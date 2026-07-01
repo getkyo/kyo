@@ -134,12 +134,13 @@ class HubTest extends kyo.test.Test[Any]:
 
         "late listeners don't receive past messages" in {
             for
-                h <- Hub.init[Int](4)
-                _ <- h.put(1)
-                _ <- Async.sleep(20.millis)
-                l <- h.listen
-                _ <- h.put(2)
-                v <- l.take
+                h  <- Hub.init[Int](4)
+                l0 <- h.listen
+                _  <- h.put(1)
+                _  <- l0.take // blocks until the distributor has delivered 1, so put(1) is fully processed
+                l  <- h.listen
+                _  <- h.put(2)
+                v  <- l.take
             yield assert(v == 2)
         }
     }
@@ -162,12 +163,12 @@ class HubTest extends kyo.test.Test[Any]:
             for
                 h <- Hub.init[Int](4)
                 _ <- h.listen(0)
-                _ <- h.put(1)
-                _ <- h.put(2)
-                _ <- h.put(3)
-                _ <- Async.sleep(10.millis)
+                // The buffer-0 listener makes the distributor block after taking exactly one message,
+                // so putBatch(1 to 5) can only complete once that first take frees a hub slot for the
+                // 5th element. When it returns the hub holds exactly [2, 3, 4, 5], with 1 held in transit.
+                _ <- h.putBatch(1 to 5)
                 r <- h.close
-            yield assert(r == Maybe(Seq(2, 3)))
+            yield assert(r == Maybe(Seq(2, 3, 4, 5)))
         }
 
         "operations fail after close" in {
@@ -474,14 +475,18 @@ class HubTest extends kyo.test.Test[Any]:
 
             "handles backpressure" in {
                 for
-                    h     <- Hub.init[Int](2)
-                    l     <- h.listen(2)
-                    _     <- h.putBatch(1 to 2)
-                    fiber <- Fiber.initUnscoped(h.putBatch(3 to 6))
-                    _     <- Async.sleep(10.millis)
-                    done  <- fiber.done
-                    size  <- l.size
-                yield assert(!done && size == 2)
+                    h <- Hub.init[Int](2)
+                    l <- h.listen(2)
+                    // The pipeline buffers at most hub(2) + in-transit(1) + listener(2) = 5 elements,
+                    // so publishing 10 forces the publisher to block until the consumer drains.
+                    fiber <- Fiber.initUnscoped(h.putBatch(1 to 10))
+                    head  <- l.takeExactly(2)
+                    // 10 published, 2 drained, at most 5 buffered => the publisher cannot be done yet.
+                    done1 <- fiber.done
+                    tail  <- l.takeExactly(8)
+                    _     <- fiber.get
+                    done2 <- fiber.done
+                yield assert(!done1 && done2 && (head ++ tail) == Chunk.from(1 to 10))
             }
 
             "fails after hub is closed" in {
@@ -531,10 +536,13 @@ class HubTest extends kyo.test.Test[Any]:
         "drainUpTo" - {
             "takes available elements up to max" in {
                 for
-                    h  <- Hub.init[Int](4)
-                    l  <- h.listen
-                    _  <- h.putBatch(1 to 4)
-                    _  <- Async.sleep(10.millis)
+                    h       <- Hub.init[Int](8)
+                    l       <- h.listen(v => v <= 4) // under test: buffers only 1..4
+                    witness <- h.listen              // gates delivery: receives every message
+                    _       <- h.putBatch(1 to 5)    // 5 is a delivery barrier, filtered out of l
+                    // The distributor delivers each message to every listener before taking the next,
+                    // so once the witness has all 5, l has already received 1..4 (5 is filtered out).
+                    _  <- witness.takeExactly(5)
                     r1 <- l.drainUpTo(2)
                     r2 <- l.drainUpTo(4)
                 yield assert(r1.size == 2 && r2.size == 2 &&
