@@ -82,13 +82,15 @@ final private[net] class PollerIoDriver private[posix] (
     // Frees pollScratch exactly once. CASed by the poll loop's terminal exit (the loop ran) and by close()'s never-started path (the loop never
     // ran); the CAS guarantees no double-free and no use-after-free between the two single owners.
     freeScratchOnce: AtomicBoolean.Unsafe,
-    // Poll-loop wakeup coalescing flag. submitChange and submitEngineOp CAS it false->true and trigger backend.wake exactly once between poll
-    // cycles; the poll loop CASes it back to false at the top of each cycle (before the next park). This (1) dedups wakes so a burst of submits
-    // triggers at most one wake per cycle, and (2) serializes the kqueue wake-arm buffer to a single in-flight trigger (the buffer is written only
-    // by the CAS winner). The wake is a LIVENESS REQUIREMENT for the indefinite park: without it, a change or engine op submitted while the loop
-    // is parked has no way to return the poll, so the change/op waits indefinitely rather than being registered with the kernel at once (the
-    // NetConnectTimeoutException regression: a connect's write-readiness arm arrived while the poll was parked, so the arm missed a short deadline).
-    // private[posix] so tests in kyo.net.internal.posix can pre-set the stale-coalescing condition directly (mirrors NioIoDriver.wakeupPending).
+    // Formerly a poll-loop wakeup coalescing flag: submitChange and submitEngineOp CASed it false->true and triggered backend.wake at most once
+    // between poll cycles (the poll loop CASed it back to false at the top of each cycle, before the next park), to dedup a burst of submits to
+    // one wake per cycle. Retired from that role: the poll loop clears it only at the TOP of each cycle, but drainFifos (which drains both FIFOs)
+    // runs BEFORE that reset, so a submit landing between a cycle's drainFifos consuming a prior wake and the next cycle's reset observed a
+    // STALE true and skipped its own wake -- a wake lost that way stranded submitEngineOp's write-only-delivery-attempt permanently (the B'
+    // post-upgrade write strand) and, on the same latent gap, submitChange's connection-reuse reads when the read side's usual self-healing
+    // (the next cycle's unconditional drainChanges) did not run in time. Both wakes are unconditional now (see submitChange / submitEngineOp).
+    // Kept ONLY so a deterministic test can pre-set the historical stale condition directly and confirm neither wake path reads it anymore
+    // (PollerWakeReadArmTest, PollerWakeEngineOpTest; mirrors NioIoDriver.wakeupPending). private[posix] for that test access.
     private[posix] val wakePending: AtomicBoolean.Unsafe,
     // True in every live driver: registerWake must succeed or start() throws before the loop is spawned (the poll parks indefinitely, making the
     // wakeup a liveness requirement). Set to true by start() after registerWake succeeds; never reset afterward.
@@ -384,7 +386,8 @@ final private[net] class PollerIoDriver private[posix] (
             // when the fd is already ready (a loopback connect's socket is writable at once, so epoll_wait/kevent returns at once). This, paired
             // with the submitChange wake that returns a park when work arrives DURING it, is what keeps the connect write-readiness from being
             // stranded until the next I/O event past a short connect deadline (the NetConnectTimeoutException regression).
-            // Clearing wakePending right before the park arms the wake for any change submitted from here on.
+            // wakePending no longer gates either wake path (both submitChange and submitEngineOp are unconditional); this reset only keeps the
+            // flag's per-cycle lifecycle consistent for the tests that pre-set it (see wakePending's own doc).
             diagPollCycles += 1L
             wakePending.set(false)
             drainChanges()
@@ -1809,16 +1812,27 @@ final private[net] class PollerIoDriver private[posix] (
       * Native TLS deadlock). The poll loop is the always-running carrier and cannot be stranded that way, so routing the drain through it makes the
       * delivery self-healing while keeping the offload contract (this returns immediately; the drain runs on the separate poll-loop carrier).
       *
-      * After the offer it triggers the poll-loop wakeup (coalesced via `wakePending`) so the parked poll returns and drains this change promptly.
-      * Without the wake, a change submitted while the loop is parked (e.g. a connect's write-readiness arm) would not be registered with
-      * the kernel at all: the poll parks indefinitely (timeoutMs=-1) and never times out on its own, so without the wake the change stalls
-      * permanently (the NetConnectTimeoutException regression). `wakePending.compareAndSet(false, true)` makes a burst of submits trigger at most one wake per poll
-      * cycle (the poll loop clears the flag before each park) and serializes the kqueue wake-arm buffer to a single in-flight trigger. The offer
-      * happens-before the wake, so the poll loop, once woken, always observes the just-offered command in its drain.
+      * After the offer it triggers the poll-loop wakeup UNCONDITIONALLY (mirrors [[submitEngineOp]]). Without the wake, a change submitted while
+      * the loop is parked (e.g. a connect's write-readiness arm, or a read re-arm on a connection whose peer has gone idle) would not be
+      * registered with the kernel at all: the poll parks indefinitely (timeoutMs=-1) and never times out on its own. An earlier version of this
+      * method coalesced the wake behind a `wakePending` CAS flag (dedup a burst of submits to at most one wake per poll cycle), but that flag is
+      * cleared only at the TOP of each poll cycle, before `drainChanges()` and the blocking park; `drainFifos()` (which also drains the change
+      * queue, after the park returns) runs BEFORE that reset. So between a cycle's `drainFifos()` consuming a prior wake and the NEXT cycle's
+      * reset, `wakePending` reads `true` while STALE: it represents a wake whose OS-level signal was already delivered and cleared, not one
+      * still in flight. A guarded `submitChange` whose CAS landed in that window would observe the stale `true`, skip its own wake, and leave
+      * this command sitting in `changeQueue` with nothing left to wake the park: if no OTHER fd on this driver has any future activity to return
+      * `backend.poll()` on its own, the command is never drained and the connection strands forever (the connection-reuse hang under kyo-http's
+      * pool/concurrency stress leaves, e.g. `HttpClientTest` "concurrent contention with more fibers than pool slots" and "connection reuse with
+      * varying data": under load `drainFifos()` does more work per cycle, widening the stale window and making a same-cycle cross-thread
+      * `submitChange` from a different connection more likely to land in it). This is the exact class of bug `submitEngineOp` was already fixed
+      * for (the B' post-upgrade write strand); `submitChange` shared the same coalescing and the same latent gap, just on the read/registration
+      * side instead of the write side, and with a self-healing path (the next cycle's unconditional `drainChanges()`) that usually, but not
+      * always, recovers a skipped wake before the park closes it off. `PollerWakeReadArmTest` pins this directly. The offer happens-before the
+      * wake, so the poll loop, once woken, always observes the just-offered command in its drain.
       */
     private def submitChange(cmd: Long)(using AllowUnsafe, Frame): Unit =
         changeQueue.offer(cmd)
-        if wakePending.compareAndSet(false, true) then triggerWake()
+        triggerWake()
     end submitChange
 
     /** Trigger the poll-loop wakeup under the wake guard: register as an in-flight wake holder, fire [[PollerBackend.wake]], then release. If the wake
@@ -2124,18 +2138,19 @@ final private[net] class PollerIoDriver private[posix] (
       * strand, leaving engine ops undrained forever (the Native TLS deadlock); the always-running poll loop cannot be stranded that way. The
       * recv/send syscalls that surround engine ops stay outside the FIFO.
       *
-      * After offering the op, triggers the poll-loop wakeup UNCONDITIONALLY (not coalesced via [[wakePending]], unlike [[submitChange]]). The
-      * poll loop resets `wakePending` only at the top of each cycle, before draining the change queue and before the blocking park; the engine
-      * queue is drained only AFTER the park returns. So between a cycle's drain consuming a prior wake and the NEXT cycle's reset, `wakePending`
-      * can read `true` while STALE: the OS-level wake signal it represented has already been delivered and cleared, not one still in flight. A
-      * guarded `submitEngineOp` whose CAS lands in that window observes the stale `true`, skips its own wake, and the carrier parks having
-      * never seen the op. Unlike a read re-arm (re-asserted on every later event), a `writeTls` engine op is the write's only delivery attempt:
-      * a wake lost here strands the connection's write side permanently (the STARTTLS-upgrade-tail B' strand). `writeTls` returns `Done`
-      * before this op has run, so there is no retry path to recover a lost wake the way the read side's backstops do. Mirrors
-      * [[IoUringDriver.submitEngineOp]], whose `wakeReapLoop()` is already unconditional for the same reason. `triggerWake` -> `backend.wake`
-      * is safe to call concurrently with a CAS-coalesced [[submitChange]] wake: epoll's `wake` is a thread-safe atomic counter increment, and
-      * kqueue's `wake` encodes into a fresh per-call buffer (see [[KqueuePollerBackend.wake]]) instead of the reused arm buffer, so two
-      * concurrent wakes never touch the same memory and there is nothing to serialize.
+      * After offering the op, triggers the poll-loop wakeup UNCONDITIONALLY, same as [[submitChange]]. Both used to gate the wake behind a CAS
+      * on a shared `wakePending` flag the poll loop reset only at the top of each cycle, before draining the FIFOs and before the blocking
+      * park: a submit whose CAS landed AFTER a prior wake was already consumed this cycle but BEFORE that reset observed a STALE `true` (a wake
+      * whose OS-level signal was already delivered and cleared, not one still in flight), skipped its own wake, and the carrier parked having
+      * never seen the newly-offered work. Unlike a read re-arm (which has a self-healing path: the coalesced-away command still sits in
+      * `changeQueue` and the next cycle's unconditional `drainChanges()` usually recovers it if `backend.poll()` returns for some other reason),
+      * a `writeTls` engine op is the write's only delivery attempt with no retry: a wake lost here strands the connection's write side
+      * permanently (the STARTTLS-upgrade-tail B' strand this method was first made unconditional for). `submitChange` shared the identical gap
+      * on the read/registration side and was later found to strand connection-reuse reads the same way when the self-healing path did not run
+      * in time (`PollerWakeReadArmTest`), so both are unconditional now and `wakePending` is retired. Mirrors [[IoUringDriver.submitEngineOp]],
+      * whose `wakeReapLoop()` is unconditional for the same reason. `triggerWake` -> `backend.wake` is safe to call concurrently from multiple
+      * carriers: epoll's `wake` is a thread-safe atomic counter increment, and kqueue's `wake` encodes into a fresh per-call buffer (see
+      * [[KqueuePollerBackend.wake]]) instead of a reused one, so concurrent wakes never touch the same memory and there is nothing to serialize.
       */
     override def submitEngineOp(op: () => Unit)(using AllowUnsafe, Frame): Unit =
         discard(engineQueue.offer(op))
@@ -2165,7 +2180,7 @@ final private[net] class PollerIoDriver private[posix] (
 
     /** Drain both per-driver FIFOs once, on the poll-loop carrier. The poll loop calls this every cycle (see [[pollLoop]]), making it the single
       * authoritative consumer of both FIFOs: `submitChange` / `submitEngineOp` only enqueue, so a submitted command or engine op is always drained
-      * within one poll cycle. Each submit triggers the poll-loop wakeup (coalesced via [[wakePending]]) so a parked indefinite poll returns promptly
+      * within one poll cycle. Each submit triggers the poll-loop wakeup unconditionally so a parked indefinite poll returns promptly
       * when work arrives. This is the recovery for the Native TLS deadlock: the prior design drained on a `Fiber.Unsafe.init` task spawned per
       * burst, which a scheduler strand could lose, leaving the FIFO undrained forever; the poll loop is the one carrier running for the driver's
       * whole life and cannot be lost that way. Draining on the poll-loop carrier (not the submitting carrier) keeps the offload contract: a submit

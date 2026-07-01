@@ -79,6 +79,8 @@ final private[kyo] class Http1ResponseParser(
             parse()
         else
             needMoreBytes()
+        end if
+    end start
 
     private def parse(): Unit =
         val headerEnd = indexOf(buf, pos, Http1Parser.CRLF_CRLF)
