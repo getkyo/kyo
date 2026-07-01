@@ -36,9 +36,24 @@ private[net] enum PendingOp(val handle: PosixHandle):
       * `handshakeOwned` marks a recv armed by the STARTTLS handshake's own ciphertext read (awaitReadCiphertext) rather than the application
       * ReadPump. During the upgrade window the reap routes a non-handshake-owned recv (a stray plaintext-pump recv) through the upgrade handoff, but
       * the handshake's own recv must still reach the engine, so the tag travels with the op (it cannot be inferred from handle flags at reap time).
+      * `armedPostUpgrade` snapshots `handle.isUpgraded` at the moment THIS recv was originally armed (not re-read on an EINTR/SQ-full resubmit,
+      * which carries the ORIGINAL value forward): a non-`handshakeOwned` recv armed while `false` that reaps once the handle's CURRENT
+      * `isUpgraded` is `true` is a stale pre-upgrade pump recv outliving the whole upgrade, indistinguishable from a genuine post-upgrade recv
+      * using `handshakeOwned`/`isUpgraded` alone (see the routing condition in `complete`). `armedForStaging` is RECOMPUTED fresh every time
+      * `submitRecv` actually runs (unlike `armedPostUpgrade`): it is always exactly "did the SQE this specific CQE reaps for target
+      * `recvStagingFor`'s buffer (`true`) or `handle.readBuffer` (`false`)", tautologically consistent with the buffer `submitRecv` chose at
+      * that exact moment. Carried so the feed-time buffer-role check (`complete`'s TLS-feed branch) can catch a recv reaping against a buffer
+      * its own kernel write never touched -- a permanent, always-on safety net for the buffer-mismatch corruption class, independent of
+      * whether the routing condition above correctly identifies every stale-recv trigger.
       */
-    case Read(promise: Promise.Unsafe[ReadOutcome, Abort[Closed]], h: PosixHandle, eintrRetries: Int, handshakeOwned: Boolean)
-        extends PendingOp(h)
+    case Read(
+        promise: Promise.Unsafe[ReadOutcome, Abort[Closed]],
+        h: PosixHandle,
+        eintrRetries: Int,
+        handshakeOwned: Boolean,
+        armedPostUpgrade: Boolean,
+        armedForStaging: Boolean
+    ) extends PendingOp(h)
 
     /** A plaintext send: pins the per-write `buf` for the kernel for the duration of the send SQE. `offset` is the index of `buf`'s first byte
       * in the original payload span and `len` is the number of bytes this SQE was asked to send, so the reap can detect a partial send
@@ -65,11 +80,11 @@ private[net] enum PendingOp(val handle: PosixHandle):
       */
     def failPromise(closed: Closed)(using AllowUnsafe): Unit =
         this match
-            case Read(promise, _, _, _)   => promise.completeDiscard(Result.fail(closed))
-            case Connect(promise, _)      => promise.completeDiscard(Result.fail(closed))
-            case Accept(promise, _, _, _) => promise.completeDiscard(Result.fail(closed))
-            case Write(_, _, _, _)        => ()
-            case TlsWrite(_, _, _)        => ()
+            case Read(promise, _, _, _, _, _) => promise.completeDiscard(Result.fail(closed))
+            case Connect(promise, _)          => promise.completeDiscard(Result.fail(closed))
+            case Accept(promise, _, _, _)     => promise.completeDiscard(Result.fail(closed))
+            case Write(_, _, _, _)            => ()
+            case TlsWrite(_, _, _)            => ()
         end match
     end failPromise
 
@@ -279,7 +294,10 @@ final private[net] class IoUringDriver private[posix] (
             if closedFlag.get() then
                 java.lang.System.err.println(s"ZZTRACE-IOU submitDeferredRecv closedFlag-reject fd=${handle.readFd}")
                 promise.completeDiscard(Result.fail(Closed(label, summon[Frame], "driver closed")))
-            else submitRecv(handle, promise, eintrRetries = 0, handshakeOwned = handshakeOwned)
+            else
+                // Snapshot handle.isUpgraded HERE, on the reap carrier, at the moment this recv is actually armed -- not at the (possibly much
+                // earlier, possibly different-carrier) awaitRead/awaitReadHandshake call. See PendingOp.Read's armedPostUpgrade doc.
+                submitRecv(handle, promise, eintrRetries = 0, handshakeOwned = handshakeOwned, armedPostUpgrade = handle.isUpgraded)
         }
 
     /** Submit one recv SQE for `promise`, recording `eintrRetries` (the count of prior re-submissions caused by a `-EINTR` read CQE) on the
@@ -290,7 +308,8 @@ final private[net] class IoUringDriver private[posix] (
         handle: PosixHandle,
         promise: Promise.Unsafe[ReadOutcome, Abort[Closed]],
         eintrRetries: Int,
-        handshakeOwned: Boolean
+        handshakeOwned: Boolean,
+        armedPostUpgrade: Boolean
     )(using
         AllowUnsafe,
         Frame
@@ -315,10 +334,32 @@ final private[net] class IoUringDriver private[posix] (
             java.lang.System.err.println(
                 s"ZZTRACE-IOU submitRecv queued (in-flight orphan) fd=${handle.readFd} handshakeOwned=$handshakeOwned"
             )
-            handle.queuedRecv = PosixHandle.QueuedRecv.Queued(promise, handshakeOwned)
+            handle.queuedRecv = PosixHandle.QueuedRecv.Queued(promise, handshakeOwned, armedPostUpgrade)
+        else if handle.recvInFlight then
+            // ALWAYS-ON exclusive-use guard (PosixHandle.recvInFlight): a plain branch, not an elidable `assert` -- this stays live in
+            // production. Unreachable for an `isUpgraded` handle (the clause above already intercepts and queues its one legitimate
+            // dual-recv window); reaching this means a SECOND recv was requested for this handle while its buffer is still kernel-owned by
+            // an SQE that has not reaped yet -- a structural violation of the "arm one, await it, arm the next" discipline every
+            // ReadPump/handshake caller is expected to follow. Never guess which recv's bytes belong where: fail this NEW request and abort
+            // the whole connection instead of letting two live kernel writes race into one buffer (the same corruption class the queue
+            // above exists to prevent for the one known trigger; this is the safety net for any other one).
+            val msg =
+                s"fd=${handle.readFd} id=${handle.id.packed} exclusive-use violation: a recv was requested while another was already " +
+                    "kernel-owned for this handle's buffer"
+            Log.live.unsafe.error(s"$label $msg")
+            promise.completeDiscard(Result.fail(Closed(label, summon[Frame], msg)))
+            closeHandle(handle)
         else
             val key = keyGen.getAndIncrement()
-            register(key, PendingOp.Read(promise, handle, eintrRetries, handshakeOwned))
+            // Cheap snapshot of WHICH buffer this recv is about to target (Present -> recvStagingFor's staging buffer, Absent -> the raw
+            // readBuffer): just the tag, not the (lazily-allocating) buffer lookup itself, which stays inside the Present(sqe) branch below so
+            // a park on a full SQ never triggers the allocation for a recv that has not actually been armed yet. Carried with the op (see
+            // PendingOp.Read's doc) so the feed-time buffer-role check in `complete` can verify the buffer it is about to read from is the SAME
+            // one this recv's kernel write actually landed in, regardless of what the handle's CURRENT `tls` state says at reap time.
+            val armedForStaging = handle.tls match
+                case Present(_) => true
+                case Absent     => false
+            register(key, PendingOp.Read(promise, handle, eintrRetries, handshakeOwned, armedPostUpgrade, armedForStaging))
             uring.kyo_uring_get_sqe(ring) match
                 case Present(sqe) =>
                     // For TLS handles: point the recv SQE directly at the per-handle staging buffer so the kernel fills it without an extra copy.
@@ -327,9 +368,8 @@ final private[net] class IoUringDriver private[posix] (
                     // never overwrites the staging with a second recv before the engine op feeds the first.
                     // For non-TLS handles: read into the handle's reused readBuffer (the raw path is unchanged).
                     val recvTarget =
-                        handle.tls match
-                            case Present(_) => recvStagingFor(handle)
-                            case Absent     => handle.readBuffer
+                        if armedForStaging then recvStagingFor(handle)
+                        else handle.readBuffer
                     // Non-negativity guard at the C trust boundary (CWE-190/195/805): a negative recv length wraps to a huge size_t at the C cast and
                     // becomes an out-of-bounds kernel read. The shim refuses to prepare the SQE and returns non-zero; map that to an OBSERVABLE
                     // rejection (fail the read promise with Closed) rather than letting a bad value pass or dropping the SQE silently (a dropped SQE
@@ -347,6 +387,9 @@ final private[net] class IoUringDriver private[posix] (
                     else
                         uring.kyo_uring_sqe_set_data64(sqe, key)
                         submitBatched()
+                        // Claim exclusive use of this handle's buffer (PosixHandle.recvInFlight) now that a real SQE owns it; cleared in
+                        // complete() the moment this CQE reaps.
+                        handle.recvInFlight = true
                         // ARM-TRACE: the recv SQE for this read is now queued/submitted (pairs with awaitRead-entry to confirm the post-onFinished arm).
                         java.lang.System.err.println(
                             s"ZZTRACE-IOU submitRecv SQE-submitted fd=${handle.readFd} key=$key handshakeOwned=$handshakeOwned upgradeActive=${handle.upgradeActive}"
@@ -355,12 +398,21 @@ final private[net] class IoUringDriver private[posix] (
                 case Absent =>
                     // SUBMISSION queue full: no recv SQE is in flight, so no CQE will re-drive this read. Park it (the promise stays pending) and
                     // re-arm after the next CQE batch frees a slot (reArmStalledSubmits), mirroring stalledRaw for sends so a transient SQ-full
-                    // backpressures the read instead of failing the connection. unregister first: the key is re-assigned on re-submit.
+                    // backpressures the read instead of failing the connection. unregister first: the key is re-assigned on re-submit. recvInFlight
+                    // stays false: nothing kernel-owned touches the buffer yet, so the later re-arm (reArmStalledSubmits, calling submitRecv
+                    // directly) must not itself trip the exclusive-use guard above.
                     unregister(key)
                     java.lang.System.err.println(
                         s"ZZTRACE-IOU submitRecv SQ-full park fd=${handle.readFd} upgradeActive=${handle.upgradeActive} stalled=${stalledSubmits.size()}"
                     )
-                    discard(stalledSubmits.add(PendingOp.Read(promise, handle, eintrRetries, handshakeOwned)))
+                    discard(stalledSubmits.add(PendingOp.Read(
+                        promise,
+                        handle,
+                        eintrRetries,
+                        handshakeOwned,
+                        armedPostUpgrade,
+                        armedForStaging
+                    )))
             end match
         end if
     end submitRecv
@@ -373,10 +425,10 @@ final private[net] class IoUringDriver private[posix] (
       */
     private def drainQueuedRecv(handle: PosixHandle)(using AllowUnsafe, Frame): Unit =
         handle.queuedRecv match
-            case PosixHandle.QueuedRecv.Queued(promise, handshakeOwned) =>
+            case PosixHandle.QueuedRecv.Queued(promise, handshakeOwned, armedPostUpgrade) =>
                 handle.queuedRecv = PosixHandle.QueuedRecv.None
                 java.lang.System.err.println(s"ZZTRACE-IOU drainQueuedRecv fd=${handle.readFd} handshakeOwned=$handshakeOwned")
-                submitRecv(handle, promise, eintrRetries = 0, handshakeOwned = handshakeOwned)
+                submitRecv(handle, promise, eintrRetries = 0, handshakeOwned = handshakeOwned, armedPostUpgrade = armedPostUpgrade)
             case _ => ()
     end drainQueuedRecv
 
@@ -924,8 +976,8 @@ final private[net] class IoUringDriver private[posix] (
       */
     override def hasInFlightRead(handle: PosixHandle)(using AllowUnsafe): Boolean =
         def isReadFor(op: PendingOp): Boolean = op match
-            case PendingOp.Read(_, h, _, _) => h.id.packed == handle.id.packed
-            case _                          => false
+            case PendingOp.Read(_, h, _, _, _, _) => h.id.packed == handle.id.packed
+            case _                                => false
         val pendingIt = pending.values().iterator()
         var found     = false
         while !found && pendingIt.hasNext do
@@ -1437,9 +1489,9 @@ final private[net] class IoUringDriver private[posix] (
             stalledSubmits.clear()
             while !batch.isEmpty do
                 batch.poll() match
-                    case PendingOp.Read(promise, h, eintrRetries, handshakeOwned) =>
+                    case PendingOp.Read(promise, h, eintrRetries, handshakeOwned, armedPostUpgrade, _) =>
                         java.lang.System.err.println(s"ZZTRACE-IOU reArmStalled Read fd=${h.readFd} upgradeActive=${h.upgradeActive}")
-                        submitRecv(h, promise, eintrRetries, handshakeOwned)
+                        submitRecv(h, promise, eintrRetries, handshakeOwned, armedPostUpgrade)
                     case PendingOp.Accept(promise, h, noAddr, noLen) => submitAccept(promise, h, noAddr, noLen)
                     case PendingOp.Connect(promise, h)               => submitConnect(promise, h)
                     case PendingOp.Write(_, _, _, _) | PendingOp.TlsWrite(_, _, _) =>
@@ -1461,7 +1513,11 @@ final private[net] class IoUringDriver private[posix] (
                 // resources before the queued op runs (the BoringSSL feedCiphertext MemorySession-alreadyClosed use-after-free).
                 var deferredDecrement = false
                 op match
-                    case PendingOp.Read(promise, h, eintrRetries, handshakeOwned) =>
+                    case PendingOp.Read(promise, h, eintrRetries, handshakeOwned, armedPostUpgrade, armedForStaging) =>
+                        // Release the exclusive-use claim (PosixHandle.recvInFlight) now that this SQE has genuinely reaped, before any
+                        // branch below (including an EINTR resubmit or drainQueuedRecv) can re-claim it. Synchronous on this same reap-carrier
+                        // call, so there is no window where a concurrent submitRecv could observe a stale `true`.
+                        h.recvInFlight = false
                         // Named so the queued-recv drain below (which must NOT fire on an EINTR retry: that re-submits the SAME logical recv,
                         // so nothing has actually completed) can check it without repeating the condition.
                         val isEintrRetry = res < 0 && -res == PosixConstants.EINTR && eintrRetries < maxTransientIoRetries && !h.isClosing()
@@ -1471,10 +1527,11 @@ final private[net] class IoUringDriver private[posix] (
                             // and dropping a healthy connection (the io_uring twin of PollerIoDriver's recvNowWithRetry). Bounded by
                             // maxTransientIoRetries via the carried count so an EINTR storm cannot spin: past the bound the `else` below fails Closed.
                             // Skipped when the handle is already closing (a concurrent close): re-arming a freed handle would be a use-after-free.
-                            submitRecv(h, promise, eintrRetries + 1, handshakeOwned)
+                            submitRecv(h, promise, eintrRetries + 1, handshakeOwned, armedPostUpgrade)
                         else if
                             !h.isClosing() &&
-                            (h.upgradeActive || (h.upgrading && !handshakeOwned) || (handshakeOwned && h.isUpgraded))
+                            (h.upgradeActive || (h.upgrading && !handshakeOwned) || (handshakeOwned && h.isUpgraded) ||
+                                (!handshakeOwned && h.isUpgraded && !armedPostUpgrade))
                         then
                             // STARTTLS stale recv: this recv was armed by the plaintext ReadPump before detachForUpgrade detached the connection, and
                             // io_uring cannot cancel it, so it just consumed the peer's first post-signal flight (the ClientHello / ServerHello, or a
@@ -1484,7 +1541,7 @@ final private[net] class IoUringDriver private[posix] (
                             // one whose promise is still live when this CQE reaps. A `promise.done()` guard therefore mis-classifies that live-promise
                             // stale recv as a normal read and feeds the flight to the torn-down ReadPump, stranding the handshake's parked waiter (the
                             // residual stall). Single-source: upgradeActive stays set for the WHOLE upgrade and the handshake reads through the
-                            // upgradeHandoff slot, arming its OWN producer recv (armUpgradeProducerRead, handshakeOwned). Three routes reach here:
+                            // upgradeHandoff slot, arming its OWN producer recv (armUpgradeProducerRead, handshakeOwned). Four routes reach here:
                             // (1) upgradeActive set: ANY recv in flight belongs to the slot via the first clause -- the handshake's producer recv AND a
                             // kernel-owned stale pump recv can BOTH be in flight, both route here, one fulfils the parked waiter and the other
                             // stages/appends a Carryover (no double-read: the socket consumes each byte once); (2) upgradeActive cleared (only at
@@ -1505,6 +1562,20 @@ final private[net] class IoUringDriver private[posix] (
                             // PosixHandle.queuedRecv), so the Carryover is staged before any conflicting recv can be armed, preserving both
                             // no-aliasing and wire order. `false` for a FRESH (non-STARTTLS) handshake's own handshakeOwned recvs: `isUpgraded` is
                             // never set on a handle that never went through `upgradeRole`, so those still fall through unaffected (their `tls` stays
+                            // Absent until their own onFinished); (4) NOT handshakeOwned, the handle has EVER upgraded, AND this SPECIFIC recv was
+                            // armed BEFORE that upgrade committed ([[PendingOp.Read.armedPostUpgrade]] false): the stale PLAINTEXT PUMP recv's
+                            // handshakeOwned=false sibling of route (3) -- a recv armed by the ordinary pre-upgrade ReadPump continuation that
+                            // outlives the ENTIRE upgrade (not just the narrow window route (2) covers, which only spans the moment between
+                            // onFinished clearing upgradeActive and then upgrading). Route (2) alone cannot catch this: once BOTH flags are false,
+                            // `handshakeOwned=false` + `isUpgraded=true` is indistinguishable from a genuine post-upgrade ReadPump recv using
+                            // per-HANDLE state alone. Without this clause the orphan falls through to the ordinary TLS-feed branch and reads from
+                            // `recvStagingFor` -- a buffer THIS recv never actually wrote to (it targeted `handle.readBuffer`, armed while `tls`
+                            // was still Absent) -- feeding stale/uninitialized bytes to the engine as bogus "ciphertext" (a fatal TLS record, or a
+                            // silent zero-plaintext re-arm if the staging buffer happens to hold leftover bytes from a genuine prior read) instead
+                            // of the peer's real application data, which is sitting untouched in `handle.readBuffer`. This is the mechanism behind
+                            // the "Closed at collect" steady-state corruption with zero TLS decode-failure markers (p10-fix-log.md): intra-connection
+                            // (same handle throughout; PosixHandle.recvStagingOwnerId's ownership check correctly stays quiet, since staging IS
+                            // owned by this handle -- the bug is staleness, not a cross-connection owner mismatch), not a session leak.
                             // Absent until their own onFinished, exactly as before this fix). Either way the bytes belong to the handshake. Route
                             // them through the single upgradeHandoff slot (fulfil the parked waiter, or stage/append a Carryover when none is
                             // parked) instead of the settled/reused promise.
@@ -1574,79 +1645,113 @@ final private[net] class IoUringDriver private[posix] (
                                         s"ZZTRACE-IOU tlsReadReap fd=${h.readFd} res=$res handshakeOwned=$handshakeOwned upgradeActive=${h.upgradeActive} upgrading=${h.upgrading}"
                                     )
                                     val staging = recvStagingFor(h)
-                                    deferredDecrement = true
-                                    submitEngineOp { () =>
-                                        try
-                                            // onFatal routes through closeHandle rather than a bare handle.requestClose(): io_uring never
-                                            // acquires the read half of the handle's guard (reads are async/kernel-owned, tracked by
-                                            // inFlight/pendingCloses/closeAfterDrain instead), so requestClose() alone would free the
-                                            // handle's buffers and engine immediately, unconditionally -- unsafe when a second kernel-owned
-                                            // recv for this same handle (the STARTTLS upgrade-handoff window allows more than one) is still
-                                            // in flight and has already captured a reference to those buffers. closeHandle defers the actual
-                                            // free until every op still in flight for the handle (this deferred decrement included) drains.
-                                            // fatalRecord is a LOCAL flag, not a shared/ambient signal: closeHandle only marks pendingCloses
-                                            // (shared across every close reason for this handle) synchronously, so checking pendingCloses here
-                                            // would also misfire for an unrelated concurrent close racing a read that decoded cleanly.
-                                            var fatalRecord = false
-                                            val plain = feedAndDecrypt(
-                                                engine,
-                                                staging,
-                                                res,
-                                                h,
-                                                () =>
-                                                    fatalRecord = true; closeHandle(h)
-                                            )
-                                            java.lang.System.err.println(
-                                                s"ZZTRACE-IOU tlsReadFed fd=${h.readFd} res=$res plain=${plain.length} handshakeOwned=$handshakeOwned closing=${h.isClosing()}"
-                                            )
-                                            // Fatal-record check (mirrors the poller's rearmOwned endDispatch closing check): fatalRecord is set
-                                            // exactly when THIS call's onFatal fired; isClosing() is kept too for any other concurrent close that
-                                            // already ran the guard's free (a rare path independent of this read). Either way, failing the read
-                                            // promise Closed here tears the connection down on io_uring exactly as the poller's rearmOwned /
-                                            // endDispatch does when the dispatch guard observes the close bit.
-                                            if fatalRecord || h.isClosing() then
-                                                promise.completeDiscard(Result.fail(Closed(
-                                                    label,
-                                                    summon[Frame],
-                                                    s"fatal TLS record fd=${h.readFd}"
-                                                )))
-                                            else if plain.length > 0 then
-                                                promise.completeDiscard(Result.succeed(ReadOutcome.Bytes(Span.fromUnsafe(plain))))
-                                                // Flush any ciphertext the read produced (e.g. a TLS 1.3 KeyUpdate response queued by the engine
-                                                // during the decode). drainReadProducedCiphertext (inside feedAndDecrypt) appended it to
-                                                // pendingCipher; flushTls submits a send SQE for the unsent region so it reaches the peer.
-                                                // This mirrors the poller's flushReArmPending / armWritableForFlush machinery that drains the tail
-                                                // after every write engine op. No flush is submitted when pendingCipher is empty (the common path
-                                                // for reads that produce no outbound ciphertext) or when a send is already in flight.
-                                                flushTls(h)
-                                            else if h.halfClose == HalfCloseState.PeerCleanClose then
-                                                // The peer's close_notify was consumed (RFC 8446 6.1 orderly close): deliver CleanClose so the
-                                                // ReadPump tears down cleanly, rather than re-arming for ciphertext the peer will never send.
-                                                // Mirrors the poller's dispatchReadTls clean-close branch.
-                                                promise.completeDiscard(Result.succeed(ReadOutcome.CleanClose))
-                                            else
-                                                // Only handshake / partial-record bytes consumed: submit another recv on the same promise rather than
-                                                // signalling EOF, mirroring the poller's rearmOwned. Then flush any read-produced ciphertext so a
-                                                // KeyUpdate response is not held until the next app-data write.
-                                                awaitRead(h, promise)
-                                                flushTls(h)
-                                            end if
-                                        catch
-                                            // A TLS engine op threw a fatal alert (JDK SSLEngine.unwrap raises SSLHandshakeException on a received
-                                            // fatal alert, which is NOT the readPlain==-2 return the isClosing branch above handles). drainEngineOps
-                                            // would otherwise swallow it and strand this read promise (a silent hang); fail the read so the connection
-                                            // tears down. The deferred in-flight decrement is a separate queued op, so it still runs after this.
-                                            case e: Throwable =>
-                                                Log.live.unsafe.warn(
-                                                    s"$label TLS engine read failed fd=${h.readFd}, closing connection: ${e.getMessage}"
+                                    // ALWAYS-ON buffer-role invariant (a plain branch, not an elidable `assert`; see PendingOp.Read's
+                                    // armedForStaging doc): this recv's own SQE must have actually targeted `recvStagingFor`'s buffer. A `false`
+                                    // here means the kernel wrote INTO A DIFFERENT BUFFER (handle.readBuffer, since tls was Absent when this
+                                    // recv was armed) than the one we are about to read `res` bytes from -- the exact stale-recv/wrong-buffer
+                                    // corruption class the routing condition above exists to route away from this branch (see its route (4)).
+                                    // This is the permanent safety net for that whole CLASS, independent of whether the routing condition
+                                    // correctly identifies every trigger: catching it here means neither trigger nor consequence goes unnoticed.
+                                    if !armedForStaging then
+                                        val msg = s"recvStaging buffer-role mismatch fd=${h.readFd} h.id=${h.id.packed}: this recv's SQE " +
+                                            "targeted a different buffer than the one being read from"
+                                        Log.live.unsafe.error(s"$label $msg: stale/mis-routed recv, aborting this connection")
+                                        promise.completeDiscard(Result.fail(Closed(label, summon[Frame], msg)))
+                                        closeHandle(h)
+                                    // ALWAYS-ON ownership invariant (a plain branch, not an elidable `assert`; see PosixHandle.recvStagingOwnerId):
+                                    // the staging buffer this recv just filled must be tagged with THIS handle's own id. A mismatch means
+                                    // recvStagingFor resolved a buffer belonging to a DIFFERENT handle -- a cross-connection ciphertext leak
+                                    // (the bad_record_mac shape) caught at the exact point it would occur, both ids attributed, instead of
+                                    // surfacing later as an unattributed decode failure. Safe-abort THIS connection only (fail this read, then
+                                    // closeHandle): the mismatched owner's own connection is left completely untouched (reaching across to it
+                                    // would itself be a cross-connection operation) and keeps running normally. Never deliver the mis-owned
+                                    // bytes: fail-closed, not fail-open.
+                                    // No decrementInFlight in either branch above: deferredDecrement stays false on this branch, so the shared
+                                    // fallback at the end of the Read case (mirroring every other non-deferred branch, e.g. the stale-recv
+                                    // branch above) decrements exactly once; calling it here too would double-decrement.
+                                    else if h.recvStagingOwnerId != h.id.packed then
+                                        // Lazy: the interpolated message (and the Log.error call itself) only runs on the mismatch path, never
+                                        // on the success path -- this branch costs one Long compare per TLS read otherwise.
+                                        val msg =
+                                            s"recvStaging ownership mismatch fd=${h.readFd} h.id=${h.id.packed} owner=${h.recvStagingOwnerId}"
+                                        Log.live.unsafe.error(s"$label $msg: cross-connection ciphertext leak, aborting this connection")
+                                        promise.completeDiscard(Result.fail(Closed(label, summon[Frame], msg)))
+                                        closeHandle(h)
+                                    else
+                                        deferredDecrement = true
+                                        submitEngineOp { () =>
+                                            try
+                                                // onFatal routes through closeHandle rather than a bare handle.requestClose(): io_uring never
+                                                // acquires the read half of the handle's guard (reads are async/kernel-owned, tracked by
+                                                // inFlight/pendingCloses/closeAfterDrain instead), so requestClose() alone would free the
+                                                // handle's buffers and engine immediately, unconditionally -- unsafe when a second kernel-owned
+                                                // recv for this same handle (the STARTTLS upgrade-handoff window allows more than one) is still
+                                                // in flight and has already captured a reference to those buffers. closeHandle defers the actual
+                                                // free until every op still in flight for the handle (this deferred decrement included) drains.
+                                                // fatalRecord is a LOCAL flag, not a shared/ambient signal: closeHandle only marks pendingCloses
+                                                // (shared across every close reason for this handle) synchronously, so checking pendingCloses here
+                                                // would also misfire for an unrelated concurrent close racing a read that decoded cleanly.
+                                                var fatalRecord = false
+                                                val plain = feedAndDecrypt(
+                                                    engine,
+                                                    staging,
+                                                    res,
+                                                    h,
+                                                    () =>
+                                                        fatalRecord = true; closeHandle(h)
                                                 )
-                                                promise.completeDiscard(Result.fail(Closed(
-                                                    label,
-                                                    summon[Frame],
-                                                    s"TLS engine read failed fd=${h.readFd}: ${e.getMessage}"
-                                                )))
-                                        end try
-                                    }
+                                                java.lang.System.err.println(
+                                                    s"ZZTRACE-IOU tlsReadFed fd=${h.readFd} res=$res plain=${plain.length} handshakeOwned=$handshakeOwned closing=${h.isClosing()}"
+                                                )
+                                                // Fatal-record check (mirrors the poller's rearmOwned endDispatch closing check): fatalRecord is set
+                                                // exactly when THIS call's onFatal fired; isClosing() is kept too for any other concurrent close that
+                                                // already ran the guard's free (a rare path independent of this read). Either way, failing the read
+                                                // promise Closed here tears the connection down on io_uring exactly as the poller's rearmOwned /
+                                                // endDispatch does when the dispatch guard observes the close bit.
+                                                if fatalRecord || h.isClosing() then
+                                                    promise.completeDiscard(Result.fail(Closed(
+                                                        label,
+                                                        summon[Frame],
+                                                        s"fatal TLS record fd=${h.readFd}"
+                                                    )))
+                                                else if plain.length > 0 then
+                                                    promise.completeDiscard(Result.succeed(ReadOutcome.Bytes(Span.fromUnsafe(plain))))
+                                                    // Flush any ciphertext the read produced (e.g. a TLS 1.3 KeyUpdate response queued by the engine
+                                                    // during the decode). drainReadProducedCiphertext (inside feedAndDecrypt) appended it to
+                                                    // pendingCipher; flushTls submits a send SQE for the unsent region so it reaches the peer.
+                                                    // This mirrors the poller's flushReArmPending / armWritableForFlush machinery that drains the tail
+                                                    // after every write engine op. No flush is submitted when pendingCipher is empty (the common path
+                                                    // for reads that produce no outbound ciphertext) or when a send is already in flight.
+                                                    flushTls(h)
+                                                else if h.halfClose == HalfCloseState.PeerCleanClose then
+                                                    // The peer's close_notify was consumed (RFC 8446 6.1 orderly close): deliver CleanClose so the
+                                                    // ReadPump tears down cleanly, rather than re-arming for ciphertext the peer will never send.
+                                                    // Mirrors the poller's dispatchReadTls clean-close branch.
+                                                    promise.completeDiscard(Result.succeed(ReadOutcome.CleanClose))
+                                                else
+                                                    // Only handshake / partial-record bytes consumed: submit another recv on the same promise rather than
+                                                    // signalling EOF, mirroring the poller's rearmOwned. Then flush any read-produced ciphertext so a
+                                                    // KeyUpdate response is not held until the next app-data write.
+                                                    awaitRead(h, promise)
+                                                    flushTls(h)
+                                                end if
+                                            catch
+                                                // A TLS engine op threw a fatal alert (JDK SSLEngine.unwrap raises SSLHandshakeException on a received
+                                                // fatal alert, which is NOT the readPlain==-2 return the isClosing branch above handles). drainEngineOps
+                                                // would otherwise swallow it and strand this read promise (a silent hang); fail the read so the connection
+                                                // tears down. The deferred in-flight decrement is a separate queued op, so it still runs after this.
+                                                case e: Throwable =>
+                                                    Log.live.unsafe.warn(
+                                                        s"$label TLS engine read failed fd=${h.readFd}, closing connection: ${e.getMessage}"
+                                                    )
+                                                    promise.completeDiscard(Result.fail(Closed(
+                                                        label,
+                                                        summon[Frame],
+                                                        s"TLS engine read failed fd=${h.readFd}: ${e.getMessage}"
+                                                    )))
+                                            end try
+                                        }
+                                    end if
                                 case Absent =>
                                     val arr = Buffer.copyToArray[Byte](h.readBuffer, 0, res) // right-sized copy out
                                     java.lang.System.err.println(
@@ -1882,6 +1987,8 @@ final private[net] class IoUringDriver private[posix] (
             case Absent =>
                 val buf = Buffer.alloc[Byte](handle.readBufferSize)
                 handle.recvStaging = Present(buf)
+                // Ownership tag (see PosixHandle.recvStagingOwnerId): stamped once, at allocation, with the SAME handle whose field this is.
+                handle.recvStagingOwnerId = handle.id.packed
                 buf
 
     /** Per-handle reused off-heap mirror for TLS flush sends. Filled element-wise from the unsent ciphertext region and sent from offset 0,

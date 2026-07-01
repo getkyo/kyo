@@ -51,19 +51,19 @@ final private[kyo] class ReadPump[Handle](
             case Present(Result.Success(outcome)) =>
                 outcome match
                     case ReadOutcome.Bytes(span)   => offerToChannel(span)
-                    case ReadOutcome.WouldBlock    => requestNextRead() // EAGAIN: re-arm, NOT EOF
-                    case ReadOutcome.PeerFin       => teardown()        // orderly peer EOF
-                    case ReadOutcome.LocalShutdown => teardown()        // our own shutdown(SHUT_RD)
-                    case ReadOutcome.CleanClose    => teardown()        // TLS close_notify consumed
+                    case ReadOutcome.WouldBlock    => requestNextRead()         // EAGAIN: re-arm, NOT EOF
+                    case ReadOutcome.PeerFin       => teardown("PeerFin")       // orderly peer EOF
+                    case ReadOutcome.LocalShutdown => teardown("LocalShutdown") // our own shutdown(SHUT_RD)
+                    case ReadOutcome.CleanClose    => teardown("CleanClose")    // TLS close_notify consumed
                     case ReadOutcome.Failed(cause) =>
                         Log.live.unsafe.debug(s"ReadPump read failed on ${driver.handleLabel(handle)}: $cause")
-                        teardown()
+                        teardown(s"Failed($cause)")
                 end match
-            case Present(Result.Failure(_)) =>
-                teardown()
+            case Present(Result.Failure(cause)) =>
+                teardown(s"Result.Failure($cause)")
             case Present(Result.Panic(t)) =>
                 Log.live.unsafe.error(s"ReadPump error on ${driver.handleLabel(handle)}", t)
-                teardown()
+                teardown(s"Result.Panic(${t.getMessage})")
         end match
     end onComplete
 
@@ -88,7 +88,7 @@ final private[kyo] class ReadPump[Handle](
                     result match
                         case Result.Success(_)         => requestNextRead()
                         case Result.Failure(_: Closed) => driver.onInboundClosedDuringRead(handle, bytes)
-                        case Result.Panic(_)           => teardown()
+                        case Result.Panic(t)           => teardown(s"putFiber Result.Panic(${t.getMessage})")
                     end match
                 }
             case Result.Failure(_: Closed) =>
@@ -96,7 +96,7 @@ final private[kyo] class ReadPump[Handle](
                 // this read may carry the peer's first TLS flight off the socket; the driver hook salvages those bytes for the handshake instead of
                 // losing them (default no-op for an ordinary close). See IoDriver.onInboundClosedDuringRead.
                 driver.onInboundClosedDuringRead(handle, bytes)
-                teardown()
+                teardown("offer Result.Failure(Closed)")
         end match
     end offerToChannel
 
@@ -111,13 +111,19 @@ final private[kyo] class ReadPump[Handle](
         driver.awaitRead(handle, self)
     end requestNextRead
 
-    private def teardown()(using AllowUnsafe, Frame): Unit =
+    private def teardown(reason: String)(using AllowUnsafe, Frame): Unit =
         // Tear the connection down on EOF/error. closeFn marks the inbound channel closing-for-writes via closeAwaitEmpty (NOT close): a consumer
         // that has not drained the bytes the ReadPump staged ahead of EOF can still take them, then sees the channel FullyClosed once empty, so
         // those bytes are not dropped (the kyo-pod ContainerItTest execStream case: a stderr frame buffered alongside stdout). The handle teardown
         // is intentionally NOT gated on that drain: closeFn reclaims the socket fd as soon as the outbound side flushes, even when the consumer
         // abandons the inbound channel (a pooled connection with no reader). Gating it on the drain leaked the fd: an abandoned inbound channel
         // never empties, so the close never fired and the peer-FIN'd socket lingered in CLOSE_WAIT until process exit.
+        // ZZTRACE: extends the same handle/channel identity-tagging the offer trace above uses (see offerToChannel) to the close path, which
+        // previously had no visibility at all -- pairs `reason` with `handle`/`ch` so a channel's full lifecycle (every byte it received, plus
+        // exactly what closed it) is reconstructable from the log for the intra-vs-cross-connection investigation (p10-fix-log.md).
+        java.lang.System.err.println(
+            s"ZZTRACE PUMP teardown handle=${driver.handleLabel(handle)} ch=${channel.hashCode()} reason=$reason"
+        )
         closeFn()
     end teardown
 

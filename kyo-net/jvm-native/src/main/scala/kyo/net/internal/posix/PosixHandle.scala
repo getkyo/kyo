@@ -187,6 +187,30 @@ final private[net] class PosixHandle private (
       */
     @volatile var recvStaging: Maybe[Buffer[Byte]] = Absent
 
+    /** Ownership tag for [[recvStaging]], stamped with this handle's own [[id]] at allocation (see `IoUringDriver.recvStagingFor`). An
+      * always-on invariant, not a diagnostic: every point that feeds `recvStaging`'s bytes into a TLS engine re-checks this against the
+      * feeding handle's own id immediately before the feed (`IoUringDriver.complete`). Since `recvStaging` is a field on THIS handle
+      * instance, the two can only ever disagree if a future change decouples the buffer lookup from the handle doing the feed (e.g. a
+      * caching or generation bug); the check exists to catch that class of cross-connection ciphertext leak (the bad_record_mac shape) at
+      * the exact point it would occur, attributing both handle ids, rather than as a downstream symptom with no attribution.
+      */
+    @volatile var recvStagingOwnerId: Long = 0L
+
+    /** Always-on exclusive-use guard for this handle's recv buffer (`readBuffer` or `recvStaging`): `true` for exactly as long as a real recv
+      * SQE is kernel-owned for it, set by `IoUringDriver.submitRecv` right after a successful submit and cleared by `IoUringDriver.complete`
+      * the moment that SQE's CQE reaps. `submitRecv` checks it before arming a fresh recv (outside the [[isUpgraded]] window, which routes its
+      * own legitimate dual-recv case through [[queuedRecv]] instead): a `true` reading there means something requested a SECOND recv while
+      * this handle's buffer was still being written by the kernel -- structurally unexpected given ReadPump/handshake discipline (arm one,
+      * await it, arm the next), so a hit safe-aborts the connection rather than letting two kernel writes interleave into one buffer. A
+      * production always-on invariant (a plain field checked with a plain branch, not an elidable `assert`): a rare compare on every read is
+      * cheaper than a silently corrupted or cross-connection-aliased byte stream. Not set for a recv parked on a full submission queue (see
+      * [[IoUringDriver.submitRecv]]'s `stalledSubmits` branch): nothing kernel-owned touches the buffer until a real SQE is submitted, so a
+      * parked request carries no aliasing risk and its later re-arm (`reArmStalledSubmits`) must not itself trip this guard. Single-writer
+      * (the reap carrier both sets and clears it), so a plain `@volatile var` suffices, matching [[queuedRecv]]'s precedent. Unused on the
+      * pollers (their reads are synchronous, holding no kernel-owned recv this could race).
+      */
+    @volatile var recvInFlight: Boolean = false
+
     /** FIFO-worker-owned drain buffer for decryptAll: readPlain writes up to readBufferSize bytes into it on each call, then bytes are
       * accumulated. Reused across records and across reads (readPlain always writes from position 0 of the buffer, not a positional offset,
       * so no reset is needed between records). Lazily allocated on the first TLS read by drainFor inside the FIFO op. Freed in freeResources.
@@ -525,10 +549,13 @@ private[net] object PosixHandle:
     /** A recv request [[IoUringDriver.submitRecv]] deferred instead of submitting, because another recv was already kernel-owned and in flight
       * for the SAME handle (see [[PosixHandle.queuedRecv]]). Carries exactly what a fresh [[IoUringDriver.submitRecv]] call needs to arm it
       * later, once the in-flight one's CQE reaps: `eintrRetries` is always 0 (a freshly-queued request, never itself a retry).
+      * `armedPostUpgrade` is the ORIGINAL value captured when this request was first made (see `PendingOp.Read`'s doc), carried through the
+      * queue unchanged so the eventual re-arm's routing decision still reflects when the caller ACTUALLY asked for this recv, not the (later,
+      * possibly different) handle state at drain time.
       */
     private[posix] enum QueuedRecv:
         case None
-        case Queued(promise: Promise.Unsafe[ReadOutcome, Abort[Closed]], handshakeOwned: Boolean)
+        case Queued(promise: Promise.Unsafe[ReadOutcome, Abort[Closed]], handshakeOwned: Boolean, armedPostUpgrade: Boolean)
     end QueuedRecv
 
     /** Socket handle: one fd carries both directions, so `readFd == writeFd`. The optional `connectTarget` (an encoded `sockaddr` buffer and
@@ -650,7 +677,7 @@ private[net] object PosixHandle:
         // Never fire it here instead: freeResources is about to close the read buffer this recv would target, so submitting it now would be a
         // use-after-free.
         h.queuedRecv match
-            case PosixHandle.QueuedRecv.Queued(p, _) =>
+            case PosixHandle.QueuedRecv.Queued(p, _, _) =>
                 p.completeDiscard(Result.fail(kyo.Closed(
                     "PosixHandle",
                     Frame.internal,
