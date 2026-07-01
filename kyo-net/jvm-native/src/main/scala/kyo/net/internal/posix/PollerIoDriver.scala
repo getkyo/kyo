@@ -269,6 +269,7 @@ final private[net] class PollerIoDriver private[posix] (
                 val accepts = new StringBuilder
                 pendingAccepts.foreach((fd, h) => discard(accepts.append(fd).append("(id=").append(h.id).append(") ")))
                 s"closed=${closedFlag.get()} pollCycles=$diagPollCycles activeFds=${activeFds.size} " +
+                    s"changeQueuePending=${changeQueue.peekNonEmpty()} wakePending=${wakePending.get()} " +
                     s"pendingReads=[$reads] pendingWritables=[$writes] pendingAccepts=[$accepts]"
             })
         end if
