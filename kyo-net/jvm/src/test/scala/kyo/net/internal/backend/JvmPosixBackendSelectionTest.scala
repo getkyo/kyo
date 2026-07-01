@@ -64,16 +64,24 @@ class JvmPosixBackendSelectionTest extends Test:
     end echoRoundTrip
 
     "the production transport selects the OS-appropriate posix backend and round-trips bytes" in {
-        // The selected entry must be the OS-appropriate posix backend (kqueue on this macOS/BSD host), not the nio floor.
-        if PosixConstants.isMacOrBsd then
-            assert(KqueueBackend.isAvailable, "kqueue must be available on this macOS/BSD host")
-            assert(IoBackendPlatform.selected.name == "kqueue", s"selected=${IoBackendPlatform.selected.name}")
-        else if PosixConstants.isLinux then
-            val expected = if IoUringBackend.isAvailable then "io_uring" else "epoll"
-            assert(IoBackendPlatform.selected.name == expected, s"selected=${IoBackendPlatform.selected.name}")
-        else
-            cancel("no posix backend on this host; selection round-trip needs epoll/kqueue/io_uring")
-        end if
+        // The selected entry must be the OS-appropriate posix backend (kqueue on this macOS/BSD host), not the nio floor. A cell-isolation
+        // run (KYO_NET_ONLY=<backend>, bridged to -Dkyo.net.backend by kyo.net.Test) forces that backend instead of the natural priority
+        // gradient; without accounting for it here, a KYO_NET_ONLY=epoll run on a host with io_uring available would wrongly expect
+        // "io_uring", since natural selection never consults the isolation env var.
+        sys.env.get("KYO_NET_ONLY") match
+            case Some(only) =>
+                assert(IoBackendPlatform.selected.name == only, s"selected=${IoBackendPlatform.selected.name}, expected=$only")
+            case None =>
+                if PosixConstants.isMacOrBsd then
+                    assert(KqueueBackend.isAvailable, "kqueue must be available on this macOS/BSD host")
+                    assert(IoBackendPlatform.selected.name == "kqueue", s"selected=${IoBackendPlatform.selected.name}")
+                else if PosixConstants.isLinux then
+                    val expected = if IoUringBackend.isAvailable then "io_uring" else "epoll"
+                    assert(IoBackendPlatform.selected.name == expected, s"selected=${IoBackendPlatform.selected.name}")
+                else
+                    cancel("no posix backend on this host; selection round-trip needs epoll/kqueue/io_uring")
+                end if
+        end match
         // The built production transport must use a PosixTransport (the unified posix path), not NioTransport.
         val unsafe = IoBackendPlatform.transport(transportConfig)
         assert(unsafe.isInstanceOf[PosixTransport], s"production transport is ${unsafe.getClass.getSimpleName}, expected PosixTransport")
