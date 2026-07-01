@@ -10,7 +10,7 @@ import kyo.net.internal.transport.ReadOutcome
 /** Reproduce-first confirmation of TWO fixes for the "orphaned handshakeOwned recv" routing bug (P10, cell-8): a STARTTLS handshake's own
   * producer recv (armed via [[IoUringDriver.awaitReadHandshake]], tagged `handshakeOwned`) that is STILL kernel-owned and in flight when the
   * handshake reaches `onFinished` -- possible because `driveUpgradeRead`'s "no stale recv in flight" check races the reap carrier's own
-  * engine-FIFO enqueue ordering (a TOCTOU: enqueued-for-registration is not yet registered, see p10-fix-log.md) -- must never be fed straight
+  * engine-FIFO enqueue ordering (a TOCTOU: enqueued-for-registration is not yet registered) -- must never be fed straight
   * into the ordinary TLS-feed branch, even though by the time its CQE reaps, `upgradeActive`/`upgrading` have already cleared and `tls` is
   * already `Present` (onFinished's flag-clear order, `PosixTransport.upgradeRole`). Before the FIRST fix, [[IoUringDriver.complete]]'s routing
   * keyed purely on `upgradeActive`/`upgrading`, so this orphan fell through into the ordinary TLS-feed branch: it fed its ciphertext directly

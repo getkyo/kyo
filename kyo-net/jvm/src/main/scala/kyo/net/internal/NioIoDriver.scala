@@ -179,8 +179,6 @@ final private[kyo] class NioIoDriver private (@volatile private var selector: Se
     // same promise), so its CAS fails.
     private def armRead(handle: NioHandle, promise: Promise.Unsafe[ReadOutcome, Abort[Closed]])(using AllowUnsafe, Frame): Unit =
         val newCell = Present(ReadArmCell(promise))
-        if handle.upgrading then
-            java.lang.System.err.println(s"ZZTRACE NIO armRead ch=${handle.channel.hashCode()} hsReading=${handle.handshakeReading}")
         handle.readArm.set(newCell)
         pendingReads.put(handle.channel, handle)
         Log.live.unsafe.debug(s"$label awaitRead registered ${handleLabel(handle)}")
@@ -195,7 +193,6 @@ final private[kyo] class NioIoDriver private (@volatile private var selector: Se
             // never rely on a coalesced wakeup for a one-shot arm) so the poll carrier runs one cycle and reassertPendingInterest re-applies
             // OP_READ on the selector carrier. One-shot: cleared here so steady-state reads keep the coalesced wakeup.
             handle.forceReadArmWakeup = false
-            java.lang.System.err.println(s"ZZTRACE-NIOW firstReadArm ch=${handle.channel.hashCode()} forcedWake=true")
             discard(selector.wakeup())
         end if
     end armRead
@@ -252,9 +249,6 @@ final private[kyo] class NioIoDriver private (@volatile private var selector: Se
     override def armUpgradeProducerRead(handle: NioHandle)(using AllowUnsafe, Frame): Unit =
         handle.handshakeReading = true
         discard(pendingUpgradeArms.offer(handle))
-        java.lang.System.err.println(
-            s"ZZTRACE-NIOW armUP ch=${handle.channel.hashCode()} keyValid=${handle.channel.keyFor(selector) != null}"
-        )
         discard(selector.wakeup())
     end armUpgradeProducerRead
 
@@ -280,7 +274,6 @@ final private[kyo] class NioIoDriver private (@volatile private var selector: Se
         handle.readArm.set(Present(ReadArmCell(producer)))
         pendingReads.put(handle.channel, handle)
         val registered = registerInterest(handle.channel, SelectionKey.OP_READ)
-        java.lang.System.err.println(s"ZZTRACE-NIOW applyUpArm ch=${handle.channel.hashCode()} registered=$registered")
         if !registered then
             discard(handle.readArm.getAndSet(Absent))
             discard(pendingReads.remove(handle.channel))
@@ -306,11 +299,7 @@ final private[kyo] class NioIoDriver private (@volatile private var selector: Se
                 val arr = new Array[Byte](n)
                 buf.get(arr)
                 if handle.readArm.compareAndSet(cell, Absent) then
-                    val before = handle.upgradeHandoff.get().getClass.getSimpleName
                     deliverToUpgradeHandoff(handle, arr)
-                    java.lang.System.err.println(
-                        s"ZZTRACE NIO selfRead ch=${channel.hashCode()} n=$n slotBefore=$before hsReading=${handle.handshakeReading}"
-                    )
                     // Demand-driven: the producer read exactly one flight and stops here. It does NOT re-arm itself; the handshake's next NEED_UNWRAP
                     // park re-arms it via armUpgradeProducerRead. Not self-re-arming is what prevents the over-read past FINISHED: the handshake stops
                     // parking once it completes, so no arm is issued after the last handshake read and the upgraded ReadPump owns post-FINISHED reads.
@@ -378,11 +367,6 @@ final private[kyo] class NioIoDriver private (@volatile private var selector: Se
         discard(handle.readArm.getAndSet(Absent))
         discard(pendingReads.remove(handle.channel))
         val key = handle.channel.keyFor(selector)
-        java.lang.System.err.println(
-            s"ZZTRACE-NIOW stopUpProducer ch=${handle.channel.hashCode()} keyValid=${(key ne null) && key.isValid} ops=${
-                    if (key ne null) && key.isValid then key.interestOps() else -1
-                }"
-        )
         if (key ne null) && key.isValid then
             try discard(key.interestOps(key.interestOps() & ~SelectionKey.OP_READ))
             catch case _: CancelledKeyException => ()
@@ -1205,16 +1189,10 @@ final private[kyo] class NioIoDriver private (@volatile private var selector: Se
                                 else dispatchReadPlain(channel, cell, armCell.promise, handle)
                     case Absent =>
                         given Frame = Frame.internal
-                        if handle.upgrading then
-                            java.lang.System.err.println(
-                                s"ZZTRACE NIO dispatchAbsentArm ch=${channel.hashCode()} hsReading=${handle.handshakeReading}"
-                            )
-                        end if
                         Log.live.unsafe.debug(s"$label dispatchRead ${handleLabel(handle)} readArm already cleared (cancelled)")
                 end match
             case Absent =>
                 given Frame = Frame.internal
-                java.lang.System.err.println(s"ZZTRACE NIO dispatchNoPending ch=${channel.hashCode()}")
                 Log.live.unsafe.warn(s"$label dispatchRead for channel=${channel.hashCode()} with no pending promise")
         end match
     end dispatchRead
@@ -1242,7 +1220,6 @@ final private[kyo] class NioIoDriver private (@volatile private var selector: Se
                     // re-arm and STEAL the read the handshake is about to issue on the same handle. Instead SALVAGE the bytes for the handshake to
                     // replay (startTlsHandshake feeds the salvage into the engine), and leave the pump's read promise to be failed by detach's
                     // cleanupPending so the pump tears down without re-arming.
-                    java.lang.System.err.println(s"ZZTRACE NIO stash ch=${channel.hashCode()} n=$n")
                     stashUpgradeBytes(handle, arr)
                     // TOCTOU close (stash-after-drain): the guard above observed handshakeReading=false, but startTls (which sets
                     // handshakeReading BEFORE its one-shot drainUpgradeSalvage) can flip it true and drain in the window between that guard
@@ -1253,23 +1230,15 @@ final private[kyo] class NioIoDriver private (@volatile private var selector: Se
                     // netInBuf; this re-drain wins, the slot delivers it to the park). Selector-carrier-confined like the stash.
                     if handle.handshakeReading then
                         drainUpgradeSalvage(handle).foreach { salvaged =>
-                            java.lang.System.err.println(s"ZZTRACE NIO stashRedrain ch=${channel.hashCode()} delivered=${salvaged.length}")
                             deliverToUpgradeHandoff(handle, salvaged)
                         }
                     end if
                 else
                     val cas = handle.readArm.compareAndSet(cell, Absent)
-                    if handle.upgrading || handle.handshakeReading then
-                        java.lang.System.err.println(
-                            s"ZZTRACE NIO deliver ch=${channel.hashCode()} n=$n cas=$cas hsReading=${handle.handshakeReading}"
-                        )
-                    end if
                     if cas then
                         // CAS-clear the owner cell before completing. Pass the SAME cell object read in dispatchRead so
                         // AtomicReference.compareAndSet's reference check succeeds.
                         promise.completeDiscard(Result.succeed(ReadOutcome.Bytes(Span.fromUnsafe(arr))))
-                    else if handle.upgrading then
-                        java.lang.System.err.println(s"ZZTRACE NIO LOST ch=${channel.hashCode()} n=$n hsReading=${handle.handshakeReading}")
                     end if
                 end if
             else if n < 0 then

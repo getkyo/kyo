@@ -251,14 +251,7 @@ final private[net] class IoUringDriver private[posix] (
         // (the STARTTLS upgrade stall). Drop it at the source: the ReadPump is being torn down, so its promise never needing to complete is correct.
         // The handshake's own ciphertext recv never enters here: it arms via awaitReadHandshake (which does not gate). False on the pollers
         // (upgradeActive is never set there: synchronous reads hold no kernel-owned recv), so this is io_uring-only.
-        // ARM-TRACE (io_uring post-onFinished ReadPump arm diagnosis): whether awaitRead is reached for the upgraded connection's first round-trip read,
-        // and whether the upgradeActive gate drops it. Pairs with the "submitRecv SQE-submitted" + "tlsReadReap" traces to localize a post-onFinished
-        // strand to pump-start / gated / get_sqe / never-delivered.
-        java.lang.System.err.println(
-            s"ZZTRACE-IOU awaitRead-entry fd=${handle.readFd} upgradeActive=${handle.upgradeActive} upgrading=${handle.upgrading} tls=${!handle.tls.isEmpty} closing=${handle.isClosing()}"
-        )
-        if handle.upgradeActive then
-            java.lang.System.err.println(s"ZZTRACE-IOU awaitRead-GATED fd=${handle.readFd}")
+        if handle.upgradeActive then ()
         else submitDeferredRecv(handle, promise, handshakeOwned = false)
     end awaitRead
 
@@ -292,7 +285,6 @@ final private[net] class IoUringDriver private[posix] (
     ): Unit =
         submitEngineOp { () =>
             if closedFlag.get() then
-                java.lang.System.err.println(s"ZZTRACE-IOU submitDeferredRecv closedFlag-reject fd=${handle.readFd}")
                 promise.completeDiscard(Result.fail(Closed(label, summon[Frame], "driver closed")))
             else
                 // Snapshot handle.isUpgraded HERE, on the reap carrier, at the moment this recv is actually armed -- not at the (possibly much
@@ -318,7 +310,6 @@ final private[net] class IoUringDriver private[posix] (
             // The handle was closed (its buffers freed) before this deferred arm ran on the reap carrier; never point a recv SQE at freed memory.
             // Fail the read so the caller's pump tears down. closeNow (the buffer free) also runs on the reap carrier, so this arm and the free are
             // serialized: either the arm wins and the close defers behind the recv CQE, or the buffer is already closed and this branch fires.
-            java.lang.System.err.println(s"ZZTRACE-IOU submitRecv readBuffer-closed fd=${handle.readFd}")
             promise.completeDiscard(Result.fail(Closed(label, summon[Frame], s"fd=${handle.readFd} closed")))
         else if handle.isUpgraded && hasInFlightRead(handle) then
             // Single-recv-ordering enforcement: this handle went through a STARTTLS upgrade (PosixHandle.isUpgraded) and ANOTHER recv is
@@ -331,9 +322,6 @@ final private[net] class IoUringDriver private[posix] (
             // onFinished comment). Gated on `isUpgraded` (rare, durable, set only for STARTTLS-upgraded handles) so a normal connection's reads
             // never pay this extra `hasInFlightRead` scan: a well-behaved ReadPump/handshake never has two recvs in flight for one handle
             // outside this one upgrade-transition window in the first place.
-            java.lang.System.err.println(
-                s"ZZTRACE-IOU submitRecv queued (in-flight orphan) fd=${handle.readFd} handshakeOwned=$handshakeOwned"
-            )
             handle.queuedRecv = PosixHandle.QueuedRecv.Queued(promise, handshakeOwned, armedPostUpgrade)
         else if handle.recvInFlight then
             // ALWAYS-ON exclusive-use guard (PosixHandle.recvInFlight): a plain branch, not an elidable `assert` -- this stays live in
@@ -397,10 +385,6 @@ final private[net] class IoUringDriver private[posix] (
                         // Claim exclusive use of this handle's buffer (PosixHandle.recvInFlight) now that a real SQE owns it; cleared in
                         // complete() the moment this CQE reaps.
                         handle.recvInFlight = true
-                        // ARM-TRACE: the recv SQE for this read is now queued/submitted (pairs with awaitRead-entry to confirm the post-onFinished arm).
-                        java.lang.System.err.println(
-                            s"ZZTRACE-IOU submitRecv SQE-submitted fd=${handle.readFd} key=$key handshakeOwned=$handshakeOwned upgradeActive=${handle.upgradeActive}"
-                        )
                     end if
                 case Absent =>
                     // SUBMISSION queue full: no recv SQE is in flight, so no CQE will re-drive this read. Park it (the promise stays pending) and
@@ -409,9 +393,6 @@ final private[net] class IoUringDriver private[posix] (
                     // stays false: nothing kernel-owned touches the buffer yet, so the later re-arm (reArmStalledSubmits, calling submitRecv
                     // directly) must not itself trip the exclusive-use guard above.
                     unregister(key)
-                    java.lang.System.err.println(
-                        s"ZZTRACE-IOU submitRecv SQ-full park fd=${handle.readFd} upgradeActive=${handle.upgradeActive} stalled=${stalledSubmits.size()}"
-                    )
                     discard(stalledSubmits.add(PendingOp.Read(
                         promise,
                         handle,
@@ -434,7 +415,6 @@ final private[net] class IoUringDriver private[posix] (
         handle.queuedRecv match
             case PosixHandle.QueuedRecv.Queued(promise, handshakeOwned, armedPostUpgrade) =>
                 handle.queuedRecv = PosixHandle.QueuedRecv.None
-                java.lang.System.err.println(s"ZZTRACE-IOU drainQueuedRecv fd=${handle.readFd} handshakeOwned=$handshakeOwned")
                 submitRecv(handle, promise, eintrRetries = 0, handshakeOwned = handshakeOwned, armedPostUpgrade = armedPostUpgrade)
             case _ => ()
     end drainQueuedRecv
@@ -992,9 +972,6 @@ final private[net] class IoUringDriver private[posix] (
         val stalledIt = stalledSubmits.iterator()
         while !found && stalledIt.hasNext do
             if isReadFor(stalledIt.next()) then found = true
-        java.lang.System.err.println(
-            s"ZZTRACE-IOU hasInFlightRead fd=${handle.readFd} found=$found pending=${pending.size()} stalled=${stalledSubmits.size()}"
-        )
         found
     end hasInFlightRead
 
@@ -1497,7 +1474,6 @@ final private[net] class IoUringDriver private[posix] (
             while !batch.isEmpty do
                 batch.poll() match
                     case PendingOp.Read(promise, h, eintrRetries, handshakeOwned, armedPostUpgrade, _) =>
-                        java.lang.System.err.println(s"ZZTRACE-IOU reArmStalled Read fd=${h.readFd} upgradeActive=${h.upgradeActive}")
                         submitRecv(h, promise, eintrRetries, handshakeOwned, armedPostUpgrade)
                     case PendingOp.Accept(promise, h, noAddr, noLen) => submitAccept(promise, h, noAddr, noLen)
                     case PendingOp.Connect(promise, h)               => submitConnect(promise, h)
@@ -1580,7 +1556,7 @@ final private[net] class IoUringDriver private[posix] (
                             // was still Absent) -- feeding stale/uninitialized bytes to the engine as bogus "ciphertext" (a fatal TLS record, or a
                             // silent zero-plaintext re-arm if the staging buffer happens to hold leftover bytes from a genuine prior read) instead
                             // of the peer's real application data, which is sitting untouched in `handle.readBuffer`. This is the mechanism behind
-                            // the "Closed at collect" steady-state corruption with zero TLS decode-failure markers (p10-fix-log.md): intra-connection
+                            // the "Closed at collect" steady-state corruption with zero TLS decode-failure markers: intra-connection
                             // (same handle throughout; PosixHandle.recvStagingOwnerId's ownership check correctly stays quiet, since staging IS
                             // owned by this handle -- the bug is staleness, not a cross-connection owner mismatch), not a session leak.
                             // Absent until their own onFinished, exactly as before this fix). Either way the bytes belong to the handshake. Route
@@ -1590,9 +1566,6 @@ final private[net] class IoUringDriver private[posix] (
                             // (driveUpgradeRead), otherwise a recvAndFeed running between this clear and the consume would read upgradeActive false,
                             // skip driveUpgradeRead, issue its own recv, and strand the staged Carryover. The handshake clears it once it takes the bytes.
                             import PosixHandle.UpgradeHandoff
-                            java.lang.System.err.println(
-                                s"ZZTRACE-IOU staleRecvComplete fd=${h.readFd} res=$res slot=${h.upgradeHandoff.get().getClass.getSimpleName} tls=${h.tls.isDefined}"
-                            )
                             // `h.tls.isDefined` (Present) means `onFinished` has ALREADY run for this handle: it is the ONLY writer of `tls`, and
                             // it runs synchronously (same carrier that drains every completion for this handle, the reap carrier for io_uring),
                             // so this read happens-after that write with no separate synchronization needed. Once onFinished has run, the
@@ -1622,9 +1595,6 @@ final private[net] class IoUringDriver private[posix] (
                                                     () =>
                                                         fatalRecord = true; closeHandle(h)
                                                 )
-                                                java.lang.System.err.println(
-                                                    s"ZZTRACE-IOU stalePostFinishedFeed fd=${h.readFd} res=$res plain=${plain.length} fatalRecord=$fatalRecord"
-                                                )
                                                 if !fatalRecord && !h.isClosing() && plain.length > 0 then
                                                     h.inboundSink(Span.fromUnsafe(plain))
                                                     flushTls(h)
@@ -1650,7 +1620,6 @@ final private[net] class IoUringDriver private[posix] (
                                     case parked: UpgradeHandoff.Waiter =>
                                         // The handshake already parked; claim the waiter by CAS to Idle (against the exact instance read: reference
                                         // equality, and the handshake parks exactly once per upgrade so this cannot lose to another park) and fulfil it.
-                                        java.lang.System.err.println(s"ZZTRACE-IOU staleRecvComplete fulfilWaiter fd=${h.readFd} n=$res")
                                         discard(h.upgradeHandoff.compareAndSet(parked, UpgradeHandoff.Idle))
                                         parked.promise.completeDiscard(Result.succeed(Span.fromUnsafe(arr)))
                                     case _ =>
@@ -1692,16 +1661,6 @@ final private[net] class IoUringDriver private[posix] (
                                     // the handle's in-flight count drains to zero), so no use-after-free risk while the FIFO worker reads it.
                                     // The re-arm inside the engine op (awaitRead on zero-plaintext) happens only after feedAndDecrypt consumes the
                                     // staging, preserving the single-in-flight-per-handle property.
-                                    // DELIVERY-TRACE (io_uring post-onFinished round-trip read): the recv reaped with bytes; pairs with the arm-trace +
-                                    // tlsReadFed (the feed result) to show whether the round-trip data arrived + decoded after onFinished.
-                                    // io_uring reap-routing hazard trace (option-2-PLUS): handshakeOwned=true here with upgradeActive=false +
-                                    // upgrading=false is a leftover handshake PRODUCER recv reaping POST-onFinished, past the :1442 upgrade-routing
-                                    // guard, into this non-exempt TLS-feed branch. Pairs with tlsReadFed's plain: plain>0 -> the bytes go to the
-                                    // THROWAWAY producer promise (dropped, the peer's app flight lost); plain=0 -> a second competing recv re-arms.
-                                    // Confirms whether the reap-routing hazard fires in a real io_uring strand before the pre-spec'd fix lands.
-                                    java.lang.System.err.println(
-                                        s"ZZTRACE-IOU tlsReadReap fd=${h.readFd} res=$res handshakeOwned=$handshakeOwned upgradeActive=${h.upgradeActive} upgrading=${h.upgrading}"
-                                    )
                                     val staging = recvStagingFor(h)
                                     // ALWAYS-ON buffer-role invariant (a plain branch, not an elidable `assert`; see PendingOp.Read's
                                     // armedForStaging doc): this recv's own SQE must have actually targeted `recvStagingFor`'s buffer. A `false`
@@ -1758,9 +1717,6 @@ final private[net] class IoUringDriver private[posix] (
                                                     () =>
                                                         fatalRecord = true; closeHandle(h)
                                                 )
-                                                java.lang.System.err.println(
-                                                    s"ZZTRACE-IOU tlsReadFed fd=${h.readFd} res=$res plain=${plain.length} handshakeOwned=$handshakeOwned closing=${h.isClosing()}"
-                                                )
                                                 // Fatal-record check (mirrors the poller's rearmOwned endDispatch closing check): fatalRecord is set
                                                 // exactly when THIS call's onFatal fired; isClosing() is kept too for any other concurrent close that
                                                 // already ran the guard's free (a rare path independent of this read). Either way, failing the read
@@ -1812,11 +1768,6 @@ final private[net] class IoUringDriver private[posix] (
                                     end if
                                 case Absent =>
                                     val arr = Buffer.copyToArray[Byte](h.readBuffer, 0, res) // right-sized copy out
-                                    java.lang.System.err.println(
-                                        s"ZZTRACE-IOU plainReadComplete fd=${h.readFd} res=$res upgradeActive=${h.upgradeActive} b0=${
-                                                if res > 0 then arr(0) & 0xff else -1
-                                            }"
-                                    )
                                     promise.completeDiscard(Result.succeed(ReadOutcome.Bytes(Span.fromUnsafe(arr))))
                         else if res == 0 then
                             // Peer close via a bare TCP FIN (no close_notify, else the clean-close branch above delivered CleanClose first): record

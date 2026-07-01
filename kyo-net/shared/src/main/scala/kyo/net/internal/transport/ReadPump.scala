@@ -69,9 +69,6 @@ final private[kyo] class ReadPump[Handle](
 
     private def offerToChannel(bytes: Span[Byte])(using AllowUnsafe, Frame): Unit =
         val offerResult = channel.offer(bytes)
-        java.lang.System.err.println(
-            s"ZZTRACE PUMP offer handle=${driver.handleLabel(handle)} ch=${channel.hashCode()} bytes=${bytes.size} result=$offerResult pendingTakes=${channel.pendingTakes()} empty=${channel.empty()}"
-        )
         offerResult match
             case Result.Success(true) =>
                 // Channel accepted, request next read
@@ -118,12 +115,6 @@ final private[kyo] class ReadPump[Handle](
         // is intentionally NOT gated on that drain: closeFn reclaims the socket fd as soon as the outbound side flushes, even when the consumer
         // abandons the inbound channel (a pooled connection with no reader). Gating it on the drain leaked the fd: an abandoned inbound channel
         // never empties, so the close never fired and the peer-FIN'd socket lingered in CLOSE_WAIT until process exit.
-        // ZZTRACE: extends the same handle/channel identity-tagging the offer trace above uses (see offerToChannel) to the close path, which
-        // previously had no visibility at all -- pairs `reason` with `handle`/`ch` so a channel's full lifecycle (every byte it received, plus
-        // exactly what closed it) is reconstructable from the log for the intra-vs-cross-connection investigation (p10-fix-log.md).
-        java.lang.System.err.println(
-            s"ZZTRACE PUMP teardown handle=${driver.handleLabel(handle)} ch=${channel.hashCode()} reason=$reason"
-        )
         closeFn()
     end teardown
 

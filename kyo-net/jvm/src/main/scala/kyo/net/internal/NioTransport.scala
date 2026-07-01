@@ -475,9 +475,6 @@ final private[kyo] class NioTransport private (
             end if
             val sslContext = NioTransport.createSslContext(tls, isServer)
             val engine     = sslContext.createSSLEngine(host, port)
-            java.lang.System.err.println(
-                s"ZZTRACE NIO engineNew ch=${channel.hashCode()} engineId=${java.lang.System.identityHashCode(engine)} ctxId=${java.lang.System.identityHashCode(sslContext)} isServer=$isServer existing=${existingHandle.isDefined}"
-            )
             engine.setUseClientMode(!isServer)
             // Enforce the configured [minVersion, maxVersion] range. The raw SSLEngine enables a broad default protocol set, so without pinning a
             // version-mismatched peer would silently negotiate a common version (CWE-326). Mirrors SslEngineProvider via the shared
@@ -555,15 +552,7 @@ final private[kyo] class NioTransport private (
             if existingHandle.isDefined then
                 handle.handshakeReading = true
                 val drained = driver.drainUpgradeSalvage(handle)
-                java.lang.System.err.println(
-                    s"ZZTRACE NIO startTls ch=${handle.channel.hashCode()} isServer=$isServer drainedSalvage=${drained.map(_.length).getOrElse(-1)} preRead=${preRead.map(_.foldLeft(0)(_ + _.size)).getOrElse(0)}"
-                )
                 drained.foreach(arr => discard(netInBuf.put(arr)))
-                java.lang.System.err.println(
-                    s"ZZTRACE NIO seedHdr ch=${handle.channel.hashCode()} netInPos=${netInBuf.position()} hdr=${
-                            (0 until math.min(5, netInBuf.position())).map(i => f"${netInBuf.get(i) & 0xff}%02x").mkString
-                        }"
-                )
                 // The upgrade producer is armed ON DEMAND by the handshake itself: driveHandshake's NEED_UNWRAP park (below) calls
                 // armUpgradeProducerRead for each read it needs, so the selector carrier reads exactly one peer flight per park and is idle once the
                 // handshake stops parking at FINISHED. No standing self-re-arming producer is bootstrapped here: a standing producer over-reads past
@@ -605,9 +594,6 @@ final private[kyo] class NioTransport private (
       */
     private def deliverUpgradeAppData(handle: NioHandle, inbound: Channel.Unsafe[Span[Byte]])(using AllowUnsafe, Frame): Unit =
         val captured = handle.upgradeAppData.getAndSet(Chunk.empty)
-        val total    = captured.foldLeft(0)(_ + _.length)
-        if total > 0 then
-            java.lang.System.err.println(s"ZZTRACE NIO deliverAppData ch=${handle.channel.hashCode()} total=$total chunks=${captured.size}")
         captured.foreach(arr => if arr.length > 0 then discard(inbound.offer(Span.fromUnsafe(arr))))
     end deliverUpgradeAppData
 
@@ -627,9 +613,6 @@ final private[kyo] class NioTransport private (
                 case _                                => Array.emptyByteArray
             tlsState.netInBuf.flip() // read mode: expose any coalesced leftover
             val leftover = tlsState.netInBuf.remaining()
-            java.lang.System.err.println(
-                s"ZZTRACE NIO drainLeftover ch=${handle.channel.hashCode()} carry=${carry.length} leftover=$leftover"
-            )
             if leftover > 0 || carry.length > 0 then
                 // Concatenate leftover (earlier in the stream) then the Carryover into one exact-sized buffer, so a record split across the two is
                 // reassembled and no fixed-size netInBuf overflow is possible for a large coalesced echo.
@@ -674,12 +657,6 @@ final private[kyo] class NioTransport private (
             // needMoreData: true = fall through to read from network, false = handled
             val needMoreData =
                 if tlsState.netInBuf.hasRemaining then
-                    val p0 = tlsState.netInBuf.position()
-                    java.lang.System.err.println(
-                        s"ZZTRACE NIO hsTopUnwrap ch=${handle.channel.hashCode()} engineId=${java.lang.System.identityHashCode(engine)} hsStatus=${engine.getHandshakeStatus} remaining=${tlsState.netInBuf.remaining()} hdr=${
-                                (0 until math.min(5, tlsState.netInBuf.remaining())).map(i => f"${tlsState.netInBuf.get(p0 + i) & 0xff}%02x").mkString
-                            }"
-                    )
                     tlsState.appInBuf.clear()
                     try
                         val res = engine.unwrap(tlsState.netInBuf, tlsState.appInBuf)
@@ -701,9 +678,6 @@ final private[kyo] class NioTransport private (
                         end if
                     catch
                         case e: Exception =>
-                            java.lang.System.err.println(
-                                s"ZZTRACE NIO hsFailTop ch=${handle.channel.hashCode()} engineId=${java.lang.System.identityHashCode(engine)} hsStatus=${engine.getHandshakeStatus} cause=${e.getClass.getSimpleName}:${e.getMessage} clientMode=${engine.getUseClientMode} upgrading=${handle.upgrading} hsReading=${handle.handshakeReading}"
-                            )
                             connectPromise.completeDiscard(Result.fail(NetTlsHandshakeException(host, port, e)))
                             false
                     end try
@@ -717,24 +691,6 @@ final private[kyo] class NioTransport private (
                 // Feed one peer ciphertext flight into the engine, unwrap, and re-drive the handshake (or fail on a bad status). Shared by the
                 // non-upgrade read path and the STARTTLS upgrade handoff path below.
                 def feedCipher(arr: Array[Byte]): Unit =
-                    // Record-boundary scan: walk the fed bytes as a sequence of TLS records (type/version/len) so a trailing record riding behind the
-                    // ClientHello (the bad_record_mac source) is visible. Stops at the first malformed/short header.
-                    val recScan =
-                        val sb  = new StringBuilder
-                        var off = 0
-                        while off + 5 <= arr.length do
-                            val t   = arr(off) & 0xff
-                            val v   = ((arr(off + 1) & 0xff) << 8) | (arr(off + 2) & 0xff)
-                            val len = ((arr(off + 3) & 0xff) << 8) | (arr(off + 4) & 0xff)
-                            sb.append(f"[t=$t%02x v=$v%04x len=$len@$off]")
-                            off += 5 + len
-                        end while
-                        if off != arr.length then sb.append(s"<tail=${arr.length - off}>")
-                        sb.toString()
-                    end recScan
-                    java.lang.System.err.println(
-                        s"ZZTRACE NIO feed ch=${handle.channel.hashCode()} engineId=${java.lang.System.identityHashCode(engine)} clientMode=${engine.getUseClientMode} hsStatus=${engine.getHandshakeStatus} len=${arr.length} netInPos=${tlsState.netInBuf.position()} recs=$recScan"
-                    )
                     tlsState.netInBuf.put(arr)
                     tlsState.netInBuf.flip()
                     tlsState.appInBuf.clear()
@@ -746,21 +702,12 @@ final private[kyo] class NioTransport private (
                         if (status eq SSLEngineResult.Status.OK) || (status eq SSLEngineResult.Status.BUFFER_UNDERFLOW) then
                             driveHandshake(handle, tlsState, host, port, connectPromise)
                         else if status eq SSLEngineResult.Status.CLOSED then
-                            java.lang.System.err.println(
-                                s"ZZTRACE NIO hsFail ch=${handle.channel.hashCode()} cause=CLOSED clientMode=${engine.getUseClientMode} inputLen=${arr.length} upgrading=${handle.upgrading} hsReading=${handle.handshakeReading}"
-                            )
                             connectPromise.completeDiscard(Result.fail(NetTlsHandshakeException(host, port, "")))
                         else // BUFFER_OVERFLOW
-                            java.lang.System.err.println(
-                                s"ZZTRACE NIO hsFail ch=${handle.channel.hashCode()} cause=BUFFER_OVERFLOW clientMode=${engine.getUseClientMode} inputLen=${arr.length} upgrading=${handle.upgrading} hsReading=${handle.handshakeReading}"
-                            )
                             connectPromise.completeDiscard(Result.fail(NetTlsHandshakeException(host, port, "")))
                         end if
                     catch
                         case e: Exception =>
-                            java.lang.System.err.println(
-                                s"ZZTRACE NIO hsFail ch=${handle.channel.hashCode()} cause=${e.getClass.getSimpleName}:${e.getMessage} clientMode=${engine.getUseClientMode} inputLen=${arr.length} upgrading=${handle.upgrading} hsReading=${handle.handshakeReading}"
-                            )
                             connectPromise.completeDiscard(Result.fail(NetTlsHandshakeException(host, port, e)))
                     end try
                 end feedCipher
@@ -780,15 +727,9 @@ final private[kyo] class NioTransport private (
                         case Result.Panic(t)       => connectPromise.completeDiscard(Result.panic(t))
                     }
                     val waiter = UpgradeHandoff.Waiter(waiterPromise.asInstanceOf[Promise.Unsafe[Span[Byte], Abort[Closed]]], summon[Frame])
-                    java.lang.System.err.println(
-                        s"ZZTRACE NIO park ch=${handle.channel.hashCode()} slot=${handle.upgradeHandoff.get().getClass.getSimpleName}"
-                    )
                     handle.upgradeHandoff.get() match
                         case staged: UpgradeHandoff.Carryover =>
-                            val carryCas = handle.upgradeHandoff.compareAndSet(staged, UpgradeHandoff.Idle)
-                            java.lang.System.err.println(
-                                s"ZZTRACE NIO carryA ch=${handle.channel.hashCode()} cas=$carryCas len=${staged.bytes.length}"
-                            )
+                            discard(handle.upgradeHandoff.compareAndSet(staged, UpgradeHandoff.Idle))
                             feedCipher(staged.bytes)
                         case _ =>
                             // Park the waiter, then arm the producer ON DEMAND for this one read. armUpgradeProducerRead defers the arm to the poll
@@ -802,10 +743,7 @@ final private[kyo] class NioTransport private (
                             else
                                 handle.upgradeHandoff.get() match
                                     case staged: UpgradeHandoff.Carryover =>
-                                        val carryCas = handle.upgradeHandoff.compareAndSet(staged, UpgradeHandoff.Idle)
-                                        java.lang.System.err.println(
-                                            s"ZZTRACE NIO carryB ch=${handle.channel.hashCode()} cas=$carryCas len=${staged.bytes.length}"
-                                        )
+                                        discard(handle.upgradeHandoff.compareAndSet(staged, UpgradeHandoff.Idle))
                                         feedCipher(staged.bytes)
                                     case _ => ()
                     end match
@@ -1222,9 +1160,6 @@ final private[kyo] class NioTransport private (
             // pump's promise (which would drop the peer's first TLS flight) or re-arming (which would steal the handshake's read). Mirrors
             // PosixHandle.upgradeActive being set before detach. Cleared at handshake completion / failure.
             handle.upgrading = true
-            java.lang.System.err.println(
-                s"ZZTRACE NIO upgradeBegin ch=${handle.channel.hashCode()} isServerOrigin=${nioConn.isServerOrigin}"
-            )
             // Step 1: detach the handle, closing inbound/outbound channels and cancelling selector
             // registration, but does NOT close the underlying SocketChannel.
             // Capture any bytes the ReadPump already pulled off the socket and staged in the inbound

@@ -476,9 +476,6 @@ final private[net] class PollerIoDriver private[posix] (
         val producer = Promise.Unsafe.init[ReadOutcome, Abort[Closed]]()
         handle.pendingReadPromise = Present(producer)
         handle.handshakeReading = true
-        java.lang.System.err.println(
-            s"ZZTRACE-EPOLLW armUP fd=${handle.readFd} id=${handle.id.packed} rmhm=${handle.readMightHaveMore} missed=${missedReads.contains(handle.readFd)} registered=${activeFds.contains(handle.readFd)} wakePending=${wakePending.get()}"
-        )
         // Edge-triggered recovery for the upgrade producer, on BOTH poller backends: a peer handshake flight ALREADY buffered when this arms
         // produces no fresh readiness edge that would re-dispatch the read, so the read never fires and the upgrade strands to the leaf timeout.
         // On epoll the register-once optimization skips the epoll_ctl(MOD) on an unchanged mask, so no new EPOLLET edge is queued. On kqueue the
@@ -808,12 +805,6 @@ final private[net] class PollerIoDriver private[posix] (
                     else handle.pendingCipherSent += sent   // strictly-positive progress; the loop terminates
                     end if
                 end while
-                // B-diagnostic (write-side, on the echo SENDER): how much of this flight's ciphertext reached the wire. fullyDrained=true means the
-                // peer DID send the rest, so an unread record on the reader is an edge-miss; fullyDrained=false (tail parked on EAGAIN) plus a stuck
-                // reader points at a write-strand/backpressure deadlock. Stripped with the ZZTRACE at final all-green.
-                java.lang.System.err.println(
-                    s"ZZTRACE-EPOLL flushTls fd=${handle.writeFd} pendingSize=${buf.size} sent=${handle.pendingCipherSent} fullyDrained=${handle.pendingCipherSent >= buf.size}"
-                )
                 if handle.pendingCipherSent >= buf.size then
                     // Fully drained (or the tail was discarded on a hard error, leaving size 0): reset so the next write starts clean and a
                     // later flush sees nothing pending.
@@ -901,11 +892,6 @@ final private[net] class PollerIoDriver private[posix] (
             submitChange(packCmd(OpDeregister, handle.writeFd, fdClosing))
         end if
         val closed = Closed(label, summon[Frame], s"fd=${handle.readFd}/${handle.writeFd} canceled")
-        if handle.upgradeActive then
-            java.lang.System.err.println(
-                s"ZZTRACE deregFds fd=${handle.readFd} fdClosing=$fdClosing readPromise=${handle.pendingReadPromise.isDefined} hsReading=${handle.handshakeReading}"
-            )
-        end if
         handle.pendingReadPromise.foreach(_.completeDiscard(Result.fail(closed)))
         handle.pendingReadPromise = Absent
         handle.pendingWritablePromise.foreach(_.completeDiscard(Result.fail(closed)))
@@ -1211,11 +1197,6 @@ final private[net] class PollerIoDriver private[posix] (
         Maybe(pendingReads.remove(fd)) match
             case Present(handle) =>
                 val promise = handle.pendingReadPromise
-                if handle.upgradeActive then
-                    java.lang.System.err.println(
-                        s"ZZTRACE dispatch fd=$fd tls=${handle.tls.isDefined} hsReading=${handle.handshakeReading} hasPromise=${promise.isDefined}"
-                    )
-                end if
                 if isStaleId(handle.readFd, handle.id) then
                     // Stale event: this fd was closed and recycled into a different handle. Drop it; do not deliver to the new handle.
                     promise.foreach(_.completeDiscard(Result.fail(Closed(label, summon[Frame], s"stale read event fd=$fd"))))
@@ -1251,7 +1232,6 @@ final private[net] class PollerIoDriver private[posix] (
                 // fd gets a fresh activeFds entry and the stale missedReads entry is cleared on deregister; at worst it triggers one
                 // spurious EAGAIN probe on the new owner's first awaitRead, which the driver already handles correctly.
                 if fromKernelEdge then
-                    java.lang.System.err.println(s"ZZTRACE dispatchAbsent fd=$fd fromKernel=$fromKernelEdge eof=$eofPending")
                     discard(missedReads.add(fd))
                     // Preserve the half-close bit of a dropped edge: a bare missedReads entry re-dispatches with eofPending=false, which would
                     // read the buffered bytes but never surface the EOF (the ET half-close edge does not re-fire). Record it so the next
@@ -1305,12 +1285,6 @@ final private[net] class PollerIoDriver private[posix] (
             val missed     = missedReads.remove(fd)
             val missedEofd = missedEof.remove(fd)
             if missedEofd && handle.halfClose == HalfCloseState.Open then handle.halfClose = HalfCloseState.PeerHalfClosePending
-            // EPOLL multi-record edge-miss diagnosis: whether this re-arm re-dispatches (a buffered/missed record) or parks waiting for a fresh
-            // EPOLLET edge. A partial TLS record (tlsRead plain=0 mightMore=false) reaches here with rmhm=false; willDispatch=false then parks, and
-            // if the continuation produced no fresh edge (already buffered) the read strands. Pairs with `tlsRead ... mightMore=` and `dispatchAbsent`.
-            java.lang.System.err.println(
-                s"ZZTRACE-EPOLL rearmOwned fd=$fd missed=$missed missedEof=$missedEofd rmhm=${handle.readMightHaveMore} willDispatch=${missed || missedEofd || handle.readMightHaveMore}"
-            )
             if missed || missedEofd || handle.readMightHaveMore then dispatchRead(fd)
             // ET: otherwise the fd stays armed at the kernel; the consumer-paced drain in dispatchCmd handles residual bytes on the next re-register.
 
@@ -1329,12 +1303,6 @@ final private[net] class PollerIoDriver private[posix] (
         AllowUnsafe,
         Frame
     ): Unit =
-        // EPOLL multi-record edge-miss diagnosis: postUpgradeReadWindow gates the epoll missedReads-seed below. Once the window closes (first
-        // application plaintext), a partial-record re-arm (rmhm=false) falls through to a bare rearmOwned with NO seed, so a continuation that
-        // produced no fresh EPOLLET edge strands. This trace shows whether the window was still open on the stuck fd's re-arm.
-        java.lang.System.err.println(
-            s"ZZTRACE-EPOLL rearmTlsRead fd=$fd postUpgradeReadWindow=${handle.postUpgradeReadWindow} rmhm=${handle.readMightHaveMore}"
-        )
         rearmOwned(fd, handle, promise)
         if pollScratch.kqueueData.isDefined then
             // KQUEUE (Class B, Decision 50(B) option 2): re-register a real EV_ADD on EVERY post-upgrade TLS-read re-arm, in-window AND
@@ -1448,12 +1416,8 @@ final private[net] class PollerIoDriver private[posix] (
     )(using AllowUnsafe, Frame): Unit =
         val result = recvNowWithRetry(fd, handle.readBuffer, handle.readBufferSize.toLong, PosixConstants.MSG_DONTWAIT)
         val n      = result.value.toInt
-        java.lang.System.err.println(
-            s"ZZTRACE-EPOLL dispatchUpgradeRead fd=$fd n=$n err=${result.errorCode} rmhm=${n == handle.readBufferSize} slot=${handle.upgradeHandoff.get().getClass.getSimpleName}"
-        )
         if n > 0 then
             val arr = Buffer.copyToArray[Byte](handle.readBuffer, 0, n)
-            java.lang.System.err.println(s"ZZTRACE-EPOLL upReadType fd=$fd recType=${if arr.length > 0 then arr(0) & 0xff else -1}")
             // Edge-triggered: a buffer-filling recv may leave more in the kernel with no new edge; readMightHaveMore makes the handshake's next
             // armUpgradeProducerRead re-dispatch immediately (dispatchCmd) rather than wait for an edge that will not re-fire.
             handle.readMightHaveMore = n == handle.readBufferSize
@@ -1490,7 +1454,6 @@ final private[net] class PollerIoDriver private[posix] (
         handle.upgradeHandoff.get() match
             case parked: UpgradeHandoff.Waiter =>
                 if handle.upgradeHandoff.compareAndSet(parked, UpgradeHandoff.Idle) then
-                    java.lang.System.err.println(s"ZZTRACE-EPOLL handoff fulfilWaiter fd=${handle.readFd} n=${arr.length}")
                     parked.promise.completeDiscard(Result.succeed(Span.fromUnsafe(arr)))
                 else deliverToUpgradeHandoff(handle, arr)
             case staged: UpgradeHandoff.Carryover =>
@@ -1499,16 +1462,9 @@ final private[net] class PollerIoDriver private[posix] (
                 java.lang.System.arraycopy(arr, 0, combined, staged.bytes.length, arr.length)
                 if !handle.upgradeHandoff.compareAndSet(staged, UpgradeHandoff.Carryover(combined)) then
                     deliverToUpgradeHandoff(handle, arr)
-                else
-                    java.lang.System.err.println(
-                        s"ZZTRACE-EPOLL handoff appendCarryover fd=${handle.readFd} was=${staged.bytes.length} add=${arr.length}"
-                    )
-                end if
             case _ =>
                 if !handle.upgradeHandoff.compareAndSet(UpgradeHandoff.Idle, UpgradeHandoff.Carryover(arr)) then
                     deliverToUpgradeHandoff(handle, arr)
-                else
-                    java.lang.System.err.println(s"ZZTRACE-EPOLL handoff stageCarryover fd=${handle.readFd} n=${arr.length}")
         end match
     end deliverToUpgradeHandoff
 
@@ -1580,7 +1536,6 @@ final private[net] class PollerIoDriver private[posix] (
         val result  = recvNowWithRetry(fd, staging, handle.readBufferSize.toLong, PosixConstants.MSG_DONTWAIT)
         val n       = result.value.toInt
         if n > 0 then
-            val recType0 = staging.get(0) & 0xff
             // Feed staging directly to feedCiphertext on the FIFO worker: no per-read re-fromArray.
             // The happens-before between the recvNow write (poll carrier) and the feedCiphertext read (FIFO worker) is the
             // submitEngineOp enqueue, the same mechanism as flushReArmPending. The at-most-one-in-flight guarantee ensures the next
@@ -1623,12 +1578,6 @@ final private[net] class PollerIoDriver private[posix] (
                     handle.readMightHaveMore =
                         (!drained && !eof && errno == 0 && handle.halfClose != HalfCloseState.PeerCleanClose) ||
                             (handle.halfClose == HalfCloseState.PeerHalfClosePending)
-                    // B-diagnostic: un-gated (was `if n < 1024`) so the 16KB multi-record post-upgrade reads are visible. n>0 with plain=0 is a
-                    // BUFFER_UNDERFLOW partial record; complete read with mightMore but no follow-up dispatch is the edge-miss. Pairs with the
-                    // write-side sent/flush trace to split edge-miss / partial-record / write-strand. Stripped with the ZZTRACE at final all-green.
-                    java.lang.System.err.println(
-                        s"ZZTRACE-EPOLL tlsRead fd=$fd n=$n recType=$recType0 plain=${plain.length} eof=$eof errno=$errno cleanClose=${handle.halfClose == HalfCloseState.PeerCleanClose} mightMore=${handle.readMightHaveMore}"
-                    )
                     if plain.length > 0 then
                         // First application plaintext after the upgrade: close the post-upgrade kqueue read window so steady-state reads keep the
                         // bare re-arm (no per-read kevent). A no-op outside an upgrade (the flag is only set at STARTTLS completion).
@@ -1886,7 +1835,6 @@ final private[net] class PollerIoDriver private[posix] (
             // remove(Object) removes the first structurally-equal element; no two live registrations are structurally equal here (distinct handles,
             // or the same handle re-arming only after its prior op on this direction completed), so this removes exactly the scanned entry.
             if regMatches(reg, fd, kind) && regIntake.remove(reg) then
-                java.lang.System.err.println(s"ZZTRACE-EPOLLW regTake fd=$fd kind=$kind id=${reg.handle.id.packed}")
                 found = reg
                 scanning = false
             end if
@@ -1954,13 +1902,10 @@ final private[net] class PollerIoDriver private[posix] (
                     // closeFn win Established->Closing and close the fd the upgrade reuses (the peer then reads EOF mid-handshake). detachForUpgrade's
                     // deregisterFds fails the pump promise AFTER the state is Upgrading, where closeFn is a no-op, so leaving the promise to it keeps
                     // the teardown safe. This is the poller dual of NioIoDriver's dispatchReadPlain upgrade guard.
-                    java.lang.System.err.println(s"ZZTRACE reject fd=$fd hadPromise=${handle.pendingReadPromise.isDefined}")
                     PollScratch.IdNoCheck
                 else
                     kind match
                         case RegKind.Read =>
-                            if handle.upgradeActive then
-                                java.lang.System.err.println(s"ZZTRACE admitRead fd=$fd hsReading=${handle.handshakeReading}")
                             activeFds.put(fd, handle.id.packed)
                             pendingReads.put(fd, handle)
                         case RegKind.Accept =>
@@ -1979,16 +1924,6 @@ final private[net] class PollerIoDriver private[posix] (
                 // No registration matched (a cancel removed it before the command ran). Return IdNoCheck so the caller skips the backend register:
                 // arming a fd with no pending op (the pre-fix behavior) would leave an interest with no owner id to tag the knote, and there is no op
                 // to deliver to anyway.
-                val dumpIt = regIntake.iterator()
-                val dumpSb = new StringBuilder
-                var dumpN  = 0
-                while dumpIt.hasNext do
-                    val r = dumpIt.next()
-                    dumpN += 1
-                    val rfd = if r.kind == RegKind.Write then r.handle.writeFd else r.handle.readFd
-                    dumpSb.append(s"[fd=$rfd k=${r.kind} id=${r.handle.id.packed}]")
-                end while
-                java.lang.System.err.println(s"ZZTRACE-EPOLLW regAbsent fd=$fd kind=$kind regIntakeSize=$dumpN entries=$dumpSb")
                 PollScratch.IdNoCheck
         end match
     end applyRegistration
@@ -2024,7 +1959,6 @@ final private[net] class PollerIoDriver private[posix] (
                     end if
                 end if
             else
-                java.lang.System.err.println(s"ZZTRACE-EPOLLW regCmdRead fd=$fd")
                 val id = applyRegistration(fd, RegKind.Read)
                 if id != PollScratch.IdNoCheck then
                     val rc = backend.registerRead(pollerFd, fd, id, pollScratch)
@@ -2047,11 +1981,6 @@ final private[net] class PollerIoDriver private[posix] (
                             // A dropped edge that carried eof advances halfClose to PeerHalfClosePending so re-dispatches drain to recv == 0
                             // and surface the EOF; the bare missedReads entry alone would re-dispatch with eofPending=false and lose it.
                             if missedEofd && h.halfClose == HalfCloseState.Open then h.halfClose = HalfCloseState.PeerHalfClosePending
-                            if h.upgradeActive || h.handshakeReading then
-                                java.lang.System.err.println(
-                                    s"ZZTRACE-EPOLLW applyRead fd=$fd rc=$rc missed=$missed rmhm=${h.readMightHaveMore} willDispatch=${h.readMightHaveMore || missed || missedEofd}"
-                                )
-                            end if
                             if h.readMightHaveMore || missed || missedEofd then dispatchRead(fd)
                         }
                     end if

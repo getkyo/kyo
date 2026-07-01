@@ -170,7 +170,7 @@ final private[net] class PosixHandle private (
       * committed, reaping AFTER `onFinished` already ran (so no `driveUpgradeRead` consumer will ever drain an `upgradeHandoff` Carryover for
       * it again) is fed to the engine and its plaintext delivered here directly, mirroring `PosixTransport.deliverHandshakePlaintext`'s own
       * post-FINISHED slot drain for the same reason: staging it as a Carryover instead would silently lose it forever, leaving a permanent
-      * gap in the ciphertext stream for the engine's NEXT record (the mechanism behind the "Closed at collect" corruption, p10-fix-log.md).
+      * gap in the ciphertext stream for the engine's NEXT record (the mechanism behind the "Closed at collect" corruption).
       * The default is a no-op so a driver with no upgrade machinery (or a handle before its first connection wiring) never crashes on it.
       */
     @volatile var inboundSink: Span[Byte] => Unit = _ => ()

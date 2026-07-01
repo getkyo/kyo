@@ -126,9 +126,9 @@ abstract class Test extends kyo.test.Test[Any]:
         import AllowUnsafe.embrace.danger
         for
             entry <- TestBackends.all
-            // ZZTRACE validation aid: KYO_NET_TLS_ONLY=<provider> restricts the matrix to one TLS provider (mirrors KYO_NET_ONLY for
-            // backends), so a single (backend, provider) cell's residual can be captured WITHOUT the concurrent dual-provider leaves
-            // confounding per-round attribution. Inert by default (unset = every registered provider).
+            // KYO_NET_TLS_ONLY=<provider> restricts the matrix to one TLS provider (mirrors KYO_NET_ONLY for backends), so a single
+            // (backend, provider) cell can be isolated WITHOUT the concurrent dual-provider leaves confounding per-round attribution.
+            // Inert by default (unset = every registered provider).
             provider <- TlsProviderPlatform.registered.filter(p => sys.env.get("KYO_NET_TLS_ONLY").forall(_ == p.name))
         do
             s"[${entry.name} / ${provider.name}]" in {

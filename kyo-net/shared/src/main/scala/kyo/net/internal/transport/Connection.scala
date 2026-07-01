@@ -92,10 +92,8 @@ final private[kyo] class Connection[Handle] private (
         Log.live.unsafe.info(s"Connection starting")
         // Created -> Established: pumps begin I/O. A connection detached or closed before start
         // (CAS lost) stays in its terminal/Upgrading state and the pumps are not started.
-        val zzPrior = state.get()
-        val zzCas   = state.compareAndSet(ConnectionState.Created, ConnectionState.Established)
-        java.lang.System.err.println(s"ZZTRACE-CONN connStart cas=$zzCas priorState=$zzPrior")
-        if zzCas then
+        val cas = state.compareAndSet(ConnectionState.Created, ConnectionState.Established)
+        if cas then
             readPump.start()
             writePump.start()
     end start

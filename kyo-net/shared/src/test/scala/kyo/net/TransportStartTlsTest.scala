@@ -27,32 +27,21 @@ class TransportStartTlsTest extends Test:
     /** A server that waits for the upgrade signal, replies ready, upgrades to TLS in `serverTls`, then echoes its inbound stream. */
     private def startTlsEchoServer(transport: Transport, serverTls: NetTlsConfig)(using Frame): Listener < (Async & Abort[Closed]) =
         transport.listen("127.0.0.1", 0, 128) { serverConn =>
-            java.lang.System.err.println(s"ZZTRACE TEST server-handler-entry conn=${serverConn.hashCode}")
             discard(Sync.Unsafe.evalOrThrow {
                 Fiber.initUnscoped {
                     Abort.run[Closed] {
                         serverConn.inbound.safe.take.flatMap { _ =>
                             serverConn.outbound.safe.put(upgradeReady).andThen {
                                 transport.upgradeToTls(serverConn, serverTls, 16).safe.get.flatMap { tlsConn =>
-                                    java.lang.System.err.println(s"ZZTRACE TEST server-upgraded ch=${tlsConn.inbound.hashCode}")
                                     Loop.foreach {
                                         tlsConn.inbound.safe.take.flatMap { data =>
-                                            java.lang.System.err.println(
-                                                s"ZZTRACE TEST server-take ch=${tlsConn.inbound.hashCode} len=${data.size}"
-                                            )
-                                            tlsConn.outbound.safe.put(data).map { _ =>
-                                                java.lang.System.err.println(
-                                                    s"ZZTRACE TEST server-put ch=${tlsConn.inbound.hashCode} len=${data.size}"
-                                                )
-                                            }.andThen(Loop.continue)
+                                            tlsConn.outbound.safe.put(data).andThen(Loop.continue)
                                         }
                                     }
                                 }
                             }
                         }
-                    }.map { result =>
-                        java.lang.System.err.println(s"ZZTRACE TEST server-fiber-end conn=${serverConn.hashCode} result=$result")
-                    }
+                    }.unit
                 }
             })
         }.safe.get
@@ -62,20 +51,12 @@ class TransportStartTlsTest extends Test:
         Frame
     ): Array[Byte] < (Async & Abort[Closed]) =
         for
-            conn <- transport.connect("127.0.0.1", port).safe.get
-            _    <- conn.outbound.safe.put(upgradeRequest)
-            _    <- conn.inbound.safe.take
-            tlsConn <- transport.upgradeToTls(conn, clientTls, 16).safe.get.map { c =>
-                java.lang.System.err.println(s"ZZTRACE TEST client-upgraded ch=${c.inbound.hashCode}")
-                c
-            }
-            _ <- tlsConn.outbound.safe.put(Span.fromUnsafe(msg)).map { _ =>
-                java.lang.System.err.println(s"ZZTRACE TEST client-sent ch=${tlsConn.inbound.hashCode}")
-            }
-            received <- tlsConn.inbound.safe.take.map { r =>
-                java.lang.System.err.println(s"ZZTRACE TEST client-take ch=${tlsConn.inbound.hashCode} len=${r.size}")
-                r
-            }
+            conn     <- transport.connect("127.0.0.1", port).safe.get
+            _        <- conn.outbound.safe.put(upgradeRequest)
+            _        <- conn.inbound.safe.take
+            tlsConn  <- transport.upgradeToTls(conn, clientTls, 16).safe.get
+            _        <- tlsConn.outbound.safe.put(Span.fromUnsafe(msg))
+            received <- tlsConn.inbound.safe.take
         yield received.toArray
 
     /** The cell's server config, additionally demanding a client certificate signed by the (self-signed) test cert. */
@@ -114,9 +95,7 @@ class TransportStartTlsTest extends Test:
                             if i >= rounds then Loop.done(())
                             else
                                 val msg = s"handoff-$i".getBytes("UTF-8")
-                                java.lang.System.err.println(s"ZZTRACE TEST round=$i begin-connect")
                                 startTlsClient(transport, listener.port, cli, msg).map { echoed =>
-                                    java.lang.System.err.println(s"ZZTRACE TEST round=$i client-returned len=${echoed.length}")
                                     assert(
                                         new String(echoed, "UTF-8") == s"handoff-$i",
                                         s"round $i must round-trip after the STARTTLS upgrade"
@@ -126,7 +105,6 @@ class TransportStartTlsTest extends Test:
                         }
                     }
                 }.map { outcome =>
-                    java.lang.System.err.println(s"ZZTRACE TEST leaf-end outcome=$outcome")
                     listener.close()
                     assert(outcome.isSuccess, s"all $rounds STARTTLS upgrades must round-trip without stranding; got $outcome")
                 }
