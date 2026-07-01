@@ -1026,9 +1026,19 @@ final private[net] class PosixTransport private[posix] (
       * goes out, the fd is reclaimed) instead of being stranded when the pool tears down; a connection whose ordinary close never ran (its peer
       * FIN never arrived, its handler never closed it) would otherwise leak its fd past the pool teardown. Without closing the listeners before
       * the pool, their accept loops would keep arming the driver for new accept events after the pool is gone.
+      *
+      * `forceCloseIfUpgrading` runs alongside `close()` for every connection: ordinary `close()` is a no-op while a connection is `Upgrading`
+      * (its fd is owned by the in-flight TLS upgrade, which normally does its own success/failure cleanup), but at transport shutdown nothing
+      * will ever complete that upgrade. Without the force-close, a connection whose upgrade never finished (its peer disconnected mid-handshake,
+      * e.g. a verifying client rejecting the peer's identity before ever sending a ClientHello) leaks its fd: the upgrade's own failure path
+      * DOES eventually free it, but only once the driver's reap loop gets a scheduler turn to run the async teardown `pool.close()` queues below,
+      * which is not bounded by the time this call returns (an intermittent CLOSE_WAIT leak under a fast-completing test's leak check).
       */
     def close()(using AllowUnsafe, Frame): Unit =
-        connections.values().forEach(c => c.close())
+        connections.values().forEach { c =>
+            c.close()
+            c.forceCloseIfUpgrading()
+        }
         connections.clear()
         listeners.forEach(l => l.close())
         pool.close()

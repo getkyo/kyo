@@ -1160,7 +1160,14 @@ final private[kyo] class NioTransport private (
     def close()(using AllowUnsafe, Frame): Unit =
         // Close every still-open connection first, while the driver is alive, so each connection's fd is reclaimed instead of being stranded when
         // the pool tears down; a connection whose ordinary close never ran (peer FIN never arrived, handler never closed it) would otherwise leak.
-        connections.values().forEach(c => c.close())
+        // forceCloseIfUpgrading additionally covers a connection stuck Upgrading (ordinary close() is a no-op there by design, deferring to the
+        // in-flight TLS upgrade's own success/failure cleanup): at shutdown nothing will ever complete that upgrade, so without the force-close a
+        // peer that disconnects mid-handshake leaks the fd until the upgrade's own (asynchronous, unbounded-by-this-call) failure path happens to
+        // run (see Connection.forceCloseIfUpgrading's scaladoc; the posix transport hits the identical gap).
+        connections.values().forEach { c =>
+            c.close()
+            c.forceCloseIfUpgrading()
+        }
         connections.clear()
         pool.close()
     end close

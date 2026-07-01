@@ -109,6 +109,26 @@ final private[kyo] class Connection[Handle] private (
     /** Close the connection. Closes channels and handle. Idempotent. */
     def close()(using AllowUnsafe, Frame): Unit = closeFn()
 
+    /** Force this connection's handle closed even while `Upgrading`, where ordinary [[close]] is a no-op by design (the fd is owned by the
+      * in-flight TLS upgrade, which is responsible for its own success/failure cleanup -- see [[ConnectionState.Upgrading]]). Used ONLY by the
+      * owning transport's shutdown sweep: at shutdown nothing will ever complete a still-in-flight upgrade, so deferring to it (ordinary
+      * close()'s behavior) strands the fd until the upgrade's OWN cleanup happens to run on the driver's carrier, which is asynchronous and not
+      * bounded by the time the transport's close() call returns (observed as an intermittent CLOSE_WAIT leak under kyo-test's leak check: the
+      * upgrade's failure path does eventually free the fd, just not before a fast-completing test's leak check inspects the fd table).
+      *
+      * `driver.cancel(handle)` synchronously fails any promise the upgrade has parked (its own handshake read, most commonly), which drives the
+      * SAME onFailed/onPanic -> engine-free-and-fd-close path an ordinary handshake failure takes, just synchronously instead of racing a
+      * scheduler turn. `driver.closeHandle(handle)` is a belt-and-suspenders direct fd close for the (rarer) window where the upgrade is not
+      * parked on any I/O at the moment of shutdown. Both are safe to call unconditionally alongside a concurrent, genuinely-still-running
+      * upgrade outcome: `PosixHandle`'s fd-close is a CAS-guarded one-shot claim, so whichever caller reaches it first wins and the other's
+      * redundant attempt is a no-op; a still-in-flight TLS engine (known only to the upgrade's own local state) is freed by whichever of this or
+      * the upgrade's own failure path runs the engine.free() call, exactly once, since they are mutually exclusive on the SAME failure trigger.
+      */
+    private[net] def forceCloseIfUpgrading()(using AllowUnsafe, Frame): Unit =
+        if state.get() == ConnectionState.Upgrading then
+            driver.cancel(handle)
+            driver.closeHandle(handle)
+
     /** Upgrade this connection to TLS via the transport-provided upgrade function.
       *
       * Returns a Fiber.Unsafe that completes with the new TLS connection, or aborts [[kyo.net.NetException]] if the upgrade fails or is
