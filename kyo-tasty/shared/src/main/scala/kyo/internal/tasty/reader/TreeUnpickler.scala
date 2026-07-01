@@ -93,6 +93,25 @@ object TreeUnpickler:
         readTree(view, decodeCtx)
     end decodeAnnotationTerm
 
+    /** Decode a body and ALSO return the per-node address cache and the fully-qualified names of any
+      * package-owned cross-file reference the body's types carried (`TERMREFpkg`/`TYPEREFpkg`).
+      *
+      * The address cache keys every decoded node by its TASTy byte address (the same address space
+      * the Positions section uses), which the public `Tasty.Tree` does not carry. The fully-qualified
+      * name map lets a package-qualified qualifier (e.g. a bare module selection like `Foo.bar`)
+      * resolve by name through the classpath instead of collapsing to the untracked `-1` sentinel.
+      * Used by `OccurrenceScanner` to join a use-site node to its source span and to resolve such
+      * qualifiers. `private[kyo]`.
+      */
+    private[kyo] def decodeWithAddrs(
+        body: SymbolBody,
+        symbol: Tasty.Symbol,
+        symbolLookup: Int => Tasty.Symbol
+    )(using
+        AllowUnsafe
+    ): (Tasty.Tree, scala.collection.Map[Int, Tasty.Tree], scala.collection.Map[Int, String], scala.collection.Map[Int, Tasty.Type]) =
+        decodeWithAddrsImpl(body, symbol, symbolLookup)
+
     /** Synchronously decode the body byte slice for `symbol` into a Tree.
       *
       * Accepts SymbolBody and a symbol lookup function to resolve SymbolId -> Symbol for IDENT/SELECT references.
@@ -109,6 +128,20 @@ object TreeUnpickler:
         symbol: Tasty.Symbol,
         symbolLookup: Int => Tasty.Symbol
     )(using AllowUnsafe): Tasty.Tree =
+        decodeWithAddrsImpl(body, symbol, symbolLookup)._1
+
+    /** Shared implementation for `decodeSync` and `decodeWithAddrs`: decodes `body` into a `Tree` and
+      * ALSO returns the per-node address cache (`treeAddrCache`, keyed by absolute TASTy byte address)
+      * and the package-qualified fully-qualified names the decode's `TreeTypeSession` tracked.
+      * `decodeSync` discards both; `decodeWithAddrs` returns both.
+      */
+    private def decodeWithAddrsImpl(
+        body: SymbolBody,
+        symbol: Tasty.Symbol,
+        symbolLookup: Int => Tasty.Symbol
+    )(using
+        AllowUnsafe
+    ): (Tasty.Tree, scala.collection.Map[Int, Tasty.Tree], scala.collection.Map[Int, String], scala.collection.Map[Int, Tasty.Type]) =
         // Unsafe: toArrayUnsafe returns the backing array of the Span without copying.
         // This is safe here because the array is read-only within this decode operation.
         val names = body.names.toArrayUnsafe
@@ -134,7 +167,12 @@ object TreeUnpickler:
             typeSession,
             treeAddrCache
         )
-        try decodeSymBody(symbol, view, body.bodyEnd, ctx)
+        try
+            val tree = decodeSymBody(symbol, view, body.bodyEnd, ctx)
+            // typeSession.addrCache holds every decoded type node keyed by its absolute address (the
+            // same space treeAddrCache and the Positions map use), surfaced for the occurrence index to
+            // collect type-position use sites the term-only treeAddrCache does not carry.
+            (tree, treeAddrCache, typeSession.unresolvedIdToFullName, typeSession.addrCache)
         catch
             case ex: TastyErrorException =>
                 // The type decoder hit an unrecognised tag (the carried error is UnknownTagInPosition).
@@ -143,7 +181,7 @@ object TreeUnpickler:
                 // getClass.getSimpleName check at the caller (fragile under JS/Native linking).
                 throw new DecodeException(ex.error.toString, 0L)
         end try
-    end decodeSync
+    end decodeWithAddrsImpl
 
     /** Decode a body slice whose layout depends on the symbol kind.
       *
@@ -1469,49 +1507,65 @@ object TreeUnpickler:
                 //   where the latter produces TermRef(outer_qual, "annotation").
                 // Build a qualified fully-qualified name: decode qual to get its fully-qualified name, then combine with the selected name.
                 val nameRef = view.readNat()
-                val nm      = session.names(nameRef).asString
+                val nameObj = session.names(nameRef)
+                val nm      = nameObj.asString
                 val qual    = TypeUnpickler.readTypeIntoSession(view, session, sectionOffset)
-                val qualFullName: String = qual match
-                    case Tasty.Type.Named(sid) if sid.value < -1 =>
-                        // Cross-file fully-qualified name reference (TERMREFpkg / TYPEREFpkg): look up the fully-qualified name from session.
-                        session.unresolvedIdToFullName.getOrElse(sid.value, "")
-                    case Tasty.Type.TermRef(innerQual, innerName) =>
-                        // TERMREFsymbol for a package produces TermRef(outerQual, packageName).
-                        // Reconstruct the fully-qualified name by walking the TermRef chain.
-                        def termRefFullName(t: Tasty.Type): String = t match
-                            case Tasty.Type.Named(sid) if sid.value < -1 =>
-                                session.unresolvedIdToFullName.getOrElse(sid.value, "")
-                            case Tasty.Type.TermRef(q2, n2) =>
-                                import Tasty.Name.asString as nameAsString
-                                val base = termRefFullName(q2)
-                                if base.nonEmpty then base + "." + nameAsString(n2) else nameAsString(n2)
-                            case _: Tasty.Type.Named | _: Tasty.Type.Applied | _: Tasty.Type.TypeLambda |
-                                _: Tasty.Type.Function | _: Tasty.Type.ContextFunction | _: Tasty.Type.Tuple |
-                                _: Tasty.Type.ByName | _: Tasty.Type.Repeated | _: Tasty.Type.Array |
-                                _: Tasty.Type.Refinement | _: Tasty.Type.Rec | _: Tasty.Type.RecThis |
-                                _: Tasty.Type.AndType | _: Tasty.Type.OrType | _: Tasty.Type.Annotated |
-                                _: Tasty.Type.ConstantType | _: Tasty.Type.ThisType | _: Tasty.Type.SuperType |
-                                _: Tasty.Type.ParamRef | _: Tasty.Type.Wildcard | _: Tasty.Type.Skolem |
-                                _: Tasty.Type.MatchType | _: Tasty.Type.FlexibleType | _: Tasty.Type.Bind | _: Tasty.Type.MatchCase |
-                                _: Tasty.Type.TypeRef | _: Tasty.Type.Bounds | Tasty.Type.Nothing | Tasty.Type.Any =>
-                                ""
-                        import Tasty.Name.asString as nameAsString
-                        val base = termRefFullName(innerQual)
-                        if base.nonEmpty then base + "." + nameAsString(innerName) else nameAsString(innerName)
-                    case _: Tasty.Type.Named | _: Tasty.Type.Applied | _: Tasty.Type.TypeLambda |
-                        _: Tasty.Type.Function | _: Tasty.Type.ContextFunction | _: Tasty.Type.Tuple |
-                        _: Tasty.Type.ByName | _: Tasty.Type.Repeated | _: Tasty.Type.Array |
-                        _: Tasty.Type.Refinement | _: Tasty.Type.Rec | _: Tasty.Type.RecThis |
-                        _: Tasty.Type.AndType | _: Tasty.Type.OrType | _: Tasty.Type.Annotated |
-                        _: Tasty.Type.ConstantType | _: Tasty.Type.ThisType | _: Tasty.Type.SuperType |
-                        _: Tasty.Type.ParamRef | _: Tasty.Type.Wildcard | _: Tasty.Type.Skolem |
-                        _: Tasty.Type.MatchType | _: Tasty.Type.FlexibleType | _: Tasty.Type.Bind | _: Tasty.Type.MatchCase |
-                        _: Tasty.Type.TypeRef | _: Tasty.Type.Bounds | Tasty.Type.Nothing | Tasty.Type.Any =>
-                        ""
-                val qualifiedFullName = if qualFullName.nonEmpty then qualFullName + "." + nm else nm
-                val id                = session.nextUnresolvedId()
-                session.unresolvedIdToFullName(id) = qualifiedFullName
-                Tasty.Type.Named(kyo.Tasty.SymbolId(id))
+                if TypeUnpickler.isConstructorName(nm) then
+                    // A parent-clause super-constructor callee reached via SELECTtpt (see
+                    // TypeUnpickler.isConstructorName's doc): the qualifier alone is the referenced type.
+                    qual
+                else
+                    qual match
+                        case Tasty.Type.Named(sid) if sid.value >= TypeUnpickler.PHASE_B_ADDR_OFFSET =>
+                            // qual is address-resolvable same-file (e.g. a package/object whose fully-qualified
+                            // name Pass 1 cannot compute synchronously). Wrap it as a member reference instead
+                            // of dropping the qualifier; finalizeMerge resolves qual via its address, then a
+                            // member-name scan resolves the reference to a final SymbolId.
+                            Tasty.Type.TypeRef(qual, nameObj)
+                        case _ =>
+                            val qualFullName: String = qual match
+                                case Tasty.Type.Named(sid) if sid.value < -1 =>
+                                    // Cross-file fully-qualified name reference (TERMREFpkg / TYPEREFpkg): look up the fully-qualified name from session.
+                                    session.unresolvedIdToFullName.getOrElse(sid.value, "")
+                                case Tasty.Type.TermRef(innerQual, innerName) =>
+                                    // TERMREFsymbol for a package produces TermRef(outerQual, packageName).
+                                    // Reconstruct the fully-qualified name by walking the TermRef chain.
+                                    def termRefFullName(t: Tasty.Type): String = t match
+                                        case Tasty.Type.Named(sid) if sid.value < -1 =>
+                                            session.unresolvedIdToFullName.getOrElse(sid.value, "")
+                                        case Tasty.Type.TermRef(q2, n2) =>
+                                            import Tasty.Name.asString as nameAsString
+                                            val base = termRefFullName(q2)
+                                            if base.nonEmpty then base + "." + nameAsString(n2) else nameAsString(n2)
+                                        case _: Tasty.Type.Named | _: Tasty.Type.Applied | _: Tasty.Type.TypeLambda |
+                                            _: Tasty.Type.Function | _: Tasty.Type.ContextFunction | _: Tasty.Type.Tuple |
+                                            _: Tasty.Type.ByName | _: Tasty.Type.Repeated | _: Tasty.Type.Array |
+                                            _: Tasty.Type.Refinement | _: Tasty.Type.Rec | _: Tasty.Type.RecThis |
+                                            _: Tasty.Type.AndType | _: Tasty.Type.OrType | _: Tasty.Type.Annotated |
+                                            _: Tasty.Type.ConstantType | _: Tasty.Type.ThisType | _: Tasty.Type.SuperType |
+                                            _: Tasty.Type.ParamRef | _: Tasty.Type.Wildcard | _: Tasty.Type.Skolem |
+                                            _: Tasty.Type.MatchType | _: Tasty.Type.FlexibleType | _: Tasty.Type.Bind | _: Tasty.Type.MatchCase |
+                                            _: Tasty.Type.TypeRef | _: Tasty.Type.Bounds | Tasty.Type.Nothing | Tasty.Type.Any =>
+                                            ""
+                                    import Tasty.Name.asString as nameAsString
+                                    val base = termRefFullName(innerQual)
+                                    if base.nonEmpty then base + "." + nameAsString(innerName) else nameAsString(innerName)
+                                case _: Tasty.Type.Named | _: Tasty.Type.Applied | _: Tasty.Type.TypeLambda |
+                                    _: Tasty.Type.Function | _: Tasty.Type.ContextFunction | _: Tasty.Type.Tuple |
+                                    _: Tasty.Type.ByName | _: Tasty.Type.Repeated | _: Tasty.Type.Array |
+                                    _: Tasty.Type.Refinement | _: Tasty.Type.Rec | _: Tasty.Type.RecThis |
+                                    _: Tasty.Type.AndType | _: Tasty.Type.OrType | _: Tasty.Type.Annotated |
+                                    _: Tasty.Type.ConstantType | _: Tasty.Type.ThisType | _: Tasty.Type.SuperType |
+                                    _: Tasty.Type.ParamRef | _: Tasty.Type.Wildcard | _: Tasty.Type.Skolem |
+                                    _: Tasty.Type.MatchType | _: Tasty.Type.FlexibleType | _: Tasty.Type.Bind | _: Tasty.Type.MatchCase |
+                                    _: Tasty.Type.TypeRef | _: Tasty.Type.Bounds | Tasty.Type.Nothing | Tasty.Type.Any =>
+                                    ""
+                            val qualifiedFullName = if qualFullName.nonEmpty then qualFullName + "." + nm else nm
+                            val id                = session.nextUnresolvedId()
+                            session.unresolvedIdToFullName(id) = qualifiedFullName
+                            Tasty.Type.Named(kyo.Tasty.SymbolId(id))
+                    end match
+                end if
 
             case TastyFormat.APPLIEDtpt =>
                 // APPLIEDtpt (162): cat-5 (tag + Length + tycon_Tree + arg_Tree*).
@@ -1556,9 +1610,33 @@ object TreeUnpickler:
                 // If the annotation is @scala.annotation.internal.Repeated, the
                 // parameter is a varargs parameter and the type should be wrapped in Type.Repeated.
                 // The annotation term decodes via APPLY(NEW(Repeated_class), ...) which TypeUnpickler
-                // unwraps to the Repeated class's type as Named(negId) with fully-qualified name in unresolvedIdToFullName.
+                // unwraps to the Repeated class's type: either Named(negId) with a fully-qualified name in
+                // unresolvedIdToFullName (a plain TYPEREF-tagged reference already resolves this way,
+                // TypeUnpickler.scala:590-594), or TypeRef(qual, name) (a TYPEREFin/SELECTtpt/SELECTin
+                // reference whose qualifier is itself Named(negId); annotFullNameContains walks both).
                 val payloadEnd = view.readEnd()
                 val underlying = TypeUnpickler.readTypeIntoSession(view, session, sectionOffset)
+                // Reconstructs the dotted fully-qualified name TypeUnpickler tracks for `t`, walking one
+                // TypeRef qualifier hop (Named(negId) -> tracked string, or TypeRef(qual, name) -> qual's
+                // tracked string + "." + name). Empty for any other shape.
+                def annotFullName(t: Tasty.Type): String = t match
+                    case Tasty.Type.Named(sid) if sid.value < -1 =>
+                        session.unresolvedIdToFullName.getOrElse(sid.value, "")
+                    case Tasty.Type.TypeRef(qual, name) =>
+                        import Tasty.Name.asString as nameAsString
+                        val qualFullName = annotFullName(qual)
+                        if qualFullName.nonEmpty then qualFullName + "." + nameAsString(name) else nameAsString(name)
+                    case _: Tasty.Type.Named | _: Tasty.Type.TermRef | _: Tasty.Type.Applied |
+                        _: Tasty.Type.TypeLambda | _: Tasty.Type.Function | _: Tasty.Type.ContextFunction |
+                        _: Tasty.Type.Tuple | _: Tasty.Type.ByName | _: Tasty.Type.Repeated |
+                        _: Tasty.Type.Array | _: Tasty.Type.Refinement | _: Tasty.Type.Rec |
+                        _: Tasty.Type.RecThis | _: Tasty.Type.AndType | _: Tasty.Type.OrType |
+                        _: Tasty.Type.Annotated | _: Tasty.Type.ConstantType | _: Tasty.Type.ThisType |
+                        _: Tasty.Type.SuperType | _: Tasty.Type.ParamRef | _: Tasty.Type.Wildcard |
+                        _: Tasty.Type.Skolem | _: Tasty.Type.MatchType | _: Tasty.Type.FlexibleType |
+                        _: Tasty.Type.Bind | _: Tasty.Type.MatchCase | _: Tasty.Type.Bounds |
+                        Tasty.Type.Nothing | Tasty.Type.Any =>
+                        ""
                 val isRepeated =
                     if view.position < payloadEnd then
                         try
@@ -1566,23 +1644,7 @@ object TreeUnpickler:
                             // The annotation fully-qualified name may be a SIGNED constructor name like
                             // "<init>:scala.annotation.internal.Repeated()" or the plain class fully-qualified name.
                             // Both forms contain the class name as a substring.
-                            annotType match
-                                case Tasty.Type.Named(sid) if sid.value < -1 =>
-                                    session.unresolvedIdToFullName.getOrElse(sid.value, "").contains(
-                                        kyo.internal.tasty.type_.TypeOps.RepeatedAnnotationFullName
-                                    )
-                                case _: Tasty.Type.Named | _: Tasty.Type.TermRef | _: Tasty.Type.Applied |
-                                    _: Tasty.Type.TypeLambda | _: Tasty.Type.Function | _: Tasty.Type.ContextFunction |
-                                    _: Tasty.Type.Tuple | _: Tasty.Type.ByName | _: Tasty.Type.Repeated |
-                                    _: Tasty.Type.Array | _: Tasty.Type.Refinement | _: Tasty.Type.Rec |
-                                    _: Tasty.Type.RecThis | _: Tasty.Type.AndType | _: Tasty.Type.OrType |
-                                    _: Tasty.Type.Annotated | _: Tasty.Type.ConstantType | _: Tasty.Type.ThisType |
-                                    _: Tasty.Type.SuperType | _: Tasty.Type.ParamRef | _: Tasty.Type.Wildcard |
-                                    _: Tasty.Type.Skolem | _: Tasty.Type.MatchType | _: Tasty.Type.FlexibleType |
-                                    _: Tasty.Type.Bind | _: Tasty.Type.MatchCase | _: Tasty.Type.TypeRef | _: Tasty.Type.Bounds |
-                                    Tasty.Type.Nothing | Tasty.Type.Any =>
-                                    false
-                            end match
+                            annotFullName(annotType).contains(kyo.internal.tasty.type_.TypeOps.RepeatedAnnotationFullName)
                         catch case _: Exception => false
                     else false
                 view.goto(payloadEnd)
@@ -1593,32 +1655,48 @@ object TreeUnpickler:
                 // SELECTin (176): cat-5 (tag + Length + nameRef + qual_Tree + owner_Tree).
                 val payloadEnd = view.readEnd()
                 val nameRef    = view.readNat()
-                val nm         = session.names(nameRef).asString
+                val nameObj    = session.names(nameRef)
+                val nm         = nameObj.asString
                 // Decode qual type to extract its fully-qualified name for cross-file resolution.
                 val qualType = TypeUnpickler.readTypeIntoSession(view, session, sectionOffset)
                 // Decode owner type (namespace); used for Phase C fully-qualified name resolution.
                 val ownerType = TypeUnpickler.readTypeIntoSession(view, session, sectionOffset)
                 view.goto(payloadEnd)
-                // Build a qualified fully-qualified name: if qual resolves to a tracked cross-file ref, combine it
-                // with the selected name to form the full name for Phase C lookup.
-                val qualFullName: String = qualType match
-                    case Tasty.Type.Named(sid) if sid.value < -1 =>
-                        session.unresolvedIdToFullName.getOrElse(sid.value, "")
-                    case _: Tasty.Type.Named | _: Tasty.Type.TermRef | _: Tasty.Type.Applied |
-                        _: Tasty.Type.TypeLambda | _: Tasty.Type.Function | _: Tasty.Type.ContextFunction |
-                        _: Tasty.Type.Tuple | _: Tasty.Type.ByName | _: Tasty.Type.Repeated |
-                        _: Tasty.Type.Array | _: Tasty.Type.Refinement | _: Tasty.Type.Rec |
-                        _: Tasty.Type.RecThis | _: Tasty.Type.AndType | _: Tasty.Type.OrType |
-                        _: Tasty.Type.Annotated | _: Tasty.Type.ConstantType | _: Tasty.Type.ThisType |
-                        _: Tasty.Type.SuperType | _: Tasty.Type.ParamRef | _: Tasty.Type.Wildcard |
-                        _: Tasty.Type.Skolem | _: Tasty.Type.MatchType | _: Tasty.Type.FlexibleType |
-                        _: Tasty.Type.Bind | _: Tasty.Type.MatchCase | _: Tasty.Type.TypeRef | _: Tasty.Type.Bounds |
-                        Tasty.Type.Nothing | Tasty.Type.Any =>
-                        ""
-                val qualifiedFullName = if qualFullName.nonEmpty then qualFullName + "." + nm else nm
-                val id                = session.nextUnresolvedId()
-                session.unresolvedIdToFullName(id) = qualifiedFullName
-                Tasty.Type.Named(kyo.Tasty.SymbolId(id))
+                if TypeUnpickler.isConstructorName(nm) then
+                    // A parent-clause super-constructor callee reached via SELECTin: dotty encodes
+                    // `extends Parent(...)`'s `New(tpt).<init>` callee using this tag (not the
+                    // term-level SELECT tag) whenever the constructor reference needs the `owner_Tree`
+                    // slot to disambiguate an overload. See TypeUnpickler.isConstructorName's doc:
+                    // the qualifier alone is the referenced (constructed) type.
+                    qualType
+                else
+                    qualType match
+                        case Tasty.Type.Named(sid) if sid.value >= TypeUnpickler.PHASE_B_ADDR_OFFSET =>
+                            // qual is address-resolvable same-file; see SELECTtpt's identical case above.
+                            Tasty.Type.TypeRef(qualType, nameObj)
+                        case _ =>
+                            // Build a qualified fully-qualified name: if qual resolves to a tracked cross-file ref, combine it
+                            // with the selected name to form the full name for Phase C lookup.
+                            val qualFullName: String = qualType match
+                                case Tasty.Type.Named(sid) if sid.value < -1 =>
+                                    session.unresolvedIdToFullName.getOrElse(sid.value, "")
+                                case _: Tasty.Type.Named | _: Tasty.Type.TermRef | _: Tasty.Type.Applied |
+                                    _: Tasty.Type.TypeLambda | _: Tasty.Type.Function | _: Tasty.Type.ContextFunction |
+                                    _: Tasty.Type.Tuple | _: Tasty.Type.ByName | _: Tasty.Type.Repeated |
+                                    _: Tasty.Type.Array | _: Tasty.Type.Refinement | _: Tasty.Type.Rec |
+                                    _: Tasty.Type.RecThis | _: Tasty.Type.AndType | _: Tasty.Type.OrType |
+                                    _: Tasty.Type.Annotated | _: Tasty.Type.ConstantType | _: Tasty.Type.ThisType |
+                                    _: Tasty.Type.SuperType | _: Tasty.Type.ParamRef | _: Tasty.Type.Wildcard |
+                                    _: Tasty.Type.Skolem | _: Tasty.Type.MatchType | _: Tasty.Type.FlexibleType |
+                                    _: Tasty.Type.Bind | _: Tasty.Type.MatchCase | _: Tasty.Type.TypeRef | _: Tasty.Type.Bounds |
+                                    Tasty.Type.Nothing | Tasty.Type.Any =>
+                                    ""
+                            val qualifiedFullName = if qualFullName.nonEmpty then qualFullName + "." + nm else nm
+                            val id                = session.nextUnresolvedId()
+                            session.unresolvedIdToFullName(id) = qualifiedFullName
+                            Tasty.Type.Named(kyo.Tasty.SymbolId(id))
+                    end match
+                end if
 
             case TastyFormat.REFINEDtpt =>
                 // REFINEDtpt (160): cat-5 (tag + Length + parent_Tree + decl_Tree*).
@@ -1738,29 +1816,17 @@ object TreeUnpickler:
 
             case TastyFormat.SELECT =>
                 // SELECT (112): cat-4 (tag + Nat + AST). Nat is nameRef; AST is the qualifier.
-                // Build a qualified fully-qualified name from the qualifier's resolved type and the selected name,
-                // mirroring SELECTtpt in decodeTptAsType (same pattern).
-                val nameRef = view.readNat()
-                val nm      = typeSession.names(nameRef).asString
-                val qual    = TypeUnpickler.readTypeIntoSession(view, typeSession, sectionOffset)
-                val qualFullName: String = qual match
-                    case Tasty.Type.Named(sid) if sid.value < -1 =>
-                        typeSession.unresolvedIdToFullName.getOrElse(sid.value, "")
-                    case _: Tasty.Type.Named | _: Tasty.Type.TermRef | _: Tasty.Type.Applied |
-                        _: Tasty.Type.TypeLambda | _: Tasty.Type.Function | _: Tasty.Type.ContextFunction |
-                        _: Tasty.Type.Tuple | _: Tasty.Type.ByName | _: Tasty.Type.Repeated |
-                        _: Tasty.Type.Array | _: Tasty.Type.Refinement | _: Tasty.Type.Rec |
-                        _: Tasty.Type.RecThis | _: Tasty.Type.AndType | _: Tasty.Type.OrType |
-                        _: Tasty.Type.Annotated | _: Tasty.Type.ConstantType | _: Tasty.Type.ThisType |
-                        _: Tasty.Type.SuperType | _: Tasty.Type.ParamRef | _: Tasty.Type.Wildcard |
-                        _: Tasty.Type.Skolem | _: Tasty.Type.MatchType | _: Tasty.Type.FlexibleType |
-                        _: Tasty.Type.Bind | _: Tasty.Type.MatchCase | _: Tasty.Type.TypeRef | _: Tasty.Type.Bounds |
-                        Tasty.Type.Nothing | Tasty.Type.Any =>
-                        ""
-                val qualifiedFullName = if qualFullName.nonEmpty then qualFullName + "." + nm else nm
-                val id                = typeSession.nextUnresolvedId()
-                typeSession.unresolvedIdToFullName(id) = qualifiedFullName
-                Tasty.Type.Named(kyo.Tasty.SymbolId(id))
+                // decodeTermTagInTypePosition only ever reaches SELECT as the callee of a
+                // constructor-call-shaped term expression (an ANNOTATEDtype's `New(...)`/`@Ann(...)`
+                // term, or a TEMPLATE parent clause's `extends X(...)`): the overall type of such an
+                // expression is always the CONSTRUCTED class (`qual`), never "a reference to the
+                // constructor method" -- the selected name (typically the SIGNED `<init>`) plays no
+                // part in the result and is discarded. Returning `qual` unchanged lets Phase C resolve
+                // it via the SAME address-based mechanism that already resolves TermRefDirect and
+                // TypeRefDirect local refs, instead of fabricating a signed-name qualified string (e.g.
+                // `<init>:Owner(...)`) that can never match fullNameIndex's plain dotted keys.
+                discard(view.readNat()) // the selected name; irrelevant to the result type here
+                TypeUnpickler.readTypeIntoSession(view, typeSession, sectionOffset)
 
             case TastyFormat.APPLY =>
                 // APPLY (136): cat-5 (tag + Length + fn_AST + args_AST*).

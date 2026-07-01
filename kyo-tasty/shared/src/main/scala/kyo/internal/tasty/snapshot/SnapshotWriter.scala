@@ -289,7 +289,8 @@ object SnapshotWriter:
         // serializeNamePool so all fully-qualified name strings are present in the name pool that the reader uses to
         // decode FQNIDX__ name IDs. Moving serializeFullNameIndex after serializeNamePool causes the reader
         // to skip entries whose name IDs exceed the stored pool length.
-        val fullNameIdxBytes = serializeFullNameIndex(classpath.indices.byFullName, symbolList, internName)
+        val fullNameIdxBytes     = serializeFullNameIndex(classpath.indices.byFullName, symbolList, internName)
+        val sourcePositionsBytes = serializeSourcePositions(symbolList, internName)
 
         // FQNMAP__ section: unresolvedFullNameByNegId map (negId -> fully-qualified name string for external annotation types).
         // Name pool must be populated (internName calls for fully-qualified name strings) BEFORE
@@ -330,8 +331,9 @@ object SnapshotWriter:
             (SnapshotFormat.sectionMEMBERS, membersBytes),
             (SnapshotFormat.sectionTPARAMS, tparamsBytes),
             // PLISTS__ joins the per-symbol relational sections (PARENTS / MEMBERS / TPARAMS_) and
-            // sits before FILES per Q-007 placement rule. Sparse two-level Int32-LE layout.
+            // sits before FILES per the section placement rule. Sparse two-level Int32-LE layout.
             (SnapshotFormat.sectionPLISTS, paramListsBytes),
+            (SnapshotFormat.sectionSRCPOS, sourcePositionsBytes),
             (SnapshotFormat.sectionFILES, filesBytes),
             (SnapshotFormat.sectionBODYBYTES, bodyBytes),
             (SnapshotFormat.sectionERRORS, errorsBytes),
@@ -847,6 +849,40 @@ object SnapshotWriter:
         end for
         sink.toArray
     end serializeFullNameIndex
+
+    /** Serialize per-symbol sourcePosition into the SRCPOS__ section.
+      *
+      * Sparse: only symbols whose `sourcePosition` is `Present` get an entry. The sourceFile
+      * string interns through the shared name pool (`internName`) so the path is stored once.
+      * `symIdx` is the symbol's position in `symbolList` (snapshot order, equal to id.value).
+      */
+    private def serializeSourcePositions(
+        symbols: Seq[Tasty.Symbol],
+        internName: String => Int
+    ): Array[Byte] =
+        val entries = scala.collection.mutable.ArrayBuffer.empty[(Int, Int, Int, Int)]
+        var i       = 0
+        // perf: index scan over a contiguous symbol array; while avoids boxing overhead of higher-order combinators
+        while i < symbols.length do
+            symbols(i).sourcePosition match
+                case Maybe.Present(pos) =>
+                    entries += ((i, internName(pos.sourceFile), pos.line, pos.column))
+                case Maybe.Absent => ()
+            end match
+            i += 1
+        end while
+        val buffer = new Array[Byte](4 + entries.length * 16)
+        SnapshotFormat.writeInt32LE(buffer, 0, entries.length)
+        var pos = 4
+        entries.foreach { case (symIdx, nameId, line, column) =>
+            SnapshotFormat.writeInt32LE(buffer, pos, symIdx)
+            SnapshotFormat.writeInt32LE(buffer, pos + 4, nameId)
+            SnapshotFormat.writeInt32LE(buffer, pos + 8, line)
+            SnapshotFormat.writeInt32LE(buffer, pos + 12, column)
+            pos += 16
+        }
+        buffer
+    end serializeSourcePositions
 
     /** Serialize the unresolvedFullNameByNegId map into a flat byte block.
       *

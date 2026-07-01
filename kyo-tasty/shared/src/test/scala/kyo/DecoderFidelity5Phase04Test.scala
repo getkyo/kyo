@@ -339,7 +339,8 @@ class DecoderFidelity5Phase04Test extends kyo.test.Test[Any]:
             sectionBytes = Span.fromUnsafe(new Array[Byte](42)),
             names = Span.fromUnsafe(new Array[Tasty.Name](3)),
             sectionOffset = 0,
-            addrMap = scala.collection.immutable.IntMap.empty
+            addrMap = scala.collection.immutable.IntMap.empty,
+            pickleId = 0
         )
         val s = body.toString
         assert(s.contains("len=42"), s"Expected 'len=42' in SymbolBody.toString but got: $s")

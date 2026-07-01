@@ -59,6 +59,15 @@ object TypeUnpickler:
       */
     private[kyo] val sentinelId: kyo.Tasty.SymbolId = kyo.Tasty.SymbolId(-1)
 
+    /** True when `nm` is the (possibly SIGNED) constructor marker name `<init>`.
+      *
+      * Dotty writes a constructor reference's name as the plain `<init>` or, when signed to disambiguate an overloaded
+      * constructor, `<init>:Owner(paramSigs)`. A constructor reference reaching a type-position qualified-name-decode site
+      * (SELECTtpt/SELECTin: dotty encodes a parent-clause super-constructor callee `New(tpt).<init>` via these tags) carries no
+      * member-name meaning there: the qualifier alone is the referenced type.
+      */
+    private[reader] def isConstructorName(nm: String): Boolean = nm == "<init>" || nm.startsWith("<init>:")
+
     /** Decode a single type node from `view`.
       *
       * @param view
@@ -128,6 +137,19 @@ object TypeUnpickler:
         val addrCache: mutable.HashMap[Int, Tasty.Type]                             = new mutable.HashMap()
         val inProgressRec: mutable.HashMap[Int, Tasty.Type.Rec]                     = new mutable.HashMap()
         val binderAddrMap: mutable.HashMap[Int, Chunk[LoadingSymbol.Materialising]] = new mutable.HashMap()
+
+        // Fully-qualified names read while decoding a body's TERMREFpkg/TYPEREFpkg types (a
+        // package-owned cross-file reference, e.g. the qualifier of a bare module selection like
+        // `Foo.bar`), tracked the same way DecodeSession tracks them for Pass 1 (unresolvedIdToFullName,
+        // nextUnresolvedId) so a lazy per-file body decode can also resolve such a reference by name
+        // via the classpath, instead of collapsing it to the untracked -1 sentinel.
+        val unresolvedIdToFullName: mutable.HashMap[Int, String] = new mutable.HashMap()
+        private var _unresolvedIdCounter: Int                    = -2
+        def nextUnresolvedId(): Int =
+            val id = _unresolvedIdCounter
+            _unresolvedIdCounter -= 1
+            id
+        end nextUnresolvedId
     end TreeTypeSession
 
     /** Read one type node using a shared TreeTypeSession (called by TreeUnpickler).
@@ -159,7 +181,8 @@ object TypeUnpickler:
                         session.binderAddrMap,
                         session.sectionBytes,
                         session.sectionOffset,
-                        callFrame
+                        callFrame,
+                        lazyTracker = Maybe(session)
                     )
                     readTypeNode(forkView, forkCtx)
                 }
@@ -174,7 +197,8 @@ object TypeUnpickler:
                 session.binderAddrMap,
                 session.sectionBytes,
                 session.sectionOffset,
-                callFrame
+                callFrame,
+                lazyTracker = Maybe(session)
             )
             readTypeNode(view, ctx)
         end if
@@ -292,6 +316,10 @@ object TypeUnpickler:
     // without snapshotting into an IntMap on every type-node decode call.
     // frame: call-site Frame, used for Log.warn in the unknown-tag fallback branch.
     // session: reference to the owning DecodeSession for cross-file fully-qualified name tracking (Maybe.Absent in body decode path).
+    // lazyTracker: the body-decode-path counterpart to session (Maybe.Absent during Pass 1, where
+    // session already carries the same tracking); lets TERMREFpkg/TYPEREFpkg keep a cross-file
+    // package reference's fully-qualified name for OccurrenceScanner instead of the untracked -1
+    // sentinel, without threading the Pass-1-only DecodeSession type into the lazy body-decode path.
     final private class DecodeCtx(
         val names: Array[Tasty.Name],
         val addrMap: scala.collection.Map[Int, LoadingSymbol.Materialising],
@@ -302,7 +330,8 @@ object TypeUnpickler:
         val sectionBytes: Array[Byte],
         val sectionOffset: Int,
         val frame: Frame,
-        val session: Maybe[DecodeSession] = Maybe.Absent
+        val session: Maybe[DecodeSession] = Maybe.Absent,
+        val lazyTracker: Maybe[TreeTypeSession] = Maybe.Absent
     ):
         // Local id counter for lambda-param Materialising instances created when addrMap lookup misses.
         // These are never placed in allSyms; their ids only need to be unique within this DecodeCtx.
@@ -435,8 +464,12 @@ object TypeUnpickler:
                     case Maybe.Present(s) =>
                         Tasty.Type.Named(makeTrackedUnresolvedSym(fullName, s.unresolvedIdToFullName, s.nextUnresolvedId()))
                     case Maybe.Absent =>
-                        // No session context: use interned sentinel instead of per-fullName name.
-                        Tasty.Type.Named(sentinelId)
+                        ctx.lazyTracker match
+                            case Maybe.Present(t) =>
+                                Tasty.Type.Named(makeTrackedUnresolvedSym(fullName, t.unresolvedIdToFullName, t.nextUnresolvedId()))
+                            case Maybe.Absent =>
+                                // No session and no lazy tracker: use interned sentinel instead of per-fullName name.
+                                Tasty.Type.Named(sentinelId)
                 end match
 
             case TastyFormat.TYPEREFpkg =>
@@ -446,8 +479,12 @@ object TypeUnpickler:
                     case Maybe.Present(s) =>
                         Tasty.Type.Named(makeTrackedUnresolvedSym(fullName, s.unresolvedIdToFullName, s.nextUnresolvedId()))
                     case Maybe.Absent =>
-                        // No session context: use interned sentinel instead of per-fullName name.
-                        Tasty.Type.Named(sentinelId)
+                        ctx.lazyTracker match
+                            case Maybe.Present(t) =>
+                                Tasty.Type.Named(makeTrackedUnresolvedSym(fullName, t.unresolvedIdToFullName, t.nextUnresolvedId()))
+                            case Maybe.Absent =>
+                                // No session and no lazy tracker: use interned sentinel instead of per-fullName name.
+                                Tasty.Type.Named(sentinelId)
                 end match
 
             case TastyFormat.RECthis =>
@@ -784,35 +821,49 @@ object TypeUnpickler:
             case TastyFormat.TYPEREFin =>
                 val end        = view.readEnd()
                 val nameRef    = view.readNat()
-                val simpleName = nameAt(ctx.names, nameRef).asString
+                val nameObj    = nameAt(ctx.names, nameRef)
+                val simpleName = nameObj.asString
                 val qual       = readTypeNode(view, ctx) // decode qual to extract package fully-qualified name
                 discard(readTypeNode(view, ctx)) // namespace
                 view.goto(end)
-                // Reconstruct full name: qualFullName + "." + simpleName.
-                // qual is typically TYPEREFpkg(packageFullName) -> Named(trackedId) where trackedId maps to packageFullName.
-                // For finalizeMerge lookup, use qualFullName + "." + simpleName.
-                ctx.session match
-                    case Maybe.Present(s) =>
-                        val qualFullName = qual match
-                            case Tasty.Type.Named(sid) if sid.value < -1 =>
-                                // Tracked cross-file ref: look up fullName from unresolvedIdToFullName
-                                s.unresolvedIdToFullName.getOrElse(sid.value, simpleName)
-                            case _: Tasty.Type.Named | _: Tasty.Type.TermRef | _: Tasty.Type.Applied |
-                                _: Tasty.Type.TypeLambda | _: Tasty.Type.Function | _: Tasty.Type.ContextFunction |
-                                _: Tasty.Type.Tuple | _: Tasty.Type.ByName | _: Tasty.Type.Repeated |
-                                _: Tasty.Type.Array | _: Tasty.Type.Refinement | _: Tasty.Type.Rec |
-                                _: Tasty.Type.RecThis | _: Tasty.Type.AndType | _: Tasty.Type.OrType |
-                                _: Tasty.Type.Annotated | _: Tasty.Type.ConstantType | _: Tasty.Type.ThisType |
-                                _: Tasty.Type.SuperType | _: Tasty.Type.ParamRef | _: Tasty.Type.Wildcard |
-                                _: Tasty.Type.Skolem | _: Tasty.Type.MatchType | _: Tasty.Type.FlexibleType |
-                                _: Tasty.Type.Bind | _: Tasty.Type.MatchCase | _: Tasty.Type.TypeRef | _: Tasty.Type.Bounds |
-                                Tasty.Type.Nothing | Tasty.Type.Any =>
-                                simpleName
-                        val qualifiedFullName = if qualFullName.nonEmpty then qualFullName + "." + simpleName else simpleName
-                        Tasty.Type.Named(makeTrackedUnresolvedSym(qualifiedFullName, s.unresolvedIdToFullName, s.nextUnresolvedId()))
-                    case Maybe.Absent =>
-                        // No session context: use interned sentinel.
-                        Tasty.Type.Named(sentinelId)
+                qual match
+                    case Tasty.Type.Named(sid) if sid.value >= PHASE_B_ADDR_OFFSET =>
+                        // qual is itself address-resolvable (a same-file owner, e.g. a package/object whose
+                        // fully-qualified name Pass 1 cannot compute synchronously). Wrap it as a member
+                        // reference instead of dropping the qualifier; finalizeMerge resolves qual via its
+                        // address, then a member-name scan resolves the reference to a final SymbolId.
+                        Tasty.Type.TypeRef(qual, nameObj)
+                    case _ =>
+                        // Reconstruct full name: qualFullName + "." + simpleName.
+                        // qual is typically TYPEREFpkg(packageFullName) -> Named(trackedId) where trackedId maps to packageFullName.
+                        // For finalizeMerge lookup, use qualFullName + "." + simpleName.
+                        ctx.session match
+                            case Maybe.Present(s) =>
+                                val qualFullName = qual match
+                                    case Tasty.Type.Named(sid) if sid.value < -1 =>
+                                        // Tracked cross-file ref: look up fullName from unresolvedIdToFullName
+                                        s.unresolvedIdToFullName.getOrElse(sid.value, simpleName)
+                                    case _: Tasty.Type.Named | _: Tasty.Type.TermRef | _: Tasty.Type.Applied |
+                                        _: Tasty.Type.TypeLambda | _: Tasty.Type.Function | _: Tasty.Type.ContextFunction |
+                                        _: Tasty.Type.Tuple | _: Tasty.Type.ByName | _: Tasty.Type.Repeated |
+                                        _: Tasty.Type.Array | _: Tasty.Type.Refinement | _: Tasty.Type.Rec |
+                                        _: Tasty.Type.RecThis | _: Tasty.Type.AndType | _: Tasty.Type.OrType |
+                                        _: Tasty.Type.Annotated | _: Tasty.Type.ConstantType | _: Tasty.Type.ThisType |
+                                        _: Tasty.Type.SuperType | _: Tasty.Type.ParamRef | _: Tasty.Type.Wildcard |
+                                        _: Tasty.Type.Skolem | _: Tasty.Type.MatchType | _: Tasty.Type.FlexibleType |
+                                        _: Tasty.Type.Bind | _: Tasty.Type.MatchCase | _: Tasty.Type.TypeRef | _: Tasty.Type.Bounds |
+                                        Tasty.Type.Nothing | Tasty.Type.Any =>
+                                        simpleName
+                                val qualifiedFullName = if qualFullName.nonEmpty then qualFullName + "." + simpleName else simpleName
+                                Tasty.Type.Named(makeTrackedUnresolvedSym(
+                                    qualifiedFullName,
+                                    s.unresolvedIdToFullName,
+                                    s.nextUnresolvedId()
+                                ))
+                            case Maybe.Absent =>
+                                // No session context: use interned sentinel.
+                                Tasty.Type.Named(sentinelId)
+                        end match
                 end match
 
             case TastyFormat.TERMREFin =>
@@ -875,31 +926,48 @@ object TypeUnpickler:
                 // Encodes e.g. `scala.Double` as SELECTtpt("Double", TERMREFpkg("scala")).
                 // Mirrors TreeUnpickler.decodeTptAsType case for SELECTtpt.
                 val nameRef = view.readNat()
-                val nm      = nameAt(ctx.names, nameRef).asString
+                val nameObj = nameAt(ctx.names, nameRef)
+                val nm      = nameObj.asString
                 val qual    = readTypeNode(view, ctx)
-                val qualFullName: String = qual match
-                    case Tasty.Type.Named(sid) if sid.value < -1 =>
-                        ctx.session match
-                            case Maybe.Present(s) => s.unresolvedIdToFullName.getOrElse(sid.value, "")
-                            case Maybe.Absent     => ""
-                    case _: Tasty.Type.Named | _: Tasty.Type.TermRef | _: Tasty.Type.Applied |
-                        _: Tasty.Type.TypeLambda | _: Tasty.Type.Function | _: Tasty.Type.ContextFunction |
-                        _: Tasty.Type.Tuple | _: Tasty.Type.ByName | _: Tasty.Type.Repeated |
-                        _: Tasty.Type.Array | _: Tasty.Type.Refinement | _: Tasty.Type.Rec |
-                        _: Tasty.Type.RecThis | _: Tasty.Type.AndType | _: Tasty.Type.OrType |
-                        _: Tasty.Type.Annotated | _: Tasty.Type.ConstantType | _: Tasty.Type.ThisType |
-                        _: Tasty.Type.SuperType | _: Tasty.Type.ParamRef | _: Tasty.Type.Wildcard |
-                        _: Tasty.Type.Skolem | _: Tasty.Type.MatchType | _: Tasty.Type.FlexibleType |
-                        _: Tasty.Type.Bind | _: Tasty.Type.MatchCase | _: Tasty.Type.TypeRef | _: Tasty.Type.Bounds |
-                        Tasty.Type.Nothing | Tasty.Type.Any =>
-                        ""
-                val qualifiedFullName = if qualFullName.nonEmpty then qualFullName + "." + nm else nm
-                ctx.session match
-                    case Maybe.Present(s) =>
-                        Tasty.Type.Named(makeTrackedUnresolvedSym(qualifiedFullName, s.unresolvedIdToFullName, s.nextUnresolvedId()))
-                    case Maybe.Absent =>
-                        Tasty.Type.Named(sentinelId)
-                end match
+                if isConstructorName(nm) then
+                    // A parent-clause super-constructor callee reached via SELECTtpt (see
+                    // isConstructorName's doc): the qualifier alone is the referenced type.
+                    qual
+                else
+                    qual match
+                        case Tasty.Type.Named(sid) if sid.value >= PHASE_B_ADDR_OFFSET =>
+                            // qual is address-resolvable same-file; see TYPEREFin's identical case above.
+                            Tasty.Type.TypeRef(qual, nameObj)
+                        case _ =>
+                            val qualFullName: String = qual match
+                                case Tasty.Type.Named(sid) if sid.value < -1 =>
+                                    ctx.session match
+                                        case Maybe.Present(s) => s.unresolvedIdToFullName.getOrElse(sid.value, "")
+                                        case Maybe.Absent     => ""
+                                case _: Tasty.Type.Named | _: Tasty.Type.TermRef | _: Tasty.Type.Applied |
+                                    _: Tasty.Type.TypeLambda | _: Tasty.Type.Function | _: Tasty.Type.ContextFunction |
+                                    _: Tasty.Type.Tuple | _: Tasty.Type.ByName | _: Tasty.Type.Repeated |
+                                    _: Tasty.Type.Array | _: Tasty.Type.Refinement | _: Tasty.Type.Rec |
+                                    _: Tasty.Type.RecThis | _: Tasty.Type.AndType | _: Tasty.Type.OrType |
+                                    _: Tasty.Type.Annotated | _: Tasty.Type.ConstantType | _: Tasty.Type.ThisType |
+                                    _: Tasty.Type.SuperType | _: Tasty.Type.ParamRef | _: Tasty.Type.Wildcard |
+                                    _: Tasty.Type.Skolem | _: Tasty.Type.MatchType | _: Tasty.Type.FlexibleType |
+                                    _: Tasty.Type.Bind | _: Tasty.Type.MatchCase | _: Tasty.Type.TypeRef | _: Tasty.Type.Bounds |
+                                    Tasty.Type.Nothing | Tasty.Type.Any =>
+                                    ""
+                            val qualifiedFullName = if qualFullName.nonEmpty then qualFullName + "." + nm else nm
+                            ctx.session match
+                                case Maybe.Present(s) =>
+                                    Tasty.Type.Named(makeTrackedUnresolvedSym(
+                                        qualifiedFullName,
+                                        s.unresolvedIdToFullName,
+                                        s.nextUnresolvedId()
+                                    ))
+                                case Maybe.Absent =>
+                                    Tasty.Type.Named(sentinelId)
+                            end match
+                    end match
+                end if
 
             case TastyFormat.APPLIEDtpt =>
                 // APPLIEDtpt (162): cat-5 (tag + Length + tycon_Tree + arg_Tree*).
@@ -930,35 +998,52 @@ object TypeUnpickler:
                 // SELECTin (176): cat-5 (tag + Length + nameRef + qual_Tree + owner_Tree).
                 val end     = view.readEnd()
                 val nameRef = view.readNat()
-                val nm      = nameAt(ctx.names, nameRef).asString
+                val nameObj = nameAt(ctx.names, nameRef)
+                val nm      = nameObj.asString
                 val qual    = readTypeNode(view, ctx)
                 discard(readTypeNode(view, ctx)) // owner (namespace); used by finalizeMerge for fully-qualified name resolution
                 view.goto(end)
-                // Build tracked qualified fully-qualified name for finalizeMerge lookup.
-                val qualFullName: String = qual match
-                    case Tasty.Type.Named(sid) if sid.value < -1 =>
-                        ctx.session match
-                            case Maybe.Present(s) => s.unresolvedIdToFullName.getOrElse(sid.value, "")
-                            case Maybe.Absent     => ""
-                    case _: Tasty.Type.Named | _: Tasty.Type.TermRef | _: Tasty.Type.Applied |
-                        _: Tasty.Type.TypeLambda | _: Tasty.Type.Function | _: Tasty.Type.ContextFunction |
-                        _: Tasty.Type.Tuple | _: Tasty.Type.ByName | _: Tasty.Type.Repeated |
-                        _: Tasty.Type.Array | _: Tasty.Type.Refinement | _: Tasty.Type.Rec |
-                        _: Tasty.Type.RecThis | _: Tasty.Type.AndType | _: Tasty.Type.OrType |
-                        _: Tasty.Type.Annotated | _: Tasty.Type.ConstantType | _: Tasty.Type.ThisType |
-                        _: Tasty.Type.SuperType | _: Tasty.Type.ParamRef | _: Tasty.Type.Wildcard |
-                        _: Tasty.Type.Skolem | _: Tasty.Type.MatchType | _: Tasty.Type.FlexibleType |
-                        _: Tasty.Type.Bind | _: Tasty.Type.MatchCase | _: Tasty.Type.TypeRef | _: Tasty.Type.Bounds |
-                        Tasty.Type.Nothing | Tasty.Type.Any =>
-                        ""
-                val qualifiedFullName = if qualFullName.nonEmpty then qualFullName + "." + nm else nm
-                ctx.session match
-                    case Maybe.Present(s) =>
-                        Tasty.Type.Named(makeTrackedUnresolvedSym(qualifiedFullName, s.unresolvedIdToFullName, s.nextUnresolvedId()))
-                    case Maybe.Absent =>
-                        // No session context: use interned sentinel.
-                        Tasty.Type.Named(sentinelId)
-                end match
+                if isConstructorName(nm) then
+                    // A parent-clause super-constructor callee reached via SELECTin (see
+                    // isConstructorName's doc): the qualifier alone is the referenced type.
+                    qual
+                else
+                    qual match
+                        case Tasty.Type.Named(sid) if sid.value >= PHASE_B_ADDR_OFFSET =>
+                            // qual is address-resolvable same-file; see TYPEREFin's identical case above.
+                            Tasty.Type.TypeRef(qual, nameObj)
+                        case _ =>
+                            // Build tracked qualified fully-qualified name for finalizeMerge lookup.
+                            val qualFullName: String = qual match
+                                case Tasty.Type.Named(sid) if sid.value < -1 =>
+                                    ctx.session match
+                                        case Maybe.Present(s) => s.unresolvedIdToFullName.getOrElse(sid.value, "")
+                                        case Maybe.Absent     => ""
+                                case _: Tasty.Type.Named | _: Tasty.Type.TermRef | _: Tasty.Type.Applied |
+                                    _: Tasty.Type.TypeLambda | _: Tasty.Type.Function | _: Tasty.Type.ContextFunction |
+                                    _: Tasty.Type.Tuple | _: Tasty.Type.ByName | _: Tasty.Type.Repeated |
+                                    _: Tasty.Type.Array | _: Tasty.Type.Refinement | _: Tasty.Type.Rec |
+                                    _: Tasty.Type.RecThis | _: Tasty.Type.AndType | _: Tasty.Type.OrType |
+                                    _: Tasty.Type.Annotated | _: Tasty.Type.ConstantType | _: Tasty.Type.ThisType |
+                                    _: Tasty.Type.SuperType | _: Tasty.Type.ParamRef | _: Tasty.Type.Wildcard |
+                                    _: Tasty.Type.Skolem | _: Tasty.Type.MatchType | _: Tasty.Type.FlexibleType |
+                                    _: Tasty.Type.Bind | _: Tasty.Type.MatchCase | _: Tasty.Type.TypeRef | _: Tasty.Type.Bounds |
+                                    Tasty.Type.Nothing | Tasty.Type.Any =>
+                                    ""
+                            val qualifiedFullName = if qualFullName.nonEmpty then qualFullName + "." + nm else nm
+                            ctx.session match
+                                case Maybe.Present(s) =>
+                                    Tasty.Type.Named(makeTrackedUnresolvedSym(
+                                        qualifiedFullName,
+                                        s.unresolvedIdToFullName,
+                                        s.nextUnresolvedId()
+                                    ))
+                                case Maybe.Absent =>
+                                    // No session context: use interned sentinel.
+                                    Tasty.Type.Named(sentinelId)
+                            end match
+                    end match
+                end if
 
             case TastyFormat.REFINEDtpt =>
                 // REFINEDtpt (160): cat-5 (tag + Length + parent_Tree + decl_Tree*).
@@ -1040,34 +1125,18 @@ object TypeUnpickler:
                 readTypeNode(view, ctx)
 
             case TastyFormat.SELECT =>
-                // SELECT (112): cat-4 (tag + Nat + AST). Build a tracked unresolved fully-qualified name (same as SELECTtpt).
-                val nameRef = view.readNat()
-                val nm      = nameAt(ctx.names, nameRef).asString
-                val qual    = readTypeNode(view, ctx)
-                val qualFullName: String = qual match
-                    case Tasty.Type.Named(sid) if sid.value < -1 =>
-                        ctx.session match
-                            case Maybe.Present(s) => s.unresolvedIdToFullName.getOrElse(sid.value, "")
-                            case Maybe.Absent     => ""
-                    case _: Tasty.Type.Named | _: Tasty.Type.TermRef | _: Tasty.Type.Applied |
-                        _: Tasty.Type.TypeLambda | _: Tasty.Type.Function | _: Tasty.Type.ContextFunction |
-                        _: Tasty.Type.Tuple | _: Tasty.Type.ByName | _: Tasty.Type.Repeated |
-                        _: Tasty.Type.Array | _: Tasty.Type.Refinement | _: Tasty.Type.Rec |
-                        _: Tasty.Type.RecThis | _: Tasty.Type.AndType | _: Tasty.Type.OrType |
-                        _: Tasty.Type.Annotated | _: Tasty.Type.ConstantType | _: Tasty.Type.ThisType |
-                        _: Tasty.Type.SuperType | _: Tasty.Type.ParamRef | _: Tasty.Type.Wildcard |
-                        _: Tasty.Type.Skolem | _: Tasty.Type.MatchType | _: Tasty.Type.FlexibleType |
-                        _: Tasty.Type.Bind | _: Tasty.Type.MatchCase | _: Tasty.Type.TypeRef | _: Tasty.Type.Bounds |
-                        Tasty.Type.Nothing | Tasty.Type.Any =>
-                        ""
-                val qualifiedFullName = if qualFullName.nonEmpty then qualFullName + "." + nm else nm
-                ctx.session match
-                    case Maybe.Present(s) =>
-                        val id = s.nextUnresolvedId()
-                        s.unresolvedIdToFullName(id) = qualifiedFullName
-                        Tasty.Type.Named(kyo.Tasty.SymbolId(id))
-                    case Maybe.Absent => Tasty.Type.Named(sentinelId)
-                end match
+                // SELECT (112): cat-4 (tag + Nat + AST). Nat is nameRef; AST is the qualifier.
+                // Mirrors TreeUnpickler.decodeTermTagInTypePosition's SELECT case: this handler is only
+                // reached as the callee of a constructor-call-shaped term expression (a NEW/APPLY chain
+                // nested inside an ANNOTATEDtype payload, APPLIEDtype arg, or REFINEDtype body), so the
+                // overall type of the expression is always the CONSTRUCTED class (`qual`), never "a
+                // reference to the constructor method". The selected name (typically the SIGNED `<init>`)
+                // plays no part in the result and is discarded. Returning `qual` unchanged lets Phase C
+                // resolve it via the SAME address-based mechanism that already resolves TermRefDirect and
+                // TypeRefDirect local refs, instead of fabricating a signed-name qualified string (e.g.
+                // `<init>:Owner(...)`) that can never match fullNameIndex's plain dotted keys.
+                discard(view.readNat()) // the selected name; irrelevant to the result type here
+                readTypeNode(view, ctx)
 
             case TastyFormat.APPLY =>
                 // APPLY (136): cat-5 (tag + Length + fn_AST + args_AST*). Result type is fn's return type.

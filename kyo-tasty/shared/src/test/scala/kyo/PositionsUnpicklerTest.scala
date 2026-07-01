@@ -87,8 +87,8 @@ class PositionsUnpicklerTest extends kyo.test.Test[Any]:
             encInt(17)  // start_delta = 17 => offset 17 => line 3, col 1
         )
         val view = ByteView(payload)
-        PositionsUnpickler.read(view, addrMap, Present("Foo.scala")) match
-            case Result.Success(result) =>
+        PositionsUnpickler.read(view, addrMap, Present("Foo.scala"), 0) match
+            case Result.Success((result, _)) =>
                 assert(result.size == 1, s"Expected 1 position entry but got ${result.size}")
                 // LongMap keyed by symbol.id.toLong, not by symbol object.
                 assert(result.contains(symbol.id.toLong), "Expected symbol.id to have a position entry")
@@ -105,8 +105,8 @@ class PositionsUnpicklerTest extends kyo.test.Test[Any]:
 
     "PositionsUnpickler: empty payload returns empty map without error" in {
         val view = ByteView(Array.empty[Byte])
-        PositionsUnpickler.read(view, IntMap.empty, Absent) match
-            case Result.Success(result) =>
+        PositionsUnpickler.read(view, IntMap.empty, Absent, 0) match
+            case Result.Success((result, _)) =>
                 assert(result.isEmpty, s"Expected empty result but got ${result.size} entries")
             case Result.Failure(e) =>
                 fail(s"Expected empty map but got failure: $e")
@@ -130,8 +130,8 @@ class PositionsUnpicklerTest extends kyo.test.Test[Any]:
         val addrMap = IntMap(1 -> symbol)
         val view    = ByteView(payload)
         // Use Present sourceFile so the truncation error is triggered, not the absent-SOURCEFILE silent skip.
-        PositionsUnpickler.read(view, addrMap, Present("test.scala")) match
-            case Result.Success(result) =>
+        PositionsUnpickler.read(view, addrMap, Present("test.scala"), 0) match
+            case Result.Success((result, _)) =>
                 fail(s"Expected MalformedSection failure but got success with ${result.size} entries")
             case Result.Failure(TastyError.MalformedSection("Positions", _, _)) =>
                 succeed
@@ -193,8 +193,8 @@ class PositionsUnpicklerTest extends kyo.test.Test[Any]:
         )
         val view = ByteView(payload)
         // Use Present sourceFile so the position entries are built, not the absent-SOURCEFILE silent skip.
-        PositionsUnpickler.read(view, addrMap, Present("test.scala")) match
-            case Result.Success(result) =>
+        PositionsUnpickler.read(view, addrMap, Present("test.scala"), 0) match
+            case Result.Success((result, _)) =>
                 assert(result.size == 2, s"Expected 2 entries but got ${result.size}")
                 // LongMap keyed by symbol.id.toLong, not by symbol object.
                 assert(result.contains(symAlpha.id.toLong), "Expected symAlpha.id to have a position entry")
@@ -283,8 +283,8 @@ class PositionsUnpicklerTest extends kyo.test.Test[Any]:
         end while
 
         val view = ByteView(payload)
-        PositionsUnpickler.read(view, addrMap, Present("scale-test.scala")) match
-            case Result.Success(result) =>
+        PositionsUnpickler.read(view, addrMap, Present("scale-test.scala"), 0) match
+            case Result.Success((result, _)) =>
                 assert(result.size == N, s"Expected $N position entries but got ${result.size}")
                 // Spot-check 5 entries: indices 0, 999, 4999, 7777, 9999
                 // LongMap keyed by symbol.id.toLong.
@@ -345,8 +345,8 @@ class PositionsUnpicklerTest extends kyo.test.Test[Any]:
         )
         val view = ByteView(payload)
         // Use Present sourceFile so the overflow check is reached, not the absent-SOURCEFILE silent skip.
-        PositionsUnpickler.read(view, IntMap.empty, Present("test.scala")) match
-            case Result.Success(result) =>
+        PositionsUnpickler.read(view, IntMap.empty, Present("test.scala"), 0) match
+            case Result.Success((result, _)) =>
                 fail(s"Expected MalformedSection for overflow but got success with ${result.size} entries")
             case Result.Failure(TastyError.MalformedSection("Positions", reason, _)) =>
                 assert(
@@ -420,8 +420,8 @@ class PositionsUnpicklerTest extends kyo.test.Test[Any]:
         val addrMap = IntMap(1 -> symbol)
         val view    = ByteView(payload)
         // Use Present sourceFile so position entries are built, not the absent-SOURCEFILE silent skip.
-        PositionsUnpickler.read(view, addrMap, Present("test.scala")) match
-            case Result.Success(result) =>
+        PositionsUnpickler.read(view, addrMap, Present("test.scala"), 0) match
+            case Result.Success((result, _)) =>
                 // Verify the read succeeded; the position of symbol at offset 0 should be line 1, col 1
                 // LongMap keyed by symbol.id.toLong.
                 assert(result.contains(symbol.id.toLong), "Expected symbol.id to have a position entry")
@@ -484,8 +484,8 @@ class PositionsUnpicklerTest extends kyo.test.Test[Any]:
         val addrMap = IntMap(1 -> symbol)
         val view    = ByteView(payload)
         // Use Present sourceFile so position entries are built, not the absent-SOURCEFILE silent skip.
-        PositionsUnpickler.read(view, addrMap, Present("test.scala")) match
-            case Result.Success(result) =>
+        PositionsUnpickler.read(view, addrMap, Present("test.scala"), 0) match
+            case Result.Success((result, _)) =>
                 // LongMap keyed by symbol.id.toLong.
                 assert(result.contains(symbol.id.toLong), "Expected symbol.id to have a position entry")
                 val pos = result(symbol.id.toLong)

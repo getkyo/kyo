@@ -65,6 +65,33 @@ class ClasspathIndexImmutabilityTest extends kyo.test.Test[Any]:
         }
     }
 
+    "bySourceFile is an immutable Dict of Chunk, no Array field" in {
+        Abort.run[TastyError](
+            Tasty.withPickles(Chunk(plainClassPickle)) {
+                Tasty.classpath.map { classpath =>
+                    val idx1 = classpath.indices.bySourceFile
+                    val _    = classpath.findClass("kyo.fixtures.PlainClass")
+                    val idx2 = classpath.indices.bySourceFile
+                    (idx1, idx2)
+                }
+            }
+        ).map {
+            case Result.Success((idx1, idx2)) =>
+                // Dict[String, Chunk[SymbolId]] is the declared static type; this compiles only if bySourceFile has that type.
+                val _: Dict[String, Chunk[Tasty.SymbolId]] = idx1
+                // Identity check confirms val semantics (same backing object returned each time).
+                assert(
+                    java.lang.System.identityHashCode(idx1.asInstanceOf[AnyRef]) ==
+                        java.lang.System.identityHashCode(idx2.asInstanceOf[AnyRef]),
+                    "bySourceFile must be the same Dict instance (val semantics, immutable)"
+                )
+            case Result.Failure(e) =>
+                fail(s"Unexpected failure: $e")
+            case Result.Panic(t) =>
+                throw t
+        }
+    }
+
     "SingleAssign deletion check delegates to ClasspathIndexGrepTest (JVM)" in {
         succeed
     }

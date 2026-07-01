@@ -45,7 +45,8 @@ class BundledSnapshotProbeJarTest extends kyo.test.Test[Any]:
                 topLevelClassIds = Chunk.empty,
                 packageIds = Chunk.from(syms.map(_.id)),
                 unresolvedFullNameByNegId = Dict.empty[Tasty.SymbolId, String],
-                diagnostics = Chunk.empty
+                diagnostics = Chunk.empty,
+                bySourceFile = Dict.empty[String, Chunk[Tasty.SymbolId]]
             ),
             errors = Chunk.empty,
             modules = Chunk.empty,
