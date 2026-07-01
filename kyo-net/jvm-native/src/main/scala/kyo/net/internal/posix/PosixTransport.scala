@@ -540,6 +540,8 @@ final private[net] class PosixTransport private[posix] (
             upgradeToTls(connection, cfg, config.channelCapacity)
         }
         installCertHash(connection, handle)
+        // Point the handle's inboundSink at THIS connection before anything can reap on it (see PosixHandle.inboundSink).
+        handle.inboundSink = bytes => discard(connection.inbound.offer(bytes))
         // Prefix safety: the handshake may have pulled the peer's first application record off the socket and into the engine
         // (loopback delivers the final handshake flight and the first data together). That plaintext is in the engine buffer, NOT the socket, so
         // the ReadPump's socket-readiness read would never fire for it. Deliver it into inbound before starting the pumps so it is not stranded.
@@ -1003,6 +1005,8 @@ final private[net] class PosixTransport private[posix] (
             upgradeToTls(connection, cfg, config.channelCapacity)
         }
         installCertHash(connection, connection.handle)
+        // Point the handle's inboundSink at THIS connection before anything can reap on it (see PosixHandle.inboundSink).
+        connection.handle.inboundSink = bytes => discard(connection.inbound.offer(bytes))
         // Deliver any application plaintext the server handshake already decrypted (the client's first record may have arrived with the final
         // handshake flight) before the pumps start, so it is not stranded in the engine awaiting a socket read that never comes.
         deliverHandshakePlaintext(connection.handle, connection.inbound)
@@ -1321,6 +1325,11 @@ final private[net] class PosixTransport private[posix] (
                                 // produced by STARTTLS could not report its RFC 5929 channel-binding hash (certHashFn stays null ->
                                 // serverCertificateHash returns Absent). The re-upgrade function keeps the same role this upgrade ran in.
                                 wireUpgraded(upgraded, isServer)
+                                // Re-point the handle's inboundSink at the UPGRADED connection now (see PosixHandle.inboundSink), before anything
+                                // below can reap a late-arriving orphan recv that uses it: onFinished runs synchronously on the same carrier that
+                                // drains every completion for this handle (the reap carrier, for io_uring), so this write happens-before any
+                                // later completion on that same carrier observes it -- no separate synchronization needed.
+                                handle.inboundSink = bytes => discard(upgraded.inbound.offer(bytes))
                                 // Post-FINISHED slot drain: a peer flight (a TLS 1.3 NewSessionTicket, or any post-handshake record) can land in the
                                 // upgradeHandoff slot during the FINISHED transition with no parked waiter to consume it (the handshake stopped parking).
                                 // Feed it to the engine BEFORE deliverHandshakePlaintext so the engine's record sequence stays intact (an un-fed

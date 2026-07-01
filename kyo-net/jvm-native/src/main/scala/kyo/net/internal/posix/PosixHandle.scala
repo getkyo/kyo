@@ -163,6 +163,18 @@ final private[net] class PosixHandle private (
       */
     @volatile var engineFreeSink: (() => Unit) => Unit = op => op()
 
+    /** Deliver plaintext to whichever [[kyo.net.Connection]] CURRENTLY owns this handle. `PosixTransport` installs this at every point a
+      * connection's `inbound` channel becomes the active one for the handle (connect, accept, and a STARTTLS upgrade's `onFinished`, where it
+      * is re-pointed from the pre-upgrade connection's channel to the post-upgrade one before `upgraded.start()` runs). The driver uses it to
+      * deliver plaintext that did not arrive through the normal ReadPump promise path: a late-reaping orphan recv armed before an upgrade
+      * committed, reaping AFTER `onFinished` already ran (so no `driveUpgradeRead` consumer will ever drain an `upgradeHandoff` Carryover for
+      * it again) is fed to the engine and its plaintext delivered here directly, mirroring `PosixTransport.deliverHandshakePlaintext`'s own
+      * post-FINISHED slot drain for the same reason: staging it as a Carryover instead would silently lose it forever, leaving a permanent
+      * gap in the ciphertext stream for the engine's NEXT record (the mechanism behind the "Closed at collect" corruption, p10-fix-log.md).
+      * The default is a no-op so a driver with no upgrade machinery (or a handle before its first connection wiring) never crashes on it.
+      */
+    @volatile var inboundSink: Span[Byte] => Unit = _ => ()
+
     /** Ciphertext the TLS write path has produced but not yet sent to the peer (the backpressure tail). When the socket send buffer fills, the
       * driver appends the un-sent ciphertext here instead of busy-spinning the engine FIFO worker on EAGAIN; a later writable readiness event
       * re-submits a flush that drains it. Lazily allocated on the FIRST backpressure event so the common one-pass write allocates nothing

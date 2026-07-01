@@ -7,28 +7,42 @@ import kyo.net.Test
 import kyo.net.internal.tls.TlsRealEngines
 import kyo.net.internal.transport.ReadOutcome
 
-/** Reproduce-first confirmation of the "orphaned handshakeOwned recv" routing bug (P10, cell-8): a STARTTLS handshake's own producer recv
-  * (armed via [[IoUringDriver.awaitReadHandshake]], tagged `handshakeOwned`) that is STILL kernel-owned and in flight when the handshake
-  * reaches `onFinished` -- possible because `driveUpgradeRead`'s "no stale recv in flight" check races the reap carrier's own engine-FIFO
-  * enqueue ordering (a TOCTOU: enqueued-for-registration is not yet registered, see p10-fix-log.md) -- must still route through the
-  * upgrade-handoff slot when its CQE eventually reaps, even though by then `upgradeActive`/`upgrading` have already cleared and `tls` is
-  * already `Present` (onFinished's flag-clear order, `PosixTransport.upgradeRole`). Before the fix, [[IoUringDriver.complete]]'s routing keyed
-  * purely on `upgradeActive`/`upgrading`, so this orphan fell through into the ordinary TLS-feed branch: it fed its ciphertext directly into
-  * the engine (racing/interleaving with whatever the post-upgrade ReadPump's own recv feeds concurrently -- exactly the bad_record_mac
+/** Reproduce-first confirmation of TWO fixes for the "orphaned handshakeOwned recv" routing bug (P10, cell-8): a STARTTLS handshake's own
+  * producer recv (armed via [[IoUringDriver.awaitReadHandshake]], tagged `handshakeOwned`) that is STILL kernel-owned and in flight when the
+  * handshake reaches `onFinished` -- possible because `driveUpgradeRead`'s "no stale recv in flight" check races the reap carrier's own
+  * engine-FIFO enqueue ordering (a TOCTOU: enqueued-for-registration is not yet registered, see p10-fix-log.md) -- must never be fed straight
+  * into the ordinary TLS-feed branch, even though by the time its CQE reaps, `upgradeActive`/`upgrading` have already cleared and `tls` is
+  * already `Present` (onFinished's flag-clear order, `PosixTransport.upgradeRole`). Before the FIRST fix, [[IoUringDriver.complete]]'s routing
+  * keyed purely on `upgradeActive`/`upgrading`, so this orphan fell through into the ordinary TLS-feed branch: it fed its ciphertext directly
+  * into the engine (racing/interleaving with whatever the post-upgrade ReadPump's own recv feeds concurrently -- exactly the bad_record_mac
   * corruption shape) and completed its own throwaway producer promise with the result, which nothing observes (a silently dropped
   * application-data flight).
+  *
+  * FIRST fix (routing): [[IoUringDriver.complete]]'s 3rd clause (`handshakeOwned && h.isUpgraded`) identifies this recv as an orphan instead of
+  * letting it fall through to the ordinary TLS-feed branch.
+  *
+  * SECOND fix (this test's actual scope, matching [[IoUringStalePumpRecvRoutingTest]]'s non-`handshakeOwned` sibling case): once identified as
+  * an orphan, the OLD behavior staged the bytes as an `upgradeHandoff` Carryover -- correct only while a live `driveUpgradeRead` consumer could
+  * still drain it. But this recv reaps AFTER `onFinished` has ALREADY run to completion (`h.tls` is `Present`): the handshake-driving fiber that
+  * used to consume `upgradeHandoff` is DONE and will never check the slot again, so staging a Carryover here would silently lose these bytes
+  * forever, leaving a permanent gap in the ciphertext stream (the actual "Closed at collect" mechanism: the engine desyncs on whatever chunk
+  * reaps next). The fix feeds these bytes to the engine directly and delivers any resulting plaintext through `PosixHandle.inboundSink` instead.
   *
   * This test drives the EXACT reap-time state the orphan reaches, without needing to win the real TOCTOU race: it arms a real `handshakeOwned`
   * recv directly via [[IoUringDriver.awaitReadHandshake]] (mirroring `armUpgradeProducerRead`) while the handle is in the upgrade window
   * (`upgradeActive`/`upgrading` true, `tls` still `Absent`, exactly as `driveUpgradeRead`'s producer-arm branch runs), then flips the handle's
   * flags in the SAME order `onFinished` does (`upgradeActive`/`upgrading` false, `tls` attached) WHILE that recv is still kernel-owned and in
   * flight, and only then lets the peer's bytes reap it for real over io_uring. The routing decision under test is [[IoUringDriver.complete]]'s;
-  * nothing about the SQE/CQE path is faked.
+  * nothing about the SQE/CQE path is faked. The sent bytes are not valid ciphertext for the never-handshaked `serverEngine` (constructing a
+  * real paired handshake is exactly what the full-stack `IoUringMutualTlsStressTest` exercises), so the observable outcome is a fatal-record
+  * teardown rather than delivered plaintext; the assertions that matter here are that (a) `upgradeHandoff` NEVER becomes a `Carryover` (the
+  * bytes are never routed to the dead slot) and (b) the handle reaches a terminal state (the new path was genuinely exercised, not silently
+  * skipped).
   *
   * io_uring-only ([[PosixTestSockets.assumeUring]]): only io_uring has a kernel-owned recv that can outlive `onFinished` this way.
   *
-  * Anti-flakiness: no `Thread.sleep`, no busy-spin. `awaitCondition` polls a real, observable state transition (`upgradeHandoff` leaving
-  * `Idle`), mirroring [[IoUringQueuedRecvOrderingTest.awaitCondition]].
+  * Anti-flakiness: no `Thread.sleep`, no busy-spin. `awaitCondition` polls a real, observable state transition, mirroring
+  * [[IoUringQueuedRecvOrderingTest.awaitCondition]].
   */
 class IoUringOrphanHandshakeRecvRoutingTest extends Test:
 
@@ -47,7 +61,7 @@ class IoUringOrphanHandshakeRecvRoutingTest extends Test:
 
     "IoUringDriver orphaned handshakeOwned recv" - {
 
-        "reaping after upgradeActive/upgrading clear (onFinished already ran) routes through the upgrade-handoff slot, not the normal TLS-feed branch" in {
+        "reaping after upgradeActive/upgrading clear (onFinished already ran) feeds the engine directly instead of staging a now-dead upgrade-handoff Carryover" in {
             PosixTestSockets.assumeUring()
             TlsRealEngines.assumeTlsReady()
             given Frame = Frame.internal
@@ -89,6 +103,12 @@ class IoUringOrphanHandshakeRecvRoutingTest extends Test:
                             acceptedH.tls = Present(serverEngine)
                             acceptedH.upgrading = false
 
+                            // Observe whether the new path is exercised: inboundSink is the delivery target for a successful decode (not
+                            // reached here, since the bytes below are not valid ciphertext for this never-handshaked engine, but installing
+                            // it confirms the code never falls back to completing `producer` or leaving the connection silently open).
+                            val delivered = new java.util.concurrent.atomic.AtomicReference[Array[Byte]](null)
+                            acceptedH.inboundSink = bytes => delivered.set(bytes.toArray)
+
                             val payload = Array[Byte](1, 2, 3, 4, 5)
                             assert(sock.sendNow(
                                 client,
@@ -97,27 +117,32 @@ class IoUringOrphanHandshakeRecvRoutingTest extends Test:
                                 0
                             ).value == payload.length.toLong)
 
-                            awaitCondition(5.seconds) {
-                                acceptedH.upgradeHandoff.get() match
-                                    case _: PosixHandle.UpgradeHandoff.Carryover => true
-                                    case _                                       => false
-                            }.map { staged =>
+                            // Not valid TLS ciphertext for a never-handshaked engine: the expected outcome is a fatal-record teardown (the
+                            // same `closeHandle` path IoUringMutualTlsStressTest's real handshakes exercise on genuinely bad data), not
+                            // delivered plaintext. What this test actually pins is the ABSENCE of the old (buggy) behavior.
+                            awaitCondition(5.seconds)(acceptedH.isClosing()).map { closed =>
                                 assert(
-                                    staged,
-                                    s"orphan recv never staged a Carryover (slot=${acceptedH.upgradeHandoff.get()}); the routing fix did not fire"
+                                    closed,
+                                    "orphan recv's post-onFinished feed never reached a terminal state (a hang, not the fix under test)"
                                 )
+                                // The core regression guard: the bytes must NEVER be staged as a Carryover. Once onFinished has fully run, that
+                                // slot has no consumer left, so staging it there would silently lose the bytes forever (the actual "Closed at
+                                // collect" mechanism this fix closes) instead of being fed to the engine (whatever the engine then does with them).
                                 acceptedH.upgradeHandoff.get() match
-                                    case PosixHandle.UpgradeHandoff.Carryover(bytes) =>
-                                        assert(
-                                            bytes.toSeq == payload.toSeq,
-                                            s"staged Carryover bytes ${bytes.toSeq} != sent payload ${payload.toSeq}"
-                                        )
-                                    case other => fail(s"expected Carryover, got $other")
+                                    case _: PosixHandle.UpgradeHandoff.Carryover =>
+                                        fail(s"orphan recv's bytes were staged as a Carryover (slot=${acceptedH.upgradeHandoff.get()}) " +
+                                            "instead of being fed to the engine -- they would be lost forever, no consumer remains")
+                                    case _ => ()
                                 end match
-                                // The orphan's own throwaway producer promise must NEVER complete: routing it through upgradeHandoff means
-                                // nothing touches `producer` (armUpgradeProducerRead's design -- "the handshake observes only the slot").
-                                // Before the fix, the same bytes would instead have been fed to feedAndDecrypt and would have completed (or
-                                // failed) `producer` directly.
+                                // The raw bytes aren't a valid TLS record for the never-handshaked engine, so the fatal-record path fires
+                                // before any plaintext is produced: inboundSink must never see a delivery here.
+                                assert(
+                                    delivered.get() == null,
+                                    s"unexpected plaintext delivered from an undecodable record: ${delivered.get().toSeq}"
+                                )
+                                // The orphan's own throwaway producer promise must NEVER complete: its bytes are delivered via inboundSink (or
+                                // dropped on a fatal record), never through this recv's own promise (armUpgradeProducerRead's design -- "the
+                                // handshake observes only the slot").
                                 assert(producer.poll().isEmpty, s"producer promise must stay pending (orphaned); got ${producer.poll()}")
                                 discard(sock.close(client))
                                 succeed

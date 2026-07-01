@@ -1584,9 +1584,60 @@ final private[net] class IoUringDriver private[posix] (
                             // skip driveUpgradeRead, issue its own recv, and strand the staged Carryover. The handshake clears it once it takes the bytes.
                             import PosixHandle.UpgradeHandoff
                             java.lang.System.err.println(
-                                s"ZZTRACE-IOU staleRecvComplete fd=${h.readFd} res=$res slot=${h.upgradeHandoff.get().getClass.getSimpleName}"
+                                s"ZZTRACE-IOU staleRecvComplete fd=${h.readFd} res=$res slot=${h.upgradeHandoff.get().getClass.getSimpleName} tls=${h.tls.isDefined}"
                             )
-                            if res > 0 then
+                            // `h.tls.isDefined` (Present) means `onFinished` has ALREADY run for this handle: it is the ONLY writer of `tls`, and
+                            // it runs synchronously (same carrier that drains every completion for this handle, the reap carrier for io_uring),
+                            // so this read happens-after that write with no separate synchronization needed. Once onFinished has run, the
+                            // handshake-driving fiber that used to consume `upgradeHandoff` via `driveUpgradeRead` is DONE and will never check
+                            // this slot again -- staging a Carryover here would silently lose these bytes forever, leaving a permanent gap in the
+                            // ciphertext stream the engine expects to be contiguous (the NEXT recv's chunk then desyncs TLS record framing,
+                            // surfacing as an unrelated-looking fatal record or bad_record_mac on data that is itself perfectly fine). Feed it to
+                            // the engine directly instead, exactly as onFinished's own post-FINISHED slot drain does for a Carryover staged
+                            // during the transition window, and deliver any resulting plaintext via `h.inboundSink` -- the CURRENT connection's
+                            // inbound (kept up to date by PosixTransport at connect/accept/upgrade) -- instead of this orphan's own throwaway
+                            // promise, which nothing observes. Wire order is preserved for free: this engine op is enqueued synchronously inside
+                            // THIS complete() call, strictly before `drainQueuedRecv` (below) can even submit the queued recv's own SQE, so
+                            // `engineQueue`'s FIFO order guarantees this op decodes before that later recv's.
+                            if h.tls.isDefined && res > 0 then
+                                h.tls match
+                                    case Present(engine) =>
+                                        deferredDecrement = true
+                                        submitEngineOp { () =>
+                                            try
+                                                val buf         = if armedForStaging then recvStagingFor(h) else h.readBuffer
+                                                var fatalRecord = false
+                                                val plain = feedAndDecrypt(
+                                                    engine,
+                                                    buf,
+                                                    res,
+                                                    h,
+                                                    () =>
+                                                        fatalRecord = true; closeHandle(h)
+                                                )
+                                                java.lang.System.err.println(
+                                                    s"ZZTRACE-IOU stalePostFinishedFeed fd=${h.readFd} res=$res plain=${plain.length} fatalRecord=$fatalRecord"
+                                                )
+                                                if !fatalRecord && !h.isClosing() && plain.length > 0 then
+                                                    h.inboundSink(Span.fromUnsafe(plain))
+                                                    flushTls(h)
+                                                else if !fatalRecord && !h.isClosing() then
+                                                    flushTls(h)
+                                                end if
+                                            catch
+                                                case e: Throwable =>
+                                                    Log.live.unsafe.warn(
+                                                        s"$label TLS engine read failed (post-onFinished stale recv) fd=${h.readFd}: ${e.getMessage}"
+                                                    )
+                                                    closeHandle(h)
+                                        }
+                                    case Absent => () // unreachable: h.tls.isDefined was just checked on the same read
+                            else if h.tls.isDefined then
+                                // res <= 0 on a post-onFinished orphan: nothing to preserve. The current connection's own next recv (queued or
+                                // freshly armed) independently observes the actual current socket state (EOF/error), so dropping this stale
+                                // result is correct -- unlike the res > 0 case above, there is no application-data gap to worry about creating.
+                                ()
+                            else if res > 0 then
                                 val arr = Buffer.copyToArray[Byte](h.readBuffer, 0, res)
                                 h.upgradeHandoff.get() match
                                     case parked: UpgradeHandoff.Waiter =>

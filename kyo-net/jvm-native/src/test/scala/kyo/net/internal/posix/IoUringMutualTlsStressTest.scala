@@ -83,10 +83,16 @@ class IoUringMutualTlsStressTest extends Test:
                             _       <- conn.inbound.safe.take
                             _       <- Sync.defer(stage.set("upgrade"))
                             tlsConn <- transport.upgradeToTls(conn, clientTls, 16).safe.get
-                            _       <- Sync.defer(stage.set("put-payload"))
-                            _       <- tlsConn.outbound.safe.put(Span.fromUnsafe(payload))
-                            _       <- Sync.defer(stage.set("collect"))
-                            echoed  <- collectN(tlsConn, payload.length)
+                            _ <- Sync.defer {
+                                val h = tlsConn.asInstanceOf[kyo.net.internal.transport.Connection[PosixHandle]].handle
+                                java.lang.System.err.println(
+                                    s"ZZTRACE-STRESS client tag=$tag fd=${h.readFd} id=${h.id.packed} ch=${tlsConn.inbound.hashCode()}"
+                                )
+                            }
+                            _      <- Sync.defer(stage.set("put-payload"))
+                            _      <- tlsConn.outbound.safe.put(Span.fromUnsafe(payload))
+                            _      <- Sync.defer(stage.set("collect"))
+                            echoed <- collectN(tlsConn, payload.length)
                         yield
                             tlsConn.close()
                             echoed
