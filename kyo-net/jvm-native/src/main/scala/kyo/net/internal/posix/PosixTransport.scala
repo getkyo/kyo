@@ -1706,10 +1706,11 @@ final private[net] class PosixTransport private[posix] (
 
     /** The STARTTLS upgrade read path, confining every ciphertext recv to the I/O carrier so the handshake fiber never races it. The handshake
       * consumes bytes the I/O carrier delivered through the handle's [[PosixHandle.upgradeHandoff]] slot, or parks a fiber waiter the I/O carrier
-      * fulfils, and never issues its own recv. On io_uring the producer is the reap carrier delivering the one kernel-owned stale recv
+      * fulfils, and never issues its own recv. On io_uring the producer is the reap carrier delivering each kernel-owned recv it routes here
       * ([[IoUringDriver]]'s `complete` upgrade branch); on a readiness poller the producer is the poll carrier, armed via
-      * [[IoDriver.armUpgradeProducerRead]], reading each peer flight. io_uring clears [[PosixHandle.upgradeActive]] after its single stale recv;
-      * the poller keeps it set across the whole upgrade (the poll carrier is the standing producer for every read) and clears it at completion.
+      * [[IoDriver.armUpgradeProducerRead]], reading each peer flight. [[PosixHandle.upgradeActive]] stays set across the WHOLE upgrade on both
+      * backends (the poll carrier is the standing producer for every read on a poller; io_uring may have more than one recv in flight across the
+      * handshake, see the comment below), cleared only at completion (`onFinished`, see `driveHandshake`).
       */
     private def driveUpgradeRead(
         handle: PosixHandle,
