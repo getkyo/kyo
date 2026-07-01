@@ -1589,7 +1589,17 @@ final private[net] class IoUringDriver private[posix] (
                         else if res == 0 then
                             // Peer close via a bare TCP FIN (no close_notify, else the clean-close branch above delivered CleanClose first): record
                             // the peer-EOF half-close state, then deliver PeerFin.
-                            h.halfClose = HalfCloseState.PeerEof
+                            // GUARD: a res==0 here can also be OUR OWN closeHandle forcing this in-flight recv to complete (registerDeferredClose
+                            // shuts down the read half with SHUT_RD because io_uring holds its own reference to the fd and close(fd) alone would
+                            // never complete a kernel-owned recv). That self-induced completion reaps through this exact branch with no way to
+                            // tell it apart from a genuine unprompted peer FIN by `res` alone, so unconditionally stamping PeerEof would make a
+                            // locally-closed connection report Truncated instead of LocalClose. pendingCloses is set synchronously at the top of
+                            // closeHandle, strictly before the deferred SHUT_RD that produces this CQE, so its presence here reliably distinguishes
+                            // "we are the closer" from a real peer FIN; isClosing() cannot substitute (the plain close path never calls
+                            // requestClose() until closeNow, which runs only after this branch returns). The promise itself is unaffected: cancel
+                            // (run synchronously inside closeHandle, before SHUT_RD) already failed it Closed, so completeDiscard below is a no-op
+                            // on the closing path and only resolves the promise for a genuine peer FIN.
+                            if !pendingCloses.containsKey(h.id.packed) then h.halfClose = HalfCloseState.PeerEof
                             promise.completeDiscard(Result.succeed(ReadOutcome.PeerFin))
                         else
                             promise.completeDiscard(Result.fail(Closed(label, summon[Frame], s"read errno=${-res}")))
