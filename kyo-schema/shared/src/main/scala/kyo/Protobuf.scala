@@ -12,7 +12,7 @@ end Protobuf
 /** Entry point for Protocol Buffers binary serialization and schema generation.
   *
   * All methods are inline and require a `Schema[A]` instance in scope. Encoding produces proto3 wire-format bytes. Field numbers are
-  * derived from stable MurmurHash3 hashes of field names, enabling schema evolution without breaking existing encoded data.
+  * derived from stable XXH32 hashes of field names, enabling schema evolution without breaking existing encoded data.
   *
   * @see
   *   [[kyo.Schema]] for the type-driven serialization model
@@ -195,7 +195,7 @@ object Protobuf:
       *
       * Pure and total: no encode, no decode, no throw. One [[FieldNumberInfo]] per user-facing
       * message field, with a dotted `path` for nested messages. `number` is the field number the
-      * codec actually writes (the MurmurHash3 scheme, or a leaf-name `Schema.fieldId` override),
+      * codec actually writes (the XXH32 scheme, or a leaf-name `Schema.fieldId` override),
       * `pinned` is true when the number came from an override, and `inReservedRange` is true when
       * the number falls in proto3's reserved band 19000-19999 (which external protoc rejects).
       *

@@ -634,7 +634,7 @@ Protobuf.decode[User](bytes)
 // Result.Success(alice)
 ```
 
-No annotations, no `.proto` files. Each field gets a stable numeric ID derived from its name via MurmurHash3. Adding, removing, or reordering fields in the case class does not break existing serialized data, because IDs are name-based rather than position-based.
+No annotations, no `.proto` files. Each field gets a stable numeric ID derived from its name via XXH32. Adding, removing, or reordering fields in the case class does not break existing serialized data, because IDs are name-based rather than position-based.
 
 The hashed IDs occupy a 21-bit range (~2 million values). For schemas with a few dozen fields, accidental collisions are statistically negligible but not impossible. If you need certainty (for example, for fields that must round-trip across independently versioned services), you can pin IDs explicitly.
 
@@ -670,33 +670,33 @@ val proto = Protobuf.protoSchema[User]
 // syntax = "proto3";
 //
 // message Address {
-//   string city = 1842612;  // hash-derived field number; pin via Schema.fieldId for stable external interop
-//   string zip = 739203;  // hash-derived field number; pin via Schema.fieldId for stable external interop
+//   string city = 1771380;  // hash-derived field number; pin via Schema.fieldId for stable external interop
+//   string zip = 366489;  // hash-derived field number; pin via Schema.fieldId for stable external interop
 // }
 //
 // message User {
-//   sint32 id = 1243642;  // hash-derived field number; pin via Schema.fieldId for stable external interop
-//   string name = 1790876;  // hash-derived field number; pin via Schema.fieldId for stable external interop
-//   string email = 1459300;  // hash-derived field number; pin via Schema.fieldId for stable external interop
-//   string password = 508918;  // hash-derived field number; pin via Schema.fieldId for stable external interop
-//   Address address = 1702831;  // hash-derived field number; pin via Schema.fieldId for stable external interop
+//   sint32 id = 671968;  // hash-derived field number; pin via Schema.fieldId for stable external interop
+//   string name = 770848;  // hash-derived field number; pin via Schema.fieldId for stable external interop
+//   string email = 2042990;  // hash-derived field number; pin via Schema.fieldId for stable external interop
+//   string password = 814318;  // hash-derived field number; pin via Schema.fieldId for stable external interop
+//   Address address = 2084274;  // hash-derived field number; pin via Schema.fieldId for stable external interop
 // }
 ```
 
-The field numbers in the generated `.proto` match the wire field numbers the codec writes: each is the MurmurHash3-derived value for that field name, the same number used at encode and decode. Hash-derived fields carry a provenance comment. Pinning a field with `fieldId` removes the provenance comment and writes the pinned number on the wire instead. A hash-derived number in proto3's reserved range (19000-19999) escalates the comment to a WARNING because external `protoc` rejects numbers in that band. The specific numbers in the examples above (1842612, 739203, and so on) are the hash-derived values for those field names and are shown for illustration; the actual values for your types are computed at compile time from field names via the same formula.
+The field numbers in the generated `.proto` match the wire field numbers the codec writes: each is the XXH32-derived value for that field name, the same number used at encode and decode. Hash-derived fields carry a provenance comment. Pinning a field with `fieldId` removes the provenance comment and writes the pinned number on the wire instead. A hash-derived number in proto3's reserved range (19000-19999) escalates the comment to a WARNING because external `protoc` rejects numbers in that band. The specific numbers in the examples above (1771380, 366489, and so on) are the hash-derived values for those field names and are shown for illustration; the actual values for your types are computed at compile time from field names via the same formula.
 
 `Protobuf.fieldNumberAudit[A]` returns one `FieldNumberInfo` per message field, depth-first, reporting the wire field number, a `pinned` flag, and an `inReservedRange` flag without performing any encode or decode:
 
 ```scala
 val audit = Protobuf.fieldNumberAudit[User]
 // Chunk.Indexed(
-//   FieldNumberInfo(id,id,1243642,false,false),       // numbers are hash-derived for these field names
-//   FieldNumberInfo(name,name,1790876,false,false),
-//   FieldNumberInfo(email,email,1459300,false,false),
-//   FieldNumberInfo(password,password,508918,false,false),
-//   FieldNumberInfo(address,address,1702831,false,false),
-//   FieldNumberInfo(address.city,city,1842612,false,false),
-//   FieldNumberInfo(address.zip,zip,739203,false,false)
+//   FieldNumberInfo(id,id,671968,false,false),       // numbers are hash-derived for these field names
+//   FieldNumberInfo(name,name,770848,false,false),
+//   FieldNumberInfo(email,email,2042990,false,false),
+//   FieldNumberInfo(password,password,814318,false,false),
+//   FieldNumberInfo(address,address,2084274,false,false),
+//   FieldNumberInfo(address.city,city,1771380,false,false),
+//   FieldNumberInfo(address.zip,zip,366489,false,false)
 // )
 ```
 
@@ -717,7 +717,7 @@ MsgPack.decode[User](bytes)
 
 Case classes encode as a MessagePack map keyed by field name, collections as arrays, `Option`/`Maybe` as the value or `nil`, and `Span[Byte]` as a binary blob. `MsgPack.decode` accepts the same `maxDepth` and `maxCollectionSize` safety limits as `Json.decode`.
 
-The wire shape is configurable through `MsgPack.Config`. For a more compact payload, switch field keys from names to the same stable MurmurHash3 IDs the Protobuf codec uses:
+The wire shape is configurable through `MsgPack.Config`. For a more compact payload, switch field keys from names to the same stable XXH32 IDs the Protobuf codec uses:
 
 ```scala
 given MsgPack = MsgPack(MsgPack.Config(keyEncoding = MsgPack.KeyEncoding.FieldId))
@@ -1205,7 +1205,7 @@ f.doc         // Maybe[String]            (documentation attached via .doc(_.por
 f.deprecated  // Maybe[String]            (deprecation reason, if any)
 f.default     // Maybe[Int]               (compile-time default from the case class)
 f.optional    // Boolean                  (true if typed Option or Maybe)
-f.fieldId     // Int                      (stable wire ID, MurmurHash3-based unless pinned)
+f.fieldId     // Int                      (stable wire ID, XXH32-based unless pinned)
 f.constraints // Chunk[Schema.Constraint] (validators targeting this path)
 ```
 
