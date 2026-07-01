@@ -1349,6 +1349,16 @@ lazy val `kyo-net` =
         .nativeSettings(
             `native-settings`,
             `openssl-native-settings`,
+            // Scala Native compiles the WHOLE module's tests into one binary, and sbt's Native test bridge runs multiple TaskDefs (suites)
+            // concurrently within that single process (real OS threads, unlike the JVM's per-suite fork isolation). Under that concurrency,
+            // MANY suites' driver pools (each spawning its own reap-loop threads, sockets, and fds) are alive SIMULTANEOUSLY, competing for the
+            // process-wide thread scheduler and fd table. That contention, not a logic bug, reproducibly wedges the accept loop under load
+            // (TransportListenerTest's "handler throws" leaf; confirmed against BOTH the io_uring and epoll drivers, so it is driver-agnostic)
+            // and separately appears to correlate with a rare SIGSEGV: a direct A/B (5/5 clean sequential vs roughly 1-in-3 hang under the sbt
+            // default) confirms the contention, not the driver logic, is the variable. parallelExecution = false serializes suite execution so
+            // at most one suite's driver pool is alive at a time, mirroring kyo-browser's Chrome-contention mitigation for the same shape of
+            // problem (many heavy per-suite resources competing for the same host).
+            Test / parallelExecution := false,
             // KyoFfiPlugin bundles the C shims (kyo_uring.c, kyo_net_boringssl.c, kyo_net_openssl.c)
             // into the Scala Native binary by copying them under resources/scala-native (Scala Native
             // scans that dir on the classpath and compiles the C into the binary). Feed the static-folded
