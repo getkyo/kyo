@@ -1,5 +1,6 @@
 package kyo
 
+import demo.ClickBridgeScene
 import demo.ServerBridgeStructuralScene
 import demo.ServerBridgeStructuralScene.Item
 
@@ -21,6 +22,12 @@ import demo.ServerBridgeStructuralScene.Item
   * live object verbatim). The Reconciler-level `regionFor`/`foreachReplace`/`reactiveReplace` leaves
   * in `ReconcilerTest` stay as the permanent layer-appropriate carrier for the diff mechanics
   * themselves; this test proves the SAME mechanics fire correctly through the real wire.
+  *
+  * Also asserts the interaction half's raycast-click bridge: `demo.ClickBridgeScene.ui` embeds two
+  * canvases, one with a `foreach`-keyed clickable cube and one with a `render`/`when` clickable cube,
+  * and a real `Browser.click` on each resolves SERVER-SIDE through `Three.resolveOnClick`'s
+  * `Ast.Foreach` and `Ast.Reactive` arms respectively, reflecting into a shared DOM label over the
+  * same `/_kyo/ws` socket the structural push uses.
   *
   * Runs in a real software-WebGL Chrome via CDP; cancels (skips) where no Chrome can be downloaded.
   */
@@ -110,6 +117,96 @@ class ThreeStructuralBridgeBrowserTest extends WebGLSceneHarness:
                 )
         }
     }
+
+    "a real raycast-click on a server-driven foreach child, and on server-driven render/when content, both resolve SERVER-SIDE and reach the client over the same /_kyo/ws socket" in {
+        cancelOnUnsupportedPlatform {
+            for
+                lastClicked <- Signal.initRef("none")
+                result <- servedClick(lastClicked) { url =>
+                    swiftshaderLaunch.map { launch =>
+                        Browser.run(launch) {
+                            for
+                                _            <- Browser.goto(url)
+                                _            <- Browser.waitFor("window.__bridgeReady === true").handle(diagnoseClickBridgeTimeout)
+                                initialLabel <- Browser.eval("""String(document.querySelector('#clicked-label')?.textContent || '')""")
+                                // A real click on the foreach-keyed canvas raycasts client-side and posts a
+                                // BackendEvent the server resolves via resolveOnClick's Ast.Foreach arm.
+                                _            <- Browser.click(Browser.Selector.id("stage-foreach"))
+                                _            <- Browser.assertText(Browser.Selector.id("clicked-label"), "foreach-hit")
+                                afterForeach <- Browser.eval("""String(document.querySelector('#clicked-label')?.textContent || '')""")
+                                // A real click on the render/when canvas raycasts client-side and posts a
+                                // BackendEvent the server resolves via resolveOnClick's Ast.Reactive arm (the
+                                // boundary's OWN relPath, no extra segment).
+                                _             <- Browser.click(Browser.Selector.id("stage-reactive"))
+                                _             <- Browser.assertText(Browser.Selector.id("clicked-label"), "render-hit")
+                                afterReactive <- Browser.eval("""String(document.querySelector('#clicked-label')?.textContent || '')""")
+                                tuple: (String, String, String) = (initialLabel, afterForeach, afterReactive)
+                            yield tuple
+                        }
+                    }
+                }
+            yield
+                val (initialLabel, afterForeach, afterReactive) = result
+                assert(initialLabel == "none", s"the SSR-hydrated label must read 'none' before any click, got '$initialLabel'")
+                assert(afterForeach == "foreach-hit", s"the foreach child's onClick must resolve server-side, got '$afterForeach'")
+                assert(afterReactive == "render-hit", s"the render/when content's onClick must resolve server-side, got '$afterReactive'")
+        }
+    }
+
+    /** Serves the SSR page for `demo.ClickBridgeScene.ui(lastClicked)` through the real
+      * `UI.runHandlers`, alongside the linked demo bundle and the three.js sources its import map
+      * resolves, and hands the served URL to `f`. Mirrors `servedStructural`, pointed at the
+      * click-bridge hydrate export instead.
+      */
+    private def servedClick[A](lastClicked: SignalRef[String])(
+        f: String => A < (Async & Scope & Abort[BrowserException])
+    )(using Frame): A < (Async & Scope & Abort[BrowserException]) =
+        for
+            // The demos bundle is ONE ES module graph carrying every demo (including ones that import
+            // OrbitControls/GLTFLoader/etc. at module scope); the whole import map must resolve even
+            // though ClickBridgeHydrate itself uses none of those, mirroring servedStructural/servedBridge.
+            bundle    <- WebGLSceneHarness.readDemoBundle
+            module    <- WebGLSceneHarness.readThreeSource("three.module.js")
+            core      <- WebGLSceneHarness.readThreeSource("three.core.js")
+            gltf      <- WebGLSceneHarness.readThreeJsm("loaders/GLTFLoader.js")
+            bufUtils  <- WebGLSceneHarness.readThreeJsm("utils/BufferGeometryUtils.js")
+            skelUtils <- WebGLSceneHarness.readThreeJsm("utils/SkeletonUtils.js")
+            orbit     <- WebGLSceneHarness.readThreeJsm("controls/OrbitControls.js")
+            bootJs = """import { hydrateClickBridge } from "/main.js"; hydrateClickBridge();"""
+            head = UI.PageHead(
+                "kyo-threejs click bridge test",
+                moduleScript = Present("/boot.js"),
+                importMap = Seq(
+                    "three"                                        -> "/three.module.js",
+                    "three/examples/jsm/loaders/GLTFLoader.js"     -> "/three/examples/jsm/loaders/GLTFLoader.js",
+                    "three/examples/jsm/controls/OrbitControls.js" -> "/three/examples/jsm/controls/OrbitControls.js"
+                )
+            )
+            appHandlers <- UI.runHandlers("/", head)(ClickBridgeScene.ui(lastClicked))
+            server <- HttpServer.init(0, "localhost")(
+                (appHandlers ++ Seq(
+                    WebGLSceneHarness.jsHandler("boot.js", bootJs),
+                    WebGLSceneHarness.jsHandler("main.js", bundle),
+                    WebGLSceneHarness.jsHandler("three.module.js", module),
+                    WebGLSceneHarness.jsHandler("three.core.js", core),
+                    WebGLSceneHarness.jsHandler("three/examples/jsm/loaders/GLTFLoader.js", gltf),
+                    WebGLSceneHarness.jsHandler("three/examples/jsm/utils/BufferGeometryUtils.js", bufUtils),
+                    WebGLSceneHarness.jsHandler("three/examples/jsm/utils/SkeletonUtils.js", skelUtils),
+                    WebGLSceneHarness.jsHandler("three/examples/jsm/controls/OrbitControls.js", orbit)
+                ))*
+            )
+            result <- f(s"http://localhost:${server.port}/")
+        yield result
+    end servedClick
+
+    /** On a click-bridge-ready timeout, surfaces the page-side error (if any) as part of the failure. */
+    private def diagnoseClickBridgeTimeout(
+        wait: String < (Browser & Abort[BrowserReadException])
+    )(using Frame): String < (Browser & Abort[BrowserReadException]) =
+        Abort.recover[BrowserReadException] { _ =>
+            for ready <- Browser.eval("String(window.__bridgeReady)")
+            yield Abort.fail(BrowserScriptErrorException(s"click bridge hydrate ready flag never set: bridgeReady=$ready"))
+        }(wait)
 
     /** Serves the SSR page for `demo.ServerBridgeStructuralScene.ui(items)` through the real
       * `UI.runHandlers`, alongside the linked demo bundle and the three.js sources its import map

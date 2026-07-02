@@ -238,6 +238,53 @@ class ReconcilerTest extends ThreeTest:
         }
     }
 
+    "a raw Three.reactive(Signal.initConst(...)) region does not churn: runReactiveRegion materializes it exactly once" in {
+        // Signal.initConst's current/next both resolve immediately with the SAME instance, so a bare
+        // Loop.foreach over signal.next would treat every resolution as a genuine change and fire step
+        // forever, continuously disposing and re-materializing the subtree. watchDistinct dedups the raw
+        // Absent arm the same way it already dedups the Foreach/render arms, so this region must
+        // materialize exactly once no matter how many scheduler turns the watcher fiber gets.
+        val leaf  = Three.mesh(Three.Geometry.box(), Three.Material.basic())
+        val node  = Three.reactive(Signal.initConst(leaf: Three))
+        val scene = Three.scene(node)
+        for
+            matCount     <- AtomicInt.init
+            materialized <- Channel.initUnscoped[Unit](1)
+            fiber <- Fiber.initUnscoped(
+                Scope.run {
+                    for
+                        mountResult <- Reconciler.mount(scene)
+                        (_, mounted) = mountResult
+                        _ = mounted.subscribeElement = _ =>
+                            matCount.incrementAndGet.andThen(Abort.run[Closed](materialized.offer(())).unit)
+                        region = Reconciler.reactiveRegions(mounted).head
+                        _ <- Reconciler.runReactiveRegion(region, mounted)
+                    yield ()
+                }
+            )
+            // The first materialize is necessary (both the old bare loop and the fix reach it): wait for it.
+            _          <- Abort.run[Closed](materialized.take)
+            afterFirst <- matCount.get
+            // Bounded scheduler-yield sweep (mirrors ThreeMountTest's "interrupt cascades" leaf): give the
+            // still-running watcher 50 real scheduler turns BEFORE interrupting it. A deduped watcher never
+            // materializes again no matter how many turns it gets; an un-deduped watcher consumes every one
+            // of them to re-dispose/re-materialize, so the count keeps climbing.
+            grew <- Loop.indexed { i =>
+                if i >= 50 then Loop.done(false)
+                else
+                    Fiber.initUnscoped(Kyo.unit).map(_.get).andThen {
+                        matCount.get.map(n => if n > afterFirst then Loop.done(true) else Loop.continue)
+                    }
+            }
+            finalCount <- matCount.get
+            _          <- fiber.interrupt
+        yield
+            assert(afterFirst == 1, s"the raw const-driven region must materialize exactly once, got $afterFirst")
+            assert(!grew, "the raw const-driven region must not keep re-materializing across further scheduler turns")
+            assert(finalCount == 1, s"a const-driven raw reactive must never churn past its first materialize, got $finalCount")
+        end for
+    }
+
     "nested group map: all nodes appear at every depth" in {
         val mesh  = Three.mesh(Three.Geometry.box(), Three.Material.basic())
         val inner = Three.group(mesh)

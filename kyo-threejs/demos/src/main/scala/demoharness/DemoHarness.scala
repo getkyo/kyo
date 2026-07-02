@@ -82,51 +82,6 @@ object DemoHarness:
         val _ = Sync.Unsafe.evalOrThrow(Fiber.initUnscoped(rendererReleaseProbe(selector)).unit)
     end mountRendererReleaseProbe
 
-    /** Mounts a pure kyo-ui tree containing a `UI.host("div")` through `UI.runMount`, driving the
-      * `DomBackend.fireHostMounts` seam on a real element. The mount callback increments
-      * `window.__hostMountCount` and sets `data-mounted="1"` on the host element; a sibling
-      * reactive span tracks a `SignalRef[Int]` driven externally via `window.__setHostCount`.
-      * Raises `window.__hostReady` when the mount callback has fired.
-      */
-    @JSExportTopLevel("mountHostProbe")
-    def mountHostProbe(): Unit =
-        // Unsafe: the page-to-kyo boundary, mirroring mountRendererReleaseProbe; runs the probe on a
-        // detached fiber and the AllowUnsafe is scoped to this entry call.
-        import AllowUnsafe.embrace.danger
-        val _ = Sync.Unsafe.evalOrThrow(Fiber.initUnscoped(hostProbe()).unit)
-    end mountHostProbe
-
-    private def hostProbe()(using Frame): Unit < Async =
-        Scope.run {
-            for
-                counter <- Signal.initRef(0)
-                tree =
-                    UI.div(
-                        UI.host("div") { el =>
-                            Sync.defer {
-                                val w = dom.window.asInstanceOf[js.Dynamic]
-                                val prev =
-                                    if js.isUndefined(w.__hostMountCount) then 0
-                                    else w.__hostMountCount.asInstanceOf[Int]
-                                w.__hostMountCount = prev + 1
-                                el.setAttribute("data-mounted", "1")
-                                // Expose a setter so the browser test can drive sibling re-renders without a
-                                // button, and observe that the host element identity is unchanged after each.
-                                w.__setHostCount = js.Any.fromFunction1 { (n: Int) =>
-                                    import AllowUnsafe.embrace.danger
-                                    val _ = Sync.Unsafe.evalOrThrow(counter.set(n).unit)
-                                }
-                                w.__hostReady = true
-                            }
-                        }.id("host-stage"),
-                        counter.map(n => UI.span(n.toString).id("host-count"))
-                    )
-                _ <- Fiber.init(UI.runMount(tree))
-                _ <- Async.never
-            yield ()
-        }
-    end hostProbe
-
     /** Mounts the embedded-3D kyo-ui tree through `UI.runMount` into the page, so kyo-ui's
       * `DomBackend.fireHostMounts` fires the `Three.embed` host's mount on the live canvas, holds
       * it for one rendered frame, then closes the page Scope and records whether the embedded WebGL

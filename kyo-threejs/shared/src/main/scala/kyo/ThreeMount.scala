@@ -2,6 +2,7 @@ package kyo
 
 import kyo.internal.GltfLoader
 import kyo.internal.Image
+import kyo.internal.PointerWire
 import kyo.internal.Raycasting
 import kyo.internal.Reconciler
 import kyo.internal.TextureLoader
@@ -9,6 +10,7 @@ import kyo.internal.ThreeFacade
 import kyo.internal.ThreeFacadeOps
 import org.scalajs.dom
 import scala.scalajs.js
+import scala.scalajs.js.JSConverters.*
 import scala.scalajs.js.typedarray.Uint8Array
 
 /** Internal implementation home for the Three scene runner and frame loop. The six public
@@ -169,133 +171,6 @@ object ThreeMount:
                 else Log.error("Three.embed mount panicked", e)
         }
     end hostMountPipeline
-
-    /** The client feed receiver: wires a per-signal-id mirror into the existing inbound `HostUpdate`
-      * routing. Registers a receiver on
-      * `window.__kyoHostChannels[id]` (the SAME registry the inline kyo-ui clientJs routes a `HostUpdate`
-      * into, `HtmlRenderer.scala:771-799`, with the same late-registration flush) that decodes an inbound
-      * `HostPayload.SignalUpdate` for this `id`, decodes its `encoded` payload with `Schema[A]`, and writes
-      * the value into `mirror`. The scene mount already forked a `forkBoundRef` observe fiber for `mirror`
-      * (the user bound it with `.color(mirror)`/`.position(mirror)`), so the write drives exactly one
-      * targeted `patchProp` on the one bound live node. A malformed payload, a non-`SignalUpdate` leaf, or
-      * a decode failure is a silent no-op (the fire-and-forget feed policy). The receiver is dropped on
-      * `Scope` close so a closed page leaves no stale entry.
-      */
-    private[kyo] def connectFeed[A: Schema](id: String, mirror: SignalRef[A])(using Frame): Unit < (Async & Scope) =
-        // Unsafe: a JS-callback bridge from the inbound WS onmessage routing into the mirror SignalRef.
-        // evalOrThrow runs the mirror write synchronously, the same Sync.Unsafe convention as
-        // connectFeedChunk and the pointer listeners.
-        import AllowUnsafe.embrace.danger
-        val rx: js.Function1[js.Any, Unit] = (payload: js.Any) =>
-            val json = js.JSON.stringify(payload)
-            Json.decode[kyo.internal.HostPayload](json) match
-                case Result.Success(kyo.internal.HostPayload.SignalUpdate(sid, encoded)) if sid == id =>
-                    Json.decode[A](encoded) match
-                        case Result.Success(value) => Sync.Unsafe.evalOrThrow(mirror.set(value))
-                        case _                     => ()
-                case _ => ()
-            end match
-        for
-            // Unsafe: registers the receiver on the live `window.__kyoHostChannels` registry by id; a
-            // synchronous DOM write deferred so it stays inside the effect.
-            _ <- Sync.Unsafe.defer {
-                val w = dom.window.asInstanceOf[js.Dynamic]
-                if js.isUndefined(w.__kyoHostChannelRegister) then
-                    if js.isUndefined(w.__kyoHostChannels) then w.__kyoHostChannels = js.Dynamic.literal()
-                    w.__kyoHostChannels.asInstanceOf[js.Dictionary[js.Any]].update(id, rx)
-                else
-                    discard(w.__kyoHostChannelRegister(id, rx))
-                end if
-            }
-            // Unsafe: drops the receiver from the registry on Scope close so a remount leaks no channel.
-            _ <- Scope.ensure(Sync.Unsafe.defer {
-                val w = dom.window.asInstanceOf[js.Dynamic]
-                if !js.isUndefined(w.__kyoHostChannels) then
-                    discard(w.__kyoHostChannels.asInstanceOf[js.Dictionary[js.Any]].remove(id))
-            })
-        yield ()
-        end for
-    end connectFeed
-
-    /** The client STRUCTURAL feed receiver: the structural analog of [[connectFeed]]. Registers a receiver
-      * on `window.__kyoHostChannels[id]` (the
-      * SAME registry, with the same late-registration flush) that decodes an inbound
-      * `HostPayload.SignalChunk` for this `id`, decodes its `encoded` payload with `Schema[Chunk[A]]`, and
-      * writes the whole snapshot into `mirror`. The scene bound `mirror` with `.foreachKeyed(key)(render)`,
-      * so the write drives the client's own keyed reconciler (`subscribeReactiveRegions`), which diffs the
-      * snapshot locally: an unchanged key reuses its live object (GPU buffers survive), a new key
-      * materializes, a dropped key disposes. A malformed payload, a non-`SignalChunk` leaf, or a decode
-      * failure is a silent no-op. The receiver is dropped on `Scope` close.
-      */
-    private[kyo] def connectFeedChunk[A: Schema](id: String, mirror: SignalRef[Chunk[A]])(using Frame): Unit < (Async & Scope) =
-        // Unsafe: a JS-callback bridge from the inbound WS onmessage routing into the mirror SignalRef.
-        // evalOrThrow runs the mirror write synchronously, the same Sync.Unsafe convention as
-        // connectFeed and the pointer listeners.
-        import AllowUnsafe.embrace.danger
-        val rx: js.Function1[js.Any, Unit] = (payload: js.Any) =>
-            val json = js.JSON.stringify(payload)
-            Json.decode[kyo.internal.HostPayload](json) match
-                case Result.Success(kyo.internal.HostPayload.SignalChunk(sid, encoded)) if sid == id =>
-                    Json.decode[Chunk[A]](encoded) match
-                        case Result.Success(value) => Sync.Unsafe.evalOrThrow(mirror.set(value))
-                        case _                     => ()
-                case _ => ()
-            end match
-        for
-            // Unsafe: registers the receiver on the live `window.__kyoHostChannels` registry by id; a
-            // synchronous DOM write deferred so it stays inside the effect.
-            _ <- Sync.Unsafe.defer {
-                val w = dom.window.asInstanceOf[js.Dynamic]
-                if js.isUndefined(w.__kyoHostChannelRegister) then
-                    if js.isUndefined(w.__kyoHostChannels) then w.__kyoHostChannels = js.Dynamic.literal()
-                    w.__kyoHostChannels.asInstanceOf[js.Dictionary[js.Any]].update(id, rx)
-                else
-                    discard(w.__kyoHostChannelRegister(id, rx))
-                end if
-            }
-            // Unsafe: drops the receiver from the registry on Scope close so a remount leaks no channel.
-            _ <- Scope.ensure(Sync.Unsafe.defer {
-                val w = dom.window.asInstanceOf[js.Dynamic]
-                if !js.isUndefined(w.__kyoHostChannels) then
-                    discard(w.__kyoHostChannels.asInstanceOf[js.Dictionary[js.Any]].remove(id))
-            })
-        yield ()
-        end for
-    end connectFeedChunk
-
-    /** The client app-event POST: the client leg of `Three.Feed.emit`. Encodes `event` with `Schema[A]`,
-      * then posts a `UIEvent.AppEvent(path, id,
-      * encoded)` over the page's single WS via the inline kyo-ui client helper `window.__kyoPostAppEvent`
-      * (installed by the page's clientJs). When that helper is not
-      * present (called outside an island feed context: no page WS bound), the effect fails with the typed
-      * `ThreeException.FeedUnavailable(id)` rather than dropping the event silently. The `path` is the host
-      * path segments (empty for a root host); routing is by `id` server-side.
-      */
-    private[kyo] def postAppEvent[A: Schema](id: String, event: A)(using Frame): Unit < (Async & Abort[ThreeException]) =
-        Sync.defer(Json.encode[A](event)).map { encoded =>
-            Sync.Unsafe.defer {
-                // Unsafe: a one-shot read of the inline-client post helper on the live window. The helper
-                // sends the AppEvent over the page's single WS (or buffers it until open). Guard the global
-                // `window` itself: outside a DOM context (a server/test call) there is no window, which is
-                // the no-channel-bound case, surfaced as FeedUnavailable rather than a ReferenceError.
-                import AllowUnsafe.embrace.danger
-                // `js.typeOf(...)` keeps the global `window` selection on the LHS of a `.`-access (the only
-                // legal way to probe the global scope on Scala.js); "undefined" means no DOM context.
-                if js.typeOf(js.Dynamic.global.window) == "undefined" then Maybe.empty[Unit]
-                else
-                    val w = js.Dynamic.global.window
-                    if js.isUndefined(w.__kyoPostAppEvent) then Maybe.empty[Unit]
-                    else
-                        discard(w.__kyoPostAppEvent(js.Array[String](), id, encoded))
-                        Present(())
-                    end if
-                end if
-            }.map {
-                case Present(_) => Kyo.unit
-                case Absent     => Abort.fail(ThreeException.FeedUnavailable(id))
-            }
-        }
-    end postAppEvent
 
     /** Resolves the `<canvas>` at `selector`; `CanvasNotFound` when no element matches. */
     def resolveCanvas(selector: String)(using Frame): js.Dynamic < (Sync & Abort[ThreeException]) =
@@ -541,6 +416,10 @@ object ThreeMount:
                 case Result.Success(eff) => eff.andThen(Loop.continue)
                 case Result.Failure(_)   => Loop.done
             }))
+            // The sink forks on mode: server (a page WS with the post seam installed) posts a BackendEvent
+            // addressed by the hit object's path->Live inverse; client-local (runMount, no page WS) runs the
+            // onClick closure locally, unchanged. Mode is detected by the post seam's presence: runMount
+            // installs no clientJs, so the seam is absent there.
             clickHandler = (evt: dom.PointerEvent) =>
                 // Unsafe: JS event callback crossing into Kyo effect; evalOrThrow runs the Sync effect synchronously.
                 import AllowUnsafe.embrace.danger
@@ -548,13 +427,31 @@ object ThreeMount:
                 discard(Sync.Unsafe.evalOrThrow(Abort.runPartial[Closed](
                     Raycasting.hit(mounted, camera, ndc).map {
                         case Present((live, pointer)) =>
-                            live.node match
-                                case i: Three.Ast.Interactive =>
-                                    i.meshProps.onClick.foreach(f =>
-                                        discard(events.unsafe.offer(f(pointer)))
-                                    )
-                                case _ => ()
-                        case Absent => ()
+                            Sync.Unsafe.defer {
+                                // Unsafe: a one-shot read of the inline-client post seam on the live window;
+                                // "undefined" outside a DOM/island-server context (a runMount or test call)
+                                // selects the client-local branch.
+                                import AllowUnsafe.embrace.danger
+                                (if js.typeOf(js.Dynamic.global.window) != "undefined"
+                                     && !js.isUndefined(js.Dynamic.global.window.__kyoPostBackendEvent)
+                                 then Present(js.Dynamic.global.window)
+                                 else Absent): Maybe[js.Dynamic]
+                            }.map {
+                                case Present(w) =>
+                                    // SERVER mode: resolve the hit object's path via the path->Live inverse
+                                    // and post BackendEvent(path, PointerWire.encode(pointer)) over the page WS.
+                                    mounted.pathForLive(live) match
+                                        case Present(path) =>
+                                            Sync.Unsafe.defer(discard(w.__kyoPostBackendEvent(path.toJSArray, PointerWire.encode(pointer))))
+                                        case Absent => Kyo.unit // hit an un-indexed object (e.g. controls gizmo): drop
+                                case Absent =>
+                                    // CLIENT-LOCAL mode (runMount): run the hit node's onClick locally, unchanged.
+                                    live.node match
+                                        case i: Three.Ast.Interactive =>
+                                            i.meshProps.onClick.foreach(f => discard(events.unsafe.offer(f(pointer))))
+                                        case _ => ()
+                            }
+                        case Absent => Kyo.unit
                     }
                 ).unit))
             // Unsafe: register a capture-phase pointerdown listener; removed on scope close.

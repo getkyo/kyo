@@ -3,98 +3,90 @@ package democlient
 import demo.FeedClockScene
 import kyo.*
 
-/** Live launcher for the feed-driven demo over the PUBLIC
-  * `Three.Feed` serve path: serves ONE three.js scene that simultaneously shows client animation and
-  * server-fed reactivity on the SAME cube and STAYS UP so a human can open it.
+/** Live launcher for the server-driven demo: serves ONE three.js scene that simultaneously shows
+  * client animation and server-driven reactivity on the SAME cube and STAYS UP so a human can open it.
   *
-  *   1. CLIENT-side animation: the cube spins via a client `onFrame`/RAF loop in the demos bundle's
-  *      `mountFeedClock` entry. The server does not drive the spin; the motion is local and continuous.
-  *   2. SERVER-driven reactivity: the cube material's color is bound to a server-fed `SignalRef[Int]`
-  *      declared with [[Three.Feed.serverSignal]] under [[demo.FeedClockScene.colorId]]. A server fiber
-  *      cycles the signal through a fixed palette (red, green, blue, yellow,
-  *      magenta) every ~1s; [[Three.Feed.run]] forks one observer per registered fed signal id, so each
-  *      emission becomes a `HostUpdate(SignalUpdate(colorId, encoded))` over the WebSocket the scene
-  *      receives and writes into its mirror, stepping the cube's color in DISCRETE ~1s jumps.
+  *   1. CLIENT-side animation: the cube spins via a client `onFrame`/RAF loop, running inside the
+  *      demos bundle's `hydrateFeedClock` entry once it hydrates the SSR'd canvas.
+  *   2. SERVER-driven reactivity: the cube material's color binds to a server-owned `SignalRef[Int]`
+  *      ([[demo.FeedClockScene.sceneWithMirror]]'s returned signal). A server fiber cycles it through a
+  *      fixed palette every ~1s; the ordinary bound-prop path emits one `SetProp` per step, patched
+  *      straight onto the client's live cube.
   *
-  * This launcher uses ONLY the public API: `Three.Feed.serverSignal` (the server-owned fed signal), a
-  * server-side background fiber (the palette cycler), and `Three.Feed.run` (the serve entry). `run` serves the
-  * SSR page that links a mount shim through `head.moduleScript` (a tiny ES module that imports the demos
-  * bundle's `mountFeedClock` entry and calls it) and carries the inline kyo-ui client that routes each
-  * inbound `HostUpdate` into `window.__kyoHostChannels`; the launcher composes `run`'s handlers with the
-  * static handlers serving the shim, the demos bundle, and three. The page's `head.importMap` resolves the
-  * bundle's bare `three` import to the served three module, so the plain `fastLinkJS` bundle loads directly,
-  * with no separate bundling step.
+  * This launcher uses ONLY the public API: `UI.runHandlers` (the SSR page + `/_kyo/ws` serve entry),
+  * `Three.embed` (the 3D host), and an ordinary `SignalRef`. `runHandlers` serves the SSR page that
+  * links a mount shim through `head.moduleScript` (a tiny ES module that imports the demos bundle's
+  * `hydrateFeedClock` entry and calls it), which rebuilds the SAME tree client-side (so `data-kyo-path`
+  * matches the server's SSR markup by construction) and hydrates the embedded canvas. The page's
+  * `head.importMap` resolves the bundle's bare `three` import to the served three module, so the plain
+  * `fastLinkJS` bundle loads directly, with no separate bundling step.
   *
   * Link the demos bundle first with `sbt kyo-threejs-demos/fastLinkJS`, then run this launcher as the
   * `kyo-threejs-demo-runner` main (see the README's "Running the demos").
   */
 object FeedClock extends ClientDemoApp:
 
-    /** The server color-step interval: the server advances the fed palette color once per this. */
+    /** The server color-step interval: the server advances the color signal once per this. */
     private val serverStepMs: Long = 1000L
 
     /** The route of the mount shim the SSR page links through `head.moduleScript`: a tiny ES module that
-      * imports the demos bundle's `mountFeedClock` entry and calls it against the host canvas. The bundle's
-      * bare `three` import resolves through the page's import map.
+      * imports the demos bundle's `hydrateFeedClock` entry and calls it. The bundle's bare `three`
+      * import resolves through the page's import map.
       */
     private val shimPath: String = "/_kyo/feedclock-mount.js"
 
-    /** The mount shim module: import the entry from the served demos bundle and mount it at `#app`. */
+    /** The mount shim module: import the hydrate entry from the served demos bundle and run it. */
     private val mountShim: String =
-        """import { mountFeedClock } from "/main.js";
-          |mountFeedClock("#app");
+        """import { hydrateFeedClock } from "/main.js";
+          |hydrateFeedClock();
           |""".stripMargin
 
     run {
         serve(port)
     }
 
-    /** Serves the FeedClock page (via [[Three.Feed.run]]) plus the mount shim, the demos bundle, and three
+    /** Serves the FeedClock page (via `UI.runHandlers`) plus the mount shim, the demos bundle, and three
       * on `port` (0 = an ephemeral port), forks the server-side palette cycler, prints the open URL, and
       * awaits forever.
+      *
+      * The scene and its color signal are built ONCE here, under the launcher's own top-level Scope (not
+      * per-connection: `UI.runHandlers`'s builder row is `< Async`, no `Scope`, so a per-connection fork
+      * has nowhere to bind). The palette cycler forks with the scoped `Fiber.init`, bound to this Scope,
+      * so it runs for the launcher's whole process lifetime and is interrupted on shutdown; every
+      * connecting client's `ui` closure reuses the SAME scene/signal, so all connected clients observe
+      * the SAME color steps.
       */
     private def serve(port: Int)(using Frame): Unit < (Async & Scope & Abort[FileException]) =
         for
-            assets   <- DemoClientServe.demoAssetHandlers
-            handlers <- Three.Feed.run("", head)(ui)
+            assets         <- DemoClientServe.demoAssetHandlers
+            (scene, color) <- FeedClockScene.sceneWithMirror
+            _              <- Fiber.init(cyclePalette(color))
+            handlers       <- UI.runHandlers("", head)(ui(scene))
             server <- HttpServer.init(port, "localhost")(
                 (handlers ++ (DemoClientServe.jsHandler(shimPath, mountShim) +: assets))*
             )
             _ <- Console.printLine(
                 s"FeedClock running on http://localhost:${server.port}/  " +
-                    "(the cube spins client-side AND steps color red/green/blue/yellow/magenta every ~1s from the server feed)"
+                    "(the cube spins client-side AND steps color red/green/blue/yellow/magenta every ~1s from the server)"
             )
             _ <- server.await
         yield ()
 
     /** The page head linking the mount shim and carrying the import map that resolves the demos bundle's
-      * bare `three` (and jsm) imports. `moduleScript` emits a `<script type="module" src="$shimPath">` into
-      * the SSR page; loading the shim imports the demos bundle and mounts the spinning cube at `#app`,
-      * connecting the color feed mirror.
+      * bare `three` (and jsm) imports. `moduleScript` emits a `<script type="module" src="$shimPath">`
+      * into the SSR page; loading the shim imports the demos bundle and hydrates the spinning cube at
+      * `#app`, so the connection's own bound-prop path drives the color.
       */
     private def head(using Frame): UI.PageHead =
         UI.PageHead("kyo-threejs FeedClock", moduleScript = Present(shimPath), importMap = DemoClientServe.threeImportMap)
 
-    /** The page body the mount shim mounts into: a `<canvas id="app">` host the FeedClock entry selects with
-      * `mountFeedClock("#app")`, plus the server-owned fed color signal and its palette cycler.
-      *
-      * `Three.Feed.serverSignal(colorId, palette.head)` declares the fed signal; running it inside the
-      * `Three.Feed.run` WebSocket session registers a feed observer for `colorId`, so each set on the
-      * returned ref is pushed over the WS. A server-side background fiber advances the palette index
-      * every ~1s and sets the signal, driving the color steps. The driver is forked with the scoped
-      * `Fiber.init`, so it binds to the connection Scope and is interrupted on disconnect (no leaked
-      * fiber); the tree carries `< (Async & Scope)` because of that scoped fork.
-      */
-    private def ui(using Frame): UI < (Async & Scope) =
-        for
-            color <- Three.Feed.serverSignal[Int](FeedClockScene.colorId, FeedClockScene.palette.head)
-            _     <- Fiber.init(cyclePalette(color))
-        yield UI.host("canvas").id("app")
+    /** The page body: the pre-built cube scene, embedded as `#app`. */
+    private def ui(scene: Three.Ast.Scene)(using Frame): UI < Async =
+        UI.div(Three.embed(scene, FeedClockScene.camera).id("app"))
 
-    /** The server-driven palette cycler: every [[serverStepMs]]ms it advances an index and sets the fed
-      * `color` signal to the next palette color, so `Three.Feed.run`'s observer pushes each step over the
-      * WS. The loop state is the next palette index; it never touches the wire directly (the observer the
-      * runner forked does that on each emission).
+    /** The server-driven palette cycler: every [[serverStepMs]]ms it advances an index and sets `color`
+      * to the next palette entry, so the ordinary bound-prop path pushes each step over the WS. The loop
+      * state is the next palette index; it never touches the wire directly.
       */
     private def cyclePalette(color: SignalRef[Int])(using Frame): Unit < Async =
         Loop(0) { i =>

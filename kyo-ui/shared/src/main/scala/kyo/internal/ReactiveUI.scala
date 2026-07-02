@@ -150,7 +150,7 @@ private[kyo] object ReactiveUI:
                     Signal.initConst(bn: Any),
                     isConst = true,
                     children = childNodes ++ propRegions ++ structRegions
-                )((_, _) => true)
+                )(backendHandle(bn, path))
 
             case ui: Element =>
                 // An element with a SignalRef-bound attribute (`.value(ref)` xor `.checked(ref)`; an element binds at most
@@ -176,6 +176,16 @@ private[kyo] object ReactiveUI:
                 ReactiveUI(path, Signal.initConst(ui: Any), isConst = true, Seq.empty, (_, _) => true, svgContext = svg)
         end match
     end normalize
+
+    /** The BackendNode arm's node handle: routes an inbound path-addressed BackendEvent to the node's own
+      * dispatchBackendEvent SPI hook, relative to this node's path. Every other event is a no-op; the
+      * boundProps/structuralRegion child regions keep their own `((_, _) => true)` handles unchanged.
+      */
+    private def backendHandle(bn: UI.Ast.BackendNode, path: Seq[String])(using Frame): Handler =
+        (targetPath, event) =>
+            event match
+                case be: UIEvent.BackendEvent => bn.dispatchBackendEvent(targetPath.drop(path.size), be.encoded).andThen(true)
+                case _                        => true
 
     /** Returns the element's single SignalRef-bound attribute (its `.value` or `.checked`), if any, so the element can be made reactive over
       * it (its HTML re-renders when that signal changes). An element binds at most one such ref.

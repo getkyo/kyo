@@ -9,20 +9,24 @@ import kyo.internal.RegionKind
 import kyo.internal.UIEvent
 import kyo.internal.UIExchange
 
-/** A trivial in-test backend node (no 3D dependency): the closest live precedent is `UI.Ast.Host`
-  * (`UI.scala:1710-1726`). Only `placeholder` needs a body; `backend`/`backendChildren`/`boundProps`/
+/** A trivial in-test backend node (no 3D dependency), the closest live precedent to kyo-threejs's
+  * own `Three.Ast.Node`. Only `placeholder` needs a body; `backend`/`backendChildren`/`boundProps`/
   * `structuralRegion` are satisfied directly by the case-class constructor params (widening the
-  * trait's `private[kyo]` members, exactly as `Host` widens them via overriding `def`s).
+  * trait's `private[kyo]` members via overriding `def`s). `onDispatch` lets a leaf observe the
+  * `relPath`/`encoded` pair a routed BackendEvent resolves to, without needing a real Three AST.
   */
 final case class FakeBackendNode(
     backend: String = "fake",
     backendChildren: Chunk[UI] = Chunk.empty,
     boundProps: Chunk[UI.Ast.BackendNode.BoundProp] = Chunk.empty,
-    override val structuralRegion: Maybe[UI.Ast.BackendNode.StructuralBinding] = Absent
+    override val structuralRegion: Maybe[UI.Ast.BackendNode.StructuralBinding] = Absent,
+    onDispatch: (Seq[String], String) => Unit < Async = (_, _) => Kyo.unit
 )(using val frame: Frame) extends UI.Ast.BackendNode:
     type Self = FakeBackendNode
     private[kyo] def placeholder: UI.Ast.BackendNode.Placeholder =
         UI.Ast.BackendNode.Placeholder("canvas", UI.Ast.Attrs())
+    override private[kyo] def dispatchBackendEvent(relPath: Seq[String], encoded: String)(using Frame): Unit < Async =
+        onDispatch(relPath, encoded)
     // Not exercised by this file's leaves (a self-return is enough to satisfy the abstract obligation).
     def id(v: String): FakeBackendNode = this
 end FakeBackendNode
@@ -265,6 +269,27 @@ class ReactiveUITest extends UITest:
             assert(countAfterInit == 1)
             assert(encoded1 == "4,5")
             assert(countAfterFirst == 2)
+    }
+
+    // A BackendNode's own node handle (backendHandle) routes an inbound BackendEvent to
+    // dispatchBackendEvent with the path RELATIVE to the node's own path, not the absolute wire path;
+    // every other event is a no-op. The Three-AST resolution walk itself (resolveOnClick) lives in
+    // kyo-threejs and is covered there; this leaf proves only the kyo-ui-side routing.
+    "a BackendNode's handle routes a BackendEvent to dispatchBackendEvent with the relative path, and no-ops on any other event" in {
+        for
+            channel <- Channel.init[(Seq[String], String)](8)
+            node = FakeBackendNode(onDispatch = (relPath, encoded) => Abort.runPartial[Closed](channel.put((relPath, encoded))).unit)
+            root <- ReactiveUI.normalize(UI.div(node), Seq.empty)
+            rui = ReactiveUI.findNode(root, Seq("0"))
+            _   = assert(rui.isDefined)
+            keptOnClick        <- rui.get.handle(Seq("0", "1", "2"), UIEvent.BackendEvent(Seq("0", "1", "2"), "encoded-payload"))
+            (relPath, encoded) <- channel.take
+            keptOnOther        <- rui.get.handle(Seq("0"), UIEvent.Click(Seq("0"), MouseEventData(UI.Modifiers.none, Absent)))
+        yield
+            assert(relPath == Seq("1", "2"))
+            assert(encoded == "encoded-payload")
+            assert(keptOnClick)
+            assert(keptOnOther)
     }
 
     // ---- Browser-level reactive behaviour ----

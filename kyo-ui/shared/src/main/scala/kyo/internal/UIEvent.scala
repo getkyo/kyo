@@ -32,11 +32,9 @@ private[kyo] enum UIEvent derives CanEqual, Schema:
     case Scroll(path: Seq[String], deltaX: Double, deltaY: Double, modifiers: UI.Modifiers, targetId: Maybe[String])
     case Hover(path: Seq[String], mouse: MouseEventData)
     case Unhover(path: Seq[String], mouse: MouseEventData)
-    // The client->server typed app-event back-channel: a client
-    // onClick (running locally on the live scene) calls `Three.Feed.emit[A](eventId, event)`, which posts
-    // this variant carrying the `Json.encode`d typed event `A` as an opaque string under `eventId`. The
-    // server routes it to the host's registered app-event handler by `eventId`, which decodes with the
-    // same `Schema[A]` and reflects it into a server-owned fed signal. `path` is the host path (unused for
-    // routing, which is by `eventId`); the `encoded` string keeps the event total for any `A: Schema`.
-    case AppEvent(path: Seq[String], eventId: String, encoded: String)
+    // The client->server backend-event back-channel: a backend island (e.g. ThreeBackend) posts this variant
+    // carrying its own `Json.encode`d event payload (a raycast Pointer for three) as an opaque string. The
+    // server routes it by `path` to the addressed BackendNode's `dispatchBackendEvent`, which decodes with
+    // its own Schema and resolves the handler at the path relative to that node.
+    case BackendEvent(path: Seq[String], encoded: String)
 end UIEvent

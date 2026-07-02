@@ -25,10 +25,10 @@ object DemoClientServe:
     /** The served route of the GltfViewer model fixture (a minimal self-contained lit cube). */
     val modelPath: String = "/models/cube.gltf"
 
-    /** The import map a `Three.Feed.run` feed page emits so the demos bundle's bare `three` (and jsm)
-      * imports resolve to the served three modules. The same five mappings the client-mount demo pages
-      * carry; OrbitControls is included so a scene that binds `Three.controls` resolves it, and an unused
-      * entry is simply never fetched.
+    /** The import map a `UI.runHandlers` server-push launcher's page emits so the demos bundle's bare
+      * `three` (and jsm) imports resolve to the served three modules. The same five mappings the
+      * client-mount demo pages carry; OrbitControls is included so a scene that binds `Three.controls`
+      * resolves it, and an unused entry is simply never fetched.
       */
     private[democlient] val threeImportMap: Seq[(String, String)] = Seq(
         "three"                                           -> "/three.module.js",
@@ -39,9 +39,9 @@ object DemoClientServe:
     )
 
     /** Reads and serves the demos bundle (at [[bundlePath]]), the three.js build, and the GLTFLoader jsm
-      * stack a `Three.Feed.run` feed page links and resolves through [[threeImportMap]]. The two feed
-      * launchers ([[democlient.FeedClock]], [[democlient.Flagship]]) compose these with the `Three.Feed.run`
-      * handlers and the mount shim they link through `head.moduleScript`.
+      * stack a server-push launcher's page links and resolves through [[threeImportMap]]. The two
+      * server-push launchers ([[democlient.FeedClock]], [[democlient.Flagship]]) compose these with the
+      * `UI.runHandlers` handlers and the mount shim they link through `head.moduleScript`.
       */
     private[democlient] def demoAssetHandlers(using
         Frame

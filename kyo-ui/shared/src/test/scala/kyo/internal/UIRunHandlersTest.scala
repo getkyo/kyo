@@ -2,6 +2,18 @@ package kyo.internal
 
 import kyo.*
 
+/** A trivial backend node fixture (no 3D dependency), used only to prove the served page stays a
+  * valid document when the tree contains a non-plain-DOM node.
+  */
+final case class FakeStageNode()(using val frame: Frame) extends UI.Ast.BackendNode:
+    type Self = FakeStageNode
+    private[kyo] def backend: String                                 = "fake-stage"
+    private[kyo] def placeholder: UI.Ast.BackendNode.Placeholder     = UI.Ast.BackendNode.Placeholder("canvas", UI.Ast.Attrs())
+    private[kyo] def backendChildren: Chunk[UI]                      = Chunk.empty
+    private[kyo] def boundProps: Chunk[UI.Ast.BackendNode.BoundProp] = Chunk.empty
+    def id(v: String): FakeStageNode                                 = this
+end FakeStageNode
+
 /** Tests the locked `UI.runHandlers` PageHead overload's effect on the served SSR page: it threads
   * `head.moduleScript` into the page so an app links its client island bundle, and the 1-arg form is
   * unchanged and delegates to the 2-arg form with `PageHead("kyo-ui")`.
@@ -9,7 +21,7 @@ import kyo.*
   * The serve-and-fetch leaves run a real `HttpServer` and `HttpClient.getText`; that transport is
   * JVM+JS (notNative). The renderPage leaves are pure string assertions that run on every platform.
   */
-class UIServerHostUpdateTest extends kyo.test.Test[Any]:
+class UIRunHandlersTest extends kyo.test.Test[Any]:
 
     private def fetchPage(ui: UI, head: Maybe[UI.PageHead])(using Frame): String < (Async & Abort[HttpException]) =
         Scope.run {
@@ -98,19 +110,19 @@ class UIServerHostUpdateTest extends kyo.test.Test[Any]:
         end for
     }
 
-    "a page with a host links the module script and stays a valid page".notNative in {
-        // A UI with a host, served with a module script: the page must link the bundle and stay a valid
-        // server-push page (the inline client script present, a well-formed document). The host renders
-        // as a bare cross-platform <canvas>; the island bundle owns the client mount.
+    "a page with a backend node links the module script and stays a valid page".notNative in {
+        // A UI with a backend node, served with a module script: the page must link the bundle and
+        // stay a valid server-push page (the inline client script present, a well-formed document).
+        // The backend node renders as a bare placeholder; the island bundle owns the client mount.
         fetchPage(
-            UI.div(UI.host("canvas")),
+            UI.div(FakeStageNode()),
             Present(UI.PageHead("app", moduleScript = Present("/_kyo/island.js")))
         ).map { body =>
             assert(
                 body.contains("""<script type="module" src="/_kyo/island.js"></script>"""),
                 s"the page must link the module script; body was:\n$body"
             )
-            assert(body.contains("<canvas"), s"the host must render as a bare canvas; body was:\n$body")
+            assert(body.contains("<canvas"), s"the backend node must render as a bare canvas; body was:\n$body")
             // Still a valid server-push page: the inline client script is present and the document is well-formed.
             assert(body.contains("<script>"), "the inline server-push client script must still be present")
             assert(body.startsWith("<!DOCTYPE html>"), "the served document must be a valid HTML page")
@@ -134,4 +146,4 @@ class UIServerHostUpdateTest extends kyo.test.Test[Any]:
         succeed
     }
 
-end UIServerHostUpdateTest
+end UIRunHandlersTest

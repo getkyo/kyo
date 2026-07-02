@@ -319,62 +319,57 @@ private[kyo] object HtmlRenderer:
     // ---- Tag names ----
 
     private def tagName(elem: Element): String = elem match
-        case _: Div           => "div"
-        case _: P             => "p"
-        case _: Section       => "section"
-        case _: Main          => "main"
-        case _: Header        => "header"
-        case _: Footer        => "footer"
-        case _: Pre           => "pre"
-        case _: Blockquote    => "blockquote"
-        case _: Code          => "code"
-        case _: Ul            => "ul"
-        case _: Ol            => "ol"
-        case _: Table         => "table"
-        case _: H1            => "h1"
-        case _: H2            => "h2"
-        case _: H3            => "h3"
-        case _: H4            => "h4"
-        case _: H5            => "h5"
-        case _: H6            => "h6"
-        case _: Hr            => "hr"
-        case _: Br            => "br"
-        case _: SpanElement   => "span"
-        case _: Nav           => "nav"
-        case _: Li            => "li"
-        case _: Tr            => "tr"
-        case _: Td            => "td"
-        case _: Th            => "th"
-        case _: Label         => "label"
-        case _: Form          => "form"
-        case _: Textarea      => "textarea"
-        case _: Select        => "select"
-        case _: Opt           => "option"
-        case _: Button        => "button"
-        case _: Anchor        => "a"
-        case _: Img           => "img"
-        case _: Iframe        => "iframe"
-        case _: Input         => "input"
-        case _: PasswordInput => "input"
-        case _: EmailInput    => "input"
-        case _: TelInput      => "input"
-        case _: UrlInput      => "input"
-        case _: SearchInput   => "input"
-        case _: NumberInput   => "input"
-        case _: Checkbox      => "input"
-        case _: Radio         => "input"
-        case _: DateInput     => "input"
-        case _: TimeInput     => "input"
-        case _: ColorInput    => "input"
-        case _: RangeInput    => "input"
-        case _: FileInput     => "input"
-        case _: HiddenInput   => "input"
-        case _: Dropdown      => "div"
-        case h: Host          => h.hostTag
-        // Unreachable in practice once the BackendNode arm precedes the Element arm in renderTo
-        // (Host is a BackendNode, so it is intercepted there, above). Kept for exhaustivity: Host is a
-        // concrete, sealed-visible Element leaf (Ast.Inline), and this match has no wildcard.
-        // Mirrors the SvgNode arm below (same shape: compiler-required, not runtime-reached).
+        case _: Div            => "div"
+        case _: P              => "p"
+        case _: Section        => "section"
+        case _: Main           => "main"
+        case _: Header         => "header"
+        case _: Footer         => "footer"
+        case _: Pre            => "pre"
+        case _: Blockquote     => "blockquote"
+        case _: Code           => "code"
+        case _: Ul             => "ul"
+        case _: Ol             => "ol"
+        case _: Table          => "table"
+        case _: H1             => "h1"
+        case _: H2             => "h2"
+        case _: H3             => "h3"
+        case _: H4             => "h4"
+        case _: H5             => "h5"
+        case _: H6             => "h6"
+        case _: Hr             => "hr"
+        case _: Br             => "br"
+        case _: SpanElement    => "span"
+        case _: Nav            => "nav"
+        case _: Li             => "li"
+        case _: Tr             => "tr"
+        case _: Td             => "td"
+        case _: Th             => "th"
+        case _: Label          => "label"
+        case _: Form           => "form"
+        case _: Textarea       => "textarea"
+        case _: Select         => "select"
+        case _: Opt            => "option"
+        case _: Button         => "button"
+        case _: Anchor         => "a"
+        case _: Img            => "img"
+        case _: Iframe         => "iframe"
+        case _: Input          => "input"
+        case _: PasswordInput  => "input"
+        case _: EmailInput     => "input"
+        case _: TelInput       => "input"
+        case _: UrlInput       => "input"
+        case _: SearchInput    => "input"
+        case _: NumberInput    => "input"
+        case _: Checkbox       => "input"
+        case _: Radio          => "input"
+        case _: DateInput      => "input"
+        case _: TimeInput      => "input"
+        case _: ColorInput     => "input"
+        case _: RangeInput     => "input"
+        case _: FileInput      => "input"
+        case _: HiddenInput    => "input"
+        case _: Dropdown       => "div"
         case e: Svg.SvgElement => svgTagName(e)
         // SvgNode/SvgRootNode are the sanctioned non-sealed cross-file bridge for the SVG AST
         // (see UI.Ast.SvgNode); every in-tree SVG node extends Svg.SvgElement, matched above, so
@@ -846,6 +841,12 @@ private[kyo] object HtmlRenderer:
            |  if(ws.readyState===1)ws.send(m);
            |  else __q.push(m);
            |}
+           |// The client->server backend-event seam: a foreign backend island (ThreeBackend) posts a
+           |// UIEvent.BackendEvent over the page's single WS through here; `encoded` is the backend's own
+           |// opaque Json payload (a raycast Pointer for three), decoded server-side by the owning BackendNode.
+           |// Sealed-enum Schema tags by case name, so the envelope is {BackendEvent:{path,encoded}} (matching
+           |// {Click:{...}} etc.).
+           |window.__kyoPostBackendEvent=function(path,encoded){post({BackendEvent:{path:path,encoded:encoded}});};
            |function pa(el){
            |  var p=el.getAttribute("data-kyo-path");
            |  return p===""?[]:p.split(".");

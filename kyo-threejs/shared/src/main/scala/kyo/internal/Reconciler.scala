@@ -303,13 +303,28 @@ private[kyo] object Reconciler:
                 buf
     end reactiveRegions
 
-    /** Watches one structural reactive region forever: on every change to the region's signal,
-      * re-reconciles the holder's children. The signal's CURRENT value is filled synchronously at
+    /** Watches one structural reactive region forever: on every GENUINE change to the region's driving
+      * data, re-reconciles the holder's children. The signal's CURRENT value is filled synchronously at
       * startup by [[fillReactiveRegionsOnce]]; this loop only handles subsequent changes. A `Reactive`
       * swaps its single subtree (disposing the prior subtree exactly once); a `Foreach` diffs by key
       * (positional when unkeyed) so an unchanged element reuses its live object (GPU buffers survive).
       * New objects materialize under a per-element scope registered with the mount scope; removed
       * elements dispose their GL resources immediately and retire their `mounted.live` entries.
+      *
+      * Dedups via [[watchDistinct]] rather than a bare `Loop.foreach(signal.next...)`: `Signal#next`
+      * is a wakeup hint, not a change guarantee (`Signal.initConst`'s `next` resolves immediately with
+      * the SAME value by design, exactly as its own `current` does), so a bare loop over it would
+      * busy-spin `step` forever on a `render`/`foreach` region driven by a constant signal, continuously
+      * disposing and re-materializing live GL resources. A `Foreach`'s own `signal: Signal[Chunk[A]]`
+      * carries the raw, un-rendered data, so it dedups directly. A `Reactive` built via `render`/`when`
+      * carries its raw pre-render data alongside in `serverDrive.dataSignal`; dedup runs on THAT (the
+      * rendered `Three` itself wraps a fresh `onClick` closure on every render, so two renders of the
+      * SAME underlying value are never `equals`, making the rendered value unusable as a dedup key). The
+      * raw `Three.reactive(Signal[Three])` constructor carries no pre-render source (its `serverDrive`
+      * is `Absent`), but its `signal` holds the caller's own `Three` values directly with no per-render
+      * `onClick` remapping, so dedup runs on `r.signal` itself: a `Signal.initConst`-driven raw reactive
+      * dedups reflexively (the SAME instance compares `equals` to itself), while a genuinely different
+      * `Three` value still fires `step`.
       */
     def runReactiveRegion(region: ReactiveRegion, mounted: Mounted)(using
         Frame
@@ -317,11 +332,29 @@ private[kyo] object Reconciler:
         region.node match
             case r: Ast.Reactive =>
                 val step = reactiveStep(region, mounted)
-                Loop.foreach(r.signal.next.map(step).andThen(Loop.continue))
+                r.serverDrive match
+                    case Present(sd) => watchDistinct(sd.dataSignal)(_ => r.signal.current.map(step))
+                    case Absent      => watchDistinct(r.signal)(step)
             case f: Ast.Foreach[a] =>
                 val step = foreachStep(region, f, mounted)
-                Loop.foreach(f.signal.next.map(step).andThen(Loop.continue))
+                watchDistinct(f.signal)(step)
             case _ => ()
+
+    /** Waits for `signal` to emit a value that is not `equals` to the last one observed before running
+      * `step`, then repeats forever. Compares via the plain `equals` method (not `==`) so this works for
+      * any `A`, including an erased/existential type parameter with no `CanEqual[A, A]` evidence in
+      * scope. See [[runReactiveRegion]] for why this dedup is needed.
+      */
+    private def watchDistinct[A](signal: Signal[A])(step: A => Unit < (Async & Scope & Abort[ThreeException]))(using
+        Frame
+    ): Unit < (Async & Scope & Abort[ThreeException]) =
+        def loop(last: Maybe[A]): Unit < (Async & Scope & Abort[ThreeException]) =
+            signal.currentWith { cur =>
+                if last.exists(_.equals(cur)) then signal.nextWith(_ => ()).andThen(loop(last))
+                else step(cur).andThen(loop(Present(cur)))
+            }
+        loop(Absent)
+    end watchDistinct
 
     /** Reconciles every region once from its signal's current value: the deterministic single-fill the
       * mount runs at startup so the first rendered frame is already populated, and the seam the live

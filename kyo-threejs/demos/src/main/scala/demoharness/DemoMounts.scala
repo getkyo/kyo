@@ -81,69 +81,6 @@ object DemoMounts:
             }
         }
 
-    /** Mounts the feed-driven scene at `selector`: a cube
-      * spinning via client `onFrame` whose material color is bound to a server-fed mirror `SignalRef`.
-      * The mount runs the real `Three.runMount` GL pipeline (so the spin animates locally) AND calls
-      * `Three.Feed.connect(FeedClockScene.colorId, mirror)` under the SAME page Scope, which registers
-      * the per-id inbound feed receiver on `window.__kyoHostChannels`. The server pushes
-      * `HostPayload.SignalUpdate(colorId, encoded)` frames over the WebSocket; the existing kyo-ui inline
-      * clientJs routes each to the receiver, which writes the mirror, and the scene's `forkBoundRef`
-      * patch fiber steps the cube's color. The page raises `window.__mounted` once the entry returns.
-      */
-    @JSExportTopLevel("mountFeedClock")
-    def mountFeedClock(selector: String): Unit =
-        runMounted {
-            FeedClockScene.sceneWithMirror.map { case (scene, mirror) =>
-                for
-                    // Connect the feed receiver FIRST (it registers on window.__kyoHostChannels and flushes
-                    // any feeds buffered before mount), then run the mount: Three.runMount parks on the RAF
-                    // loop and never returns, so the connect must precede it under the same page Scope.
-                    _ <- Three.Feed.connect(FeedClockScene.colorId, mirror)
-                    _ <- Three.runMount(scene, FeedClockScene.camera, selector, ThreeFrames.Raf)
-                yield ()
-            }
-        }
-
-    /** Mounts the structural feed scene at `selector`:
-      * a `foreachKeyed` field of cubes whose count and arrangement are driven by a server-fed
-      * `Chunk[Int]` item list. The mount runs the real `Three.runMount` GL pipeline (so the field spins
-      * locally) AND calls `Three.Feed.connectChunk(FeedChunkScene.listId, mirror)` under the SAME page
-      * Scope, registering the per-id inbound structural feed receiver on `window.__kyoHostChannels`. The
-      * server pushes `HostPayload.SignalChunk(listId, encoded)` frames over the WebSocket; the inline
-      * client routes each to the receiver, which writes the mirror, and the client's own keyed reconciler
-      * diffs the snapshot: an add materializes a cube, a remove disposes one, a reorder reuses the live
-      * cubes. The page raises `window.__mounted` once the entry returns.
-      */
-    @JSExportTopLevel("mountFeedChunk")
-    def mountFeedChunk(selector: String): Unit =
-        runMounted {
-            FeedChunkScene.sceneWithMirror.map { case (scene, mirror) =>
-                for
-                    _ <- Three.Feed.connectChunk(FeedChunkScene.listId, mirror)
-                    _ <- Three.runMount(scene, FeedChunkScene.camera, selector, ThreeFrames.Raf)
-                yield ()
-            }
-        }
-
-    /** Mounts the app-event scene at `selector`:
-      * a cube whose `onClick` calls `Three.Feed.emit` to post a typed app event, and whose material color
-      * is bound to a server-fed mirror the server's app-event handler updates. The mount runs the real
-      * `Three.runMount` GL pipeline AND calls `Three.Feed.connect(FeedEmitScene.colorId, mirror)` under the
-      * page Scope. A client click raycasts the cube locally, runs the `onClick` closure, and `emit`s the
-      * bump event over the WS; the server handler advances a fed color and feeds it back, stepping the
-      * cube's color. The page raises `window.__mounted` once the entry returns.
-      */
-    @JSExportTopLevel("mountFeedEmit")
-    def mountFeedEmit(selector: String): Unit =
-        runMounted {
-            FeedEmitScene.sceneWithMirror.map { case (scene, mirror) =>
-                for
-                    _ <- Three.Feed.connect(FeedEmitScene.colorId, mirror)
-                    _ <- Three.runMount(scene, FeedEmitScene.camera, selector, ThreeFrames.Raf)
-                yield ()
-            }
-        }
-
     /** Mounts the orbit-controls scene at `selector`:
       * a static (non-spinning) object plus a `Three.controls(autoRotate = true)` node, so the
       * CAMERA orbits the scene automatically. The mount binds a live `OrbitControls` over the camera and
@@ -155,31 +92,6 @@ object DemoMounts:
         runMounted {
             ControlsScene.scene.map { scene =>
                 Three.runMount(scene, ControlsScene.camera, selector, ThreeFrames.Raf)
-            }
-        }
-
-    /** Mounts the flagship consolidated scene at `selector`: ONE cube
-      * that shows ALL FOUR behaviors at once. The mount runs the real `Three.runMount` GL pipeline (so
-      * the cube spins via client `onFrame` AND the camera orbits via the bound `OrbitControls`) AND
-      * connects BOTH server-fed mirrors under the SAME page Scope: `Three.Feed.connect(colorId, color)`
-      * for the auto-cycled palette color and `Three.Feed.connect(scaleId, scale)` for the click-driven
-      * scale. The server pushes `SignalUpdate(colorId, ...)` on its ~1s schedule and
-      * `SignalUpdate(scaleId, ...)` whenever a client click's `emit` reaches the server's app-event
-      * handler; the existing `forkBoundRef` patch fibers step the cube's color and size. A client click
-      * raycasts the cube locally, runs the `onClick` closure, and `emit`s the bump over the WS.
-      */
-    @JSExportTopLevel("mountFlagship")
-    def mountFlagship(selector: String): Unit =
-        runMounted {
-            FlagshipScene.sceneWithMirrors.map { case (scene, color, scale) =>
-                for
-                    // Connect both feed receivers FIRST (they register on window.__kyoHostChannels and flush
-                    // any feeds buffered before mount), then run the mount: Three.runMount parks on the RAF
-                    // loop and never returns, so the connects must precede it under the same page Scope.
-                    _ <- Three.Feed.connect(FlagshipScene.colorId, color)
-                    _ <- Three.Feed.connect(FlagshipScene.scaleId, scale)
-                    _ <- Three.runMount(scene, FlagshipScene.camera, selector, ThreeFrames.Raf)
-                yield ()
             }
         }
 

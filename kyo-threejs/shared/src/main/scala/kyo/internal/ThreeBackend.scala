@@ -211,7 +211,7 @@ private[kyo] object ThreeBackend extends Backend:
       * (path-transparent: the `"reactive"` `prevKeyed` literal is diff bookkeeping, not a path
       * segment).
       */
-    private def buildPathIndex(
+    private[kyo] def buildPathIndex(
         live: Reconciler.Live,
         path: Seq[String],
         mounted: Reconciler.Mounted,

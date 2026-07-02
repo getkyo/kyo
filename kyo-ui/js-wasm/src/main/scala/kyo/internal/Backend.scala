@@ -13,8 +13,8 @@ import org.scalajs.dom
   *
   * All members are `private[kyo]`: this is the internal backend seam, never user surface. Declared in
   * `js-wasm/src/main` because `mount`'s `host: dom.Element` parameter is JS-only and both
-  * implementations are JS/Wasm; the JS-free pieces (`BackendNode`, `BackendMount`, the wire ops) stay
-  * in `shared` so kyo-ui keeps compiling on JVM/Native (no three.js, no JS-only DOM type in shared).
+  * implementations are JS/Wasm; the JS-free pieces (`BackendNode`, the wire ops) stay in `shared` so
+  * kyo-ui keeps compiling on JVM/Native (no three.js, no JS-only DOM type in shared).
   */
 private[kyo] trait Backend:
     def key: String

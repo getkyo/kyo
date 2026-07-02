@@ -2,42 +2,37 @@ package demo
 
 import kyo.*
 
-/** The feed-driven scene (kept minimal): ONE
-  * three.js scene that simultaneously shows client animation and server-fed reactivity on the SAME cube.
+/** The server-driven scene (kept minimal): ONE
+  * three.js scene that simultaneously shows client animation and server-driven reactivity on the SAME
+  * cube.
   *
   *   1. CLIENT-side animation: a `SignalRef[Double]` spin angle that the cube's `onFrame` advances every
   *      RAF tick, bound to the cube `Group`'s rotation. The motion is continuous and driven entirely by
   *      the client frame loop; the server never touches it.
-  *   2. SERVER-driven reactivity: the cube material's color is bound to a server-fed mirror
-  *      `SignalRef[Int]` ([[FeedClockScene.colorId]]). On the island the mount calls
-  *      `Three.Feed.connect(colorId, colorMirror)`, which writes inbound `HostPayload.SignalUpdate`
-  *      feeds into the mirror; the existing `forkBoundRef`/`patchProp` path the scene already forked for
-  *      the bound color then patches exactly the cube's material color. The server cycles the fed value
-  *      through a fixed palette on its own ~1s schedule, so the color changes in DISCRETE steps that are
-  *      visually distinguishable from the smooth spin.
+  *   2. SERVER-driven reactivity: the cube material's color binds to `colorMirror`, a `SignalRef[Int]`.
+  *      A server launcher owns and advances the signal on its own ~1s schedule; the ordinary bound-prop
+  *      path (the same `PropRegion` walk `ServerBridgeScene` exercises) emits one `SetProp` per step over
+  *      the page's single WebSocket, patched straight onto the mounted cube's material, so the color
+  *      changes in DISCRETE steps visually distinguishable from the smooth spin. In a client-local mount
+  *      (`Three.runMount`) the signal is simply never driven, so the cube stays at its initial color.
   *
-  * The smooth spin proves the local loop runs; the discrete color steps prove the server feed reaches
-  * the scene. Combining client animation with server-fed reactivity on one cube is the capability the
-  * scene demonstrates.
+  * The smooth spin proves the local loop runs; the discrete color steps prove server-driven reactivity
+  * reaches the scene. Combining client animation with server-driven reactivity on one cube is the
+  * capability the scene demonstrates.
   */
 object FeedClockScene:
 
-    /** The string signal id the two halves agree on: the server feeds its color value addressed by this
-      * id, and the island binds a mirror `SignalRef[Int]` under the same id.
-      */
-    val colorId: String = "feed-color"
-
-    /** The fixed server palette (packed `0xRRGGBB` ints) the server cycles the fed color through, one
-      * step per ~1s. Saturated primaries so each step is unmistakable in a screencast: red, green, blue,
-      * yellow, magenta. The first value (red) is also the initial mirror value, so the cube starts red
-      * before the first feed and steps from there.
+    /** The fixed server palette (packed `0xRRGGBB` ints) a server launcher cycles `colorMirror` through,
+      * one step per ~1s. Saturated primaries so each step is unmistakable in a screencast: red, green,
+      * blue, yellow, magenta. The first value (red) is also the initial signal value, so the cube starts
+      * red before the first step.
       */
     val palette: Seq[Int] = Seq(0xff0000, 0x00ff00, 0x0000ff, 0xffff00, 0xff00ff)
 
-    /** Builds the scene and returns it alongside the color mirror `SignalRef[Int]` the island connects to
-      * the feed. The cube spins via `onFrame` on its `Group`; its material color binds to `colorMirror`
-      * mapped into a `Three.Color`. The mirror starts at the palette's first value so the cube renders red
-      * before any feed arrives.
+    /** Builds the scene and returns it alongside the color `SignalRef[Int]` a server launcher drives (or a
+      * client hydrate leaves untouched). The cube spins via `onFrame` on its `Group`; its material color
+      * binds to `colorMirror` mapped into a `Three.Color`. The signal starts at the palette's first value
+      * so the cube renders red before any drive.
       */
     def sceneWithMirror(using Frame): (Three.Ast.Scene, SignalRef[Int]) < Sync =
         for
@@ -46,8 +41,8 @@ object FeedClockScene:
             cube = Three.mesh(
                 Three.Geometry.box(2.0, 2.0, 2.0),
                 // A lit standard material so the rotating faces catch the directional light and the
-                // shading shifts frame to frame (proving the spin); the color binds to the server-fed
-                // mirror so the whole cube steps through the palette on the server's schedule.
+                // shading shifts frame to frame (proving the spin); the color binds to the server-driven
+                // signal so the whole cube steps through the palette on the server's schedule.
                 Three.Material.standard(color = Three.Color.red, roughness = Three.Normal(0.5)).color(colorMirror.map(rgb =>
                     Three.Color(rgb)
                 ))

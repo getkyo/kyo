@@ -51,29 +51,6 @@ private[kyo] object DomBackend extends Backend:
 
     private val live: Backend.Live = new Backend.Live {}
 
-    /** The private dom-host registry entry: mounts the transitional `Host`'s own mount closure
-      * (if any) through the uniform registry dispatch (`Backend.lookup("dom-host")`), the renamed
-      * successor of the old direct `DomHostMount`-special-case run. `private[kyo]`, transitional:
-      * deleted together with `Host`.
-      */
-    private[kyo] object DomHostBackend extends Backend:
-        def key: String = "dom-host"
-
-        def mount(node: UI, host: dom.Element, path: Seq[String])(using Frame): Backend.Live < (Async & Scope) =
-            node match
-                case h: UI.Ast.Host =>
-                    h.mount match
-                        case Present(m: DomBackendMount) => m.run(host).andThen(DomBackend.live)
-                        case _                           => DomBackend.live
-                case _ => DomBackend.live
-
-        // The dom-host backend never receives a server op: Host carries no boundProps, and DOM
-        // structural reactivity rides Replace (never SetProp/ReplaceSubtree). Satisfies the SPI.
-        def patch(path: Seq[String], key: String, encoded: String)(using Frame): Unit < Async = Kyo.unit
-
-        def replaceSubtree(path: Seq[String], encoded: String)(using Frame): Unit < Async = Kyo.unit
-    end DomHostBackend
-
     /** Injects a rendered stylesheet CSS string into the live document.
       *
       * The base reset is injected first (idempotently) so it precedes the authored CSS in document
@@ -89,11 +66,11 @@ private[kyo] object DomBackend extends Backend:
 
     private def mountInto(ui: UI, container: dom.Element)(using Frame): Unit < (Async & Scope) =
         for
-            // Pre-register the DOM backend + the transitional dom-host entry so the generalized
-            // fireHostMounts below can dispatch through the registry. Idempotent (re-registering on a
-            // later mount just overwrites the same map entries); the page's single main fiber registers
-            // before any mount dispatch reads it (Backend.scala:47-48).
-            _    <- Sync.defer { Backend.register(DomBackend); Backend.register(DomHostBackend) }
+            // Pre-register the DOM backend so the generalized fireHostMounts below can dispatch through
+            // the registry. Idempotent (re-registering on a later mount just overwrites the same map
+            // entry); the page's single main fiber registers before any mount dispatch reads it
+            // (Backend.scala:47-48).
+            _    <- Sync.defer { Backend.register(DomBackend) }
             _    <- DomStyleSheet.injectBase()
             root <- ReactiveUI.normalize(ui, Seq.empty)
             html <- HtmlRenderer.render(ui, Seq.empty)
@@ -131,11 +108,10 @@ private[kyo] object DomBackend extends Backend:
       * server-driven page needs no CLIENT-local reactive subscription).
       */
     private[kyo] def hydrateBackendNodes(ui: UI)(using Frame): Unit < (Async & Scope) =
-        // Pre-register the DOM backend + the transitional dom-host entry, mirroring mountInto's own
-        // idempotent registration (Backend.scala:47-48); a page that only embeds a foreign backend node
-        // (no plain DOM host) still needs DomBackend registered for the dom-host registry entry it
-        // shares with mountInto's own Host dispatch path.
-        Sync.defer { Backend.register(DomBackend); Backend.register(DomHostBackend) }
+        // Pre-register the DOM backend, mirroring mountInto's own idempotent registration
+        // (Backend.scala:47-48); a page that only embeds a foreign backend node still needs DomBackend
+        // registered before fireHostMounts dispatches through the registry.
+        Sync.defer { Backend.register(DomBackend) }
             .andThen(fireHostMounts(ui, Seq.empty))
 
     /** Walk the original AST tracking `data-kyo-path` exactly as `HtmlRenderer.renderTo`
@@ -150,14 +126,9 @@ private[kyo] object DomBackend extends Backend:
     private def fireHostMounts(ui: UI, path: Seq[String], underReactive: Boolean = false)(using Frame): Unit < (Async & Scope) =
         ui match
             case bn: UI.Ast.BackendNode =>
-                // The transitional Host carries an OPTIONAL mount closure (a bare `UI.host()` with no
-                // closure is a legitimately inert placeholder); every other BackendNode (a future
-                // registered scene) always has real mount work, so it defaults to true.
-                val hasMountIntent = bn match
-                    case h: UI.Ast.Host => h.mount.nonEmpty
-                    case _              => true
-                if !hasMountIntent then Kyo.unit
-                else if underReactive then
+                // Every BackendNode always has real mount work, so it is always fired (unless it sits
+                // under a reactive region, handled below).
+                if underReactive then
                     Log.warn(
                         s"UI backend node '${bn.placeholder.tag}' (backend='${bn.backend}') carries a client mount but " +
                             "sits inside a reactive region (UI.show/when/render/foreach); its mount is not fired because " +

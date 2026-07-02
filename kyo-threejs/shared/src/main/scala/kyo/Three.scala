@@ -210,6 +210,16 @@ object Three extends ThreeColorOps, ThreeVec3Ops, ThreeNormalOps, ThreeRadiansOp
             // dead by construction; a self-return keeps the chain typed without inventing behaviour that
             // never renders. Ast.Embed overrides it to actually set the placeholder's id.
             def id(v: String): Self = this.asInstanceOf[Self]
+            // Decodes the wire Pointer once, walks this node's Three AST down relPath, runs the addressed
+            // onClick. Pure server-side read of the same authoritative signals the structural region
+            // drives; no live scene, no FFI.
+            override private[kyo] def dispatchBackendEvent(relPath: Seq[String], encoded: String)(using Frame): Unit < Async =
+                kyo.internal.PointerWire.decode(encoded) match
+                    case Present(pointer) => resolveOnClick(this, relPath, pointer).map {
+                            case Present(effect) => effect.unit
+                            case Absent          => Kyo.unit
+                        }
+                    case Absent => Kyo.unit // malformed payload: drop (a buggy client must not tear the session down)
         end Node
 
         /** Anything with a transform: the `position`/`rotation`/`scale` setters route through a per-node
@@ -843,6 +853,50 @@ object Three extends ThreeColorOps, ThreeVec3Ops, ThreeNormalOps, ThreeRadiansOp
 
     end Ast
 
+    // Mirrors ReactiveUI.targetSatisfies member for member. NODE-first: a Reactive is matched BEFORE
+    // any relPath split and resolves its current content at the SAME path (the boundary consumes no
+    // segment); a Foreach child is addressed by key through signal.current + render(i, item); a static
+    // container's children are index-addressed; at relPath == empty an Interactive node's onClick
+    // applies to the pointer. Matching Reactive only under `seg +: rest` would DROP a click landing
+    // DIRECTLY on render/when content (relPath == empty); matching the node first is what makes that
+    // corner resolve.
+    private def resolveOnClick(node: Three, relPath: Seq[String], pointer: Pointer)(using Frame): Maybe[Any < Async] < Async =
+        node match
+            case r: Ast.Reactive =>
+                // Path-transparent: content occupies the boundary's OWN path (no segment consumed), so
+                // recurse into the CURRENT content at the SAME relPath, read at click time. Matched
+                // BEFORE the relPath split so it resolves whether relPath is empty (click on render
+                // content) or not (render content wraps a deeper target).
+                r.signal.current.map(cur => resolveOnClick(cur, relPath, pointer))
+            case f: Ast.Foreach[a] =>
+                relPath match
+                    case seg +: rest =>
+                        f.signal.current.map { items =>
+                            val idx = f.key.fold(seg.toIntOption.getOrElse(-1))(k => items.indexWhere(it => k(it) == seg))
+                            if idx >= 0 && idx < items.size then resolveOnClick(f.render(idx, items(idx)), rest, pointer)
+                            else Absent
+                        }
+                    case Seq() => Absent // the Foreach holder carries no onClick of its own
+            case e: Ast.Embed =>
+                // The Embed carrier's ADDRESSABLE child is backendChildren(0) == scene; its `children` is
+                // EMPTY, so the generic Ast.Node arm below would index e.children -> out of range ->
+                // Absent, silently DROPPING every server-mode 3D click through the embed hop. A click
+                // arriving at the Embed carries relPath ["0", ...] (the scene is materialized/indexed at
+                // path :+ "0"; the ReactiveUI backendChildren descent puts it at path :+ "0"), so map the
+                // leading "0" segment to the scene and continue the walk there. Matched BEFORE the generic
+                // Ast.Node arm.
+                relPath match
+                    case "0" +: rest => resolveOnClick(e.scene, rest, pointer)
+                    case _           => Absent // no other child index exists on an Embed
+            case n: Ast.Node =>
+                relPath match
+                    case Seq() => n match
+                            case i: Ast.Interactive => i.meshProps.onClick.map(f => f(pointer))
+                            case _                  => Absent
+                    case seg +: rest => // static container: index-address a child, then descend (nested Interactive descendants included)
+                        Maybe.fromOption(seg.toIntOption).filter(i => i >= 0 && i < n.children.size)
+                            .fold(Absent: Maybe[Any < Async] < Async)(i => resolveOnClick(n.children(i), rest, pointer))
+
     // ---- Geometry factories --------------------------------------------------------
 
     object Geometry:
@@ -1046,324 +1100,5 @@ object Three extends ThreeColorOps, ThreeVec3Ops, ThreeNormalOps, ThreeRadiansOp
         frames: ThreeFrames = ThreeFrames.Raf
     )(using Frame): UI.Ast.BackendNode =
         Three.Ast.Embed(scene, camera, frames)
-
-    /** The server-feeds-by-signal-id surface.
-      *
-      * The client owns and animates the real scene (its `onFrame`/`onClick` closures compiled into the
-      * client bundle) while the SERVER feeds reactive DATA addressed by a string signal id over the
-      * EXISTING kyo-ui WebSocket `HostUpdate` transport. The two halves agree only on the set of string
-      * ids: a `Three.Feed.serverSignal[A](id, ...)` is server-owned (a clock fiber writes it) and mirrored
-      * client-side under the SAME id; each server emission becomes a `HostPayload.SignalUpdate(id, encoded)`
-      * wire leaf the client decodes and writes into the mirror `SignalRef[A]`, which the scene's existing
-      * `.color`/`.position` bound setters already observe through the `forkBoundRef`/`patchProp` path. The
-      * fed value crosses as a `Json.encode`d string of the `Schema`-serialized `A`, so any `A: Schema` (the
-      * bound setters' `Color`/`Vec3`/`Double` and a plain `Int` alike) round-trips identically client-side
-      * and server-side without any typed-value wire union.
-      *
-      * This object carries the mirror-`SignalRef` factory, the server-side wire-leaf encoder, and the
-      * client-side per-id feed receiver. The full `run`/`emit` serve wiring layers on top of this same seam.
-      */
-    object Feed:
-
-        /** One registered server-owned fed signal: its protocol `id` and a closure that, given the
-          * per-session host-update sink, runs the signal's `observe` loop (each emission a
-          * `HostPayload.SignalUpdate(id, encoded)` pushed through the sink). The closure captures the
-          * signal's own `A`/`Schema[A]`/`SignalRef[A]`, so the registry stays homogeneous and type-safe
-          * with no existential leaking onto the wire path. `observe`'s first setup runs on the current
-          * value, so a freshly connected client receives the signal's present value immediately.
-          */
-        final private[kyo] case class FeedEntry(
-            id: String,
-            observe: (kyo.internal.HostPayload => Unit < Async) => Unit < (Async & Scope)
-        )
-
-        /** One registered server-side app-event handler: its routing `eventId` and a closure that, given
-          * the inbound `AppEvent`'s `Json.encode`d string, decodes it
-          * with the handler's own `Schema[A]` and runs the user's handler. The closure captures `A`/
-          * `Schema[A]`, so the registry stays homogeneous with no existential leaking; a decode failure is a
-          * log-and-skip (the fire-and-forget back-channel policy). Decoding and routing never throw a frame;
-          * the user handler then runs inline in the session loop, so a handler that panics tears the session
-          * down, as a panicking DOM-event handler does.
-          */
-        final private[kyo] case class AppEventHandler(
-            eventId: String,
-            run: String => Unit < Async
-        )
-
-        /** The request-context fed-signal registry: a mutable holder of the `FeedEntry`s the `serverSignal`
-          * calls record AND the `AppEventHandler`s the
-          * `onAppEvent` calls record while the `ui` builder runs. `run` establishes one fresh registry per
-          * WebSocket session (via [[registryLocal]] `let`), runs the builder inside it, reads the recorded
-          * feed entries to fork the feed observers, and reads the recorded app-event handlers to route
-          * inbound `AppEvent`s. The capability to feed and to handle is established once at `run`, never
-          * threaded through `serverSignal`/`onAppEvent`'s signatures.
-          */
-        final private[kyo] class FeedRegistry(
-            private val entries: AtomicRef[Chunk[FeedEntry]],
-            private val handlers: AtomicRef[Chunk[AppEventHandler]]
-        ):
-            def register(entry: FeedEntry)(using Frame): Unit < Sync          = entries.updateAndGet(_.append(entry)).unit
-            def registerHandler(h: AppEventHandler)(using Frame): Unit < Sync = handlers.updateAndGet(_.append(h)).unit
-            def all(using Frame): Chunk[FeedEntry] < Sync                     = entries.get
-            def allHandlers(using Frame): Chunk[AppEventHandler] < Sync       = handlers.get
-        end FeedRegistry
-
-        private[kyo] object FeedRegistry:
-            def init(using Frame): FeedRegistry < Sync =
-                for
-                    entries  <- AtomicRef.init(Chunk.empty[FeedEntry])
-                    handlers <- AtomicRef.init(Chunk.empty[AppEventHandler])
-                yield FeedRegistry(entries, handlers)
-        end FeedRegistry
-
-        // Absent outside a `run` WebSocket session (a plain client island calling `serverSignal` to get
-        // the mirror, or a unit test): registration is then a no-op and `serverSignal` yields just the
-        // ref. `run` sets it via `let` so the builder's `serverSignal` calls populate that session's
-        // registry without any session value crossing the signature.
-        private[kyo] val registryLocal: Local[Maybe[FeedRegistry]] = Local.init(Absent)
-
-        /** Allocates the server-owned (or, on the island, the client mirror) `SignalRef[A]` addressed by
-          * `id`. On the SERVER the app writes it and the feed runner emits each change by id over the WS;
-          * on the CLIENT the island binds the returned ref into the scene with the existing setters and
-          * [[connect]] writes inbound feeds into it. The `id` is the protocol key the two halves agree on;
-          * `A: Schema` is what lets the value cross the wire.
-          *
-          * When called inside a [[run]] WebSocket session (the server path), the call also registers an
-          * observer of the returned ref in the session's fed-signal registry, so `run` feeds each emission
-          * by `id` over the WS. Outside a session (the client mirror, a unit test) the registration is a
-          * no-op and the bare ref is returned.
-          */
-        def serverSignal[A: Schema](id: String, initial: A)(using Frame, CanEqual[A, A]): SignalRef[A] < Sync =
-            for
-                ref <- Signal.initRef[A](initial)
-                _ <- registryLocal.use {
-                    case Present(reg) =>
-                        reg.register(FeedEntry(id, sink => ref.observe(value => sink(encodeUpdate(id, value)))))
-                    case Absent => Kyo.unit
-                }
-            yield ref
-
-        /** Structural fed-signal overload: a server-fed `Chunk[A]` the client's own `foreachKeyed`
-          * reconciler diffs locally.
-          *
-          * Allocates the server-owned (or, on the island, the client mirror) `SignalRef[Chunk[A]]`
-          * addressed by `id`. On the SERVER, when called inside a [[run]] WebSocket session, it registers
-          * an observer of the returned ref in the session's fed-signal registry so each emission becomes a
-          * `HostPayload.SignalChunk(id, encoded)` over the WS, the whole collection snapshot encoded as the
-          * `Json.encode`d string of the `Schema`-serialized `Chunk[A]`. On the CLIENT the island binds the
-          * returned ref with the EXISTING `.foreachKeyed(key)(render)` extension and calls
-          * [[connectChunk]]; an inbound `SignalChunk` for this `id` decodes with the same `Schema[A]` and
-          * writes the snapshot into the mirror, and the client's own keyed reconciler
-          * (`subscribeReactiveRegions`) diffs/splices it locally (an unchanged key reuses its live object,
-          * the GPU buffers survive). The wire carries the typed element DATA, never a flattened rendered
-          * subtree: the server feeds the snapshot and the diff runs client-side.
-          *
-          * Distinct from the single-value [[serverSignal]]: it threads a `Chunk[A]` value type the
-          * single-value form cannot express and registers the id as a STRUCTURAL feed (the client routes it
-          * to its keyed reconciler, not a prop mirror). Same id-registration core, distinct typed surface.
-          */
-        def serverSignal[A: Schema](id: String, initial: Chunk[A])(using
-            Frame,
-            CanEqual[A, A]
-        ): SignalRef[Chunk[A]] < Sync =
-            for
-                ref <- Signal.initRef[Chunk[A]](initial)
-                _ <- registryLocal.use {
-                    case Present(reg) =>
-                        reg.register(FeedEntry(id, sink => ref.observe(value => sink(encodeChunkUpdate(id, value)))))
-                    case Absent => Kyo.unit
-                }
-            yield ref
-
-        /** Encodes a server-owned fed value as the `HostPayload.SignalUpdate(id, encoded)` wire leaf the
-          * feed runner emits over the existing `HtmlOp.HostUpdate` transport (`UIServer.emitHostUpdate`).
-          * The value crosses as the `Json.encode`d string of its `Schema`, decoded client-side by
-          * [[connect]] with the same `Schema[A]`.
-          */
-        private[kyo] def encodeUpdate[A: Schema](id: String, value: A)(using Frame): kyo.internal.HostPayload =
-            kyo.internal.HostPayload.SignalUpdate(id, Json.encode[A](value))
-
-        /** Encodes a server-owned fed `Chunk[A]` snapshot as the `HostPayload.SignalChunk(id, encoded)`
-          * wire leaf the structural feed runner emits. The whole collection crosses as the `Json.encode`d
-          * string of its `Schema`, decoded client-side by
-          * [[connectChunk]] with the same `Schema[A]`; the client's own keyed reconciler then diffs it.
-          */
-        private[kyo] def encodeChunkUpdate[A: Schema](id: String, value: Chunk[A])(using Frame): kyo.internal.HostPayload =
-            kyo.internal.HostPayload.SignalChunk(id, Json.encode[Chunk[A]](value))
-
-        /** Wires the client mirror (the island-side feed connect): registers a receiver on
-          * `window.__kyoHostChannels[id]` (the same registry the inline kyo-ui clientJs routes a
-          * `HostUpdate` into, `HtmlRenderer.scala:771-799`) that decodes an inbound
-          * `HostPayload.SignalUpdate` for this `id` with `Schema[A]` and writes the decoded value into
-          * `mirror`. The existing `forkBoundRef`/`patchProp` fiber the scene mount already forked for
-          * `mirror` then patches exactly the one bound live node. A malformed or wrong-id payload is a
-          * silent no-op. The receiver is dropped on `Scope` close.
-          *
-          * This is the client island entry's feed-connect helper: the island's `@JSExportTopLevel` main
-          * mounts the scene via `Three.runMount` and calls this once per fed signal id under the mount
-          * Scope.
-          */
-        def connect[A: Schema](id: String, mirror: SignalRef[A])(using
-            Frame
-        ): Unit < (Async & Scope) =
-            ThreeMount.connectFeed[A](id, mirror)
-
-        /** Wires the client mirror for a STRUCTURAL feed: the client-side connect for a
-          * `Three.Feed.serverSignal[Chunk[A]]`. Registers a receiver on
-          * `window.__kyoHostChannels[id]` that decodes an inbound `HostPayload.SignalChunk` for this `id`
-          * with `Schema[Chunk[A]]` and writes the whole decoded snapshot into `mirror`. The scene bound the
-          * mirror with `.foreachKeyed(key)(render)`, so the write drives the client's OWN keyed reconciler
-          * (`subscribeReactiveRegions`), which diffs/splices the snapshot locally: an unchanged key reuses
-          * its live object (GPU buffers survive), a new key materializes, a dropped key disposes. A
-          * malformed or wrong-id payload is a silent no-op. The receiver is dropped on `Scope` close.
-          *
-          * The client island entry calls this once per fed structural signal id under the mount Scope, the
-          * structural analog of [[connect]].
-          */
-        def connectChunk[A: Schema](id: String, mirror: SignalRef[Chunk[A]])(using
-            Frame
-        ): Unit < (Async & Scope) =
-            ThreeMount.connectFeedChunk[A](id, mirror)
-
-        /** The client->server typed app-event back-channel. Called from inside a CLIENT `onClick` (or other
-          * handler) on the user's live scene: the client raycasts and runs `onClick` LOCALLY, and within
-          * that closure `emit` posts a typed `[A: Schema]` app event addressed by `id` over the SAME
-          * WebSocket. The server's [[run]] routes it to the handler registered for that `id` via
-          * [[onAppEvent]], which reflects it into a server-owned fed signal it feeds back, closing the
-          * hook-and-feed loop.
-          *
-          * The event crosses as the `Json.encode`d string of its `Schema` inside a `private[kyo]`
-          * `UIEvent.AppEvent(path, id, encoded)` (the user sees only this typed surface, never the wire
-          * envelope). When no feed channel is bound (called outside a client feed context, e.g. before the
-          * WS is open or in a non-island context), the post fails with `Abort[ThreeException.FeedUnavailable]`
-          * visible in the row, never a silent drop. An event for an `id` with no registered server handler
-          * is a log-and-skip server-side (the fire-and-forget back-channel policy).
-          */
-        def emit[A: Schema](id: String, event: A)(using Frame): Unit < (Async & Abort[ThreeException]) =
-            ThreeMount.postAppEvent[A](id, event)
-
-        /** Registers a server-side handler for the typed app event `id`: the server leg of the back-channel
-          * that [[emit]] drives from the client. Called inside the [[run]] `ui` builder, exactly as
-          * [[serverSignal]] is, so the handler records itself in
-          * the session's request-context registry; [[run]] then routes each inbound `AppEvent` for `id` to
-          * this handler. The handler receives the decoded typed event and typically reflects it into a
-          * server-owned fed signal it also declared with `serverSignal`, feeding the result back to the
-          * client. Outside a [[run]] session (a unit test, a non-serve context) the registration is a no-op.
-          *
-          * Like [[serverSignal]] the capability is established once at `run`; the handler is not threaded
-          * through a signature. A decode failure or an event for an unregistered id is a server-side
-          * log-and-skip (the fire-and-forget policy): decoding and routing never throw a frame. The handler
-          * itself runs inline in the session message loop, so a well-behaved handler that returns normally
-          * never throws a frame, but a handler that panics tears the session down (exactly as a panicking
-          * DOM-event handler does).
-          */
-        def onAppEvent[A: Schema](id: String)(handler: A => Unit < Async)(using Frame): Unit < Sync =
-            registryLocal.use {
-                case Present(reg) =>
-                    reg.registerHandler(AppEventHandler(
-                        id,
-                        encoded =>
-                            Json.decode[A](encoded) match
-                                case Result.Success(event) => handler(event)
-                                case Result.Failure(_)     => Log.warn(s"Three.Feed app event '$id' decode failed; dropped")
-                                case Result.Panic(ex)      => Log.error(s"Three.Feed app event '$id' decode panicked", ex)
-                    ))
-                case Absent => Kyo.unit
-            }
-
-        /** The serve entry: returns the HTTP handlers (an SSR page GET and a WebSocket route) that serve a
-          * feed-by-signal-id app. Compose the returned handlers with any static handlers (the client island
-          * bundle, three.js) via `HttpServer.init`.
-          *
-          * The page is built from `head`: it links the client island bundle through `head.moduleScript`
-          * (the `@JSExportTopLevel` entry that mounts the real scene via `Three.runMount` and connects each
-          * fed signal id via [[connect]]) and carries the inline
-          * kyo-ui client that routes each inbound `HostUpdate` into `window.__kyoHostChannels[id]`. The
-          * `ui` builder renders the page body (a host `<canvas>` the island selects, plus any kyo-ui HUD).
-          *
-          * Per WebSocket connection the runner runs the `ui` builder once inside a fresh fed-signal
-          * registry, so the `Three.Feed.serverSignal` calls in the builder record their ids, then forks
-          * ONE observer per registered id, each signal emission becoming a
-          * `HostUpdate(Seq(id), HostPayload.SignalUpdate(id, encoded))` over that WS (via
-          * `UIServer.emitHostUpdate`). The observers and the kyo-ui reactive session bind to the
-          * connection Scope and are interrupted on disconnect (no leaked fiber). The server never builds
-          * the 3D scene graph; it learns only the fed ids.
-          *
-          * The builder's row is `(Async & Scope)`: it is evaluated under the connection Scope, so a
-          * server-timer driver feeding a `serverSignal` (a background loop the user forks with
-          * `Fiber.init`) binds to that same Scope and is interrupted on disconnect alongside the
-          * observers, leaking no fiber. A plain `UI < Async` builder still conforms. On the SSR page GET
-          * the builder runs under its own short-lived Scope, so any such driver is torn down once the
-          * page body is rendered.
-          *
-          * Construction is `< Sync` (the per-connection observers fork at WebSocket-connect time under
-          * the connection Scope, matching the `UI.runHandlers` substrate).
-          */
-        def run(basePath: String, head: UI.PageHead)(ui: => UI < (Async & Scope))(using
-            Frame
-        ): Seq[HttpHandler[?, ?, ?]] < Sync =
-            Sync.defer {
-                val base = kyo.internal.UIServer.normalizePath(basePath)
-                Seq(
-                    // The SSR page render only needs the produced tree; discharge the builder's Scope so a
-                    // forked driver is torn down once the body is rendered (no per-GET fiber leak).
-                    kyo.internal.UIServer.pageHandler(basePath, head)(Scope.run(Sync.defer(ui))),
-                    feedWsRoute(base, Sync.defer(ui))
-                )
-            }
-
-        /** The feed WebSocket route: per connection, establishes a fresh [[FeedRegistry]] for the lifetime
-          * of the `ui` builder run (so the builder's `serverSignal` and `onAppEvent` calls record their ids
-          * and handlers), runs the kyo-ui reactive session for the same tree (any HUD reactivity), forks one
-          * feed observer per registered id under the session Scope, and routes each inbound `AppEvent` by its
-          * `eventId` to the matching registered handler. Each observer pushes the signal's value as a
-          * `HostUpdate` whenever it emits; an inbound app event runs its handler (which typically sets a fed
-          * signal, feeding the result back over the same WS). All fibers tear down on disconnect.
-          */
-        private def feedWsRoute(base: String, ui: => UI < (Async & Scope))(using Frame): HttpHandler[Any, Any, Nothing] =
-            HttpHandler.webSocket(s"$base/_kyo/ws") { (_, ws) =>
-                FeedRegistry.init.map { registry =>
-                    registryLocal.let(Present(registry)) {
-                        kyo.internal.UIServer.serveSession(ws, ui) { _ =>
-                            registry.all.map { entries =>
-                                Kyo.foreachDiscard(entries) { entry =>
-                                    // Fork each observer under the session Scope: Fiber.init registers an
-                                    // interrupt on Scope close, so a disconnect tears every feed fiber down.
-                                    // The body is wrapped in Abort.run[Throwable] so a non-Closed panic in the
-                                    // observe loop is logged rather than lost (matching every sibling forked
-                                    // fiber); an Interrupted is the normal Scope-close signal, not an error.
-                                    Fiber.init {
-                                        Abort.run[Throwable] {
-                                            entry.observe(payload =>
-                                                kyo.internal.UIServer.emitHostUpdate(ws, Seq(entry.id), payload)
-                                            )
-                                        }.map { result =>
-                                            result.fold(
-                                                _ => (): Unit < Sync,
-                                                err => Log.error(s"Three.Feed observer for '${entry.id}' failed: ${err.getMessage}"),
-                                                panic =>
-                                                    if panic.isInstanceOf[Interrupted] then (): Unit < Sync
-                                                    else Log.error(s"Three.Feed observer for '${entry.id}' panicked", panic)
-                                            )
-                                        }
-                                    }.unit
-                                }
-                            }
-                        } { (eventId, encoded) =>
-                            // Route an inbound AppEvent to its registered handler by eventId. The registry is
-                            // fully populated by the single `ui` run before the WS message loop starts, so the
-                            // lookup is complete. An event for an unregistered id is a log-and-skip (the
-                            // fire-and-forget back-channel policy), never a thrown frame.
-                            registry.allHandlers.map { handlers =>
-                                Maybe.fromOption(handlers.find(_.eventId == eventId)) match
-                                    case Present(h) => h.run(encoded)
-                                    case Absent     => Log.warn(s"Three.Feed app event for unregistered id '$eventId' dropped")
-                            }
-                        }
-                    }
-                }
-            }
-
-    end Feed
 
 end Three
