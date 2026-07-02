@@ -132,7 +132,11 @@ class IoUringQueuedRecvOrderingTest extends Test:
                                                 )
                                             case other => fail(s"expected recv #2 Success(Bytes), got $other")
                                         end match
+                                        // Close both sides: `client` (the peer) and `accepted` (the driver-managed handle this test drove
+                                        // directly, never wired to a Connection). Only closing `client` leaves `accepted`'s fd in CLOSE_WAIT
+                                        // forever (driver.close() below tears down the ring, not individually-registered handle fds).
                                         discard(sock.close(client))
+                                        discard(sock.close(accepted))
                                         succeed
                                     }
                                 }

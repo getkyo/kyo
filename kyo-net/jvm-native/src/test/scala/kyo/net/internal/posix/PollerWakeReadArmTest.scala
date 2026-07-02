@@ -59,6 +59,9 @@ class PollerWakeReadArmTest extends Test:
                         s"other pending event on this driver to return the park -- strands forever)"
                 )
                 PosixTestSockets.closePeerForEof(Ffi.load[SocketBindings], acceptedFd)
+                // driver.cancel(handle) deregisters clientFd from the driver but never closes it; only closing the peer (above) leaves
+                // clientFd itself in CLOSE_WAIT forever (driver.close() below tears down the poll loop, not individually-cancelled fds).
+                discard(Ffi.load[SocketBindings].close(clientFd))
             finally driver.close()
             end try
         }

@@ -199,7 +199,11 @@ class IoUringOrphanFeedOrderNoDuplicationTest extends Test:
                                                 order.asScala.toSeq == Seq("orphan:chunk1", "second:chunk2"),
                                                 s"expected exactly [orphan:chunk1, second:chunk2] in order, got ${order.asScala.toSeq}"
                                             )
+                                            // Close both sides: `client` (the peer) and `accepted` (the driver-managed handle this test drove
+                                            // directly, never wired to a Connection). Only closing `client` leaves `accepted`'s fd in CLOSE_WAIT
+                                            // forever (driver.close() below tears down the ring, not individually-registered handle fds).
                                             discard(sock.close(client))
+                                            discard(sock.close(accepted))
                                             succeed
                                         }
                                     }

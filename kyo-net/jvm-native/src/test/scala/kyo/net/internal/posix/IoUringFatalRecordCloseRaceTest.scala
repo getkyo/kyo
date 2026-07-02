@@ -140,7 +140,12 @@ class IoUringFatalRecordCloseRaceTest extends Test:
                                 "expected the bug to reproduce: a bare requestClose() onFatal must free handle.tls immediately even " +
                                     "though a recv is still genuinely in flight (proves the test's own mechanism, not a vacuous pass)"
                             )
+                            // Close both sides: `client` (the peer) and `accepted` (the driver-managed handle this test drove directly, never
+                            // wired to a Connection). requestClose() frees handle.tls but never the raw fd; only closing `client` leaves
+                            // `accepted`'s fd in CLOSE_WAIT forever (driver.close() below tears down the ring, not individually-registered
+                            // handle fds).
                             discard(sock.close(client))
+                            discard(sock.close(accepted))
                             succeed
                         }
                     }
