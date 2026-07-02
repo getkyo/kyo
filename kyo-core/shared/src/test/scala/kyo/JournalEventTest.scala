@@ -2,6 +2,9 @@ package kyo
 
 class JournalEventTest extends kyo.test.Test[Any]:
 
+    private def valid[A](r: Result[JournalError.InvalidIdentifier, A]): A =
+        r.getOrElse(throw new AssertionError("expected valid identifier"))
+
     "StreamId" - {
         "accepts a non-empty value" in {
             assert(StreamId("users-1").map(_.value) == Result.succeed("users-1"))
@@ -64,6 +67,43 @@ class JournalEventTest extends kyo.test.Test[Any]:
         }
         "Existing exists" in {
             assert(StreamInfo.Existing(3L, StreamRevision.first).exists)
+        }
+    }
+
+    "EventEnvelope and RecordedEvent" - {
+        "carry payload bytes by value" in {
+            val payload = Span.from("""{"name":"Ada"}""".getBytes("UTF-8"))
+            val envelope = EventEnvelope(
+                id = valid(EventId("event-1")),
+                eventType = valid(EventType("UserRegistered")),
+                payload = payload,
+                metadata = EventMetadata.empty
+            )
+            val recorded = RecordedEvent(
+                streamId = valid(StreamId("users-1")),
+                revision = StreamRevision.first,
+                eventId = envelope.id,
+                eventType = envelope.eventType,
+                payload = envelope.payload,
+                metadata = envelope.metadata
+            )
+            // Span equality via == is reference-based; payload contents compare with Span#is.
+            assert(recorded.payload.is(Span.from("""{"name":"Ada"}""".getBytes("UTF-8"))))
+            assert(recorded.streamId.value == "users-1")
+            assert(recorded.revision == StreamRevision.first)
+            assert(recorded.eventId == envelope.id)
+            assert(recorded.eventType == envelope.eventType)
+            assert(recorded.metadata == EventMetadata.empty)
+        }
+    }
+
+    "AppendResult" - {
+        "reports the appended range and post-append state" in {
+            val sid    = StreamId("users-1").getOrElse(throw new AssertionError("valid stream id"))
+            val result = AppendResult(sid, StreamRevision.first, StreamRevision.first, StreamInfo.Existing(1L, StreamRevision.first))
+            assert(result.firstRevision == StreamRevision.first)
+            assert(result.lastRevision == StreamRevision.first)
+            assert(result.streamInfo == StreamInfo.Existing(1L, StreamRevision.first))
         }
     }
 end JournalEventTest

@@ -48,7 +48,7 @@ end EventId
 
 /** Type label of an event, used by consumers to select decoders.
   *
-  * The journal stores payloads as raw bytes; the event type is the routing key a typed layer (kyo-eventlog) uses to pick the decoder.
+  * The routing label consumers use to select a decoder for the payload.
   * The constructor validates that the label is non-empty and returns a `Result`.
   *
   * @see
@@ -71,9 +71,8 @@ end EventType
 
 /** Zero-based position of an event within its stream.
   *
-  * The first event of a stream is revision 0 and appends assign consecutive revisions. Valid values are in `[0, Long.MaxValue)`;
-  * `Long.MaxValue` is excluded so the one-based [[StreamVersion]] view (`revision + 1`) cannot overflow. The constructor validates the
-  * range and returns a `Result`.
+  * The first event of a stream is revision 0 and appends assign consecutive revisions. Valid values are in `[0, Long.MaxValue)`.
+  * Use [[StreamVersion.after]] to convert a revision to a one-based count. The constructor validates the range and returns a `Result`.
   *
   * @see
   *   [[kyo.StreamVersion]] for the one-based count view derived from a revision
@@ -160,3 +159,46 @@ enum StreamInfo derives CanEqual:
             case StreamInfo.Absent         => false
             case StreamInfo.Existing(_, _) => true
 end StreamInfo
+
+/** An event as submitted to [[kyo.Journal.append]]: producer-assigned identity, type label, raw payload, and metadata.
+  *
+  * The journal treats the payload as opaque bytes; typed encoding and decoding live above this layer (kyo-eventlog). Note that `Span`
+  * equality via `==` is reference-based: compare payload contents with `Span#is`, not by comparing envelopes with `==`.
+  *
+  * @see
+  *   [[kyo.RecordedEvent]] for the stored form returned by reads
+  */
+final case class EventEnvelope(
+    id: EventId,
+    eventType: EventType,
+    payload: Span[Byte],
+    metadata: EventMetadata
+) derives CanEqual
+
+/** A stored event as returned by [[kyo.Journal.read]]: the envelope's data plus the stream identity and assigned revision.
+  *
+  * Note that `Span` equality via `==` is reference-based: compare payload contents with `Span#is`, not by comparing records with `==`.
+  *
+  * @see
+  *   [[kyo.EventEnvelope]] for the submitted form
+  */
+final case class RecordedEvent(
+    streamId: StreamId,
+    revision: StreamRevision,
+    eventId: EventId,
+    eventType: EventType,
+    payload: Span[Byte],
+    metadata: EventMetadata
+) derives CanEqual
+
+/** Outcome of a successful append: the revision range assigned to the batch and the post-append stream state.
+  *
+  * @see
+  *   [[kyo.Journal.append]] which returns this
+  */
+final case class AppendResult(
+    streamId: StreamId,
+    firstRevision: StreamRevision,
+    lastRevision: StreamRevision,
+    streamInfo: StreamInfo
+) derives CanEqual

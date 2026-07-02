@@ -4,7 +4,7 @@ package kyo
   *
   * Metadata is a map from validated dotted-path keys to structural values, stored beside the raw payload. It exists for infrastructure
   * concerns (correlation identifiers, tracing, tags) that consumers may need without decoding the payload. The value tree mirrors the
-  * shape of kyo-schema's `Structure.Value` without depending on it; kyo-eventlog provides the lossless bridge between the two.
+  * shape of kyo-schema's `Structure.Value` without depending on it; a bridge layer with access to both types provides lossless conversion.
   *
   * @see
   *   [[kyo.EventEnvelope]] and [[kyo.RecordedEvent]] which carry this metadata
@@ -45,8 +45,7 @@ end MetadataKey
 
 /** Structural metadata value: records, variant cases, sequences, map entries, and scalars.
   *
-  * The cases mirror kyo-schema's `Structure.Value` one-to-one so metadata written against this ADT converts losslessly once kyo-eventlog
-  * (which sees both modules) provides the bridge. kyo-core itself attaches no interpretation beyond structural equality.
+  * The cases mirror kyo-schema's `Structure.Value` one-to-one; a bridge layer that can see both types provides lossless conversion in both directions. Structural equality via `derives CanEqual` is the only interpretation kyo-core applies.
   */
 enum MetadataValue derives CanEqual:
     case Record(fields: Chunk[(String, MetadataValue)])

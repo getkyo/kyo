@@ -22,7 +22,7 @@ enum JournalError derives CanEqual:
     /** A `StreamId`, `EventId`, `EventType`, `StreamRevision`, `StreamVersion`, or `MetadataKey` value failed validation. */
     case InvalidIdentifier(kind: String, value: String)
 
-    /** A durable backend observed damaged stored data away from the write tail and refuses to repair it. */
+    /** A durable backend detected unrecoverable corruption in stored events and refuses to repair it silently. */
     case Corrupted(streamId: Maybe[StreamId], detail: String)
 
     /** An I/O failure from a durable backend's underlying storage. */
