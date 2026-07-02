@@ -35,8 +35,8 @@ object ThumbnailGalleryScene:
     /** The render camera the gallery captures each scene from, aimed at the origin. */
     def camera(using Frame): Three.Ast.Camera =
         Three.Camera.perspective(
-            position = Vec3(0, 0, 4),
-            lookAt = Vec3.zero
+            position = Three.Vec3(0, 0, 4),
+            lookAt = Three.Vec3.zero
         )
 
     /** The named scenes the gallery renders to PNGs. */
@@ -44,16 +44,16 @@ object ThumbnailGalleryScene:
         Chunk(
             "red-cube" -> Three.scene(
                 Three.Light.ambient(),
-                Three.mesh(Three.Geometry.box(), Three.Material.standard(color = Color.red))
+                Three.mesh(Three.Geometry.box(), Three.Material.standard(color = Three.Color.red))
             ),
             "blue-ball" -> Three.scene(
                 Three.Light.directional(),
-                Three.mesh(Three.Geometry.sphere(), Three.Material.standard(color = Color.blue))
+                Three.mesh(Three.Geometry.sphere(), Three.Material.standard(color = Three.Color.blue))
             ),
             "torus" -> Three.scene(
                 Three.Light.ambient(),
                 Three.Light.point(),
-                Three.mesh(Three.Geometry.torus(), Three.Material.standard(color = Color.magenta))
+                Three.mesh(Three.Geometry.torus(), Three.Material.standard(color = Three.Color.magenta))
             )
         )
 
@@ -62,6 +62,6 @@ object ThumbnailGalleryScene:
         Three.scene(
             Three.Light.ambient(),
             Three.Light.point(),
-            Three.mesh(Three.Geometry.torus(), Three.Material.standard(color = Color.magenta))
+            Three.mesh(Three.Geometry.torus(), Three.Material.standard(color = Three.Color.magenta))
         )
 end ThumbnailGalleryScene

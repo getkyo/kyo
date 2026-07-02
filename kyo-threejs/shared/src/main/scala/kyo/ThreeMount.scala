@@ -29,17 +29,15 @@ object ThreeMount:
         selector: String,
         frames: ThreeFrames = ThreeFrames.Raf
     )(using Frame): Unit < (Async & Scope & Abort[ThreeException]) =
+        // Resolves the canvas inline (a missing selector still surfaces as a typed ThreeException to
+        // this method's caller); once resolved, mounts through the SAME registry-dispatched backend
+        // the embed/hydrate path uses (ThreeBackend.mount), unifying both entries. mount's own row is
+        // (Async & Scope) only (it discharges a mount-pipeline failure to Log.error internally,
+        // matching hostMountPipeline's existing swallow-and-log contract), which widens into this
+        // method's declared Abort[ThreeException] row with no further handling needed here.
         for
-            canvas      <- ThreeMount.resolveCanvas(selector)
-            renderer    <- ThreeMount.makeRenderer(canvas)
-            mountResult <- Reconciler.mount(scene)
-            (rootLive, mounted) = mountResult
-            cam      <- ThreeFacadeOps.makeCamera(camera)
-            _        <- ThreeMount.subscribeRegions(mounted)
-            _        <- ThreeMount.subscribeReactiveRegions(mounted)
-            _        <- ThreeMount.setupPointerDelegation(canvas, mounted, cam)
-            controls <- ThreeMount.setupControls(canvas, mounted, cam)
-            _        <- ThreeMount.runLoop(mounted, rootLive, cam, renderer, frames, controls)
+            canvas <- ThreeMount.resolveCanvas(selector)
+            _      <- kyo.internal.ThreeBackend.mount(Three.Ast.Embed(scene, camera, frames), canvas.asInstanceOf[dom.Element], Seq.empty)
         yield ()
 
     /** Yields a deterministic [[Three.Driver]] over the materialized scene, the same driver the
@@ -100,28 +98,8 @@ object ThreeMount:
             bytes  <- ThreeToImage.encodePng(pixels, width, height)
         yield Image.fromBinary(bytes)
 
-    /** Embeds `scene` as a first-class child of a kyo-ui tree: returns a kyo-ui host node
-      * whose `<canvas>` kyo-ui lays out and renders on every runner, and into which the 3D
-      * scene mounts at page mount and disposes at page teardown (client-side). The renderer,
-      * reconciler, GL contexts, and pointer listeners bind to the page mount Scope and are
-      * released at teardown. The frame loop runs as a fiber forked under the page Scope: no
-      * leaked GL context, no orphaned frame loop; the loop fiber is interrupted when the
-      * page Scope closes. Shared `SignalRef`s bridge exactly as in the side-by-side path.
-      * Usage: `UI.div(controls, Three.embed(scene, camera), footer)`.
-      */
-    private[kyo] def embed(
-        scene: Three,
-        camera: Three.Ast.Camera,
-        frames: ThreeFrames = ThreeFrames.Raf
-    )(using Frame): UI.Ast.Host =
-        // The client DomHostMount closure wires the GL pipeline on the client under UI.runMount: the
-        // scene builds, animates, and raycasts locally (closures intact), the same pipeline runMount runs.
-        UI.host("canvas") { canvas =>
-            hostMountPipeline(scene, camera, frames, canvas)
-        }
-    end embed
-
-    private def hostMountPipeline(
+    // private[kyo], not private: ThreeBackend.mount (kyo.internal) calls this directly.
+    private[kyo] def hostMountPipeline(
         scene: Three,
         camera: Three.Ast.Camera,
         frames: ThreeFrames,
@@ -595,7 +573,7 @@ object ThreeMount:
                         currentHitLiveRef.getAndSet(newLive).map { prevLive =>
                             val pointer = hitResult match
                                 case Present((_, p)) => p
-                                case Absent          => Pointer(Vec3(0, 0, 0), 0.0, ndc, Pointer.Buttons.none)
+                                case Absent          => Three.Pointer(Three.Vec3(0, 0, 0), 0.0, ndc, Three.Pointer.Buttons.none)
                             val (fireOut, fireOver) = ThreeMount.hoverTransition(prevLive, newLive)
                             fireOut.foreach { prev =>
                                 prev.node match
@@ -686,7 +664,7 @@ object ThreeMount:
                 controls.autoRotate = node.autoRotate
                 val t = node.target match
                     case Bound.Const(v) => v
-                    case Bound.Ref(_)   => Vec3.zero
+                    case Bound.Ref(_)   => Three.Vec3.zero
                 discard(controls.target.set(t.x, t.y, t.z))
                 discard(controls.update())
                 controls
@@ -788,19 +766,19 @@ object ThreeMount:
         def add[A](signal: Signal[A], patch: A => js.Dynamic => Unit): Unit =
             buf = buf.appended((live, patch.asInstanceOf[Any => js.Dynamic => Unit], signal.asInstanceOf[Signal[Any]]))
 
-        def addColor(b: Bound[Color], navigate: js.Dynamic => js.Dynamic): Unit =
+        def addColor(b: Bound[Three.Color], navigate: js.Dynamic => js.Dynamic): Unit =
             b match
                 case Bound.Ref(sig) => add(
                         sig,
-                        (c: Color) =>
+                        (c: Three.Color) =>
                             (obj: js.Dynamic) =>
                                 val _ = navigate(obj).set(c.packed.toDouble)
                     )
                 case _ => ()
 
-        def addNormal(b: Bound[Normal], set: (js.Dynamic, Double) => Unit): Unit =
+        def addNormal(b: Bound[Three.Normal], set: (js.Dynamic, Double) => Unit): Unit =
             b match
-                case Bound.Ref(sig) => add(sig, (n: Normal) => (obj: js.Dynamic) => set(obj, n.toDouble))
+                case Bound.Ref(sig) => add(sig, (n: Three.Normal) => (obj: js.Dynamic) => set(obj, n.toDouble))
                 case _              => ()
 
         def addDouble(b: Bound[Double], set: (js.Dynamic, Double) => Unit): Unit =
@@ -808,12 +786,12 @@ object ThreeMount:
                 case Bound.Ref(sig) => add(sig, (d: Double) => (obj: js.Dynamic) => set(obj, d))
                 case _              => ()
 
-        def addVec3(b: Maybe[Bound[Vec3]], navigate: js.Dynamic => js.Dynamic): Unit =
+        def addVec3(b: Maybe[Bound[Three.Vec3]], navigate: js.Dynamic => js.Dynamic): Unit =
             b.foreach {
                 case Bound.Ref(sig) =>
                     add(
                         sig,
-                        (v: Vec3) =>
+                        (v: Three.Vec3) =>
                             (obj: js.Dynamic) =>
                                 val _ = navigate(obj).set(v.x, v.y, v.z)
                     )
@@ -895,7 +873,7 @@ object ThreeMount:
                     case Bound.Ref(sig) =>
                         add(
                             sig,
-                            (v: Vec3) =>
+                            (v: Three.Vec3) =>
                                 (obj: js.Dynamic) =>
                                     // Unsafe: re-aiming the camera toward a reactive lookAt target; called after
                                     // every position update so orientation stays correct.
@@ -911,7 +889,7 @@ object ThreeMount:
                     case Bound.Ref(sig) =>
                         add(
                             sig,
-                            (v: Vec3) =>
+                            (v: Three.Vec3) =>
                                 (obj: js.Dynamic) =>
                                     // Unsafe: re-aiming the orthographic camera toward a reactive lookAt target.
                                     val _ = obj.lookAt(v.x, v.y, v.z)

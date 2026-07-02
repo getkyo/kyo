@@ -57,6 +57,10 @@ private[kyo] object Reconciler:
         // element. The default no-op covers the headless toImage path, which fills reactive props once
         // (fillBoundRefsOnce) instead of forking observe fibers. The live mount installs the real hook.
         private[kyo] var subscribeElement: Live => Unit < (Async & Scope) = (_: Live) => ()
+        // The per-mount hooks a path-indexing backend installs; DEFAULT no-op, so the
+        // client-local runMount + headless toImage paths maintain no server index.
+        private[kyo] var reindexRegion: (ReactiveRegion, Chunk[(String, Live)]) => Unit = (_, _) => () // re-index on splice
+        private[kyo] var pathForLive: Live => Maybe[Seq[String]]                        = _ => Absent  // the click producer's inverse
     end Mounted
 
     // Private wrapper so HashMap uses reference identity (== on the node ref),
@@ -152,6 +156,12 @@ private[kyo] object Reconciler:
                 ThreeFacadeOps.makeHolder().flatMap(obj =>
                     Sync.Unsafe.defer(record(mounted, c, obj, Chunk.empty, attachChildren = false))
                 )
+            case e: Ast.Embed =>
+                // Unreachable: Ast.Embed is private[kyo] and its only factory (Three.embed) returns it
+                // upcast to UI.Ast.BackendNode, so no scene's `children: Chunk[Three]` can ever hold one;
+                // ThreeBackend.mount dispatches an Embed to hostMountPipeline(e.scene, ...), materializing
+                // e.scene, never e itself. Kept as a defensive panic for the sealed-match exhaustivity.
+                Abort.panic(new IllegalStateException(s"Reconciler.materialize: unreachable Ast.Embed: $e"))
         end match
     end materialize
 
@@ -271,6 +281,10 @@ private[kyo] object Reconciler:
         // Single-owner per region: the last reconcile's keyed live children, read to diff the
         // next emission so an unchanged key reuses its live object.
         private[kyo] var prevKeyed: Chunk[(String, Live)] = Chunk.empty
+        // This region's holder's data-kyo-path, STAMPED by ThreeBackend's
+        // buildPathIndex before any post-mount splice; empty (Absent-equivalent) in the client-local/
+        // headless paths that maintain no server index. regionFor + the reindex hook read it.
+        private[kyo] var holderPath: Seq[String] = Seq.empty
     end ReactiveRegion
 
     /** The structural reactive regions (`Ast.Reactive`, `Ast.Foreach`) of the mount, built once from the
@@ -333,7 +347,7 @@ private[kyo] object Reconciler:
                 disposeElemScope(prevLive, mounted)
             }.andThen {
                 materializeInElemScope(next, mounted).map { fresh =>
-                    replaceHolderChildren(region, Chunk(("reactive", fresh)))
+                    replaceHolderChildren(region, Chunk(("reactive", fresh)), mounted)
                 }
             }
 
@@ -347,7 +361,7 @@ private[kyo] object Reconciler:
         items =>
             val keyed = keyEntries(f, items)
             diffKeyed(region.prevKeyed, keyed, mounted).map { lives =>
-                replaceHolderChildren(region, keyed.map(_._1).zip(lives))
+                replaceHolderChildren(region, keyed.map(_._1).zip(lives), mounted)
             }
 
     /** Pairs each `Foreach` element with its key (the keyed accessor, or its index when unkeyed) and the
@@ -364,7 +378,7 @@ private[kyo] object Reconciler:
       * Removed children are disposed by the caller before this runs; only the scene-graph relink
       * and state update happen here.
       */
-    private def replaceHolderChildren(region: ReactiveRegion, keyedLives: Chunk[(String, Live)])(using
+    private def replaceHolderChildren(region: ReactiveRegion, keyedLives: Chunk[(String, Live)], mounted: Mounted)(using
         Frame
     ): Unit < Sync =
         // Unsafe: the keyed re-link is a synchronous scene-graph relink on objects the reconciler owns.
@@ -374,6 +388,11 @@ private[kyo] object Reconciler:
             val snapshot    = childrenArr.toArray
             snapshot.foreach(child => ThreeFacadeOps.detachUnsafe(holder, child))
             keyedLives.foreach { case (_, l) => ThreeFacadeOps.attachUnsafe(holder, l.obj) }
+            // Re-index BEFORE overwriting prevKeyed, so the hook can diff old-vs-new
+            // keyed sets from region.prevKeyed (still the PRIOR set at this point) against keyedLives (the
+            // NEW set). ThreeBackend installs this to write byPath/byLive (un-index removed keys, index
+            // spliced keys under holderPath :+ key [+ i...]); no-op in client-local/headless mode.
+            mounted.reindexRegion(region, keyedLives)
             region.prevKeyed = keyedLives
         }
 
@@ -382,5 +401,35 @@ private[kyo] object Reconciler:
         val mounted = new Mounted
         materialize(root, mounted).map(live => (live, mounted))
     end mount
+
+    // ---- Wire-driven seams: the twins of reactiveStep/foreachStep for a server-pushed
+    // ReplaceSubtree op, sharing the SAME diffKeyed/materializeInElemScope/disposeElemScope primitives.
+    // The caller (ThreeBackend's drain loop) MUST run these under the AMBIENT MOUNT Scope (never a
+    // transient Scope.run), so a freshly-spliced element's materializeInElemScope -> Scope.ensure
+    // attaches to mount teardown, not an immediately-closing local scope.
+
+    /** Finds the structural region whose holder is stamped with `path` (by ThreeBackend's
+      * buildPathIndex). Wire-path and holder agree BY CONSTRUCTION: `path` is the same node path the
+      * server's structural discovery walk assigns to this region.
+      */
+    private[kyo] def regionFor(mounted: Mounted, path: Seq[String]): Maybe[ReactiveRegion] =
+        Maybe.fromOption(reactiveRegions(mounted).find(_.holderPath == path))
+
+    /** The wire-driven twin of `foreachStep`'s body: reconciles `region` against a server-decoded keyed
+      * set instead of the local signal's next value.
+      */
+    private[kyo] def foreachReplace(region: ReactiveRegion, keyed: Chunk[(String, Three)], mounted: Mounted)(using
+        Frame
+    ): Unit < (Async & Scope & Abort[ThreeException]) =
+        diffKeyed(region.prevKeyed, keyed, mounted).map(lives => replaceHolderChildren(region, keyed.map(_._1).zip(lives), mounted))
+
+    /** The wire-driven twin of `reactiveStep`'s body: swaps `region`'s subtree to a server-decoded node
+      * instead of the local signal's next value.
+      */
+    private[kyo] def reactiveReplace(region: ReactiveRegion, next: Three, mounted: Mounted)(using
+        Frame
+    ): Unit < (Async & Scope & Abort[ThreeException]) =
+        Kyo.foreachDiscard(region.prevKeyed)((_, prev) => disposeElemScope(prev, mounted))
+            .andThen(materializeInElemScope(next, mounted).map(fresh => replaceHolderChildren(region, Chunk(("reactive", fresh)), mounted)))
 
 end Reconciler

@@ -44,7 +44,7 @@ class ThreeToImageTest extends ThreeTest:
         Scope.run {
             Abort.recover[ThreeException](e => Abort.panic(e)) {
                 for
-                    colorRef <- Signal.initRef(Color.red)
+                    colorRef <- Signal.initRef(Three.Color.red)
                     mesh = Three.mesh(
                         Three.Geometry.box(),
                         Three.Material.standard().color(colorRef)
@@ -65,10 +65,13 @@ class ThreeToImageTest extends ThreeTest:
                             .getOrElse(-1)
                     }
                 yield
-                    assert(seededHex == Color.white.packed, s"materialize seed must be white (0xffffff), got 0x${seededHex.toHexString}")
                     assert(
-                        filledHex == Color.red.packed,
-                        s"fillBoundRefsOnce must apply the signal's current value (RED 0x${Color.red.packed.toHexString}), " +
+                        seededHex == Three.Color.white.packed,
+                        s"materialize seed must be white (0xffffff), got 0x${seededHex.toHexString}"
+                    )
+                    assert(
+                        filledHex == Three.Color.red.packed,
+                        s"fillBoundRefsOnce must apply the signal's current value (RED 0x${Three.Color.red.packed.toHexString}), " +
                             s"got 0x${filledHex.toHexString}"
                     )
                 end for
@@ -83,7 +86,7 @@ class ThreeToImageTest extends ThreeTest:
         Scope.run {
             Abort.recover[ThreeException](e => Abort.panic(e)) {
                 for
-                    posRef <- Signal.initRef(Vec3(3, 4, 5))
+                    posRef <- Signal.initRef(Three.Vec3(3, 4, 5))
                     mesh = Three.mesh(Three.Geometry.box(), Three.Material.standard())
                         .position(posRef)
                     scene = Three.scene(mesh)

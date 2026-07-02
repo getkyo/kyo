@@ -4,6 +4,16 @@ import kyo.*
 import kyo.Svg
 import kyo.UI.*
 
+// The region-kind discriminator, replacing the earlier propMeta Maybe. The earlier two-way
+// Present/Absent becomes a THREE-way sealed kind (Dom / Prop / Structural) so a structural region has a
+// distinct outcome from a DOM subtree without a second cost-without-benefit Maybe beside propMeta.
+sealed private[kyo] trait RegionKind derives CanEqual
+private[kyo] object RegionKind:
+    case object Dom                                           extends RegionKind
+    final case class Prop(key: String, encode: Any => String) extends RegionKind
+    final case class Structural(encode: Any => String)        extends RegionKind
+end RegionKind
+
 /** Normalized reactive UI node. */
 private[kyo] case class ReactiveUI(
     path: Seq[String],
@@ -12,9 +22,9 @@ private[kyo] case class ReactiveUI(
     children: Seq[ReactiveUI],
     handle: (Seq[String], UIEvent) => Boolean < Async,
     svgContext: Boolean = false,
-    // Marks a bound-prop region on a BackendNode (the key + encoder); Absent for a DOM-subtree
-    // region. The discriminator subscribeScoped reads to build a DomRegion vs a PropRegion.
-    propMeta: Maybe[(String, Any => String)] = Absent
+    // The region kind (Dom / a bound-prop on a BackendNode / a structural region on a BackendNode),
+    // the discriminator subscribeScoped reads to build the matching Region case for the exchange.
+    regionKind: RegionKind = RegionKind.Dom
 )
 
 private[kyo] object ReactiveUI:
@@ -27,11 +37,11 @@ private[kyo] object ReactiveUI:
         isConst: Boolean,
         children: Seq[ReactiveUI],
         svgContext: Boolean = false,
-        propMeta: Maybe[(String, Any => String)] = Absent
+        regionKind: RegionKind = RegionKind.Dom
     )(
         handle: (Seq[String], UIEvent) => Boolean < Async
     ): ReactiveUI =
-        ReactiveUI(path, signal, isConst, children, handle, svgContext, propMeta)
+        ReactiveUI(path, signal, isConst, children, handle, svgContext, regionKind)
 
     /** Locate the ReactiveUI node at `path` in the resolved tree. Used by the exchanges to look up the
       * recorded svgContext flag so an empty placeholder uses the correct (<g> vs <span>) tag.
@@ -91,39 +101,55 @@ private[kyo] object ReactiveUI:
 
             case bn: UI.Ast.BackendNode =>
                 // Assign this node's path, then descend backendChildren (index-addressed like DOM children,
-                // path :+ i) and boundProps (each a per-key reactive region at path :+ key), emitting NO
-                // HTML. The structural descent is identical to the DOM case; only the leaf kind differs (a
-                // 3D prop vs an HTML element). Matches a backend node first/explicitly: a pure 3D node is
-                // not an Element (so it cannot fall through to the Element arm); placed BEFORE the Element
-                // arm only so the transitional Host (a BackendNode that also mixes Inline) is matched here.
+                // path :+ i), boundProps (each a per-key reactive region at path :+ key), and the structural
+                // region (at the node's OWN path), emitting NO HTML. Matches a backend node first/
+                // explicitly: a pure 3D node is not an Element (so it cannot fall through to the Element
+                // arm); placed BEFORE the Element arm only so the transitional Host (a BackendNode that also
+                // mixes Inline) is matched here.
                 for
                     childNodes <- Kyo.foreach(bn.backendChildren.toSeq.zipWithIndex) { (child, i) =>
                         normalize(child, path :+ i.toString, svg = false)
                     }
                     // Each prop region's signal IS the bound prop's signal (the raw value the server
-                    // encodes); propMeta marks it a PropRegion so the exchange emits SetProp, not Replace.
+                    // encodes); RegionKind.Prop marks it so the exchange emits SetProp, not Replace.
                     propRegions = bn.boundProps.toSeq.map { bp =>
                         init(
                             path :+ bp.key,
                             bp.signal,
                             isConst = false,
                             children = Seq.empty,
-                            propMeta = Present((bp.key, bp.encode))
+                            regionKind = RegionKind.Prop(bp.key, bp.encode)
+                        )((_, _) => true)
+                    }
+                    // The structural region (0 or 1 element), observed at the node's OWN path
+                    // (a same-path child, NOT index/key-addressed like backendChildren/boundProps: the wire
+                    // op addresses the node's own subtree). NON-const: its signal is the REAL structural
+                    // data signal (Signal[Chunk[A]] / Signal[A]), so observing it is correct and does not
+                    // trigger a re-walk runaway (only the carrier's own initConst below is
+                    // const; subscribeScoped walks children regardless of isConst).
+                    structRegions = bn.structuralRegion.toChunk.toSeq.map { sb =>
+                        init(
+                            path,
+                            sb.signal,
+                            isConst = false,
+                            children = Seq.empty,
+                            regionKind = RegionKind.Structural(sb.encode)
                         )((_, _) => true)
                     }
                 // isConst = true unconditionally: this node's own signal is Signal.initConst (it never
                 // changes), and subscribeScoped still walks `children` regardless of isConst, so the
-                // propRegions/childNodes are subscribed either way. Marking this node non-const when
-                // boundProps is nonempty would make subscribeScoped `observe` a signal that can never
-                // emit a second value, so its one-shot renderValue call (the Absent-propMeta branch)
-                // re-walks this same node via walkStatic -> normalize and re-subscribes a fresh copy of
-                // the whole subtree, forking without bound. Const avoids observing this node's own
-                // signal at all; only the propRegions' real (changing) signals are individually observed.
+                // propRegions/structRegions/childNodes are subscribed either way. Marking this node
+                // non-const when boundProps/structuralRegion is nonempty would make subscribeScoped
+                // `observe` a signal that can never emit a second value, so its one-shot renderValue call
+                // (the Dom-kind branch) re-walks this same node via walkStatic -> normalize and
+                // re-subscribes a fresh copy of the whole subtree, forking without bound. Const avoids
+                // observing this node's own signal at all; only the propRegions'/structRegions' real
+                // (changing) signals are individually observed.
                 yield init(
                     path,
                     Signal.initConst(bn: Any),
                     isConst = true,
-                    children = childNodes ++ propRegions
+                    children = childNodes ++ propRegions ++ structRegions
                 )((_, _) => true)
 
             case ui: Element =>
@@ -630,15 +656,16 @@ private[kyo] object ReactiveUI:
     case class Subscription(handle: Handler, lastSignalChangeTime: AtomicRef[Instant])
 
     /** The exchange-facing view of a reactive region, derived from a ReactiveUI node's path +
-      * propMeta. NOT a third AST node kind: the discriminated argument subscribeScoped passes to
+      * regionKind. NOT a third AST node kind: the discriminated argument subscribeScoped passes to
       * UIExchange.onChange. A DomRegion renders HTML (Replace); a PropRegion encodes a raw value
-      * (SetProp).
+      * (SetProp); a StructuralRegion encodes a Schema-serialized data snapshot (ReplaceSubtree).
       */
     sealed private[kyo] trait Region derives CanEqual:
         def path: Seq[String]
     private[kyo] object Region:
         final case class DomRegion(path: Seq[String])                                      extends Region
         final case class PropRegion(path: Seq[String], key: String, encode: Any => String) extends Region
+        final case class StructuralRegion(path: Seq[String], encode: Any => String)        extends Region
     end Region
 
     /** Subscribe all reactive boundaries under the caller's Scope. Returns the dispatch handle + change
@@ -666,15 +693,25 @@ private[kyo] object ReactiveUI:
             // Per-value setup, run inside each value's fresh Scope: render the region and fork its children into
             // that scope, so the next value (or an interrupt) tears them down by cascade.
             def renderValue(current: Any): Unit < (Async & Scope) =
-                rui.propMeta match
-                    case Present((key, encode)) =>
+                rui.regionKind match
+                    case RegionKind.Prop(key, encode) =>
                         // A bound-prop region on a BackendNode: emit one SetProp; no subtree to walk.
                         for
                             now <- Clock.now
                             _   <- signalChangeTime.set(now)
                             _   <- exchange.onChange(Region.PropRegion(rui.path, key, encode), current)
                         yield ()
-                    case Absent =>
+                    case RegionKind.Structural(encode) =>
+                        // A structural region on a BackendNode (a Reactive/Foreach's own
+                        // path); emit one ReplaceSubtree carrying the Schema-encoded data snapshot. No
+                        // subtree to walk (the client re-renders from the decoded snapshot, not from a
+                        // server-side HTML walk): the exact structural analog of the Prop branch above.
+                        for
+                            now <- Clock.now
+                            _   <- signalChangeTime.set(now)
+                            _   <- exchange.onChange(Region.StructuralRegion(rui.path, encode), current)
+                        yield ()
+                    case RegionKind.Dom =>
                         // A DOM subtree region: value is a UI; render + re-walk children (today's path).
                         val ui = current.asInstanceOf[UI]
                         for

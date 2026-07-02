@@ -36,7 +36,7 @@ object FeedEmitScene:
 
     /** Builds the scene and returns it alongside the color mirror `SignalRef[Int]` the island connects to
       * the fed color. The cube's `onClick` emits `Bump(1)`; its material color binds to `colorMirror`
-      * mapped into a `Color`. The mirror starts at the palette's first value so the cube renders red
+      * mapped into a `Three.Color`. The mirror starts at the palette's first value so the cube renders red
       * before any click.
       */
     def sceneWithMirror(using Frame): (Three.Ast.Scene, SignalRef[Int]) < Sync =
@@ -44,8 +44,8 @@ object FeedEmitScene:
             colorMirror <- Signal.initRef(palette.head)
             cube = Three.mesh(
                 Three.Geometry.box(2.0, 2.0, 2.0),
-                Three.Material.standard(color = Color.red, roughness = Normal(0.5))
-                    .color(colorMirror.map(rgb => Color(rgb)))
+                Three.Material.standard(color = Three.Color.red, roughness = Three.Normal(0.5))
+                    .color(colorMirror.map(rgb => Three.Color(rgb)))
             ).onClick { _ =>
                 // The onClick closure row is `< Async`; emit's typed FeedUnavailable Abort is discharged
                 // here to a Log.warn (the no-channel-bound case cannot occur once the page WS is bound, but
@@ -59,7 +59,7 @@ object FeedEmitScene:
         yield (
             Three.scene(
                 Three.Light.ambient(intensity = 1.0),
-                Three.Light.directional(position = Vec3(4, 6, 8)),
+                Three.Light.directional(position = Three.Vec3(4, 6, 8)),
                 cube
             ),
             colorMirror
@@ -70,8 +70,8 @@ object FeedEmitScene:
     /** The viewing camera, pulled back to frame the cube so a raycast click lands on it. */
     def camera(using Frame): Three.Ast.Camera =
         Three.Camera.perspective(
-            position = Vec3(0, 0, 6),
-            lookAt = Vec3(0, 0, 0)
+            position = Three.Vec3(0, 0, 6),
+            lookAt = Three.Vec3(0, 0, 0)
         )
 
 end FeedEmitScene

@@ -119,7 +119,7 @@ private[kyo] object ThreeFacadeOps:
         camera match
             case c: Ast.Camera.Perspective =>
                 // PerspectiveCamera(fov, aspect, near, far): fov is in DEGREES; toDegrees converts from the
-                // Radians opaque type which stores values in radians internally.
+                // Three.Radians opaque type which stores values in radians internally.
                 acquirePlain(
                     // Unsafe: position must be set before lookAt so three.js computes orientation from
                     // the correct world position toward the target; both calls share this thunk.
@@ -147,11 +147,11 @@ private[kyo] object ThreeFacadeOps:
       * target. For `Bound.Const` the target is applied immediately; for `Bound.Ref` the initial
       * orientation uses the signal's seed value (reactive updates follow via `subscribeRegions`).
       */
-    private def aimedCamera(obj: js.Dynamic, lookAt: Bound[Vec3])(using AllowUnsafe): js.Dynamic =
+    private def aimedCamera(obj: js.Dynamic, lookAt: Bound[Three.Vec3])(using AllowUnsafe): js.Dynamic =
         // Unsafe: Camera.lookAt is a synchronous orientation setter on an already-positioned camera.
         val target = lookAt match
             case Bound.Const(v) => v
-            case Bound.Ref(_)   => Vec3.zero // initial seed; reactive update path re-aims on each emission
+            case Bound.Ref(_)   => Three.Vec3.zero // initial seed; reactive update path re-aims on each emission
         val _ = obj.lookAt(target.x, target.y, target.z)
         obj
     end aimedCamera
@@ -178,11 +178,11 @@ private[kyo] object ThreeFacadeOps:
         // Unsafe: the sanctioned typed escape hatch; build produces the raw three.js object.
         build(input)
 
-    private def boundColor(b: Bound[Color]): Double = b match
+    private def boundColor(b: Bound[Three.Color]): Double = b match
         case Bound.Const(c) => c.packed.toDouble
         case Bound.Ref(_)   => 0xffffff.toDouble // seeded white; a reactive observe updates the live value
 
-    private def boundNormal(b: Bound[Normal]): Double = b match
+    private def boundNormal(b: Bound[Three.Normal]): Double = b match
         case Bound.Const(n) => n.toDouble
         case Bound.Ref(_)   => 1.0
 

@@ -6,9 +6,10 @@ package kyo
   * from outside the effect system and observed by the kyo-ui reactive label, and the host canvas
   * element identity is preserved across sibling reactive re-renders.
   *
-  * Every leaf exercises the real surface: `Three.embed` returns a `UI.Ast.Host` that
-  * `DomBackend.fireHostMounts` drives, running through the actual compiled Scala.js bundle linking
-  * `ThreeMount.scala` and `DomBackend.scala`; nothing is hand-written JavaScript.
+  * Every leaf exercises the real surface: `Three.embed` returns a `UI.Ast.BackendNode` that
+  * `DomBackend.fireHostMounts` dispatches (via the `Backend` registry, keyed by `"three"`) to
+  * `ThreeBackend.mount`, running through the actual compiled Scala.js bundle linking
+  * `ThreeMount.scala`, `ThreeBackend.scala`, and `DomBackend.scala`; nothing is hand-written JavaScript.
   *
   * Runs in a real software-WebGL Chrome via CDP; cancels (skips) where no Chrome can be downloaded.
   */

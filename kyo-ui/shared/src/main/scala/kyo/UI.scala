@@ -872,6 +872,14 @@ object UI:
           *
           * Every member is `private[kyo]`: the backend SPI the kyo-ui walk and the registered backends
           * consume, never a user call. PUBLIC as a TYPE so a kyo-threejs `Three.Ast.Node` extends it.
+          *
+          * The one exception is `id`: a `BackendNode` cannot mix `Element` (§ above), so it cannot pick
+          * up `Element.id` for free, yet a caller placing a backend node in a tree needs the same
+          * chainable DOM-id setter `Element.id` gives every other node (e.g. to locate the mounted
+          * `<canvas>` from a test). Declared ABSTRACT here (not defaulted) so it never conflicts with
+          * `Element.id`: the transitional `Host` (which mixes both `BackendNode` and `Ast.Inline`)
+          * satisfies it for free from `Element.id`'s own concrete implementation, and a pure backend
+          * node (kyo-threejs's `Three.Ast.Node`) implements it directly against its own placeholder.
           */
         trait BackendNode extends UI, Ast.HtmlContent:
             type Self <: BackendNode
@@ -879,6 +887,12 @@ object UI:
             private[kyo] def placeholder: BackendNode.Placeholder
             private[kyo] def backendChildren: Chunk[UI]
             private[kyo] def boundProps: Chunk[BackendNode.BoundProp]
+            // The structural reactive region owned by THIS node (a render/foreach/foreachKeyed
+            // whose signal produces the subtree as serializable DATA the client re-renders). DEFAULT Absent
+            // so every existing BackendNode subtype is unaffected; only Three.Ast.Reactive/Foreach override
+            // it. private[kyo] SPI.
+            private[kyo] def structuralRegion: Maybe[BackendNode.StructuralBinding] = Absent
+            def id(v: String): Self
         end BackendNode
 
         object BackendNode:
@@ -893,6 +907,13 @@ object UI:
               * never a public asInstanceOf.
               */
             final private[kyo] case class BoundProp(key: String, signal: Signal[Any], encode: Any => String)
+
+            // The SERVER-side half of a structural region: the type-erased DATA signal the
+            // walk observes + the encoder that serializes an emission into the ReplaceSubtree payload. The
+            // client decode + re-render lives on the backend node (kyo-threejs), keyed by path, mirroring
+            // how the scalar path splits BoundProp (server) from extractBoundRefs (client). The Signal[Any]
+            // erasure is contained here, never a public asInstanceOf. private[kyo], NOT public surface.
+            final private[kyo] case class StructuralBinding(signal: Signal[Any], encode: Any => String)
         end BackendNode
 
         /** TRANSITIONAL, `private[kyo]` (deleted together with `Host`): the platform-neutral marker the

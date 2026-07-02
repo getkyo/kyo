@@ -17,27 +17,27 @@ import kyo.Three.render
   */
 object Snake3DScene:
 
-    final case class Segment(id: Int, pos: Vec3) derives CanEqual
-    final case class Game(body: Chunk[Segment], dir: Vec3, food: Vec3, nextId: Int) derives CanEqual
+    final case class Segment(id: Int, pos: Three.Vec3) derives CanEqual
+    final case class Game(body: Chunk[Segment], dir: Three.Vec3, food: Three.Vec3, nextId: Int) derives CanEqual
 
     /** A grid-walking snake: a `SignalRef[Game]` holds state, `foreachKeyed` reconciles one cube per
       * segment by id, and a `Group.onFrame` steps the game each tick.
       */
     def scene(using Frame): Three.Ast.Scene < Sync =
         val initialBody = Chunk(
-            Segment(0, Vec3(0, 0, 0)),
-            Segment(1, Vec3(-1, 0, 0)),
-            Segment(2, Vec3(-2, 0, 0)),
-            Segment(3, Vec3(-3, 0, 0))
+            Segment(0, Three.Vec3(0, 0, 0)),
+            Segment(1, Three.Vec3(-1, 0, 0)),
+            Segment(2, Three.Vec3(-2, 0, 0)),
+            Segment(3, Three.Vec3(-3, 0, 0))
         )
         for
-            game <- Signal.initRef(Game(initialBody, Vec3.unitX, Vec3(3, 0, -2), 4))
+            game <- Signal.initRef(Game(initialBody, Three.Vec3.unitX, Three.Vec3(3, 0, -2), 4))
             cubes = game.map(_.body).foreachKeyed(_.id.toString) { seg =>
                 Three.mesh(
                     Three.Geometry.box(0.9, 0.9, 0.9),
                     Three.Material.standard(
-                        color = Color.green,
-                        emissive = Color(0x114411)
+                        color = Three.Color.green,
+                        emissive = Three.Color(0x114411)
                     )
                 ).position(seg.pos)
             }
@@ -45,15 +45,15 @@ object Snake3DScene:
                 Three.mesh(
                     Three.Geometry.sphere(0.4),
                     Three.Material.standard(
-                        color = Color.red,
-                        emissive = Color(0x440000)
+                        color = Three.Color.red,
+                        emissive = Three.Color(0x440000)
                     )
                 ).position(g.food)
             }
             ticker = Three.group().onFrame(_ => game.updateAndGet(step))
         yield Three.scene(
             Three.Light.ambient(intensity = 0.6),
-            Three.Light.directional(intensity = 1.2, position = Vec3(4, 8, 6)),
+            Three.Light.directional(intensity = 1.2, position = Three.Vec3(4, 8, 6)),
             cubes,
             food,
             ticker
@@ -64,9 +64,9 @@ object Snake3DScene:
     /** The angled camera framing the snake on the playfield, looking down at the grid centre. */
     def camera(using Frame): Three.Ast.Camera =
         Three.Camera.perspective(
-            fov = Radians.deg(70),
-            position = Vec3(0, 5, 8),
-            lookAt = Vec3(0, 0, 0)
+            fov = Three.Radians.deg(70),
+            position = Three.Vec3(0, 5, 8),
+            lookAt = Three.Vec3(0, 0, 0)
         )
 
     /** The fixed-interval step source driving the snake. */
@@ -76,17 +76,17 @@ object Snake3DScene:
     private val gridHalf = 5
 
     private def step(g: Game): Game =
-        val head    = g.body.headMaybe.getOrElse(Segment(0, Vec3.zero))
+        val head    = g.body.headMaybe.getOrElse(Segment(0, Three.Vec3.zero))
         val newHead = Segment(g.nextId, wrap(head.pos + g.dir))
         Game(newHead +: g.body.dropRight(1), g.dir, g.food, g.nextId + 1)
     end step
 
     /** Wraps a position so the snake re-enters from the opposite edge when it leaves the grid. */
-    private def wrap(pos: Vec3): Vec3 =
+    private def wrap(pos: Three.Vec3): Three.Vec3 =
         def fold(v: Double): Double =
             if v > gridHalf then -gridHalf.toDouble
             else if v < -gridHalf then gridHalf.toDouble
             else v
-        Vec3(fold(pos.x), fold(pos.y), fold(pos.z))
+        Three.Vec3(fold(pos.x), fold(pos.y), fold(pos.z))
     end wrap
 end Snake3DScene

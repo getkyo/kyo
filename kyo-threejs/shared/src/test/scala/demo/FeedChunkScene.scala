@@ -39,11 +39,11 @@ object FeedChunkScene:
       * spacing is wide enough that adding, removing, or reordering items visibly changes the arrangement.
       */
     private def cube(index: Int, id: Int)(using Frame): Three =
-        val color = Color(palette(((id % palette.size) + palette.size) % palette.size))
+        val color = Three.Color(palette(((id % palette.size) + palette.size) % palette.size))
         Three.mesh(
             Three.Geometry.box(0.8, 0.8, 0.8),
-            Three.Material.standard(color = color, roughness = Normal(0.4))
-        ).position(Vec3((index - 2.5) * 1.2, 0.0, 0.0))
+            Three.Material.standard(color = color, roughness = Three.Normal(0.4))
+        ).position(Three.Vec3((index - 2.5) * 1.2, 0.0, 0.0))
     end cube
 
     /** Builds the scene and returns it alongside the item-list mirror `SignalRef[Chunk[Int]]` the island
@@ -57,7 +57,7 @@ object FeedChunkScene:
         yield (
             Three.scene(
                 Three.Light.ambient(intensity = 1.0),
-                Three.Light.directional(position = Vec3(4, 6, 8)),
+                Three.Light.directional(position = Three.Vec3(4, 6, 8)),
                 indexedField(items)
             ),
             items
@@ -84,8 +84,8 @@ object FeedChunkScene:
       */
     def camera(using Frame): Three.Ast.Camera =
         Three.Camera.perspective(
-            position = Vec3(0, 0, 8),
-            lookAt = Vec3(0, 0, 0)
+            position = Three.Vec3(0, 0, 8),
+            lookAt = Three.Vec3(0, 0, 0)
         )
 
 end FeedChunkScene

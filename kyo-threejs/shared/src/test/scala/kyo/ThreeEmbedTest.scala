@@ -9,7 +9,7 @@ import scala.scalajs.js as sjs
 /** Guards the `Three.embed` adapter: compile-resolution, render-string, and lifecycle assertions;
   * no live GL.
   *
-  * Tests pin that `Three.embed` returns a `UI.Ast.Host` accepted by `UI.div`, that the shared
+  * Tests pin that `Three.embed` returns a `UI.Ast.BackendNode` accepted by `UI.div`, that the shared
   * renderer emits `<canvas data-kyo-path>` for an embedded host, and that the `frames` default
   * and override both compile. The pipeline-returns test (leaf 4) guards the mount-returns
   * contract: the frame loop must run in a forked fiber so the mount effect itself returns and the
@@ -27,9 +27,9 @@ import scala.scalajs.js as sjs
   */
 class ThreeEmbedTest extends ThreeTest:
 
-    "Three.embed returns a UI.Ast.Host usable as a UI.div child" in {
+    "Three.embed returns a UI.Ast.BackendNode usable as a UI.div child" in {
         val embedded                  = Three.embed(Three.scene(), Three.Camera.perspective())
-        val _: UI.Ast.Host            = embedded
+        val _: UI.Ast.BackendNode     = embedded
         val tree                      = UI.div(UI.span("controls"), embedded, UI.span("hud"))
         val _: Unit < (Async & Scope) = UI.runMount(tree, "#app")
         succeed
@@ -38,15 +38,15 @@ class ThreeEmbedTest extends ThreeTest:
     "the embedded host renders <canvas data-kyo-path> on the shared renderer" in {
         val tree = UI.div(Three.embed(Three.scene(), Three.Camera.perspective()))
         for html <- HtmlRenderer.render(tree, Seq.empty)
-        yield assert(html.contains("<canvas data-kyo-path=\"0\"></canvas>"))
+        yield assert(html.contains("<canvas data-kyo-path=\"0\" data-kyo-backend=\"three\"></canvas>"))
         end for
     }
 
     "Three.embed defaults frames to ThreeFrames.Raf and accepts an explicit ThreeFrames" in {
-        val a: UI.Ast.Host = Three.embed(Three.scene(), Three.Camera.perspective())
-        val b: UI.Ast.Host = Three.embed(Three.scene(), Three.Camera.perspective(), ThreeFrames.Clock(16.millis))
-        val _              = a
-        val _              = b
+        val a: UI.Ast.BackendNode = Three.embed(Three.scene(), Three.Camera.perspective())
+        val b: UI.Ast.BackendNode = Three.embed(Three.scene(), Three.Camera.perspective(), ThreeFrames.Clock(16.millis))
+        val _                     = a
+        val _                     = b
         succeed
     }
 

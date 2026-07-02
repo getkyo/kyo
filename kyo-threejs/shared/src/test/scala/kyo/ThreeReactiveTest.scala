@@ -11,7 +11,7 @@ import kyo.internal.Reconciler
 class ThreeReactiveTest extends ThreeTest:
 
     "signal position emits a patch that mutates exactly the bound object" in {
-        Signal.initRef(Vec3(0, 0, 0)).map { posRef =>
+        Signal.initRef(Three.Vec3(0, 0, 0)).map { posRef =>
             val mesh  = Three.mesh(Three.Geometry.box(), Three.Material.standard()).position(posRef)
             val scene = Three.scene(mesh)
             Scope.run {
@@ -20,7 +20,7 @@ class ThreeReactiveTest extends ThreeTest:
                         val refs = ThreeMount.boundRefs(mounted)
                         assert(refs.nonEmpty)
                         val (live, patchFn, _) = refs(0)
-                        patchFn(Vec3(1, 2, 3))(live.obj)
+                        patchFn(Three.Vec3(1, 2, 3))(live.obj)
                         val x = live.obj.position.x.asInstanceOf[Double]
                         assert(x == 1.0)
                     }
@@ -30,7 +30,7 @@ class ThreeReactiveTest extends ThreeTest:
     }
 
     "sibling mesh with Const color yields no patch entry in boundRefs" in {
-        Signal.initRef(Color.white).map { colorRef =>
+        Signal.initRef(Three.Color.white).map { colorRef =>
             val meshA = Three.mesh(
                 Three.Geometry.box(),
                 Three.Material.standard().color(colorRef)
@@ -52,7 +52,7 @@ class ThreeReactiveTest extends ThreeTest:
     }
 
     "signal patch on one mesh leaves sibling live object identity unchanged" in {
-        Signal.initRef(Vec3(0, 0, 0)).map { posRef =>
+        Signal.initRef(Three.Vec3(0, 0, 0)).map { posRef =>
             val meshA = Three.mesh(Three.Geometry.box(), Three.Material.standard()).position(posRef)
             val meshB = Three.mesh(Three.Geometry.sphere(), Three.Material.standard())
             val scene = Three.scene(meshA, meshB)
@@ -62,7 +62,7 @@ class ThreeReactiveTest extends ThreeTest:
                         val siblingBefore      = rootLive.children(1).obj
                         val refs               = ThreeMount.boundRefs(mounted)
                         val (live, patchFn, _) = refs(0)
-                        patchFn(Vec3(5, 5, 5))(live.obj)
+                        patchFn(Three.Vec3(5, 5, 5))(live.obj)
                         val siblingAfter = rootLive.children(1).obj
                         assert(siblingBefore eq siblingAfter)
                     }
@@ -91,7 +91,7 @@ class ThreeReactiveTest extends ThreeTest:
     }
 
     "no full rebuild: applying a signal patch does not replace the scene root live object" in {
-        Signal.initRef(Vec3(0, 0, 0)).map { posRef =>
+        Signal.initRef(Three.Vec3(0, 0, 0)).map { posRef =>
             val mesh  = Three.mesh(Three.Geometry.box(), Three.Material.standard()).position(posRef)
             val scene = Three.scene(mesh)
             Scope.run {
@@ -100,7 +100,7 @@ class ThreeReactiveTest extends ThreeTest:
                         val rootBefore         = rootLive.obj
                         val refs               = ThreeMount.boundRefs(mounted)
                         val (live, patchFn, _) = refs(0)
-                        patchFn(Vec3(1, 1, 1))(live.obj)
+                        patchFn(Three.Vec3(1, 1, 1))(live.obj)
                         val rootAfter = rootLive.obj
                         assert(rootBefore eq rootAfter)
                     }

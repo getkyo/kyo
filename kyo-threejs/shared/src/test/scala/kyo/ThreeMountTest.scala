@@ -366,7 +366,7 @@ class ThreeMountTest extends ThreeTest:
                 for
                     items <- Signal.initRef(Chunk(1, 2, 3))
                     foreach = items.foreachKeyed(_.toString) { i =>
-                        Three.mesh(Three.Geometry.box(), Three.Material.standard()).position(Vec3(i.toDouble, 0, 0))
+                        Three.mesh(Three.Geometry.box(), Three.Material.standard()).position(Three.Vec3(i.toDouble, 0, 0))
                     }
                     scene = Three.scene(foreach)
                     mountResult <- Reconciler.mount(scene)
@@ -383,7 +383,7 @@ class ThreeMountTest extends ThreeTest:
                 for
                     items <- Signal.initRef(Chunk(1, 2))
                     foreach = items.foreachKeyed(_.toString) { i =>
-                        Three.mesh(Three.Geometry.box(), Three.Material.standard()).position(Vec3(i.toDouble, 0, 0))
+                        Three.mesh(Three.Geometry.box(), Three.Material.standard()).position(Three.Vec3(i.toDouble, 0, 0))
                     }
                     scene = Three.scene(foreach)
                     mountResult <- Reconciler.mount(scene)
@@ -408,7 +408,7 @@ class ThreeMountTest extends ThreeTest:
                 for
                     items <- Signal.initRef(Chunk(1, 2))
                     foreach = items.foreachKeyed(_.toString) { i =>
-                        Three.mesh(Three.Geometry.box(), Three.Material.standard()).position(Vec3(i.toDouble, 0, 0))
+                        Three.mesh(Three.Geometry.box(), Three.Material.standard()).position(Three.Vec3(i.toDouble, 0, 0))
                     }
                     scene = Three.scene(foreach)
                     mountResult <- Reconciler.mount(scene)
@@ -453,11 +453,11 @@ class ThreeMountTest extends ThreeTest:
                 for
                     ref <- items
                     foreach = ref.foreachKeyed(_.toString) { i =>
-                        Three.mesh(Three.Geometry.box(), Three.Material.standard()).position(Vec3(i.toDouble, 0, 0))
+                        Three.mesh(Three.Geometry.box(), Three.Material.standard()).position(Three.Vec3(i.toDouble, 0, 0))
                     }
                     food = ref.render { its =>
                         Three.mesh(Three.Geometry.sphere(), Three.Material.standard())
-                            .position(Vec3(its.size.toDouble, 0, 0))
+                            .position(Three.Vec3(its.size.toDouble, 0, 0))
                     }
                     scene = Three.scene(Three.Light.ambient(), foreach, food)
                     mountResult <- Reconciler.mount(scene)
@@ -486,7 +486,7 @@ class ThreeMountTest extends ThreeTest:
                     items <- Signal.initRef(Chunk(1, 2))
                     foreach = items.foreachKeyed(_.toString) { i =>
                         Three.mesh(Three.Geometry.box(), Three.Material.standard())
-                            .position(Vec3(i.toDouble, 0, 0))
+                            .position(Three.Vec3(i.toDouble, 0, 0))
                     }
                     scene = Three.scene(foreach)
                     mountResult <- Reconciler.mount(scene)
@@ -622,11 +622,11 @@ class ThreeMountTest extends ThreeTest:
         // A Perspective camera with .position(signal) placed as a scene child appears in
         // boundRefs so subscribeRegions wires live position updates. The patch function is applied
         // directly to the live object, asserting the three.js camera .position changes to the
-        // emitted Vec3.
+        // emitted Three.Vec3.
         Scope.run {
             Abort.recover[ThreeException](e => Abort.panic(e)) {
                 for
-                    posRef <- Signal.initRef(Vec3(0, 0, 5))
+                    posRef <- Signal.initRef(Three.Vec3(0, 0, 5))
                     cam   = Three.Camera.perspective().position(posRef)
                     scene = Three.scene(cam)
                     mountResult <- Reconciler.mount(scene)
@@ -636,7 +636,7 @@ class ThreeMountTest extends ThreeTest:
                 yield
                     assert(camLiv.isDefined, "camera must have a live entry in the mounted map")
                     assert(refs.nonEmpty, "boundRefs must register at least one triple for the reactive camera position")
-                    val newPos = Vec3(7, 8, 9)
+                    val newPos = Three.Vec3(7, 8, 9)
                     refs.foreach { case (live, patch, _) =>
                         if live.node eq cam then
                             import AllowUnsafe.embrace.danger
@@ -662,7 +662,7 @@ class ThreeMountTest extends ThreeTest:
         Scope.run {
             Abort.recover[ThreeException](e => Abort.panic(e)) {
                 for
-                    posRef <- Signal.initRef(Vec3(1, 1, 1))
+                    posRef <- Signal.initRef(Three.Vec3(1, 1, 1))
                     light = Three.Light.directional().position(posRef)
                     scene = Three.scene(light)
                     mountResult <- Reconciler.mount(scene)
@@ -675,7 +675,7 @@ class ThreeMountTest extends ThreeTest:
                         refs.exists(_._1.node eq light),
                         "boundRefs must register a triple for the light's signal position"
                     )
-                    val newPos = Vec3(4, 5, 6)
+                    val newPos = Three.Vec3(4, 5, 6)
                     refs.foreach { case (live, patch, _) =>
                         if live.node eq light then
                             import AllowUnsafe.embrace.danger
@@ -703,7 +703,7 @@ class ThreeMountTest extends ThreeTest:
         Scope.run {
             Abort.recover[ThreeException](e => Abort.panic(e)) {
                 for
-                    posRef <- Signal.initRef(Vec3(1, 1, 1))
+                    posRef <- Signal.initRef(Three.Vec3(1, 1, 1))
                     items  <- Signal.initRef(Chunk(0))
                     region = items.foreachKeyed(_.toString)(_ =>
                         Three.group(
@@ -714,7 +714,7 @@ class ThreeMountTest extends ThreeTest:
                     mountResult <- Reconciler.mount(scene)
                     (_, mounted) = mountResult
                     _   <- ThreeMount.subscribeReactiveRegions(mounted)
-                    _   <- posRef.set(Vec3(7, 8, 9))
+                    _   <- posRef.set(Three.Vec3(7, 8, 9))
                     got <- pollUntil(liveMeshX(mounted).map(x => math.abs(x - 7.0) < 0.001))
                     px  <- liveMeshX(mounted)
                 yield

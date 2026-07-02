@@ -36,7 +36,7 @@ object FeedClockScene:
 
     /** Builds the scene and returns it alongside the color mirror `SignalRef[Int]` the island connects to
       * the feed. The cube spins via `onFrame` on its `Group`; its material color binds to `colorMirror`
-      * mapped into a `Color`. The mirror starts at the palette's first value so the cube renders red
+      * mapped into a `Three.Color`. The mirror starts at the palette's first value so the cube renders red
       * before any feed arrives.
       */
     def sceneWithMirror(using Frame): (Three.Ast.Scene, SignalRef[Int]) < Sync =
@@ -48,15 +48,17 @@ object FeedClockScene:
                 // A lit standard material so the rotating faces catch the directional light and the
                 // shading shifts frame to frame (proving the spin); the color binds to the server-fed
                 // mirror so the whole cube steps through the palette on the server's schedule.
-                Three.Material.standard(color = Color.red, roughness = Normal(0.5)).color(colorMirror.map(rgb => Color(rgb)))
+                Three.Material.standard(color = Three.Color.red, roughness = Three.Normal(0.5)).color(colorMirror.map(rgb =>
+                    Three.Color(rgb)
+                ))
             )
             spinning = Three.group(cube)
-                .rotation(spin.map(a => Vec3(a * 0.6, a, 0.0)))
+                .rotation(spin.map(a => Three.Vec3(a * 0.6, a, 0.0)))
                 .onFrame(t => spin.updateAndGet(_ + t.delta.toMillis * 0.0015))
         yield (
             Three.scene(
                 Three.Light.ambient(intensity = 1.0),
-                Three.Light.directional(position = Vec3(4, 6, 8)),
+                Three.Light.directional(position = Three.Vec3(4, 6, 8)),
                 spinning
             ),
             colorMirror
@@ -67,8 +69,8 @@ object FeedClockScene:
     /** The viewing camera, pulled back to frame the spinning cube. */
     def camera(using Frame): Three.Ast.Camera =
         Three.Camera.perspective(
-            position = Vec3(0, 0, 6),
-            lookAt = Vec3(0, 0, 0)
+            position = Three.Vec3(0, 0, 6),
+            lookAt = Three.Vec3(0, 0, 0)
         )
 
 end FeedClockScene

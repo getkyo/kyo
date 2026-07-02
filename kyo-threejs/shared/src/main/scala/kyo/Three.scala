@@ -15,7 +15,11 @@ import scala.scalajs.js
 sealed abstract class Three:
     private[kyo] def frame: Frame
 
-object Three:
+// The 5 value types (Color/Vec3/Normal/Radians/Pointer) nest under `object Three` via a mixin trait
+// per owning file (`ThreeColorOps` in Color.scala, etc.), so each stays byte-unchanged in its own
+// file (ColorTest.scala/Vec3Test.scala/etc. stay valid 1:1-named test files, no renames) while
+// resolving as `Three.Color`/`Three.Vec3`/etc. to every consumer.
+object Three extends ThreeColorOps, ThreeVec3Ops, ThreeNormalOps, ThreeRadiansOps, ThreePointerOps:
 
     given CanEqual[Three, Three] = CanEqual.derived
 
@@ -44,13 +48,16 @@ object Three:
 
     // ---- Reactive nodes ------------------------------------------------------------
 
-    /** A subtree driven by a `Signal[Three]`: the bound region re-renders on each emission. */
-    def reactive(signal: Signal[Three])(using Frame): Ast.Reactive =
-        Ast.Reactive(signal)
+    /** A subtree driven by a `Signal[Three]`: the bound region re-renders on each emission. Client-local
+      * only (no `Schema`, no server drive): the signal's `Three` values are not serializable.
+      */
+    def reactive(signal: Signal[Three])(using Frame): Ast.Reactive = Ast.Reactive(signal, Absent)
 
-    /** Shows `body` while `condition` holds, else `Three.empty`. */
+    /** Shows `body` while `condition` holds, else `Three.empty`. Re-points to `render` (`Boolean` is
+      * serializable, so `when` gains server drive too); the public signature is unchanged.
+      */
     def when(condition: Signal[Boolean])(body: => Three)(using Frame): Ast.Reactive =
-        Ast.Reactive(condition.map(c => if c then body else empty))
+        condition.render(c => if c then body else empty)
 
     /** The typed raw-three.js escape hatch: `build` produces the live object the reconciler inserts.
       * `In` is the user's own typed parameter object. A `Custom` is `Interactive` and `Animated`.
@@ -82,22 +89,59 @@ object Three:
     // ---- Signal extensions ---------------------------------------------------------
 
     extension [A](signal: Signal[A])
-        /** Projects a value signal into a reactive subtree via `f`. */
-        def render(f: A => Three)(using Frame): Ast.Reactive =
-            Ast.Reactive(signal.map(f(_)))
+        /** Projects a value signal into a reactive subtree via `f`. Requires `Schema[A]` so the region
+          * gains a server drive alongside its (unchanged) client-local behavior: a server-side `render`
+          * re-renders the client's 3D subtree from the Schema-encoded data snapshot.
+          */
+        def render(f: A => Three)(using Frame, Schema[A]): Ast.Reactive =
+            // The erased dataSignal's CanEqual[Any, Any] bound is not auto-derived under strict
+            // equality; widened explicitly here, mirroring ReactiveUI.normalize's same erasure.
+            given CanEqual[Any, Any] = CanEqual.derived
+            Ast.Reactive(
+                signal.map(f(_)),                   // client-local Signal[Three] (unchanged behaviour)
+                Present(Ast.StructuralDrive.Render( // NEW server-drive half
+                    dataSignal = signal.map(x => x: Any),
+                    encode = a => Json.encode[A](a.asInstanceOf[A]),
+                    decodeOne = s => f(Json.decode[A](s).getOrThrow) // re-render client-side
+                ))
+            )
     end extension
 
     extension [A](signal: Signal[Chunk[A]])
-        /** One child node per element, reconciled by position. */
-        def foreach(render: A => Three)(using Frame): Ast.Foreach[A] =
-            Ast.Foreach(signal, Absent, (_, a) => render(a))
+        /** One child node per element, reconciled by position. Requires `Schema[A]` so the region gains
+          * a server drive: a server-side `foreach` splices/removes the client's 3D subtree from the
+          * Schema-encoded chunk snapshot.
+          */
+        def foreach(render: A => Three)(using Frame, Schema[A]): Ast.Foreach[A] =
+            Ast.Foreach(signal, Absent, (_, a) => render(a), foreachDrive(signal, Absent, (_, a) => render(a)))
 
         /** Keyed reconciliation so reorders and insertions reuse the matching live nodes (the GPU
-          * buffers survive), important for 3D where recreating a mesh re-uploads buffers.
+          * buffers survive), important for 3D where recreating a mesh re-uploads buffers. Requires
+          * `Schema[A]`, as [[foreach]] does.
           */
-        def foreachKeyed(key: A => String)(render: A => Three)(using Frame): Ast.Foreach[A] =
-            Ast.Foreach(signal, Present(key), (_, a) => render(a))
+        def foreachKeyed(key: A => String)(render: A => Three)(using Frame, Schema[A]): Ast.Foreach[A] =
+            Ast.Foreach(signal, Present(key), (_, a) => render(a), foreachDrive(signal, Present(key), (_, a) => render(a)))
     end extension
+
+    // Builds the StructuralDrive.Foreach where A + Schema[A] are in scope (foreach/foreachKeyed's own
+    // call site): encode Json-serializes the whole Chunk[A] snapshot; decodeKeyed decodes it back to
+    // Chunk[A] then applies key/render right there (no erasure, no cast) to yield the keyed children.
+    private def foreachDrive[A: Schema](
+        signal: Signal[Chunk[A]],
+        key: Maybe[A => String],
+        render: (Int, A) => Three
+    )(using Frame): Ast.StructuralDrive.Foreach =
+        // See render's same erasure widening above.
+        given CanEqual[Any, Any] = CanEqual.derived
+        Ast.StructuralDrive.Foreach(
+            dataSignal = signal.map(x => x: Any),
+            encode = c => Json.encode[Chunk[A]](c.asInstanceOf[Chunk[A]]),
+            decodeKeyed = s =>
+                Json.decode[Chunk[A]](s).getOrThrow.zipWithIndex.map { (item, i) =>
+                    (key.fold(i.toString)(_(item)), render(i, item))
+                }
+        )
+    end foreachDrive
 
     // ---- Per-frame payload + the deterministic test driver --------------------------
 
@@ -141,9 +185,31 @@ object Three:
         )
 
         /** The AST node base: every node carries a `Frame`, a child list, and a copy seam for setters. */
-        sealed trait Node extends Three:
+        sealed trait Node extends Three, UI.Ast.BackendNode:
             type Self <: Node
             def children: Chunk[Three]
+            // The four BackendNode obligations, implemented ONCE here from existing data, all pure
+            // Frame-free accessors (the kyo-threejs pure-AST invariant). Every Three.Ast.Node is a
+            // first-class backend node the kyo-ui reactive walk descends natively; it is registry-
+            // dispatched by `backend`, so there is no mount-closure obligation.
+            final private[kyo] def backend: String = "three"
+            // NOT a bare Chunk[+A] widen. `Three` is not a `UI` subtype, so `children: Chunk[Three]`
+            // is not a `Chunk[UI]` by covariance; `Three`'s sole subtype is `Node`, which IS a `UI` (via
+            // BackendNode), so each child projects by a total match over the sealed `Three` base.
+            private[kyo] def backendChildren: Chunk[UI] = children.map { case n: Node =>
+                n
+            } // NOT final: Ast.Embed overrides it (its addressable child is the scene, not children)
+            private[kyo] def placeholder: UI.Ast.BackendNode.Placeholder =
+                UI.Ast.BackendNode.Placeholder("canvas", UI.Ast.Attrs()) // scene root only; inner nodes never SSR
+                // NOT final: Ast.Embed overrides it to read its own settable `attrs` (`.id`, below).
+            private[kyo] def boundProps: Chunk[UI.Ast.BackendNode.BoundProp] = Ast.boundPropsOf(this)
+            // BackendNode.id's obligation, implemented ONCE as a no-op: HtmlRenderer.renderTo only ever
+            // reads `.placeholder` off the ONE BackendNode reachable from a real UI tree (the scene root,
+            // Ast.Embed; a nested Mesh/Group/etc. is walked by ReactiveUI.normalize for boundProps/
+            // structural-region discovery, never for its own placeholder), so `.id` on any other Node is
+            // dead by construction; a self-return keeps the chain typed without inventing behaviour that
+            // never renders. Ast.Embed overrides it to actually set the placeholder's id.
+            def id(v: String): Self = this.asInstanceOf[Self]
         end Node
 
         /** Anything with a transform: the `position`/`rotation`/`scale` setters route through a per-node
@@ -257,19 +323,55 @@ object Three:
 
         // ---- Reactive nodes ---------------------------------------------------------------
 
-        final case class Reactive(signal: Signal[Three])(using val frame: Frame) extends Node:
+        final case class Reactive(
+            signal: Signal[Three],
+            // Absent for raw reactive(Signal[Three]) (client-local only); Present for render[A]/when.
+            private[kyo] serverDrive: Maybe[Ast.StructuralDrive.Render] = Absent
+        )(using val frame: Frame) extends Node:
             type Self = Reactive
             def children: Chunk[Three] = Chunk.empty
+            override private[kyo] def structuralRegion: Maybe[UI.Ast.BackendNode.StructuralBinding] =
+                serverDrive.map(sd => UI.Ast.BackendNode.StructuralBinding(sd.dataSignal, sd.encode))
+            private[kyo] def decodeSubtree(encoded: String): Maybe[Three] =
+                serverDrive.map(_.decodeOne(encoded))
         end Reactive
 
         final case class Foreach[A](
             signal: Signal[Chunk[A]],
             key: Maybe[A => String],
-            render: (Int, A) => Three
+            render: (Int, A) => Three,
+            // Present for every foreach/foreachKeyed (they now capture Schema[A]); the FOREACH drive
+            // variant carries the WHOLE keyed decode captured where A + Schema[A] are in scope.
+            private[kyo] serverDrive: Ast.StructuralDrive.Foreach
         )(using val frame: Frame) extends Node:
             type Self = Foreach[A]
             def children: Chunk[Three] = Chunk.empty
+            override private[kyo] def structuralRegion: Maybe[UI.Ast.BackendNode.StructuralBinding] =
+                // See Three.render's same erasure widening (Three.scala, the render extension).
+                given CanEqual[Any, Any] = CanEqual.derived
+                Present(UI.Ast.BackendNode.StructuralBinding(signal.map(x => x: Any), serverDrive.encode))
+            end structuralRegion
+            // The CLIENT half: decode the wire snapshot straight to keyed Three children (the drive variant
+            // captured `key`/`render` at construction, so this is a delegation with no erasure and no cast).
+            private[kyo] def decodeKeyed(encoded: String): Chunk[(String, Three)] = serverDrive.decodeKeyed(encoded)
         end Foreach
+
+        // The pure, FFI-free wire-codec bundle a structural region captures at construction, where
+        // Schema[A] is in scope. dataSignal is the type-erased DATA signal the SERVER observes; encode
+        // serializes an emission; the decode side re-hydrates on the CLIENT. No FFI, no js.Dynamic: lives
+        // in shared/src/main. private[kyo].
+        private[kyo] object StructuralDrive:
+            final private[kyo] case class Render(
+                dataSignal: Signal[Any],   // Signal[A] widened
+                encode: Any => String,     // Json.encode[A] under the captured Schema
+                decodeOne: String => Three // s => f(Json.decode[A](s)): re-render one subtree client-side
+            )
+            final private[kyo] case class Foreach(
+                dataSignal: Signal[Any],                      // Signal[Chunk[A]] widened
+                encode: Any => String,                        // Json.encode[Chunk[A]] under the captured Schema
+                decodeKeyed: String => Chunk[(String, Three)] // decode Chunk[A] then apply key/render, in scope
+            )
+        end StructuralDrive
 
         // ---- Orbit controls node ----------------------------------------------------------
 
@@ -290,6 +392,43 @@ object Three:
             type Self = Controls
             def children: Chunk[Three] = Chunk.empty
         end Controls
+
+        // The embed carrier: a private backend node bundling the scene + camera + frames so the
+        // registry-dispatched ThreeBackend.mount conveys them, while Three.embed returns a BackendNode.
+        // backendChildren is the scene so the kyo-ui reactive walk descends the scene's
+        // boundProps; registry-dispatched by `backend = "three"` (no mount-closure member).
+        // private[kyo]: not public surface.
+        final private[kyo] case class Embed(
+            scene: Three,
+            camera: Three.Ast.Camera,
+            frames: ThreeFrames,
+            attrs: UI.Ast.Attrs = UI.Ast.Attrs()
+        )(using val frame: Frame)
+            extends Node:
+            type Self = Embed
+            def children: Chunk[Three] = Chunk.empty
+            // `scene` is a `Three` (sole subtype `Node`, a `UI` via BackendNode).
+            override private[kyo] def backendChildren: Chunk[UI]                      = Chunk(scene).map { case n: Node => n }
+            override private[kyo] def boundProps: Chunk[UI.Ast.BackendNode.BoundProp] = Chunk.empty
+            // Embed is the one Node the kyo-ui reactive walk SSRs a placeholder tag for (the scene root,
+            // Node.placeholder's own comment); it reads its own settable `attrs` rather than the base's
+            // hardcoded empty one, so `.id` below actually reaches the rendered `<canvas>`.
+            override private[kyo] def placeholder: UI.Ast.BackendNode.Placeholder =
+                UI.Ast.BackendNode.Placeholder("canvas", attrs)
+            // Embed cannot mix Element/Inline to inherit Element.id (Element.children: Chunk[UI] collides
+            // with Node.children: Chunk[Three], since Three is not a UI; the design doc's rationale for
+            // dropping Inline from BackendNode). Overrides BackendNode.id directly against its own
+            // placeholder's attrs, the same call-site shape as Element.id with no such collision.
+            override def id(v: String): Embed = copy(attrs = attrs.copy(identifier = Present(v)))
+            // Touches ThreeBackend so its object initializer (which self-registers into the client
+            // Backend registry, mirroring how DomBackend pre-registers) runs at construction time,
+            // guaranteeing registration before ANY later dispatch path (UI.runMount ->
+            // DomBackend.fireHostMounts -> Backend.lookup, or a hydrate-only bootstrap) looks it up by
+            // key. Every Three.embed call constructs an Embed, so this covers every mount path
+            // uniformly; ThreeMount.runMount's own dispatch calls ThreeBackend.mount directly and needs
+            // no such touch, but nothing else in the tree does.
+            kyo.internal.ThreeBackend.ensureRegistered()
+        end Embed
 
         // ---- The Geometry sealed union --------------------------------------------
 
@@ -590,6 +729,118 @@ object Three:
             final case class FromUrl(url: String) extends Texture
         end Texture
 
+        // ---- Server-side bound-prop discovery --------------------------------------
+
+        // Pure, FFI-free (no js.Dynamic) mirror of ThreeMount.extractBoundRefs (the client-side live-
+        // setter half): walks the SAME Bound.Ref detection over the SAME 12-key closed vocabulary
+        // (position/rotation/scale, material.color/opacity/metalness/roughness/emissive,
+        // color/groundColor/intensity, lookAt), yielding (key, signal, encode) triples instead of live
+        // setters. The server-side half of the `boundProps` SPI member (Node, above); `encode`
+        // Json-serializes each raw value under its Schema so the wire carries only encoded data, never
+        // a closure or a js.Dynamic. Scene.props.background and every node's own transform (the
+        // carrier, as opposed to its position/rotation/scale fields) are NOT in the 12-key vocabulary
+        // and fall to the catch-all: a deliberate scope boundary, not a gap. private[kyo], not public.
+        private[kyo] def boundPropsOf(node: Node): Chunk[UI.Ast.BackendNode.BoundProp] =
+            // The BackendNode.boundProps SPI member (UI.scala) carries no Frame; encode is a pure
+            // Json-encoding of an already-computed value, not a user call site, so Frame.internal is
+            // the sanctioned zero-derivation frame (matches Async.scala/Layer.scala's own use).
+            given Frame = Frame.internal
+            var buf     = Chunk.empty[UI.Ast.BackendNode.BoundProp]
+
+            def add[A](key: String, signal: Signal[A], encode: A => String): Unit =
+                buf = buf.appended(UI.Ast.BackendNode.BoundProp(
+                    key,
+                    signal.asInstanceOf[Signal[Any]],
+                    encode.asInstanceOf[Any => String]
+                ))
+
+            def addColor(key: String, b: Bound[Color]): Unit =
+                b match
+                    case Bound.Ref(sig) => add(key, sig, (c: Color) => Json.encode[Int](c.packed))
+                    case _              => ()
+
+            def addNormal(key: String, b: Bound[Normal]): Unit =
+                b match
+                    case Bound.Ref(sig) => add(key, sig, (n: Normal) => Json.encode[Double](n.toDouble))
+                    case _              => ()
+
+            def addDouble(key: String, b: Bound[Double]): Unit =
+                b match
+                    case Bound.Ref(sig) => add(key, sig, (d: Double) => Json.encode[Double](d))
+                    case _              => ()
+
+            def addVec3(key: String, b: Maybe[Bound[Vec3]]): Unit =
+                b.foreach {
+                    case Bound.Ref(sig) => add(key, sig, (v: Vec3) => Json.encode[Vec3](v))
+                    case _              => ()
+                }
+
+            node match
+                case m: Mesh =>
+                    addVec3("position", m.props.transform.position)
+                    addVec3("rotation", m.props.transform.rotation)
+                    addVec3("scale", m.props.transform.scale)
+                    m.material match
+                        case mat: Material.Basic =>
+                            addColor("material.color", mat.color)
+                            addNormal("material.opacity", mat.opacity)
+                        case mat: Material.Standard =>
+                            addColor("material.color", mat.color)
+                            addNormal("material.opacity", mat.opacity)
+                            addNormal("material.metalness", mat.metalness)
+                            addNormal("material.roughness", mat.roughness)
+                            addColor("material.emissive", mat.emissive)
+                        case mat: Material.Line =>
+                            addColor("material.color", mat.color)
+                            addNormal("material.opacity", mat.opacity)
+                        case mat: Material.Points =>
+                            addColor("material.color", mat.color)
+                            addNormal("material.opacity", mat.opacity)
+                        case _ => ()
+                    end match
+                case c: Custom[?] =>
+                    addVec3("position", c.props.transform.position)
+                    addVec3("rotation", c.props.transform.rotation)
+                    addVec3("scale", c.props.transform.scale)
+                case l: Light.Ambient =>
+                    addColor("color", l.color)
+                    addDouble("intensity", l.intensity)
+                case l: Light.Directional =>
+                    addColor("color", l.color)
+                    addDouble("intensity", l.intensity)
+                    addVec3("position", l.props.position)
+                case l: Light.Point =>
+                    addColor("color", l.color)
+                    addDouble("intensity", l.intensity)
+                    addVec3("position", l.props.position)
+                case l: Light.Spot =>
+                    addColor("color", l.color)
+                    addDouble("intensity", l.intensity)
+                    addVec3("position", l.props.position)
+                case l: Light.Hemisphere =>
+                    addColor("color", l.sky)
+                    addColor("groundColor", l.ground)
+                    addDouble("intensity", l.intensity)
+                case g: Group =>
+                    addVec3("position", g.props.transform.position)
+                    addVec3("rotation", g.props.transform.rotation)
+                    addVec3("scale", g.props.transform.scale)
+                case cam: Camera.Perspective =>
+                    addVec3("position", cam.transform.position)
+                    cam.lookAt match
+                        case Bound.Ref(sig) => add("lookAt", sig, (v: Vec3) => Json.encode[Vec3](v))
+                        case _              => ()
+                case cam: Camera.Orthographic =>
+                    addVec3("position", cam.transform.position)
+                    cam.lookAt match
+                        case Bound.Ref(sig) => add("lookAt", sig, (v: Vec3) => Json.encode[Vec3](v))
+                        case _              => ()
+                case _ => ()
+            end match
+
+            buf
+        end boundPropsOf
+
     end Ast
 
     // ---- Geometry factories --------------------------------------------------------
@@ -780,12 +1031,12 @@ object Three:
     )(using Frame): kyo.internal.Image < (Async & Scope & Abort[ThreeException]) =
         ThreeMount.toImage(scene, camera, width, height)
 
-    /** Embeds `scene` as a first-class child of a kyo-ui tree: returns a `UI.Ast.Host` whose
-      * `<canvas>` kyo-ui lays out and renders on every runner, and into which the 3D scene mounts
-      * at page mount and disposes at page teardown (client-side). The renderer, reconciler, GL
-      * contexts, and pointer listeners bind to the page mount Scope and are released at teardown.
-      * The frame loop runs as a fiber forked under the page Scope: no leaked GL context, no
-      * orphaned frame loop. Shared `SignalRef`s bridge exactly as in the side-by-side path.
+    /** Embeds `scene` as a first-class child of a kyo-ui tree: returns a `UI.Ast.BackendNode` whose
+      * `<canvas>` kyo-ui lays out and renders on every runner, registry-dispatched to `ThreeBackend`
+      * at mount. The 3D scene mounts at page mount and disposes at page teardown (client-side); the
+      * renderer, reconciler, GL contexts, and pointer listeners bind to the page mount Scope and are
+      * released at teardown. The frame loop runs as a fiber forked under the page Scope: no leaked GL
+      * context, no orphaned frame loop. Shared `SignalRef`s bridge exactly as in the side-by-side path.
       *
       * Usage: `UI.div(controls, Three.embed(scene, camera), footer)`.
       */
@@ -793,8 +1044,8 @@ object Three:
         scene: Three,
         camera: Three.Ast.Camera,
         frames: ThreeFrames = ThreeFrames.Raf
-    )(using Frame): UI.Ast.Host =
-        ThreeMount.embed(scene, camera, frames)
+    )(using Frame): UI.Ast.BackendNode =
+        Three.Ast.Embed(scene, camera, frames)
 
     /** The server-feeds-by-signal-id surface.
       *

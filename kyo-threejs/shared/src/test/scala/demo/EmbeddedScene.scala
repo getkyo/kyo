@@ -23,20 +23,20 @@ object EmbeddedSceneScene:
             earthAngle <- Signal.initRef(0.0)
             sun = Three.mesh(
                 Three.Geometry.sphere(1.0),
-                Three.Material.standard().emissive(Color.yellow)
+                Three.Material.standard().emissive(Three.Color.yellow)
             ).onClick(_ => selected.set("Sun"))
             earth = Three.group(
                 Three.mesh(
                     Three.Geometry.sphere(0.3),
-                    Three.Material.standard(color = Color.blue)
-                ).position(Vec3(4, 0, 0))
+                    Three.Material.standard(color = Three.Color.blue)
+                ).position(Three.Vec3(4, 0, 0))
                     .onClick(_ => selected.set("Earth"))
-            ).rotation(earthAngle.map(a => Vec3(0, a, 0)))
+            ).rotation(earthAngle.map(a => Three.Vec3(0, a, 0)))
                 .onFrame(t => earthAngle.updateAndGet(_ + t.delta.toMillis * 0.001))
         yield (
             Three.scene(
                 Three.Light.ambient(intensity = 0.3),
-                Three.Light.point(position = Vec3.zero),
+                Three.Light.point(position = Three.Vec3.zero),
                 sun,
                 earth
             ),
@@ -48,9 +48,9 @@ object EmbeddedSceneScene:
       */
     def camera(using Frame): Three.Ast.Camera =
         Three.Camera.perspective(
-            fov = Radians.deg(60),
-            position = Vec3(0, 7, 7),
-            lookAt = Vec3.zero
+            fov = Three.Radians.deg(60),
+            position = Three.Vec3(0, 7, 7),
+            lookAt = Three.Vec3.zero
         )
 
     /** Composes the full kyo-ui tree: a control panel (button writing "Sun" into the shared

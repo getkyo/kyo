@@ -787,7 +787,10 @@ private[kyo] object HtmlRenderer:
            |  }else if(op.SetProp){
            |    var p=op.SetProp.path;
            |    var b=backendForPath(p);            // nearest [data-kyo-backend] root; null -> DOM handling
-           |    if(b){b.patch(p,op.SetProp.key,op.SetProp.encoded);}
+           |    // p's LAST segment is always op.SetProp.key itself (PropRegion's own path is the owning
+           |    // node's path with the key appended, ReactiveUI.normalize's BackendNode arm); the node's
+           |    // OWN path (what buildPathIndex/byPath key on) is p with that trailing segment dropped.
+           |    if(b){b.patch(p.slice(0,p.length-1),op.SetProp.key,op.SetProp.encoded);}
            |  }else if(op.ReplaceSubtree){
            |    var p=op.ReplaceSubtree.path;
            |    var b=backendForPath(p);
@@ -798,13 +801,23 @@ private[kyo] object HtmlRenderer:
            |// {patch,replaceSubtree} keyed by its placeholder's data-kyo-path (the backend root). The SSR
            |// placeholder is in the DOM before the island mounts, so there is no register-before-push race.
            |window.__kyoBackends=window.__kyoBackends||{};
-           |// Resolves the live backend handle owning `path`: walk up from the element at `path` to the
-           |// nearest [data-kyo-backend] ancestor, read its data-kyo-path (the root), and look it up.
+           |// Resolves the live backend handle owning `path`: shrink `path` one segment at a time (longest
+           |// prefix first) looking up the DOM element at each shrunk data-kyo-path, and return the first
+           |// one that itself carries data-kyo-backend. A DOM-ancestor walk from the exact `path` would
+           |// find nothing for a boundProp NESTED below a backend node's OWN root (e.g. a 3D scene's
+           |// material.color several AST levels under its <canvas>): the backend's HTML descent stops at
+           |// its own placeholder (HtmlRenderer's BackendNode arm), so no element ever carries a `path`
+           |// deeper than the root, and no such element has a DOM parent chain to climb. Shrinking the
+           |// PATH (not walking the DOM) reaches the root directly; it also covers the shallower case (a
+           |// DOM-rendered element inside a backend's own children) since an ancestor element's own
+           |// data-kyo-path is a prefix of its descendant's by construction.
            |function backendForPath(path){
-           |  var el=document.querySelector('[data-kyo-path="'+path.join(".")+'"]');
-           |  while(el){ if(el.hasAttribute&&el.hasAttribute("data-kyo-backend")){
-           |    return window.__kyoBackends[el.getAttribute("data-kyo-path")]||null; }
-           |    el=el.parentElement; }
+           |  for(var i=path.length;i>0;i--){
+           |    var el=document.querySelector('[data-kyo-path="'+path.slice(0,i).join(".")+'"]');
+           |    if(el&&el.hasAttribute&&el.hasAttribute("data-kyo-backend")){
+           |      return window.__kyoBackends[el.getAttribute("data-kyo-path")]||null;
+           |    }
+           |  }
            |  return null;
            |}
            |function fp(el){

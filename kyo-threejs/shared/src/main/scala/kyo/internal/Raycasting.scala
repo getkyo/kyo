@@ -5,7 +5,7 @@ import scala.scalajs.js
 
 /** Raycast hit resolution over the reconciler's live map: a `Raycaster` casts from the camera
   * through the pointer's normalized device coordinates and resolves the nearest `Live` object whose AST
-  * node carries an `Interactive` handler, building the [[Pointer]] payload from the intersection.
+  * node carries an `Interactive` handler, building the [[Three.Pointer]] payload from the intersection.
   *
   * Raycasting runs headless against real three.js, so hit resolution is Node-testable; only the live
   * DOM pointer-event capture rides the mount's browser path.
@@ -17,7 +17,7 @@ private[kyo] object Raycasting:
         mounted: Reconciler.Mounted,
         camera: js.Dynamic,
         ndc: (Double, Double)
-    )(using Frame): Maybe[(Reconciler.Live, Pointer)] < Sync =
+    )(using Frame): Maybe[(Reconciler.Live, Three.Pointer)] < Sync =
         // Unsafe: a Raycaster cast over the live objects; all synchronous three.js reads, deferred.
         Sync.Unsafe.defer {
             discard(camera.updateMatrixWorld())
@@ -32,20 +32,20 @@ private[kyo] object Raycasting:
             else
                 val nearest = intersections(0)
                 resolveLive(targets, nearest.`object`) match
-                    case Present(live) => Present((live, toPointer(nearest, ndc, Pointer.Buttons.none)))
+                    case Present(live) => Present((live, toPointer(nearest, ndc, Three.Pointer.Buttons.none)))
                     case Absent        => Absent
             end if
         }
 
-    /** Builds the [[Pointer]] payload from an intersection (world point, distance, ndc, buttons). */
-    def toPointer(intersection: js.Dynamic, ndc: (Double, Double), buttons: Pointer.Buttons)(using
+    /** Builds the [[Three.Pointer]] payload from an intersection (world point, distance, ndc, buttons). */
+    def toPointer(intersection: js.Dynamic, ndc: (Double, Double), buttons: Three.Pointer.Buttons)(using
         AllowUnsafe
-    ): Pointer =
+    ): Three.Pointer =
         // Unsafe: reading the intersection's world-space point and distance from the three.js result.
         val p        = intersection.point
-        val point    = Vec3(p.x.asInstanceOf[Double], p.y.asInstanceOf[Double], p.z.asInstanceOf[Double])
+        val point    = Three.Vec3(p.x.asInstanceOf[Double], p.y.asInstanceOf[Double], p.z.asInstanceOf[Double])
         val distance = intersection.distance.asInstanceOf[Double]
-        Pointer(point, distance, ndc, buttons)
+        Three.Pointer(point, distance, ndc, buttons)
     end toPointer
 
     /** The live objects whose AST node carries an `Interactive` handler. */

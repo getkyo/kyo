@@ -19,7 +19,7 @@ class ThreeInteractiveTest extends ThreeTest:
     "hit resolves to handled node when ray passes through mesh" in {
         val mesh = Three.mesh(Three.Geometry.box(), Three.Material.standard())
             .onClick(_ => Sync.defer { () })
-            .position(Vec3(0, 0, 0))
+            .position(Three.Vec3(0, 0, 0))
         val scene = Three.scene(mesh)
         Scope.run {
             Abort.recover[ThreeException](e => Abort.panic(e)) {
@@ -44,7 +44,7 @@ class ThreeInteractiveTest extends ThreeTest:
     "hit world-point and distance have concrete values for a centered ray" in {
         val mesh = Three.mesh(Three.Geometry.box(), Three.Material.standard())
             .onClick(_ => Sync.defer { () })
-            .position(Vec3(0, 0, 0))
+            .position(Three.Vec3(0, 0, 0))
         val scene = Three.scene(mesh)
         Scope.run {
             Abort.recover[ThreeException](e => Abort.panic(e)) {
@@ -69,7 +69,7 @@ class ThreeInteractiveTest extends ThreeTest:
     "miss returns Absent when ray does not intersect any mesh" in {
         val mesh = Three.mesh(Three.Geometry.box(), Three.Material.standard())
             .onClick(_ => Sync.defer { () })
-            .position(Vec3(10, 10, 10))
+            .position(Three.Vec3(10, 10, 10))
         val scene = Three.scene(mesh)
         Scope.run {
             Abort.recover[ThreeException](e => Abort.panic(e)) {
@@ -87,9 +87,9 @@ class ThreeInteractiveTest extends ThreeTest:
     "ray through unhandled sibling returns Absent (interactive filter)" in {
         val handled = Three.mesh(Three.Geometry.box(), Three.Material.standard())
             .onClick(_ => Sync.defer { () })
-            .position(Vec3(5, 5, 5))
+            .position(Three.Vec3(5, 5, 5))
         val unhandled = Three.mesh(Three.Geometry.box(), Three.Material.standard())
-            .position(Vec3(0, 0, 0))
+            .position(Three.Vec3(0, 0, 0))
         val scene = Three.scene(handled, unhandled)
         Scope.run {
             Abort.recover[ThreeException](e => Abort.panic(e)) {
@@ -107,10 +107,10 @@ class ThreeInteractiveTest extends ThreeTest:
     "nearest of two overlapping meshes wins" in {
         val front = Three.mesh(Three.Geometry.box(), Three.Material.standard())
             .onClick(_ => Sync.defer { () })
-            .position(Vec3(0, 0, 0))
+            .position(Three.Vec3(0, 0, 0))
         val back = Three.mesh(Three.Geometry.box(), Three.Material.standard())
             .onClick(_ => Sync.defer { () })
-            .position(Vec3(0, 0, -1))
+            .position(Three.Vec3(0, 0, -1))
         val scene = Three.scene(front, back)
         Scope.run {
             Abort.recover[ThreeException](e => Abort.panic(e)) {
@@ -132,10 +132,10 @@ class ThreeInteractiveTest extends ThreeTest:
     }
 
     "onPointerOver handler fires when pointer enters a mesh" in {
-        var overPointer = Maybe.empty[Pointer]
+        var overPointer = Maybe.empty[Three.Pointer]
         val mesh = Three.mesh(Three.Geometry.box(), Three.Material.standard())
             .onPointerOver(p => Sync.defer { overPointer = Present(p) })
-            .position(Vec3(0, 0, 0))
+            .position(Three.Vec3(0, 0, 0))
         val scene = Three.scene(mesh)
         Scope.run {
             Abort.recover[ThreeException](e => Abort.panic(e)) {
@@ -165,7 +165,7 @@ class ThreeInteractiveTest extends ThreeTest:
         var outFired = false
         val mesh = Three.mesh(Three.Geometry.box(), Three.Material.standard())
             .onPointerOut(_ => Sync.defer { outFired = true })
-            .position(Vec3(0, 0, 0))
+            .position(Three.Vec3(0, 0, 0))
         val scene = Three.scene(mesh)
         Scope.run {
             Abort.recover[ThreeException](e => Abort.panic(e)) {
@@ -190,7 +190,7 @@ class ThreeInteractiveTest extends ThreeTest:
     "buttons payload is populated on the Pointer" in {
         val mesh = Three.mesh(Three.Geometry.box(), Three.Material.standard())
             .onClick(_ => Sync.defer { () })
-            .position(Vec3(0, 0, 0))
+            .position(Three.Vec3(0, 0, 0))
         val scene = Three.scene(mesh)
         Scope.run {
             Abort.recover[ThreeException](e => Abort.panic(e)) {
@@ -202,7 +202,7 @@ class ThreeInteractiveTest extends ThreeTest:
                 yield
                     result match
                         case Present((_, pointer)) =>
-                            assert(pointer.buttons == Pointer.Buttons.none)
+                            assert(pointer.buttons == Three.Pointer.Buttons.none)
                         case Absent =>
                             assert(false, "expected a hit but got Absent")
                     end match
@@ -233,7 +233,7 @@ class ThreeInteractiveTest extends ThreeTest:
         val mesh = Three.mesh(Three.Geometry.box(), Three.Material.standard())
             .onPointerOver(_ => Sync.defer { () })
             .onPointerOut(_ => Sync.defer { () })
-            .position(Vec3(0, 0, 0))
+            .position(Three.Vec3(0, 0, 0))
         val scene = Three.scene(mesh)
         Scope.run {
             Abort.recover[ThreeException](e => Abort.panic(e)) {

@@ -30,18 +30,18 @@ object GltfViewerScene:
                 .onPointerOver(_ => Log.info("pointer over model"))
                 .onClick(_ => Log.info("clicked model"))
             rig = Three.group(root)
-                .rotation(angle.map(a => Vec3(0, a, 0)))
+                .rotation(angle.map(a => Three.Vec3(0, a, 0)))
                 .onFrame(t => angle.updateAndGet(_ + t.delta.toMillis * 0.0005))
         yield Three.scene(
             Three.Light.ambient(intensity = 0.4),
-            Three.Light.directional(position = Vec3(5, 5, 5)),
+            Three.Light.directional(position = Three.Vec3(5, 5, 5)),
             rig
         )
 
     /** The viewing camera, framing the loaded model centered at the origin. */
     def camera(using Frame): Three.Ast.Camera =
         Three.Camera.perspective(
-            position = Vec3(0, 0, 4),
-            lookAt = Vec3.zero
+            position = Three.Vec3(0, 0, 4),
+            lookAt = Three.Vec3.zero
         )
 end GltfViewerScene

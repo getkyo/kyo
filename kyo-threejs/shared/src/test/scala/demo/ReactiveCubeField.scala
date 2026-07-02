@@ -26,18 +26,18 @@ object ReactiveCubeFieldScene:
                     z <- 0 until n
                 yield
                     val height = phase.map(p => 1.0 + math.sin(p + x * 0.5 + z * 0.5))
-                    val color  = phase.map(p => Color.hsl((p * 40 + x * 20 + z * 20) % 360, 0.7, 0.5))
+                    val color  = phase.map(p => Three.Color.hsl((p * 40 + x * 20 + z * 20) % 360, 0.7, 0.5))
                     Three.mesh(
                         Three.Geometry.box(0.8, 1.0, 0.8),
                         Three.Material.standard().color(color)
-                    ).position(Vec3(x - n / 2.0, 0, z - n / 2.0))
-                        .scale(height.map(h => Vec3(1, h, 1)))
+                    ).position(Three.Vec3(x - n / 2.0, 0, z - n / 2.0))
+                        .scale(height.map(h => Three.Vec3(1, h, 1)))
             )
             waver = Three.group().onFrame(t => phase.updateAndGet(_ + t.delta.toMillis * 0.002))
         yield Three.scene(
             Chunk(
                 Three.Light.ambient(intensity = 0.4): Three,
-                Three.Light.directional(position = Vec3(5, 10, 5)): Three,
+                Three.Light.directional(position = Three.Vec3(5, 10, 5)): Three,
                 waver: Three
             ).concat(cubes.map(c => c: Three))*
         )
@@ -47,8 +47,8 @@ object ReactiveCubeFieldScene:
     /** The viewing camera, raised to look down the wave field, aimed at the grid center at mid-height. */
     def camera(using Frame): Three.Ast.Camera =
         Three.Camera.perspective(
-            fov = Radians.deg(70),
-            position = Vec3(0, 5, 8),
-            lookAt = Vec3(0, 1, 0)
+            fov = Three.Radians.deg(70),
+            position = Three.Vec3(0, 5, 8),
+            lookAt = Three.Vec3(0, 1, 0)
         )
 end ReactiveCubeFieldScene

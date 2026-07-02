@@ -5,22 +5,26 @@ import kyo.internal.HtmlOp
 import kyo.internal.KeyboardEventData
 import kyo.internal.MouseEventData
 import kyo.internal.ReactiveUI
+import kyo.internal.RegionKind
 import kyo.internal.UIEvent
 import kyo.internal.UIExchange
 
 /** A trivial in-test backend node (no 3D dependency): the closest live precedent is `UI.Ast.Host`
-  * (`UI.scala:1710-1726`). Only `placeholder` needs a body; `backend`/`backendChildren`/`boundProps`
-  * are satisfied directly by the case-class constructor params (widening the trait's `private[kyo]`
-  * members, exactly as `Host` widens them via overriding `def`s).
+  * (`UI.scala:1710-1726`). Only `placeholder` needs a body; `backend`/`backendChildren`/`boundProps`/
+  * `structuralRegion` are satisfied directly by the case-class constructor params (widening the
+  * trait's `private[kyo]` members, exactly as `Host` widens them via overriding `def`s).
   */
 final case class FakeBackendNode(
     backend: String = "fake",
     backendChildren: Chunk[UI] = Chunk.empty,
-    boundProps: Chunk[UI.Ast.BackendNode.BoundProp] = Chunk.empty
+    boundProps: Chunk[UI.Ast.BackendNode.BoundProp] = Chunk.empty,
+    override val structuralRegion: Maybe[UI.Ast.BackendNode.StructuralBinding] = Absent
 )(using val frame: Frame) extends UI.Ast.BackendNode:
     type Self = FakeBackendNode
     private[kyo] def placeholder: UI.Ast.BackendNode.Placeholder =
         UI.Ast.BackendNode.Placeholder("canvas", UI.Ast.Attrs())
+    // Not exercised by this file's leaves (a self-return is enough to satisfy the abstract obligation).
+    def id(v: String): FakeBackendNode = this
 end FakeBackendNode
 
 class ReactiveUITest extends UITest:
@@ -112,7 +116,7 @@ class ReactiveUITest extends UITest:
         yield
             val region = ReactiveUI.findNode(root, Seq("0", "material.color"))
             assert(region.isDefined)
-            assert(region.get.propMeta.isDefined)
+            assert(region.get.regionKind.isInstanceOf[RegionKind.Prop])
             assert(region.get.path == Seq("0", "material.color"))
     }
 
@@ -174,6 +178,93 @@ class ReactiveUITest extends UITest:
             assert(countAfterFirst == 2)
             assert(encoded2 == "99")
             assert(countAfterSecond == 3)
+    }
+
+    // The real path descends TWO BackendNode levels (Three.Ast.Embed -> its scene root -> a
+    // material.color boundProp), not one; nothing above exercises nested-const descent past depth 1.
+    // A `FakeBackendNode` nesting a second `FakeBackendNode` in its `backendChildren` reproduces the
+    // same shape with no 3D dependency.
+    "a nested BackendNode's boundProp (depth 2) normalizes to path :+ childIndex :+ key, and drives exactly one SetProp per change" in {
+        for
+            ref     <- Signal.initRef(0)
+            counter <- AtomicInt.init
+            inner = FakeBackendNode(boundProps =
+                Chunk(UI.Ast.BackendNode.BoundProp("material.color", ref.asInstanceOf[Signal[Any]], v => v.toString))
+            )
+            outer = FakeBackendNode(backendChildren = Chunk(inner))
+            root    <- ReactiveUI.normalize(UI.div(outer), Seq.empty)
+            channel <- Channel.init[(ReactiveUI.Region.PropRegion, Any)](8)
+            exchange = new UIExchange:
+                def onChange(region: ReactiveUI.Region, value: Any)(using Frame): Unit < Async =
+                    region match
+                        case prop: ReactiveUI.Region.PropRegion =>
+                            counter.incrementAndGet.andThen(Abort.runPartial[Closed](channel.put((prop, value))).unit)
+                        case _ => Kyo.unit
+            region = ReactiveUI.findNode(root, Seq("0", "0", "material.color"))
+            _      = assert(region.isDefined)
+            _      = assert(region.get.regionKind.isInstanceOf[RegionKind.Prop])
+            _      = assert(region.get.path == Seq("0", "0", "material.color"))
+            result <- Scope.run {
+                for
+                    _               <- ReactiveUI.subscribe(root, exchange)
+                    (_, _)          <- channel.take // the immediate emission at subscribe time
+                    countAfterInit  <- counter.get
+                    _               <- ref.set(255)
+                    (prop1, v1)     <- channel.take
+                    countAfterFirst <- counter.get
+                yield (prop1.encode(v1), countAfterInit, countAfterFirst)
+            }
+        yield
+            val (encoded1, countAfterInit, countAfterFirst) = result
+            assert(countAfterInit == 1)
+            assert(encoded1 == "255")
+            assert(countAfterFirst == 2)
+    }
+
+    // The structural analog of the depth-1 leaf above: a BackendNode's structuralRegion (a
+    // render/foreach/foreachKeyed carrier) normalizes to a region at the node's OWN path (path-
+    // transparent, not path :+ key), and driving its signal emits exactly one StructuralRegion per
+    // change. The FIRST executable proof the generic ReactiveUI walk discovers and drives a structural
+    // region at all. `findNode` matches path-equality depth-first
+    // on the CALLER'S root, so it returns the node's own const carrier (regionKind = Dom by default,
+    // sharing the SAME path); the structural region is a same-path CHILD of that carrier, found by
+    // scanning its `children` for a `RegionKind.Structural` entry, not by a second `findNode` call.
+    "a BackendNode's structuralRegion normalizes to a StructuralRegion at the node's OWN path, and drives exactly one ReplaceSubtree per change" in {
+        for
+            chunkSignal <- Signal.initRef(Chunk(1, 2, 3))
+            counter     <- AtomicInt.init
+            encode = (v: Any) => v.asInstanceOf[Chunk[Int]].mkString(",")
+            node = FakeBackendNode(structuralRegion =
+                Present(UI.Ast.BackendNode.StructuralBinding(chunkSignal.asInstanceOf[Signal[Any]], encode))
+            )
+            root    <- ReactiveUI.normalize(UI.div(node), Seq.empty)
+            channel <- Channel.init[(ReactiveUI.Region.StructuralRegion, Any)](8)
+            exchange = new UIExchange:
+                def onChange(region: ReactiveUI.Region, value: Any)(using Frame): Unit < Async =
+                    region match
+                        case s: ReactiveUI.Region.StructuralRegion =>
+                            counter.incrementAndGet.andThen(Abort.runPartial[Closed](channel.put((s, value))).unit)
+                        case _ => Kyo.unit
+            carrier = ReactiveUI.findNode(root, Seq("0"))
+            _       = assert(carrier.isDefined)
+            _       = assert(carrier.get.children.exists(c => c.path == Seq("0") && c.regionKind.isInstanceOf[RegionKind.Structural]))
+            result <- Scope.run {
+                for
+                    _                   <- ReactiveUI.subscribe(root, exchange)
+                    (initOp, initValue) <- channel.take // the immediate emission at subscribe time
+                    countAfterInit      <- counter.get
+                    _                   <- chunkSignal.set(Chunk(4, 5))
+                    (op1, v1)           <- channel.take
+                    countAfterFirst     <- counter.get
+                yield (initOp.path, initOp.encode(initValue), countAfterInit, op1.encode(v1), countAfterFirst)
+            }
+        yield
+            val (initPath, initEncoded, countAfterInit, encoded1, countAfterFirst) = result
+            assert(initPath == Seq("0"))
+            assert(initEncoded == "1,2,3")
+            assert(countAfterInit == 1)
+            assert(encoded1 == "4,5")
+            assert(countAfterFirst == 2)
     }
 
     // ---- Browser-level reactive behaviour ----

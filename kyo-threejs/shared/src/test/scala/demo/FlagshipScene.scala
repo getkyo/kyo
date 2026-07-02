@@ -71,8 +71,8 @@ object FlagshipScene:
                 // A lit standard material so the rotating faces catch the directional light (proving the
                 // spin); the color binds to the server-fed color mirror so the whole cube steps through the
                 // palette on the server's schedule.
-                Three.Material.standard(color = Color.red, roughness = Normal(0.5))
-                    .color(colorMirror.map(rgb => Color(rgb)))
+                Three.Material.standard(color = Three.Color.red, roughness = Three.Normal(0.5))
+                    .color(colorMirror.map(rgb => Three.Color(rgb)))
             ).onClick { _ =>
                 // The onClick closure row is `< Async`; emit's typed FeedUnavailable Abort is discharged
                 // here to a Log.warn (the no-channel-bound case cannot occur once the page WS is bound, but
@@ -84,13 +84,13 @@ object FlagshipScene:
                 }
             }
             spinning = Three.group(cube)
-                .rotation(spin.map(a => Vec3(a * 0.6, a, 0.0)))
-                .scale(scaleMirror.map(level => Vec3.one * (level / 1000.0)))
+                .rotation(spin.map(a => Three.Vec3(a * 0.6, a, 0.0)))
+                .scale(scaleMirror.map(level => Three.Vec3.one * (level / 1000.0)))
                 .onFrame(t => spin.updateAndGet(_ + t.delta.toMillis * 0.0015))
         yield (
             Three.scene(
                 Three.Light.ambient(intensity = 1.0),
-                Three.Light.directional(position = Vec3(4, 6, 8)),
+                Three.Light.directional(position = Three.Vec3(4, 6, 8)),
                 spinning,
                 // autoRotate: the camera orbits the cube automatically, a distinct rate from the cube's own
                 // onFrame spin, proving the OrbitControls binding drives the camera each frame.
@@ -107,8 +107,8 @@ object FlagshipScene:
       */
     def camera(using Frame): Three.Ast.Camera =
         Three.Camera.perspective(
-            position = Vec3(0, 0, 6),
-            lookAt = Vec3(0, 0, 0)
+            position = Three.Vec3(0, 0, 6),
+            lookAt = Three.Vec3(0, 0, 0)
         )
 
 end FlagshipScene

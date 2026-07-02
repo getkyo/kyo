@@ -120,6 +120,12 @@ private[kyo] object UIServer:
                     case prop: ReactiveUI.Region.PropRegion =>
                         // a boundProp region on a BackendNode: encode the raw value, emit one SetProp.
                         push(HtmlOp.SetProp(prop.path, prop.key, prop.encode(value)))
+                    case struct: ReactiveUI.Region.StructuralRegion =>
+                        // Encode the raw structural DATA emission (a Chunk[A] for foreach, an
+                        // A for render) and address the node's own path; the client's clientJs
+                        // dispatch routes ReplaceSubtree to the owning backend's replaceSubtree
+                        // with no client-side edit needed.
+                        push(HtmlOp.ReplaceSubtree(struct.path, struct.encode(value)))
             end onChange
 
     private def dispatchEvent(

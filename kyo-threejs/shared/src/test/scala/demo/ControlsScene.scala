@@ -17,10 +17,10 @@ object ControlsScene:
     /** A static cluster of cubes: a central large cube flanked by smaller offset cubes of distinct colors
       * at distinct depths, so the orbiting camera frames a visibly different arrangement as it sweeps.
       */
-    private def cube(color: Color, pos: Vec3, size: Double)(using Frame): Three =
+    private def cube(color: Three.Color, pos: Three.Vec3, size: Double)(using Frame): Three =
         Three.mesh(
             Three.Geometry.box(size, size, size),
-            Three.Material.standard(color = color, roughness = Normal(0.4))
+            Three.Material.standard(color = color, roughness = Three.Normal(0.4))
         ).position(pos)
 
     /** Builds the static scene with an orbiting camera. The `Three.controls(autoRotate = true)` node makes
@@ -32,11 +32,11 @@ object ControlsScene:
         Sync.defer {
             Three.scene(
                 Three.Light.ambient(intensity = 0.8),
-                Three.Light.directional(position = Vec3(5, 8, 6)),
-                cube(Color.red, Vec3(0, 0, 0), 1.4),
-                cube(Color.green, Vec3(1.6, 0.4, 0.8), 0.9),
-                cube(Color.blue, Vec3(-1.4, -0.3, -1.0), 1.0),
-                cube(Color(0xffd040), Vec3(0.2, 1.4, -0.6), 0.7),
+                Three.Light.directional(position = Three.Vec3(5, 8, 6)),
+                cube(Three.Color.red, Three.Vec3(0, 0, 0), 1.4),
+                cube(Three.Color.green, Three.Vec3(1.6, 0.4, 0.8), 0.9),
+                cube(Three.Color.blue, Three.Vec3(-1.4, -0.3, -1.0), 1.0),
+                cube(Three.Color(0xffd040), Three.Vec3(0.2, 1.4, -0.6), 0.7),
                 // autoRotate: the camera orbits the cluster automatically (no object onFrame), proving the
                 // OrbitControls binding drives the camera each frame.
                 Three.controls(autoRotate = true)
@@ -46,8 +46,8 @@ object ControlsScene:
     /** The viewing camera the controls orbit, offset so the initial frame shows the cluster from an angle. */
     def camera(using Frame): Three.Ast.Camera =
         Three.Camera.perspective(
-            position = Vec3(0, 1.5, 6),
-            lookAt = Vec3(0, 0, 0)
+            position = Three.Vec3(0, 1.5, 6),
+            lookAt = Three.Vec3(0, 0, 0)
         )
 
 end ControlsScene

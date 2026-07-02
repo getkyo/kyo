@@ -16,12 +16,12 @@ class ThreeControlsTest extends ThreeTest:
         assert(c.enablePan)
         assert(c.enableRotate)
         assert(!c.autoRotate)
-        assert(c.target == Bound.Const(Vec3.zero))
+        assert(c.target == Bound.Const(Three.Vec3.zero))
     }
 
     "controls carries each explicit flag and target" in {
         val c = Three.controls(
-            target = Vec3(1.0, 2.0, 3.0),
+            target = Three.Vec3(1.0, 2.0, 3.0),
             enableZoom = false,
             enablePan = false,
             enableRotate = false,
@@ -31,7 +31,7 @@ class ThreeControlsTest extends ThreeTest:
         assert(!c.enablePan)
         assert(!c.enableRotate)
         assert(c.autoRotate)
-        assert(c.target == Bound.Const(Vec3(1.0, 2.0, 3.0)))
+        assert(c.target == Bound.Const(Three.Vec3(1.0, 2.0, 3.0)))
     }
 
     "a controls node is a childless Node" in {

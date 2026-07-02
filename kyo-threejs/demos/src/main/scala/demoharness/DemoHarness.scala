@@ -65,7 +65,7 @@ object DemoHarness:
                 }
             }
         val probe = Three.scene(box)
-        Three.runMount(probe, Three.Camera.perspective(position = Vec3(0, 0, 6)), selector, ThreeFrames.Raf)
+        Three.runMount(probe, Three.Camera.perspective(position = Three.Vec3(0, 0, 6)), selector, ThreeFrames.Raf)
     end orderingProbe
 
     /** Drives the PRODUCTION `ThreeMount.makeRenderer` acquire/release through a `Scope` and reports

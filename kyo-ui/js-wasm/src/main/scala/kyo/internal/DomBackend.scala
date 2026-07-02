@@ -119,6 +119,25 @@ private[kyo] object DomBackend extends Backend:
         end for
     end mountInto
 
+    /** Hydrates an ALREADY-SSR'd page: walks `ui` (rebuilt client-side via the SAME builder function
+      * the server called, so `data-kyo-path`/`data-kyo-backend` match the SSR markup by construction)
+      * and dispatches each `BackendNode`'s mount through the registry onto its existing
+      * placeholder element (a foreign backend's `<canvas>`, say), WITHOUT touching `container.innerHTML`,
+      * unlike `mountInto`. A server-pushed page's own reactivity rides the inline WS listener
+      * `HtmlRenderer.clientJs` already emits into the SSR'd HTML (`SetProp`/`ReplaceSubtree` routed
+      * through `window.__kyoBackends`); this walk exists only to REGISTER each
+      * backend node's live mount so that dispatch has somewhere to land, mirroring `mountInto`'s own
+      * `fireHostMounts` step with no `ReactiveUI.normalize`/`LocalExchange`/`subscribe` half (a
+      * server-driven page needs no CLIENT-local reactive subscription).
+      */
+    private[kyo] def hydrateBackendNodes(ui: UI)(using Frame): Unit < (Async & Scope) =
+        // Pre-register the DOM backend + the transitional dom-host entry, mirroring mountInto's own
+        // idempotent registration (Backend.scala:47-48); a page that only embeds a foreign backend node
+        // (no plain DOM host) still needs DomBackend registered for the dom-host registry entry it
+        // shares with mountInto's own Host dispatch path.
+        Sync.defer { Backend.register(DomBackend); Backend.register(DomHostBackend) }
+            .andThen(fireHostMounts(ui, Seq.empty))
+
     /** Walk the original AST tracking `data-kyo-path` exactly as `HtmlRenderer.renderTo`
       * assigns it (children indexed by position; `KeyedChild` keeps its parent path), and for
       * each `BackendNode` resolve the live element by its path and dispatch its mount through the
@@ -243,6 +262,13 @@ private[kyo] object DomBackend extends Backend:
                         case Present(backend) => backend.patch(prop.path, prop.key, prop.encode(value))
                         case Absent           => Kyo.unit
                     }
+                case _: ReactiveUI.Region.StructuralRegion =>
+                    // Deliberate no-op. In a client-local mount the 3D structure is driven
+                    // LOCALLY by the reconciler's own runReactiveRegion, the SINGLE writer of
+                    // region.prevKeyed. Routing this emission to a backend's replaceSubtree would make
+                    // LocalExchange a SECOND writer of the same keyed state, breaking dispose-once/keyed-
+                    // reuse. The client owns structure here.
+                    Kyo.unit
     end LocalExchange
 
     /** Resolves the live backend owning `path`: walk up from the element at `path` to the nearest

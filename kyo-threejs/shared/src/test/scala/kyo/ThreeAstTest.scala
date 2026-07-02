@@ -53,13 +53,13 @@ class ThreeAstTest extends kyo.test.Test[Any]:
     }
 
     "spot light angle is Radians-typed from a degree helper" in {
-        val spot = Three.Light.spot(angle = Radians.deg(45))
-        assert(math.abs(spot.angle.toDouble - Radians.deg(45).toDouble) < 1e-9)
+        val spot = Three.Light.spot(angle = Three.Radians.deg(45))
+        assert(math.abs(spot.angle.toDouble - Three.Radians.deg(45).toDouble) < 1e-9)
     }
 
     "perspective camera defaults" in {
         val cam = Three.Camera.perspective()
-        assert(cam.fov == Radians.deg(75))
+        assert(cam.fov == Three.Radians.deg(75))
         assert(cam.near == 0.1)
         assert(cam.far == 1000.0)
         // The default position (0,0,5) must appear in the transform, however the internal wrapping is done.
@@ -67,20 +67,20 @@ class ThreeAstTest extends kyo.test.Test[Any]:
     }
 
     "position(Vec3) records a transform entry" in {
-        val v      = Vec3(1, 2, 3)
+        val v      = Three.Vec3(1, 2, 3)
         val result = Three.group().position(v)
         assert(result.transform.position.isDefined)
     }
 
     "position(Vec3) round-trips: a group positioned twice at the same Vec3 is equal" in {
         val g = Three.group()
-        val v = Vec3(7, 8, 9)
+        val v = Three.Vec3(7, 8, 9)
         assert(g.position(v) == g.position(v))
     }
 
     "position(Vec3) and position(Vec3) at different values are not equal" in {
         val g = Three.group()
-        assert(g.position(Vec3(1, 2, 3)) != g.position(Vec3(4, 5, 6)))
+        assert(g.position(Three.Vec3(1, 2, 3)) != g.position(Three.Vec3(4, 5, 6)))
     }
 
     "a Light is Object3D but not Interactive (compile shape)" in {

@@ -1,5 +1,6 @@
 package kyo
 
+import kyo.Three.foreachKeyed
 import kyo.internal.Reconciler
 import kyo.internal.ThreeFacadeOps
 import scala.scalajs.js as sjs
@@ -250,6 +251,70 @@ class ReconcilerTest extends ThreeTest:
                 assert(mounted.live.get(new Reconciler.IdentityKey(inner)).isDefined)
                 assert(mounted.live.get(new Reconciler.IdentityKey(mesh)).isDefined)
             }
+        }
+    }
+
+    // ---- Wire-driven seams: regionFor / holderPath / foreachReplace / reactiveReplace ----
+    // ThreeBackend's buildPathIndex (kyo-threejs/shared/src/main/scala/kyo/internal/ThreeBackend.scala)
+    // owns the ACTUAL byPath/byLive maps and stamps ReactiveRegion.holderPath; these leaves cover what
+    // Reconciler itself owns: the holderPath field + regionFor lookup, and the reindexRegion hook's
+    // before/after-overwrite contract foreachReplace/reactiveReplace drive it through.
+
+    "regionFor finds the region stamped with a given holderPath, and Absent for an unstamped path" in {
+        val sig   = Signal.initConst(Chunk("a", "b"))
+        val fe    = sig.foreachKeyed(identity)(k => Three.mesh(Three.Geometry.box(), Three.Material.basic()))
+        val scene = Three.scene(fe)
+        Scope.run {
+            for
+                (_, mounted) <- Reconciler.mount(scene)
+                _            <- Reconciler.fillReactiveRegionsOnce(mounted)
+            yield
+                val region = Reconciler.reactiveRegions(mounted).head
+                // Simulates ThreeBackend.buildPathIndex stamping the holder's own data-kyo-path (a
+                // parent's path :+ its own child index); Reconciler itself never writes holderPath.
+                region.holderPath = Seq("0")
+                assert(Reconciler.regionFor(mounted, Seq("0")).exists(_ eq region))
+                assert(Reconciler.regionFor(mounted, Seq("does-not-exist")).isEmpty)
+        }
+    }
+
+    "foreachReplace calls reindexRegion with the OLD keyed set (still intact) before overwriting prevKeyed with the NEW one" in {
+        val sig                    = Signal.initConst(Chunk("a", "b"))
+        val fe                     = sig.foreachKeyed(identity)(k => Three.mesh(Three.Geometry.box(), Three.Material.basic()))
+        val scene                  = Three.scene(fe)
+        var hookOld: Chunk[String] = Chunk.empty
+        var hookNew: Chunk[String] = Chunk.empty
+        Scope.run {
+            for
+                (_, mounted) <- Reconciler.mount(scene)
+                _            <- Reconciler.fillReactiveRegionsOnce(mounted)
+                region = Reconciler.reactiveRegions(mounted).head
+                _ = mounted.reindexRegion = (r, keyed) =>
+                    hookOld = r.prevKeyed.map(_._1); hookNew = keyed.map(_._1)
+                nextMesh: Three = Three.mesh(Three.Geometry.box(), Three.Material.basic())
+                _ <- Reconciler.foreachReplace(region, Chunk(("a", nextMesh)), mounted)
+            yield
+                assert(hookOld == Chunk("a", "b")) // the prior keyed set, read from region.prevKeyed BEFORE this call overwrites it
+                assert(hookNew == Chunk("a"))      // "b" spliced out, "a" carried forward
+                assert(region.prevKeyed.map(_._1) == Chunk("a")) // overwritten AFTER the hook ran
+        }
+    }
+
+    "reactiveReplace's resulting prevKeyed is always the literal single \"reactive\" key: render is path-transparent, never holderPath-derived" in {
+        val sig   = Signal.initConst(Three.empty: Three)
+        val node  = Three.reactive(sig)
+        val scene = Three.scene(node)
+        Scope.run {
+            for
+                (_, mounted) <- Reconciler.mount(scene)
+                _            <- Reconciler.fillReactiveRegionsOnce(mounted)
+                region          = Reconciler.reactiveRegions(mounted).head
+                _               = region.holderPath = Seq("0") // an arbitrary stamped path; must not leak into the key
+                nextNode: Three = Three.group(Three.empty)
+                _ <- Reconciler.reactiveReplace(region, nextNode, mounted)
+            yield
+                assert(region.prevKeyed.map(_._1) == Chunk("reactive"))
+                assert(region.prevKeyed.size == 1)
         }
     }
 

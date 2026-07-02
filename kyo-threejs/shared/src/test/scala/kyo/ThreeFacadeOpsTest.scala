@@ -27,8 +27,8 @@ class ThreeFacadeOpsTest extends ThreeTest:
         Scope.run {
             ThreeFacadeOps.makeMaterial(
                 Three.Material.standard(
-                    metalness = Normal(0.5),
-                    roughness = Normal(0.8)
+                    metalness = Three.Normal(0.5),
+                    roughness = Three.Normal(0.8)
                 )
             ).map { matObj =>
                 Sync.Unsafe.defer {
@@ -51,7 +51,7 @@ class ThreeFacadeOpsTest extends ThreeTest:
 
     "makeCamera perspective passes fov in degrees" in {
         Scope.run {
-            ThreeFacadeOps.makeCamera(Three.Camera.perspective(fov = Radians.deg(60))).map { camObj =>
+            ThreeFacadeOps.makeCamera(Three.Camera.perspective(fov = Three.Radians.deg(60))).map { camObj =>
                 Sync.Unsafe.defer {
                     // three.js stores fov as-is; the value must be near 60 degrees (not ~1.047 radians)
                     // confirms perspective fov is passed in degrees, not raw radians.
@@ -64,14 +64,14 @@ class ThreeFacadeOpsTest extends ThreeTest:
 
     "makeCamera perspective applies lookAt so camera aims toward the target" in {
         // Camera at (0, 5, 6) looking at origin: the forward direction (negative Z in camera space,
-        // expressed as getWorldDirection) must point from the camera position toward Vec3.zero.
+        // expressed as getWorldDirection) must point from the camera position toward Three.Vec3.zero.
         // Without lookAt wiring the camera would face straight down -Z (three.js default), producing
         // direction (0,0,-1), which differs from the expected (0,-5,-6).normalized.
         Scope.run {
             ThreeFacadeOps.makeCamera(
                 Three.Camera.perspective(
-                    position = Vec3(0, 5, 6),
-                    lookAt = Vec3.zero
+                    position = Three.Vec3(0, 5, 6),
+                    lookAt = Three.Vec3.zero
                 )
             ).map { camObj =>
                 Sync.Unsafe.defer {

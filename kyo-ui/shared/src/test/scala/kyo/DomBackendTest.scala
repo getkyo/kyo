@@ -109,7 +109,7 @@ class DomBackendTest extends UITest:
         }
     }
 
-    // INV-008: the single-consumer drain preserves event ordering; all 5 clicks must be processed in
+    // The single-consumer drain preserves event ordering: all 5 clicks must be processed in
     // order by the same drain fiber, so the counter reaches 5 monotonically with no dropped events.
     "events dispatch in order under the page scope" in {
         val app: UI < Async =

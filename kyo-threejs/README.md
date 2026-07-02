@@ -15,13 +15,13 @@ import kyo.*
 
 // A pure value: a blue sphere, lit, framed by a camera. No browser, no GPU, nothing runs yet.
 val planet =
-    Three.mesh(Three.Geometry.sphere(1.0), Three.Material.standard(color = Color.blue))
+    Three.mesh(Three.Geometry.sphere(1.0), Three.Material.standard(color = Three.Color.blue))
 
 val scene =
     Three.scene(Three.Light.ambient(intensity = 0.4), Three.Light.point(), planet)
 
 val camera =
-    Three.Camera.perspective(position = Vec3(0, 2, 6), lookAt = Vec3.zero)
+    Three.Camera.perspective(position = Three.Vec3(0, 2, 6), lookAt = Three.Vec3.zero)
 ```
 
 This README threads one running scene: a lit planet that grows a reactive color, a per-frame spin, a keyed belt of moons, then mounts to a canvas and is captured to a PNG.
@@ -76,12 +76,12 @@ import kyo.*
 
 val metal =
     Three.Material.standard(
-        color = Color.gray,
-        metalness = Normal(0.9),
-        roughness = Normal(0.2)
+        color = Three.Color.gray,
+        metalness = Three.Normal(0.9),
+        roughness = Three.Normal(0.2)
     )
 
-val flat = Three.Material.basic(color = Color.red)
+val flat = Three.Material.basic(color = Three.Color.red)
 ```
 
 The `map` parameter takes a `Maybe[Texture]`, and the only way to get a `Texture` is the `Three.texture(url)` loader, so adding a texture turns an otherwise-pure scene build into an effect-typed one. That seam is covered in [Loading assets](#loading-assets-gltf-and-textures).
@@ -96,77 +96,77 @@ import kyo.*
 val lights =
     Three.scene(
         Three.Light.ambient(intensity = 0.3),
-        Three.Light.directional(intensity = 1.2, position = Vec3(5, 10, 5)),
-        Three.Light.point(position = Vec3.zero)
+        Three.Light.directional(intensity = 1.2, position = Three.Vec3(5, 10, 5)),
+        Three.Light.point(position = Three.Vec3.zero)
     )
 ```
 
 ### Camera
 
-`Three.Camera.perspective` and `Three.Camera.orthographic` frame the scene. `fov` is a `Radians`, not a raw `Double`, so a field of view cannot be confused with a number. `position` and `lookAt` are plain `Vec3` factory params; to make them reactive call `.position(signal)` or `.lookAt(signal)` on the camera value.
+`Three.Camera.perspective` and `Three.Camera.orthographic` frame the scene. `fov` is a `Three.Radians`, not a raw `Double`, so a field of view cannot be confused with a number. `position` and `lookAt` are plain `Three.Vec3` factory params; to make them reactive call `.position(signal)` or `.lookAt(signal)` on the camera value.
 
 ```scala
 import kyo.*
 
 val view =
     Three.Camera.perspective(
-        fov = Radians.deg(60),
-        position = Vec3(0, 7, 7),
-        lookAt = Vec3.zero
+        fov = Three.Radians.deg(60),
+        position = Three.Vec3(0, 7, 7),
+        lookAt = Three.Vec3.zero
     )
 ```
 
-## Value types: Color, Vec3, Radians, Normal
+## Value types: Three.Color, Three.Vec3, Three.Radians, Three.Normal
 
 The factories above are typed at their boundaries by four small value types that make an illegal value unrepresentable and construction total. These are fully pure and browser-free, the part of the surface you can exercise with no runner at all.
 
-### Color
+### Three.Color
 
-`Color` is an opaque packed `0xRRGGBB` integer. Construction is total: `Color.hex` returns `Maybe[Color]` (it never throws on a malformed string), while `Color.rgb` clamps each channel and `Color.hsl` wraps the hue. Named constants cover the common cases, and channel extensions read a color back apart.
+`Three.Color` is an opaque packed `0xRRGGBB` integer. Construction is total: `Three.Color.hex` returns `Maybe[Three.Color]` (it never throws on a malformed string), while `Three.Color.rgb` clamps each channel and `Three.Color.hsl` wraps the hue. Named constants cover the common cases, and channel extensions read a color back apart.
 
 ```scala
 import kyo.*
 
-val sky: Maybe[Color] = Color.hex("#87ceeb") // Present(...) on a valid hex
-val bad: Maybe[Color] = Color.hex("nope")    // Absent: malformed input, no throw
+val sky: Maybe[Three.Color] = Three.Color.hex("#87ceeb") // Present(...) on a valid hex
+val bad: Maybe[Three.Color] = Three.Color.hex("nope")    // Absent: malformed input, no throw
 
-val fixed: Color              = Color.hex("#87ceeb").getOrElse(Color.blue)
-val warm: Color               = Color.rgb(255, 160, 64)
-val hue: Color                = Color.hsl(210, 0.7, 0.5)
+val fixed: Three.Color              = Three.Color.hex("#87ceeb").getOrElse(Three.Color.blue)
+val warm: Three.Color               = Three.Color.rgb(255, 160, 64)
+val hue: Three.Color                = Three.Color.hsl(210, 0.7, 0.5)
 val channels: (Int, Int, Int) = (fixed.r, fixed.g, fixed.b)
 ```
 
-> **Note:** `Color.hex` returns `Maybe[Color]`, so a malformed string is an `Absent` you handle, not an exception. Pair the happy path with a fallback (`getOrElse`) or a branch on the `Maybe`, the same way you would decode any untrusted input.
+> **Note:** `Three.Color.hex` returns `Maybe[Three.Color]`, so a malformed string is an `Absent` you handle, not an exception. Pair the happy path with a fallback (`getOrElse`) or a branch on the `Maybe`, the same way you would decode any untrusted input.
 
-### Vec3
+### Three.Vec3
 
-`Vec3` is the universal spatial value used by positions, scales, light and camera placement, and geometry parameters. The component-wise `+`, `-`, and scalar `*` compose vectors purely, the companion carries the common constants, and `Vec3.ofDegrees` builds a Euler-angle vector (in radians) from degree inputs, the bridge for a `.rotation`.
+`Three.Vec3` is the universal spatial value used by positions, scales, light and camera placement, and geometry parameters. The component-wise `+`, `-`, and scalar `*` compose vectors purely, the companion carries the common constants, and `Three.Vec3.ofDegrees` builds a Euler-angle vector (in radians) from degree inputs, the bridge for a `.rotation`.
 
 ```scala
 import kyo.*
 
-val a: Vec3      = Vec3(0, 2, 6)
-val up: Vec3     = Vec3.unitY
-val moved: Vec3  = a + up * 3.0
-val tilted: Vec3 = Vec3.ofDegrees(0, 45, 0) // 45 degrees of yaw, expressed in radians
+val a: Three.Vec3      = Three.Vec3(0, 2, 6)
+val up: Three.Vec3     = Three.Vec3.unitY
+val moved: Three.Vec3  = a + up * 3.0
+val tilted: Three.Vec3 = Three.Vec3.ofDegrees(0, 45, 0) // 45 degrees of yaw, expressed in radians
 ```
 
-### Radians and Normal
+### Three.Radians and Three.Normal
 
-`Radians` is an opaque `Double` of radians shared by rotations and field of view, so a degree value cannot be passed where radians are meant; build one with `Radians.deg` (converts on construction) or `Radians.rad`, and recover the underlying value with `.toDouble`. `Normal` is an opaque `Double` clamped to `[0, 1]` for the material fractions (opacity, metalness, roughness) and a spot light's penumbra. Light intensity is a plain `Double`, not a `Normal`, so it can exceed `1.0`.
+`Three.Radians` is an opaque `Double` of radians shared by rotations and field of view, so a degree value cannot be passed where radians are meant; build one with `Three.Radians.deg` (converts on construction) or `Three.Radians.rad`, and recover the underlying value with `.toDouble`. `Three.Normal` is an opaque `Double` clamped to `[0, 1]` for the material fractions (opacity, metalness, roughness) and a spot light's penumbra. Light intensity is a plain `Double`, not a `Three.Normal`, so it can exceed `1.0`.
 
 ```scala
 import kyo.*
 
-val fov: Radians = Radians.deg(75)
+val fov: Three.Radians = Three.Radians.deg(75)
 val back: Double = fov.toDegrees // 75.0
 
-val opaque: Normal  = Normal(1.0)
-val clamped: Normal = Normal(1.7)        // clamps to 1.0
-val safe: Normal    = Normal(Double.NaN) // NaN maps to 0.0
+val opaque: Three.Normal  = Three.Normal(1.0)
+val clamped: Three.Normal = Three.Normal(1.7)        // clamps to 1.0
+val safe: Three.Normal    = Three.Normal(Double.NaN) // NaN maps to 0.0
 ```
 
-> **Note:** `Normal(...)` clamps any input into `[0, 1]` and maps `NaN` to `0` on construction, silently. You cannot build a material or light with an out-of-range fraction, so an over-bright value is folded into range rather than rejected.
+> **Note:** `Three.Normal(...)` clamps any input into `[0, 1]` and maps `NaN` to `0` on construction, silently. You cannot build a material or light with an out-of-range fraction, so an over-bright value is folded into range rather than rejected.
 
 ## Transforms, interaction, and animation
 
@@ -174,21 +174,21 @@ A static node becomes a placed, clickable, animated one through chainable setter
 
 ### Transforms
 
-`.position(v: Vec3)`, `.rotation(v: Vec3)`, and `.scale(v: Vec3)` set static transforms. To make a transform reactive, pass a `Signal[Vec3]` to the same setter: `.position(signal)`, `.rotation(signal)`, `.scale(signal)`. The reconciler patches the live object on each emission, never rebuilding the scene. Rotation components are radian-valued, so reach for `Vec3.ofDegrees` when you think in degrees.
+`.position(v: Three.Vec3)`, `.rotation(v: Three.Vec3)`, and `.scale(v: Three.Vec3)` set static transforms. To make a transform reactive, pass a `Signal[Three.Vec3]` to the same setter: `.position(signal)`, `.rotation(signal)`, `.scale(signal)`. The reconciler patches the live object on each emission, never rebuilding the scene. Rotation components are radian-valued, so reach for `Three.Vec3.ofDegrees` when you think in degrees.
 
 ```scala
 import kyo.*
 
 val placed =
     Three.mesh(Three.Geometry.box(), Three.Material.standard())
-        .position(Vec3(4, 0, 0))
-        .rotation(Vec3.ofDegrees(0, 30, 0))
-        .scale(Vec3(1, 2, 1))
+        .position(Three.Vec3(4, 0, 0))
+        .rotation(Three.Vec3.ofDegrees(0, 30, 0))
+        .scale(Three.Vec3(1, 2, 1))
 ```
 
 ### Interaction
 
-`.onClick`, `.onPointerOver`, and `.onPointerOut` attach raycast pointer handlers on any `Interactive` node (a `Mesh` or a `Custom`). The handler receives a `Pointer` (the world-space hit point, the ray distance, the normalized device coordinates, and the pressed buttons) and returns `Any < Async`. The return value is discarded; reach the rest of your app through a `SignalRef`.
+`.onClick`, `.onPointerOver`, and `.onPointerOut` attach raycast pointer handlers on any `Interactive` node (a `Mesh` or a `Custom`). The handler receives a `Three.Pointer` (the world-space hit point, the ray distance, the normalized device coordinates, and the pressed buttons) and returns `Any < Async`. The return value is discarded; reach the rest of your app through a `SignalRef`.
 
 ```scala
 import kyo.*
@@ -209,8 +209,8 @@ import kyo.*
 
 val spinning =
     for angle <- Signal.initRef(0.0)
-    yield Three.mesh(Three.Geometry.box(), Three.Material.standard(color = Color.blue))
-        .rotation(angle.map(a => Vec3(0, a, 0)))
+    yield Three.mesh(Three.Geometry.box(), Three.Material.standard(color = Three.Color.blue))
+        .rotation(angle.map(a => Three.Vec3(0, a, 0)))
         .onFrame(t => angle.updateAndGet(_ + t.delta.toMillis * 0.001))
 ```
 
@@ -231,8 +231,8 @@ val pulsing =
     for phase <- Signal.initRef(0.0)
     yield Three.mesh(
         Three.Geometry.box(0.8, 1.0, 0.8),
-        Three.Material.standard().color(phase.map(p => Color.hsl(p * 40 % 360, 0.7, 0.5)))
-    ).scale(phase.map(p => Vec3(1, 1 + math.sin(p), 1)))
+        Three.Material.standard().color(phase.map(p => Three.Color.hsl(p * 40 % 360, 0.7, 0.5)))
+    ).scale(phase.map(p => Three.Vec3(1, 1 + math.sin(p), 1)))
 ```
 
 > **Note:** a signal setter patches the one object it binds, never the scene. Hundreds of cubes can each bind their own color and height to a shared phase signal, and a phase change applies one targeted FFI setter per cube, not a scene diff.
@@ -247,10 +247,10 @@ When the shape of a subtree changes (a whole branch swaps, or a collection grows
 import kyo.*
 import kyo.Three.foreachKeyed
 
-final case class Moon(id: Int, pos: Vec3) derives CanEqual
+final case class Moon(id: Int, pos: Three.Vec3) derives CanEqual
 
 val belt =
-    for moons <- Signal.initRef(Chunk(Moon(0, Vec3(2, 0, 0)), Moon(1, Vec3(-2, 0, 0))))
+    for moons <- Signal.initRef(Chunk(Moon(0, Three.Vec3(2, 0, 0)), Moon(1, Three.Vec3(-2, 0, 0))))
     yield Three.scene(
         Three.Light.ambient(),
         moons.foreachKeyed(_.id.toString) { m =>
@@ -276,14 +276,14 @@ import kyo.*
 
 val mounted =
     // The planet, scene, and camera from the opening, now passed to a runner.
-    val planet = Three.mesh(Three.Geometry.sphere(1.0), Three.Material.standard(color = Color.blue))
+    val planet = Three.mesh(Three.Geometry.sphere(1.0), Three.Material.standard(color = Three.Color.blue))
     val scene  = Three.scene(Three.Light.ambient(intensity = 0.4), Three.Light.point(), planet)
-    val camera = Three.Camera.perspective(position = Vec3(0, 2, 6), lookAt = Vec3.zero)
+    val camera = Three.Camera.perspective(position = Three.Vec3(0, 2, 6), lookAt = Three.Vec3.zero)
     Three.runMount(scene, camera, "#app")
 end mounted
 ```
 
-The pointer handlers from [Transforms, interaction, and animation](#transforms-interaction-and-animation) fire only under a live mount: `runMount` installs the raycast delegation that dispatches them. On a `pointerdown`, the runner casts a ray from the camera through the pointer, finds the front-most `Interactive` node under it, and runs that node's `onClick` with the `Pointer` payload; `pointermove` tracks the hovered node and fires `onPointerOut` on the one left and `onPointerOver` on the one entered. A scene built and inspected without a mount carries its handlers as data, but nothing dispatches them until it is mounted.
+The pointer handlers from [Transforms, interaction, and animation](#transforms-interaction-and-animation) fire only under a live mount: `runMount` installs the raycast delegation that dispatches them. On a `pointerdown`, the runner casts a ray from the camera through the pointer, finds the front-most `Interactive` node under it, and runs that node's `onClick` with the `Three.Pointer` payload; `pointermove` tracks the hovered node and fires `onPointerOut` on the one left and `onPointerOver` on the one entered. A scene built and inspected without a mount carries its handlers as data, but nothing dispatches them until it is mounted.
 
 ```scala
 import kyo.*
@@ -291,10 +291,10 @@ import kyo.*
 val selectable =
     for
         selected <- Signal.initRef("none")
-        planet = Three.mesh(Three.Geometry.sphere(1.0), Three.Material.standard(color = Color.blue))
+        planet = Three.mesh(Three.Geometry.sphere(1.0), Three.Material.standard(color = Three.Color.blue))
             .onClick(_ => selected.set("planet"))
         scene  = Three.scene(Three.Light.ambient(), Three.Light.point(), planet)
-        camera = Three.Camera.perspective(position = Vec3(0, 2, 6), lookAt = Vec3.zero)
+        camera = Three.Camera.perspective(position = Three.Vec3(0, 2, 6), lookAt = Three.Vec3.zero)
         _ <- Three.runMount(scene, camera, "#app")
     yield ()
 ```
@@ -334,7 +334,7 @@ val viewer =
             .onPointerOver(_ => Log.info("pointer over model"))
             .onClick(_ => Log.info("clicked model"))
         rig = Three.group(root)
-            .rotation(angle.map(a => Vec3(0, a, 0)))
+            .rotation(angle.map(a => Three.Vec3(0, a, 0)))
             .onFrame(t => angle.updateAndGet(_ + t.delta.toMillis * 0.0005))
     yield Three.scene(Three.Light.ambient(intensity = 0.4), rig)
 ```
@@ -364,9 +364,9 @@ import kyo.*
 val capture =
     val scene = Three.scene(
         Three.Light.ambient(),
-        Three.mesh(Three.Geometry.torus(), Three.Material.standard(color = Color.magenta))
+        Three.mesh(Three.Geometry.torus(), Three.Material.standard(color = Three.Color.magenta))
     )
-    val camera = Three.Camera.perspective(position = Vec3(0, 0, 4), lookAt = Vec3.zero)
+    val camera = Three.Camera.perspective(position = Three.Vec3(0, 0, 4), lookAt = Three.Vec3.zero)
     for
         img <- Three.toImage(scene, camera, 512, 512)
         _   <- img.writeFileBinary("runs/thumbnail.png")
@@ -392,7 +392,7 @@ val driven =
     for
         angle <- Signal.initRef(0.0)
         mesh = Three.mesh(Three.Geometry.box(), Three.Material.standard())
-            .rotation(angle.map(a => Vec3(0, a, 0)))
+            .rotation(angle.map(a => Three.Vec3(0, a, 0)))
             .onFrame(t => angle.updateAndGet(_ + t.delta.toMillis * 0.001))
         scene  = Three.scene(Three.Light.ambient(), mesh)
         camera = Three.Camera.perspective()
@@ -421,7 +421,7 @@ val sprite =
         val obj      = js.Dynamic.newInstance(js.Dynamic.global.THREE.Sprite)(material)
         obj.scale.set(spec.size, spec.size, spec.size)
         obj
-    }(SpriteSpec(2.0)).position(Vec3(0, 1, 0))
+    }(SpriteSpec(2.0)).position(Three.Vec3(0, 1, 0))
 ```
 
 This is a typed builder boundary, not a cast: the input is your own type, and the node it returns composes into a scene like any other.
@@ -436,10 +436,10 @@ import kyo.*
 val app =
     for
         selected <- Signal.initRef("none")
-        planet = Three.mesh(Three.Geometry.sphere(1.0), Three.Material.standard(color = Color.blue))
+        planet = Three.mesh(Three.Geometry.sphere(1.0), Three.Material.standard(color = Three.Color.blue))
             .onClick(_ => selected.set("planet"))
         scene  = Three.scene(Three.Light.ambient(), Three.Light.point(), planet)
-        camera = Three.Camera.perspective(position = Vec3(0, 2, 6), lookAt = Vec3.zero)
+        camera = Three.Camera.perspective(position = Three.Vec3(0, 2, 6), lookAt = Three.Vec3.zero)
         hud    = UI.div(UI.p(selected.map(s => s"Selected: $s")))
         _ <- Fiber.init(UI.runMount(hud, "#hud")).unit
         _ <- Three.runMount(scene, camera, "#app")
@@ -461,21 +461,21 @@ val embedded =
         earthAngle <- Signal.initRef(0.0)
         sun = Three.mesh(
             Three.Geometry.sphere(1.0),
-            Three.Material.standard().emissive(Color.yellow)
+            Three.Material.standard().emissive(Three.Color.yellow)
         ).onClick(_ => selected.set("Sun"))
         earth = Three.group(
-            Three.mesh(Three.Geometry.sphere(0.3), Three.Material.standard(color = Color.blue))
-                .position(Vec3(4, 0, 0))
+            Three.mesh(Three.Geometry.sphere(0.3), Three.Material.standard(color = Three.Color.blue))
+                .position(Three.Vec3(4, 0, 0))
                 .onClick(_ => selected.set("Earth"))
-        ).rotation(earthAngle.map(a => Vec3(0, a, 0)))
+        ).rotation(earthAngle.map(a => Three.Vec3(0, a, 0)))
             .onFrame(t => earthAngle.updateAndGet(_ + t.delta.toMillis * 0.001))
         scene = Three.scene(
             Three.Light.ambient(intensity = 0.3),
-            Three.Light.point(position = Vec3.zero),
+            Three.Light.point(position = Three.Vec3.zero),
             sun,
             earth
         )
-        camera   = Three.Camera.perspective(fov = Radians.deg(60), position = Vec3(0, 7, 7), lookAt = Vec3.zero)
+        camera   = Three.Camera.perspective(fov = Three.Radians.deg(60), position = Three.Vec3(0, 7, 7), lookAt = Three.Vec3.zero)
         controls = UI.div(UI.button("Focus Sun").id("focus-sun").onClick(selected.set("Sun")))
         hud      = UI.div(UI.p(selected.map(s => s"Selected: $s")).id("selected-label"))
     yield UI.div(controls, Three.embed(scene, camera).id("stage"), hud)
@@ -501,7 +501,7 @@ import kyo.*
 val orbited =
     Three.scene(
         Three.Light.ambient(intensity = 0.8),
-        Three.mesh(Three.Geometry.box(1.4, 1.4, 1.4), Three.Material.standard(color = Color.red)),
+        Three.mesh(Three.Geometry.box(1.4, 1.4, 1.4), Three.Material.standard(color = Three.Color.red)),
         Three.controls(autoRotate = true)
     )
 ```
@@ -525,13 +525,13 @@ val fedColor =
         cube = Three.mesh(
             Three.Geometry.box(2.0, 2.0, 2.0),
             // The cube's color follows the server-fed mirror; a spin keeps the client frame loop running.
-            Three.Material.standard().color(color.map(rgb => Color(rgb)))
+            Three.Material.standard().color(color.map(rgb => Three.Color(rgb)))
         )
         spin <- Signal.initRef(0.0)
         scene = Three.scene(
             Three.Light.ambient(intensity = 1.0),
             Three.group(cube)
-                .rotation(spin.map(a => Vec3(a * 0.6, a, 0)))
+                .rotation(spin.map(a => Three.Vec3(a * 0.6, a, 0)))
                 .onFrame(t => spin.updateAndGet(_ + t.delta.toMillis * 0.0015))
         )
     yield (scene, color)
@@ -586,18 +586,18 @@ The running scene, fully grown: a lit planet whose color follows a signal, that 
 import kyo.*
 import kyo.Three.foreachKeyed
 
-final case class Moon(id: Int, pos: Vec3) derives CanEqual
+final case class Moon(id: Int, pos: Three.Vec3) derives CanEqual
 
 val solarSystem =
     for
         spin     <- Signal.initRef(0.0)
-        tint     <- Signal.initRef(Color.blue)
+        tint     <- Signal.initRef(Three.Color.blue)
         selected <- Signal.initRef("none")
-        moons    <- Signal.initRef(Chunk(Moon(0, Vec3(2, 0, 0)), Moon(1, Vec3(-2, 0, 0)), Moon(2, Vec3(0, 0, 2))))
+        moons    <- Signal.initRef(Chunk(Moon(0, Three.Vec3(2, 0, 0)), Moon(1, Three.Vec3(-2, 0, 0)), Moon(2, Three.Vec3(0, 0, 2))))
         planet = Three.mesh(
             Three.Geometry.sphere(1.0),
             Three.Material.standard().color(tint)
-        ).rotation(spin.map(a => Vec3(0, a, 0)))
+        ).rotation(spin.map(a => Three.Vec3(0, a, 0)))
             .onFrame(t => spin.updateAndGet(_ + t.delta.toMillis * 0.001))
             .onClick(_ => selected.set("planet"))
         belt = moons.foreachKeyed(_.id.toString) { m =>
@@ -605,11 +605,11 @@ val solarSystem =
         }
         scene = Three.scene(
             Three.Light.ambient(intensity = 0.4),
-            Three.Light.point(position = Vec3.zero),
+            Three.Light.point(position = Three.Vec3.zero),
             planet,
             belt
         )
-        camera = Three.Camera.perspective(position = Vec3(0, 2, 6), lookAt = Vec3.zero)
+        camera = Three.Camera.perspective(position = Three.Vec3(0, 2, 6), lookAt = Three.Vec3.zero)
         _ <- Three.runMount(scene, camera, "#app", ThreeFrames.Raf)
     yield ()
 ```
@@ -640,7 +640,7 @@ The demo scenes live in [`shared/src/test/scala/demo`](shared/src/test/scala/dem
     <td width="50%" valign="top">
       <img src="docs/images/bouncing-balls.png" width="320" alt="BouncingBalls demo: spheres bouncing on a floor under gravity">
       <br>
-      <a href="shared/src/test/scala/demo/BouncingBalls.scala"><strong>BouncingBalls</strong></a>: 24 spheres, each with its own <code>SignalRef[(Vec3, Vec3)]</code> and an <code>onFrame</code> integrating gravity and a floor bounce: the many-object frame-loop showcase.
+      <a href="shared/src/test/scala/demo/BouncingBalls.scala"><strong>BouncingBalls</strong></a>: 24 spheres, each with its own <code>SignalRef[(Three.Vec3, Three.Vec3)]</code> and an <code>onFrame</code> integrating gravity and a floor bounce: the many-object frame-loop showcase.
     </td>
   </tr>
   <tr>
