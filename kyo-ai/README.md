@@ -205,6 +205,8 @@ The problem it solves: reasoning before answering (chain of thought) improves qu
 A model fills the fields in order, top to bottom, so an **opening** thought's field is generated *before* the answer: the model writes its reasoning first, and that reasoning conditions the answer it then commits to. A **closing** thought's field is generated *after* the answer, acting as a self-check. You give the reasoning a shape with a plain type, and its `@doc` annotations become the instructions the model sees for that field:
 
 ```scala
+import kyo.schema.doc
+
 case class Reasoning(@doc("step-by-step working") steps: String) derives Schema
 val reasonFirst = Thought.opening[Reasoning]
 
