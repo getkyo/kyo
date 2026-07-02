@@ -2,7 +2,7 @@ package kyo
 
 import scala.jdk.CollectionConverters.*
 
-private[kyo] object FlagPlatform:
+private[kyo] object FlagPlatform {
 
     def property(name: String): String =
         java.lang.System.getProperty(name)
@@ -16,4 +16,4 @@ private[kyo] object FlagPlatform:
     def envNames: Iterable[String] =
         java.lang.System.getenv().keySet().asScala.toList
 
-end FlagPlatform
+}
