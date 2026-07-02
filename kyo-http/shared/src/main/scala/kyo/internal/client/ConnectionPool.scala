@@ -30,6 +30,9 @@ final private[kyo] class ConnectionPool[C](
 
     @volatile private var closed = false
 
+    /** True once `close()` has run. For testing the client's close/release path only. */
+    private[kyo] def isClosed(using AllowUnsafe): Boolean = closed
+
     /** Try to get a live idle connection for the given host. */
     def poll(key: HttpAddress)(using AllowUnsafe): Maybe[C] =
         if closed then Maybe.empty

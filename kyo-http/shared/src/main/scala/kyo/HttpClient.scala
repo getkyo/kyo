@@ -99,6 +99,9 @@ object HttpClient:
 
         /** Reference equality check (for testing scope isolation). */
         private[kyo] def eq(that: HttpClient): Boolean = (self: AnyRef) eq (that: AnyRef)
+
+        /** True once this client's pool has been closed. For testing the close/release path only (see [[init]]'s Scope release). */
+        private[kyo] def isPoolClosed(using AllowUnsafe): Boolean = self.isPoolClosed
     end extension
 
     // --- Context management ---
@@ -169,7 +172,15 @@ object HttpClient:
         defaultTlsConfig: HttpTlsConfig = HttpTlsConfig.default,
         transportConfig: HttpTransportConfig = HttpTransportConfig.default
     )(using Frame): HttpClient < (Async & Scope) =
-        Scope.acquireRelease(initUnscoped(maxConnectionsPerHost, idleConnectionTimeout, defaultTlsConfig, transportConfig))(_.closeNow)
+        // NOT `_.closeNow`: HttpClient is `opaque type HttpClient = HttpClientBackend`, and this call site sits inside HttpClient's own
+        // defining object, where opaque-type transparency makes HttpClientBackend's member `closeNow(conn: HttpConnection)` visible too.
+        // `_.closeNow` there resolves to THAT member (arity mismatch resolved by eta-expansion into an unapplied `HttpConnection => Unit
+        // < Async`, which type-checks as the release function's `Any` result without ever calling it), not the zero-arg extension below,
+        // so the scope's release silently did nothing: the pool and its owned transport were never closed. `close(Duration.Zero)` has no
+        // colliding member on HttpClientBackend, so it is unambiguous; it is exactly what the `closeNow` extension itself calls.
+        Scope.acquireRelease(initUnscoped(maxConnectionsPerHost, idleConnectionTimeout, defaultTlsConfig, transportConfig))(_.close(
+            Duration.Zero
+        ))
 
     /** Creates a client with its own connection pool that must be closed explicitly via `close()`. Prefer `init` with Scope-based lifecycle
       * unless you need manual control. See [[init]] for the meaning of `transportConfig`.

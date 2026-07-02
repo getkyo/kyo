@@ -190,6 +190,37 @@ class HttpClientTest extends BaseHttpTest:
         }
     }
 
+    "init" - {
+
+        "closes the pool once the enclosing Scope exits".notNative in {
+            // Regression for a Scope-release bug: `init`'s release used to read as `_.closeNow`, which inside HttpClient's own
+            // object resolves to HttpClientBackend's one-arg `closeNow(conn)` member instead of the zero-arg extension, so the
+            // release silently did nothing and the pool never closed. Captures the client out of its own nested Scope.run so the
+            // pool's closed state can be checked once that Scope has actually exited.
+            val route                       = HttpRoute.getRaw("ping").response(_.bodyText)
+            val ep                          = route.handler(_ => HttpResponse.ok("pong"))
+            var captured: Maybe[HttpClient] = Absent
+            Scope.run {
+                HttpServer.init(0, "localhost")(ep).map { s =>
+                    val url = HttpUrl.parse(s"http://localhost:${s.port}/ping").getOrThrow
+                    HttpClient.init(defaultTlsConfig = HttpTlsConfig(trustAll = true)).map { hc =>
+                        captured = Present(hc)
+                        HttpClient.let(hc)(HttpClient.getText(url).unit)
+                    }
+                }
+            }.andThen {
+                captured match
+                    case Present(hc) =>
+                        // Unsafe: isPoolClosed is a plain field read, no I/O or unchecked state; AllowUnsafe is required only
+                        // because ConnectionPool's accessors are unconditionally AllowUnsafe-gated (see ConnectionPool.scala).
+                        import AllowUnsafe.embrace.danger
+                        assert(hc.isPoolClosed, "HttpClient.init's Scope release must close the pool once its Scope exits")
+                    case Absent =>
+                        fail("client was not captured")
+            }
+        }
+    }
+
     "HTTP methods" - {
 
         "GET with text response" - {
