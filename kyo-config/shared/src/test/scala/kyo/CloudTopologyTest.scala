@@ -1,5 +1,6 @@
 package kyo
 
+import kyo.internal.XXHash
 import org.scalatest.freespec.AnyFreeSpec
 
 /** Tests for cloud topology auto-detection logic.
@@ -7,7 +8,7 @@ import org.scalatest.freespec.AnyFreeSpec
   * Note: Since auto-detection reads environment variables at object initialization time, and environment variables cannot be reliably
   * modified in a running JVM, these tests focus on:
   *   1. The path/bucket computation logic (which is testable via select with explicit path/bucket)
-  *   2. The bucketFor public API (which uses MurmurHash3)
+  *   2. The bucketFor public API (which uses XXH32)
   *   3. Verifying that the detection priority and segment assembly logic is correct by testing the select engine with paths that would be
   *      produced by auto-detection
   *
@@ -128,11 +129,11 @@ class CloudTopologyTest extends AnyFreeSpec {
         }
     }
 
-    "MurmurHash3 bucket computation" - {
-        "bucketFor uses MurmurHash3 (not SHA-1)" in {
-            // Verify by checking a known MurmurHash3 result
+    "XXH32 bucket computation" - {
+        "bucketFor uses XXH32 (not SHA-1)" in {
+            // Verify by checking a known XXH32 result
             val key    = "test-key"
-            val hash   = scala.util.hashing.MurmurHash3.stringHash(key)
+            val hash   = XXHash.hash32(key)
             val bucket = Math.floorMod(hash, 100)
             assert(Rollout.bucketFor(key) == bucket)
         }

@@ -6,6 +6,7 @@ import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLongArray
 import java.util.concurrent.atomic.AtomicReferenceArray
 import kyo.Maybe.Absent
+import kyo.internal.XXHash
 import scala.annotation.tailrec
 
 /** A bounded, thread-safe cache with automatic eviction and optional time-based expiration.
@@ -756,13 +757,9 @@ object Cache:
         private def nowCentis()(using AllowUnsafe): Int =
             ((clock.nowMonotonic().toNanos - epoch) / 10_000_000L).toInt
 
-        // MurmurHash3 fmix32 — scrambles low bits of hashCode to prevent clustering in open-addressing probes.
+        // Scrambles low bits of hashCode to prevent clustering in open-addressing probes.
         private def spread(h: Int): Int =
-            val x1 = h ^ (h >>> 16)
-            val x2 = x1 * 0x85ebca6b
-            val x3 = x2 ^ (x2 >>> 13)
-            val x4 = x3 * 0xc2b2ae35
-            x4 ^ (x4 >>> 16)
+            XXHash.hashInt(h)
         end spread
 
         private inline def next(slot: Int): Int = (slot + 1) & mask

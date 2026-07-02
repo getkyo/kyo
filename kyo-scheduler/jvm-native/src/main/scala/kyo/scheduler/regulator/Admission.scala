@@ -4,13 +4,13 @@ import java.util.concurrent.ThreadLocalRandom
 import java.util.concurrent.atomic.LongAdder
 import java.util.function.DoubleSupplier
 import java.util.function.LongSupplier
+import kyo.internal.XXHash
 import kyo.scheduler.*
 import kyo.scheduler.InternalTimer
 import kyo.scheduler.regulator.*
 import kyo.scheduler.top.AdmissionStatus
 import scala.annotation.nowarn
 import scala.concurrent.duration.*
-import scala.util.hashing.MurmurHash3
 
 /** Admission control regulator that prevents scheduler overload by measuring queuing delays.
   *
@@ -153,7 +153,7 @@ final class Admission(
       *   true if the task should be rejected, false if it should be admitted
       */
     def reject(key: String): Boolean =
-        reject(MurmurHash3.stringHash(key))
+        reject(XXHash.hash32(key))
 
     /** Tests if a task should be rejected using the provided integer key.
       *
