@@ -141,7 +141,7 @@ object Thought:
                     case Present(sv) =>
                         Abort.run[DecodeException](Abort.get(Structure.decode(sv)(using resultSchema, summon))).map {
                             case Result.Success(a) => a
-                            case Result.Failure(e) => Abort.fail(AIDecodeException(e.getMessage))
+                            case Result.Failure(e) => Abort.fail(AIDecodeException(s"${e.getMessage}: ${Json.encode(sv)}"))
                             case p: Result.Panic   => Abort.panic(p.exception)
                         }
                     case Absent => Abort.fail(AIDecodeException("result envelope has no resultValue"))

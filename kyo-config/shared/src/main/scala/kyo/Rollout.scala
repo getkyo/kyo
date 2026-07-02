@@ -689,11 +689,11 @@ object Rollout {
 
     /** Reads a system property or environment variable, returning empty string if neither is set. */
     private def readProperty(sysProp: String, envVar: String): String = {
-        val prop = java.lang.System.getProperty(sysProp)
+        val prop = FlagPlatform.property(sysProp)
         if (prop != null) prop
         else {
             val env =
-                try java.lang.System.getenv(envVar)
+                try FlagPlatform.env(envVar)
                 catch { case _: SecurityException => null }
             if (env != null) env
             else ""
@@ -741,7 +741,7 @@ object Rollout {
 
     private def env(name: String): String = {
         val v =
-            try java.lang.System.getenv(name)
+            try FlagPlatform.env(name)
             catch { case _: SecurityException => null }
         if (v eq null) "" else v
     }

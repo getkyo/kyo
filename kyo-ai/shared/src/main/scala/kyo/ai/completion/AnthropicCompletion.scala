@@ -7,7 +7,7 @@ import kyo.Schema
 import kyo.Structure
 import kyo.Tool
 import kyo.ai.*
-import kyo.ai.Context.*
+import kyo.ai.Context.{Message as ContextMessage, *}
 
 /** The Anthropic completion backend (the `/messages` API).
   *
@@ -33,10 +33,10 @@ private[completion] object AnthropicCompletion extends Completion:
         context: Context,
         tools: Chunk[Tool.internal.Info[?, ?, LLM]],
         resultSchema: Maybe[JsonSchema] = Absent
-    )(using Frame): AssistantMessage < (LLM & Async & Abort[HttpException | AIGenException]) =
+    )(using Frame): Chunk[ContextMessage] < (LLM & Async & Abort[HttpException | AIGenException]) =
         fetch(config, Request(context, config, tools, resultSchema)).map(read)
 
-    private def read(response: Response)(using Frame): AssistantMessage < LLM =
+    private def read(response: Response)(using Frame): Chunk[ContextMessage] < LLM =
         val text = response.content.collect {
             case c if c.`type` == "text" => c.text.getOrElse("")
         }.mkString("")
@@ -48,7 +48,7 @@ private[completion] object AnthropicCompletion extends Completion:
                     Json.encode(c.input.getOrElse(Structure.Value.Record(Chunk.empty)))
                 )
         }.to(Chunk)
-        AssistantMessage(text, toolCalls)
+        Chunk(AssistantMessage(text, toolCalls))
     end read
 
     private def fetch(config: Config, req: Request)(using Frame): Response < (LLM & Async & Abort[HttpException | AIGenException]) =
@@ -62,15 +62,28 @@ private[completion] object AnthropicCompletion extends Completion:
                     "anthropic-version" -> "2023-06-01"
                 )
                 val url = s"${config.apiUrl}/messages"
-                HttpClient.postText(url, Json.encode(req), headers)
-                    .map(body => Abort.get(Json.decode[Response](body).mapFailure(e => HttpJsonDecodeException(e.getMessage, "POST", url))))
+                HttpClient.withConfig(_.timeout(config.timeout)) {
+                    HttpClient.postText(url, Json.encode(req), headers)
+                        .map(body =>
+                            Abort.get(Json.decode[Response](body).mapFailure(e => HttpJsonDecodeException(e.getMessage, "POST", url)))
+                        )
+                }
 
-    override def streamRequest(
+    def streamFragments(
         config: Config,
         context: Context,
         resultSchema: JsonSchema,
         resultTool: Chunk[Tool.internal.Info[?, ?, LLM]]
-    )(using Frame): Completion.StreamRequest =
+    )(using Frame): Stream[String, Async & Scope & Abort[AIStreamException]] < (LLM & Async & Abort[AIGenException]) =
+        Completion.sseFragments(config, streamRequest(config, context, resultSchema, resultTool), parseDeltaArguments)
+    end streamFragments
+
+    private[kyo] def streamRequest(
+        config: Config,
+        context: Context,
+        resultSchema: JsonSchema,
+        resultTool: Chunk[Tool.internal.Info[?, ?, LLM]]
+    )(using Frame): Completion.StreamRequest < Abort[AIStreamException] =
         import internal.*
         val headers =
             Seq("content-type" -> "application/json", "anthropic-version" -> "2023-06-01") ++
@@ -87,7 +100,7 @@ private[completion] object AnthropicCompletion extends Completion:
       * (`message_start`, `content_block_start`, `text_delta`, `message_delta`, `message_stop`, `ping`) carries
       * no tool-argument fragment. There is no `[DONE]` terminator; the stream ends at `message_stop`.
       */
-    override def parseDeltaArguments(line: String)(using Frame): Result[String, Maybe[String]] =
+    private[kyo] def parseDeltaArguments(line: String)(using Frame): Result[String, Maybe[String]] =
         import internal.*
         Json.decode[StreamEvent](line) match
             case Result.Success(event) =>
@@ -114,6 +127,7 @@ private[completion] object AnthropicCompletion extends Completion:
         case class Source(`type`: String, media_type: String, data: String) derives Schema
         case class Message(role: String, content: List[Content]) derives Schema
         case class ToolDefinition(name: String, description: Maybe[String], input_schema: JsonSchema) derives Schema
+        case class ToolChoice(`type`: String, name: Maybe[String] = Absent) derives Schema
         case class Request(
             model: String,
             messages: List[Message],
@@ -121,6 +135,7 @@ private[completion] object AnthropicCompletion extends Completion:
             max_tokens: Int,
             temperature: Maybe[Double],
             tools: Maybe[List[ToolDefinition]] = Absent,
+            tool_choice: Maybe[ToolChoice] = Absent,
             stream: Maybe[Boolean] = Absent
         ) derives Schema
         case class Usage(input_tokens: Int, output_tokens: Int) derives Schema
@@ -203,7 +218,15 @@ private[completion] object AnthropicCompletion extends Completion:
                                 else Json.jsonSchema(using t.inputSchema)
                             ToolDefinition(t.name, Maybe.when(t.description.nonEmpty)(t.description), schema)
                         }.toList)
-                Request(config.modelName, messages, system, config.maxTokens.getOrElse(8192), config.temperature, toolDefs)
+                val toolChoice =
+                    tools.headMaybe match
+                        case Present(tool) if tools.size == 1 && tool.name == Completion.resultToolName =>
+                            Present(ToolChoice("tool", Present(Completion.resultToolName)))
+                        case Present(_) =>
+                            Present(ToolChoice("any"))
+                        case Absent =>
+                            Absent
+                Request(config.modelName, messages, system, config.maxTokens.getOrElse(8192), config.temperature, toolDefs, toolChoice)
             end apply
         end Request
 

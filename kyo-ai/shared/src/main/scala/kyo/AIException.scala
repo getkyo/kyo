@@ -51,6 +51,12 @@ case class AIInvalidThoughtException(name: String)(using Frame)
 case class AIDecodeException(detail: String)(using Frame)
     extends AIException(detail) with AIGenException
 
+/** A command-backed provider could not be reached because its local account, quota, or network transport is
+  * unavailable.
+  */
+case class AIProviderUnavailableException(provider: String, detail: String)(using Frame)
+    extends AIException(s"$provider provider is unavailable: $detail") with AIGenException with AIStreamException
+
 /** A streaming SSE delta was not a parseable event for the provider. */
 case class AIStreamDeltaException(detail: String)(using Frame)
     extends AIException(s"malformed SSE delta: $detail") with AIStreamException
