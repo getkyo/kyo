@@ -334,7 +334,7 @@ private[kyo] object UnsafeServerDispatch:
                                 // their own race (see HttpWebSocket.onPeerClose docs).
                                 readFiber.getResult.map { result =>
                                     val log = result match
-                                        case Result.Failure(e) => Log.warn(s"HttpWebSocket server reader failed: $e")
+                                        case Result.Failure(_) => Kyo.unit
                                         case Result.Panic(t)   => Log.warn("HttpWebSocket server reader panicked", t)
                                         case Result.Success(_) => Kyo.unit
                                     log.andThen(inbound.close.unit).andThen(peerClosedPromise.completeUnit.unit)

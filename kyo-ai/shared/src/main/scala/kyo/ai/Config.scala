@@ -9,9 +9,9 @@ import kyo.ai.completion.*
   * provider (which carries the wire backend), the model and its token cap, and the runtime knobs
   * (temperature, seed, timeout, retry schedule, meter, iteration cap). `temperature` is optional: it is
   * omitted from the request when unset (the model uses its own default) and clamped to `[0, 2]` when set.
-  * `default` auto-selects the first provider whose API key is present (system properties
-  * before environment variables, read via `kyo.System`, never raw `sys.props`/`sys.env`), falling back
-  * to Anthropic. The active config is carried in `LLM.State.env.config`, read via `AI.config`
+  * `default` auto-selects the first provider marker or API key present (system properties before
+  * environment variables, read via `kyo.System`, never raw `sys.props`/`sys.env`), falling back to
+  * Anthropic. The active config is carried in `LLM.State.env.config`, read via `AI.config`
   * and scoped via `AI.withConfig`.
   */
 final case class Config private (
@@ -53,6 +53,8 @@ final case class Config private (
 
 end Config
 
+private[kyo] object provider extends StaticFlag[String]("")
+
 object Config:
 
     private[kyo] def read(key: String)(using Frame): Maybe[String] < Sync =
@@ -61,19 +63,33 @@ object Config:
             env  <- if prop.isDefined then (prop: Maybe[String] < Sync) else System.env[String](key)
         yield env
 
-    /** Resolves the default config by probing each provider's key (sys props first, then env), via
-      * `kyo.System`. Evaluated once under `Sync` since key probing is effectful; falls back to Anthropic.
+    /** Resolves the default config by probing provider flags and API keys (sys props first, then env), via
+      * `kyo.System`. The static `kyo.ai.provider` flag can force a provider by name. Without an explicit
+      * provider, command harnesses are selected only when their marker variables are present, then API
+      * providers are selected by key presence.
       */
     def default(using Frame): Config < Sync =
-        Kyo.foreach(Provider.all)(p => read(p.keyName).map(_.isDefined -> p)).map { probes =>
-            probes.collectFirst { case (true, p) => p }.getOrElse(Anthropic)
-        }.map(p => init(p, p.default.modelName, p.default.modelMaxTokens))
+        val selected = provider().trim
+        providerByName(selected.toLowerCase) match
+            case Present(p) =>
+                init(p, p.default.modelName, p.default.modelMaxTokens)
+            case Absent if selected.nonEmpty =>
+                throw IllegalArgumentException(s"Unsupported kyo.ai provider '$selected'.")
+            case Absent =>
+                Kyo.foreach(Provider.defaultCandidates)(p => read(p.keyName).map(_.isDefined -> p)).map { probes =>
+                    probes.collectFirst { case (true, p) => p }.getOrElse(Anthropic)
+                }.map(p => init(p, p.default.modelName, p.default.modelMaxTokens))
+        end match
+    end default
 
     def init(provider: Provider, modelName: String, modelMaxTokens: Int)(using Frame): Config < Sync =
-        for
-            key <- read(provider.keyName)
-            org <- read(provider.orgKey)
-        yield Config(provider.baseUrl, key, org, provider, modelName, modelMaxTokens)
+        if provider.usesApiKey then
+            for
+                key <- read(provider.keyName)
+                org <- read(provider.orgKey)
+            yield Config(provider.baseUrl, key, org, provider, modelName, modelMaxTokens)
+        else
+            Config(provider.baseUrl, Absent, Absent, provider, modelName, modelMaxTokens)
 
     /** A purely-constructed config for a provider's catalog entry (key/org left absent; filled at use via
       * the provider default path). The catalog values use this so a model literal is pure.
@@ -81,21 +97,41 @@ object Config:
     private[kyo] def catalog(provider: Provider, modelName: String, modelMaxTokens: Int): Config =
         Config(provider.baseUrl, Absent, Absent, provider, modelName, modelMaxTokens)
 
-    /** A provider: its display name, base URL, the key env-var name, and the wire completion backend. */
+    /** A provider: its display name, base URL, credential behavior, and completion backend. */
     abstract class Provider(
         val name: String,
         val baseUrl: String,
         val keyName: String,
-        val completion: Completion
+        val completion: Completion,
+        val usesApiKey: Boolean = true
     ):
         val orgKey: String = keyName + "_ORG"
         def default: Config
     end Provider
 
     object Provider:
-        val all: Chunk[Provider] =
-            Chunk(Anthropic, OpenAI, DeepSeek, Gemini, Groq, Baseten, OpenRouter)
+        def all: Chunk[Provider] =
+            Chunk(Anthropic, OpenAI, DeepSeek, Gemini, Groq, Baseten, OpenRouter, ClaudeCode, Codex)
+        def apiKeyProviders: Chunk[Provider] =
+            all.filter(_.usesApiKey)
+        def defaultCandidates: Chunk[Provider] =
+            Chunk(ClaudeCode, Codex, Anthropic, OpenAI, DeepSeek, Gemini, Groq, Baseten, OpenRouter)
     end Provider
+
+    private def providerByName(name: String): Maybe[Provider] =
+        name match
+            case ""                                       => Absent
+            case "claude-code" | "claude_code" | "claude" => Present(ClaudeCode)
+            case "codex"                                  => Present(Codex)
+            case "anthropic"                              => Present(Anthropic)
+            case "openai"                                 => Present(OpenAI)
+            case "deepseek"                               => Present(DeepSeek)
+            case "gemini"                                 => Present(Gemini)
+            case "groq"                                   => Present(Groq)
+            case "baseten"                                => Present(Baseten)
+            case "openrouter"                             => Present(OpenRouter)
+            case _                                        => Absent
+    end providerByName
 
     // Each provider exposes its catalog as named pure `Config` constants (key absent, filled at use), so
     // `Config.<Provider>.<model>` is a model literal; `default` points at the recommended entry.
@@ -203,5 +239,33 @@ object Config:
         val gpt_5_mini: Config                = catalog(this, "openai/gpt-5-mini", 400000)
         def default: Config                   = grok_4_fast
     end OpenRouter
+
+    case object ClaudeCode extends Provider(
+            "Claude Code",
+            "",
+            "CLAUDE_CODE",
+            Completion.claudeCode,
+            usesApiKey = false
+        ):
+        val opus: Config    = catalog(this, "opus", 1000000)
+        val sonnet: Config  = catalog(this, "sonnet", 1000000)
+        val haiku: Config   = catalog(this, "haiku", 200000)
+        def default: Config = sonnet
+    end ClaudeCode
+
+    case object Codex extends Provider(
+            "Codex",
+            "",
+            "CODEX",
+            Completion.codex,
+            usesApiKey = false
+        ):
+        val auto: Config       = catalog(this, "", 400000)
+        val gpt_5_5: Config    = catalog(this, "gpt-5.5", 1050000)
+        val gpt_5_4: Config    = catalog(this, "gpt-5.4", 1050000)
+        val gpt_5: Config      = catalog(this, "gpt-5", 400000)
+        val gpt_5_mini: Config = catalog(this, "gpt-5-mini", 400000)
+        def default: Config    = auto
+    end Codex
 
 end Config

@@ -64,10 +64,10 @@ class LLMStreamTest extends kyo.test.Test[Any]:
         assert(LLM.completePartialJson("{\"resultValue\":123}") == "{\"resultValue\":123}")
     }
 
-    "stream[String] emits growing text prefixes as the answer arrives" in {
-        // A String result streams in prefix mode: the resultValue text arrives split mid-word and the completer
-        // closes each prefix, so the stream emits "The", "The sky", "The sky is blue" incrementally. This is the
-        // chat-UI token-by-token case; the terminal element is the full answer.
+    "stream[String] emits text chunks as the answer arrives" in {
+        // A String result streams in text mode: the resultValue text arrives split mid-word and the completer
+        // closes each prefix internally, but the public stream emits only the newly decoded suffix. Concatenating
+        // the elements yields the full answer.
         TestCompletionServer.runStreaming { server =>
             val config = serverConfig(server.baseUrl)
             server.enqueueStream(Chunk(
@@ -77,10 +77,8 @@ class LLMStreamTest extends kyo.test.Test[Any]:
             )).andThen {
                 LLM.run(config) {
                     AI.stream[String].map(_.run.map { collected =>
-                        assert(
-                            collected == Chunk("The", "The sky", "The sky is blue"),
-                            s"expected growing String prefixes, got: $collected"
-                        )
+                        assert(collected == Chunk("The", " sky", " is blue"), s"expected String chunks, got: $collected")
+                        assert(collected.mkString == "The sky is blue", s"chunks should concatenate to the final text: $collected")
                     })
                 }
             }
@@ -375,16 +373,16 @@ class LLMStreamTest extends kyo.test.Test[Any]:
         }
     }
 
-    // --- prefix mode (String) ---
+    // --- text mode (String) ---
 
-    "stream[String] does not re-emit an unchanged prefix when the closing delta arrives" in {
+    "stream[String] does not re-emit unchanged text when the closing delta arrives" in {
         // After the text decodes to "hi", the closing `"}` delta yields the same "hi"; it must be deduped, so the
         // stream emits "hi" exactly once, not twice.
         TestCompletionServer.runStreaming { server =>
             val config = serverConfig(server.baseUrl)
             server.enqueueStream(Chunk(argDelta("{\"resultValue\":\"hi"), argDelta("\"}"))).andThen {
                 LLM.run(config)(AI.stream[String].map(_.run.map { collected =>
-                    assert(collected == Chunk("hi"), s"the unchanged prefix must be deduped, got: $collected")
+                    assert(collected == Chunk("hi"), s"unchanged text must be deduped, got: $collected")
                 }))
             }
         }
@@ -395,20 +393,20 @@ class LLMStreamTest extends kyo.test.Test[Any]:
             val config = serverConfig(server.baseUrl)
             server.enqueueStream(Chunk(argDelta(prefixArgs("")))).andThen {
                 LLM.run(config)(AI.stream[String].map(_.run.map { collected =>
-                    assert(collected == Chunk(""), s"an empty text result must yield one empty prefix, got: $collected")
+                    assert(collected == Chunk(""), s"an empty text result must yield one empty chunk, got: $collected")
                 }))
             }
         }
     }
 
     "stream[String] decodes escaped characters in the text" in {
-        // The text carries embedded quotes, a backslash, and a newline; the completed prefix must decode them.
+        // The text carries embedded quotes, a backslash, and a newline; the emitted chunk must decode them.
         val text = "she said \"hi\"\\\n done"
         TestCompletionServer.runStreaming { server =>
             val config = serverConfig(server.baseUrl)
             server.enqueueStream(Chunk(argDelta(prefixArgs(text)))).andThen {
                 LLM.run(config)(AI.stream[String].map(_.run.map { collected =>
-                    assert(collected.last == text, s"escaped characters must decode, got: ${collected.last}")
+                    assert(collected.mkString == text, s"escaped characters must decode, got: $collected")
                 }))
             }
         }
@@ -425,13 +423,13 @@ class LLMStreamTest extends kyo.test.Test[Any]:
         }
     }
 
-    "stream[String] yields the partial prefix when the stream is cut off mid-text" in {
-        // A String prefix is always valid, so a truncated text stream yields the shorter prefix, not a failure.
+    "stream[String] yields the partial text when the stream is cut off mid-text" in {
+        // A decodable String prefix is valid, so a truncated text stream yields the shorter text, not a failure.
         TestCompletionServer.runStreaming { server =>
             val config = serverConfig(server.baseUrl)
             server.enqueueStream(Chunk(argDelta("{\"resultValue\":\"hel"))).andThen {
                 LLM.run(config)(AI.stream[String].map(_.run.map { collected =>
-                    assert(collected == Chunk("hel"), s"a truncated text stream must yield the partial prefix, got: $collected")
+                    assert(collected == Chunk("hel"), s"a truncated text stream must yield the partial text, got: $collected")
                 }))
             }
         }
@@ -612,7 +610,7 @@ class LLMStreamTest extends kyo.test.Test[Any]:
 
     // --- request shape: the result schema reflects the mode ---
 
-    "the streaming result schema is an array in element mode and a bare value in prefix mode" in {
+    "the streaming result schema is an array in element mode and a bare value in text mode" in {
         TestCompletionServer.runStreaming { server =>
             val config = serverConfig(server.baseUrl)
             server.enqueueStream(Chunk(argDelta(elementArgs(List(Answer("a")))))).andThen {
@@ -628,14 +626,14 @@ class LLMStreamTest extends kyo.test.Test[Any]:
         }
     }
 
-    "the streaming result schema carries no array items in prefix mode" in {
+    "the streaming result schema carries no array items in text mode" in {
         TestCompletionServer.runStreaming { server =>
             val config = serverConfig(server.baseUrl)
             server.enqueueStream(Chunk(argDelta(prefixArgs("hi")))).andThen {
                 LLM.run(config)(AI.stream[String].map(_.run))
             }.andThen {
                 server.captured.map { caps =>
-                    assert(!caps.head.body.contains("\"items\""), s"prefix-mode request must carry a bare value schema: ${caps.head.body}")
+                    assert(!caps.head.body.contains("\"items\""), s"text-mode request must carry a bare value schema: ${caps.head.body}")
                 }
             }
         }
@@ -643,7 +641,7 @@ class LLMStreamTest extends kyo.test.Test[Any]:
 
     // --- provider parity ---
 
-    "stream[String] streams growing text against the Anthropic backend" in {
+    "stream[String] streams text chunks against the Anthropic backend" in {
         TestCompletionServer.runStreaming { server =>
             val config = anthropicServerConfig(server.baseUrl)
             server.enqueueStream(Chunk(
@@ -651,8 +649,8 @@ class LLMStreamTest extends kyo.test.Test[Any]:
                 anthropicArgDelta(" sky\"}")
             )).andThen {
                 LLM.run(config)(AI.stream[String].map(_.run.map { collected =>
-                    assert(collected.last == "The sky", s"the Anthropic prefix stream must terminate in the full text, got: $collected")
-                    assert(collected == Chunk("The", "The sky"), s"got: $collected")
+                    assert(collected.mkString == "The sky", s"the Anthropic text stream must concatenate to the full text, got: $collected")
+                    assert(collected == Chunk("The", " sky"), s"got: $collected")
                 }))
             }
         }
@@ -678,7 +676,7 @@ class LLMStreamTest extends kyo.test.Test[Any]:
         }
     }
 
-    "prefix streaming terminates in the full text regardless of delta boundaries (randomized)" in {
+    "text streaming concatenates to the full text regardless of delta boundaries (randomized)" in {
         val text = "The quick brown fox jumps over the lazy dog."
         val full = prefixArgs(text)
         val rng  = new scala.util.Random(7L)
@@ -688,18 +686,10 @@ class LLMStreamTest extends kyo.test.Test[Any]:
                 val frags = randomSplit(full, rng)
                 server.enqueueStream(frags.map(argDelta)).andThen {
                     LLM.run(config)(AI.stream[String].map(_.run.map { collected =>
-                        assert(collected.nonEmpty, s"iteration $i must emit at least one prefix")
+                        assert(collected.nonEmpty, s"iteration $i must emit at least one text chunk")
                         assert(
-                            collected.last == text,
-                            s"iteration $i split=${frags.toList} must terminate in the full text, got: ${collected.last}"
-                        )
-                        assert(
-                            collected.forall(text.startsWith),
-                            s"iteration $i every element must be a prefix of the text, got: $collected"
-                        )
-                        assert(
-                            collected.map(_.length) == collected.map(_.length).sorted,
-                            s"iteration $i prefixes must grow monotonically, got: $collected"
+                            collected.mkString == text,
+                            s"iteration $i split=${frags.toList} must concatenate to the full text, got: $collected"
                         )
                     }))
                 }
@@ -718,9 +708,8 @@ class LLMStreamTest extends kyo.test.Test[Any]:
             val config = serverConfig(server.baseUrl)
             server.enqueueStream(chars(prefixArgs(text)).map(argDelta)).andThen {
                 LLM.run(config)(AI.stream[String].map(_.run.map { collected =>
-                    assert(collected.nonEmpty, "the stream must emit at least one prefix")
-                    assert(collected.last == text, s"the terminal prefix must be the full text, got: ${collected.last}")
-                    assert(collected.forall(text.startsWith), s"every emitted prefix must be a prefix of the text, got: $collected")
+                    assert(collected.nonEmpty, "the stream must emit at least one text chunk")
+                    assert(collected.mkString == text, s"text chunks must concatenate to the full text, got: $collected")
                 }))
             }
         }

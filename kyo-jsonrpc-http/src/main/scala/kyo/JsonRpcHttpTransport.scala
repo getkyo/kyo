@@ -13,6 +13,52 @@ package kyo
   */
 object JsonRpcHttpTransport:
 
+    /** Adapts an accepted `HttpWebSocket` as a [[JsonRpcTransport]].
+      *
+      * This is the server-side counterpart to [[webSocket]]: each JSON-RPC envelope is carried as
+      * one WebSocket text frame. Binary frames surface as malformed JSON-RPC messages so the peer
+      * gets a protocol-level failure instead of a silent drop.
+      */
+    def webSocket(
+        ws: HttpWebSocket,
+        codec: Schema[JsonRpcEnvelope]
+    )(using Frame): JsonRpcTransport < Sync =
+        Sync.defer {
+            new JsonRpcTransport:
+                def send(env: JsonRpcEnvelope)(using Frame): Unit < (Async & Abort[Closed]) =
+                    Abort.run[JsonRpcError](Structure.encode[JsonRpcEnvelope](env)(using codec)).map {
+                        case Result.Success(structure) =>
+                            ws.put(HttpWebSocket.Payload.Text(Json.encode(structure)))
+                        case Result.Failure(err) =>
+                            Log.warn(s"kyo-jsonrpc-http: encode failed ${err.message}")
+                        case Result.Panic(t) =>
+                            Log.warn(s"kyo-jsonrpc-http: encode panic ${t.getMessage}")
+                    }
+
+                def incoming(using Frame): Stream[JsonRpcEnvelope, Async & Abort[Closed]] =
+                    ws.stream.map {
+                        case HttpWebSocket.Payload.Text(text) =>
+                            Json.decode[Structure.Value](text) match
+                                case Result.Success(sv) =>
+                                    Structure.decode[JsonRpcEnvelope](sv)(using codec)
+                                        .getOrElse(JsonRpcMalformedMessage(Absent, "decode failed", sv))
+                                case Result.Failure(e) =>
+                                    JsonRpcMalformedMessage(Absent, s"json parse: ${e.getMessage}", Structure.Value.Str(text))
+                                case Result.Panic(t) =>
+                                    JsonRpcMalformedMessage(Absent, s"json parse panic: ${t.getMessage}", Structure.Value.Str(text))
+                        case HttpWebSocket.Payload.Binary(data) =>
+                            JsonRpcMalformedMessage(Absent, "binary WebSocket frame", Structure.Value.Str(s"${data.size} bytes"))
+                    }
+
+                def close(using Frame): Unit < Async =
+                    ws.close()
+            end new
+        }
+    end webSocket
+
+    def webSocket(ws: HttpWebSocket)(using Frame): JsonRpcTransport < Sync =
+        webSocket(ws, summon[Schema[JsonRpcEnvelope]])
+
     /** Opens a WebSocket to `url` and adapts it as a [[JsonRpcTransport]].
       *
       * @param url
@@ -40,9 +86,9 @@ object JsonRpcHttpTransport:
             val transport: JsonRpcTransport = new JsonRpcTransport:
                 def send(env: JsonRpcEnvelope)(using Frame): Unit < (Async & Abort[Closed]) =
                     // Structure.encode is pure but throws a JsonRpcError for the unencodable cases (a Malformed
-                    // message, or a lenient reserved-extras key); Abort.catching reifies that so the
+                    // message, or a lenient reserved-extras key); Abort.run reifies that so the
                     // Success/Failure/Panic logging is preserved.
-                    Abort.run[JsonRpcError](Abort.catching[JsonRpcError](Structure.encode[JsonRpcEnvelope](env)(using codec))).map {
+                    Abort.run[JsonRpcError](Structure.encode[JsonRpcEnvelope](env)(using codec)).map {
                         case Result.Success(structure) =>
                             // Json.encode[Structure.Value] emits standard JSON-RPC wire text via the identity
                             // wire shape (Record to object, Str to string, Integer/Decimal to number), so the
@@ -112,6 +158,10 @@ object JsonRpcHttpTransport:
             }.map(_ => transport)
 
     extension (self: JsonRpcTransport.type)
+        def webSocket(ws: HttpWebSocket)(using Frame): JsonRpcTransport < Sync =
+            JsonRpcHttpTransport.webSocket(ws)
+        def webSocket(ws: HttpWebSocket, codec: Schema[JsonRpcEnvelope])(using Frame): JsonRpcTransport < Sync =
+            JsonRpcHttpTransport.webSocket(ws, codec)
         def webSocket(url: HttpUrl)(using Frame): JsonRpcTransport < (Async & Scope & Abort[HttpException]) =
             JsonRpcHttpTransport.webSocket(url)
         def webSocket(url: HttpUrl, headers: HttpHeaders)(using Frame): JsonRpcTransport < (Async & Scope & Abort[HttpException]) =

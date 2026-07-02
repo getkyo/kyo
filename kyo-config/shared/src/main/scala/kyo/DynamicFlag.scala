@@ -101,9 +101,9 @@ abstract class DynamicFlag[A](default: A, validate: A => Either[Throwable, A] = 
     def reload()(implicit allow: AllowUnsafe): Flag.ReloadResult = {
         val expr: Option[String] = source match {
             case Flag.Source.SystemProperty =>
-                Option(java.lang.System.getProperty(name))
+                Option(FlagPlatform.property(name))
             case Flag.Source.EnvironmentVariable =>
-                Option(java.lang.System.getenv(envName))
+                Option(FlagPlatform.env(envName))
             case Flag.Source.Default =>
                 None
         }
