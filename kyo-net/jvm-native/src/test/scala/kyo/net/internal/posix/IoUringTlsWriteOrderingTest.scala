@@ -100,17 +100,22 @@ class IoUringTlsWriteOrderingTest extends Test:
                         assert(w2 == WriteResult.Done, s"write 2 result=$w2")
 
                         collectPlaintext(drv, peerHandle, clientEngine, expected.length).map { got =>
-                            handle.tls = Absent
-                            drv.closeHandle(handle)
-                            drv.closeHandle(peerHandle)
-                            assert(
-                                got.toList == expected,
-                                s"conservation: decrypted wire bytes must equal p1 ++ p2 once each in order.\n  expected (${expected.size}): $expected\n  got (${got.length}): ${got.toList}"
-                            )
-                            assert(
-                                handle.pendingCipher.isEmpty || handle.pendingCipherSent == 0,
-                                "no bytes may be stranded in pendingCipher after all sends reaped"
-                            )
+                            // collectPlaintext returning proves the WIRE effect (the peer decrypted every byte); it proves nothing about
+                            // this driver's own ACCOUNTING of that send, which resets on a later reap cycle (onTlsSendComplete). Barrier
+                            // first so the invariant below reads settled state instead of racing the reap carrier (#29).
+                            drv.awaitQuiesced(handle).map { _ =>
+                                handle.tls = Absent
+                                drv.closeHandle(handle)
+                                drv.closeHandle(peerHandle)
+                                assert(
+                                    got.toList == expected,
+                                    s"conservation: decrypted wire bytes must equal p1 ++ p2 once each in order.\n  expected (${expected.size}): $expected\n  got (${got.length}): ${got.toList}"
+                                )
+                                assert(
+                                    handle.pendingCipher.isEmpty || handle.pendingCipherSent == 0,
+                                    "no bytes may be stranded in pendingCipher after all sends reaped"
+                                )
+                            }
                         }
                     }
                 }
@@ -139,17 +144,20 @@ class IoUringTlsWriteOrderingTest extends Test:
                         assert(w2 == WriteResult.Done, s"write 2 result=$w2")
 
                         collectPlaintext(drv, peerHandle, clientEngine, expected.length).map { got =>
-                            handle.tls = Absent
-                            drv.closeHandle(handle)
-                            drv.closeHandle(peerHandle)
-                            assert(
-                                got.toList == expected,
-                                s"partial conservation: decrypted wire bytes must equal p1 ++ p2 once each in order (got ${got.length} of ${expected.size})"
-                            )
-                            assert(
-                                handle.pendingCipher.isEmpty || handle.pendingCipherSent == 0,
-                                "no bytes may be stranded in pendingCipher after all sends reaped"
-                            )
+                            // Barrier first: see the conservation leaf's comment above (#29).
+                            drv.awaitQuiesced(handle).map { _ =>
+                                handle.tls = Absent
+                                drv.closeHandle(handle)
+                                drv.closeHandle(peerHandle)
+                                assert(
+                                    got.toList == expected,
+                                    s"partial conservation: decrypted wire bytes must equal p1 ++ p2 once each in order (got ${got.length} of ${expected.size})"
+                                )
+                                assert(
+                                    handle.pendingCipher.isEmpty || handle.pendingCipherSent == 0,
+                                    "no bytes may be stranded in pendingCipher after all sends reaped"
+                                )
+                            }
                         }
                     }
                 }
@@ -178,17 +186,20 @@ class IoUringTlsWriteOrderingTest extends Test:
                             assert(w == WriteResult.Done, s"write $i result=$w")
                         }
                         collectPlaintext(drv, peerHandle, clientEngine, expected.length).map { got =>
-                            handle.tls = Absent
-                            drv.closeHandle(handle)
-                            drv.closeHandle(peerHandle)
-                            assert(
-                                got.toList == expected,
-                                s"three-write conservation: decrypted wire bytes must equal the three plaintexts concatenated in order (got ${got.length} of ${expected.size})"
-                            )
-                            assert(
-                                handle.pendingCipher.isEmpty || handle.pendingCipherSent == 0,
-                                "no bytes may be stranded in pendingCipher after all sends reaped"
-                            )
+                            // Barrier first: see the conservation leaf's comment above (#29).
+                            drv.awaitQuiesced(handle).map { _ =>
+                                handle.tls = Absent
+                                drv.closeHandle(handle)
+                                drv.closeHandle(peerHandle)
+                                assert(
+                                    got.toList == expected,
+                                    s"three-write conservation: decrypted wire bytes must equal the three plaintexts concatenated in order (got ${got.length} of ${expected.size})"
+                                )
+                                assert(
+                                    handle.pendingCipher.isEmpty || handle.pendingCipherSent == 0,
+                                    "no bytes may be stranded in pendingCipher after all sends reaped"
+                                )
+                            }
                         }
                     }
                 }

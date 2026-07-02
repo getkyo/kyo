@@ -642,6 +642,15 @@ private[net] object PosixHandle:
         h.flushMirror = Absent
         h.sendMirror.foreach(_.close())
         h.sendMirror = Absent
+        // NOT an at-rest invariant here (deliberately, after testing one): unlike recvInFlight (a second recv while one is kernel-owned
+        // is ALWAYS wrong, no legitimate case), unsent bytes in pendingCipher at freeResources time is routine, correct behavior, not a
+        // stale-accounting symptom. freeResources is the single free path for every close, including an abrupt one that deliberately
+        // abandons an in-flight, not-yet-fully-sent write (a caller closing before a backpressured flush drains): CloseDuringBackpressuredFlushTest
+        // pins exactly that as correct ("close while the flush is parked on writability: frees once, clears pending state"). A blanket
+        // check here fired on every such legitimate abrupt close under the full suite (confirmed via CloseDuringBackpressuredFlushTest,
+        // CrossTailMockedTest, FlushReArmPendingCoalesceTest), so it would spam production logs on ordinary early disconnects, not just
+        // genuine bugs. The sound version of this doctrine for the send tail lives at the reap-and-declare-drained point instead (see
+        // onTlsSendComplete's fully-drained branch in IoUringDriver), where "should be exactly zero" is actually always true.
         h.pendingCipher = Absent
         h.pendingCipherSent = 0
         h.flushReArmPending = false

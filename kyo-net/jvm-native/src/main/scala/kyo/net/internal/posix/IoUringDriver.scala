@@ -854,6 +854,17 @@ final private[net] class IoUringDriver private[posix] (
                     if handle.pendingCipherSent >= buf.size then
                         buf.reset()
                         handle.pendingCipherSent = 0
+                        // Always-on at-rest invariant (the recvInFlight doctrine, PosixHandle.scala:211-224, applied to the send tail): a
+                        // plain branch, not an elidable assert, so it stays live in production. Once the tail is declared fully drained,
+                        // both fields must actually be at rest; a future edit that resets one but not the other would otherwise surface
+                        // only as a downstream, hard-to-attribute #29-class flake in some unrelated suite. Attributes both values here,
+                        // at the exact op, in every TLS-writing suite.
+                        if buf.size != 0 || handle.pendingCipherSent != 0 then
+                            Log.live.unsafe.error(
+                                s"$label fd=${handle.writeFd} at-rest violation: TLS send tail declared fully drained but " +
+                                    s"bufSize=${buf.size} pendingCipherSent=${handle.pendingCipherSent} after reset"
+                            )
+                        end if
                     else
                         // Bytes remain (a partial send, or ciphertext a coalesced write appended while this send was in flight): re-submit a send
                         // SQE for the new unsent region. flushTls re-sets sendInFlight when it submits.
@@ -1035,6 +1046,48 @@ final private[net] class IoUringDriver private[posix] (
                 Maybe(closeAfterDrain.remove(handle.id.packed)).foreach(closeNow)
         end if
     end registerDeferredClose
+
+    /** Test-only quiescence barrier: completes once `handle` has no in-flight ops (SQEs submitted but not yet reaped) and no TLS or raw
+      * send SQE outstanding. This is the missing quiescence point behind #29: a completion driver's write is two-phase (the wire effect
+      * happens on the kernel's own schedule; the local accounting update, e.g. [[onTlsSendComplete]] resetting `pendingCipherSent`, runs
+      * only when that op's CQE is reaped on a LATER reap cycle), so an invariant phrased "after all sends are reaped" has no way to
+      * establish "after" without an explicit barrier. `IoUringTlsWriteOrderingTest` asserts its at-rest invariant behind this instead of
+      * racing the reap carrier.
+      *
+      * Implementation: submit an engine op that samples `inFlight`/`sendInFlight`/`rawSendInFlight` (the engine FIFO is this driver's
+      * single owner of that state, so the sample itself cannot race the accounting it reads); if not yet quiescent, wait a real settle
+      * tick (`Async.sleep`) and resubmit. The wait is genuine wall-clock time, not a resubmission from inside the engine op itself:
+      * `drainEngineOps` drains its queue to empty in one tail-recursive pass, so an op that re-offers itself synchronously would be
+      * drained again in that SAME pass, before `reapLoop` ever reaches its own `flushSubmits` / `submit_and_wait` / `drainReady` turn --
+      * starving the very reap that has to run for the pending CQE this barrier is waiting on to ever complete. Bounded by `maxAttempts`
+      * so a genuine driver bug (the handle never quiesces) fails loudly instead of hanging the caller forever.
+      */
+    private[posix] def awaitQuiesced(handle: PosixHandle, maxAttempts: Int = 2000)(using
+        AllowUnsafe,
+        Frame
+    ): Unit < (Abort[Closed] & Async) =
+        Loop(maxAttempts) { remaining =>
+            Sync.Unsafe.defer {
+                val p = Promise.Unsafe.init[Boolean, Abort[Closed]]()
+                submitEngineOp { () =>
+                    val quiescent =
+                        Maybe(inFlight.get(handle.id.packed)).getOrElse(0L) <= 0L &&
+                            !handle.sendInFlight && !handle.rawSendInFlight
+                    p.completeDiscard(Result.succeed(quiescent))
+                }
+                p.safe.get
+            }.map { quiescent =>
+                if quiescent then Loop.done(())
+                else if remaining <= 0 then
+                    Abort.fail(Closed(
+                        label,
+                        summon[Frame],
+                        s"awaitQuiesced: handle ${handle.id} did not quiesce within the attempt budget"
+                    ))
+                else Async.sleep(2.millis).andThen(Loop.continue(remaining - 1))
+            }
+        }
+    end awaitQuiesced
 
     /** Emit this side's TLS close_notify and submit it as a TLS send SQE (best-effort, one-directional). FIFO-worker-only (called from the
       * closeHandle engine op under the write guard). Runs one [[TlsEngine.shutdownStep]] to emit this side's close_notify, drains the produced
