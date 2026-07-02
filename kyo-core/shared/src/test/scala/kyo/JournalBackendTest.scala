@@ -155,6 +155,21 @@ abstract class JournalBackendTest(newBackend: => Journal.Backend < (Sync & Scope
                     fail(s"expected success, got: $other")
         }
 
+        "preserves payload content through append and read" in {
+            for
+                backend <- newBackend
+                _       <- Abort.run[JournalError](backend.append(streamId, ExpectedRevision.NoStream, Chunk(envelope(0), envelope(1))))
+                events  <- Abort.run[JournalError](backend.read(streamId, StreamRevision.first, 10))
+            yield events match
+                case Result.Success(events) =>
+                    assert(events.length == 2)
+                    assert(events(0).payload.is(envelope(0).payload))
+                    assert(events(1).payload.is(envelope(1).payload))
+                    assert(events(0).metadata == EventMetadata.empty)
+                case other =>
+                    fail(s"expected success, got: $other")
+        }
+
         "streams are independent" in {
             for
                 backend <- newBackend

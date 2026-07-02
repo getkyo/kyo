@@ -29,7 +29,7 @@ object Journal:
     /** Storage contract behind the [[Journal]] capability.
       *
       * A backend provides atomic optimistic appends, bounded ordered reads, and stream inspection under `Sync` and
-      * `Abort[JournalError]`. Implementations must satisfy the contract exercised by the shared backend test suite: consecutive
+      * `Abort[JournalError]`. Implementations must satisfy the contract exercised by [[kyo.JournalBackendTest]]: consecutive
       * zero-based revision assignment, an expected-revision check atomic with the write, all-or-nothing batches, and empty reads (never
       * failures) for missing streams and out-of-range positions.
       *
