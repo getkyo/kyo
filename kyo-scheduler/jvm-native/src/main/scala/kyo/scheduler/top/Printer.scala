@@ -62,4 +62,33 @@ object Printer {
 
         sb.toString()
     }
+
+    // One machine-readable line for the CI resource monitor: worker counts (blocked/stalled and the
+    // allocated total that balloons toward maxWorkers under blocking), queued load, cumulative task
+    // counters, and the admission percent. Absolute values, so the collector snapshots and deltas itself.
+    def compact(status: Status): String = {
+        val ws      = status.workers.iterator.filter(_ ne null)
+        var active  = 0
+        var blocked = 0
+        var stalled = 0
+        var load    = 0L
+        var exec    = 0L
+        var done    = 0L
+        var stolen  = 0L
+        var lost    = 0L
+        ws.foreach { w =>
+            if (w.running) active += 1
+            if (w.isBlocked) blocked += 1
+            if (w.isStalled) stalled += 1
+            load += w.load.toLong
+            exec += w.executions
+            done += w.completions
+            stolen += w.stolenTasks
+            lost += w.lostTasks
+        }
+        f"kyo.sched ts=${java.lang.System.currentTimeMillis()} cur=${status.currentWorkers} alloc=${status.allocatedWorkers}" +
+            f" active=$active blocked=$blocked stalled=$stalled load=$load loadAvg=${status.loadAvg}%.4f" +
+            f" threads=${status.activeThreads}/${status.totalThreads} exec=$exec done=$done stolen=$stolen lost=$lost" +
+            f" admit=${status.admission.admissionPercent}"
+    }
 }
