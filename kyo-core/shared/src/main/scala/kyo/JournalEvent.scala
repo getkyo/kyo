@@ -162,7 +162,7 @@ end StreamInfo
 
 /** An event as submitted to [[kyo.Journal.append]]: producer-assigned identity, type label, raw payload, and metadata.
   *
-  * The journal treats the payload as opaque bytes; typed encoding and decoding live above this layer (kyo-eventlog). Note that `Span`
+  * The journal treats the payload as opaque bytes; typed encoding and decoding live above this layer. Note that `Span`
   * equality via `==` is reference-based: compare payload contents with `Span#is`, not by comparing envelopes with `==`.
   *
   * @see
