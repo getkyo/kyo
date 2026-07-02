@@ -70,6 +70,41 @@ class JournalTest extends kyo.test.Test[Any]:
         }.map(result => assert(result == Result.fail(JournalError.EmptyAppend)))
     }
 
+    "Backend.inMemory appends and reads through the capability" in {
+        for
+            backend <- Journal.Backend.inMemory
+            result <- Abort.run[JournalError] {
+                Journal.run(backend) {
+                    for
+                        appended <- Journal.append(streamId, ExpectedRevision.NoStream, Chunk(envelope))
+                        events   <- Journal.read(streamId, StreamRevision.first, 10)
+                        info     <- Journal.streamInfo(streamId)
+                    yield (appended, events, info)
+                }
+            }
+        yield result match
+            case Result.Success((appended, events, info)) =>
+                assert(appended == appendResult)
+                assert(events.length == 1)
+                assert(events(0).streamId == streamId)
+                assert(events(0).revision == StreamRevision.first)
+                assert(events(0).eventId == eventId)
+                assert(events(0).eventType == eventType)
+                assert(events(0).payload.is(envelope.payload))
+                assert(info == expectedInfo)
+            case other =>
+                fail(s"expected success, got: $other")
+    }
+
+    "separate inMemory backends do not share streams" in {
+        for
+            first  <- Journal.Backend.inMemory
+            second <- Journal.Backend.inMemory
+            _      <- Abort.run[JournalError](first.append(streamId, ExpectedRevision.NoStream, Chunk(envelope)))
+            info   <- Abort.run[JournalError](second.streamInfo(streamId))
+        yield assert(info == Result.succeed(StreamInfo.Absent))
+    }
+
     private enum Call derives CanEqual:
         case Append(streamId: StreamId, expected: ExpectedRevision, events: Chunk[EventEnvelope])
         case Read(streamId: StreamId, from: StreamRevision, maxCount: Int)
