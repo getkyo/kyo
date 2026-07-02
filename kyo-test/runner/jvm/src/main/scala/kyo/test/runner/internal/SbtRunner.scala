@@ -63,9 +63,9 @@ final private[runner] class SbtRunner(
     // launch). The baseline is captured now, in the constructor, before any suite runs, so the diff at done() excludes the JVM's
     // own startup descriptors and threads (including the sbt.ForkMain socket). In the main sbt JVM `forked` is false: no
     // baseline, no carrier tracking, no check (the diff would be polluted by sbt's own resources and a throw would fail sbt).
-    private val forked       = LeakCheck.isForked
-    private val leakBaseline = if forked then LeakCheck.baseline() else LeakCheck.Baseline(kyo.Maybe.empty, Set.empty)
-    private val leakCheckRan = new java.util.concurrent.atomic.AtomicBoolean(false)
+    private val forked            = LeakCheck.isForked
+    private val leakBaseline      = if forked then LeakCheck.baseline() else LeakCheck.Baseline(kyo.Maybe.empty, Set.empty)
+    private val endOfRunChecksRan = new java.util.concurrent.atomic.AtomicBoolean(false)
 
     // Leak-debug mode (KYO_TEST_LEAK_DEBUG=1): leaves are forced serial (LeafPool.globalK = 1), so install a per-leaf probe that snapshots the
     // open descriptors around each leaf and records which descriptors the leaf left open. The end-of-run leak report then attributes each leaked
@@ -91,7 +91,7 @@ final private[runner] class SbtRunner(
                 Array.empty
 
     def done(): String =
-        runLeakCheck()
+        runEndOfRunChecks()
         parsedArgs match
             case Args.Result.Error(msg) => msg
             case Args.Result.Help       => ""
@@ -101,14 +101,16 @@ final private[runner] class SbtRunner(
         end match
     end done
 
-    /** Runs the end-of-run leak probes once, only inside a forked test JVM, and throws [[LeakCheck.Detected]] on a leak so sbt fails the test
-      * task. The leak settings are aggregated from the suites that ran in this fork (each [[TestReport]] carries its suite's effective
-      * `leakCheck` and `leakCheckAllowlist`): the check runs if any suite enabled it, against the union of their allowlists. sbt calls `done()`
-      * more than once per forked runner (once after execution, once from a shutdown hook), so the compare-and-set guard fires the probes and
-      * any failure exactly once. Outside a fork (the main sbt JVM) `forked` is false, so this is a no-op.
+    /** Runs the end-of-run leak and stranded-op probes once, only inside a forked test JVM, throwing on the first one that finds
+      * something so sbt fails the test task. The leak settings are aggregated from the suites that ran in this fork (each
+      * [[TestReport]] carries its suite's effective `leakCheck` and `leakCheckAllowlist`): [[LeakCheck]] runs if any suite enabled it,
+      * against the union of their allowlists. [[StrandedOpCheck]] has no per-suite opt-out (unlike LeakCheck it always runs in a fork)
+      * but reuses the same aggregated allowlist. sbt calls `done()` more than once per forked runner (once after execution, once from a
+      * shutdown hook), so the compare-and-set guard fires the probes and any failure exactly once. Outside a fork (the main sbt JVM)
+      * `forked` is false, so this is a no-op.
       */
-    private def runLeakCheck(): Unit =
-        if forked && leakCheckRan.compareAndSet(false, true) then
+    private def runEndOfRunChecks(): Unit =
+        if forked && endOfRunChecksRan.compareAndSet(false, true) then
             import scala.jdk.CollectionConverters.*
             val suites    = results.asScala.flatMap(_.suiteReports)
             val allowlist = Chunk.from(suites.flatMap(_.leakCheckAllowlist)).distinct
@@ -135,6 +137,13 @@ final private[runner] class SbtRunner(
                     case kyo.Maybe.Absent          => ()
                 end match
             end if
-    end runLeakCheck
+            // Runs regardless of every suite's leakCheck settings (LeakCheck.detect above already settled the scheduler via
+            // awaitSchedulerIdle when any category ran; StrandedOpCheck's own two-sample settle window is independent of that and runs
+            // unconditionally, since a stranded op is never acceptable suite behavior).
+            StrandedOpCheck.detect(allowlist, settleNanos = 200_000_000L) match
+                case kyo.Maybe.Present(report) => throw new StrandedOpCheck.Detected(report)
+                case kyo.Maybe.Absent          => ()
+            end match
+    end runEndOfRunChecks
 
 end SbtRunner

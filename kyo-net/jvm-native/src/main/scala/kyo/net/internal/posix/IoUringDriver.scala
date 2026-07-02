@@ -231,6 +231,13 @@ final private[net] class IoUringDriver private[posix] (
     // value when a leaf hangs means the reap loop is dead/stuck; an advancing value means it is live but a pending completion is not delivered.
     @volatile private var diagReapCycles: Long = 0L
 
+    // This driver's Diagnostics registration, held from start() and closed from close() so a per-test driver's dumper/probe does not
+    // outlive it (Diagnostics is a process-global registry; every driver ever built registers now, not just the process-shared
+    // singleton, so an unclosed registration would accumulate for the life of the process). Null until start() registers it; start()
+    // runs on the construction carrier before this driver is exposed to a concurrent close(), so no synchronization guards the write
+    // itself, but the field is @volatile so close() (on any carrier) observes it.
+    @volatile private var diagRegistration: kyo.internal.Diagnostics.Registration | Null = null
+
     // Bound on consecutive `-EINTR` retries for one logical read or send. POSIX recv(2)/send(2): a non-blocking call interrupted by a signal
     // before any byte is transferred completes with `-EINTR` and MUST be retried (no data was moved, the socket is unchanged), exactly as
     // PollerIoDriver retries EINTR in place (commit 5498ada6b) and as the accept path already retries it. The retry is bounded so a pathological
@@ -1093,6 +1100,12 @@ final private[net] class IoUringDriver private[posix] (
 
     def close()(using AllowUnsafe, Frame): Unit =
         if closedFlag.compareAndSet(false, true) then
+            // Unregister this driver's Diagnostics dumper/probe now: registration happened in start() (if it ran) before the reap
+            // carrier was spawned, so by the time any carrier can observe closedFlag=true the field is either already set or was never
+            // going to be (start() never called). Closing here, rather than at the reap loop's later ring teardown, is what keeps a
+            // per-test driver's entry from outliving its own close() call in the process-global registry.
+            val reg = diagRegistration
+            if reg ne null then reg.close()
             // Wake the reap loop so a wait parked INDEFINITELY on the wake observes closedFlag and tears the ring down promptly; without this an
             // indefinite park would only end on an unrelated CQE. The eventfd write is unconditional, so the close wake always lands. Harmless when
             // no reap loop is parked (never started): the eventfd is closed by teardownRing below, guarded against this write.
@@ -1173,10 +1186,20 @@ final private[net] class IoUringDriver private[posix] (
         // Mark BEFORE spawning the loop: a close() racing start observes started=true and defers teardown to the reap loop, which (once
         // spawned) sees closedFlag set, runs zero iterations, and tears the ring down itself. started.set happens-before the spawn.
         started.set(true)
-        // The process-shared default transport registers a diagnostics snapshot of its by-design process-lifetime loop (the singleton is never
-        // closed); read on the construction thread before the spawn.
-        if kyo.net.internal.ProcessSharedTransport.isBuilding then
-            discard(kyo.internal.Diagnostics.register("IoUringDriver@" + java.lang.System.identityHashCode(this)) { () =>
+        // Every driver registers a diagnostics snapshot of its reap loop, not just the process-shared singleton's: the stranded-op
+        // post-suite gate (kyo-test's runner) needs a probe for every driver a suite builds, and most of kyo-net's own suites build
+        // their own per-config transport rather than using the singleton. Held in diagRegistration and closed from close() so a
+        // per-test driver's entry does not accumulate in the process-global registry for the rest of the run.
+        //
+        // The registered name carries a `processSharedTransport` marker for the by-design process-lifetime singleton (never closed, so
+        // it legitimately parks forever with a pending op on a kept-alive connection): the stranded-op gate matches this name the same
+        // way LeakCheck's fiber-leak allowlist already does (LeakCheck.defaultAllowlist), so the one driver that is SUPPOSED to look
+        // parked-with-pending-work forever is exempted by the same convention, not a second one.
+        val diagName =
+            "IoUringDriver@" + java.lang.System.identityHashCode(this) +
+                (if kyo.net.internal.ProcessSharedTransport.isBuilding then " processSharedTransport" else "")
+        diagRegistration = kyo.internal.Diagnostics.register(diagName)(
+            dump = () =>
                 val pend = new StringBuilder
                 pending.forEach((k, v) =>
                     discard(
@@ -1191,8 +1214,14 @@ final private[net] class IoUringDriver private[posix] (
                 closeAfterDrain.forEach((k, _) => discard(cad.append(k).append(' ')))
                 s"closed=${closedFlag.get()} reapExited=${reapExited.get()} reapCycles=$diagReapCycles " +
                     s"pending(${pending.size})=[$pend] inFlight=[$infl] closeAfterDrain(${closeAfterDrain.size})=[$cad] stalledRaw=${stalledRaw.size}"
-            })
-        end if
+            ,
+            probe = () =>
+                kyo.internal.Diagnostics.Probe(
+                    closed = closedFlag.get(),
+                    cycles = diagReapCycles,
+                    pending = !pending.isEmpty
+                )
+        )
         val donePromise = Promise.Unsafe.init[Unit, Any]()
         val thread =
             new Thread(

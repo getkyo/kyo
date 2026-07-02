@@ -138,6 +138,13 @@ final private[net] class PollerIoDriver private[posix] (
     // value when a leaf hangs means the poll loop is dead/stuck; an advancing value means it is live but not delivering to some fd.
     @volatile private var diagPollCycles: Long = 0L
 
+    // This driver's Diagnostics registration, held from start() and closed from close() so a per-test driver's dumper/probe does not
+    // outlive it (Diagnostics is a process-global registry; every driver ever built registers now, not just the process-shared
+    // singleton, so an unclosed registration would accumulate for the life of the process). Null until start() registers it; start()
+    // runs on the construction carrier before this driver is exposed to a concurrent close(), so no synchronization guards the write
+    // itself, but the field is @volatile so close() (on any carrier) observes it.
+    @volatile private var diagRegistration: kyo.internal.Diagnostics.Registration | Null = null
+
     // Registration intake: many fibers enqueue a pending registration (awaitRead/armSocketWritable/awaitAccept) here; the poll-loop carrier consumes
     // it and applies the activeFds + pendingReads/pendingWritables/pendingAccepts puts on its own carrier, so the maps are written by ONE carrier.
     // A ConcurrentLinkedQueue (single poll-fiber consumer) mirrors the engineQueue; the small Registration record per await replaces the
@@ -258,10 +265,20 @@ final private[net] class PollerIoDriver private[posix] (
         end if
         started.set(true)
         wakeArmed.set(true)
-        // The process-shared default transport registers a diagnostics snapshot of its by-design process-lifetime loop (the singleton is never
-        // closed); read on the construction thread before the spawn.
-        if kyo.net.internal.ProcessSharedTransport.isBuilding then
-            discard(kyo.internal.Diagnostics.register("PollerIoDriver@" + java.lang.System.identityHashCode(this)) { () =>
+        // Every driver registers a diagnostics snapshot of its poll loop, not just the process-shared singleton's: the stranded-op
+        // post-suite gate (kyo-test's runner) needs a probe for every driver a suite builds, and most of kyo-net's own suites build
+        // their own per-config transport rather than using the singleton. Held in diagRegistration and closed from close() so a
+        // per-test driver's entry does not accumulate in the process-global registry for the rest of the run.
+        //
+        // The registered name carries a `processSharedTransport` marker for the by-design process-lifetime singleton (never closed, so
+        // it legitimately parks forever with a pending armed read on a kept-alive connection): the stranded-op gate matches this name
+        // the same way LeakCheck's fiber-leak allowlist already does (LeakCheck.defaultAllowlist), so the one driver that is SUPPOSED
+        // to look parked-with-pending-work forever is exempted by the same convention, not a second one.
+        val diagName =
+            "PollerIoDriver@" + java.lang.System.identityHashCode(this) +
+                (if kyo.net.internal.ProcessSharedTransport.isBuilding then " processSharedTransport" else "")
+        diagRegistration = kyo.internal.Diagnostics.register(diagName)(
+            dump = () =>
                 val reads = new StringBuilder
                 pendingReads.foreach((fd, h) => discard(reads.append(fd).append("(id=").append(h.id).append(") ")))
                 val writes = new StringBuilder
@@ -271,8 +288,14 @@ final private[net] class PollerIoDriver private[posix] (
                 s"closed=${closedFlag.get()} pollCycles=$diagPollCycles activeFds=${activeFds.size} " +
                     s"changeQueuePending=${changeQueue.peekNonEmpty()} wakePending=${wakePending.get()} " +
                     s"pendingReads=[$reads] pendingWritables=[$writes] pendingAccepts=[$accepts]"
-            })
-        end if
+            ,
+            probe = () =>
+                kyo.internal.Diagnostics.Probe(
+                    closed = closedFlag.get(),
+                    cycles = diagPollCycles,
+                    pending = changeQueue.peekNonEmpty() || pendingReads.size > 0 || pendingWritables.size > 0 || pendingAccepts.size > 0
+                )
+        )
         val donePromise = Promise.Unsafe.init[Unit, Any]()
         val thread =
             new Thread(
@@ -1035,6 +1058,12 @@ final private[net] class PollerIoDriver private[posix] (
 
     def close()(using AllowUnsafe, Frame): Unit =
         if closedFlag.compareAndSet(false, true) then
+            // Unregister this driver's Diagnostics dumper/probe now: registration happened in start() (if it ran) before the loop's
+            // carrier was spawned, so by the time any carrier can observe closedFlag=true the field is either already set or was never
+            // going to be (start() never called). Closing here, rather than at the poll loop's later terminal exit, is what keeps a
+            // per-test driver's entry from outliving its own close() call in the process-global registry.
+            val reg = diagRegistration
+            if reg ne null then reg.close()
             val closed = Closed(label, summon[Frame], "driver closed")
             if started.get() then
                 // The poll loop is running (or ran). Its maps are poll-fiber-confined, so the teardown must run on the poll-loop carrier,
