@@ -41,8 +41,8 @@ class PositionTest extends kyo.test.Test[Any]:
         )
         val addrMap = IntMap(1 -> symbol)
         val view    = ByteView(payload)
-        PositionsUnpickler.read(view, addrMap, Maybe.Absent) match
-            case Result.Success(posMap) =>
+        PositionsUnpickler.read(view, addrMap, Maybe.Absent, 0) match
+            case Result.Success((posMap, _)) =>
                 assert(
                     posMap.isEmpty,
                     s"Expected empty position map when SOURCEFILE is absent, but got ${posMap.size} entries"
@@ -71,8 +71,8 @@ class PositionTest extends kyo.test.Test[Any]:
         )
         val addrMap = IntMap(1 -> symbol)
         val view    = ByteView(payload)
-        PositionsUnpickler.read(view, addrMap, Maybe.Present("Foo.scala")) match
-            case Result.Success(posMap) =>
+        PositionsUnpickler.read(view, addrMap, Maybe.Present("Foo.scala"), 0) match
+            case Result.Success((posMap, _)) =>
                 assert(posMap.size == 1, s"Expected 1 position entry but got ${posMap.size}")
                 // LongMap keyed by symbol.id.toLong, not by symbol object.
                 assert(posMap.contains(symbol.id.toLong), "Expected symbol.id to have a position entry")

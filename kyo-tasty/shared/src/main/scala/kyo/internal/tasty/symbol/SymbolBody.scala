@@ -28,7 +28,13 @@ final private[kyo] case class SymbolBody(
     sectionBytes: Span[Byte],
     names: Span[Tasty.Name],
     sectionOffset: Int,
-    private[kyo] val addrMap: IntMap[Tasty.SymbolId]
+    private[kyo] val addrMap: IntMap[Tasty.SymbolId],
+    // pickleId: the index of the .tasty pickle this body came from. Distinguishes bodies that
+    // share one SOURCEFILE but live in different pickles (two top-level declarations of one .scala
+    // file compile to two pickles), so the occurrence scanner joins a body only to its own pickle's
+    // Positions data. Deterministic (the FileResult merge order). Not part of equals/hashCode:
+    // sectionBytes/sectionOffset/names already distinguish pickles; pickleId is derived metadata.
+    pickleId: Int
 ):
     override def equals(other: Any): Boolean = other match
         case that: SymbolBody =>

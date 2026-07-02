@@ -77,7 +77,7 @@ object SnapshotFormat:
 
     /** Current format version. Major bumps invalidate old snapshots. */
     val majorVersion: Int = 1
-    val minorVersion: Int = 12
+    val minorVersion: Int = 13
 
     /** Maximum number of sections allowed in a snapshot header.
       *
@@ -118,7 +118,8 @@ object SnapshotFormat:
             "FQNMAP__",
             "SUBCIDX_",
             "COMPIDX_",
-            "PLISTS__"
+            "PLISTS__",
+            "SRCPOS__"
         )
 
     /** Validate that every entry in `sectionNames` is at most 8 bytes and contains no NUL character.
@@ -213,6 +214,20 @@ object SnapshotFormat:
       *   listCount x [Int32-LE innerCount][innerCount x Int32-LE symbolId.value]
       */
     val sectionPLISTS: String = "PLISTS__"
+
+    /** Source-position section (added in minor=13).
+      *
+      * Persists `Symbol.sourcePosition` (sourceFile, line, column) per symbol so a warm-loaded
+      * classpath restores positions a cold load holds. Without it warm-loaded symbols carry
+      * `Maybe.Absent`, so document-symbol ranges and the derived `Indices.bySourceFile` would be
+      * empty on a cache hit. `bySourceFile` is recomputed from these positions in `Classpath.make`,
+      * the same recompute-on-construct pattern as `bySimpleName`, so it needs no section of its own.
+      *
+      * Layout: [Int32-LE entryCount] then per entry:
+      *   [Int32-LE symIdx][Int32-LE sourceFileNameId][Int32-LE line][Int32-LE column]
+      * Sparse: symbols with `sourcePosition == Maybe.Absent` are omitted.
+      */
+    val sectionSRCPOS: String = "SRCPOS__"
 
     /** minor=7 (breaking bump): ERRORS section re-encoded as typed tagged format instead of flat strings.
       *

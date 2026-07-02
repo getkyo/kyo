@@ -29,20 +29,24 @@ object CommentsUnpickler:
       * @param view
       *   ByteView positioned at the start of the Comments section payload. `view.remaining` covers the full section.
       * @param addrMap
-      *   Map from TASTy byte address to symbol, as produced by Pass 1 (AstUnpickler.Pass1Result.addrMap). Entries whose address is not in
-      *   this map are skipped.
+      *   Map from TASTy byte address to symbol, as produced by Pass 1 (AstUnpickler.Pass1Result.addrMap). Keys are
+      *   absolute byte offsets in the TASTy file (i.e., section-relative address + sectionOffset).
+      * @param sectionOffset
+      *   Absolute byte offset of the start of the ASTs section in the TASTy file (Pass1Result.sectionOffset). Added to
+      *   each section-relative Addr before looking up in addrMap.
       */
     def read(
         view: ByteView,
-        addrMap: IntMap[LoadingSymbol.Materialising]
+        addrMap: IntMap[LoadingSymbol.Materialising],
+        sectionOffset: Int
     )(using Frame, AllowUnsafe): Result[TastyError, scala.collection.mutable.LongMap[String]] =
-        try Result.Success(readSync(view, addrMap))
+        try Result.Success(readSync(view, addrMap, sectionOffset))
         catch
             case _: ArrayIndexOutOfBoundsException =>
                 Result.Failure(TastyError.MalformedSection("Comments", "unexpected end of Comments section", view.position.toLong))
     end read
 
-    private def readSync(view: ByteView, addrMap: IntMap[LoadingSymbol.Materialising])(using
+    private def readSync(view: ByteView, addrMap: IntMap[LoadingSymbol.Materialising], sectionOffset: Int)(using
         AllowUnsafe
     ): scala.collection.mutable.LongMap[String] =
         // Key by symbol.id (primitive Long), not the mutable LoadingSymbol.Materialising case class.
@@ -59,7 +63,8 @@ object CommentsUnpickler:
             end while
             // Skip span (LongInt: signed big-endian base-128 encoding, same loop as Varint.readLongInt but result discarded)
             skipLongInt(view)
-            addrMap.get(address) match
+            // address is section-relative; addrMap keys are absolute (sectionOffset + section-relative).
+            addrMap.get(address + sectionOffset) match
                 case Some(symbol) =>
                     val text = new String(buffer, java.nio.charset.StandardCharsets.UTF_8)
                     builder(symbol.id.toLong) = text
