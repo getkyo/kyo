@@ -1200,11 +1200,11 @@ class TagTest extends kyo.test.Test[Any]:
 
         // kyo-aeron derives aeron stream ids from `Tag.hash`, so a publish and a subscribe of the same
         // type in separate JVM processes must hash identically. Pinning to constants is the in-JVM proxy:
-        // the hash is the content-stable String hashCode of the encoded tag, so it reproduces these
+        // the hash is the content-stable XXH32 hash of the encoded tag, so it reproduces these
         // values on any JVM. An identity-derived hash would vary across processes and break that.
         "is pinned to its content-derived constant (process-independent determinism)" in {
-            assert(Tag[Int].hash == 618500523, s"Tag[Int].hash = ${Tag[Int].hash}")
-            assert(Tag[String].hash == 1473269625, s"Tag[String].hash = ${Tag[String].hash}")
+            assert(Tag[Int].hash == 1027356392, s"Tag[Int].hash = ${Tag[Int].hash}")
+            assert(Tag[String].hash == -8622366, s"Tag[String].hash = ${Tag[String].hash}")
         }
     }
 

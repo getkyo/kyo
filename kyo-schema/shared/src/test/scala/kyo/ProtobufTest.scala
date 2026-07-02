@@ -1373,9 +1373,9 @@ class ProtobufTest extends kyo.test.Test[Any]:
 
         "INV-PBC-12-reserved-flag-and-control" in {
             val rows    = Protobuf.fieldNumberAudit[PBReserved]
-            val inBand  = rows.find(_.name == "bAt").get
+            val inBand  = rows.find(_.name == "r1641").get
             val control = rows.find(_.name == "ctrl").get
-            assert(inBand.inReservedRange == true, s"'bAt' (number=${inBand.number}) should be in reserved range 19000-19999")
+            assert(inBand.inReservedRange == true, s"'r1641' (number=${inBand.number}) should be in reserved range 19000-19999")
             assert(control.inReservedRange == false, s"'ctrl' (number=${control.number}) should NOT be in reserved range 19000-19999")
         }
 
@@ -1464,13 +1464,13 @@ class ProtobufTest extends kyo.test.Test[Any]:
         }
 
         "INV-PBC-12-reserved-WARNING-comment" in {
-            // Sub-case A: hash-derived-in-band. PBReserved.bAt hashes to 19506.
+            // Sub-case A: hash-derived-in-band. PBReserved.r1641 hashes to 19603.
             val reservedOutput = Protobuf.protoSchema[PBReserved]
-            val bAtLine        = reservedOutput.linesIterator.find(_.contains(" bAt = ")).getOrElse("")
+            val r1641Line      = reservedOutput.linesIterator.find(_.contains(" r1641 = ")).getOrElse("")
             val ctrlLine       = reservedOutput.linesIterator.find(_.contains(" ctrl = ")).getOrElse("")
             assert(
-                bAtLine.contains("WARNING: in proto3 reserved range 19000-19999"),
-                s"'bAt' (hash-derived in reserved band) must carry the WARNING: '$bAtLine'"
+                r1641Line.contains("WARNING: in proto3 reserved range 19000-19999"),
+                s"'r1641' (hash-derived in reserved band) must carry the WARNING: '$r1641Line'"
             )
             assert(
                 !ctrlLine.contains("WARNING"),
@@ -1553,12 +1553,12 @@ class ProtobufTest extends kyo.test.Test[Any]:
         "reserved-range WARNING always emitted even when suppressed" in {
             given Protobuf = Protobuf(Protobuf.Config(protoSchemaProvenance = false))
             val output     = Protobuf.protoSchema[PBReserved]
-            val bAtLine = output.linesIterator.find(_.contains(" bAt = ")).getOrElse(
-                fail(s"'bAt' field not found in protoSchema output:\n$output")
+            val r1641Line = output.linesIterator.find(_.contains(" r1641 = ")).getOrElse(
+                fail(s"'r1641' field not found in protoSchema output:\n$output")
             )
             assert(
-                bAtLine.contains("WARNING: in proto3 reserved range 19000-19999"),
-                s"reserved-range WARNING must be emitted even when protoSchemaProvenance=false: '$bAtLine'"
+                r1641Line.contains("WARNING: in proto3 reserved range 19000-19999"),
+                s"reserved-range WARNING must be emitted even when protoSchemaProvenance=false: '$r1641Line'"
             )
         }
 
@@ -1714,8 +1714,8 @@ case class PBAuditInner(id: Int) derives Schema, CanEqual
 case class PBAuditPerson(name: String, inner: PBAuditInner) derives Schema, CanEqual
 case class PBAuditReuse(list: List[PBAuditInner], map: Map[String, PBAuditInner], ints: List[Int]) derives Schema, CanEqual
 case class PBAuditTree(value: Int, children: List[PBAuditTree]) derives Schema, CanEqual
-// bAt hashes to 19506 (in proto3 reserved range 19000-19999); ctrl is the out-of-band control field.
-case class PBReserved(bAt: Int, ctrl: Int) derives Schema, CanEqual
+// r1641 hashes to 19603 (in proto3 reserved range 19000-19999); ctrl is the out-of-band control field.
+case class PBReserved(r1641: Int, ctrl: Int) derives Schema, CanEqual
 
 // Holder for testing that the reserved-range WARNING fires unconditionally on pinned-in-band numbers.
 case class PBReservedPinnedHolder(x: Int) derives Schema, CanEqual

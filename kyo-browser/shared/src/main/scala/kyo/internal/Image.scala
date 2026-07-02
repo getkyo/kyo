@@ -28,7 +28,7 @@ final case class Image private (data: Span[Byte]) derives CanEqual:
 
     /** Two `Image` values are equal when their byte payloads are byte-identical. The default case-class equality compares `data` via the
       * underlying `Array`'s reference identity (because `Span[Byte]` is an opaque alias over `Array[Byte]`), so we override `equals` /
-      * `hashCode` to derive content-equality from [[Span.is]] and the bytewise `MurmurHash3` of the payload.
+      * `hashCode` to derive content-equality from [[Span.is]] and the bytewise XXH32 of the payload.
       */
     override def equals(other: Any): Boolean =
         other match
@@ -36,8 +36,7 @@ final case class Image private (data: Span[Byte]) derives CanEqual:
             case _           => false
 
     override def hashCode: Int =
-        // Unsafe: hashing the underlying array bytes; MurmurHash3.bytesHash reads only, does not mutate.
-        scala.util.hashing.MurmurHash3.bytesHash(data.toArrayUnsafe)
+        XXHash.hash32(data)
 
     /** Writes the image to a file in raw binary format. */
     def writeFileBinary(path: String)(using Frame): Unit < (Sync & Abort[FileWriteException]) =
