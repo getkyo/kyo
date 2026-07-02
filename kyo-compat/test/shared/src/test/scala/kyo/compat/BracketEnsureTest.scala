@@ -209,4 +209,35 @@ class BracketEnsureTest extends CompatTest:
         }
     }
 
+    "acquireReleaseWith runs release when use is cut short by a timeout" in run {
+        // A timed-out `use` must still release its resource. Ox cancellation is thread interruption,
+        // so the timed-out `use` exits via InterruptedException; on bindings without cancellation the
+        // `use` runs to completion orphaned. Either way release must run.
+        val released = new AtomicBoolean(false)
+        val bracket: CIO[Int] =
+            CIO.acquireReleaseWith(CIO.unit)(_ =>
+                CIO.defer { val _ = released.set(true) }
+            )(_ => CIO.sleep(200.millis).map(_ => 0))
+        CIO.timeout(50.millis)(bracket).flatMap { result =>
+            // Wait past the use duration so release has fired on every binding before asserting.
+            CIO.sleep(500.millis).map { _ =>
+                assert(result.isEmpty, s"expected timeout (None), got: $result")
+                assert(released.get, "release did not run after use was cut short by the timeout")
+            }
+        }
+    }
+
+    "ensure runs the cleanup when the computation is cut short by a timeout" in run {
+        // Same shape as above via the `ensure` entry point (delegates to acquireReleaseWith).
+        val ran = new AtomicBoolean(false)
+        val guarded: CIO[Int] =
+            CIO.ensure(CIO.defer { val _ = ran.set(true) })(CIO.sleep(200.millis).map(_ => 0))
+        CIO.timeout(50.millis)(guarded).flatMap { result =>
+            CIO.sleep(500.millis).map { _ =>
+                assert(result.isEmpty, s"expected timeout (None), got: $result")
+                assert(ran.get, "cleanup did not run after the computation was cut short by the timeout")
+            }
+        }
+    }
+
 end BracketEnsureTest
