@@ -1,5 +1,6 @@
 package kyo
 
+import kyo.internal.XXHash
 import org.scalatest.freespec.AnyFreeSpec
 
 class RolloutTest extends AnyFreeSpec {
@@ -682,7 +683,7 @@ class RolloutTest extends AnyFreeSpec {
         }
 
         "bucketFor never returns negative (Int.MinValue hash edge case)" in {
-            // MurmurHash3 can return Int.MinValue, which made Math.abs overflow.
+            // Hash functions can return Int.MinValue, which made Math.abs overflow.
             // Test with many keys to increase chance of hitting problematic hashes.
             for (i <- 0 until 100000) {
                 val b = Rollout.bucketFor(s"hashtest-$i")
@@ -699,7 +700,7 @@ class RolloutTest extends AnyFreeSpec {
                 "Int.MinValue",
                 "\u0000",
                 "x" * 10000,
-                scala.util.hashing.MurmurHash3.stringHash("probe").toString
+                XXHash.hash32("probe").toString
             )
             keys.foreach { key =>
                 val b = Rollout.bucketFor(key)

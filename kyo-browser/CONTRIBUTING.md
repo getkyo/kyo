@@ -323,7 +323,7 @@ protocol, in order, is: best-effort `settleForCapture` pre-settle, await
 transitions paused, caret hidden), then loop the base capture until two consecutive
 frames hash-identical or `captureHoldStillTimeout` elapses, returning the last frame
 (`HoldStill.scala:5-39`). It is best-effort: it NEVER aborts on timeout. Equality is
-`Image.hashCode` over the DECODED image bytes (a content hash via `MurmurHash3.bytesHash`),
+`Image.hashCode` over the DECODED image bytes (a content hash via XXH32),
 NOT an image-diff algorithm and NOT the base64 wire string; using `img.binary.hashCode`
 would compare `Array` reference identity and never converge (`HoldStill.scala:42-51`).
 

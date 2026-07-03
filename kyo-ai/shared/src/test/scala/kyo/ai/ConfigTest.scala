@@ -27,11 +27,27 @@ class ConfigTest extends kyo.test.Test[Any]:
         assert(cfg.temperature.isEmpty)
     }
 
-    "Provider.all carries exactly the 7 providers in order, each with a valid Completion backend" in {
+    "provider override flags use the documented names" in {
+        assert(provider.name == "kyo.ai.provider")
+        assert(provider.envName == "KYO_AI_PROVIDER")
+    }
+
+    "Provider.all carries exactly the providers in order, each with a valid Completion backend" in {
         val names = Config.Provider.all.map(_.name)
-        assert(names == Chunk("Anthropic", "OpenAI", "DeepSeek", "Gemini", "Groq", "Baseten", "OpenRouter"))
+        assert(names == Chunk("Anthropic", "OpenAI", "DeepSeek", "Gemini", "Groq", "Baseten", "OpenRouter", "Claude Code", "Codex"))
+        assert(Config.Provider.apiKeyProviders.map(_.name) == Chunk(
+            "Anthropic",
+            "OpenAI",
+            "DeepSeek",
+            "Gemini",
+            "Groq",
+            "Baseten",
+            "OpenRouter"
+        ))
         assert(Config.Anthropic.completion eq Completion.anthropic)
         assert(Config.OpenAI.completion eq Completion.openAI)
+        assert(Config.ClaudeCode.completion eq Completion.claudeCode)
+        assert(Config.Codex.completion eq Completion.codex)
     }
 
     "default auto-selects the keyed provider via kyo.System and fills its key" in {
@@ -45,6 +61,31 @@ class ConfigTest extends kyo.test.Test[Any]:
     "default falls back to Anthropic when no key is set" in {
         val customSystem = System(new TestUnsafeSystem())
         System.let(customSystem)(Config.default).map(cfg => assert(cfg.provider.name == "Anthropic"))
+    }
+
+    "default prefers command harness markers before API provider keys" in {
+        val customSystem = System(new TestUnsafeSystem(properties = Map("CODEX" -> "1", "CLAUDE_CODE" -> "1")))
+        System.let(customSystem)(Config.default).map(cfg => assert(cfg.provider.name == "Claude Code"))
+    }
+
+    "default selects Codex when its marker is present and Claude Code is absent" in {
+        val customSystem = System(new TestUnsafeSystem(properties = Map("CODEX" -> "1", "ANTHROPIC_API_KEY" -> "key")))
+        System.let(customSystem)(Config.default).map(cfg => assert(cfg.provider.name == "Codex"))
+    }
+
+    "init for command harness providers does not read API key or org settings" in {
+        val customSystem = System(new TestUnsafeSystem(properties =
+            Map(
+                "CODEX"     -> "not-an-api-key",
+                "CODEX_ORG" -> "not-an-org"
+            )
+        ))
+        System.let(customSystem)(Config.init(Config.Codex, Config.Codex.default.modelName, Config.Codex.default.modelMaxTokens)).map {
+            cfg =>
+                assert(cfg.provider eq Config.Codex)
+                assert(cfg.apiKey.isEmpty)
+                assert(cfg.apiOrg.isEmpty)
+        }
     }
 
     "named catalog entries are pure Config literals (key absent) with the right model and token cap" in {
@@ -89,10 +130,9 @@ class ConfigTest extends kyo.test.Test[Any]:
         assert(cfg.modelName == "claude-x" && cfg.modelMaxTokens == 1000 && cfg.provider.name == "Anthropic")
     }
 
-    "every provider default is a pure catalog entry: non-empty model, positive cap, absent key, matching provider" in {
+    "every provider default is a pure catalog entry with positive cap, absent key, matching provider" in {
         Config.Provider.all.foreach { p =>
             val d = p.default
-            assert(d.modelName.nonEmpty, s"${p.name} default modelName is empty")
             assert(d.modelMaxTokens > 0, s"${p.name} default token cap not positive: ${d.modelMaxTokens}")
             assert(d.apiKey.isEmpty, s"${p.name} default must leave the key absent (filled at use)")
             assert(d.provider eq p, s"${p.name} default provider mismatch: ${d.provider.name}")
@@ -108,6 +148,8 @@ class ConfigTest extends kyo.test.Test[Any]:
         assert(Config.Groq.default.modelName == "openai/gpt-oss-120b")
         assert(Config.Baseten.default.modelName == "deepseek-ai/DeepSeek-V4-Pro")
         assert(Config.OpenRouter.default.modelName == "x-ai/grok-4-fast:nitro")
+        assert(Config.ClaudeCode.default.modelName == "sonnet")
+        assert(Config.Codex.default.modelName == "")
     }
 
     private class TestUnsafeSystem(

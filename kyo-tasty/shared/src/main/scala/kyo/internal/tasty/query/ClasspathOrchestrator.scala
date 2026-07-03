@@ -82,6 +82,11 @@ object ClasspathOrchestrator:
         typeBySymbol: mutable.LongMap[Tasty.Type],
         commentsBySymbol: mutable.LongMap[String],
         positionsBySymbol: mutable.LongMap[Tasty.Position],
+        /** Per-symbol declaration full-extent range, keyed by loading-symbol id in lock-step with
+          * `positionsBySymbol`. Produced by `PositionsUnpickler.read` alongside the definition points;
+          * remapped to final SymbolIds and aggregated into `DecodeContext.declarationRangeStore` in finalizeMerge.
+          */
+        declarationRangesBySymbol: mutable.LongMap[Tasty.SourceRange],
         ownerBySymbol: mutable.LongMap[LoadingSymbol.Materialising],
         bodyDataByAddr: mutable.LongMap[(Int, Int)],
         sectionBytes: Array[Byte],
@@ -102,7 +107,18 @@ object ClasspathOrchestrator:
           * Populated during readAndDecodeTastyFile when a same-named .class file exists alongside the .tasty file.
           * Consumed by finalizeMerge to write descs(idx).javaMetadata for TASTy-loaded class symbols.
           */
-        companionJavaMeta: mutable.LongMap[Tasty.Java.Metadata]
+        companionJavaMeta: mutable.LongMap[Tasty.Java.Metadata],
+        /** Raw Positions-section bytes for this pickle, retained so `PositionsUnpickler.readSpans` can run
+          * lazily at first occurrence-index query instead of at load. Empty when the file carries no
+          * Positions section. Consumed by finalizeMerge to populate `positionsStore`, keyed by pickle index.
+          */
+        positionsSectionBytes: Array[Byte],
+        /** Per-class-like-symbol extends/with parent type-ref (absolute-address, decoded Type) capture, keyed by
+          * loading-symbol id, parallel to `parentsBySymbol`. Produced by `AstUnpickler.decodeTemplateParents`;
+          * finalizeMerge resolves each Type to a final parent SymbolId and records the address -> SymbolId
+          * use site into `parentOccurrenceStore`, keyed by this file's pickle index.
+          */
+        parentRefAddrsBySymbol: mutable.LongMap[Chunk[(Int, Tasty.Type)]]
     )
 
     /** Tagged union for results flowing through the result channel.
@@ -134,9 +150,18 @@ object ClasspathOrchestrator:
         val packageIndex: mutable.HashMap[String, LoadingSymbol.Materialising]  = mutable.HashMap.empty
         val allSyms: mutable.ArrayBuffer[LoadingSymbol.Materialising]           = mutable.ArrayBuffer.empty
         // LongSet (LongMap[Unit]) keyed on LoadingSymbol.Materialising.id: unique per-instance, cross-platform.
-        val allSymsSet: mutable.LongMap[Unit]                                  = mutable.LongMap.empty
-        val topLevelCls: mutable.ArrayBuffer[LoadingSymbol.Materialising]      = mutable.ArrayBuffer.empty
-        val packages: mutable.ArrayBuffer[LoadingSymbol.Materialising]         = mutable.ArrayBuffer.empty
+        val allSymsSet: mutable.LongMap[Unit]                             = mutable.LongMap.empty
+        val topLevelCls: mutable.ArrayBuffer[LoadingSymbol.Materialising] = mutable.ArrayBuffer.empty
+        val packages: mutable.ArrayBuffer[LoadingSymbol.Materialising]    = mutable.ArrayBuffer.empty
+
+        /** Every Package partial seen for a given fully-qualified name, across every file. A package
+          * is legitimately split across files (each file that opens it registers its OWN partial
+          * during its own per-file Pass 1), so a single fully-qualified name can carry more than one
+          * entry here; `finalizeMerge` collapses each group to one canonical final SymbolId, see
+          * `packagesByFullName`'s use there.
+          */
+        val packagesByFullName: mutable.HashMap[String, mutable.ArrayBuffer[LoadingSymbol.Materialising]] =
+            mutable.HashMap.empty
         val accErrors: mutable.ArrayBuffer[TastyError]                         = mutable.ArrayBuffer.empty
         val fileResults: mutable.ArrayBuffer[FileResult]                       = mutable.ArrayBuffer.empty
         val moduleIndex: mutable.HashMap[String, Tasty.Java.Module.Descriptor] = mutable.HashMap.empty
@@ -212,12 +237,26 @@ object ClasspathOrchestrator:
         concurrency: Int
     )(using
         Frame
-    ): (Tasty.Classpath, java.util.concurrent.ConcurrentHashMap[SymbolId, SymbolBody]) < (Sync & Async & Scope & Abort[TastyError]) =
+    ): (
+        Tasty.Classpath,
+        java.util.concurrent.ConcurrentHashMap[SymbolId, SymbolBody],
+        java.util.concurrent.ConcurrentHashMap[
+            Int,
+            Span[Byte]
+        ],
+        java.util.concurrent.ConcurrentHashMap[SymbolId, Tasty.SourceRange],
+        java.util.concurrent.ConcurrentHashMap[Int, Chunk[(Int, SymbolId)]]
+    ) < (Sync & Async & Scope & Abort[TastyError]) =
         // Unsafe: ConcurrentHashMap allocation for body store; same pattern as DecodeContext.fresh().
         // Sync.Unsafe.defer supplies AllowUnsafe for the bare-Java mutable allocation; the resulting
         // ConcurrentHashMap is shared across decode fibers via runPhaseAB's MultiProducerMultiConsumer
         // channels, so the allocation crosses fiber boundaries cleanly.
-        Sync.Unsafe.defer(new java.util.concurrent.ConcurrentHashMap[SymbolId, SymbolBody]()).map { bodyStore =>
+        Sync.Unsafe.defer((
+            new java.util.concurrent.ConcurrentHashMap[SymbolId, SymbolBody](),
+            new java.util.concurrent.ConcurrentHashMap[Int, Span[Byte]](),
+            new java.util.concurrent.ConcurrentHashMap[SymbolId, Tasty.SourceRange](),
+            new java.util.concurrent.ConcurrentHashMap[Int, Chunk[(Int, SymbolId)]]()
+        )).map { (bodyStore, positionsStore, declarationRangeStore, parentOccurrenceStore) =>
             Kyo.foreach(roots) { root =>
                 if root.startsWith("jrt:/") then Sync.defer(true)
                 else
@@ -235,12 +274,20 @@ object ClasspathOrchestrator:
                         case (root, false) => TastyError.FileNotFound(root): TastyError
                     })
                 ZipHandle.withPool {
-                    runPhaseAB(validRoots, mode, concurrency, Maybe.Present(bodyStore))
+                    runPhaseAB(
+                        validRoots,
+                        mode,
+                        concurrency,
+                        Maybe.Present(bodyStore),
+                        Maybe.Present(positionsStore),
+                        Maybe.Present(declarationRangeStore),
+                        Maybe.Present(parentOccurrenceStore)
+                    )
                 }.map { classpath =>
                     val finalCp =
                         if preErrors.nonEmpty then Tasty.Classpath.copyWithPreErrors(classpath, preErrors)
                         else classpath
-                    (finalCp, bodyStore)
+                    (finalCp, bodyStore, positionsStore, declarationRangeStore, parentOccurrenceStore)
                 }
             }
         }
@@ -260,7 +307,10 @@ object ClasspathOrchestrator:
         roots: Seq[String],
         mode: Tasty.ErrorMode,
         concurrency: Int,
-        bodyStoreOutput: Maybe[java.util.concurrent.ConcurrentHashMap[SymbolId, SymbolBody]] = Maybe.Absent
+        bodyStoreOutput: Maybe[java.util.concurrent.ConcurrentHashMap[SymbolId, SymbolBody]] = Maybe.Absent,
+        positionsStoreOutput: Maybe[java.util.concurrent.ConcurrentHashMap[Int, Span[Byte]]] = Maybe.Absent,
+        declarationRangeStoreOutput: Maybe[java.util.concurrent.ConcurrentHashMap[SymbolId, Tasty.SourceRange]] = Maybe.Absent,
+        parentOccurrenceStoreOutput: Maybe[java.util.concurrent.ConcurrentHashMap[Int, Chunk[(Int, SymbolId)]]] = Maybe.Absent
     )(using Frame): Tasty.Classpath < (Sync & Async & Abort[TastyError]) =
         val decodeConcurrency = concurrency.max(1)
         val rootCount         = roots.size.max(1)
@@ -346,7 +396,14 @@ object ClasspathOrchestrator:
                                     Chunk(producerWithClose, decoderWithClose, mergerWithTiming)
                                 Async.foreach(stages, 3) { stage =>
                                     stage
-                                }.andThen(finalizeMerge(mergeState, mode, bodyStoreOutput)).map { result =>
+                                }.andThen(finalizeMerge(
+                                    mergeState,
+                                    mode,
+                                    bodyStoreOutput,
+                                    positionsStoreOutput,
+                                    declarationRangeStoreOutput,
+                                    parentOccurrenceStoreOutput
+                                )).map { result =>
                                     (if timingEnabled then
                                          Sync.Unsafe.defer {
                                              val t_end       = java.lang.System.nanoTime()
@@ -598,6 +655,21 @@ object ClasspathOrchestrator:
                         state.allSymsSet(symbol.id.toLong) = ()
                 end for
 
+                // The synthetic per-file root Package("") (fr.symbolsInOrder's first element, per
+                // FileResult's construction) carries an EMPTY fully-qualified name, so computeFullName's
+                // `.nonEmpty` guard excludes it from fullNameKeys/fullNameSymbols below -- it never
+                // reaches the fullName-keyed loop that registers every other package into
+                // packagesByFullName. Register it here instead, under the same "" key every file's root
+                // shares, so finalizeMerge's duplicate-package collapse (see packagesByFullName's use
+                // there) also unions every file's top-level declarations onto ONE canonical root, instead
+                // of leaving N independent per-file roots where only rootId (hardcoded to whichever root
+                // happens to land at final index 0) is ever reachable from Classpath.root.
+                if fr.symbolsInOrder.nonEmpty then
+                    val fileRoot = fr.symbolsInOrder.head
+                    if fileRoot.kind == SymbolKind.Package then
+                        state.packagesByFullName.getOrElseUpdate("", mutable.ArrayBuffer.empty) += fileRoot
+                end if
+
                 val frKeys = fr.fullNameKeys
                 val frSyms = fr.fullNameSymbols
                 var fnIdx  = 0
@@ -678,6 +750,7 @@ object ClasspathOrchestrator:
                         case SymbolKind.Package =>
                             state.packages += symbol
                             state.packageIndex(fullName) = symbol
+                            state.packagesByFullName.getOrElseUpdate(fullName, mutable.ArrayBuffer.empty) += symbol
                         case SymbolKind.Class | SymbolKind.Trait | SymbolKind.Object |
                             SymbolKind.EnumCase =>
                             state.topLevelCls += symbol
@@ -796,7 +869,10 @@ object ClasspathOrchestrator:
     private def finalizeMerge(
         state: MergeState,
         mode: Tasty.ErrorMode,
-        bodyStoreOutput: Maybe[java.util.concurrent.ConcurrentHashMap[SymbolId, SymbolBody]] = Maybe.Absent
+        bodyStoreOutput: Maybe[java.util.concurrent.ConcurrentHashMap[SymbolId, SymbolBody]] = Maybe.Absent,
+        positionsStoreOutput: Maybe[java.util.concurrent.ConcurrentHashMap[Int, Span[Byte]]] = Maybe.Absent,
+        declarationRangeStoreOutput: Maybe[java.util.concurrent.ConcurrentHashMap[SymbolId, Tasty.SourceRange]] = Maybe.Absent,
+        parentOccurrenceStoreOutput: Maybe[java.util.concurrent.ConcurrentHashMap[Int, Chunk[(Int, SymbolId)]]] = Maybe.Absent
     )(using Frame): Tasty.Classpath < (Sync & Abort[TastyError]) =
         val canonical   = TypeArena.canonical()
         val fileResults = state.fileResults.toSeq
@@ -814,22 +890,72 @@ object ClasspathOrchestrator:
         }.andThen {
             TastyStat.scope.traceSpan("finalize.materializeSymbols") {
                 Sync.Unsafe.defer {
-                    // Build a map from LoadingSymbol.Materialising.id -> final SymbolId (index in allPartial).
-                    // LongMap keyed on m.id (unique per-instance); replaces the former IdentityHashMap approach.
-                    // Pre-size the backing arrays to allPartial.length so the LongMap is allocated once instead
-                    // of repacking (re-allocating and copying its long[]/Object[] arrays) ~log2(count) times as
-                    // it fills with the classpath's symbols.
-                    val symbolIdMap = new mutable.LongMap[Int](allPartial.length * 2)
-                    var i           = 0
-                    for symbol <- allPartial do
-                        symbolIdMap(symbol.id.toLong) = i
-                        i += 1
+                    // Duplicate-package collapse: a package is legitimately split across every file that
+                    // opens it, and each file's own per-file Pass 1 registers its OWN Package partial for
+                    // the same fully-qualified name (AstUnpickler.scala:188,301). Left uncollapsed, each
+                    // partial would get its own final SymbolId below, producing multiple independent
+                    // Package symbols for the SAME fully-qualified name in one classpath, each carrying
+                    // only its own file's slice of the package's declarations -- a findMember(package,
+                    // name) call resolving through whichever duplicate a given reference happens to embed
+                    // would then miss members declared in a sibling file's slice (the parent-clause /
+                    // type-param-bound resolution chain hit exactly this: JVM and JS/Native picked
+                    // different duplicates, because which file's registration is merged last is decided by
+                    // concurrent decode-fiber completion order, which differs per platform's scheduler).
+                    // Collapse every fully-qualified-name group with more than one partial down to ONE
+                    // canonical partial; every other partial in the group redirects to the canonical
+                    // partial's final id instead of receiving its own, and (below, at the declarationIds
+                    // population loop) every file's contribution is unioned onto that one id rather than
+                    // the last file's contribution overwriting the rest.
+                    //
+                    // Canonical is chosen by lowest Materialising.id, not by arrival order into this
+                    // group (Phase C merge order, itself dictated by concurrent decode-fiber completion,
+                    // which differs per platform's scheduler): `id` is the AtomicInt each file's Pass 1
+                    // walk claims while decoding, so at the concurrency == 1 configuration this codebase
+                    // already treats as its determinism baseline (see the entry-sort comment above, "byte
+                    // -equal snapshot idempotency when concurrency == 1"), files decode strictly in
+                    // sorted-path order and `minBy(_.id)` reduces to "the alphabetically-first file that
+                    // declares this package" -- reproducible run to run, not scheduler-dependent. At
+                    // concurrency > 1 the chosen id can still vary by platform, the same tier of
+                    // best-effort determinism `fileResults`-ordered scaladoc/sourcePosition assignment
+                    // below already has; picking by id value instead of by this group's incidental
+                    // insertion order removes an extra, unnecessary source of divergence from Phase C's
+                    // own merge scheduling on top of that.
+                    val packageCanonicalOf = mutable.LongMap.empty[LoadingSymbol.Materialising]
+                    for (_, group) <- state.packagesByFullName do
+                        if group.length > 1 then
+                            val canonical = group.minBy(_.id)
+                            for dup <- group do
+                                if dup ne canonical then packageCanonicalOf(dup.id.toLong) = canonical
+                            end for
+                        end if
                     end for
 
-                    val count = allPartial.length
+                    // Build a map from LoadingSymbol.Materialising.id -> final SymbolId (index in
+                    // descPartials, i.e. allPartial minus the non-canonical package duplicates collapsed
+                    // above). LongMap keyed on m.id (unique per-instance); replaces the former
+                    // IdentityHashMap approach. Pre-size the backing arrays to allPartial.length so the
+                    // LongMap is allocated once instead of repacking (re-allocating and copying its
+                    // long[]/Object[] arrays) ~log2(count) times as it fills with the classpath's symbols.
+                    val symbolIdMap  = new mutable.LongMap[Int](allPartial.length * 2)
+                    val descPartials = new mutable.ArrayBuffer[LoadingSymbol.Materialising](allPartial.length)
+                    var i            = 0
+                    for symbol <- allPartial do
+                        if !packageCanonicalOf.contains(symbol.id.toLong) then
+                            symbolIdMap(symbol.id.toLong) = i
+                            descPartials += symbol
+                            i += 1
+                        end if
+                    end for
+                    // Redirect every non-canonical package duplicate to its canonical's already-assigned
+                    // final id, so every reference to any of the duplicates resolves identically.
+                    for (dupId, canonical) <- packageCanonicalOf do
+                        symbolIdMap(dupId) = symbolIdMap.getOrElse(canonical.id.toLong, -1)
+                    end for
+
+                    val count = descPartials.length
                     val descs = new Array[SymbolDescriptor](count)
                     i = 0
-                    for partialSym <- allPartial do
+                    for partialSym <- descPartials do
                         val id = i
                         // Post-process kind: reclassify all forms of Scala 3 enum cases and Java enum
                         // constants to EnumCase. The initial classification from AstUnpickler/ClassfileUnpickler
@@ -1084,11 +1210,69 @@ object ClasspathOrchestrator:
                             if idx >= 0 && idx < count then
                                 val typeParams   = children.filter(_.kind == SymbolKind.TypeParam)
                                 val declarations = children.filter(_.kind != SymbolKind.TypeParam)
-                                descs(idx).typeParamIds = typeParams.map(c => symbolIdMap.getOrElse(c.id.toLong, -1)).filter(_ >= 0)
-                                descs(idx).declarationIds = declarations.map(c => symbolIdMap.getOrElse(c.id.toLong, -1)).filter(_ >= 0)
+                                // Union, deduped (not overwrite): a package's own childrenByOwner entry is
+                                // keyed by its per-file partial id, and every duplicate partial for the
+                                // same fully-qualified name now redirects (via symbolIdMap, above) to the
+                                // SAME canonical idx, so a package accumulates declarations across every
+                                // file that opens it instead of the last file's contribution clobbering
+                                // the rest. `.distinct` because a MULTI-LEVEL duplicate chain (e.g. the
+                                // root package AND one of its children both split across the same two
+                                // files) would otherwise union in the same already-canonical child id once
+                                // per contributing file. A no-op for any owner that only ever receives one
+                                // contribution.
+                                val newTypeParamIds =
+                                    typeParams.map(c => symbolIdMap.getOrElse(c.id.toLong, -1)).filter(_ >= 0)
+                                val newDeclarationIds =
+                                    declarations.map(c => symbolIdMap.getOrElse(c.id.toLong, -1)).filter(_ >= 0)
+                                descs(idx).typeParamIds = (descs(idx).typeParamIds ++ newTypeParamIds).distinct
+                                descs(idx).declarationIds = (descs(idx).declarationIds ++ newDeclarationIds).distinct
                             end if
                         }
                     end for
+
+                    // Resolve parent-clause TypeRef markers into a genuine final SymbolId, now that
+                    // declarationIds is populated for every desc (immediately above). A TypeRef(qual, name)
+                    // in parentTypes is produced by TYPEREFin/SELECTtpt/SELECTin when the qualifier is an
+                    // address-resolvable same-file reference (e.g. a nested class named via its enclosing
+                    // object, `extends Outer.Nested`): Pass 1 cannot synchronously compute the qualifier's
+                    // fully-qualified name string (its owner chain isn't built yet), so the decode site defers
+                    // to this address-based reference instead of fabricating an unresolvable one. Unlike
+                    // declaredType/bounds (resolved lazily and query-time by OccurrenceScanner.classLikeOf),
+                    // parentTypes has no TypeRef-aware consumer: parents(), allMembersOf, and
+                    // buildSubclassIndex all require a plain Named entry, and empty-parentTypes default-parent
+                    // injection (below) would also misfire on a lingering TypeRef, so this must resolve here.
+                    def resolveParentTypeRef(t: Tasty.Type): Tasty.Type = t match
+                        case Tasty.Type.TypeRef(qual, name) =>
+                            resolveParentTypeRef(qual) match
+                                case Tasty.Type.Named(ownerSid) if ownerSid.value >= 0 && ownerSid.value < count =>
+                                    import kyo.Tasty.Name.asString
+                                    val nm = name.asString
+                                    descs(ownerSid.value).declarationIds.find(cid =>
+                                        cid >= 0 && cid < count && descs(cid).name.asString == nm
+                                    ) match
+                                        case Some(cid) => Tasty.Type.Named(SymbolId(cid))
+                                        case None      => t
+                                    end match
+                                case _ => t
+                        case _ => t
+                    end resolveParentTypeRef
+
+                    // The final head SymbolId a parent type denotes: a plain Named parent is that symbol; an
+                    // applied parent (`extends Foo[Bar]`) is its constructor `Foo`. Returns -1 for a shape with
+                    // no in-range Named head. Used to match a captured parent type-ref address against the
+                    // class's actual resolved parents when building parentOccurrenceStore.
+                    def parentHeadSid(t: Tasty.Type): Int = t match
+                        case Tasty.Type.Named(sid) if sid.value >= 0 && sid.value < count => sid.value
+                        case Tasty.Type.Applied(base, _)                                  => parentHeadSid(base)
+                        case _                                                            => -1
+
+                    var ptIdx = 0
+                    while ptIdx < count do
+                        if descs(ptIdx).parentTypes.nonEmpty then
+                            descs(ptIdx).parentTypes = descs(ptIdx).parentTypes.map(resolveParentTypeRef)
+                        end if
+                        ptIdx += 1
+                    end while
 
                     // Copy the Pass-1 parameter-list partition from each Method loading symbol into its
                     // descriptor. The carrier is LoadingSymbol.Materialising.paramListIds (Chunk[Chunk[Int]])
@@ -1114,26 +1298,46 @@ object ClasspathOrchestrator:
                         val frRemap3 = fileRemaps(frIdx3)
                         fr.typeBySymbol.foreach { case (symId, t) =>
                             val idx = symbolIdMap.getOrElse(symId, -1)
-                            if idx >= 0 && idx < count && descs(idx).declaredType.isEmpty then
+                            if idx >= 0 && idx < count then
                                 val remapped = remapType(t, frRemap3)
-                                // Drop Named(SymbolId(-1)) sentinels: a sentinel in declaredType position
-                                // means the type could not be resolved. Leave declaredType as Absent so
-                                // FailFast can surface TastyError.MissingDeclaredType instead of exposing
-                                // a sentinel in the produced public ADT.
-                                remapped match
-                                    case Tasty.Type.Named(sid) if sid.value == -1 => ()
-                                    case _: Tasty.Type.Named | _: Tasty.Type.TermRef | _: Tasty.Type.Applied |
-                                        _: Tasty.Type.TypeLambda | _: Tasty.Type.Function | _: Tasty.Type.ContextFunction |
-                                        _: Tasty.Type.Tuple | _: Tasty.Type.ByName | _: Tasty.Type.Repeated |
-                                        _: Tasty.Type.Array | _: Tasty.Type.Refinement | _: Tasty.Type.Rec |
-                                        _: Tasty.Type.RecThis | _: Tasty.Type.AndType | _: Tasty.Type.OrType |
-                                        _: Tasty.Type.Annotated | _: Tasty.Type.ConstantType | _: Tasty.Type.ThisType |
-                                        _: Tasty.Type.SuperType | _: Tasty.Type.ParamRef | _: Tasty.Type.Wildcard |
-                                        _: Tasty.Type.Skolem | _: Tasty.Type.MatchType | _: Tasty.Type.FlexibleType |
-                                        _: Tasty.Type.Bind | _: Tasty.Type.MatchCase | _: Tasty.Type.TypeRef | _: Tasty.Type.Bounds |
-                                        Tasty.Type.Nothing | Tasty.Type.Any =>
-                                        descs(idx).declaredType = Maybe(remapped)
-                                end match
+                                // TypeParam/AbstractType carry their declared constraint as `bounds: TypeBounds`,
+                                // not `declaredType`; neither TypedSymbolFactory case reads `d.declaredType` for
+                                // them. OpaqueType is EXCLUDED here even though it also has a `bounds` field: its
+                                // ONE `typeBySymbol` entry is the alias body (fed to `d.declaredType`, consumed by
+                                // OpaqueType.body), so it keeps the declaredType path below unchanged; its
+                                // `bounds` field has no decode source yet and stays the existing sentinel.
+                                val isBoundsKind = descs(idx).kind == SymbolKind.TypeParam || descs(idx).kind == SymbolKind.AbstractType
+                                if isBoundsKind && descs(idx).bounds.isEmpty then
+                                    // A TYPEPARAM/ABSTRACTTYPE node with both a lower and an upper bound decodes
+                                    // as Type.Bounds(lo, hi) (TYPEBOUNDS tag); one with only an upper bound (the
+                                    // common case, e.g. `A <: SomeTrait`) decodes as that upper type directly.
+                                    // Either way, the sentinel TypeBounds(Nothing, Any) never masks a
+                                    // genuinely-declared bound.
+                                    remapped match
+                                        case Tasty.Type.Named(sid) if sid.value == -1 => ()
+                                        case Tasty.Type.Bounds(lo, hi)                => descs(idx).bounds = Maybe(Tasty.TypeBounds(lo, hi))
+                                        case other => descs(idx).bounds = Maybe(Tasty.TypeBounds(Tasty.Type.Nothing, other))
+                                    end match
+                                else if !isBoundsKind && descs(idx).declaredType.isEmpty then
+                                    // Drop Named(SymbolId(-1)) sentinels: a sentinel in declaredType position
+                                    // means the type could not be resolved. Leave declaredType as Absent so
+                                    // FailFast can surface TastyError.MissingDeclaredType instead of exposing
+                                    // a sentinel in the produced public ADT.
+                                    remapped match
+                                        case Tasty.Type.Named(sid) if sid.value == -1 => ()
+                                        case _: Tasty.Type.Named | _: Tasty.Type.TermRef | _: Tasty.Type.Applied |
+                                            _: Tasty.Type.TypeLambda | _: Tasty.Type.Function | _: Tasty.Type.ContextFunction |
+                                            _: Tasty.Type.Tuple | _: Tasty.Type.ByName | _: Tasty.Type.Repeated |
+                                            _: Tasty.Type.Array | _: Tasty.Type.Refinement | _: Tasty.Type.Rec |
+                                            _: Tasty.Type.RecThis | _: Tasty.Type.AndType | _: Tasty.Type.OrType |
+                                            _: Tasty.Type.Annotated | _: Tasty.Type.ConstantType | _: Tasty.Type.ThisType |
+                                            _: Tasty.Type.SuperType | _: Tasty.Type.ParamRef | _: Tasty.Type.Wildcard |
+                                            _: Tasty.Type.Skolem | _: Tasty.Type.MatchType | _: Tasty.Type.FlexibleType |
+                                            _: Tasty.Type.Bind | _: Tasty.Type.MatchCase | _: Tasty.Type.TypeRef | _: Tasty.Type.Bounds |
+                                            Tasty.Type.Nothing | Tasty.Type.Any =>
+                                            descs(idx).declaredType = Maybe(remapped)
+                                    end match
+                                end if
                             end if
                         }
                         frIdx3 += 1
@@ -1148,7 +1352,7 @@ object ClasspathOrchestrator:
                     // but not the -1 placeholder. After typeParamIds are set, replace each
                     // TypeLambda.paramId=-1 with the corresponding positional entry from typeParamIds.
                     i = 0
-                    for symbol <- allPartial do
+                    for symbol <- descPartials do
                         val d = descs(i)
                         if symbol.kind == SymbolKind.OpaqueType && d.typeParamIds.nonEmpty then
                             d.declaredType match
@@ -1176,7 +1380,7 @@ object ClasspathOrchestrator:
                     // Default declaredType for Class/Trait/Object/EnumCase: Type.Named(SymbolId(i)).
                     // Use SymbolId(i), not symbol.id (which is SymbolId(-1) for all partial symbols).
                     i = 0
-                    for symbol <- allPartial do
+                    for symbol <- descPartials do
                         if descs(i).declaredType.isEmpty then
                             val k = symbol.kind
                             if k == SymbolKind.Class || k == SymbolKind.Trait
@@ -1203,6 +1407,19 @@ object ClasspathOrchestrator:
                                 descs(idx).sourcePosition = Maybe(pos)
                         }
                     end for
+
+                    // Aggregate each file's declaration full-extent ranges into the runtime declarationRangeStore,
+                    // remapping the loading-symbol id to its FINAL SymbolId exactly as the sourcePosition loop above
+                    // does. Keyed by final SymbolId so Tasty.declarationRange(symbol) resolves by symbol.id. This
+                    // store is never serialized; a pure-snapshot load leaves it empty (declarationRange -> Absent).
+                    declarationRangeStoreOutput.foreach { store =>
+                        for fr <- fileResults do
+                            fr.declarationRangesBySymbol.foreach { (symId, range) =>
+                                val idx = symbolIdMap.getOrElse(symId, -1)
+                                if idx >= 0 && idx < count then discard(store.putIfAbsent(SymbolId(idx), range))
+                            }
+                        end for
+                    }
 
                     // Populate annotations from ANNOTATION modifier blocks decoded during per-file decode.
                     // Each annotation's tycon may contain Named(negId) cross-file refs; remap through
@@ -1686,7 +1903,47 @@ object ClasspathOrchestrator:
                         qIdx += 1
                     end while
 
-                    for fr <- fileResults do
+                    for (fr, fi) <- fileResults.zipWithIndex do
+                        // Resolve every in-file definition address to its FINAL SymbolId so a lazily-decoded
+                        // body resolves use-site IDENT/SELECT references; the addrToFinal map computed at
+                        // fileRemaps supplies the address-to-id mapping.
+                        val fileAddrMap: scala.collection.immutable.IntMap[SymbolId] =
+                            var m = scala.collection.immutable.IntMap.empty[SymbolId]
+                            fileRemaps(fi).addrToFinal.forEach((addr, finalIdx) => m = m.updated(addr, SymbolId(finalIdx)))
+                            m
+                        end fileAddrMap
+                        // Retain this pickle's Positions-section bytes, keyed by the pickle index fi (Concern 2:
+                        // a String(sourceFile) key collides across pickles of one .scala). A per-pickle copy of just
+                        // the Positions-section bytes (not the whole-file array), so readSpans runs lazily at first query, not at load.
+                        positionsStoreOutput.foreach { store =>
+                            if fr.positionsSectionBytes.nonEmpty then
+                                discard(store.put(fi, Span.fromUnsafe(fr.positionsSectionBytes)))
+                        }
+                        // Capture this pickle's extends/with parent-clause use sites, keyed by the pickle index fi
+                        // (the key occurrencesInFile joins against this pickle's PositionMap). For each class-like
+                        // symbol, resolve every captured parent type-ref address to a final SymbolId via the same
+                        // remap/resolve path parentTypes takes, keeping only addresses that point at one of the
+                        // class's actual resolved parents. distinct because one parent name can decode into more
+                        // than one type node at the same address span (the constructor call and its inner type ref).
+                        parentOccurrenceStoreOutput.foreach { store =>
+                            val refs = new mutable.ArrayBuffer[(Int, SymbolId)]()
+                            fr.parentRefAddrsBySymbol.foreach { case (symId, captured) =>
+                                val idx = symbolIdMap.getOrElse(symId, -1)
+                                if idx >= 0 && idx < count then
+                                    val parentHeadSids: Set[Int] =
+                                        descs(idx).parentTypes.iterator.map(parentHeadSid).filter(_ >= 0).toSet
+                                    if parentHeadSids.nonEmpty then
+                                        captured.foreach { case (addr, cachedType) =>
+                                            val resolved =
+                                                parentHeadSid(resolveParentTypeRef(remapType(cachedType, fileRemaps(fi))))
+                                            if resolved >= 0 && parentHeadSids.contains(resolved) then
+                                                discard(refs += ((addr, SymbolId(resolved))))
+                                        }
+                                    end if
+                                end if
+                            }
+                            if refs.nonEmpty then discard(store.put(fi, Chunk.from(refs).distinct))
+                        }
                         fr.bodyDataByAddr.foreach { case (symId, bodyData) =>
                             val bodyStart = bodyData._1
                             val bodyEnd   = bodyData._2
@@ -1702,7 +1959,8 @@ object ClasspathOrchestrator:
                                                 sectionBytes = Span.fromUnsafe(fr.sectionBytes),
                                                 names = Span.fromUnsafe(fr.fileNames),
                                                 sectionOffset = fr.sectionOffset,
-                                                addrMap = scala.collection.immutable.IntMap.empty
+                                                addrMap = fileAddrMap,
+                                                pickleId = fi
                                             )
                                         ))
                                     case Maybe.Absent =>
@@ -1844,11 +2102,14 @@ object ClasspathOrchestrator:
                         val idx = symbolIdMap.getOrElse(partial.id.toLong, -1)
                         pkgIdBuf += pkg -> (if idx >= 0 then SymbolId(idx) else SymbolId(-1))
                     end for
-                    // packages list: unresolvable entries use SymbolId(-1).
+                    // packages list: unresolvable entries use SymbolId(-1). Distinct because every
+                    // non-canonical package duplicate (see the collapse above) redirects to its
+                    // canonical's id, so `packages` (the raw per-file partial list) can carry the SAME
+                    // final id more than once; the public listing must show each package exactly once.
                     val pkgIdsList = packages.map { partial =>
                         val idx = symbolIdMap.getOrElse(partial.id.toLong, -1)
                         if idx >= 0 then SymbolId(idx) else SymbolId(-1)
-                    }
+                    }.distinct
 
                     val finalErrors   = Chunk.from(accErrors)
                     val symsChunk     = Chunk.from(finalSymbols)
@@ -2213,6 +2474,7 @@ object ClasspathOrchestrator:
             mutable.LongMap.empty[Tasty.Type],
             mutable.LongMap.empty[String],
             mutable.LongMap.empty[Tasty.Position],
+            mutable.LongMap.empty[Tasty.SourceRange],
             mutable.LongMap.empty[LoadingSymbol.Materialising],
             mutable.LongMap.empty[(Int, Int)],
             Array.empty[Byte],
@@ -2221,7 +2483,9 @@ object ClasspathOrchestrator:
             scala.collection.immutable.IntMap.empty[LoadingSymbol.Materialising],
             mutable.HashMap.empty[Int, String],
             mutable.LongMap.empty[mutable.ArrayBuffer[Tasty.Annotation]],
-            mutable.LongMap.empty[Tasty.Java.Metadata]
+            mutable.LongMap.empty[Tasty.Java.Metadata],
+            Array.empty[Byte],
+            mutable.LongMap.empty[Chunk[(Int, Tasty.Type)]]
         )
 
     /** Time a synchronous Result-returning computation, adding elapsed nanoseconds to `counter`.
@@ -2267,16 +2531,23 @@ object ClasspathOrchestrator:
             commentsBySymbol <- timed(TastyPerfStats.commentsUnpicklerNs)(sections.get(TastyFormat.CommentsSection) match
                 case Present((offset, length)) =>
                     val commentsView = view.subView(offset, offset + length)
-                    CommentsUnpickler.read(commentsView, pass1Result.addrMap)
+                    CommentsUnpickler.read(commentsView, pass1Result.addrMap, pass1Result.sectionOffset)
                 case Absent =>
                     Result.Success(mutable.LongMap.empty[String]))
-            positionsBySymbol <- timed(TastyPerfStats.positionsUnpicklerNs)(sections.get(TastyFormat.PositionsSection) match
+            positions <- timed(TastyPerfStats.positionsUnpicklerNs)(sections.get(TastyFormat.PositionsSection) match
                 case Present((offset, length)) =>
                     val posView = view.subView(offset, offset + length)
-                    PositionsUnpickler.read(posView, pass1Result.addrMap, attrs.sourceFile)
+                    PositionsUnpickler.read(posView, pass1Result.addrMap, attrs.sourceFile, pass1Result.sectionOffset)
                 case Absent =>
-                    Result.Success(mutable.LongMap.empty[Tasty.Position]))
+                    Result.Success((mutable.LongMap.empty[Tasty.Position], mutable.LongMap.empty[Tasty.SourceRange])))
         yield
+            val (positionsBySymbol, declarationRangesBySymbol) = positions
+            // Retain the Positions section's own bytes (a copy, not the whole-file shared array) so
+            // readSpans can decode it lazily at first occurrence-index query, without keeping the
+            // Positions section's decode context (typeSession, addrMap) alive past load.
+            val positionsSectionBytes: Array[Byte] = sections.get(TastyFormat.PositionsSection) match
+                case Present((offset, length)) => java.util.Arrays.copyOfRange(bytes, offset, offset + length)
+                case Absent                    => Array.empty[Byte]
             // computeFullName walks the ownerBySymbol chain to build the dotted fully-qualified name.
             val ownerBySymbol = pass1Result.ownerBySymbol
             // Accumulate the (fullName, symbol) associations as two aligned arrays: no per-pair Tuple2 and no
@@ -2311,6 +2582,7 @@ object ClasspathOrchestrator:
                 pass1Result.typeBySymbol,
                 commentsBySymbol,
                 positionsBySymbol,
+                declarationRangesBySymbol,
                 pass1Result.ownerBySymbol,
                 pass1Result.bodyDataByAddr,
                 pass1Result.sectionBytes,
@@ -2321,7 +2593,9 @@ object ClasspathOrchestrator:
                 pass1Result.annotationsBySymbol,
                 // companionJavaMeta is populated by readAndDecodeTastyFile AFTER decodeTastyBytes returns,
                 // so this field starts empty here and is filled in the caller.
-                mutable.LongMap.empty[Tasty.Java.Metadata]
+                mutable.LongMap.empty[Tasty.Java.Metadata],
+                positionsSectionBytes,
+                pass1Result.parentRefAddrsBySymbol
             )
         end for
     end decodeTastyBytes
@@ -2486,10 +2760,19 @@ object ClasspathOrchestrator:
             val coldLoad: Binding < (Sync & Async & Scope & Abort[TastyError]) =
                 cacheDir match
                     case Maybe.Absent =>
-                        initWithBodies(coldRoots, mode, concurrency).map { (coldCp, bodyStore) =>
-                            val merged = if bundledCp.symbols.isEmpty then coldCp
-                            else BundledSnapshotProbe.mergePartialInto(bundledCp, coldCp)
-                            Binding(merged, Maybe.Present(DecodeContext.fresh(bodyStore)))
+                        initWithBodies(coldRoots, mode, concurrency).map {
+                            (coldCp, bodyStore, positionsStore, declarationRangeStore, parentOccurrenceStore) =>
+                                val merged = if bundledCp.symbols.isEmpty then coldCp
+                                else BundledSnapshotProbe.mergePartialInto(bundledCp, coldCp)
+                                Binding(
+                                    merged,
+                                    Maybe.Present(DecodeContext.fresh(
+                                        bodyStore,
+                                        positionsStore,
+                                        declarationRangeStore,
+                                        parentOccurrenceStore
+                                    ))
+                                )
                         }
                     case Maybe.Present(dir) =>
                         import kyo.internal.tasty.snapshot.DigestComputer as SnapshotDigest
@@ -2498,10 +2781,19 @@ object ClasspathOrchestrator:
                         Abort.run[TastyError](SnapshotDigest.compute(coldRoots)).map {
                             case Result.Failure(_) | Result.Panic(_) =>
                                 // Digest failed (e.g. browser platform): fall through to cold load.
-                                initWithBodies(coldRoots, mode, concurrency).map { (coldCp, bodyStore) =>
-                                    val merged = if bundledCp.symbols.isEmpty then coldCp
-                                    else BundledSnapshotProbe.mergePartialInto(bundledCp, coldCp)
-                                    Binding(merged, Maybe.Present(DecodeContext.fresh(bodyStore)))
+                                initWithBodies(coldRoots, mode, concurrency).map {
+                                    (coldCp, bodyStore, positionsStore, declarationRangeStore, parentOccurrenceStore) =>
+                                        val merged = if bundledCp.symbols.isEmpty then coldCp
+                                        else BundledSnapshotProbe.mergePartialInto(bundledCp, coldCp)
+                                        Binding(
+                                            merged,
+                                            Maybe.Present(DecodeContext.fresh(
+                                                bodyStore,
+                                                positionsStore,
+                                                declarationRangeStore,
+                                                parentOccurrenceStore
+                                            ))
+                                        )
                                 }
                             case Result.Success(digest) =>
                                 val hexDigest    = SnapshotDigest.toHexString(digest)
@@ -2516,19 +2808,37 @@ object ClasspathOrchestrator:
                                                 Binding(merged, Maybe.Present(DecodeContext.fresh()))
                                             case Result.Failure(_) | Result.Panic(_) =>
                                                 // Snapshot unreadable; fall through to cold load.
-                                                initWithBodies(coldRoots, mode, concurrency).map { (coldCp, bodyStore) =>
-                                                    val merged = if bundledCp.symbols.isEmpty then coldCp
-                                                    else BundledSnapshotProbe.mergePartialInto(bundledCp, coldCp)
-                                                    Binding(merged, Maybe.Present(DecodeContext.fresh(bodyStore)))
+                                                initWithBodies(coldRoots, mode, concurrency).map {
+                                                    (coldCp, bodyStore, positionsStore, declarationRangeStore, parentOccurrenceStore) =>
+                                                        val merged = if bundledCp.symbols.isEmpty then coldCp
+                                                        else BundledSnapshotProbe.mergePartialInto(bundledCp, coldCp)
+                                                        Binding(
+                                                            merged,
+                                                            Maybe.Present(DecodeContext.fresh(
+                                                                bodyStore,
+                                                                positionsStore,
+                                                                declarationRangeStore,
+                                                                parentOccurrenceStore
+                                                            ))
+                                                        )
                                                 }
                                         }
                                     else
-                                        initWithBodies(coldRoots, mode, concurrency).map { (coldCp, bodyStore) =>
-                                            Abort.run[TastyError](SnapshotWriter.write(coldCp, dir, digest)).andThen {
-                                                val merged = if bundledCp.symbols.isEmpty then coldCp
-                                                else BundledSnapshotProbe.mergePartialInto(bundledCp, coldCp)
-                                                Binding(merged, Maybe.Present(DecodeContext.fresh(bodyStore)))
-                                            }
+                                        initWithBodies(coldRoots, mode, concurrency).map {
+                                            (coldCp, bodyStore, positionsStore, declarationRangeStore, parentOccurrenceStore) =>
+                                                Abort.run[TastyError](SnapshotWriter.write(coldCp, dir, digest)).andThen {
+                                                    val merged = if bundledCp.symbols.isEmpty then coldCp
+                                                    else BundledSnapshotProbe.mergePartialInto(bundledCp, coldCp)
+                                                    Binding(
+                                                        merged,
+                                                        Maybe.Present(DecodeContext.fresh(
+                                                            bodyStore,
+                                                            positionsStore,
+                                                            declarationRangeStore,
+                                                            parentOccurrenceStore
+                                                        ))
+                                                    )
+                                                }
                                         }
                                 }
                         }
@@ -2599,8 +2909,12 @@ object ClasspathOrchestrator:
                 }
             val roots                              = indexed.map(_._1)
             val bytesMap: Map[String, Array[Byte]] = indexed.toMap
-            initWithBodiesFromBytesMap(roots, bytesMap).map { (classpath, bodyStore) =>
-                Binding(classpath, Maybe.Present(DecodeContext.fresh(bodyStore)))
+            initWithBodiesFromBytesMap(roots, bytesMap).map {
+                (classpath, bodyStore, positionsStore, declarationRangeStore, parentOccurrenceStore) =>
+                    Binding(
+                        classpath,
+                        Maybe.Present(DecodeContext.fresh(bodyStore, positionsStore, declarationRangeStore, parentOccurrenceStore))
+                    )
             }
     end loadPickles
 
@@ -2614,15 +2928,36 @@ object ClasspathOrchestrator:
         bytesMap: Map[String, Array[Byte]]
     )(using
         Frame
-    ): (Tasty.Classpath, java.util.concurrent.ConcurrentHashMap[SymbolId, SymbolBody]) < (Sync & Async & Scope & Abort[TastyError]) =
+    ): (
+        Tasty.Classpath,
+        java.util.concurrent.ConcurrentHashMap[SymbolId, SymbolBody],
+        java.util.concurrent.ConcurrentHashMap[
+            Int,
+            Span[Byte]
+        ],
+        java.util.concurrent.ConcurrentHashMap[SymbolId, Tasty.SourceRange],
+        java.util.concurrent.ConcurrentHashMap[Int, Chunk[(Int, SymbolId)]]
+    ) < (Sync & Async & Scope & Abort[TastyError]) =
         // Unsafe: ConcurrentHashMap allocation for body store; same pattern as DecodeContext.fresh().
         // Sync.Unsafe.defer supplies AllowUnsafe for the bare-Java mutable allocation; the resulting
         // ConcurrentHashMap is shared across the Phase A/B pipeline via runPhaseABFromBytesMap.
-        Sync.Unsafe.defer(new java.util.concurrent.ConcurrentHashMap[SymbolId, SymbolBody]()).map { bodyStore =>
+        Sync.Unsafe.defer((
+            new java.util.concurrent.ConcurrentHashMap[SymbolId, SymbolBody](),
+            new java.util.concurrent.ConcurrentHashMap[Int, Span[Byte]](),
+            new java.util.concurrent.ConcurrentHashMap[SymbolId, Tasty.SourceRange](),
+            new java.util.concurrent.ConcurrentHashMap[Int, Chunk[(Int, SymbolId)]]()
+        )).map { (bodyStore, positionsStore, declarationRangeStore, parentOccurrenceStore) =>
             // All roots exist (they are in-memory keys). No existence check needed.
             // No pool for in-memory reads (no jar mmap needed).
-            runPhaseABFromBytesMap(roots, bytesMap, Maybe.Present(bodyStore)).map { classpath =>
-                (classpath, bodyStore)
+            runPhaseABFromBytesMap(
+                roots,
+                bytesMap,
+                Maybe.Present(bodyStore),
+                Maybe.Present(positionsStore),
+                Maybe.Present(declarationRangeStore),
+                Maybe.Present(parentOccurrenceStore)
+            ).map { classpath =>
+                (classpath, bodyStore, positionsStore, declarationRangeStore, parentOccurrenceStore)
             }
         }
     end initWithBodiesFromBytesMap
@@ -2631,7 +2966,10 @@ object ClasspathOrchestrator:
     private def runPhaseABFromBytesMap(
         roots: Seq[String],
         bytesMap: Map[String, Array[Byte]],
-        bodyStoreOutput: Maybe[java.util.concurrent.ConcurrentHashMap[SymbolId, SymbolBody]] = Maybe.Absent
+        bodyStoreOutput: Maybe[java.util.concurrent.ConcurrentHashMap[SymbolId, SymbolBody]] = Maybe.Absent,
+        positionsStoreOutput: Maybe[java.util.concurrent.ConcurrentHashMap[Int, Span[Byte]]] = Maybe.Absent,
+        declarationRangeStoreOutput: Maybe[java.util.concurrent.ConcurrentHashMap[SymbolId, Tasty.SourceRange]] = Maybe.Absent,
+        parentOccurrenceStoreOutput: Maybe[java.util.concurrent.ConcurrentHashMap[Int, Chunk[(Int, SymbolId)]]] = Maybe.Absent
     )(using Frame): Tasty.Classpath < (Sync & Async & Abort[TastyError]) =
         val decodeConcurrency = 1
         val rootCount         = roots.size.max(1)
@@ -2656,7 +2994,14 @@ object ClasspathOrchestrator:
                     Channel.initUnscoped[DecodeResult](resultCap, Access.MultiProducerMultiConsumer).map { resultCh =>
                         Scope.ensure(entryCh.close.unit).andThen {
                             Scope.ensure(resultCh.close.unit).andThen {
-                                val producerStage = Async.foreach(Chunk.from(roots), rootCount) { root =>
+                                // Put entries in strict `roots` order (parallelism 1), not concurrently: the
+                                // single decoder consumes the channel FIFO, so a deterministic put order gives a
+                                // deterministic decode/merge order and therefore deterministic symbol ids across
+                                // byte-equal loads, independent of decode timing. A concurrent producer would let
+                                // per-file decode-time variance (e.g. the eager parent-clause capture) reorder
+                                // arrivals and shift ids run to run. In-memory reads are instant, so ordering the
+                                // puts costs no parallelism (the decoder is already single).
+                                val producerStage = Async.foreach(Chunk.from(roots), 1) { root =>
                                     // In-memory: all roots are .tasty "files" in the map.
                                     val entry = root
                                     Abort.run[Closed](entryCh.put((entry, ".tasty"))).unit
@@ -2690,7 +3035,14 @@ object ClasspathOrchestrator:
                                     Chunk(producerWithClose, decoderWithClose, mergerWithTiming)
                                 Async.foreach(stages, 3) { stage =>
                                     stage
-                                }.andThen(finalizeMerge(mergeState, Tasty.ErrorMode.SoftFail, bodyStoreOutput))
+                                }.andThen(finalizeMerge(
+                                    mergeState,
+                                    Tasty.ErrorMode.SoftFail,
+                                    bodyStoreOutput,
+                                    positionsStoreOutput,
+                                    declarationRangeStoreOutput,
+                                    parentOccurrenceStoreOutput
+                                ))
                             }
                         }
                     }

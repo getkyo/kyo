@@ -93,10 +93,10 @@ object AI:
         gen[A]((input1, input2, input3, input4))
 
     /** Projects a generation as a `Stream`, in one of two forms inferred from `A`. For a `String` the stream
-      * is incremental text: each element is a longer prefix of the answer, the terminal one the full text (the
-      * chat-UI, token-by-token case). For any other type the stream is object by object: the model produces a
-      * sequence of `A` and each element is emitted once it is complete, never a half-filled value (the iterable
-      * case, for extracting or generating multiple records). Mints a fresh ephemeral instance to stream against.
+      * is incremental text chunks whose concatenation is the final answer (the chat-UI, token-by-token case).
+      * For any other type the stream is object by object: the model produces a sequence of `A` and each element
+      * is emitted once it is complete, never a half-filled value (the iterable case, for extracting or generating
+      * multiple records). Mints a fresh ephemeral instance to stream against.
       */
     def stream[A: Schema](using Frame, Tag[Emit[Chunk[A]]]): Stream[A, Async & Scope & Abort[AIStreamException]] < LLM =
         init.map(ai => ai.stream[A])

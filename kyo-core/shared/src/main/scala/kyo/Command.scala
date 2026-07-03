@@ -155,6 +155,9 @@ object Command:
         /** Appends the given environment variables (merged on top of the inherited environment). */
         def envAppend(vars: Map[String, String]): Command = self.unsafe.withEnvAppend(vars).safe
 
+        /** Removes the given variables from the inherited or configured process environment. */
+        def envRemove(names: Iterable[String]): Command = self.unsafe.withEnvRemove(names.toSet).safe
+
         /** Replaces the entire environment with the given variables. */
         def envReplace(vars: Map[String, String]): Command = self.unsafe.withEnvReplace(vars).safe
 
@@ -221,6 +224,8 @@ object Command:
     private[kyo] enum EnvMode derives CanEqual:
         case Inherit
         case Append(vars: Map[String, String])
+        case Remove(names: Set[String])
+        case AppendThenRemove(vars: Map[String, String], names: Set[String])
         case Replace(vars: Map[String, String])
         case Clear
         case ClearThenAppend(vars: Map[String, String])
@@ -256,16 +261,19 @@ object Command:
 
         /** Returns the environment variables that will be appended/replaced, or empty if inheriting/cleared. */
         final def env: Map[String, String] = envMode match
-            case EnvMode.Inherit               => Map.empty
-            case EnvMode.Append(vars)          => vars
-            case EnvMode.Replace(vars)         => vars
-            case EnvMode.Clear                 => Map.empty
-            case EnvMode.ClearThenAppend(vars) => vars
+            case EnvMode.Inherit                   => Map.empty
+            case EnvMode.Append(vars)              => vars
+            case EnvMode.Remove(_)                 => Map.empty
+            case EnvMode.AppendThenRemove(vars, _) => vars
+            case EnvMode.Replace(vars)             => vars
+            case EnvMode.Clear                     => Map.empty
+            case EnvMode.ClearThenAppend(vars)     => vars
 
         // --- Pure builder methods (return new Unsafe instances) ---
 
         def withCwd(path: kyo.Path): Unsafe
         def withEnvAppend(vars: Map[String, String]): Unsafe
+        def withEnvRemove(names: Set[String]): Unsafe
         def withEnvReplace(vars: Map[String, String]): Unsafe
         def withEnvClear: Unsafe
         def withStdin(input: Process.Input): Unsafe

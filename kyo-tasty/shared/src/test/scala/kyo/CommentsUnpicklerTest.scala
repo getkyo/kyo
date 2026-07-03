@@ -71,7 +71,7 @@ class CommentsUnpicklerTest extends kyo.test.Test[Any]:
         val addrMap = IntMap(10 -> symbol) // address 10 -> symbol
         val payload = buildSection(10 -> "/** My doc */")
         val view    = ByteView(payload)
-        CommentsUnpickler.read(view, addrMap) match
+        CommentsUnpickler.read(view, addrMap, 0) match
             case Result.Success(result) =>
                 assert(result.size == 1, s"Expected 1 entry but got ${result.size}")
                 // LongMap keyed by symbol.id.toLong, not by symbol object.
@@ -87,7 +87,7 @@ class CommentsUnpicklerTest extends kyo.test.Test[Any]:
 
     "CommentsUnpickler: empty payload returns empty map without error" in {
         val view = ByteView(Array.empty[Byte])
-        CommentsUnpickler.read(view, IntMap.empty) match
+        CommentsUnpickler.read(view, IntMap.empty, 0) match
             case Result.Success(result) =>
                 assert(result.isEmpty, s"Expected empty result but got ${result.size} entries")
             case Result.Failure(e) =>
@@ -111,7 +111,7 @@ class CommentsUnpicklerTest extends kyo.test.Test[Any]:
         val symbol  = makeTestSymbol("Truncated")
         val addrMap = IntMap(5 -> symbol)
         val view    = ByteView(payload)
-        CommentsUnpickler.read(view, addrMap) match
+        CommentsUnpickler.read(view, addrMap, 0) match
             case Result.Success(result) =>
                 fail(s"Expected MalformedSection failure but got success with ${result.size} entries")
             case Result.Failure(TastyError.MalformedSection("Comments", _, _)) =>
@@ -131,7 +131,7 @@ class CommentsUnpicklerTest extends kyo.test.Test[Any]:
         // Only address 1 has a comment; address 2 is in addrMap but has no comment entry in the section.
         val payload = buildSection(1 -> "/** documented */")
         val view    = ByteView(payload)
-        CommentsUnpickler.read(view, addrMap) match
+        CommentsUnpickler.read(view, addrMap, 0) match
             case Result.Success(comments) =>
                 // LongMap keyed by symbol.id.toLong, not by symbol object.
                 assert(
@@ -159,7 +159,7 @@ class CommentsUnpicklerTest extends kyo.test.Test[Any]:
         val addrMap  = IntMap(10 -> symAlpha, 20 -> symBeta)
         val payload  = buildSection(10 -> "/** Alpha doc */", 20 -> "/** Beta doc */")
         val view     = ByteView(payload)
-        CommentsUnpickler.read(view, addrMap) match
+        CommentsUnpickler.read(view, addrMap, 0) match
             case Result.Success(comments) =>
                 assert(comments.size == 2, s"Expected 2 entries but got ${comments.size}")
                 // LongMap keyed by symbol.id.toLong, not by symbol object.

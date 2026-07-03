@@ -795,7 +795,7 @@ final private[kyo] class HttpClientBackend[Handle] private (
                                 // to react to peer close compose ws.onPeerClose into their sender/receiver race.
                                 readFiber.getResult.map { result =>
                                     val log = result match
-                                        case Result.Failure(e) => Log.warn(s"HttpWebSocket client reader failed: $e")
+                                        case Result.Failure(_) => Kyo.unit
                                         case Result.Panic(t)   => Log.warn("HttpWebSocket client reader panicked", t)
                                         case Result.Success(_) => Kyo.unit
                                     log.andThen(inbound.close.unit).andThen(peerClosedPromise.completeUnit.unit)

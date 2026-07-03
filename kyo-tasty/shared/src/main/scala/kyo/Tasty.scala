@@ -1,14 +1,20 @@
 package kyo
 
+import kyo.internal.tasty.binary.ByteView
 import kyo.internal.tasty.binary.Utf8
 import kyo.internal.tasty.query.Binding
 import kyo.internal.tasty.query.ClasspathOrchestrator
 import kyo.internal.tasty.query.DecodeContext
+import kyo.internal.tasty.query.OccurrenceScanner
 import kyo.internal.tasty.query.PlatformModuleOps
 import kyo.internal.tasty.query.TastyStat
+import kyo.internal.tasty.reader.PositionsUnpickler
+import kyo.internal.tasty.reader.PositionsUnpickler.PositionMap
+import kyo.internal.tasty.reader.TreeUnpickler
 import kyo.internal.tasty.snapshot.DigestComputer as SnapshotDigest
 import kyo.internal.tasty.snapshot.SnapshotReader
 import kyo.internal.tasty.snapshot.SnapshotWriter
+import kyo.internal.tasty.symbol.SymbolBody
 import kyo.internal.tasty.symbol.SymbolKind
 import kyo.stats.Attributes
 import scala.collection.immutable.IntMap
@@ -303,6 +309,45 @@ object Tasty:
       */
     def findClassesByName(simpleName: String)(using Frame): Chunk[Symbol.Class] < Sync =
         classpath.map(_.findClassesByName(simpleName))
+
+    /** All symbols declared in `sourceFile` (document-symbol data).
+      *
+      * Thin delegator to `Classpath.symbolsInFile` over the active binding. Returns every symbol
+      * kind whose `sourcePosition.sourceFile` equals `sourceFile`, in ascending `SymbolId` order;
+      * an unknown file yields an empty `Chunk`. Backs `textDocument/documentSymbol`: the consumer
+      * maps each `Symbol` to a document symbol (name, kind from the sealed subtype, range from
+      * `sourcePosition`). O(1) in classpath size via `indices.bySourceFile`.
+      *
+      * @param sourceFile the source-file path exactly as recorded in the TASTy Attributes section
+      * @return all symbols defined in that file, empty when the file is unknown
+      */
+    def symbolsInFile(sourceFile: String)(using Frame): Chunk[Symbol] < Sync =
+        classpath.map(_.symbolsInFile(sourceFile))
+
+    /** All symbols of any kind whose simple name equals `simpleName` (exact workspace symbol).
+      *
+      * Thin delegator to `Classpath.symbolsByName` over the active binding. The all-kinds
+      * counterpart of `findClassesByName`; reads the resident `indices.bySimpleName`. An unknown
+      * or empty name yields an empty `Chunk`. Backs the exact-match arm of `workspace/symbol`.
+      *
+      * @param simpleName the unqualified symbol name to match exactly
+      * @return all symbols with that simple name, empty when none match
+      */
+    def symbolsByName(simpleName: String)(using Frame): Chunk[Symbol] < Sync =
+        classpath.map(_.symbolsByName(simpleName))
+
+    /** All symbols whose simple name starts with `prefix` (incremental workspace symbol).
+      *
+      * Thin delegator to `Classpath.symbolsByPrefix` over the active binding. Scans the distinct
+      * simple-name keys at query time, building no eager index. An empty prefix returns
+      * all named symbols; a non-matching prefix yields an empty `Chunk`. Backs the incremental
+      * query arm of `workspace/symbol`.
+      *
+      * @param prefix the simple-name prefix to match
+      * @return all symbols whose simple name starts with `prefix`
+      */
+    def symbolsByPrefix(prefix: String)(using Frame): Chunk[Symbol] < Sync =
+        classpath.map(_.symbolsByPrefix(prefix))
 
     /** Find a method symbol by owner fully-qualified name and simple method name.
       *
@@ -705,6 +750,281 @@ object Tasty:
             end if
         }
     end bodyTree
+
+    /** Shared per-file occurrence resolver for symbolAt and references.
+      *
+      * The shared `Sync.Unsafe.defer` boundary backing both decode-backed query methods. Returns
+      * the file's memoized occurrences, decoding lazily on first demand and caching only a SUCCESSFUL
+      * file result in `occurrenceMemo`, so a cancelled `references` drain leaves a consistent cache.
+      * Unlike `bodyTree`'s `bodyMemo`, a decode FAILURE is deliberately NOT memoized: a
+      * deterministically-corrupt file re-decodes and re-aborts on each query (rare, and keeps the
+      * cache free of poisoned entries). An absent decode context (no active binding) yields an empty
+      * chunk, exactly as bodyTree returns Absent. Arena-closed and corrupt bytes surface as distinct
+      * typed `TastyError` values, never collapsed.
+      */
+    private[kyo] def occurrencesInFile(sourceFile: String)(using Frame): Chunk[Occurrence] < (Sync & Abort[TastyError]) =
+        bindingLocal.use { mbind =>
+            val maybeCtx = mbind.flatMap(_.decodeCtx)
+            if maybeCtx.isEmpty then Chunk.empty[Occurrence]
+            else
+                val ctx       = maybeCtx.get
+                val classpath = mbind.get.classpath
+                Sync.Unsafe.defer {
+                    // Sync.Unsafe.defer adds no embrace.danger; the decode runs under the
+                    // propagated AllowUnsafe, mirroring bodyTree.
+                    Maybe.fromOption(Option(ctx.occurrenceMemo.get(sourceFile))) match
+                        case Maybe.Present(cached) => cached
+                        case Maybe.Absent =>
+                            val ids    = classpath.indices.bySourceFile.getOrElse(sourceFile, Chunk.empty)
+                            val bodies = ids.flatMap(id => Maybe.fromOption(Option(ctx.bodyStore.get(id))).map(b => (id, b)).toChunk)
+                            // Upfront bounds validation over every body in this file, mirroring bodyTree's
+                            // identical per-symbol check. A malformed (bodyStart, bodyEnd) tuple is documented
+                            // as MalformedSection; computing the verdict from the integers themselves avoids
+                            // relying on a thrown ArrayIndexOutOfBoundsException. Scala.js converts the same
+                            // bounds violation into org.scalajs.linker.runtime.UndefinedBehaviorError (extends
+                            // java.lang.Error, which NonFatal explicitly filters out), so on JS the throw would
+                            // escape every catch arm below and crash the test process. The upfront check is
+                            // platform-agnostic by construction.
+                            val truncatedBody: Option[SymbolBody] = bodies.map(_._2).find { b =>
+                                b.bodyStart < 0 || b.bodyEnd > b.sectionBytes.size || b.bodyStart > b.bodyEnd
+                            }
+                            // A single .scala file can compile to several .tasty pickles (one per top-level
+                            // declaration), each with its own Positions bytes and sectionOffset, so positions
+                            // are joined per pickle, never per file.
+                            val positionsByPickle: Result[TastyError, Map[Int, PositionMap]] =
+                                bodies.groupBy(_._2.pickleId).foldLeft(
+                                    Result.Success(Map.empty[Int, PositionMap]): Result[TastyError, Map[Int, PositionMap]]
+                                ) {
+                                    case (acc, (pickleId, pickleBodies)) =>
+                                        acc.flatMap { built =>
+                                            Maybe.fromOption(Option(ctx.positionsStore.get(pickleId))) match
+                                                case Maybe.Absent            => Result.Success(built)
+                                                case Maybe.Present(posBytes) =>
+                                                    // Unsafe: toArrayUnsafe is zero-copy; safe here because positionsStore holds
+                                                    // a freshly-allocated per-pickle array (ClasspathOrchestrator.finalizeMerge),
+                                                    // never aliased or mutated after retention.
+                                                    val view = ByteView(posBytes.toArrayUnsafe, 0, posBytes.size)
+                                                    PositionsUnpickler.readSpans(
+                                                        view,
+                                                        pickleBodies.head._2.sectionOffset,
+                                                        Maybe(sourceFile)
+                                                    )
+                                                        .map(pm => built.updated(pickleId, pm))
+                                        }
+                                }
+                            truncatedBody match
+                                case Some(b) =>
+                                    Abort.fail(TastyError.MalformedSection(
+                                        "ASTs",
+                                        s"truncated body: bodyStart=${b.bodyStart}, bodyEnd=${b.bodyEnd}, sectionSize=${b.sectionBytes.size}",
+                                        0L
+                                    ))
+                                case None =>
+                                    positionsByPickle match
+                                        case Result.Failure(e) => Abort.fail(e)
+                                        case Result.Success(byPickle) =>
+                                            val occResult: Result[TastyError, Chunk[Occurrence]] =
+                                                // A file's bySourceFile ids include both a class-like symbol and each of
+                                                // its own members (e.g. an object and its methods), and bodyStore holds a
+                                                // SEPARATE SymbolBody for each: the class-like's body decodes its whole
+                                                // Template (nesting every member's own DefDef/ValDef), while a member's
+                                                // own body decodes that same content again independently. scanFile visits
+                                                // every body in `bodies`, so an address reachable from more than one of
+                                                // them yields the identical (range, symbolId) occurrence more than once.
+                                                // distinct collapses those exact duplicates; it never merges two DIFFERENT
+                                                // occurrences (a shared range resolving to two different symbols, handled
+                                                // by symbolAt's narrowest-span tie-break, survives untouched).
+                                                try
+                                                    // Term and type-position use sites decoded from the bodies, plus the
+                                                    // extends/with parent-clause use sites joined from parentOccurrenceStore
+                                                    // (captured at cold load, not carried in the per-symbol body slice the
+                                                    // scanner decodes). distinct collapses exact duplicates across both.
+                                                    val termAndType = OccurrenceScanner.scanFile(
+                                                        sourceFile,
+                                                        classpath,
+                                                        bodies,
+                                                        byPickle
+                                                    )
+                                                    val parents = parentOccurrences(ctx, sourceFile, classpath, byPickle)
+                                                    Result.Success((termAndType ++ parents).distinct)
+                                                catch
+                                                    // A reader gap on well-formed bytes degrades to an empty result, mirroring
+                                                    // bodyTree's Tree.Unknown degrade.
+                                                    case _: TreeUnpickler.DecodeException  => Result.Success(Chunk.empty[Occurrence])
+                                                    case _: ArrayIndexOutOfBoundsException => Result.Success(Chunk.empty[Occurrence])
+                                                    case ise: IllegalStateException if isArenaClosed(ise) =>
+                                                        Result.Failure(
+                                                            TastyError.ClasspathClosed(s"occurrencesInFile(sourceFile=$sourceFile)")
+                                                        )
+                                                    case _: IllegalStateException => Result.Success(Chunk.empty[Occurrence])
+                                                    case ex: Throwable if NonFatal(ex) =>
+                                                        Result.Failure(TastyError.MalformedSection(
+                                                            "ASTs",
+                                                            s"${ex.getClass.getSimpleName}: ${ex.getMessage}",
+                                                            0L
+                                                        ))
+                                            occResult match
+                                                case Result.Success(occ) =>
+                                                    ctx.occurrenceMemo.put(sourceFile, occ)
+                                                    occ
+                                                case Result.Failure(e) => Abort.fail(e)
+                                            end match
+                                    end match
+                            end match
+                    end match
+                }
+            end if
+        }
+    end occurrencesInFile
+
+    /** The extends/with parent-clause use sites for `sourceFile`, joined from the runtime
+      * `parentOccurrenceStore`. Each of the file's pickles records its parent type-ref addresses (captured
+      * at cold load from `AstUnpickler.decodeTemplateParents`'s eager decode); this joins each address
+      * against that pickle's `PositionMap` (the same `byPickle` map the scanner uses) to recover the parent
+      * name span, then emits a `(range, parentSymbolId)` occurrence. The id is bounds-checked and a
+      * zero-width span is widened to the referenced name, mirroring `OccurrenceScanner`'s own emit. A
+      * pure-snapshot load leaves the store empty, so this yields `Chunk.empty` there.
+      */
+    private def parentOccurrences(
+        ctx: DecodeContext,
+        sourceFile: String,
+        classpath: Classpath,
+        byPickle: scala.collection.Map[Int, PositionMap]
+    ): Chunk[Occurrence] =
+        val syms = classpath.symbols
+        val out  = Chunk.newBuilder[Occurrence]
+        byPickle.foreach { (pickleId, positions) =>
+            val refs = ctx.parentOccurrenceStore.get(pickleId)
+            if refs != null then
+                refs.foreach { (addr, sid) =>
+                    if sid.value >= 0 && sid.value < syms.size then
+                        positions.get(addr) match
+                            case Some((sl, sc, el, ec)) =>
+                                // Widen a zero-width point (a type-level node with no end delta) to the
+                                // referenced name, so a find-references highlight covers the identifier.
+                                val (endLine, endColumn) =
+                                    if sl == el && sc == ec then (sl, sc + syms(sid.value).simpleName.length)
+                                    else (el, ec)
+                                out += Occurrence(SourceRange(sourceFile, sl, sc, endLine, endColumn), sid)
+                            case None => ()
+                }
+            end if
+        }
+        out.result()
+    end parentOccurrences
+
+    /** Resolve the symbol at a 1-based source `position`.
+      *
+      * Returns the symbol DEFINED at the position (cursor exactly at a declaration's recorded start
+      * position, its `sourcePosition`, matched via `bySourceFile`, not anywhere within the name) or
+      * REFERENCED there (cursor anywhere inside a use-site span, via the file occurrence index). `Maybe.Absent` when no symbol covers the
+      * position or when there is no active binding (mirrors `bodyTree`). Decodes only
+      * `position.sourceFile`, lazily and memoized. Positions are 1-based; the LSP 0-based wire
+      * position is converted with `+1` at the call site, never inside kyo-tasty.
+      *
+      * @param position a 1-based `Tasty.Position`
+      * @return the covering symbol, or `Maybe.Absent`
+      */
+    def symbolAt(position: Position)(using Frame): Maybe[Symbol] < (Sync & Abort[TastyError]) =
+        bindingLocal.use { mbind =>
+            val maybeCtx = mbind.flatMap(_.decodeCtx)
+            if maybeCtx.isEmpty then Maybe.Absent
+            else
+                val classpath = mbind.get.classpath
+                occurrencesInFile(position.sourceFile).map { occ =>
+                    val hit = occ
+                        .filter(o => spanContains(o.range, position.line, position.column))
+                        .sortBy(o => spanWidth(o.range))
+                        .headOption
+                    hit match
+                        case Some(o) => classpath.symbol(o.symbolId)
+                        case None    => definitionAt(classpath, position)
+                }
+            end if
+        }
+    end symbolAt
+
+    /** The full declaration extent of `symbol`, as a `SourceRange`.
+      *
+      * Where `Symbol.sourcePosition` gives only the declaration's START point, this returns the whole
+      * span the TASTy Positions section records for the definition: a method's entire `def ... = ...` region, a
+      * val's entire `val ... = ...`, and so on. The range's `(startLine, startColumn)` equals `sourcePosition`'s
+      * `(line, column)`; the end `(endLine, endColumn)` extends to one past the last character, end-exclusive per
+      * `SourceRange`. This is the data behind an LSP `DocumentSymbol.range` and a move-refactoring that relocates a
+      * whole declaration.
+      *
+      * Like `references` and `symbolAt`, this reads a cold-loaded classpath: the extent is computed at load from the
+      * Positions section, held in the active `DecodeContext`, and never serialized into a snapshot. A symbol looked
+      * up outside a `withClasspath(roots, ...)` or `withPickles` scope, or loaded from a pure bundled snapshot,
+      * yields `Maybe.Absent`, as does any symbol with no recorded Positions extent (packages, Java symbols).
+      *
+      * @param symbol the symbol whose declaration extent is requested
+      * @return the full declaration span, or `Maybe.Absent`
+      */
+    def declarationRange(symbol: Symbol)(using Frame): Maybe[Tasty.SourceRange] < Sync =
+        bindingLocal.use { mbind =>
+            val maybeCtx = mbind.flatMap(_.decodeCtx)
+            if maybeCtx.isEmpty then Maybe.Absent
+            else Maybe.fromOption(Option(maybeCtx.get.declarationRangeStore.get(symbol.id)))
+        }
+    end declarationRange
+
+    /** Every use-site occurrence of `symbol` across the classpath, as `SourceRange`s.
+      *
+      * Drains every indexed source file's occurrence index, including `symbol`'s own declaring file
+      * (so same-file uses are returned too), and selects entries whose resolved `SymbolId` equals
+      * `symbol.id`. Term uses (a call, a field access), type-position uses (the symbol used as a `val`,
+      * parameter, or result type, or a type argument), and `extends`/`with` parent-clause uses (a
+      * subclass's reference to its superclass or mixin) are all collected, so a superclass relationship
+      * now surfaces by source location here as well as by symbol via `implementationsOf`.
+      * The declaration site itself is excluded (it is `symbol.sourcePosition`); an LSP
+      * server re-adds it per its request's includeDeclaration flag. `Async`: a cancellation is
+      * observed at the `Sync` safepoints between per-file decodes, and a cancelled drain leaves a
+      * consistent partial cache (each file's occurrenceMemo entry is written whole or not at all).
+      * Matching is `SymbolId` equality, no name re-resolution.
+      *
+      * @param symbol the symbol whose use sites are collected
+      * @return all use-site spans across the classpath
+      */
+    def references(symbol: Symbol)(using Frame): Chunk[SourceRange] < (Async & Abort[TastyError]) =
+        classpath.map { cp =>
+            val files = cp.indices.bySourceFile.toChunk.map(_._1)
+            Kyo.foreachConcat(files) { file =>
+                occurrencesInFile(file).map { occ =>
+                    occ.filter(_.symbolId == symbol.id).map(_.range)
+                }
+            }
+        }
+    end references
+
+    /** Whether `range` covers 1-based `(line, column)`. Start-inclusive, end-exclusive, per
+      * `SourceRange`'s own contract.
+      */
+    private def spanContains(range: SourceRange, line: Int, column: Int): Boolean =
+        val afterStart = line > range.startLine || (line == range.startLine && column >= range.startColumn)
+        val beforeEnd  = line < range.endLine || (line == range.endLine && column < range.endColumn)
+        afterStart && beforeEnd
+    end spanContains
+
+    /** Narrowest-span tie-break key for `symbolAt`: a single-line span's column width. A multi-line
+      * span never outranks a single-line span covering the same start point.
+      */
+    private def spanWidth(range: SourceRange): Int =
+        if range.startLine == range.endLine then range.endColumn - range.startColumn
+        else Int.MaxValue
+
+    /** The symbol DEFINED at `position`: the `bySourceFile` candidate whose `sourcePosition` matches
+      * the cursor exactly. No decode; a pure index lookup mirroring `symbolsInFile`.
+      */
+    private def definitionAt(classpath: Classpath, position: Position): Maybe[Symbol] =
+        val candidates = classpath.indices.bySourceFile.getOrElse(position.sourceFile, Chunk.empty)
+            .flatMap(id => classpath.symbol(id).toChunk)
+        Maybe.fromOption(candidates.find { s =>
+            s.sourcePosition match
+                case Maybe.Present(pos) => pos.line == position.line && pos.column == position.column
+                case Maybe.Absent       => false
+        })
+    end definitionAt
 
     // ── Nested types ────────────────────────────────────────────────────────
     // The vocabulary (SymbolId, Version, Name, Flags, ErrorMode, SubtypeVerdict,
@@ -1188,6 +1508,37 @@ object Tasty:
         /** Human-readable representation: `file:line:column`. */
         def show: String = s"$sourceFile:$line:$column"
     end Position
+
+    /** A contiguous source span: one region of a single source file.
+      *
+      * The element type of `Tasty.references`; each value names one use-site occurrence of a
+      * symbol. A single `sourceFile` for the whole span makes a cross-file range
+      * unrepresentable. All four coordinates are 1-based, matching `Tasty.Position`. The start
+      * `(startLine, startColumn)` is inclusive (the first character of the span); the end
+      * `(endLine, endColumn)` is end-exclusive, the 1-based column one past the last character,
+      * so a half-open `[start, end)` reading maps cleanly onto an editor range. The end is read
+      * directly from the TASTy Positions section, never reconstructed from a name length.
+      *
+      * Equality is structural across all five fields.
+      */
+    final case class SourceRange(
+        sourceFile: String,
+        startLine: Int,
+        startColumn: Int,
+        endLine: Int,
+        endColumn: Int
+    ) derives Schema, CanEqual:
+        /** Human-readable `file:startLine:startColumn-endLine:endColumn`. */
+        def show: String = s"$sourceFile:$startLine:$startColumn-$endLine:$endColumn"
+    end SourceRange
+
+    /** Internal use-site occurrence: a `SourceRange` plus the `SymbolId` it resolves to.
+      *
+      * Produced by `OccurrenceScanner.scanFile` and memoized per file in `DecodeContext`. Never on
+      * the public surface: `symbolAt` returns `Maybe[Symbol]` and `references` returns
+      * `Chunk[SourceRange]`; this carrier stays inside the query layer.
+      */
+    final private[kyo] case class Occurrence(range: SourceRange, symbolId: SymbolId)
 
     /** Common base for all annotation kinds produced by the kyo-tasty loader.
       *
@@ -2220,9 +2571,11 @@ object Tasty:
 
     /** Scope selector for `classpath.members` and `classpath.findMember`.
       *
-      * Three cases: `Declared` (only symbols directly declared on the receiver), `Inherited` (only symbols
-      * inherited from parent types, not directly declared), and `All` (union of declared and inherited,
-      * deduplicated by simple name keeping the most-specific occurrence).
+      * Three cases: `Declared` (only symbols directly declared on the receiver, including private ones), `Inherited`
+      * (only symbols inherited from parent types, not directly declared), and `All` (union of declared and
+      * inherited, deduplicated by simple name keeping the most-specific occurrence). `Inherited` and `All` both
+      * skip a private own-declared symbol entirely rather than let it shadow a same-named public member from a
+      * parent (a private member is never selectable through an inherited-or-external reference).
       *
       * The default scope is `Declared`, matching the most common use case (checking what a class
       * introduces, not what it inherits).
@@ -3330,6 +3683,56 @@ object Tasty:
             }
         end findClassesByName
 
+        /** All symbols declared in `sourceFile`, in ascending `SymbolId` order.
+          *
+          * Reads the immutable `indices.bySourceFile` index, so the lookup is O(1) in classpath
+          * size plus O(k) in the result, not a linear scan over all symbols. Returns every symbol
+          * kind (class, method, val, ...) whose `sourcePosition.sourceFile` equals `sourceFile`.
+          * An unknown or empty path returns an empty `Chunk`. The data behind
+          * `textDocument/documentSymbol`: each returned `Symbol` maps to a document symbol.
+          */
+        def symbolsInFile(sourceFile: String): Chunk[Symbol] =
+            indices.bySourceFile.getOrElse(sourceFile, Chunk.empty).flatMap { id =>
+                symbol(id) match
+                    case Maybe.Present(s) => Chunk(s)
+                    case Maybe.Absent     => Chunk.empty
+            }
+        end symbolsInFile
+
+        /** All symbols of any kind whose simple name equals `simpleName`.
+          *
+          * The all-kinds counterpart of `findClassesByName`, which narrows the same
+          * `indices.bySimpleName` index to classes. Reads the resident index, so the lookup is
+          * O(1) in classpath size plus O(k) in the result. An unknown or empty name returns an
+          * empty `Chunk`. The data behind the exact-match arm of `workspace/symbol`.
+          */
+        def symbolsByName(simpleName: String): Chunk[Symbol] =
+            indices.bySimpleName.getOrElse(simpleName, Chunk.empty).flatMap { id =>
+                symbol(id) match
+                    case Maybe.Present(s) => Chunk(s)
+                    case Maybe.Absent     => Chunk.empty
+            }
+        end symbolsByName
+
+        /** All symbols whose simple name starts with `prefix`.
+          *
+          * Scans the distinct keys of `indices.bySimpleName` at query time, so no new eager index
+          * is built at load. An empty prefix returns all named symbols; a non-matching
+          * prefix returns an empty `Chunk`. The data behind the incremental query of
+          * `workspace/symbol`. Results follow ascending `SymbolId` order within each matched name.
+          */
+        def symbolsByPrefix(prefix: String): Chunk[Symbol] =
+            indices.bySimpleName.foldLeft(Chunk.empty[Symbol]) { (acc, name, ids) =>
+                if name.startsWith(prefix) then
+                    acc ++ ids.flatMap { id =>
+                        symbol(id) match
+                            case Maybe.Present(s) => Chunk(s)
+                            case Maybe.Absent     => Chunk.empty
+                    }
+                else acc
+            }
+        end symbolsByPrefix
+
         /** All package symbols in this classpath.
           *
           * Pure accessor over the immutable `packageIds` Chunk. Each id is resolved and narrowed to `Symbol.Package`; ids that resolve to
@@ -4129,9 +4532,12 @@ object Tasty:
           *   `declarations`). O(n) in the number of declared members.
           * - `MemberScope.Inherited`: symbols inherited from parent types and not redeclared on
           *   `symbol`. The parent walk deduplicates by `simpleName`; the first (most-specific)
-          *   occurrence wins.
-          * - `MemberScope.All`: union of Declared and Inherited, deduplicated by `simpleName`.
-          *   Most-specific (nearest in the hierarchy) symbol wins on name clash.
+          *   occurrence wins. A PRIVATE own declaration is not treated as a redeclaration (it cannot
+          *   shadow a same-named inherited public member), so the inherited member is still returned.
+          * - `MemberScope.All`: the own-declared plus inherited members, deduplicated by `simpleName`
+          *   (most-specific in the hierarchy wins on a clash). Like `Inherited`, `All` drops a PRIVATE
+          *   own declaration (a private member is never selectable through an inherited-or-external
+          *   reference), so `All` is NOT a strict superset of `Declared`, which keeps private declarations.
           *
           * For `Symbol.Package`, `Declared` and `All` both read `memberIds`; `Inherited` returns
           * empty (packages do not inherit).
@@ -4151,7 +4557,12 @@ object Tasty:
                     val declIds = symbol match
                         case c: Symbol.ClassLike => c.declarationIds
                         case p: Symbol.Package   => p.memberIds
-                    declIds.foreach(id => this.symbol(id).foreach(s => discard(directNames.add(s.simpleName))))
+                    // A private own-declared symbol (e.g. a val-less primary-constructor parameter
+                    // retained as a private[this] field) is never selectable from outside its own
+                    // class, so it must not shadow a same-named PUBLIC member inherited from a parent:
+                    // skip it here too, mirroring allMembersOf's own isPrivate skip (the tasty-query#195
+                    // shape: a `Child(y: Int)` ctor param must never hide the inherited `Parent.y`).
+                    declIds.foreach(id => this.symbol(id).foreach(s => if !s.isPrivate then discard(directNames.add(s.simpleName))))
                     allMembersOf(symbol).filter(s => !directNames.contains(s.simpleName))
                 case MemberScope.All =>
                     allMembersOf(symbol)
@@ -4287,8 +4698,16 @@ object Tasty:
                     def visit(cl: Symbol.ClassLike): Unit =
                         cl.declarationIds.foreach { id =>
                             this.symbol(id).foreach { d =>
-                                val nm = d.simpleName
-                                if seen.add(nm) then out += d
+                                // A private own-declared symbol (e.g. a val-less primary-constructor
+                                // parameter retained as a private[this] field) is never selectable from
+                                // outside its own class, so it must not shadow a same-named PUBLIC member
+                                // inherited from a parent: skip it entirely for both the "seen" shadow-set
+                                // and the output, rather than let a private artifact block the genuinely
+                                // visible member (the tasty-query#195 shape: a `Child(y: Int)` ctor param
+                                // must never hide the inherited `Parent.y`).
+                                if !d.isPrivate then
+                                    val nm = d.simpleName
+                                    if seen.add(nm) then out += d
                             }
                         }
                         cl.parentTypes.foreach {
@@ -4392,7 +4811,8 @@ object Tasty:
             topLevelClassIds: Chunk[SymbolId],
             packageIds: Chunk[SymbolId],
             unresolvedFullNameByNegId: Dict[SymbolId, String],
-            diagnostics: Chunk[Classpath.Diagnostic]
+            diagnostics: Chunk[Classpath.Diagnostic],
+            bySourceFile: Dict[String, Chunk[SymbolId]]
         ) derives CanEqual:
             // Dict is an opaque type without structural == ; override equals to use Dict.is
             // for each Dict field so that structural comparison works as expected for case class equality.
@@ -4407,7 +4827,8 @@ object Tasty:
                     topLevelClassIds == i.topLevelClassIds &&
                     packageIds == i.packageIds &&
                     unresolvedFullNameByNegId.is(i.unresolvedFullNameByNegId)(using CanEqual.canEqualAny, CanEqual.canEqualAny) &&
-                    diagnostics == i.diagnostics
+                    diagnostics == i.diagnostics &&
+                    bySourceFile.is(i.bySourceFile)(using CanEqual.canEqualAny, CanEqual.canEqualAny)
                 case _ => false // carve-out: Any is open; exhaustive enumeration is not possible here
             end equals
 
@@ -4430,6 +4851,7 @@ object Tasty:
                 h = 31 * h + packageIds.hashCode
                 h = 31 * h + dictHash(unresolvedFullNameByNegId)
                 h = 31 * h + diagnostics.hashCode
+                h = 31 * h + dictHash(bySourceFile)
                 h
             end hashCode
         end Indices
@@ -4445,7 +4867,8 @@ object Tasty:
                 topLevelClassIds = Chunk.empty,
                 packageIds = Chunk.empty,
                 unresolvedFullNameByNegId = Dict.empty[SymbolId, String],
-                diagnostics = Chunk.empty
+                diagnostics = Chunk.empty,
+                bySourceFile = Dict.empty[String, Chunk[SymbolId]]
             )
         end Indices
 
@@ -4603,6 +5026,16 @@ object Tasty:
                 }
                 Dict.from(b.map((k, v) => k -> Chunk.from(v)).toMap)
             end bySimpleName
+            val bySourceFile: Dict[String, Chunk[SymbolId]] =
+                val b = scala.collection.mutable.HashMap.empty[String, scala.collection.mutable.ArrayBuffer[SymbolId]]
+                symbols.foreach { symbol =>
+                    symbol.sourcePosition match
+                        case Maybe.Present(pos) =>
+                            b.getOrElseUpdate(pos.sourceFile, new scala.collection.mutable.ArrayBuffer()) += symbol.id
+                        case Maybe.Absent => ()
+                }
+                Dict.from(b.map((k, v) => k -> Chunk.from(v)).toMap)
+            end bySourceFile
             val moduleValues =
                 val builder = Chunk.newBuilder[Java.Module.Descriptor]
                 moduleIndex.foreach((_, v) => builder += v)
@@ -4620,7 +5053,8 @@ object Tasty:
                     topLevelClassIds = topLevelClassIds,
                     packageIds = packageIds,
                     unresolvedFullNameByNegId = unresolvedFullNameByNegId,
-                    diagnostics = diagnostics
+                    diagnostics = diagnostics,
+                    bySourceFile = bySourceFile
                 ),
                 errors = errors,
                 modules = moduleValues,

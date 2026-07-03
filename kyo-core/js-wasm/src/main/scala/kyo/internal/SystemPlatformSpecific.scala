@@ -10,6 +10,19 @@ import scala.scalajs.js
   * `"Mac OS X"`, `"Linux"`) so downstream `String.contains("mac")` checks just work.
   */
 private[kyo] object SystemPlatformSpecific:
+    def env(name: String)(using AllowUnsafe): String =
+        val proc = js.Dynamic.global.process
+        if js.typeOf(proc) == "undefined" || js.typeOf(proc.env) == "undefined" then null
+        else
+            val value = proc.env.selectDynamic(name)
+            if js.isUndefined(value) || value == null then null
+            else value.asInstanceOf[String]
+        end if
+    end env
+
+    def property(name: String)(using AllowUnsafe): String =
+        java.lang.System.getProperty(name)
+
     def osName()(using AllowUnsafe): String =
         val javaProp = java.lang.System.getProperty("os.name", "")
         if javaProp.nonEmpty then javaProp

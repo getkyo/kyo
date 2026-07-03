@@ -137,8 +137,8 @@ class SnapshotFidelityTest extends kyo.test.Test[Any]:
 
     "SnapshotFormat.FORMAT_VERSION reflects current minor version" in {
         assert(
-            SnapshotFormat.minorVersion == 12,
-            s"Expected SnapshotFormat.minorVersion == 12 but got ${SnapshotFormat.minorVersion}"
+            SnapshotFormat.minorVersion == 13,
+            s"Expected SnapshotFormat.minorVersion == 13 but got ${SnapshotFormat.minorVersion}"
         )
     }
 

@@ -85,7 +85,7 @@ class OpenAICompletionTest extends kyo.test.Test[Any]:
                     }
                 }.map { result =>
                     result match
-                        case Result.Success(Result.Success(msg)) =>
+                        case Result.Success(Result.Success(Chunk(msg: AssistantMessage))) =>
                             assert(msg.content == "", s"expected empty content, got: ${msg.content}")
                             assert(msg.calls == Chunk.empty, s"expected no calls, got: ${msg.calls}")
                         case other =>
@@ -133,7 +133,7 @@ class OpenAICompletionTest extends kyo.test.Test[Any]:
                     }
                 }.map { result =>
                     result match
-                        case Result.Success(Result.Success(msg)) =>
+                        case Result.Success(Result.Success(Chunk(msg: AssistantMessage))) =>
                             assert(msg.calls.size == 1, s"expected 1 call, got ${msg.calls.size}")
                             val call = msg.calls.head
                             assert(call.id == CallId("tid-1"), s"expected call id 'tid-1', got ${call.id}")

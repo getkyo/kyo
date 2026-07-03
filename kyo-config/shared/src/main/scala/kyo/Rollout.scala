@@ -1,5 +1,6 @@
 package kyo
 
+import kyo.internal.XXHash
 import scala.annotation.tailrec
 
 /** Infrastructure-level gradual rollout via a string DSL.
@@ -24,7 +25,7 @@ import scala.annotation.tailrec
   * WARNING: Increasing a percentage adds entities; decreasing can REMOVE entities. `50%` -> `75%` adds 25% new entities. `75%` -> `50%`
   * removes 25% existing entities.
   *
-  * Note: The bucket is deterministic per key (MurmurHash3). Same key always gets the same bucket. Different flags share the same bucket for
+  * Note: The bucket is deterministic per key (XXH32). Same key always gets the same bucket. Different flags share the same bucket for
   * a given key, enabling correlated rollouts.
   *
   * @see
@@ -45,7 +46,7 @@ object Rollout {
       */
     def bucketFor(key: String): Int =
         if (key.isEmpty) 0
-        else Math.floorMod(scala.util.hashing.MurmurHash3.stringHash(key), 100)
+        else Math.floorMod(XXHash.hash32(key), 100)
 
     /** Validates a rollout expression without evaluating it.
       *
@@ -104,12 +105,12 @@ object Rollout {
         if (raw.isEmpty) Array.empty[String] else raw.split("/")
     }
 
-    /** Deterministic bucket (0-99) derived from MurmurHash3 of the full rollout path string. */
+    /** Deterministic bucket (0-99) derived from XXH32 of the full rollout path string. */
     private[kyo] val bucket: Int = {
         val explicit = readProperty("kyo.rollout.path", "KYO_ROLLOUT_PATH")
         val raw      = if (explicit.nonEmpty) explicit else detectPath()
         if (raw.isEmpty) 0
-        else Math.floorMod(scala.util.hashing.MurmurHash3.stringHash(raw), 100)
+        else Math.floorMod(XXHash.hash32(raw), 100)
     }
 
     /** Parses a rollout expression and returns the selected value string.
@@ -689,11 +690,11 @@ object Rollout {
 
     /** Reads a system property or environment variable, returning empty string if neither is set. */
     private def readProperty(sysProp: String, envVar: String): String = {
-        val prop = java.lang.System.getProperty(sysProp)
+        val prop = FlagPlatform.property(sysProp)
         if (prop != null) prop
         else {
             val env =
-                try java.lang.System.getenv(envVar)
+                try FlagPlatform.env(envVar)
                 catch { case _: SecurityException => null }
             if (env != null) env
             else ""
@@ -741,7 +742,7 @@ object Rollout {
 
     private def env(name: String): String = {
         val v =
-            try java.lang.System.getenv(name)
+            try FlagPlatform.env(name)
             catch { case _: SecurityException => null }
         if (v eq null) "" else v
     }

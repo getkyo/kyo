@@ -5,7 +5,6 @@
 <!-- doctest:setup
 ```scala
 import kyo.*
-import kyo.schema.doc
 ```
 -->
 
@@ -206,6 +205,8 @@ The problem it solves: reasoning before answering (chain of thought) improves qu
 A model fills the fields in order, top to bottom, so an **opening** thought's field is generated *before* the answer: the model writes its reasoning first, and that reasoning conditions the answer it then commits to. A **closing** thought's field is generated *after* the answer, acting as a self-check. You give the reasoning a shape with a plain type, and its `@doc` annotations become the instructions the model sees for that field:
 
 ```scala
+import kyo.schema.doc
+
 case class Reasoning(@doc("step-by-step working") steps: String) derives Schema
 val reasonFirst = Thought.opening[Reasoning]
 
@@ -309,7 +310,7 @@ end boundedAgent
 
 `AI.stream[A]` (or `ai.stream[A]`) projects a generation as a `Stream`, in one of two forms inferred from `A`. The result tool rides every streaming request, so the model always has a tool to call.
 
-For a `String`, the stream is incremental text: each element is a longer prefix of the answer, the terminal one the full text. This is the chat-UI, token-by-token case.
+For a `String`, the stream is incremental text chunks whose concatenation is the final answer. This is the chat-UI, token-by-token case.
 
 ```scala
 def streamedText: Chunk[String] < (Async & Abort[AIStreamException | AIGenException] & Scope) =
@@ -385,14 +386,14 @@ val openAiConfig =
         .temperature(0.2)
 ```
 
-The module ships seven providers: Anthropic, OpenAI, DeepSeek, Gemini, Groq, Baseten, OpenRouter, each available as `AI.Config.Anthropic`, `AI.Config.OpenAI`, and so on, and as `AI.Config.Provider.all`. Each exposes a pure catalog `.default` you refine with builders. `AI.Config.init` builds a config for a provider while reading its API key and org from system properties then the environment.
+The module ships nine providers: Anthropic, OpenAI, DeepSeek, Gemini, Groq, Baseten, OpenRouter, Claude Code, and Codex, each available as `AI.Config.Anthropic`, `AI.Config.OpenAI`, and so on, and as `AI.Config.Provider.all`. `AI.Config.default` first honors the provider override flag `kyo.ai.provider` (environment variable `KYO_AI_PROVIDER`), then probes provider markers and keys in order, preferring `CLAUDE_CODE`, then `CODEX`, then API provider keys such as `ANTHROPIC_API_KEY` and `OPENAI_API_KEY`. Supported override values are `claude-code`, `codex`, `anthropic`, `openai`, `deepseek`, `gemini`, `groq`, `baseten`, and `openrouter`. Each provider exposes a pure catalog `.default` you refine with builders. `AI.Config.init` builds a config for an API-key provider while reading its API key and org from system properties then the environment.
 
 ```scala
 def initConfig: AI.Config < Sync =
     AI.Config.init(AI.Config.Anthropic, "claude-sonnet-4-5-20250929", 200000)
 ```
 
-The no-argument `LLM.run` resolves its config with `AI.Config.default`, which probes each provider's API key (system properties first, then environment variables) and selects the first present, falling back to Anthropic. Retries and timeouts are wired into the eval loop, configured here: the completion call is wrapped meter, then retry, then timeout.
+The no-argument `LLM.run` resolves its config with `AI.Config.default`, which probes provider markers and API keys (system properties first, then environment variables) and selects the first present, falling back to Anthropic. Retries and timeouts are wired into the eval loop, configured here: the completion call is wrapped meter, then retry, then timeout.
 
 ```scala
 def reliable(q: Question): Answer < (Async & Abort[AIGenException]) =
@@ -402,6 +403,14 @@ def reliable(q: Question): Answer < (Async & Abort[AIGenException]) =
 ```
 
 > **Caution:** `AI.Config.default` is effectful, typed `AI.Config < Sync`, because it probes system properties and environment variables. It is not a pure `val` and must be `.map`ped. The per-provider `.default` values (such as `AI.Config.OpenAI.default`) are pure and safe to use directly.
+
+When running forked sbt demos, prefer the `KYO_AI_PROVIDER` environment variable on the command itself. A `-Dkyo.ai.provider=...` argument passed before the sbt task configures the sbt JVM, not necessarily the forked demo JVM. The `LLM` boundary emits debug logs through `kyo.Log`; enable a debug logger around your program to see the backend that actually ran:
+
+```text
+kyo-ai gen backend=Claude Code model=sonnet messages=3 tools=1 thoughts=0 forceResult=false
+```
+
+The runnable demos at the end of this README print the resolved provider and model so a forked run can be checked directly.
 
 The error model is principled and typed. A generation's failures ride `run`'s residual as `Abort[AIGenException]`, a sealed hierarchy whose leaves name the specific failure: a transport error is an `AITransportException` (wrapping the kyo-http `HttpException`), eval-loop exhaustion an `AIEvalExhaustedException`, an invalid thought name an `AIInvalidThoughtException`, an undecodable reply an `AIDecodeException`, a missing API key an `AIMissingApiKeyException`. Streaming failures are typed in the stream's own row as `Abort[AIStreamException]`: a malformed delta is an `AIStreamDeltaException`, a stream that ends without a decodable value an `AIStreamIncompleteException`. The super-types track operations, the leaves track failures, and a failure shared by both operations (a missing key, a transport error) belongs to both. Misuse stays off the rows: using an `AI` outside the `LLM.run` that created it panics with `AICrossRunException`.
 
@@ -470,7 +479,7 @@ for event in stream:
             pass
 ```
 
-In kyo-ai that is a `Stream` of decoded prefix snapshots:
+In kyo-ai that is a `Stream` of decoded values:
 
 ```scala
 val answerStream =
@@ -481,4 +490,29 @@ The categories removed wholesale: JSON-schema authoring and the parse-and-valida
 
 ## How it works
 
-`LLM` is a custom `ArrowEffect` whose operations carry data: a program typed `A < LLM` is a tree of virtual operations with no `Async` in its row, reading and appending to per-instance conversation histories held in one threaded `State`. The single operation that reaches the world is `Gen`, whose handler runs the eval loop; that is where `Async` and `Abort[AIGenException]` enter, riding out on `run`'s residual. The completion call is wrapped meter, then retry, then timeout, and two wire backends (an OpenAI-compatible one shared by six providers, and an Anthropic one) sit behind `AI.Config.Provider`. For the operation GADT, the state-threading handler, and the asymmetric `Isolate` that backs parallel branches, see `kyo-ai/shared/src/main/scala/kyo/LLM.scala` and CONTRIBUTING.md.
+`LLM` is a custom `ArrowEffect` whose operations carry data: a program typed `A < LLM` is a tree of virtual operations with no `Async` in its row, reading and appending to per-instance conversation histories held in one threaded `State`. The single operation that reaches the world is `Gen`, whose handler runs the eval loop; that is where `Async` and `Abort[AIGenException]` enter, riding out on `run`'s residual. The completion call is wrapped meter, then retry, then timeout, and four backend adapters sit behind `AI.Config.Provider`: an OpenAI-compatible HTTP adapter shared by six providers, an Anthropic HTTP adapter, plus Claude Code and Codex command harness adapters. The eval boundary emits debug logs through `kyo.Log` naming the selected backend, model, message count, tool count, and streaming mode. For the operation GADT, the state-threading handler, and the asymmetric `Isolate` that backs parallel branches, see `kyo-ai/shared/src/main/scala/kyo/LLM.scala` and CONTRIBUTING.md.
+
+## Demos
+
+Runnable end-to-end demos live in [`shared/src/test/scala/demo`](shared/src/test/scala/demo). Run any with `sbt 'kyo-aiJVM/Test/runMain demo.<Name>'`.
+
+- [**TypedGenerationDemo**](shared/src/test/scala/demo/TypedGenerationDemo.scala): schema-derived typed generation into a case class.
+- [**ConversationDemo**](shared/src/test/scala/demo/ConversationDemo.scala): one persistent `AI` instance carrying multi-turn history.
+- [**ToolCallDemo**](shared/src/test/scala/demo/ToolCallDemo.scala): Kyo tool registration, model tool calls, tool execution, and final typed answer.
+- [**StreamingDemo**](shared/src/test/scala/demo/StreamingDemo.scala): text-chunk streaming and object-by-object streaming.
+- [**HarnessCompletionDemo**](shared/src/test/scala/demo/HarnessCompletionDemo.scala): command-backed harness providers with image input and retained history. It prints the resolved provider and model before running.
+- [**AgentDemo**](shared/src/test/scala/demo/AgentDemo.scala): a small typed `Agent` retaining its own conversation.
+- [**SamplingDemo**](shared/src/test/scala/demo/SamplingDemo.scala): parallel sampling and synthesis.
+- [**ThoughtsDemo**](shared/src/test/scala/demo/ThoughtsDemo.scala): thought extraction alongside a final answer.
+- [**WikiResearchDemo**](shared/src/test/scala/demo/WikiResearchDemo.scala): a richer tool-backed research flow.
+
+Self-contained commands for the harness smoke demo, assuming API keys and command harness auth are already available in the environment:
+
+```sh
+JAVA_OPTS="-Xms3G -Xmx4G -Xss10M -XX:MaxMetaspaceSize=512M -XX:ReservedCodeCacheSize=128M -Dfile.encoding=UTF-8" JVM_OPTS="-Xms3G -Xmx4G -Xss10M -XX:MaxMetaspaceSize=512M -XX:ReservedCodeCacheSize=128M -Dfile.encoding=UTF-8" KYO_AI_PROVIDER=claude-code sbt -Dsbt.server=false 'kyo-aiJVM/Test/runMain demo.HarnessCompletionDemo'
+JAVA_OPTS="-Xms3G -Xmx4G -Xss10M -XX:MaxMetaspaceSize=512M -XX:ReservedCodeCacheSize=128M -Dfile.encoding=UTF-8" JVM_OPTS="-Xms3G -Xmx4G -Xss10M -XX:MaxMetaspaceSize=512M -XX:ReservedCodeCacheSize=128M -Dfile.encoding=UTF-8" KYO_AI_PROVIDER=codex sbt -Dsbt.server=false 'kyo-aiJVM/Test/runMain demo.HarnessCompletionDemo'
+JAVA_OPTS="-Xms3G -Xmx4G -Xss10M -XX:MaxMetaspaceSize=512M -XX:ReservedCodeCacheSize=128M -Dfile.encoding=UTF-8" JVM_OPTS="-Xms3G -Xmx4G -Xss10M -XX:MaxMetaspaceSize=512M -XX:ReservedCodeCacheSize=128M -Dfile.encoding=UTF-8" KYO_AI_PROVIDER=anthropic sbt -Dsbt.server=false 'kyo-aiJVM/Test/runMain demo.HarnessCompletionDemo'
+JAVA_OPTS="-Xms3G -Xmx4G -Xss10M -XX:MaxMetaspaceSize=512M -XX:ReservedCodeCacheSize=128M -Dfile.encoding=UTF-8" JVM_OPTS="-Xms3G -Xmx4G -Xss10M -XX:MaxMetaspaceSize=512M -XX:ReservedCodeCacheSize=128M -Dfile.encoding=UTF-8" KYO_AI_PROVIDER=openai sbt -Dsbt.server=false 'kyo-aiJVM/Test/runMain demo.HarnessCompletionDemo'
+```
+
+Use the same command shape with `demo.ToolCallDemo` for tool calling and `demo.StreamingDemo` for both streaming modes.

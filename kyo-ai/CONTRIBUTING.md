@@ -101,7 +101,7 @@ final case class State private[kyo] (
 
 ### The stream loop
 
-`AI.stream[A]` / `ai.stream[A]` suspend `Op.Stream`, whose handler runs `streamAgainst` ([`LLM.scala:259-263`], [`LLM.scala:133-141`]). `streamAgainst` posts an SSE request with the result tool in every request, parses each delta through `config.provider.completion.parseDeltaArguments`, accumulates the tool-call argument fragments, and emits each successfully decoded prefix as a `Chunk[A]` (the terminal element is the full `A`) ([`LLM.scala:147-225`]). The returned `Stream` carries its failures typed in its element row as `Abort[AIStreamException]`: a malformed delta is `AIStreamDeltaException`, an end without a decodable value `AIStreamIncompleteException`, a transport error `AITransportException` ([`LLM.scala:181-216`]). A missing API key is the one failure raised eagerly (before the `Stream` value), as `AIMissingApiKeyException` on the run boundary ([`LLM.scala:164-167`]).
+`AI.stream[A]` / `ai.stream[A]` suspend `Op.Stream`, whose handler runs `streamAgainst` ([`LLM.scala:259-263`], [`LLM.scala:133-141`]). `streamAgainst` asks `config.provider.completion.streamFragments` for raw JSON fragments of the `{ resultValue: ... }` envelope and accumulates the fragments. For `String`, it emits decoded text chunks whose concatenation is the final text. For other result types, it emits each complete decoded element from the result array exactly once ([`LLM.scala:147-225`]). HTTP providers implement fragments with SSE result-tool deltas; command harnesses use their native event or stream-json output. The returned `Stream` carries its failures typed in its element row as `Abort[AIStreamException]`: a malformed delta is `AIStreamDeltaException`, an end without a decodable value `AIStreamIncompleteException`, a transport error `AITransportException` ([`LLM.scala:181-216`]). A missing API key is the one failure raised eagerly (before the `Stream` value), as `AIMissingApiKeyException` on the run boundary ([`LLM.scala:164-167`]).
 
 ### The `LLM.isolate` given
 
@@ -182,9 +182,9 @@ Actor.run(Abort.run[AIGenException](llmRun).map(_.getOrThrow))
 
 - **Temperature is opt-in.** `temperature` is `Maybe[Double] = Absent`; it is OMITTED from the request when unset (the model uses its own default) and clamped to `[0, 2]` when set (`temperature.max(0).min(2)`) ([`Config.scala:24`], [`Config.scala:35`], [`Config.scala:6-10`]). There is no `forcedTemperature` / `effectiveTemperature` and no `gpt-5` heuristic.
 - **Optional builders.** `maxTokens(Int)` and `seed(Int)` are also `Maybe`; an internal `seed(Maybe[Int])` exists for cross-run seed derivation ([`Config.scala:25-26`], [`Config.scala:36-44`]).
-- **Default selection.** `Config.default` probes each provider's API key (system properties first, then env vars) via `kyo.System`, never raw `sys.props` / `sys.env`, and falls back to Anthropic ([`Config.scala:64-70`]).
+- **Default selection.** `Config.default` probes provider markers and API keys (system properties first, then env vars) via `kyo.System`, never raw `sys.props` / `sys.env`, and falls back to Anthropic ([`Config.scala:64-70`]).
 
-There are **seven** providers in `Provider.all`: `Anthropic`, `OpenAI`, `DeepSeek`, `Gemini`, `Groq`, `Baseten`, `OpenRouter` ([`Config.scala:96-98`]). Each exposes its model catalog as named pure `Config` constants (key absent, filled at use), and `default` points at the recommended entry ([`Config.scala:100-205`]). `DeepSeek`, `Gemini`, `Groq`, `Baseten`, and `OpenRouter` all carry `Completion.openAI` as their wire backend; only `Anthropic` carries `Completion.anthropic` ([`Config.scala:102-205`]). The model catalog is current (Anthropic `claude-opus-4-8` / `claude-sonnet-4-6`, OpenAI `gpt-5.x`, etc.); update the literals here, not in the wire layer.
+There are **nine** providers in `Provider.all`: `Anthropic`, `OpenAI`, `DeepSeek`, `Gemini`, `Groq`, `Baseten`, `OpenRouter`, `ClaudeCode`, `Codex` ([`Config.scala:96-98`]). `Config.default` checks the provider marker/key names in default-candidate order, preferring `CLAUDE_CODE`, then `CODEX`, then HTTP/API provider keys. Each provider exposes its model catalog as named pure `Config` constants (key absent, filled at use), and `default` points at the recommended entry ([`Config.scala:100-228`]). `DeepSeek`, `Gemini`, `Groq`, `Baseten`, and `OpenRouter` all carry `Completion.openAI` as their wire backend; `Anthropic` carries `Completion.anthropic`; `ClaudeCode` and `Codex` carry command-backed harness completions ([`Config.scala:102-228`]). The model catalog is current (Anthropic `claude-opus-4-8` / `claude-sonnet-4-6`, OpenAI `gpt-5.x`, etc.); update the literals here, not in the wire layer.
 
 ## `Context` and `Message`
 
@@ -192,20 +192,49 @@ There are **seven** providers in `Provider.all`: `Anthropic`, `OpenAI`, `DeepSee
 
 ## Wire layer: `Completion`
 
-`Completion` is the provider-backend contract ([`Completion.scala:23-53`]):
+`Completion` is the provider-backend contract ([`Completion.scala:23-44`]):
 
 ```scala
-def apply(config: Config, context: Context, tools: Chunk[Tool.internal.Info[?, ?, LLM]], resultSchema: Maybe[JsonSchema] = Absent)(using Frame): AssistantMessage < (LLM & Async & Abort[HttpException | AIGenException])
+def apply(config: Config, context: Context, tools: Chunk[Tool.internal.Info[?, ?, LLM]], resultSchema: Maybe[JsonSchema] = Absent)(using Frame): Chunk[Message] < (LLM & Async & Abort[HttpException | AIGenException])
 ```
 
-plus `streamRequest` (assembles the provider-specific endpoint URL + headers + body for the result tool) and `parseDeltaArguments` (parses one SSE data line into an incremental result-tool argument fragment) ([`Completion.scala:38-51`]). Transport failures surface as `Abort[HttpException]`, never `Abort[Throwable]`; a missing key or undecodable reply as the typed `Abort[AIGenException]` leaves ([`Completion.scala:9-21`]).
+plus `streamFragments`, which emits raw JSON fragments for the `{ resultValue: ... }` envelope consumed by `LLM.stream` ([`Completion.scala:33-44`]). HTTP providers implement it by posting their native SSE request and projecting result-tool argument deltas through `Completion.sseFragments`; command harnesses implement it through their native event or stream-json output. Returning `Chunk[Message]` lets command harnesses append the transcript delta they produced, while the HTTP providers still return a singleton assistant message. Transport failures surface as `Abort[HttpException]`, never `Abort[Throwable]`; a missing key or undecodable reply as the typed `Abort[AIGenException]` leaves ([`Completion.scala:9-21`]).
 
-Two implementations, both `private[completion] object`s reached through `Config.Provider.completion`, never constructed by users ([`Completion.scala:55-68`]):
+Three implementation families, reached through `Config.Provider.completion`, never constructed by users ([`Completion.scala:55-74`]):
 
 - `OpenAICompletion`: `POST {apiUrl}/chat/completions` with `content-type: application/json` and `Authorization: Bearer <key>` (plus `OpenAI-Organization` when present); covers OpenAI and the five compatible providers ([`OpenAICompletion.scala:27`], [`OpenAICompletion.scala:51-61`]). The SSE stream terminates on a `[DONE]` line ([`OpenAICompletion.scala:70-92`]).
 - `AnthropicCompletion`: `POST {apiUrl}/messages` with `x-api-key: <key>` and `anthropic-version: 2023-06-01` ([`AnthropicCompletion.scala:27`], [`AnthropicCompletion.scala:57-64`], [`AnthropicCompletion.scala:76-79`]).
+- `ClaudeCodeCompletion` and `CodexCompletion`: command-backed harness adapters sharing the `HarnessCompletion` base class. Claude Code receives SDK `stream-json` input and emits `stream-json` output. Enabled Kyo tools are exposed to Claude Code through a private localhost MCP bridge that calls back into Kyo tool handlers, with ambient MCP, plugins, shell tools, browser tools, and user config disabled. Codex uses `codex app-server`, injects prior context with `thread/inject_items`, starts turns with `turn/start`, and reads turn events until `turn/completed`. Completed Kyo tool-call history is replayed inertly in Claude Code so the CLI does not re-execute old calls; new tool calls are carried by the private bridge and the returned transcript is converted back to Kyo messages.
 
 The result tool has the reserved name `Completion.resultToolName` (`"result_tool"`); when `resultSchema` is `Present`, the backend substitutes it for the tool's opaque `Structure.Value` input schema so the wire parameter schema exposes the real thought-aware properties ([`Completion.scala:65-68`], [`Completion.scala:9-21`]).
+
+### kyo-ai Completion Backends
+
+`kyo-ai` completion backends are an internal implementation detail behind `AI.Config.Provider`. A backend must be transparent to the public API: `AI.gen`, `AI.stream[String]`, `AI.stream[A]`, typed results, images, prompts, thoughts, modes, retained `AI` history, and Kyo tools must behave the same from the caller's perspective across HTTP providers and command harness providers.
+
+Backend implementation rules:
+
+- Implement the full `Completion` contract. Do not add placeholder streaming methods, silent tool rejection, or partial support paths.
+- Kyo remains the tool runner for every backend. If a provider agent loop needs synchronous tool execution, use a private bridge that calls back into Kyo tool handlers and return the produced transcript as Kyo `Context.Message` values. Do not expose ambient user MCP servers, provider shell tools, plugins, or unrelated host tools through a completion backend.
+- Preserve structured context as far as the provider protocol allows. Use native message, image, function-call, and tool-result protocol items when they exist. If a provider has no supported native injection path for a piece of history, keep the workaround explicit in code and tests, and verify the public behavior it affects.
+- Command harnesses must live in `shared/src/main`, unless behavior is genuinely platform-specific. `Command`, `Path`, and the Kyo effects are cross-platform APIs.
+- Isolate provider config without losing auth. For command harnesses this means a temporary working directory and an isolated config home that copies only required auth material. Disable user plugins, shell tools, browser/computer tools, and other external provider tools unless they are the explicit backend under test.
+- Surface provider unavailability as typed failures, for example auth, quota, rate limit, and network failures should become provider-unavailable exceptions rather than string matching in tests.
+- Log backend dispatch through `kyo.Log`, not raw printing. The `LLM` boundary should name the provider, model, message count, tool count, and streaming mode without dumping prompts, API keys, auth files, or full transcripts.
+
+Backend tests must cover the same behavior a user can observe:
+
+- Unit tests for request and response conversion: context messages, images, assistant tool calls, tool results, result tool envelopes, malformed provider output, and streaming fragments.
+- Shared live integration tests for command harnesses in `shared/src/test`. Use `assume` when the CLI, auth, quota, account, or network provider is unavailable, and fail on behavioral regressions after the provider is available.
+- Live tests must assert that the intended provider and completion backend are actually selected.
+- Live tests must exercise `ai.gen`, retained history via `AI.snapshot` and `AI.recover`, image input, Kyo tool calling, `ai.stream[String]`, and object streaming via `ai.stream[A]`.
+- Use `KYO_AI_PROVIDER=<provider>` for forked sbt demos; a `-Dkyo.ai.provider=...` argument before the sbt task configures the sbt JVM and may not reach the forked demo process. If a manual program needs visible backend selection, wrap it with `Log.withConsoleLogger(..., Log.Level.debug)` or another debug-enabled logger.
+
+Self-contained demo command shape:
+
+```sh
+JAVA_OPTS="-Xms3G -Xmx4G -Xss10M -XX:MaxMetaspaceSize=512M -XX:ReservedCodeCacheSize=128M -Dfile.encoding=UTF-8" JVM_OPTS="-Xms3G -Xmx4G -Xss10M -XX:MaxMetaspaceSize=512M -XX:ReservedCodeCacheSize=128M -Dfile.encoding=UTF-8" KYO_AI_PROVIDER=codex sbt -Dsbt.server=false 'kyo-aiJVM/Test/runMain demo.HarnessCompletionDemo'
+```
 
 ## The exception hierarchy
 
@@ -298,6 +327,6 @@ In addition to the root checklist:
 4. **Config override.** Is an instance config a `Maybe[Config]` (`Absent` = inherit, `Present` = override)? Does `genLoop`'s merge keep `Present` winning over the scope and over a scope `withConfig`, while a mode `withConfig` still layers on top? [`LLM.scala:318-326`, `LLMTest.scala:325-374`]
 5. **New `Mode`.** Is `apply`'s `gen` row exactly `Maybe[A] < (LLM & Async & Abort[AIGenException])`? Does the mode receive `ai` and read/write that instance only? [`Mode.scala:21-23`]
 6. **New `Agent` overload.** Does it delegate to `runImpl`, minting ONE stable instance via `AI.initWith(behavior)`, discharging with `LLM.run`, re-throwing `Abort[AIGenException]` via `getOrThrow`, and handing to `Actor.run`? [`Agent.scala:217-240`]
-7. **New completion backend.** Does it match the result tool by `Completion.resultToolName` and substitute `resultSchema` when `Present`? Does it surface transport failures as `Abort[HttpException]`, never `Abort[Throwable]`? Is it reached through a new `Config.Provider` in `Provider.all`? [`Completion.scala:65-68`, `Config.scala:96-98`]
+7. **New completion backend.** Does it match the result tool by `Completion.resultToolName` and substitute `resultSchema` when `Present`? Does it surface transport failures as `Abort[HttpException]`, never `Abort[Throwable]`? If it is command-backed, does it use the harness's native input/output shape and map process or decode failures to `AIDecodeException`? Is it reached through a new `Config.Provider` in `Provider.all`? [`Completion.scala:65-74`, `Config.scala:96-98`]
 8. **New failure.** Is there a leaf in `AIException.scala` under the right operation trait(s), with its message on the leaf, mapped from any raw `HttpException` at the eval/stream boundary? Is a misuse/impossible-state panic kept off both rows? [`AIException.scala`, `LLM.scala:331`]
 9. **New test.** Does it extend `kyo.test.Test[Any]`, use `TestCompletionServer` (not a live endpoint), assert concrete values, place each `enqueueBody`/`enqueueStream` before the consuming client call, and live in `shared/src/test`? [`TestCompletionServer.scala`, `LLMTest.scala`]

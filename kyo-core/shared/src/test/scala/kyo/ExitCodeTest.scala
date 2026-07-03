@@ -216,6 +216,28 @@ class ExitCodeTest extends kyo.test.Test[Any]:
             }
     }
 
+    "envRemove removes inherited environment variables" in {
+        assume(!kyo.internal.Platform.isWindows, "env command is Unix-only")
+        {
+            Command("env")
+                .envRemove(Set("PATH"))
+                .text
+                .map { result =>
+                    assert(!result.linesIterator.exists(_.startsWith("PATH=")), s"PATH should be removed from child env: $result")
+                }
+        }
+    }
+
+    "envRemove removes appended environment variables" in {
+        Command("sh", "-c", "echo ${KYO_REMOVE_ME:-missing}:${KYO_KEEP_ME:-missing}")
+            .envAppend(Map("KYO_REMOVE_ME" -> "bad", "KYO_KEEP_ME" -> "good"))
+            .envRemove(Set("KYO_REMOVE_ME"))
+            .text
+            .map { result =>
+                assert(result.trim == "missing:good")
+            }
+    }
+
     "envReplace runs process with only specified environment" in {
         Command("sh", "-c", "echo ${KYO_ONLY_VAR:-only}")
             .envReplace(Map("KYO_ONLY_VAR" -> "only"))

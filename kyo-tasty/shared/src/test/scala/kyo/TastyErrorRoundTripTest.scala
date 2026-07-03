@@ -10,7 +10,7 @@ import kyo.internal.tasty.snapshot.SnapshotWriter
   * Coverage:
   *   1. Round-trip TastyError.UnhandledSubtypingCase with Type.Any and Type.Nothing.
   *   2. Round-trip TastyError.UnresolvedReference, TastyError.UnknownType, TastyError.MissingDeclaredType.
-  *   3. Minor version is 12 in freshly written snapshot.
+  *   3. Minor version is 13 in freshly written snapshot.
   *   4. Old minor=10 snapshot is rejected with TastyError.SnapshotVersionMismatch.
   */
 class TastyErrorRoundTripTest extends kyo.test.Test[Any]:
@@ -87,14 +87,14 @@ class TastyErrorRoundTripTest extends kyo.test.Test[Any]:
         }
     }
 
-    // minor version bumped to 12 (added the PLISTS__ section).
-    "minor version is 12 in freshly written snapshot" in {
+    // minor version bumped to 13 (added the SRCPOS__ section).
+    "minor version is 13 in freshly written snapshot" in {
         val snapshotBytes = snapshotBytesWithErrors(Chunk.empty)
         val minor         = snapshotBytes(5) & 0xff
-        assert(minor == 12, s"Expected snapshot minor version 12, got $minor")
+        assert(minor == 13, s"Expected snapshot minor version 13, got $minor")
         assert(
-            SnapshotFormat.minorVersion == 12,
-            s"SnapshotFormat.minorVersion must be 12, got ${SnapshotFormat.minorVersion}"
+            SnapshotFormat.minorVersion == 13,
+            s"SnapshotFormat.minorVersion must be 13, got ${SnapshotFormat.minorVersion}"
         )
     }
 
@@ -117,8 +117,8 @@ class TastyErrorRoundTripTest extends kyo.test.Test[Any]:
                             s"Expected found version (1,10,0), got ${vm.found}"
                         )
                         assert(
-                            vm.supported.major == 1 && vm.supported.minor == 12,
-                            s"Expected supported version (1,12,0), got ${vm.supported}"
+                            vm.supported.major == 1 && vm.supported.minor == 13,
+                            s"Expected supported version (1,13,0), got ${vm.supported}"
                         )
                     case other =>
                         fail(s"Expected TastyError.SnapshotVersionMismatch, got: $other")

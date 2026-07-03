@@ -280,12 +280,10 @@ object JsonRpcEndpointImpl:
                                     req.idSignal.completeDiscard(Result.succeed(id))(using AllowUnsafe.embrace.danger)
                                 }.andThen {
                                     // Build envelope and encode to JSON. Structure.encode is pure but throws a
-                                    // JsonRpcError for the unencodable cases; Abort.catching reifies that so the
+                                    // JsonRpcError for the unencodable cases; Abort.run reifies that so the
                                     // Success/non-Success branch shape is preserved.
                                     val env = JsonRpcRequest(id, req.method, req.encodedParams, extrasVal)
-                                    Abort.run[JsonRpcError](
-                                        Abort.catching[JsonRpcError](Structure.encode[JsonRpcEnvelope](env)(using config.codec, frame))
-                                    ).map {
+                                    Abort.run[JsonRpcError](Structure.encode[JsonRpcEnvelope](env)(using config.codec, frame)).map {
                                         case Result.Success(sv) => Json.encode[Structure.Value](sv)
                                         case _                  => ""
                                     }
