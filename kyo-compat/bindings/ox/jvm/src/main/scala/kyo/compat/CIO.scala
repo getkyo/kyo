@@ -13,7 +13,8 @@ import scala.util.control.NonFatal
   * capability. `lift` wraps an `Ox ?=> A` by ignoring the depth; `lower` applies the carrier at depth 0 against the ambient `Ox`. Errors
   * are encoded as `throw`; recovery uses `try/catch` on `Throwable` (via `liftToTry`). Deep `flatMap` chains are stack-safe: `flatMap`
   * threads the depth, and once it reaches `LIMIT` it re-runs the remaining chain inside a fresh `ox.forkUnsupervised` — a virtual thread
-  * with a fresh stack — and joins it, capping JVM stack growth. `acquireReleaseWith` release failures propagate synchronously: on
+  * with a fresh stack — and joins it, capping JVM stack growth. `acquireReleaseWith` runs release on every exit path including Ox
+  * cancellation (thread interruption): the `use` catch matches all `Throwable` and release runs inside `ox.uninterruptible`. On
   * `use`-failure + `release`-failure the release throwable is attached to `use`'s via `addSuppressed`. `cede` forks an unsupervised task
   * and immediately joins it (a real async boundary). `blocking { thunk }` wraps in `scala.concurrent.blocking` so the ForkJoinPool can
   * spawn a replacement worker. `fromScalaFuture` blocks the calling thread via `Await.result`. `zip` arities 2-4 use `ox.par`; arities 5-7
@@ -63,8 +64,10 @@ object CIO:
     inline def fromScalaFuture[A](inline f: ScalaFuture[A]): CIO[A] =
         deferLift(Await.result(f, ScalaDuration.Inf))
 
-    /** Pairs acquisition with release that runs on success and failure of `use`; release throwables propagate synchronously through a
-      * `try`/`catch` shell, attached to a failed `use` throwable via `addSuppressed`.
+    /** Pairs acquisition with release that runs on every exit path of `use`, including Ox cancellation. Ox cancellation is thread
+      * interruption, so a cancelled `use` exits via `InterruptedException` (which `NonFatal` treats as fatal); the `use` catch matches all
+      * `Throwable` so the interrupt does not skip release, and release runs inside `ox.uninterruptible` so a pending interrupt cannot abort
+      * it. On `use`-failure + `release`-failure the release throwable is attached to `use`'s via `addSuppressed`.
       */
     inline def acquireReleaseWith[A, B](
         inline acquire: CIO[A]
@@ -77,10 +80,10 @@ object CIO:
             val a = acquire.lower
             val useResult: scala.util.Try[B] =
                 try scala.util.Success(use(a).lower)
-                catch case t: Throwable if NonFatal(t) => scala.util.Failure(t)
-            try release(a).lower
+                catch case t: Throwable => scala.util.Failure(t)
+            try ox.uninterruptible(release(a).lower)
             catch
-                case relT: Throwable if NonFatal(relT) =>
+                case relT: Throwable =>
                     useResult match
                         case scala.util.Failure(useT) => useT.addSuppressed(relT)
                         case scala.util.Success(_)    => throw relT

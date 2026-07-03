@@ -209,4 +209,47 @@ class BracketEnsureTest extends CompatTest:
         }
     }
 
+    "acquireReleaseWith runs release when use is cut short by a timeout" in run {
+        // `use` parks on `proceed` so it cannot finish before the timeout, `release` fulfills
+        // `releaseDone` which the test waits on, and `proceed.succeed` afterwards unblocks the
+        // orphaned `use` on bindings without cancellation.
+        val released = new AtomicBoolean(false)
+        CPromise.init[Unit].flatMap { proceed =>
+            CPromise.init[Unit].flatMap { releaseDone =>
+                val bracket: CIO[Unit] =
+                    CIO.acquireReleaseWith(CIO.unit)(_ =>
+                        CIO.defer { val _ = released.set(true) }.flatMap(_ => releaseDone.succeed(()).unit)
+                    )(_ => proceed.get)
+                CIO.timeout(100.millis)(bracket).flatMap { result =>
+                    proceed.succeed(()).flatMap { _ =>
+                        releaseDone.get.map { _ =>
+                            assert(result.isEmpty, s"expected timeout (None), got: $result")
+                            assert(released.get, "release did not run after use was cut short by the timeout")
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    "ensure runs the cleanup when the computation is cut short by a timeout" in run {
+        val ran = new AtomicBoolean(false)
+        CPromise.init[Unit].flatMap { proceed =>
+            CPromise.init[Unit].flatMap { cleanupDone =>
+                val guarded: CIO[Unit] =
+                    CIO.ensure(
+                        CIO.defer { val _ = ran.set(true) }.flatMap(_ => cleanupDone.succeed(()).unit)
+                    )(proceed.get)
+                CIO.timeout(100.millis)(guarded).flatMap { result =>
+                    proceed.succeed(()).flatMap { _ =>
+                        cleanupDone.get.map { _ =>
+                            assert(result.isEmpty, s"expected timeout (None), got: $result")
+                            assert(ran.get, "cleanup did not run after the computation was cut short by the timeout")
+                        }
+                    }
+                }
+            }
+        }
+    }
+
 end BracketEnsureTest
