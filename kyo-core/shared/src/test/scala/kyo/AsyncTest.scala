@@ -1819,4 +1819,24 @@ class AsyncTest extends kyo.test.Test[Any]:
         }
     }
 
+    "defaultConcurrency knob" - {
+        val computedDefault = Runtime.getRuntime().availableProcessors() * 2
+
+        "absent property yields availableProcessors * 2" in {
+            assert(Async.parseConcurrencyDefault(Maybe.empty, computedDefault) == computedDefault)
+        }
+
+        "valid override is parsed" in {
+            assert(Async.parseConcurrencyDefault(Maybe("4"), computedDefault) == 4)
+        }
+
+        "malformed override throws IllegalArgumentException naming the property and bad value" in {
+            val ex = intercept[IllegalArgumentException] {
+                Async.parseConcurrencyDefault(Maybe("abc"), computedDefault)
+            }
+            assert(ex.getMessage.contains("kyo.async.concurrency.default"))
+            assert(ex.getMessage.contains("abc"))
+        }
+    }
+
 end AsyncTest
