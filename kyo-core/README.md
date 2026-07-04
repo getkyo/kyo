@@ -790,8 +790,8 @@ val withTimeout: Result[Timeout, Int] < (Async & Sync) =
 `Async.timeoutWithError(d, error)(v)` lets you raise a domain-specific error on expiry instead.
 
 > **File system, processes, and environment:** `Path`, `Command`, `Process`, `System`, and the
-> `FileException` hierarchy have moved to [`kyo-system`](../kyo-system/README.md). Add
-> `kyo-system` to your dependency to access them.
+> `FileException` hierarchy live in [`kyo-system`](../kyo-system/README.md); add it to your
+> dependencies to use them.
 
 ## Ambient services
 

@@ -8,7 +8,7 @@ Module-specific guide for kyo-system. Read the repository-root [CONTRIBUTING.md]
 
 ## Architecture overview
 
-kyo-system owns five capabilities relocated from kyo-core:
+kyo-system owns five capabilities:
 
 | Capability | Safe type | Unsafe abstract class | Effect row |
 |---|---|---|---|

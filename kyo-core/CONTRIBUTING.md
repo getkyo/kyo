@@ -4,8 +4,7 @@ This file documents the internal design contracts, invariants, and conventions
 specific to `kyo-core`. Read the root `CONTRIBUTING.md` first; everything there
 applies here, and this file extends it with module-local rules.
 
-The file and OS-signal surface previously in `kyo-core` moved to `kyo-system` as
-part of the module split. See `kyo-system/CONTRIBUTING.md` for those conventions.
+File and OS-signal capabilities live in `kyo-system`; see `kyo-system/CONTRIBUTING.md` for those conventions.
 
 ---
 
