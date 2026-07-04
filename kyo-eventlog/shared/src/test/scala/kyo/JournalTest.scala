@@ -93,6 +93,24 @@ class JournalTest extends kyo.test.Test[Any]:
         }.map(result => assert(result == Result.fail(JournalEmptyAppendError())))
     }
 
+    "run preserves backend read aborts" in {
+        val backend = new FailingBackend(
+            readError = JournalStorageError("test read failure", Maybe.empty)
+        )
+        Abort.run[JournalError] {
+            Journal.run(backend)(Journal.read(streamId, StreamOffset.first, 10))
+        }.map(result => assert(result == Result.fail(JournalStorageError("test read failure", Maybe.empty))))
+    }
+
+    "run preserves backend streamInfo aborts" in {
+        val backend = new FailingBackend(
+            streamInfoError = JournalStorageError("test streamInfo failure", Maybe.empty)
+        )
+        Abort.run[JournalError] {
+            Journal.run(backend)(Journal.streamInfo(streamId))
+        }.map(result => assert(result == Result.fail(JournalStorageError("test streamInfo failure", Maybe.empty))))
+    }
+
     "Backend.inMemory appends and reads through the capability" in {
         for
             backend <- Journal.Backend.inMemory

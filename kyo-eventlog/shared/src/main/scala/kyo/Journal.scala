@@ -165,7 +165,7 @@ object Journal:
         )(using AllowUnsafe): Chunk[RecordedEvent] < (S & Abort[JournalReadFailure]) =
             backend.read(streamId, from, maxCount)
 
-        /** Inspects directly against `backend`, bypassing the ArrowEffect suspend and handler dispatch. */
+        /** Reports stream state directly against `backend`, bypassing the ArrowEffect suspend and handler dispatch. */
         def streamInfo[S](backend: Backend[S])(streamId: StreamId)(using AllowUnsafe): StreamInfo < (S & Abort[JournalStreamInfoFailure]) =
             backend.streamInfo(streamId)
     end Unsafe

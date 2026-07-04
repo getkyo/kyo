@@ -1998,7 +1998,6 @@ lazy val `kyo-bench` =
         .dependsOn(`kyo-direct`)
         .dependsOn(`kyo-scheduler-zio`)
         .dependsOn(`kyo-scheduler-cats`)
-        .dependsOn(`kyo-system`)
         .disablePlugins(MimaPlugin)
         .jvmConfigure(_.disablePlugins(KyoDoctestPlugin))
         .settings(
