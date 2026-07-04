@@ -276,6 +276,8 @@ lazy val kyoJVM: Project = project
         `kyo-aeron`.jvm,
         `kyo-compiler`.jvm,
         `kyo-schema`.jvm,
+        `kyo-eventlog`.jvm,
+        `kyo-system`.jvm,
         `kyo-http`.jvm,
         `kyo-flow`.jvm,
         `kyo-ai`.jvm,
@@ -347,6 +349,8 @@ lazy val kyoJS = project
         `kyo-tasty`.js,
         `kyo-tasty-fixtures-internal`.js,
         `kyo-schema`.js,
+        `kyo-eventlog`.js,
+        `kyo-system`.js,
         `kyo-http`.js,
         `kyo-flow`.js,
         `kyo-ai`.js,
@@ -398,6 +402,8 @@ lazy val kyoNative = project
         `kyo-tasty`.native,
         `kyo-tasty-fixtures-internal`.native,
         `kyo-schema`.native,
+        `kyo-eventlog`.native,
+        `kyo-system`.native,
         `kyo-http`.native,
         `kyo-flow`.native,
         `kyo-ai`.native,
@@ -440,6 +446,8 @@ lazy val kyoWasm = project
         `kyo-prelude`.wasm,
         `kyo-parse`.wasm,
         `kyo-schema`.wasm,
+        `kyo-eventlog`.wasm,
+        `kyo-system`.wasm,
         `kyo-scheduler`.wasm,
         `kyo-core`.wasm,
         `kyo-direct`.wasm,
@@ -658,6 +666,30 @@ lazy val `kyo-schema` =
         .jvmSettings(mimaCheck(false))
         .nativeSettings(`native-settings`)
         .jsSettings(`js-settings`, Test / scalaJSLinkerConfig ~= (_.withModuleKind(ModuleKind.CommonJSModule)))
+        .wasmSettings(`wasm-settings`)
+
+lazy val `kyo-eventlog` =
+    crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
+        .crossType(CrossType.Full)
+        .in(file("kyo-eventlog"))
+        .dependsOn(`kyo-core`, `kyo-schema`)
+        .withKyoTest
+        .settings(`kyo-settings`)
+        .jvmSettings(mimaCheck(false))
+        .nativeSettings(`native-settings`)
+        .jsSettings(`js-settings`, scalaJSLinkerConfig ~= (_.withModuleKind(ModuleKind.CommonJSModule)))
+        .wasmSettings(`wasm-settings`)
+
+lazy val `kyo-system` =
+    crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
+        .crossType(CrossType.Full)
+        .in(file("kyo-system"))
+        .dependsOn(`kyo-core`)
+        .withKyoTest
+        .settings(`kyo-settings`)
+        .jvmSettings(mimaCheck(false))
+        .nativeSettings(`native-settings`)
+        .jsSettings(`js-settings`, scalaJSLinkerConfig ~= (_.withModuleKind(ModuleKind.CommonJSModule)))
         .wasmSettings(`wasm-settings`)
 
 lazy val `kyo-core` =
