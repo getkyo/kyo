@@ -73,9 +73,11 @@ object Async extends AsyncPlatformSpecific:
       * Note: This only affects collection processing methods. Operations like race and gather run with unbounded concurrency.
       */
     val defaultConcurrency =
-        import AllowUnsafe.embrace.danger
-        given Frame = Frame.internal
-        Sync.Unsafe.evalOrThrow(System.property[Int]("kyo.async.concurrency.default", Runtime.getRuntime().availableProcessors() * 2))
+        val default = Runtime.getRuntime().availableProcessors() * 2
+        // Unsafe: kyo.System lives in kyo-system (which depends on kyo-core), so this init-time knob reads java.lang.System directly.
+        Maybe(
+            java.lang.System.getProperty("kyo.async.concurrency.default")
+        ).flatMap(raw => Maybe.fromOption(raw.toIntOption)).getOrElse(default)
     end defaultConcurrency
 
     /** Convenience method for suspending side effects in an Async effect.

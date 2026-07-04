@@ -1028,6 +1028,7 @@ lazy val `kyo-actor` =
         .crossType(CrossType.Full)
         .in(file("kyo-actor"))
         .dependsOn(`kyo-core`)
+        .dependsOn(`kyo-system`)
         .withKyoTest
         .settings(`kyo-settings`)
         .jvmSettings(mimaCheck(false))
@@ -1039,7 +1040,7 @@ lazy val `kyo-tasty` =
     crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
         .crossType(CrossType.Full)
         .in(file("kyo-tasty"))
-        .dependsOn(`kyo-core`, `kyo-schema`)
+        .dependsOn(`kyo-core`, `kyo-schema`, `kyo-system`)
         .withKyoTest
         .settings(
             `kyo-settings`,
@@ -1212,7 +1213,7 @@ lazy val `kyo-compiler` =
     crossProject(JVMPlatform)
         .crossType(CrossType.Full)
         .in(file("kyo-compiler"))
-        .dependsOn(`kyo-core`, `kyo-aeron`, `kyo-ai` % Test)
+        .dependsOn(`kyo-core`, `kyo-aeron`, `kyo-ai` % Test, `kyo-system`)
         .withKyoTest
         .settings(
             `kyo-settings`,
@@ -1255,7 +1256,7 @@ lazy val `kyo-ai` =
     crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
         .crossType(CrossType.Full)
         .in(file("kyo-ai"))
-        .dependsOn(`kyo-core`, `kyo-schema`, `kyo-http`, `kyo-actor`, `kyo-jsonrpc`, `kyo-jsonrpc-http`, `kyo-mcp`)
+        .dependsOn(`kyo-core`, `kyo-schema`, `kyo-http`, `kyo-actor`, `kyo-jsonrpc`, `kyo-jsonrpc-http`, `kyo-mcp`, `kyo-system`)
         .withKyoTest
         .settings(`kyo-settings`)
         .jvmSettings(mimaCheck(false))
@@ -1291,6 +1292,7 @@ lazy val `kyo-jsonrpc` =
         .dependsOn(`kyo-prelude`)
         .dependsOn(`kyo-core`)
         .dependsOn(`kyo-schema`)
+        .dependsOn(`kyo-system`)
         .in(file("kyo-jsonrpc"))
         .withKyoTest
         .settings(`kyo-settings`)
@@ -1336,6 +1338,7 @@ lazy val `kyo-lsp` =
         .in(file("kyo-lsp"))
         .withKyoTest
         .dependsOn(`kyo-jsonrpc`)
+        .dependsOn(`kyo-system`)
         .settings(`kyo-settings`)
         .jvmSettings(mimaCheck(false))
         .nativeSettings(`native-settings`)
@@ -1663,7 +1666,7 @@ lazy val `kyo-pod` =
     crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
         .crossType(CrossType.Full)
         .in(file("kyo-pod"))
-        .dependsOn(`kyo-core`, `kyo-http`)
+        .dependsOn(`kyo-core`, `kyo-http`, `kyo-system`)
         .withKyoTest
         .settings(
             `kyo-settings`
@@ -1765,7 +1768,7 @@ lazy val `kyo-browser` =
     crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
         .crossType(CrossType.Full)
         .in(file("kyo-browser"))
-        .dependsOn(`kyo-http`, `kyo-jsonrpc`, `kyo-jsonrpc-http`)
+        .dependsOn(`kyo-http`, `kyo-jsonrpc`, `kyo-jsonrpc-http`, `kyo-system`)
         .withKyoTest
         .settings(
             `kyo-settings`
@@ -1917,6 +1920,7 @@ lazy val `kyo-website` =
         .in(file("kyo-website"))
         .dependsOn(`kyo-ui`)
         .dependsOn(`kyo-parse`)
+        .dependsOn(`kyo-system`)
         .withKyoTest
         .settings(`kyo-settings`)
         .settings(publish / skip := true)
@@ -1966,6 +1970,7 @@ lazy val `kyo-examples` =
         .dependsOn(`kyo-direct`)
         .dependsOn(`kyo-core`)
         .dependsOn(`kyo-actor`)
+        .dependsOn(`kyo-system`)
         .disablePlugins(MimaPlugin)
         .settings(
             `kyo-settings`,
@@ -1993,6 +1998,7 @@ lazy val `kyo-bench` =
         .dependsOn(`kyo-direct`)
         .dependsOn(`kyo-scheduler-zio`)
         .dependsOn(`kyo-scheduler-cats`)
+        .dependsOn(`kyo-system`)
         .disablePlugins(MimaPlugin)
         .jvmConfigure(_.disablePlugins(KyoDoctestPlugin))
         .settings(
@@ -2061,6 +2067,7 @@ lazy val `kyo-doctest` =
         .dependsOn(`kyo-schema`)
         .dependsOn(`kyo-parse`)
         .dependsOn(`kyo-direct` % Test)
+        .dependsOn(`kyo-system`)
         .withKyoTest
         .disablePlugins(MimaPlugin)
         .jvmConfigure(_.disablePlugins(KyoDoctestPlugin))
