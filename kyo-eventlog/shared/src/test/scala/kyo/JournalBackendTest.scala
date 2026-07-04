@@ -218,7 +218,7 @@ abstract class JournalBackendTest(newBackend: => Journal.Backend[Sync] < (Sync &
                 r2   <- fiber2.get
                 info <- Abort.run[JournalError](backend.streamInfo(streamId))
             yield
-                val outcomes = List(r1, r2)
+                val outcomes = Chunk(r1, r2)
                 assert(outcomes.count(_.isSuccess) == 1)
                 assert(outcomes.count {
                     case Result.Failure(JournalConflictError(_, _, _)) => true
@@ -228,6 +228,3 @@ abstract class JournalBackendTest(newBackend: => Journal.Backend[Sync] < (Sync &
         }
     }
 end JournalBackendTest
-
-/** Runs the backend contract against the in-memory backend. */
-class InMemoryJournalBackendTest extends JournalBackendTest(Journal.Backend.inMemory)

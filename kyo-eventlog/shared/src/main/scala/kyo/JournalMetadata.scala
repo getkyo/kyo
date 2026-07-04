@@ -37,7 +37,7 @@ object MetadataKey:
         def value: String = self
 
         /** The dot-separated segments of the key. */
-        def segments: Chunk[String] = Chunk.from(self.split("\\.").toIndexedSeq)
+        def segments: Chunk[String] = Chunk.from(self.split("\\."))
     end extension
 
     inline given CanEqual[MetadataKey, MetadataKey] = CanEqual.derived

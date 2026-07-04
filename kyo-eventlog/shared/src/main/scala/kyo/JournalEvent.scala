@@ -162,8 +162,8 @@ end StreamInfo
 
 /** An event as submitted to [[kyo.Journal.append]]: producer-assigned identity, type label, raw payload, and metadata.
   *
-  * The journal treats the payload as opaque bytes; typed encoding and decoding live above this layer. Note that `Span` equality via `==`
-  * is reference-based: compare payload contents with `Span#is`, not by comparing envelopes with `==`.
+  * The journal treats the payload as opaque bytes; typed encoding and decoding live above this layer. `Span` equality via `==` is
+  * reference-based: compare payload contents with `Span#is`, not by comparing envelopes with `==`.
   *
   * @see
   *   [[kyo.RecordedEvent]] for the stored form returned by reads
@@ -177,7 +177,7 @@ final case class EventEnvelope(
 
 /** A stored event as returned by [[kyo.Journal.read]]: the envelope's data plus the stream identity and assigned offset.
   *
-  * Note that `Span` equality via `==` is reference-based: compare payload contents with `Span#is`, not by comparing records with `==`.
+  * `Span` equality via `==` is reference-based: compare payload contents with `Span#is`, not by comparing records with `==`.
   *
   * @see
   *   [[kyo.EventEnvelope]] for the submitted form

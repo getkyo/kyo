@@ -61,7 +61,8 @@ object StreamFileExtensions:
         /** Writes each string element as a separate line to `path` using the given charset.
           *
           * The write channel is acquired in a `Scope` and released when the stream completes or fails. If the stream fails, the
-          * partially-written file is deleted before re-raising the error.
+          * partially-written file is deleted before re-raising the error. The line separator is
+          * `java.lang.System.lineSeparator()`: `\n` on JS (Scala.js shim) and the host OS separator on JVM and Native.
           */
         def writeLinesTo(
             path: Path,

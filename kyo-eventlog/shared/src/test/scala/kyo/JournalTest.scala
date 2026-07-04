@@ -78,7 +78,7 @@ class JournalTest extends kyo.test.Test[Any]:
             assert(appended == appendResult)
             assert(events == Chunk(recorded))
             assert(info == expectedInfo)
-            assert(backend.calls == List(
+            assert(backend.calls == Chunk(
                 Call.Append(streamId, ExpectedOffset.NoStream, Chunk(envelope)),
                 Call.Read(streamId, StreamOffset.first, 10),
                 Call.Info(streamId)
@@ -210,27 +210,27 @@ class JournalTest extends kyo.test.Test[Any]:
     end Call
 
     final private class RecordingBackend extends Journal.Backend[Sync]:
-        private var recordedCalls: List[Call] = Nil
+        private var recordedCalls: Chunk[Call] = Chunk.empty
 
-        def calls: List[Call] = recordedCalls.reverse
+        def calls: Chunk[Call] = recordedCalls
 
         def append(streamId: StreamId, expected: ExpectedOffset, events: Chunk[EventEnvelope])
             : AppendResult < (Sync & Abort[JournalAppendFailure]) =
             Sync.defer {
-                recordedCalls = Call.Append(streamId, expected, events) :: recordedCalls
+                recordedCalls = recordedCalls.append(Call.Append(streamId, expected, events))
                 appendResult
             }
 
         def read(streamId: StreamId, from: StreamOffset, maxCount: Int)
             : Chunk[RecordedEvent] < (Sync & Abort[JournalReadFailure]) =
             Sync.defer {
-                recordedCalls = Call.Read(streamId, from, maxCount) :: recordedCalls
+                recordedCalls = recordedCalls.append(Call.Read(streamId, from, maxCount))
                 Chunk(recorded)
             }
 
         def streamInfo(streamId: StreamId): StreamInfo < (Sync & Abort[JournalStreamInfoFailure]) =
             Sync.defer {
-                recordedCalls = Call.Info(streamId) :: recordedCalls
+                recordedCalls = recordedCalls.append(Call.Info(streamId))
                 expectedInfo
             }
     end RecordingBackend

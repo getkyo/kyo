@@ -13,7 +13,7 @@ private[kyo] trait KyoAppInterrupts:
                 promise
                     .completeDiscard(Result.panic(Interrupted(Frame.internal, s"Interrupt Signal: $signal")))
 
-        // Unsafe: kyo.System lives in kyo-system (which depends on kyo-core); detect Windows from java.lang.System, the source System.live reads.
+        // Unsafe: kyo.System lives in kyo-system (which depends on kyo-core); detect Windows from java.lang.System os.name (empty on JS, where signal registration is a no-op anyway).
         if !java.lang.System.getProperty("os.name", "").startsWith("Windows") then
             OsSignal.handle("INT", interrupt("INT"))
             OsSignal.handle("TERM", interrupt("TERM"))
