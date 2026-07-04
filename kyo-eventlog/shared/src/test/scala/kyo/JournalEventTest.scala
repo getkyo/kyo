@@ -66,7 +66,7 @@ class JournalEventTest extends kyo.test.Test[Any]:
             assert(!StreamInfo.Absent.exists)
         }
         "Existing exists" in {
-            assert(StreamInfo.Existing(3L, StreamOffset.first).exists)
+            assert(StreamInfo.Existing(valid(StreamVersion(3L)), StreamOffset.first).exists)
         }
     }
 
@@ -99,11 +99,12 @@ class JournalEventTest extends kyo.test.Test[Any]:
 
     "AppendResult" - {
         "reports the appended range and post-append state" in {
-            val sid    = StreamId("users-1").getOrElse(throw new AssertionError("valid stream id"))
-            val result = AppendResult(sid, StreamOffset.first, StreamOffset.first, StreamInfo.Existing(1L, StreamOffset.first))
+            val sid = StreamId("users-1").getOrElse(throw new AssertionError("valid stream id"))
+            val result =
+                AppendResult(sid, StreamOffset.first, StreamOffset.first, StreamInfo.Existing(valid(StreamVersion(1L)), StreamOffset.first))
             assert(result.firstOffset == StreamOffset.first)
             assert(result.lastOffset == StreamOffset.first)
-            assert(result.streamInfo == StreamInfo.Existing(1L, StreamOffset.first))
+            assert(result.streamInfo == StreamInfo.Existing(valid(StreamVersion(1L)), StreamOffset.first))
         }
     }
 end JournalEventTest

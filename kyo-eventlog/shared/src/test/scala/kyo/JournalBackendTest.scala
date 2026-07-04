@@ -23,6 +23,9 @@ abstract class JournalBackendTest(newBackend: => Journal.Backend[Sync] < (Sync &
     private def offset(value: Long): StreamOffset =
         StreamOffset(value).getOrElse(throw new AssertionError("valid offset"))
 
+    private def version(n: Long): StreamVersion =
+        StreamVersion(n).getOrElse(throw new AssertionError("valid version"))
+
     "append" - {
         "assigns consecutive zero-based offsets from the first event" in {
             for
@@ -33,7 +36,7 @@ abstract class JournalBackendTest(newBackend: => Journal.Backend[Sync] < (Sync &
                 assert(first.map(_.firstOffset) == Result.succeed(offset(0)))
                 assert(first.map(_.lastOffset) == Result.succeed(offset(1)))
                 assert(second.map(_.firstOffset) == Result.succeed(offset(2)))
-                assert(second.map(_.streamInfo) == Result.succeed(StreamInfo.Existing(3L, offset(2))))
+                assert(second.map(_.streamInfo) == Result.succeed(StreamInfo.Existing(version(3L), offset(2))))
         }
 
         "NoStream succeeds only when the stream is absent" in {
@@ -45,7 +48,7 @@ abstract class JournalBackendTest(newBackend: => Journal.Backend[Sync] < (Sync &
                 case Result.Failure(JournalConflictError(sid, expected, actual)) =>
                     assert(sid == streamId)
                     assert(expected == ExpectedOffset.NoStream)
-                    assert(actual == StreamInfo.Existing(1L, offset(0)))
+                    assert(actual == StreamInfo.Existing(version(1L), offset(0)))
                 case other =>
                     fail(s"expected Conflict, got: $other")
         }
@@ -58,7 +61,7 @@ abstract class JournalBackendTest(newBackend: => Journal.Backend[Sync] < (Sync &
                 live    <- Abort.run[JournalError](backend.append(streamId, ExpectedOffset.Exact(offset(0)), Chunk(envelope(1))))
             yield
                 assert(stale == Result.fail(
-                    JournalConflictError(streamId, ExpectedOffset.Exact(offset(7)), StreamInfo.Existing(1L, offset(0)))
+                    JournalConflictError(streamId, ExpectedOffset.Exact(offset(7)), StreamInfo.Existing(version(1L), offset(0)))
                 ))
                 assert(live.map(_.firstOffset) == Result.succeed(offset(1)))
         }
@@ -80,7 +83,7 @@ abstract class JournalBackendTest(newBackend: => Journal.Backend[Sync] < (Sync &
             yield
                 assert(fresh.map(_.firstOffset) == Result.succeed(offset(0)))
                 assert(onTop.map(_.firstOffset) == Result.succeed(offset(1)))
-                assert(onTop.map(_.streamInfo) == Result.succeed(StreamInfo.Existing(2L, offset(1))))
+                assert(onTop.map(_.streamInfo) == Result.succeed(StreamInfo.Existing(version(2L), offset(1))))
         }
 
         "an empty batch fails with EmptyAppend and leaves the stream unchanged" in {
@@ -101,7 +104,7 @@ abstract class JournalBackendTest(newBackend: => Journal.Backend[Sync] < (Sync &
                 info    <- Abort.run[JournalError](backend.streamInfo(streamId))
                 events  <- Abort.run[JournalError](backend.read(streamId, StreamOffset.first, 10))
             yield
-                assert(info == Result.succeed(StreamInfo.Existing(1L, offset(0))))
+                assert(info == Result.succeed(StreamInfo.Existing(version(1L), offset(0))))
                 assert(events.map(_.length) == Result.succeed(1))
         }
     }
@@ -193,7 +196,7 @@ abstract class JournalBackendTest(newBackend: => Journal.Backend[Sync] < (Sync &
                 backend <- newBackend
                 _       <- Abort.run[JournalError](backend.append(streamId, ExpectedOffset.NoStream, Chunk(envelope(0), envelope(1))))
                 info    <- Abort.run[JournalError](backend.streamInfo(streamId))
-            yield assert(info == Result.succeed(StreamInfo.Existing(2L, offset(1))))
+            yield assert(info == Result.succeed(StreamInfo.Existing(version(2L), offset(1))))
         }
     }
 
@@ -224,7 +227,7 @@ abstract class JournalBackendTest(newBackend: => Journal.Backend[Sync] < (Sync &
                     case Result.Failure(JournalConflictError(_, _, _)) => true
                     case _                                             => false
                 } == 1)
-                assert(info == Result.succeed(StreamInfo.Existing(2L, offset(1))))
+                assert(info == Result.succeed(StreamInfo.Existing(version(2L), offset(1))))
         }
     }
 end JournalBackendTest

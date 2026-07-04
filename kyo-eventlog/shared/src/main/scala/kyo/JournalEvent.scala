@@ -144,14 +144,15 @@ enum ExpectedOffset derives CanEqual:
     case Exact(offset: StreamOffset)
 end ExpectedOffset
 
-/** Observed state of a stream: absent, or existing with an event count and last offset.
+/** Observed state of a stream: absent, or existing with a stream version and last offset.
   *
-  * Returned by [[kyo.Journal.streamInfo]] and carried inside [[JournalConflictError]] so a failed optimistic append reports what it
-  * actually observed.
+  * `StreamInfo.Existing(version, lastOffset)` carries the one-based event count as a typed [[StreamVersion]] and the zero-based offset
+  * of the last event. For a contiguous zero-based stream `version.value == lastOffset.value + 1` always holds. Returned by
+  * [[kyo.Journal.streamInfo]] and carried inside [[JournalConflictError]] so a failed optimistic append reports what it actually observed.
   */
 enum StreamInfo derives CanEqual:
     case Absent
-    case Existing(eventCount: Long, lastOffset: StreamOffset)
+    case Existing(version: StreamVersion, lastOffset: StreamOffset)
 
     /** Whether the stream has at least one event. */
     def exists: Boolean =

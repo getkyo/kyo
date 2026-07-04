@@ -105,5 +105,7 @@ final private class InMemoryJournal(state: AtomicRef[InMemoryJournal.State])(usi
 
     private def info(events: Chunk[RecordedEvent]): StreamInfo =
         if events.isEmpty then StreamInfo.Absent
-        else StreamInfo.Existing(events.length.toLong, StreamOffset.fromUnchecked(events.length.toLong - 1L))
+        else
+            val lastOffset = StreamOffset.fromUnchecked(events.length.toLong - 1L)
+            StreamInfo.Existing(StreamVersion.after(lastOffset), lastOffset)
 end InMemoryJournal

@@ -24,7 +24,7 @@ class JournalTest extends kyo.test.Test[Any]:
         payload = envelope.payload,
         metadata = envelope.metadata
     )
-    private val expectedInfo = StreamInfo.Existing(1L, StreamOffset.first)
+    private val expectedInfo = StreamInfo.Existing(StreamVersion.after(StreamOffset.first), StreamOffset.first)
     private val appendResult = AppendResult(streamId, StreamOffset.first, StreamOffset.first, expectedInfo)
 
     "operations expose the Journal capability and per-op Abort in the row" in {
