@@ -271,7 +271,8 @@ What every Kyo program uses. `kyo-core` and `kyo-prelude` carry the effects you 
 
 | Module                                       | JVM | JS  | Native | WASM | Identity                                                                                                   |
 | -------------------------------------------- | --- | --- | ------ | ---- | ---------------------------------------------------------------------------------------------------------- |
-| [kyo-core](kyo-core/README.md)               | ✅  | ✅  | ✅     | ✅   | I/O and concurrency: `Sync`, `Async`, `Scope`, `Fiber`, `Channel`, `Hub`, `Queue`, `Clock`, `Log`, `Path`  |
+| [kyo-core](kyo-core/README.md)               | ✅  | ✅  | ✅     | ✅   | I/O and concurrency: `Sync`, `Async`, `Scope`, `Fiber`, `Channel`, `Hub`, `Queue`, `Clock`, `Log`          |
+| [kyo-system](kyo-system/README.md)           | ✅  | ✅  | ✅     | ✅   | File system, OS processes, and environment: `Path`, `Command`, `Process`, `System`, `FileException`        |
 | [kyo-prelude](kyo-prelude/README.md)         | ✅  | ✅  | ✅     | ✅   | Strictly-pure effect layer: `Abort`, `Env`, `Var`, `Memo`, `Choice`, `Emit`, `Poll`, `Stream`, `Layer`     |
 | [kyo-data](kyo-data/README.md)               | ✅  | ✅  | ✅     | ✅   | Low-allocation data types: `Maybe`, `Result`, `Chunk`, `Span`, `Duration`, `Instant`, `Schedule`, `TypeMap`|
 | [kyo-kernel](kyo-kernel/README.md)           | ✅  | ✅  | ✅     | ✅   | Algebraic-effects substrate; defines `A < S`, `ArrowEffect`, `ContextEffect`, multi-shot continuations     |
@@ -290,6 +291,7 @@ The vertical an application developer assembles: HTTP services and clients, deri
 | [kyo-ui](kyo-ui/README.md)                   | ✅  | ✅  | ✅     | ✅   | Web UIs as pure values: Scala.js DOM app, server HTML-over-SSE or SSR stream with first-class reactivity   |
 | [kyo-ai](kyo-ai/README.md)                   | ✅  | ✅  | ✅     | ✅   | Typed LLM programs: prompts, tools, thoughts, agents, streaming, provider backends                         |
 | [kyo-caliban](kyo-caliban/README.md)         | ✅  |     |        |      | Caliban GraphQL mounted on kyo-http: typed Kyo effects in resolvers, WebSocket subscriptions               |
+| [kyo-eventlog](kyo-eventlog/README.md)       | ✅  | ✅  | ✅     | ✅   | Durable event log: `Journal`, `JournalEvent`, `JournalMetadata`, `JournalError`                            |
 
 ### Writing style
 
