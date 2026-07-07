@@ -275,12 +275,13 @@ class WebsiteContentTest extends WebsiteTest:
     //      fixed here cannot regress: slug is the DIRECTORY, platform columns are JVM/JS/Native/WASM) ----
 
     /** A copy of the real root README `## Modules` section's `### Core` group (README.md lines 268 to
-      * 284): the `## Modules` heading and intro prose, the `### Core` heading and prose, then the GFM
-      * table with the real `[kyo-core]` / `[kyo-prelude]` / `[kyo-data]` / `[kyo-kernel]` /
-      * `[kyo-scheduler]` rows and the real `| Module | JVM | JS | Native | WASM | Identity |` 6-column
-      * header (alignment padding included). The table rows are copied exactly so the parser is tested
-      * against the current real format (including the WASM column added when WebAssembly became a
-      * published platform), not a fixture written to the code's old three-platform assumptions.
+      * 279): the `## Modules` heading and intro prose, the `### Core` heading and prose, then the GFM
+      * table with the real `[kyo-core]` / `[kyo-system]` / `[kyo-prelude]` / `[kyo-data]` /
+      * `[kyo-kernel]` / `[kyo-scheduler]` rows and the real `| Module | JVM | JS | Native | WASM |
+      * Identity |` 6-column header (alignment padding included). The table rows are copied exactly so
+      * the parser is tested against the current real format (including the WASM column added when
+      * WebAssembly became a published platform), not a fixture written to the code's old three-platform
+      * assumptions.
       */
     private val realCoreReadme =
         """# Kyo
@@ -295,7 +296,8 @@ class WebsiteContentTest extends WebsiteTest:
           |
           || Module                                       | JVM | JS  | Native | WASM | Identity                                                                                                  |
           || -------------------------------------------- | --- | --- | ------ | ---- | --------------------------------------------------------------------------------------------------------- |
-          || [kyo-core](kyo-core/README.md)               | ✅   | ✅   | ✅      | ✅   | I/O and concurrency: `Sync`, `Async`, `Scope`, `Fiber`, `Channel`, `Hub`, `Queue`, `Clock`, `Log`, `Path` |
+          || [kyo-core](kyo-core/README.md)               | ✅   | ✅   | ✅      | ✅   | I/O and concurrency: `Sync`, `Async`, `Scope`, `Fiber`, `Channel`, `Hub`, `Queue`, `Clock`, `Log`         |
+          || [kyo-system](kyo-system/README.md)           | ✅  | ✅  | ✅     | ✅   | File system, OS processes, and environment: `Path`, `Command`, `Process`, `System`, `FileException`        |
           || [kyo-prelude](kyo-prelude/README.md)         | ✅   | ✅   | ✅      | ✅   | Strictly-pure effect layer: `Abort`, `Env`, `Var`, `Memo`, `Choice`, `Emit`, `Poll`, `Stream`, `Layer`    |
           || [kyo-data](kyo-data/README.md)               | ✅   | ✅   | ✅      | ✅   | Low-allocation values: `Maybe`, `Result`, `Chunk`, `Span`, `Duration`, `Instant`, `Schedule`, `TypeMap`  |
           || [kyo-kernel](kyo-kernel/README.md)           | ✅   | ✅   | ✅      | ✅   | Algebraic-effects substrate; defines `A < S`, `ArrowEffect`, `ContextEffect`, multi-shot continuations    |
@@ -307,6 +309,7 @@ class WebsiteContentTest extends WebsiteTest:
             result <- fromRepoResult(Seq(
                 "README.md"               -> realCoreReadme,
                 "kyo-core/README.md"      -> "# kyo-core\n\nI/O and concurrency.",
+                "kyo-system/README.md"    -> "# kyo-system\n\nFile system, OS processes, and environment.",
                 "kyo-prelude/README.md"   -> "# kyo-prelude\n\nPure effect layer.",
                 "kyo-data/README.md"      -> "# kyo-data\n\nLow-allocation values.",
                 "kyo-kernel/README.md"    -> "# kyo-kernel\n\nEffect substrate.",
@@ -320,7 +323,7 @@ class WebsiteContentTest extends WebsiteTest:
                 val slugs = core.modules.map(_.slug)
                 // The slug is the module DIRECTORY, NOT the verbatim link target `kyo-core/README.md`.
                 assert(
-                    slugs == Chunk("kyo-core", "kyo-prelude", "kyo-data", "kyo-kernel", "kyo-scheduler"),
+                    slugs == Chunk("kyo-core", "kyo-system", "kyo-prelude", "kyo-data", "kyo-kernel", "kyo-scheduler"),
                     s"slugs: $slugs"
                 )
                 assert(!slugs.exists(_.contains("README.md")), s"no slug may carry the README.md suffix: $slugs")
@@ -335,7 +338,7 @@ class WebsiteContentTest extends WebsiteTest:
                 // The module READMEs are read from `root/<slug>/README.md` (no Missing abort).
                 assert(
                     core.modules.map(_.readme.linesIterator.next()) ==
-                        Chunk("# kyo-core", "# kyo-prelude", "# kyo-data", "# kyo-kernel", "# kyo-scheduler"),
+                        Chunk("# kyo-core", "# kyo-system", "# kyo-prelude", "# kyo-data", "# kyo-kernel", "# kyo-scheduler"),
                     "module READMEs must be read"
                 )
             case other => fail(s"expected Success on the real README format, got $other")
