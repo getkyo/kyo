@@ -42,6 +42,118 @@ class FileSizeTest extends kyo.test.Test[Any]:
         }
     }
 
+    "Int extension" - {
+        "bytes" in {
+            assert(0.bytes == FileSize.Zero)
+            assert(1.bytes.toBytes == 1L)
+            assert(1024.bytes.toBytes == 1024L)
+        }
+
+        "kib" in {
+            assert(1.kib.toBytes == 1024L)
+            assert(2.kib.toBytes == 2048L)
+        }
+
+        "mib" in {
+            assert(1.mib.toBytes == 1048576L)
+            assert(512.mib.toBytes == 536870912L)
+        }
+
+        "gib" in {
+            assert(1.gib.toBytes == 1073741824L)
+            assert(2.gib.toBytes == 2147483648L)
+        }
+
+        "tib" in {
+            assert(1.tib.toBytes == 1099511627776L)
+        }
+
+        "negative clamps to Zero" in {
+            assert((-1).bytes == FileSize.Zero)
+            assert((-1).kib == FileSize.Zero)
+            assert((-1).mib == FileSize.Zero)
+            assert((-1).gib == FileSize.Zero)
+            assert((-1).tib == FileSize.Zero)
+        }
+
+        "zero clamps to Zero" in {
+            assert(0.kib == FileSize.Zero)
+            assert(0.mib == FileSize.Zero)
+        }
+
+        "Int.MaxValue.tib saturates to Long.MaxValue" in {
+            assert(Int.MaxValue.tib.toBytes == Long.MaxValue)
+        }
+
+        "equality across Int and Long forms" in {
+            assert(2.mib == 2L.mib)
+            assert(1.gib == 1L.gib)
+            assert(512.kib == 512L.kib)
+        }
+    }
+
+    "decimal unit extensions" - {
+        "Long.kb" in {
+            assert(1L.kb.toBytes == 1000L)
+            assert(3L.kb.toBytes == 3000L)
+        }
+
+        "Long.mb" in {
+            assert(1L.mb.toBytes == 1000000L)
+            assert(5L.mb.toBytes == 5000000L)
+        }
+
+        "Long.gb" in {
+            assert(1L.gb.toBytes == 1000000000L)
+            assert(2L.gb.toBytes == 2000000000L)
+        }
+
+        "Int.kb" in {
+            assert(1.kb.toBytes == 1000L)
+            assert(3.kb.toBytes == 3000L)
+        }
+
+        "Int.mb" in {
+            assert(1.mb.toBytes == 1000000L)
+            assert(5.mb.toBytes == 5000000L)
+        }
+
+        "Int.gb" in {
+            assert(1.gb.toBytes == 1000000000L)
+            assert(2.gb.toBytes == 2000000000L)
+        }
+
+        "negative Long.kb clamps to Zero" in {
+            assert((-1L).kb == FileSize.Zero)
+            assert((-1L).mb == FileSize.Zero)
+            assert((-1L).gb == FileSize.Zero)
+        }
+
+        "negative Int.kb clamps to Zero" in {
+            assert((-1).kb == FileSize.Zero)
+            assert((-1).mb == FileSize.Zero)
+            assert((-1).gb == FileSize.Zero)
+        }
+
+        "Int and Long decimal forms are equal" in {
+            assert(3.kb == 3L.kb)
+            assert(5.mb == 5L.mb)
+            assert(2.gb == 2L.gb)
+        }
+
+        "large Long.gb is exact" in {
+            assert(8589934591L.gb.toBytes == 8589934591000000000L)
+        }
+
+        "large Long.mb is exact" in {
+            assert(1099511627775L.mb.toBytes == 1099511627775000000L)
+        }
+
+        "large Long.kb is exact" in {
+            assert(73838224265209L.kb.toBytes == 73838224265209000L)
+        }
+    }
+
     "FileSize.fromBytes" - {
         "positive value" in {
             assert(FileSize.fromBytes(512L).toBytes == 512L)
@@ -110,6 +222,10 @@ class FileSizeTest extends kyo.test.Test[Any]:
             assert(FileSize.parse("1KB") == Result.succeed(FileSize.fromUnits(1L, FileSize.Units.KB)))
             assert(FileSize.parse("10MB") == Result.succeed(FileSize.fromUnits(10L, FileSize.Units.MB)))
             assert(FileSize.parse("2GB") == Result.succeed(FileSize.fromUnits(2L, FileSize.Units.GB)))
+        }
+
+        "large integral decimal value is exact" in {
+            assert(FileSize.parse("8589934591GB") == Result.succeed(FileSize.fromBytes(8589934591000000000L)))
         }
 
         "whitespace between number and unit" in {
@@ -305,6 +421,10 @@ class FileSizeTest extends kyo.test.Test[Any]:
 
         "decimal units" in {
             assert(reader("10MB") == Right(FileSize.fromUnits(10L, FileSize.Units.MB)))
+        }
+
+        "large integral decimal value is exact" in {
+            assert(reader("8589934591GB") == Right(FileSize.fromBytes(8589934591000000000L)))
         }
 
         "bare number is bytes" in {
