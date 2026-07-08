@@ -17,14 +17,21 @@ import scala.annotation.tailrec
   * production settings: every acknowledged append is flushed to stable storage, and segments
   * rotate at 64 MiB. Override `fsync` only in tests; see the field note.
   *
+  * Recovery runs lazily on the first touch of a stream, and a `read` or `streamInfo` can be that
+  * first touch. When it is, recovery truncates a torn active-segment tail left by a prior crash
+  * and logs a WARN, so a nominally read-only operation can perform a one-time on-disk write. The
+  * truncation only ever removes an unacknowledged trailing batch; committed events are never lost.
+  *
   * @param fsync
   *   flush each acknowledged append to stable storage before returning. Defaults to `true`.
   *   Setting it `false` trades durability for throughput and is TEST-ONLY: the crash-survival
   *   guarantee does not hold when it is `false`.
   * @param segmentSize
-  *   soft rotation threshold in bytes; a new segment starts once the active segment reaches
-  *   this size. Defaults to 64 MiB. A single record larger than the threshold still writes,
-  *   into its own segment.
+  *   soft rotation threshold in bytes. Defaults to 64 MiB. The threshold is checked before an
+  *   append, not after: a new segment starts on the next append once the active segment has
+  *   reached this size. The active segment can therefore grow past the threshold, and a record
+  *   larger than the threshold is written whole into the current active segment rather than a
+  *   dedicated one.
   * @see
   *   [[Journal.Backend.file]] for the constructor that consumes this config
   */
@@ -227,12 +234,23 @@ final private class FileJournal(
 
     // --- claim spin ---------------------------------------------------------------------------
 
+    // Serializes same-stream appends: a waiter loops until the holder clears the writer flag. The whole
+    // append critical section (write + fsync) runs inside one Sync.Unsafe.defer with no suspension point,
+    // because the backend is a Journal.Backend[Sync] and its append row cannot carry Async. A waiter
+    // therefore cannot suspend as a fiber and free its carrier; it yields the carrier on each spin so it
+    // does not peg a core while the holder's blocking fsync runs. Thread.onSpinWait is deliberately not
+    // used: it is a same-core busy hint that would still hold the carrier hot across the fsync, whereas
+    // Thread.yield lets other carriers make progress. A truly suspending per-stream mutex would require a
+    // Journal.Backend[Async] backend and a change to the Sync-typed contract suite; see the module guide.
     @tailrec
     private def claim(ref: AtomicRef.Unsafe[StreamState])(using AllowUnsafe): StreamState =
         val s = ref.get()
-        if s.writer then claim(ref)                                // spin: a holder is running its section
+        if s.writer then
+            Thread.`yield`()
+            claim(ref)                                             // a holder is running its section
         else if ref.compareAndSet(s, s.copy(writer = true)) then s // won the claim; caller must publish/clear
         else claim(ref)
+        end if
     end claim
 
     // --- append critical section --------------------------------------------------------------
@@ -339,14 +357,42 @@ final private class FileJournal(
     end rotateIfNeeded
 
     private def createSegment(streamId: StreamId, baseOffset: Long)(using AllowUnsafe): SegmentEntry =
-        val dir = streamDir(streamId)
+        val dir     = streamDir(streamId)
+        val existed = dir.unsafe.exists()
         discard(dir.unsafe.mkDir())
+        // A newly created stream directory's own entry is not durable until its parent (streams/) is fsync'd.
+        // Sync it before the segment beneath it is acknowledged, on the fsync path only and only when the
+        // directory did not already exist (a rotation reuses an existing, already-synced stream directory).
+        if config.fsync && !existed then fsyncDir(streamsDir)
         val segPath = dir / segmentName(baseOffset)
         val channel = channelFor(segPath.toJava) // opens + registers
         val header  = ByteBuffer.wrap(SegmentHeader)
         discard(channel.write(header, 0L))
+        // FileChannel.force on the segment flushes its data but not the directory link that names it, so after a
+        // crash the just-created segment's data can be durable while its directory entry is lost. Fsync the
+        // containing directory here so the entry survives; writeBatch forces the segment's data afterwards.
+        if config.fsync then fsyncDir(dir)
         SegmentEntry(baseOffset, segPath, Chunk.empty[Long], HeaderSize.toLong, HeaderSize.toLong)
     end createSegment
+
+    // Fsyncs a directory so a newly created child entry (a stream directory or a segment file) becomes durable.
+    // On POSIX the parent directory must be fsync'd for a new child's link to survive a crash; FileChannel.force
+    // on the child does not cover this. Opening the directory read-only and forcing it is the POSIX-portable
+    // mechanism and works on Linux and macOS under both the JVM and Native. Windows cannot open a directory as a
+    // FileChannel, so the open throws IOException there; that case is tolerated because the platform makes the
+    // directory entry durable without an explicit directory sync. A force failure on an opened directory is a
+    // genuine durability fault and propagates to writeBatch, which maps it to JournalStorageError. This path is
+    // not black-box testable: it requires a power loss between the directory write and its sync, which no
+    // in-process test can stage; it is exercised only through the segment-creation and rotation call sites.
+    private def fsyncDir(dir: Path)(using AllowUnsafe): Unit =
+        val opened =
+            try Maybe(FileChannel.open(dir.toJava, StandardOpenOption.READ))
+            catch case _: IOException => Absent // platform cannot open a directory as a channel (Windows)
+        opened.foreach { ch =>
+            try discard(ch.force(true))
+            finally ch.close()
+        }
+    end fsyncDir
 
     // --- read path ---------------------------------------------------------------------------
 
@@ -600,14 +646,28 @@ final private class FileJournal(
         // Returns true if a valid batch-commit terminator exists at any byte offset from `from`
         // to the end of the segment. Used to distinguish a torn tail (no terminator follows the
         // failure point) from mid-file damage (a committed terminator survives after the bad record).
+        // The region is read in overlapping buffered windows and scanned in memory rather than issuing
+        // a 12-byte positional channel read per offset: a single bad record early in a full active
+        // segment would otherwise drive tens of millions of syscalls at recovery. Windows overlap by
+        // TerminatorSize-1 so a terminator straddling a boundary is still found; the magic-first check in
+        // terminatorAt short-circuits before the CRC, so only genuine KJNC candidates pay for a checksum.
         def hasTerminatorAfter(from: Long): Boolean =
-            var p     = from
-            var found = false
-            while p <= size - TerminatorSize.toLong && !found do
-                SegmentCodec.readTerminator(channel, p) match
-                    case Present(_) => found = true
-                    case Absent     => ()
-                p += 1L
+            val window  = 1 << 16
+            val overlap = TerminatorSize.toLong - 1L
+            var winPos  = from
+            var found   = false
+            while !found && winPos <= size - TerminatorSize.toLong do
+                val len  = math.min(window.toLong, size - winPos).toInt
+                val buf  = ByteBuffer.allocate(len)
+                val n    = channel.read(buf, winPos)
+                val arr  = buf.array()
+                var i    = 0
+                val last = n - TerminatorSize
+                while !found && i <= last do
+                    if SegmentCodec.terminatorAt(arr, i) then found = true
+                    i += 1
+                end while
+                winPos += (window.toLong - overlap)
             end while
             found
         end hasTerminatorAfter
@@ -736,7 +796,8 @@ private[kyo] object SegmentCodec:
         8L + 8 + (4 + idB.length) + (4 + tpB.length) + (4 + md.length) + (4 + pl.length)
     end recordSize
 
-    // Reads one record at position pos; verifies CRC. Left = corruption detail, Right = decoded.
+    // Reads one record at position pos; verifies CRC. Result.Failure carries the corruption detail,
+    // Result.Success the decoded record.
     def decodeRecordAt(channel: FileChannel, pos: Long): Result[String, DecodedRecord] =
         val head = ByteBuffer.allocate(8)
         if channel.read(head, pos) < 8 then Result.fail("record header truncated")
@@ -744,20 +805,29 @@ private[kyo] object SegmentCodec:
             head.flip()
             val bodyLen = head.getInt()
             val crcExp  = head.getInt()
-            val body    = ByteBuffer.allocate(bodyLen)
-            if channel.read(body, pos + 8L) < bodyLen then Result.fail("record body truncated")
+            // The 4-byte length prefix is deliberately not CRC-covered, so a single-bit corruption of it reaches
+            // here unfiltered. Bound it against the segment before allocating: a negative length (a flipped high
+            // bit) or one that runs past EOF is corruption, not a record. Without this guard a corrupt length
+            // drives ByteBuffer.allocate straight into IllegalArgumentException or OutOfMemoryError, which would
+            // escape the modeled JournalCorruptedError channel as an unhandled panic.
+            val maxBody = channel.size() - pos - 8L
+            if bodyLen < 0 || bodyLen.toLong > maxBody then Result.fail(s"record length out of range at byte $pos")
             else
-                val bodyArr = body.array()
-                val crc     = new CRC32(); crc.update(bodyArr, 0, bodyLen)
-                if (crc.getValue & 0xffffffffL).toInt != crcExp then Result.fail(s"record CRC mismatch at byte $pos")
+                val body = ByteBuffer.allocate(bodyLen)
+                if channel.read(body, pos + 8L) < bodyLen then Result.fail("record body truncated")
                 else
-                    body.flip()
-                    val offset   = body.getLong()
-                    val eventId  = getLpStr(body)
-                    val eventTp  = getLpStr(body)
-                    val metadata = getLpBytes(body)
-                    val payload  = getLpBytes(body)
-                    Result.succeed(DecodedRecord(offset, eventId, eventTp, metadata, payload, bodyLen))
+                    val bodyArr = body.array()
+                    val crc     = new CRC32(); crc.update(bodyArr, 0, bodyLen)
+                    if (crc.getValue & 0xffffffffL).toInt != crcExp then Result.fail(s"record CRC mismatch at byte $pos")
+                    else
+                        body.flip()
+                        val offset   = body.getLong()
+                        val eventId  = getLpStr(body)
+                        val eventTp  = getLpStr(body)
+                        val metadata = getLpBytes(body)
+                        val payload  = getLpBytes(body)
+                        Result.succeed(DecodedRecord(offset, eventId, eventTp, metadata, payload, bodyLen))
+                    end if
                 end if
             end if
         end if
@@ -772,6 +842,25 @@ private[kyo] object SegmentCodec:
         buf.putInt((crc.getValue & 0xffffffffL).toInt)
         buf.array()
     end encodeTerminator
+
+    // True if a valid 12-byte batch terminator sits at buf(off): mirrors readTerminator over an in-memory
+    // slab so a windowed recovery scan avoids a positional channel read per candidate offset. The magic
+    // bytes are checked first and short-circuit, so the CRC32 is only ever computed at a genuine KJNC hit.
+    def terminatorAt(buf: Array[Byte], off: Int): Boolean =
+        if off < 0 || off + TerminatorSize > buf.length then false
+        else
+            var i = 0
+            while i < 4 && buf(off + i) == CommitMagic(i) do i += 1
+            if i < 4 then false
+            else
+                val crc = new CRC32()
+                crc.update(CommitMagic)
+                crc.update(buf, off + 4, 4) // the 4 record-count bytes, byte-identical to intBytes(count)
+                val crcExp =
+                    ((buf(off + 8) & 0xff) << 24) | ((buf(off + 9) & 0xff) << 16) | ((buf(off + 10) & 0xff) << 8) | (buf(off + 11) & 0xff)
+                (crc.getValue & 0xffffffffL).toInt == crcExp
+            end if
+    end terminatorAt
 
     // Returns Some(recordCount) if a valid terminator sits at pos, else None (torn/absent).
     def readTerminator(channel: FileChannel, pos: Long): Maybe[Int] =

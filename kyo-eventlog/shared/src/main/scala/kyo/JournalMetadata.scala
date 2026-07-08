@@ -22,9 +22,10 @@ end EventMetadata
   *
   * Backed by [[kyo.Structure.Value]] directly with no allocation overhead. The accompanying [[Schema]] encodes each of the ten
   * constructors as a one-field record keyed by a fixed tag string (str, int, bool, decimal, bignum, null, seq, record, entries, variant),
-  * so every constructor round-trips without loss through any Codec (MsgPack, Ion, Json). This covers the three constructors the
-  * kyo-schema identity codec does not preserve: [[kyo.Structure.Value.VariantCase]], [[kyo.Structure.Value.MapEntries]] with
-  * all-string keys, and [[kyo.Structure.Value.BigNum]].
+  * so every constructor round-trips without loss through the self-describing MsgPack codec, which is the codec the file backend uses. This
+  * covers the three constructors the kyo-schema identity codec does not preserve: [[kyo.Structure.Value.VariantCase]],
+  * [[kyo.Structure.Value.MapEntries]] with all-string keys, and [[kyo.Structure.Value.BigNum]]. The text codecs do not read the tag-keyed
+  * open shape back for every constructor, so the round-trip guarantee is scoped to the binary MsgPack path.
   *
   * Construct with [[MetadataValue.apply]] and project with [[MetadataValue.value]]; the opaque wrapper does not auto-convert.
   *
@@ -46,7 +47,8 @@ object MetadataValue:
         def value: Structure.Value = self
 
     /** Constructor-exact codec: each of the ten [[kyo.Structure.Value]] constructors encodes as a one-field record keyed by its tag
-      * name and round-trips without loss through any Codec.
+      * name and round-trips without loss through the self-describing MsgPack codec the file backend uses. The tag-keyed open shape is
+      * not read back by every text codec, so the guarantee is scoped to the binary MsgPack path.
       */
     given metadataValueSchema: Schema[MetadataValue] = Schema.init[MetadataValue](
         writeFn = (v, w) => write(w, v),

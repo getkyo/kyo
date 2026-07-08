@@ -14,12 +14,12 @@ class FileJournalCodecTest extends kyo.test.Test[Any]:
     }
 
     "record frame" - {
-        "round-trips offset, ids, metadata, and payload" in {
+        "frames a record with a body-length prefix and a body-covering CRC" in {
             val md      = encodeMetadata(EventMetadata.empty)
             val payload = "hello".getBytes("UTF-8")
             val frame   = encodeRecord(7L, "evt-1", "UserRegistered", md, payload)
-            // decode by writing the frame to a channel-backed buffer is exercised through the backend;
-            // at the codec level assert the length field equals the body length and CRC verifies.
+            // Full field decode is exercised through the backend (decodeRecordAt needs a channel); at the codec
+            // level assert only the framing: the length prefix equals the body length and the CRC covers the body.
             val buf    = ByteBuffer.wrap(frame)
             val length = buf.getInt()
             val crc    = buf.getInt()
