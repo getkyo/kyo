@@ -81,6 +81,9 @@ object FileJournal:
                         case e: OverlappingFileLockException =>
                             lockChannel.close()
                             return Result.fail(JournalStorageError(s"Journal root '${dir.unsafe.show}' is locked", Present(e)))
+                        case e: IOException =>
+                            lockChannel.close()
+                            throw e // re-thrown; the outer catch handles it
                 if lock == null then
                     lockChannel.close()
                     Result.fail(JournalStorageError(s"Journal root '${dir.unsafe.show}' is locked by another owner", Absent))
@@ -209,8 +212,9 @@ final private class FileJournal(
         events: Chunk[EventEnvelope],
         log: Log.Unsafe
     )(using AllowUnsafe): Result[JournalAppendFailure, AppendResult] =
-        val ref     = cell(streamId)
-        val claimed = claim(ref) // may spin; holds the writer flag
+        val ref             = cell(streamId)
+        val claimed         = claim(ref) // may spin; holds the writer flag
+        var alreadyReleased = false
         try
             ensureIndexed(streamId, ref, claimed, log) match
                 case Result.Failure(err) => Result.fail(err)
@@ -219,14 +223,17 @@ final private class FileJournal(
                     if !matches(expected, info) then
                         Result.fail(JournalConflictError(streamId, expected, info))
                     else
-                        writeBatch(streamId, ref, indexed, events)
+                        writeBatch(streamId, ref, indexed, events) match
+                            case r @ Result.Success(_) => alreadyReleased = true; r
+                            case r                     => r
                     end if
         finally
-            // Clear the claim on any path (success publishes new state with writer=false; failure
-            // restores the last published state with writer=false) so a failed append never wedges
-            // the stream.
-            val cur = ref.get()
-            if cur.writer then discard(ref.compareAndSet(cur, cur.copy(writer = false)))
+            // On failure paths only: writeBatch already published the new state with writer=false
+            // on success, so clearing the claim here would race against a concurrent thread that
+            // won the CAS between writeBatch's ref.set and this finally's ref.get.
+            if !alreadyReleased then
+                val cur = ref.get()
+                if cur.writer then discard(ref.compareAndSet(cur, cur.copy(writer = false)))
         end try
     end appendUnsafe
 
@@ -259,7 +266,7 @@ final private class FileJournal(
             val lastOffset  = s.lastOffset + events.length.toLong
             val updatedActive = active.copy(
                 writePos = newWritePos,
-                recordPositions = Span.from(active.recordPositions.toArray ++ positions)
+                recordPositions = active.recordPositions ++ Chunk.from(positions)
             )
             val published = s.copy(
                 segments = priorSegments :+ updatedActive,
@@ -307,7 +314,7 @@ final private class FileJournal(
         val channel = channelFor(segPath.toJava) // opens + registers
         val header  = ByteBuffer.wrap(SegmentHeader)
         discard(channel.write(header, 0L))
-        SegmentEntry(baseOffset, segPath, Span.empty[Long], HeaderSize.toLong, HeaderSize.toLong)
+        SegmentEntry(baseOffset, segPath, Chunk.empty[Long], HeaderSize.toLong, HeaderSize.toLong)
     end createSegment
 
     // --- read path ---------------------------------------------------------------------------
@@ -410,7 +417,7 @@ final private class FileJournal(
                     case ScanResult.Corrupt(detail) =>
                         // `return` is required: without it, Result.fail(...) is a non-unit value
                         // discarded in a while-loop body, failing under -Wconf:msg=discarded.*value:error.
-                        return Result.fail(JournalCorruptedError(Present(streamId), detail))
+                        return Result.fail(JournalCorruptedError(Present(streamId), s"$detail in segment '${segPath.unsafe.show}'"))
                     case ScanResult.Ok(positions, committedEnd, tornAt) =>
                         tornAt match
                             case Present(from) if isActive =>
@@ -559,11 +566,25 @@ final private class FileJournal(
         var committedEnd = HeaderSize.toLong
         var batchStart   = HeaderSize.toLong
         var pending      = List.empty[Long] // record positions in the current, not-yet-terminated batch
+        // Returns true if a valid batch-commit terminator exists at any byte offset from `from`
+        // to the end of the segment. Used to distinguish a torn tail (no terminator follows the
+        // failure point) from mid-file damage (a committed terminator survives after the bad record).
+        def hasTerminatorAfter(from: Long): Boolean =
+            var p     = from
+            var found = false
+            while p <= size - TerminatorSize.toLong && !found do
+                SegmentCodec.readTerminator(channel, p) match
+                    case Present(_) => found = true
+                    case Absent     => ()
+                p += 1L
+            end while
+            found
+        end hasTerminatorAfter
         @tailrec def loop(): ScanResult =
             if pos >= size then
                 // reached EOF; any pending (unterminated) records are a torn tail
-                if pending.isEmpty then ScanResult.Ok(Span.from(committed.result().toArray), committedEnd, Absent)
-                else if isActive then ScanResult.Ok(Span.from(committed.result().toArray), committedEnd, Present(batchStart))
+                if pending.isEmpty then ScanResult.Ok(committed.result(), committedEnd, Absent)
+                else if isActive then ScanResult.Ok(committed.result(), committedEnd, Present(batchStart))
                 else ScanResult.Corrupt(s"unterminated batch at byte $batchStart in sealed segment")
             else
                 SegmentCodec.readTerminator(channel, pos) match
@@ -577,16 +598,15 @@ final private class FileJournal(
                     case _ =>
                         SegmentCodec.decodeRecordAt(channel, pos) match
                             case Result.Success(dec) =>
-                                val recLen = 8L + {
-                                    val h = ByteBuffer.allocate(4); discard(channel.read(h, pos)); h.flip(); h.getInt().toLong
-                                }
                                 pending = pos :: pending
-                                pos += recLen
+                                pos += 8L + dec.bodyLen.toLong
                                 loop()
                             case Result.Failure(detail) =>
-                                // torn/corrupt here: tail of active segment with pending batch -> torn tail;
-                                // otherwise mid-file damage.
-                                if isActive then ScanResult.Ok(Span.from(committed.result().toArray), committedEnd, Present(batchStart))
+                                // A decode failure in the active segment is a torn tail only when no valid
+                                // terminator follows the failure point. A terminator surviving after the bad
+                                // record means the damage is mid-file and must not be silently truncated away.
+                                if isActive && !hasTerminatorAfter(pos + 1L) then
+                                    ScanResult.Ok(committed.result(), committedEnd, Present(batchStart))
                                 else ScanResult.Corrupt(detail)
         loop()
     end scanRecords
@@ -613,15 +633,16 @@ private[kyo] object StreamState:
 final private[kyo] case class SegmentEntry(
     baseOffset: Long,
     path: Path,
-    recordPositions: Span[Long],
+    recordPositions: Chunk[Long],
     writePos: Long,
     sealedSize: Long
 )
 
-/** Pure segment binary codec: header, record frame (with CRC), batch-commit terminator, metadata
+/** Stateless binary codec: header, record frame (with CRC), batch-commit terminator, metadata
   * (MsgPack of a single `Structure.Value.MapEntries`), and the injective streamId
-  * percent-encoding. No I/O; all functions operate on byte arrays / channels at explicit positions.
-  * `private[kyo]` so the codec unit tests can drive it in isolation; out of public surface.
+  * percent-encoding. No open handles, no implicit position; all channel operations use explicit
+  * byte positions. `private[kyo]` so the codec unit tests can drive it in isolation; out of
+  * public surface.
   */
 private[kyo] object SegmentCodec:
 
@@ -704,7 +725,7 @@ private[kyo] object SegmentCodec:
                     val eventTp  = getLpStr(body)
                     val metadata = getLpBytes(body)
                     val payload  = getLpBytes(body)
-                    Result.succeed(DecodedRecord(offset, eventId, eventTp, metadata, payload))
+                    Result.succeed(DecodedRecord(offset, eventId, eventTp, metadata, payload, bodyLen))
                 end if
             end if
         end if
@@ -750,7 +771,9 @@ private[kyo] object SegmentCodec:
     end encodeMetadata
 
     def decodeMetadata(bytes: Array[Byte])(using Frame): Result[JournalInvalidIdentifierError, EventMetadata] =
-        if bytes.isEmpty || bytes(0) != MetadataVersion then Result.succeed(EventMetadata.empty)
+        if bytes.isEmpty then Result.succeed(EventMetadata.empty)
+        else if bytes(0) != MetadataVersion then
+            Result.fail(JournalInvalidIdentifierError("metadata encoding version", s"unknown byte 0x${(bytes(0) & 0xff).toHexString}"))
         else
             val payload = Span.from(java.util.Arrays.copyOfRange(bytes, 1, bytes.length))
             // MsgPack.newReader is statically Codec.Reader, but the concrete MsgPackReader is always a
@@ -809,12 +832,13 @@ final private[kyo] case class DecodedRecord(
     eventId: String,
     eventType: String,
     metadata: Array[Byte],
-    payload: Array[Byte]
+    payload: Array[Byte],
+    bodyLen: Int
 )
 
 /** Result of scanning one segment's records. `committedEnd` is the byte after the last valid
   * terminator; `tornAt` is the byte where the trailing torn batch began (if any).
   */
 private[kyo] enum ScanResult:
-    case Ok(positions: Span[Long], committedEnd: Long, tornAt: Maybe[Long])
+    case Ok(positions: Chunk[Long], committedEnd: Long, tornAt: Maybe[Long])
     case Corrupt(detail: String)
