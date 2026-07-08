@@ -4,7 +4,7 @@
 
 A `Journal` program is a composed value. Operations (`append`, `read`, `streamInfo`) suspend as reified effects, and `Journal.run(backend)(program)` installs a storage backend, discharges the `Journal` capability, and leaves each operation's typed failure on the `Abort` row. Schemas, codecs, and domain event types live at the layer above; the payload is raw bytes throughout.
 
-The module targets JVM, JavaScript, Scala Native, and WebAssembly. It depends on `kyo-core` and `kyo-schema`; `Structure.Value` (used in metadata) is the schema layer's value vocabulary.
+The module targets JVM, JavaScript, Scala Native, and WebAssembly. It depends on `kyo-core`, `kyo-schema`, and `kyo-system`; callers using `Journal.Backend.file` must include `kyo-system` in their own build to construct a `Path` value. Metadata values are `MetadataValue` instances, an opaque wrapper around `Structure.Value` with a constructor-exact codec.
 
 <!-- doctest:setup
 ```scala
@@ -204,7 +204,7 @@ val safe: Result[JournalError, Chunk[RecordedEvent]] < Sync =
 
 ## Metadata
 
-`EventMetadata` holds infrastructure data alongside the payload: correlation identifiers, tracing keys, tags. Values are `kyo.Structure.Value` trees from kyo-schema. Domain fields belong in the encoded payload bytes; metadata is for infrastructure concerns that consumers need without decoding.
+`EventMetadata` holds infrastructure data alongside the payload: correlation identifiers, tracing keys, tags. Values are `MetadataValue` instances. `MetadataValue` is an opaque wrapper around `Structure.Value` with a constructor-exact codec that round-trips all ten `Structure.Value` constructors without loss. Construct with `MetadataValue(sv: Structure.Value)` and access the underlying value with `.value`. Domain fields belong in the encoded payload bytes; metadata is for infrastructure concerns that consumers need without decoding.
 
 ```scala
 val key: Result[JournalInvalidIdentifierError, MetadataKey] = MetadataKey("trace.correlation_id")
@@ -224,7 +224,26 @@ val inMem: Journal.Backend[Sync] < Sync =
     Journal.Backend.inMemory
 ```
 
-> **Note:** The in-memory backend is for tests and local programs; each call creates an isolated store and separate calls do not share state. For durable storage, implement `Journal.Backend[S]` with your storage layer and pass it to `Journal.run`.
+> **Note:** The in-memory backend is for tests and local programs; each call creates an isolated store and separate calls do not share state.
+
+`Journal.Backend.file` opens a durable, segment-based file journal rooted at a directory:
+
+```scala doctest:expect=skipped
+val dir: Path = Path("my-journal")
+val backend: Journal.Backend[Sync] < (Sync & Scope & Abort[JournalStorageError]) =
+    Journal.Backend.file(dir)
+```
+
+This constructor is available on JVM and Native only; it is absent from Scala.js and Wasm. The `dir` parameter is a `Path` from `kyo-system`. `Scope` finalization releases the advisory LOCK file and closes all open segment channels. A second open of a held root directory fails immediately with `JournalStorageError`.
+
+Pass `FileJournal.Config` to override two knobs:
+
+| Field | Default | Notes |
+|---|---|---|
+| `fsync` | `true` | Flush each acknowledged append to stable storage. Set `false` only in tests; the crash-survival guarantee does not hold when `false`. |
+| `segmentSize` | 67108864 (64 MiB) | Soft rotation threshold in bytes. A record larger than the threshold still writes, into its own segment. |
+
+Every acknowledged append (with `fsync = true`) survives a crash. A torn tail at the end of the active segment (from a prior crash) is silently truncated at recovery; prior committed events are never lost. Non-tail corruption and unknown segment versions are fatal (`JournalCorruptedError`). Metadata values round-trip exactly through the file backend: all ten `Structure.Value` constructors encode without loss.
 
 Every custom backend must pass `JournalBackendTest`, an abstract test class covering offset assignment, expected-offset semantics, batch atomicity, bounded reads, stream isolation, and concurrent conflict detection:
 

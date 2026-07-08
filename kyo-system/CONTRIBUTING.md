@@ -23,7 +23,7 @@ The typed error hierarchies for the two operation families are:
 - `FileException` and its sub-traits (`FileReadException`, `FileWriteException`, `FileFsException`) cover all Path I/O.
 - `CommandException` covers pre-launch failures for Command.
 
-**Dependency rule:** kyo-system depends on `kyo-core` only. No other kyo module is a compile-time dependency. A future `kyo-eventlog` edge arrives when `FileJournal` is introduced; do not add it before then.
+**Dependency rule:** kyo-system depends on `kyo-core` only. No other kyo module is a compile-time dependency from kyo-system's side. `kyo-eventlog` depends on kyo-system (introduced with `FileJournal`, which uses `Path`, `Path.Unsafe`, and `toJava` for its segment files); no other inbound module edge exists.
 
 ### Source layout
 
@@ -482,6 +482,6 @@ Run through this list before touching the internals or adding a new public surfa
 
 9. **New StreamFileExtensions sink.** Does it follow the `writeWith` pattern (acquire handle, run body, delete partial file on failure)? Does every platform I/O call carry a `// Unsafe:` comment? Is it exported at the bottom of the file? Is it a sink on `Stream[String, S]` if it requires string semantics (not on `Stream[Byte, S]`)? [`StreamFileExtensions.scala`]
 
-10. **New dependency from kyo-system.** kyo-system depends on `kyo-core` only. Adding any other kyo module (including `kyo-eventlog`) requires explicit authorisation. [`build.sbt:683-693`]
+10. **New dependency from kyo-system.** kyo-system depends on `kyo-core` only. `kyo-eventlog` depends on kyo-system (as of the file backend work); no outbound edge from kyo-system to kyo-eventlog or any other kyo module exists. Adding any further inbound module edge requires explicit authorisation. [`build.sbt:683-693`]
 
 11. **New test.** Does it extend `kyo.test.Test[Any]`? Does it assert concrete values? Does it live in `shared/src/test` unless it genuinely requires a JVM-only API? Is it folded into the matching `*Test.scala` for the source it covers? Does it include at least one edge case (empty path, non-existent file, non-zero exit, missing env variable)?

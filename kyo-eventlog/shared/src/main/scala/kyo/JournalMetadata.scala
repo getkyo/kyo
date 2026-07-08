@@ -109,7 +109,7 @@ object MetadataValue:
             case "bool"    => Structure.Value.Bool(r.boolean())
             case "decimal" => Structure.Value.Decimal(r.double())
             case "bignum"  => Structure.Value.BigNum(BigDecimal(r.string()))
-            case "null"    => r.skip(); Structure.Value.Null
+            case "null"    => r.skip(); Structure.Value.Null // skip consumes the nil body written by w.nil()
             case "seq" =>
                 discard(r.arrayStart())
                 val b = Chunk.newBuilder[Structure.Value]
