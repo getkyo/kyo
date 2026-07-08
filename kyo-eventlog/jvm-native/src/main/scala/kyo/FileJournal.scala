@@ -23,9 +23,9 @@ import scala.annotation.tailrec
   * truncation only ever removes an unacknowledged trailing batch; committed events are never lost.
   *
   * @param fsync
-  *   flush each acknowledged append to stable storage before returning. Defaults to `true`.
-  *   Setting it `false` trades durability for throughput and is TEST-ONLY: the crash-survival
-  *   guarantee does not hold when it is `false`.
+  *   durability policy for acknowledged appends. Defaults to [[Fsync.Always]]. [[Fsync.Disabled]]
+  *   trades durability for throughput and is TEST-ONLY: the crash-survival guarantee does not hold
+  *   when [[Fsync.Disabled]] is set.
   * @param segmentSize
   *   soft rotation threshold in bytes. Defaults to 64 MiB. The threshold is checked before an
   *   append, not after: a new segment starts on the next append once the active segment has
@@ -37,8 +37,31 @@ import scala.annotation.tailrec
   */
 object FileJournal:
 
+    /** Durability policy for acknowledged appends.
+      *
+      * Each case encodes one flush discipline applied after a batch write. The enum form is the
+      * extension point for future fine-grained modes such as batched flushing or interval-based
+      * flushing: adding a new case is a non-breaking change, and exhaustive match sites gain a
+      * compile error when new cases arrive rather than silently defaulting.
+      *
+      * The production default is [[Always]]. [[Disabled]] is reserved for test scenarios that
+      * need throughput without crash-survival guarantees. Any code path that is expected to
+      * survive a power loss must use [[Always]].
+      *
+      * @see [[Config]] for the config type that carries this policy
+      */
+    enum Fsync derives CanEqual:
+        /** Flush every acknowledged append to stable storage before returning. Production default. */
+        case Always
+
+        /** No flush; trades durability for throughput. TEST-ONLY: the crash-survival guarantee
+          * does not hold.
+          */
+        case Disabled
+    end Fsync
+
     final case class Config(
-        fsync: Boolean = true,
+        fsync: Fsync = Fsync.Always,
         segmentSize: Long = 64L * 1024L * 1024L // 64 MiB = 67108864
     ) derives CanEqual
 
@@ -310,7 +333,7 @@ final private class FileJournal(
                 i += 1
             end while
             discard(channel.write(buffer, startPos))
-            if config.fsync then discard(channel.force(false)) // fdatasync (JVM) / full fsync (Native)
+            if config.fsync == Fsync.Always then discard(channel.force(false)) // fdatasync (JVM) / full fsync (Native)
             val newWritePos = startPos + buffer.limit().toLong
             val lastOffset  = s.lastOffset + events.length.toLong
             val updatedActive = active.copy(
@@ -363,7 +386,7 @@ final private class FileJournal(
         // A newly created stream directory's own entry is not durable until its parent (streams/) is fsync'd.
         // Sync it before the segment beneath it is acknowledged, on the fsync path only and only when the
         // directory did not already exist (a rotation reuses an existing, already-synced stream directory).
-        if config.fsync && !existed then fsyncDir(streamsDir)
+        if config.fsync == Fsync.Always && !existed then fsyncDir(streamsDir)
         val segPath = dir / segmentName(baseOffset)
         val channel = channelFor(segPath.toJava) // opens + registers
         val header  = ByteBuffer.wrap(SegmentHeader)
@@ -371,7 +394,7 @@ final private class FileJournal(
         // FileChannel.force on the segment flushes its data but not the directory link that names it, so after a
         // crash the just-created segment's data can be durable while its directory entry is lost. Fsync the
         // containing directory here so the entry survives; writeBatch forces the segment's data afterwards.
-        if config.fsync then fsyncDir(dir)
+        if config.fsync == Fsync.Always then fsyncDir(dir)
         SegmentEntry(baseOffset, segPath, Chunk.empty[Long], HeaderSize.toLong, HeaderSize.toLong)
     end createSegment
 

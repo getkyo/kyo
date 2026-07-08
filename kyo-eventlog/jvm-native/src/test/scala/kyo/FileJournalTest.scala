@@ -63,7 +63,7 @@ class FileJournalTest extends kyo.test.Test[Any]:
             val big = EventEnvelope(valid(EventId("big")), valid(EventType("T")), Span.from(new Array[Byte](512)), EventMetadata.empty)
             for
                 dir     <- freshDir("fj-rot")
-                backend <- discharge(Journal.Backend.file(dir, FileJournal.Config(fsync = true, segmentSize = 256L)))
+                backend <- discharge(Journal.Backend.file(dir, FileJournal.Config(fsync = FileJournal.Fsync.Always, segmentSize = 256L)))
                 _       <- discharge(appendAll(backend, sid, 0 until 20))
                 slice   <- discharge(backend.read(sid, off(8), 6))
                 _       <- discharge(backend.append(sid, ExpectedOffset.Any, Chunk(big)))
