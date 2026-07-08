@@ -672,11 +672,23 @@ lazy val `kyo-eventlog` =
     crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
         .crossType(CrossType.Full)
         .in(file("kyo-eventlog"))
-        .dependsOn(`kyo-core`, `kyo-schema`)
+        .dependsOn(`kyo-core`, `kyo-schema`, `kyo-system`)
         .withKyoTest
         .settings(`kyo-settings`)
-        .jvmSettings(mimaCheck(false))
-        .nativeSettings(`native-settings`)
+        .jvmSettings(
+            mimaCheck(false),
+            Compile / unmanagedSourceDirectories +=
+                baseDirectory.value.getParentFile / "jvm-native" / "src" / "main" / "scala",
+            Test / unmanagedSourceDirectories +=
+                baseDirectory.value.getParentFile / "jvm-native" / "src" / "test" / "scala"
+        )
+        .nativeSettings(
+            `native-settings`,
+            Compile / unmanagedSourceDirectories +=
+                baseDirectory.value.getParentFile / "jvm-native" / "src" / "main" / "scala",
+            Test / unmanagedSourceDirectories +=
+                baseDirectory.value.getParentFile / "jvm-native" / "src" / "test" / "scala"
+        )
         .jsSettings(`js-settings`, Test / scalaJSLinkerConfig ~= (_.withModuleKind(ModuleKind.CommonJSModule)))
         .wasmSettings(`wasm-settings`)
 
