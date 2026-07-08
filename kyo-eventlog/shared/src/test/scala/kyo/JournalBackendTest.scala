@@ -200,6 +200,46 @@ abstract class JournalBackendTest(newBackend: => Journal.Backend[Sync] < (Sync &
         }
     }
 
+    "metadata fidelity" - {
+        "preserves all ten Structure.Value constructors through append and read" in {
+            val bigDecimalVal = BigDecimal("123456789012345678901234567890.0123456789")
+            val storedMeta = EventMetadata(Map(
+                valid(MetadataKey("str"))     -> MetadataValue(Structure.Value.Str("hello")),
+                valid(MetadataKey("int"))     -> MetadataValue(Structure.Value.Integer(42L)),
+                valid(MetadataKey("bool"))    -> MetadataValue(Structure.Value.Bool(true)),
+                valid(MetadataKey("decimal")) -> MetadataValue(Structure.Value.Decimal(3.14)),
+                valid(MetadataKey("bignum"))  -> MetadataValue(Structure.Value.BigNum(bigDecimalVal)),
+                valid(MetadataKey("null"))    -> MetadataValue(Structure.Value.Null),
+                valid(MetadataKey("seq")) -> MetadataValue(Structure.Value.Sequence(Chunk(
+                    Structure.Value.Str("a"),
+                    Structure.Value.Integer(1L)
+                ))),
+                valid(MetadataKey("record")) -> MetadataValue(Structure.Value.Record(Chunk("x" -> Structure.Value.Bool(false)))),
+                valid(MetadataKey("entries")) -> MetadataValue(
+                    Structure.Value.MapEntries(Chunk(Structure.Value.Integer(1L) -> Structure.Value.Str("v")))
+                ),
+                valid(MetadataKey("variant")) -> MetadataValue(Structure.Value.VariantCase("MyCase", Structure.Value.Str("payload")))
+            ))
+            val ev = EventEnvelope(
+                id = valid(EventId("meta-fidelity")),
+                eventType = valid(EventType("MetaTest")),
+                payload = Span.from(Array.emptyByteArray),
+                metadata = storedMeta
+            )
+            for
+                backend <- newBackend
+                _       <- Abort.run[JournalError](backend.append(streamId, ExpectedOffset.Any, Chunk(ev)))
+                events  <- Abort.run[JournalError](backend.read(streamId, StreamOffset.first, 1))
+            yield events match
+                case Result.Success(es) =>
+                    assert(es.length == 1)
+                    assert(es.head.metadata == storedMeta)
+                case other =>
+                    fail(s"expected success, got: $other")
+            end for
+        }
+    }
+
     "concurrency" - {
         "exactly one of two racing Exact appends wins" in {
             for

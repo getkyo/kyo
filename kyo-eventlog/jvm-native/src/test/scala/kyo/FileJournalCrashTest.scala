@@ -172,7 +172,7 @@ class FileJournalCrashTest extends kyo.test.Test[Any]:
                 val events = res.getOrElse(throw new AssertionError(s"recovery read failed: $res"))
                 val warns  = captured.get().filter(_.startsWith("warn:"))
                 assert(events.map(_.offset.value) == List(0L))
-                assert(warns.exists(_.contains(".seg")))
+                assert(warns.exists(w => w.contains(".seg") && w.contains("byte")))
             end for
         }
     }

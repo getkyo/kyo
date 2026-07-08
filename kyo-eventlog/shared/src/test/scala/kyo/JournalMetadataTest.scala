@@ -33,8 +33,8 @@ class JournalMetadataTest extends kyo.test.Test[Any]:
         }
         "carries structural values" in {
             val key      = MetadataKey("event.number").getOrElse(throw new AssertionError("valid key"))
-            val metadata = EventMetadata(Map(key -> Structure.Value.Integer(42L)))
-            assert(metadata.values(key) == Structure.Value.Integer(42L))
+            val metadata = EventMetadata(Map(key -> MetadataValue(Structure.Value.Integer(42L))))
+            assert(metadata.values(key).value == Structure.Value.Integer(42L))
         }
     }
 end JournalMetadataTest

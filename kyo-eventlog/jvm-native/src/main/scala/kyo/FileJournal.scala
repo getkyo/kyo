@@ -627,8 +627,9 @@ private[kyo] object StreamState:
 
 /** One segment file's index entry. `recordPositions(i)` is the byte offset of the record for
   * `baseOffset + i`. Channels live in the FileJournal registry, keyed by path.
-  * `writePos` is the append cursor (= current logical size); `sealedSize` is the frozen size after
-  * rotation, else equal to `writePos`.
+  * `writePos` is the append cursor for the active segment; `sealedSize` is the logical committed
+  * size at the time the entry was last opened or sealed (equal to `writePos` at seal time; used as
+  * the future stored-index anchor).
   */
 final private[kyo] case class SegmentEntry(
     baseOffset: Long,
@@ -639,7 +640,7 @@ final private[kyo] case class SegmentEntry(
 )
 
 /** Stateless binary codec: header, record frame (with CRC), batch-commit terminator, metadata
-  * (MsgPack of a single `Structure.Value.MapEntries`), and the injective streamId
+  * (a MsgPack map of tag-keyed `MetadataValue` nodes), and the injective streamId
   * percent-encoding. No open handles, no implicit position; all channel operations use explicit
   * byte positions. `private[kyo]` so the codec unit tests can drive it in isolation; out of
   * public surface.
@@ -652,7 +653,7 @@ private[kyo] object SegmentCodec:
     val SegmentHeader: Array[Byte] = Magic :+ Version
     val CommitMagic: Array[Byte]   = Array[Byte]('K', 'J', 'N', 'C')
     val TerminatorSize: Int        = 12                              // KJNC(4) + recordCount(4) + crc(4)
-    val MetadataVersion: Byte      = 0x01                            // 0x01 = MsgPack-of-Structure.Value
+    val MetadataVersion: Byte      = 0x01                            // 0x01 = tagged map of MetadataValue
 
     private val Utf8 = StandardCharsets.UTF_8
 
@@ -759,10 +760,12 @@ private[kyo] object SegmentCodec:
     // --- metadata ----------------------------------------------------------------------------
 
     def encodeMetadata(md: EventMetadata): Array[Byte] =
-        val entries = Chunk.from(md.values.toSeq.map((k, v) => (Structure.Value.Str(k.value): Structure.Value, v)))
-        val value   = Structure.Value.MapEntries(entries)
-        val writer  = MsgPack().newWriter()
-        Schema.writeStructureValue(writer, value)
+        val writer = MsgPack().newWriter()
+        writer.mapStart(md.values.size)
+        md.values.foreach((k, v) =>
+            writer.field(k.value, 0); MetadataValue.write(writer, v)
+        )
+        writer.mapEnd()
         val body = writer.result().toArray
         val out  = new Array[Byte](1 + body.length)
         out(0) = MetadataVersion
@@ -776,19 +779,22 @@ private[kyo] object SegmentCodec:
             Result.fail(JournalInvalidIdentifierError("metadata encoding version", s"unknown byte 0x${(bytes(0) & 0xff).toHexString}"))
         else
             val payload = Span.from(java.util.Arrays.copyOfRange(bytes, 1, bytes.length))
-            // MsgPack.newReader is statically Codec.Reader, but the concrete MsgPackReader is always a
-            // Codec.IntrospectingReader, so this cast reaches readStructure()
-            // and cannot fail for a MsgPack-backed codec; no safe accessor exposes readStructure on Reader.
-            val reader = MsgPack().newReader(payload).asInstanceOf[Codec.IntrospectingReader]
-            reader.readStructure() match
-                case Structure.Value.MapEntries(entries) =>
-                    val pairs = entries.map {
-                        case (Structure.Value.Str(k), v) => MetadataKey(k).map(mk => (mk, v))
-                        case _                           => Result.fail(JournalInvalidIdentifierError("MetadataKey", "<non-string key>"))
-                    }
-                    Result.collect(pairs).map(ps => EventMetadata(ps.toMap))
-                case _ => Result.succeed(EventMetadata.empty)
-            end match
+            val reader  = MsgPack().newReader(payload)
+            try
+                discard(reader.objectStart())
+                val rawPairs = Chunk.newBuilder[(String, MetadataValue)]
+                while reader.hasNextField() do
+                    val keyStr = reader.field()
+                    val v      = MetadataValue.read(reader)
+                    rawPairs += (keyStr -> v)
+                end while
+                reader.objectEnd()
+                val pairs = rawPairs.result().map((k, v) => MetadataKey(k).map(mk => (mk, v)))
+                Result.collect(pairs).map(ps => EventMetadata(ps.toMap))
+            catch
+                case e: DecodeException =>
+                    Result.fail(JournalInvalidIdentifierError("metadata value tag", e.getMessage))
+            end try
     end decodeMetadata
 
     // --- streamId percent-encoding (injective, filesystem-safe) ------------------------------
