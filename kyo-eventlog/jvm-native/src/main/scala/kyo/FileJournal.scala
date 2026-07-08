@@ -27,11 +27,10 @@ import scala.annotation.tailrec
   *   trades durability for throughput and is TEST-ONLY: the crash-survival guarantee does not hold
   *   when [[Fsync.Disabled]] is set.
   * @param segmentSize
-  *   soft rotation threshold in bytes. Defaults to 64 MiB. The threshold is checked before an
-  *   append, not after: a new segment starts on the next append once the active segment has
-  *   reached this size. The active segment can therefore grow past the threshold, and a record
-  *   larger than the threshold is written whole into the current active segment rather than a
-  *   dedicated one.
+  *   soft rotation threshold. Defaults to 64 MiB. The threshold is checked before an append, not
+  *   after: a new segment starts on the next append once the active segment has reached this size.
+  *   The active segment can therefore grow past the threshold, and a record larger than the
+  *   threshold is written whole into the current active segment rather than a dedicated one.
   * @see
   *   [[Journal.Backend.file]] for the constructor that consumes this config
   */
@@ -62,7 +61,7 @@ object FileJournal:
 
     final case class Config(
         fsync: Fsync = Fsync.Always,
-        segmentSize: Long = 64L * 1024L * 1024L // 64 MiB = 67108864
+        segmentSize: FileSize = 64L.mib
     ) derives CanEqual
 
     object Config:
@@ -369,7 +368,7 @@ final private class FileJournal(
     )
         : (Chunk[SegmentEntry], SegmentEntry) =
         s.segments.lastMaybe match
-            case Present(active) if active.writePos < config.segmentSize =>
+            case Present(active) if active.writePos < config.segmentSize.toBytes =>
                 (s.segments.dropRight(1), active)
             case Present(active) =>
                 val sealed0 = active.copy(sealedSize = active.writePos)

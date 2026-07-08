@@ -51,7 +51,7 @@ class FileJournalCodecTest extends kyo.test.Test[Any]:
 
     "Config.default" - {
         "carries fsync=Always and segmentSize=64 MiB" in {
-            assert(FileJournal.Config.default == FileJournal.Config(fsync = FileJournal.Fsync.Always, segmentSize = 67108864L))
+            assert(FileJournal.Config.default == FileJournal.Config(fsync = FileJournal.Fsync.Always, segmentSize = 64L.mib))
         }
     }
 end FileJournalCodecTest
