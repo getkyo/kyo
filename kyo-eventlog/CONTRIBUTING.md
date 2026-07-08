@@ -440,7 +440,7 @@ See the root [CONTRIBUTING.md](../CONTRIBUTING.md) for the global test naming ru
 
 ### Deterministic concurrency: the Latch pattern
 
-[`JournalBackendTest.scala:203-231`]
+[`JournalBackendTest.scala:243-273`]
 
 Concurrency tests use `Latch.init(n)` to coordinate fibers to a common start point, then `Fiber.initUnscoped` to race them. A latch of 1 makes both fibers block at `latch.await` until `latch.release` fires, at which point they proceed simultaneously. The test then retrieves both results and asserts exactly one success and one conflict. Use this pattern for any optimistic-concurrency test in kyo-eventlog; do not use `sleep` to simulate concurrency.
 
