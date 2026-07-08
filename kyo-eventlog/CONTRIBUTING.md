@@ -324,7 +324,7 @@ The `dir` parameter is a `Path` from `kyo-system`. `Scope` finalization releases
 | Field | Default | Notes |
 |---|---|---|
 | `fsync: Fsync` | `Fsync.Always` | Flush each acknowledged append to stable storage before returning. Set to `Fsync.Disabled` only in tests; the crash-survival guarantee does not hold when `Fsync.Disabled` is set. |
-| `segmentSize: Long` | 67108864 (64 MiB) | Soft rotation threshold. The threshold is checked before an append, not after, so the active segment can grow past it: a record larger than the threshold is written whole into the current active segment rather than a dedicated one. |
+| `segmentSize: FileSize` | `64L.mib` (64 MiB) | Soft rotation threshold. The threshold is checked before an append, not after, so the active segment can grow past it: a record larger than the threshold is written whole into the current active segment rather than a dedicated one. |
 
 **Segment format:** each segment file begins with `KJN1` + `0x01` (4-byte magic + 1-byte version). Record frames follow with the layout `length(4) | crc32(4) | body`; the CRC covers the body only. Each append batch is closed by a terminator (`KJNC` + record count + CRC), which is the commit boundary. A torn tail in the active segment (no valid terminator after the trailing record group, from a prior crash) is silently truncated at recovery with a WARN log entry naming the segment and byte range. Non-tail corruption and unknown segment versions are fatal (`JournalCorruptedError`).
 

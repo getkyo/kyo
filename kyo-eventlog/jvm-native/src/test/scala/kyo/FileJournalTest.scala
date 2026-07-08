@@ -62,12 +62,13 @@ class FileJournalTest extends kyo.test.Test[Any]:
             val sid = valid(StreamId("s"))
             val big = EventEnvelope(valid(EventId("big")), valid(EventType("T")), Span.from(new Array[Byte](512)), EventMetadata.empty)
             for
-                dir     <- freshDir("fj-rot")
-                backend <- discharge(Journal.Backend.file(dir, FileJournal.Config(fsync = FileJournal.Fsync.Always, segmentSize = 256L)))
-                _       <- discharge(appendAll(backend, sid, 0 until 20))
-                slice   <- discharge(backend.read(sid, off(8), 6))
-                _       <- discharge(backend.append(sid, ExpectedOffset.Any, Chunk(big)))
-                back    <- discharge(backend.read(sid, off(20), 1))
+                dir <- freshDir("fj-rot")
+                backend <-
+                    discharge(Journal.Backend.file(dir, FileJournal.Config(fsync = FileJournal.Fsync.Always, segmentSize = 256L.bytes)))
+                _     <- discharge(appendAll(backend, sid, 0 until 20))
+                slice <- discharge(backend.read(sid, off(8), 6))
+                _     <- discharge(backend.append(sid, ExpectedOffset.Any, Chunk(big)))
+                back  <- discharge(backend.read(sid, off(20), 1))
             yield
                 assert(slice.map(_.offset.value) == (8L to 13L).toList)
                 assert(slice.map(e => new String(e.payload.toArray, "UTF-8")) == (8 to 13).map(n => s"payload-$n").toList)

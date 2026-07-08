@@ -398,6 +398,47 @@ def take3(s: Schedule, now: Instant): List[Duration] =
 
 `schedule.show` returns a string that resembles the source-level constructor call; `toString` delegates to `show`. The result is suitable for logs and debug output.
 
+## Storage sizes
+
+When code talks about a quantity of storage (a buffer cap, a file rotation threshold, a transfer limit), reach for `FileSize`. It is an opaque type over `Long` (representing bytes). Construct it through the unit extensions (`64L.mib`, `1L.gib`), the factory method (`FileSize.fromBytes`), or parse it from text.
+
+```scala
+import kyo.*
+
+val small: FileSize  = 512L.bytes
+val medium: FileSize = 64L.mib
+val large: FileSize  = 1L.gib
+
+val z: FileSize = FileSize.Zero
+
+val parsed: Result[FileSize.InvalidFileSize, FileSize] = FileSize.parse("64MiB")
+```
+
+> **Note:** Negative inputs to `FileSize.fromBytes` and the unit extensions clamp to `FileSize.Zero`. There is no `Infinity` sentinel; the maximum representable value is `Long.MaxValue` bytes.
+
+Arithmetic saturates on overflow: addition and multiplication that would exceed `Long.MaxValue` clamp to `Long.MaxValue`; subtraction clamps to `FileSize.Zero`.
+
+```scala
+import kyo.*
+
+val a: FileSize       = 32L.mib + 32L.mib                            // 64 MiB
+val b: FileSize       = 1L.gib - 256L.mib                            // 768 MiB
+val c: FileSize       = 1L.mib * 128.0                               // 128 MiB
+val clamped: FileSize = FileSize.fromBytes(Long.MaxValue) + 1L.bytes // still Long.MaxValue
+```
+
+`FileSize` also offers `to(unit)` for converting to a `Double` in a given unit, and `show` for a human-readable string at the coarsest lossless binary unit.
+
+```scala
+import kyo.*
+
+val size: FileSize = 64L.mib
+
+val asGib: Double = size.to(FileSize.Units.GiB) // 0.0625
+val label: String = size.show                   // "64.mib"
+val zero: String  = FileSize.Zero.show          // "FileSize.Zero"
+```
+
 ## Records and named fields
 
 A record is a named collection of typed fields whose shape is known at compile time but is not declared as a case class. `kyo-data` offers `Record[F]`, where `F` is an intersection of `Name ~ Value` pairs encoding the schema directly in the type. The macro-derived `Fields[F]` companion provides runtime metadata; `Field[Name, Value]` is the reified per-field descriptor.
@@ -695,6 +736,7 @@ When `kyo-config` is on the classpath, kyo-data types can be used directly as `F
 | Type | Format | Example |
 |------|--------|---------|
 | `Duration` | number + unit (optional space) | `"5s"`, `"100ms"`, `"2minutes"`, `"infinity"` |
+| `FileSize` | number + unit (optional space), or bare digits (bytes) | `"64MiB"`, `"1.5GiB"`, `"1024"` |
 | `Chunk[A]` | comma-separated | `"a,b,c"` |
 | `Span[A]` | comma-separated | `"1,2,3"` |
 | `Dict[K,V]` | key=value pairs, comma-separated | `"host=localhost,port=8080"` |
