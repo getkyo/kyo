@@ -123,7 +123,7 @@ class FileJournalCrashTest extends kyo.test.Test[Any]:
     "tail recovery" - {
         "truncating the active segment at every byte offset keeps all prior acknowledged events" in {
             // Write two single-event batches [e0], [e1]. For every cut from the byte after e0's committed
-            // terminator up to just before EOF, e1's batch is torn (its terminator is incomplete) so the read
+            // terminator up to the byte before EOF, e1's batch is torn (its terminator is incomplete) so the read
             // yields exactly [e0]; at the full length both survive. Exhaustive over the final record +
             // terminator byte range, deterministic (no sleeps; the crash is a byte truncation).
             for
@@ -245,7 +245,8 @@ class FileJournalCrashTest extends kyo.test.Test[Any]:
             for
                 dir <- freshDir
                 _   <- appendClosed(dir, Seq(Chunk(env(0)))) // creates streams/crash-1/ and the segment
-                _ <-
+                _   <-
+                    // Unsafe: raw byte-level segment rewrite to plant an unknown metadata version fixture.
                     Sync.Unsafe.defer {
                         val badMeta = Array[Byte](0x02.toByte) // unknown future version, no body
                         val rec     = SegmentCodec.encodeRecord(0L, "e-0", "T", badMeta, "p0".getBytes("UTF-8"))

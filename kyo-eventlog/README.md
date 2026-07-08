@@ -248,7 +248,7 @@ Every acknowledged append (with `fsync = true`) survives a crash. A torn tail at
 Every custom backend must pass `JournalBackendTest`, an abstract test class covering offset assignment, expected-offset semantics, batch atomicity, bounded reads, stream isolation, and concurrent conflict detection:
 
 ```scala doctest:expect=skipped
-class MyBackendTest extends JournalBackendTest(() => myBackend)
+class MyBackendTest extends JournalBackendTest(myBackend)
 ```
 
 ## Retry patterns

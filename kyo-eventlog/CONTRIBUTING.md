@@ -332,14 +332,31 @@ The `dir` parameter is a `Path` from `kyo-system`. `Scope` finalization releases
 
 ### Unsafe tier in backend implementations
 
-A backend that bridges raw platform I/O must wrap each site in `Sync.Unsafe.defer` and annotate it with a `// Unsafe:` comment naming the safe-tier contract being bridged:
+A raw platform I/O backend uses two distinct patterns; both are present in `FileJournal`.
+
+**Open and release boundaries.** The private `FileJournal.acquire` function takes `(using AllowUnsafe)` explicitly and performs all platform I/O (directory creation via `Path.Unsafe`, `FileChannel.open`, `tryLock`) without any `Sync.Unsafe.defer` inside it. `FileJournal.open` calls it inside a single `Sync.Unsafe.defer` at the open boundary:
 
 ```scala
-// Unsafe: raw FileChannel for fsync; force(false) is not reachable through Path.Unsafe
-Sync.Unsafe.defer(channel.force(false))
+Sync.Unsafe.defer(Abort.get(FileJournal.acquire(dir, config)))
 ```
 
-`FileJournal` uses this pattern at every `Path.Unsafe` call (directory creation, listing, truncate) and at every raw `FileChannel` operation (positional write, `force(false)` for fdatasync, `tryLock` for advisory locking). `FileChannel` is the platform-I/O layer that `Path.Unsafe` does not expose; a new backend that needs operations `Path.Unsafe` cannot reach must bridge them the same way. Do not introduce `import AllowUnsafe.embrace.danger` in backend source; `AllowUnsafe` evidence flows from the enclosing `Sync.Unsafe.defer` scope.
+The `Scope` release path wraps `backend.release()` the same way:
+
+```scala
+Sync.Unsafe.defer(backend.release())
+```
+
+Each boundary is one `Sync.Unsafe.defer` wrapping the entire call, not a separate call per operation inside `acquire` or `release`.
+
+**Class-level threading for backend methods.** `FileJournal` captures `(using allow: AllowUnsafe)` as a constructor parameter. This is the `AllowUnsafe` evidence that `Sync.Unsafe.defer` in `FileJournal.open` provides at construction time; the class retains it and threads it through all private methods as a regular parameter. Each public `Backend` method wraps a single call to the corresponding private function in one `Sync.Unsafe.defer`:
+
+```scala
+Sync.Unsafe.defer(appendUnsafe(streamId, expected, events, log.unsafe))
+```
+
+All `FileChannel` and `Path.Unsafe` calls inside `appendUnsafe`, `readUnsafe`, and `streamInfoUnsafe` run under the constructor `allow` already in scope. No additional `Sync.Unsafe.defer` appears per call site inside those private functions.
+
+Annotate each `Sync.Unsafe.defer` call with a `// Unsafe:` comment naming the safe-tier contract being bypassed. Do not introduce `import AllowUnsafe.embrace.danger` in backend source; `AllowUnsafe` flows from the class constructor parameter, which is itself supplied by the `Sync.Unsafe.defer` in `FileJournal.open`.
 
 ---
 

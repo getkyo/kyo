@@ -7,6 +7,7 @@ import java.nio.channels.FileLock
 import java.nio.channels.OverlappingFileLockException
 import java.nio.charset.StandardCharsets
 import java.nio.file.StandardOpenOption
+import java.util.concurrent.atomic.AtomicReference
 import java.util.zip.CRC32
 import scala.annotation.tailrec
 
@@ -38,6 +39,24 @@ object FileJournal:
         val default: Config = Config()
     end Config
 
+    // Process-wide registry of canonical root paths currently held open. POSIX advisory locks
+    // (fcntl) do not exclude the owning process from reacquiring the same lock, so in-process
+    // exclusion must be enforced separately. This registry provides that layer on all platforms;
+    // the file lock still provides cross-process exclusion.
+    private val heldRoots: AtomicReference[Set[String]] =
+        new AtomicReference(Set.empty[String])
+
+    @tailrec private def registerRoot(key: String): Boolean =
+        val snap = heldRoots.get()
+        if snap.contains(key) then false
+        else if heldRoots.compareAndSet(snap, snap + key) then true
+        else registerRoot(key)
+    end registerRoot
+
+    @tailrec private def unregisterRoot(key: String): Unit =
+        val snap = heldRoots.get()
+        if !heldRoots.compareAndSet(snap, snap - key) then unregisterRoot(key)
+
     /** Opens (or creates) a file-backed journal rooted at `dir`, acquiring the single-owner LOCK.
       * Internal; the public entry point is the `Journal.Backend.file` extension below.
       */
@@ -51,8 +70,9 @@ object FileJournal:
             // path to tryLock() (Path.Unsafe exposes no locking).
             Sync.Unsafe.defer(Abort.get(FileJournal.acquire(dir, config)))
         )(backend =>
-            // Unsafe: releases the FileLock and closes every open segment channel then the LOCK
-            // channel, on Scope finalization.
+            // Unsafe: bridges the raw JDK release calls (FileLock.release, FileChannel.close on
+            // every segment channel then the LOCK channel) into the Sync tier for the
+            // Scope.acquireRelease finalization callback.
             Sync.Unsafe.defer(backend.release())
         )
 
@@ -61,10 +81,15 @@ object FileJournal:
         allow: AllowUnsafe
     )
         : Result[JournalStorageError, FileJournal] =
+        val rootKey    = dir.toJava.toAbsolutePath.normalize.toString
+        var registered = false
         try
             if dir.unsafe.exists() && !dir.unsafe.isDirectory() then
                 Result.fail(JournalStorageError(s"Journal root '${dir.unsafe.show}' exists and is not a directory", Absent))
             else
+                if !registerRoot(rootKey) then
+                    return Result.fail(JournalStorageError(s"Journal root '${dir.unsafe.show}' is locked by this process", Absent))
+                registered = true
                 discard(dir.unsafe.mkDir())
                 val streamsDir = dir / "streams"
                 discard(streamsDir.unsafe.mkDir())
@@ -80,24 +105,28 @@ object FileJournal:
                     catch
                         case e: OverlappingFileLockException =>
                             lockChannel.close()
+                            unregisterRoot(rootKey)
                             return Result.fail(JournalStorageError(s"Journal root '${dir.unsafe.show}' is locked", Present(e)))
                         case e: IOException =>
                             lockChannel.close()
                             throw e // re-thrown; the outer catch handles it
                 if lock == null then
                     lockChannel.close()
+                    unregisterRoot(rootKey)
                     Result.fail(JournalStorageError(s"Journal root '${dir.unsafe.show}' is locked by another owner", Absent))
                 else
-                    Result.succeed(new FileJournal(streamsDir, config, lockChannel, lock))
+                    Result.succeed(new FileJournal(rootKey, streamsDir, config, lockChannel, lock))
                 end if
             end if
         catch
             case e: IOException =>
+                if registered then unregisterRoot(rootKey)
                 Result.fail(JournalStorageError(s"Failed to open journal root '${dir.unsafe.show}'", Present(e)))
+        end try
     end acquire
 end FileJournal
 
-/** Discoverable constructor on the `Backend` companion, realized as an extension on `Journal.Backend.type`.
+/** Constructor on the `Backend` companion, implemented as an extension on `Journal.Backend.type`.
   * Available on JVM and Native only (jvm-native tree).
   *
   * @see [[FileJournal.Config]] for the durability and rotation knobs
@@ -116,6 +145,7 @@ end extension
   * claim in each stream's state. The `Frame` is captured once at construction.
   */
 final private class FileJournal(
+    rootKey: String,
     streamsDir: Path,
     config: FileJournal.Config,
     lockChannel: FileChannel,
@@ -178,6 +208,7 @@ final private class FileJournal(
         discard(Result.catching[Throwable](lock.release()))
         channels.get().valuesIterator.foreach(ch => discard(Result.catching[Throwable](ch.close())))
         discard(Result.catching[Throwable](lockChannel.close()))
+        FileJournal.unregisterRoot(rootKey)
     end release
 
     // --- get-or-create stream cell ------------------------------------------------------------
@@ -185,9 +216,9 @@ final private class FileJournal(
     @tailrec
     private def cell(streamId: StreamId)(using AllowUnsafe): AtomicRef.Unsafe[StreamState] =
         val map = streams.get()
-        map.get(streamId) match
-            case Some(existing) => existing
-            case None =>
+        Maybe.fromOption(map.get(streamId)) match
+            case Present(existing) => existing
+            case Absent =>
                 val fresh = AtomicRef.Unsafe.init(StreamState.empty)
                 if streams.compareAndSet(map, map.updated(streamId, fresh)) then fresh
                 else cell(streamId)
@@ -490,15 +521,15 @@ final private class FileJournal(
 
     private def channelFor(jpath: java.nio.file.Path)(using AllowUnsafe): FileChannel =
         val key = jpath.toAbsolutePath.toString
-        channels.get().get(key) match
-            case Some(ch) => ch
-            case None =>
+        Maybe.fromOption(channels.get().get(key)) match
+            case Present(ch) => ch
+            case Absent =>
                 val ch = FileChannel.open(jpath, StandardOpenOption.CREATE, StandardOpenOption.READ, StandardOpenOption.WRITE)
                 @tailrec def register(): FileChannel =
                     val m = channels.get()
-                    m.get(key) match
-                        case Some(existing) => ch.close(); existing
-                        case None           => if channels.compareAndSet(m, m.updated(key, ch)) then ch else register()
+                    Maybe.fromOption(m.get(key)) match
+                        case Present(existing) => ch.close(); existing
+                        case Absent            => if channels.compareAndSet(m, m.updated(key, ch)) then ch else register()
                 end register
                 register()
         end match
@@ -565,7 +596,7 @@ final private class FileJournal(
         var pos          = HeaderSize.toLong
         var committedEnd = HeaderSize.toLong
         var batchStart   = HeaderSize.toLong
-        var pending      = List.empty[Long] // record positions in the current, not-yet-terminated batch
+        var pending      = Chunk.empty[Long] // record positions in the current, not-yet-terminated batch
         // Returns true if a valid batch-commit terminator exists at any byte offset from `from`
         // to the end of the segment. Used to distinguish a torn tail (no terminator follows the
         // failure point) from mid-file damage (a committed terminator survives after the bad record).
@@ -589,16 +620,16 @@ final private class FileJournal(
             else
                 SegmentCodec.readTerminator(channel, pos) match
                     case Present(count) if count == pending.length =>
-                        pending.reverse.foreach(p => discard(committed += p))
+                        pending.foreach(p => discard(committed += p))
                         pos += SegmentCodec.TerminatorSize.toLong
                         committedEnd = pos
                         batchStart = pos
-                        pending = Nil
+                        pending = Chunk.empty
                         loop()
                     case _ =>
                         SegmentCodec.decodeRecordAt(channel, pos) match
                             case Result.Success(dec) =>
-                                pending = pos :: pending
+                                pending = pending.append(pos)
                                 pos += 8L + dec.bodyLen.toLong
                                 loop()
                             case Result.Failure(detail) =>
