@@ -432,9 +432,11 @@ When code talks about a quantity of storage (a buffer cap, a file rotation thres
 ```scala
 import kyo.*
 
-val small: FileSize  = 512L.bytes
-val medium: FileSize = 64L.mib
-val large: FileSize  = 1L.gib
+val small: FileSize   = 512L.bytes
+val medium: FileSize  = 64L.mib
+val large: FileSize   = 1L.gib
+val fromInt: FileSize = 512.mib // Int constructor, identical result to 512L.mib
+val fromKb: FileSize  = 100.kb  // decimal unit: 100,000 bytes
 
 val z: FileSize = FileSize.Zero
 

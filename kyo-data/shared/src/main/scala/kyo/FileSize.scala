@@ -40,18 +40,24 @@ object FileSize:
 
     /** Creates a `FileSize` from a value and unit.
       *
-      * Negative values are clamped to `FileSize.Zero`. Values that would overflow `Long.MaxValue`
+      * The byte count is the exact integer product `value * unit.bytes`; no floating-point
+      * arithmetic is used, so results carry full precision at every magnitude. Negative and zero
+      * values are clamped to `FileSize.Zero`. Values whose product would exceed `Long.MaxValue`
       * clamp to `Long.MaxValue`.
       */
     def fromUnits(value: Long, unit: Units): FileSize =
         if value <= 0 then FileSize.Zero
-        else FileSize.*(value)(unit.bytes.toDouble)
+        else if value > Long.MaxValue / unit.bytes then Long.MaxValue
+        else value * unit.bytes
 
     /** Parses a human-readable file size string.
       *
       * Accepted formats: `"64MiB"`, `"64 MiB"`, `"1.5GiB"`, `"512B"`, `"1024"` (bare digits
-      * equal bytes), `"10MB"`. Unit matching is case-insensitive. Negative values and values that
-      * overflow `Long.MaxValue` are rejected with an `InvalidFileSize` error.
+      * equal bytes), `"10MB"`. Unit matching is case-insensitive. An integral value with a unit
+      * (for example `"10MB"`) yields the exact byte count `value * unit.bytes`; a fractional value
+      * (for example `"1.5GiB"`) is scaled with `BigDecimal` and rounded to whole bytes using
+      * `HALF_UP`. Negative values and values that overflow `Long.MaxValue` are rejected with an
+      * `InvalidFileSize` error.
       *
       * @param s
       *   the string to parse
@@ -84,14 +90,32 @@ object FileSize:
             .map(Result.succeed)
             .getOrElse(Result.fail(InvalidFileSize(s"Invalid unit: $unitStr")))
             .flatMap { unit =>
-                val d       = numStr.toDouble
-                val resultD = d * unit.bytes.toDouble
-                if resultD > Long.MaxValue.toDouble then
-                    Result.fail(InvalidFileSize(s"File size overflow: $original"))
-                else
-                    Result.succeed(fromBytes(Math.round(resultD)))
-                end if
+                bytesFromParsed(numStr, unit) match
+                    case Present(byteCount) => Result.succeed(fromBytes(byteCount))
+                    case Absent             => Result.fail(InvalidFileSize(s"File size overflow: $original"))
             }
+
+    /** Computes the exact byte count for a parsed numeric string in the given unit.
+      *
+      * An integral input (no decimal point) uses exact integer arithmetic: the byte count is
+      * `value * unit.bytes` computed without floating point. A fractional input (for example
+      * `"1.5"`) is scaled by `unit.bytes` using `BigDecimal` and rounded to a whole number of
+      * bytes with `HALF_UP`. Returns `Absent` when the byte count would exceed `Long.MaxValue`.
+      *
+      * The input is assumed to be a non-negative decimal literal, as produced by the parse
+      * patterns. Shared by `FileSize.parse` and the `Flag.Reader` given so the two cannot drift.
+      */
+    private[kyo] def bytesFromParsed(numStr: String, unit: Units): Maybe[Long] =
+        val byteCount =
+            if numStr.contains('.') then
+                (BigDecimal(numStr) * BigDecimal(unit.bytes))
+                    .setScale(0, BigDecimal.RoundingMode.HALF_UP)
+                    .toBigInt
+            else
+                BigInt(numStr) * BigInt(unit.bytes)
+        if byteCount > BigInt(Long.MaxValue) then Absent
+        else Present(byteCount.toLong)
+    end bytesFromParsed
 
     /** Storage size units with their byte counts and symbols. */
     enum Units(val bytes: Long, val symbol: String):
@@ -163,7 +187,8 @@ object FileSize:
 
     /** Parses a `FileSize` from a string without requiring a `Frame`, for use in CLI/config-flag contexts.
       *
-      * This reimplements `FileSize.parse` directly to avoid the `Frame` requirement.
+      * This mirrors `FileSize.parse`'s pattern matching to avoid the `Frame` requirement while
+      * sharing `bytesFromParsed` for the numeric conversion, so the two stay consistent.
       */
     given Flag.Reader.Scalar[FileSize] with
         private val dotPattern  = """(\d+)\.([a-zA-Z]+)""".r
@@ -188,13 +213,9 @@ object FileSize:
             Units.values.find(u => u.symbol.equalsIgnoreCase(unitStr) || u.toString.equalsIgnoreCase(unitStr)) match
                 case None => Left(new IllegalArgumentException(s"Invalid file size unit: $unitStr"))
                 case Some(unit) =>
-                    val d       = numStr.toDouble
-                    val resultD = d * unit.bytes.toDouble
-                    if resultD > Long.MaxValue.toDouble then
-                        Left(new IllegalArgumentException(s"File size overflow: $original"))
-                    else
-                        Right(fromBytes(Math.round(resultD)))
-                    end if
+                    bytesFromParsed(numStr, unit) match
+                        case Present(byteCount) => Right(fromBytes(byteCount))
+                        case Absent             => Left(new IllegalArgumentException(s"File size overflow: $original"))
 
         def typeName: String = "FileSize"
     end given
@@ -217,7 +238,45 @@ extension (value: Long)
     /** Creates a `FileSize` of the given number of tebibytes (1 TiB = 1,099,511,627,776 bytes). */
     def tib: FileSize = value.asFileSizeUnit(FileSize.Units.TiB)
 
+    /** Creates a `FileSize` of the given number of kilobytes (1 KB = 1,000 bytes). */
+    def kb: FileSize = value.asFileSizeUnit(FileSize.Units.KB)
+
+    /** Creates a `FileSize` of the given number of megabytes (1 MB = 1,000,000 bytes). */
+    def mb: FileSize = value.asFileSizeUnit(FileSize.Units.MB)
+
+    /** Creates a `FileSize` of the given number of gigabytes (1 GB = 1,000,000,000 bytes). */
+    def gb: FileSize = value.asFileSizeUnit(FileSize.Units.GB)
+
     /** Creates a `FileSize` from a specific unit. */
     private[kyo] def asFileSizeUnit(unit: FileSize.Units): FileSize =
         FileSize.fromUnits(value, unit)
+end extension
+
+extension (value: Int)
+    /** Creates a `FileSize` of the given number of bytes. */
+    def bytes: FileSize = FileSize.fromBytes(value.toLong)
+
+    /** Creates a `FileSize` of the given number of kibibytes (1 KiB = 1024 bytes). */
+    def kib: FileSize = value.asIntFileSizeUnit(FileSize.Units.KiB)
+
+    /** Creates a `FileSize` of the given number of mebibytes (1 MiB = 1,048,576 bytes). */
+    def mib: FileSize = value.asIntFileSizeUnit(FileSize.Units.MiB)
+
+    /** Creates a `FileSize` of the given number of gibibytes (1 GiB = 1,073,741,824 bytes). */
+    def gib: FileSize = value.asIntFileSizeUnit(FileSize.Units.GiB)
+
+    /** Creates a `FileSize` of the given number of tebibytes (1 TiB = 1,099,511,627,776 bytes). */
+    def tib: FileSize = value.asIntFileSizeUnit(FileSize.Units.TiB)
+
+    /** Creates a `FileSize` of the given number of kilobytes (1 KB = 1,000 bytes). */
+    def kb: FileSize = value.asIntFileSizeUnit(FileSize.Units.KB)
+
+    /** Creates a `FileSize` of the given number of megabytes (1 MB = 1,000,000 bytes). */
+    def mb: FileSize = value.asIntFileSizeUnit(FileSize.Units.MB)
+
+    /** Creates a `FileSize` of the given number of gigabytes (1 GB = 1,000,000,000 bytes). */
+    def gb: FileSize = value.asIntFileSizeUnit(FileSize.Units.GB)
+
+    private[kyo] def asIntFileSizeUnit(unit: FileSize.Units): FileSize =
+        FileSize.fromUnits(value.toLong, unit)
 end extension
