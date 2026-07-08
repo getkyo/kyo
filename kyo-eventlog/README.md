@@ -240,10 +240,10 @@ Pass `FileJournal.Config` to override two knobs:
 
 | Field | Default | Notes |
 |---|---|---|
-| `fsync` | `true` | Flush each acknowledged append to stable storage. Set `false` only in tests; the crash-survival guarantee does not hold when `false`. |
+| `fsync` | `Fsync.Always` | Flush each acknowledged append to stable storage before returning. Set to `Fsync.Disabled` only in tests; the crash-survival guarantee does not hold when `Fsync.Disabled` is set. |
 | `segmentSize` | 67108864 (64 MiB) | Soft rotation threshold in bytes. The threshold is checked before an append, not after, so the active segment can grow past it: a record larger than the threshold is written whole into the current active segment rather than a dedicated one. |
 
-Every acknowledged append (with `fsync = true`) survives a crash. A torn tail at the end of the active segment (from a prior crash) is silently truncated at recovery; prior committed events are never lost. Recovery runs lazily on the first touch of a stream, and a `read` or `streamInfo` can be that first touch, so a nominally read-only call can perform the one-time torn-tail truncation on disk. Non-tail corruption and unknown segment versions are fatal (`JournalCorruptedError`). Metadata values round-trip exactly through the file backend: all ten `Structure.Value` constructors encode without loss.
+Every acknowledged append (with `fsync = Fsync.Always`) survives a crash. A torn tail at the end of the active segment (from a prior crash) is silently truncated at recovery; prior committed events are never lost. Recovery runs lazily on the first touch of a stream, and a `read` or `streamInfo` can be that first touch, so a nominally read-only call can perform the one-time torn-tail truncation on disk. Non-tail corruption and unknown segment versions are fatal (`JournalCorruptedError`). Metadata values round-trip exactly through the file backend: all ten `Structure.Value` constructors encode without loss.
 
 Every custom backend must pass `JournalBackendTest`, an abstract test class covering offset assignment, expected-offset semantics, batch atomicity, bounded reads, stream isolation, and concurrent conflict detection:
 
