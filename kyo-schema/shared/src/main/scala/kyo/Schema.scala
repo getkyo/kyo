@@ -1566,10 +1566,10 @@ object Schema:
         ):
             @publicInBinary def serializeWrite(value: A, writer: Writer): Unit =
                 if hasTransforms then transformedWrite(value, writer)
-                else writeFn(value, writer)
+                else rawSerializeWrite(value, writer)
             @publicInBinary def serializeRead(reader: Reader): A =
                 if hasReadTransforms then transformedRead(reader)
-                else readFn(reader)
+                else rawSerializeRead(reader)
             @publicInBinary override def rawSerializeWrite(value: A, writer: Writer): Unit = writeFn(value, writer)
             @publicInBinary override def rawSerializeRead(reader: Reader): A               = readFn(reader)
             @publicInBinary def getter(value: A): Maybe[Any]                               = getterFn(value)
@@ -3096,10 +3096,10 @@ object Schema:
             @publicInBinary override private[kyo] val flattenedReadFields: Chunk[(String, String)] = flattenedReadFields0
             @publicInBinary def serializeWrite(value: A, writer: Writer): Unit =
                 if hasTransforms then transformedWrite(value, writer)
-                else writeFn(value, writer)
+                else rawSerializeWrite(value, writer)
             @publicInBinary def serializeRead(reader: Reader): A =
                 if hasReadTransforms then transformedRead(reader)
-                else readFn(reader)
+                else rawSerializeRead(reader)
             @publicInBinary override def rawSerializeWrite(value: A, writer: Writer): Unit = writeFn(value, writer)
             @publicInBinary override def rawSerializeRead(reader: Reader): A               = readFn(reader)
             @publicInBinary def getter(value: A): Maybe[Any]                               = getterFn(value)
