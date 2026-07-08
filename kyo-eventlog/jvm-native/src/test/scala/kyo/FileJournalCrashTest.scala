@@ -222,6 +222,24 @@ class FileJournalCrashTest extends kyo.test.Test[Any]:
                 assert(detail.contains(".seg"))
                 assert(detail.contains("byte")) // names the failing segment and the offending byte offset
         }
+        "a corrupt record length prefix is fatal, not a crash" in {
+            // Flip the most significant byte of the first record's 4-byte length prefix in a 3-event batch, whose
+            // single committed terminator survives after it, so recovery classifies the damage as mid-file rather
+            // than a torn tail. The length field is deliberately not CRC-covered, so the flip reaches the decoder
+            // unfiltered and turns the length huge/negative. Without a bound check on the length, ByteBuffer.allocate
+            // throws (NegativeArraySize / IllegalArgument / OutOfMemory) and escapes as a panic; the fix resolves it
+            // to JournalCorruptedError instead.
+            for
+                dir <- freshDir
+                _   <- appendClosed(dir, Seq(Chunk(env(0), env(1), env(2))))
+                _   <- flipByte(dir, HeaderSize.toLong) // MSB of record e0's length prefix (frame starts at HeaderSize)
+                res <- readResult(dir)
+            yield
+                val isCorrupt = res match
+                    case Result.Failure(_: JournalCorruptedError) => true
+                    case _                                        => false
+                assert(isCorrupt)
+        }
         "an unknown version byte is fatal with streamId absent" in {
             // Write a valid stream, overwrite the header version byte with 0x02; on first touch validateHeader
             // fails before any record parse, so the error is header-level with an absent streamId.

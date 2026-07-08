@@ -37,4 +37,36 @@ class JournalMetadataTest extends kyo.test.Test[Any]:
             assert(metadata.values(key).value == Structure.Value.Integer(42L))
         }
     }
+
+    "MetadataValue.metadataValueSchema" - {
+        // Exercises the given Schema[MetadataValue] (not the backend's direct write/read) through the MsgPack
+        // codec the file backend uses. All ten Structure.Value constructors must survive, covering the three the
+        // kyo-schema identity codec drops on its own: VariantCase, all-string-keyed MapEntries, and BigNum. The
+        // codec's open/dynamic tag-keyed shape round-trips through MsgPack's introspecting reader; the text
+        // codecs (JSON, Ion) do not read the array-of-arrays MapEntries encoding back, so the schema's claim is
+        // scoped to the self-describing binary codec and is not asserted for the text codecs.
+        "round-trips all ten Structure.Value constructors through the MsgPack codec" in {
+            val bigNum = BigDecimal("123456789012345678901234567890.0123456789")
+            val values = List[Structure.Value](
+                Structure.Value.Str("hello"),
+                Structure.Value.Integer(42L),
+                Structure.Value.Bool(true),
+                Structure.Value.Decimal(3.14),
+                Structure.Value.BigNum(bigNum),
+                Structure.Value.Null,
+                Structure.Value.Sequence(Chunk(Structure.Value.Str("a"), Structure.Value.Integer(1L))),
+                Structure.Value.Record(Chunk("x" -> Structure.Value.Bool(false))),
+                Structure.Value.MapEntries(Chunk(Structure.Value.Str("k") -> Structure.Value.Str("v"))),
+                Structure.Value.VariantCase("MyCase", Structure.Value.Str("payload"))
+            )
+            val roundTripped = values.map { sv =>
+                val v = MetadataValue(sv)
+                val viaMsgPack =
+                    MsgPack.decode[MetadataValue](MsgPack.encode(v)).getOrElse(throw new AssertionError(s"msgpack decode failed for $sv"))
+                viaMsgPack.value == sv
+            }
+            assert(values.length == 10)
+            assert(roundTripped.forall(identity))
+        }
+    }
 end JournalMetadataTest
