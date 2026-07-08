@@ -17,8 +17,9 @@ kyo-eventlog owns the Journal capability and its backing infrastructure:
 | `JournalEvent.scala` | Wire-vocabulary types: `StreamId`, `EventId`, `EventType`, `StreamOffset`, `StreamVersion`, `ExpectedOffset`, `StreamInfo`, `EventEnvelope`, `RecordedEvent`, `AppendResult` |
 | `JournalMetadata.scala` | `EventMetadata` case class; `MetadataKey` opaque type |
 | `internal/InMemoryJournal.scala` | Ephemeral in-memory backend: CAS over `AtomicRef`, `Loop`-based retry |
+| `jvm-native/src/main/scala/kyo/FileJournal.scala` | Durable file backend (`Journal.Backend.file`); JVM and Native only |
 
-**Dependency rule:** kyo-eventlog depends on `kyo-core` and `kyo-schema` only. `kyo-schema` is pulled in for `Structure.Value`, which `EventMetadata` uses as its value type. No other kyo module is a compile-time dependency. [`build.sbt:675`]
+**Dependency rule:** kyo-eventlog depends on `kyo-core`, `kyo-schema`, and `kyo-system`. `kyo-schema` is pulled in for `Structure.Value`, `Codec.Writer`/`Reader`, and `Schema.init`, which `MetadataValue`'s constructor-exact codec uses. `kyo-system` is pulled in by `FileJournal`, whose `FileChannel`-based append, fsync, and advisory locking reach the platform I/O layer through `Path.Unsafe` and the `toJava` extension from `kyo-system`; its `jvm-native` source tree resolves `Path`, `Path.Unsafe`, and `toJava` through that edge. No other kyo module is a compile-time dependency. [`build.sbt:675`]
 
 ### Source layout
 
@@ -41,11 +42,20 @@ kyo-eventlog/
     JournalEventTest.scala
     JournalMetadataTest.scala
 
+  jvm-native/src/main/scala/kyo/
+    FileJournal.scala              # durable file backend; JVM and Native only
+
+  jvm-native/src/test/scala/kyo/
+    FileJournalBackendTest.scala   # contract suite subclass
+    FileJournalCodecTest.scala     # segment codec unit tests
+    FileJournalCrashTest.scala     # crash, recovery, and corruption suite
+    FileJournalTest.scala          # rotation, metadata, streamId, lock, failed-open
+
   jvm/src/  js/src/  native/src/  wasm/src/
-    (empty: kyo-eventlog has no platform-specific source)
+    (empty)
 ```
 
-kyo-eventlog has no platform-specific source trees. All public APIs compile and behave identically on JVM, Scala.js, Scala Native, and Wasm.
+The `jvm-native/` tree is compiled on JVM and Native only. `Journal.Backend.file` and `FileJournal.Config` are available only on those two platforms. All other public types and operations (`Journal`, `Journal.Backend.inMemory`, the wire types, the error hierarchy) compile and behave identically on JVM, Scala.js, Scala Native, and Wasm.
 
 ---
 
@@ -223,9 +233,9 @@ These are plain `final case class` values.
 
 ## EventMetadata and MetadataKey
 
-[`JournalMetadata.scala:14-44`]
+[`JournalMetadata.scala:14-181`]
 
-`EventMetadata` is a `final case class` wrapping `Map[MetadataKey, Structure.Value]`. Values are `kyo.Structure.Value` trees from `kyo-schema`, the module's only schema-layer dependency. Metadata is for infrastructure concerns (correlation identifiers, tracing tags) that consumers may need without decoding the payload.
+`EventMetadata` is a `final case class` wrapping `Map[MetadataKey, MetadataValue]` (`JournalMetadata.scala:14`). `MetadataValue` is an opaque type backed by `Structure.Value` with a constructor-exact codec: each of the ten `Structure.Value` constructors encodes as a one-field record keyed by its tag name (`str`, `int`, `bool`, `decimal`, `bignum`, `null`, `seq`, `record`, `entries`, `variant`), so every constructor round-trips without loss through any Codec. Construct with `MetadataValue(sv: Structure.Value)` and project with `.value: Structure.Value`. Metadata is for infrastructure concerns (correlation identifiers, tracing tags) that consumers may need without decoding the payload.
 
 `MetadataKey` is an opaque `String` with dotted-path validation: non-empty, no leading dot, no trailing dot, no consecutive dots (`foo..bar` is rejected). The `segments` extension splits on `.` and returns a `Chunk[String]`.
 
@@ -294,7 +304,42 @@ The contract exercised covers:
 
 3. Add a `class MyBackendTest extends JournalBackendTest(MyBackend.init)` test class alongside the backend, following the pattern of `InMemoryJournalBackendTest`. A backend without a `JournalBackendTest` subclass is incomplete.
 
-4. Follow kyo-eventlog's dependency rule: add new build-level dependencies only when required and document the reason.
+4. Follow kyo-eventlog's dependency rule: the three authorized compile-time dependencies are `kyo-core`, `kyo-schema`, and `kyo-system`. New backends in `shared/src/main/scala/kyo/` need no extra dependency. Backends that reach raw platform I/O (file channels, advisory locks, fsync) belong in `jvm-native/src/main/scala/kyo/` and must use `Sync.Unsafe.defer` with per-site `// Unsafe:` comments (see the section below).
+
+### File backend
+
+[`jvm-native/src/main/scala/kyo/FileJournal.scala`]
+
+`FileJournal` is the durable file backend: an append-only segment log on disk, available on JVM and Native. The public entry point is `Journal.Backend.file`, an extension on `Journal.Backend.type`:
+
+```scala
+Journal.Backend.file(dir: Path, config: FileJournal.Config = FileJournal.Config.default)
+    : Journal.Backend[Sync] < (Sync & Scope & Abort[JournalStorageError])
+```
+
+The `dir` parameter is a `Path` from `kyo-system`. `Scope` finalization releases the advisory LOCK and closes all open segment channels. A second `Backend.file` open of a held root directory fails immediately with `JournalStorageError`.
+
+`FileJournal.Config` has two fields:
+
+| Field | Default | Notes |
+|---|---|---|
+| `fsync: Boolean` | `true` | Flush each acknowledged append to stable storage before returning. Set to `false` only in tests; the crash-survival guarantee does not hold when `false`. |
+| `segmentSize: Long` | 67108864 (64 MiB) | Soft rotation threshold. A single record larger than the threshold still writes, into its own segment. |
+
+**Segment format:** each segment file begins with `KJN1` + `0x01` (4-byte magic + 1-byte version). Record frames follow with the layout `length(4) | crc32(4) | body`; the CRC covers the body only. Each append batch is closed by a terminator (`KJNC` + record count + CRC), which is the commit boundary. A torn tail in the active segment (no valid terminator after the trailing record group, from a prior crash) is silently truncated at recovery with a WARN log entry naming the segment and byte range. Non-tail corruption and unknown segment versions are fatal (`JournalCorruptedError`).
+
+**LOCK:** one advisory file lock per root directory, acquired at open and released on `Scope` finalization. A second open of a held root fails immediately.
+
+### Unsafe tier in backend implementations
+
+A backend that bridges raw platform I/O must wrap each site in `Sync.Unsafe.defer` and annotate it with a `// Unsafe:` comment naming the safe-tier contract being bridged:
+
+```scala
+// Unsafe: raw FileChannel for fsync; force(false) is not reachable through Path.Unsafe
+Sync.Unsafe.defer(channel.force(false))
+```
+
+`FileJournal` uses this pattern at every `Path.Unsafe` call (directory creation, listing, truncate) and at every raw `FileChannel` operation (positional write, `force(false)` for fdatasync, `tryLock` for advisory locking). `FileChannel` is the platform-I/O layer that `Path.Unsafe` does not expose; a new backend that needs operations `Path.Unsafe` cannot reach must bridge them the same way. Do not introduce `import AllowUnsafe.embrace.danger` in backend source; `AllowUnsafe` evidence flows from the enclosing `Sync.Unsafe.defer` scope.
 
 ---
 
@@ -412,6 +457,6 @@ Run through this list before touching the internals or adding a new public surfa
 
 4. **New backend implementation.** Does it implement all three `Backend[S]` methods with the correct per-op `Abort` rows? Does it capture a `Frame` at construction rather than on each method? Is there a `JournalBackendTest` subclass that passes unchanged? [`internal/InMemoryJournal.scala`, `JournalBackendTest.scala`]
 
-5. **New dependency from kyo-eventlog.** kyo-eventlog depends on `kyo-core` and `kyo-schema` only. Adding any other kyo module requires explicit authorisation. [`build.sbt:675`]
+5. **New dependency from kyo-eventlog.** kyo-eventlog depends on `kyo-core`, `kyo-schema`, and `kyo-system`. `kyo-system` is present because `FileJournal` uses `Path`, `Path.Unsafe`, and `toJava` for its segment files and LOCK file. Adding any module beyond these three requires explicit authorisation. [`build.sbt:675`]
 
 6. **New test.** Does it extend `kyo.test.Test[Any]`? Does it assert concrete values? Is it folded into the matching `*Test.scala` for the source it covers? Does concurrency use the `Latch` pattern rather than `sleep`? Is payload comparison done with `Span#is`, not `==`?
