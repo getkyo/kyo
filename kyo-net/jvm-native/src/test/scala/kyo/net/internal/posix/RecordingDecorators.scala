@@ -15,9 +15,9 @@ import kyo.net.internal.transport.WriteResult
 
 /** Spy decorator over a real [[SocketBindings]].
   *
-  * Delegates all 16 methods to the real bindings and records observations: close counts per fd, send/recv buffer identities and regions,
-  * and optional one-shot hooks for race-determinism. The real syscall runs on every method call, except the two authorized one-shot errno
-  * injections below; no other behavior is scripted.
+  * Delegates all 16 methods to the real bindings and records observations: close counts per fd, shutdown calls (fd, how) in order,
+  * send/recv buffer identities and regions, and optional one-shot hooks for race-determinism. The real syscall runs on every method call,
+  * except the two authorized one-shot errno injections below; no other behavior is scripted.
   *
   * Authorized single-result errno injections (`injectRecvEintrOnce` / `injectSendEintrOnce`): a real mid-syscall signal delivery that makes a
   * non-blocking recv/send return -1 with errno EINTR before any byte is transferred is not deterministically injectable from Scala. These two
@@ -35,6 +35,22 @@ final class RecordingSocketBindings(real: SocketBindings) extends SocketBindings
 
     // Per-fd close count. close() increments before delegating so a double-close is observable immediately.
     val closeCounts: ConcurrentHashMap[Int, Int] = new ConcurrentHashMap[Int, Int]()
+
+    // (fd, how) per shutdown() call, in order, so a test can assert NO stale shutdown landed on a given (possibly recycled) fd number.
+    // Recorded before delegating, mirroring closeCounts.
+    val shutdownCalls: ConcurrentLinkedQueue[(Int, Int)] = new ConcurrentLinkedQueue[(Int, Int)]()
+
+    // Unified call-order log across shutdown/send/sendNow/close for this spy instance, in execution order (each entry recorded before
+    // delegating to real, mirroring RecordingTlsEngine.entries/order below). A close-during-io race test uses this to assert the exact
+    // interleaving of a claimed fd-close credit (shutdown, deferred) against the in-flight syscall it was deferred past (send) and the
+    // eventual real close it unblocks (close).
+    val callOrder: ConcurrentLinkedQueue[String] = new ConcurrentLinkedQueue[String]()
+
+    /** The recorded shutdown/send/close call order. */
+    def order: List[String] =
+        import scala.jdk.CollectionConverters.*
+        callOrder.iterator().asScala.toList
+    end order
 
     // (position-into-buf, len) per sendNow call for byte-conservation and ordering assertions.
     val sendNowRegions: ConcurrentLinkedQueue[(Int, Long)] = new ConcurrentLinkedQueue[(Int, Long)]()
@@ -56,6 +72,21 @@ final class RecordingSocketBindings(real: SocketBindings) extends SocketBindings
     // One-shot hook fired from inside sendNow BEFORE delegating to real, for close-during-flush races.
     // null means no hook set; CAS to null before firing so it fires exactly once.
     @volatile var onSend: () => Unit = null
+
+    // One-shot hook fired from inside recvNow BEFORE delegating to real, for close-during-dispatch races (the read-side twin of onSend).
+    // null means no hook set; CAS to null before firing so it fires exactly once.
+    @volatile var onRecvNow: Int => Unit = null
+
+    // Per-fd latch that completes the first time close(fd) is actually called, mirroring RecordingPollerBackend's
+    // registeredRead/deregisteredFd pattern. A close-during-io race test uses this to await the deferred real close(fd) running (which
+    // happens asynchronously on whatever carrier releases the last guard holder), rather than polling closeCounts.
+    private val closedOf: ConcurrentHashMap[Int, Promise.Unsafe[Unit, Any]] = new ConcurrentHashMap()
+
+    /** A promise that completes when close(fd) is called. Created on first request, so it is ready before the close runs; if the close
+      * already ran, the returned promise is already complete.
+      */
+    def closed(fd: Int)(using AllowUnsafe): Promise.Unsafe[Unit, Any] =
+        closedOf.computeIfAbsent(fd, _ => Promise.Unsafe.init[Unit, Any]())
 
     // Authorized one-shot errno injection: when set to true, the next recvNow returns a synthesized (-1, EINTR) Outcome ONCE
     // instead of delegating, then clears itself so every later recvNow delegates to the real syscall. A real mid-syscall signal
@@ -95,7 +126,11 @@ final class RecordingSocketBindings(real: SocketBindings) extends SocketBindings
         real.fstat(fd, buf)
 
     def shutdown(fd: Int, how: Int)(using AllowUnsafe): Int =
+        // Record before delegating, mirroring close()'s ordering.
+        shutdownCalls.add((fd, how))
+        discard(callOrder.add(s"shutdown($fd)"))
         real.shutdown(fd, how)
+    end shutdown
 
     def connect(fd: Int, addr: Buffer[Byte], addrlen: Int)(using AllowUnsafe): Fiber.Unsafe[Ffi.Outcome[Int], Any] =
         real.connect(fd, addr, addrlen)
@@ -120,6 +155,7 @@ final class RecordingSocketBindings(real: SocketBindings) extends SocketBindings
                     onSend = null
                     hook()
             end if
+            discard(callOrder.add(s"send($fd)"))
             real.send(fd, buf, len, flags)
         end if
     end send
@@ -139,6 +175,7 @@ final class RecordingSocketBindings(real: SocketBindings) extends SocketBindings
                     onSend = null
                     hook()
             end if
+            discard(callOrder.add(s"send($fd)"))
             real.sendNow(fd, buf, len, flags)
         end if
     end sendNow
@@ -149,6 +186,14 @@ final class RecordingSocketBindings(real: SocketBindings) extends SocketBindings
         // driver must retry the interrupted recv and the retried call (delegating below) then delivers the data for real.
         if injectRecvEintrOnce.compareAndSet(true, false) then
             return Ffi.Outcome.fromValueErrno(-1L, PosixConstants.EINTR)
+        // Fire the onRecvNow hook before delegating so it fires while beginDispatch is held, the read-side twin of onSend's flush-race hook.
+        val recvHook = onRecvNow
+        if recvHook != null then
+            if onRecvNow.eq(recvHook) then
+                onRecvNow = null
+                recvHook(fd)
+        end if
+        discard(callOrder.add(s"recv($fd)"))
         val r        = real.recvNow(fd, buf, len, flags)
         val isEagain = r.value < 0 && (r.errorCode == PosixConstants.EAGAIN || r.errorCode == PosixConstants.EWOULDBLOCK)
         if isEagain then
@@ -171,6 +216,8 @@ final class RecordingSocketBindings(real: SocketBindings) extends SocketBindings
     def close(fd: Int)(using AllowUnsafe): Fiber.Unsafe[Int, Any] =
         // Record before delegating so the count is visible even if the caller does not await the returned fiber.
         discard(closeCounts.merge(fd, 1, (a, b) => a + b))
+        discard(callOrder.add(s"close($fd)"))
+        closedOf.computeIfAbsent(fd, _ => Promise.Unsafe.init[Unit, Any]()).completeDiscard(Result.succeed(()))
         real.close(fd)
     end close
 

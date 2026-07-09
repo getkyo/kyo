@@ -2,6 +2,7 @@ package kyo.net.internal.tls
 
 import kyo.*
 import kyo.ffi.Buffer
+import kyo.internal.Diagnostics
 
 /** The native [[TlsEngine]] on JVM and Native: a thin wrapper over a live TLS session through any [[SslLibBindings]] backend.
   *
@@ -31,39 +32,85 @@ final private[net] class NativeSslEngine[B <: SslLibBindings](lib: B, ssl: Long)
     // every compareAndSet below runs under the caller's AllowUnsafe.
     private val freed = AtomicBoolean.Unsafe.init(false)(using AllowUnsafe.embrace.danger)
 
-    def handshakeStep()(using AllowUnsafe): Int = lib.doHandshakeStep(ssl)
+    // Every op below reads `freed` first and refuses the native call once it is set, reporting a Diagnostics violation naming the op instead
+    // of dereferencing `ssl` after `sslFree` released it. Production free/use pairs are single-carrier-serialized (see the class doc), so this
+    // volatile read never races a concurrent free: a caller that observes `freed = false` here is guaranteed the native session is still live
+    // for the duration of its own call. A caller that reaches this AFTER free() has already run has broken that serialization invariant
+    // somewhere upstream; the gate turns what would otherwise be a silent native use-after-free (a wild write into whatever reused the freed
+    // allocation, see the SSL_shutdown UAF this was added for) into an attributed, in-process failure.
+    private def reportUseAfterFree(op: String): Unit =
+        Diagnostics.reportViolation(s"NativeSslEngine.$op called after free(): the native SSL session was already released")
+
+    def handshakeStep()(using AllowUnsafe): Int =
+        if freed.get() then
+            reportUseAfterFree("handshakeStep")
+            -2
+        else lib.doHandshakeStep(ssl)
 
     def feedCiphertext(buf: Buffer[Byte], len: Int)(using AllowUnsafe): Int =
-        lib.feedCiphertext(ssl, buf, len)
+        if freed.get() then
+            reportUseAfterFree("feedCiphertext")
+            -1
+        else lib.feedCiphertext(ssl, buf, len)
 
     def drainCiphertext(buf: Buffer[Byte], len: Int)(using AllowUnsafe): Int =
-        lib.drainCiphertext(ssl, buf, len)
+        if freed.get() then
+            reportUseAfterFree("drainCiphertext")
+            0
+        else lib.drainCiphertext(ssl, buf, len)
 
-    def readPlain(buf: Buffer[Byte], len: Int)(using AllowUnsafe): Int = lib.readPlain(ssl, buf, len)
+    def readPlain(buf: Buffer[Byte], len: Int)(using AllowUnsafe): Int =
+        if freed.get() then
+            reportUseAfterFree("readPlain")
+            0
+        else lib.readPlain(ssl, buf, len)
 
-    def writePlain(buf: Buffer[Byte], len: Int)(using AllowUnsafe): Int = lib.writePlain(ssl, buf, len)
+    def writePlain(buf: Buffer[Byte], len: Int)(using AllowUnsafe): Int =
+        if freed.get() then
+            reportUseAfterFree("writePlain")
+            0
+        else lib.writePlain(ssl, buf, len)
 
-    def hasBufferedPlaintext(using AllowUnsafe): Boolean = lib.pending(ssl) > 0
+    def hasBufferedPlaintext(using AllowUnsafe): Boolean =
+        if freed.get() then
+            reportUseAfterFree("hasBufferedPlaintext")
+            false
+        else lib.pending(ssl) > 0
 
     def readBuffered()(using AllowUnsafe): Span[Byte] =
-        val pending = lib.pending(ssl)
-        if pending <= 0 then Span.empty[Byte]
+        if freed.get() then
+            reportUseAfterFree("readBuffered")
+            Span.empty[Byte]
         else
-            Buffer.use[Byte, Span[Byte]](pending) { out =>
-                val n = lib.readPlain(ssl, out, pending)
-                if n > 0 then Span.fromUnsafe(Buffer.copyToArray[Byte](out, 0, n))
-                else Span.empty[Byte]
-            }
+            val pending = lib.pending(ssl)
+            if pending <= 0 then Span.empty[Byte]
+            else
+                Buffer.use[Byte, Span[Byte]](pending) { out =>
+                    val n = lib.readPlain(ssl, out, pending)
+                    if n > 0 then Span.fromUnsafe(Buffer.copyToArray[Byte](out, 0, n))
+                    else Span.empty[Byte]
+                }
+            end if
         end if
     end readBuffered
 
     def certSha256()(using AllowUnsafe): Maybe[Span[Byte]] =
-        Buffer.use[Byte, Maybe[Span[Byte]]](32) { out =>
-            val n = lib.peerCertSha256(ssl, out, 32)
-            if n == 32 then Present(Span.fromUnsafe(Buffer.copyToArray[Byte](out, 0, 32))) else Absent
-        }
+        if freed.get() then
+            reportUseAfterFree("certSha256")
+            Absent
+        else
+            Buffer.use[Byte, Maybe[Span[Byte]]](32) { out =>
+                val n = lib.peerCertSha256(ssl, out, 32)
+                if n == 32 then Present(Span.fromUnsafe(Buffer.copyToArray[Byte](out, 0, 32))) else Absent
+            }
+        end if
+    end certSha256
 
-    def shutdownStep()(using AllowUnsafe): Int = lib.shutdownStep(ssl)
+    def shutdownStep()(using AllowUnsafe): Int =
+        if freed.get() then
+            reportUseAfterFree("shutdownStep")
+            -2
+        else lib.shutdownStep(ssl)
 
     def free()(using AllowUnsafe): Unit =
         if freed.compareAndSet(false, true) then lib.sslFree(ssl)

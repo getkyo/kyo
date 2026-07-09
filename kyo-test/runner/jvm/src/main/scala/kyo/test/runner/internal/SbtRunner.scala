@@ -144,6 +144,12 @@ final private[runner] class SbtRunner(
                 case kyo.Maybe.Present(report) => throw new StrandedOpCheck.Detected(report)
                 case kyo.Maybe.Absent          => ()
             end match
+            // Authoritative teardown violations, checked alongside StrandedOpCheck's probe-based inference: a component that already,
+            // definitively determined (not sampled) that it stranded an obligation reports it directly via
+            // kyo.internal.Diagnostics.reportViolation. StrandedOpCheck's own `after.closed => Ok` exemption cannot see these (it is
+            // deliberately scoped to a live loop's lost-wakeup class, not a closed component's leaked fd/engine reclaim).
+            val violations = kyo.internal.Diagnostics.drainViolations()
+            if violations.nonEmpty then throw new TeardownViolationCheck.Detected(violations)
     end runEndOfRunChecks
 
 end SbtRunner

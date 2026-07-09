@@ -75,6 +75,15 @@ object TlsRealEngines:
       * the computation is executed). This mirrors production, which frees a connection engine through the same FIFO after every engine op.
       *
       * Anti-flakiness: engine allocation is synchronous and the free is ordered after the body via Sync.ensure; no sleeping.
+      *
+      * Ownership rule: never wire an engine from this method into a `handle.tls` a driver owns unless the body waits for that handle's `tls`
+      * to go `Absent` before returning. A driver's own teardown (`dischargeClose` / `shutdownTls` / `freeResources`) is frequently QUEUED, not
+      * inline, so it can still be pending when the body's result value completes; this method's `ensure` then frees the engine out-of-band
+      * while the driver's queued teardown still owes it an `SSL_shutdown`, a native use-after-free (unmapped reuse crashes immediately,
+      * recycled reuse corrupts a live allocation and surfaces later at an unrelated leaf). Prefer [[singleEngine]] instead, which leaves the
+      * free entirely to whichever path (the driver's own free sink, or the test's own cleanup) actually needs it; `NativeSslEngine.free()` is
+      * CAS-guarded exactly-once so calling it from both is harmless. See `PollerIoDriverTlsHalfCloseEtTest`'s `awaitCondition(...)
+      * (!acceptedH.tls.isDefined)` for the guard a caller that still wants this method's convenience must add.
       */
     def withEngines[A, S](f: (TlsEngine, TlsEngine) => A < S)(using Frame, AllowUnsafe): A < (S & Sync) =
         if !boringSslAvailable() then

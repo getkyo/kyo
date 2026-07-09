@@ -107,7 +107,37 @@ final private[net] class PollerIoDriver private[posix] (
     // the phantom 8-byte [1,0,0,0,0,0,0,0] ahead of its real data: the lazyFdDelete cross-fd stale-event failure under full-suite load. Gating the
     // close behind the in-flight-wake count closes the window: the eventfd is never closed while a wake holds it, so its number cannot be recycled
     // out from under an eventfd_write.
-    wakeGuard: AtomicInt.Unsafe
+    wakeGuard: AtomicInt.Unsafe,
+    // Set true as the FIRST step of the poll loop's terminal exit, strictly BEFORE the final drainFifos() call. Its ONLY remaining
+    // consumer is `engineFreeSink` (deciding whether a PosixHandle.close's engine-free callback may run inline on the calling carrier
+    // instead of round-tripping through submitEngineOp): every carrier that can reach `engineFreeSink` while `terminal` is true but
+    // [[teardownComplete]] is not yet true is provably the poll-loop carrier itself (the queued close op, or sweepPendingCloses' first
+    // pass, both run on this same carrier during drainFifos()), so inline is always safe there regardless of how far the drain has
+    // progressed. NOT safe to treat as "self-close now" (a prior version of this doc claimed exactly that): reading `true` here means
+    // only that the terminal exit has STARTED, not that it has FINISHED, so a self-close gated on this flag alone could run
+    // concurrently with the terminal exit's own still-in-flight sweep of the SAME handle (both trying to drive `shutdownTls` on the
+    // same TLS engine at once). closeHandle's self-close instead gates on [[teardownComplete]], which is set only at the END of the
+    // terminal exit, after every legitimate submission window has closed.
+    terminal: AtomicBoolean.Unsafe,
+    // Set true as the LAST step of the terminal exit's obligation handling (after the final drainFifos(), the first sweepPendingCloses(),
+    // and the closeReason claim attempt), strictly BEFORE the terminal exit's own re-sweep. Distinguishes "the terminal exit has
+    // STARTED" ([[terminal]]) from "the terminal exit's own submission window has FULLY CLOSED": once this is true, drainFifos() will
+    // never run again, so no normally-queued engine op for ANY handle can still be pending, and dischargeClose's single-discharger claim
+    // (`pendingCloses.remove`) is the only thing left serializing the terminal exit's re-sweep against closeHandle's own self-close.
+    // closeHandle's TLS branch (put pendingCloses, submit the deferred close op, then re-check this flag) uses it to decide whether to
+    // self-close inline instead of trusting the queued op: reading `false` here happens-before the eventual write of `true` (a plain
+    // AtomicBoolean read/write pair), which happens-before the re-sweep in the terminal exit's own program order, so a pendingCloses put
+    // that observed `false` is guaranteed visible to the still-upcoming re-sweep (the Dekker pairing terminalTeardown's scaladoc
+    // details). close()'s own post-submit recheck uses the same flag, paired symmetrically against terminalTeardown's own post-flag
+    // re-read of `closeReason`, to cover the panic-exit ordering (see close()'s doc).
+    teardownComplete: AtomicBoolean.Unsafe,
+    // Exactly-once gate for closeTeardown: close()'s own teardown op can strand the same way a TLS closeHandle op can (e.g. the loop
+    // observes closedFlag between close()'s CAS and its submitEngineOp call and runs its entire terminal exit before the op ever lands).
+    // Attempted by the queued closure close() submits AND, unconditionally, by the terminal exit itself right after sweepPendingCloses:
+    // whichever runs first wins the CAS: no waiting, no flag inference, both run on carriers where the map-confinement precondition
+    // already holds (the queued closure via the single-consumer engineQueue drain; the terminal exit's own attempt because it IS the
+    // poll-loop carrier, sequenced after the maps' last legitimate access).
+    closeTeardownClaim: AtomicBoolean.Unsafe
 ) extends IoDriver[PosixHandle], TlsEngineIo:
 
     import PollerIoDriver.PendingWritable
@@ -144,6 +174,12 @@ final private[net] class PollerIoDriver private[posix] (
     // runs on the construction carrier before this driver is exposed to a concurrent close(), so no synchronization guards the write
     // itself, but the field is @volatile so close() (on any carrier) observes it.
     @volatile private var diagRegistration: kyo.internal.Diagnostics.Registration | Null = null
+
+    // The driver-closed teardown reason, set by close() the instant it wins the closedFlag CAS (before submitEngineOp), so the pollLoop's
+    // terminal exit (a different carrier than close()'s caller) can run closeTeardown itself if close()'s own submitted op never gets
+    // drained. Null only when the driver was never closed (terminal exit ran from a backend failure/panic instead), in which case no
+    // closeTeardown claim is attempted here.
+    @volatile private var closeReason: Closed | Null = null
 
     // Registration intake: many fibers enqueue a pending registration (awaitRead/armSocketWritable/awaitAccept) here; the poll-loop carrier consumes
     // it and applies the activeFds + pendingReads/pendingWritables/pendingAccepts puts on its own carrier, so the maps are written by ONE carrier.
@@ -198,6 +234,16 @@ final private[net] class PollerIoDriver private[posix] (
     // guarantees at most one engine op runs at a time per connection (the single-owner guarantee), so a stateful TLS engine is never touched by two
     // carriers at once.
     private val engineQueue = new ConcurrentLinkedQueue[() => Unit]()
+
+    // Registered fd-close obligations for TLS handles (mirrors IoUringDriver.pendingCloses): closeHandle's TLS branch defers the real
+    // sockets.close/PosixHandle.close behind an engine op (so the close_notify send is serialized behind any in-flight read/write for this
+    // connection), which strands forever if the op lands in engineQueue after the poll loop's one-shot terminal drain has already run
+    // (a deferred-close obligation whose sole executor has a terminal point). Every TLS closeHandle call PUTs its handle here
+    // BEFORE submitting the deferred op; the op's own discharge removes it (dischargeClose). The terminal exit's sweepPendingCloses force-
+    // discharges (claim-guarded, exactly-once via PosixHandle's own fd/resource claims) whatever is still here after the final drain, so a
+    // stranded obligation is always reclaimed regardless of submission timing. A plain ConcurrentHashMap-backed set: put/remove/iterate from
+    // multiple carriers, no poll-fiber confinement needed (unlike activeFds/pendingReads/etc; this touches only handle-scoped state).
+    private val pendingCloses = java.util.concurrent.ConcurrentHashMap.newKeySet[PosixHandle]()
 
     // Missed-readiness tracker for the dropped-edge case under epoll EPOLLET register-once.
     //
@@ -286,14 +332,23 @@ final private[net] class PollerIoDriver private[posix] (
                 val accepts = new StringBuilder
                 pendingAccepts.foreach((fd, h) => discard(accepts.append(fd).append("(id=").append(h.id).append(") ")))
                 s"closed=${closedFlag.get()} pollCycles=$diagPollCycles activeFds=${activeFds.size} " +
-                    s"changeQueuePending=${changeQueue.peekNonEmpty()} wakePending=${wakePending.get()} " +
+                    s"changeQueuePending=${changeQueue.peekNonEmpty()} engineQueuePending=${!engineQueue.isEmpty()} " +
+                    s"pendingClosesSize=${pendingCloses.size()} wakePending=${wakePending.get()} " +
                     s"pendingReads=[$reads] pendingWritables=[$writes] pendingAccepts=[$accepts]"
             ,
             probe = () =>
                 kyo.internal.Diagnostics.Probe(
                     closed = closedFlag.get(),
                     cycles = diagPollCycles,
-                    pending = changeQueue.peekNonEmpty() || pendingReads.size > 0 || pendingWritables.size > 0 || pendingAccepts.size > 0
+                    // engineQueue and pendingCloses: a live driver stuck with a queued engine op or an undischarged fd-close
+                    // obligation, with no cycle progress, is the same class of lost-wakeup this probe already catches for
+                    // changeQueue/pendingReads/etc. engineQueue was omitted before, which is why a stranded-close obligation could hide
+                    // behind a "pending = false" probe read even while the driver was still open. This is a LIVE-driver signal only: the
+                    // authoritative closed-driver leak check is terminalTeardown's own post-completion re-sweep, reported directly to
+                    // Diagnostics.reportViolation (see terminalTeardown's doc), since this probe's `closed => Ok` exemption in
+                    // StrandedOpCheck cannot see a leak on an already-closed driver.
+                    pending = changeQueue.peekNonEmpty() || !engineQueue.isEmpty() || !pendingCloses.isEmpty() ||
+                        pendingReads.size > 0 || pendingWritables.size > 0 || pendingAccepts.size > 0
                 )
         )
         val donePromise = Promise.Unsafe.init[Unit, Any]()
@@ -447,13 +502,16 @@ final private[net] class PollerIoDriver private[posix] (
                         drainFifos()
                         if !closedFlag.get() then discard(Fiber.Unsafe.init { pollLoop() })
                         else
-                            // Terminal JS exit: closed flag set, not re-entering, last poll done. Close the poller fd after the last poll and free
-                            // the scratch once (the teardown op was drained by the drainFifos above).
+                            // Terminal JS exit: closed flag set, not re-entering, last poll done. terminalTeardown's own drainFifos is a
+                            // harmless extra pass (JS is single-threaded, so there is no cross-thread ordering concern here: nothing else
+                            // can run concurrently with the drainFifos above).
+                            terminalTeardown()
                             backend.close(pollerFd)
                             freeScratch()
                         end if
                     case _ =>
-                        // Terminal JS exit: wait failed, not re-entering. Close the poller fd and free the scratch once.
+                        // Terminal JS exit: wait failed, not re-entering.
+                        terminalTeardown()
                         backend.close(pollerFd)
                         freeScratch()
                 }
@@ -466,17 +524,71 @@ final private[net] class PollerIoDriver private[posix] (
             if !enteredPending then drainFifos()
         end while
         // Terminal exit on JVM/Native (the while loop ended on closedFlag or a backend failure/panic): the last poll has completed and the maps +
-        // scratch are provably not in use, so the poll loop carrier finishes the teardown here. The FINAL drainFifos runs any close-teardown engine
-        // op that close() submitted concurrently with the closedFlag set (so it is never stranded by the loop exiting first); since it runs on this
-        // poll-loop carrier, the teardown's map access stays poll-fiber-confined. backend.close(pollerFd) runs AFTER the last poll, so the
-        // poller fd is never closed under an in-flight epoll_wait/kevent. Skipped when the JS branch parked on a pending wait fiber (not terminal:
-        // it tears down from the onComplete instead).
+        // scratch are provably not in use, so the poll loop carrier finishes the teardown here. terminalTeardown runs any close-teardown engine
+        // op that close() submitted concurrently with the closedFlag set (so it is never stranded by the loop exiting first) and sweeps any
+        // fd-close obligation a TLS closeHandle registered too late to be drained normally; since it runs on this poll-loop carrier, the map
+        // access stays poll-fiber-confined. backend.close(pollerFd) runs AFTER the last poll, so the poller fd is never closed under an
+        // in-flight epoll_wait/kevent. Skipped when the JS branch parked on a pending wait fiber (not terminal: it tears down from the
+        // onComplete instead).
         if !enteredPending then
-            drainFifos()
+            terminalTeardown()
             backend.close(pollerFd)
             freeScratch()
         end if
     end pollLoop
+
+    /** The poll loop's terminal-exit teardown, shared by every exit path (JVM/Native's terminal `while`-exit and both JS onComplete terminal
+      * branches): set [[terminal]] before the final drain (the ordering [[closeHandle]]'s put-then-recheck relies on), drain once more
+      * (picks up anything already queued), sweep any fd-close obligation that missed the drain, set [[teardownComplete]], then RE-SWEEP
+      * and re-read [[closeReason]] before checking for a genuine invariant violation.
+      *
+      * The re-sweep and re-read are the Dekker half of two independent races, both closed by pairing a write here with a recheck on the
+      * OTHER carrier:
+      *
+      *   - `pendingCloses` vs. closeHandle's self-close: closeHandle puts the handle in `pendingCloses`, submits the deferred op, THEN
+      *     rechecks [[teardownComplete]] to decide whether to self-close. If that recheck reads `false`, the put happens-before this
+      *     re-sweep's iteration (both are on the SAME `pendingCloses` map; the put preceded the read in closeHandle's own program order,
+      *     and the read preceded this re-sweep in real time by definition of reading `false`), so the re-sweep is guaranteed to observe
+      *     it. If the recheck instead reads `true`, closeHandle self-closes directly. Either way the obligation is discharged by
+      *     someone; [[dischargeClose]]'s own `pendingCloses.remove` is what makes the two attempts (this re-sweep's and a concurrent
+      *     self-close's) resolve to exactly one winner if both fire.
+      *   - `closeReason` vs. close()'s post-submit recheck: this re-read happens strictly after `teardownComplete.set(true)` in this
+      *     method's own program order; close() rechecks `teardownComplete` strictly after its own `closeReason` store (see close()'s
+      *     doc). Whichever of {this read, close()'s recheck} runs later in real time is guaranteed to observe the other side's
+      *     already-completed write, covering the panic-exit ordering (the loop dies from a backend failure before close() is ever
+      *     called, so this method runs with `closeReason` still null; close() rechecks `teardownComplete` after the fact and finds it
+      *     already true).
+      *
+      * Note: `ConcurrentHashMap`'s iteration is only weakly consistent, so the `pendingCloses` happens-before argument above is
+      * not a strict JMM guarantee by itself. The actual safety net is the double sweep (before and after
+      * `teardownComplete.set(true)`) plus the violation report below: a missed entry surfaces as a reported violation and a red
+      * run, never a silent leak or corruption.
+      *
+      * A `pendingCloses` entry surviving THIS re-sweep is a genuine invariant violation, not a false-positive
+      * candidate the way a single pre-flag sweep would be (that could still race a closeHandle call that had not yet reached its own
+      * recheck). It can never be serviced (nothing will ever call `drainFifos` again), so it is reported to
+      * [[kyo.internal.Diagnostics.reportViolation]], which fails the kyo-test run even though the driver is closed by then (unlike the
+      * probe-based stranded-op check, which exempts a closed component by design). `engineQueue`'s own size stays in the human-readable
+      * diagnostics dump only (see the `dump` thunk in `start()`): a queued-but-already-serviced op can legitimately still sit there after
+      * being drained by identity, not value, so it is not a sound error predicate on its own.
+      */
+    private def terminalTeardown()(using AllowUnsafe, Frame): Unit =
+        terminal.set(true)
+        drainFifos()
+        sweepPendingCloses()
+        teardownComplete.set(true)
+        sweepPendingCloses()
+        val reason = closeReason
+        if reason != null && closeTeardownClaim.compareAndSet(false, true) then closeTeardown(reason)
+        if !pendingCloses.isEmpty() then
+            val stranded = new StringBuilder
+            pendingCloses.forEach(h => discard(stranded.append("fd=").append(h.readFd).append('/').append(h.writeFd).append(' ')))
+            kyo.internal.Diagnostics.reportViolation(
+                s"$label: ${pendingCloses.size()} close obligation(s) [$stranded] survived the terminal teardown's post-completion " +
+                    "re-sweep (stranded-close class regression)"
+            )
+        end if
+    end terminalTeardown
 
     def awaitRead(handle: PosixHandle, promise: Promise.Unsafe[ReadOutcome, Abort[Closed]])(using AllowUnsafe, Frame): Unit =
         handle.pendingReadPromise = Present(promise)
@@ -487,6 +599,18 @@ final private[net] class PollerIoDriver private[posix] (
         // happens-before the changeQueue.offer (the MpscLongQueue offer tail swap is the barrier), so the change worker sees it on rc<0.
         regIntake.offer(Registration(handle, RegKind.Read))
         submitChange(packCmd(OpRegisterRead, handle.readFd))
+        // Offer-then-recheck against [[terminal]], mirroring the poll-fiber-confined idiom this file already uses elsewhere
+        // (dischargeClose's own put-then-recheck). Once the poll loop's terminal exit has started, its own final drainFifos() call is
+        // the LAST chance this registration will ever get to be applied; relying on that alone risks stranding this promise forever if
+        // it landed too late even for that drain (the loop will never cycle again after `terminal` is set). Fail it directly instead:
+        // `pendingReadPromise` is already held on the handle (deregisterFds's own synchronous-fail pattern), so no poll-fiber-confined
+        // map access is needed here, and `completeDiscard` is idempotent against a legitimate concurrent dispatch or closeTeardown also
+        // completing it. This drives the existing onFailed -> teardown() -> closeHandle -> self-close chain end-to-end for free.
+        if terminal.get() then
+            val closed = Closed(label, summon[Frame], s"fd=${handle.readFd} driver closed")
+            handle.pendingReadPromise.foreach(_.completeDiscard(Result.fail(closed)))
+            handle.pendingReadPromise = Absent
+        end if
     end awaitRead
 
     /** STARTTLS upgrade confinement: make the poll carrier the sole producer of the upgrade's ciphertext reads. The handshake parked a waiter on
@@ -523,6 +647,35 @@ final private[net] class PollerIoDriver private[posix] (
     override def forceReadRecovery(handle: PosixHandle)(using AllowUnsafe, Frame): Unit =
         discard(missedReads.add(handle.readFd))
 
+    /** STARTTLS handoff: the plaintext [[ReadPump]] pulled `bytes` off the socket, but by the time it tried to deliver them the inbound
+      * channel was already closed. If the handle is upgrading, deliver them into [[PosixHandle.upgradeHandoff]] instead of dropping them:
+      * mirrors [[NioIoDriver]]'s own override, and reuses [[deliverToUpgradeHandoff]] (the exact slot [[dispatchUpgradeRead]] already stages
+      * into and [[kyo.net.internal.posix.PosixTransport.driveUpgradeRead]] already knows how to drain), so the handshake picks these bytes up
+      * on its very next read with no other change needed.
+      *
+      * This is a DIFFERENT race than [[applyRegistration]]'s stray-pump-rearm guard (2125) already rejects: that guard covers a NEW `awaitRead`
+      * registration attempt made AFTER `upgradeActive` is observed true. This covers a read that was ALREADY DISPATCHED (recv() already ran,
+      * off the socket, via the normal `dispatchReadPlain` path) before `upgradeToTls` set `upgradeActive`, whose DELIVERY then runs later, on
+      * whatever carrier the scheduler resumes `ReadPump.onComplete` on -- not necessarily inline with the read, and not necessarily before
+      * `detachForUpgrade`'s `inbound.close()` (called from an arbitrary caller carrier) has already run. `dispatchRead`'s own `upgradeActive`
+      * check (1451) is evaluated once, at dispatch time; it cannot see a flag flip that has not happened yet, so a read that raced ahead of the
+      * flag is a real, reachable outcome, not a bug in that check. Without this override those bytes (the peer's first TLS flight, e.g. the
+      * ClientHello) were silently discarded, stranding the handshake waiting for data that already arrived and was thrown away.
+      *
+      * A non-upgrade close (an ordinary teardown) leaves `upgrading` false and the bytes are discarded, exactly as before.
+      */
+    override def onInboundClosedDuringRead(handle: PosixHandle, bytes: Span[Byte])(using AllowUnsafe, Frame): Unit =
+        if handle.upgrading then
+            val arr = bytes.toArrayUnsafe
+            // One-shot claim on lastPlaintextRead: PosixTransport.feedCoalescedHandshake races this same chunk through the SAME slot (both
+            // alias it for the peer's first upgrade flight). Whichever side wins the CAS is the sole feeder; the loser (this call arriving
+            // after feedCoalescedHandshake already claimed it, or vice versa) skips, so the flight is never delivered to the engine twice.
+            val delivered = handle.lastPlaintextRead.get() match
+                case p @ Present(last) if last eq arr => handle.lastPlaintextRead.compareAndSet(p, Absent)
+                case _                                => false
+            if delivered then deliverToUpgradeHandoff(handle, arr)
+    end onInboundClosedDuringRead
+
     def awaitWritable(handle: PosixHandle, promise: Promise.Unsafe[Unit, Abort[Closed]])(using AllowUnsafe, Frame): Unit =
         if handle.unsentTailBytes >= PosixHandle.WriteTailLowWater then
             // Tail-bound park (CWE-400): the WritePump suspended because the TLS write tail hit the high-water mark, NOT because the kernel send
@@ -558,6 +711,13 @@ final private[net] class PollerIoDriver private[posix] (
         handle.pendingWritablePromise = Present(promise)
         regIntake.offer(Registration(handle, RegKind.Write))
         submitChange(packCmd(OpRegisterWrite, handle.writeFd))
+        // Same offer-then-recheck as awaitRead (see its doc); every caller of this primitive (awaitWritable's below-bound path,
+        // awaitConnect, armWritableForFlush) inherits the protection from this one call site.
+        if terminal.get() then
+            val closed = Closed(label, summon[Frame], s"fd=${handle.writeFd} driver closed")
+            handle.pendingWritablePromise.foreach(_.completeDiscard(Result.fail(closed)))
+            handle.pendingWritablePromise = Absent
+        end if
     end armSocketWritable
 
     def awaitConnect(handle: PosixHandle, promise: Promise.Unsafe[Unit, Abort[Closed]])(using AllowUnsafe, Frame): Unit =
@@ -576,6 +736,12 @@ final private[net] class PollerIoDriver private[posix] (
         // command to the accept staging map on the poll carrier (an awaitRead on the same fd would clear it and stage a Read instead).
         regIntake.offer(Registration(handle, RegKind.Accept))
         submitChange(packCmd(OpRegisterRead, handle.readFd, accept = true))
+        // Same offer-then-recheck as awaitRead (see its doc).
+        if terminal.get() then
+            val closed = Closed(label, summon[Frame], s"fd=${handle.readFd} driver closed")
+            handle.pendingAcceptPromise.foreach(_.completeDiscard(Result.fail(closed)))
+            handle.pendingAcceptPromise = Absent
+        end if
     end awaitAccept
 
     /** Dispatch a read-ready event on a listen fd registered via `awaitAccept`. Completes the accept promise with -1 as a readiness
@@ -613,22 +779,26 @@ final private[net] class PollerIoDriver private[posix] (
             // Checked before beginWrite so an over-bound write touches no guard / engine. (The raw path never reaches here: the poller's raw send is
             // inline and reports its own Partial straight from the send syscall, so its tail is always bounded by the kernel send buffer.)
             WriteResult.TailPartial(data, offset)
-        else if !handle.beginWrite() then
-            // The handle was closed (resources freed) before this write acquired them; bail without touching the engine / buffers (the write
-            // twin of dispatchRead's !beginDispatch guard). The pump treats Error as teardown, which is correct for a write on a closed handle.
-            WriteResult.Error
         else
             handle.tls match
                 case Present(engine) =>
-                    // For TLS writes, endWrite is called from INSIDE the FIFO thunk after engine ops complete. This keeps the write guard
-                    // held until the engine is done: a concurrent closeHandle defers the engine free until endWrite fires from the FIFO
-                    // worker, so the engine is never freed while writePlain / drainCiphertext are running.
+                    // Unlike the plaintext branch below, beginWrite is NOT acquired here. writeTls submits its work to the engine
+                    // FIFO and acquires (and releases) the guard INSIDE that submitted op, not on this caller's carrier: see writeTls's doc.
                     writeTls(handle, data, engine)
                 case Absent =>
-                    // For plaintext writes, endWrite is called here synchronously after writeRaw completes.
-                    try writeRaw(handle, data, offset)
-                    finally discard(handle.endWrite())
-                    end try
+                    if !handle.beginWrite() then
+                        // The handle was closed (resources freed) before this write acquired them; bail without touching the buffers (the
+                        // write twin of dispatchRead's !beginDispatch guard). The pump treats Error as teardown, which is correct for a
+                        // write on a closed handle. Plaintext writeRaw runs synchronously on this same carrier (no engine FIFO hop), so
+                        // acquiring here is safe: the guard is never held across a deferred/stranded op the way a submitted TLS op could.
+                        WriteResult.Error
+                    else
+                        // For plaintext writes, endWrite is called here synchronously after writeRaw completes.
+                        try writeRaw(handle, data, offset)
+                        finally discard(handle.endWrite())
+                        end try
+                    end if
+            end match
         end if
     end write
 
@@ -733,22 +903,30 @@ final private[net] class PollerIoDriver private[posix] (
       * re-arm ([[armWritableForFlush]]) that re-submits the flush when the socket drains. The write pump always sees Done and proceeds to the
       * next take; the actual send (and any backpressured remainder) happens asynchronously on the FIFO worker carrier. There is NO busy-spin:
       * a full send buffer parks on writability instead of retrying the same bytes, so one slow connection never stalls the shared FIFO worker.
+      *
+      * `beginWrite` is acquired INSIDE this submitted op, not by `write()`'s caller beforehand, mirroring [[armWritableForFlush]]'s
+      * own re-submitted flush op: a stranded (never-drained) op then never acquires the write guard at all, rather than holding it from
+      * the caller's synchronous acquire until a drain that may never come. A held-forever guard would also block
+      * [[PosixHandle.freeResources]] forever (its `HandleGuard` requires no active write holder before it frees the engine), stranding
+      * the engine free ON TOP of the original close obligation. FIFO ordering, not a cross-carrier guard hold, is what keeps the engine
+      * alive for ops queued before a close op: this op's guard is acquired and released entirely within its own turn, before any close op
+      * queued after it runs.
       */
     private def writeTls(handle: PosixHandle, data: Span[Byte], engine: TlsEngine)(using AllowUnsafe, Frame): WriteResult =
         submitEngineOp { () =>
-            // endWrite is called here (inside the FIFO thunk, after all engine ops) rather than in the write method's finally block.
-            // This keeps the write guard held until engine ops complete: a concurrent closeHandle defers the engine free until this
-            // endWrite fires, preventing a use-after-free between the guard release and the writePlain / drainCiphertext execution. The
-            // guard is acquired (beginWrite) and released (endWrite) within THIS one op; the flush re-arm runs as a SEPARATE later op that
-            // re-acquires its own guard, so the guard is never held across the awaitWritable suspension.
-            try
-                // Encrypt the plaintext through the shared engine loop, appending each drained ciphertext chunk to the pending tail; then send
-                // as much of the tail as the socket accepts (the poller's inline-send flush). The engine loop is shared with the io_uring
-                // driver; the inline send + writability re-arm below are the poller's send mechanism.
-                discard(encryptPlaintext(handle, data, engine)((drain, n) => appendPending(handle, drain, n)))
-                flushPending(handle)
-            finally discard(handle.endWrite())
-            end try
+            // A failed acquire means the handle was closed before this op got a turn (or this op was stranded and force-discharged by a
+            // terminal sweep): silently skip the write rather than touching the (possibly freed) engine/buffers. The caller already saw
+            // Done; there is no return path left to report this once the op is queued.
+            if handle.beginWrite() then
+                try
+                    // Encrypt the plaintext through the shared engine loop, appending each drained ciphertext chunk to the pending tail; then
+                    // send as much of the tail as the socket accepts (the poller's inline-send flush). The engine loop is shared with the
+                    // io_uring driver; the inline send + writability re-arm below are the poller's send mechanism.
+                    discard(encryptPlaintext(handle, data, engine)((drain, n) => appendPending(handle, drain, n)))
+                    flushPending(handle)
+                finally discard(handle.endWrite())
+                end try
+            end if
         }
         // The pump always sees Done; the actual send runs on the FIFO worker carrier after engine ops complete.
         WriteResult.Done
@@ -932,43 +1110,100 @@ final private[net] class PollerIoDriver private[posix] (
         // Public IoDriver cancel: the fd is still open (live-fd withdrawal). EV_DELETE must execute on kqueue to prevent stale events.
         deregisterFds(handle, fdClosing = false)
 
+    /** Claim this handle's fd close (the one-shot [[PosixHandle.claimFdClose]]) and, if won, shut it down immediately and install the deferred
+      * real `close(fd)` as [[PosixHandle.fdCloseSink]] -- the shared claim-then-defer dance every abrupt (non-`close_notify`) close path on
+      * this driver runs BEFORE calling `PosixHandle.close` / `requestClose` for the handle. Winning the claim proves the fd is still owned by
+      * this handle, so the immediate shutdown is safe; the real close is deferred to `freeResources`, the same exactly-once, zero-holders
+      * point that frees the engine and buffers, so a carrier still mid-syscall on this fd under a live `beginWrite` / `beginDispatch` hold is
+      * never exposed to a fd number the kernel has already recycled to an unrelated connection. A no-op if the claim is already spent
+      * (another path is handling this handle's fd) or `readFd != writeFd` (stdio, whose fds are never closed this way).
+      *
+      * Every caller MUST install this credit before its own call into `PosixHandle.close` / `requestClose` reaches the guard: `freeResources`
+      * runs at most once per handle, so a `requestClose` that fires before this credit exists (e.g. a bare `handle.requestClose()` racing this
+      * claim) permanently forfeits the fd close, since the terminal guard never runs `freeResources` a second time to pick the credit up later.
+      */
+    private def claimAndDeferFdClose(handle: PosixHandle)(using AllowUnsafe, Frame): Unit =
+        if handle.readFd == handle.writeFd && handle.claimFdClose() then
+            discard(sockets.shutdown(handle.readFd, PosixConstants.SHUT_RDWR))
+            handle.fdCloseSink = Present(() => discard(takeNow(sockets.close(handle.readFd))))
+    end claimAndDeferFdClose
+
+    /** Discharge one TLS handle's deferred close obligation: best-effort close_notify (RFC 8446 6.1 / RFC 5246 7.2.1), claim-guarded fd close,
+      * and PosixHandle.close (which frees the engine + buffers). Single-discharger: `pendingCloses.remove(handle)` IS the claim, gating the
+      * WHOLE body, not just the fd close. At most three carriers ever call this for the same handle (the normal queued engine op, the
+      * terminal exit's sweepPendingCloses / re-sweep, and closeHandle's own post-[[teardownComplete]] self-close), and exactly one of them
+      * ever observes `true` from the removal: `ConcurrentHashMap`'s remove is atomic, so only the winner's body runs, and every other
+      * caller's call is a safe no-op.
+      *
+      * This eliminates the overlap a prior version of this method allowed: closeHandle's self-close used to skip the graceful close_notify
+      * specifically because it could run concurrently with the terminal sweep's own attempt on the SAME handle (two carriers both driving
+      * `shutdownTls` on one TLS engine at once). With single-discharge there is no such overlap to guard against: whichever carrier wins
+      * the claim is PROVABLY the only one inside this body for this handle, so it can always attempt the close_notify. The three
+      * potential callers are also never live at once in practice: the normal queued op only runs during (or before) `drainFifos()`, which
+      * has unconditionally finished by the time [[teardownComplete]] is set, so by the time a self-close or a re-sweep can even run, the
+      * queued op is already a dead letter (already discharged, or never going to run again).
+      */
+    private def dischargeClose(handle: PosixHandle)(using AllowUnsafe, Frame): Unit =
+        if pendingCloses.remove(handle) then
+            handle.tls.foreach { engine =>
+                if handle.beginWrite() then
+                    try shutdownTls(handle, engine)
+                    finally discard(handle.endWrite())
+                    end try
+            }
+            // Shut the fd down (not close it) right after the (attempted) alert flush, so the FIN follows the close_notify on the wire when
+            // both run; see claimAndDeferFdClose for why the real close is deferred instead of run here.
+            claimAndDeferFdClose(handle)
+            // Request the resource free here, after shutdownTls and the fd shutdown, so the CloseBit is set only after the alert is sent.
+            PosixHandle.close(handle)
+        end if
+    end dischargeClose
+
+    /** Visit every fd-close obligation currently registered in [[pendingCloses]] and offer each to [[dischargeClose]]. Does not itself
+      * decide who wins a given handle: [[dischargeClose]]'s own `pendingCloses.remove` is the single-discharger claim, so visiting a
+      * handle a concurrent self-close (or the other sweep pass) already claimed is a safe no-op here. Called from the terminal exit both
+      * before and after [[teardownComplete]] is set (see `terminalTeardown`'s doc for why the second pass is required, not redundant).
+      */
+    private def sweepPendingCloses()(using AllowUnsafe, Frame): Unit =
+        val it = pendingCloses.iterator()
+        while it.hasNext do
+            dischargeClose(it.next())
+        end while
+    end sweepPendingCloses
+
     def closeHandle(handle: PosixHandle)(using AllowUnsafe, Frame): Unit =
         // Close path: the fd will be closed below. The OS auto-removes kqueue filters on close, so EV_DELETE is unnecessary and dangerous
         // (a recycled fd number would receive EV_DELETE intended for the old fd). Pass fdClosing=true to skip EV_DELETE on kqueue.
         deregisterFds(handle, fdClosing = true)
         // Route the engine free through the engine FIFO so it is serialized behind any read/write engine ops for this connection (no two
-        // carriers touch one ssl). Installed before the engine op runs so freeResources sees the sink.
-        handle.engineFreeSink = op => submitEngineOp(op)
+        // carriers touch one ssl). Installed before the engine op runs so freeResources sees the sink. Terminal-aware: once the poll loop's
+        // terminal exit has started, submitting here would strand the free the same way an unguarded closeHandle op would (the loop's own
+        // per-cycle drain is gone), so free inline instead. Safe either way: freeResources only invokes this once the handle's own
+        // HandleGuard confirms no read/write holder is active, so whichever carrier ends up running it is already the sole owner.
+        handle.engineFreeSink = op => if terminal.get() then op() else submitEngineOp(op)
         handle.tls match
             case Present(engine) =>
-                // TLS close: emit this side's close_notify (RFC 8446 6.1 / RFC 5246 7.2.1: MUST send before closing the write side) and flush it
-                // to the wire BEFORE closing the fd, then close the fd, all in ONE engine-FIFO op so the alert and the fd close are serialized in
-                // order behind any in-flight read/write engine op (the single-owner-of-ssl invariant) and the alert reaches the peer ahead of the
-                // FIN. Bounded + non-blocking: shutdownTls runs one shutdownStep and a best-effort inline send (it never waits for the peer's
-                // close_notify and never blocks a carrier), so close() always completes.
+                // TLS close: emit this side's close_notify and flush it to the wire BEFORE closing the fd, then close the fd, all in ONE
+                // engine-FIFO op so the alert and the fd close are serialized in order behind any in-flight read/write engine op and the
+                // alert reaches the peer ahead of the FIN. Bounded + non-blocking: shutdownTls runs one shutdownStep and a best-effort
+                // inline send (it never waits for the peer's close_notify and never blocks a carrier), so close() always completes.
                 //
-                // PosixHandle.close is called INSIDE this op, after shutdownTls and the fd close, so the CloseBit is not set until the alert
-                // has been flushed. Calling PosixHandle.close before the op runs would set the CloseBit immediately (holders == 0 at submission
-                // time), causing beginWrite() to return false and the close_notify to be skipped.
-                // freeResources (called by PosixHandle.close) routes engine.free through the SAME FIFO via engineFreeSink, serialized AFTER
-                // this op, so the engine is alive for the shutdown emit.
-                submitEngineOp { () =>
-                    if handle.beginWrite() then
-                        try shutdownTls(handle, engine)
-                        finally discard(handle.endWrite())
-                        end try
-                    end if
-                    // Close the fd after the alert flush, inside this op so the FIN follows the close_notify on the wire.
-                    if handle.readFd == handle.writeFd && handle.claimFdClose() then discard(takeNow(sockets.close(handle.readFd)))
-                    // Request the resource free here, after shutdownTls and the fd close, so the CloseBit is set only after the alert is sent.
-                    PosixHandle.close(handle)
-                }
+                // Registered in pendingCloses BEFORE the op is submitted (the teardown-fix invariant: register synchronously on the
+                // calling carrier before any deferred step). If the poll loop's terminal exit has ALREADY finished its own submission
+                // window by the time this checks [[teardownComplete]] (put-then-recheck), the queued op above will never be drained
+                // (nothing will ever call `drainFifos` again): self-close now. Safe and always graceful now that [[dischargeClose]] is
+                // single-discharger (see its doc): the claim guarantees this call cannot overlap the terminal exit's own re-sweep of the
+                // same handle even though both may attempt it.
+                pendingCloses.add(handle)
+                submitEngineOp { () => dischargeClose(handle) }
+                if teardownComplete.get() then dischargeClose(handle)
             case Absent =>
-                // Plaintext close: no close_notify to emit. Close the socket fd (sockets set readFd == writeFd; stdio leaves 0/1 untouched).
-                // recv/send after this fail, proving the close. The claimFdClose CAS makes the close one-shot: a STARTTLS upgrade failure racing
-                // this closeHandle targets the SAME fd, so without the claim the fd could be closed twice (and a recycled fd belonging to another
-                // connection wrongly closed). The single claim winner issues the close.
-                if handle.readFd == handle.writeFd && handle.claimFdClose() then discard(takeNow(sockets.close(handle.readFd)))
+                // Plaintext close: no close_notify to emit. recv/send after this fail with 0/EPIPE, proving the close to any carrier still
+                // mid-syscall on it (see claimAndDeferFdClose). The claimFdClose CAS makes this one-shot: a STARTTLS upgrade failure racing
+                // this closeHandle targets the SAME fd, so without the claim the fd could be shut down/closed twice (and a recycled fd
+                // belonging to another connection wrongly touched). Synchronous, on the calling carrier: never deferred via the engine FIFO,
+                // so it needs no pendingCloses registration (nothing here can be stranded by a driver terminal exit).
+                claimAndDeferFdClose(handle)
                 PosixHandle.close(handle)
         end match
     end closeHandle
@@ -1056,7 +1291,18 @@ final private[net] class PollerIoDriver private[posix] (
         end while
     end flushRegIntakeToLiveTables
 
+    /** Close the driver: fail every pending op with `Closed` and reclaim the poller fd + scratch, exactly once (guarded by `closedFlag`).
+      *
+      * `closeReason` is stored BEFORE the `closedFlag` CAS, not after: any carrier that can OBSERVE `closedFlag == true` (in
+      * particular the poll loop's own exit check) can only do so after this CAS has actually run, which is sequenced after the store on
+      * THIS carrier's own program order. So the store happens-before any observation of the CAS's effect, closing the window a post-CAS
+      * store left open (the loop could otherwise observe `closedFlag == true`, race through its entire terminal exit including its own
+      * `closeReason` read, and see it still null because this carrier had not reached the store yet). A losing CAS (a concurrent `close()`
+      * already won) leaves this store as a harmless, unread value.
+      */
     def close()(using AllowUnsafe, Frame): Unit =
+        val closed = Closed(label, summon[Frame], "driver closed")
+        closeReason = closed
         if closedFlag.compareAndSet(false, true) then
             // Unregister this driver's Diagnostics dumper/probe now: registration happened in start() (if it ran) before the loop's
             // carrier was spawned, so by the time any carrier can observe closedFlag=true the field is either already set or was never
@@ -1064,16 +1310,24 @@ final private[net] class PollerIoDriver private[posix] (
             // per-test driver's entry from outliving its own close() call in the process-global registry.
             val reg = diagRegistration
             if reg ne null then reg.close()
-            val closed = Closed(label, summon[Frame], "driver closed")
             if started.get() then
                 // The poll loop is running (or ran). Its maps are poll-fiber-confined, so the teardown must run on the poll-loop carrier,
                 // not this arbitrary close carrier (a direct map iteration here would race the poll loop's map access on the non-thread-safe maps).
                 // Route the teardown through the engine FIFO (drained by the poll loop) and wake the parked poll so it drains it and exits promptly.
-                // The poll loop runs one final drainFifos at its terminal exit, so a teardown op submitted concurrently with the closedFlag set is
-                // still drained before the loop frees the scratch. backend.close(pollerFd) + freeScratch run at the poll loop's terminal exit, AFTER
-                // its last poll, so the poller fd is never closed out from under an in-flight epoll_wait/kevent.
-                submitEngineOp(() => closeTeardown(closed))
+                // closeTeardownClaim makes this exactly-once against terminalTeardown's own unconditional attempt (see closeReason's doc):
+                // whichever of {this op, the terminal exit} runs first wins the CAS, and both run on a carrier where the map-confinement
+                // precondition already holds, so there is nothing to wait for and nothing to race.
+                submitEngineOp(() => if closeTeardownClaim.compareAndSet(false, true) then closeTeardown(closed))
                 triggerWake()
+                // Panic-exit ordering: if the poll loop already died from a backend failure (not from observing closedFlag) before
+                // this close() call ran at all, terminalTeardown ran with `closeReason` still null and skipped the claim entirely; no
+                // further terminal exit will ever run to retry it (the loop is gone for good). This recheck is the Dekker pairing for
+                // terminalTeardown's own post-`teardownComplete` re-read of `closeReason` (see its doc): it runs strictly after this
+                // carrier's own `closeReason` store above, so if `teardownComplete` is observed true here, the terminal exit's re-read
+                // (sequenced after ITS OWN `teardownComplete.set(true)`) is guaranteed to have already run relative to this store, and
+                // this carrier is the only one left that can ever discharge the claim. Map-confinement still holds: the loop is provably
+                // gone, so nothing else can touch the poll-fiber-confined maps closeTeardown clears.
+                if teardownComplete.get() && closeTeardownClaim.compareAndSet(false, true) then closeTeardown(closed)
             else
                 // start() was never called: no poll loop ran, so no carrier is using the maps or the scratch. Tear down directly.
                 closeTeardown(closed)
@@ -1391,7 +1645,7 @@ final private[net] class PollerIoDriver private[posix] (
             val arr = Buffer.copyToArray[Byte](handle.readBuffer, 0, n)
             // Keep a reference to this chunk so a subsequent STARTTLS upgrade can recover a handshake flight that arrived coalesced with
             // the upgrade signal in this same read (the consumer takes the whole chunk as the signal and discards the trailing bytes).
-            handle.lastPlaintextRead = Present(arr)
+            handle.lastPlaintextRead.set(Present(arr))
             // Set readMightHaveMore when the kernel may have additional bytes with no new ET edge pending. Two cases:
             // (1) n == readBufferSize: the recv filled the buffer; residual bytes may remain in the kernel that epoll ET will not re-signal.
             // (2) PeerHalfClosePending: the peer half-closed; the next recv will either return more data or 0 (EOF). Re-dispatch is required
@@ -1471,12 +1725,14 @@ final private[net] class PollerIoDriver private[posix] (
         end if
     end dispatchUpgradeRead
 
-    /** Deliver `arr` (one peer ciphertext flight read on the poll carrier) into the handle's [[PosixHandle.upgradeHandoff]] slot: fulfil a parked
-      * handshake waiter, or stage a Carryover the handshake's next read consumes. When a Carryover is already staged (the poll carrier read a peer
-      * flight before the handshake parked its next waiter, e.g. a boringssl multi-record flight delivered across two dispatches), the new bytes are
-      * APPENDED to it rather than overwriting it: a single-slot replace would drop every segment but the first, the upgrade-handoff drop. The poll
-      * carrier is the sole stager (poll-carrier-confined), so the Carryover-append never contends. Mirrors [[NioIoDriver]]'s `deliverToUpgradeHandoff`
-      * Carryover-append. The CAS loop keeps exactly one winner per transition; a CAS-loss is resolved by a single re-run (no spin).
+    /** Deliver `arr` (one peer ciphertext flight, read on the poll carrier or salvaged by [[onInboundClosedDuringRead]] on whatever arbitrary
+      * carrier the scheduler resumes the parked put on) into the handle's [[PosixHandle.upgradeHandoff]] slot: fulfil a parked handshake
+      * waiter, or stage a Carryover the handshake's next read consumes. When a Carryover is already staged (a peer flight landed before the
+      * handshake parked its next waiter, e.g. a boringssl multi-record flight delivered across two dispatches), the new bytes are APPENDED to
+      * it rather than overwriting it: a single-slot replace would drop every segment but the first, the upgrade-handoff drop. The two callers
+      * are NOT confined to one carrier (the normal dispatch path and the salvage path can call this concurrently for the same handle), so the
+      * CAS loop's retry is load-bearing, not defensive: a losing attempt re-reads and re-applies against whatever the winner left. Mirrors
+      * [[NioIoDriver]]'s `deliverToUpgradeHandoff` Carryover-append.
       */
     @scala.annotation.tailrec
     private def deliverToUpgradeHandoff(handle: PosixHandle, arr: Array[Byte])(using AllowUnsafe): Unit =
@@ -1577,7 +1833,15 @@ final private[net] class PollerIoDriver private[posix] (
             if eofPending && handle.halfClose == HalfCloseState.Open then handle.halfClose = HalfCloseState.PeerHalfClosePending
             submitEngineOp { () =>
                 try
-                    var plain   = feedAndDecrypt(engine, staging, n, handle, () => handle.requestClose())
+                    // A fatal TLS record is an abrupt, ungraceful close (the stream itself is corrupt, so no close_notify is attempted): it
+                    // must claim-and-defer the fd close the SAME way every other close path here does, before calling requestClose. A bare
+                    // requestClose() would run freeResources immediately here (this read dispatch is its own last holder once it releases
+                    // moments later), forfeiting the fd close permanently, since freeResources never runs a second time for a handle whose
+                    // credit is installed only after the guard has already gone terminal.
+                    val onFatal = () =>
+                        claimAndDeferFdClose(handle)
+                        handle.requestClose()
+                    var plain   = feedAndDecrypt(engine, staging, n, handle, onFatal)
                     var eof     = false
                     var errno   = 0
                     var drained = false
@@ -1591,7 +1855,7 @@ final private[net] class PollerIoDriver private[posix] (
                     while plain.length == 0 && !eof && errno == 0 && handle.halfClose != HalfCloseState.PeerCleanClose && !drained do
                         val r  = recvNowWithRetry(fd, staging, handle.readBufferSize.toLong, PosixConstants.MSG_DONTWAIT)
                         val rN = r.value.toInt
-                        if rN > 0 then plain = feedAndDecrypt(engine, staging, rN, handle, () => handle.requestClose())
+                        if rN > 0 then plain = feedAndDecrypt(engine, staging, rN, handle, onFatal)
                         else if rN == 0 then eof = true
                         else if isWouldBlock(r.errorCode) then drained = true
                         else errno = r.errorCode
@@ -2220,7 +2484,10 @@ private[net] object PollerIoDriver:
             freeScratchOnce = AtomicBoolean.Unsafe.init(false),
             wakePending = AtomicBoolean.Unsafe.init(false),
             wakeArmed = AtomicBoolean.Unsafe.init(false),
-            wakeGuard = AtomicInt.Unsafe.init(0)
+            wakeGuard = AtomicInt.Unsafe.init(0),
+            terminal = AtomicBoolean.Unsafe.init(false),
+            teardownComplete = AtomicBoolean.Unsafe.init(false),
+            closeTeardownClaim = AtomicBoolean.Unsafe.init(false)
         )
     end init
 

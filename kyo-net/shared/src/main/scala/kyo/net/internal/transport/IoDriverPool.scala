@@ -9,7 +9,6 @@ import scala.util.control.NonFatal
   */
 final private[kyo] class IoDriverPool[Handle] private (
     private val drivers: Array[IoDriver[Handle]],
-    private val fibers: Array[Maybe[Fiber.Unsafe[Unit, Any]]],
     private val counter: AtomicLong.Unsafe
 ):
 
@@ -32,35 +31,39 @@ final private[kyo] class IoDriverPool[Handle] private (
         drivers(idx)
     end next
 
-    /** Start all event loops. Stores fiber references for shutdown.
+    /** Start all event loops.
       *
       * Must be called exactly once after construction, before any calls to next(). If any driver fails to start, the already-started drivers
-      * are closed, their fibers interrupted, and the failure is rethrown (all-or-nothing).
+      * are closed and the failure is rethrown (all-or-nothing).
       */
     def start()(using AllowUnsafe, Frame): Unit =
         @tailrec def loop(i: Int): Unit =
             if i < drivers.length then
-                val started =
-                    try drivers(i).start()
-                    catch
-                        case ex: Throwable if NonFatal(ex) =>
-                            // All-or-nothing: a partially-started pool is never handed to the transport. Close the already-started
-                            // subset (close() skips Absent slots and is CAS-guarded) and rethrow, so the transport build fails atomically
-                            // rather than running fewer drivers than ioPoolSize requested. Guarded on NonFatal: on a fatal/control
-                            // throwable the process is dying, so the subset-close is moot; let the fatal propagate uncaught.
-                            close()
-                            throw ex
-                    end try
-                end started
-                fibers(i) = Present(started)
+                try discard(drivers(i).start())
+                catch
+                    case ex: Throwable if NonFatal(ex) =>
+                        // All-or-nothing: a partially-started pool is never handed to the transport. Close the already-started
+                        // subset (close() skips Absent slots and is CAS-guarded) and rethrow, so the transport build fails atomically
+                        // rather than running fewer drivers than ioPoolSize requested. Guarded on NonFatal: on a fatal/control
+                        // throwable the process is dying, so the subset-close is moot; let the fatal propagate uncaught.
+                        close()
+                        throw ex
+                end try
                 loop(i + 1)
         loop(0)
     end start
 
-    /** Close all drivers and interrupt event loop fibers.
+    /** Close all drivers.
       *
-      * Closes drivers first to stop accepting new work, then interrupts all fibers. Idempotent via AtomicBoolean guard. Each driver's
-      * close() is also independently CAS-guarded. Fiber slots that were never started (still Absent) are skipped.
+      * Idempotent via AtomicBoolean guard. Each driver's close() is also independently CAS-guarded, so calling it here is safe even if a
+      * driver was already closed directly.
+      *
+      * Does NOT interrupt each driver's event-loop fiber: every driver's own `close()` is responsible for bringing its loop down (NIO closes
+      * its selector directly, which aborts a blocked `select()`; the posix io_uring/poller drivers wake their loop and let it observe the
+      * close signal on its own carrier). For io_uring and the poller that self-teardown is deferred to the loop's own carrier (their pending-op
+      * bookkeeping is carrier-confined and cannot be swept from here), so an unconditional fiber interrupt issued right after signaling close
+      * could abort the loop before it reaches that deferred teardown, permanently stranding a handle whose close was mid-flight -- exactly
+      * the fd leak this method used to cause under full-suite load. Trust each driver's own close() contract instead of racing it.
       */
     def close()(using AllowUnsafe, Frame): Unit =
         if closedFlag.compareAndSet(false, true) then
@@ -69,11 +72,6 @@ final private[kyo] class IoDriverPool[Handle] private (
                     drivers(i).close()
                     closeLoop(i + 1)
             closeLoop(0)
-            @tailrec def interruptLoop(i: Int): Unit =
-                if i < fibers.length then
-                    fibers(i).foreach(f => discard(f.interrupt(Result.Panic(new Exception("IoDriverPool closed")))))
-                    interruptLoop(i + 1)
-            interruptLoop(0)
     end close
 
 end IoDriverPool
@@ -92,11 +90,7 @@ private[kyo] object IoDriverPool:
 
     private[kyo] def init[Handle](drivers: Array[IoDriver[Handle]], initialCounter: Long)(using AllowUnsafe): IoDriverPool[Handle] =
         require(drivers.length > 0, "IoDriverPool requires at least one driver")
-        new IoDriverPool(
-            drivers,
-            Array.fill[Maybe[Fiber.Unsafe[Unit, Any]]](drivers.length)(Absent),
-            AtomicLong.Unsafe.init(initialCounter)
-        )
+        new IoDriverPool(drivers, AtomicLong.Unsafe.init(initialCounter))
     end init
 
 end IoDriverPool

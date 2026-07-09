@@ -7,12 +7,15 @@ import kyo.net.internal.transport.IoDriverPool
 import kyo.net.internal.transport.ReadOutcome
 import kyo.net.internal.transport.WriteResult
 
-/** Yardstick LIVE-8: a pool/transport shutdown drains the in-flight per-driver closes BEFORE it stops the loops. `IoDriverPool.close` closes every
-  * driver first (each driver's close drains its in-flight/deferred closes) and only then interrupts the loop fibers, so a close in flight when the
-  * pool shuts down is not orphaned by a loop that stopped first.
+/** Yardstick LIVE-8: a pool shutdown never races a driver's own event-loop teardown with an external interrupt. `IoDriverPool.close` calls
+  * every driver's close() and nothing else; it is each driver's own close() that is trusted to bring its loop down (a closed selector aborts
+  * a blocked select(); the posix io_uring/poller drivers wake their loop and let it observe the close signal on its own carrier). An
+  * interrupt issued by the pool right after signaling close could abort a driver's carrier-confined deferred-close draining before it
+  * reached the code that reclaims a still in-flight handle's fd -- exactly the CLOSE_WAIT leak this yardstick exists to rule out.
   *
-  * Each SpyDriver appends `close-<id>` when its close runs and `interrupt-<id>` when the loop fiber the pool started for it is interrupted (the
-  * pool interrupts it with a Panic, firing the fiber's onComplete). The test pins that EVERY close precedes EVERY interrupt. Pins: LIVE-8.
+  * Each SpyDriver appends `close-<id>` when its close runs and would append `interrupt-<id>` if the loop fiber the pool started for it were
+  * ever completed by an external interrupt. The test pins that every driver is closed exactly once and no loop fiber is ever interrupted by
+  * the pool. Pins: LIVE-8.
   */
 class LIVE8Test extends Test:
 
@@ -37,21 +40,19 @@ class LIVE8Test extends Test:
         def handleLabel(handle: Unit): String       = "spy"
     end SpyDriver
 
-    "pool-shutdown-drains-in-flight-closes" in {
+    "pool-shutdown-never-interrupts-driver-loops" in {
         val events                       = new ConcurrentLinkedQueue[String]()
         val spies: Array[IoDriver[Unit]] = Array(new SpyDriver(0, events), new SpyDriver(1, events))
         val pool                         = IoDriverPool.init(spies)
         Sync.defer {
             pool.start()
             pool.close()
-            val seq        = scala.jdk.CollectionConverters.IterableHasAsScala(events).asScala.toList
-            val lastClose  = seq.lastIndexWhere(_.startsWith("close-"))
-            val firstInter = seq.indexWhere(_.startsWith("interrupt-"))
+            val seq = scala.jdk.CollectionConverters.IterableHasAsScala(events).asScala.toList
             assert(seq.count(_.startsWith("close-")) == 2, s"both drivers must be closed on shutdown, got $seq")
-            assert(seq.count(_.startsWith("interrupt-")) == 2, s"both loop fibers must be interrupted on shutdown, got $seq")
             assert(
-                lastClose < firstInter,
-                s"every driver close (draining its in-flight closes) must precede every loop interrupt, got $seq"
+                seq.count(_.startsWith("interrupt-")) == 0,
+                s"pool.close() must never interrupt a driver's own loop fiber (racing that interrupt against a driver's carrier-confined " +
+                    s"deferred-close drain is the CLOSE_WAIT leak class this yardstick guards), got $seq"
             )
         }
     }

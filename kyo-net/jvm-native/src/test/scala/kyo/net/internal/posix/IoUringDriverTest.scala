@@ -462,6 +462,10 @@ class IoUringDriverTest extends Test:
                     // (which keys submittedKeys) runs a few lines BEFORE `handle.recvInFlight = true` in submitRecv's successful branch, so
                     // submittedKeys.nonEmpty can be true while recvInFlight is still false -- a narrower but real race that let closeHandle
                     // free the buffer immediately in that window (confirmed flaky under cell-11's full-suite podman run, clean in isolation).
+                    // A SEPARATE full-suite-only flake of this same assertion was later root-caused to reapRcContinues under-classifying a
+                    // transient `-ENOMEM` from kyo_uring_submit_and_wait_timeout (plausible under many concurrently-running rings) as a fatal
+                    // ring rc, self-destructing the whole ring mid-test; closeHandle's ringExited fast path then frees the buffer immediately
+                    // regardless of recvInFlight. See IoUringDriverReapTransientErrnoTest for the deterministic reproduction and the fix.
                     awaitCondition(5.seconds)(acceptedH.recvInFlight).map { armed =>
                         assert(armed, "recv's submitRecv never ran (a hang, not the close-ordering hazard under test)")
                         // closeHandle while the recv SQE is in flight: it must NOT free the read buffer yet (the kernel still owns it).

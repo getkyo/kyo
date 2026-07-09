@@ -32,6 +32,10 @@ final private[net] class PosixHandle private (
     val connectTarget: Maybe[(Buffer[Byte], Int)],
     // One-shot claim for closing the fd (see claimFdClose), so the fd shutdown/close happens exactly once even on a recycled fd.
     fdCloseClaimed: AtomicBoolean.Unsafe,
+    // One-shot credit recorded by IoUringDriver.registerDeferredClose when it wins claimFdClose to guard the deferred shutdown(SHUT_RD)
+    // (see markDeferredFdClose / consumeDeferredFdClose), so the later closeNow that owes the real close(fd) can still run it despite
+    // claimFdClose already being spent.
+    deferredFdClose: AtomicBoolean.Unsafe,
     // The cross-direction ownership guard (independent read/write holder bits plus a close bit, the Go fdMutex model): the last holder while
     // closing runs the deferred release exactly once. A read and a write proceed full-duplex; two reads or two writes serialize.
     guard: HandleGuard,
@@ -42,7 +46,15 @@ final private[net] class PosixHandle private (
     // Both sides now CAS this one slot, so exactly one side wins each transition and the loser's single re-read sees the winner's value and
     // completes the other half (no spin, no thread block: the waiter is fiber-parking). The close path (freeResources) swings it to Idle and fails
     // any parked waiter Closed.
-    val upgradeHandoff: AtomicRef.Unsafe[PosixHandle.UpgradeHandoff]
+    val upgradeHandoff: AtomicRef.Unsafe[PosixHandle.UpgradeHandoff],
+    // The most recent plaintext chunk the driver read off this fd, kept only so a STARTTLS upgrade can recover the peer's first handshake
+    // flight when it arrived coalesced with the upgrade signal in a single `recv` and the application consumed (and discarded) the whole
+    // chunk. A one-shot claim, not a plain snapshot: feedCoalescedHandshake and the upgrade-handoff salvage hooks (PollerIoDriver /
+    // IoUringDriver onInboundClosedDuringRead) both alias this slot for the SAME chunk when the plaintext pump's channel-offer fails, so a
+    // plain read-then-clear let both paths feed the peer's flight to the handshake engine, corrupting the record stream. Whichever side
+    // wins a `compareAndSet(Present(arr), Absent)` on this slot is the sole feeder for that chunk; the loser sees the winner's `Absent` and
+    // skips.
+    val lastPlaintextRead: AtomicRef.Unsafe[Maybe[Array[Byte]]]
 ):
     /** The reused per-handle off-heap read buffer the driver recv's into. Grown on demand by the adaptive predictor (see
       * [[growReadBufferForFullRead]]): the field is `var` so the grow can swap in a larger buffer, but every read of it is a coherent snapshot
@@ -65,13 +77,6 @@ final private[net] class PosixHandle private (
       * reaches this field before the bind would surface a clear `UnsupportedOperationException` from the sentinel rather than a `NullPointerException`.
       */
     @volatile var driver: IoDriver[PosixHandle] = NoDriver
-
-    /** The most recent plaintext chunk the driver read off this fd, kept only so a STARTTLS upgrade can recover the peer's first handshake
-      * flight when it arrived coalesced with the upgrade signal in a single `recv` and the application consumed (and discarded) the whole
-      * chunk. The upgrade scans this for a TLS record (everything before it is the signal) and clears the slot; in every other case it is just
-      * the buffer the previous read already produced, held by reference at no extra allocation, and is replaced by the next read.
-      */
-    @volatile var lastPlaintextRead: Maybe[Array[Byte]] = Absent
 
     /** STARTTLS-on-io_uring carry-over of the plaintext ReadPump's stale in-flight recv. io_uring cannot cancel an in-flight recv SQE, so after
       * `detachForUpgrade` that recv stays kernel-owned and consumes the peer's first post-signal handshake flight (the ClientHello) into the read
@@ -155,6 +160,18 @@ final private[net] class PosixHandle private (
     /** Claim the socket-fd close: returns `true` for the single caller that should issue `close(fd)`, `false` for every later caller. */
     private[posix] def claimFdClose()(using AllowUnsafe): Boolean = fdCloseClaimed.compareAndSet(false, true)
 
+    /** Record that a [[claimFdClose]] win was spent guarding [[IoUringDriver.registerDeferredClose]]'s deferred `shutdown(SHUT_RD)`, not the
+      * real `close(fd)` syscall: that call still owes the actual close once the in-flight recv drains, but its own `claimFdClose()` attempt
+      * would lose (the claim is already spent). Set by the winner right after winning; consumed exactly once via [[consumeDeferredFdClose]].
+      */
+    private[posix] def markDeferredFdClose()(using AllowUnsafe): Unit = deferredFdClose.set(true)
+
+    /** Consume the credit [[markDeferredFdClose]] recorded: returns `true` for the single caller (the deferred-close discharge) that should
+      * therefore still issue `close(fd)` despite `claimFdClose` already being spent by the `shutdown(SHUT_RD)` winner, `false` otherwise
+      * (nothing was deferred, or another discharge already consumed it).
+      */
+    private[posix] def consumeDeferredFdClose()(using AllowUnsafe): Boolean = deferredFdClose.compareAndSet(true, false)
+
     /** How the TLS engine's `free()` is run when the handle's resources are released (see [[PosixHandle.freeResources]]). The driver installs
       * its `submitEngineOp` here in `closeHandle` so the engine free is enqueued on the per-driver engine FIFO and therefore serialized AFTER
       * any read/write engine ops for this connection: no two carriers touch one native `ssl` at once, and the free never races an in-flight
@@ -162,6 +179,16 @@ final private[net] class PosixHandle private (
       * Absent, so the sink is never exercised). Set once, before the close path can fire.
       */
     @volatile var engineFreeSink: (() => Unit) => Unit = op => op()
+
+    /** One-shot deferred real `close(fd)` action: the fd-number twin of [[engineFreeSink]]. The winner of [[claimFdClose]] issues
+      * `shutdown(SHUT_RDWR)` immediately (safe: winning the claim proves the fd is still owned by this handle, and it makes any carrier
+      * still mid-syscall on it under a live [[beginWrite]] / [[beginDispatch]] hold observe 0/EPIPE rather than a fd number the kernel has
+      * already recycled to an unrelated connection) and installs the actual `close(fd)` call here instead of running it inline. `freeResources`
+      * invokes it LAST, at the same exactly-once, zero-holders point that already frees the engine and buffers, so the fd number inherits
+      * that same guarantee. `Absent` for a handle whose fd was never claimed this way (stdio, whose fds are process-owned and never closed
+      * here; or the loser of a `claimFdClose` race, whose real close is the winner's job).
+      */
+    @volatile var fdCloseSink: Maybe[() => Unit] = Absent
 
     /** Deliver plaintext to whichever [[kyo.net.Connection]] CURRENTLY owns this handle. `PosixTransport` installs this at every point a
       * connection's `inbound` channel becomes the active one for the handle (connect, accept, and a STARTTLS upgrade's `onFinished`, where it
@@ -439,7 +466,7 @@ final private[net] class PosixHandle private (
       */
     private[posix] def endDispatch()(using AllowUnsafe): Boolean =
         val freedHere = guard.release(read = true)
-        if freedHere then PosixHandle.freeResources(this)
+        if freedHere then PosixHandle.freeResources(this, deferredHolder = Present("read"))
         freedHere
     end endDispatch
 
@@ -455,9 +482,31 @@ final private[net] class PosixHandle private (
       */
     private[posix] def endWrite()(using AllowUnsafe): Boolean =
         val freedHere = guard.release(read = false)
-        if freedHere then PosixHandle.freeResources(this)
+        if freedHere then PosixHandle.freeResources(this, deferredHolder = Present("write"))
         freedHere
     end endWrite
+
+    /** Acquire the shared resources for a driver-level deferred close (a third holder kind alongside [[beginDispatch]] / [[beginWrite]]; see
+      * [[IoUringDriver.registerDeferredClose]]). A kernel-owned op (e.g. a submitted but not-yet-reaped recv SQE) can leave a handle's
+      * resources unsafe to free for a stretch of real wall-clock time with no carrier synchronously inside a `beginDispatch` / `beginWrite`
+      * bracket for any of it: `close(fd)` alone does not complete it, so the driver defers its own real close until the count drains, but that
+      * deferral is bookkept in the driver's own private map, invisible to this guard. Without this hold, an unrelated concurrent
+      * [[requestClose]] caller (e.g. a racing STARTTLS-upgrade-failure teardown) would see zero active holders and free the resources
+      * immediately, before the driver ever installs the real close credit ([[fdCloseSink]]) -- permanently stranding it (the credit sits
+      * unconsumed and the real `close(fd)` never runs, a `CLOSE_WAIT` leak). Returns `true` when the hold was taken (MUST pair with
+      * [[endDeferredClose]]); `false` when a close was already requested by someone else, in which case the caller has nothing left to
+      * protect (that other closer's own release already ran, or will run, without ever waiting on the driver's deferred bookkeeping).
+      */
+    private[posix] def beginDeferredClose()(using AllowUnsafe): Boolean = guard.acquireRead()
+
+    /** Release the hold [[beginDeferredClose]] took, once the driver has installed the real close credit and is ready to discharge it.
+      * Mirrors [[endDispatch]]: returns `true` when this is the last holder, so the just-installed credit is consumed here, exactly once.
+      */
+    private[posix] def endDeferredClose()(using AllowUnsafe): Boolean =
+        val freedHere = guard.release(read = true)
+        if freedHere then PosixHandle.freeResources(this, deferredHolder = Present("deferred-close"))
+        freedHere
+    end endDeferredClose
 
     /** Test whether a close has been requested (or resources already freed). Used by the io_uring read CQE path to detect that
       * [[feedAndDecrypt]] triggered [[requestClose]] (fatal TLS record): the io_uring path holds no dispatch guard, so the guard state
@@ -505,7 +554,8 @@ final private[net] class PosixHandle private (
       * once the close bit is set (or the resources are already freed).
       */
     private[posix] def requestClose()(using AllowUnsafe): Unit =
-        if guard.requestClose() then PosixHandle.freeResources(this)
+        val freedHere = guard.requestClose()
+        if freedHere then PosixHandle.freeResources(this)
     end requestClose
 end PosixHandle
 
@@ -552,7 +602,7 @@ private[net] object PosixHandle:
       *   - [[Carryover]]: the reap delivered the stale recv's bytes before the handshake parked; the handshake's next read consumes them.
       *   - [[Waiter]]: the handshake parked before the reap delivered; the reap fulfils this fiber-parking promise with the bytes.
       */
-    private[posix] enum UpgradeHandoff:
+    private[posix] enum UpgradeHandoff derives CanEqual:
         case Idle
         case Carryover(bytes: Array[Byte])
         case Waiter(promise: Promise.Unsafe[Span[Byte], Abort[Closed]], frame: Frame)
@@ -587,8 +637,10 @@ private[net] object PosixHandle:
             Absent,
             connectTarget,
             fdCloseClaimed = AtomicBoolean.Unsafe.init(false),
+            deferredFdClose = AtomicBoolean.Unsafe.init(false),
             guard = HandleGuard.init(),
-            upgradeHandoff = AtomicRef.Unsafe.init(PosixHandle.UpgradeHandoff.Idle)
+            upgradeHandoff = AtomicRef.Unsafe.init(PosixHandle.UpgradeHandoff.Idle),
+            lastPlaintextRead = AtomicRef.Unsafe.init(Absent)
         )
 
     /** stdio handle: split fds, read end 0 and write end 1 (the split-fd case). */
@@ -602,8 +654,10 @@ private[net] object PosixHandle:
             Absent,
             Absent,
             fdCloseClaimed = AtomicBoolean.Unsafe.init(false),
+            deferredFdClose = AtomicBoolean.Unsafe.init(false),
             guard = HandleGuard.init(),
-            upgradeHandoff = AtomicRef.Unsafe.init(PosixHandle.UpgradeHandoff.Idle)
+            upgradeHandoff = AtomicRef.Unsafe.init(PosixHandle.UpgradeHandoff.Idle),
+            lastPlaintextRead = AtomicRef.Unsafe.init(Absent)
         )
 
     /** Actually release the resources the handle owns: the TLS engine (if any) and the reused read buffer. Called exactly once, under the
@@ -622,8 +676,12 @@ private[net] object PosixHandle:
       * too. The buffer is a plain array object (no native handle), so dropping the reference is the whole release; the guard ensures no engine op is
       * mid-flush when this runs, so the clear cannot race a concurrent append. The FIFO-worker-owned TLS write buffers ([[plaintextStaging]],
       * [[encryptDrain]], [[flushMirror]]) are closed and cleared here as well; they are off-heap and require an explicit close.
+      *
+      * `deferredHolder` names which guard holder (`"read"` or `"write"`) this call is running on behalf of when it was `endDispatch` / `endWrite`
+      * that observed the last release (i.e. a holder was still active when the close was requested), `Absent` for the immediate `requestClose`
+      * path where no holder was active. It is used purely to log the arbiter WARN below when a real [[fdCloseSink]] credit is also pending.
       */
-    private def freeResources(h: PosixHandle)(using AllowUnsafe): Unit =
+    private def freeResources(h: PosixHandle, deferredHolder: Maybe[String] = Absent)(using AllowUnsafe): Unit =
         h.tls.foreach { engine =>
             h.engineFreeSink(() => engine.free())
         }
@@ -711,6 +769,19 @@ private[net] object PosixHandle:
         h.pendingReadPromise = Absent
         h.pendingAcceptPromise = Absent
         h.pendingWritablePromise = Absent
+        // Run the deferred real close(fd) LAST: this method is the exactly-once, zero-holders point that just freed the engine and buffers
+        // above, so the fd number inherits the same guarantee (see fdCloseSink). A non-Absent deferredHolder names which holder was still
+        // active when the close was requested: "read"/"write" is a genuine concurrent I/O op that raced the close; "deferred-close" is
+        // IoUringDriver.registerDeferredClose's own bookkeeping hold (see beginDeferredClose), not an I/O race, and is the routine steady
+        // state for any io_uring connection with an armed recv.
+        h.fdCloseSink.foreach { closeFd =>
+            deferredHolder.foreach { holder =>
+                given Frame = Frame.internal
+                Log.live.unsafe.debug(s"fd=${h.readFd} handle=${h.id} close(fd) deferred past the $holder hold")
+            }
+            closeFd()
+        }
+        h.fdCloseSink = Absent
     end freeResources
 
     /** Release the resources the handle owns (the TLS engine and the reused read buffer), coordinated against any in-flight read dispatch OR

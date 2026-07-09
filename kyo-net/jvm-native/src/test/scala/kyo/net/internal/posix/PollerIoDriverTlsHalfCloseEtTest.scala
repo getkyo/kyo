@@ -84,6 +84,18 @@ class PollerIoDriverTlsHalfCloseEtTest extends Test:
         val TimedOut: String              = "timeout"
     end TlsHalfCloseReader
 
+    /** Poll a real condition until it holds or the bound elapses, re-checking each turn after a short Async.sleep. Mirrors
+      * [[IoUringFatalRecordCloseRaceTest.awaitCondition]].
+      */
+    private def awaitCondition(bound: Duration)(cond: => Boolean)(using Frame): Boolean < Async =
+        val deadline = java.lang.System.nanoTime() + bound.toNanos
+        Loop(()) { _ =>
+            if cond then Loop.done(true)
+            else if java.lang.System.nanoTime() >= deadline then Loop.done(false)
+            else Async.sleep(2.millis).andThen(Loop.continue(()))
+        }
+    end awaitCondition
+
     "PollerIoDriver TLS ET half-close drain" - {
 
         /** Core case: the peer sends encrypted data and immediately half-closes. The ciphertext and the TCP FIN both arrive in the kernel
@@ -139,26 +151,35 @@ class PollerIoDriverTlsHalfCloseEtTest extends Test:
                             Abort.run[Timeout](Async.timeout(10.seconds)(done.safe.get)).map { outcome =>
                                 driver.closeHandle(acceptedH)
                                 discard(sock.close(client))
-                                outcome match
-                                    case Result.Success(TlsHalfCloseReader.EofSeen) =>
-                                        assert(
-                                            acc.toByteArray.toList == plain.toList,
-                                            s"TLS plaintext not delivered in full before EOF: got ${acc.size()} of ${plain.length} bytes"
-                                        )
-                                    case Result.Success(TlsHalfCloseReader.ClosedSeen) =>
-                                        fail(
-                                            s"TLS half-close surfaced Closed after ${acc.size()} of ${plain.length} bytes instead of " +
-                                                "Span.empty EOF (dispatchReadTls did not propagate eofPending to halfClose == PeerHalfClosePending)"
-                                        )
-                                    case Result.Success(other) => fail(s"unexpected reader outcome: $other after ${acc.size()} bytes")
-                                    case Result.Failure(_: Timeout) =>
-                                        fail(
-                                            s"TLS half-close read stalled after ${acc.size()} of ${plain.length} bytes " +
-                                                "(no EOF delivered; readMightHaveMore not set from halfClose == PeerHalfClosePending, " +
-                                                "strand waiting for an EPOLLRDHUP edge that ET will not re-fire)"
-                                        )
-                                    case other => fail(s"unexpected outcome: $other")
-                                end match
+                                // The driver's TLS teardown (dischargeClose -> shutdownTls -> freeResources) is queued, not inline: it clears
+                                // acceptedH.tls only once it actually runs on the poll thread. TlsRealEngines.withEngines' own `ensure` frees
+                                // BOTH engines out-of-band the instant this body's result value completes; without waiting here that free can
+                                // race the still-queued dischargeClose's SSL_shutdown, a native use-after-free on the freed engine (see
+                                // TlsRealEngines.withEngines' ownership-rule doc). Waiting for tls to go Absent settles that race first, so
+                                // withEngines' free becomes a harmless CAS-guarded second free.
+                                awaitCondition(5.seconds)(!acceptedH.tls.isDefined).map { settled =>
+                                    assert(settled, "the driver's own TLS teardown never settled (a hang, not the race this guard targets)")
+                                    outcome match
+                                        case Result.Success(TlsHalfCloseReader.EofSeen) =>
+                                            assert(
+                                                acc.toByteArray.toList == plain.toList,
+                                                s"TLS plaintext not delivered in full before EOF: got ${acc.size()} of ${plain.length} bytes"
+                                            )
+                                        case Result.Success(TlsHalfCloseReader.ClosedSeen) =>
+                                            fail(
+                                                s"TLS half-close surfaced Closed after ${acc.size()} of ${plain.length} bytes instead of " +
+                                                    "Span.empty EOF (dispatchReadTls did not propagate eofPending to halfClose == PeerHalfClosePending)"
+                                            )
+                                        case Result.Success(other) => fail(s"unexpected reader outcome: $other after ${acc.size()} bytes")
+                                        case Result.Failure(_: Timeout) =>
+                                            fail(
+                                                s"TLS half-close read stalled after ${acc.size()} of ${plain.length} bytes " +
+                                                    "(no EOF delivered; readMightHaveMore not set from halfClose == PeerHalfClosePending, " +
+                                                    "strand waiting for an EPOLLRDHUP edge that ET will not re-fire)"
+                                            )
+                                        case other => fail(s"unexpected outcome: $other")
+                                    end match
+                                }
                             }
                         }
                     }
@@ -210,25 +231,30 @@ class PollerIoDriverTlsHalfCloseEtTest extends Test:
                             Abort.run[Timeout](Async.timeout(10.seconds)(done.safe.get)).map { outcome =>
                                 driver.closeHandle(acceptedH)
                                 discard(sock.close(client))
-                                outcome match
-                                    case Result.Success(TlsHalfCloseReader.EofSeen) =>
-                                        assert(
-                                            acc.toByteArray.toList == plainData.toList,
-                                            s"TLS plaintext not delivered in full before EOF: got ${acc.size()} of ${plainData.length} bytes"
-                                        )
-                                    case Result.Success(TlsHalfCloseReader.ClosedSeen) =>
-                                        fail(
-                                            s"TLS half-close surfaced Closed after ${acc.size()} of ${plainData.length} bytes " +
-                                                "(regression: should be Span.empty EOF)"
-                                        )
-                                    case Result.Success(other) => fail(s"unexpected reader outcome: $other after ${acc.size()} bytes")
-                                    case Result.Failure(_: Timeout) =>
-                                        fail(
-                                            s"TLS half-close EAGAIN read stalled after ${acc.size()} of ${plainData.length} bytes " +
-                                                "(halfClose not advanced to PeerHalfClosePending in EAGAIN branch; strand waiting for a missing re-edge)"
-                                        )
-                                    case other => fail(s"unexpected outcome: $other")
-                                end match
+                                // See the sibling leaf above: wait for the queued TLS teardown to actually settle before returning, so
+                                // TlsRealEngines.withEngines' out-of-band free of serverEngine cannot race the driver's own SSL_shutdown.
+                                awaitCondition(5.seconds)(!acceptedH.tls.isDefined).map { settled =>
+                                    assert(settled, "the driver's own TLS teardown never settled (a hang, not the race this guard targets)")
+                                    outcome match
+                                        case Result.Success(TlsHalfCloseReader.EofSeen) =>
+                                            assert(
+                                                acc.toByteArray.toList == plainData.toList,
+                                                s"TLS plaintext not delivered in full before EOF: got ${acc.size()} of ${plainData.length} bytes"
+                                            )
+                                        case Result.Success(TlsHalfCloseReader.ClosedSeen) =>
+                                            fail(
+                                                s"TLS half-close surfaced Closed after ${acc.size()} of ${plainData.length} bytes " +
+                                                    "(regression: should be Span.empty EOF)"
+                                            )
+                                        case Result.Success(other) => fail(s"unexpected reader outcome: $other after ${acc.size()} bytes")
+                                        case Result.Failure(_: Timeout) =>
+                                            fail(
+                                                s"TLS half-close EAGAIN read stalled after ${acc.size()} of ${plainData.length} bytes " +
+                                                    "(halfClose not advanced to PeerHalfClosePending in EAGAIN branch; strand waiting for a missing re-edge)"
+                                            )
+                                        case other => fail(s"unexpected outcome: $other")
+                                    end match
+                                }
                             }
                         }
                     }

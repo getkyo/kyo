@@ -181,6 +181,7 @@ private[net] object EpollPollerBackend extends PollerBackend:
                     result match
                         case Result.Success(outcome) => decodeReady(outcome.eval, scratch)
                         case _ =>
+                            Log.live.unsafe.error(s"epoll_wait fiber failed pollerFd=$pollerFd: $result")
                             scratch.readyCount = 0
                             0
                 val completed = Promise.Unsafe.init[Int, Any]()
@@ -197,9 +198,18 @@ private[net] object EpollPollerBackend extends PollerBackend:
       * ready count. Each `epoll_event`'s `data` packs the watched fd (low 32 bits) and the owning handle id (high 32 bits, the recycled-fd
       * stale-event discriminator); its `events` bitmask carries readiness: `EPOLLIN`/`EPOLLOUT` map to read/write, `EPOLLERR`/`EPOLLHUP` to error,
       * and `EPOLLRDHUP` (peer half-close, can co-occur with `EPOLLIN` when bytes are buffered before EOF) to eof.
+      *
+      * A negative `outcome.value` is a genuine `epoll_wait` failure (`man epoll_wait`: `EBADF`/`EFAULT`/`EINTR`/`EINVAL`), treated the same as
+      * zero ready events (the poll loop simply re-polls next cycle): `EINTR` is expected under a busy multi-threaded JVM (a delivered signal) and
+      * loses nothing (the edge-triggered kernel state a signal interrupts is un-consumed, so a later successful `epoll_wait` still reports it),
+      * so it is silently retried. Anything else is logged: mirrors `IoUringDriver.reapRcContinues`'s rc classification (an unrecognized/fatal rc
+      * there gets a named log line instead of a silent swallow), so a genuine backend error here leaves a trace instead of presenting as an
+      * unexplained stalled connection.
       */
-    private def decodeReady(outcome: Ffi.Outcome[Int], scratch: PollScratch)(using AllowUnsafe): Int =
-        val raw   = outcome.value
+    private def decodeReady(outcome: Ffi.Outcome[Int], scratch: PollScratch)(using AllowUnsafe, Frame): Int =
+        val raw = outcome.value
+        if raw < 0 && outcome.errorCode != PosixConstants.EINTR then
+            Log.live.unsafe.error(s"epoll_wait failed errno=${outcome.errorCode}")
         val n     = if raw <= 0 then 0 else raw
         val fds   = scratch.fds
         val flags = scratch.flags

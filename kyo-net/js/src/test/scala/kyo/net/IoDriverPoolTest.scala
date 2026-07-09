@@ -190,7 +190,7 @@ class IoDriverPoolTest extends Test:
         succeed
     }
 
-    "close closes drivers before interrupting fibers: driver close order preserved" in {
+    "close closes every driver in order" in {
         val closeOrder = mutable.ListBuffer[Int]()
         val rawSpies = Array.tabulate(2) { i =>
             val spy = new RecordingDriver(JsIoDriver.init())
@@ -209,11 +209,10 @@ class IoDriverPoolTest extends Test:
         succeed
     }
 
-    "close skips Absent fiber slots: no error when pool not started" in {
+    "close is safe when the pool was never started" in {
         val spies: Array[IoDriver[JsHandle]] = mkSpies(3).asInstanceOf[Array[IoDriver[JsHandle]]]
         val pool                             = IoDriverPool.init(spies)
-        // Do NOT call pool.start(); all fiber slots remain Absent.
-        // close() must handle Absent slots gracefully without throwing.
+        // Do NOT call pool.start(); close() must still close every driver without throwing.
         pool.close()
         succeed
     }

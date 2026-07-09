@@ -248,6 +248,7 @@ private[net] object KqueuePollerBackend extends PollerBackend:
                     result match
                         case Result.Success(outcome) => decodeReady(outcome.eval, scratch, data)
                         case _ =>
+                            Log.live.unsafe.error(s"kevent fiber failed pollerFd=$pollerFd: $result")
                             scratch.readyCount = 0
                             0
                 val completed = Promise.Unsafe.init[Int, Any]()
@@ -264,9 +265,18 @@ private[net] object KqueuePollerBackend extends PollerBackend:
       * count. The watched fd is each event's `ident`; readiness is the `filter` (`EVFILT_READ` / `EVFILT_WRITE`), with `EV_EOF` (peer half-close)
       * and `EV_ERROR` (hard error) folded into the flags. The three needed fields are read directly through the codec's primitive readers, so no
       * `KEvent` object is allocated and no `Long` field is boxed. `eventsBuffer` is NOT closed here: it is the caller-owned per-driver reused buffer.
+      *
+      * A negative `outcome.value` is a genuine `kevent` failure (`man kevent`: `EACCES`/`EFAULT`/`EBADF`/`EINTR`/`EINVAL`/`ENOENT`/`ENOMEM`/
+      * `ESRCH`), treated the same as zero ready events (the poll loop simply re-polls next cycle): `EINTR` is expected under a busy
+      * multi-threaded JVM (a delivered signal) and loses nothing (the kernel state a signal interrupts is un-consumed, so a later successful
+      * `kevent` still reports it), so it is silently retried. Anything else is logged: mirrors `IoUringDriver.reapRcContinues`'s rc
+      * classification (an unrecognized/fatal rc there gets a named log line instead of a silent swallow), so a genuine backend error here
+      * leaves a trace instead of presenting as an unexplained stalled connection.
       */
-    private def decodeReady(outcome: Ffi.Outcome[Int], scratch: PollScratch, data: KqueuePollData)(using AllowUnsafe): Int =
-        val raw   = outcome.value
+    private def decodeReady(outcome: Ffi.Outcome[Int], scratch: PollScratch, data: KqueuePollData)(using AllowUnsafe, Frame): Int =
+        val raw = outcome.value
+        if raw < 0 && outcome.errorCode != PosixConstants.EINTR then
+            Log.live.unsafe.error(s"kevent failed errno=${outcome.errorCode}")
         val n     = if raw <= 0 then 0 else raw
         val fds   = scratch.fds
         val flags = scratch.flags

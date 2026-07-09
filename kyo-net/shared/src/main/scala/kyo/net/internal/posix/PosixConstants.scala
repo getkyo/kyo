@@ -90,6 +90,11 @@ private[net] object PosixConstants:
     // io_uring's bounded wait returns -ETIME on a timeout with no completion; the reap loop treats it as a normal empty turn.
     // io_uring is Linux-only, so the Linux value (62) is the one the driver ever sees; the macOS/BSD value (60) is kept for completeness.
     val ETIME: Int = if isMacOrBsd then 60 else 62
+    // ENOMEM is 12 on both Linux and macOS/BSD. io_uring_enter (the syscall behind kyo_uring_submit_and_wait_timeout) returns it when the
+    // kernel could not allocate memory for the request right now, a momentary condition under concurrent memory pressure (many rings /
+    // connections sharing a host, e.g. a full test-suite run), not a broken ring; the io_uring reap loop treats it as a transient retry
+    // condition, same as EBUSY/EAGAIN/EINTR, rather than tearing the whole ring (and every connection on it) down.
+    val ENOMEM: Int = 12
 
     // --- epoll (Linux) ---
     val EPOLL_CTL_ADD: Int = 1

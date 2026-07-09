@@ -62,6 +62,26 @@ private[kyo] object Diagnostics:
     private def remove(entry: AnyRef): Unit =
         synchronized { entries = entries.filterNot(_ eq entry) }
 
+    // Authoritative, self-reported teardown violations: never cleared by a component's own close(), unlike the entries list above.
+    private var violations: List[String] = Nil
+
+    /** Report a definitively detected invariant violation, e.g. a poller whose terminal exit re-swept its close obligations and found one
+      * still outstanding after every legitimate submission window had passed. Unlike [[Probe]] (a snapshot a consumer samples twice and
+      * infers a verdict from, tolerant of a component still mid-shutdown), this is the component's own post-mortem finding at the moment
+      * it KNOWS, with no settle window and no race against a still-closing peer. Never cleared by that component's own `close()`: a
+      * component that already broke its own invariant does not get to un-report it by closing cleanly afterward. Consumed by
+      * [[drainViolations]] (see the kyo-test runner's end-of-run check, which fails the run if this is non-empty).
+      */
+    def reportViolation(message: String): Unit = synchronized { violations = message :: violations }
+
+    /** Drain and return every violation reported since the last drain (oldest first). */
+    def drainViolations(): List[String] =
+        synchronized {
+            val v = violations.reverse
+            violations = Nil
+            v
+        }
+
     /** Render every registered dumper's snapshot, each under its name. A dumper that throws is reported inline rather than aborting the rest,
       * so one broken component never suppresses the others' state.
       */
