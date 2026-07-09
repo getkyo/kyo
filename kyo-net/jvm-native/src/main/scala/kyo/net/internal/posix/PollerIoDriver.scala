@@ -769,7 +769,7 @@ final private[net] class PollerIoDriver private[posix] (
     end dispatchAccept
 
     def write(handle: PosixHandle, data: Span[Byte], offset: Int)(using AllowUnsafe): WriteResult =
-        given Frame = Frame.internal
+        inline given Frame = Frame.internal
         if data.isEmpty || offset >= data.size then WriteResult.Done
         else if handle.unsentTailBytes >= PosixHandle.WriteTailHighWater then
             // Write-backpressure bound (CWE-400): the TLS write tail (pendingCipher) has reached the high-water mark because the peer is not draining
@@ -827,9 +827,9 @@ final private[net] class PollerIoDriver private[posix] (
       * the pump copies only the remaining unsent bytes on the next call, without allocating a new span.
       */
     private def writeRaw(handle: PosixHandle, data: Span[Byte], offset: Int)(using AllowUnsafe): WriteResult =
-        given Frame = Frame.internal
-        val len     = data.size - offset
-        val flags   = PosixConstants.MSG_NOSIGNAL
+        inline given Frame = Frame.internal
+        val len            = data.size - offset
+        val flags          = PosixConstants.MSG_NOSIGNAL
         if kyo.internal.Platform.isJS then
             // JS: copy the unsent region into the reused sendMirror, then call sendNow (synchronous, non-blocking).
             val mirror = sendMirrorFor(handle, len)
