@@ -32,20 +32,20 @@ private[completion] object OpenAICompletion extends Completion:
         context: Context,
         tools: Chunk[Tool.internal.Info[?, ?, LLM]],
         resultSchema: Maybe[JsonSchema] = Absent
-    )(using Frame): AssistantMessage < (LLM & Async & Abort[HttpException | AIGenException]) =
+    )(using Frame): Chunk[Message] < (LLM & Async & Abort[HttpException | AIGenException]) =
         fetch(config, Request(context, config, tools, resultSchema)).map(read)
 
-    private def read(response: Response)(using Frame): AssistantMessage < (LLM & Sync & Abort[AIGenException]) =
+    private def read(response: Response)(using Frame): Chunk[Message] < (LLM & Sync & Abort[AIGenException]) =
         Maybe.fromOption(response.choices.headOption) match
             case Absent =>
                 Abort.fail(AIDecodeException("LLM response has no choices: " + Json.encode(response)))
             case Present(v) =>
-                AssistantMessage(
+                Chunk(AssistantMessage(
                     v.message.content.getOrElse(""),
                     Chunk.from(v.message.tool_calls.getOrElse(Nil).map(c =>
                         Call(CallId(c.id), c.function.name, c.function.arguments)
                     ))
-                )
+                ))
 
     private def fetch(config: Config, req: Request)(using Frame): Response < (LLM & Async & Abort[HttpException | AIGenException]) =
         config.apiKey match
@@ -56,8 +56,12 @@ private[completion] object OpenAICompletion extends Completion:
                     Seq("content-type" -> "application/json", "Authorization" -> s"Bearer $key") ++
                         config.apiOrg.map("OpenAI-Organization" -> _).toList
                 val url = s"${config.apiUrl}/chat/completions"
-                HttpClient.postText(url, Json.encode(req), headers)
-                    .map(body => Abort.get(Json.decode[Response](body).mapFailure(e => HttpJsonDecodeException(e.getMessage, "POST", url))))
+                HttpClient.withConfig(_.timeout(config.timeout)) {
+                    HttpClient.postText(url, Json.encode(req), headers)
+                        .map(body =>
+                            Abort.get(Json.decode[Response](body).mapFailure(e => HttpJsonDecodeException(e.getMessage, "POST", url)))
+                        )
+                }
 
     /** Parses one SSE data line as an OpenAI streaming chunk and extracts the tool-call argument fragment.
       *
@@ -66,7 +70,16 @@ private[completion] object OpenAICompletion extends Completion:
       * argument fragment: a content-only or empty delta, or the `[DONE]` terminator. Returns
       * `Result.Failure` when the line is not a parseable OpenAI streaming chunk.
       */
-    override def parseDeltaArguments(line: String)(using Frame): Result[String, Maybe[String]] =
+    def streamFragments(
+        config: Config,
+        context: Context,
+        resultSchema: JsonSchema,
+        resultTool: Chunk[Tool.internal.Info[?, ?, LLM]]
+    )(using Frame): Stream[String, Async & Scope & Abort[AIStreamException]] < (LLM & Async & Abort[AIGenException]) =
+        Completion.sseFragments(config, streamRequest(config, context, resultSchema, resultTool), parseDeltaArguments)
+    end streamFragments
+
+    private[kyo] def parseDeltaArguments(line: String)(using Frame): Result[String, Maybe[String]] =
         import internal.*
         // The chat-completions stream terminates with a `[DONE]` sentinel line; treat it (and any content-only
         // or empty delta) as carrying no argument fragment, so the generic projection ignores it.
@@ -90,12 +103,12 @@ private[completion] object OpenAICompletion extends Completion:
         end if
     end parseDeltaArguments
 
-    override def streamRequest(
+    private[kyo] def streamRequest(
         config: Config,
         context: Context,
         resultSchema: JsonSchema,
         resultTool: Chunk[Tool.internal.Info[?, ?, LLM]]
-    )(using Frame): Completion.StreamRequest =
+    )(using Frame): Completion.StreamRequest < Abort[AIStreamException] =
         import internal.*
         val headers =
             Seq("content-type" -> "application/json") ++

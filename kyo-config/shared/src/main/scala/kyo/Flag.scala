@@ -1,7 +1,6 @@
 package kyo
 
 import scala.annotation.implicitNotFound
-import scala.jdk.CollectionConverters.*
 
 /** Shared foundation for type-safe configuration flags backed by system properties and environment variables.
   *
@@ -60,10 +59,10 @@ abstract class Flag[A] private[kyo] (final val default: A, final val validate: A
     // --- Internal ---
 
     private val (resolvedSource: Flag.Source, resolvedExpression: String) = {
-        val prop = java.lang.System.getProperty(name)
+        val prop = FlagPlatform.property(name)
         if (prop ne null) (Flag.Source.SystemProperty, prop)
         else {
-            val env = java.lang.System.getenv(envName)
+            val env = FlagPlatform.env(envName)
             if (env ne null) (Flag.Source.EnvironmentVariable, env)
             else (Flag.Source.Default, "")
         }
@@ -224,11 +223,11 @@ object Flag {
       * dots → underscores) → default. No rollout evaluation.
       */
     def apply[A](name: String, default: A)(implicit reader: Reader[A]): A = {
-        val prop = java.lang.System.getProperty(name)
+        val prop = FlagPlatform.property(name)
         if (prop ne null) reader.parse(name, prop)
         else {
             val envName = name.replace('.', '_').toUpperCase
-            val env     = java.lang.System.getenv(envName)
+            val env     = FlagPlatform.env(envName)
             if (env ne null) reader.parse(name, env)
             else default
         }
@@ -304,9 +303,7 @@ object Flag {
             val envNameLower  = flag.envName.toLowerCase
 
             try {
-                val props = java.lang.System.getProperties
-                scala.jdk.CollectionConverters.EnumerationHasAsScala(props.propertyNames()).asScala.foreach { elem =>
-                    val propName = elem.toString
+                FlagPlatform.properties.foreach { propName =>
                     if (propName.toLowerCase == flagNameLower && propName != flag.name) {
                         java.lang.System.err.println(
                             s"[kyo-config] Warning: Flag '${flag.name}' resolved to default \u2014 did you mean system property '$propName'?"
@@ -318,8 +315,7 @@ object Flag {
             }
             // Also check env vars for near-miss
             try {
-                val envMap = java.lang.System.getenv()
-                envMap.keySet().asScala.foreach { envKey =>
+                FlagPlatform.envNames.foreach { envKey =>
                     if (envKey.toLowerCase == envNameLower && envKey != flag.envName) {
                         java.lang.System.err.println(
                             s"[kyo-config] Warning: Flag '${flag.name}' resolved to default \u2014 did you mean environment variable '$envKey'?"

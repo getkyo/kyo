@@ -86,7 +86,14 @@ object AstUnpickler:
         /** Per-symbol annotation list decoded from ANNOTATION modifier blocks. Populated by readModifiers and scanForwardAndCollectFlags.
           * Flows through FileResult into ClasspathOrchestrator.finalizeMerge where descs(idx).annotations is set.
           */
-        annotationsBySymbol: mutable.LongMap[mutable.ArrayBuffer[Tasty.Annotation]]
+        annotationsBySymbol: mutable.LongMap[mutable.ArrayBuffer[Tasty.Annotation]],
+        /** Per-class-like-symbol extends/with parent-clause use sites: each entry is the parent type-ref
+          * (absolute-address, decoded Type) pairs captured as a byproduct of the eager parent decode in
+          * `decodeTemplateParents`. Keyed by the loading-symbol id, parallel to `parentsBySymbol`. Consumed by
+          * finalizeMerge, which resolves each Type to a final parent SymbolId and records the address ->
+          * SymbolId use site into the runtime `parentOccurrenceStore`.
+          */
+        parentRefAddrsBySymbol: mutable.LongMap[Chunk[(Int, Tasty.Type)]]
     )
 
     /** Run pass 1 over the AST section.
@@ -162,7 +169,10 @@ object AstUnpickler:
         val ownerStack = new mutable.ArrayDeque[LoadingSymbol.Materialising]()
         // LongMap keyed on LoadingSymbol.Materialising.id (unique per-instance integer); cross-platform.
         val parentsBySymbol = mutable.LongMap.empty[Chunk[Tasty.Type]]
-        val typeBySymbol    = mutable.LongMap.empty[Tasty.Type]
+        // Parallel to parentsBySymbol: the parent type-ref (absolute-address, decoded Type) capture that
+        // backs extends/with use sites in the occurrence index.
+        val parentRefAddrsBySymbol = mutable.LongMap.empty[Chunk[(Int, Tasty.Type)]]
+        val typeBySymbol           = mutable.LongMap.empty[Tasty.Type]
         // ownerBySymbol and bodyDataByAddr track per-symbol data consumed by Pass C to build
         // ownerId and body fields on the final immutable Symbols.
         val ownerBySymbol  = mutable.LongMap.empty[LoadingSymbol.Materialising]
@@ -207,6 +217,7 @@ object AstUnpickler:
             ownerStack,
             typeSession,
             parentsBySymbol,
+            parentRefAddrsBySymbol,
             typeBySymbol,
             ownerBySymbol,
             bodyDataByAddr,
@@ -250,7 +261,8 @@ object AstUnpickler:
             names = names,
             unresolvedIdToFullName = typeSession.unresolvedIdToFullName,
             annotationDecodeErrors = Chunk.from(typeSession.annotationDecodeErrors),
-            annotationsBySymbol = annotationsBySymbol
+            annotationsBySymbol = annotationsBySymbol,
+            parentRefAddrsBySymbol = parentRefAddrsBySymbol
         )
     end runPass1
 
@@ -278,6 +290,7 @@ object AstUnpickler:
         ownerStack: mutable.ArrayDeque[LoadingSymbol.Materialising],
         typeSession: TypeUnpickler.DecodeSession,
         parentsBySymbol: mutable.LongMap[Chunk[Tasty.Type]],
+        parentRefAddrsBySymbol: mutable.LongMap[Chunk[(Int, Tasty.Type)]],
         typeBySymbol: mutable.LongMap[Tasty.Type],
         ownerBySymbol: mutable.LongMap[LoadingSymbol.Materialising],
         bodyDataByAddr: mutable.LongMap[(Int, Int)],
@@ -316,6 +329,7 @@ object AstUnpickler:
                         ownerStack,
                         typeSession,
                         parentsBySymbol,
+                        parentRefAddrsBySymbol,
                         typeBySymbol,
                         ownerBySymbol,
                         bodyDataByAddr,
@@ -397,6 +411,7 @@ object AstUnpickler:
                         ownerStack,
                         typeSession,
                         parentsBySymbol,
+                        parentRefAddrsBySymbol,
                         typeBySymbol,
                         ownerBySymbol,
                         bodyDataByAddr,
@@ -457,7 +472,8 @@ object AstUnpickler:
                         // are skipped first; scanning stops at SELFDEF, VALDEF, DEFDEF, TYPEDEF, or
                         // any modifier tag (which signals the start of the stat section).
                         val parentScanView = view.subView(templateBodyStart, templatePayloadEnd)
-                        val decodedParents = decodeTemplateParents(parentScanView, templatePayloadEnd, sectionOffset, typeSession)
+                        val (decodedParents, parentRefAddrs) =
+                            decodeTemplateParents(parentScanView, templatePayloadEnd, sectionOffset, typeSession)
                         // Advance the outer view past the TEMPLATE payload so that readModifiers
                         // reads modifiers from templatePayloadEnd to payloadEnd.
                         view.goto(templatePayloadEnd)
@@ -478,6 +494,11 @@ object AstUnpickler:
                         // Record parent types for this class symbol (used by mergeResults for _parents assignment).
                         if decodedParents.nonEmpty then
                             parentsBySymbol(symbol.id.toLong) = Chunk.from(decodedParents)
+                        // Record the parent type-ref (address, Type) capture for the extends/with occurrence
+                        // index. finalizeMerge resolves each Type to the final parent SymbolId and keeps the
+                        // addresses that point at an actual parent.
+                        if parentRefAddrs.nonEmpty then
+                            parentRefAddrsBySymbol(symbol.id.toLong) = Chunk.from(parentRefAddrs)
                         // Walk template body to discover members (type params, constructor params, member defs).
                         val templateFork = view.subView(templateBodyStart, templatePayloadEnd)
                         ownerStack.append(symbol)
@@ -498,6 +519,7 @@ object AstUnpickler:
                             ownerStack,
                             typeSession,
                             parentsBySymbol,
+                            parentRefAddrsBySymbol,
                             typeBySymbol,
                             ownerBySymbol,
                             bodyDataByAddr,
@@ -806,16 +828,23 @@ object AstUnpickler:
       * Uses a fresh sub-view (parentScanView) that is independent of templateFork, so walkStats can still walk the same byte range from the
       * beginning.
       *
-      * Returns the decoded parent types as a buffer. The caller records them into `parentsBySymbol` keyed by the class symbol. Parent types
+      * Returns the decoded parent types as a buffer AND the parent type-ref (absolute-address, Type) capture. The caller records the types into
+      * `parentsBySymbol` and the address capture into `parentRefAddrsBySymbol`, both keyed by the class symbol. Parent types
       * may contain Named(SymbolId(negId)) for cross-file parents (negId < -1, tracked in session.unresolvedIdToFullName); these are resolved or
       * filtered out during finalizeMerge so no negative SymbolId survives in produced ADT parentTypes.
+      *
+      * The address capture is a byproduct of this eager decode: readTypeNode records every type node it decodes into
+      * `typeSession.addrCache` keyed by the node's absolute address (the same address space the Positions section uses). Snapshotting the
+      * cache key set before the parent scan and diffing after attributes the newly-decoded addresses to the parent clause, so the extends/with
+      * use sites join the occurrence index without a second decode pass. finalizeMerge keeps only the addresses whose Type resolves to an
+      * actual parent symbol.
       */
     private def decodeTemplateParents(
         parentScanView: ByteView,
         end: Long,
         sectionOffset: Int = 0,
         typeSession: TypeUnpickler.DecodeSession
-    )(using Frame, AllowUnsafe): mutable.ArrayBuffer[Tasty.Type] =
+    )(using Frame, AllowUnsafe): (mutable.ArrayBuffer[Tasty.Type], mutable.ArrayBuffer[(Int, Tasty.Type)]) =
         val collected = new mutable.ArrayBuffer[Tasty.Type]()
         // Step 1: skip leading TYPEPARAM and PARAM nodes (class own type/term params).
         var skipParams = true
@@ -835,7 +864,11 @@ object AstUnpickler:
         // Cross-file parents arrive as APPLY(SELECT(NEW(type_ref), <init>), args) term trees with
         // tag >= firstLengthTreeTag (128). We descend into APPLY nodes to extract the constructor
         // type reference so that buildSubclassIndex can correctly index cross-file parent edges.
-        var scanParents = true
+        //
+        // Snapshot the type-cache addresses present before the parent scan; every address readTypeNode
+        // adds while decoding the parents (below) is a parent type-ref address, captured by diffing after.
+        val cacheKeysBefore: Set[Int] = typeSession.addrCache.keySet.toSet
+        var scanParents               = true
         while scanParents && parentScanView.position < end do
             val tag = parentScanView.peekByte(parentScanView.position) & 0xff
             if tag == TastyFormat.SELFDEF ||
@@ -848,9 +881,11 @@ object AstUnpickler:
             else if tag == TastyFormat.APPLY && tag >= TastyFormat.firstLengthTreeTag then
                 // APPLY-headed parent: consume tag + length, then decode the first sub-node
                 // (the constructor call target) as a type reference.
-                // The first child is typically SELECT(NEW(type_ref), <init>).
-                // SELECT=112 is a term tag; route through decodeTermTagInTypePosition instead
-                // of TypeUnpickler.readTypeIntoSession which has no handler for SELECT.
+                // The first child is typically SELECT(NEW(type_ref), <init>) or, when the
+                // constructor reference needs the owner/namespace slot to disambiguate an overload,
+                // SELECTin(NEW(type_ref), <init>, owner) instead: SELECTin routes to
+                // TreeUnpickler.decodeTptAsType (isTreeTptTag), not decodeTermTagInTypePosition, so
+                // both dispatch arms must be able to decode a constructor-call-headed parent.
                 try
                     discard(parentScanView.readByte()) // consume APPLY tag
                     val applyEnd = parentScanView.readEnd()
@@ -891,7 +926,12 @@ object AstUnpickler:
                 end try
             end if
         end while
-        collected
+        // Diff the type cache: every address added during the parent scan is a parent type-ref use site.
+        val parentRefAddrs = new mutable.ArrayBuffer[(Int, Tasty.Type)]()
+        typeSession.addrCache.foreach { case (addr, tpe) =>
+            if !cacheKeysBefore.contains(addr) then parentRefAddrs += ((addr, tpe))
+        }
+        (collected, parentRefAddrs)
     end decodeTemplateParents
 
     /** Scan forward through sub-trees, collecting modifier flag bits and annotations when modifiers are reached.

@@ -84,11 +84,32 @@ final private[kyo] class JvmCommandUnsafe(
 
     def withEnvAppend(vars: Map[String, String]): JvmCommandUnsafe =
         val newMode = envMode match
-            case EnvMode.Clear                 => EnvMode.ClearThenAppend(vars)
-            case EnvMode.ClearThenAppend(prev) => EnvMode.ClearThenAppend(prev ++ vars)
-            case _                             => EnvMode.Append(vars)
+            case EnvMode.Clear                         => EnvMode.ClearThenAppend(vars)
+            case EnvMode.ClearThenAppend(prev)         => EnvMode.ClearThenAppend(prev ++ vars)
+            case EnvMode.Remove(names)                 => EnvMode.AppendThenRemove(vars -- names, names)
+            case EnvMode.AppendThenRemove(prev, names) => EnvMode.AppendThenRemove((prev ++ vars) -- names, names)
+            case _                                     => EnvMode.Append(vars)
         copy(envMode = newMode)
     end withEnvAppend
+
+    def withEnvRemove(names: Set[String]): JvmCommandUnsafe =
+        val newMode = envMode match
+            case EnvMode.Inherit =>
+                EnvMode.Remove(names)
+            case EnvMode.Append(vars) =>
+                EnvMode.AppendThenRemove(vars -- names, names)
+            case EnvMode.Remove(prev) =>
+                EnvMode.Remove(prev ++ names)
+            case EnvMode.AppendThenRemove(vars, prev) =>
+                EnvMode.AppendThenRemove(vars -- names, prev ++ names)
+            case EnvMode.Replace(vars) =>
+                EnvMode.Replace(vars -- names)
+            case EnvMode.Clear =>
+                EnvMode.Clear
+            case EnvMode.ClearThenAppend(vars) =>
+                EnvMode.ClearThenAppend(vars -- names)
+        copy(envMode = newMode)
+    end withEnvRemove
 
     def withEnvReplace(vars: Map[String, String]): JvmCommandUnsafe =
         copy(envMode = EnvMode.Replace(vars))
@@ -170,6 +191,11 @@ final private[kyo] class JvmCommandUnsafe(
                     case EnvMode.Inherit => () // default: inherit parent env
                     case EnvMode.Append(vars) =>
                         pb.environment().putAll(vars.asJava)
+                    case EnvMode.Remove(names) =>
+                        names.foreach(pb.environment().remove)
+                    case EnvMode.AppendThenRemove(vars, names) =>
+                        pb.environment().putAll(vars.asJava)
+                        names.foreach(pb.environment().remove)
                     case EnvMode.Replace(vars) =>
                         pb.environment().clear()
                         pb.environment().putAll(vars.asJava)
@@ -370,6 +396,11 @@ final private[kyo] class JvmCommandUnsafe(
                         case EnvMode.Inherit => ()
                         case EnvMode.Append(vars) =>
                             vars.foreach { (k, v) => discard(pb.environment().put(k, v)) }
+                        case EnvMode.Remove(names) =>
+                            names.foreach(pb.environment().remove)
+                        case EnvMode.AppendThenRemove(vars, names) =>
+                            vars.foreach { (k, v) => discard(pb.environment().put(k, v)) }
+                            names.foreach(pb.environment().remove)
                         case EnvMode.Replace(vars) =>
                             pb.environment().clear()
                             vars.foreach { (k, v) => discard(pb.environment().put(k, v)) }

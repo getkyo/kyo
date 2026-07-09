@@ -6,6 +6,8 @@ import kyo.AllowUnsafe
   * `os.name`, `user.name`, and `line.separator` via `java.lang.System` — simply delegate.
   */
 private[kyo] object SystemPlatformSpecific:
-    def osName()(using AllowUnsafe): String = java.lang.System.getProperty("os.name", "")
-    def osArch()(using AllowUnsafe): String = java.lang.System.getProperty("os.arch", "")
+    def env(name: String)(using AllowUnsafe): String      = java.lang.System.getenv(name)
+    def property(name: String)(using AllowUnsafe): String = java.lang.System.getProperty(name)
+    def osName()(using AllowUnsafe): String               = java.lang.System.getProperty("os.name", "")
+    def osArch()(using AllowUnsafe): String               = java.lang.System.getProperty("os.arch", "")
 end SystemPlatformSpecific

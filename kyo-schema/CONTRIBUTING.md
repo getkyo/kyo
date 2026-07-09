@@ -17,7 +17,7 @@ Dependency direction is strictly downward: `internal/` may not import from outsi
 | Public surface | `Schema.scala`, `Codec.scala`, `Structure.scala`, `SchemaException.scala`, `Json.scala`, `Protobuf.scala`, `Yaml.scala`, `Focus.scala`, `Builder.scala`, `Compare.scala`, `Changeset.scala`, `Convert.scala`, `Modify.scala` | The four-slot Schema, the Codec abstraction, the exception hierarchy, the format entry points, the navigation/transform helpers. |
 | Annotation surface | `schema/SchemaAnnotation.scala` (package `kyo.schema`, the only file outside package `kyo`) | The marker base `SchemaAnnotation`, the capture-filtering `AnnotationPolicy`, the built-in annotation set (`@rename`, `@alias`, `@discriminator`, `@adjacent`, `@untagged`, `@transient`, `@transform`, `@omit`, `@doc`, and the scoped `@proto.fieldNumber`), and the `Transformer` / `OmitPredicate` object-reference families. See [Annotation-driven configuration](#annotation-driven-configuration). |
 | Macro boundary | `internal/SchemaDerivedMacro.scala` | Thin class-file boundary that immediately delegates to `FocusMacro.derivedImpl`; exists only to break the cyclic compile-time dependency the `inline given derived` call in `Schema.scala` would otherwise create [kyo-schema/shared/src/main/scala/kyo/internal/SchemaDerivedMacro.scala:6-22]. |
-| Macros | `internal/FocusMacro.scala`, `internal/SchemaTransformMacro.scala`, `internal/NavigationMacro.scala`, `internal/ExpandMacro.scala`, `internal/MacroUtils.scala`, `internal/CodecMacro.scala` | Derivation, transforms (drop/rename/add/select/flatten), navigation, structural-shape expansion, shared quote-reflection utilities, and the `fieldId` MurmurHash3 helper. |
+| Macros | `internal/FocusMacro.scala`, `internal/SchemaTransformMacro.scala`, `internal/NavigationMacro.scala`, `internal/ExpandMacro.scala`, `internal/MacroUtils.scala`, `internal/CodecMacro.scala` | Derivation, transforms (drop/rename/add/select/flatten), navigation, structural-shape expansion, shared quote-reflection utilities, and the `fieldId` XXH32 helper. |
 | Runtime engine | `internal/SchemaCodecRuntime.scala`, `internal/SchemaSerializer.scala`, `internal/SchemaFactory.scala`, `internal/StructureValueWriter.scala`, `internal/StructureValueReader.scala` | The runtime walk fed by the macro-emitted metadata table; the transform-aware dispatcher; the path-key recomputation factory; the in-memory `Structure.Value` writer/reader. |
 | Wire formats | `internal/JsonWriter.scala`, `internal/JsonReader.scala`, `internal/ProtobufWriter.scala`, `internal/ProtobufReader.scala`, `internal/YamlWriter.scala`, `internal/YamlReader.scala`, `internal/YamlParser.scala`, `internal/YamlEventReader.scala`, `internal/JsonSchemaEnricher.scala` | Concrete `Codec.Writer` / `Codec.Reader` implementations; JSON math sublayers (`Ryu` for write, `FastFloat` for read). |
 | Platform split | `jvm/.../AsciiStringFactory.scala`, `js-wasm/.../AsciiStringFactory.scala`, `native/.../AsciiStringFactory.scala`, `jvm/.../tools/FastFloatPow10Gen.scala` | The single platform-specific surface plus a JVM-only build-time table generator. |
@@ -469,11 +469,11 @@ The hand-rolled reader uses the canonical `Codec.Reader` contract: `hasNextField
 
 ### Stable Protobuf field IDs
 
-`CodecMacro.fieldId(name)` is a 21-bit `MurmurHash3` over field names used as the stable Protobuf field number, so adding / removing fields does not collide on the wire [kyo-schema/shared/src/main/scala/kyo/internal/CodecMacro.scala:6-19]:
+`CodecMacro.fieldId(name)` is a 21-bit `XXH32` over field names used as the stable Protobuf field number, so adding / removing fields does not collide on the wire [kyo-schema/shared/src/main/scala/kyo/internal/CodecMacro.scala:6-19]:
 
 ```
 def fieldId(name: String): Int =
-    (MurmurHash3.stringHash(name) & 0x1fffff) + 1
+    (XXHash.hash32(name) & 0x1fffff) + 1
 ```
 
 ### Conformance modes (Strict and Permissive)
@@ -497,14 +497,14 @@ given Protobuf = Protobuf(Protobuf.Config(conformance = Protobuf.Conformance.Per
 `FieldNumberInfo` fields:
 - `path`: dotted path from the root message (e.g., `"inner.id"` for a nested field)
 - `name`: leaf field name
-- `number`: the wire field number this codec uses (MurmurHash3 formula or a leaf-name override)
+- `number`: the wire field number this codec uses (XXH32 formula or a leaf-name override)
 - `pinned`: true when a single-segment (leaf field-name) `Schema.fieldId` override is in effect and is wire-functional; nested-path (multi-segment) overrides are a consistent no-op (`pinned` stays false), deferred to getkyo/kyo#1719
 - `inReservedRange`: true when `number` is in proto3's reserved band 19000-19999, which external `protoc` rejects
 
 The field-id formula is fixed and identical across `CodecMacro.fieldId`, `fieldNumberAudit`, and `protoSchema`:
 
 ```
-(MurmurHash3.stringHash(name) & 0x1fffff) + 1
+(XXHash.hash32(name) & 0x1fffff) + 1
 ```
 
 ### Packed and unpacked repeated scalars
@@ -515,7 +515,7 @@ This dual-handling invariant must be preserved: adding a new scalar reader arm m
 
 ### protoSchema emits wire-true field numbers
 
-`Protobuf.protoSchema[A]` emits the MurmurHash3-derived field number for every message field, the same number the codec writes on the wire. Hash-derived fields carry a line-end provenance comment. A pinned field (leaf-name `Schema.fieldId` override) carries no provenance comment. A field in proto3's reserved range 19000-19999 carries a WARNING comment unconditionally.
+`Protobuf.protoSchema[A]` emits the XXH32-derived field number for every message field, the same number the codec writes on the wire. Hash-derived fields carry a line-end provenance comment. A pinned field (leaf-name `Schema.fieldId` override) carries no provenance comment. A field in proto3's reserved range 19000-19999 carries a WARNING comment unconditionally.
 
 Structural slots (oneof variant numbers, MapEntry key=1/value=2) are not affected and keep their structural assignments.
 

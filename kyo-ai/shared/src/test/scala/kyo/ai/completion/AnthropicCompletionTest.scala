@@ -157,7 +157,7 @@ class AnthropicCompletionTest extends kyo.test.Test[Any]:
                     }
                 }.map { result =>
                     result match
-                        case Result.Success(Result.Success(msg)) =>
+                        case Result.Success(Result.Success(Chunk(msg: AssistantMessage))) =>
                             assert(msg.calls.size == 1, s"expected 1 call, got ${msg.calls.size}")
                             val call = msg.calls.head
                             assert(call.id == CallId("tu-1"), s"expected call id 'tu-1', got ${call.id}")
@@ -214,16 +214,22 @@ class AnthropicCompletionTest extends kyo.test.Test[Any]:
     }
 
     "streaming: streamRequest targets /messages with x-api-key auth and a stream-flagged body" in {
-        val req = AnthropicCompletion.streamRequest(
-            keyedConfig("https://anthropic.test/v1"),
-            Context.empty.userMessage("hi"),
-            Json.jsonSchema[String],
-            Chunk.empty
-        )
-        assert(req.url == "https://anthropic.test/v1/messages", s"url: ${req.url}")
-        assert(req.headers.exists { case (k, v) => k == "x-api-key" && v == "test-key" }, s"headers: ${req.headers}")
-        assert(req.headers.exists(_._1 == "anthropic-version"), s"headers: ${req.headers}")
-        assert(req.body.contains("\"stream\":true"), s"stream flag in body: ${req.body}")
+        Abort.run[AIStreamException](
+            AnthropicCompletion.streamRequest(
+                keyedConfig("https://anthropic.test/v1"),
+                Context.empty.userMessage("hi"),
+                Json.jsonSchema[String],
+                Chunk.empty
+            )
+        ).map {
+            case Result.Success(req) =>
+                assert(req.url == "https://anthropic.test/v1/messages", s"url: ${req.url}")
+                assert(req.headers.exists { case (k, v) => k == "x-api-key" && v == "test-key" }, s"headers: ${req.headers}")
+                assert(req.headers.exists(_._1 == "anthropic-version"), s"headers: ${req.headers}")
+                assert(req.body.contains("\"stream\":true"), s"stream flag in body: ${req.body}")
+            case other =>
+                fail(s"expected success, got: $other")
+        }
     }
 
     "a gen runs end-to-end against the Anthropic backend, extracting the result" in {

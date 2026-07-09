@@ -137,7 +137,9 @@ class ToolTest extends kyo.test.Test[Any]:
                 tableNode match
                     case Some(JsonSchema.Obj(innerProps, _, additionalProps, _, _, _)) =>
                         assert(innerProps.isEmpty)
-                        assert(additionalProps == Present(JsonSchema.Integer()))
+                        additionalProps match
+                            case Present(JsonSchema.Integer(_, _, _, _, _)) => succeed
+                            case other                                      => fail(s"expected Integer additionalProperties, got $other")
                     case _ =>
                         assert(false, s"expected Obj with additionalProperties for table, got $tableNode")
                 end match

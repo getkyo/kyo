@@ -145,10 +145,11 @@ object LLM:
     end runWith
 
     /** Projects the conversation as a streaming completion: posts the SSE request, parses each delta as an
-      * OpenAI streaming chunk, accumulates the tool-call argument fragments, and emits each successfully
-      * decoded prefix as a `Chunk[A]` snapshot (the terminal element is the full A). The result_tool rides
-      * every request so the model has a tool to call. Config and the result-tool/context assembly are read
-      * on the `LLM` row; the returned `Stream` value carries the I/O effects in its element row, with the
+      * OpenAI streaming chunk, accumulates the tool-call argument fragments, and emits decoded values. For
+      * `String`, emitted chunks concatenate to the final text. For every other type, emitted values are complete
+      * array elements. The result_tool rides every request so the model has a tool to call. Config and the
+      * result-tool/context assembly are read on the `LLM` row; the returned `Stream` value carries the I/O
+      * effects in its element row, with the
       * SSE connection scoped so it closes on stream termination or error. The returned `Stream` carries its
       * failures typed in its row (`Abort[AIStreamException]`): a malformed delta is an
       * `AIStreamDeltaException`, a stream that ends without a decodable value an `AIStreamIncompleteException`,
@@ -190,54 +191,41 @@ object LLM:
     ): Stream[A, Async & Scope & Abort[AIStreamException]] < (LLM & Async & Abort[AIGenException]) =
         given Schema[A] = schema
         AI.config.map { config =>
-            config.apiKey match
-                case Absent =>
-                    Abort.fail[AIGenException](AIMissingApiKeyException(config.modelName))
-                case Present(_) =>
-                    // assemble the streaming request with the result_tool in every request:
-                    // resultToolInfo supplies the tool definition; enrichedContext includes its prompt and
-                    // the tool definition in the request body.
-                    val toolInfos = Tool.internal.resultToolInfo.infos
-                    // Two streaming modes, inferred from A. A String result streams incrementally: each emitted
-                    // element is a growing text prefix, the terminal one the full answer. Any other type streams
-                    // object by object: the model returns an array of A and each element is emitted once it is
-                    // complete (never a half-filled A). A bare partial scalar has no meaning, so only String takes
-                    // the prefix path; everything else, scalars included, takes the complete-element path.
-                    val stringMode = schema.structure match
-                        case Structure.Type.Primitive(Structure.PrimitiveKind.String, _) => true
-                        case _                                                           => false
-                    context(target).map { targetContext =>
-                        Prompt.internal.enrichedContext(targetContext, toolInfos).map { context =>
-                            // Wrap in the {resultValue: A} object envelope (an array of A in element mode); a bare
-                            // non-object schema is rejected by the providers, which require an object tool schema. The
-                            // array schema is derived through kyo-schema's chunk Schema, not hand-built.
-                            val resultValueSchema =
-                                if stringMode then Json.jsonSchema[A] else Json.jsonSchema(using Schema.chunkSchema(using schema))
-                            val resultSchema = Thought.internal.resultJson(Chunk.empty, resultValueSchema)
-                            // The streaming request (url + headers + body) is fully provider-dispatched; the SSE
-                            // projection below is generic, feeding each data line through parseDeltaArguments.
-                            val req = config.provider.completion.streamRequest(config, context, resultSchema, toolInfos)
-                            given sseTag: Tag[Emit[Chunk[HttpSseEvent[String]]]] = Tag[Emit[Chunk[HttpSseEvent[String]]]]
-                            val route      = HttpRoute.postRaw("").request(_.bodyText).response(_.bodySseText)
-                            val completion = config.provider.completion
+            if config.provider.usesApiKey && config.apiKey.isEmpty then
+                Abort.fail[AIGenException](AIMissingApiKeyException(config.modelName))
+            else
+                // assemble the streaming request with the result_tool in every request:
+                // resultToolInfo supplies the tool definition; enrichedContext includes its prompt and
+                // the tool definition in the request body.
+                val toolInfos = Tool.internal.resultToolInfo.infos
+                // Two streaming modes, inferred from A. A String result streams incrementally: each emitted
+                // element is the next decoded text chunk. Any other type streams object by object: the model
+                // returns an array of A and each element is emitted once it is complete (never a half-filled A).
+                // A bare partial scalar has no meaning, so only String takes the incremental text path;
+                // everything else, scalars included, takes the complete-element path.
+                val stringMode = schema.structure match
+                    case Structure.Type.Primitive(Structure.PrimitiveKind.String, _) => true
+                    case _                                                           => false
+                context(target).map { targetContext =>
+                    Prompt.internal.enrichedContext(targetContext, toolInfos).map { context =>
+                        // Wrap in the {resultValue: A} object envelope (an array of A in element mode); a bare
+                        // non-object schema is rejected by the providers, which require an object tool schema. The
+                        // array schema is derived through kyo-schema's chunk Schema, not hand-built.
+                        val resultValueSchema =
+                            if stringMode then Json.jsonSchema[A] else Json.jsonSchema(using Schema.chunkSchema(using schema))
+                        val resultSchema = Thought.internal.resultJson(Chunk.empty, resultValueSchema)
+                        val completion   = config.provider.completion
+                        Log.debug(
+                            s"kyo-ai stream backend=${config.provider.name} model=${config.modelName} " +
+                                s"mode=${if stringMode then "prefix" else "elements"} messages=${context.messages.size} tools=${toolInfos.size}"
+                        ).andThen(completion.streamFragments(config, context, resultSchema, toolInfos)).map { fragments =>
                             Stream[A, Async & Scope & Abort[AIStreamException]] {
-                                Abort.recover[HttpException](e => Abort.fail(AITransportException(e))) {
-                                    Abort.get(HttpRequest.postRaw(req.url)).map { baseReq =>
-                                        val request = req.headers.foldLeft(baseReq)((r, kv) => r.addHeader(kv._1, kv._2))
-                                            .addField("body", req.body)
-                                        HttpClient.withConfig(_.timeout(config.timeout)) {
-                                            HttpClient.use { client =>
-                                                client.sendWith(route, request)(_.fields.body)
-                                            }.map { sseStream =>
-                                                if stringMode then consumePrefixStream(sseStream, completion, schema)
-                                                else consumeElementStream(sseStream, completion, schema)
-                                            }
-                                        }
-                                    }
-                                }
+                                if stringMode then consumePrefixFragments(fragments, schema)
+                                else consumeElementFragments(fragments, schema)
                             }
                         }
                     }
+                }
         }
     end streamAgainst
 
@@ -299,56 +287,65 @@ object LLM:
         loop(0, false, false, 0, -1, -1, Chunk.empty)
     end completeElements
 
-    // Prefix mode (String): emit each growing decode of resultValue, skipping a repeat of the last one emitted,
-    // so the text streams token by token. Fails if the stream ends with buffered args that never decoded.
-    private def consumePrefixStream[A](
-        sseStream: Stream[HttpSseEvent[String], Async & Scope & Abort[AIStreamException]],
-        completion: Completion,
+    // Text mode (String): the provider exposes growing decodable prefixes of resultValue. Emit only the newly
+    // decoded suffix so callers receive normal text chunks and can concatenate them into the final answer.
+    // Fails if the stream ends with buffered args that never decoded.
+    private[kyo] def consumePrefixFragments[A](
+        fragments: Stream[String, Async & Scope & Abort[AIStreamException]],
         schema: Schema[A]
     )(using
         Frame,
         Tag[Emit[Chunk[A]]],
-        Tag[Emit[Chunk[HttpSseEvent[String]]]]
+        Tag[Emit[Chunk[String]]]
     ): Unit < (Emit[Chunk[A]] & Async & Scope & Abort[AIStreamException]) =
         given Schema[A] = schema
-        sseStream.fold(("", Maybe.empty[String])) { (state, event) =>
-            val (argsBuf, lastJson) = state
-            completion.parseDeltaArguments(event.data) match
-                case Result.Failure(err)    => Abort.fail(AIStreamDeltaException(err))
-                case Result.Success(Absent) => Kyo.lift(state)
-                case Result.Success(Present(fragment)) =>
-                    val newBuf = argsBuf + fragment
-                    resultValueOf(newBuf) match
-                        case Present(sub) =>
-                            Structure.decode(sub)(using schema, summon) match
-                                case Result.Success(a) =>
-                                    val encoded = Json.encode(a)(using schema, summon)
-                                    if lastJson.exists(_ == encoded) then Kyo.lift((newBuf, lastJson))
-                                    else Emit.value(Chunk(a)).andThen((newBuf, Present(encoded)))
-                                case _ => Kyo.lift((newBuf, lastJson))
-                        case Absent => Kyo.lift((newBuf, lastJson))
-                    end match
+        def emitText(delta: String): Unit < (Emit[Chunk[A]] & Abort[AIStreamException]) =
+            Structure.decode[A](Structure.Value.Str(delta)) match
+                case Result.Success(a) => Emit.value(Chunk(a))
+                case Result.Failure(err) =>
+                    Abort.fail(AIStreamDeltaException(s"stream[String] decoded text chunk failed schema validation: $err"))
+                case Result.Panic(ex) =>
+                    Abort.panic(ex)
+        fragments.fold(("", Maybe.empty[String])) { (state, fragment) =>
+            val (argsBuf, lastText) = state
+            val newBuf              = argsBuf + fragment
+            resultValueOf(newBuf) match
+                case Present(Structure.Value.Str(text)) =>
+                    lastText match
+                        case Present(prev) if text == prev =>
+                            Kyo.lift((newBuf, lastText))
+                        case Present(prev) if text.startsWith(prev) =>
+                            emitText(text.drop(prev.length)).andThen((newBuf, Present(text)))
+                        case Present(prev) =>
+                            Abort.fail(AIStreamDeltaException(
+                                s"stream[String] decoded a non-monotonic text prefix. Previous: $prev, next: $text"
+                            ))
+                        case Absent =>
+                            emitText(text).andThen((newBuf, Present(text)))
+                case Present(other) =>
+                    Abort.fail(AIStreamDeltaException(s"stream[String] expected a JSON string resultValue, got: ${Json.encode(other)}"))
+                case Absent =>
+                    Kyo.lift((newBuf, lastText))
             end match
-        }.map { case (argsBuf, lastJson) =>
+        }.map { case (argsBuf, lastText) =>
             // No provider terminator is required: if the SSE stream ends having buffered argument JSON but
             // never emitted a decodable A, the generation failed.
-            if lastJson.isEmpty && argsBuf.nonEmpty then Abort.fail(AIStreamIncompleteException(argsBuf))
+            if lastText.isEmpty && argsBuf.nonEmpty then Abort.fail(AIStreamIncompleteException(argsBuf))
             else Kyo.lift(())
         }
-    end consumePrefixStream
+    end consumePrefixFragments
 
     // Element mode (object by object): resultValue is an array of A. After each delta, emit every newly-complete
     // element (one whose JSON closed and is followed by a delimiter); an in-progress final element waits. Each A
     // is emitted exactly once, fully formed; a truncated tail is dropped and a complete element before a trailing
     // comma is kept.
-    private def consumeElementStream[A](
-        sseStream: Stream[HttpSseEvent[String], Async & Scope & Abort[AIStreamException]],
-        completion: Completion,
+    private[kyo] def consumeElementFragments[A](
+        fragments: Stream[String, Async & Scope & Abort[AIStreamException]],
         schema: Schema[A]
     )(using
         Frame,
         Tag[Emit[Chunk[A]]],
-        Tag[Emit[Chunk[HttpSseEvent[String]]]]
+        Tag[Emit[Chunk[String]]]
     ): Unit < (Emit[Chunk[A]] & Async & Scope & Abort[AIStreamException]) =
         given Schema[A] = schema
         def decodeElement(raw: String): A < Abort[AIStreamException] =
@@ -358,17 +355,12 @@ object LLM:
                         case Result.Success(a) => a
                         case _                 => Abort.fail(AIStreamIncompleteException(raw))
                 case _ => Abort.fail(AIStreamIncompleteException(raw))
-        sseStream.fold(("", 0)) { (state, event) =>
+        fragments.fold(("", 0)) { (state, fragment) =>
             val (argsBuf, emitted) = state
-            completion.parseDeltaArguments(event.data) match
-                case Result.Failure(err)    => Abort.fail(AIStreamDeltaException(err))
-                case Result.Success(Absent) => Kyo.lift(state)
-                case Result.Success(Present(fragment)) =>
-                    val newBuf = argsBuf + fragment
-                    val ready  = completeElements(newBuf)
-                    if ready.size <= emitted then Kyo.lift((newBuf, emitted))
-                    else Kyo.foreach(ready.drop(emitted))(decodeElement).map(as => Emit.value(as).andThen((newBuf, ready.size)))
-            end match
+            val newBuf             = argsBuf + fragment
+            val ready              = completeElements(newBuf)
+            if ready.size <= emitted then Kyo.lift((newBuf, emitted))
+            else Kyo.foreach(ready.drop(emitted))(decodeElement).map(as => Emit.value(as).andThen((newBuf, ready.size)))
         }.map { case (argsBuf, emitted) =>
             // Everything complete was emitted during the fold. An empty or in-progress-only array yields an empty
             // stream; only a buffer that never produced a resultValue array at all is incomplete.
@@ -376,7 +368,7 @@ object LLM:
                 Abort.fail(AIStreamIncompleteException(argsBuf))
             else Kyo.unit
         }
-    end consumeElementStream
+    end consumeElementFragments
 
     /** Discharges `LLM`, threading a fresh `State`. */
     def run[A, S](v: A < (LLM & S))(using Frame): A < (S & Async & Abort[AIGenException]) =
@@ -516,7 +508,11 @@ object LLM:
             resultSchema = Thought.internal.resultJson(thoughts, Json.jsonSchema[A])
             ctx     <- ai.context
             context <- Prompt.internal.enrichedContext(ctx, allTools)
-            message <-
+            _ <- Log.debug(
+                s"kyo-ai gen backend=${config.provider.name} model=${config.modelName} " +
+                    s"messages=${context.messages.size} tools=${allTools.size} thoughts=${thoughts.size} forceResult=$forceResult"
+            )
+            messages <-
                 HttpClient.withConfig(_.timeout(config.timeout)) {
                     Abort.run[Closed] {
                         config.provider
@@ -526,15 +522,21 @@ object LLM:
                                 Retry[HttpException](config.retrySchedule)(_)
                             )
                     }.map {
-                        case Result.Success(msg) => msg
-                        case Result.Failure(_)   => Abort.panic(AIMeterClosedException())
-                        case Result.Panic(ex)    => Abort.panic(ex)
+                        case Result.Success(msgs) => msgs
+                        case Result.Failure(_)    => Abort.panic(AIMeterClosedException())
+                        case Result.Panic(ex)     => Abort.panic(ex)
                     }
                 }
-            _ <- ai.updateContext(_.add(message))
-            _ <- Tool.internal.handle(ai, allTools, message.calls)
+            _ <- Log.debug(
+                s"kyo-ai gen backend=${config.provider.name} returned messages=${messages.size} " +
+                    s"toolCalls=${messages.collect { case msg: AssistantMessage => msg.calls.size }.sum}"
+            )
+            _ <- ai.updateContext(ctx => messages.foldLeft(ctx)(_.add(_)))
+            calls            = messages.collect { case msg: AssistantMessage => msg.calls }.flatten
+            completedCallIds = messages.collect { case ToolMessage(callId, _) => callId }
+            _ <- Tool.internal.handle(ai, allTools, calls.filterNot(call => completedCallIds.contains(call.id)))
             // Extract the model's structured result directly from its result_tool call (no capturing run).
-            raw = message.calls.filter(_.function == Completion.resultToolName).headMaybe
+            raw = calls.filter(_.function == Completion.resultToolName).headMaybe
                 .flatMap(call => Json.decode[Structure.Value](call.arguments).toMaybe)
             r <- raw match
                 case Present(record) =>

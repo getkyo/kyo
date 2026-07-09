@@ -60,7 +60,10 @@ class StandardClasspathFidelityTest extends kyo.test.Test[Any]:
             Clock.nowMonotonic.map { start =>
                 TestClasspaths.withClasspath(roots)(Tasty.classpath).map { classpath =>
                     Clock.nowMonotonic.map { end =>
-                        assert(classpath.symbols.size >= 81000, s"Expected >= 81,000 symbols; got ${classpath.symbols.size}")
+                        // >= 80,000: the standard classpath measures ~80,321 after finalizeMerge's package dedup
+                        // removes the per-file duplicate Package partials (was ~81,569 with duplicates). Real classes/members are
+                        // unaffected (unioned into the canonical package); only duplicate Package headers are collapsed.
+                        assert(classpath.symbols.size >= 80000, s"Expected >= 80,000 symbols; got ${classpath.symbols.size}")
                         end - start
                     }
                 }

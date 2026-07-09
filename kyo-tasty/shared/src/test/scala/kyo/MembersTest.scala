@@ -191,6 +191,99 @@ class MembersTest extends kyo.test.Test[Any]:
         }
     }
 
+    // Base declares a public 'y'; Child extends Base and declares its OWN private 'y' (e.g. a
+    // val-less primary-constructor parameter retained as a private[this] field). Child's private
+    // 'y' must never shadow Base's public 'y' in MemberScope.Inherited, mirroring
+    // Tasty.scala's Inherited-scope directNames construction (the tasty-query#195 shape).
+    private def buildPrivateShadowHierarchy(using Frame): Tasty.Classpath < Sync =
+        val baseId   = SymbolId(0)
+        val baseYId  = SymbolId(1)
+        val childId  = SymbolId(2)
+        val childYId = SymbolId(3)
+
+        val baseY = Tasty.Symbol.Method(
+            baseYId,
+            Tasty.Name("y"),
+            Tasty.Flags.empty,
+            baseId,
+            Maybe.Absent,
+            Maybe.Absent,
+            Maybe.Absent,
+            Chunk.empty,
+            Chunk.empty,
+            Chunk.empty,
+            Maybe.Absent
+        )
+        val baseClass = Tasty.Symbol.Class(
+            baseId,
+            Tasty.Name("Base"),
+            Tasty.Flags.empty,
+            SymbolId(-1),
+            Maybe.Absent,
+            Maybe.Absent,
+            Maybe.Absent,
+            Chunk.empty,
+            Chunk.empty,
+            Chunk(baseYId),
+            Maybe.Absent,
+            Chunk.empty,
+            Chunk.empty
+        )
+        val childY = Tasty.Symbol.Method(
+            childYId,
+            Tasty.Name("y"),
+            Tasty.Flags(Tasty.Flag.Private),
+            childId,
+            Maybe.Absent,
+            Maybe.Absent,
+            Maybe.Absent,
+            Chunk.empty,
+            Chunk.empty,
+            Chunk.empty,
+            Maybe.Absent
+        )
+        val childClass = Tasty.Symbol.Class(
+            childId,
+            Tasty.Name("Child"),
+            Tasty.Flags.empty,
+            SymbolId(-1),
+            Maybe.Absent,
+            Maybe.Absent,
+            Maybe.Absent,
+            Chunk(Tasty.Type.Named(baseId)), // extends Base
+            Chunk.empty,
+            Chunk(childYId),
+            Maybe.Absent,
+            Chunk.empty,
+            Chunk.empty
+        )
+        Tasty.Classpath.fromPicklesWithSymbols(Chunk(baseClass, baseY, childClass, childY))
+    end buildPrivateShadowHierarchy
+
+    "findMember(Child, y, Inherited) matches findMember(Child, y, All) when Child's own y is private" in {
+        buildPrivateShadowHierarchy.map { classpath =>
+            val childOpt = classpath.symbols.toSeq.collectFirst {
+                case c: Tasty.Symbol.Class if c.simpleName == "Child" => c
+            }
+            childOpt match
+                case None => fail("Child class not found in synthetic classpath fixture")
+                case Some(child) =>
+                    val viaAll       = classpath.findMember(child, "y", Tasty.MemberScope.All)
+                    val viaInherited = classpath.findMember(child, "y", Tasty.MemberScope.Inherited)
+                    assert(viaAll.isDefined, s"expected findMember(Child, y, All) to resolve to Base.y; got $viaAll")
+                    assert(
+                        viaAll.exists(_.id == SymbolId(1)),
+                        s"expected the resolved member to be Base's y (SymbolId(1)); got $viaAll"
+                    )
+                    assert(
+                        viaInherited == viaAll,
+                        s"a private Child.y must not shadow the inherited Base.y in MemberScope.Inherited: " +
+                            s"Inherited=$viaInherited All=$viaAll"
+                    )
+            end match
+        }
+    }
+
     "members(emptyPkg, All) returns Chunk.empty for package with no members" in {
         val emptyPkg = Tasty.Symbol.Package(
             SymbolId(0),

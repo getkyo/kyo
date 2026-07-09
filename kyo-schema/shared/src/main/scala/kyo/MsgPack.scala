@@ -9,7 +9,7 @@ package kyo
   *
   * The wire shape is controlled by [[MsgPack.Config]]:
   *   - [[MsgPack.KeyEncoding]] selects how case-class field and sealed-variant names are written: `StringName` (default, self-describing,
-  *     interops with any MsgPack decoder) or `FieldId` (compact MurmurHash3 integers, like Protobuf). Dynamic `Map` keys and the
+  *     interops with any MsgPack decoder) or `FieldId` (compact XXH32 integers, like Protobuf). Dynamic `Map` keys and the
   *     `Result`/`Either`/tuple discriminator keys are always written as strings regardless of this setting, since they are not recoverable
   *     from a hash.
   *   - [[MsgPack.InstantEncoding]] selects how `Instant` is written: `Primitive` (default, lossless `[seconds, nanos]` array) or
@@ -44,7 +44,7 @@ object MsgPack:
         /** Write each schema field/variant name as its UTF-8 string. Self-describing and interoperable with generic MessagePack tooling. */
         case StringName
 
-        /** Write each schema field/variant name as its stable MurmurHash3 `fieldId` integer. Compact, but not consumable without the
+        /** Write each schema field/variant name as its stable XXH32 `fieldId` integer. Compact, but not consumable without the
           * schema.
           */
         case FieldId

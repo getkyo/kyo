@@ -1,7 +1,6 @@
 package kyo.ffi.sbt
 
 import java.io.File
-import java.io.FileOutputStream
 import java.net.URL
 import java.net.URLClassLoader
 import java.nio.file.Files
@@ -15,22 +14,20 @@ import sbt.util.Logger
   * Scala 3 library. We cannot statically `dependsOn` across major Scala versions.
   *
   * Strategy:
-  *   - The plugin JAR bundles `kyo-ffi-codegen.jar` as a resource under
-  *     `kyo-ffi-plugin/kyo-ffi-codegen.jar` (see `build.sbt`,  *     `Compile/resourceGenerators`).
-  *   - At runtime we extract that JAR to a temp file and build a URLClassLoader
-  *     whose URLs are: `[codegenJar, ...userDependencyClasspath]`. Parent is
-  *     the JVM bootstrap (no plugin-class-loader parent, so there's no 2.12
-  *     stdlib in scope to clash with 3.x).
-  *   - The user's `Compile / dependencyClasspath` is passed in from the plugin
-  *     and must contain scala3-library, scala3-tasty-inspector, and
-  *     scala3-compiler, which it does automatically because the user depends
-  *     on `kyo-ffi` (a Scala 3 library).
+  *   - The plugin resolves `kyo-ffi-codegen` (and its transitive Scala 3 toolchain:
+  *     scala3-tasty-inspector, scala3-compiler, tasty-core, ...) from the user's
+  *     resolvers via `ffiCodegenClasspath` (see `KyoFfiPlugin`). The in-repo
+  *     integration test overrides that task with the codegen project's own classpath.
+  *   - At runtime we build a URLClassLoader whose URLs are
+  *     `[...codegenClasspath, ...userDependencyClasspath]`. Parent is the JVM
+  *     bootstrap (no plugin-class-loader parent, so there's no 2.12 stdlib in scope
+  *     to clash with 3.x).
+  *   - The user's `Compile / dependencyClasspath` is passed in so kyo-ffi and its
+  *     runtime friends are also visible.
   */
 private[sbt] object CodegenBridge {
 
-    private val cachedLoader         = new AtomicReference[ClassLoader](null)
-    private val cachedOverrideLoader = new AtomicReference[ClassLoader](null)
-    private val cachedFingerprint    = new AtomicReference[String](null)
+    private val cachedCodegenLoader = new AtomicReference[ClassLoader](null)
 
     /** Outcome of a single `generate` invocation.
       *
@@ -162,35 +159,22 @@ private[sbt] object CodegenBridge {
     private def getCodegenClassLoader(
         userClasspath: Seq[String],
         log: Logger,
-        codegenClasspathOverride: Seq[String] = Nil
+        codegenClasspath: Seq[String]
     ): Option[ClassLoader] = {
-        if (codegenClasspathOverride.nonEmpty) {
-            val existing = cachedOverrideLoader.get
-            if (existing != null) return Some(existing)
-
-            val urls = new java.util.ArrayList[URL]()
-            codegenClasspathOverride.foreach(s => urls.add(new File(s).toURI.toURL))
-            userClasspath.foreach(s => urls.add(new File(s).toURI.toURL))
-
-            // Parent = bootstrap (via `null`) so there's no 2.12 stdlib clash.
-            val loader = new URLClassLoader(urls.toArray(new Array[URL](0)), null)
-            cachedOverrideLoader.set(loader)
-            return Some(loader)
+        if (codegenClasspath.isEmpty) {
+            log.warn("[kyo-ffi-plugin] codegen classpath is empty; ffiGenerate is a no-op.")
+            return None
         }
-
-        val existing = cachedLoader.get
+        val existing = cachedCodegenLoader.get
         if (existing != null) return Some(existing)
 
-        val bundled = extractBundledJars(log)
-        if (bundled.isEmpty) return None
-
         val urls = new java.util.ArrayList[URL]()
-        bundled.foreach(p => urls.add(p.toUri.toURL))
+        codegenClasspath.foreach(s => urls.add(new File(s).toURI.toURL))
         userClasspath.foreach(s => urls.add(new File(s).toURI.toURL))
 
         // Parent = bootstrap (via `null`) so there's no 2.12 stdlib clash.
         val loader = new URLClassLoader(urls.toArray(new Array[URL](0)), null)
-        cachedLoader.set(loader)
+        cachedCodegenLoader.set(loader)
         Some(loader)
     }
 
@@ -203,87 +187,36 @@ private[sbt] object CodegenBridge {
       * (#255). Cached: the bundle is fixed for the JVM session. Returns "unknown" when the bundle is
       * absent, the case where ffiGenerate is already a no-op.
       */
-    def codegenFingerprint(): String = codegenFingerprint(Nil)
-
-    /** SHA-256 fingerprint of the codegen, override-aware.
-      *
-      * When `codegenClasspathOverride` is non-empty the fingerprint is the SHA-256 over the bytes
-      * of those jar files (in sorted-path order for stability), so the in-repo bootstrap path stays
-      * incrementally correct when the codegen classpath changes. Directory entries on the override
-      * are folded in by path so a codegen rebuild still invalidates the cache. When it is empty the
-      * bundled-resource fingerprint is used (and cached for the JVM session), the default path.
+    /** SHA-256 fingerprint of the codegen classpath: the bytes of each jar (in sorted-path order for
+      * stability), so ffiGenerate's cache stays incrementally correct when the codegen changes. A
+      * codegen upgrade (a new `kyo-ffi-codegen` version resolving different jars) invalidates the
+      * cache. Returns "unknown" when the classpath is empty, the case where ffiGenerate is a no-op.
       */
-    def codegenFingerprint(codegenClasspathOverride: Seq[String]): String = {
-        if (codegenClasspathOverride.nonEmpty) {
-            val md = java.security.MessageDigest.getInstance("SHA-256")
-            codegenClasspathOverride.sorted.foreach { path =>
-                md.update(path.getBytes(java.nio.charset.StandardCharsets.UTF_8))
-                val f = new File(path)
-                if (f.isFile) {
-                    val in = new java.io.FileInputStream(f)
-                    try md.update(readAll(in))
-                    finally in.close()
-                }
+    def codegenFingerprint(codegenClasspath: Seq[String]): String = {
+        if (codegenClasspath.isEmpty) return "unknown"
+        val md = java.security.MessageDigest.getInstance("SHA-256")
+        codegenClasspath.sorted.foreach { path =>
+            md.update(path.getBytes(java.nio.charset.StandardCharsets.UTF_8))
+            val f = new File(path)
+            if (f.isFile) {
+                val in = new java.io.FileInputStream(f)
+                try md.update(readAll(in))
+                finally in.close()
             }
-            return md.digest().map(b => "%02x".format(b)).mkString
         }
-        val existing = cachedFingerprint.get
-        if (existing != null) return existing
-        val manifestStream = getClass.getResourceAsStream("/kyo-ffi-plugin/bundled.txt")
-        val result =
-            if (manifestStream == null) "unknown"
-            else {
-                val manifest =
-                    try new String(readAll(manifestStream), java.nio.charset.StandardCharsets.UTF_8)
-                    finally manifestStream.close()
-                val md = java.security.MessageDigest.getInstance("SHA-256")
-                md.update(manifest.getBytes(java.nio.charset.StandardCharsets.UTF_8))
-                manifest.split("\n").toList.filter(_.nonEmpty).foreach { name =>
-                    val in = getClass.getResourceAsStream(s"/kyo-ffi-plugin/$name")
-                    if (in != null)
-                        try md.update(readAll(in))
-                        finally in.close()
-                }
-                md.digest().map(b => "%02x".format(b)).mkString
-            }
-        cachedFingerprint.set(result)
-        result
+        md.digest().map(b => "%02x".format(b)).mkString
     }
 
-    /** Extract every JAR listed in `/kyo-ffi-plugin/bundled.txt` to temp files. */
-    private def extractBundledJars(log: Logger): Seq[Path] = {
-        val manifestStream = getClass.getResourceAsStream("/kyo-ffi-plugin/bundled.txt")
-        if (manifestStream == null) {
-            log.warn("[kyo-ffi-plugin] bundled.txt not found in plugin JAR; codegen bundle missing.")
-            return Nil
-        }
-        val manifest =
-            try new String(readAll(manifestStream), java.nio.charset.StandardCharsets.UTF_8)
-            finally manifestStream.close()
-
-        manifest.split("\n").toList.filter(_.nonEmpty).flatMap { name =>
-            val resPath = s"/kyo-ffi-plugin/$name"
-            val in      = getClass.getResourceAsStream(resPath)
-            if (in == null) {
-                log.warn(s"[kyo-ffi-plugin] bundled resource $resPath missing from plugin JAR.")
-                None
-            } else {
-                try {
-                    val tmp = Files.createTempFile("kyo-ffi-bundle-", ".jar")
-                    tmp.toFile.deleteOnExit()
-                    val out = new FileOutputStream(tmp.toFile)
-                    try {
-                        val buf = new Array[Byte](8192)
-                        var n   = in.read(buf)
-                        while (n > 0) {
-                            out.write(buf, 0, n)
-                            n = in.read(buf)
-                        }
-                    } finally out.close()
-                    Some(tmp)
-                } finally in.close()
-            }
-        }
+    /** Version of this plugin, read from the `version.txt` resource baked into the plugin JAR at
+      * build time. Used to resolve the matching `kyo-ffi-codegen` release from the user's resolvers.
+      */
+    def pluginVersion: String = {
+        val in = getClass.getResourceAsStream("/kyo-ffi-plugin/version.txt")
+        if (in == null)
+            sys.error("[kyo-ffi-plugin] version.txt missing from plugin JAR; cannot resolve kyo-ffi-codegen.")
+        else
+            try new String(readAll(in), java.nio.charset.StandardCharsets.UTF_8).trim
+            finally in.close()
     }
 
     private def readAll(in: java.io.InputStream): Array[Byte] = {

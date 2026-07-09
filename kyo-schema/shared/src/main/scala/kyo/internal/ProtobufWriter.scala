@@ -6,7 +6,7 @@ import scala.annotation.tailrec
 
 /** Writes values in Protocol Buffers wire format.
   *
-  * Field numbers are stable hash-based IDs computed from field names using MurmurHash3. This provides schema evolution compatibility -
+  * Field numbers are stable hash-based IDs computed from field names using XXH32. This provides schema evolution compatibility -
   * adding or removing fields doesn't affect existing field numbers.
   *
   * Field ID overrides can be configured via `withFieldIdOverrides` for interoperability with existing `.proto` definitions.

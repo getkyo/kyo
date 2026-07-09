@@ -100,9 +100,9 @@ object System:
         System(
             new Unsafe:
                 def env(name: String)(using AllowUnsafe): Maybe[String] =
-                    Maybe(JSystem.getenv(name))
+                    Maybe(SystemPlatformSpecific.env(name))
                 def property(name: String)(using AllowUnsafe): Maybe[String] =
-                    Maybe(JSystem.getProperty(name))
+                    Maybe(SystemPlatformSpecific.property(name))
                 def lineSeparator()(using AllowUnsafe): String = JSystem.lineSeparator()
                 def userName()(using AllowUnsafe): String      = JSystem.getProperty("user.name")
                 def operatingSystem()(using AllowUnsafe): OS =

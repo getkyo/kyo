@@ -10,9 +10,9 @@ final private[kyo] class WireTransportAdapter(
 
     def send(env: JsonRpcEnvelope)(using Frame): Unit < (Async & Abort[Closed]) =
         // Structure.encode is pure but throws a JsonRpcError for the unencodable cases (a Malformed
-        // message, or a Lenient reserved-extras key); Abort.catching reifies that into a Result so the
+        // message, or a Lenient reserved-extras key); Abort.run reifies that into a Result so the
         // Success/Failure/Panic logging below is preserved.
-        Abort.run[JsonRpcError](Abort.catching[JsonRpcError](Structure.encode[JsonRpcEnvelope](env)(using codec))).map {
+        Abort.run[JsonRpcError](Structure.encode[JsonRpcEnvelope](env)(using codec)).map {
             case Result.Success(structure) =>
                 // Json.encode[Structure.Value] emits standard JSON-RPC wire bytes via the identity wire
                 // shape (Record to object, Str to string, Integer/Decimal to number), so the universal

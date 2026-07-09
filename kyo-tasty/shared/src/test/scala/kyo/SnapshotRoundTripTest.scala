@@ -20,6 +20,12 @@ class SnapshotRoundTripTest extends kyo.test.Test[Any]:
     private val someTraitPickle =
         Tasty.Pickle("some-trait", Tasty.Version(28, 3, 0), Span.from(kyo.fixtures.Embedded.someTraitTasty))
 
+    private val childClassPickle =
+        Tasty.Pickle("child-class", Tasty.Version(28, 3, 0), Span.from(kyo.fixtures.Embedded.childClassTasty))
+
+    private val baseClassPickle =
+        Tasty.Pickle("base-class", Tasty.Version(28, 3, 0), Span.from(kyo.fixtures.Embedded.baseClassTasty))
+
     /** Serialize a single-fixture classpath to bytes and return (bytes, snapshotPath). */
     private def serializeSnapshot()(using Frame): (Array[Byte], String) < (Async & Abort[TastyError]) =
         val digest = Array[Byte](1, 2, 3, 4, 5, 6, 7, 8)
@@ -698,7 +704,7 @@ class SnapshotRoundTripTest extends kyo.test.Test[Any]:
         }
     }
 
-    "new snapshot section-index: all 18 sections present and offsets monotone increasing" in {
+    "new snapshot section-index: all 19 sections present and offsets monotone increasing" in {
         val digest = Array[Byte](0xc0.toByte, 0xc1.toByte, 0xc2.toByte, 0xc3.toByte, 0xc4.toByte, 0xc5.toByte, 0xc6.toByte, 0xc7.toByte)
         Abort.run[TastyError](
             Tasty.withPickles(Chunk(plainClassPickle)) {
@@ -709,7 +715,7 @@ class SnapshotRoundTripTest extends kyo.test.Test[Any]:
         ).map {
             case Result.Success(bytes) =>
                 val sectionCount = SnapshotFormat.readInt32LE(bytes, 32)
-                assert(sectionCount == 18, s"Expected 18 sections in new-writer snapshot, got $sectionCount")
+                assert(sectionCount == 19, s"Expected 19 sections in new-writer snapshot, got $sectionCount")
 
                 val expectedNames = Set(
                     SnapshotFormat.sectionNAMES,
@@ -729,7 +735,8 @@ class SnapshotRoundTripTest extends kyo.test.Test[Any]:
                     SnapshotFormat.sectionFQNMAP,
                     SnapshotFormat.sectionSUBCIDX,
                     SnapshotFormat.sectionCOMPIDX,
-                    SnapshotFormat.sectionPLISTS
+                    SnapshotFormat.sectionPLISTS,
+                    SnapshotFormat.sectionSRCPOS
                 )
 
                 val foundNames = scala.collection.mutable.Set.empty[String]
@@ -898,6 +905,99 @@ class SnapshotRoundTripTest extends kyo.test.Test[Any]:
                         throw t
                 }
             }
+        }
+    }
+
+    "bySourceFile round-trips across the 12->13 bump (warm equals fresh)" in {
+        val digest = Array[Byte](0xe0.toByte, 0xe1.toByte, 0xe2.toByte, 0xe3.toByte, 0xe4.toByte, 0xe5.toByte, 0xe6.toByte, 0xe7.toByte)
+        Abort.run[TastyError](
+            Tasty.withPickles(Chunk(childClassPickle, baseClassPickle)) {
+                Tasty.classpath.map { coldCp =>
+                    val bytes    = SnapshotWriter.serializeToBytes(coldCp, digest)
+                    val snapPath = s"mem/srcpos-rt.krfl"
+                    SnapshotReader.readFromBytes(bytes, snapPath).map { warmCp =>
+                        (coldCp.indices.bySourceFile, warmCp.indices.bySourceFile)
+                    }
+                }
+            }
+        ).map {
+            case Result.Success((coldBsf, warmBsf)) =>
+                assert(coldBsf.is(warmBsf), s"bySourceFile must be equal after round-trip; cold=$coldBsf warm=$warmBsf")
+                assert(!coldBsf.isEmpty, "bySourceFile must be non-empty for fixtures with SOURCEFILE attribute")
+            case Result.Failure(e) =>
+                fail(s"Unexpected failure: $e")
+            case Result.Panic(t) =>
+                throw t
+        }
+    }
+
+    "warm-loaded symbols carry sourcePosition" in {
+        val digest = Array[Byte](0xf0.toByte, 0xf1.toByte, 0xf2.toByte, 0xf3.toByte, 0xf4.toByte, 0xf5.toByte, 0xf6.toByte, 0xf7.toByte)
+        Abort.run[TastyError](
+            Tasty.withPickles(Chunk(childClassPickle, baseClassPickle)) {
+                Tasty.classpath.map { coldCp =>
+                    val bytes    = SnapshotWriter.serializeToBytes(coldCp, digest)
+                    val snapPath = s"mem/srcpos-warm.krfl"
+                    SnapshotReader.readFromBytes(bytes, snapPath).map { warmCp =>
+                        val coldWithPos = coldCp.symbols.filter(s => s.sourcePosition.isDefined)
+                        val warmById    = warmCp.symbols.map(s => s.id -> s).toMap
+                        (coldWithPos, warmById)
+                    }
+                }
+            }
+        ).map {
+            case Result.Success((coldWithPos, warmById)) =>
+                assert(coldWithPos.nonEmpty, "At least one symbol must carry sourcePosition after cold load")
+                coldWithPos.foreach { coldSym =>
+                    warmById.get(coldSym.id) match
+                        case Some(warmSym) =>
+                            assert(
+                                warmSym.sourcePosition == coldSym.sourcePosition,
+                                s"sourcePosition mismatch for ${coldSym.id}: cold=${coldSym.sourcePosition} warm=${warmSym.sourcePosition}"
+                            )
+                        case None =>
+                            fail(s"Symbol id=${coldSym.id} missing from warm classpath")
+                }
+            case Result.Failure(e) =>
+                fail(s"Unexpected failure: $e")
+            case Result.Panic(t) =>
+                throw t
+        }
+    }
+
+    "recompute-from-sourcePosition equals stored bySourceFile after warm load" in {
+        val digest = Array[Byte](0xa0.toByte, 0xa1.toByte, 0xa2.toByte, 0xa3.toByte, 0xa4.toByte, 0xa5.toByte, 0xa6.toByte, 0xa7.toByte)
+        Abort.run[TastyError](
+            Tasty.withPickles(Chunk(childClassPickle, baseClassPickle)) {
+                Tasty.classpath.map { coldCp =>
+                    val bytes    = SnapshotWriter.serializeToBytes(coldCp, digest)
+                    val snapPath = s"mem/srcpos-recompute.krfl"
+                    SnapshotReader.readFromBytes(bytes, snapPath).map { warmCp =>
+                        val rebuilt = warmCp.symbols.foldLeft(
+                            scala.collection.mutable.HashMap.empty[String, scala.collection.mutable.ArrayBuffer[Tasty.SymbolId]]
+                        ) { (b, sym) =>
+                            sym.sourcePosition match
+                                case Maybe.Present(pos) =>
+                                    b.getOrElseUpdate(pos.sourceFile, new scala.collection.mutable.ArrayBuffer()) += sym.id
+                                case Maybe.Absent => ()
+                            end match
+                            b
+                        }
+                        val rebuiltDict = Dict.from(rebuilt.map((k, v) => k -> Chunk.from(v.toSeq)).toMap)
+                        (rebuiltDict, warmCp.indices.bySourceFile)
+                    }
+                }
+            }
+        ).map {
+            case Result.Success((rebuiltDict, storedDict)) =>
+                assert(
+                    rebuiltDict.is(storedDict),
+                    s"Recomputed bySourceFile must equal stored bySourceFile after warm load"
+                )
+            case Result.Failure(e) =>
+                fail(s"Unexpected failure: $e")
+            case Result.Panic(t) =>
+                throw t
         }
     }
 

@@ -13,6 +13,8 @@ private[kyo] object timeSliceMs        extends StaticFlag[Int](10)
 private[kyo] object cycleIntervalNs    extends StaticFlag[Int](100000)
 private[kyo] object enableTopJMX       extends StaticFlag[Boolean](false)
 private[kyo] object enableTopConsoleMs extends StaticFlag[Int](0)
+private[kyo] object topStatusFile      extends StaticFlag[String]("")
+private[kyo] object topStatusFileMs    extends StaticFlag[Int](0)
 
 // worker rebalance rate-limit (ms)
 private[kyo] object minInterval extends StaticFlag[Int](1)

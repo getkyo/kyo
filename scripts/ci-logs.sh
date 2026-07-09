@@ -13,7 +13,9 @@ set -uo pipefail
 #   runs   <branch> [n]             --full                entire cleaned log
 #   running [branch]                --tail <n>            last n lines (n=40)
 #   pr     <number>                  --steps               per-job step status
-#   open-prs                         --all-jobs            apply to ALL jobs,
+#   open-prs                         --metrics             ci-monitor.sh resource
+#                                                          lines (implies all-jobs)
+#                                    --all-jobs            apply to ALL jobs,
 #                                                          not just failed ones
 #
 # Examples:
@@ -50,6 +52,7 @@ while [ $# -gt 0 ]; do
     case "$1" in
         --failures) VIEW=failures ;;
         --grep)     VIEW=grep; GREP_RE="${2:?--grep needs a pattern}"; shift ;;
+        --metrics)  VIEW=grep; GREP_RE='\[ci-mon\]'; ALL_JOBS=1 ;;
         --full|--dump|--raw) VIEW=full ;;
         --tail)     VIEW=tail; TAIL_N="${2:?--tail needs a count}"; shift ;;
         --steps)    VIEW=steps ;;

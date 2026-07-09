@@ -100,6 +100,16 @@ private[kyo] object BundledSnapshotProbe:
             }
             Dict.from(b.toMap)
         end mergedSimple
+        // Merge bySourceFile.
+        val mergedBySourceFile: Dict[String, Chunk[SymbolId]] =
+            val b = scala.collection.mutable.HashMap.empty[String, Chunk[SymbolId]]
+            existing.indices.bySourceFile.foreach((k, v) => b(k) = v)
+            partial.indices.bySourceFile.foreach { (k, v) =>
+                val shifted = v.map(id => SymbolId(id.value + offset))
+                b(k) = b.getOrElse(k, Chunk.empty) ++ shifted
+            }
+            Dict.from(b.toMap)
+        end mergedBySourceFile
         // Merge errors and modules.
         val mergedErrors: Chunk[TastyError]                    = existing.errors ++ partial.errors
         val mergedModules: Chunk[Tasty.Java.Module.Descriptor] = existing.modules ++ partial.modules
@@ -120,7 +130,8 @@ private[kyo] object BundledSnapshotProbe:
                 topLevelClassIds = mergedTopIds,
                 packageIds = mergedPkgIds,
                 unresolvedFullNameByNegId = existing.indices.unresolvedFullNameByNegId ++ partial.indices.unresolvedFullNameByNegId,
-                diagnostics = existing.indices.diagnostics ++ partial.indices.diagnostics
+                diagnostics = existing.indices.diagnostics ++ partial.indices.diagnostics,
+                bySourceFile = mergedBySourceFile
             ),
             errors = mergedErrors,
             modules = mergedModules,

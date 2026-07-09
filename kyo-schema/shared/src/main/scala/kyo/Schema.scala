@@ -970,7 +970,7 @@ abstract class Schema[A] @publicInBinary private[kyo] (
 
     /** Returns the stable field ID for a given field name.
       *
-      * Field IDs are computed using MurmurHash3 of the field name, producing stable 21-bit positive integers. These IDs are used by binary
+      * Field IDs are computed using XXH32 of the field name, producing stable 21-bit positive integers. These IDs are used by binary
       * formats like Protocol Buffers and MessagePack for schema evolution compatibility.
       *
       * The ID remains stable across:
@@ -1047,7 +1047,7 @@ abstract class Schema[A] @publicInBinary private[kyo] (
       *
       * Pinning is keyed by field NAME and is therefore GLOBAL: pinning `id` sets the field number for
       * EVERY field named `id` across all messages. This is consistent with the default scheme, where the
-      * field number is already `MurmurHash3(name)`, so all same-named fields already share a number.
+      * field number is already `XXH32(name)`, so all same-named fields already share a number.
       *
       * {{{
       * Schema[User].fieldId(_.age)(42)  // Sets field ID 42 for the 'age' field
@@ -1566,10 +1566,10 @@ object Schema:
         ):
             @publicInBinary def serializeWrite(value: A, writer: Writer): Unit =
                 if hasTransforms then transformedWrite(value, writer)
-                else writeFn(value, writer)
+                else rawSerializeWrite(value, writer)
             @publicInBinary def serializeRead(reader: Reader): A =
                 if hasReadTransforms then transformedRead(reader)
-                else readFn(reader)
+                else rawSerializeRead(reader)
             @publicInBinary override def rawSerializeWrite(value: A, writer: Writer): Unit = writeFn(value, writer)
             @publicInBinary override def rawSerializeRead(reader: Reader): A               = readFn(reader)
             @publicInBinary def getter(value: A): Maybe[Any]                               = getterFn(value)
@@ -3096,10 +3096,10 @@ object Schema:
             @publicInBinary override private[kyo] val flattenedReadFields: Chunk[(String, String)] = flattenedReadFields0
             @publicInBinary def serializeWrite(value: A, writer: Writer): Unit =
                 if hasTransforms then transformedWrite(value, writer)
-                else writeFn(value, writer)
+                else rawSerializeWrite(value, writer)
             @publicInBinary def serializeRead(reader: Reader): A =
                 if hasReadTransforms then transformedRead(reader)
-                else readFn(reader)
+                else rawSerializeRead(reader)
             @publicInBinary override def rawSerializeWrite(value: A, writer: Writer): Unit = writeFn(value, writer)
             @publicInBinary override def rawSerializeRead(reader: Reader): A               = readFn(reader)
             @publicInBinary def getter(value: A): Maybe[Any]                               = getterFn(value)

@@ -466,8 +466,12 @@ final private[kyo] class YamlReader private (
                 delegate = Absent
                 reader
             case _ =>
+                // Only pull a new source-sequence element when no delegate holds the current one.
+                // A present delegate is the sequence element currently being decoded (its fields drained
+                // by a wrapper reader), so the capture forwards into it; pulling a new element here would
+                // re-enter the enclosing sequence frame after it is exhausted and read past end of buffer.
                 sourceFrames match
-                    case (f: SourceSequenceFrame) :: _ if allowSourcePull && !prepared =>
+                    case (f: SourceSequenceFrame) :: _ if allowSourcePull && !prepared && delegate.isEmpty =>
                         sourceCaptureSequenceElement(f)
                         delegate match
                             case Present(reader) =>
@@ -475,7 +479,7 @@ final private[kyo] class YamlReader private (
                                 reader
                             case Absent => error("Expected captured YAML value")
                         end match
-                    case (f: SourceFlowSequenceFrame) :: _ if allowSourcePull && !prepared =>
+                    case (f: SourceFlowSequenceFrame) :: _ if allowSourcePull && !prepared && delegate.isEmpty =>
                         sourceCaptureSequenceElement(f)
                         delegate match
                             case Present(reader) =>
@@ -1012,7 +1016,13 @@ final private[kyo] class YamlReader private (
                 anchor.foreach(a => registerSourceAnchor(a.value, value, valueLine))
                 SourceValue(value, valueLine)
             else if tailEnd > tailStart then
-                SourceValue(trimmed + "\n" + normalizeBlock(tailStart, tailEnd, frame.indent), lineNumber)
+                // Exclude a tail that is entirely blank lines: those are trailing
+                // document blanks, not continuation content for a plain scalar.
+                // Block scalar indicators (| >) and multi-line plain scalar
+                // continuations always produce non-blank tail text, so they pass through.
+                val normalizedTail = normalizeBlock(tailStart, tailEnd, frame.indent)
+                if normalizedTail.isBlank then SourceValue(trimmed + "\n", lineNumber)
+                else SourceValue(trimmed + "\n" + normalizedTail, lineNumber)
             else SourceValue(trimmed + "\n", lineNumber)
             end if
         else
@@ -1572,6 +1582,7 @@ final private[kyo] class YamlReader private (
 
     private def readSourceRestOfLineFrom(start: Int): String =
         sourcePos = YamlSource.lineEnd(source, sourcePos)
+        if start > sourcePos then sourceError("Invalid YAML source capture position")
         val out = source.substring(start, sourcePos)
         if sourcePos < source.length && source.charAt(sourcePos) == '\n' then sourcePos += 1
         out

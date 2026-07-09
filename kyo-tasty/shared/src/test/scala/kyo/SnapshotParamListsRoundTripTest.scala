@@ -7,7 +7,7 @@ import kyo.internal.tasty.snapshot.SnapshotReader
 import kyo.internal.tasty.snapshot.SnapshotWriter
 import scala.collection.mutable
 
-/** Round-trip tests for PLISTS__ section (minor=12 wire format bump).
+/** Round-trip tests for PLISTS__ section (introduced in minor=12; current minor=13).
   *
   * Covers:
   *   1. Meters extension methods preserve paramListIds shape through write+read.
@@ -185,8 +185,8 @@ class SnapshotParamListsRoundTripTest extends kyo.test.Test[Any]:
                             s"Expected found.minor == 11, got ${mismatch.found.minor}"
                         )
                         assert(
-                            mismatch.supported.minor == 12,
-                            s"Expected supported.minor == 12, got ${mismatch.supported.minor}"
+                            mismatch.supported.minor == 13,
+                            s"Expected supported.minor == 13, got ${mismatch.supported.minor}"
                         )
                         succeed
                     case other =>
@@ -228,7 +228,7 @@ class SnapshotParamListsRoundTripTest extends kyo.test.Test[Any]:
 
         assert(
             foundNames.contains(SnapshotFormat.sectionPLISTS),
-            s"Expected PLISTS__ section in minor=12 snapshot output but not found. Sections found: ${foundNames.toSet}"
+            s"Expected PLISTS__ section in minor=13 snapshot output but not found. Sections found: ${foundNames.toSet}"
         )
         succeed
     }

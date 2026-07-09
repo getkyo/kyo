@@ -9,8 +9,8 @@ import kyo.internal.tasty.snapshot.SnapshotFormat
   */
 class SnapshotFormatTest extends kyo.test.Test[Any]:
 
-    "SnapshotFormat.minorVersion is 12 (added PLISTS__ section for Symbol.Method.paramListIds)" in {
-        assert(SnapshotFormat.minorVersion == 12)
+    "SnapshotFormat.minorVersion is 13 (added SRCPOS__ section for Symbol.sourcePosition)" in {
+        assert(SnapshotFormat.minorVersion == 13)
         succeed
     }
 
