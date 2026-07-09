@@ -374,7 +374,7 @@ final private[kyo] class FileJournalCore(
     private def claim(ref: AtomicRef.Unsafe[StreamState])(using AllowUnsafe): StreamState =
         val s = ref.get()
         if s.writer then
-            Thread.`yield`()
+            yieldCurrentThread()
             claim(ref)                                             // a holder is running its section
         else if ref.compareAndSet(s, s.copy(writer = true)) then s // won the claim; caller must publish/clear
         else claim(ref)
