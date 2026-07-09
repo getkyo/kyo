@@ -86,41 +86,39 @@ private[net] object KqueuePollerBackend extends PollerBackend:
 
     def registerWake(pollerFd: Int, scratch: PollScratch)(using AllowUnsafe, Frame): Boolean =
         // Register the EVFILT_USER wake filter on the fixed wakeUserIdent with EV_CLEAR (auto-reset on delivery). No wake fd: the filter lives on
-        // the kqueue fd and is released when it closes. wakeArmBuf is the reused one-element changelist the trigger encodes NOTE_TRIGGER into.
-        scratch.wakeArmBuf = Buffer.alloc[Byte](KEvent.size)
-        val emptyEvents = Buffer.alloc[Byte](0)
-        KEvent.encodeUser(scratch.wakeArmBuf, scratch.wakeUserIdent, (PosixConstants.EV_ADD | PosixConstants.EV_CLEAR).toShort, 0)
-        val rc = kq.keventNow(pollerFd, scratch.wakeArmBuf, 1, emptyEvents, 0, ZeroTimeout).value
-        emptyEvents.close()
+        // the kqueue fd and is released when it closes. After registering, re-encode the same buffer once with the constant NOTE_TRIGGER
+        // changelist that wake() reuses read-only: the trigger payload never varies (fixed ident, fixed fflags) and kevent reads the changelist
+        // without writing it, so one pre-encoded buffer serves every wake with no per-call allocation and no cross-wake write race. Publish it
+        // through the volatile wakeArmBuf field only AFTER its bytes are final, so any waker that observes a non-null wakeArmBuf also observes the
+        // encoded trigger. The eventlist is `buf` itself with nevents=0: kevent(2) permits changelist and eventlist to be the same array, and with
+        // nevents=0 the kernel writes nothing, so no separate eventlist buffer is needed. wakeArmBuf is the only wake buffer, and its lifetime is
+        // the wake guard's (freed at closeWake, deferred behind any in-flight wake), so wake never touches a buffer that freeScratch already closed.
+        val buf = Buffer.alloc[Byte](KEvent.size)
+        KEvent.encodeUser(buf, scratch.wakeUserIdent, (PosixConstants.EV_ADD | PosixConstants.EV_CLEAR).toShort, 0)
+        val rc = kq.keventNow(pollerFd, buf, 1, buf, 0, ZeroTimeout).value
+        KEvent.encodeUser(buf, scratch.wakeUserIdent, 0, PosixConstants.NOTE_TRIGGER)
+        scratch.wakeArmBuf = buf
         rc >= 0
     end registerWake
 
     def wake(pollerFd: Int, scratch: PollScratch)(using AllowUnsafe, Frame): Unit =
         // Fire the EVFILT_USER filter with NOTE_TRIGGER so a parked kevent returns. keventNow is the non-blocking register-only syscall.
         //
-        // submitChange's wake is CAS-coalesced (PollerIoDriver.wakePending guarantees at most one in-flight trigger), but submitEngineOp's
-        // wake is UNCONDITIONAL (the B' write-stall fix: a coalesced wake can be skipped against a stale wakePending, permanently stranding
-        // a TLS write's only delivery attempt), so a submitChange wake and a submitEngineOp wake from two different connections' carrier
-        // threads can now reach this method at the same time. The reused `scratch.wakeArmBuf` is single-writer (the arm path registers it
-        // once at driver start), so it must not be the encode target of two concurrent wakes. Rather than lock it (kyo-net is uniformly
-        // lock-free; no `synchronized` anywhere else in this module), each call encodes into a FRESH buffer, mirroring the existing
-        // fresh-per-call pattern in `change`/`changeNow` above: two concurrent wakes never touch the same memory, so there is nothing to
-        // race. Wakes are rare relative to the data-plane read/write syscalls this driver issues, so the per-wake allocation is negligible.
+        // Both submitChange and submitEngineOp trigger this UNCONDITIONALLY (wake coalescing was retired: a coalesced wake can be skipped
+        // against a stale wakePending and permanently strand a TLS write's only delivery attempt), so two carrier threads can wake at the same
+        // time. wake reads the per-driver wakeArmBuf that registerWake pre-encoded with the constant NOTE_TRIGGER changelist and passes it to
+        // kevent, which only reads the changelist; concurrent wakes therefore share one immutable buffer with nothing to race, and there is no
+        // per-wake allocation. This matters because the previous fresh-per-call armBuf/emptyEvents pair closed a shared Arena on every wake, and
+        // each Arena.ofShared close forces a JVM-wide thread handshake, so under submission-heavy load that per-wake close dominated the single
+        // poll-loop thread's time.
         //
-        // wakeArmBuf's nullness (set by registerWake, never cleared) is still the "is the wake mechanism armed" guard, exactly as before:
-        // a driver whose poll loop never started (registerWake never ran, e.g. PollerFifoBackstopRecoveryTest's direct-submit tests) must
-        // not attempt a keventNow on an unregistered EVFILT_USER identifier. The buffer ITSELF is no longer the encode target.
-        if scratch.wakeArmBuf != null then
-            val armBuf      = Buffer.alloc[Byte](KEvent.size)
-            val emptyEvents = Buffer.alloc[Byte](0)
-            try
-                KEvent.encodeUser(armBuf, scratch.wakeUserIdent, 0, PosixConstants.NOTE_TRIGGER)
-                discard(kq.keventNow(pollerFd, armBuf, 1, emptyEvents, 0, ZeroTimeout))
-            finally
-                armBuf.close()
-                emptyEvents.close()
-            end try
-        end if
+        // wakeArmBuf's nullness is the "is the wake mechanism armed" guard: a driver whose poll loop never started (registerWake never ran, e.g.
+        // PollerFifoBackstopRecoveryTest's direct-submit tests) must not keventNow on an unregistered EVFILT_USER identifier. wakeArmBuf is freed
+        // as the wake guard's terminal action (closeWake), so a wake holding the guard cannot race that free. The eventlist is wakeArmBuf itself
+        // with nevents=0 (kevent(2) permits changelist == eventlist and writes nothing when nevents=0), so the wake touches only the guard-managed
+        // buffer, never a scratch buffer that freeScratch closes independently of the wake guard.
+        val buf = scratch.wakeArmBuf
+        if buf != null then discard(kq.keventNow(pollerFd, buf, 1, buf, 0, ZeroTimeout))
     end wake
 
     def drainWake(scratch: PollScratch)(using AllowUnsafe, Frame): Unit =

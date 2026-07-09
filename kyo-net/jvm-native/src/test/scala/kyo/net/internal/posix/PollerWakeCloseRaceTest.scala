@@ -24,9 +24,9 @@ import kyo.net.Test
   *
   * Gate: `PosixTestSockets.assumePoller()` (a real epoll/kqueue fd). The race has a backend-specific shape but one guard. On epoll closeWake closes
   * the wakeup eventfd, whose freed number can be recycled. On kqueue there is no wake fd (the EVFILT_USER filter is released with the kqueue fd), but
-  * `wake()` mutates `scratch.wakeArmBuf` (the NOTE_TRIGGER changelist) on an arbitrary carrier, so closeWake frees that buffer as the guard's terminal
-  * action; without the guard `PollScratch.close` freed it under an in-flight wake, a use-after-close ("Buffer is closed"). The leaf pins the invariant
-  * on both backends: closeWake never runs while a wake is in flight.
+  * `wake()` reads `scratch.wakeArmBuf` (the NOTE_TRIGGER changelist `registerWake` pre-encoded once) as the `keventNow` changelist on an arbitrary
+  * carrier, so closeWake frees that buffer as the guard's terminal action; without the guard `PollScratch.close` freed it under an in-flight wake, a
+  * use-after-close ("Buffer is closed"). The leaf pins the invariant on both backends: closeWake never runs while a wake is in flight.
   */
 class PollerWakeCloseRaceTest extends Test:
 

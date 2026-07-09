@@ -77,10 +77,11 @@ private[net] trait PollerBackend:
     def registerWake(pollerFd: Int, scratch: PollScratch)(using AllowUnsafe, Frame): Boolean
 
     /** Trigger the poll-loop wakeup: make a parked [[poll]] on `pollerFd` return now so the driver drains its change/engine FIFOs. Thread-safe and
-      * callable from any carrier (it is the cross-carrier wake): epoll writes the eventfd counter (an atomic syscall, no shared buffer); kqueue
-      * submits a one-element `NOTE_TRIGGER` changelist via the non-blocking `keventNow` into `scratch.wakeArmBuf` (the caller serializes access to
-      * that buffer through the driver's `wakePending` CAS, so at most one trigger is in flight). A no-op if `scratch.wakeFd` or the filter is gone
-      * after close (the wake-fd teardown guard catches the close-while-in-flight race).
+      * callable from any carrier (it is the cross-carrier wake), and triggered UNCONDITIONALLY per submission (wake coalescing was retired): epoll
+      * writes the eventfd counter (an atomic syscall, no shared buffer); kqueue submits the `NOTE_TRIGGER` changelist that `registerWake`
+      * pre-encoded once into `scratch.wakeArmBuf`, read-only, so concurrent wakes share one immutable buffer and allocate nothing per wake. A no-op
+      * if the wake mechanism is gone after close (`scratch.wakeFd` < 0 on epoll, `scratch.wakeArmBuf` null on kqueue); the wake guard frees that
+      * buffer as its terminal action so a wake holding the guard cannot race the close (the close-while-in-flight recycle race).
       */
     def wake(pollerFd: Int, scratch: PollScratch)(using AllowUnsafe, Frame): Unit
 
@@ -206,13 +207,15 @@ final private[net] class PollScratch(
       *
       * epoll: `wakeFd` is the eventfd (created with EFD_NONBLOCK | EFD_CLOEXEC, registered in the epoll set for read interest); `wakeDrainBuf`
       * is the reused 8-byte buffer the poll loop reads the eventfd counter into when the wake fires. kqueue: `wakeFd` stays -1 (EVFILT_USER is
-      * keyed on a fixed ident on the kqueue fd, not a separate fd); `wakeArmBuf` is the reused one-element changelist the trigger encodes the
-      * NOTE_TRIGGER into. The wake buffers are off-heap and freed in [[close]]. Single-writer per buffer: the poll-loop carrier owns
-      * `wakeDrainBuf`; the wake trigger owns `wakeArmBuf`, serialized by the driver's `wakePending` CAS so at most one trigger is in flight.
+      * keyed on a fixed ident on the kqueue fd, not a separate fd); `wakeArmBuf` holds the constant NOTE_TRIGGER changelist that
+      * `registerWake` pre-encodes ONCE and every `wake` reuses read-only (kevent reads the changelist without writing it, so concurrent
+      * unconditional wakes share the one immutable buffer with nothing to race and allocate nothing per wake). The wake buffers are off-heap
+      * and freed under the wake guard at [[close]]/`closeWake`. `wakeArmBuf` is `@volatile` so a waker carrier that observes it non-null also
+      * observes the encoded trigger bytes; `wakeDrainBuf` is poll-loop-carrier-owned.
       */
-    var wakeFd: Int                        = -1
-    var wakeDrainBuf: kyo.ffi.Buffer[Byte] = null
-    var wakeArmBuf: kyo.ffi.Buffer[Byte]   = null
+    var wakeFd: Int                                = -1
+    var wakeDrainBuf: kyo.ffi.Buffer[Byte]         = null
+    @volatile var wakeArmBuf: kyo.ffi.Buffer[Byte] = null
 
     /** The fixed kqueue `EVFILT_USER` ident used as the wakeup key. Distinct from any socket fd (a large sentinel), so a delivered wake event
       * is recognized and consumed by the poll loop rather than dispatched to a connection. Unused on epoll.
