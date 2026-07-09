@@ -68,8 +68,14 @@ final private[kyo] class ConnectionPool[C](
             pools.clear()
             builder.result()
 
+    // Cached mapping function: computeIfAbsent reuses this one instance instead of allocating a fresh lambda on every getPool call, and getPool
+    // runs on the hot path (poll/release/tryReserve/unreserve each call it). maxConnectionsPerHost is a fixed constructor param, so one instance
+    // per pool suffices.
+    private val newHostPool: java.util.function.Function[HttpAddress, HostPool] =
+        _ => new HostPool(maxConnectionsPerHost)
+
     private def getPool(key: HttpAddress): HostPool =
-        pools.computeIfAbsent(key, _ => new HostPool(maxConnectionsPerHost))
+        pools.computeIfAbsent(key, newHostPool)
 
 end ConnectionPool
 
