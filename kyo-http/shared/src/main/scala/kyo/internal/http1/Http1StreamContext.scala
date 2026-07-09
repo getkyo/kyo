@@ -4,6 +4,7 @@ import kyo.*
 import kyo.internal.codec.*
 import kyo.internal.server.*
 import kyo.internal.util.*
+import kyo.net.internal.util.GrowableByteBuffer
 import scala.annotation.tailrec
 
 /** HTTP/1.1 implementation of StreamContext — one instance per connection, reused across requests.

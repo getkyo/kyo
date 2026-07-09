@@ -4,6 +4,7 @@ import kyo.*
 import kyo.ffi.Buffer
 import kyo.net.internal.tls.TlsEngine
 import kyo.net.internal.util.GrowableByteBuffer
+import kyo.net.internal.util.writeFromBuffer
 
 /** The TLS encrypt/decrypt steps shared by the readiness driver ([[PollerIoDriver]]) and the completion driver ([[IoUringDriver]]).
   *

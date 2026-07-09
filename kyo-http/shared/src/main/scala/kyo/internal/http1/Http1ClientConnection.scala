@@ -3,6 +3,7 @@ package kyo.internal.http1
 import kyo.*
 import kyo.internal.codec.*
 import kyo.internal.util.*
+import kyo.net.internal.util.GrowableByteBuffer
 import kyo.scheduler.IOPromise
 
 /** HTTP/1.1 client connection that sends requests and receives responses using the unsafe channel-backed architecture.

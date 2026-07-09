@@ -1,6 +1,5 @@
 package kyo.net.internal.util
 
-import kyo.AllowUnsafe
 import scala.annotation.tailrec
 
 /** A reusable growable byte buffer for connection-scoped serialization.
@@ -118,25 +117,6 @@ final private[kyo] class GrowableByteBuffer:
 
     /** Advances the position by `n` bytes, recording that `n` bytes have been written directly into `array` at offset `size`. */
     private[kyo] def advance(n: Int): Unit = pos += n
-
-    /** Copies `len` bytes from an off-heap Buffer[Byte] into the internal array at the current position, growing the array if needed and
-      * advancing the position by `len`.
-      *
-      * The kyo-ffi Buffer API does not expose a bulk copyInto(dst: Array[Byte], dstOffset: Int, len: Int) primitive, so this method reads
-      * element-wise directly into the internal array starting at `pos`, with no intermediate allocation. The loop is the same per-element
-      * cost as Buffer.copyToArray internally (which also loops buf.get(from+i)), but without the temporary array or the subsequent
-      * arraycopy, yielding strictly zero extra allocation per call.
-      *
-      * Used by decryptAll (multi-record path) and appendPending (TLS write backpressure).
-      */
-    def writeFromBuffer(src: kyo.ffi.Buffer[Byte], len: Int)(using AllowUnsafe): Unit =
-        ensureCapacity(len)
-        var i = 0
-        while i < len do
-            arr(pos + i) = src.get(i)
-            i += 1
-        pos += len
-    end writeFromBuffer
 end GrowableByteBuffer
 
 private[kyo] object GrowableByteBuffer:

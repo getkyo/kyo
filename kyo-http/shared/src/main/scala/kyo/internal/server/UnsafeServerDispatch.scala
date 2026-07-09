@@ -13,6 +13,7 @@ import kyo.internal.util.*
 import kyo.internal.websocket.*
 import kyo.kernel.internal.Context
 import kyo.kernel.internal.Trace
+import kyo.net.internal.util.GrowableByteBuffer
 import kyo.scheduler.IOTask
 import scala.annotation.tailrec
 

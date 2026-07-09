@@ -2,6 +2,7 @@ package kyo.internal.http1
 
 import kyo.*
 import kyo.internal.util.*
+import kyo.net.internal.util.GrowableByteBuffer
 import scala.annotation.tailrec
 
 /** Strips HTTP/1.1 chunked transfer encoding framing from raw bytes.

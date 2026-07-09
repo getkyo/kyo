@@ -7,6 +7,7 @@ import kyo.internal.server.RouteUtil
 import kyo.internal.transport.*
 import kyo.internal.util.*
 import kyo.internal.websocket.WebSocketCodec
+import kyo.net.internal.util.GrowableByteBuffer
 import kyo.scheduler.IOPromise
 
 /** HTTP client backend that combines transport, protocol, pool, and orchestration layers.

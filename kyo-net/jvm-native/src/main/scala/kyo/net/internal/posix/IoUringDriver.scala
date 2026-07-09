@@ -10,6 +10,7 @@ import kyo.net.internal.transport.IoDriver
 import kyo.net.internal.transport.ReadOutcome
 import kyo.net.internal.transport.WriteResult
 import kyo.net.internal.util.GrowableByteBuffer
+import kyo.net.internal.util.writeFromBuffer
 
 /** One submitted-but-not-yet-reaped io_uring operation, keyed by a dense `user_data` value.
   *

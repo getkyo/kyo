@@ -14,6 +14,7 @@ import kyo.net.internal.util.HandleId
 import kyo.net.internal.util.IntLongMap
 import kyo.net.internal.util.IntRefMap
 import kyo.net.internal.util.MpscLongQueue
+import kyo.net.internal.util.writeFromBuffer
 
 /** Readiness-to-completion I/O driver over epoll (Linux) / kqueue (macOS/BSD), unified onto [[PosixHandle]] and the kyo-ffi bindings.
   *

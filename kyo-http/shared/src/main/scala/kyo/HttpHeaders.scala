@@ -285,7 +285,7 @@ object HttpHeaders:
         /** Writes all headers to a GrowableByteBuffer in HTTP/1.1 wire format (name: value\r\n per header). Zero allocation for packed
           * headers. For chunk-backed headers, uses writeAscii.
           */
-        def writeToBuffer(buf: kyo.internal.util.GrowableByteBuffer): Unit =
+        def writeToBuffer(buf: kyo.net.internal.util.GrowableByteBuffer): Unit =
             if isPacked(self) then
                 val packed = asPacked(self)
                 val count  = packedHeaderCount(packed)

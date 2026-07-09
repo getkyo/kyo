@@ -6,6 +6,7 @@ import kyo.internal.codec.*
 import kyo.internal.http1.*
 import kyo.internal.server.*
 import kyo.internal.util.*
+import kyo.net.internal.util.GrowableByteBuffer
 
 class Http1ParserTest extends kyo.BaseHttpTest:
 
