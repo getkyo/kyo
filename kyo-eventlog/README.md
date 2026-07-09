@@ -234,7 +234,9 @@ val backend: Journal.Backend[Sync] < (Sync & Scope & Abort[JournalStorageError])
     Journal.Backend.file(dir)
 ```
 
-This constructor is available on JVM and Native only; it is absent from Scala.js and Wasm. The `dir` parameter is a `Path` from `kyo-system`. `Scope` finalization releases the advisory LOCK file and closes all open segment channels. A second open of a held root directory fails immediately with `JournalStorageError`.
+This constructor is available on JVM, Native, and Node.js (including Wasm-under-Node). On a browser runtime (no `node:fs`) it fails immediately with a typed `JournalStorageError` rather than at first I/O; no browser persistence backend exists. The `dir` parameter is a `Path` from `kyo-system`. `Scope` finalization releases the root lock and closes all open segment channels. A second open of a held root directory fails immediately with `JournalStorageError`.
+
+On JVM and Native the root lock is an advisory file lock (`FileChannel.tryLock`); the OS drops it on process death, so no cleanup is needed after a crash. On Node.js the lock is an `O_EXCL` lockfile carrying the holder's pid and hostname. On the next open after a crash, the dead holder's pid is probed with `process.kill(pid, 0)`; an `ESRCH` result (no such process) triggers an atomic reclaim, and the open succeeds. An unparseable lock or a lock from another host is never reclaimed and fails closed. The crash-recovery guarantee (a dead holder's lock is always reclaimed on the next open) is the same on all platforms.
 
 Pass `FileJournal.Config` to override two knobs:
 
