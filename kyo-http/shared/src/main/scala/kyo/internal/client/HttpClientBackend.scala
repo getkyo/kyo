@@ -107,7 +107,7 @@ final private[kyo] class HttpClientBackend private (
     )(using AllowUnsafe, Frame): Fiber.Unsafe[HttpResponse[Out], Abort[HttpException]] =
         val resultPromise = Promise.Unsafe.init[HttpResponse[Out], Abort[HttpException]]()
         try
-            encodeAndSendDirectWith(conn, route, request) { (responsePromise, path) =>
+            encodeAndSendDirectWith(conn, route, request) { responsePromise =>
                 // IOPromise.onComplete gives Result[Nothing, ParsedResponse] directly - no `< S` wrapper
                 responsePromise.onComplete { parseResult =>
                     parseResult match
@@ -135,7 +135,7 @@ final private[kyo] class HttpClientBackend private (
     )(using AllowUnsafe, Frame): Fiber.Unsafe[HttpResponse[Out], Abort[HttpException]] =
         val resultPromise = Promise.Unsafe.init[HttpResponse[Out], Abort[HttpException]]()
         try
-            encodeAndSendDirectWith(conn, route, request) { (responsePromise, path) =>
+            encodeAndSendDirectWith(conn, route, request) { responsePromise =>
                 // IOPromise.onComplete gives Result[Nothing, ParsedResponse] directly
                 responsePromise.onComplete { parseResult =>
                     parseResult match
@@ -253,15 +253,15 @@ final private[kyo] class HttpClientBackend private (
 
     // -- Request encoding --
 
-    /** Encode a request and send it over the Http1ClientConnection. Returns the underlying IOPromise (not Fiber.Unsafe) for direct
-      * onComplete without `< S` wrapper, plus the path.
+    /** Encode a request and send it over the Http1ClientConnection. Passes the underlying IOPromise (not Fiber.Unsafe) to `f` for a direct
+      * onComplete without `< S` wrapper.
       */
-    private def encodeAndSendDirectWith[In, Out, A](
+    private inline def encodeAndSendDirectWith[In, Out, A](
         conn: HttpConnection,
         route: HttpRoute[In, Out, ?],
         request: HttpRequest[In]
     )(
-        f: (IOPromise[Nothing, ParsedResponse], String) => A
+        inline f: IOPromise[Nothing, ParsedResponse] => A
     )(using AllowUnsafe, Frame): A =
         // Determine the effective host header value for this request.
         // If the request URL has an explicit host (e.g. after a redirect), recompute;
@@ -279,12 +279,12 @@ final private[kyo] class HttpClientBackend private (
             onEmpty = (path, headers) =>
                 val promise =
                     conn.http1.sendDirect(request.method, path, headers, Span.empty[Byte], hostHeader, contentLength = 0, chunked = false)
-                f(promise, path)
+                f(promise)
             ,
             onBuffered = (path, headers, body) =>
                 val promise =
                     conn.http1.sendDirect(request.method, path, headers, body, hostHeader, contentLength = body.size.toInt, chunked = false)
-                f(promise, path)
+                f(promise)
             ,
             onStreaming = (path, headers, bodyStream) =>
                 // For streaming request bodies, first send headers with empty body,
@@ -293,7 +293,7 @@ final private[kyo] class HttpClientBackend private (
                     conn.http1.sendDirect(request.method, path, headers, Span.empty[Byte], hostHeader, contentLength = -1, chunked = true)
                 // Launch streaming body writer as a background fiber
                 streamRequestBody(conn, bodyStream)
-                f(promise, path)
+                f(promise)
         )
     end encodeAndSendDirectWith
 
