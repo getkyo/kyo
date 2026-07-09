@@ -1,11 +1,10 @@
-package kyo.net.internal.client
+package kyo.internal
 
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
 import kyo.*
-import kyo.net.NetAddress
-import kyo.net.Test
+import kyo.internal.client.*
 
 /** Concurrent-invariant stress for [[ConnectionPool]]'s lock-free Vyukov-style MPMC ring (`HostPool`) under contention.
   *
@@ -29,11 +28,11 @@ import kyo.net.Test
   *   - "unreserve correctness under concurrency": reserve to the limit, concurrent unreserves, then reserves succeed again, the live held count
   *     never exceeding capacity throughout.
   */
-class ConnectionPoolConcurrencyTest extends Test:
+class ConnectionPoolConcurrencyTest extends BaseHttpTest:
 
     import AllowUnsafe.embrace.danger
 
-    private val key = NetAddress.Tcp("contended-host", 80)
+    private val key = HttpAddress.Tcp("contended-host", 80)
 
     /** Number of concurrent fibers and per-fiber iterations. High enough to exercise the ring's CAS loops on a multicore JVM/Native run while
       * keeping every assertion interleaving-independent.
