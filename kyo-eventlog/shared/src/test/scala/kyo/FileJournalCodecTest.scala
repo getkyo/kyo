@@ -1,6 +1,8 @@
 package kyo
 
 import java.nio.ByteBuffer
+import kyo.internal.CRC32
+import kyo.internal.SegmentCodec
 
 class FileJournalCodecTest extends kyo.test.Test[Any]:
     import SegmentCodec.*
@@ -18,23 +20,21 @@ class FileJournalCodecTest extends kyo.test.Test[Any]:
             val md      = encodeMetadata(EventMetadata.empty)
             val payload = "hello".getBytes("UTF-8")
             val frame   = encodeRecord(7L, "evt-1", "UserRegistered", md, payload)
-            // Full field decode is exercised through the backend (decodeRecordAt needs a channel); at the codec
-            // level assert only the framing: the length prefix equals the body length and the CRC covers the body.
-            val buf    = ByteBuffer.wrap(frame)
-            val length = buf.getInt()
-            val crc    = buf.getInt()
+            val buf     = ByteBuffer.wrap(frame)
+            val length  = buf.getInt()
+            val crc     = buf.getInt()
             assert(frame.length == 8 + length)
             val body   = java.util.Arrays.copyOfRange(frame, 8, frame.length)
-            val actual = new java.util.zip.CRC32(); actual.update(body)
-            assert((actual.getValue & 0xffffffffL).toInt == crc)
+            val actual = new CRC32(); actual.update(body)
+            assert((actual.value & 0xffffffffL).toInt == crc)
         }
         "crc covers the body but not the length or crc fields" in {
             val frame = encodeRecord(1L, "e", "t", encodeMetadata(EventMetadata.empty), Array[Byte](9))
             // flipping a body byte must break the CRC; flipping the length field must not (it is not covered)
             val body       = frame.clone(); body(10) = (body(10) ^ 0xff).toByte // a byte inside the body
             val bb         = ByteBuffer.wrap(body); val len = bb.getInt(); val crc = bb.getInt()
-            val recomputed = new java.util.zip.CRC32(); recomputed.update(java.util.Arrays.copyOfRange(body, 8, body.length))
-            assert((recomputed.getValue & 0xffffffffL).toInt != crc)
+            val recomputed = new CRC32(); recomputed.update(java.util.Arrays.copyOfRange(body, 8, body.length))
+            assert((recomputed.value & 0xffffffffL).toInt != crc)
         }
     }
 

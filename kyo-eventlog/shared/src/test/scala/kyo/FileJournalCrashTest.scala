@@ -1,8 +1,6 @@
 package kyo
 
-import java.nio.ByteBuffer
-import java.nio.channels.FileChannel
-import java.nio.file.StandardOpenOption
+import kyo.internal.SegmentCodec
 
 class FileJournalCrashTest extends kyo.test.Test[Any]:
 
@@ -70,54 +68,49 @@ class FileJournalCrashTest extends kyo.test.Test[Any]:
 
     // --- raw segment mutation (test-only; the safe tier cannot truncate or flip a chosen byte) ----------
 
+    // Reads all bytes of the active segment. `Path.Unsafe.readBytes` opens the file read-only and returns
+    // its contents as a Span[Byte]; `.toArray` materializes it. The Sync.Unsafe.defer provides AllowUnsafe.
     private def readSegmentBytes(dir: Path)(using Frame): Array[Byte] < Sync =
-        // Unsafe: raw positional read of the whole segment for byte-level fixture inspection.
         Sync.Unsafe.defer {
-            val ch = FileChannel.open(segmentPath(dir).toJava, StandardOpenOption.READ)
-            try
-                val buf = ByteBuffer.allocate(ch.size().toInt)
-                discard(ch.read(buf, 0L))
-                buf.array()
-            finally ch.close()
-            end try
+            segmentPath(dir).unsafe.readBytes() match
+                case Result.Success(span) => span.toArray
+                case Result.Failure(e)    => throw e
         }
 
-    // Truncate to `length` then rewrite the first `length` bytes of `full`, restoring the fixture even after
-    // a prior reopen truncated the torn tail.
+    // Writes `full.take(length)` bytes to the segment, replacing its entire content. Path.Unsafe.writeBytes
+    // uses TRUNCATE_EXISTING semantics so the file is exactly `length` bytes afterward; no separate truncate
+    // call is needed. This restores the fixture even after a prior reopen truncated the torn tail.
     private def writePrefix(dir: Path, full: Array[Byte], length: Int)(using Frame): Unit < Sync =
-        // Unsafe: raw truncate + positional write to synthesize a partial (torn) segment.
         Sync.Unsafe.defer {
-            val ch = FileChannel.open(segmentPath(dir).toJava, StandardOpenOption.WRITE)
-            try
-                ch.truncate(length.toLong)
-                discard(ch.write(ByteBuffer.wrap(full, 0, length), 0L))
-                discard(ch.force(true))
-            finally ch.close()
-            end try
+            segmentPath(dir).unsafe.writeBytes(Span.from(full.take(length))) match
+                case Result.Success(_) => ()
+                case Result.Failure(e) => throw e
         }
 
+    // Reads all bytes, flips one byte at `pos`, writes all bytes back (mid-file CRC-failure fixture).
     private def flipByte(dir: Path, pos: Long)(using Frame): Unit < Sync =
-        // Unsafe: raw positional read/write to corrupt one byte (mid-file CRC-failure fixture).
         Sync.Unsafe.defer {
-            val ch = FileChannel.open(segmentPath(dir).toJava, StandardOpenOption.READ, StandardOpenOption.WRITE)
-            try
-                val one = ByteBuffer.allocate(1)
-                discard(ch.read(one, pos))
-                discard(ch.write(ByteBuffer.wrap(Array((one.get(0) ^ 0xff).toByte)), pos))
-                discard(ch.force(true))
-            finally ch.close()
-            end try
+            val arr = (segmentPath(dir).unsafe.readBytes() match
+                case Result.Success(span) => span.toArray
+                case Result.Failure(e)    => throw e
+            )
+            arr(pos.toInt) = (arr(pos.toInt) ^ 0xff).toByte
+            segmentPath(dir).unsafe.writeBytes(Span.from(arr)) match
+                case Result.Success(_) => ()
+                case Result.Failure(e) => throw e
         }
 
+    // Reads all bytes, overwrites the header version byte (index 4), writes all bytes back.
     private def overwriteVersion(dir: Path, v: Byte)(using Frame): Unit < Sync =
-        // Unsafe: raw positional write of the header version byte (index 4) for the unknown-version fixture.
         Sync.Unsafe.defer {
-            val ch = FileChannel.open(segmentPath(dir).toJava, StandardOpenOption.WRITE)
-            try
-                discard(ch.write(ByteBuffer.wrap(Array(v)), 4L))
-                discard(ch.force(true))
-            finally ch.close()
-            end try
+            val arr = (segmentPath(dir).unsafe.readBytes() match
+                case Result.Success(span) => span.toArray
+                case Result.Failure(e)    => throw e
+            )
+            arr(4) = v
+            segmentPath(dir).unsafe.writeBytes(Span.from(arr)) match
+                case Result.Success(_) => ()
+                case Result.Failure(e) => throw e
         }
 
     "tail recovery" - {
@@ -270,18 +263,13 @@ class FileJournalCrashTest extends kyo.test.Test[Any]:
                         val rec     = SegmentCodec.encodeRecord(0L, "e-0", "T", badMeta, "p0".getBytes("UTF-8"))
                         val term    = SegmentCodec.encodeTerminator(1)
                         val total   = SegmentCodec.HeaderSize + rec.length + term.length
-                        val seg     = ByteBuffer.allocate(total)
-                        discard(seg.put(SegmentCodec.SegmentHeader))
-                        discard(seg.put(rec))
-                        discard(seg.put(term))
-                        discard(seg.flip())
-                        val ch = FileChannel.open(segmentPath(dir).toJava, StandardOpenOption.WRITE)
-                        try
-                            ch.truncate(total.toLong)
-                            discard(ch.write(seg, 0L))
-                            discard(ch.force(true))
-                        finally ch.close()
-                        end try
+                        val seg     = new Array[Byte](total)
+                        java.lang.System.arraycopy(SegmentCodec.SegmentHeader, 0, seg, 0, SegmentCodec.HeaderSize)
+                        java.lang.System.arraycopy(rec, 0, seg, SegmentCodec.HeaderSize, rec.length)
+                        java.lang.System.arraycopy(term, 0, seg, SegmentCodec.HeaderSize + rec.length, term.length)
+                        segmentPath(dir).unsafe.writeBytes(Span.from(seg)) match
+                            case Result.Success(_) => ()
+                            case Result.Failure(e) => throw e
                     }
                 res <- readResult(dir)
             yield
