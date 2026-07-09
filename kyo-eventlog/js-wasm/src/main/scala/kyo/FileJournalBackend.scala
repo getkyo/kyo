@@ -13,7 +13,7 @@ private[kyo] def isNodeRuntime: Boolean =
 
 /** Opens (or creates) a file-backed journal rooted at `dir`. Requires a Node.js runtime; on
   * a browser runtime (no `node:fs`) the call fails immediately with a typed
-  * [[JournalStorageError]] rather than at first I/O (per design A.6). Available on JS and
+  * [[JournalStorageError]] rather than at first I/O. Available on JS and
   * Wasm when executed under NodeJSEnv or a WasmGC-on-Node host.
   *
   * @see
@@ -26,7 +26,7 @@ extension (backend: Journal.Backend.type)
         : Journal.Backend[Sync] < (Sync & Scope & Abort[JournalStorageError]) =
         if !isNodeRuntime then
             Abort.fail(JournalStorageError(
-                "FileJournal requires a Node.js runtime; browser persistence is not yet supported",
+                "FileJournal requires a Node.js runtime; no browser persistence backend exists",
                 Absent
             ))
         else

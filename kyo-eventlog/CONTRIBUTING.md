@@ -66,7 +66,7 @@ kyo-eventlog/
       PlatformSupport.scala        # yieldCurrentThread (no-op on single-threaded runtimes)
 
   js-wasm/src/test/scala/kyo/
-    FileJournalNodeLockTest.scala  # O_EXCL lock failure matrix (cases 2-7)
+    FileJournalNodeLockTest.scala  # O_EXCL lock failure matrix (cases 1-7)
     FileJournalNodeRuntimeTest.scala # isNodeRuntime predicate; browser-fail typed error
 
   jvm/src/test/scala/kyo/
@@ -481,7 +481,7 @@ See the root [CONTRIBUTING.md](../CONTRIBUTING.md) for the global test naming ru
 | `FileJournal.scala`, `internal/FileJournalCore.scala`, `internal/SegmentStore.scala` | `FileJournalBackendTest.scala`, `FileJournalCrashTest.scala`, `FileJournalTest.scala` | All in `shared/src/test`; run on JVM, Native, JS-node, Wasm-node |
 | `internal/CRC32.scala` | `FileJournalCodecTest.scala` (shared); `jvm/src/test: CRC32EqualityTest.scala` | Known-answer vectors on all platforms; equality against `java.util.zip.CRC32` is JVM-only |
 | `jvm-native/FileJournalBackend.scala` | `FileJournalTest.scala` (shared, second-open and failed-open cases), `FileJournalCrashTest.scala` | The FileChannel lock path is covered by the shared second-open case running on JVM and Native |
-| `js-wasm/FileJournalBackend.scala`, `js-wasm/internal/NodeJournalStore.scala` | `FileJournalNodeLockTest.scala`, `FileJournalNodeRuntimeTest.scala` | js-wasm-only; Node lock matrix (cases 2-7) and browser-fail typed error |
+| `js-wasm/FileJournalBackend.scala`, `js-wasm/internal/NodeJournalStore.scala` | `FileJournalNodeLockTest.scala`, `FileJournalNodeRuntimeTest.scala` | js-wasm-only; Node lock matrix (cases 1-7) and browser-fail typed error |
 
 ### Deterministic concurrency: the Latch pattern
 
