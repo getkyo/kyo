@@ -17,13 +17,17 @@ kyo-eventlog owns the Journal capability and its backing infrastructure:
 | `JournalEvent.scala` | Wire-vocabulary types: `StreamId`, `EventId`, `EventType`, `StreamOffset`, `StreamVersion`, `ExpectedOffset`, `StreamInfo`, `EventEnvelope`, `RecordedEvent`, `AppendResult` |
 | `JournalMetadata.scala` | `EventMetadata` case class; `MetadataKey` opaque type |
 | `internal/InMemoryJournal.scala` | Ephemeral in-memory backend: CAS over `AtomicRef`, `Loop`-based retry |
-| `jvm-native/src/main/scala/kyo/FileJournal.scala` | Durable file backend (`Journal.Backend.file`); JVM and Native only |
+| `FileJournal.scala` | `FileJournal.Config` and `FileJournal.Fsync` (the durability and rotation knobs; the `Backend.file` extension lives in each platform tree's `FileJournalBackend.scala`) |
+| `internal/FileJournalCore.scala` | Shared orchestration: recovery driver, segment index, in-process root registry, CAS claim, rotation, read path |
+| `internal/SegmentStore.scala` | Platform I/O seam (`open`, `acquireLock`, `syncDir`); each platform tree supplies one concrete implementation |
+| `internal/CRC32.scala` | Table-driven pure Scala CRC32 (reflected IEEE 802.3 polynomial `0xEDB88320`); byte-identical on every platform |
+| `jvm-native/src/main/scala/kyo/FileJournalBackend.scala` | `FileChannel`-backed `SegmentStore`; `FileChannel.tryLock` cross-process lock; `Backend.file` for JVM and Native |
+| `js-wasm/src/main/scala/kyo/FileJournalBackend.scala` | `isNodeRuntime` predicate; `Backend.file` for JS and Wasm (requires a Node.js runtime) |
+| `js-wasm/src/main/scala/kyo/internal/NodeJournalStore.scala` | `NodeFsSync` / `NodeOsHost` facades; `NodeSegmentStore`, `NodeHandle`, `NodeFileLock` |
 
-**Dependency rule:** kyo-eventlog depends on `kyo-core`, `kyo-schema`, and `kyo-system`. `kyo-schema` is pulled in for `Structure.Value`, `Codec.Writer`/`Reader`, and `Schema.init`, which `MetadataValue`'s constructor-exact codec uses. `kyo-system` is pulled in by `FileJournal`, whose `FileChannel`-based append, fsync, and advisory locking reach the platform I/O layer through `Path.Unsafe` and the `toJava` extension from `kyo-system`; its `jvm-native` source tree resolves `Path`, `Path.Unsafe`, and `toJava` through that edge. No other kyo module is a compile-time dependency. [`build.sbt:675`]
+**Dependency rule:** kyo-eventlog depends on `kyo-core`, `kyo-schema`, and `kyo-system`. `kyo-schema` is pulled in for `Structure.Value`, `Codec.Writer`/`Reader`, and `Schema.init`, which `MetadataValue`'s constructor-exact codec uses. `kyo-system` is pulled in by the file backend: the shared orchestration uses `Path.Unsafe` for cross-platform directory operations (exists, mkdir, list), and the jvm-native backend additionally uses the `toJava` extension for `FileChannel.open`. The journal-specific Node facades (`NodeFsSync`, `NodeOsHost`, and the durability primitives `fdatasyncSync`/`fsyncSync`/`ftruncateSync`) live in the kyo-eventlog `js-wasm` tree rather than kyo-system, to keep those journal-specific bindings scoped to the module that needs them. No other kyo module is a compile-time dependency. [`build.sbt:675`]
 
 ### Source layout
-
-All source is cross-platform and lives in the shared tree:
 
 ```
 kyo-eventlog/
@@ -32,8 +36,12 @@ kyo-eventlog/
     JournalError.scala
     JournalEvent.scala
     JournalMetadata.scala
+    FileJournal.scala              # Config and Fsync knobs
     internal/
       InMemoryJournal.scala
+      FileJournalCore.scala        # shared orchestration and recovery driver
+      SegmentStore.scala           # platform I/O seam (open, acquireLock, syncDir)
+      CRC32.scala                  # pure shared CRC32 (IEEE 802.3 polynomial)
 
   shared/src/test/scala/kyo/
     JournalTest.scala
@@ -41,21 +49,31 @@ kyo-eventlog/
     InMemoryJournalBackendTest.scala
     JournalEventTest.scala
     JournalMetadataTest.scala
-
-  jvm-native/src/main/scala/kyo/
-    FileJournal.scala              # durable file backend; JVM and Native only
-
-  jvm-native/src/test/scala/kyo/
-    FileJournalBackendTest.scala   # contract suite subclass
-    FileJournalCodecTest.scala     # segment codec unit tests
-    FileJournalCrashTest.scala     # crash, recovery, and corruption suite
+    FileJournalBackendTest.scala   # contract suite subclass; runs on all four platforms
+    FileJournalCodecTest.scala     # segment codec unit tests; all four platforms
+    FileJournalCrashTest.scala     # crash, recovery, and corruption suite; all four platforms
     FileJournalTest.scala          # rotation, metadata, streamId, lock, failed-open
 
-  jvm/src/  js/src/  native/src/  wasm/src/
-    (empty)
+  jvm-native/src/main/scala/kyo/
+    FileJournalBackend.scala       # FileChannel SegmentStore; FileChannel.tryLock lock; Backend.file (JVM/Native)
+    internal/
+      PlatformSupport.scala        # yieldCurrentThread via Thread.yield
+
+  js-wasm/src/main/scala/kyo/
+    FileJournalBackend.scala       # isNodeRuntime predicate; Backend.file (JS/Wasm)
+    internal/
+      NodeJournalStore.scala       # NodeFsSync/NodeOsHost facades; NodeSegmentStore; NodeFileLock
+      PlatformSupport.scala        # yieldCurrentThread (no-op on single-threaded runtimes)
+
+  js-wasm/src/test/scala/kyo/
+    FileJournalNodeLockTest.scala  # O_EXCL lock failure matrix (cases 2-7)
+    FileJournalNodeRuntimeTest.scala # isNodeRuntime predicate; browser-fail typed error
+
+  jvm/src/test/scala/kyo/
+    CRC32EqualityTest.scala        # equality with java.util.zip.CRC32 over a fixed corpus (JVM-only)
 ```
 
-The `jvm-native/` tree is compiled on JVM and Native only. `Journal.Backend.file` and `FileJournal.Config` are available only on those two platforms. All other public types and operations (`Journal`, `Journal.Backend.inMemory`, the wire types, the error hierarchy) compile and behave identically on JVM, Scala.js, Scala Native, and Wasm.
+`Journal.Backend.file` and `FileJournal.Config` are available on all four platforms. On JVM and Native the backend uses a `FileChannel`-backed store. On JS and Wasm it uses Node's synchronous `fs` API and requires a Node.js runtime; on a browser runtime (no `node:fs`) the call fails immediately with a typed `JournalStorageError` rather than at first I/O. No browser persistence backend exists. The `jvm-native/` tree compiles on JVM and Native; the `js-wasm/` tree compiles on both JS and Wasm. All other public types and operations (`Journal`, `Journal.Backend.inMemory`, the wire types, the error hierarchy) compile and behave identically on all four platforms.
 
 ---
 
@@ -304,13 +322,13 @@ The contract exercised covers:
 
 3. Add a `class MyBackendTest extends JournalBackendTest(MyBackend.init)` test class alongside the backend, following the pattern of `InMemoryJournalBackendTest`. A backend without a `JournalBackendTest` subclass is incomplete.
 
-4. Follow kyo-eventlog's dependency rule: the three authorized compile-time dependencies are `kyo-core`, `kyo-schema`, and `kyo-system`. New backends in `shared/src/main/scala/kyo/` need no extra dependency. Backends that reach raw platform I/O (file channels, advisory locks, fsync) belong in `jvm-native/src/main/scala/kyo/` and must use `Sync.Unsafe.defer` with per-site `// Unsafe:` comments (see the section below).
+4. Follow kyo-eventlog's dependency rule: the three authorized compile-time dependencies are `kyo-core`, `kyo-schema`, and `kyo-system`. New backends in `shared/src/main/scala/kyo/` need no extra dependency. Backends that reach raw platform I/O (file channels, advisory locks, fsync, Node raw-fd calls) belong in the appropriate platform source tree (`jvm-native/` or `js-wasm/`) and must use `Sync.Unsafe.defer` with per-site `// Unsafe:` comments (see the section below).
 
 ### File backend
 
-[`jvm-native/src/main/scala/kyo/FileJournal.scala`]
+[`shared/src/main/scala/kyo/FileJournal.scala`, `jvm-native/src/main/scala/kyo/FileJournalBackend.scala`, `js-wasm/src/main/scala/kyo/FileJournalBackend.scala`]
 
-`FileJournal` is the durable file backend: an append-only segment log on disk, available on JVM and Native. The public entry point is `Journal.Backend.file`, an extension on `Journal.Backend.type`:
+`FileJournal` is the durable file backend: an append-only segment log on disk, available on JVM, Native, JS-under-Node, and Wasm-under-Node. The public entry point is `Journal.Backend.file`, an extension on `Journal.Backend.type`:
 
 ```scala
 Journal.Backend.file(dir: Path, config: FileJournal.Config = FileJournal.Config.default)
@@ -328,20 +346,27 @@ The `dir` parameter is a `Path` from `kyo-system`. `Scope` finalization releases
 
 **Segment format:** each segment file begins with `KJN1` + `0x01` (4-byte magic + 1-byte version). Record frames follow with the layout `length(4) | crc32(4) | body`; the CRC covers the body only. Each append batch is closed by a terminator (`KJNC` + record count + CRC), which is the commit boundary. A torn tail in the active segment (no valid terminator after the trailing record group, from a prior crash) is silently truncated at recovery with a WARN log entry naming the segment and byte range. Non-tail corruption and unknown segment versions are fatal (`JournalCorruptedError`).
 
-**LOCK:** one advisory file lock per root directory, acquired at open and released on `Scope` finalization. A second open of a held root fails immediately.
+**CRC32:** the CRC is computed by a table-driven pure Scala implementation (`internal/CRC32.scala`) using the reflected IEEE 802.3 polynomial `0xEDB88320`, producing the same 32-bit values as `java.util.zip.CRC32`. Using one shared implementation across all platforms makes cross-platform byte-identity hold by construction rather than by relying on two independent standard libraries agreeing. `CRC32EqualityTest` (jvm-only) asserts equality with `java.util.zip.CRC32` over a fixed corpus; `FileJournalCodecTest` verifies known-answer vectors on every platform.
 
-**Same-stream append serialization.** `FileJournal` is a `Journal.Backend[Sync]`, so `append` returns a `Sync` computation with no suspension point: the whole critical section (offset check, frame, positional write, fsync, index publish) runs inside one `Sync.Unsafe.defer`. Concurrent appends to the same stream serialize on a per-stream CAS flag (`StreamState.writer`) taken in `claim`. Because the section is unsuspendable, a waiter cannot park as a fiber and free its carrier; it yields the carrier with `Thread.yield` on each spin so it does not peg a core while the holder's blocking fsync runs. `Thread.onSpinWait` is deliberately not used: it is a same-core busy hint that would still hold the carrier hot across the fsync. A truly suspending per-stream mutex (a `Meter` or a mailbox `Fiber`) would move the serialization into `Async`, which requires a `Journal.Backend[Async]` and a change to the `Sync`-typed `JournalBackendTest` contract suite; that is out of the file backend's current contract. The `concurrency` leaf of `JournalBackendTest` is the correctness oracle for this serialization.
+**LOCK:** the file backend enforces single-owner exclusion at two levels. An in-process registry (`heldRoots` in `FileJournalCore`) checks same-process opens on every platform before any OS-level call. The cross-process layer differs by platform:
+
+- **JVM and Native:** `FileChannel.tryLock()` on the `LOCK` file. The OS drops the advisory lock on process death, so no manual cleanup is needed after a crash.
+- **JS and Wasm (Node.js):** an `O_EXCL` lockfile (`openSync("wx")` = `O_CREAT | O_EXCL | O_WRONLY`). The file carries the holder's pid, hostname, and start timestamp in JSON. On `EEXIST`, the holder's pid is probed with `process.kill(pid, 0)` (signal 0 tests reachability without sending a signal): `ESRCH` means the holder is dead and the lock is reclaimed; any other result is treated as alive and the open fails. Reclaim is atomic: the stale lock is moved aside under a per-attempt unique name before the `O_EXCL` create is retried, so two concurrent reclaimers cannot collide; ownership is decided solely by which process wins the subsequent `openSync("wx")`. An unparseable lock or a lock from another hostname is never reclaimed and fails with `JournalStorageError` (fail-closed). Release calls `unlinkSync(LOCK)` best-effort. This protocol gives the same crash-recovery semantics as the JVM `FileChannel.tryLock`: a crashed holder's lock is reclaimed on the next open.
+
+A second open of a held root always fails immediately with `JournalStorageError`, regardless of platform.
+
+**Same-stream append serialization.** `FileJournal` is a `Journal.Backend[Sync]`, so `append` returns a `Sync` computation with no suspension point: the whole critical section (offset check, frame, positional write, fsync, index publish) runs inside one `Sync.Unsafe.defer`. Concurrent appends to the same stream serialize on a per-stream CAS flag (`StreamState.writer`) taken in `claim`. The spin-wait behavior is platform-split via `yieldCurrentThread()` in `internal/PlatformSupport.scala`: on JVM and Native it calls `Thread.yield()` so a waiter releases its carrier thread while the holder's blocking fsync runs; on JS and Wasm it is a no-op because those runtimes are single-threaded and the CAS loop terminates immediately on first success. `Thread.onSpinWait` is deliberately not used on JVM/Native: it is a same-core busy hint that would still hold the carrier hot across the fsync. A truly suspending per-stream mutex (a `Meter` or a mailbox `Fiber`) would move the serialization into `Async`, which requires a `Journal.Backend[Async]` and a change to the `Sync`-typed `JournalBackendTest` contract suite; that is out of the file backend's current contract. The `concurrency` leaf of `JournalBackendTest` is the correctness oracle for this serialization.
 
 **Directory durability.** `FileChannel.force` on a segment file flushes its data but not the parent directory's link to it; on POSIX a newly created file or directory is not durable until its containing directory is fsync'd. On the `Fsync.Always` path `createSegment` therefore fsyncs the stream directory after creating a segment (and the `streams/` directory when the stream directory is new) via `fsyncDir`, which opens the directory read-only and forces it. Windows cannot open a directory as a `FileChannel`, so that open throws `IOException` and is tolerated (the platform makes the entry durable without an explicit directory sync); a force failure on an opened directory propagates and maps to `JournalStorageError`. This path is not black-box testable: it needs a power loss between the directory write and its sync.
 
 ### Unsafe tier in backend implementations
 
-A raw platform I/O backend uses two distinct patterns; both are present in `FileJournal`.
+A raw platform I/O backend uses two distinct patterns. Both appear in the jvm-native backend; the Node backend follows the same conventions with its own raw-fd facade.
 
-**Open and release boundaries.** The private `FileJournal.acquire` function takes `(using AllowUnsafe)` explicitly and performs all platform I/O (directory creation via `Path.Unsafe`, `FileChannel.open`, `tryLock`) without any `Sync.Unsafe.defer` inside it. `FileJournal.open` calls it inside a single `Sync.Unsafe.defer` at the open boundary:
+**Open and release boundaries.** The `FileJournalCore.acquire` function takes `(using AllowUnsafe)` explicitly and performs all platform I/O (directory creation via `Path.Unsafe`, `FileChannel.open` or `NodeFsSync.openSync`, `acquireLock`) without any `Sync.Unsafe.defer` inside it. `FileJournalCore.open` calls it inside a single `Sync.Unsafe.defer` at the open boundary:
 
 ```scala
-Sync.Unsafe.defer(Abort.get(FileJournal.acquire(dir, config)))
+Sync.Unsafe.defer(Abort.get(FileJournalCore.acquire(dir, config, store)))
 ```
 
 The `Scope` release path wraps `backend.release()` the same way:
@@ -352,15 +377,31 @@ Sync.Unsafe.defer(backend.release())
 
 Each boundary is one `Sync.Unsafe.defer` wrapping the entire call, not a separate call per operation inside `acquire` or `release`.
 
-**Class-level threading for backend methods.** `FileJournal` captures `(using allow: AllowUnsafe)` as a constructor parameter. This is the `AllowUnsafe` evidence that `Sync.Unsafe.defer` in `FileJournal.open` provides at construction time; the class retains it and threads it through all private methods as a regular parameter. Each public `Backend` method wraps a single call to the corresponding private function in one `Sync.Unsafe.defer`:
+**Class-level threading for backend methods.** `FileJournalCore` captures `(using allow: AllowUnsafe)` as a constructor parameter. This is the `AllowUnsafe` evidence that `Sync.Unsafe.defer` in `FileJournalCore.open` provides at construction time; the class retains it and threads it through all private methods as a regular parameter. Each public `Backend` method wraps a single call to the corresponding private function in one `Sync.Unsafe.defer`:
 
 ```scala
 Sync.Unsafe.defer(appendUnsafe(streamId, expected, events, log.unsafe))
 ```
 
-All `FileChannel` and `Path.Unsafe` calls inside `appendUnsafe`, `readUnsafe`, and `streamInfoUnsafe` run under the constructor `allow` already in scope. No additional `Sync.Unsafe.defer` appears per call site inside those private functions.
+All `SegmentStore.Handle` and `Path.Unsafe` calls inside `appendUnsafe`, `readUnsafe`, and `streamInfoUnsafe` run under the constructor `allow` already in scope. No additional `Sync.Unsafe.defer` appears per call site inside those private functions.
 
-Annotate each `Sync.Unsafe.defer` call with a `// Unsafe:` comment naming the safe-tier contract being bypassed. Do not introduce `import AllowUnsafe.embrace.danger` in backend source; `AllowUnsafe` flows from the class constructor parameter, which is itself supplied by the `Sync.Unsafe.defer` in `FileJournal.open`.
+**Node raw-fs bridge pattern.** `NodeSegmentStore` and `NodeFileLock` (in `js-wasm/src/main/scala/kyo/internal/NodeJournalStore.scala`) bridge the kyo effect system to raw Node.js `fd` operations via the `NodeFsSync` facade. The same conventions apply: `AllowUnsafe` flows from the `FileJournalCore` constructor, every raw Node call carries a `// Unsafe:` comment naming what it bridges, and the entire `SegmentStore.Handle` and `SegmentStore.Lock` call surface is inside the class body (not in per-call `Sync.Unsafe.defer`). The lock protocol (`NodeFileLock.acquire`) takes `(using AllowUnsafe, Frame)` directly and is called from inside the single `Sync.Unsafe.defer` in `FileJournalCore.acquire`.
+
+Annotate each `Sync.Unsafe.defer` call with a `// Unsafe:` comment naming the safe-tier contract being bypassed. Do not introduce `import AllowUnsafe.embrace.danger` in backend source; `AllowUnsafe` flows from the class constructor parameter, which is itself supplied by the `Sync.Unsafe.defer` in `FileJournalCore.open`.
+
+---
+
+## Prior art
+
+The file backend's design is grounded in established storage engineering patterns. Knowing the lineage makes the design decisions easier to reason about when extending or debugging.
+
+**Kafka log segments.** Kafka names each segment by the base offset of its first record (zero-padded), rotates at a size threshold, and frames each record with a CRC. FileJournal's segment naming (20-digit base offset), soft-threshold rotation, and per-record CRC follow this model directly.
+
+**Write-ahead-log tail recovery (PostgreSQL, RocksDB).** A WAL is read forward on restart and stops at the first torn or unchecksummed record at the tail, treating everything after the last good record as an incomplete write to discard. FileJournal's recovery is the same forward scan with tail truncation; the refinement is that the commit boundary is a batch terminator, not a single record.
+
+**ARIES commit records.** ARIES marks a transaction durable only when its commit log record is on stable storage; recovery replays only committed transactions. The batch-commit terminator (binary `KJNC`) is exactly this: a batch is committed iff its terminator is durable, which is what makes a multi-event append all-or-nothing.
+
+**Magic + version container convention.** A leading magic constant plus an explicit format-version byte is the standard self-describing-file convention (PNG, class files, many WALs). FileJournal's `KJN1` + version byte follows it, enabling safe detection of unknown or corrupt segment headers before any record parse.
 
 ---
 
@@ -437,6 +478,10 @@ See the root [CONTRIBUTING.md](../CONTRIBUTING.md) for the global test naming ru
 | `JournalEvent.scala` | `JournalEventTest.scala` | Wire-type validation, opaque-type extensions, envelope/record fields |
 | `JournalMetadata.scala` | `JournalMetadataTest.scala` | `MetadataKey` validation, `EventMetadata` |
 | `internal/InMemoryJournal.scala` | `InMemoryJournalBackendTest.scala` | Covered via `JournalBackendTest` contract suite |
+| `FileJournal.scala`, `internal/FileJournalCore.scala`, `internal/SegmentStore.scala` | `FileJournalBackendTest.scala`, `FileJournalCrashTest.scala`, `FileJournalTest.scala` | All in `shared/src/test`; run on JVM, Native, JS-node, Wasm-node |
+| `internal/CRC32.scala` | `FileJournalCodecTest.scala` (shared); `jvm/src/test: CRC32EqualityTest.scala` | Known-answer vectors on all platforms; equality against `java.util.zip.CRC32` is JVM-only |
+| `jvm-native/FileJournalBackend.scala` | `FileJournalTest.scala` (shared, second-open and failed-open cases), `FileJournalCrashTest.scala` | The FileChannel lock path is covered by the shared second-open case running on JVM and Native |
+| `js-wasm/FileJournalBackend.scala`, `js-wasm/internal/NodeJournalStore.scala` | `FileJournalNodeLockTest.scala`, `FileJournalNodeRuntimeTest.scala` | js-wasm-only; Node lock matrix (cases 2-7) and browser-fail typed error |
 
 ### Deterministic concurrency: the Latch pattern
 
@@ -478,6 +523,6 @@ Run through this list before touching the internals or adding a new public surfa
 
 4. **New backend implementation.** Does it implement all three `Backend[S]` methods with the correct per-op `Abort` rows? Does it capture a `Frame` at construction rather than on each method? Is there a `JournalBackendTest` subclass that passes unchanged? [`internal/InMemoryJournal.scala`, `JournalBackendTest.scala`]
 
-5. **New dependency from kyo-eventlog.** kyo-eventlog depends on `kyo-core`, `kyo-schema`, and `kyo-system`. `kyo-system` is present because `FileJournal` uses `Path`, `Path.Unsafe`, and `toJava` for its segment files and LOCK file. Adding any module beyond these three requires explicit authorisation. [`build.sbt:675`]
+5. **New dependency from kyo-eventlog.** kyo-eventlog depends on `kyo-core`, `kyo-schema`, and `kyo-system`. `kyo-system` is present because the file backend uses `Path.Unsafe` for cross-platform directory operations on every platform, and the jvm-native backend additionally uses the `toJava` extension for `FileChannel.open`. Journal-specific Node facades (`NodeFsSync`, `NodeOsHost`) live in the kyo-eventlog `js-wasm` tree, not kyo-system. Adding any module beyond these three requires explicit authorisation. [`build.sbt:675`]
 
 6. **New test.** Does it extend `kyo.test.Test[Any]`? Does it assert concrete values? Is it folded into the matching `*Test.scala` for the source it covers? Does concurrency use the `Latch` pattern rather than `sleep`? Is payload comparison done with `Span#is`, not `==`?
