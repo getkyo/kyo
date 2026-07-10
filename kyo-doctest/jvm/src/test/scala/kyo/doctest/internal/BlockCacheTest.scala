@@ -27,19 +27,19 @@ class BlockCacheTest extends kyo.test.Test[Any]:
         for
             id <- Random.uuid
             dir = Path.basePaths.tmp / s"doctest-cache-test-$id"
-            _   <- Abort.run[FileFsException](dir.mkDir).unit
-            res <- Scope.acquireRelease(Sync.defer(dir))(_ => Abort.run[FileFsException](dir.removeAll).unit).flatMap(f)
+            _   <- Abort.run[FileException](Path.run(dir.mkDir)).unit
+            res <- Scope.acquireRelease(Sync.defer(dir))(_ => Abort.run[FileException](Path.run(dir.removeAll)).unit).flatMap(f)
         yield res
 
     "BlockCache.init creates the cache directory if missing" in {
         withTempDir { dir =>
             val subDir = dir / "new-subdir"
-            subDir.exists.flatMap { existsBefore =>
+            Path.runReadOnly(subDir.exists).flatMap { existsBefore =>
                 assert(!existsBefore, "subdir should not exist before init")
                 BlockCache.init(subDir).flatMap { _ =>
-                    subDir.exists.flatMap { existsAfter =>
+                    Path.runReadOnly(subDir.exists).flatMap { existsAfter =>
                         assert(existsAfter, "subdir should exist after init")
-                        subDir.isDirectory.map { isDir =>
+                        Path.runReadOnly(subDir.isDirectory).map { isDir =>
                             assert(isDir, "subdir should be a directory")
                         }
                     }

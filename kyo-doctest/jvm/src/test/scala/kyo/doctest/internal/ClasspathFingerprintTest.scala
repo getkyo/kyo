@@ -9,8 +9,8 @@ class ClasspathFingerprintTest extends kyo.test.Test[Any]:
     // Create a temporary file with given contents and return it as a kyo.Path.
     private def makeTempFile(dir: kyo.Path, name: String, content: Array[Byte])(using Frame): kyo.Path < (Sync & Abort[Doctest.Error]) =
         val file = dir / name
-        Abort.recover[FileWriteException](e => Abort.fail(Doctest.Error.IoError(file, "write", e))) {
-            file.writeBytes(Span.from(content)).andThen(file)
+        Abort.recover[FileException](e => Abort.fail(Doctest.Error.IoError(file, "write", e))) {
+            Path.run(file.writeBytes(Span.from(content)).andThen(file))
         }
     end makeTempFile
 
@@ -19,8 +19,8 @@ class ClasspathFingerprintTest extends kyo.test.Test[Any]:
         for
             id <- Random.uuid
             dir = Path.basePaths.tmp / s"kyo-doctest-fp-test-$id"
-            _   <- Abort.run[FileFsException](dir.mkDir).unit
-            res <- Scope.acquireRelease(Sync.defer(dir))(_ => Abort.run[FileFsException](dir.removeAll).unit).flatMap(f)
+            _   <- Abort.run[FileException](Path.run(dir.mkDir)).unit
+            res <- Scope.acquireRelease(Sync.defer(dir))(_ => Abort.run[FileException](Path.run(dir.removeAll)).unit).flatMap(f)
         yield res
 
     "compute returns stable hash for unchanged jars" in {
@@ -44,8 +44,8 @@ class ClasspathFingerprintTest extends kyo.test.Test[Any]:
             makeTempFile(dir, "lib.jar", Array[Byte](1, 2, 3, 4)).flatMap { jar =>
                 ClasspathFingerprint.compute(Chunk(jar)).flatMap { hash1 =>
                     // Overwrite the jar with different content.
-                    Abort.recover[FileWriteException](e => Abort.fail(Doctest.Error.IoError(jar, "write", e))) {
-                        jar.writeBytes(Span.from(Array[Byte](9, 8, 7, 6)))
+                    Abort.recover[FileException](e => Abort.fail(Doctest.Error.IoError(jar, "write", e))) {
+                        Path.run(jar.writeBytes(Span.from(Array[Byte](9, 8, 7, 6))))
                     }.flatMap { _ =>
                         ClasspathFingerprint.compute(Chunk(jar)).map { hash2 =>
                             assert(hash1 != hash2, s"expected different hashes after content change, but both were '$hash1'")

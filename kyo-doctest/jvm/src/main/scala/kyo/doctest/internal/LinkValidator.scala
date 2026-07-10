@@ -32,6 +32,8 @@ private[kyo] object LinkValidator:
       * touched. Cross-document anchor checks read each referenced README at most once (memoised across the call).
       */
     def validate(file: Path)(using Frame): Chunk[Doctest.Failure] < (Sync & Abort[Doctest.Error]) =
+        // Per-operation runner: the IoError message must carry the "read" op label; a single boundary
+        // runner at validate() entry would lose the distinction between "read" here and "exists" in validateLink.
         Abort.recover[FileException](e => Abort.fail(Doctest.Error.IoError(file, "read", e))) {
             Path.runReadOnly(file.read).flatMap { raw =>
                 val content      = raw.replace("\r\n", "\n")
@@ -60,6 +62,7 @@ private[kyo] object LinkValidator:
         else
             val (pathPart, anchorPart) = splitAnchor(target)
             val resolved               = file.parent.map(_ / pathPart).getOrElse(Path(pathPart))
+            // Per-operation runner: the IoError message must carry the "exists" op label.
             Abort.recover[FileException](e => Abort.fail(Doctest.Error.IoError(resolved, "exists", e))) {
                 Path.runReadOnly(resolved.exists)
             }.flatMap {
@@ -83,6 +86,7 @@ private[kyo] object LinkValidator:
         targetFile: Path,
         anchor: String
     )(using Frame): Chunk[Doctest.Failure] < (Sync & Abort[Doctest.Error]) =
+        // Per-operation runner: the IoError message must carry the "read" op label.
         Abort.recover[FileException](e => Abort.fail(Doctest.Error.IoError(targetFile, "read", e))) {
             Path.runReadOnly(targetFile.read).map { raw =>
                 val slugs = extractHeadings(raw.replace("\r\n", "\n")).map(_.slug).toSet

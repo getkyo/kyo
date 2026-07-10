@@ -37,12 +37,12 @@ class CorpusTest extends kyo.test.Test[Any]:
             cp    <- testClasspath
             nCpus <- System.availableProcessors
             cacheDir = Path.basePaths.tmp / s"kyo-doctest-corpus-cache-$id"
-            _ <- Abort.recover[FileFsException](e => Abort.fail(Doctest.Error.IoError(cacheDir, "mkDir", e)))(
-                cacheDir.mkDir
+            _ <- Abort.recover[FileException](e => Abort.fail(Doctest.Error.IoError(cacheDir, "mkDir", e)))(
+                Path.run(cacheDir.mkDir)
             )
             _ <- Scope.acquireRelease(cacheDir)(dir =>
                 // Release must not fail; swallow removeAll errors.
-                Abort.run[FileFsException](dir.removeAll).unit
+                Abort.run[FileException](Path.run(dir.removeAll)).unit
             )
             report <- Doctest.check(Doctest.Config(
                 sources = Chunk(filePath),
@@ -306,19 +306,24 @@ class CorpusTest extends kyo.test.Test[Any]:
     "kyo-doctest README.md self-validates with zero failures" in {
         // Locate the README.md at the project root relative to the module.
         // In sbt, baseDirectory for kyo-doctest is kyo-doctest/. The README lives there.
-        findReadme.flatMap { readmePath =>
-            Abort.run(Scope.run(runCheck(readmePath))).map {
-                case Result.Success(report) =>
-                    assert(
-                        report.failures.isEmpty,
-                        s"README.md self-validation failed with ${report.failures.size} failure(s):\n" +
-                            report.failures.toSeq.map(f => s"  ${f.line}: ${f.message}").mkString("\n")
-                    )
-                case Result.Failure(e) =>
-                    fail(s"unexpected failure during README self-validation: $e")
-                case Result.Panic(t) =>
-                    fail(s"unexpected panic during README self-validation: ${t.getMessage}")
-            }
+        Abort.run[FileException](findReadme).flatMap {
+            case Result.Success(readmePath) =>
+                Abort.run(Scope.run(runCheck(readmePath))).map {
+                    case Result.Success(report) =>
+                        assert(
+                            report.failures.isEmpty,
+                            s"README.md self-validation failed with ${report.failures.size} failure(s):\n" +
+                                report.failures.toSeq.map(f => s"  ${f.line}: ${f.message}").mkString("\n")
+                        )
+                    case Result.Failure(e) =>
+                        fail(s"unexpected failure during README self-validation: $e")
+                    case Result.Panic(t) =>
+                        fail(s"unexpected panic during README self-validation: ${t.getMessage}")
+                }
+            case Result.Failure(e) =>
+                fail(s"failed to locate README.md: $e")
+            case Result.Panic(t) =>
+                fail(s"unexpected IO panic locating README.md: ${t.getMessage}")
         }
     }
 
@@ -327,7 +332,7 @@ class CorpusTest extends kyo.test.Test[Any]:
     // We walk parent directories looking for a directory named "kyo-doctest" that contains README.md.
     // Failing that, fall back to user.dir itself (in case the test runs from the kyo-doctest dir directly).
     // NOTE: override via the kyo.doctest.readme system property for non-standard build layouts.
-    private def findReadme(using Frame): kyo.Path < Sync =
+    private def findReadme(using Frame): kyo.Path < (Sync & Abort[FileException]) =
         System.property[String]("kyo.doctest.readme").flatMap { overrideProp =>
             overrideProp match
                 case Present(p) => kyo.Path(p)
@@ -335,16 +340,16 @@ class CorpusTest extends kyo.test.Test[Any]:
                     kyo.System.property[String]("user.dir").flatMap { maybeCwd =>
                         val cwdStr = maybeCwd.getOrElse(".")
                         val cwd    = kyo.Path(cwdStr)
-                        def loop(dir: kyo.Path): kyo.Path < Sync =
+                        def loop(dir: kyo.Path): kyo.Path < (Sync & Abort[FileException]) =
                             // Check if this dir contains kyo-doctest/README.md as a sibling subdir.
                             val sibling = dir / "kyo-doctest" / "README.md"
                             // Check if this dir IS named kyo-doctest and directly contains README.md.
                             val direct  = dir / "README.md"
                             val dirName = dir.name.getOrElse("")
-                            sibling.exists.flatMap { siblingExists =>
+                            Path.runReadOnly(sibling.exists).flatMap { siblingExists =>
                                 if siblingExists then sibling
                                 else
-                                    direct.exists.flatMap { directExists =>
+                                    Path.runReadOnly(direct.exists).flatMap { directExists =>
                                         if dirName == "kyo-doctest" && directExists then direct
                                         else
                                             dir.parent match

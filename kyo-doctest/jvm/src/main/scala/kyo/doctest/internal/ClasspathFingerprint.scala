@@ -42,6 +42,8 @@ private[kyo] object ClasspathFingerprint:
 
     // Produce a raw-bytes hash for a single classpath entry.
     private def hashEntry(entry: kyo.Path)(using Frame): Array[Byte] < (Sync & Async & Abort[Doctest.Error]) =
+        // Per-operation runner: each Abort.recover here carries a distinct IoError op label; one runner
+        // per op is required to keep the label accurate to the failing operation.
         Abort.recover[FileException](e => Abort.fail(Doctest.Error.IoError(entry, "exists", e))) {
             Path.runReadOnly(entry.exists)
         }.flatMap { exists =>
@@ -49,11 +51,13 @@ private[kyo] object ClasspathFingerprint:
                 // Missing entry: hash the path string itself so presence vs absence is detectable.
                 sha256Bytes(entry.toString.getBytes("UTF-8"))
             else
+                // Per-operation runner: the IoError message must carry the "isDirectory" op label.
                 Abort.recover[FileException](e => Abort.fail(Doctest.Error.IoError(entry, "isDirectory", e))) {
                     Path.runReadOnly(entry.isDirectory)
                 }.flatMap { isDir =>
                     if isDir then hashDirectory(entry)
                     else
+                        // Per-operation runner: the IoError message must carry the "read" op label.
                         Abort.recover[FileException](e => Abort.fail(Doctest.Error.IoError(entry, "read", e))) {
                             Path.runReadOnly(entry.readBytes).map(span => sha256Bytes(span.toArray))
                         }
@@ -65,6 +69,7 @@ private[kyo] object ClasspathFingerprint:
     // Walk requires Scope; we run that scope locally (Scope.run introduces Async in the row).
     private def hashDirectory(dir: kyo.Path)(using Frame): Array[Byte] < (Sync & Async & Abort[Doctest.Error]) =
         Scope.run {
+            // Per-operation runner: the IoError message must carry the "walk" op label.
             Abort.recover[FileException](e => Abort.fail(Doctest.Error.IoError(dir, "walk", e))) {
                 Path.runReadOnly(dir.walk.run)
             }
@@ -73,6 +78,7 @@ private[kyo] object ClasspathFingerprint:
             // Sort by path string for stable hashing.
             val sortedFiles = classFiles.toSeq.sortBy(_.toString)
             Kyo.foreach(sortedFiles) { f =>
+                // Per-operation runner: the IoError message must carry the "read" op label.
                 Abort.recover[FileException](e => Abort.fail(Doctest.Error.IoError(f, "read", e))) {
                     Path.runReadOnly(f.readBytes).map(span => (f.toString, span.toArray))
                 }

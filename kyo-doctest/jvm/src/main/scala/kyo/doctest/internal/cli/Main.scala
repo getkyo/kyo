@@ -24,29 +24,34 @@ object Main extends KyoApp:
         else
             val configPathStr = args(0).toString
             val resultPathStr = args(1).toString
-            for
-                configJson <-
-                    Abort.recover[FileException](e =>
-                        Abort.fail(new java.io.IOException(s"failed to read config: $e"))
-                    )(Path.runReadOnly(Path(configPathStr).read))
+            // Single boundary runner for the entire for-comprehension: Path.run subsumes runReadOnly,
+            // so one runner covers both the config read and the result write. The two Abort.recover
+            // wrappers each translate FileException to a context-specific IOException message.
+            Path.run {
+                for
+                    configJson <-
+                        Abort.recover[FileException](e =>
+                            Abort.fail(new java.io.IOException(s"failed to read config: $e"))
+                        )(Path(configPathStr).read)
 
-                config <- decodeConfig(configJson)
-                report <- runDoctest(config)
+                    config <- decodeConfig(configJson)
+                    report <- runDoctest(config)
 
-                _ <-
-                    Abort.recover[FileException](e =>
-                        Abort.fail(new java.io.IOException(s"failed to write result: $e"))
-                    )(Path.run(Path(resultPathStr).write(Json.encode(report))))
+                    _ <-
+                        Abort.recover[FileException](e =>
+                            Abort.fail(new java.io.IOException(s"failed to write result: $e"))
+                        )(Path(resultPathStr).write(Json.encode(report)))
 
-                _ <-
-                    if report.failures.nonEmpty then
-                        // useAnsi=false: output is captured by the sbt plugin, not displayed directly in a terminal.
-                        Console.printLineErr(ErrorReporter.renderAll(report.failures, useAnsi = false))
-                            .andThen(Sync.defer { scala.sys.exit(1) })
-                    else
-                        Kyo.unit
-            yield ()
-            end for
+                    _ <-
+                        if report.failures.nonEmpty then
+                            // useAnsi=false: output is captured by the sbt plugin, not displayed directly in a terminal.
+                            Console.printLineErr(ErrorReporter.renderAll(report.failures, useAnsi = false))
+                                .andThen(Sync.defer { scala.sys.exit(1) })
+                        else
+                            Kyo.unit
+                yield ()
+                end for
+            }
         end if
     }
 
