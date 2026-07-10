@@ -935,15 +935,15 @@ final private[kyo] class HttpContainerBackend(
         val tempDir       = Path("/tmp") / s"kyo-copyto-$uniqueSuffix"
         val target        = tempDir / containerFile
 
-        Abort.run[FileFsException](tempDir.mkDir).map {
+        Abort.run[FileException](Path.run(tempDir.mkDir)).map {
             case Result.Failure(e) =>
                 Abort.fail(ContainerOperationException(s"copyTo: failed to create temp dir for ${id.value}", e))
             case Result.Panic(t) =>
                 Abort.fail(ContainerBackendException(s"copyTo: panic creating temp dir for ${id.value}", t))
             case Result.Success(_) =>
-                Sync.ensure(tempDir.removeAll.unit) {
-                    Abort.run[FileFsException](
-                        source.copy(target, replaceExisting = true)
+                Sync.ensure(Abort.run[FileException](Path.run(tempDir.removeAll)).unit) {
+                    Abort.run[FileException](
+                        Path.run(source.copy(target, replaceExisting = true))
                     ).map {
                         case Result.Failure(e) =>
                             Abort.fail(ContainerOperationException(
@@ -2934,9 +2934,10 @@ private[kyo] object HttpContainerBackend:
                         else
                             xp.toList ++ Seq(defaultSocket) ++ hd.toList
                     // Filter to paths that exist on disk
-                    Kyo.filter(candidates)(path => Path(path).exists).map { staticPaths =>
-                        if staticPaths.nonEmpty then staticPaths
-                        else discoverSocketsViaCli()
+                    Kyo.filter(candidates)(path => Abort.recover[FileException](_ => false)(Path.runReadOnly(Path(path).exists))).map {
+                        staticPaths =>
+                            if staticPaths.nonEmpty then staticPaths
+                            else discoverSocketsViaCli()
                     }
                 }
             }

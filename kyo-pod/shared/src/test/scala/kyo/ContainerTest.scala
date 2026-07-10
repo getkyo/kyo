@@ -759,39 +759,43 @@ class ContainerTest extends BasePodTest:
         "XDG_RUNTIME_DIR/containers/auth.json is consulted when present" in {
             val tmpRoot    = Path("/tmp/kyo-xdg-" + java.util.UUID.randomUUID)
             val containers = tmpRoot / "containers"
-            for
-                _ <- containers.mkDir
-                _ <- (containers / "auth.json").write("""{"auths":{"ghcr.io":"dGVzdA=="}}""")
-                auth <- kyo.System.let(systemWith(
-                    envOverrides = Map("XDG_RUNTIME_DIR" -> tmpRoot.toString, "DOCKER_CONFIG" -> ""),
-                    propsOverrides = Map("user.home" -> "/nonexistent")
-                )) {
-                    kyo.internal.ContainerBackend.registryAuthFromConfig
-                }
-                _ <- tmpRoot.removeAll
-            yield assert(
-                auth.auths.toMap.nonEmpty,
-                s"expected XDG path to be consulted, got empty auth: $auth"
-            )
-            end for
+            Path.run {
+                for
+                    _ <- containers.mkDir
+                    _ <- (containers / "auth.json").write("""{"auths":{"ghcr.io":"dGVzdA=="}}""")
+                    auth <- kyo.System.let(systemWith(
+                        envOverrides = Map("XDG_RUNTIME_DIR" -> tmpRoot.toString, "DOCKER_CONFIG" -> ""),
+                        propsOverrides = Map("user.home" -> "/nonexistent")
+                    )) {
+                        kyo.internal.ContainerBackend.registryAuthFromConfig
+                    }
+                    _ <- tmpRoot.removeAll
+                yield assert(
+                    auth.auths.toMap.nonEmpty,
+                    s"expected XDG path to be consulted, got empty auth: $auth"
+                )
+                end for
+            }
         }
 
         "malformed JSON yields empty auth Dict (no panic)" in {
             val tmpRoot    = Path("/tmp/kyo-xdg-bad-" + java.util.UUID.randomUUID)
             val containers = tmpRoot / "containers"
-            for
-                _ <- containers.mkDir
-                _ <- (containers / "auth.json").write("not json")
-                auth <- kyo.System.let(systemWith(
-                    envOverrides = Map("XDG_RUNTIME_DIR" -> tmpRoot.toString, "DOCKER_CONFIG" -> ""),
-                    propsOverrides = Map("user.home" -> "/nonexistent")
-                )) { kyo.internal.ContainerBackend.registryAuthFromConfig }
-                _ <- tmpRoot.removeAll
-            yield assert(
-                auth.auths.toMap.isEmpty,
-                s"expected empty Dict on malformed JSON, got: $auth"
-            )
-            end for
+            Path.run {
+                for
+                    _ <- containers.mkDir
+                    _ <- (containers / "auth.json").write("not json")
+                    auth <- kyo.System.let(systemWith(
+                        envOverrides = Map("XDG_RUNTIME_DIR" -> tmpRoot.toString, "DOCKER_CONFIG" -> ""),
+                        propsOverrides = Map("user.home" -> "/nonexistent")
+                    )) { kyo.internal.ContainerBackend.registryAuthFromConfig }
+                    _ <- tmpRoot.removeAll
+                yield assert(
+                    auth.auths.toMap.isEmpty,
+                    s"expected empty Dict on malformed JSON, got: $auth"
+                )
+                end for
+            }
         }
 
         "missing file yields empty auth Dict (no panic)" in {
