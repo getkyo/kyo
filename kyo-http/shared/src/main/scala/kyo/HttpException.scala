@@ -359,10 +359,13 @@ case class HttpProtocolException private[kyo] (detail: String)(using Frame)
         s"HTTP protocol error: $detail"
     )
 
-/** Request body exceeds the configured maximum size (RFC 9110 §15.5.14). */
+/** A response body exceeds the client's configured `HttpClientConfig.maxResponseLength`. The client rejects an oversized response (by its
+  * declared `Content-Length` or its accumulated bytes) rather than buffer it without bound (CWE-400); `bodySize` is the offending size, `maxSize`
+  * the configured cap.
+  */
 case class HttpPayloadTooLargeException private[kyo] (bodySize: Int, maxSize: Int)(using Frame)
     extends HttpDecodeException(
-        s"Request body size $bodySize exceeds maximum allowed $maxSize"
+        s"Response body size $bodySize exceeds the configured maximum $maxSize"
     )
 
 /** Connection closed cleanly (EOF). Not an error, normal keep-alive termination. */
