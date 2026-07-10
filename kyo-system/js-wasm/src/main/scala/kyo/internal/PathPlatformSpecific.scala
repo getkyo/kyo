@@ -557,6 +557,7 @@ end NodeWalkHandle
 final private[kyo] class NodeWriteHandle(fd: Int, path: Path) extends Path.WriteHandle:
 
     private var pos: Long = 0L
+    private var finished  = false
 
     def writeBytes(chunk: Chunk[Byte])(using AllowUnsafe, Frame): Result[FileWriteException, Unit] =
         try
@@ -574,8 +575,17 @@ final private[kyo] class NodeWriteHandle(fd: Int, path: Path) extends Path.Write
     def writeString(s: String, charset: Charset)(using AllowUnsafe, Frame): Result[FileWriteException, Unit] =
         writeBytes(Chunk.from(s.getBytes(charset)))
 
+    def finish()(using AllowUnsafe): Unit =
+        finished = true
+
     def close()(using AllowUnsafe): Unit =
         NodeFs.closeSync(fd)
+        if !finished then
+            // Unsafe: removes the partially-written file if finish() was never called
+            if NodeFs.existsSync(path.unsafe.show) then
+                NodeFs.unlinkSync(path.unsafe.show)
+        end if
+    end close
 
 end NodeWriteHandle
 
@@ -648,7 +658,7 @@ abstract private[kyo] class PathPlatformSpecific extends PathDirectories:
             }
         }
 
-    def tempDir(
+    def tempDirUnscoped(
         prefix: String = "kyo"
     )(using Frame): Path < (Sync & Abort[FileFsException]) =
         Sync.Unsafe.defer {

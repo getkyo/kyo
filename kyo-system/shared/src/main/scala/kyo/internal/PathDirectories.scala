@@ -33,7 +33,7 @@ private[kyo] trait PathDirectories:
     private[kyo] def temp(prefix: String, suffix: String)(using Frame): Path < (Sync & Abort[FileFsException])
 
     /** Creates a temporary directory. Platform-specific. */
-    private[kyo] def tempDir(prefix: String)(using Frame): Path < (Sync & Abort[FileFsException])
+    private[kyo] def tempDirUnscoped(prefix: String)(using Frame): Path < (Sync & Abort[FileFsException])
 
     // --- Concrete shared logic ---
 
@@ -76,7 +76,7 @@ private[kyo] trait PathDirectories:
     )(using Frame): Path < (Sync & Scope & Abort[FileFsException]) =
         temp(prefix, suffix).map { p =>
             Scope.acquireRelease(p) { q =>
-                Abort.run[FileFsException](q.removeAll).unit
+                Abort.run[FileException](Path.run(q.removeAll)).unit
             }
         }
 

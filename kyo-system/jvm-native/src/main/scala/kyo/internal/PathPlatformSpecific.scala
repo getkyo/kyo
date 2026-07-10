@@ -383,6 +383,8 @@ end NioPathUnsafe
 /** Concrete write handle backed by a `java.nio.channels.FileChannel`. */
 final private[kyo] class NioWriteHandle(channel: FileChannel, path: Path) extends Path.WriteHandle:
 
+    private var finished = false
+
     def writeBytes(chunk: Chunk[Byte])(using AllowUnsafe, Frame): Result[FileWriteException, Unit] =
         try
             val arr = chunk.toArray
@@ -396,8 +398,15 @@ final private[kyo] class NioWriteHandle(channel: FileChannel, path: Path) extend
     def writeString(s: String, charset: Charset)(using AllowUnsafe, Frame): Result[FileWriteException, Unit] =
         writeBytes(Chunk.from(s.getBytes(charset)))
 
+    def finish()(using AllowUnsafe): Unit =
+        finished = true
+
     def close()(using AllowUnsafe): Unit =
         channel.close()
+        if !finished then
+            // Unsafe: removes the partially-written file if finish() was never called
+            discard(java.nio.file.Files.deleteIfExists(path.unsafe.asInstanceOf[NioPathUnsafe].jpath))
+    end close
 
 end NioWriteHandle
 
@@ -490,7 +499,7 @@ abstract private[kyo] class PathPlatformSpecific extends PathDirectories:
       * @param prefix
       *   prefix for the temp directory name (default `"kyo"`)
       */
-    def tempDir(
+    def tempDirUnscoped(
         prefix: String = "kyo"
     )(using Frame): Path < (Sync & Abort[FileFsException]) =
         Sync.Unsafe.defer(

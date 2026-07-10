@@ -90,15 +90,17 @@ class CommandTest extends kyo.test.Test[Any]:
     }
 
     "cwd sets working directory for the process" in {
-        for
-            tmpDir <- Path.tempDir("kyo-cmd-cwd-test")
-            result <- pwd.cwd(tmpDir).text
-            _      <- tmpDir.removeAll
-        yield
-            val pwdPath = normalize(result).trim
-            val dirName = tmpDir.name.getOrElse("")
-            assert(pwdPath.contains(dirName))
-        end for
+        Path.run {
+            for
+                tmpDir <- Path.tempDir("kyo-cmd-cwd-test")
+                result <- pwd.cwd(tmpDir).text
+                _      <- tmpDir.removeAll
+            yield
+                val pwdPath = normalize(result).trim
+                val dirName = tmpDir.name.getOrElse("")
+                assert(pwdPath.contains(dirName))
+            end for
+        }
     }
 
     "non-existent program raises ProgramNotFoundException" in {
@@ -183,58 +185,66 @@ class CommandTest extends kyo.test.Test[Any]:
     // ---------------------------------------------------------------------------
 
     "stdoutToFile writes stdout to file" in {
-        for
-            path    <- Path.temp("kyo-stdout-file-test", ".txt")
-            _       <- echo("stdout line").stdoutToFile(path).waitFor
-            content <- path.read
-            _       <- path.remove
-        yield assert(normalize(content).trim == "stdout line")
-        end for
+        Path.run {
+            for
+                path    <- Path.temp("kyo-stdout-file-test", ".txt")
+                _       <- echo("stdout line").stdoutToFile(path).waitFor
+                content <- path.read
+                _       <- path.remove
+            yield assert(normalize(content).trim == "stdout line")
+            end for
+        }
     }
 
     // ProcessBuilder.Redirect.appendTo is broken on Scala Native Windows ARM64
     "stdoutToFile with append=true appends" in {
         assume(!(isWindows && kyo.internal.Platform.isNative), "ProcessBuilder append broken on Native Windows")
         {
-            for
-                path    <- Path.temp("kyo-stdout-append-test", ".txt")
-                _       <- path.write("line1\n")
-                _       <- echo("line2").stdoutToFile(path, append = true).waitFor
-                content <- path.read
-                _       <- path.remove
-            yield
-                assert(content.contains("line1"))
-                assert(content.contains("line2"))
-            end for
+            Path.run {
+                for
+                    path    <- Path.temp("kyo-stdout-append-test", ".txt")
+                    _       <- path.write("line1\n")
+                    _       <- echo("line2").stdoutToFile(path, append = true).waitFor
+                    content <- path.read
+                    _       <- path.remove
+                yield
+                    assert(content.contains("line1"))
+                    assert(content.contains("line2"))
+                end for
+            }
         }
     }
 
     "stderrToFile writes stderr to file" in {
         assumeUnix("stderr redirect");
         {
-            for
-                path    <- Path.temp("kyo-stderr-file-test", ".txt")
-                _       <- Command("sh", "-c", "echo err >&2").stderrToFile(path).waitFor
-                content <- path.read
-                _       <- path.remove
-            yield assert(normalize(content).trim == "err")
-            end for
+            Path.run {
+                for
+                    path    <- Path.temp("kyo-stderr-file-test", ".txt")
+                    _       <- Command("sh", "-c", "echo err >&2").stderrToFile(path).waitFor
+                    content <- path.read
+                    _       <- path.remove
+                yield assert(normalize(content).trim == "err")
+                end for
+            }
         }
     }
 
     "stderrToFile with append=true appends" in {
         assumeUnix("stderr redirect");
         {
-            for
-                path    <- Path.temp("kyo-stderr-append-test", ".txt")
-                _       <- path.write("first\n")
-                _       <- Command("sh", "-c", "echo second >&2").stderrToFile(path, append = true).waitFor
-                content <- path.read
-                _       <- path.remove
-            yield
-                assert(content.contains("first"))
-                assert(content.contains("second"))
-            end for
+            Path.run {
+                for
+                    path    <- Path.temp("kyo-stderr-append-test", ".txt")
+                    _       <- path.write("first\n")
+                    _       <- Command("sh", "-c", "echo second >&2").stderrToFile(path, append = true).waitFor
+                    content <- path.read
+                    _       <- path.remove
+                yield
+                    assert(content.contains("first"))
+                    assert(content.contains("second"))
+                end for
+            }
         }
     }
 
@@ -378,18 +388,20 @@ class CommandTest extends kyo.test.Test[Any]:
 
     "Path.unsafe.read returns Success for readable file" in {
         val text = "unsafe read content"
-        for
-            dir <- Path.tempDir("kyo-unsafe-test")
-            file = dir / "unsafe-read.txt"
-            _ <- file.write(text)
-            result =
-                import AllowUnsafe.embrace.danger
-                file.unsafe.read()
-            _ <- dir.removeAll
-        yield result match
-            case Result.Success(content) => assert(content == text)
-            case other                   => fail(s"Expected Success, got: $other")
-        end for
+        Path.run {
+            for
+                dir <- Path.tempDir("kyo-unsafe-test")
+                file = dir / "unsafe-read.txt"
+                _ <- file.write(text)
+                result =
+                    import AllowUnsafe.embrace.danger
+                    file.unsafe.read()
+                _ <- dir.removeAll
+            yield result match
+                case Result.Success(content) => assert(content == text)
+                case other                   => fail(s"Expected Success, got: $other")
+            end for
+        }
     }
 
     "Path.unsafe.read returns Failure(FileNotFoundException) for absent file" in {
@@ -528,16 +540,18 @@ class CommandTest extends kyo.test.Test[Any]:
     "stdoutToFile with append=true preserves existing content" in {
         assume(!(isWindows && kyo.internal.Platform.isNative), "ProcessBuilder append broken on Native Windows")
         {
-            for
-                path    <- Path.temp("kyo-stdout-append-preserve-test", ".txt")
-                _       <- path.write("line1\n")
-                _       <- echo("line2").stdoutToFile(path, append = true).waitFor
-                content <- path.read
-                _       <- path.remove
-            yield
-                assert(content.contains("line1"))
-                assert(content.contains("line2"))
-            end for
+            Path.run {
+                for
+                    path    <- Path.temp("kyo-stdout-append-preserve-test", ".txt")
+                    _       <- path.write("line1\n")
+                    _       <- echo("line2").stdoutToFile(path, append = true).waitFor
+                    content <- path.read
+                    _       <- path.remove
+                yield
+                    assert(content.contains("line1"))
+                    assert(content.contains("line2"))
+                end for
+            }
         }
     }
 
