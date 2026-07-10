@@ -28,6 +28,7 @@ private[net] trait OpenSslBindings extends SslLibBindings, Ffi:
     def ctxSetCert(ctx: Long, certPem: String, keyPem: String)(using AllowUnsafe): Int
     def ctxSetVerifyMode(ctx: Long, mode: Int)(using AllowUnsafe): Unit
     def ctxLoadCa(ctx: Long, caPem: String)(using AllowUnsafe): Int
+    def ctxLoadSystemCa(ctx: Long)(using AllowUnsafe): Int
     def ctxSetMinMaxVersion(ctx: Long, min: Int, max: Int)(using AllowUnsafe): Int
     def sslNew(ctx: Long, hostname: String)(using AllowUnsafe): Long
     def sslSetVerifyName(ssl: Long, hostname: String)(using AllowUnsafe): Int
@@ -58,6 +59,7 @@ private[net] object OpenSslBindings extends Ffi.Config(
             "ctxSetCert"                    -> "kyo_ossl_ctx_set_cert",
             "ctxSetVerifyMode"              -> "kyo_ossl_ctx_set_verify_mode",
             "ctxLoadCa"                     -> "kyo_ossl_ctx_load_ca",
+            "ctxLoadSystemCa"               -> "kyo_ossl_ctx_load_system_ca",
             "ctxSetMinMaxVersion"           -> "kyo_ossl_ctx_set_min_max_version",
             "sslNew"                        -> "kyo_ossl_ssl_new",
             "sslSetVerifyName"              -> "kyo_ossl_ssl_set_verify_name",

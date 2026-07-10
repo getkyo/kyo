@@ -163,6 +163,33 @@ static int KYO_SSL_FN(ctx_load_ca)(long ctx_ptr, const char *ca_pem) {
 }
 
 /*
+ * Load the platform default trust store into the context, so a verifying client with no explicit
+ * caCertPath validates public-internet chains (converging with the JDK floor's default trust store,
+ * NioTransport's `Absent => JDK default trust store`). System OpenSSL resolves its compiled-in CA
+ * dir/file and the SSL_CERT_FILE / SSL_CERT_DIR overrides via SSL_CTX_set_default_verify_paths; a
+ * bundled BoringSSL has no compiled-in default, so the common platform CA bundle files are loaded too.
+ * Returns 1 if any trust source loaded, 0 otherwise. Never fails the context: a missing bundle path is
+ * skipped and the error queue is cleared so a later handshake's error reporting is not polluted.
+ */
+static int KYO_SSL_FN(ctx_load_system_ca)(long ctx_ptr) {
+    if (!ctx_ptr) return 0;
+    SSL_CTX *ctx = (SSL_CTX *)(intptr_t)ctx_ptr;
+    int loaded = 0;
+    if (SSL_CTX_set_default_verify_paths(ctx) == 1) loaded = 1;
+    static const char *const bundles[] = {
+        "/etc/ssl/certs/ca-certificates.crt", /* Debian, Ubuntu, Alpine, Arch */
+        "/etc/pki/tls/certs/ca-bundle.crt",   /* Fedora, RHEL, CentOS */
+        "/etc/ssl/ca-bundle.pem",             /* openSUSE */
+        "/etc/ssl/cert.pem",                  /* macOS, some BSD */
+    };
+    for (size_t i = 0; i < sizeof(bundles) / sizeof(bundles[0]); i++) {
+        if (SSL_CTX_load_verify_locations(ctx, bundles[i], NULL) == 1) loaded = 1;
+    }
+    ERR_clear_error();
+    return loaded;
+}
+
+/*
  * Pin the TLS version window. min/max are 2 or 3 (TLS 1.2 / TLS 1.3); 0 leaves that bound at the
  * library default. Returns 0 on success, -1 on a rejected version.
  */

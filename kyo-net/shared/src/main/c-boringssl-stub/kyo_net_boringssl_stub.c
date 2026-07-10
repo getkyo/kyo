@@ -48,6 +48,11 @@ int kyo_bssl_ctx_load_ca(long ctx_ptr, const char *ca_pem) {
     return -1;
 }
 
+int kyo_bssl_ctx_load_system_ca(long ctx_ptr) {
+    (void)ctx_ptr;
+    return 0;
+}
+
 int kyo_bssl_ctx_set_min_max_version(long ctx_ptr, int min, int max) {
     (void)ctx_ptr;
     (void)min;

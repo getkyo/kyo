@@ -41,6 +41,12 @@ private[net] trait SslLibBindings:
     /** Load PEM CA certificate(s) into the trust store. Returns the count added (`>= 1`) or `-1`. */
     def ctxLoadCa(ctx: Long, caPem: String)(using AllowUnsafe): Int
 
+    /** Load the platform default trust store (system OpenSSL default paths + `SSL_CERT_FILE`/`SSL_CERT_DIR`, plus the common CA-bundle files a
+      * bundled BoringSSL needs). Returns `1` if any trust source loaded, `0` otherwise. Used for a verifying client with no explicit `caCertPath`,
+      * so it validates public chains against the same trust the JDK floor's default trust store provides.
+      */
+    def ctxLoadSystemCa(ctx: Long)(using AllowUnsafe): Int
+
     /** Pin the TLS version window (`2` = TLS 1.2, `3` = TLS 1.3, `0` = library default). `0` ok, `-1` on a rejected version. */
     def ctxSetMinMaxVersion(ctx: Long, min: Int, max: Int)(using AllowUnsafe): Int
 

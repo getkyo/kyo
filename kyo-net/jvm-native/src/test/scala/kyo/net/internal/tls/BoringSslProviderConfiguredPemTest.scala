@@ -1,6 +1,7 @@
 package kyo.net.internal.tls
 
 import kyo.*
+import kyo.ffi.Ffi
 import kyo.net.NetTlsConfig
 import kyo.net.Test
 
@@ -124,6 +125,41 @@ class BoringSslProviderConfiguredPemTest extends Test:
             finally engine.free()
             end try
         }
+    }
+
+    // The fix: a verifying client with no configured caCertPath must actually LOAD the platform trust store, not leave an EMPTY X509 store. Before
+    // the fix, applyConfig's Absent branch loaded no CAs while verify mode stayed 2 (SSL_VERIFY_PEER), so every public-internet handshake failed
+    // with EngineError (the kyo-browser Chrome-download wipeout: the "system-trust default" the two tests above assert was empty in the native
+    // path). This exercises the shim's ctxLoadSystemCa directly: on a host with a real platform CA bundle it must load at least one trust source
+    // (SSL_CTX_load_verify_locations parses the bundle only when it exists), so the client validates public chains. Gated on a bundle file being
+    // present (Linux CI has /etc/ssl/certs/ca-certificates.crt); a host with none cannot exercise system trust and cancels.
+    private val systemCaBundlePaths = Seq(
+        "/etc/ssl/certs/ca-certificates.crt", // Debian, Ubuntu, Alpine, Arch
+        "/etc/pki/tls/certs/ca-bundle.crt",   // Fedora, RHEL, CentOS
+        "/etc/ssl/ca-bundle.pem",             // openSUSE
+        "/etc/ssl/cert.pem"                   // macOS, some BSD
+    )
+    private def presentCaBundle: Maybe[String] =
+        Maybe.fromOption(systemCaBundlePaths.find(p => java.nio.file.Files.exists(java.nio.file.Paths.get(p))))
+
+    "BoringSSL: a verifying client with no caCertPath loads the platform trust store, not an empty store" in {
+        if !TlsRealEngines.boringSslAvailable() then cancel("BoringSSL not staged for this host")
+        presentCaBundle match
+            case Absent => cancel("no platform CA bundle on this host to exercise system trust")
+            case Present(bundle) =>
+                Sync.defer {
+                    val lib = Ffi.load[BoringSslBindings]
+                    val ctx = lib.ctxNew(0)
+                    assert(ctx != 0L, "ctxNew")
+                    try
+                        assert(
+                            lib.ctxLoadSystemCa(ctx) > 0,
+                            s"ctxLoadSystemCa must load at least one trust source from the platform default store (bundle present: $bundle)"
+                        )
+                    finally lib.ctxFree(ctx)
+                    end try
+                }
+        end match
     }
 
 end BoringSslProviderConfiguredPemTest

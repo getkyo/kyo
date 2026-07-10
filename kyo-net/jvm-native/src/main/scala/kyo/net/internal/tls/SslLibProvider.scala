@@ -57,7 +57,15 @@ abstract private[net] class SslLibProvider extends TlsEngineProvider:
         // The server verifies client certs against trustStorePath, falling back to caCertPath; the client verifies the server chain against
         // caCertPath.
         val serverCa = if isServer then config.trustStorePath.orElse(config.caCertPath) else config.caCertPath
-        readPem(serverCa).foreach(ca => discard(lib.ctxLoadCa(ctx, ca)))
+        readPem(serverCa) match
+            case Present(ca) => discard(lib.ctxLoadCa(ctx, ca))
+            case Absent      =>
+                // A verifying CLIENT with no configured caCertPath validates the server chain against the platform default trust store,
+                // converging with the JDK floor (NioTransport: `Absent => JDK default trust store`). Without this a bundled BoringSSL client has
+                // an EMPTY X509 store, so every public-internet handshake fails with EngineError. NOT applied to a server: a server verifies the
+                // peer's CLIENT certificate and must anchor on an explicit trust store, never the public CA set.
+                if !isServer && !config.trustAll then discard(lib.ctxLoadSystemCa(ctx))
+        end match
         lib.ctxSetVerifyMode(ctx, verifyMode(config, isServer))
         discard(lib.ctxSetMinMaxVersion(ctx, versionCode(config.minVersion), versionCode(config.maxVersion)))
         // Load the certificate + key whenever both are configured, for the client too: a mutual-TLS client presents its own client certificate

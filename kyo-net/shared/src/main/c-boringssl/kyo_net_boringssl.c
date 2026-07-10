@@ -58,6 +58,7 @@ int kyo_bssl_ctx_set_cert(long ctx_ptr, const char *cert_pem, const char *key_pe
 }
 void kyo_bssl_ctx_set_verify_mode(long ctx_ptr, int mode) { kyo_bssl_ctx_set_verify_mode_impl(ctx_ptr, mode); }
 int kyo_bssl_ctx_load_ca(long ctx_ptr, const char *ca_pem) { return kyo_bssl_ctx_load_ca_impl(ctx_ptr, ca_pem); }
+int kyo_bssl_ctx_load_system_ca(long ctx_ptr) { return kyo_bssl_ctx_load_system_ca_impl(ctx_ptr); }
 int kyo_bssl_ctx_set_min_max_version(long ctx_ptr, int min, int max) {
     return kyo_bssl_ctx_set_min_max_version_impl(ctx_ptr, min, max);
 }
