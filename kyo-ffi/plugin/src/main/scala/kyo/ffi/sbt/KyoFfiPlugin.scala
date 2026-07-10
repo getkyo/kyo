@@ -76,6 +76,12 @@ object KyoFfiPlugin extends AutoPlugin {
                 "into the binary by Scala Native, not linked as an archive. Wire into " +
                 "nativeConfig.linkingOptions in a Native project."
         )
+        val ffiNativeCompileOptions = taskKey[Seq[String]](
+            "Scala Native compileOptions for ffiLibraries: the `-I` include dirs the bundled C is compiled " +
+                "against (e.g. a staged BoringSSL include tree). A downstream Native module that recompiles " +
+                "this module's bundled C needs the same headers, so it resolves the same functions the link " +
+                "libs provide. Wire into nativeConfig.compileOptions in a Native project."
+        )
 
         /** Diagnostic: return the resolved `cc` command line(s) the plugin would
           * invoke for the current library configuration, without executing it. One
@@ -514,6 +520,11 @@ object KyoFfiPlugin extends AutoPlugin {
         // without a `-l<library>` the linker can't find. No-op on JVM / JS.
         Compile / resourceGenerators += ffiNativeResourceGenerator.taskValue,
 
+        // Native only: write this module's FFI link + compile flags to classpath manifests so a downstream
+        // Native module that recompiles this module's bundled C compiles and links it the same way. See
+        // `ffiNativeFlagsManifestGenerator`. No-op elsewhere.
+        Compile / resourceGenerators += ffiNativeFlagsManifestGenerator.taskValue,
+
         // Surface extract-dir + scratch-size as JVM system properties so consumer forks
         // pick them up at runtime. Covers Compile/run/Test javaOptions; consumers still
         // need to set `fork := true` to actually get a child JVM.
@@ -631,6 +642,21 @@ object KyoFfiPlugin extends AutoPlugin {
                         CCompiler.foldedLinkLibFlags(lib.resolvedLinkLibs(buildOs), lib.staticLink)
                 }
             }
+        },
+
+        // ffiNativeCompileOptions: only meaningful on Native (Nil elsewhere). The `-I` include dirs the
+        // bundled C is compiled against (e.g. a staged BoringSSL include tree). A downstream Native module
+        // that recompiles this module's bundled C (Scala Native scans every `scala-native` dir on the
+        // classpath) MUST compile it against the SAME headers so its `SSL_*` macro/function references
+        // resolve to the same library the link libs provide. Otherwise the bundled C compiles against the
+        // system openssl headers (`SSL_CTX_set_min_proto_version` -> the `SSL_CTX_ctrl` macro) while the
+        // link resolves against a BoringSSL archive that does not export `SSL_CTX_ctrl`, and nativeLink
+        // fails with `undefined reference to SSL_CTX_ctrl`.
+        ffiNativeCompileOptions := {
+            val platform = ffiTargetPlatform.value
+            val libs     = ffiLibrariesResolved.value
+            if (platform != "Native") Nil
+            else libs.flatMap(_.includeDirs).distinct.map(d => s"-I${d.getAbsolutePath}")
         }
     )
 
@@ -669,6 +695,68 @@ object KyoFfiPlugin extends AutoPlugin {
                     dest
                 }
             }
+        }
+    }
+
+    /** The classpath-relative directories KyoFfiPlugin writes each Native module's link- and compile-flag
+      * manifests into (one `<module>.flags` file per FFI module in each). A downstream Native module reads
+      * every dependency's manifests from these directories on its classpath and folds the flags into its own
+      * `nativeConfig.linkingOptions` / `compileOptions`. Kept in sync with the reader in build.sbt's
+      * `native-settings`.
+      */
+    val ffiNativeLinkFlagsDir: Seq[String]    = Seq("META-INF", "kyo-ffi", "native-link-flags")
+    val ffiNativeCompileFlagsDir: Seq[String] = Seq("META-INF", "kyo-ffi", "native-compile-flags")
+
+    /** Native-only resource generator: write this module's Scala Native FFI link flags
+      * (`ffiNativeLinkingOptions`, e.g. `-Wl,-Bstatic -luring -Wl,-Bdynamic` on Linux, plus the staged
+      * BoringSSL force-load) and compile flags (`ffiNativeCompileOptions`, the `-I` include dirs the bundled
+      * C is compiled against) to classpath manifests under the `resourceManaged` `META-INF/kyo-ffi`
+      * subtrees (one flag per line).
+      *
+      * A `nativeBundled` binding's C sources already ride the classpath (via `ffiNativeResourceGenerator`)
+      * and Scala Native compiles them into ANY downstream binary, so a module that depends on this one both
+      * COMPILES that C (needs the same `-I` headers, or a `SSL_*` reference resolves to the wrong library)
+      * and LINKS its symbols (needs the same `-l` libs, e.g. `io_uring_*`). But `nativeConfig` is per-project
+      * and does NOT propagate across a project dependency, so the downstream build would fail (compile
+      * against system openssl headers -> `SSL_CTX_ctrl` macro, then `undefined reference to SSL_CTX_ctrl`
+      * against a BoringSSL archive that does not export it; or `undefined reference to io_uring_*`). These
+      * manifests carry the same flags across the classpath; build.sbt's `native-settings` reads every
+      * dependency's manifests and folds them into the downstream `nativeConfig`, mirroring how the bundled C
+      * itself propagates.
+      *
+      * No-op on JVM / JS (they load a shared library at runtime, so there are no native build flags). An
+      * empty flag set (e.g. macOS, where liburing does not apply) writes no file and removes a stale one, so
+      * a now-flagless build does not leak a previous build's flags downstream.
+      */
+    private def ffiNativeFlagsManifestGenerator: Def.Initialize[Task[Seq[File]]] = Def.task {
+        // All task/setting lookups are hoisted out of the `if` (sbt evaluates task dependencies eagerly
+        // regardless of branch; on JVM/JS the FFI-flag tasks return Nil, so this is a cheap no-op).
+        val platform     = ffiTargetPlatform.value
+        val linkFlags    = ffiNativeLinkingOptions.value
+        val compileFlags = ffiNativeCompileOptions.value
+        val resManaged   = (Compile / resourceManaged).value
+        val moduleName   = name.value
+        if (platform != "Native") Seq.empty[File]
+        else
+            writeFfiFlagsManifest(resManaged, ffiNativeLinkFlagsDir, moduleName, linkFlags) ++
+                writeFfiFlagsManifest(resManaged, ffiNativeCompileFlagsDir, moduleName, compileFlags)
+    }
+
+    /** Write `flags` (one per line) to `<resManaged>/<relDir>/<module>.flags`, content-skipped so the
+      * generated resource (and thus nativeLink's classpath hash) stays stable across no-change builds. An
+      * empty flag set writes nothing and removes a stale file so it does not leak downstream.
+      */
+    private def writeFfiFlagsManifest(resManaged: File, relDir: Seq[String], moduleName: String, flags: Seq[String]): Seq[File] = {
+        val destDir = relDir.foldLeft(resManaged)(_ / _)
+        val dest    = destDir / (moduleName + ".flags")
+        if (flags.isEmpty) {
+            if (dest.exists()) IO.delete(dest)
+            Seq.empty[File]
+        } else {
+            IO.createDirectory(destDir)
+            val content = flags.mkString("", "\n", "\n")
+            if (!dest.exists() || IO.read(dest) != content) IO.write(dest, content)
+            Seq(dest)
         }
     }
 

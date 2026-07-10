@@ -2452,12 +2452,42 @@ lazy val `openssl-native-settings` = Seq(
     }
 )
 
+// Reads the FFI native-flag manifests KyoFfiPlugin writes for every dependency on the classpath (one
+// `<module>.flags` file per FFI module under `relDir`), one flag per line, deduped in first-seen order so
+// a BoringSSL `-I` precedes a later system include. A downstream Native module folds a dependency's
+// link/compile flags into its own nativeConfig so the dependency's bundled C compiles and links the same
+// way it does in the owning module (see `native-settings`).
+def readFfiNativeManifest(cp: Seq[Attributed[File]], relDir: Seq[String]): Seq[String] =
+    cp.flatMap { entry =>
+        val dir = relDir.foldLeft(entry.data)(_ / _)
+        if (dir.isDirectory) (dir * "*.flags").get.flatMap(IO.readLines(_)) else Seq.empty[String]
+    }.map(_.trim).filter(_.nonEmpty).distinct
+
 lazy val `native-settings` = Seq(
     fork                                              := false,
     bspEnabled                                        := false,
     Test / testForkedParallel                         := false,
     Test / envVars += "SCALANATIVE_THREAD_STACK_SIZE" -> "33554432",
-    libraryDependencies += "io.github.cquiroz"       %%% "scala-java-time" % "2.7.0"
+    libraryDependencies += "io.github.cquiroz"       %%% "scala-java-time" % "2.7.0",
+    // A dependency's `nativeBundled` FFI C (e.g. kyo-net's kyo_uring.c and TLS shims) is compiled into THIS
+    // Native binary by Scala Native (it scans every `scala-native` dir on the classpath), so this binary both
+    // COMPILES that C (must use the same `-I` headers, or a `SSL_*` reference resolves to the wrong library)
+    // and LINKS its symbols (io_uring_*, SSL_*). `nativeConfig` does not propagate across a project
+    // dependency, so without the flags the downstream build fails (compile against system openssl headers ->
+    // `SSL_CTX_ctrl` macro, then `undefined reference to SSL_CTX_ctrl`; or `undefined reference to
+    // io_uring_*`). KyoFfiPlugin writes each FFI module's link + compile flags to
+    // `META-INF/kyo-ffi/native-{link,compile}-flags/*.flags` manifests (`ffiNativeFlagsManifestGenerator`);
+    // read every dependency's manifests off the classpath and fold them into this binary's nativeConfig,
+    // mirroring how the bundled C itself propagates. A module that owns its FFI flags (kyo-net) does not see
+    // its own manifests here (dependencyClasspath excludes own output) and wires them directly instead.
+    nativeConfig := {
+        val base         = nativeConfig.value
+        val cp           = (Compile / dependencyClasspath).value
+        val linkExtra    = readFfiNativeManifest(cp, KyoFfiPlugin.ffiNativeLinkFlagsDir)
+        val compileExtra = readFfiNativeManifest(cp, KyoFfiPlugin.ffiNativeCompileFlagsDir)
+        val withLink     = if (linkExtra.isEmpty) base else base.withLinkingOptions(base.linkingOptions ++ linkExtra)
+        if (compileExtra.isEmpty) withLink else withLink.withCompileOptions(withLink.compileOptions ++ compileExtra)
+    }
 )
 
 lazy val `js-settings` = Seq(
