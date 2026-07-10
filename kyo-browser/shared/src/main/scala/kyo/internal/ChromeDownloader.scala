@@ -200,16 +200,24 @@ private[kyo] object ChromeDownloader:
         Frame
     )
         : Unit < (Async & Abort[BrowserSetupException]) =
-        Abort.recover[HttpException | FileWriteException] { (ex) =>
+        Abort.recover[HttpException | FileException] { (ex) =>
             val cause: Throwable = ex match
-                case e: HttpException      => e
-                case e: FileWriteException => e
+                case e: HttpException => e
+                case e: FileException => e
             Abort.fail[BrowserSetupException](
                 BrowserSetupFailedException(s"failed to download Chrome from $url", cause)
             )
         } {
             HttpClient.withConfig(_.timeout(downloadTimeout)) {
-                HttpClient.getBinary(url).map(bytes => dest.writeBytes(bytes))
+                // Stream the archive straight to disk rather than buffering it. `getBinary` reads the whole body into
+                // memory bounded by `HttpClientConfig.maxResponseLength` (100 MiB), which rejects the full-Chrome zip
+                // (~200 MiB). `getStreamBytes` has no such cap; `writeTo` sinks each network chunk through a scoped write
+                // handle and removes the partial file if the download fails midway.
+                Scope.run {
+                    HttpClient.getStreamBytes(url)
+                        .mapChunkPure(_.map(span => Chunk.from(span.toArray)).flattenChunk)
+                        .writeTo(dest)
+                }
             }
         }
 
