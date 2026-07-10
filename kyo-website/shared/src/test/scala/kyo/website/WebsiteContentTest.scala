@@ -73,14 +73,16 @@ class WebsiteContentTest extends WebsiteTest:
     private def fromRepoResult(
         files: Seq[(String, String)],
         version: WebsiteVersion = version1
-    )(using Frame): Result[WebsiteException, WebsiteContent] < (Sync & Abort[FileFsException | FileWriteException]) =
-        for
-            root <- Path.tempDir("kyo-fromrepo-test")
-            _ <- Kyo.foreachDiscard(Chunk.from(files)) { case (rel, body) =>
-                (root / rel).write(body)
+    )(using Frame): Result[WebsiteException, WebsiteContent] < (Sync & Scope & Abort[FileException]) =
+        Path.run {
+            Path.tempDir("kyo-fromrepo-test").map { root =>
+                Kyo.foreachDiscard(Chunk.from(files)) { case (rel, body) =>
+                    (root / rel).write(body)
+                }.map { _ =>
+                    Abort.run[WebsiteException](WebsiteContent.fromRepo(root, version))
+                }
             }
-            result <- Abort.run[WebsiteException](WebsiteContent.fromRepo(root, version))
-        yield result
+        }
 
     private val fullTreeReadme =
         """# Kyo

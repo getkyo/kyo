@@ -56,7 +56,7 @@ object WebsiteContent:
     // ---- Private helpers ----
 
     private def readRequired(path: Path)(using Frame): String < (Sync & Abort[WebsiteException]) =
-        Abort.run[FileReadException](path.read).map {
+        Abort.run[FileException](Path.runReadOnly(path.read)).map {
             case Result.Success(s) => s
             case Result.Failure(_) => Abort.fail(WebsiteReadmeException(path, WebsiteReadmeException.ReadmeFailure.Missing))
             case p: Result.Panic   => Abort.error(p)

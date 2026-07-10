@@ -110,7 +110,7 @@ object WebsiteGenerator:
       */
     private def readRequiredManifesto(repoRoot: Path)(using Frame): String < (Sync & Abort[WebsiteException]) =
         val path = repoRoot / "MANIFESTO.md"
-        Abort.run[FileReadException](path.read).map {
+        Abort.run[FileException](Path.runReadOnly(path.read)).map {
             case Result.Success(md) => md
             case Result.Failure(_)  => Abort.fail(WebsiteReadmeException(path, WebsiteReadmeException.ReadmeFailure.Missing))
             case p: Result.Panic    => Abort.error(p)
@@ -691,14 +691,14 @@ object WebsiteGenerator:
         WebsitePage.wrap(opts)(view).take(1).run.map(_.headMaybe.getOrElse(""))
 
     private def writeRoute(path: Path, html: String)(using Frame): Unit < (Sync & Abort[WebsiteException]) =
-        Abort.run[FileWriteException](path.write(html)).map {
+        Abort.run[FileException](Path.run(path.write(html))).map {
             case Result.Success(_) => ()
             case Result.Failure(e) => Abort.fail(WebsiteEmitException(path.toString, e))
             case p: Result.Panic   => Abort.error(p)
         }
 
     private def writeString(route: String, path: Path, content: String)(using Frame): Unit < (Sync & Abort[WebsiteException]) =
-        Abort.run[FileWriteException](path.write(content)).map {
+        Abort.run[FileException](Path.run(path.write(content))).map {
             case Result.Success(_) => ()
             case Result.Failure(e) => Abort.fail(WebsiteEmitException(route, e))
             case p: Result.Panic   => Abort.error(p)
@@ -811,7 +811,7 @@ object WebsiteGenerator:
         writeString("robots.txt", outDir / "robots.txt", buildRobotsTxt())
 
     private def copyFile(route: String, src: Path, dst: Path)(using Frame): Unit < (Sync & Abort[WebsiteException]) =
-        Abort.run[FileFsException](src.copy(dst, replaceExisting = true)).map {
+        Abort.run[FileException](Path.run(src.copy(dst, replaceExisting = true))).map {
             case Result.Success(_) => ()
             case Result.Failure(e) => Abort.fail(WebsiteEmitException(route, e))
             case p: Result.Panic   => Abort.error(p)

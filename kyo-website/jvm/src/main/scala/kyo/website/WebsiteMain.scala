@@ -199,7 +199,7 @@ object WebsiteMain extends KyoApp:
     private def listSnapshotDirs(contentDir: Path, currentTag: String)(using
         Frame
     ): Chunk[Path] < (Sync & Abort[WebsiteException]) =
-        Abort.run[FileFsException](contentDir.list).map {
+        Abort.run[FileException](Path.runReadOnly(contentDir.list)).map {
             case Result.Success(paths) =>
                 val byName =
                     paths.toSeq
@@ -241,7 +241,7 @@ object WebsiteMain extends KyoApp:
         flagValue(theArgs, "--bundle-dir") match
             case Present(dir) => dir
             case Absent =>
-                Abort.run[FileFsException](discoverBundleDir(repoRoot)).map {
+                Abort.run[FileException](discoverBundleDir(repoRoot)).map {
                     case Result.Success(dir) => dir
                     case Result.Failure(e)   => Abort.fail(WebsiteEmitException("bundle-dir discovery", e))
                     case p: Result.Panic     => Abort.error(p)
@@ -254,24 +254,28 @@ object WebsiteMain extends KyoApp:
     // deterministic regardless of the platform's filesystem listing order. The `isDirectory` guard
     // runs before any `.list` call so a regular file whose name matches the predicate is silently
     // skipped rather than causing a `FileNotADirectoryException`.
-    private def childDirsMatching(dir: Path, p: String => Boolean)(using Frame): Chunk[Path] < (Sync & Abort[FileFsException]) =
-        dir.list.map(entries =>
-            Kyo.foreach(entries)(d => d.isDirectory.map(_ -> d)).map(
-                _.collect { case (true, d) if d.name.exists(p) => d }.sortBy(_.toString)
+    private def childDirsMatching(dir: Path, p: String => Boolean)(using Frame): Chunk[Path] < (Sync & Abort[FileException]) =
+        Path.runReadOnly {
+            dir.list.map(entries =>
+                Kyo.foreach(entries)(d => d.isDirectory.map(_ -> d)).map(
+                    _.collect { case (true, d) if d.name.exists(p) => d }.sortBy(_.toString)
+                )
             )
-        )
+        }
 
-    private def discoverBundleDir(repoRoot: String)(using Frame): String < (Sync & Abort[FileFsException]) =
+    private def discoverBundleDir(repoRoot: String)(using Frame): String < (Sync & Abort[FileException]) =
         val fallback  = Path(repoRoot, "kyo-website-bundle", "js", "target", "scala-3.8.3", "kyo-website-bundle-opt")
         val targetDir = Path(repoRoot, "kyo-website-bundle", "js", "target")
-        targetDir.isDirectory.map {
-            case false => fallback.toString
-            case true =>
-                for
-                    scalaDirs   <- childDirsMatching(targetDir, _.startsWith("scala-"))
-                    optDirs     <- Kyo.foreach(scalaDirs)(childDirsMatching(_, _.endsWith("-opt"))).map(_.flattenChunk)
-                    flaggedMain <- Kyo.foreach(optDirs)(d => (d / "main.js").isRegularFile.map(_ -> d))
-                yield flaggedMain.collect { case (true, d) => d.toString }.headMaybe.getOrElse(fallback.toString)
+        Path.runReadOnly {
+            targetDir.isDirectory.map {
+                case false => fallback.toString
+                case true =>
+                    for
+                        scalaDirs   <- childDirsMatching(targetDir, _.startsWith("scala-"))
+                        optDirs     <- Kyo.foreach(scalaDirs)(childDirsMatching(_, _.endsWith("-opt"))).map(_.flattenChunk)
+                        flaggedMain <- Kyo.foreach(optDirs)(d => (d / "main.js").isRegularFile.map(_ -> d))
+                    yield flaggedMain.collect { case (true, d) => d.toString }.headMaybe.getOrElse(fallback.toString)
+            }
         }
     end discoverBundleDir
 
@@ -288,7 +292,7 @@ object WebsiteMain extends KyoApp:
         flagValue(theArgs, "--repo-root") match
             case Present(dir) => dir
             case Absent =>
-                Abort.run[FileFsException](discoverRepoRoot()).map {
+                Abort.run[FileException](discoverRepoRoot()).map {
                     case Result.Success(dir) => dir
                     case Result.Failure(e)   => Abort.fail(WebsiteEmitException("repo-root discovery", e))
                     case p: Result.Panic     => Abort.error(p)
@@ -296,11 +300,11 @@ object WebsiteMain extends KyoApp:
         end match
     end parseRepoRoot
 
-    private def discoverRepoRoot()(using Frame): String < (Sync & Abort[FileFsException]) =
+    private def discoverRepoRoot()(using Frame): String < (Sync & Abort[FileException]) =
         System.property[String]("user.dir", ".").map { userDir =>
-            val start                             = Path(userDir)
-            def isRoot(dir: Path): Boolean < Sync = (dir / "build.sbt").isRegularFile
-            def walkUp(dir: Path): Maybe[Path] < Sync =
+            val start                                 = Path(userDir)
+            def isRoot(dir: Path): Boolean < PathRead = (dir / "build.sbt").isRegularFile
+            def walkUp(dir: Path): Maybe[Path] < PathRead =
                 isRoot(dir).map {
                     case true => Present(dir)
                     case false =>
@@ -308,7 +312,7 @@ object WebsiteMain extends KyoApp:
                             case Present(p) => walkUp(p)
                             case Absent     => Absent
                 }
-            walkUp(start).map(_.map(_.toString).getOrElse(userDir))
+            Path.runReadOnly(walkUp(start).map(_.map(_.toString).getOrElse(userDir)))
         }
     end discoverRepoRoot
 

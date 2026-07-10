@@ -17,20 +17,37 @@ class WebsiteMainTest extends WebsiteTest:
         dir
     end findRepoRoot
 
-    private def tmpDir(using Frame): Path < Sync =
-        Sync.defer(Path(Files.createTempDirectory("kyo-main-test").toString))
+    private def deleteDir(d: java.nio.file.Path): Unit =
+        if Files.exists(d) then
+            Files.walk(d)
+                .sorted(java.util.Comparator.reverseOrder())
+                .forEach(p => Files.delete(p))
 
-    private def stubBundleDir(using Frame): Path < Sync =
-        Sync.defer {
-            val d = Files.createTempDirectory("kyo-main-bundle")
-            java.nio.file.Files.writeString(d.resolve("main.js"), "// stub")
-            java.nio.file.Files.writeString(d.resolve("main.js.map"), "{}")
-            Path(d.toString)
-        }
+    private def tmpDir(using Frame): Path < (Sync & Scope) =
+        Scope.acquireRelease(
+            Sync.defer(Files.createTempDirectory("kyo-main-test"))
+        )(d => Sync.defer(deleteDir(d))).map(d => Path(d.toString))
+
+    private def stubBundleDir(using Frame): Path < (Sync & Scope) =
+        Scope.acquireRelease(
+            Sync.defer {
+                val d = Files.createTempDirectory("kyo-main-bundle")
+                Files.writeString(d.resolve("main.js"), "// stub")
+                Files.writeString(d.resolve("main.js.map"), "{}")
+                d
+            }
+        )(d => Sync.defer(deleteDir(d))).map(d => Path(d.toString))
 
     private def readFile(path: Path)(using Frame): String < (Sync & Abort[WebsiteException]) =
-        Abort.run[FileReadException](path.read).map {
+        Abort.run[FileException](Path.runReadOnly(path.read)).map {
             case Result.Success(s) => s
+            case Result.Failure(e) => Abort.fail(WebsiteEmitException(path.toString, e))
+            case p: Result.Panic   => Abort.error(p)
+        }
+
+    private def fileExists(path: Path)(using Frame): Boolean < (Sync & Abort[WebsiteException]) =
+        Abort.run[FileException](Path.runReadOnly(path.exists)).map {
+            case Result.Success(b) => b
             case Result.Failure(e) => Abort.fail(WebsiteEmitException(path.toString, e))
             case p: Result.Panic   => Abort.error(p)
         }
@@ -70,8 +87,8 @@ class WebsiteMainTest extends WebsiteTest:
                 out,
                 WebsiteGenerator.Config(repoRoot, bundleDir)
             )
-            sitemapExists <- (out / "sitemap.xml").exists
-            robotsExists  <- (out / "robots.txt").exists
+            sitemapExists <- fileExists(out / "sitemap.xml")
+            robotsExists  <- fileExists(out / "robots.txt")
             sitemap       <- readFile(out / "sitemap.xml")
         yield
             assert(sitemapExists, "sitemap.xml must be written")
@@ -93,7 +110,7 @@ class WebsiteMainTest extends WebsiteTest:
                 out,
                 WebsiteGenerator.Config(repoRoot, bundleDir)
             )
-            exists <- (out / "index.html").exists
+            exists <- fileExists(out / "index.html")
         yield assert(exists, s"output must be written to the specified directory: $out")
         end for
     }
@@ -232,7 +249,7 @@ class WebsiteMainTest extends WebsiteTest:
     "parseRepoRoot discovers the build.sbt ancestor when --repo-root absent" in {
         for
             result <- WebsiteMain.parseRepoRoot(Chunk.empty[String])
-            exists <- (Path(result) / "build.sbt").exists
+            exists <- fileExists(Path(result) / "build.sbt")
         yield
             assert(result.nonEmpty, s"discovered repo root must be non-empty")
             assert(exists, s"parseRepoRoot must return a directory containing build.sbt, got: $result")

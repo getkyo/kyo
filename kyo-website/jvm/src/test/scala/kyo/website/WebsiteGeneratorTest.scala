@@ -43,15 +43,26 @@ class WebsiteGeneratorTest extends WebsiteTest:
 
     // ---- Helpers ----
 
-    private def tmpDir(using Frame): Path < (Sync & Abort[FileFsException]) =
-        Path.tempDir("kyo-gen-test")
+    private def deleteDir(d: java.nio.file.Path): Unit =
+        if java.nio.file.Files.exists(d) then
+            java.nio.file.Files.walk(d)
+                .sorted(java.util.Comparator.reverseOrder())
+                .forEach(p => java.nio.file.Files.delete(p))
 
-    private def stubBundleDir(using Frame): Path < (Sync & Abort[FileFsException | FileWriteException]) =
-        Path.tempDir("kyo-bundle-stub").map { d =>
-            (d / "main.js").write("// stub")
-                .andThen((d / "main.js.map").write("{}"))
-                .andThen(d)
-        }
+    private def tmpDir(using Frame): Path < (Sync & Scope) =
+        Scope.acquireRelease(
+            Sync.defer(java.nio.file.Files.createTempDirectory("kyo-gen-test"))
+        )(d => Sync.defer(deleteDir(d))).map(d => Path(d.toString))
+
+    private def stubBundleDir(using Frame): Path < (Sync & Scope) =
+        Scope.acquireRelease(
+            Sync.defer {
+                val d = java.nio.file.Files.createTempDirectory("kyo-bundle-stub")
+                java.nio.file.Files.writeString(d.resolve("main.js"), "// stub")
+                java.nio.file.Files.writeString(d.resolve("main.js.map"), "{}")
+                d
+            }
+        )(d => Sync.defer(deleteDir(d))).map(d => Path(d.toString))
 
     private def repoRoot(using Frame): Path =
         import AllowUnsafe.embrace.danger
@@ -73,8 +84,15 @@ class WebsiteGeneratorTest extends WebsiteTest:
         WebsiteGenerator.emit(content, outDir, WebsiteGenerator.Config(repoRoot, bundleDir))
 
     private def readFile(path: Path)(using Frame): String < (Sync & Abort[WebsiteException]) =
-        Abort.run[FileReadException](path.read).map {
+        Abort.run[FileException](Path.runReadOnly(path.read)).map {
             case Result.Success(s) => s
+            case Result.Failure(e) => Abort.fail(WebsiteEmitException(path.toString, e))
+            case p: Result.Panic   => Abort.error(p)
+        }
+
+    private def fileExists(path: Path)(using Frame): Boolean < (Sync & Abort[WebsiteException]) =
+        Abort.run[FileException](Path.runReadOnly(path.exists)).map {
+            case Result.Success(b) => b
             case Result.Failure(e) => Abort.fail(WebsiteEmitException(path.toString, e))
             case p: Result.Panic   => Abort.error(p)
         }
@@ -183,8 +201,8 @@ class WebsiteGeneratorTest extends WebsiteTest:
             bundleDir <- stubBundleDir
             _         <- emit(oneVersion, out, bundleDir)
             html      <- readFile(out / "index.html")
-            exists    <- (out / "main.js").exists
-            mapExists <- (out / "main.js.map").exists
+            exists    <- fileExists(out / "main.js")
+            mapExists <- fileExists(out / "main.js.map")
         yield
             val scriptSrcCount = countOccurrences(html, "src=\"main.js\"")
             assert(scriptSrcCount == 1, s"expected 1 main.js script ref, got $scriptSrcCount")
@@ -200,9 +218,9 @@ class WebsiteGeneratorTest extends WebsiteTest:
             out       <- tmpDir
             bundleDir <- stubBundleDir
             _         <- emit(oneVersion, out, bundleDir)
-            svgExists <- (out / "kyo.svg").exists
-            pngExists <- (out / "kyo.png").exists
-            icoExists <- (out / "kyo.ico").exists
+            svgExists <- fileExists(out / "kyo.svg")
+            pngExists <- fileExists(out / "kyo.png")
+            icoExists <- fileExists(out / "kyo.ico")
         yield
             assert(svgExists, "kyo.svg (the vector brand mark) must be present in outDir")
             assert(pngExists, "kyo.png must be present in outDir")
@@ -215,10 +233,14 @@ class WebsiteGeneratorTest extends WebsiteTest:
     "write failure aborts with WebsiteEmitException" in {
         for
             bundleDir <- stubBundleDir
-            tmp <- Path.tempDir("kyo-gen-fail-test").map { d =>
-                // Create a directory at index.html so writing a file there will fail
-                (d / "index.html").mkDir.andThen(d)
-            }
+            tmp <- Scope.acquireRelease(
+                Sync.defer {
+                    val d = java.nio.file.Files.createTempDirectory("kyo-gen-fail-test")
+                    // Create a directory at index.html so writing a file there will fail
+                    java.nio.file.Files.createDirectory(d.resolve("index.html"))
+                    d
+                }
+            )(d => Sync.defer(deleteDir(d))).map(d => Path(d.toString))
             result <- Abort.run[WebsiteException](emit(oneVersion, tmp, bundleDir))
         yield
             result match
@@ -243,16 +265,20 @@ class WebsiteGeneratorTest extends WebsiteTest:
     "idempotent re-emit produces byte-identical files" in {
         for
             bundleDir <- stubBundleDir
-            out1      <- Path.tempDir("kyo-gen-idem-a")
-            out2      <- Path.tempDir("kyo-gen-idem-b")
-            _         <- emit(oneVersion, out1, bundleDir)
-            _         <- emit(oneVersion, out2, bundleDir)
-            html1     <- readFile(out1 / "index.html")
-            html2     <- readFile(out2 / "index.html")
-            json1     <- readFile(out1 / "versions.json")
-            json2     <- readFile(out2 / "versions.json")
-            cname1    <- readFile(out1 / "CNAME")
-            cname2    <- readFile(out2 / "CNAME")
+            out1 <- Scope.acquireRelease(
+                Sync.defer(java.nio.file.Files.createTempDirectory("kyo-gen-idem-a"))
+            )(d => Sync.defer(deleteDir(d))).map(d => Path(d.toString))
+            out2 <- Scope.acquireRelease(
+                Sync.defer(java.nio.file.Files.createTempDirectory("kyo-gen-idem-b"))
+            )(d => Sync.defer(deleteDir(d))).map(d => Path(d.toString))
+            _      <- emit(oneVersion, out1, bundleDir)
+            _      <- emit(oneVersion, out2, bundleDir)
+            html1  <- readFile(out1 / "index.html")
+            html2  <- readFile(out2 / "index.html")
+            json1  <- readFile(out1 / "versions.json")
+            json2  <- readFile(out2 / "versions.json")
+            cname1 <- readFile(out1 / "CNAME")
+            cname2 <- readFile(out2 / "CNAME")
         yield
             assert(html1 == html2, "index.html must be byte-identical across two emits")
             assert(json1 == json2, "versions.json must be byte-identical across two emits")
@@ -438,22 +464,22 @@ class WebsiteGeneratorTest extends WebsiteTest:
             out           <- tmpDir
             bundleDir     <- stubBundleDir
             _             <- emit(Chunk(vWithModules, vIntroOnly), out, bundleDir)
-            vIndex        <- (out / "v1.0.0-RC2" / "index.html").exists
-            dataIndex     <- (out / "v1.0.0-RC2" / "kyo-data" / "index.html").exists
+            vIndex        <- fileExists(out / "v1.0.0-RC2" / "index.html")
+            dataIndex     <- fileExists(out / "v1.0.0-RC2" / "kyo-data" / "index.html")
             dataMd        <- readFile(out / "v1.0.0-RC2" / "kyo-data" / "content.md")
             kernelMd      <- readFile(out / "v1.0.0-RC2" / "kyo-kernel" / "content.md")
-            kernelIdx     <- (out / "v1.0.0-RC2" / "kyo-kernel" / "index.html").exists
+            kernelIdx     <- fileExists(out / "v1.0.0-RC2" / "kyo-kernel" / "index.html")
             vManifest     <- readFile(out / "v1.0.0-RC2" / "manifest.json")
             vIntroMd      <- readFile(out / "v1.0.0-RC2" / "content.md")
-            introIdx      <- (out / "v0.9.3" / "index.html").exists
+            introIdx      <- fileExists(out / "v0.9.3" / "index.html")
             introMan      <- readFile(out / "v0.9.3" / "manifest.json")
-            introSlug     <- (out / "v0.9.3" / "kyo-data" / "index.html").exists
+            introSlug     <- fileExists(out / "v0.9.3" / "kyo-data" / "index.html")
             introIntroMd  <- readFile(out / "v0.9.3" / "content.md")
-            latestIdx     <- (out / "latest" / "index.html").exists
+            latestIdx     <- fileExists(out / "latest" / "index.html")
             latestMd      <- readFile(out / "latest" / "kyo-data" / "content.md")
             latestIntroMd <- readFile(out / "latest" / "content.md")
-            latestMan     <- (out / "latest" / "manifest.json").exists
-            versions      <- (out / "versions.json").exists
+            latestMan     <- fileExists(out / "latest" / "manifest.json")
+            versions      <- fileExists(out / "versions.json")
         yield
             assert(vIndex, "v1.0.0-RC2/index.html must exist")
             assert(dataIndex, "v1.0.0-RC2/kyo-data/index.html must exist")
@@ -518,8 +544,8 @@ class WebsiteGeneratorTest extends WebsiteTest:
             out       <- tmpDir
             bundleDir <- stubBundleDir
             _         <- emit(Chunk(vIntroOnly), out, bundleDir)
-            introIdx  <- (out / "v0.9.3" / "index.html").exists
-            slugIdx   <- (out / "v0.9.3" / "kyo-data" / "index.html").exists
+            introIdx  <- fileExists(out / "v0.9.3" / "index.html")
+            slugIdx   <- fileExists(out / "v0.9.3" / "kyo-data" / "index.html")
             manifest  <- readFile(out / "v0.9.3" / "manifest.json")
         yield
             assert(introIdx, "v0.9.3/index.html must exist")
@@ -557,8 +583,8 @@ class WebsiteGeneratorTest extends WebsiteTest:
             // Order is oldest-first by sort -V: stable v1.0.0 then... but RC sorts before final.
             // Provide [stableV1, rcV2]; pickLatest must choose the stable one regardless of position.
             _            <- emit(Chunk(stableV1, rcV2), out, bundleDir)
-            stableMirror <- (out / "latest" / "kyo-stable" / "index.html").exists
-            rcMirror     <- (out / "latest" / "kyo-rc" / "index.html").exists
+            stableMirror <- fileExists(out / "latest" / "kyo-stable" / "index.html")
+            rcMirror     <- fileExists(out / "latest" / "kyo-rc" / "index.html")
         yield
             assert(stableMirror, "latest/ must mirror the stable v1.0.0 module")
             assert(!rcMirror, "latest/ must NOT mirror the RC module")
@@ -593,8 +619,8 @@ class WebsiteGeneratorTest extends WebsiteTest:
             bundleDir <- stubBundleDir
             // Oldest-first: [rc1, rc2]; newest pre-release is rc2 (the last entry).
             _    <- emit(Chunk(rc1, rc2), out, bundleDir)
-            rc2m <- (out / "latest" / "kyo-rc2" / "index.html").exists
-            rc1m <- (out / "latest" / "kyo-rc1" / "index.html").exists
+            rc2m <- fileExists(out / "latest" / "kyo-rc2" / "index.html")
+            rc1m <- fileExists(out / "latest" / "kyo-rc1" / "index.html")
         yield
             assert(rc2m, "latest/ must mirror rc2 (the newest pre-release)")
             assert(!rc1m, "latest/ must NOT mirror rc1")
@@ -636,8 +662,8 @@ class WebsiteGeneratorTest extends WebsiteTest:
             bundleDir <- stubBundleDir
             // Oldest-first by semantic order: stable v1.0.0 sorts before the v1.0.1-RC1 pre-release.
             _            <- emit(Chunk(stable100, rc101), out, bundleDir)
-            stableMirror <- (out / "latest" / "kyo-stable100" / "index.html").exists
-            rcMirror     <- (out / "latest" / "kyo-rc101" / "index.html").exists
+            stableMirror <- fileExists(out / "latest" / "kyo-stable100" / "index.html")
+            rcMirror     <- fileExists(out / "latest" / "kyo-rc101" / "index.html")
         yield
             assert(stableMirror, "latest/ must mirror the stable v1.0.0 module, not the newer pre-release")
             assert(!rcMirror, "latest/ must NOT mirror the v1.0.1-RC1 pre-release module")
@@ -841,12 +867,18 @@ class WebsiteGeneratorTest extends WebsiteTest:
             // and the /latest/ overview).
             latestSlugPages <-
                 val latestDir = out / "latest"
-                latestDir.exists.map {
-                    case false => 0
-                    case true =>
-                        latestDir.list.map { entries =>
-                            Kyo.foreach(entries)(_.isDirectory).map(_.count(identity))
-                        }
+                Abort.run[FileException](Path.runReadOnly {
+                    latestDir.exists.map {
+                        case false => 0
+                        case true =>
+                            latestDir.list.map { entries =>
+                                Kyo.foreach(entries)(_.isDirectory).map(_.count(identity))
+                            }
+                    }
+                }).map {
+                    case Result.Success(n) => n
+                    case Result.Failure(e) => Abort.fail(WebsiteEmitException(latestDir.toString, e))
+                    case p: Result.Panic   => Abort.error(p)
                 }
         yield
             assert(sitemap.startsWith("<?xml"), s"sitemap must be valid XML: $sitemap")
@@ -1342,8 +1374,8 @@ class WebsiteGeneratorTest extends WebsiteTest:
             out       <- tmpDir
             bundleDir <- stubBundleDir
             _         <- emit(Chunk(vWithModules), out, bundleDir)
-            exists    <- (out / "v1.0.0-RC2" / "search-index.json").exists
-            latestEx  <- (out / "latest" / "search-index.json").exists
+            exists    <- fileExists(out / "v1.0.0-RC2" / "search-index.json")
+            latestEx  <- fileExists(out / "latest" / "search-index.json")
             json      <- readFile(out / "v1.0.0-RC2" / "search-index.json")
         yield
             assert(exists, "v1.0.0-RC2/search-index.json must exist next to manifest.json")
@@ -1467,7 +1499,7 @@ class WebsiteGeneratorTest extends WebsiteTest:
             bundleDir <- stubBundleDir
             _         <- emit(Chunk(vWithModules), out, bundleDir)
             manifest  <- readFile(out / "v1.0.0-RC2" / "manifest.json")
-            siExists  <- (out / "v1.0.0-RC2" / "search-index.json").exists
+            siExists  <- fileExists(out / "v1.0.0-RC2" / "search-index.json")
         yield
             assert(
                 manifest == expectedManifest,
@@ -1553,8 +1585,8 @@ class WebsiteGeneratorTest extends WebsiteTest:
             out       <- tmpDir
             bundleDir <- stubBundleDir
             _         <- emit(Chunk(vWithModules), out, bundleDir)
-            vManPage  <- (out / "v1.0.0-RC2" / "manifesto" / "index.html").exists
-            latestMan <- (out / "latest" / "manifesto" / "index.html").exists
+            vManPage  <- fileExists(out / "v1.0.0-RC2" / "manifesto" / "index.html")
+            latestMan <- fileExists(out / "latest" / "manifesto" / "index.html")
             manHtml   <- readFile(out / "latest" / "manifesto" / "index.html")
             manMd     <- readFile(out / "latest" / "manifesto" / "content.md")
             manifest  <- readFile(out / "latest" / "manifest.json")
@@ -1580,9 +1612,11 @@ class WebsiteGeneratorTest extends WebsiteTest:
 
     "a missing MANIFESTO.md aborts the emit (the manifesto is required, not optional)" in {
         for
-            out         <- tmpDir
-            bundleDir   <- stubBundleDir
-            noManifesto <- Path.tempDir("kyo-no-manifesto")
+            out       <- tmpDir
+            bundleDir <- stubBundleDir
+            noManifesto <- Scope.acquireRelease(
+                Sync.defer(java.nio.file.Files.createTempDirectory("kyo-no-manifesto"))
+            )(d => Sync.defer(deleteDir(d))).map(d => Path(d.toString))
             result <- Abort.run[WebsiteException](
                 WebsiteGenerator.emit(Chunk(vWithModules), out, WebsiteGenerator.Config(noManifesto, bundleDir))
             )
