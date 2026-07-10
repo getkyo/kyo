@@ -56,7 +56,9 @@ private[kyo] object Orchestrator:
         scalaVer: String
     )(using Frame): Chunk[BlockOutcome] < (Sync & Async & Scope & Abort[Doctest.Error]) =
         Kyo.foreach(config.sources) { sourcePath =>
-            sourcePath.exists.flatMap { exists =>
+            Abort.recover[FileException](e => Abort.fail(Doctest.Error.IoError(sourcePath, "exists", e))) {
+                Path.runReadOnly(sourcePath.exists)
+            }.flatMap { exists =>
                 if !exists then Abort.fail(Doctest.Error.SourceNotFound(sourcePath))
                 else processOneSource(sourcePath, config, driver, cache, fingerprint, scalaVer)
             }

@@ -52,8 +52,8 @@ private[kyo] object MarkdownParser:
       *   a Chunk of Block objects representing every extracted scala code block
       */
     def parse(path: kyo.Path)(using Frame): Chunk[Block] < (Sync & Abort[Doctest.Error]) =
-        Abort.recover[FileReadException](e => Abort.fail(Doctest.Error.IoError(path, "read", e))) {
-            path.read.flatMap { raw =>
+        Abort.recover[FileException](e => Abort.fail(Doctest.Error.IoError(path, "read", e))) {
+            Path.runReadOnly(path.read).flatMap { raw =>
                 parseString(raw.replace("\r\n", "\n"), path)
             }
         }

@@ -116,7 +116,7 @@ final private[kyo] class Driver private (
       */
     def close(using Frame): Unit < Sync =
         // Swallow removeAll errors: if cleanup fails the OS temp cleaner will handle it.
-        Abort.run[FileFsException](outputDir.removeAll).andThen(Sync.defer(compilerThread.shutdown()))
+        Abort.run[FileException](Path.run(outputDir.removeAll)).andThen(Sync.defer(compilerThread.shutdown()))
 
 end Driver
 
@@ -228,8 +228,8 @@ private[kyo] object Driver:
         for
             id <- Random.uuid
             dir = Path.basePaths.tmp / s"doctest-out-$id"
-            _ <- Abort.run[FileFsException](dir.mkDir).flatMap {
-                (r: Result[FileFsException, Unit]) =>
+            _ <- Abort.run[FileException](Path.run(dir.mkDir)).flatMap {
+                (r: Result[FileException, Unit]) =>
                     r match
                         case Result.Success(_) => Sync.defer(())
                         case Result.Failure(e) =>

@@ -46,19 +46,19 @@ final private[kyo] class BlockCache private (root: kyo.Path):
         // Cache files may be truncated or corrupted by a crashed prior run; treat parse failures as Absent so the
         // block re-runs rather than serving stale garbage. The corrupted file is left in place and overwritten by
         // the next `record` call.
-        okFile.exists.flatMap {
-            case true =>
+        Abort.run[FileException](Path.runReadOnly(okFile.exists)).flatMap {
+            case Result.Success(true) =>
                 // Wrap in Abort.run so a read error (corrupt/truncated file) is treated as a cache miss.
-                Abort.run[FileReadException](okFile.read).map {
+                Abort.run[FileException](Path.runReadOnly(okFile.read)).map {
                     case Result.Success(content) =>
                         try Maybe(BlockCache.Entry(Driver.Outcome.Ok(deserializeDiagnostics(content))))
                         catch case _: Throwable => Maybe.empty
                     case _ => Maybe.empty
                 }
-            case false =>
-                failFile.exists.flatMap {
-                    case true =>
-                        Abort.run[FileReadException](failFile.read).map {
+            case _ =>
+                Abort.run[FileException](Path.runReadOnly(failFile.exists)).flatMap {
+                    case Result.Success(true) =>
+                        Abort.run[FileException](Path.runReadOnly(failFile.read)).map {
                             case Result.Success(content) =>
                                 try
                                     val (errors, warnings) = deserializeErrorsAndWarnings(content)
@@ -66,7 +66,7 @@ final private[kyo] class BlockCache private (root: kyo.Path):
                                 catch case _: Throwable => Maybe.empty
                             case _ => Maybe.empty
                         }
-                    case false =>
+                    case _ =>
                         Maybe.empty
                 }
         }
@@ -102,7 +102,7 @@ final private[kyo] class BlockCache private (root: kyo.Path):
             case Driver.Outcome.Failed(errors, warnings) =>
                 (root / s"$key.fail", serializeErrorsAndWarnings(errors, warnings))
         // Swallow write errors: a failed cache write means the next run recompiles. Not fatal.
-        Abort.run[FileWriteException](filePath.write(content)).unit
+        Abort.run[FileException](Path.run(filePath.write(content))).unit
     end record
 
     /** Cache key: SHA-256 of all components fed with length-prefix delimiters to prevent preimage collisions. */
@@ -206,10 +206,12 @@ private[kyo] object BlockCache:
       *   A ready-to-use BlockCache.
       */
     def init(path: kyo.Path)(using Frame): BlockCache < (Sync & Abort[Doctest.Error]) =
-        path.exists.flatMap { exists =>
+        Abort.recover[FileException](e => Abort.fail(Doctest.Error.IoError(path, "exists", e))) {
+            Path.runReadOnly(path.exists)
+        }.flatMap { exists =>
             if !exists then
-                Abort.recover[FileFsException](e => Abort.fail(Doctest.Error.IoError(path, "mkDir", e))) {
-                    path.mkDir.andThen(new BlockCache(path))
+                Abort.recover[FileException](e => Abort.fail(Doctest.Error.IoError(path, "mkDir", e))) {
+                    Path.run(path.mkDir.andThen(new BlockCache(path)))
                 }
             else
                 new BlockCache(path)

@@ -27,7 +27,7 @@ private[kyo] object UdsBackend:
                 // Close the whole wire on scope exit: wire.close closes the accepted connection in addition to the
                 // server channel, so the accepted socket is not left open until GC finalizes it. Then remove the file.
                 Scope.ensure(
-                    wire.close.andThen(Abort.run[FileFsException](sockPath.remove).unit)
+                    wire.close.andThen(Abort.run[FileException](Path.run(sockPath.remove)).unit)
                 ).andThen {
                     JsonRpcTransport.fromWire(wire, framer, codec)
                 }

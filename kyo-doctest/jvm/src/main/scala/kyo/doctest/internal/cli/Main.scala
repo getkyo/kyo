@@ -26,17 +26,17 @@ object Main extends KyoApp:
             val resultPathStr = args(1).toString
             for
                 configJson <-
-                    Abort.recover[FileReadException](e =>
+                    Abort.recover[FileException](e =>
                         Abort.fail(new java.io.IOException(s"failed to read config: $e"))
-                    )(Path(configPathStr).read)
+                    )(Path.runReadOnly(Path(configPathStr).read))
 
                 config <- decodeConfig(configJson)
                 report <- runDoctest(config)
 
                 _ <-
-                    Abort.recover[FileWriteException](e =>
+                    Abort.recover[FileException](e =>
                         Abort.fail(new java.io.IOException(s"failed to write result: $e"))
-                    )(Path(resultPathStr).write(Json.encode(report)))
+                    )(Path.run(Path(resultPathStr).write(Json.encode(report))))
 
                 _ <-
                     if report.failures.nonEmpty then
