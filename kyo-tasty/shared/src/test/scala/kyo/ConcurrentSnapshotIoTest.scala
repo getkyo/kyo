@@ -18,44 +18,46 @@ class ConcurrentSnapshotIoTest extends kyo.test.Test[Any]:
 
     "concurrent snapshot reader+writer: reader sees pre- or post-write, not corrupt" in {
         val digest = Array[Byte](0x50, 0x51, 0x52, 0x53, 0x54, 0x55, 0x56, 0x57)
-        Path.tempDir("kyo-conc-snap").map { dir =>
-            val tmpDir       = dir.toString
-            val hexDigest    = DigestComputer.toHexString(digest)
-            val snapshotPath = s"$tmpDir/$hexDigest.krfl"
-            TestClasspaths.withClasspath()(Tasty.classpath).map { classpath =>
-                // Write the initial snapshot so the reader has a valid file to observe.
-                SnapshotWriter.write(classpath, tmpDir, digest).map { _ =>
-                    Latch.init(1).map { latch =>
-                        Fiber.init {
-                            Abort.run[TastyError](
-                                latch.await.andThen(SnapshotReader.read(snapshotPath))
-                            )
-                        }
-                            .map { readerFiber =>
-                                Fiber.init {
-                                    Abort.run[TastyError] {
-                                        latch.release.andThen {
-                                            SnapshotWriter.write(classpath, tmpDir, digest)
-                                        }
-                                    }
-                                }
-                                    .map { writerFiber =>
-                                        writerFiber.get.map { _ =>
-                                            readerFiber.get.map { readResult =>
-                                                readResult match
-                                                    case Result.Panic(t) =>
-                                                        fail(s"Reader panicked during concurrent write: ${t.getMessage}")
-                                                    case Result.Failure(_) =>
-                                                        // A read failure is acceptable: the reader may have observed
-                                                        // the file absent or in a transient state. Only a Panic
-                                                        // (corrupt partial read) is a contract violation.
-                                                        succeed
-                                                    case Result.Success(_) =>
-                                                        succeed
+        Scope.run {
+            Path.run(Path.tempDir("kyo-conc-snap")).map { dir =>
+                val tmpDir       = dir.toString
+                val hexDigest    = DigestComputer.toHexString(digest)
+                val snapshotPath = s"$tmpDir/$hexDigest.krfl"
+                TestClasspaths.withClasspath()(Tasty.classpath).map { classpath =>
+                    // Write the initial snapshot so the reader has a valid file to observe.
+                    SnapshotWriter.write(classpath, tmpDir, digest).map { _ =>
+                        Latch.init(1).map { latch =>
+                            Fiber.init {
+                                Abort.run[TastyError](
+                                    latch.await.andThen(SnapshotReader.read(snapshotPath))
+                                )
+                            }
+                                .map { readerFiber =>
+                                    Fiber.init {
+                                        Abort.run[TastyError] {
+                                            latch.release.andThen {
+                                                SnapshotWriter.write(classpath, tmpDir, digest)
                                             }
                                         }
                                     }
-                            }
+                                        .map { writerFiber =>
+                                            writerFiber.get.map { _ =>
+                                                readerFiber.get.map { readResult =>
+                                                    readResult match
+                                                        case Result.Panic(t) =>
+                                                            fail(s"Reader panicked during concurrent write: ${t.getMessage}")
+                                                        case Result.Failure(_) =>
+                                                            // A read failure is acceptable: the reader may have observed
+                                                            // the file absent or in a transient state. Only a Panic
+                                                            // (corrupt partial read) is a contract violation.
+                                                            succeed
+                                                        case Result.Success(_) =>
+                                                            succeed
+                                                }
+                                            }
+                                        }
+                                }
+                        }
                     }
                 }
             }

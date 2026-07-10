@@ -112,25 +112,27 @@ class SnapshotRoundTripTest extends kyo.test.Test[Any]:
         // Create a temp file and then try to use it as a cache directory.
         // Path.mkDir on a path where a file already exists fails with FileFsException,
         // which SnapshotWriter wraps as SnapshotIoError.
-        Path.tempDir("kyo-srt-fail").map { tmpDir =>
-            val fileAsDir = tmpDir / "not-a-dir"
-            fileAsDir.mkFile.map { _ =>
-                Abort.run[TastyError](
-                    Tasty.withPickles(Chunk(plainClassPickle)) {
-                        Tasty.classpath.map { classpath =>
-                            val digest = Array[Byte](1, 2, 3, 4, 5, 6, 7, 8)
-                            SnapshotWriter.write(classpath, fileAsDir.toString, digest)
+        Scope.run {
+            Path.run(Path.tempDir("kyo-srt-fail")).map { tmpDir =>
+                val fileAsDir = tmpDir / "not-a-dir"
+                Path.run(fileAsDir.mkFile).map { _ =>
+                    Abort.run[TastyError](
+                        Tasty.withPickles(Chunk(plainClassPickle)) {
+                            Tasty.classpath.map { classpath =>
+                                val digest = Array[Byte](1, 2, 3, 4, 5, 6, 7, 8)
+                                SnapshotWriter.write(classpath, fileAsDir.toString, digest)
+                            }
                         }
+                    ).map {
+                        case Result.Success(_) =>
+                            fail("Expected SnapshotIoError for unwritable cache dir")
+                        case Result.Failure(e) =>
+                            e match
+                                case _: TastyError.SnapshotIoError => succeed
+                                case other                         => fail(s"Expected SnapshotIoError but got: $other")
+                        case Result.Panic(t) =>
+                            throw t
                     }
-                ).map {
-                    case Result.Success(_) =>
-                        fail("Expected SnapshotIoError for unwritable cache dir")
-                    case Result.Failure(e) =>
-                        e match
-                            case _: TastyError.SnapshotIoError => succeed
-                            case other                         => fail(s"Expected SnapshotIoError but got: $other")
-                    case Result.Panic(t) =>
-                        throw t
                 }
             }
         }
@@ -139,44 +141,46 @@ class SnapshotRoundTripTest extends kyo.test.Test[Any]:
     "two concurrent snapshot writers produce one valid snapshot file (atomic rename)" in {
         val digest = Array[Byte](0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0x10, 0x11)
         val hex    = DigestComputer.toHexString(digest)
-        Path.tempDir("kyo-srt-conc").map { dir =>
-            val cacheDir = dir.toString
-            val finalKey = s"$cacheDir/$hex.krfl"
-            Abort.run[TastyError | Timeout](
-                Async.timeout(5.seconds)(
-                    Tasty.withPickles(Chunk(plainClassPickle)) {
-                        Tasty.classpath.map { classpath =>
-                            Async.zip[TastyError, Unit, Unit, Any](
-                                SnapshotWriter.write(classpath, cacheDir, digest),
-                                SnapshotWriter.write(classpath, cacheDir, digest)
-                            ).map(_ => ())
+        Scope.run {
+            Path.run(Path.tempDir("kyo-srt-conc")).map { dir =>
+                val cacheDir = dir.toString
+                val finalKey = s"$cacheDir/$hex.krfl"
+                Abort.run[TastyError | Timeout](
+                    Async.timeout(5.seconds)(
+                        Tasty.withPickles(Chunk(plainClassPickle)) {
+                            Tasty.classpath.map { classpath =>
+                                Async.zip[TastyError, Unit, Unit, Any](
+                                    SnapshotWriter.write(classpath, cacheDir, digest),
+                                    SnapshotWriter.write(classpath, cacheDir, digest)
+                                ).map(_ => ())
+                            }
                         }
-                    }
-                )
-            ).map {
-                case Result.Success(_) =>
-                    // Both writers completed; the final snapshot file must exist and be valid
-                    Abort.run[FileFsException](Path(finalKey).exists).map {
-                        case Result.Success(exists) =>
-                            assert(exists, s"Expected snapshot file at $finalKey after concurrent writes")
-                            succeed
-                        case Result.Failure(e) =>
-                            fail(s"Path.exists failed: $e")
-                        case Result.Panic(t) =>
-                            throw t
-                    }
-                case Result.Failure(_: Timeout) =>
-                    fail("Concurrent snapshot write timed out")
-                case Result.Failure(e) =>
-                    // One writer may fail with SnapshotIoError (rename collision); final file must still exist
-                    Abort.run[FileFsException](Path(finalKey).exists).map {
-                        case Result.Success(exists) =>
-                            assert(exists, s"Expected snapshot file at $finalKey even after partial failure")
-                            succeed
-                        case _ => succeed
-                    }
-                case Result.Panic(t) =>
-                    throw t
+                    )
+                ).map {
+                    case Result.Success(_) =>
+                        // Both writers completed; the final snapshot file must exist and be valid
+                        Abort.run[FileException](Path.runReadOnly(Path(finalKey).exists)).map {
+                            case Result.Success(exists) =>
+                                assert(exists, s"Expected snapshot file at $finalKey after concurrent writes")
+                                succeed
+                            case Result.Failure(e) =>
+                                fail(s"Path.exists failed: $e")
+                            case Result.Panic(t) =>
+                                throw t
+                        }
+                    case Result.Failure(_: Timeout) =>
+                        fail("Concurrent snapshot write timed out")
+                    case Result.Failure(e) =>
+                        // One writer may fail with SnapshotIoError (rename collision); final file must still exist
+                        Abort.run[FileException](Path.runReadOnly(Path(finalKey).exists)).map {
+                            case Result.Success(exists) =>
+                                assert(exists, s"Expected snapshot file at $finalKey even after partial failure")
+                                succeed
+                            case _ => succeed
+                        }
+                    case Result.Panic(t) =>
+                        throw t
+                }
             }
         }
     }
@@ -215,30 +219,32 @@ class SnapshotRoundTripTest extends kyo.test.Test[Any]:
     "cold miss writes snapshot file to cache dir" in {
         val digest = Array[Byte](0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27)
         val hex    = DigestComputer.toHexString(digest)
-        Path.tempDir("kyo-srt-cold").map { dir =>
-            val cacheDir = dir.toString
-            val snapPath = s"$cacheDir/$hex.krfl"
-            Abort.run[TastyError](
-                Tasty.withPickles(Chunk(plainClassPickle)) {
-                    Tasty.classpath.map { classpath =>
-                        SnapshotWriter.write(classpath, cacheDir, digest)
+        Scope.run {
+            Path.run(Path.tempDir("kyo-srt-cold")).map { dir =>
+                val cacheDir = dir.toString
+                val snapPath = s"$cacheDir/$hex.krfl"
+                Abort.run[TastyError](
+                    Tasty.withPickles(Chunk(plainClassPickle)) {
+                        Tasty.classpath.map { classpath =>
+                            SnapshotWriter.write(classpath, cacheDir, digest)
+                        }
                     }
+                ).map {
+                    case Result.Success(_) =>
+                        Abort.run[FileException](Path.runReadOnly(Path(snapPath).exists)).map {
+                            case Result.Success(exists) =>
+                                assert(exists, s"Expected snapshot file at $snapPath after write")
+                                succeed
+                            case Result.Failure(e) =>
+                                fail(s"Path.exists failed: $e")
+                            case Result.Panic(t) =>
+                                throw t
+                        }
+                    case Result.Failure(e) =>
+                        fail(s"Unexpected failure: $e")
+                    case Result.Panic(t) =>
+                        throw t
                 }
-            ).map {
-                case Result.Success(_) =>
-                    Abort.run[FileFsException](Path(snapPath).exists).map {
-                        case Result.Success(exists) =>
-                            assert(exists, s"Expected snapshot file at $snapPath after write")
-                            succeed
-                        case Result.Failure(e) =>
-                            fail(s"Path.exists failed: $e")
-                        case Result.Panic(t) =>
-                            throw t
-                    }
-                case Result.Failure(e) =>
-                    fail(s"Unexpected failure: $e")
-                case Result.Panic(t) =>
-                    throw t
             }
         }
     }
@@ -248,33 +254,35 @@ class SnapshotRoundTripTest extends kyo.test.Test[Any]:
         // other.txt has no .krfl extension, so evictOlderThan leaves it untouched.
         val staleMs = 1_000_000_000_000L
         val maxAge  = 60.seconds
-        Path.tempDir("kyo-srt-evict").map { dir =>
-            val f1  = dir / "aabbccdd01020304.krfl"
-            val f2  = dir / "1122334455667788.krfl"
-            val txt = dir / "other.txt"
-            f1.writeBytes(Span.from(Array[Byte](1, 2, 3, 4))).map { _ =>
-                f1.setLastModified(staleMs).map { _ =>
-                    f2.writeBytes(Span.from(Array[Byte](5, 6, 7, 8))).map { _ =>
-                        f2.setLastModified(staleMs).map { _ =>
-                            txt.writeBytes(Span.from(Array[Byte](9, 10))).map { _ =>
-                                Abort.run[TastyError](
-                                    Tasty.evictOlderThan(dir.toString, maxAge)
-                                ).map {
-                                    case Result.Success(_) =>
-                                        f1.exists.map { e1 =>
-                                            f2.exists.map { e2 =>
-                                                txt.exists.map { et =>
-                                                    assert(!e1, s"aabbccdd01020304.krfl must be evicted; exists=$e1")
-                                                    assert(!e2, s"1122334455667788.krfl must be evicted; exists=$e2")
-                                                    assert(et, s"other.txt must NOT be evicted; exists=$et")
-                                                    succeed
+        Scope.run {
+            Path.run(Path.tempDir("kyo-srt-evict")).map { dir =>
+                val f1  = dir / "aabbccdd01020304.krfl"
+                val f2  = dir / "1122334455667788.krfl"
+                val txt = dir / "other.txt"
+                Path.run(f1.writeBytes(Span.from(Array[Byte](1, 2, 3, 4)))).map { _ =>
+                    Path.run(f1.setLastModified(staleMs)).map { _ =>
+                        Path.run(f2.writeBytes(Span.from(Array[Byte](5, 6, 7, 8)))).map { _ =>
+                            Path.run(f2.setLastModified(staleMs)).map { _ =>
+                                Path.run(txt.writeBytes(Span.from(Array[Byte](9, 10)))).map { _ =>
+                                    Abort.run[TastyError](
+                                        Tasty.evictOlderThan(dir.toString, maxAge)
+                                    ).map {
+                                        case Result.Success(_) =>
+                                            Path.runReadOnly(f1.exists).map { e1 =>
+                                                Path.runReadOnly(f2.exists).map { e2 =>
+                                                    Path.runReadOnly(txt.exists).map { et =>
+                                                        assert(!e1, s"aabbccdd01020304.krfl must be evicted; exists=$e1")
+                                                        assert(!e2, s"1122334455667788.krfl must be evicted; exists=$e2")
+                                                        assert(et, s"other.txt must NOT be evicted; exists=$et")
+                                                        succeed
+                                                    }
                                                 }
                                             }
-                                        }
-                                    case Result.Failure(e) =>
-                                        fail(s"Unexpected failure: $e")
-                                    case Result.Panic(t) =>
-                                        throw t
+                                        case Result.Failure(e) =>
+                                            fail(s"Unexpected failure: $e")
+                                        case Result.Panic(t) =>
+                                            throw t
+                                    }
                                 }
                             }
                         }
@@ -285,50 +293,54 @@ class SnapshotRoundTripTest extends kyo.test.Test[Any]:
     }
 
     "DigestComputer.compute for the same roots is deterministic" in {
-        Path.tempDir("kyo-srt-det").map { dir =>
-            val file = dir / "PlainClass.tasty"
-            file.writeBytes(Span.from(kyo.fixtures.Embedded.plainClassTasty)).map { _ =>
-                val root = dir.toString
-                Abort.run[TastyError] {
-                    DigestComputer.compute(Seq(root)).map { digest1 =>
-                        DigestComputer.compute(Seq(root)).map { digest2 =>
-                            (digest1, digest2)
+        Scope.run {
+            Path.run(Path.tempDir("kyo-srt-det")).map { dir =>
+                val file = dir / "PlainClass.tasty"
+                Path.run(file.writeBytes(Span.from(kyo.fixtures.Embedded.plainClassTasty))).map { _ =>
+                    val root = dir.toString
+                    Abort.run[TastyError] {
+                        DigestComputer.compute(Seq(root)).map { digest1 =>
+                            DigestComputer.compute(Seq(root)).map { digest2 =>
+                                (digest1, digest2)
+                            }
                         }
+                    }.map {
+                        case Result.Success((d1, d2)) =>
+                            assert(d1.length == d2.length, "Digest arrays must have same length")
+                            assert(d1.sameElements(d2), s"Same inputs must produce same digest: ${d1.toSeq} vs ${d2.toSeq}")
+                        case Result.Failure(e) =>
+                            fail(s"Unexpected failure: $e")
+                        case Result.Panic(t) =>
+                            throw t
                     }
-                }.map {
-                    case Result.Success((d1, d2)) =>
-                        assert(d1.length == d2.length, "Digest arrays must have same length")
-                        assert(d1.sameElements(d2), s"Same inputs must produce same digest: ${d1.toSeq} vs ${d2.toSeq}")
-                    case Result.Failure(e) =>
-                        fail(s"Unexpected failure: $e")
-                    case Result.Panic(t) =>
-                        throw t
                 }
             }
         }
     }
 
     "DigestComputer.compute for different file sets returns different digests" in {
-        Path.tempDir("kyo-srt-diff").map { dir =>
-            val file = dir / "PlainClass.tasty"
-            val root = dir.toString
-            file.writeBytes(Span.from(kyo.fixtures.Embedded.plainClassTasty)).map { _ =>
-                Abort.run[TastyError] {
-                    DigestComputer.compute(Seq(root)).map { digest1 =>
-                        // Overwrite with different-length content so size (and thus digest) differs.
-                        file.writeBytes(Span.from(Array[Byte](1, 2, 3, 4, 5, 6, 7, 8))).map { _ =>
-                            DigestComputer.compute(Seq(root)).map { digest2 =>
-                                (digest1, digest2)
+        Scope.run {
+            Path.run(Path.tempDir("kyo-srt-diff")).map { dir =>
+                val file = dir / "PlainClass.tasty"
+                val root = dir.toString
+                Path.run(file.writeBytes(Span.from(kyo.fixtures.Embedded.plainClassTasty))).map { _ =>
+                    Abort.run[TastyError] {
+                        DigestComputer.compute(Seq(root)).map { digest1 =>
+                            // Overwrite with different-length content so size (and thus digest) differs.
+                            Path.run(file.writeBytes(Span.from(Array[Byte](1, 2, 3, 4, 5, 6, 7, 8)))).map { _ =>
+                                DigestComputer.compute(Seq(root)).map { digest2 =>
+                                    (digest1, digest2)
+                                }
                             }
                         }
+                    }.map {
+                        case Result.Success((d1, d2)) =>
+                            assert(!d1.sameElements(d2), "Different file contents must produce different digests")
+                        case Result.Failure(e) =>
+                            fail(s"Unexpected failure: $e")
+                        case Result.Panic(t) =>
+                            throw t
                     }
-                }.map {
-                    case Result.Success((d1, d2)) =>
-                        assert(!d1.sameElements(d2), "Different file contents must produce different digests")
-                    case Result.Failure(e) =>
-                        fail(s"Unexpected failure: $e")
-                    case Result.Panic(t) =>
-                        throw t
                 }
             }
         }
@@ -807,12 +819,96 @@ class SnapshotRoundTripTest extends kyo.test.Test[Any]:
     }
 
     "DigestComputer.compute on real root returns same digest for two successive calls" in {
-        Path.tempDir("kyo-srt-det2").map { dir =>
-            val fileA = dir / "A.tasty"
-            val fileB = dir / "B.tasty"
-            val root  = dir.toString
-            fileA.writeBytes(Span.from(Array[Byte](1, 2, 3))).map { _ =>
-                fileB.writeBytes(Span.from(Array[Byte](4, 5, 6))).map { _ =>
+        Scope.run {
+            Path.run(Path.tempDir("kyo-srt-det2")).map { dir =>
+                val fileA = dir / "A.tasty"
+                val fileB = dir / "B.tasty"
+                val root  = dir.toString
+                Path.run(fileA.writeBytes(Span.from(Array[Byte](1, 2, 3)))).map { _ =>
+                    Path.run(fileB.writeBytes(Span.from(Array[Byte](4, 5, 6)))).map { _ =>
+                        Abort.run[TastyError] {
+                            DigestComputer.compute(Seq(root)).map { d1 =>
+                                DigestComputer.compute(Seq(root)).map { d2 =>
+                                    (d1, d2)
+                                }
+                            }
+                        }.map {
+                            case Result.Success((d1, d2)) =>
+                                assert(d1.sameElements(d2), s"real root digest must be deterministic: ${d1.toSeq} vs ${d2.toSeq}")
+                            case Result.Failure(e) =>
+                                fail(s"Unexpected failure: $e")
+                            case Result.Panic(t) =>
+                                throw t
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    "DigestComputer.compute detects additional file in root (different digest)" in {
+        Scope.run {
+            Path.run(Path.tempDir("kyo-srt-add")).map { dir =>
+                val fileA = dir / "A.tasty"
+                val root  = dir.toString
+                Path.run(fileA.writeBytes(Span.from(Array[Byte](1, 2, 3)))).map { _ =>
+                    Abort.run[TastyError] {
+                        DigestComputer.compute(Seq(root)).map { d1 =>
+                            val fileB = dir / "B.tasty"
+                            Path.run(fileB.writeBytes(Span.from(Array[Byte](4, 5, 6, 7, 8)))).map { _ =>
+                                DigestComputer.compute(Seq(root)).map { d2 =>
+                                    (d1, d2)
+                                }
+                            }
+                        }
+                    }.map {
+                        case Result.Success((d1, d2)) =>
+                            assert(!d1.sameElements(d2), "Adding a file must produce a different digest")
+                        case Result.Failure(e) =>
+                            fail(s"Unexpected failure: $e")
+                        case Result.Panic(t) =>
+                            throw t
+                    }
+                }
+            }
+        }
+    }
+
+    "DigestComputer.compute on two real roots is root-order independent" in {
+        Scope.run {
+            Path.run(Path.tempDir("kyo-srt-ord")).map { dir =>
+                val root1 = dir / "root1"
+                val root2 = dir / "root2"
+                val fileX = root1 / "X.tasty"
+                val fileY = root2 / "Y.tasty"
+                Path.run(fileX.writeBytes(Span.from(Array[Byte](10, 20, 30)))).map { _ =>
+                    Path.run(fileY.writeBytes(Span.from(kyo.fixtures.Embedded.plainClassTasty))).map { _ =>
+                        Abort.run[TastyError] {
+                            DigestComputer.compute(Seq(root1.toString, root2.toString)).map { d1 =>
+                                DigestComputer.compute(Seq(root2.toString, root1.toString)).map { d2 =>
+                                    (d1, d2)
+                                }
+                            }
+                        }.map {
+                            case Result.Success((d1, d2)) =>
+                                assert(d1.sameElements(d2), s"root order must not affect digest: ${d1.toSeq} vs ${d2.toSeq}")
+                            case Result.Failure(e) =>
+                                fail(s"Unexpected failure: $e")
+                            case Result.Panic(t) =>
+                                throw t
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    "DigestComputer.compute on directory root returns same digest for two successive calls" in {
+        Scope.run {
+            Path.run(Path.tempDir("kyo-srt-dir")).map { dir =>
+                val file = dir / "PlainClass.tasty"
+                val root = dir.toString
+                Path.run(file.writeBytes(Span.from(kyo.fixtures.Embedded.plainClassTasty))).map { _ =>
                     Abort.run[TastyError] {
                         DigestComputer.compute(Seq(root)).map { d1 =>
                             DigestComputer.compute(Seq(root)).map { d2 =>
@@ -821,88 +917,12 @@ class SnapshotRoundTripTest extends kyo.test.Test[Any]:
                         }
                     }.map {
                         case Result.Success((d1, d2)) =>
-                            assert(d1.sameElements(d2), s"real root digest must be deterministic: ${d1.toSeq} vs ${d2.toSeq}")
+                            assert(d1.sameElements(d2), s"directory-root digest must be deterministic: ${d1.toSeq} vs ${d2.toSeq}")
                         case Result.Failure(e) =>
                             fail(s"Unexpected failure: $e")
                         case Result.Panic(t) =>
                             throw t
                     }
-                }
-            }
-        }
-    }
-
-    "DigestComputer.compute detects additional file in root (different digest)" in {
-        Path.tempDir("kyo-srt-add").map { dir =>
-            val fileA = dir / "A.tasty"
-            val root  = dir.toString
-            fileA.writeBytes(Span.from(Array[Byte](1, 2, 3))).map { _ =>
-                Abort.run[TastyError] {
-                    DigestComputer.compute(Seq(root)).map { d1 =>
-                        val fileB = dir / "B.tasty"
-                        fileB.writeBytes(Span.from(Array[Byte](4, 5, 6, 7, 8))).map { _ =>
-                            DigestComputer.compute(Seq(root)).map { d2 =>
-                                (d1, d2)
-                            }
-                        }
-                    }
-                }.map {
-                    case Result.Success((d1, d2)) =>
-                        assert(!d1.sameElements(d2), "Adding a file must produce a different digest")
-                    case Result.Failure(e) =>
-                        fail(s"Unexpected failure: $e")
-                    case Result.Panic(t) =>
-                        throw t
-                }
-            }
-        }
-    }
-
-    "DigestComputer.compute on two real roots is root-order independent" in {
-        Path.tempDir("kyo-srt-ord").map { dir =>
-            val root1 = dir / "root1"
-            val root2 = dir / "root2"
-            val fileX = root1 / "X.tasty"
-            val fileY = root2 / "Y.tasty"
-            fileX.writeBytes(Span.from(Array[Byte](10, 20, 30))).map { _ =>
-                fileY.writeBytes(Span.from(kyo.fixtures.Embedded.plainClassTasty)).map { _ =>
-                    Abort.run[TastyError] {
-                        DigestComputer.compute(Seq(root1.toString, root2.toString)).map { d1 =>
-                            DigestComputer.compute(Seq(root2.toString, root1.toString)).map { d2 =>
-                                (d1, d2)
-                            }
-                        }
-                    }.map {
-                        case Result.Success((d1, d2)) =>
-                            assert(d1.sameElements(d2), s"root order must not affect digest: ${d1.toSeq} vs ${d2.toSeq}")
-                        case Result.Failure(e) =>
-                            fail(s"Unexpected failure: $e")
-                        case Result.Panic(t) =>
-                            throw t
-                    }
-                }
-            }
-        }
-    }
-
-    "DigestComputer.compute on directory root returns same digest for two successive calls" in {
-        Path.tempDir("kyo-srt-dir").map { dir =>
-            val file = dir / "PlainClass.tasty"
-            val root = dir.toString
-            file.writeBytes(Span.from(kyo.fixtures.Embedded.plainClassTasty)).map { _ =>
-                Abort.run[TastyError] {
-                    DigestComputer.compute(Seq(root)).map { d1 =>
-                        DigestComputer.compute(Seq(root)).map { d2 =>
-                            (d1, d2)
-                        }
-                    }
-                }.map {
-                    case Result.Success((d1, d2)) =>
-                        assert(d1.sameElements(d2), s"directory-root digest must be deterministic: ${d1.toSeq} vs ${d2.toSeq}")
-                    case Result.Failure(e) =>
-                        fail(s"Unexpected failure: $e")
-                    case Result.Panic(t) =>
-                        throw t
                 }
             }
         }

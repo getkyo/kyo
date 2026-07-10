@@ -61,14 +61,14 @@ object SnapshotWriter:
                 val tmpName   = s"$cacheDir/$hexDigest-$unique.krfl"
                 val finalName = s"$cacheDir/$hexDigest.krfl"
                 Sync.defer(Span.fromUnsafe(serialize(classpath, digest))).map { span =>
-                    Abort.recover[FileFsException](e => Abort.fail(TastyError.SnapshotIoError(s"mkDir $cacheDir: ${e.getMessage}")))(
-                        Path(cacheDir).mkDir
+                    Abort.recover[FileException](e => Abort.fail(TastyError.SnapshotIoError(s"mkDir $cacheDir: ${e.getMessage}")))(
+                        Path.run(Path(cacheDir).mkDir)
                     ).map { _ =>
-                        Abort.recover[FileWriteException](e => Abort.fail(TastyError.SnapshotIoError(s"write $tmpName: ${e.getMessage}")))(
-                            Path(tmpName).writeBytes(span)
+                        Abort.recover[FileException](e => Abort.fail(TastyError.SnapshotIoError(s"write $tmpName: ${e.getMessage}")))(
+                            Path.run(Path(tmpName).writeBytes(span))
                         ).map { _ =>
-                            Abort.recover[FileFsException](e => Abort.fail(TastyError.SnapshotIoError(s"move $tmpName: ${e.getMessage}")))(
-                                Path(tmpName).move(Path(finalName), atomicMove = true)
+                            Abort.recover[FileException](e => Abort.fail(TastyError.SnapshotIoError(s"move $tmpName: ${e.getMessage}")))(
+                                Path.run(Path(tmpName).move(Path(finalName), atomicMove = true))
                             )
                         }
                     }

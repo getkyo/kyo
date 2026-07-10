@@ -35,8 +35,8 @@ object SnapshotReader:
         path: String,
         expectedDigest: Maybe[Array[Byte]] = Maybe.Absent
     )(using Frame): Tasty.Classpath < (Sync & Abort[TastyError]) =
-        Abort.recover[FileReadException](e => Abort.fail(TastyError.SnapshotIoError(s"read $path: ${e.getMessage}")))(
-            Path(path).readBytes
+        Abort.recover[FileException](e => Abort.fail(TastyError.SnapshotIoError(s"read $path: ${e.getMessage}")))(
+            Path.runReadOnly(Path(path).readBytes)
         ).map { bytes =>
             expectedDigest match
                 case Maybe.Absent =>

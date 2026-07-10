@@ -274,10 +274,10 @@ private[kyo] object TestClasspaths2Jvm:
                             kyo.internal.tasty.snapshot.SnapshotWriter.write(cp2, tmpB, digest2).map { _ =>
                                 val hexB  = kyo.internal.tasty.snapshot.DigestComputer.toHexString(digest2)
                                 val pathB = s"$tmpB/$hexB.krfl"
-                                Abort.recover[kyo.FileReadException](e => Abort.fail(TastyError.SnapshotIoError(e.getMessage)))(
-                                    Path(pathA).readBytes.map { spanA =>
-                                        Abort.recover[kyo.FileReadException](e => Abort.fail(TastyError.SnapshotIoError(e.getMessage)))(
-                                            Path(pathB).readBytes.map { spanB =>
+                                Abort.recover[kyo.FileException](e => Abort.fail(TastyError.SnapshotIoError(e.getMessage)))(
+                                    Path.runReadOnly(Path(pathA).readBytes).map { spanA =>
+                                        Abort.recover[kyo.FileException](e => Abort.fail(TastyError.SnapshotIoError(e.getMessage)))(
+                                            Path.runReadOnly(Path(pathB).readBytes).map { spanB =>
                                                 (spanA.toArray, spanB.toArray)
                                             }
                                         )

@@ -19,8 +19,8 @@ class NativeMmapReaderTest extends kyo.test.Test[Any]:
         import AllowUnsafe.embrace.danger
         val path    = tmpPath("kyo-native-mmap-test-read-open.bin")
         val content = Array[Byte](0x42.toByte, 0x43.toByte, 0x44.toByte, 0x45.toByte)
-        Abort.run[TastyError](
-            Path(path).writeBytes(Span.from(content)).map { _ =>
+        Path.run(Path(path).writeBytes(Span.from(content))).map { _ =>
+            Abort.run[TastyError](
                 Scope.run {
                     NativeMmapReader.init(path).map { view =>
                         val b = view.readByte()
@@ -28,11 +28,11 @@ class NativeMmapReaderTest extends kyo.test.Test[Any]:
                         succeed
                     }
                 }
+            ).map {
+                case Result.Success(assertion) => assertion
+                case Result.Failure(e)         => fail(s"Unexpected TastyError: $e")
+                case Result.Panic(t)           => throw t
             }
-        ).map {
-            case Result.Success(assertion) => assertion
-            case Result.Failure(e)         => fail(s"Unexpected TastyError: $e")
-            case Result.Panic(t)           => throw t
         }
     }
 
@@ -42,30 +42,30 @@ class NativeMmapReaderTest extends kyo.test.Test[Any]:
         val content = Array[Byte](0x01.toByte, 0x02.toByte, 0x03.toByte, 0x04.toByte)
         // Capture the view reference outside the scope so we can read after the scope exits.
         var capturedView: MappedByteView = null
-        Abort.run[TastyError](
-            Path(path).writeBytes(Span.from(content)).map { _ =>
+        Path.run(Path(path).writeBytes(Span.from(content))).map { _ =>
+            Abort.run[TastyError](
                 Scope.run {
                     NativeMmapReader.init(path).map { view =>
                         capturedView = view
                         succeed
                     }
                 }
+            ).map { scopeResult =>
+                scopeResult match
+                    case Result.Failure(e) => fail(s"Unexpected TastyError: $e")
+                    case Result.Panic(t)   => throw t
+                    case Result.Success(_) =>
+                        // Scope.run has exited: the finalizer ran, setting closed = true.
+                        assert(capturedView != null, "Expected view to be non-null after scope")
+                        val ex = intercept[IllegalStateException] {
+                            capturedView.readByte()
+                        }
+                        assert(
+                            ex.getMessage == "mmap arena closed",
+                            s"Expected 'mmap arena closed' but got '${ex.getMessage}'"
+                        )
+                        succeed
             }
-        ).map { scopeResult =>
-            scopeResult match
-                case Result.Failure(e) => fail(s"Unexpected TastyError: $e")
-                case Result.Panic(t)   => throw t
-                case Result.Success(_) =>
-                    // Scope.run has exited: the finalizer ran, setting closed = true.
-                    assert(capturedView != null, "Expected view to be non-null after scope")
-                    val ex = intercept[IllegalStateException] {
-                        capturedView.readByte()
-                    }
-                    assert(
-                        ex.getMessage == "mmap arena closed",
-                        s"Expected 'mmap arena closed' but got '${ex.getMessage}'"
-                    )
-                    succeed
         }
     }
 

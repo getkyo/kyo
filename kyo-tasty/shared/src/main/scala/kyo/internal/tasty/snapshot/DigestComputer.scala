@@ -150,8 +150,8 @@ object DigestComputer:
         collectAllFiles(roots).map { files =>
             val sorted = files.sortBy(identity)
             Kyo.foreach(sorted) { path =>
-                Abort.recover[FileReadException](e => Abort.fail(TastyError.SnapshotIoError(s"read $path: ${e.getMessage}"))) {
-                    Path(path).readBytes.map(span => (path, span))
+                Abort.recover[FileException](e => Abort.fail(TastyError.SnapshotIoError(s"read $path: ${e.getMessage}"))) {
+                    Path.runReadOnly(Path(path).readBytes).map(span => (path, span))
                 }
             }.map { pairs =>
                 var acc = 0L
@@ -230,8 +230,8 @@ object DigestComputer:
     )(using Frame): Seq[(String, Long, Long)] < (Sync & Abort[TastyError]) =
         collectFiles(roots).map { files =>
             Kyo.foreach(files) { path =>
-                Abort.recover[FileReadException](e => Abort.fail(TastyError.SnapshotIoError(s"stat $path: ${e.getMessage}"))) {
-                    Path(path).stat.map(st => (path, st.lastModifiedMs, st.sizeBytes))
+                Abort.recover[FileException](e => Abort.fail(TastyError.SnapshotIoError(s"stat $path: ${e.getMessage}"))) {
+                    Path.runReadOnly(Path(path).stat).map(st => (path, st.lastModifiedMs, st.sizeBytes))
                 }
             }
         }
@@ -248,7 +248,7 @@ object DigestComputer:
         roots: Seq[String]
     )(using Frame): Seq[String] < (Sync & Abort[TastyError]) =
         Kyo.foreach(roots) { root =>
-            Path(root).exists.map { ex =>
+            Abort.recover[FileException](_ => false)(Path.runReadOnly(Path(root).exists)).map { ex =>
                 if !ex then Sync.defer(Seq.empty[String])
                 else
                     Sync.Unsafe.defer {

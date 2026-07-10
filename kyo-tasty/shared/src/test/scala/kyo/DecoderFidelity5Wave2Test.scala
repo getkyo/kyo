@@ -174,18 +174,20 @@ class DecoderFidelity5Wave2Test extends kyo.test.Test[Any]:
 
     "snapshot write to unwritable path produces SnapshotIoError" in {
         // Create a temp file and attempt to use it as a cache directory.
-        // Path.mkDir on a path occupied by a regular file fails with FileFsException,
+        // Path.mkDir on a path occupied by a regular file fails with FileException,
         // which SnapshotWriter wraps as SnapshotIoError.
-        Path.tempDir("kyo-dfw2-fail").map { tmpDir =>
-            val fileAsDir = tmpDir / "not-a-dir"
-            fileAsDir.mkFile.map { _ =>
-                TestClasspaths.withClasspath()(Tasty.classpath).map { classpath =>
-                    val digest = Array.fill[Byte](8)(0x33.toByte)
-                    Abort.run[TastyError](SnapshotWriter.write(classpath, fileAsDir.toString, digest)).map {
-                        case Result.Failure(_: TastyError.SnapshotIoError) => succeed
-                        case Result.Failure(other)                         => fail(s"expected SnapshotIoError got: $other")
-                        case Result.Success(_)                             => fail("expected SnapshotWriter.write to fail")
-                        case Result.Panic(t)                               => fail(s"SnapshotWriter panicked: ${t.getMessage}")
+        Scope.run {
+            Path.run(Path.tempDir("kyo-dfw2-fail")).map { tmpDir =>
+                val fileAsDir = tmpDir / "not-a-dir"
+                Path.run(fileAsDir.mkFile).map { _ =>
+                    TestClasspaths.withClasspath()(Tasty.classpath).map { classpath =>
+                        val digest = Array.fill[Byte](8)(0x33.toByte)
+                        Abort.run[TastyError](SnapshotWriter.write(classpath, fileAsDir.toString, digest)).map {
+                            case Result.Failure(_: TastyError.SnapshotIoError) => succeed
+                            case Result.Failure(other)                         => fail(s"expected SnapshotIoError got: $other")
+                            case Result.Success(_)                             => fail("expected SnapshotWriter.write to fail")
+                            case Result.Panic(t)                               => fail(s"SnapshotWriter panicked: ${t.getMessage}")
+                        }
                     }
                 }
             }

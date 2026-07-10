@@ -202,7 +202,7 @@ object ClasspathOrchestrator:
         Kyo.foreach(roots) { root =>
             if root.startsWith("jrt:/") then Sync.defer(true)
             else
-                Path(root).exists.map { ex =>
+                Abort.recover[FileException](_ => false)(Path.runReadOnly(Path(root).exists)).map { ex =>
                     if !ex && mode == Tasty.ErrorMode.FailFast then Abort.fail(TastyError.FileNotFound(root))
                     else Sync.defer(ex) // true = root exists; false = missing (only in SoftFail)
                 }
@@ -260,7 +260,7 @@ object ClasspathOrchestrator:
             Kyo.foreach(roots) { root =>
                 if root.startsWith("jrt:/") then Sync.defer(true)
                 else
-                    Path(root).exists.map { ex =>
+                    Abort.recover[FileException](_ => false)(Path.runReadOnly(Path(root).exists)).map { ex =>
                         if !ex && mode == Tasty.ErrorMode.FailFast then Abort.fail(TastyError.FileNotFound(root))
                         else Sync.defer(ex)
                     }
@@ -479,7 +479,7 @@ object ClasspathOrchestrator:
                 }
             else
                 // Directory, direct .tasty file, or direct .class file: use Path walk.
-                Abort.recover[FileFsException](err => Abort.fail(TastyError.SnapshotIoError(s"list $root: ${err.getMessage}"))) {
+                Abort.recover[FileException](err => Abort.fail(TastyError.SnapshotIoError(s"list $root: ${err.getMessage}"))) {
                     if root.endsWith(".tasty") || root.endsWith("module-info.class") then
                         Sync.defer(Chunk(root))
                     else if root.endsWith(".class") && !root.endsWith("module-info.class") then
@@ -487,7 +487,7 @@ object ClasspathOrchestrator:
                     else
                         // Path.walk returns a Stream requiring Scope; Scope.run discharges the Scope.
                         Scope.run {
-                            Path(root).walk.run.map { paths =>
+                            Path.runReadOnly(Path(root).walk.run).map { paths =>
                                 Chunk.from(paths.toSeq.filter { p =>
                                     val name = p.name.getOrElse("")
                                     suffixes.exists(name.endsWith)
@@ -629,8 +629,8 @@ object ClasspathOrchestrator:
         else if entryPath.startsWith("jrt:/") then
             ZipHandle.readJrtEntry(entryPath).map(Span.fromUnsafe)
         else
-            Abort.recover[FileReadException](err => Abort.fail(TastyError.SnapshotIoError(s"read $entryPath: ${err.getMessage}"))) {
-                Path(entryPath).readBytes
+            Abort.recover[FileException](err => Abort.fail(TastyError.SnapshotIoError(s"read $entryPath: ${err.getMessage}"))) {
+                Path.runReadOnly(Path(entryPath).readBytes)
             }
         end if
     end readEntryBytes
@@ -2408,7 +2408,7 @@ object ClasspathOrchestrator:
                         // For jar entries, try reading and treat IOException as absent.
                         Sync.defer(true) // attempt the read; soft-fail handles the error
                     else
-                        Path(companionPath).exists
+                        Abort.recover[FileException](_ => false)(Path.runReadOnly(Path(companionPath).exists))
                     end if
                 end companionExistsEffect
                 companionExistsEffect.map { exists =>
@@ -2798,7 +2798,7 @@ object ClasspathOrchestrator:
                             case Result.Success(digest) =>
                                 val hexDigest    = SnapshotDigest.toHexString(digest)
                                 val snapshotPath = s"$dir/$hexDigest.krfl"
-                                Path(snapshotPath).exists.map { exists =>
+                                Abort.recover[FileException](_ => false)(Path.runReadOnly(Path(snapshotPath).exists)).map { exists =>
                                     if exists then
                                         Abort.run[TastyError](SnapshotReader.readMapped(snapshotPath)).map {
                                             case Result.Success(coldCp) =>

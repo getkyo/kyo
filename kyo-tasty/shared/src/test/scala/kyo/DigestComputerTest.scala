@@ -37,29 +37,31 @@ class DigestComputerTest extends kyo.test.Test[Any]:
 
     // directory root compute is deterministic and sensitive to file-set changes.
     "directory root compute is deterministic and detects added file" in {
-        Path.tempDir("kyo-dct").map { dir =>
-            val file = dir / "Foo.tasty"
-            file.writeBytes(Span.from(Array[Byte](1, 2, 3, 4))).map { _ =>
-                val root = dir.toString
-                Abort.run[TastyError] {
-                    DigestComputer.compute(Seq(root)).map { d1 =>
-                        DigestComputer.compute(Seq(root)).map { d2 =>
-                            val file2 = dir / "Bar.tasty"
-                            file2.writeBytes(Span.from(Array[Byte](5, 6, 7, 8))).map { _ =>
-                                DigestComputer.compute(Seq(root)).map { d3 =>
-                                    (d1, d2, d3)
+        Scope.run {
+            Path.run(Path.tempDir("kyo-dct")).map { dir =>
+                val file = dir / "Foo.tasty"
+                Path.run(file.writeBytes(Span.from(Array[Byte](1, 2, 3, 4)))).map { _ =>
+                    val root = dir.toString
+                    Abort.run[TastyError] {
+                        DigestComputer.compute(Seq(root)).map { d1 =>
+                            DigestComputer.compute(Seq(root)).map { d2 =>
+                                val file2 = dir / "Bar.tasty"
+                                Path.run(file2.writeBytes(Span.from(Array[Byte](5, 6, 7, 8)))).map { _ =>
+                                    DigestComputer.compute(Seq(root)).map { d3 =>
+                                        (d1, d2, d3)
+                                    }
                                 }
                             }
                         }
                     }
+                        .map {
+                            case Result.Success((d1, d2, d3)) =>
+                                assert(d1.sameElements(d2), "same directory must produce same digest")
+                                assert(!d1.sameElements(d3), "adding a file must produce a different digest")
+                            case Result.Failure(e) => fail(s"Unexpected failure: $e")
+                            case Result.Panic(t)   => throw t
+                        }
                 }
-                    .map {
-                        case Result.Success((d1, d2, d3)) =>
-                            assert(d1.sameElements(d2), "same directory must produce same digest")
-                            assert(!d1.sameElements(d3), "adding a file must produce a different digest")
-                        case Result.Failure(e) => fail(s"Unexpected failure: $e")
-                        case Result.Panic(t)   => throw t
-                    }
             }
         }
     }

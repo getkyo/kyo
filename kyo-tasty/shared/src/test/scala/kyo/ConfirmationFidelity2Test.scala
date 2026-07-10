@@ -105,33 +105,35 @@ class ConfirmationFidelity2Test extends Fidelity2TestBase:
 
     "findClass(kyo.fixtures.JavaSimpleFixture) returns Present with isJava via temp dir" in {
         // Write the .class file to a temp dir and use ClasspathOrchestrator.init with a real path.
-        Path.tempDir("kyo-cf2-java").map { tmpDir =>
-            val subDir = tmpDir / "kyo" / "fixtures"
-            subDir.mkDir.map { _ =>
-                (subDir / "JavaSimpleFixture.class").writeBytes(
-                    Span.from(kyo.fixtures.EmbeddedJavaFixtures.javaSimpleFixtureClassfile)
-                ).map { _ =>
-                    Scope.run {
-                        Abort.run[TastyError](
-                            ClasspathOrchestrator.init(
-                                Seq((tmpDir / "kyo" / "fixtures" / "JavaSimpleFixture.class").toString),
-                                Tasty.ErrorMode.SoftFail,
-                                1
-                            ).map { classpath =>
-                                Tasty.withClasspath(classpath) {
-                                    Tasty.findClass("kyo.fixtures.JavaSimpleFixture")
+        Scope.run {
+            Path.run(Path.tempDir("kyo-cf2-java")).map { tmpDir =>
+                val subDir = tmpDir / "kyo" / "fixtures"
+                Path.run(subDir.mkDir).map { _ =>
+                    Path.run((subDir / "JavaSimpleFixture.class").writeBytes(
+                        Span.from(kyo.fixtures.EmbeddedJavaFixtures.javaSimpleFixtureClassfile)
+                    )).map { _ =>
+                        Scope.run {
+                            Abort.run[TastyError](
+                                ClasspathOrchestrator.init(
+                                    Seq((tmpDir / "kyo" / "fixtures" / "JavaSimpleFixture.class").toString),
+                                    Tasty.ErrorMode.SoftFail,
+                                    1
+                                ).map { classpath =>
+                                    Tasty.withClasspath(classpath) {
+                                        Tasty.findClass("kyo.fixtures.JavaSimpleFixture")
+                                    }
                                 }
+                            ).map {
+                                case Result.Success(Maybe.Present(c)) =>
+                                    assert(c.isJava, "JavaSimpleFixture must have isJava (Flag.JavaDefined set by ClassfileUnpickler)")
+                                    succeed
+                                case Result.Success(Maybe.Absent) =>
+                                    fail("kyo.fixtures.JavaSimpleFixture not found; standalone .class root was not discovered")
+                                case Result.Failure(e) =>
+                                    fail(s"Unexpected failure: $e")
+                                case Result.Panic(t) =>
+                                    throw t
                             }
-                        ).map {
-                            case Result.Success(Maybe.Present(c)) =>
-                                assert(c.isJava, "JavaSimpleFixture must have isJava (Flag.JavaDefined set by ClassfileUnpickler)")
-                                succeed
-                            case Result.Success(Maybe.Absent) =>
-                                fail("kyo.fixtures.JavaSimpleFixture not found; standalone .class root was not discovered")
-                            case Result.Failure(e) =>
-                                fail(s"Unexpected failure: $e")
-                            case Result.Panic(t) =>
-                                throw t
                         }
                     }
                 }
