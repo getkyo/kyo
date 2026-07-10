@@ -19,9 +19,9 @@ class WebsiteMainTest extends WebsiteTest:
 
     private def deleteDir(d: java.nio.file.Path): Unit =
         if Files.exists(d) then
-            Files.walk(d)
-                .sorted(java.util.Comparator.reverseOrder())
-                .forEach(p => Files.delete(p))
+            scala.util.Using.resource(Files.walk(d)) { stream =>
+                stream.sorted(java.util.Comparator.reverseOrder()).forEach(p => Files.delete(p))
+            }
 
     private def tmpDir(using Frame): Path < (Sync & Scope) =
         Scope.acquireRelease(

@@ -45,9 +45,9 @@ class WebsiteGeneratorTest extends WebsiteTest:
 
     private def deleteDir(d: java.nio.file.Path): Unit =
         if java.nio.file.Files.exists(d) then
-            java.nio.file.Files.walk(d)
-                .sorted(java.util.Comparator.reverseOrder())
-                .forEach(p => java.nio.file.Files.delete(p))
+            scala.util.Using.resource(java.nio.file.Files.walk(d)) { stream =>
+                stream.sorted(java.util.Comparator.reverseOrder()).forEach(p => java.nio.file.Files.delete(p))
+            }
 
     private def tmpDir(using Frame): Path < (Sync & Scope) =
         Scope.acquireRelease(
