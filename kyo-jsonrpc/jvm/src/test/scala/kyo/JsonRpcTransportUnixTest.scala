@@ -7,16 +7,20 @@ import java.nio.channels.SocketChannel
 class JsonRpcTransportUnixTest extends JsonRpcTest:
 
     "unixDomain binds and accepts a connection" in {
-        Path.tempDir("kyo-jsonrpc-uds-").map { tempDir =>
-            val sock = Path(tempDir, "test.sock")
-            Scope.run {
-                JsonRpcTransport.unixDomain(sock).map { _ =>
-                    sock.exists.map(exists => assert(exists)).andThen {
-                        Sync.defer {
-                            val client = SocketChannel.open(UnixDomainSocketAddress.of(sock.toString))
-                            try assert(client.isConnected)
-                            finally client.close()
-                            end try
+        Scope.run {
+            Path.run {
+                Path.tempDir("kyo-jsonrpc-uds-").map { tempDir =>
+                    val sock = Path(tempDir, "test.sock")
+                    Scope.run {
+                        JsonRpcTransport.unixDomain(sock).map { _ =>
+                            sock.exists.map(exists => assert(exists)).andThen {
+                                Sync.defer {
+                                    val client = SocketChannel.open(UnixDomainSocketAddress.of(sock.toString))
+                                    try assert(client.isConnected)
+                                    finally client.close()
+                                    end try
+                                }
+                            }
                         }
                     }
                 }
@@ -25,24 +29,28 @@ class JsonRpcTransportUnixTest extends JsonRpcTest:
     }
 
     "unixDomain round-trips one envelope" in {
-        Path.tempDir("kyo-jsonrpc-uds-").map { tempDir =>
-            val sock = Path(tempDir, "test.sock")
-            Scope.run {
-                JsonRpcTransport.unixDomain(sock).map { t =>
-                    Sync.defer {
-                        val client = SocketChannel.open(UnixDomainSocketAddress.of(sock.toString))
-                        try
-                            val payload = """{"jsonrpc":"2.0","method":"ping"}""" + "\n"
-                            discard(client.write(ByteBuffer.wrap(payload.getBytes("UTF-8"))))
-                            client.shutdownOutput()
-                        finally client.close()
-                        end try
-                    }.andThen {
-                        t.incoming.take(1).run.map { frames =>
-                            assert(frames.size == 1)
-                            frames.head match
-                                case JsonRpcNotification("ping", _, _) => succeed
-                                case other                             => fail(s"unexpected $other")
+        Scope.run {
+            Path.run {
+                Path.tempDir("kyo-jsonrpc-uds-").map { tempDir =>
+                    val sock = Path(tempDir, "test.sock")
+                    Scope.run {
+                        JsonRpcTransport.unixDomain(sock).map { t =>
+                            Sync.defer {
+                                val client = SocketChannel.open(UnixDomainSocketAddress.of(sock.toString))
+                                try
+                                    val payload = """{"jsonrpc":"2.0","method":"ping"}""" + "\n"
+                                    discard(client.write(ByteBuffer.wrap(payload.getBytes("UTF-8"))))
+                                    client.shutdownOutput()
+                                finally client.close()
+                                end try
+                            }.andThen {
+                                t.incoming.take(1).run.map { frames =>
+                                    assert(frames.size == 1)
+                                    frames.head match
+                                        case JsonRpcNotification("ping", _, _) => succeed
+                                        case other                             => fail(s"unexpected $other")
+                                }
+                            }
                         }
                     }
                 }
@@ -51,36 +59,44 @@ class JsonRpcTransportUnixTest extends JsonRpcTest:
     }
 
     "unixDomain Scope cleanup deletes socket file" in {
-        Path.tempDir("kyo-jsonrpc-uds-").map { tempDir =>
-            val sock = Path(tempDir, "test.sock")
-            Scope.run {
-                JsonRpcTransport.unixDomain(sock).map(_ => ())
-            }.andThen {
-                sock.exists.map(exists => assert(!exists))
+        Scope.run {
+            Path.run {
+                Path.tempDir("kyo-jsonrpc-uds-").map { tempDir =>
+                    val sock = Path(tempDir, "test.sock")
+                    Scope.run {
+                        JsonRpcTransport.unixDomain(sock).map(_ => ())
+                    }.andThen {
+                        sock.exists.map(exists => assert(!exists))
+                    }
+                }
             }
         }
     }
 
     "unixDomain framer override changes wire shape" in {
-        Path.tempDir("kyo-jsonrpc-uds-").map { tempDir =>
-            val sock = Path(tempDir, "test.sock")
-            Scope.run {
-                JsonRpcTransport.unixDomain(sock, framer = JsonRpcFramer.contentLength).map { t =>
-                    Sync.defer {
-                        val client = SocketChannel.open(UnixDomainSocketAddress.of(sock.toString))
-                        try
-                            val body    = """{"jsonrpc":"2.0","method":"p"}"""
-                            val payload = s"Content-Length: ${body.length}\r\n\r\n$body"
-                            discard(client.write(ByteBuffer.wrap(payload.getBytes("UTF-8"))))
-                            client.shutdownOutput()
-                        finally client.close()
-                        end try
-                    }.andThen {
-                        t.incoming.take(1).run.map { frames =>
-                            assert(frames.size == 1)
-                            frames.head match
-                                case JsonRpcNotification("p", _, _) => succeed
-                                case other                          => fail(s"unexpected $other")
+        Scope.run {
+            Path.run {
+                Path.tempDir("kyo-jsonrpc-uds-").map { tempDir =>
+                    val sock = Path(tempDir, "test.sock")
+                    Scope.run {
+                        JsonRpcTransport.unixDomain(sock, framer = JsonRpcFramer.contentLength).map { t =>
+                            Sync.defer {
+                                val client = SocketChannel.open(UnixDomainSocketAddress.of(sock.toString))
+                                try
+                                    val body    = """{"jsonrpc":"2.0","method":"p"}"""
+                                    val payload = s"Content-Length: ${body.length}\r\n\r\n$body"
+                                    discard(client.write(ByteBuffer.wrap(payload.getBytes("UTF-8"))))
+                                    client.shutdownOutput()
+                                finally client.close()
+                                end try
+                            }.andThen {
+                                t.incoming.take(1).run.map { frames =>
+                                    assert(frames.size == 1)
+                                    frames.head match
+                                        case JsonRpcNotification("p", _, _) => succeed
+                                        case other                          => fail(s"unexpected $other")
+                                }
+                            }
                         }
                     }
                 }
