@@ -39,20 +39,20 @@ final case class Image private (data: Span[Byte]) derives CanEqual:
         XXHash.hash32(data)
 
     /** Writes the image to a file in raw binary format. */
-    def writeFileBinary(path: String)(using Frame): Unit < (Sync & Abort[FileWriteException]) =
+    def writeFileBinary(path: String)(using Frame): Unit < (Sync & Abort[FileException]) =
         writeFileBinary(Path(path))
 
     /** Writes the image to a file in raw binary format. */
-    def writeFileBinary(path: Path)(using Frame): Unit < (Sync & Abort[FileWriteException]) =
-        path.writeBytes(data)
+    def writeFileBinary(path: Path)(using Frame): Unit < (Sync & Abort[FileException]) =
+        Path.run(path.writeBytes(data))
 
     /** Writes the image to a file as a Base64-encoded text payload. */
-    def writeFileBase64(path: String)(using Frame): Unit < (Sync & Abort[FileWriteException]) =
+    def writeFileBase64(path: String)(using Frame): Unit < (Sync & Abort[FileException]) =
         writeFileBase64(Path(path))
 
     /** Writes the image to a file as a Base64-encoded text payload. */
-    def writeFileBase64(path: Path)(using Frame): Unit < (Sync & Abort[FileWriteException]) =
-        path.write(base64)
+    def writeFileBase64(path: Path)(using Frame): Unit < (Sync & Abort[FileException]) =
+        Path.run(path.write(base64))
 
     /** The raw image bytes as an immutable [[Span]]. */
     def binary: Span[Byte] = data

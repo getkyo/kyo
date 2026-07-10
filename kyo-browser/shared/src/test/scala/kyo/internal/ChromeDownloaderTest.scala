@@ -52,12 +52,8 @@ class ChromeDownloaderTest extends BaseBrowserTest:
     // ---- version override path is reflected in the cached directory ----
 
     /** Creates a temp directory that auto-deletes when the enclosing scope closes. */
-    private def tempDirScoped(prefix: String)(using Frame): Path < (Scope & Sync & Abort[FileFsException]) =
-        Path.tempDir(prefix).map { p =>
-            Scope.acquireRelease(p) { dir =>
-                Abort.run[FileFsException](dir.removeAll).unit
-            }
-        }
+    private def tempDirScoped(prefix: String)(using Frame): Path < (Scope & Sync & Abort[FileException]) =
+        Path.run(Path.tempDir(prefix))
 
     /** Builds a [[System]] override whose env returns `KYO_BROWSER_CACHE = cacheDir.unsafe.show`. OS/arch fall back to the host. */
     private def systemWithCache(cacheDir: Path)(os: OS, arch: Arch): System =
@@ -76,7 +72,7 @@ class ChromeDownloaderTest extends BaseBrowserTest:
                     build         = Browser.ChromeForTestingBuild.HeadlessShell
                     versionDir    = tmp / s"chrome-headless-shell-$customVersion-$platform"
                     exec          = ChromeDownloader.executablePath(versionDir, platform, build)
-                    _ <- exec.write("fake-exec") // createFolders=true creates the full ancestor chain
+                    _ <- Path.run(exec.write("fake-exec")) // createFolders=true creates the full ancestor chain
                     sys = systemWithCache(tmp)(os, arch)
                     resolved <- System.let(sys)(ChromeDownloader.ensure(
                         Present(customVersion),
@@ -105,7 +101,7 @@ class ChromeDownloaderTest extends BaseBrowserTest:
                     build         = Browser.ChromeForTestingBuild.Chrome
                     versionDir    = tmp / s"chrome-$customVersion-$platform"
                     exec          = ChromeDownloader.executablePath(versionDir, platform, build)
-                    _ <- exec.write("fake-full-chrome")
+                    _ <- Path.run(exec.write("fake-full-chrome"))
                     sys = systemWithCache(tmp)(os, arch)
                     resolved <- System.let(sys)(ChromeDownloader.ensure(
                         Present(customVersion),
@@ -278,7 +274,7 @@ class ChromeDownloaderTest extends BaseBrowserTest:
         // 127.0.0.1:0 is reserved as 'no port' and refuses connection immediately.
         val url = "http://127.0.0.1:0/nonexistent"
         Scope.run {
-            Path.tempScoped("kyo-cd-dl-", ".zip").map { dest =>
+            Path.run(Path.tempScoped("kyo-cd-dl-", ".zip")).map { dest =>
                 Abort.run[BrowserSetupException](ChromeDownloader.downloadZip(url, dest, 5.minutes)).map {
                     case Result.Failure(ex: BrowserSetupFailedException) => assert(ex.getMessage.contains("failed to download Chrome"))
                     case other => fail(s"expected Failure(BrowserSetupFailedException) but got $other")
@@ -326,9 +322,9 @@ class ChromeDownloaderTest extends BaseBrowserTest:
     "extractZip on a garbage-bytes archive raises BrowserSetupFailedException" in {
         Scope.run {
             for
-                tmp <- Path.tempScoped("kyo-cd-zip-", ".zip")
+                tmp <- Path.run(Path.tempScoped("kyo-cd-zip-", ".zip"))
                 garbage = Span[Byte](0x00.toByte, 0xff.toByte, 0x00.toByte, 0xff.toByte, 0xde.toByte, 0xad.toByte, 0xbe.toByte, 0xef.toByte)
-                _ <- tmp.writeBytes(garbage)
+                _ <- Path.run(tmp.writeBytes(garbage))
                 dest = Path(tmp.unsafe.show + "-extract")
                 result <- Abort.run[BrowserSetupException](ChromeDownloader.extractZip(tmp, dest))
             yield result match
@@ -359,10 +355,10 @@ class ChromeDownloaderTest extends BaseBrowserTest:
                             val target = ChromeDownloader.executablePath(vDir, _p, _b)
                             for
                                 _ <- counter.updateAndGet(_ + 1)
-                                _ <- Abort.run[FileFsException](target.parent match
+                                _ <- Abort.run[FileException](Path.run(target.parent match
                                     case Present(par) => par.mkDir
-                                    case Absent       => Kyo.unit).map(_.getOrThrow)
-                                _ <- Abort.run[FileWriteException](target.write("fake-exec")).map(_.getOrThrow)
+                                    case Absent       => Kyo.unit)).map(_.getOrThrow)
+                                _ <- Abort.run[FileException](Path.run(target.write("fake-exec"))).map(_.getOrThrow)
                             yield ()
                             end for
                     first <- System.let(sys)(ChromeDownloader.ensureWith(

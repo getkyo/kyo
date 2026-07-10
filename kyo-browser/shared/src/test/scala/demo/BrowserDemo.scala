@@ -54,11 +54,11 @@ abstract class BrowserDemo[Result](val demoName: String):
             writeOrLog(logFile.append(s"[$ts] $msg\n"), s"log write failed for: $msg")
         }
 
-    /** Performs a file-write effect, logging any `FileWriteException` failure as a warning rather than silently dropping it. */
-    private def writeOrLog(write: => Unit < (Sync & Abort[FileWriteException]), context: String)(using Frame): Unit < Sync =
-        Abort.recover[FileWriteException] { e =>
+    /** Performs a file-write effect, logging any `FileException` failure as a warning rather than silently dropping it. */
+    private def writeOrLog(write: => Unit < PathWrite, context: String)(using Frame): Unit < Sync =
+        Abort.recover[FileException] { e =>
             Log.warn(s"$context: $e")
-        }(write)
+        }(Path.run(write))
 
     private[demo] def step(n: Int, desc: String)(using Frame): Unit < Async =
         for

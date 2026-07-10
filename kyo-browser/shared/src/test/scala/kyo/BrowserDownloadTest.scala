@@ -22,7 +22,7 @@ class BrowserDownloadTest extends BrowserTest:
         Loop(0) { i =>
             if i >= samples then Loop.done(())
             else
-                path.exists.map {
+                Abort.recover[FileException](_ => false)(Path.runReadOnly(path.exists)).map {
                     case true =>
                         Abort.fail[BrowserAssertionException](
                             BrowserAssertionTimedOutException(
@@ -56,7 +56,7 @@ class BrowserDownloadTest extends BrowserTest:
     "allowDownloads(toPath = Present(absoluteTmp)) lands a downloaded file at the requested path" in {
         withBrowser {
             for
-                tempPath <- Path.tempDir("kyo-dl-allow-")
+                tempPath <- Path.run(Path.tempDir("kyo-dl-allow-"))
                 tempDir = tempPath.toString
                 now <- Clock.nowMonotonic
                 fileName = s"hello-${now.toNanos}.txt"
@@ -69,7 +69,7 @@ class BrowserDownloadTest extends BrowserTest:
                 result <- Browser.onDownload(collectEvents(events, done)) {
                     Browser.goto(html).andThen(Browser.click(Browser.Selector.id("dl"))).andThen(done.get)
                 }
-                downloaded <- (tempPath / fileName).readBytes
+                downloaded <- Path.runReadOnly((tempPath / fileName).readBytes)
             yield
                 val bytes = downloaded.toArray
                 assert(new String(bytes, "UTF-8") == "Hello", s"expected 'Hello' but got ${new String(bytes, "UTF-8")}")
@@ -109,7 +109,7 @@ class BrowserDownloadTest extends BrowserTest:
     "denyDownloads drops the download (no file lands at the previously-set toPath)" in {
         withBrowser {
             for
-                tempPath <- Path.tempDir("kyo-dl-deny-")
+                tempPath <- Path.run(Path.tempDir("kyo-dl-deny-"))
                 tempDir = tempPath.toString
                 now <- Clock.nowMonotonic
                 fileName = s"hello-deny-${now.toNanos}.bin"
@@ -122,7 +122,7 @@ class BrowserDownloadTest extends BrowserTest:
                 // Inverse poll: loop exits cleanly iff file never landed; Abort.fail = file landed.
                 _ <- assertNeverLands(tempPath / fileName, s"denyDownloads-no-landing-at-$fileName", 10, 50.millis)
                 // Confirm the file is absent after the full poll window (the deny contract was upheld).
-                absent <- (tempPath / fileName).exists
+                absent <- Abort.recover[FileException](_ => false)(Path.runReadOnly((tempPath / fileName).exists))
             yield assert(!absent, s"Expected file to remain absent after denyDownloads but it landed at ${tempPath / fileName}")
             end for
         }
@@ -135,7 +135,7 @@ class BrowserDownloadTest extends BrowserTest:
     "setDownloadBehavior(Default) resets to Chrome's default after a previous Allow" in {
         withBrowser {
             for
-                tempPath <- Path.tempDir("kyo-dl-default-")
+                tempPath <- Path.run(Path.tempDir("kyo-dl-default-"))
                 tempDir = tempPath.toString
                 dataUrl = "data:application/octet-stream;base64,SGVsbG8="
                 // Phase A: Allow → file lands at tmp. Use onDownload+collectEvents so Chrome drives the
@@ -149,7 +149,7 @@ class BrowserDownloadTest extends BrowserTest:
                 _ <- Browser.onDownload(collectEvents(eventsA, doneA)) {
                     Browser.goto(htmlA).andThen(Browser.click(Browser.Selector.id("dl"))).andThen(doneA.get)
                 }
-                landedA <- (tempPath / fileNameA).exists
+                landedA <- Path.runReadOnly((tempPath / fileNameA).exists)
                 // Phase B: Default → file does NOT land at tmp. Mirror the denyDownloads shape:
                 // goto + click + short sleep + check file. Under Default with no toPath the file doesn't
                 // land at our tempDir; we don't observe a "completed" event so no onDownload here.
@@ -170,7 +170,7 @@ class BrowserDownloadTest extends BrowserTest:
                 _ <- Browser.onDownload(collectEvents(eventsC, doneC)) {
                     Browser.goto(htmlC).andThen(Browser.click(Browser.Selector.id("dl"))).andThen(doneC.get)
                 }
-                landedC <- (tempPath / fileNameC).exists
+                landedC <- Path.runReadOnly((tempPath / fileNameC).exists)
             yield
                 assert(landedA, s"Phase A (Allow): expected file at $tempDir/$fileNameA")
                 // Phase B's no-landing contract is enforced inside the for-comprehension by `assertNeverLands`.
@@ -182,7 +182,7 @@ class BrowserDownloadTest extends BrowserTest:
     "onDownload(f)(trigger) fires f with DownloadEvent.WillBegin(guid, url, suggestedFilename)" in {
         withBrowser {
             for
-                tempPath <- Path.tempDir("kyo-dl-willbegin-")
+                tempPath <- Path.run(Path.tempDir("kyo-dl-willbegin-"))
                 tempDir = tempPath.toString
                 now <- Clock.nowMonotonic
                 fileName = s"will-begin-${now.toNanos}.txt"
@@ -237,7 +237,7 @@ class BrowserDownloadTest extends BrowserTest:
         withLocalhostServer(handler) { (host, port) =>
             withBrowser {
                 for
-                    tempPath <- Path.tempDir("kyo-dl-big-")
+                    tempPath <- Path.run(Path.tempDir("kyo-dl-big-"))
                     tempDir = tempPath.toString
                     now <- Clock.nowMonotonic
                     fileName = s"big-${now.toNanos}.bin"
@@ -277,7 +277,7 @@ class BrowserDownloadTest extends BrowserTest:
     "onDownload(f)(action1).andThen(action2) - f is called for action1's downloads only" in {
         withBrowser {
             for
-                tempPath <- Path.tempDir("kyo-dl-unsub-")
+                tempPath <- Path.run(Path.tempDir("kyo-dl-unsub-"))
                 tempDir = tempPath.toString
                 now <- Clock.nowMonotonic
                 fileName1 = s"in-scope-${now.toNanos}.bin"
@@ -360,7 +360,7 @@ class BrowserDownloadTest extends BrowserTest:
     "Two concurrent tabs each running onDownload do not cross-talk" in {
         withBrowser {
             for
-                tempPath <- Path.tempDir("kyo-dl-tabs-")
+                tempPath <- Path.run(Path.tempDir("kyo-dl-tabs-"))
                 tempDir = tempPath.toString
                 now <- Clock.nowMonotonic
                 fileName1 = s"tab1-${now.toNanos}.bin"
@@ -425,7 +425,7 @@ class BrowserDownloadTest extends BrowserTest:
     "withDownloads(toPath) allows downloads in the body and reverts to Deny on exit" in {
         withBrowser {
             for
-                tempPath <- Path.tempDir("kyo-dl-with-")
+                tempPath <- Path.run(Path.tempDir("kyo-dl-with-"))
                 tempDir = tempPath.toString
                 now <- Clock.nowMonotonic
                 fileNameInside  = s"inside-${now.toNanos}.txt"
@@ -441,7 +441,7 @@ class BrowserDownloadTest extends BrowserTest:
                         Browser.goto(html).andThen(Browser.click(Browser.Selector.id("dl1"))).andThen(done.get)
                     }
                 }
-                downloaded <- (tempPath / fileNameInside).readBytes
+                downloaded <- Path.runReadOnly((tempPath / fileNameInside).readBytes)
                 // Click dl2 AFTER the withDownloads block. Policy is now Deny so no file should land.
                 // We don't observe an event for the second click; we just confirm the path does not exist.
                 _ <- Browser.click(Browser.Selector.id("dl2"))
@@ -464,7 +464,7 @@ class BrowserDownloadTest extends BrowserTest:
     "recordDownloads captures every DownloadEvent emitted during the body in arrival order" in {
         withBrowser {
             for
-                tempPath <- Path.tempDir("kyo-dl-record-")
+                tempPath <- Path.run(Path.tempDir("kyo-dl-record-"))
                 tempDir = tempPath.toString
                 now <- Clock.nowMonotonic
                 fileA   = s"a-${now.toNanos}.txt"
