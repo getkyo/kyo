@@ -12,7 +12,7 @@ import scala.scalajs.js.annotation.JSExportTopLevel
   * `window.__preRegisterReady` and installs the release trigger BEFORE calling the public
   * `UI.runHydrate` entry, then parks on a `Promise` until the test releases it.
   *
-  * This opens the exact window CR-02 is about: the inline WebSocket client (in the SSR'd page) connects
+  * This opens the exact register-before-push window: the inline WebSocket client (in the SSR'd page) connects
   * and the server pushes its initial `SetProp` per bound prop immediately, while the island has not yet
   * registered its `{patch,replaceSubtree}` handle. A dropped-buffer implementation would lose those
   * ops; the shipped startup buffer holds them per root and flushes them in order on registration, so the
