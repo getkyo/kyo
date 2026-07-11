@@ -9,12 +9,11 @@ class FileJournalTest extends kyo.test.Test[Any]:
 
     private def off(value: Long): StreamOffset = valid(StreamOffset(value))
 
-    // A fresh temp root. Path.tempDir has row Sync & Abort[FileFsException]; discharge the FileFsException
-    // here (a temp-dir failure is test-infra breakage, surfaced as a defect) so the for-comprehensions below
-    // stay on Sync & Scope, exactly as FileJournalCrashTest.freshDir does. Without this the raw Path.tempDir
-    // leaves Abort[FileFsException] in each test body's row, which `discharge` (JournalError only) never runs.
-    private def freshDir(prefix: String)(using Frame): Path < Sync =
-        Abort.run[FileFsException](Path.tempDir(prefix)).map {
+    // A fresh temp root. Path.tempDir carries PathWrite & Sync & Scope; Path.run discharges
+    // PathWrite and adds Abort[FileException]. A temp-dir failure is test-infra breakage, surfaced
+    // as a defect. Scope propagates so Scope-managed resources (e.g. LOCK) live until the test ends.
+    private def freshDir(prefix: String)(using Frame): Path < (Sync & Scope) =
+        Abort.run[FileException](Path.run(Path.tempDir(prefix))).map {
             case Result.Success(d)   => d
             case Result.Failure(err) => throw err
             case panic: Result.Panic => throw panic.exception

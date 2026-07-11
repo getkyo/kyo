@@ -30,8 +30,9 @@ class FileJournalNodeLockTest extends kyo.test.Test[Any]:
     private def valid[A](r: Result[JournalInvalidIdentifierError, A]): A =
         r.getOrElse(throw new AssertionError("valid identifier"))
 
-    private def freshDir(using Frame): Path < Sync =
-        Abort.run[FileFsException](Path.tempDir("fj-nodelock")).map {
+    // Path.tempDir carries PathWrite & Sync & Scope; Path.run discharges PathWrite.
+    private def freshDir(using Frame): Path < (Sync & Scope) =
+        Abort.run[FileException](Path.run(Path.tempDir("fj-nodelock"))).map {
             case Result.Success(d)   => d
             case Result.Failure(err) => throw err
             case panic: Result.Panic => throw panic.exception

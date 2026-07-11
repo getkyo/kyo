@@ -23,8 +23,9 @@ class FileJournalCrashTest extends kyo.test.Test[Any]:
     private def segmentPath(dir: Path): Path = dir / "streams" / "crash-1" / segmentName(0L)
 
     // A fresh temp root; a temp-dir failure is test-infra breakage, surfaced as a defect.
-    private def freshDir(using Frame): Path < Sync =
-        Abort.run[FileFsException](Path.tempDir("fj-crash")).map {
+    // Path.tempDir carries PathWrite & Sync & Scope; Path.run discharges PathWrite.
+    private def freshDir(using Frame): Path < (Sync & Scope) =
+        Abort.run[FileException](Path.run(Path.tempDir("fj-crash"))).map {
             case Result.Success(d)   => d
             case Result.Failure(err) => throw err
             case panic: Result.Panic => throw panic.exception

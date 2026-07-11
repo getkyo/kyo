@@ -7,11 +7,11 @@ package kyo
   */
 class FileJournalBackendTest
     extends JournalBackendTest(
-        // Path.tempDir has row Sync & Abort[FileFsException]; the by-name hook wants Sync & Scope. Both
-        // open-time Aborts are run to a panic here (FileFsException from tempDir, then JournalStorageError
-        // from Backend.file): a temp-dir or open failure is test-infra breakage, not a modeled condition.
+        // Path.tempDir carries PathWrite & Sync & Scope. Path.run discharges PathWrite and adds
+        // Abort[FileException]; both open-time failures (FileException from tempDir, JournalStorageError
+        // from Backend.file) are run to a panic: a temp-dir or open failure is test-infra breakage.
         // Scope is retained so the LOCK releases between tests.
-        Abort.run[FileFsException](Path.tempDir("kyo-file-journal-backend")).map {
+        Abort.run[FileException](Path.run(Path.tempDir("kyo-file-journal-backend"))).map {
             case Result.Success(dir) => dir
             case Result.Failure(err) => throw err
             case panic: Result.Panic => throw panic.exception
