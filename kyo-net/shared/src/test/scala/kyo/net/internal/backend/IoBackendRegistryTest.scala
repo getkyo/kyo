@@ -127,4 +127,15 @@ class IoBackendRegistryTest extends Test:
         }
     }
 
+    "selectAndBuild aborts Closed for a forced entry that is unavailable, without attempting a build (fail loud)" in {
+        // Distinct from the forced-build-fails case above: here the forced backend's cheap probe reports unavailable, so selectAndBuild aborts at
+        // the availability gate before it ever calls build. A forced name never silently falls through to another backend even when it is not usable.
+        val list = Chunk(Stub("io_uring", 30, false), Stub("epoll", 20, true))
+        withProp("kyo.net.test.backend.forced5", "io_uring") {
+            val ex = intercept[Closed](selectAndBuild(list, "kyo.net.test.backend.forced5", failing = Set.empty))
+            assert(ex.getMessage.contains("io_uring"))
+            assert(ex.getMessage.contains("unavailable"))
+        }
+    }
+
 end IoBackendRegistryTest
