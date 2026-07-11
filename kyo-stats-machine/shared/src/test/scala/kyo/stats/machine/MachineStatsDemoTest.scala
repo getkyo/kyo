@@ -7,8 +7,8 @@ import kyo.*
   *
   * The runnable demo (`demo.MachineStatsDemoApp`) proves the full classpath auto-load path end to end with a
   * live clock: it touches `kyo.Stat`, the class-init scan constructs the factory, the factory starts the
-  * once-per-second sampler, and after a few real seconds `machine.*` metrics appear (see the campaign's
-  * run-log evidence). This CI leaf pins the SAME real-host read and the SAME design-derived acceptance
+  * once-per-second sampler, and after a few real seconds `machine.*` metrics appear. This CI leaf pins
+  * the SAME real-host read and the SAME design-derived acceptance
   * deterministically, without depending on a wall-clock detached fiber and without racing sibling suites on
   * the process-global registry: it binds the real per-OS `Machine` impl the sampler resolves and drives the
   * sampler's exact per-tick body (`machineRead` + `diskRead` + `observe`) against the real host. The host
