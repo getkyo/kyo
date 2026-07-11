@@ -35,9 +35,8 @@ private[kyo] object ThreeBackend extends Backend:
         val mounted: Reconciler.Mounted,
         // The latest un-applied `ReplaceSubtree` snapshot PER path, drained as a batch on each wakeup.
         // Each op is a COMPLETE subtree snapshot, so a newer op for a path fully supersedes an older one:
-        // overwriting the slot keeps only the newest (never the stale drop-newest a bounded queue caused),
-        // and the drain applies each path's latest exactly once. Insertion-ordered so distinct paths apply
-        // in first-enqueued order.
+        // overwriting the slot keeps only the newest, and the drain applies each path's latest exactly once.
+        // Insertion-ordered so distinct paths apply in first-enqueued order.
         val pending: scala.collection.mutable.LinkedHashMap[Seq[String], String],
         // A capacity-1 wakeup: `replaceSubtree` offers one (deduped) after updating a pending slot; the
         // drain fiber parks on it and drains all pending slots when it fires.
@@ -130,8 +129,8 @@ private[kyo] object ThreeBackend extends Backend:
         }
 
     /** Buffers the LATEST `ReplaceSubtree` snapshot for `path` and wakes the drain fiber. Each op is a
-      * complete subtree snapshot, so overwriting the slot coalesces to the newest (the newest is never
-      * dropped, unlike a bounded queue's drop-on-full); a single capacity-1 wakeup schedules the drain.
+      * complete subtree snapshot, so overwriting the slot coalesces to the newest per path, and the drain
+      * applies that newest snapshot; a single capacity-1 wakeup schedules the drain.
       */
     private[kyo] def enqueueReplace(live: Live, path: Seq[String], encoded: String)(using Frame, AllowUnsafe): Unit =
         live.pending.update(path, encoded)

@@ -74,8 +74,7 @@ class ThreeBackendTest extends ThreeTest:
         assert(kids.size == 2)
         assert(kids(1).asInstanceOf[AnyRef] eq cameraNode.asInstanceOf[AnyRef])
         // The embed sits at page path Seq("1"); the server walk must reach the camera's lookAt boundProp
-        // at the camera's own path Seq("1","1") (before this fix backendChildren was Chunk(scene) only, so
-        // the camera was never discovered).
+        // at the camera's own path Seq("1","1"), since the camera is backendChildren(1).
         ReactiveUI.normalize(embed, Seq("1")).map { root =>
             def collect(n: ReactiveUI): List[(Seq[String], String)] =
                 val self = n.regionKind match
@@ -108,8 +107,8 @@ class ThreeBackendTest extends ThreeTest:
                         val live       = new ThreeBackend.Live(byPath, byLive, mounted, pending, wakeup)
                         val region     = Reconciler.reactiveRegions(mounted).head
                         val holderPath = region.holderPath
-                        // Flood far past any bounded queue with superseded single-key snapshots for the SAME
-                        // path, then one final two-key snapshot; each op is a COMPLETE snapshot.
+                        // Flood the SAME path with many superseded single-key snapshots, then one final
+                        // two-key snapshot; each op is a COMPLETE snapshot, so only the newest must survive.
                         (1 to 999).foreach(i =>
                             ThreeBackend.enqueueReplace(live, holderPath, Json.encode[Chunk[FloodItem]](Chunk(FloodItem("a", i.toDouble))))
                         )
@@ -132,7 +131,7 @@ class ThreeBackendTest extends ThreeTest:
                     }
                 yield
                     val (keys, xs) = finalState
-                    // The flood collapsed to ONE op (the newest), never the stale drop-newest a bounded queue caused.
+                    // The flood collapsed to ONE op per path (the newest); the latest-snapshot slot keeps it.
                     assert(batch.size == 1)
                     // The applied state equals the FINAL pushed snapshot, not any superseded "a@i" one.
                     assert(keys == Chunk("b", "c"))
