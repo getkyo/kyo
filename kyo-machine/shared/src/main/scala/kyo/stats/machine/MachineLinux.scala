@@ -13,6 +13,8 @@ import kyo.ffi.*
   */
 private[machine] object MachineLinux extends Machine:
 
+    // Unsafe: the reader runs inside the sampler's tick and bridges the readScoped file reads and the
+    // statvfs/sysconf FFI calls, all of which require the capability.
     import AllowUnsafe.embrace.danger
 
     def read(sampler: MachineSampler)(using AllowUnsafe): Machine.Reading =

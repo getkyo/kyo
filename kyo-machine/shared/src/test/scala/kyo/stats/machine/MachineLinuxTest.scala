@@ -52,8 +52,8 @@ class MachineLinuxTest extends kyo.test.Test[Any]:
             assert(dirs.get("memory") == Some("/sys/fs/cgroup/memory/system.slice/foo.service"))
             assert(dirs.get("cpu,cpuacct") == None)
             // The cpu key resolution mirrors LinuxCgroup.readV1's own lookup precedence: the
-            // individual "cpu" key wins over the compound mount-root fallback the plan reserves
-            // for the case neither individual key is present.
+            // individual "cpu" key wins over the compound mount-root fallback used when neither
+            // individual key is present.
             val resolvedCpu = dirs.get("cpu").orElse(dirs.get("cpuacct")).getOrElse("/sys/fs/cgroup/cpu,cpuacct")
             assert(resolvedCpu == "/sys/fs/cgroup/cpu,cpuacct/system.slice/foo.service")
         }

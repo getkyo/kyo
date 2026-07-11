@@ -38,9 +38,6 @@ final private[machine] case class Text(value: String):
         fields.find(_.startsWith(key)).map(_.stripPrefix(key)) match
             case Some(v) => Present(v)
             case None    => Absent
-
-    /** The whitespace fields of the first line starting with `prefix`, or Absent. */
-    def lineStartingWith(prefix: String): Maybe[IndexedSeq[String]] = lineFields(prefix)
 end Text
 
 private[machine] object Text:

@@ -9,8 +9,8 @@ class LinuxBindingsTest extends kyo.test.Test[Any]:
 
     "real host load" - {
 
-        // Ffi.load[LinuxBindings] against the real JVM host libc is the one leaf in this phase's
-        // suite that touches an actual host resource rather than a staged fixture: it verifies
+        // Ffi.load[LinuxBindings] against the real JVM host libc is the one leaf here that touches
+        // an actual host resource rather than a staged fixture: it verifies
         // host-invariant properties (a positive sysconf Hz; a coherent statvfs total/free
         // relation) that hold across any CI runner's disk size, never a specific numeric value.
         // struct statvfs's field layout is platform-specific (this binding reads the LP64
