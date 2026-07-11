@@ -15,10 +15,9 @@ import scala.scalajs.js
 sealed abstract class Three:
     private[kyo] def frame: Frame
 
-// The 5 value types (Color/Vec3/Normal/Radians/Pointer) nest under `object Three` via a mixin trait
-// per owning file (`ThreeColorOps` in Color.scala, etc.), so each stays byte-unchanged in its own
-// file (ColorTest.scala/Vec3Test.scala/etc. stay valid 1:1-named test files, no renames) while
-// resolving as `Three.Color`/`Three.Vec3`/etc. to every consumer.
+// The 5 value types (Color/Vec3/Normal/Radians/Pointer) each live in their own file and nest under
+// `object Three` via a per-file mixin trait (`ThreeColorOps` in Color.scala, and so on), resolving
+// as `Three.Color`/`Three.Vec3`/etc. to every consumer.
 object Three extends ThreeColorOps, ThreeVec3Ops, ThreeNormalOps, ThreeRadiansOps, ThreePointerOps:
 
     given CanEqual[Three, Three] = CanEqual.derived

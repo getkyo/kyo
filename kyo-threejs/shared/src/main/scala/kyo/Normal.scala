@@ -1,8 +1,7 @@
 package kyo
 
 /** `object Three` mixes this trait in, so [[Normal]] resolves as `Three.Normal` to every consumer
-  * while the opaque type + companion stay in this file (`NormalTest.scala` stays a valid 1:1-named
-  * test file).
+  * while the opaque type and its companion stay in this file.
   */
 private[kyo] trait ThreeNormalOps:
 

@@ -1,8 +1,7 @@
 package kyo
 
 /** `object Three` mixes this trait in, so [[Radians]] resolves as `Three.Radians` to every consumer
-  * while the opaque type + companion stay in this file (`RadiansTest.scala` stays a valid 1:1-named
-  * test file).
+  * while the opaque type and its companion stay in this file.
   */
 private[kyo] trait ThreeRadiansOps:
 

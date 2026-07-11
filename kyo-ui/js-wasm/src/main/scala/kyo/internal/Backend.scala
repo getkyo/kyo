@@ -3,8 +3,8 @@ package kyo.internal
 import kyo.*
 import org.scalajs.dom
 
-/** The per-node rendering backend SPI, extracted from the hardcoded `DomBackend` so a foreign
-  * renderer (kyo-threejs) is a sibling of the DOM backend rather than a host-mount bolt-on.
+/** The per-node rendering backend SPI. A foreign renderer (kyo-threejs) is a sibling of the DOM
+  * backend: both implement this interface and register in the client backend registry.
   *
   * A backend mounts a node into a host element under the page `Scope`, returning a Scope-managed
   * teardown handle, then delivers every later change through `patch` (one scalar prop) or

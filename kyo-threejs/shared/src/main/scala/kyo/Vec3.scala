@@ -1,7 +1,7 @@
 package kyo
 
 /** `object Three` mixes this trait in, so [[Vec3]] resolves as `Three.Vec3` to every consumer while
-  * the case class + companion stay in this file (`Vec3Test.scala` stays a valid 1:1-named test file).
+  * the case class and its companion stay in this file.
   */
 private[kyo] trait ThreeVec3Ops:
 

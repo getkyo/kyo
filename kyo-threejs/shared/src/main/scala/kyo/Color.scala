@@ -1,7 +1,7 @@
 package kyo
 
 /** `object Three` mixes this trait in, so [[Color]] resolves as `Three.Color` to every consumer while
-  * the opaque type + companion stay in this file (`ColorTest.scala` stays a valid 1:1-named test file).
+  * the opaque type and its companion stay in this file.
   */
 private[kyo] trait ThreeColorOps:
 

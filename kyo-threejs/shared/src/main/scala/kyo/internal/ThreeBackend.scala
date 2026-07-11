@@ -308,7 +308,7 @@ private[kyo] object ThreeBackend extends Backend:
     end buildPathIndex
 
     /** Re-indexes `region` after a splice: un-indexes its PRIOR keyed set (`region.prevKeyed`, still the
-      * prior set at this call point (`replaceHolderChildren` calls this before overwriting it), then
+      * prior set at this call point, since `replaceHolderChildren` calls this before overwriting it), then
       * re-indexes the NEW keyed set under the SAME path scheme `buildPathIndex` uses (a `Foreach`'s
       * entries at `holderPath :+ key`, a `Reactive`'s single entry AT `holderPath`). A key that survives
       * the splice is un-indexed then immediately re-indexed at the SAME path (a no-op on `byPath`/

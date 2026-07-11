@@ -1,8 +1,7 @@
 package kyo
 
 /** `object Three` mixes this trait in, so [[Pointer]] resolves as `Three.Pointer` to every consumer
-  * while the case class + companion stay in this file (`PointerTest.scala` stays a valid 1:1-named
-  * test file).
+  * while the case class and its companion stay in this file.
   */
 private[kyo] trait ThreePointerOps:
 
