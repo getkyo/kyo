@@ -42,7 +42,7 @@ int machine_macos_vm_statistics(int64_t* out) {
     size_t len = sizeof(memsize);
     if (sysctlbyname("hw.memsize", &memsize, &len, NULL, 0) != 0) return 1;
     vm_size_t page = 0;
-    host_page_size(mach_host_self(), &page);
+    if (host_page_size(mach_host_self(), &page) != KERN_SUCCESS || page == 0) return 1;
     vm_statistics64_data_t vm;
     mach_msg_type_number_t count = HOST_VM_INFO64_COUNT;
     if (host_statistics64(mach_host_self(), HOST_VM_INFO64, (host_info64_t)&vm, &count) != KERN_SUCCESS)
