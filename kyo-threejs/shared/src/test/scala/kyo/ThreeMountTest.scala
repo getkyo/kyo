@@ -471,6 +471,60 @@ class ThreeMountTest extends ThreeTest:
         }
     }
 
+    "subscribeReactiveRegions with serverDriven true forks a local watcher only for the client-local region" in {
+        // A render region is Schema-backed and carries a server drive, so on a hydrated server-driven page
+        // the server's ReplaceSubtree drain is the single writer of its live subtree. Under serverDriven the
+        // gate withholds its local watcher: an emit on its signal must not re-render it here. A raw
+        // Three.reactive(Signal[Three]) region carries no server drive (the server cannot drive it), so it
+        // keeps its local watcher even under serverDriven: an emit must re-render it here. Each builder
+        // records the last value it rendered, so the render builder freezes at its mount value while the
+        // reactive builder advances to the emitted value.
+        var lastRenderVal   = -1
+        var lastReactiveVal = -1
+        Scope.run {
+            Abort.recover[ThreeException](e => Abort.panic(e)) {
+                for
+                    serverSource <- Signal.initRef(0)
+                    clientSource <- Signal.initRef(0)
+                    serverRegion = serverSource.render { n =>
+                        lastRenderVal = n
+                        Three.mesh(Three.Geometry.box(), Three.Material.standard()).position(Three.Vec3(n.toDouble, 0, 0))
+                    }
+                    clientRegion = Three.reactive(clientSource.map[Three] { n =>
+                        lastReactiveVal = n
+                        Three.mesh(Three.Geometry.sphere(), Three.Material.standard()).position(Three.Vec3(n.toDouble, 0, 0))
+                    })
+                    scene = Three.scene(serverRegion, clientRegion)
+                    mountResult <- Reconciler.mount(scene)
+                    (_, mounted) = mountResult
+                    _ <- ThreeMount.subscribeReactiveRegions(mounted, serverDriven = true)
+                    _ <- serverSource.set(1)
+                    _ <- clientSource.set(1)
+                    // Yield real scheduler turns until the client-local watcher re-renders the emitted value.
+                    // Its watcher is forked, so this terminates; the cap is a safety bound, not a sleep.
+                    _ <- Loop.indexed { i =>
+                        if lastReactiveVal == 1 || i >= 50 then Loop.done(())
+                        else Fiber.initUnscoped(Kyo.unit).map(_.get).andThen(Loop.continue)
+                    }
+                    // Give a would-be server-region watcher the same window to fire before asserting it never did.
+                    _ <- Loop.indexed { i =>
+                        if i >= 50 then Loop.done(())
+                        else Fiber.initUnscoped(Kyo.unit).map(_.get).andThen(Loop.continue)
+                    }
+                yield
+                    assert(
+                        lastRenderVal == 0,
+                        s"server-drivable render region must keep its mount value with no local watcher under serverDriven, got $lastRenderVal"
+                    )
+                    assert(
+                        lastReactiveVal == 1,
+                        s"client-local reactive region must re-render its emitted value via its local watcher under serverDriven, got $lastReactiveVal"
+                    )
+                end for
+            }
+        }
+    }
+
     // ---- per-element dispose-once and live-map retirement ----
 
     /** Finds the keyed `ReactiveRegion` for the given holder node using ref-identity. */

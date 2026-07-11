@@ -210,8 +210,8 @@ private[kyo] object ThreeBackend extends Backend:
 
     // The per-mount registry, keyed by the mount's OWN root path (the Embed's data-kyo-path). A patch/
     // replaceSubtree targets some DESCENDANT path; backendLiveFor resolves the longest registered root
-    // that is a prefix of the target path (the nearest enclosing mount), mirroring DomBackend's own
-    // backendForPath ancestor walk. Race-free by construction: the whole surface is JS-only, so every
+    // that is a prefix of the target path (the nearest enclosing mount), a longest-prefix match over the
+    // registered roots. Race-free by construction: the whole surface is JS-only, so every
     // fiber (including the detached patch/replaceSubtree fibers) runs on the single JS event-loop thread,
     // and each access is synchronous inside a Sync.Unsafe.defer block (no suspension mid-op); no two
     // fibers can interleave, so no concurrency control is needed.
