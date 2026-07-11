@@ -303,20 +303,26 @@ final private[kyo] class HttpClientBackend private (
         import kyo.kernel.internal.Trace
         import kyo.scheduler.IOTask
         val computation: Unit < Async =
-            bodyStream.foreachChunk { chunk =>
-                Kyo.foreachDiscard(chunk) { span =>
-                    if span.nonEmpty then
-                        // Write chunk header (hex size + CRLF) + data + CRLF
-                        val header = Span.fromUnsafe(Http1StreamContext.formatChunkSize(span.size))
-                        Abort.run[Closed](conn.transport.outbound.safe.put(header)).unit
-                            .andThen(Abort.run[Closed](conn.transport.outbound.safe.put(span)).unit)
-                            .andThen(Abort.run[Closed](conn.transport.outbound.safe.put(CrLf)).unit)
-                    else Kyo.unit
+            // The whole write is wrapped in a single Abort.run[Closed]: the first Closed (connection torn
+            // down) aborts foreachChunk instead of being swallowed per-put, which used to let this loop keep
+            // pulling an infinite body stream into a dead connection. A closed connection here is routine
+            // (the request is being torn down), so the discard is correct and needs no logging.
+            Abort.run[Closed] {
+                bodyStream.foreachChunk { chunk =>
+                    Kyo.foreachDiscard(chunk) { span =>
+                        if span.nonEmpty then
+                            // Write chunk header (hex size + CRLF) + data + CRLF
+                            val header = Span.fromUnsafe(Http1StreamContext.formatChunkSize(span.size))
+                            conn.transport.outbound.safe.put(header)
+                                .andThen(conn.transport.outbound.safe.put(span))
+                                .andThen(conn.transport.outbound.safe.put(CrLf))
+                        else Kyo.unit
+                    }
+                }.andThen {
+                    // Write terminal chunk: 0\r\n\r\n
+                    conn.transport.outbound.safe.put(TerminalChunk)
                 }
-            }.andThen {
-                // Write terminal chunk: 0\r\n\r\n
-                Abort.run[Closed](conn.transport.outbound.safe.put(TerminalChunk)).unit
-            }
+            }.unit
         discard(IOTask(computation, Trace.init, Context.empty))
     end streamRequestBody
 

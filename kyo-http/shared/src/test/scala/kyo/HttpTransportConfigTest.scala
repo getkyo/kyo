@@ -17,7 +17,7 @@ class HttpTransportConfigTest extends BaseHttpTest:
             }
         }
 
-    "default config values match design doc".notNative in {
+    "default config values match design doc" in {
         val config = HttpTransportConfig.default
         assert(config.channelCapacity == 4)
         assert(config.readChunkSize == 8192)
@@ -26,7 +26,7 @@ class HttpTransportConfigTest extends BaseHttpTest:
         assert(config.handshakeTimeout == Duration.Infinity)
     }
 
-    "builder methods produce correct values".notNative in {
+    "builder methods produce correct values" in {
         val config = HttpTransportConfig.default
             .channelCapacity(8)
             .readChunkSize(4096)
@@ -40,7 +40,7 @@ class HttpTransportConfigTest extends BaseHttpTest:
         assert(config.handshakeTimeout == 250.millis)
     }
 
-    "custom channelCapacity respected".notNative in {
+    "custom channelCapacity respected" in {
         val tc     = HttpTransportConfig.default.channelCapacity(1)
         val config = HttpServerConfig.default.port(0).host("localhost").transportConfig(tc)
         val route  = HttpRoute.getText("hello").response(_.bodyText)
@@ -57,7 +57,7 @@ class HttpTransportConfigTest extends BaseHttpTest:
         }
     }
 
-    "custom readChunkSize respected".notNative in {
+    "custom readChunkSize respected" in {
         val tc     = HttpTransportConfig.default.readChunkSize(512)
         val config = HttpServerConfig.default.port(0).host("localhost").transportConfig(tc)
         val route  = HttpRoute.getText("hello").response(_.bodyText)
@@ -74,7 +74,7 @@ class HttpTransportConfigTest extends BaseHttpTest:
         }
     }
 
-    "custom maxHeaderSize rejects oversized headers".notNative in {
+    "custom maxHeaderSize rejects oversized headers" in {
         val tc     = HttpTransportConfig.default.maxHeaderSize(128)
         val config = HttpServerConfig.default.port(0).host("localhost").transportConfig(tc)
         val route  = HttpRoute.getText("hello").response(_.bodyText)
@@ -104,7 +104,7 @@ class HttpTransportConfigTest extends BaseHttpTest:
         }
     }
 
-    "config propagated through HttpServerConfig".notNative in {
+    "config propagated through HttpServerConfig" in {
         val tc = HttpTransportConfig.default
             .channelCapacity(2)
             .readChunkSize(1024)
@@ -125,7 +125,7 @@ class HttpTransportConfigTest extends BaseHttpTest:
         }
     }
 
-    "transportConfig propagated through HttpClient.init: owned transport serves requests".notNative in {
+    "transportConfig propagated through HttpClient.init: owned transport serves requests" in {
         // A custom byte-transport field makes HttpClient.init build a per-config owned transport (closed when the client closes). A normal
         // request routed through this client (not the shared test backend) must succeed, proving the owned transport works end to end. The
         // high-level HttpClient.getText API is used so the request flows through the fiber-local client set by HttpClient.let.
@@ -143,7 +143,7 @@ class HttpTransportConfigTest extends BaseHttpTest:
         }
     }
 
-    "client maxHeaderSize is reachable via HttpClient.init and rejects an oversized response (CWE-400)".notNative in {
+    "client maxHeaderSize is reachable via HttpClient.init and rejects an oversized response (CWE-400)" in {
         // Before this was plumbed the client parser's header limit was hardcoded to the 64 KiB default, so a tighter limit was unsettable.
         // A 512-byte limit against a ~2 KiB response header must now fail (a malicious/buggy server cannot force unbounded client header
         // buffering). A regression (the limit ignored) would let the request succeed.

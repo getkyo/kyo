@@ -67,7 +67,7 @@ class HttpSecurityServerTest extends BaseHttpTest:
 
     "request smuggling defenses" - {
 
-        "duplicate Content-Length headers (CVE-2019-20445)".notNative in {
+        "duplicate Content-Length headers (CVE-2019-20445)" in {
             withEchoServer { (host, port) =>
                 val raw =
                     ("POST /echo HTTP/1.1\r\n" +
@@ -83,7 +83,7 @@ class HttpSecurityServerTest extends BaseHttpTest:
             }
         }
 
-        "CL+TE conflict (classic CL.TE smuggling)".notNative in {
+        "CL+TE conflict (classic CL.TE smuggling)" in {
             withEchoServer { (host, port) =>
                 val raw =
                     ("POST /echo HTTP/1.1\r\n" +
@@ -102,7 +102,7 @@ class HttpSecurityServerTest extends BaseHttpTest:
             }
         }
 
-        "Content-Length integer overflow".notNative in {
+        "Content-Length integer overflow" in {
             withEchoServer { (host, port) =>
                 val raw =
                     ("POST /echo HTTP/1.1\r\n" +
@@ -120,15 +120,14 @@ class HttpSecurityServerTest extends BaseHttpTest:
 
     "handshake-stall DoS defenses" - {
 
-        // TLS server tests skip on Native: OpenSSL's recursive ASN.1 parser overflows Scala Native thread stacks during
-        // certificate parsing (the same documented limitation HttpServerTest's "tls" leg carries). The cross-backend reap
-        // mechanism itself (including Native) is covered by kyo-net's TransportHandshakeTimeoutTest via the public
-        // NetPlatform.transport(config) factory; this test covers the kyo-http wiring: HttpServerConfig.transportConfig
-        // .handshakeTimeout reaching an owned per-config transport whose finite deadline reaps a stalled accept handshake.
+        // The cross-backend reap mechanism itself (including Native) is covered by kyo-net's TransportHandshakeTimeoutTest
+        // via the public NetPlatform.transport(config) factory; this test covers the kyo-http wiring:
+        // HttpServerConfig.transportConfig.handshakeTimeout reaching an owned per-config transport whose finite deadline
+        // reaps a stalled accept handshake.
 
         val serverTls = internal.HttpTestPlatformBackend.serverTlsConfig
 
-        "a finite handshakeTimeout reaps a stalled TLS accept handshake (CWE-400, slowloris)".notNative in {
+        "a finite handshakeTimeout reaps a stalled TLS accept handshake (CWE-400, slowloris)" in {
             val tc = HttpTransportConfig.default.handshakeTimeout(150.millis)
             val serverConfig = HttpServerConfig.default.port(0).host("localhost")
                 .tls(serverTls)
@@ -155,7 +154,7 @@ class HttpSecurityServerTest extends BaseHttpTest:
             }
         }
 
-        "a TLS handshake completing within the deadline is served, not reaped".notNative in {
+        "a TLS handshake completing within the deadline is served, not reaped" in {
             val okRoute   = HttpRoute.getText("ok").response(_.bodyText)
             val okHandler = okRoute.handler(_ => HttpResponse.ok("served"))
             // A generous finite deadline: the loopback handshake completes well under it, so the timer disarms and the

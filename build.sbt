@@ -1556,7 +1556,15 @@ lazy val `kyo-http` =
         )
         .nativeSettings(
             `native-settings`,
-            `openssl-native-settings`
+            `openssl-native-settings`,
+            // Scala Native resolves `java.util.ServiceLoader.load` at LINK time: a provider present in
+            // META-INF/services is linked only when ALSO enlisted here. Enlist the shared test factory so the
+            // auto-filter tests exercise real ServiceLoader discovery on Native, the same way a Native user
+            // enlists their own HttpFilter.Factory (JVM reads META-INF/services directly; JS uses the
+            // JSServiceLoaderRegistry shim). The load site is a plain method in HttpFilter.Factory, not a lazy
+            // val, to dodge a Scala Native 0.5.12 codegen crash (see loadFactories there). Plain string
+            // literal: the "$" must not interpolate.
+            Test / nativeConfig ~= (_.withServiceProviders(Map("kyo.HttpFilter$Factory" -> Seq("kyo.HttpFilterTestFactory"))))
         )
         .wasmSettings(`wasm-settings`)
 

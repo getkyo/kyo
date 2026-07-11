@@ -289,7 +289,7 @@ class Rfc3986Test extends BaseHttpTest:
 
     // ==================== Percent-Encoding in Path (via routing) ====================
 
-    "Section 2.1 - Percent-encoded space in path".notNative in {
+    "Section 2.1 - Percent-encoded space in path" in {
         // RFC 3986 §2.1: "A percent-encoding mechanism is used to represent a data octet
         // in a component when that octet's corresponding character is outside the allowed set"
         val route = HttpRoute.getRaw("items" / Capture[String]("name")).response(_.bodyText)
@@ -302,7 +302,7 @@ class Rfc3986Test extends BaseHttpTest:
         }
     }
 
-    "Section 2.1 - Percent-encoded UTF-8 in path".notNative in {
+    "Section 2.1 - Percent-encoded UTF-8 in path" in {
         val route = HttpRoute.getRaw("items" / Capture[String]("name")).response(_.bodyText)
         val ep    = route.handler(req => HttpResponse.ok(req.fields.name))
         withServer(ep) { port =>
@@ -314,7 +314,7 @@ class Rfc3986Test extends BaseHttpTest:
         }
     }
 
-    "Section 2.1 - Unencoded path passthrough".notNative in {
+    "Section 2.1 - Unencoded path passthrough" in {
         val route = HttpRoute.getRaw("items" / Capture[String]("name")).response(_.bodyText)
         val ep    = route.handler(req => HttpResponse.ok(req.fields.name))
         withServer(ep) { port =>
@@ -426,7 +426,7 @@ class Rfc3986Test extends BaseHttpTest:
 
     // ==================== Path routing (server, additional) ====================
 
-    "Section 3.3 - Multiple path captures".notNative in {
+    "Section 3.3 - Multiple path captures" in {
         val route = HttpRoute.getRaw("a" / Capture[String]("x") / "b" / Capture[String]("y")).response(_.bodyText)
         val ep    = route.handler(req => HttpResponse.ok(s"${req.fields.x}-${req.fields.y}"))
         withServer(ep) { port =>
@@ -436,7 +436,7 @@ class Rfc3986Test extends BaseHttpTest:
         }
     }
 
-    "Section 3.3 - Path capture with integer".notNative in {
+    "Section 3.3 - Path capture with integer" in {
         val route = HttpRoute.getRaw("items" / Capture[Int]("id")).response(_.bodyText)
         val ep    = route.handler(req => HttpResponse.ok(s"id=${req.fields.id}"))
         withServer(ep) { port =>
@@ -446,7 +446,7 @@ class Rfc3986Test extends BaseHttpTest:
         }
     }
 
-    "Section 3.3 - Static path matching exact".notNative in {
+    "Section 3.3 - Static path matching exact" in {
         val route = HttpRoute.getRaw("exact" / "path").response(_.bodyText)
         val ep    = route.handler(_ => HttpResponse.ok("matched"))
         withServer(ep) { port =>
@@ -457,7 +457,7 @@ class Rfc3986Test extends BaseHttpTest:
         }
     }
 
-    "Section 2.1 - Percent-encoded special chars in path capture".notNative in {
+    "Section 2.1 - Percent-encoded special chars in path capture" in {
         val route = HttpRoute.getRaw("items" / Capture[String]("name")).response(_.bodyText)
         val ep    = route.handler(req => HttpResponse.ok(req.fields.name))
         withServer(ep) { port =>
@@ -468,7 +468,7 @@ class Rfc3986Test extends BaseHttpTest:
         }
     }
 
-    "Section 3.3 - Path not found returns 404".notNative in {
+    "Section 3.3 - Path not found returns 404" in {
         val route = HttpRoute.getRaw("exists").response(_.bodyText)
         val ep    = route.handler(_ => HttpResponse.ok("ok"))
         withServer(ep) { port =>
@@ -478,7 +478,7 @@ class Rfc3986Test extends BaseHttpTest:
         }
     }
 
-    "Section 3.4 - Server receives query parameters".notNative in {
+    "Section 3.4 - Server receives query parameters" in {
         val route = HttpRoute.getRaw("search")
             .request(_.query[String]("q"))
             .response(_.bodyText)

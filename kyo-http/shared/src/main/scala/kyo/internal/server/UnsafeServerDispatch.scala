@@ -551,9 +551,11 @@ private[kyo] object UnsafeServerDispatch:
                             val writer = streamCtx.respond(status, hdrs.add("Transfer-Encoding", "chunked"))
                             Abort.run[Any](
                                 responseStream.foreach { chunk =>
-                                    // Use safe.put for backpressure instead of offer() which silently drops data when full
+                                    // Use safe.put for backpressure instead of offer() which silently drops data when full.
+                                    // Closed is NOT swallowed here: it must propagate so a disconnected client aborts the
+                                    // foreach instead of the handler stream being pulled forever into a dead outbound.
                                     val formatted = Http1StreamContext.formatChunkSpan(chunk)
-                                    Abort.run[Closed](streamCtx.outbound.safe.put(formatted)).unit
+                                    streamCtx.outbound.safe.put(formatted)
                                 }
                             ).map { result =>
                                 result match
@@ -561,6 +563,9 @@ private[kyo] object UnsafeServerDispatch:
                                         Log.error("UnsafeServerDispatch: streaming response error", t).andThen(
                                             Sync.Unsafe.defer(writer.finish())
                                         )
+                                    case Result.Failure(_: Closed) =>
+                                        // Routine peer disconnect mid-stream: not an error, so no log noise.
+                                        Sync.Unsafe.defer(writer.finish())
                                     case Result.Failure(e) =>
                                         Log.error(s"UnsafeServerDispatch: streaming response aborted: $e").andThen(
                                             Sync.Unsafe.defer(writer.finish())
