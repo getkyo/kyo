@@ -522,15 +522,17 @@ class PathOverlayServiceRecoveryTest extends kyo.test.Test[Any]:
             val stagingDir = root / "kyo-commit-torn"
             val tornBytes  = Span.from("KYIL".getBytes(StandardCharsets.UTF_8) :+ 0x01.toByte)
             lower.mkDir(stagingDir).andThen {
-                lower.writeBytes(stagingDir / "intent.kyo", tornBytes, createFolders = false).andThen {
-                    // Create a fresh overlay on the same lower for the disk-scan restart.
-                    Path.Service.overlay(lower).map { freshOv =>
-                        val overlay = freshOv.asInstanceOf[OverlayService[Sync]]
-                        // recoverFromDisk finds kyo-commit-torn, reads the torn log, discards.
-                        overlay.recoverFromDisk(root).andThen {
-                            // Staging dir should be gone after recoverStagingDir cleaned it up.
-                            lower.exists(stagingDir).map { still =>
-                                assert(!still, "torn staging dir should be removed after recoverFromDisk")
+                lower.writeBytes(stagingDir / ".kyo-staging", Span.from(Array.empty[Byte]), createFolders = false).andThen {
+                    lower.writeBytes(stagingDir / "intent.kyo", tornBytes, createFolders = false).andThen {
+                        // Create a fresh overlay on the same lower for the disk-scan restart.
+                        Path.Service.overlay(lower).map { freshOv =>
+                            val overlay = freshOv.asInstanceOf[OverlayService[Sync]]
+                            // recoverFromDisk finds kyo-commit-torn, reads the torn log, discards.
+                            overlay.recoverFromDisk(root).andThen {
+                                // Staging dir should be gone after recoverStagingDir cleaned it up.
+                                lower.exists(stagingDir).map { still =>
+                                    assert(!still, "torn staging dir should be removed after recoverFromDisk")
+                                }
                             }
                         }
                     }
@@ -558,22 +560,24 @@ class PathOverlayServiceRecoveryTest extends kyo.test.Test[Any]:
                 val stagingDir = root / "kyo-commit-restart"
                 // Stage the file for WriteFile op at e0.dat (applyOneOpIdempotent moves it to a.txt).
                 lower.mkDir(stagingDir).andThen {
-                    lower.writeBytes(
-                        stagingDir / "e0.dat",
-                        Span.from("file-content".getBytes(StandardCharsets.UTF_8)),
-                        createFolders = false
-                    ).andThen {
-                        // Write the valid intent log (WriteOpLog.encode returns Span[Byte] directly).
-                        lower.writeBytes(stagingDir / "intent.kyo", WriteOpLog.encode(journal), createFolders = false).andThen {
-                            // Fresh overlay over the same lower; no in-memory stagingDirHandle.
-                            Path.Service.overlay(lower).map { freshOv =>
-                                val overlay = freshOv.asInstanceOf[OverlayService[Sync]]
-                                overlay.recoverFromDisk(root).andThen {
-                                    // All three ops must be reflected in lower.
-                                    assertFullyApplied(lower, a, d, old).andThen {
-                                        // Staging dir cleaned up.
-                                        lower.exists(stagingDir).map { still =>
-                                            assert(!still, "restart staging dir should be removed after recoverFromDisk")
+                    lower.writeBytes(stagingDir / ".kyo-staging", Span.from(Array.empty[Byte]), createFolders = false).andThen {
+                        lower.writeBytes(
+                            stagingDir / "e0.dat",
+                            Span.from("file-content".getBytes(StandardCharsets.UTF_8)),
+                            createFolders = false
+                        ).andThen {
+                            // Write the valid intent log (WriteOpLog.encode returns Span[Byte] directly).
+                            lower.writeBytes(stagingDir / "intent.kyo", WriteOpLog.encode(journal), createFolders = false).andThen {
+                                // Fresh overlay over the same lower; no in-memory stagingDirHandle.
+                                Path.Service.overlay(lower).map { freshOv =>
+                                    val overlay = freshOv.asInstanceOf[OverlayService[Sync]]
+                                    overlay.recoverFromDisk(root).andThen {
+                                        // All three ops must be reflected in lower.
+                                        assertFullyApplied(lower, a, d, old).andThen {
+                                            // Staging dir cleaned up.
+                                            lower.exists(stagingDir).map { still =>
+                                                assert(!still, "restart staging dir should be removed after recoverFromDisk")
+                                            }
                                         }
                                     }
                                 }
@@ -629,8 +633,10 @@ class PathOverlayServiceRecoveryTest extends kyo.test.Test[Any]:
 
                     def writeLog(stagingDir: Path, journal: Chunk[WriteOp], eBytes: Span[Byte]): Unit < (Sync & Abort[FileException]) =
                         lower.mkDir(stagingDir).andThen {
-                            lower.writeBytes(stagingDir / "e0.dat", eBytes, createFolders = false).andThen {
-                                lower.writeBytes(stagingDir / "intent.kyo", WriteOpLog.encode(journal), createFolders = false)
+                            lower.writeBytes(stagingDir / ".kyo-staging", Span.from(Array.empty[Byte]), createFolders = false).andThen {
+                                lower.writeBytes(stagingDir / "e0.dat", eBytes, createFolders = false).andThen {
+                                    lower.writeBytes(stagingDir / "intent.kyo", WriteOpLog.encode(journal), createFolders = false)
+                                }
                             }
                         }
 
@@ -656,6 +662,96 @@ class PathOverlayServiceRecoveryTest extends kyo.test.Test[Any]:
                                 }
                             }
                         }
+                    }
+                }
+            }
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // ownership sentinel: recoverFromDisk skip/clean based on .kyo-staging presence
+    // -------------------------------------------------------------------------
+
+    "recoverFromDisk does not touch a kyo-commit-* dir that lacks the ownership sentinel" in {
+        withHostTestOverlay { (_, lower, root) =>
+            // A user directory whose name starts with "kyo-commit-" but has no .kyo-staging sentinel.
+            // recoverFromDisk must skip it entirely to prevent destroying unrelated user data.
+            val userDir = root / "kyo-commit-user-data"
+            lower.mkDir(userDir).andThen {
+                lower.writeBytes(
+                    userDir / "important.txt",
+                    Span.from("user-data".getBytes(StandardCharsets.UTF_8)),
+                    createFolders = false
+                ).andThen {
+                    Path.Service.overlay(lower).map { freshOv =>
+                        val overlay = freshOv.asInstanceOf[OverlayService[Sync]]
+                        overlay.recoverFromDisk(root).andThen {
+                            // Both the user dir and its file must survive intact.
+                            lower.exists(userDir / "important.txt").map { still =>
+                                assert(still, "user file inside kyo-commit-* dir without sentinel must survive recoverFromDisk")
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    "recoverFromDisk removes a kyo-commit-* dir with the ownership sentinel but no intent log" in {
+        withHostTestOverlay { (_, lower, root) =>
+            // Simulates a crash between sentinel write and intent-log write.
+            // recoverFromDisk must clean up the orphan (sentinel present, no log = never durable).
+            val stagingDir = root / "kyo-commit-orphan-sentinel"
+            lower.mkDir(stagingDir).andThen {
+                lower.writeBytes(stagingDir / ".kyo-staging", Span.from(Array.empty[Byte]), createFolders = false).andThen {
+                    Path.Service.overlay(lower).map { freshOv =>
+                        val overlay = freshOv.asInstanceOf[OverlayService[Sync]]
+                        overlay.recoverFromDisk(root).andThen {
+                            lower.exists(stagingDir).map { still =>
+                                assert(!still, "sentinel-only staging dir with no intent log must be removed by recoverFromDisk")
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // barrier ordering: staged file is written durably before intent log
+    // -------------------------------------------------------------------------
+
+    "staged file is durably written to staging dir before intent log (barrier ordering)" in {
+        withHostTestOverlay { (ov, lower, root) =>
+            val a = root / "a.txt"; val d = root / "d"; val old = root / "old.txt"
+            primeJournal(ov, lower, a, d, old).andThen {
+                Sync.Unsafe.defer {
+                    ov.afterIntentLogHook = () => throw SyntheticCrash("crash: after intent log (barrier ordering test)")
+                }.asInstanceOf[Unit < (Sync & Abort[FileException])].andThen {
+                    attemptCrash(ov.commitOverwrite).asInstanceOf[Unit < (Sync & Abort[FileException])].andThen {
+                        Sync.Unsafe.defer { ov.afterIntentLogHook = () => () }
+                            .asInstanceOf[Unit < (Sync & Abort[FileException])].andThen {
+                                // After crash at crash point 2, stagingDirHandle is set. The staging dir holds
+                                // e0.dat (WriteFile for a.txt) and intent.kyo. Verify e0.dat exists with the
+                                // correct content, confirming the durable staged write completed before the log.
+                                Sync.Unsafe.defer { ov.stagingDirHandle }
+                                    .asInstanceOf[Maybe[Path.TempDirHandle] < (Sync & Abort[FileException])].map {
+                                        case Absent =>
+                                            fail("stagingDirHandle must be set after crash at crash point 2")
+                                        case Present(handle) =>
+                                            val sd = handle.path
+                                            lower.exists(sd / "e0.dat").map { exists =>
+                                                assert(exists, "staged e0.dat must exist (durable write completed before log)")
+                                            }.andThen {
+                                                lower.readBytes(sd / "e0.dat").map { bytes =>
+                                                    assert(
+                                                        bytes.toArray sameElements "file-content".getBytes(StandardCharsets.UTF_8),
+                                                        "staged e0.dat must have correct content"
+                                                    )
+                                                }
+                                            }.andThen(ov.recover())
+                                    }
+                            }
                     }
                 }
             }

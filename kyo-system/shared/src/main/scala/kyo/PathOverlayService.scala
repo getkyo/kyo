@@ -392,7 +392,7 @@ final private[kyo] class OverlayService[S](lower: Path.Service[S], state: Atomic
     // Tracks the staging directory handle of the current or most recent commit attempt.
     // Set in withCommit before applyResolved, cleared after successful cleanup. Left set
     // when applyResolved throws (crash simulation) so recover() can find the staging dir.
-    private var stagingDirHandle: Maybe[Path.TempDirHandle] = Absent
+    private[kyo] var stagingDirHandle: Maybe[Path.TempDirHandle] = Absent
 
     // CAS modify loop for operations that may fail with FileException.
     private def modify[A](op: OverlayState => Result[FileException, (OverlayState, A)]): A < (Sync & Abort[FileException]) =
@@ -1144,18 +1144,34 @@ final private[kyo] class OverlayService[S](lower: Path.Service[S], state: Atomic
         // Unsafe: same halt-on-throw contract as runHook.
         Sync.Unsafe.defer(hook(k, n)).asInstanceOf[Unit < (S & Abort[FileException])]
 
+    // Writes file content to `path` via the openWrite/writeChunk/finish/close path so the
+    // bytes are durable (finish() calls fsync) before the caller proceeds. Used for staged
+    // files in stageOps so that if the process crashes after staging but before the intent
+    // log is written, the staged content is either fully present or absent -- never partial.
+    private def stageDurableFile(path: Path, bytes: Span[Byte]): Unit < (S & Abort[FileException]) =
+        lower.openWrite(path, false, false).map { handle =>
+            lower.writeChunk(handle, Chunk.from(bytes.toArray)).andThen(
+                // Unsafe: finish() fsyncs so staged bytes are durable before returning;
+                // close() releases the channel. Without finish(), a crash mid-write leaves
+                // no sealed file: recovery's existence check would see a partial artifact.
+                Sync.Unsafe.defer { handle.finish(); handle.close() }
+                    .asInstanceOf[Unit < (S & Abort[FileException])]
+            )
+        }
+
     // Stage file content for every WriteOp that carries bytes. Writes each as "e<i>.dat"
-    // inside stagingDir via the lower service. Directory ops and removes have no staged file.
+    // inside stagingDir via the durable write path so staged bytes survive power loss.
+    // Directory ops and removes have no staged file.
     private def stageOps(stagingDir: Path, journal: Chunk[WriteOp]): Unit < (S & Abort[FileException]) =
         journal.zipWithIndex.foldLeft[Unit < (S & Abort[FileException])](()) { case (acc, (op, i)) =>
             acc.andThen {
                 op match
-                    case WriteOp.WriteFile(_, bytes, stat) =>
-                        applyEntry(stagingDir / s"e$i.dat", Path.Entry.File(bytes, stat))
-                    case WriteOp.Move(_, _, entry @ Path.Entry.File(_, _)) =>
-                        applyEntry(stagingDir / s"e$i.dat", entry)
-                    case WriteOp.Copy(_, _, entry @ Path.Entry.File(_, _)) =>
-                        applyEntry(stagingDir / s"e$i.dat", entry)
+                    case WriteOp.WriteFile(_, bytes, _) =>
+                        stageDurableFile(stagingDir / s"e$i.dat", bytes)
+                    case WriteOp.Move(_, _, Path.Entry.File(bytes, _)) =>
+                        stageDurableFile(stagingDir / s"e$i.dat", bytes)
+                    case WriteOp.Copy(_, _, Path.Entry.File(bytes, _)) =>
+                        stageDurableFile(stagingDir / s"e$i.dat", bytes)
                     case _ => ()
             }
         }
@@ -1169,8 +1185,9 @@ final private[kyo] class OverlayService[S](lower: Path.Service[S], state: Atomic
         lower.openWrite(stagingDir / "intent.kyo", false, false).map { handle =>
             lower.writeChunk(handle, Chunk.from(logBytes.toArray)).andThen(
                 // Unsafe: finish() seals the log as complete; close() releases the channel.
-                // Without finish(), a crash mid-write leaves no sealed log: recovery skips.
-                Sync.Unsafe.defer { handle.finish(); handle.close() }
+                // syncDir flushes the staging dir's dirent so the log file is reachable after
+                // power loss. Without finish(), a crash mid-write leaves no sealed log: recovery skips.
+                Sync.Unsafe.defer { handle.finish(); handle.close(); stagingDir.unsafe.syncDir() }
                     .asInstanceOf[Unit < (S & Abort[FileException])]
             )
         }
@@ -1182,17 +1199,21 @@ final private[kyo] class OverlayService[S](lower: Path.Service[S], state: Atomic
     private def writeCommittedMarker(stagingDir: Path): Unit < (S & Abort[FileException]) =
         lower.openWrite(stagingDir / "committed.marker", false, false).map { handle =>
             // No content; finish() commits the zero-byte sentinel, close() releases the channel.
-            Sync.Unsafe.defer { handle.finish(); handle.close() }
+            // syncDir flushes the staging dir's dirent so the marker is reachable after power loss.
+            Sync.Unsafe.defer { handle.finish(); handle.close(); stagingDir.unsafe.syncDir() }
                 .asInstanceOf[Unit < (S & Abort[FileException])]
         }
 
     // Apply one WriteOp during the commit apply phase. File entries move atomically from
     // their staged copy to the final lower path (POSIX rename on host; CAS on in-memory).
-    // Non-idempotent: assumes the staged file still exists.
+    // Each atomic move is followed by a best-effort parent-dir sync so the renamed dirent
+    // is durable after power loss. Non-idempotent: assumes the staged file still exists.
     private def applyOneOp(stagingDir: Path, i: Int, op: WriteOp): Unit < (S & Abort[FileException]) =
         op match
             case WriteOp.WriteFile(parts, _, _) =>
-                lower.move(stagingDir / s"e$i.dat", pathFrom(parts), replaceExisting = true, atomicMove = true, createFolders = true)
+                val target = pathFrom(parts)
+                lower.move(stagingDir / s"e$i.dat", target, replaceExisting = true, atomicMove = true, createFolders = true)
+                    .andThen(syncParentOf(target))
             case WriteOp.WriteDirectory(parts, _) =>
                 lower.mkDir(pathFrom(parts))
             case WriteOp.Remove(parts) =>
@@ -1201,20 +1222,23 @@ final private[kyo] class OverlayService[S](lower: Path.Service[S], state: Atomic
                 lower.removeAll(pathFrom(fromP)).andThen {
                     resolved match
                         case _: Path.Entry.File =>
+                            val target = pathFrom(toP)
                             lower.move(
                                 stagingDir / s"e$i.dat",
-                                pathFrom(toP),
+                                target,
                                 replaceExisting = true,
                                 atomicMove = true,
                                 createFolders = true
-                            )
+                            ).andThen(syncParentOf(target))
                         case _: Path.Entry.Directory =>
                             lower.mkDir(pathFrom(toP))
                 }
             case WriteOp.Copy(_, toP, resolved) =>
                 resolved match
                     case _: Path.Entry.File =>
-                        lower.move(stagingDir / s"e$i.dat", pathFrom(toP), replaceExisting = true, atomicMove = true, createFolders = true)
+                        val target = pathFrom(toP)
+                        lower.move(stagingDir / s"e$i.dat", target, replaceExisting = true, atomicMove = true, createFolders = true)
+                            .andThen(syncParentOf(target))
                     case _: Path.Entry.Directory =>
                         lower.mkDir(pathFrom(toP))
 
@@ -1225,6 +1249,9 @@ final private[kyo] class OverlayService[S](lower: Path.Service[S], state: Atomic
         op match
             case WriteOp.WriteFile(parts, _, _) =>
                 val staged = stagingDir / s"e$i.dat"
+                // Invariant: staged is absent only when a prior recovery pass already moved it
+                // to the final path. The staged write (in stageOps) uses the durable write path
+                // (openWrite/finish/close with fsync), so absence here means moved, never lost.
                 lower.exists(staged).map { has =>
                     if has then lower.move(staged, pathFrom(parts), replaceExisting = true, atomicMove = true, createFolders = true)
                     else ()
@@ -1297,29 +1324,42 @@ final private[kyo] class OverlayService[S](lower: Path.Service[S], state: Atomic
     private def withCommit(journal: Chunk[WriteOp]): Unit < (S & Abort[FileException]) =
         val commitId = s"$instanceSeed-${commitSeq.getAndIncrement().toHexString}"
         lower.tempDir(s"kyo-commit-$commitId").map { handle =>
-            // Unsafe: stores handle before applyResolved so recover() can find the staging dir
-            // if applyResolved is interrupted by a crash hook throwing an exception.
-            Sync.Unsafe.defer { stagingDirHandle = Present(handle) }
-                .asInstanceOf[Unit < (S & Abort[FileException])]
-                .andThen {
-                    applyResolved(handle.path, journal).andThen {
-                        runHook(afterMarkerHook).andThen { // crash point 6
-                            // Committed marker written; safe to remove staging dir.
-                            // Unsafe: clears handle reference and removes the staging directory.
-                            Sync.Unsafe.defer {
-                                stagingDirHandle = Absent
-                                handle.remove()
-                            }.asInstanceOf[Unit < (S & Abort[FileException])]
+            // Write the ownership sentinel as the first entry in the staging dir. recoverFromDisk
+            // skips any kyo-commit-* dir that lacks it to prevent misclassifying user directories
+            // as orphaned staging dirs. A crash between staging dir creation and sentinel write
+            // leaks an empty dir; disk-scan skips it (no sentinel). Accepted trade.
+            lower.writeBytes(handle.path / ".kyo-staging", Span.from(Array.empty[Byte]), createFolders = false).andThen {
+                // Unsafe: stores handle after sentinel write so recover() can find the staging dir
+                // if applyResolved is interrupted; also best-effort syncs the parent dir so the
+                // staging dir's own dirent is durable.
+                Sync.Unsafe.defer {
+                    stagingDirHandle = Present(handle)
+                    pathFrom(handle.path.parts.dropRight(1)).unsafe.syncDir()
+                }.asInstanceOf[Unit < (S & Abort[FileException])]
+                    .andThen {
+                        applyResolved(handle.path, journal).andThen {
+                            runHook(afterMarkerHook).andThen { // crash point 6
+                                // Committed marker written; safe to remove staging dir.
+                                // Unsafe: clears handle reference and removes the staging directory.
+                                Sync.Unsafe.defer {
+                                    stagingDirHandle = Absent
+                                    handle.remove()
+                                }.asInstanceOf[Unit < (S & Abort[FileException])]
+                            }
                         }
                     }
-                }
+            }
         }
     end withCommit
 
-    private def applyEntry(path: Path, entry: Path.Entry): Unit < (S & Abort[FileException]) =
-        entry match
-            case Path.Entry.File(bytes, _) => lower.writeBytes(path, bytes, createFolders = true)
-            case Path.Entry.Directory(_)   => lower.mkDir(path)
+    // Best-effort: syncs the parent directory of `path` so that a newly-moved file's
+    // directory entry is durable after power loss. Swallowed silently on platforms that
+    // do not support directory fsync (Windows, some in-memory lowerers).
+    private def syncParentOf(path: Path): Unit < (S & Abort[FileException]) =
+        val pp = path.parts.dropRight(1)
+        Sync.Unsafe.defer { if pp.nonEmpty then pathFrom(pp).unsafe.syncDir() }
+            .asInstanceOf[Unit < (S & Abort[FileException])]
+    end syncParentOf
 
     def commit(using Frame): Unit < (S & Abort[FileException] & Abort[CommitConflict]) =
         stateGet.map { s =>
@@ -1396,7 +1436,21 @@ final private[kyo] class OverlayService[S](lower: Path.Service[S], state: Atomic
     // (skipping ops already applied to the lower), writes the committed marker if absent, then
     // removes the staging directory via the lower service. Used by both recover() (live commit
     // reference still in memory) and recoverFromDisk() (disk-scan after a process restart).
-    private def recoverStagingDir(stagingDir: Path): Unit < (S & Abort[FileException]) =
+    //
+    // `checkSentinel`: when true (disk-scan path), the dir must contain the ".kyo-staging"
+    // ownership sentinel before recovery proceeds. This prevents misclassifying a user directory
+    // whose name happens to start with "kyo-commit-" as an orphaned staging dir.
+    // When false (in-process recover() path), the staging handle is authoritative and the
+    // sentinel check is skipped.
+    private def recoverStagingDir(stagingDir: Path, checkSentinel: Boolean = false): Unit < (S & Abort[FileException]) =
+        if !checkSentinel then recoverStagingDirImpl(stagingDir)
+        else
+            lower.exists(stagingDir / ".kyo-staging").map { hasSentinel =>
+                if !hasSentinel then () // not kyo-owned; skip to protect user directories
+                else recoverStagingDirImpl(stagingDir)
+            }
+
+    private def recoverStagingDirImpl(stagingDir: Path): Unit < (S & Abort[FileException]) =
         val logPath = stagingDir / "intent.kyo"
         lower.exists(logPath).map { hasLog =>
             if !hasLog then
@@ -1434,7 +1488,7 @@ final private[kyo] class OverlayService[S](lower: Path.Service[S], state: Atomic
                         }
                 }
         }
-    end recoverStagingDir
+    end recoverStagingDirImpl
 
     // Recovery driver: re-applies a partially-applied commit found via stagingDirHandle.
     // Called after a simulated mid-commit crash: the overlay object remains alive, so
@@ -1464,7 +1518,7 @@ final private[kyo] class OverlayService[S](lower: Path.Service[S], state: Atomic
             entries.foldLeft[Unit < (S & Abort[FileException])](()) { (acc, entry) =>
                 acc.andThen {
                     entry.name match
-                        case Present(n) if n.startsWith("kyo-commit-") => recoverStagingDir(entry)
+                        case Present(n) if n.startsWith("kyo-commit-") => recoverStagingDir(entry, checkSentinel = true)
                         case _                                         => ()
                 }
             }

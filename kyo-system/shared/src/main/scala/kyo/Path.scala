@@ -614,7 +614,9 @@ object Path extends PathPlatformSpecific:
       * the enclosing `Scope`. The removal runs through the service that created the directory (host:
       * real recursive delete; in-memory: map-subtree removal; overlay: upper-entry discard), so a temp
       * dir made by a virtual service is never deleted by a host-tier `removeAll`. There is no unscoped
-      * public temp-directory primitive.
+      * public temp-directory primitive. The location of the created directory is service-defined:
+      * unconfined host services use the OS temporary directory; root-confined host services create the
+      * directory inside their root.
       */
     def tempDir(prefix: String = "kyo")(using Frame): Path < (PathWrite & Sync & Scope) =
         Scope.acquireRelease(
@@ -1254,6 +1256,13 @@ object Path extends PathPlatformSpecific:
 
         /** Returns `true` if this path is absolute (begins at a filesystem root). */
         def isAbsolute: Boolean
+
+        /** Best-effort sync of the directory itself so that newly-created or renamed
+          * children have their directory entries flushed to stable storage. Swallowed
+          * silently on platforms that do not support directory fsync (Windows). The
+          * default is a no-op; platform implementations override it.
+          */
+        private[kyo] def syncDir()(using AllowUnsafe): Unit = ()
 
         /** Returns the human-readable representation; delegates to `show` so Path values display correctly. */
         override def toString: String = show

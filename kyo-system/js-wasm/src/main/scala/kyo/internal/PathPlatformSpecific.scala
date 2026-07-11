@@ -151,6 +151,14 @@ final private[kyo] class NodePathUnsafe(raw: String) extends Path.Unsafe:
 
     override def hashCode(): Int = pathStr.hashCode
 
+    override private[kyo] def syncDir()(using AllowUnsafe): Unit =
+        try
+            val fd = NodeFs.openSync(pathStr, "r")
+            try NodeFs.fsyncSync(fd)
+            finally NodeFs.closeSync(fd)
+        catch
+            case _: js.JavaScriptException => () // directory fsync not supported on this platform
+
     // --- Inspection ---
 
     def exists()(using AllowUnsafe): Boolean =

@@ -53,6 +53,14 @@ final private[kyo] class NioPathUnsafe(val jpath: java.nio.file.Path) extends Pa
 
     override def hashCode(): Int = jpath.hashCode()
 
+    override private[kyo] def syncDir()(using AllowUnsafe): Unit =
+        try
+            val ch = FileChannel.open(jpath, StandardOpenOption.READ)
+            try ch.force(true)
+            finally ch.close()
+        catch
+            case _: IOException => () // directory fsync not supported on this platform (e.g., Windows)
+
     // --- Inspection ---
 
     def exists()(using AllowUnsafe): Boolean =
