@@ -1,7 +1,12 @@
 package kyo
 
+import kyo.internal.ClaimSeam
 import kyo.internal.FileJournalCore
+import kyo.internal.FlushStrategy
+import kyo.internal.GroupCommitCoordinator
+import kyo.internal.NodeAsyncJournalStore
 import kyo.internal.NodeSegmentStore
+import kyo.internal.StoreSeam
 import scala.scalajs.js
 
 // True when the runtime is Node.js: `process` is defined and carries a `versions.node`
@@ -34,5 +39,44 @@ extension (backend: Journal.Backend.type)
                 Absent
             ))
         else
-            FileJournalCore.open(dir, config, new NodeSegmentStore, payloadCodec)
+            FileJournalCore.open(dir, config, StoreSeam.sync(new NodeSegmentStore), payloadCodec, ClaimSeam.sync, FlushStrategy.inline)
+
+    /** Opens (or creates) an Async-flavored file-backed journal rooted at `dir`. Requires a
+      * Node.js runtime; on a browser runtime the call fails immediately with a typed
+      * [[JournalStorageError]] rather than at first I/O, matching [[file]]. Store operations run
+      * entirely on `node:fs/promises`; concurrent appenders to the same stream coalesce their
+      * durability flushes into one `fsync` per round.
+      *
+      * @see
+      *   [[FileJournal.Config]] for the durability and rotation knobs
+      */
+    def fileAsync(
+        dir: Path,
+        config: FileJournal.Config = FileJournal.Config.default,
+        payloadCodec: EventPayloadCodec = EventPayloadCodec.bytes
+    )(using
+        Frame
+    )
+        : Journal.Backend[Async] < (Sync & Scope & Abort[JournalStorageError]) =
+        if !isNodeRuntime then
+            Abort.fail(JournalStorageError(
+                "FileJournal requires a Node.js runtime; no browser persistence backend exists",
+                Absent
+            ))
+        else
+            // Unsafe: bootstraps in-process claim permits and group-commit coordinator maps.
+            Sync.Unsafe.defer {
+                val coordinator = new GroupCommitCoordinator
+                (ClaimSeam.async(), (fsync: FileJournal.Fsync) => FlushStrategy.groupCommit(fsync, coordinator))
+            }.flatMap { (claim, flushFor) =>
+                FileJournalCore.open(
+                    dir,
+                    config,
+                    new NodeAsyncJournalStore,
+                    payloadCodec,
+                    claim,
+                    flushFor
+                )
+            }
+    end fileAsync
 end extension

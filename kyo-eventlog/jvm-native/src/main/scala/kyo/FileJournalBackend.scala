@@ -4,8 +4,12 @@ import java.nio.ByteBuffer
 import java.nio.channels.FileChannel
 import java.nio.channels.OverlappingFileLockException
 import java.nio.file.StandardOpenOption
+import kyo.internal.ClaimSeam
 import kyo.internal.FileJournalCore
+import kyo.internal.FlushStrategy
+import kyo.internal.GroupCommitCoordinator
 import kyo.internal.SegmentStore
+import kyo.internal.StoreSeam
 
 /** [[FileChannel]]-backed [[SegmentStore]] for JVM and Native. Each call to `open` opens one
   * segment file for positioned read+write (no channel cursor). `acquireLock` acquires a
@@ -112,6 +116,34 @@ final private class FileChannelStore extends SegmentStore:
 
 end FileChannelStore
 
+/** Wraps a [[SegmentStore]] as a `StoreSeam[Async]` for the Async backend: every call defers
+  * through [[Sync.Unsafe.defer]] (the identical blocking `FileChannel` call the Sync backend
+  * makes) and then [[Async.defer]] to add `Async` to the residual. `Async.defer` runs on the
+  * current carrier; the kyo scheduler's `BlockingMonitor` detects the blocked carrier and
+  * compensates, so no dedicated thread pool or explicit offload primitive is needed.
+  */
+private def offloadStore(store: SegmentStore): StoreSeam[Async] = new StoreSeam[Async]:
+    def open(path: Path)(using Frame): StoreSeam.Handle[Async] < (Async & Abort[JournalStorageError]) =
+        Abort.catching[Exception](e => JournalStorageError(s"Cannot open segment '${path.unsafe.show}'", Present(e))) {
+            Async.defer(Sync.Unsafe.defer(offloadHandle(store.open(path))))
+        }
+
+    def acquireLock(root: Path)(using Frame): SegmentStore.Lock < (Sync & Abort[JournalStorageError]) =
+        Sync.Unsafe.defer(Abort.get(store.acquireLock(root)))
+
+    def syncDir(dir: Path)(using Frame): Unit < Async =
+        Async.defer(Sync.Unsafe.defer(store.syncDir(dir)))
+end offloadStore
+
+private def offloadHandle(h: SegmentStore.Handle): StoreSeam.Handle[Async] = new StoreSeam.Handle[Async]:
+    def readAt(pos: Long, len: Int)(using Frame): Array[Byte] < Async     = Async.defer(Sync.Unsafe.defer(h.readAt(pos, len)))
+    def writeAt(pos: Long, bytes: Array[Byte])(using Frame): Unit < Async = Async.defer(Sync.Unsafe.defer(h.writeAt(pos, bytes)))
+    def sync()(using Frame): Unit < Async                                 = Async.defer(Sync.Unsafe.defer(h.sync()))
+    def truncate(size: Long)(using Frame): Unit < Async                   = Async.defer(Sync.Unsafe.defer(h.truncate(size)))
+    def size()(using Frame): Long < Async                                 = Async.defer(Sync.Unsafe.defer(h.size()))
+    def close()(using Frame): Unit < Async                                = Async.defer(Sync.Unsafe.defer(h.close()))
+end offloadHandle
+
 /** Opens (or creates) a file-backed journal rooted at `dir`. Available on JVM and Native only.
   *
   * @see
@@ -128,5 +160,39 @@ extension (backend: Journal.Backend.type)
         Frame
     )
         : Journal.Backend[Sync] < (Sync & Scope & Abort[JournalStorageError]) =
-        FileJournalCore.open(dir, config, new FileChannelStore, payloadCodec)
+        FileJournalCore.open(dir, config, StoreSeam.sync(new FileChannelStore), payloadCodec, ClaimSeam.sync, FlushStrategy.inline)
+
+    /** Opens (or creates) an Async-flavored file-backed journal rooted at `dir`. Same on-disk
+      * format and durability semantics as [[file]]; the store calls run through the kyo scheduler's
+      * blocking-offload path instead of blocking the calling effect directly, and concurrent
+      * appenders to the same stream coalesce their durability flushes into one `fsync` per round.
+      *
+      * @see
+      *   [[FileJournal.Config]] for the durability and rotation knobs
+      * @see
+      *   [[EventPayloadCodec]] for payload encoding strategies
+      */
+    def fileAsync(
+        dir: Path,
+        config: FileJournal.Config = FileJournal.Config.default,
+        payloadCodec: EventPayloadCodec = EventPayloadCodec.bytes
+    )(using
+        Frame
+    )
+        : Journal.Backend[Async] < (Sync & Scope & Abort[JournalStorageError]) =
+        // Unsafe: bootstraps in-process claim permits and group-commit coordinator maps.
+        Sync.Unsafe.defer {
+            val coordinator = new GroupCommitCoordinator
+            (ClaimSeam.async(), (fsync: FileJournal.Fsync) => FlushStrategy.groupCommit(fsync, coordinator))
+        }.flatMap { (claim, flushFor) =>
+            FileJournalCore.open(
+                dir,
+                config,
+                offloadStore(new FileChannelStore),
+                payloadCodec,
+                claim,
+                flushFor
+            )
+        }
+    end fileAsync
 end extension

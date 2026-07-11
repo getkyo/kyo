@@ -2,7 +2,6 @@ package kyo.internal
 
 import java.nio.charset.StandardCharsets
 import kyo.*
-import scala.annotation.tailrec
 
 /** JSONL segment codec: one JSON object per line per event, followed by one commit line per batch.
   * Files carry no binary header; the FORMAT marker at the root distinguishes them from binary
@@ -37,7 +36,7 @@ final private[kyo] class JsonlSegmentCodec(payloadCodec: EventPayloadCodec) exte
     def recordSize(env: EventEnvelope): Long = 0L // never called; extractPositions overrides
 
     // JSONL segments carry no binary file header.
-    def validateHeader(h: SegmentStore.Handle)(using AllowUnsafe): Maybe[String] = Absent
+    def validateHeader[S](h: StoreSeam.Handle[S])(using Frame): Maybe[String] < S = Absent
 
     // --- write ---------------------------------------------------------------------------------
 
@@ -88,109 +87,106 @@ final private[kyo] class JsonlSegmentCodec(payloadCodec: EventPayloadCodec) exte
 
     // --- scan ----------------------------------------------------------------------------------
 
-    def scan(handle: SegmentStore.Handle, size: Long, isActive: Boolean)(using AllowUnsafe): ScanResult =
-        val committed = Chunk.newBuilder[Long]
-        // pendingBuf accumulates record positions for the current uncommitted batch. Using a
-        // mutable ArrayBuffer keeps append O(1) amortised; Chunk.append is O(n) per call.
-        val pendingBuf   = new scala.collection.mutable.ArrayBuffer[Long]()
-        var pos          = 0L
-        var committedEnd = 0L
-        var batchStart   = 0L
-        @tailrec def loop(): ScanResult =
+    def scan[S](handle: StoreSeam.Handle[S], size: Long, isActive: Boolean)(using Frame): ScanResult < S =
+        Loop(0L, 0L, Chunk.empty[Long], Chunk.empty[Long]) { (pos, committedEnd, pending, committed) =>
             if pos >= size then
-                if pendingBuf.isEmpty then ScanResult.Ok(committed.result(), committedEnd, Absent)
-                else if isActive then ScanResult.Ok(committed.result(), committedEnd, Present(batchStart))
-                else ScanResult.Corrupt(s"unterminated batch at byte $batchStart in sealed segment")
+                if pending.isEmpty then Loop.done(ScanResult.Ok(committed, committedEnd, Absent))
+                else if isActive then Loop.done(ScanResult.Ok(committed, committedEnd, Present(pending.head)))
+                else Loop.done(ScanResult.Corrupt(s"unterminated batch at byte ${pending.head} in sealed segment"))
             else
-                readLineAt(handle, pos, size) match
+                readLineAt(handle, pos, size).map {
                     case null =>
-                        // Truncated line with no terminating `\n`.
-                        if isActive && !hasCommitAfter(handle, pos, size) then
-                            ScanResult.Ok(committed.result(), committedEnd, Present(batchStart))
-                        else ScanResult.Corrupt(s"truncated JSONL line at byte $pos in sealed segment")
+                        // Truncated line with no terminating '\n'.
+                        hasCommitAfter(handle, pos, size).map { hasMore =>
+                            if isActive && !hasMore then
+                                Loop.done(ScanResult.Ok(committed, committedEnd, Present(pending.headMaybe.getOrElse(pos))))
+                            else Loop.done(ScanResult.Corrupt(s"truncated JSONL line at byte $pos in sealed segment"))
+                        }
                     case lineBytes =>
                         val lineLen = lineBytes.length.toLong + 1L // +1 for '\n'
                         if isCommitLine(lineBytes) then
                             parseCommitCount(lineBytes) match
-                                case Right(count) if count == pendingBuf.length && verifyCrcLine(lineBytes) =>
-                                    pendingBuf.foreach(p => discard(committed += p))
-                                    pos += lineLen
-                                    committedEnd = pos
-                                    batchStart = pos
-                                    pendingBuf.clear()
-                                    loop()
+                                case Right(count) if count == pending.length && verifyCrcLine(lineBytes) =>
+                                    val newPos = pos + lineLen
+                                    Loop.continue(newPos, newPos, Chunk.empty[Long], committed ++ pending)
                                 case _ =>
-                                    if isActive && !hasCommitAfter(handle, pos + lineLen, size) then
-                                        ScanResult.Ok(committed.result(), committedEnd, Present(batchStart))
-                                    else ScanResult.Corrupt(s"commit CRC/count mismatch at byte $pos")
+                                    hasCommitAfter(handle, pos + lineLen, size).map { hasMore =>
+                                        if isActive && !hasMore then
+                                            Loop.done(ScanResult.Ok(committed, committedEnd, Present(pending.headMaybe.getOrElse(pos))))
+                                        else Loop.done(ScanResult.Corrupt(s"commit CRC/count mismatch at byte $pos"))
+                                    }
+                        else if verifyCrcLine(lineBytes) then
+                            Loop.continue(pos + lineLen, committedEnd, pending.append(pos), committed)
                         else
-                            if verifyCrcLine(lineBytes) then
-                                discard(pendingBuf.addOne(pos))
-                                pos += lineLen
-                                loop()
-                            else
-                                if isActive && !hasCommitAfter(handle, pos + lineLen, size) then
-                                    ScanResult.Ok(committed.result(), committedEnd, Present(batchStart))
-                                else ScanResult.Corrupt(s"record CRC mismatch at byte $pos")
+                            hasCommitAfter(handle, pos + lineLen, size).map { hasMore =>
+                                if isActive && !hasMore then
+                                    Loop.done(ScanResult.Ok(committed, committedEnd, Present(pending.headMaybe.getOrElse(pos))))
+                                else Loop.done(ScanResult.Corrupt(s"record CRC mismatch at byte $pos"))
+                            }
                         end if
-        loop()
+                }
+        }
     end scan
 
-    def decodeRecordAt(handle: SegmentStore.Handle, pos: Long)(using AllowUnsafe): Result[String, DecodedRecord] =
-        try
-            readLineAt(handle, pos, handle.size()) match
+    def decodeRecordAt[S](handle: StoreSeam.Handle[S], pos: Long)(using Frame): Result[String, DecodedRecord] < S =
+        handle.size().map { sz =>
+            readLineAt(handle, pos, sz).map {
                 case null => Result.fail(s"truncated JSONL line at byte $pos")
                 case lineBytes =>
                     if !verifyCrcLine(lineBytes) then Result.fail(s"JSONL CRC mismatch at byte $pos")
                     else
-                        val reader = new Json().newReader(Span.from(lineBytes))(using Frame.internal)
-                        discard(reader.objectStart())
-                        var offset    = -1L
-                        var eventId   = ""
-                        var eventType = ""
-                        var metadata  = Array.emptyByteArray
-                        var payload   = Span.empty[Byte]
-                        while reader.hasNextField() do
-                            reader.field() match
-                                case "offset"    => offset = reader.long()
-                                case "eventId"   => eventId = reader.string()
-                                case "eventType" => eventType = reader.string()
-                                case "metadata"  => metadata = readMetadataJson(reader)
-                                case "payload" =>
-                                    payloadCodec.decodeFromJsonl(reader)(using Frame.internal) match
-                                        case Result.Success(s)  => payload = s
-                                        case Result.Failure(ex) => throw ex
-                                case _ => reader.skip()
-                        end while
-                        reader.objectEnd()
-                        if offset < 0L then Result.fail(s"missing offset field in JSONL line at byte $pos")
-                        else
-                            Result.succeed(DecodedRecord(
-                                offset = offset,
-                                eventId = eventId,
-                                eventType = eventType,
-                                metadata = metadata,
-                                payload = payload.toArray,
-                                bodyLen = lineBytes.length + 1 // +1 for '\n', kept for consistency
-                            ))
-                        end if
-        catch
-            // Narrow to the parse/decode failure types the JSON reader and payload codec produce.
-            // Broader exception types (NPE, IndexOutOfBounds) are defects and must propagate.
-            case e: DecodeException => Result.fail(s"JSONL decode error at byte $pos: ${e.getMessage}")
+                        try
+                            val reader = new Json().newReader(Span.from(lineBytes))(using Frame.internal)
+                            discard(reader.objectStart())
+                            var offset    = -1L
+                            var eventId   = ""
+                            var eventType = ""
+                            var metadata  = Array.emptyByteArray
+                            var payload   = Span.empty[Byte]
+                            while reader.hasNextField() do
+                                reader.field() match
+                                    case "offset"    => offset = reader.long()
+                                    case "eventId"   => eventId = reader.string()
+                                    case "eventType" => eventType = reader.string()
+                                    case "metadata"  => metadata = readMetadataJson(reader)
+                                    case "payload" =>
+                                        payloadCodec.decodeFromJsonl(reader)(using Frame.internal) match
+                                            case Result.Success(s)  => payload = s
+                                            case Result.Failure(ex) => throw ex
+                                    case _ => reader.skip()
+                            end while
+                            reader.objectEnd()
+                            if offset < 0L then Result.fail(s"missing offset field in JSONL line at byte $pos")
+                            else
+                                Result.succeed(DecodedRecord(
+                                    offset = offset,
+                                    eventId = eventId,
+                                    eventType = eventType,
+                                    metadata = metadata,
+                                    payload = payload.toArray,
+                                    bodyLen = lineBytes.length + 1 // +1 for '\n', kept for consistency
+                                ))
+                            end if
+                        catch
+                            // Narrow to the parse/decode failure types the JSON reader and payload codec
+                            // produce. Broader exception types (NPE, IndexOutOfBounds) are defects and
+                            // must propagate.
+                            case e: DecodeException => Result.fail(s"JSONL decode error at byte $pos: ${e.getMessage}")
+            }
+        }
     end decodeRecordAt
 
-    def hasCommitAfter(handle: SegmentStore.Handle, from: Long, size: Long)(using AllowUnsafe): Boolean =
-        var pos   = from
-        var found = false
-        while !found && pos < size do
-            readLineAt(handle, pos, size) match
-                case null => pos = size // no more complete lines
-                case lineBytes =>
-                    if isCommitLine(lineBytes) && verifyCrcLine(lineBytes) then found = true
-                    pos += lineBytes.length.toLong + 1L
-        end while
-        found
+    def hasCommitAfter[S](handle: StoreSeam.Handle[S], from: Long, size: Long)(using Frame): Boolean < S =
+        Loop(from) { pos =>
+            if pos >= size then Loop.done(false)
+            else
+                readLineAt(handle, pos, size).map {
+                    case null => Loop.done(false) // no more complete lines
+                    case lineBytes =>
+                        if isCommitLine(lineBytes) && verifyCrcLine(lineBytes) then Loop.done(true)
+                        else Loop.continue(pos + lineBytes.length.toLong + 1L)
+                }
+        }
     end hasCommitAfter
 
     // --- private helpers -----------------------------------------------------------------------
@@ -226,21 +222,22 @@ final private[kyo] class JsonlSegmentCodec(payloadCodec: EventPayloadCodec) exte
         out
     end appendCrc
 
-    // Reads one line starting at `pos`, scanning for `\n`. Returns the line bytes WITHOUT the
+    // Reads one line starting at `pos`, scanning for `\n`. Resolves to the line bytes WITHOUT the
     // trailing `\n`, or null if no `\n` exists before `size` (truncated file). Uses a 4 KiB
     // initial chunk and doubles on miss to avoid per-byte positional reads.
-    private def readLineAt(handle: SegmentStore.Handle, pos: Long, size: Long)(using AllowUnsafe): Array[Byte] =
-        var chunkLen = math.min(4096L, size - pos).toInt
-        if chunkLen <= 0 then return null
-        var chunk = handle.readAt(pos, chunkLen)
-        var nlIdx = indexOf(chunk, '\n'.toByte)
-        while nlIdx < 0 && chunk.length.toLong < (size - pos) do
-            chunkLen = math.min(chunkLen * 2L, size - pos).toInt
-            chunk = handle.readAt(pos, chunkLen)
-            nlIdx = indexOf(chunk, '\n'.toByte)
-        end while
-        if nlIdx < 0 then null
-        else java.util.Arrays.copyOfRange(chunk, 0, nlIdx)
+    private def readLineAt[S](handle: StoreSeam.Handle[S], pos: Long, size: Long)(using Frame): Array[Byte] < S =
+        val initLen = math.min(4096L, size - pos).toInt
+        if initLen <= 0 then (null: Array[Byte])
+        else
+            Loop(initLen) { chunkLen =>
+                handle.readAt(pos, chunkLen).map { chunk =>
+                    val nlIdx = indexOf(chunk, '\n'.toByte)
+                    if nlIdx >= 0 then Loop.done(java.util.Arrays.copyOfRange(chunk, 0, nlIdx))
+                    else if chunk.length.toLong >= (size - pos) then Loop.done(null: Array[Byte])
+                    else Loop.continue(math.min(chunkLen * 2L, size - pos).toInt)
+                }
+            }
+        end if
     end readLineAt
 
     private def indexOf(arr: Array[Byte], b: Byte): Int =

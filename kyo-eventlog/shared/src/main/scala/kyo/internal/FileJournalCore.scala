@@ -10,6 +10,8 @@ import scala.annotation.tailrec
 
 /** Format-dispatch seam for segment encoding. Implementations encode and decode event records
   * to and from segment files; the orchestration layer ([[FileJournalCore]]) is format-agnostic.
+  * Every operation that reads from a handle is polymorphic in the handle's effect `S`, so the
+  * same codec instance drives both the synchronous and the asynchronous backend.
   *
   * Two implementations exist: [[BinarySegmentCodec]] (the original `KJN1` binary format) and
   * [[kyo.internal.JsonlSegmentCodec]] (the one-JSON-object-per-line JSONL format). Both are
@@ -31,10 +33,9 @@ private[kyo] trait SegmentCodec:
 
     /** Returns `Absent` if the segment header at position 0 is valid, or `Present(detail)` if
       * it is missing, malformed, or from an unknown version. Called once per segment during
-      * recovery before any record scan. Must require [[AllowUnsafe]] because it reads from the
-      * segment handle.
+      * recovery before any record scan.
       */
-    def validateHeader(h: SegmentStore.Handle)(using AllowUnsafe): Maybe[String]
+    def validateHeader[S](h: StoreSeam.Handle[S])(using Frame): Maybe[String] < S
 
     // --- write ---
 
@@ -79,19 +80,19 @@ private[kyo] trait SegmentCodec:
       * [[ScanResult]] describing the committed record positions, the committed-end byte offset,
       * and any trailing torn batch. Called once per segment during first-touch recovery.
       */
-    def scan(h: SegmentStore.Handle, size: Long, isActive: Boolean)(using AllowUnsafe): ScanResult
+    def scan[S](h: StoreSeam.Handle[S], size: Long, isActive: Boolean)(using Frame): ScanResult < S
 
     /** Reads the record (or commit line for JSONL) at byte position `pos` and verifies its
       * integrity (CRC32). Returns `Result.fail(detail)` on corruption, `Result.succeed` on a
       * valid record.
       */
-    def decodeRecordAt(h: SegmentStore.Handle, pos: Long)(using AllowUnsafe): Result[String, DecodedRecord]
+    def decodeRecordAt[S](h: StoreSeam.Handle[S], pos: Long)(using Frame): Result[String, DecodedRecord] < S
 
     /** Returns true if a valid batch-commit marker exists anywhere in the segment between byte
       * `from` (inclusive) and `size` (exclusive). Used to distinguish a torn tail from mid-file
       * damage during scan.
       */
-    def hasCommitAfter(h: SegmentStore.Handle, from: Long, size: Long)(using AllowUnsafe): Boolean
+    def hasCommitAfter[S](h: StoreSeam.Handle[S], from: Long, size: Long)(using Frame): Boolean < S
 
     // --- shared concrete helpers (override if different) ---
 
@@ -113,7 +114,7 @@ end SegmentCodec
 
 /** Stateless binary codec: header, record frame (with CRC), batch-commit terminator, metadata (a
   * MsgPack map of tag-keyed `MetadataValue` nodes), and the injective streamId percent-encoding. No
-  * open handles, no implicit position; all operations work on `SegmentStore.Handle` via explicit
+  * open handles, no implicit position; all operations work on [[StoreSeam.Handle]] via explicit
   * byte positions or on in-memory arrays. `private[kyo]` so codec unit tests can drive it in
   * isolation; out of public surface.
   *
@@ -137,16 +138,16 @@ private[kyo] object BinarySegmentCodec extends SegmentCodec:
     // --- header -------------------------------------------------------------------------------
 
     // Returns Present(detail) if the 5-byte header is missing/malformed/unknown-version, else Absent.
-    def validateHeader(handle: SegmentStore.Handle)(using AllowUnsafe): Maybe[String] =
-        val arr = handle.readAt(0L, HeaderSize)
-        if arr.length < HeaderSize then Present(s"segment header truncated (${arr.length} bytes)")
-        else
-            val m = java.util.Arrays.copyOfRange(arr, 0, 4)
-            val v = arr(4)
-            if !java.util.Arrays.equals(m, Magic) then Present("segment magic is not KJN1")
-            else if v != Version then Present(s"unknown segment format version 0x${(v & 0xff).toHexString}")
-            else Absent
-        end if
+    def validateHeader[S](handle: StoreSeam.Handle[S])(using Frame): Maybe[String] < S =
+        handle.readAt(0L, HeaderSize).map { arr =>
+            if arr.length < HeaderSize then Present(s"segment header truncated (${arr.length} bytes)")
+            else
+                val m = java.util.Arrays.copyOfRange(arr, 0, 4)
+                val v = arr(4)
+                if !java.util.Arrays.equals(m, Magic) then Present("segment magic is not KJN1")
+                else if v != Version then Present(s"unknown segment format version 0x${(v & 0xff).toHexString}")
+                else Absent
+        }
     end validateHeader
 
     // --- record frame -------------------------------------------------------------------------
@@ -182,37 +183,40 @@ private[kyo] object BinarySegmentCodec extends SegmentCodec:
 
     // Reads one record at position pos; verifies CRC. Result.Failure carries the corruption detail,
     // Result.Success the decoded record.
-    def decodeRecordAt(handle: SegmentStore.Handle, pos: Long)(using AllowUnsafe): Result[String, DecodedRecord] =
-        val head = handle.readAt(pos, 8)
-        if head.length < 8 then Result.fail("record header truncated")
-        else
-            val headBuf = ByteBuffer.wrap(head)
-            val bodyLen = headBuf.getInt()
-            val crcExp  = headBuf.getInt()
-            // Bound the body length before allocating: a negative length (a flipped high bit) or one
-            // that runs past EOF is corruption, not a record. Without this guard a corrupt length
-            // drives ByteBuffer.allocate into IllegalArgumentException or OutOfMemoryError, which would
-            // escape the modeled JournalCorruptedError channel as an unhandled panic.
-            val maxBody = handle.size() - pos - 8L
-            if bodyLen < 0 || bodyLen.toLong > maxBody then Result.fail(s"record length out of range at byte $pos")
+    def decodeRecordAt[S](handle: StoreSeam.Handle[S], pos: Long)(using Frame): Result[String, DecodedRecord] < S =
+        handle.readAt(pos, 8).map { head =>
+            if head.length < 8 then Result.fail("record header truncated")
             else
-                val bodyArr = handle.readAt(pos + 8L, bodyLen)
-                if bodyArr.length < bodyLen then Result.fail("record body truncated")
-                else
-                    val crc = new CRC32(); crc.update(bodyArr, 0, bodyLen)
-                    if (crc.value & 0xffffffffL).toInt != crcExp then Result.fail(s"record CRC mismatch at byte $pos")
+                val headBuf = ByteBuffer.wrap(head)
+                val bodyLen = headBuf.getInt()
+                val crcExp  = headBuf.getInt()
+                handle.size().map { sz =>
+                    // Bound the body length before allocating: a negative length (a flipped high bit) or
+                    // one that runs past EOF is corruption, not a record. Without this guard a corrupt
+                    // length drives ByteBuffer.allocate into IllegalArgumentException or
+                    // OutOfMemoryError, which would escape the modeled JournalCorruptedError channel as
+                    // an unhandled panic.
+                    val maxBody = sz - pos - 8L
+                    if bodyLen < 0 || bodyLen.toLong > maxBody then Result.fail(s"record length out of range at byte $pos")
                     else
-                        val body     = ByteBuffer.wrap(bodyArr)
-                        val offset   = body.getLong()
-                        val eventId  = getLpStr(body)
-                        val eventTp  = getLpStr(body)
-                        val metadata = getLpBytes(body)
-                        val payload  = getLpBytes(body)
-                        Result.succeed(DecodedRecord(offset, eventId, eventTp, metadata, payload, bodyLen))
+                        handle.readAt(pos + 8L, bodyLen).map { bodyArr =>
+                            if bodyArr.length < bodyLen then Result.fail("record body truncated")
+                            else
+                                val crc = new CRC32(); crc.update(bodyArr, 0, bodyLen)
+                                if (crc.value & 0xffffffffL).toInt != crcExp then Result.fail(s"record CRC mismatch at byte $pos")
+                                else
+                                    val body     = ByteBuffer.wrap(bodyArr)
+                                    val offset   = body.getLong()
+                                    val eventId  = getLpStr(body)
+                                    val eventTp  = getLpStr(body)
+                                    val metadata = getLpBytes(body)
+                                    val payload  = getLpBytes(body)
+                                    Result.succeed(DecodedRecord(offset, eventId, eventTp, metadata, payload, bodyLen))
+                                end if
+                        }
                     end if
-                end if
-            end if
-        end if
+                }
+        }
     end decodeRecordAt
 
     // --- batch-commit terminator --------------------------------------------------------------
@@ -246,85 +250,82 @@ private[kyo] object BinarySegmentCodec extends SegmentCodec:
     end terminatorAt
 
     // Returns Present(recordCount) if a valid terminator sits at pos, else Absent (torn/absent).
-    def readTerminator(handle: SegmentStore.Handle, pos: Long)(using AllowUnsafe): Maybe[Int] =
-        val arr = handle.readAt(pos, TerminatorSize)
-        if arr.length < TerminatorSize then Absent
-        else
-            val buf    = ByteBuffer.wrap(arr)
-            val m      = new Array[Byte](4); buf.get(m)
-            val count  = buf.getInt()
-            val crcExp = buf.getInt()
-            val crc    = new CRC32(); crc.update(CommitMagic); crc.update(intBytes(count))
-            if java.util.Arrays.equals(m, CommitMagic) && (crc.value & 0xffffffffL).toInt == crcExp then Present(count)
-            else Absent
-        end if
+    def readTerminator[S](handle: StoreSeam.Handle[S], pos: Long)(using Frame): Maybe[Int] < S =
+        handle.readAt(pos, TerminatorSize).map { arr =>
+            if arr.length < TerminatorSize then Absent
+            else
+                val buf    = ByteBuffer.wrap(arr)
+                val m      = new Array[Byte](4); buf.get(m)
+                val count  = buf.getInt()
+                val crcExp = buf.getInt()
+                val crc    = new CRC32(); crc.update(CommitMagic); crc.update(intBytes(count))
+                if java.util.Arrays.equals(m, CommitMagic) && (crc.value & 0xffffffffL).toInt == crcExp then Present(count)
+                else Absent
+        }
     end readTerminator
 
-    // --- scan (moved from FileJournalCore.scanRecords) ----------------------------------------
+    // --- segment record scan ------------------------------------------------------------------
 
-    def scan(handle: SegmentStore.Handle, size: Long, isActive: Boolean)(using AllowUnsafe): ScanResult =
-        val committed    = Chunk.newBuilder[Long]
-        var pos          = HeaderSize.toLong
-        var committedEnd = HeaderSize.toLong
-        var batchStart   = HeaderSize.toLong
-        var pending      = Chunk.empty[Long] // record positions in the current, not-yet-terminated batch
-        @tailrec def loop(): ScanResult =
-            if pos >= size then
-                // Reached EOF; any pending (unterminated) records are a torn tail.
-                if pending.isEmpty then ScanResult.Ok(committed.result(), committedEnd, Absent)
-                else if isActive then ScanResult.Ok(committed.result(), committedEnd, Present(batchStart))
-                else ScanResult.Corrupt(s"unterminated batch at byte $batchStart in sealed segment")
-            else
-                readTerminator(handle, pos) match
-                    case Present(count) if count == pending.length =>
-                        pending.foreach(p => discard(committed += p))
-                        pos += TerminatorSize.toLong
-                        committedEnd = pos
-                        batchStart = pos
-                        pending = Chunk.empty
-                        loop()
-                    case _ =>
-                        decodeRecordAt(handle, pos) match
-                            case Result.Success(dec) =>
-                                pending = pending.append(pos)
-                                pos += 8L + dec.bodyLen.toLong
-                                loop()
-                            case Result.Failure(detail) =>
-                                // A decode failure in the active segment is a torn tail only when no
-                                // valid terminator follows the failure point. A terminator surviving
-                                // after the bad record means the damage is mid-file and must not be
-                                // silently truncated away.
-                                if isActive && !hasCommitAfter(handle, pos + 1L, size) then
-                                    ScanResult.Ok(committed.result(), committedEnd, Present(batchStart))
-                                else ScanResult.Corrupt(detail)
-        loop()
+    def scan[S](handle: StoreSeam.Handle[S], size: Long, isActive: Boolean)(using Frame): ScanResult < S =
+        Loop(HeaderSize.toLong, HeaderSize.toLong, Chunk.empty[Long], Chunk.empty[Long]) {
+            (pos, committedEnd, pending, committed) =>
+                if pos >= size then
+                    if pending.isEmpty then Loop.done(ScanResult.Ok(committed, committedEnd, Absent))
+                    else if isActive then Loop.done(ScanResult.Ok(committed, committedEnd, Present(pending.head)))
+                    else Loop.done(ScanResult.Corrupt(s"unterminated batch at byte ${pending.head} in sealed segment"))
+                else
+                    readTerminator(handle, pos).map {
+                        case Present(count) if count == pending.length =>
+                            val newCommitted = committed ++ pending
+                            val newPos       = pos + TerminatorSize.toLong
+                            Loop.continue(newPos, newPos, Chunk.empty[Long], newCommitted)
+                        case _ =>
+                            decodeRecordAt(handle, pos).map {
+                                case Result.Success(dec) =>
+                                    Loop.continue(pos + 8L + dec.bodyLen.toLong, committedEnd, pending.append(pos), committed)
+                                case Result.Failure(detail) =>
+                                    // A decode failure in the active segment is a torn tail only when no
+                                    // valid terminator follows the failure point. A terminator surviving
+                                    // after the bad record means the damage is mid-file and must not be
+                                    // silently truncated away.
+                                    if isActive then
+                                        hasCommitAfter(handle, pos + 1L, size).map { hasMore =>
+                                            if !hasMore then
+                                                Loop.done(ScanResult.Ok(committed, committedEnd, Present(pending.headMaybe.getOrElse(pos))))
+                                            else Loop.done(ScanResult.Corrupt(detail))
+                                        }
+                                    else Loop.done(ScanResult.Corrupt(detail))
+                            }
+                    }
+        }
     end scan
 
-    def hasCommitAfter(handle: SegmentStore.Handle, from: Long, size: Long)(using AllowUnsafe): Boolean =
+    def hasCommitAfter[S](handle: StoreSeam.Handle[S], from: Long, size: Long)(using Frame): Boolean < S =
         // Returns true if a valid 12-byte batch terminator exists at any byte offset from `from` to
         // the end of the segment. The region is read in overlapping buffered windows and scanned in
         // memory rather than issuing a 12-byte positional handle read per candidate offset. Windows
         // overlap by TerminatorSize-1 so a terminator straddling a boundary is still found.
         val window  = 1 << 16
         val overlap = TerminatorSize.toLong - 1L
-        var winPos  = from
-        var found   = false
-        while !found && winPos <= size - TerminatorSize.toLong do
-            val len  = math.min(window.toLong, size - winPos).toInt
-            val arr  = handle.readAt(winPos, len)
-            val n    = arr.length
-            var i    = 0
-            val last = n - TerminatorSize
-            while !found && i <= last do
-                if terminatorAt(arr, i) then found = true
-                i += 1
-            end while
-            winPos += (window.toLong - overlap)
-        end while
-        found
+        Loop(from) { winPos =>
+            if winPos > size - TerminatorSize.toLong then Loop.done(false)
+            else
+                val len = math.min(window.toLong, size - winPos).toInt
+                handle.readAt(winPos, len).map { arr =>
+                    if scanWindowForTerminator(arr) then Loop.done(true)
+                    else Loop.continue(winPos + (window.toLong - overlap))
+                }
+        }
     end hasCommitAfter
 
-    // --- batch frame (moved from FileJournalCore.frameBatch) ----------------------------------
+    @tailrec private def scanWindowForTerminator(arr: Array[Byte], i: Int = 0): Boolean =
+        val last = arr.length - TerminatorSize
+        if i > last then false
+        else if terminatorAt(arr, i) then true
+        else scanWindowForTerminator(arr, i + 1)
+    end scanWindowForTerminator
+
+    // --- batch framing ------------------------------------------------------------------------
 
     def frameBatch(firstOffset: Long, events: Chunk[EventEnvelope]): Array[Byte] =
         // Assembles N record frames followed by a batch-commit terminator into one contiguous byte array.
@@ -422,18 +423,24 @@ end BinarySegmentCodec
 
 // --- Data types -------------------------------------------------------------------------------
 
-/** Immutable per-stream state cell contents. `indexed` gates lazy recovery; `writer` is the CAS
-  * claim. `lastOffset == -1` means the stream is absent.
+/** Immutable per-stream state cell contents. `indexed` gates lazy recovery; `writer` is the Sync
+  * CAS claim flag (unused, always `false`, when the backend is Async). `lastOffset` is the
+  * highest WRITTEN offset; `durableOffset` is the highest offset confirmed durable (fsynced). The
+  * two coincide on the Sync backend (publish happens only after fsync); on the Async
+  * backend `lastOffset` can briefly run ahead of `durableOffset` while a group-commit flush is in
+  * flight. The read path clamps to `durableOffset` so a caller never observes a written-but-not-
+  * yet-durable record. `lastOffset == -1` means the stream is absent.
   */
 final private[kyo] case class StreamState(
     segments: Chunk[SegmentEntry],
     lastOffset: Long,
+    durableOffset: Long,
     indexed: Boolean,
     writer: Boolean
 )
 private[kyo] object StreamState:
-    val empty: StreamState        = StreamState(Chunk.empty, -1L, indexed = false, writer = false)
-    val emptyIndexed: StreamState = StreamState(Chunk.empty, -1L, indexed = true, writer = false)
+    val empty: StreamState        = StreamState(Chunk.empty, -1L, -1L, indexed = false, writer = false)
+    val emptyIndexed: StreamState = StreamState(Chunk.empty, -1L, -1L, indexed = true, writer = false)
 
 /** One segment file's index entry. `recordPositions(i)` is the byte offset of the record for
   * `baseOffset + i`. Handles live in the FileJournalCore registry, keyed by path string. `writePos`
@@ -465,28 +472,260 @@ private[kyo] enum ScanResult:
     case Ok(positions: Chunk[Long], committedEnd: Long, tornAt: Maybe[Long])
     case Corrupt(detail: String)
 
+// --- Claim seam: per-stream write serialization, one implementation per effect -----------------
+
+/** Serializes same-stream writes. The Sync implementation is a bounded CAS spin; the Async
+  * implementation uses a parked per-stream permit. [[holdThroughFlush]]
+  * tells [[FileJournalCore]] whether the claim must stay held until durability is confirmed (Sync:
+  * yes, held for the full write-fsync-publish sequence) or may be released right after the
+  * positional write (Async: yes to concurrency, no to durability ordering; group commit needs same-
+  * stream writes to pipeline past each other while a flush is in flight).
+  */
+private[kyo] trait ClaimSeam[S]:
+    def holdThroughFlush: Boolean
+    def acquire(streamId: StreamId, ref: AtomicRef.Unsafe[StreamState])(using AllowUnsafe, Frame): StreamState < S
+    def release(streamId: StreamId, ref: AtomicRef.Unsafe[StreamState])(using AllowUnsafe, Frame): Unit < Sync
+end ClaimSeam
+
+private[kyo] object ClaimSeam:
+
+    /** A per-stream CAS flag with a bounded spin. A waiter yields the carrier on each spin so it
+      * does not peg a core while the holder's blocking fsync runs. `acquire` returns the POST-claim
+      * snapshot (`writer = true`) rather than the pre-claim one: every downstream `.copy` that republishes this
+      * stream's state (the write's positional publish, first-touch recovery) derives from this
+      * value, so returning the pre-claim snapshot would republish `writer = false` on every such
+      * copy and release the mutex early, before the actual `release` call, letting a spinning
+      * contender start writing to the same segment while this holder is still mid-flush.
+      */
+    val sync: ClaimSeam[Sync] = new ClaimSeam[Sync]:
+        def holdThroughFlush: Boolean = true
+
+        @tailrec def acquire(streamId: StreamId, ref: AtomicRef.Unsafe[StreamState])(using AllowUnsafe, Frame): StreamState < Sync =
+            val s = ref.get()
+            if s.writer then
+                yieldCurrentThread()
+                acquire(streamId, ref)
+            else
+                val claimed = s.copy(writer = true)
+                if ref.compareAndSet(s, claimed) then claimed
+                else acquire(streamId, ref)
+            end if
+        end acquire
+
+        def release(streamId: StreamId, ref: AtomicRef.Unsafe[StreamState])(using AllowUnsafe, Frame): Unit < Sync =
+            val cur = ref.get()
+            if cur.writer then discard(ref.compareAndSet(cur, cur.copy(writer = false)))
+        end release
+    end sync
+
+    /** A fresh per-instance async claim: a lazily created, per-stream `Channel[Unit]` of capacity
+      * one used as a mutex (preloaded with one token, so the first `take` succeeds immediately). A
+      * blocked appender parks on `take`, suspending the fiber and freeing the carrier rather than
+      * spinning; FIFO fairness comes from the channel's own wait queue.
+      */
+    def async()(using AllowUnsafe): ClaimSeam[Async] = new ClaimSeam[Async]:
+        def holdThroughFlush: Boolean = false
+
+        // Unsafe: bootstraps an empty in-process map; never touches platform I/O and is always safe.
+        private val permits: AtomicRef.Unsafe[Map[StreamId, Channel[Unit]]] = AtomicRef.Unsafe.init(Map.empty)
+
+        @tailrec private def permitFor(streamId: StreamId)(using AllowUnsafe, Frame): Channel[Unit] =
+            val m = permits.get()
+            Maybe.fromOption(m.get(streamId)) match
+                case Present(ch) => ch
+                case Absent =>
+                    val fresh = Channel.Unsafe.init[Unit](1)
+                    discard(fresh.offer(()))
+                    val ch = fresh.safe
+                    if permits.compareAndSet(m, m.updated(streamId, ch)) then ch else permitFor(streamId)
+            end match
+        end permitFor
+
+        def acquire(streamId: StreamId, ref: AtomicRef.Unsafe[StreamState])(using AllowUnsafe, Frame): StreamState < Async =
+            val permit = permitFor(streamId)
+            Abort.run[Closed](permit.take).map:
+                case Result.Success(_) => ref.get()
+                case Result.Failure(closed) =>
+                    throw new IllegalStateException(s"stream permit channel for '${streamId.value}' closed unexpectedly: $closed")
+                case Result.Panic(e) => throw e
+        end acquire
+
+        def release(streamId: StreamId, ref: AtomicRef.Unsafe[StreamState])(using AllowUnsafe, Frame): Unit < Sync =
+            val permit = permitFor(streamId)
+            Abort.run[Closed](permit.offerDiscard(())).map:
+                case Result.Success(_) => ()
+                case Result.Failure(closed) =>
+                    throw new IllegalStateException(s"stream permit channel for '${streamId.value}' closed unexpectedly: $closed")
+                case Result.Panic(e) => throw e
+        end release
+    end async
+
+end ClaimSeam
+
+// --- Group commit: coalesces durability flushes across concurrent appenders to one handle ------
+
+/** Coalesces `handle.sync()` calls that target the same segment handle. The first caller to reach
+  * [[requestFlush]] while idle becomes the leader and calls `handle.sync()` directly; any caller
+  * that arrives while a flush is already in progress waits for the NEXT round rather than assuming
+  * it is covered by the one already underway (safety over opportunism: a write that lands after
+  * the in-flight `sync()` call has already started is not guaranteed to be covered by it). When a
+  * round completes, the leader immediately runs another round for whatever arrived during the
+  * previous one, and keeps doing so until a round finds nothing new, at which point it returns to
+  * idle. There is no timer: the coalescing window is exactly "whatever accumulated during the
+  * previous flush".
+  *
+  * One coordinator instance is shared by a [[FileJournalCore]], keyed by the same path-string key
+  * as the handle registry, so distinct streams (distinct handles) coalesce independently.
+  */
+final private[kyo] class GroupCommitCoordinator(using allow: AllowUnsafe):
+    // Unsafe: bootstraps an empty in-process map; never touches platform I/O and is always safe.
+    import GroupCommitCoordinator.State
+    private val coordinators: AtomicRef.Unsafe[Map[String, AtomicRef.Unsafe[State]]] = AtomicRef.Unsafe.init(Map.empty)
+
+    @tailrec private def stateFor(key: String)(using AllowUnsafe): AtomicRef.Unsafe[State] =
+        val m = coordinators.get()
+        Maybe.fromOption(m.get(key)) match
+            case Present(ref) => ref
+            case Absent =>
+                val fresh = AtomicRef.Unsafe.init[State](State.Idle)
+                if coordinators.compareAndSet(m, m.updated(key, fresh)) then fresh else stateFor(key)
+        end match
+    end stateFor
+
+    def requestFlush(key: String, handle: StoreSeam.Handle[Async])(using AllowUnsafe, Frame): Unit < Async =
+        join(stateFor(key), handle)
+
+    @tailrec private def join(ref: AtomicRef.Unsafe[State], handle: StoreSeam.Handle[Async])(using AllowUnsafe, Frame): Unit < Async =
+        ref.get() match
+            case State.Idle =>
+                if ref.compareAndSet(State.Idle, State.Flushing(Nil)) then runRound(ref, handle)
+                else join(ref, handle)
+            case cur @ State.Flushing(waiters) =>
+                val signal = Channel.Unsafe.init[Unit](0)
+                if ref.compareAndSet(cur, State.Flushing(signal.safe :: waiters)) then
+                    Abort.run[Closed](signal.safe.take).map:
+                        case Result.Success(_) => ()
+                        case Result.Failure(closed) =>
+                            throw new IllegalStateException(s"group commit signal closed unexpectedly: $closed")
+                        case Result.Panic(e) => throw e
+                else join(ref, handle)
+                end if
+        end match
+    end join
+
+    private def runRound(ref: AtomicRef.Unsafe[State], handle: StoreSeam.Handle[Async])(using AllowUnsafe, Frame): Unit < Async =
+        handle.sync().map(_ => afterRound(ref, handle))
+
+    @tailrec private def afterRound(ref: AtomicRef.Unsafe[State], handle: StoreSeam.Handle[Async])(using
+        AllowUnsafe,
+        Frame
+    ): Unit < Async =
+        ref.get() match
+            case cur @ State.Flushing(Nil) =>
+                if ref.compareAndSet(cur, State.Idle) then () else afterRound(ref, handle)
+            case cur @ State.Flushing(waiters) =>
+                if ref.compareAndSet(cur, State.Flushing(Nil)) then runRound(ref, handle).map(_ => releaseAll(waiters))
+                else afterRound(ref, handle)
+            case State.Idle =>
+                throw new IllegalStateException("group commit coordinator observed an idle state during an active flush")
+        end match
+    end afterRound
+
+    private def releaseAll(waiters: List[Channel[Unit]])(using AllowUnsafe, Frame): Unit < Async =
+        Kyo.foreachDiscard(waiters) { w =>
+            Abort.run[Closed](w.offerDiscard(())).map:
+                case Result.Success(_) => ()
+                case Result.Failure(closed) =>
+                    throw new IllegalStateException(s"group commit signal closed unexpectedly: $closed")
+                case Result.Panic(e) => throw e
+        }
+
+end GroupCommitCoordinator
+
+private[kyo] object GroupCommitCoordinator:
+    private enum State derives CanEqual:
+        case Idle
+        case Flushing(waiters: List[Channel[Unit]])
+end GroupCommitCoordinator
+
+// --- Flush strategy: how a batch's durability is confirmed, one implementation per effect ------
+
+/** Confirms that the bytes written by one append are durable, then advances `ref`'s
+  * `durableOffset` to `targetOffset`. The Sync implementation flushes inline; the
+  * Async implementation routes through the shared [[GroupCommitCoordinator]].
+  */
+private[kyo] trait FlushStrategy[S]:
+    def confirmDurable(
+        handle: StoreSeam.Handle[S],
+        key: String,
+        ref: AtomicRef.Unsafe[StreamState],
+        targetOffset: Long
+    )(using AllowUnsafe, Frame): Unit < S
+end FlushStrategy
+
+private[kyo] object FlushStrategy:
+
+    @tailrec private[internal] def bumpDurable(ref: AtomicRef.Unsafe[StreamState], targetOffset: Long)(using AllowUnsafe): Unit =
+        val cur = ref.get()
+        if cur.durableOffset >= targetOffset then ()
+        else if ref.compareAndSet(cur, cur.copy(durableOffset = targetOffset)) then ()
+        else bumpDurable(ref, targetOffset)
+    end bumpDurable
+
+    def inline(fsync: FileJournal.Fsync): FlushStrategy[Sync] = new FlushStrategy[Sync]:
+        def confirmDurable(
+            handle: StoreSeam.Handle[Sync],
+            key: String,
+            ref: AtomicRef.Unsafe[StreamState],
+            targetOffset: Long
+        )(using AllowUnsafe, Frame): Unit < Sync =
+            (if fsync == FileJournal.Fsync.Always then handle.sync() else ((): Unit < Sync)).map { _ =>
+                bumpDurable(ref, targetOffset)
+            }
+    end inline
+
+    def groupCommit(fsync: FileJournal.Fsync, coordinator: GroupCommitCoordinator): FlushStrategy[Async] = new FlushStrategy[Async]:
+        def confirmDurable(
+            handle: StoreSeam.Handle[Async],
+            key: String,
+            ref: AtomicRef.Unsafe[StreamState],
+            targetOffset: Long
+        )(using AllowUnsafe, Frame): Unit < Async =
+            (if fsync == FileJournal.Fsync.Always then coordinator.requestFlush(key, handle) else ((): Unit < Async)).map { _ =>
+                bumpDurable(ref, targetOffset)
+            }
+    end groupCommit
+
+end FlushStrategy
+
 // --- Shared orchestration class ---------------------------------------------------------------
 
-/** The durable backend core. Never returned by name: callers see `Journal.Backend[Sync]`. The
-  * critical section (offset check + frame + write + fsync + index publish) runs inside one
-  * `Sync.Unsafe.defer` with no kyo suspension point, serialized across carrier threads by a CAS
-  * claim in each stream's state. The `Frame` is captured once at construction.
+/** The durable backend core, generalized over the store's effect `S`. Never returned by name:
+  * callers see `Journal.Backend[S]`. Recovery, the offset check, framing, and rotation math are
+  * single-sourced and shared by every `S`; same-stream write serialization ([[ClaimSeam]]) and
+  * durability confirmation ([[FlushStrategy]]) are the two points where the Sync and Async
+  * backends intentionally diverge (Sync: bounded CAS spin, inline fsync, claim held
+  * throughout; Async: parked permit, group-commit-coalesced fsync, claim released right after the
+  * positional write so same-stream appends can pipeline past an in-flight flush). The `Frame` is
+  * captured once at construction.
   *
-  * All platform I/O is delegated to the injected [[SegmentStore]]; no `FileChannel`, `toJava`, or
+  * All platform I/O is delegated to the injected [[StoreSeam]]; no `FileChannel`, `toJava`, or
   * platform-specific types appear here. The [[CRC32]] used for every checksum is the shared pure
   * implementation, making segment bytes identical across JVM, Native, JS, and Wasm by construction.
   * The segment encoding is delegated to the injected [[SegmentCodec]], which is selected by the
   * FORMAT marker at open time.
   */
-final private[kyo] class FileJournalCore(
+final private[kyo] class FileJournalCore[S >: (Async & Abort[Throwable]) <: Sync](
     rootKey: String,
     streamsDir: Path,
     config: FileJournal.Config,
-    store: SegmentStore,
+    seam: StoreSeam[S],
     lock: SegmentStore.Lock,
     codec: SegmentCodec,
-    payloadCodec: EventPayloadCodec
-)(using frame: Frame, allow: AllowUnsafe) extends Journal.Backend[Sync]:
+    payloadCodec: EventPayloadCodec,
+    claimSeam: ClaimSeam[S],
+    flushStrategy: FlushStrategy[S]
+)(using frame: Frame, allow: AllowUnsafe) extends Journal.Backend[S]:
 
     import FileJournal.*
 
@@ -498,7 +737,7 @@ final private[kyo] class FileJournalCore(
     // Registry of open segment handles, keyed by path string. Handles open lazily during
     // recovery/rotation and close on release. The per-stream state below references segments by
     // path; this map owns the handle lifecycle.
-    private val handles: AtomicRef.Unsafe[Map[String, SegmentStore.Handle]] =
+    private val handles: AtomicRef.Unsafe[Map[String, StoreSeam.Handle[S]]] =
         AtomicRef.Unsafe.init(Map.empty)
 
     // StreamId -> its mutable state cell. get-or-create by CAS.
@@ -509,37 +748,34 @@ final private[kyo] class FileJournalCore(
         streamId: StreamId,
         expected: ExpectedOffset,
         events: Chunk[EventEnvelope]
-    ): AppendResult < (Sync & Abort[JournalAppendFailure]) =
+    ): AppendResult < (S & Abort[JournalAppendFailure]) =
         if events.isEmpty then Abort.fail(JournalEmptyAppendError())
         else
             Log.use { log =>
-                // Unsafe: whole append critical section (recover-if-needed, offset check, frame,
-                // positional write, fsync, index publish) under one defer with no suspension, so a
-                // carrier runs it to completion; cross-thread races serialize on the CAS claim.
-                Sync.Unsafe.defer(appendUnsafe(streamId, expected, events, log.unsafe)).map(Abort.get)
+                appendCriticalSection(streamId, expected, events, cell(streamId), log.unsafe).map(Abort.get)
             }
 
     def read(
         streamId: StreamId,
         from: StreamOffset,
         maxCount: Int
-    ): Chunk[RecordedEvent] < (Sync & Abort[JournalReadFailure]) =
+    ): Chunk[RecordedEvent] < (S & Abort[JournalReadFailure]) =
         Log.use { log =>
-            // Unsafe: first-touch recovery may take the claim once; steady-state read is a
-            // lock-free volatile read + positional handle reads.
-            Sync.Unsafe.defer(readUnsafe(streamId, from, maxCount, log.unsafe)).map(Abort.get)
+            readCriticalSection(streamId, from, maxCount, log.unsafe).map(Abort.get)
         }
 
-    def streamInfo(streamId: StreamId): StreamInfo < (Sync & Abort[JournalStreamInfoFailure]) =
+    def streamInfo(streamId: StreamId): StreamInfo < (S & Abort[JournalStreamInfoFailure]) =
         Log.use { log =>
-            // Unsafe: first-touch recovery may take the claim once; steady state reads published state.
-            Sync.Unsafe.defer(streamInfoUnsafe(streamId, log.unsafe)).map(Abort.get)
+            streamInfoCriticalSection(streamId, log.unsafe).map(Abort.get)
         }
 
-    private[kyo] def release()(using AllowUnsafe): Unit =
+    private[kyo] def release()(using AllowUnsafe, Frame): Unit < S =
         discard(Result.catching[Throwable](lock.release()))
-        handles.get().valuesIterator.foreach(h => discard(Result.catching[Throwable](h.close())))
-        FileJournalCore.unregisterRoot(rootKey)
+        Kyo.foreachDiscard(Chunk.from(handles.get().values)) { h =>
+            Abort.run(Abort.catching[Throwable](h.close())).map(_ => ())
+        }.map { _ =>
+            FileJournalCore.unregisterRoot(rootKey)
+        }
     end release
 
     // --- get-or-create stream cell ------------------------------------------------------------
@@ -556,97 +792,124 @@ final private[kyo] class FileJournalCore(
         end match
     end cell
 
-    // --- claim spin ---------------------------------------------------------------------------
-
-    // Serializes same-stream appends: a waiter loops until the holder clears the writer flag. The
-    // whole append critical section (write + fsync) runs inside one Sync.Unsafe.defer with no
-    // suspension point, because the backend is a Journal.Backend[Sync] and its append row cannot
-    // carry Async. A waiter yields the carrier on each spin so it does not peg a core while the
-    // holder's blocking fsync runs.
-    @tailrec
-    private def claim(ref: AtomicRef.Unsafe[StreamState])(using AllowUnsafe): StreamState =
-        val s = ref.get()
-        if s.writer then
-            yieldCurrentThread()
-            claim(ref)                                             // a holder is running its section
-        else if ref.compareAndSet(s, s.copy(writer = true)) then s // won the claim; caller must publish/clear
-        else claim(ref)
-        end if
-    end claim
-
     // --- append critical section --------------------------------------------------------------
 
-    private def appendUnsafe(
+    private def appendCriticalSection(
         streamId: StreamId,
         expected: ExpectedOffset,
         events: Chunk[EventEnvelope],
+        ref: AtomicRef.Unsafe[StreamState],
         log: Log.Unsafe
-    )(using AllowUnsafe): Result[JournalAppendFailure, AppendResult] =
-        val ref             = cell(streamId)
-        val claimed         = claim(ref) // may spin; holds the writer flag
-        var alreadyReleased = false
-        try
-            ensureIndexed(streamId, ref, claimed, log) match
-                case Result.Failure(err) => Result.fail(err)
-                case Result.Success(indexed) =>
-                    val info = infoOf(indexed)
-                    if !matches(expected, info) then
-                        Result.fail(JournalConflictError(streamId, expected, info))
-                    else
-                        writeBatch(streamId, ref, indexed, events) match
-                            case r @ Result.Success(_) => alreadyReleased = true; r
-                            case r                     => r
-                    end if
-        finally
-            // On failure paths only: writeBatch already published the new state with writer=false
-            // on success, so clearing the claim here would race against a concurrent thread that
-            // won the CAS between writeBatch's ref.set and this finally's ref.get.
-            if !alreadyReleased then
-                val cur = ref.get()
-                if cur.writer then discard(ref.compareAndSet(cur, cur.copy(writer = false)))
-        end try
-    end appendUnsafe
+    )(using AllowUnsafe, Frame): Result[JournalAppendFailure, AppendResult] < S =
+        claimSeam.acquire(streamId, ref).map { claimed =>
+            if claimSeam.holdThroughFlush then appendHoldingClaim(streamId, expected, events, ref, claimed, log)
+            else appendReleasingEarly(streamId, expected, events, ref, claimed, log)
+        }
 
-    private def writeBatch(
+    // The Sync shape: the claim stays held until durability is confirmed (write, then fsync, then
+    // publish, then release).
+    private def appendHoldingClaim(
+        streamId: StreamId,
+        expected: ExpectedOffset,
+        events: Chunk[EventEnvelope],
+        ref: AtomicRef.Unsafe[StreamState],
+        claimed: StreamState,
+        log: Log.Unsafe
+    )(using AllowUnsafe, Frame): Result[JournalAppendFailure, AppendResult] < S =
+        Sync.ensure(claimSeam.release(streamId, ref)) {
+            writeCriticalSection(streamId, expected, events, ref, claimed, log).map {
+                case Result.Failure(err) => Result.fail(err)
+                case Result.Success((handle, key, targetOffset, draft)) =>
+                    flushStrategy.confirmDurable(handle, key, ref, targetOffset).map(_ => Result.succeed(draft))
+                case Result.Panic(e) => throw e
+            }
+        }
+
+    // The Async shape: the claim is released right after the positional write (before durability
+    // is confirmed), so another same-stream appender can start its own write while this append's
+    // flush is in flight, which is what gives group commit something to coalesce.
+    private def appendReleasingEarly(
+        streamId: StreamId,
+        expected: ExpectedOffset,
+        events: Chunk[EventEnvelope],
+        ref: AtomicRef.Unsafe[StreamState],
+        claimed: StreamState,
+        log: Log.Unsafe
+    )(using AllowUnsafe, Frame): Result[JournalAppendFailure, AppendResult] < S =
+        Sync.ensure(claimSeam.release(streamId, ref)) {
+            writeCriticalSection(streamId, expected, events, ref, claimed, log)
+        }.map {
+            case Result.Failure(err) => Result.fail(err)
+            case Result.Success((handle, key, targetOffset, draft)) =>
+                flushStrategy.confirmDurable(handle, key, ref, targetOffset).map(_ => Result.succeed(draft))
+            case Result.Panic(e) => throw e
+        }
+
+    // Shared: recovery-if-needed, the expected-offset check, and the framed positional write.
+    // Publishes the new WRITTEN state (lastOffset advanced) but leaves durableOffset untouched;
+    // the caller's flush strategy advances durableOffset once the write is confirmed durable.
+    private def writeCriticalSection(
+        streamId: StreamId,
+        expected: ExpectedOffset,
+        events: Chunk[EventEnvelope],
+        ref: AtomicRef.Unsafe[StreamState],
+        claimed: StreamState,
+        log: Log.Unsafe
+    )(using AllowUnsafe, Frame): Result[JournalAppendFailure, (StoreSeam.Handle[S], String, Long, AppendResult)] < S =
+        ensureIndexed(streamId, ref, claimed, log).map:
+            case Result.Failure(err)     => Result.fail(err)
+            case Result.Success(indexed) =>
+                // The conflict check is atomic with the write because the per-stream claim (CAS spin
+                // or parked permit) already serializes same-stream appenders: whichever appender holds
+                // the claim always observes every prior appender's write. It must compare against
+                // `lastOffset` (written), not `durableOffset` (fsynced): on the async backend the claim
+                // is released right after the write, before its own durability is confirmed, so a
+                // waiting appender can be granted the claim while the previous write is still flushing.
+                val info = writtenInfoOf(indexed)
+                if !matches(expected, info) then Result.fail(JournalConflictError(streamId, expected, info))
+                else writeFramedBatch(streamId, ref, indexed, events)
+
+    private def writeFramedBatch(
         streamId: StreamId,
         ref: AtomicRef.Unsafe[StreamState],
         s: StreamState,
         events: Chunk[EventEnvelope]
-    )(using AllowUnsafe): Result[JournalAppendFailure, AppendResult] =
-        try
+    )(using AllowUnsafe, Frame): Result[JournalAppendFailure, (StoreSeam.Handle[S], String, Long, AppendResult)] < S =
+        catchStorageError[(StoreSeam.Handle[S], String, Long, AppendResult)](s"Append to stream '${streamId.value}' failed") {
             val firstOffset = s.lastOffset + 1L
             // priorSegments holds every segment that precedes the one being written. On a rotation
             // it already ends with the just-sealed segment; with no rotation it is the prior list.
-            val (priorSegments, active) = rotateIfNeeded(streamId, s, firstOffset)
-            val handle                  = handleFor(active.path)
-            val startPos                = active.writePos
-            val bytes                   = codec.frameBatch(firstOffset, events)
-            val positions               = codec.extractPositions(firstOffset, events, bytes, startPos)
-            handle.writeAt(startPos, bytes)
-            if config.fsync == Fsync.Always then handle.sync() // fdatasync-or-stronger
-            val newWritePos = startPos + bytes.length.toLong
-            val lastOffset  = s.lastOffset + events.length.toLong
-            val updatedActive = active.copy(
-                writePos = newWritePos,
-                recordPositions = active.recordPositions ++ Chunk.from(positions)
-            )
-            val published = s.copy(
-                segments = priorSegments :+ updatedActive,
-                lastOffset = lastOffset,
-                writer = false
-            )
-            ref.set(published) // publish only after sync
-            Result.succeed(AppendResult(
-                streamId = streamId,
-                firstOffset = StreamOffset.fromUnchecked(firstOffset),
-                lastOffset = StreamOffset.fromUnchecked(lastOffset),
-                streamInfo =
-                    StreamInfo.Existing(StreamVersion.after(StreamOffset.fromUnchecked(lastOffset)), StreamOffset.fromUnchecked(lastOffset))
-            ))
-        catch
-            case e: Exception =>
-                Result.fail(JournalStorageError(s"Append to stream '${streamId.value}' failed", Present(e)))
-    end writeBatch
+            rotateIfNeeded(streamId, s, firstOffset).map {
+                case (priorSegments, active) =>
+                    val key = active.path.unsafe.show
+                    handleFor(active.path).map { handle =>
+                        val startPos  = active.writePos
+                        val bytes     = codec.frameBatch(firstOffset, events)
+                        val positions = codec.extractPositions(firstOffset, events, bytes, startPos)
+                        handle.writeAt(startPos, bytes).map { _ =>
+                            val newWritePos = startPos + bytes.length.toLong
+                            val lastOffset  = s.lastOffset + events.length.toLong
+                            val updatedActive = active.copy(
+                                writePos = newWritePos,
+                                recordPositions = active.recordPositions ++ Chunk.from(positions)
+                            )
+                            val published = s.copy(segments = priorSegments :+ updatedActive, lastOffset = lastOffset)
+                            ref.set(published)
+                            val result = AppendResult(
+                                streamId = streamId,
+                                firstOffset = StreamOffset.fromUnchecked(firstOffset),
+                                lastOffset = StreamOffset.fromUnchecked(lastOffset),
+                                streamInfo = StreamInfo.Existing(
+                                    StreamVersion.after(StreamOffset.fromUnchecked(lastOffset)),
+                                    StreamOffset.fromUnchecked(lastOffset)
+                                )
+                            )
+                            (handle, key, lastOffset, result)
+                        }
+                    }
+            }
+        }
+    end writeFramedBatch
 
     // Seal the active segment and start a new one when it has reached segmentSize (soft threshold).
     // Creates the next segment file named by the next offset, writes its header (if any).
@@ -654,191 +917,220 @@ final private[kyo] class FileJournalCore(
     // and the prior list is everything before it. Rotation: the filled segment is sealed and
     // appended to the prior list, and a fresh active segment is created.
     private def rotateIfNeeded(streamId: StreamId, s: StreamState, nextOffset: Long)(using
-        AllowUnsafe
-    )
-        : (Chunk[SegmentEntry], SegmentEntry) =
+        AllowUnsafe,
+        Frame
+    ): (Chunk[SegmentEntry], SegmentEntry) < (S & Abort[JournalStorageError]) =
         s.segments.lastMaybe match
             case Present(active) if active.writePos < config.segmentSize.toBytes =>
                 (s.segments.dropRight(1), active)
             case Present(active) =>
                 val sealed0 = active.copy(sealedSize = active.writePos)
-                val fresh   = createSegment(streamId, nextOffset)
-                (s.segments.dropRight(1) :+ sealed0, fresh)
+                createSegment(streamId, nextOffset).map(fresh => (s.segments.dropRight(1) :+ sealed0, fresh))
             case Absent =>
-                (Chunk.empty, createSegment(streamId, nextOffset))
+                createSegment(streamId, nextOffset).map(fresh => (Chunk.empty, fresh))
     end rotateIfNeeded
 
-    private def createSegment(streamId: StreamId, baseOffset: Long)(using AllowUnsafe): SegmentEntry =
+    // Directory operations (existence check, mkdir, listing) stay on the raw Path.unsafe API on
+    // every platform: they run only at segment-creation/rotation time (not per record) and are not
+    // part of the StoreSeam generalization.
+    private def createSegment(streamId: StreamId, baseOffset: Long)(using
+        AllowUnsafe,
+        Frame
+    ): SegmentEntry < (S & Abort[JournalStorageError]) =
         val dir     = streamDir(streamId)
         val existed = dir.unsafe.exists()
         discard(dir.unsafe.mkDir())
+        val segPath   = dir / codec.segmentName(baseOffset)
+        val headerLen = codec.header.length.toLong
         // A newly created stream directory's entry is not durable until its parent (streams/) is
         // fsync'd. Sync it before the segment beneath it is acknowledged, on the fsync path only
         // and only when the directory did not already exist (a rotation reuses an existing, already-
         // synced stream directory).
-        if config.fsync == Fsync.Always && !existed then store.syncDir(streamsDir)
-        val segPath   = dir / codec.segmentName(baseOffset)
-        val handle    = handleFor(segPath) // opens + registers
-        val headerLen = codec.header.length.toLong
-        if headerLen > 0L then handle.writeAt(0L, codec.header)
-        // store.syncDir after creating the segment so its directory link survives a crash; the
-        // subsequent handle.sync() in writeBatch covers the segment's data.
-        if config.fsync == Fsync.Always then store.syncDir(dir)
-        SegmentEntry(baseOffset, segPath, Chunk.empty[Long], headerLen, headerLen)
+        val syncStreamsDir: Unit < S = if config.fsync == Fsync.Always && !existed then seam.syncDir(streamsDir) else ()
+        syncStreamsDir.andThen(handleFor(segPath)).map { handle =>
+            val writeHeader: Unit < S = if headerLen > 0L then handle.writeAt(0L, codec.header) else ()
+            // seam.syncDir after creating the segment so its directory link survives a crash; the
+            // subsequent handle.sync() (or group-commit flush) covers the segment's data.
+            val syncSegmentDir: Unit < S = if config.fsync == Fsync.Always then seam.syncDir(dir) else ()
+            writeHeader.andThen(syncSegmentDir).andThen(
+                SegmentEntry(baseOffset, segPath, Chunk.empty[Long], headerLen, headerLen)
+            )
+        }
     end createSegment
 
     // --- read path ---------------------------------------------------------------------------
 
-    private def readUnsafe(
+    private def readCriticalSection(
         streamId: StreamId,
         from: StreamOffset,
         maxCount: Int,
         log: Log.Unsafe
-    )(using AllowUnsafe): Result[JournalReadFailure, Chunk[RecordedEvent]] =
+    )(using AllowUnsafe, Frame): Result[JournalReadFailure, Chunk[RecordedEvent]] < S =
         val ref = cell(streamId)
-        ensureFirstTouch(streamId, ref, log) match
+        ensureFirstTouch(streamId, ref, log).map:
             case Result.Failure(err) => Result.fail(err)
             case Result.Success(s) =>
-                if maxCount <= 0 || from.value > s.lastOffset then Result.succeed(Chunk.empty)
-                else readRange(streamId, s, from.value, math.min(from.value + maxCount.toLong - 1L, s.lastOffset))
-        end match
-    end readUnsafe
+                if maxCount <= 0 || from.value > s.durableOffset then Result.succeed(Chunk.empty)
+                else readRange(streamId, s, from.value, math.min(from.value + maxCount.toLong - 1L, s.durableOffset))
+    end readCriticalSection
 
-    private def streamInfoUnsafe(streamId: StreamId, log: Log.Unsafe)(using
-        AllowUnsafe
-    )
-        : Result[JournalStreamInfoFailure, StreamInfo] =
+    private def streamInfoCriticalSection(streamId: StreamId, log: Log.Unsafe)(using
+        AllowUnsafe,
+        Frame
+    ): Result[JournalStreamInfoFailure, StreamInfo] < S =
         val ref = cell(streamId)
-        ensureFirstTouch(streamId, ref, log).map(infoOf)
-    end streamInfoUnsafe
+        ensureFirstTouch(streamId, ref, log).map(_.map(infoOf))
+    end streamInfoCriticalSection
 
     // --- indexing / recovery entry points -----------------------------------------------------
 
     // Read path first-touch: recover under a one-shot claim if not yet indexed, then release it.
     private def ensureFirstTouch(streamId: StreamId, ref: AtomicRef.Unsafe[StreamState], log: Log.Unsafe)(using
-        AllowUnsafe
-    )
-        : Result[IndexFailure, StreamState] =
+        AllowUnsafe,
+        Frame
+    ): Result[IndexFailure, StreamState] < S =
         if ref.get().indexed then Result.succeed(ref.get())
         else
-            val claimed = claim(ref)
-            try ensureIndexed(streamId, ref, claimed, log)
-            finally
-                val cur = ref.get()
-                if cur.writer then discard(ref.compareAndSet(cur, cur.copy(writer = false)))
-            end try
+            claimSeam.acquire(streamId, ref).map { claimed =>
+                Sync.ensure(claimSeam.release(streamId, ref)) {
+                    ensureIndexed(streamId, ref, claimed, log)
+                }
+            }
     end ensureFirstTouch
 
-    // Runs recovery once for a claimed cell; publishes the recovered state (indexed=true, writer=true
-    // retained because the caller still holds the claim in the append path; ensureFirstTouch clears it).
+    // Runs recovery once for a claimed cell; publishes the recovered state. Both lastOffset and
+    // durableOffset come from recovery equally: everything scanned off disk is, by definition,
+    // already durable (recovery only ever discovers previously-fsynced or torn-and-truncated data).
     private def ensureIndexed(
         streamId: StreamId,
         ref: AtomicRef.Unsafe[StreamState],
         claimed: StreamState,
         log: Log.Unsafe
-    )(using AllowUnsafe): Result[IndexFailure, StreamState] =
+    )(using AllowUnsafe, Frame): Result[IndexFailure, StreamState] < S =
         if claimed.indexed then Result.succeed(claimed)
         else
-            recover(streamId, log) match
-                case Result.Failure(err) => Result.fail(err)
+            recover(streamId, log).map:
+                case Result.Failure(err)       => Result.fail(err)
                 case Result.Success(recovered) =>
-                    val published = recovered.copy(writer = true) // keep the claim for the append caller
+                    // Preserve the caller's claim flag: `recovered` is built from scratch by `recover`
+                    // and always carries `writer = false`, which would republish a released mutex
+                    // while the caller (append or first-touch) is still holding the claim.
+                    val published = recovered.copy(writer = claimed.writer)
                     ref.set(published)
                     Result.succeed(published)
     end ensureIndexed
 
     // --- recovery ---------------------------------------------------------------------------------
 
-    private def recover(streamId: StreamId, log: Log.Unsafe)(using AllowUnsafe): Result[IndexFailure, StreamState] =
+    private def recover(streamId: StreamId, log: Log.Unsafe)(using AllowUnsafe, Frame): Result[IndexFailure, StreamState] < S =
         val dir = streamDir(streamId)
         if !dir.unsafe.exists() then Result.succeed(StreamState.emptyIndexed)
         else
-            val segFiles = dir.unsafe.list() match
+            dir.unsafe.list() match
                 // Extension-driven filtering: codec.segmentExtension selects which segment files
                 // belong to this root, so JSONL roots recover .jsonl files and Binary roots recover .seg files.
                 case Result.Success(paths) =>
-                    paths.filter(_.unsafe.show.endsWith(codec.segmentExtension)).sortBy(_.unsafe.show)
+                    val segFiles = paths.filter(_.unsafe.show.endsWith(codec.segmentExtension)).sortBy(_.unsafe.show)
+                    if segFiles.isEmpty then Result.succeed(StreamState.emptyIndexed)
+                    else scanSegments(streamId, segFiles, log)
                 case Result.Failure(e) =>
-                    return Result.fail(JournalStorageError(s"Cannot list segments for '${streamId.value}'", Present(e)))
-            if segFiles.isEmpty then Result.succeed(StreamState.emptyIndexed)
-            else scanSegments(streamId, segFiles, log)
+                    Result.fail(JournalStorageError(s"Cannot list segments for '${streamId.value}'", Present(e)))
         end if
     end recover
 
     // Walks segments in base-offset order, validating header + records, grouping by batch
     // terminators. The trailing torn batch (no valid terminator after it) in the LAST segment
     // truncates and warns; any other CRC/framing failure is fatal Corrupted; an unknown version is
-    // fatal. Returns the recovered, indexed StreamState.
+    // fatal. Returns the recovered, indexed StreamState with durableOffset == lastOffset (recovered
+    // data is, by definition, already durable).
     private def scanSegments(streamId: StreamId, segFiles: Chunk[Path], log: Log.Unsafe)(using
-        AllowUnsafe
-    )
-        : Result[IndexFailure, StreamState] =
-        try
-            var entries    = Chunk.empty[SegmentEntry]
-            var lastOffset = -1L
-            var idx        = 0
-            while idx < segFiles.length do
-                val segPath  = segFiles(idx)
-                val isActive = idx == segFiles.length - 1
-                val handle   = handleFor(segPath)
-                val size     = handle.size()
-                codec.validateHeader(handle) match
-                    case Present(detail) => return Result.fail(JournalCorruptedError(Absent, detail))
-                    case Absent          => ()
-                val baseOffset = codec.parseSegmentName(segPath)
-                codec.scan(handle, size, isActive) match
-                    case ScanResult.Corrupt(detail) =>
-                        // `return` required: without it, Result.fail(...) is a non-unit value
-                        // discarded in a while-loop body, failing under -Wconf:msg=discarded.*value:error.
-                        return Result.fail(JournalCorruptedError(Present(streamId), s"$detail in segment '${segPath.unsafe.show}'"))
-                    case ScanResult.Ok(positions, committedEnd, tornAt) =>
-                        tornAt match
-                            case Present(from) if isActive =>
-                                handle.truncate(committedEnd)
-                                log.warn(
-                                    s"FileJournal recovered stream '${streamId.value}': truncated torn tail of segment '${segPath.unsafe.show}' from byte $from to $committedEnd"
-                                )(using frame, summon[AllowUnsafe])
-                            case _ => ()
-                        end match
-                        entries =
-                            entries :+ SegmentEntry(baseOffset, segPath, positions, if isActive then committedEnd else size, committedEnd)
-                        lastOffset = baseOffset + positions.size.toLong - 1L
-                        idx += 1
-                end match
-            end while
-            Result.succeed(StreamState(entries, lastOffset, indexed = true, writer = false))
-        catch
-            case e: Exception =>
-                Result.fail(JournalStorageError(s"Recovery of stream '${streamId.value}' failed", Present(e)))
+        AllowUnsafe,
+        Frame
+    ): Result[IndexFailure, StreamState] < S =
+        catchStorageError[Result[IndexFailure, StreamState]](s"Recovery of stream '${streamId.value}' failed") {
+            Loop.indexed(Chunk.empty[SegmentEntry], -1L) { (idx, entries, lastOffset) =>
+                if idx >= segFiles.length then
+                    Loop.done[Chunk[SegmentEntry], Long, Result[IndexFailure, StreamState]](
+                        Result.succeed(StreamState(entries, lastOffset, lastOffset, indexed = true, writer = false))
+                    )
+                else
+                    val segPath  = segFiles(idx)
+                    val isActive = idx == segFiles.length - 1
+                    handleFor(segPath).map { handle =>
+                        handle.size().map { size =>
+                            codec.validateHeader(handle).map:
+                                case Present(detail) =>
+                                    Loop.done[Chunk[SegmentEntry], Long, Result[IndexFailure, StreamState]](
+                                        Result.fail(JournalCorruptedError(Absent, detail))
+                                    )
+                                case Absent =>
+                                    val baseOffset = codec.parseSegmentName(segPath)
+                                    codec.scan(handle, size, isActive).map:
+                                        case ScanResult.Corrupt(detail) =>
+                                            Loop.done[Chunk[SegmentEntry], Long, Result[IndexFailure, StreamState]](Result.fail(
+                                                JournalCorruptedError(Present(streamId), s"$detail in segment '${segPath.unsafe.show}'")
+                                            ))
+                                        case ScanResult.Ok(positions, committedEnd, tornAt) =>
+                                            (tornAt match
+                                                case Present(from) if isActive =>
+                                                    handle.truncate(committedEnd).map { _ =>
+                                                        log.warn(
+                                                            s"FileJournal recovered stream '${streamId.value}': truncated torn tail of segment '${segPath.unsafe.show}' from byte $from to $committedEnd"
+                                                        )(using frame, summon[AllowUnsafe])
+                                                    }
+                                                case _ => (()): Unit < S
+                                            ).map { _ =>
+                                                val entry = SegmentEntry(
+                                                    baseOffset,
+                                                    segPath,
+                                                    positions,
+                                                    if isActive then committedEnd else size,
+                                                    committedEnd
+                                                )
+                                                Loop.continue(entries :+ entry, baseOffset + positions.size.toLong - 1L)
+                                            }
+                        }
+                    }
+            }
+        }.map {
+            case Result.Success(inner) => inner
+            case failure               => failure.asInstanceOf[Result[IndexFailure, StreamState]]
+        }
     end scanSegments
 
     // --- shared helpers -----------------------------------------------------------------------
 
     private def readRange(streamId: StreamId, s: StreamState, fromOff: Long, toOff: Long)(using
-        AllowUnsafe
-    )
-        : Result[JournalReadFailure, Chunk[RecordedEvent]] =
-        try
-            val out = Chunk.newBuilder[RecordedEvent]
-            var off = fromOff
-            while off <= toOff do
-                val seg    = segmentFor(s, off)
-                val handle = handleFor(seg.path)
-                val pos    = seg.recordPositions((off - seg.baseOffset).toInt)
-                codec.decodeRecordAt(handle, pos) match
-                    case Result.Failure(detail) =>
-                        return Result.fail(JournalCorruptedError(Present(streamId), detail))
-                    case Result.Success(dec) =>
-                        rebuild(streamId, dec) match
-                            case Result.Failure(err) => return Result.fail(err)
-                            case Result.Success(ev)  => discard(out += ev)
-                end match
-                off += 1L
-            end while
-            Result.succeed(Chunk.from(out.result()))
-        catch
-            case e: Exception =>
-                Result.fail(JournalStorageError(s"Read of stream '${streamId.value}' failed", Present(e)))
+        AllowUnsafe,
+        Frame
+    ): Result[JournalReadFailure, Chunk[RecordedEvent]] < S =
+        catchStorageError[Result[JournalReadFailure, Chunk[RecordedEvent]]](s"Read of stream '${streamId.value}' failed") {
+            Loop.indexed(Chunk.empty[RecordedEvent], fromOff) { (_, out, off) =>
+                if off > toOff then
+                    Loop.done[Chunk[RecordedEvent], Long, Result[JournalReadFailure, Chunk[RecordedEvent]]](Result.succeed(out))
+                else
+                    val seg    = segmentFor(s, off)
+                    val handle = handleFor(seg.path)
+                    handle.map { h =>
+                        val pos = seg.recordPositions((off - seg.baseOffset).toInt)
+                        codec.decodeRecordAt(h, pos).map:
+                            case Result.Failure(detail) =>
+                                Loop.done[Chunk[RecordedEvent], Long, Result[JournalReadFailure, Chunk[RecordedEvent]]](
+                                    Result.fail(JournalCorruptedError(Present(streamId), detail))
+                                )
+                            case Result.Success(dec) =>
+                                rebuild(streamId, dec) match
+                                    case Result.Failure(err) =>
+                                        Loop.done[Chunk[RecordedEvent], Long, Result[JournalReadFailure, Chunk[RecordedEvent]]](
+                                            Result.fail(err)
+                                        )
+                                    case Result.Success(ev) => Loop.continue(out :+ ev, off + 1L)
+                    }
+            }
+        }.map {
+            case Result.Success(inner) => inner
+            case failure               => failure.asInstanceOf[Result[JournalReadFailure, Chunk[RecordedEvent]]]
+        }
     end readRange
 
     private def rebuild(streamId: StreamId, dec: DecodedRecord)(using AllowUnsafe): Result[JournalReadFailure, RecordedEvent] =
@@ -862,24 +1154,26 @@ final private[kyo] class FileJournalCore(
             case Result.Failure(_)  => Result.fail(JournalCorruptedError(Present(streamId), "record fields failed to reconstruct"))
     end rebuild
 
-    // Opens a handle for `path` on first access, registering it in the handle map. On a CAS race,
+    // Opens a handle for `path` on first access, registering it in the handle map. On a race,
     // closes the duplicate and returns the winning handle. Path string used as the registry key;
     // paths are derived from the root directory (which callers pass as absolute in practice).
-    private def handleFor(path: Path)(using AllowUnsafe): SegmentStore.Handle =
+    private def handleFor(path: Path)(using AllowUnsafe, Frame): StoreSeam.Handle[S] < (S & Abort[JournalStorageError]) =
         val key = path.unsafe.show
         Maybe.fromOption(handles.get().get(key)) match
             case Present(h) => h
-            case Absent =>
-                val h = store.open(path)
-                @tailrec def register(): SegmentStore.Handle =
-                    val m = handles.get()
-                    Maybe.fromOption(m.get(key)) match
-                        case Present(existing) => h.close(); existing
-                        case Absent            => if handles.compareAndSet(m, m.updated(key, h)) then h else register()
-                end register
-                register()
+            case Absent     => seam.open(path).map(h => registerHandle(key, h))
         end match
     end handleFor
+
+    private def registerHandle(key: String, h: StoreSeam.Handle[S])(using AllowUnsafe, Frame): StoreSeam.Handle[S] < S =
+        val m = handles.get()
+        Maybe.fromOption(m.get(key)) match
+            case Present(existing) => h.close().map(_ => existing)
+            case Absent =>
+                if handles.compareAndSet(m, m.updated(key, h)) then h
+                else registerHandle(key, h)
+        end match
+    end registerHandle
 
     private def streamDir(streamId: StreamId): Path = streamsDir / BinarySegmentCodec.encodeStreamId(streamId)
 
@@ -896,7 +1190,20 @@ final private[kyo] class FileJournalCore(
         go(0, s.segments.length - 1)
     end segmentFor
 
+    // Durable-view: what a caller of `read`/`streamInfo` may observe. Never runs ahead of the last
+    // fsynced offset, so a written-but-not-yet-durable record is invisible outside the stream's own
+    // claim holder.
     private def infoOf(s: StreamState): StreamInfo =
+        if s.durableOffset < 0L then StreamInfo.Absent
+        else
+            val last = StreamOffset.fromUnchecked(s.durableOffset)
+            StreamInfo.Existing(StreamVersion.after(last), last)
+
+    // Written-view: what the append conflict check compares `expected` against. Same-stream appends
+    // are already serialized by the claim (CAS spin or parked permit), so this always reflects every
+    // prior appender's write by the time the next one is granted the claim, even if that prior
+    // append's own durability flush is still in flight.
+    private def writtenInfoOf(s: StreamState): StreamInfo =
         if s.lastOffset < 0L then StreamInfo.Absent
         else
             val last = StreamOffset.fromUnchecked(s.lastOffset)
@@ -910,6 +1217,21 @@ final private[kyo] class FileJournalCore(
                 actual match
                     case StreamInfo.Existing(_, lastOffset) => lastOffset == offset
                     case StreamInfo.Absent                  => false
+
+    // Wraps `v` so a thrown Exception becomes a typed JournalStorageError instead of an untyped
+    // panic, and materializes the result as a plain Result value (this class threads Result, not
+    // Abort, internally; the public append/read/streamInfo methods are the only places that cross
+    // into Abort, via Abort.get). Works identically whether S is Sync or Async: Abort.catching
+    // catches exceptions raised at any point in the wrapped `< S` computation, including inside a
+    // suspended Async continuation.
+    private def catchStorageError[A](msg: String)(v: => A < (S & Abort[JournalStorageError]))(using
+        Frame
+    ): Result[JournalStorageError, A] < S =
+        Abort.run(Abort.catching[Exception](e => JournalStorageError(msg, Present(e)))(v)).map {
+            case Result.Success(a)   => Result.succeed(a)
+            case Result.Failure(err) => Result.fail(err)
+            case Result.Panic(e)     => throw e
+        }
 
 end FileJournalCore
 
@@ -938,90 +1260,90 @@ private[kyo] object FileJournalCore:
         if !heldRoots.compareAndSet(snap, snap - key) then unregisterRoot(key)
 
     /** Opens (or creates) a file-backed journal rooted at `dir`, acquiring the single-owner lock
-      * via the supplied `SegmentStore`. Internal; the public entry point is the platform-specific
-      * `Journal.Backend.file` extension.
+      * via the supplied [[StoreSeam]]. Internal; the public entry points are the platform-specific
+      * `Journal.Backend.file` / `Journal.Backend.fileAsync` extensions.
       */
-    private[kyo] def open(
+    private[kyo] def open[S >: (Async & Abort[Throwable]) <: Sync](
         dir: Path,
         config: FileJournal.Config,
-        store: SegmentStore,
-        payloadCodec: EventPayloadCodec
+        seam: StoreSeam[S],
+        payloadCodec: EventPayloadCodec,
+        claimSeam: ClaimSeam[S],
+        flushStrategyFor: FileJournal.Fsync => FlushStrategy[S]
     )(using
         frame: Frame
     )
-        : Journal.Backend[Sync] < (Sync & Scope & Abort[JournalStorageError]) =
+        : Journal.Backend[S] < (Sync & Scope & Abort[JournalStorageError]) =
         Scope.acquireRelease(
             // Unsafe: creates the root, streams/ via Path.Unsafe and acquires the platform lock via
-            // the injected SegmentStore; raw platform I/O is the only path to locking.
-            Sync.Unsafe.defer(Abort.get(FileJournalCore.acquire(dir, config, store, payloadCodec)))
+            // the injected StoreSeam; raw platform I/O is the only path to locking.
+            Sync.Unsafe.defer(FileJournalCore.acquire(dir, config, seam, payloadCodec, claimSeam, flushStrategyFor).map(Abort.get))
         )(backend =>
             // Unsafe: bridges the raw platform release calls (lock release, handle closes) into the
             // Sync tier for the Scope.acquireRelease finalization callback.
             Sync.Unsafe.defer(backend.release())
         )
 
-    private def acquire(
+    private def acquire[S >: (Async & Abort[Throwable]) <: Sync](
         dir: Path,
         config: FileJournal.Config,
-        store: SegmentStore,
-        payloadCodec: EventPayloadCodec
+        seam: StoreSeam[S],
+        payloadCodec: EventPayloadCodec,
+        claimSeam: ClaimSeam[S],
+        flushStrategyFor: FileJournal.Fsync => FlushStrategy[S]
     )(using
         frame: Frame,
         allow: AllowUnsafe
-    )
-        : Result[JournalStorageError, FileJournalCore] =
+    ): Result[JournalStorageError, FileJournalCore[S]] < Sync =
         // Use show as the canonical in-process key. Callers are expected to pass absolute paths
         // (Path.tempDir returns absolute; production usage is absolute); relative paths with the
         // same last component but different cwd would collide, which matches the platform-lock's
         // own cwd-relative limitation.
-        val rootKey    = dir.unsafe.show
-        var registered = false
-        try
-            if dir.unsafe.exists() && !dir.unsafe.isDirectory() then
-                Result.fail(JournalStorageError(s"Journal root '${dir.unsafe.show}' exists and is not a directory", Absent))
-            else
-                if !registerRoot(rootKey) then
-                    return Result.fail(JournalStorageError(s"Journal root '${dir.unsafe.show}' is locked by this process", Absent))
-                registered = true
-                discard(dir.unsafe.mkDir())
-                val streamsDir = dir / "streams"
-                discard(streamsDir.unsafe.mkDir())
-                store.acquireLock(dir) match
-                    case Result.Failure(err) =>
-                        unregisterRoot(rootKey)
-                        Result.fail(err)
-                    case Result.Success(acquiredLock) =>
-                        // FORMAT marker check/write runs after lock acquisition to prevent a TOCTOU
-                        // race where two processes both see a fresh root and both write FORMAT.
-                        checkOrWriteFormatMarker(dir, config.format) match
-                            case Result.Failure(err) =>
-                                // Unsafe: release the lock before propagating the format error.
-                                discard(Result.catching[Throwable](acquiredLock.release()))
-                                unregisterRoot(rootKey)
-                                Result.fail(err)
-                            case Result.Success(validatedFormat) =>
-                                val codec = validatedFormat match
-                                    case FileJournal.SegmentFormat.Binary => BinarySegmentCodec
-                                    case FileJournal.SegmentFormat.Jsonl  => new JsonlSegmentCodec(payloadCodec)
-                                Result.succeed(
-                                    new FileJournalCore(
-                                        rootKey,
-                                        streamsDir,
-                                        config,
-                                        store,
-                                        acquiredLock,
-                                        codec,
-                                        payloadCodec
-                                    )
+        val rootKey = dir.unsafe.show
+        if dir.unsafe.exists() && !dir.unsafe.isDirectory() then
+            Result.fail(JournalStorageError(s"Journal root '${dir.unsafe.show}' exists and is not a directory", Absent))
+        else if !registerRoot(rootKey) then
+            Result.fail(JournalStorageError(s"Journal root '${dir.unsafe.show}' is locked by this process", Absent))
+        else
+            discard(dir.unsafe.mkDir())
+            val streamsDir = dir / "streams"
+            discard(streamsDir.unsafe.mkDir())
+            Abort.run(seam.acquireLock(dir)).map {
+                case Result.Failure(err) =>
+                    unregisterRoot(rootKey)
+                    Result.fail(err)
+                case Result.Panic(e) =>
+                    unregisterRoot(rootKey)
+                    Result.fail(JournalStorageError(s"Failed to open journal root '${dir.unsafe.show}'", Present(e)))
+                case Result.Success(acquiredLock) =>
+                    // FORMAT marker check/write runs after lock acquisition to prevent a TOCTOU
+                    // race where two processes both see a fresh root and both write FORMAT.
+                    checkOrWriteFormatMarker(dir, config.format) match
+                        case Result.Failure(err) =>
+                            // Unsafe: release the lock before propagating the format error.
+                            discard(Result.catching[Throwable](acquiredLock.release()))
+                            unregisterRoot(rootKey)
+                            Result.fail(err)
+                        case Result.Success(validatedFormat) =>
+                            val codec = validatedFormat match
+                                case FileJournal.SegmentFormat.Binary => BinarySegmentCodec
+                                case FileJournal.SegmentFormat.Jsonl  => new JsonlSegmentCodec(payloadCodec)
+                            Result.succeed(
+                                new FileJournalCore[S](
+                                    rootKey,
+                                    streamsDir,
+                                    config,
+                                    seam,
+                                    acquiredLock,
+                                    codec,
+                                    payloadCodec,
+                                    claimSeam,
+                                    flushStrategyFor(config.fsync)
                                 )
-                        end match
-                end match
-            end if
-        catch
-            case e: Exception =>
-                if registered then unregisterRoot(rootKey)
-                Result.fail(JournalStorageError(s"Failed to open journal root '${dir.unsafe.show}'", Present(e)))
-        end try
+                            )
+                    end match
+            }
+        end if
     end acquire
 
     // Reads or writes the FORMAT marker file in `dir`. Must be called AFTER the process-level

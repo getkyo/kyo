@@ -2,9 +2,14 @@ package kyo
 
 /** Behavioral contract every [[Journal.Backend]] implementation must satisfy: offset assignment, expected-offset checks, batch atomicity, bounded reads, stream inspection, and append serialization.
   *
-  * Extend with a factory for the backend under test; every backend must pass unchanged.
+  * Generalized over the backend's own effect `S` (bounded between `Async` and `Sync`, mirroring
+  * [[kyo.internal.FileJournalCore]]'s own bound) so the identical suite drives both the Sync
+  * backends (in-memory, file) and the Async file backend without an explicit effect isolate: since
+  * `Async <: S` always holds within that bound, `Async & S` collapses to `Async` at every fiber-fork
+  * call site below, so the standard derived isolate applies unchanged. Extend with a factory for the
+  * backend under test; every backend must pass unchanged.
   */
-abstract class JournalBackendTest(newBackend: => Journal.Backend[Sync] < (Sync & Scope)) extends kyo.test.Test[Any]:
+abstract class JournalBackendTest[S >: Async <: Sync](newBackend: => Journal.Backend[S] < (S & Scope)) extends kyo.test.Test[Any]:
 
     private def valid[A](r: Result[JournalInvalidIdentifierError, A]): A =
         r.getOrElse(throw new AssertionError("expected valid identifier"))
