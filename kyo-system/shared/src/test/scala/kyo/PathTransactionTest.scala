@@ -162,4 +162,66 @@ class PathTransactionTest extends kyo.test.Test[Any]:
         }
     }
 
+    // commit-scope boundary: overlay returned by virtual must be used inside a PathWrite scope
+
+    "virtual commit outside ambient path scope leaves PathWrite unresolved" in {
+        Path.Service.inMemory.map { lower =>
+            val p = Path("virtual-scope-boundary.txt")
+            // PathWrite is discharged by runWith here; overlay escapes with no handler in scope
+            Path.runWith(lower)(Path.virtual(p.write("staged"))).map { case ((), overlay) =>
+                // overlay.commit types as Unit < (Sync & Abort[FileException] & Abort[CommitConflict])
+                // but at runtime re-suspends Tag[PathWrite] with no ambient handler.
+                // evalNow returns absent, confirming the PathWrite suspension is unresolved.
+                val computation = Abort.run[CommitConflict](Abort.run[FileException](overlay.commit))
+                assert(computation.evalNow.isEmpty, "commit outside scope must leave PathWrite unresolved")
+                // Lower is untouched: no commit reached the backend
+                Path.runWith(lower)(p.exists).map(e => assert(!e))
+            }
+        }
+    }
+
+    // nesting composition: sandbox inside transaction and transaction inside sandbox
+
+    "sandbox inside transaction discards sandboxed writes while transaction commits its own writes" in {
+        Path.Service.inMemory.map { lower =>
+            val pOuter     = Path("sit-outer.txt")
+            val pSandboxed = Path("sit-sandboxed.txt")
+            Abort.run[CommitConflict](
+                Path.runWith(lower)(
+                    Path.transaction(
+                        pOuter.write("outer").andThen(
+                            Path.sandbox(pSandboxed.write("sandboxed"))
+                        )
+                    )
+                )
+            ).map {
+                case Result.Success(()) =>
+                    // transaction committed pOuter; sandbox discarded pSandboxed
+                    Path.runWith(lower)(pOuter.read).map(v => assert(v == "outer")).andThen(
+                        Path.runWith(lower)(pSandboxed.exists).map(e => assert(!e))
+                    )
+                case Result.Failure(cc) =>
+                    assert(false, s"unexpected CommitConflict: $cc")
+            }
+        }
+    }
+
+    "transaction inside sandbox stages writes that sandbox discards; lower unchanged after rollback" in {
+        Path.Service.inMemory.map { lower =>
+            val p = Path("tis-inner.txt")
+            // sandbox is outermost: inner transaction commits into sandbox overlay,
+            // then sandbox rolls back; lower never receives the writes
+            Abort.run[CommitConflict](
+                Path.runWith(lower)(
+                    Path.sandbox(Path.transaction(p.write("inner")))
+                )
+            ).map {
+                case Result.Success(()) =>
+                    Path.runWith(lower)(p.exists).map(e => assert(!e))
+                case Result.Failure(cc) =>
+                    assert(false, s"unexpected CommitConflict: $cc")
+            }
+        }
+    }
+
 end PathTransactionTest

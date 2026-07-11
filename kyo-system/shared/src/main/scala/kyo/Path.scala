@@ -621,6 +621,10 @@ object Path extends PathPlatformSpecific:
 
     /** Runs `program` against a fresh overlay and returns the overlay alongside the result, so the
       * caller can inspect, commit, discard, or choose a conflict policy after the block.
+      *
+      * The `commit` and `rollback` operations on the returned overlay must run within an ambient
+      * path scope (the same or an enclosing `runWith` call) for them to reach the backend.
+      * Calling them after PathWrite is discharged leaves path operations unresolved at runtime.
       */
     def virtual[A, S](program: A < (PathWrite & S))(using Frame): (A, Service.Overlay[Sync]) < (PathWrite & S) =
         // Unsafe: create overlay directly without Scope; caller controls commit/discard after the block
