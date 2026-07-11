@@ -1377,7 +1377,7 @@ class YamlTest extends kyo.test.Test[Any]:
             val value   = YamlBytesHolder(Span.from(Array[Byte](1, 2, 3)))
             val yaml    = Yaml.encode(value)
             val decoded = Yaml.decode[YamlBytesHolder](yaml)
-            assert(decoded.getOrThrow.data.toArray.toSeq == value.data.toArray.toSeq)
+            assert(CodecTestSupport.sameBytes(decoded.getOrThrow.data, value.data))
         }
 
         "round trips Instant and Duration as quoted scalars" in {

@@ -718,7 +718,7 @@ class StructureTest extends kyo.test.Test[Any]:
                 val v     = Structure.Value.primitive(bytes)
                 v match
                     case Structure.Value.Bytes(value) =>
-                        assert(value.toArray.toSeq == bytes.toArray.toSeq)
+                        assert(CodecTestSupport.sameBytes(value, bytes))
                     case other => fail(s"Expected Bytes, got $other")
                 end match
             }
@@ -794,7 +794,7 @@ class StructureTest extends kyo.test.Test[Any]:
                 val dv    = summon[Schema[Span[Byte]]].toStructureValue(bytes)
                 dv match
                     case Structure.Value.Bytes(value) =>
-                        assert(value.toArray.toSeq == bytes.toArray.toSeq)
+                        assert(CodecTestSupport.sameBytes(value, bytes))
                     case other => fail(s"Expected Bytes, got $other")
                 end match
             }
@@ -1133,7 +1133,7 @@ class StructureTest extends kyo.test.Test[Any]:
             val json = w.resultString
             val r    = JsonReader(json)
             val got  = r.bytes()
-            assert(got.toArray.toSeq == data.toArray.toSeq)
+            assert(CodecTestSupport.sameBytes(got, data))
         }
 
         "json bigInt round-trip" in {
@@ -1204,7 +1204,7 @@ class StructureTest extends kyo.test.Test[Any]:
             val r   = new ProtobufReader(w.resultBytes)
             val _   = r.field()
             val got = r.bytes()
-            assert(got.toArray.toSeq == data.toArray.toSeq)
+            assert(CodecTestSupport.sameBytes(got, data))
         }
 
         "protobuf bigInt round-trip" in {
@@ -1297,11 +1297,11 @@ class StructureTest extends kyo.test.Test[Any]:
             w.bytes(data)
             val dv = w.getResult
             dv match
-                case Structure.Value.Bytes(value) => assert(value.toArray.toSeq == data.toArray.toSeq)
+                case Structure.Value.Bytes(value) => assert(CodecTestSupport.sameBytes(value, data))
                 case other                        => fail(s"Expected Bytes, got $other")
             val r   = new StructureValueReader(dv)
             val got = r.bytes()
-            assert(got.toArray.toSeq == data.toArray.toSeq)
+            assert(CodecTestSupport.sameBytes(got, data))
         }
 
         "legacy string bytes decode" in {
@@ -1309,7 +1309,7 @@ class StructureTest extends kyo.test.Test[Any]:
             val encoded = java.util.Base64.getEncoder.encodeToString(data.toArray)
             val r       = new StructureValueReader(Structure.Value.Str(encoded))
             val got     = r.bytes()
-            assert(got.toArray.toSeq == data.toArray.toSeq)
+            assert(CodecTestSupport.sameBytes(got, data))
         }
 
         "base64-shaped string remains string" in {

@@ -66,7 +66,7 @@ class BsonTest extends kyo.test.Test[Any]:
             val value  = BsonPerson("Bob", 41)
             val config = Bson.Config(maxDepth = 8, maxCollectionSize = 16)
 
-            assert(Bson.encode(value, config).toArray.toSeq == Bson.encodeBytes(value, config).toArray.toSeq)
+            assert(CodecTestSupport.sameBytes(Bson.encode(value, config), Bson.encodeBytes(value, config)))
             assert(Bson.decodeBytes[BsonPerson](Bson.encode(value, config), config).getOrThrow == value)
         }
 
@@ -163,7 +163,7 @@ class BsonTest extends kyo.test.Test[Any]:
                 3,
                 0
             ))
-            assert(Bson.decode[BsonBytes](Span.from(bytes.toArray)).getOrThrow.data.toArray.toSeq == data.toArray.toSeq)
+            assert(CodecTestSupport.sameBytes(Bson.decode[BsonBytes](Span.from(bytes.toArray)).getOrThrow.data, data))
 
             val invalidSubtype = bytes.toArray
             invalidSubtype(14) = 0x80.toByte

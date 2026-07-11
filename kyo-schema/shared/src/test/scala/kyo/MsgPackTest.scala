@@ -12,9 +12,6 @@ class MsgPackTest extends kyo.test.Test[Any]:
 
     given CanEqual[Any, Any] = CanEqual.derived
 
-    private def roundTrip[A](value: A)(using Schema[A], CanEqual[A, A]): A =
-        MsgPack.decode[A](MsgPack.encode[A](value)).getOrThrow
-
     // ===== writer/reader primitives =====
 
     "writer/reader primitives" - {
@@ -102,17 +99,17 @@ class MsgPackTest extends kyo.test.Test[Any]:
     "encode/decode" - {
 
         "simple case class round-trip" in {
-            assert(roundTrip(MPPerson("Alice", 30)) == MPPerson("Alice", 30))
+            assert(CodecTestSupport.roundTrip[MPPerson, MsgPack](MPPerson("Alice", 30)) == MPPerson("Alice", 30))
         }
 
         "all-primitive case class round-trip" in {
             val v = MPAllPrims(true, -7, 9_000_000_000L, 2.5f, 1.25, 12.toShort, (-3).toByte, 'k', "kyo")
-            assert(roundTrip(v) == v)
+            assert(CodecTestSupport.roundTrip[MPAllPrims, MsgPack](v) == v)
         }
 
         "deterministic encoding" in {
             val v = MPPerson("Charlie", 40)
-            assert(MsgPack.encode(v).toArray.toSeq == MsgPack.encode(v).toArray.toSeq)
+            assert(CodecTestSupport.sameBytes(MsgPack.encode(v), MsgPack.encode(v)))
         }
 
         "distinct values encode distinctly" in {
@@ -121,7 +118,7 @@ class MsgPackTest extends kyo.test.Test[Any]:
 
         "nested case class with collection round-trip" in {
             val v = MPNested(MPPerson("Alice", 30), List("a", "b", "c"))
-            assert(roundTrip(v) == v)
+            assert(CodecTestSupport.roundTrip[MPNested, MsgPack](v) == v)
         }
     }
 
@@ -130,37 +127,37 @@ class MsgPackTest extends kyo.test.Test[Any]:
     "containers" - {
 
         "Option present and absent round-trip" in {
-            assert(roundTrip(MPOpt("a", Some("nick"), Maybe(7))) == MPOpt("a", Some("nick"), Maybe(7)))
-            assert(roundTrip(MPOpt("a", None, Maybe.empty)) == MPOpt("a", None, Maybe.empty))
+            assert(CodecTestSupport.roundTrip[MPOpt, MsgPack](MPOpt("a", Some("nick"), Maybe(7))) == MPOpt("a", Some("nick"), Maybe(7)))
+            assert(CodecTestSupport.roundTrip[MPOpt, MsgPack](MPOpt("a", None, Maybe.empty)) == MPOpt("a", None, Maybe.empty))
         }
 
         "Map[String, Int] round-trip preserves arbitrary keys" in {
             val v = MPMap(Map("x" -> 1, "really long key name" -> 2, "é" -> 3))
-            assert(roundTrip(v) == v)
+            assert(CodecTestSupport.roundTrip[MPMap, MsgPack](v) == v)
         }
 
         "Span[Byte] round-trip" in {
             val original = Span.from(Array[Byte](1, 2, 3, -1, 0, 127))
             val bytes    = MsgPack.encode(MPBytes(original))
             val decoded  = MsgPack.decode[MPBytes](bytes).getOrThrow
-            assert(decoded.data.toArray.toSeq == original.toArray.toSeq)
+            assert(CodecTestSupport.sameBytes(decoded.data, original))
         }
 
         "BigInt and BigDecimal round-trip losslessly" in {
             val v = MPBig(BigInt("123456789012345678901234567890"), BigDecimal("3.141592653589793238462643383279"))
-            assert(roundTrip(v) == v)
+            assert(CodecTestSupport.roundTrip[MPBig, MsgPack](v) == v)
         }
 
         "recursive tree round-trip" in {
             val tree = TreeNode(1, List(TreeNode(2, Nil), TreeNode(3, List(TreeNode(4, Nil)))))
-            assert(roundTrip(tree) == tree)
+            assert(CodecTestSupport.roundTrip[TreeNode, MsgPack](tree) == tree)
         }
 
         "Result round-trip" in {
             val ok: Result[String, Int]  = Result.succeed(42)
             val err: Result[String, Int] = Result.fail("boom")
-            assert(roundTrip(ok) == ok)
-            assert(roundTrip(err) == err)
+            assert(CodecTestSupport.roundTrip[Result[String, Int], MsgPack](ok) == ok)
+            assert(CodecTestSupport.roundTrip[Result[String, Int], MsgPack](err) == err)
         }
     }
 
@@ -171,19 +168,19 @@ class MsgPackTest extends kyo.test.Test[Any]:
         "sealed trait variants discriminate" in {
             val c: MPShape = MPCircle(2.0)
             val d: MPShape = MPDot
-            assert(roundTrip(c) == c)
-            assert(roundTrip(d) == d)
+            assert(CodecTestSupport.roundTrip[MPShape, MsgPack](c) == c)
+            assert(CodecTestSupport.roundTrip[MPShape, MsgPack](d) == d)
         }
 
         "enum round-trips every case" in {
-            assert(roundTrip[MPColor](MPColor.Red) == MPColor.Red)
-            assert(roundTrip[MPColor](MPColor.Green) == MPColor.Green)
-            assert(roundTrip[MPColor](MPColor.Blue) == MPColor.Blue)
+            assert(CodecTestSupport.roundTrip[MPColor, MsgPack](MPColor.Red) == MPColor.Red)
+            assert(CodecTestSupport.roundTrip[MPColor, MsgPack](MPColor.Green) == MPColor.Green)
+            assert(CodecTestSupport.roundTrip[MPColor, MsgPack](MPColor.Blue) == MPColor.Blue)
         }
 
         "shared MTShape via MTDrawing round-trip" in {
             val v = MTDrawing("d", MTCircle(1.5))
-            assert(roundTrip(v) == v)
+            assert(CodecTestSupport.roundTrip[MTDrawing, MsgPack](v) == v)
         }
     }
 
@@ -242,7 +239,7 @@ class MsgPackTest extends kyo.test.Test[Any]:
 
         "default (Primitive instant, Lossless duration) round-trips at nanosecond precision" in {
             val v = MPTime(instant, duration)
-            assert(roundTrip(v) == v)
+            assert(CodecTestSupport.roundTrip[MPTime, MsgPack](v) == v)
         }
 
         "Instant Extension mode round-trips losslessly" in {
@@ -308,7 +305,7 @@ class MsgPackTest extends kyo.test.Test[Any]:
 
         "FiniteDuration round-trips (Lossless and Compat)" in {
             val v = MPFinite(5.seconds, 250.millis)
-            assert(roundTrip(v) == v)
+            assert(CodecTestSupport.roundTrip[MPFinite, MsgPack](v) == v)
             given MsgPack = MsgPack(Config(durationEncoding = DurationEncoding.Compat))
             assert(MsgPack.decode[MPFinite](MsgPack.encode(v)).getOrThrow == v)
         }
@@ -482,7 +479,7 @@ class MsgPackTest extends kyo.test.Test[Any]:
         "list sizes cross fixarray/array16/array32 boundaries" in {
             List(0, 15, 16, 65535, 65536).foreach { n =>
                 val v = MPList(List.fill(n)(7))
-                assert(roundTrip(v) == v, s"list size $n failed")
+                assert(CodecTestSupport.roundTrip[MPList, MsgPack](v) == v, s"list size $n failed")
             }
             succeed
         }
@@ -490,7 +487,7 @@ class MsgPackTest extends kyo.test.Test[Any]:
         "map sizes cross fixmap/map16/map32 boundaries" in {
             List(0, 15, 16, 65536).foreach { n =>
                 val v = MPMap((0 until n).map(i => s"k$i" -> i).toMap)
-                assert(roundTrip(v) == v, s"map size $n failed")
+                assert(CodecTestSupport.roundTrip[MPMap, MsgPack](v) == v, s"map size $n failed")
             }
             succeed
         }
@@ -499,13 +496,13 @@ class MsgPackTest extends kyo.test.Test[Any]:
             val v = MPWide(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17)
             // 17 entries => map16 header 0xde
             assert((MsgPack.encode(v).toArray(0) & 0xff) == 0xde)
-            assert(roundTrip(v) == v)
+            assert(CodecTestSupport.roundTrip[MPWide, MsgPack](v) == v)
         }
 
         "empty containers round-trip" in {
-            assert(roundTrip(MPList(Nil)) == MPList(Nil))
-            assert(roundTrip(MPMap(Map.empty)) == MPMap(Map.empty))
-            assert(roundTrip(MPPerson("", 0)) == MPPerson("", 0))
+            assert(CodecTestSupport.roundTrip[MPList, MsgPack](MPList(Nil)) == MPList(Nil))
+            assert(CodecTestSupport.roundTrip[MPMap, MsgPack](MPMap(Map.empty)) == MPMap(Map.empty))
+            assert(CodecTestSupport.roundTrip[MPPerson, MsgPack](MPPerson("", 0)) == MPPerson("", 0))
             val emptyBytes = MsgPack.decode[MPBytes](MsgPack.encode(MPBytes(Span.empty))).getOrThrow
             assert(emptyBytes.data.toArray.isEmpty)
         }

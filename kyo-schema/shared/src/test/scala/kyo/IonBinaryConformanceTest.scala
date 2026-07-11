@@ -4,8 +4,8 @@ package kyo
 // products, lists, maps, options, a sum carrying bytes, instants, durations, bigints, and
 // bigdecimals. Every fixture is a fixed literal, never randomly generated. ---
 
-case class IBCFPoint(x: Int, y: Int) derives CanEqual, Schema
-case class IBCFProduct(name: String, point: IBCFPoint) derives CanEqual, Schema
+given Schema[MTPoint] = Schema.derived[MTPoint]
+case class IBCFProduct(name: String, point: MTPoint) derives CanEqual, Schema
 
 sealed trait IBCFSum derives CanEqual, Schema
 case class IBCFSumCount(count: Int) extends IBCFSum derives CanEqual
@@ -60,9 +60,9 @@ class IonBinaryConformanceTest extends kyo.test.Test[Any]:
 
     private def assertBytesCrossFormatRoundTrip(value: Span[Byte])(using kyo.test.AssertScope): Unit =
         val textDecoded = Ion.decode[Span[Byte]](Ion.encode(value)).getOrThrow
-        assert(textDecoded.toArray.toSeq == value.toArray.toSeq, s"Ion text oracle mismatch")
+        assert(CodecTestSupport.sameBytes(textDecoded, value), s"Ion text oracle mismatch")
         val binaryDecoded = IonBinary.decode[Span[Byte]](IonBinary.encode(value)).getOrThrow
-        assert(binaryDecoded.toArray.toSeq == textDecoded.toArray.toSeq, s"Ion Binary mismatch vs text oracle")
+        assert(CodecTestSupport.sameBytes(binaryDecoded, textDecoded), s"Ion Binary mismatch vs text oracle")
     end assertBytesCrossFormatRoundTrip
 
     "wire validation" - {
@@ -218,11 +218,11 @@ class IonBinaryConformanceTest extends kyo.test.Test[Any]:
     "cross-format round-trip sweep" - {
 
         "round trips a simple product" in {
-            assertCrossFormatRoundTrip(IBCFPoint(3, 4))
+            assertCrossFormatRoundTrip(MTPoint(3, 4))
         }
 
         "round trips a nested product" in {
-            assertCrossFormatRoundTrip(IBCFProduct("origin", IBCFPoint(0, 0)))
+            assertCrossFormatRoundTrip(IBCFProduct("origin", MTPoint(0, 0)))
         }
 
         "round trips a list of ints" in {
@@ -234,7 +234,7 @@ class IonBinaryConformanceTest extends kyo.test.Test[Any]:
         }
 
         "round trips a list of products" in {
-            assertCrossFormatRoundTrip(List(IBCFPoint(1, 1), IBCFPoint(2, 2)))
+            assertCrossFormatRoundTrip(List(MTPoint(1, 1), MTPoint(2, 2)))
         }
 
         "round trips a map" in {
@@ -296,7 +296,7 @@ class IonBinaryConformanceTest extends kyo.test.Test[Any]:
             (textDecoded, binaryDecoded) match
                 case (IBCFBytesPayload(textData), IBCFBytesPayload(binaryData)) =>
                     assert(textData.toArray.toSeq == Seq[Byte](9, 8, 7), s"Ion text oracle mismatch: $textDecoded")
-                    assert(binaryData.toArray.toSeq == textData.toArray.toSeq, s"Ion Binary mismatch vs text oracle: $binaryDecoded")
+                    assert(CodecTestSupport.sameBytes(binaryData, textData), s"Ion Binary mismatch vs text oracle: $binaryDecoded")
                 case other =>
                     fail(s"expected both decodes to be IBCFBytesPayload, got $other")
             end match
@@ -304,7 +304,7 @@ class IonBinaryConformanceTest extends kyo.test.Test[Any]:
 
         "round trips a combined product systematically composing every category" in {
             val value = IBCFCombined(
-                product = IBCFProduct("Alice", IBCFPoint(1, 2)),
+                product = IBCFProduct("Alice", MTPoint(1, 2)),
                 items = List(1, 2, 3),
                 tags = Map("a" -> 1, "b" -> 2),
                 nickname = Some("Ally"),

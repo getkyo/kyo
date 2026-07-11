@@ -177,7 +177,7 @@ class IonBinaryTest extends kyo.test.Test[Any]:
         "encodeBytes and decodeBytes are direct aliases of encode and decode" in {
             val value   = MTPerson("Alice", 30)
             val encoded = IonBinary.encodeBytes(value)
-            assert(encoded.toArray.toSeq == IonBinary.encode(value).toArray.toSeq)
+            assert(CodecTestSupport.sameBytes(encoded, IonBinary.encode(value)))
             assert(IonBinary.decodeBytes[MTPerson](encoded).getOrThrow == value)
         }
     }

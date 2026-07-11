@@ -665,7 +665,7 @@ class CodecTest extends kyo.test.Test[Any]:
     "bytes codec round-trip" in {
         val value = Span.from(Array[Byte](1, 2, 3))
         val got   = jsonRoundTrip(value)
-        assert(got.toArray.toSeq == value.toArray.toSeq)
+        assert(CodecTestSupport.sameBytes(got, value))
     }
 
     "writeStructureValue writes bytes event" in {
@@ -852,7 +852,7 @@ class CodecTest extends kyo.test.Test[Any]:
 
     private def sameKitchenSink(a: CFSKitchenSink, b: CFSKitchenSink): Boolean =
         a.fullName == b.fullName &&
-            a.payload.toArray.toSeq == b.payload.toArray.toSeq &&
+            CodecTestSupport.sameBytes(a.payload, b.payload) &&
             a.at == b.at &&
             a.span == b.span &&
             a.items == b.items &&
@@ -867,105 +867,72 @@ class CodecTest extends kyo.test.Test[Any]:
         assert(sameKitchenSink(decoded.getOrThrow, kitchenSinkValue))
     }
 
-    "kitchen sink product round trips through Ion text" in {
-        val schema  = summon[Schema[CFSKitchenSink]]
-        val decoded = schema.decode[Ion](schema.encode[Ion](kitchenSinkValue))
-        assert(sameKitchenSink(decoded.getOrThrow, kitchenSinkValue))
-    }
-
-    "kitchen sink product round trips through Ion Binary" in {
-        val schema  = summon[Schema[CFSKitchenSink]]
-        val decoded = schema.decode[IonBinary](schema.encode[IonBinary](kitchenSinkValue))
-        assert(sameKitchenSink(decoded.getOrThrow, kitchenSinkValue))
-    }
-
-    "kitchen sink product round trips through BSON" in {
-        val schema  = summon[Schema[CFSKitchenSink]]
-        val decoded = schema.decode[Bson](schema.encode[Bson](kitchenSinkValue))
-        assert(sameKitchenSink(decoded.getOrThrow, kitchenSinkValue))
-    }
-
-    "kitchen sink product round trips through MsgPack" in {
-        val schema  = summon[Schema[CFSKitchenSink]]
-        val decoded = schema.decode[MsgPack](schema.encode[MsgPack](kitchenSinkValue))
-        assert(sameKitchenSink(decoded.getOrThrow, kitchenSinkValue))
-    }
-
-    "kitchen sink product round trips through JSON" in {
-        val schema  = summon[Schema[CFSKitchenSink]]
-        val decoded = schema.decode[Json](schema.encode[Json](kitchenSinkValue))
-        assert(sameKitchenSink(decoded.getOrThrow, kitchenSinkValue))
-    }
-
-    "kitchen sink product round trips through YAML" in {
-        val schema  = summon[Schema[CFSKitchenSink]]
-        val decoded = schema.decode[Yaml](schema.encode[Yaml](kitchenSinkValue))
-        assert(sameKitchenSink(decoded.getOrThrow, kitchenSinkValue))
-    }
+    // One assertion per self-describing codec, table-driven so a new codec is one row, not a
+    // copy-pasted block. StructureValue stays separate above: it round trips through
+    // Structure.encode/decode, not the schema.encode[C]/decode[C] path these share.
+    for (codecName, decode) <- List[(String, () => CFSKitchenSink)](
+            "Ion text"   -> (() => CodecTestSupport.roundTrip[CFSKitchenSink, Ion](kitchenSinkValue)),
+            "Ion Binary" -> (() => CodecTestSupport.roundTrip[CFSKitchenSink, IonBinary](kitchenSinkValue)),
+            "BSON"       -> (() => CodecTestSupport.roundTrip[CFSKitchenSink, Bson](kitchenSinkValue)),
+            "MsgPack"    -> (() => CodecTestSupport.roundTrip[CFSKitchenSink, MsgPack](kitchenSinkValue)),
+            "JSON"       -> (() => CodecTestSupport.roundTrip[CFSKitchenSink, Json](kitchenSinkValue)),
+            "YAML"       -> (() => CodecTestSupport.roundTrip[CFSKitchenSink, Yaml](kitchenSinkValue))
+        )
+    do
+        s"kitchen sink product round trips through $codecName" in {
+            assert(sameKitchenSink(decode(), kitchenSinkValue))
+        }
+    end for
 
     // --- Field transform + Map field regression matrix -------------------------------------
 
     private val transformMapRenameValue = TransformMapRename("Alice", Map("a" -> 1, "b" -> 2, "c" -> 3))
 
+    // JSON/MsgPack/BSON share the same helper-backed matrix as the Yaml/Ion/Protobuf rows below;
+    // assertRenameOrDenyRoundTrip and assertDropRoundTripSurvives are defined later in the class.
     "schema-level rename alongside a Map field decodes the Map correctly through JSON" in {
-        val schema  = summon[Schema[TransformMapRename]]
-        val decoded = schema.decode[Json](schema.encode[Json](transformMapRenameValue))
-        assert(decoded == Result.Success(transformMapRenameValue), s"rename+Map JSON round trip: $decoded")
+        assertRenameOrDenyRoundTrip[TransformMapRename, Json](transformMapRenameValue)
     }
 
     "schema-level rename alongside a Map field decodes the Map correctly through MsgPack" in {
-        val schema  = summon[Schema[TransformMapRename]]
-        val decoded = schema.decode[MsgPack](schema.encode[MsgPack](transformMapRenameValue))
-        assert(decoded == Result.Success(transformMapRenameValue), s"rename+Map MsgPack round trip: $decoded")
+        assertRenameOrDenyRoundTrip[TransformMapRename, MsgPack](transformMapRenameValue)
     }
 
     "schema-level rename alongside a Map field decodes the Map correctly through BSON" in {
-        val schema  = summon[Schema[TransformMapRename]]
-        val decoded = schema.decode[Bson](schema.encode[Bson](transformMapRenameValue))
-        assert(decoded == Result.Success(transformMapRenameValue), s"rename+Map BSON round trip: $decoded")
+        assertRenameOrDenyRoundTrip[TransformMapRename, Bson](transformMapRenameValue)
     }
 
     private val transformMapDropValue = TransformMapDrop("Bob", "shh", Map("x" -> 10, "y" -> 20, "z" -> 30))
 
-    "schema-level drop alongside a Map field decodes the Map correctly through JSON" in {
-        val schema  = summon[Schema[TransformMapDrop]]
-        val decoded = schema.decode[Json](schema.encode[Json](transformMapDropValue)).getOrThrow
+    private def assertDropMapPreserved(decoded: TransformMapDrop)(using kyo.test.AssertScope): Unit =
         assert(decoded.fullName == "Bob", s"fullName survives drop: $decoded")
         assert(decoded.tags == Map("x" -> 10, "y" -> 20, "z" -> 30), s"Map field must decode uncorrupted: $decoded")
+    end assertDropMapPreserved
+
+    "schema-level drop alongside a Map field decodes the Map correctly through JSON" in {
+        assertDropRoundTripSurvives[TransformMapDrop, Json](transformMapDropValue)(assertDropMapPreserved)
     }
 
     "schema-level drop alongside a Map field decodes the Map correctly through MsgPack" in {
-        val schema  = summon[Schema[TransformMapDrop]]
-        val decoded = schema.decode[MsgPack](schema.encode[MsgPack](transformMapDropValue)).getOrThrow
-        assert(decoded.fullName == "Bob", s"fullName survives drop: $decoded")
-        assert(decoded.tags == Map("x" -> 10, "y" -> 20, "z" -> 30), s"Map field must decode uncorrupted: $decoded")
+        assertDropRoundTripSurvives[TransformMapDrop, MsgPack](transformMapDropValue)(assertDropMapPreserved)
     }
 
     "schema-level drop alongside a Map field decodes the Map correctly through BSON" in {
-        val schema  = summon[Schema[TransformMapDrop]]
-        val decoded = schema.decode[Bson](schema.encode[Bson](transformMapDropValue)).getOrThrow
-        assert(decoded.fullName == "Bob", s"fullName survives drop: $decoded")
-        assert(decoded.tags == Map("x" -> 10, "y" -> 20, "z" -> 30), s"Map field must decode uncorrupted: $decoded")
+        assertDropRoundTripSurvives[TransformMapDrop, Bson](transformMapDropValue)(assertDropMapPreserved)
     }
 
     private val transformMapDenyValue = TransformMapDeny("Carol", Map("p" -> 1, "q" -> 2))
 
     "schema-level denyUnknownFields alongside a Map field decodes the Map correctly through JSON" in {
-        val schema  = summon[Schema[TransformMapDeny]]
-        val decoded = schema.decode[Json](schema.encode[Json](transformMapDenyValue))
-        assert(decoded == Result.Success(transformMapDenyValue), s"denyUnknownFields+Map JSON round trip: $decoded")
+        assertRenameOrDenyRoundTrip[TransformMapDeny, Json](transformMapDenyValue)
     }
 
     "schema-level denyUnknownFields alongside a Map field decodes the Map correctly through MsgPack" in {
-        val schema  = summon[Schema[TransformMapDeny]]
-        val decoded = schema.decode[MsgPack](schema.encode[MsgPack](transformMapDenyValue))
-        assert(decoded == Result.Success(transformMapDenyValue), s"denyUnknownFields+Map MsgPack round trip: $decoded")
+        assertRenameOrDenyRoundTrip[TransformMapDeny, MsgPack](transformMapDenyValue)
     }
 
     "schema-level denyUnknownFields alongside a Map field decodes the Map correctly through BSON" in {
-        val schema  = summon[Schema[TransformMapDeny]]
-        val decoded = schema.decode[Bson](schema.encode[Bson](transformMapDenyValue))
-        assert(decoded == Result.Success(transformMapDenyValue), s"denyUnknownFields+Map BSON round trip: $decoded")
+        assertRenameOrDenyRoundTrip[TransformMapDeny, Bson](transformMapDenyValue)
     }
 
     // --- Field transform + Map/mixed product regression matrix, extended to every representable
@@ -1078,7 +1045,7 @@ class CodecTest extends kyo.test.Test[Any]:
         val genericBytes = pinOnlyPersonSchema.encode[Protobuf](value)
         val specialBytes = Protobuf.encode[PinOnlyPerson](value)
         assert(
-            genericBytes.toArray.toSeq == specialBytes.toArray.toSeq,
+            CodecTestSupport.sameBytes(genericBytes, specialBytes),
             s"generic encode must write the pinned field id identically to the specialized entry point: " +
                 s"generic=${genericBytes.toArray.toSeq} specialized=${specialBytes.toArray.toSeq}"
         )
@@ -1119,7 +1086,7 @@ class CodecTest extends kyo.test.Test[Any]:
         val genericBytes     = summon[Schema[PinOnlyOuter]].encode[Protobuf](outerValue)
         val specializedBytes = Protobuf.encode[PinOnlyOuter](outerValue)
         assert(
-            genericBytes.toArray.toSeq == specializedBytes.toArray.toSeq,
+            CodecTestSupport.sameBytes(genericBytes, specializedBytes),
             s"generic and specialized encode must agree: generic=${genericBytes.toArray.toSeq} specialized=${specializedBytes.toArray.toSeq}"
         )
         val genericDecoded = summon[Schema[PinOnlyOuter]].decode[Protobuf](genericBytes)
@@ -1155,7 +1122,7 @@ class CodecTest extends kyo.test.Test[Any]:
         val genericBytes     = summon[Schema[PinOnlyListHolder]].encode[Protobuf](holderValue)
         val specializedBytes = Protobuf.encode[PinOnlyListHolder](holderValue)
         assert(
-            genericBytes.toArray.toSeq == specializedBytes.toArray.toSeq,
+            CodecTestSupport.sameBytes(genericBytes, specializedBytes),
             s"generic and specialized encode must agree: generic=${genericBytes.toArray.toSeq} specialized=${specializedBytes.toArray.toSeq}"
         )
         val decoded = Protobuf.decode[PinOnlyListHolder](genericBytes)
@@ -1173,7 +1140,7 @@ class CodecTest extends kyo.test.Test[Any]:
         )
         val specializedBytes = Protobuf.encode[PinAndRenameOuter](outerValue)
         assert(
-            genericBytes.toArray.toSeq == specializedBytes.toArray.toSeq,
+            CodecTestSupport.sameBytes(genericBytes, specializedBytes),
             s"generic and specialized encode must agree: generic=${genericBytes.toArray.toSeq} specialized=${specializedBytes.toArray.toSeq}"
         )
         val decoded = summon[Schema[PinAndRenameOuter]].decode[Protobuf](genericBytes)
@@ -1222,7 +1189,7 @@ class CodecTest extends kyo.test.Test[Any]:
         val genericBytes     = pinOrderOuterSchema.encode[Protobuf](value)
         val specializedBytes = Protobuf.encode[PinOrderOuter](value)
         assert(
-            genericBytes.toArray.toSeq == specializedBytes.toArray.toSeq,
+            CodecTestSupport.sameBytes(genericBytes, specializedBytes),
             s"generic and specialized encode must agree: generic=${genericBytes.toArray.toSeq} specialized=${specializedBytes.toArray.toSeq}"
         )
         val topFields   = topLevelFieldNumbers(genericBytes)

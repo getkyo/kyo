@@ -114,3 +114,6 @@ case class MTListOfOption(name: String, tags: List[Option[Int]]) derives CanEqua
 sealed trait MTStatus derives CanEqual
 case object MTActive                   extends MTStatus derives CanEqual
 case class MTSuspended(reason: String) extends MTStatus derives CanEqual
+
+// Plain two-coordinate product, shared by the codec suites that each declared their own Point.
+case class MTPoint(x: Int, y: Int) derives CanEqual

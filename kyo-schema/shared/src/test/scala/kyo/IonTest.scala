@@ -267,7 +267,7 @@ class IonTest extends kyo.test.Test[Any]:
             val bytes   = Ion.encodeBytes[MTPerson](person)
 
             assert(Ion.encodeText[MTPerson](person) == encoded)
-            assert(Ion.encodeTextBytes[MTPerson](person).toArray.toSeq == bytes.toArray.toSeq)
+            assert(CodecTestSupport.sameBytes(Ion.encodeTextBytes[MTPerson](person), bytes))
             assert(Ion.decodeText[MTPerson](encoded) == Ion.decode[MTPerson](encoded))
             assert(Ion.decodeTextBytes[MTPerson](bytes) == Ion.decodeBytes[MTPerson](bytes))
         }
@@ -279,7 +279,7 @@ class IonTest extends kyo.test.Test[Any]:
             val bytes   = Ion.encodeBytes[MTPerson](person)
 
             assert(Ion.encode[MTPerson](person, config) == encoded)
-            assert(Ion.encodeBytes[MTPerson](person, config).toArray.toSeq == bytes.toArray.toSeq)
+            assert(CodecTestSupport.sameBytes(Ion.encodeBytes[MTPerson](person, config), bytes))
             assert(Ion.decode[MTPerson](encoded, config) == Ion.decode[MTPerson](encoded))
             assert(Ion.decode[MTPerson](bytes, config) == Ion.decodeBytes[MTPerson](bytes))
             assert(Ion.decodeBytes[MTPerson](bytes, config) == Ion.decodeBytes[MTPerson](bytes))
@@ -303,7 +303,7 @@ class IonTest extends kyo.test.Test[Any]:
             val writer = Ion(config).newWriter()
             summon[Schema[IonAnnotated]].writeTo(value, writer)
             val codecBytes = writer.result()
-            assert(codecBytes.toArray.toSeq == Ion.encodeBytes(value, config).toArray.toSeq)
+            assert(CodecTestSupport.sameBytes(codecBytes, Ion.encodeBytes(value, config)))
         }
 
         "canWriteAnnotations is true only when annotation emission is enabled" in {
@@ -360,7 +360,7 @@ class IonTest extends kyo.test.Test[Any]:
             val bytes   = Span.from("To infinity... and beyond!".getBytes(java.nio.charset.StandardCharsets.UTF_8))
             val encoded = Ion.encode(bytes)
             assert(encoded == "{{VG8gaW5maW5pdHkuLi4gYW5kIGJleW9uZCE=}}")
-            assert(Ion.decode[Span[Byte]](encoded).getOrThrow.toArray.toSeq == bytes.toArray.toSeq)
+            assert(CodecTestSupport.sameBytes(Ion.decode[Span[Byte]](encoded).getOrThrow, bytes))
         }
 
         "ion sealed traits use wrapper structs" in {

@@ -8,6 +8,13 @@ class JsonTest extends kyo.test.Test[Any]:
 
     given CanEqual[Any, Any] = CanEqual.derived
 
+    private def jsonRoundTrip[A](value: A)(using schema: Schema[A]): A =
+        val w = JsonWriter()
+        schema.writeTo(value, w)
+        val r = JsonReader(w.resultString)
+        schema.readFrom(r)
+    end jsonRoundTrip
+
     // ===================================================================
     // encode/decode: from FormatTest (JSON-only tests)
     // ===================================================================
@@ -761,11 +768,9 @@ class JsonTest extends kyo.test.Test[Any]:
                 "{\t\"name\":\t\"Alice\",\n\"age\":\r\n30}"
             )
 
-            case class Person(name: String, age: Int) derives CanEqual
-
             jsonVariants.foreach { json =>
-                val decoded = Json.decode[Person](json).getOrThrow
-                assert(decoded == Person("Alice", 30), s"Failed for: $json")
+                val decoded = Json.decode[MTPerson](json).getOrThrow
+                assert(decoded == MTPerson("Alice", 30), s"Failed for: $json")
             }
             ()
         }
@@ -873,16 +878,14 @@ class JsonTest extends kyo.test.Test[Any]:
 
     "jsonSchema" - {
 
-        case class JSPerson(name: String, age: Int)
         case class JSWithDefault(name: String, count: Int = 0)
-        case class JSNested(person: JSPerson, label: String)
         case class JSBaseValues(bytes: Span[Byte], instant: java.time.Instant, duration: java.time.Duration)
         sealed trait JSShape
         case class JSCircle(radius: Double)              extends JSShape
         case class JSRect(width: Double, height: Double) extends JSShape
 
         "required fields listed correctly from macro" in {
-            val schema = JsonSchema.from[JSPerson]
+            val schema = JsonSchema.from[MTPerson]
             schema match
                 case obj: JsonSchema.Obj =>
                     assert(obj.required == List("name", "age"))
@@ -892,7 +895,7 @@ class JsonTest extends kyo.test.Test[Any]:
         }
 
         "macro generates correct schema for case class" in {
-            val schema = JsonSchema.from[JSPerson]
+            val schema = JsonSchema.from[MTPerson]
             schema match
                 case obj: JsonSchema.Obj =>
                     assert(obj.properties.length == 2)
@@ -1095,47 +1098,40 @@ class JsonTest extends kyo.test.Test[Any]:
 
     "BigDecimal" - {
 
-        def jsonRoundTripBD[A](value: A)(using schema: Schema[A]): A =
-            val w = JsonWriter()
-            schema.writeTo(value, w)
-            val r = JsonReader(w.resultString)
-            schema.readFrom(r)
-        end jsonRoundTripBD
-
         "BigDecimal(0) round-trip" in {
             val v = BigDecimalBox(BigDecimal("0"))
-            assert(jsonRoundTripBD(v) == v)
+            assert(jsonRoundTrip(v) == v)
         }
 
         "BigDecimal(3.14) round-trip" in {
             val v = BigDecimalBox(BigDecimal("3.14"))
-            assert(jsonRoundTripBD(v) == v)
+            assert(jsonRoundTrip(v) == v)
         }
 
         "BigDecimal(1e100) round-trip" in {
             val v = BigDecimalBox(BigDecimal("1e100"))
-            assert(jsonRoundTripBD(v) == v)
+            assert(jsonRoundTrip(v) == v)
         }
 
         "BigDecimal(1e-100) round-trip" in {
             val v = BigDecimalBox(BigDecimal("1e-100"))
-            assert(jsonRoundTripBD(v) == v)
+            assert(jsonRoundTrip(v) == v)
         }
 
         "BigDecimal 30 significant digits round-trip" in {
             val v = BigDecimalBox(BigDecimal("1.23456789012345678901234567890"))
-            assert(jsonRoundTripBD(v) == v)
+            assert(jsonRoundTrip(v) == v)
         }
 
         "BigDecimal trailing zeros scale preservation" in {
             val original = BigDecimal("1.000")
-            val decoded  = jsonRoundTripBD(BigDecimalBox(original))
+            val decoded  = jsonRoundTrip(BigDecimalBox(original))
             assert(decoded.value.scale == original.scale, s"Expected scale ${original.scale}, got ${decoded.value.scale}")
         }
 
         "BigDecimal(-0) round-trip" in {
             val v = BigDecimalBox(BigDecimal("-0"))
-            assert(jsonRoundTripBD(v) == v)
+            assert(jsonRoundTrip(v) == v)
         }
 
     }
@@ -1146,28 +1142,21 @@ class JsonTest extends kyo.test.Test[Any]:
 
     "BigInt" - {
 
-        def jsonRoundTripBI[A](value: A)(using schema: Schema[A]): A =
-            val w = JsonWriter()
-            schema.writeTo(value, w)
-            val r = JsonReader(w.resultString)
-            schema.readFrom(r)
-        end jsonRoundTripBI
-
         "BigInt(0) round-trip" in {
             val v = BigIntBox(BigInt("0"))
-            assert(jsonRoundTripBI(v) == v)
+            assert(jsonRoundTrip(v) == v)
         }
 
         "BigInt 100 digits positive round-trip" in {
             val hundredOnes = "1" * 100
             val v           = BigIntBox(BigInt(hundredOnes))
-            assert(jsonRoundTripBI(v) == v)
+            assert(jsonRoundTrip(v) == v)
         }
 
         "BigInt 100 digits negative round-trip" in {
             val hundredOnes = "1" * 100
             val v           = BigIntBox(BigInt("-" + hundredOnes))
-            assert(jsonRoundTripBI(v) == v)
+            assert(jsonRoundTrip(v) == v)
         }
 
     }
@@ -1178,45 +1167,38 @@ class JsonTest extends kyo.test.Test[Any]:
 
     "numeric edge cases" - {
 
-        def jsonRoundTripNum[A](value: A)(using schema: Schema[A]): A =
-            val w = JsonWriter()
-            schema.writeTo(value, w)
-            val r = JsonReader(w.resultString)
-            schema.readFrom(r)
-        end jsonRoundTripNum
-
         "Double.NaN JSON round-trip" in {
-            val decoded = jsonRoundTripNum(DoubleBox(Double.NaN))
+            val decoded = jsonRoundTrip(DoubleBox(Double.NaN))
             assert(decoded.d.isNaN, s"Expected NaN but got ${decoded.d}")
         }
 
         "Double.PositiveInfinity JSON round-trip" in {
-            val decoded = jsonRoundTripNum(DoubleBox(Double.PositiveInfinity))
+            val decoded = jsonRoundTrip(DoubleBox(Double.PositiveInfinity))
             assert(decoded.d == Double.PositiveInfinity, s"Expected PositiveInfinity but got ${decoded.d}")
         }
 
         "Double.NegativeInfinity JSON round-trip" in {
-            val decoded = jsonRoundTripNum(DoubleBox(Double.NegativeInfinity))
+            val decoded = jsonRoundTrip(DoubleBox(Double.NegativeInfinity))
             assert(decoded.d == Double.NegativeInfinity, s"Expected NegativeInfinity but got ${decoded.d}")
         }
 
         "Float.NaN JSON round-trip" in {
-            val decoded = jsonRoundTripNum(FloatBox(Float.NaN))
+            val decoded = jsonRoundTrip(FloatBox(Float.NaN))
             assert(decoded.f.isNaN, s"Expected NaN but got ${decoded.f}")
         }
 
         "Float.PositiveInfinity JSON round-trip" in {
-            val decoded = jsonRoundTripNum(FloatBox(Float.PositiveInfinity))
+            val decoded = jsonRoundTrip(FloatBox(Float.PositiveInfinity))
             assert(decoded.f == Float.PositiveInfinity, s"Expected PositiveInfinity but got ${decoded.f}")
         }
 
         "Float.NegativeInfinity JSON round-trip" in {
-            val decoded = jsonRoundTripNum(FloatBox(Float.NegativeInfinity))
+            val decoded = jsonRoundTrip(FloatBox(Float.NegativeInfinity))
             assert(decoded.f == Float.NegativeInfinity, s"Expected NegativeInfinity but got ${decoded.f}")
         }
 
         "Double -0.0 JSON round-trip" in {
-            val decoded = jsonRoundTripNum(DoubleBox(-0.0d))
+            val decoded = jsonRoundTrip(DoubleBox(-0.0d))
             assert(
                 java.lang.Double.doubleToRawLongBits(decoded.d) == java.lang.Double.doubleToRawLongBits(-0.0d),
                 s"Expected -0.0 but got ${decoded.d} (bits: ${java.lang.Double.doubleToRawLongBits(decoded.d)})"
@@ -1224,27 +1206,27 @@ class JsonTest extends kyo.test.Test[Any]:
         }
 
         "Double.MinValue JSON round-trip" in {
-            val decoded = jsonRoundTripNum(DoubleBox(Double.MinValue))
+            val decoded = jsonRoundTrip(DoubleBox(Double.MinValue))
             assert(decoded.d == Double.MinValue, s"Expected Double.MinValue but got ${decoded.d}")
         }
 
         "Double.MaxValue JSON round-trip" in {
-            val decoded = jsonRoundTripNum(DoubleBox(Double.MaxValue))
+            val decoded = jsonRoundTrip(DoubleBox(Double.MaxValue))
             assert(decoded.d == Double.MaxValue, s"Expected Double.MaxValue but got ${decoded.d}")
         }
 
         "Double.MinPositiveValue JSON round-trip" in {
-            val decoded = jsonRoundTripNum(DoubleBox(Double.MinPositiveValue))
+            val decoded = jsonRoundTrip(DoubleBox(Double.MinPositiveValue))
             assert(decoded.d == Double.MinPositiveValue, s"Expected Double.MinPositiveValue but got ${decoded.d}")
         }
 
         "Float.MinValue JSON round-trip" in {
-            val decoded = jsonRoundTripNum(FloatBox(Float.MinValue))
+            val decoded = jsonRoundTrip(FloatBox(Float.MinValue))
             assert(decoded.f == Float.MinValue, s"Expected Float.MinValue but got ${decoded.f}")
         }
 
         "Float.MaxValue JSON round-trip" in {
-            val decoded = jsonRoundTripNum(FloatBox(Float.MaxValue))
+            val decoded = jsonRoundTrip(FloatBox(Float.MaxValue))
             assert(decoded.f == Float.MaxValue, s"Expected Float.MaxValue but got ${decoded.f}")
         }
 
@@ -1295,57 +1277,50 @@ class JsonTest extends kyo.test.Test[Any]:
 
         import java.time.Instant
 
-        def jsonRoundTripTime[A](value: A)(using schema: Schema[A]): A =
-            val w = JsonWriter()
-            schema.writeTo(value, w)
-            val r = JsonReader(w.resultString)
-            schema.readFrom(r)
-        end jsonRoundTripTime
-
         "Instant.ofEpochSecond(0) round-trip" in {
             val v = InstantBox(Instant.ofEpochSecond(0))
-            assert(jsonRoundTripTime(v) == v)
+            assert(jsonRoundTrip(v) == v)
         }
 
         "Instant.ofEpochSecond(1) round-trip" in {
             val v = InstantBox(Instant.ofEpochSecond(1))
-            assert(jsonRoundTripTime(v) == v)
+            assert(jsonRoundTrip(v) == v)
         }
 
         "Instant.ofEpochSecond(-1) round-trip" in {
             val v = InstantBox(Instant.ofEpochSecond(-1))
-            assert(jsonRoundTripTime(v) == v)
+            assert(jsonRoundTrip(v) == v)
         }
 
         "Instant.ofEpochSecond(1000000000, 123456789) round-trip" in {
             val v = InstantBox(Instant.ofEpochSecond(1000000000L, 123456789L))
-            assert(jsonRoundTripTime(v) == v)
+            assert(jsonRoundTrip(v) == v)
         }
 
         "Instant.ofEpochSecond(1000000000, 0) round-trip" in {
             val v = InstantBox(Instant.ofEpochSecond(1000000000L, 0L))
-            assert(jsonRoundTripTime(v) == v)
+            assert(jsonRoundTrip(v) == v)
         }
 
         "Instant.parse max year edge round-trip" in {
             val v = InstantBox(Instant.parse("9999-12-31T23:59:59.999999999Z"))
-            assert(jsonRoundTripTime(v) == v)
+            assert(jsonRoundTrip(v) == v)
         }
 
         "Instant.parse min year edge round-trip" in {
             val v = InstantBox(Instant.parse("0001-01-01T00:00:00Z"))
-            assert(jsonRoundTripTime(v) == v)
+            assert(jsonRoundTrip(v) == v)
         }
 
         "Instant.now round-trip" in {
             val now = Instant.now()
             val v   = InstantBox(now)
-            assert(jsonRoundTripTime(v) == v)
+            assert(jsonRoundTrip(v) == v)
         }
 
         "Instant.ofEpochSecond(1609459200, 500000000) round-trip" in {
             val v = InstantBox(Instant.ofEpochSecond(1609459200L, 500000000L))
-            assert(jsonRoundTripTime(v) == v)
+            assert(jsonRoundTrip(v) == v)
         }
 
     }
@@ -1358,41 +1333,34 @@ class JsonTest extends kyo.test.Test[Any]:
 
         import java.time.Duration
 
-        def jsonRoundTripDur[A](value: A)(using schema: Schema[A]): A =
-            val w = JsonWriter()
-            schema.writeTo(value, w)
-            val r = JsonReader(w.resultString)
-            schema.readFrom(r)
-        end jsonRoundTripDur
-
         "Duration.ZERO round-trip" in {
             val v = DurationBox(Duration.ZERO)
-            assert(jsonRoundTripDur(v) == v)
+            assert(jsonRoundTrip(v) == v)
         }
 
         "Duration.ofSeconds(1) round-trip" in {
             val v = DurationBox(Duration.ofSeconds(1))
-            assert(jsonRoundTripDur(v) == v)
+            assert(jsonRoundTrip(v) == v)
         }
 
         "Duration.ofSeconds(-1) round-trip" in {
             val v = DurationBox(Duration.ofSeconds(-1))
-            assert(jsonRoundTripDur(v) == v)
+            assert(jsonRoundTrip(v) == v)
         }
 
         "Duration.ofNanos(123456789) round-trip" in {
             val v = DurationBox(Duration.ofNanos(123456789L))
-            assert(jsonRoundTripDur(v) == v)
+            assert(jsonRoundTrip(v) == v)
         }
 
         "Duration.ofSeconds(1, 500000000) round-trip" in {
             val v = DurationBox(Duration.ofSeconds(1L, 500000000L))
-            assert(jsonRoundTripDur(v) == v)
+            assert(jsonRoundTrip(v) == v)
         }
 
         "Duration.ofDays(36500) round-trip" in {
             val v = DurationBox(Duration.ofDays(36500L))
-            assert(jsonRoundTripDur(v) == v)
+            assert(jsonRoundTrip(v) == v)
         }
 
     }

@@ -118,7 +118,7 @@ class ProtobufTest extends kyo.test.Test[Any]:
             val person = MTPerson("Charlie", 40)
             val bytes1 = Protobuf.encode[MTPerson](person)
             val bytes2 = Protobuf.encode[MTPerson](person)
-            assert(bytes1.toArray.toSeq == bytes2.toArray.toSeq)
+            assert(CodecTestSupport.sameBytes(bytes1, bytes2))
         }
 
         "protobuf round-trip via Protobuf.decode" in {
@@ -853,7 +853,7 @@ class ProtobufTest extends kyo.test.Test[Any]:
         val nativeBytes =
             given Schema[CFPerson] = Schema[CFPerson]
             Protobuf.encode(CFPerson("Bob", 30))
-        assert(bytes.toArray.toSeq == nativeBytes.toArray.toSeq, s"wire bytes must reflect write transform (age=30 on wire)")
+        assert(CodecTestSupport.sameBytes(bytes, nativeBytes), s"wire bytes must reflect write transform (age=30 on wire)")
     }
 
     "strict decode treats a unicode-digit wire key as an unknown name, not a numeric field id" in {
@@ -982,7 +982,7 @@ class ProtobufTest extends kyo.test.Test[Any]:
             assert(decoded.s.toSeq == v.s.toSeq)
             assert(decoded.set == v.set)
             assert(decoded.c == v.c)
-            assert(decoded.sp.toArray.toSeq == v.sp.toArray.toSeq)
+            assert(CodecTestSupport.sameBytes(decoded.sp, v.sp))
             assert(decoded.m == v.m)
             assert(decoded.n == v.n)
         }
@@ -1380,7 +1380,7 @@ class ProtobufTest extends kyo.test.Test[Any]:
                     // Set is unordered; element equality suffices.
                     assert(d.set == v.set)
                     assert(d.c == v.c)
-                    assert(d.sp.toArray.toSeq == v.sp.toArray.toSeq)
+                    assert(CodecTestSupport.sameBytes(d.sp, v.sp))
                     assert(d.m == v.m)
                     assert(d.n == v.n)
                 case other => fail(s"PB1716Collections encode/decode failed: $other")
