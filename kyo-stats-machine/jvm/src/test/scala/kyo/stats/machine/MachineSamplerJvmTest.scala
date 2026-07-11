@@ -18,7 +18,7 @@ class MachineSamplerJvmTest extends kyo.test.Test[Any]:
 
     "the sampler readScoped/fill path assembles a multi-chunk file in full and allocates zero per read after warmup" in {
         for
-            dir <- Path.tempDir("kyo-machine-alloc")
+            dir <- Path.tempDir("kyo-stats-machine-alloc")
             // Larger than the sampler's fixed 8192-byte scratch chunk, so a full read spans
             // multiple readChunk calls and exercises fill's multi-chunk arraycopy assembly.
             content = ("0123456789" * 2000) // 20000 bytes

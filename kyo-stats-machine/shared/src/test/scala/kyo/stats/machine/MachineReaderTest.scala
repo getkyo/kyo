@@ -197,7 +197,7 @@ class MachineReaderTest extends kyo.test.Test[Any]:
             for
                 handles <- MachineHandles.init
                 sampler = new MachineSampler(handles, Machine.NullMachine)
-                result = sampler.readScoped(Path("/does/not/exist/kyo-machine-test"), (b, n) => LinuxDisk.parseMounts(b, n))
+                result = sampler.readScoped(Path("/does/not/exist/kyo-stats-machine-test"), (b, n) => LinuxDisk.parseMounts(b, n))
                     .getOrElse(Chunk.empty)
             yield assert(result == Chunk.empty)
         }

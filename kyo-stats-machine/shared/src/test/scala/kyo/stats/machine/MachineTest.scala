@@ -5,7 +5,7 @@ import kyo.*
 class MachineTest extends kyo.test.Test[Any]:
 
     // MachineHandles.init resolves the SAME process-global StatsRegistry scope ("machine") every
-    // leaf in this file and every other kyo-machine test file share, so a concurrently-running
+    // leaf in this file and every other kyo-stats-machine test file share, so a concurrently-running
     // leaf that also observes cpuTimeTotal/memTotal/loadOne would corrupt this leaf's before/after
     // delta assertions.
     override def config: kyo.test.RunConfig = super.config.sequential

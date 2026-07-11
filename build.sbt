@@ -270,7 +270,7 @@ lazy val kyoJVM: Project = project
         `kyo-stats-registry`.jvm,
         `kyo-config`.jvm,
         `kyo-stats-otlp`.jvm,
-        `kyo-machine`.jvm,
+        `kyo-stats-machine`.jvm,
         `kyo-logging-jpl`.jvm,
         `kyo-logging-slf4j`.jvm,
         `kyo-reactive-streams`.jvm,
@@ -339,7 +339,7 @@ lazy val kyoJS = project
         `kyo-config`.js,
         `kyo-reactive-streams`.js,
         `kyo-stats-otlp`.js,
-        `kyo-machine`.js,
+        `kyo-stats-machine`.js,
         `kyo-zio-test`.js,
         `kyo-zio`.js,
         `kyo-cats`.js,
@@ -412,7 +412,7 @@ lazy val kyoNative = project
         `kyo-zio-test`.native,
         `kyo-stm`.native,
         `kyo-stats-otlp`.native,
-        `kyo-machine`.native,
+        `kyo-stats-machine`.native,
         `kyo-browser`.native,
         `kyo-slack`.native,
         `kyo-ui`.native,
@@ -1118,10 +1118,10 @@ lazy val `kyo-config` =
         .jsSettings(`js-settings`)
         .wasmSettings(`wasm-settings`)
 
-lazy val `kyo-machine` =
+lazy val `kyo-stats-machine` =
     crossProject(JVMPlatform, JSPlatform, NativePlatform)
         .crossType(CrossType.Full)
-        .in(file("kyo-machine"))
+        .in(file("kyo-stats-machine"))
         .enablePlugins(KyoFfiPlugin)
         .dependsOn(`kyo-ffi`)
         .withKyoTest
@@ -1138,7 +1138,7 @@ lazy val `kyo-machine` =
             `js-settings`,
             // koffi is loaded via CommonJS `require` at runtime, so align the linker.
             scalaJSLinkerConfig ~= { _.withModuleKind(ModuleKind.CommonJSModule) },
-            // Bootstrap koffi into Node's resolver before tests run: LinuxBindings is kyo-machine's
+            // Bootstrap koffi into Node's resolver before tests run: LinuxBindings is kyo-stats-machine's
             // first Ffi binding, so its generated JS impl reaches for koffi at module load. Hooked on
             // Test / compile (not Test / test) so test, testOnly, and testQuick all trigger it, and
             // it re-runs after a clean wipes node_modules. Idempotent on the marker file.
@@ -1150,14 +1150,14 @@ lazy val `kyo-machine` =
                 // Must match `kyo.ffi.internal.FfiPlatformErrors.KoffiSupportedRange`.
                 val koffiRange = "^2.7"
                 val pjContent =
-                    s"""{"name":"kyo-machine-js-test","private":true,"dependencies":{"koffi":"$koffiRange"}}"""
+                    s"""{"name":"kyo-stats-machine-js-test","private":true,"dependencies":{"koffi":"$koffiRange"}}"""
                 val pj = targetBase / "package.json"
                 if (!pj.exists() || IO.read(pj) != pjContent) {
                     IO.createDirectory(targetBase)
                     IO.write(pj, pjContent)
                 }
                 if (!marker.exists()) {
-                    log.info(s"[kyo-machine JS] installing koffi@$koffiRange into $targetBase ...")
+                    log.info(s"[kyo-stats-machine JS] installing koffi@$koffiRange into $targetBase ...")
                     val rc = scala.sys.process.Process(
                         Seq("npm", "install", "--no-audit", "--no-fund", "--silent"),
                         targetBase
