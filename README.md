@@ -340,6 +340,7 @@ In-process metrics and tracing registry, OTLP exporter that activates from `OTEL
 | -------------------------------------------------------- | --- | --- | ------ | ---- | --------------------------------------------------------------------------------------------------------- |
 | [kyo-stats-registry](kyo-stats-registry/README.md)       | ✅  | ✅  | ✅     | ✅   | Process-global registry; counters / gauges / counter-gauges / histograms; `TraceExporter` SPI             |
 | [kyo-stats-otlp](kyo-stats-otlp/README.md)               | ✅  | ✅  | ✅     | ✅   | Zero-code OTLP/HTTP+JSON exporter; W3C `traceparent` propagation auto-installed on kyo-http               |
+| [kyo-stats-machine](kyo-stats-machine/README.md)         | ✅  | ✅  | ✅     |      | Zero-code host metrics (CPU, memory, swap, disk, load, cgroup, PSI) into `kyo.Stat`; auto-loads on classpath |
 | [kyo-logging-jpl](kyo-logging-jpl/README.md)             | ✅  |     |        |      | Bridge `kyo.Log` to `java.lang.System.Logger` (JEP 264, JDK 9+); zero third-party deps                    |
 | [kyo-logging-slf4j](kyo-logging-slf4j/README.md)         | ✅  |     |        |      | Bridge `kyo.Log` to any SLF4J binding the host application already configures (Logback, Log4j 2, etc.)    |
 
