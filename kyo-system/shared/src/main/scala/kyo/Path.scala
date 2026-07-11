@@ -273,6 +273,20 @@ object Path extends PathPlatformSpecific:
           * behavior exactly. Its disposition is `AutoCommit`.
           */
         def host(using Frame): Service[Sync] = new HostService
+
+        /** Root-confined host backend: resolves `root.realPath` at construction and rejects any op whose
+          * canonical path (following every symlink) escapes it; writes to missing entries validate the
+          * nearest existing parent. Prefix-only checking without realpath is a security defect.
+          */
+        def host(root: Path)(using Frame): Service[Sync] < (Sync & Abort[FileException]) =
+            // Unsafe: resolves the confinement root's real path once at construction
+            Sync.Unsafe.defer(Abort.get(root.unsafe.realPath())).map(rootReal => new RootConfinedHostService(rootReal))
+
+        /** In-memory backend: an immutable node tree keyed by `Path.parts` behind one `AtomicRef`,
+          * advanced by an optimistic CAS loop. `isSymbolicLink` always returns `false`. Its disposition
+          * is `AutoCommit`.
+          */
+        def inMemory(using Frame): Service[Sync] < Sync = InMemoryService.init
     end Service
 
     final private class HostService(using Frame) extends Service[Sync]:
@@ -408,6 +422,97 @@ object Path extends PathPlatformSpecific:
             }
     end HostService
 
+    final private class RootConfinedHostService(rootReal: Path)(using Frame) extends Service[Sync]:
+        private val host                  = new HostService
+        val disposition: Path.Disposition = Path.Disposition.AutoCommit
+
+        private def confined(path: Path): Path < (Sync & Abort[FileException]) =
+            // Unsafe: probes target existence to choose between realpath and nearest-parent checks
+            Sync.Unsafe.defer(path.unsafe.exists()).map {
+                case true  => Sync.Unsafe.defer(Abort.get(path.unsafe.realPath())).map(check)
+                case false => nearestExistingParent(path).map(check).andThen(path)
+            }
+        private def check(real: Path): Path < Abort[FileException] =
+            if real.parts.take(rootReal.parts.size) == rootReal.parts then real
+            else Abort.fail(FileAccessDeniedException(real))
+        private def nearestExistingParent(path: Path): Path < (Sync & Abort[FileException]) =
+            path.parent match
+                case Absent     => Abort.fail(FileNotFoundException(path))
+                case Present(p) =>
+                    // Unsafe: probes parent existence to walk to the nearest real ancestor
+                    Sync.Unsafe.defer(p.unsafe.exists()).map {
+                        case true  => Sync.Unsafe.defer(Abort.get(p.unsafe.realPath()))
+                        case false => nearestExistingParent(p)
+                    }
+
+        def exists(path: Path): Boolean < (Sync & Abort[FileException]) = confined(path).andThen(host.exists(path))
+        def exists(path: Path, followLinks: Boolean): Boolean < (Sync & Abort[FileException]) =
+            confined(path).andThen(host.exists(path, followLinks))
+        def isDirectory(path: Path): Boolean < (Sync & Abort[FileException])           = confined(path).andThen(host.isDirectory(path))
+        def isRegularFile(path: Path): Boolean < (Sync & Abort[FileException])         = confined(path).andThen(host.isRegularFile(path))
+        def isSymbolicLink(path: Path): Boolean < (Sync & Abort[FileException])        = confined(path).andThen(host.isSymbolicLink(path))
+        def realPath(path: Path): Path < (Sync & Abort[FileException])                 = confined(path).andThen(host.realPath(path))
+        def read(path: Path): String < (Sync & Abort[FileException])                   = confined(path).andThen(host.read(path))
+        def read(path: Path, charset: Charset): String < (Sync & Abort[FileException]) = confined(path).andThen(host.read(path, charset))
+        def readBytes(path: Path): Span[Byte] < (Sync & Abort[FileException])          = confined(path).andThen(host.readBytes(path))
+        def readLines(path: Path): Chunk[String] < (Sync & Abort[FileException])       = confined(path).andThen(host.readLines(path))
+        def readLines(path: Path, charset: Charset): Chunk[String] < (Sync & Abort[FileException]) =
+            confined(path).andThen(host.readLines(path, charset))
+        def size(path: Path): Long < (Sync & Abort[FileException])                = confined(path).andThen(host.size(path))
+        def stat(path: Path): Path.PathStat < (Sync & Abort[FileException])       = confined(path).andThen(host.stat(path))
+        def openRead(path: Path): Path.ReadHandle < (Sync & Abort[FileException]) = confined(path).andThen(host.openRead(path))
+        def openReadLines(path: Path, charset: Charset): Path.LineReadHandle < (Sync & Abort[FileException]) =
+            confined(path).andThen(host.openReadLines(path, charset))
+        def openWalk(path: Path, maxDepth: Int, followLinks: Boolean): Path.WalkHandle < (Sync & Abort[FileException]) =
+            confined(path).andThen(host.openWalk(path, maxDepth, followLinks))
+        def write(path: Path, value: String, createFolders: Boolean): Unit < (Sync & Abort[FileException]) =
+            confined(path).andThen(host.write(path, value, createFolders))
+        def writeBytes(path: Path, value: Span[Byte], createFolders: Boolean): Unit < (Sync & Abort[FileException]) =
+            confined(path).andThen(host.writeBytes(path, value, createFolders))
+        def writeLines(path: Path, value: Chunk[String], createFolders: Boolean): Unit < (Sync & Abort[FileException]) =
+            confined(path).andThen(host.writeLines(path, value, createFolders))
+        def append(path: Path, value: String, createFolders: Boolean): Unit < (Sync & Abort[FileException]) =
+            confined(path).andThen(host.append(path, value, createFolders))
+        def appendBytes(path: Path, value: Span[Byte], createFolders: Boolean): Unit < (Sync & Abort[FileException]) =
+            confined(path).andThen(host.appendBytes(path, value, createFolders))
+        def appendLines(path: Path, value: Chunk[String], createFolders: Boolean): Unit < (Sync & Abort[FileException]) =
+            confined(path).andThen(host.appendLines(path, value, createFolders))
+        def truncate(path: Path, size: Long): Unit < (Sync & Abort[FileException]) = confined(path).andThen(host.truncate(path, size))
+        def setLastModified(path: Path, epochMs: Long): Unit < (Sync & Abort[FileException]) =
+            confined(path).andThen(host.setLastModified(path, epochMs))
+        def openWrite(path: Path, append: Boolean, createFolders: Boolean): Path.WriteHandle < (Sync & Abort[FileException]) =
+            confined(path).andThen(host.openWrite(path, append, createFolders))
+        // writeChunk/writeString carry only a handle (no path), so confinement is not applicable; forward directly.
+        def writeChunk(handle: Path.WriteHandle, chunk: Chunk[Byte]): Unit < (Sync & Abort[FileException]) = host.writeChunk(handle, chunk)
+        def writeString(handle: Path.WriteHandle, value: String, charset: Charset): Unit < (Sync & Abort[FileException]) =
+            host.writeString(handle, value, charset)
+        def mkDir(path: Path): Unit < (Sync & Abort[FileException])                     = confined(path).andThen(host.mkDir(path))
+        def mkFile(path: Path): Unit < (Sync & Abort[FileException])                    = confined(path).andThen(host.mkFile(path))
+        def list(path: Path): Chunk[Path] < (Sync & Abort[FileException])               = confined(path).andThen(host.list(path))
+        def list(path: Path, glob: String): Chunk[Path] < (Sync & Abort[FileException]) = confined(path).andThen(host.list(path, glob))
+        def move(
+            from: Path,
+            to: Path,
+            replaceExisting: Boolean,
+            atomicMove: Boolean,
+            createFolders: Boolean
+        ): Unit < (Sync & Abort[FileException]) =
+            confined(from).andThen(confined(to)).andThen(host.move(from, to, replaceExisting, atomicMove, createFolders))
+        def copy(
+            from: Path,
+            to: Path,
+            followLinks: Boolean,
+            replaceExisting: Boolean,
+            copyAttributes: Boolean,
+            createFolders: Boolean
+        ): Unit < (Sync & Abort[FileException]) =
+            confined(from).andThen(confined(to)).andThen(host.copy(from, to, followLinks, replaceExisting, copyAttributes, createFolders))
+        def remove(path: Path): Boolean < (Sync & Abort[FileException])                 = confined(path).andThen(host.remove(path))
+        def removeExisting(path: Path): Unit < (Sync & Abort[FileException])            = confined(path).andThen(host.removeExisting(path))
+        def removeAll(path: Path): Unit < (Sync & Abort[FileException])                 = confined(path).andThen(host.removeAll(path))
+        def tempDir(prefix: String): Path.TempDirHandle < (Sync & Abort[FileException]) = host.tempDir(prefix)
+    end RootConfinedHostService
+
     // --- Runners ---
 
     /** Runs `program`, discharging both write and read capabilities against the default host service.
@@ -499,6 +604,53 @@ object Path extends PathPlatformSpecific:
         def path: Path
         def remove()(using AllowUnsafe): Unit
     end TempDirHandle
+
+    /** A committed filesystem entry surfaced by [[Conflict]] and [[Resolution.Write]]. Symlink entries
+      * are excluded until Path has public symlink operations.
+      */
+    enum Entry derives CanEqual:
+        case File(bytes: Span[Byte], stat: Path.PathStat)
+        case Directory(stat: Path.PathStat)
+
+    /** The base observation the overlay records for a lower entry at first sight, and the value carried
+      * by [[Conflict.ancestor]]. It is exactly what the read-set stores, so a commit can surface it
+      * without re-reading the lower: the observed entry kind, the size for a regular file, the
+      * last-modified time where available, and a content hash only when the backend can supply one
+      * cheaply. No bytes are retained.
+      */
+    final case class Stamp(
+        entryType: Stamp.Kind,
+        size: Maybe[FileSize],
+        lastModifiedMs: Maybe[Long],
+        contentHash: Maybe[Span[Byte]]
+    ) derives CanEqual
+
+    object Stamp:
+        /** The entry kind observed at stamp time. `Absent` records an observed-missing path, which is
+          * distinct from a `Maybe.Absent` [[Conflict.ancestor]] (the path was never observed).
+          */
+        enum Kind derives CanEqual:
+            case File, Directory, Absent
+    end Stamp
+
+    /** A [[Service]] whose writes stage until an explicit commit. The overlay ([[Service.overlay]]) is
+      * the in-scope implementation; its disposition is `ManualCommit`.
+      */
+    trait CommitHandle[S] extends Service[S]:
+        /** Validates the read-set against the live lower service; replays if every stamp matches, else
+          * aborts `CommitConflict` and leaves the lower service untouched.
+          */
+        def commit(using Frame): Unit < (S & Abort[FileException] & Abort[CommitConflict])
+
+        /** Replays unconditionally (last-writer-wins); no `CommitConflict` in the row. */
+        def commitOverwrite(using Frame): Unit < (S & Abort[FileException])
+
+        /** Validates, calls `resolve` per conflict, replays the resolved journal. */
+        def commitWith[S2](resolve: Conflict => Resolution < S2)(using Frame): Unit < (S & Abort[FileException] & S2)
+
+        /** Discards staged writes; no error surface. */
+        def rollback(using Frame): Unit < S
+    end CommitHandle
 
     // --- Safe extension methods ---
 
