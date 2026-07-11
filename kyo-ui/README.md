@@ -1195,6 +1195,10 @@ val ui: UI                          = div(button("+1").id("inc"))
 val mountTo: Unit < (Async & Scope) = runMount(ui, "#app")
 ```
 
+### `UI.runHydrate(ui)` (Scala.js)
+
+The client entry for a server-rendered page that embeds a rendering backend (for example a kyo-threejs 3D scene). Where `runMount` renders a fresh tree into the DOM, `runHydrate` attaches to the page `runHandlers` already served: it walks `ui`, binds each backend node to the live element the server placed in the DOM, and wires the client side of the reactive bridge, without re-rendering the surrounding HTML. Like `runMount` it is a JS-only extension on `UI.type` with an `Async & Scope` row, and its lifecycle is `Scope`-bound (closing the scope releases the backend mounts). The client island rebuilds the same `ui` value the server rendered and calls `runHydrate(ui)` to bring it to life.
+
 ### `UI.runHandlers(basePath)(ui)`
 
 Server-push deployment. Returns `Seq[HttpHandler[?, ?, ?]] < Sync`: two handlers in one sequence, a GET that serves the initial server-side-rendered page (pure SSR, no session, no fibers, no cookie), and a WebSocket route at `/_kyo/ws` that carries `HtmlOp.Replace` diffs out to the client and client events back in over the same connection. You wire them into `HttpServer.init` alongside your other routes.
