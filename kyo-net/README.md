@@ -17,7 +17,7 @@ The examples below import `AllowUnsafe.embrace.danger` to obtain the `AllowUnsaf
 
 ## Connecting
 
-`Transport.connect` opens a client TCP connection and returns a fiber that completes with an open `Connection`. The platform default transport is `NetPlatform.transport`, shared for the process lifetime.
+To reach a peer you go through the platform transport, not a socket constructor. `NetPlatform.transport` is the process-global instance, shared for the process lifetime; `connect` names a host and port and returns a fiber that completes with an open `Connection`.
 
 ```scala
 import AllowUnsafe.embrace.danger
@@ -26,19 +26,6 @@ import kyo.net.*
 
 val connected: Connection < (Async & Abort[NetException]) =
     NetPlatform.transport.connect("example.com", 80).safe.get
-```
-
-A second `connect` overload takes a `NetTlsConfig` and terminates TLS as part of the connect, so the returned connection is already encrypted:
-
-```scala
-import AllowUnsafe.embrace.danger
-import kyo.*
-import kyo.net.*
-
-val tls = NetTlsConfig(sniHostname = Present("example.com"))
-
-val secured: Connection < (Async & Abort[NetException]) =
-    NetPlatform.transport.connect("example.com", 443, tls).safe.get
 ```
 
 `connectUnix` opens a Unix-domain socket connection by path, and `stdio` wraps the process's standard input and output as a connection where the platform supports it:
@@ -52,9 +39,11 @@ val viaUnix: Connection < (Async & Abort[NetException]) =
     NetPlatform.transport.connectUnix("/tmp/app.sock").safe.get
 ```
 
+For a connection that is encrypted from its first byte, use the `connect` overload that takes a `NetTlsConfig`; that and the STARTTLS-style in-place upgrade are covered under [TLS](#tls).
+
 ## Reading and writing
 
-A `Connection` exposes two channels of byte spans, `inbound` and `outbound`. There is no `write` method: you write by putting a span on `outbound`, and you read by taking from `inbound`. Both are `Channel.Unsafe[Span[Byte]]`, so compose them with `.safe`.
+kyo-net has no `write` method: a `Connection` is a pair of byte channels, `inbound` and `outbound`. You send by putting a `Span[Byte]` on `outbound`, and you receive by taking from `inbound`. Both are `Channel.Unsafe[Span[Byte]]`, so compose them with `.safe`.
 
 ```scala
 import AllowUnsafe.embrace.danger
@@ -72,9 +61,27 @@ def echo(conn: Connection): Maybe[Span[Byte]] < (Async & Abort[Closed]) =
 
 `close()` releases the connection; `isOpen` reports whether it is still live. The caller closes every connection it opens.
 
+When the peer closes, `inbound` completes. At that point `closeReason` reports how the stream ended. For a TLS connection this separates an orderly close, where the peer sent its authenticated `close_notify` before the TCP FIN (`CloseReason.CleanClose`), from a `CloseReason.Truncated` end, where the connection dropped with a bare FIN and no `close_notify`.
+
+> **Caution:** A `Truncated` close is the truncation-attack condition (RFC 8446 6.1). kyo-net does not reject it, because a large population of real HTTP/1.1 servers close this way after a complete length-framed message, but a length-aware caller that has not yet reached its expected message boundary must treat a `Truncated` end as a truncation, not a normal EOF.
+
+```scala
+import AllowUnsafe.embrace.danger
+import kyo.*
+import kyo.net.*
+
+def receive(conn: Connection): Maybe[Chunk[Span[Byte]]] < (Async & Abort[Closed]) =
+    conn.inbound.safe.drain.map { bytes =>
+        conn.closeReason match
+            case Connection.CloseReason.CleanClose => Present(bytes) // close_notify seen: the stream is complete
+            case Connection.CloseReason.Truncated  => Absent         // bare FIN, no close_notify: drop as a possible truncation
+            case _                                 => Present(bytes) // non-TLS or still-active: no truncation distinction
+    }
+```
+
 ## Listening
 
-`Transport.listen` binds a server socket and runs a handler once per accepted connection. The handler is `Connection => Unit`: it runs fire-and-forget on the accept carrier and returns immediately, so anything beyond a trivial setup spawns its own carrier with `Fiber.Unsafe.init`. A long-running synchronous handler stalls accepts.
+A server does not run its own accept loop: it binds with `listen` and hands over a per-connection handler that the transport invokes once for each accepted connection. The handler is `Connection => Unit`: it runs fire-and-forget on the accept carrier and returns immediately, so anything beyond a trivial setup spawns its own carrier with `Fiber.Unsafe.init`. A long-running synchronous handler stalls accepts.
 
 ```scala
 import AllowUnsafe.embrace.danger
@@ -90,31 +97,24 @@ val listening: Listener < (Async & Abort[NetException]) =
 
 Binding to port `0` asks the OS for a free port; the `Listener` reports the address it actually bound to, so read `listener.port` after `listen` returns to learn it. `close()` on the listener stops accepting new connections and releases the bound socket, but does NOT close connections already accepted (those are owned by their handler), so a graceful shutdown closes the listener first, then drains the live connections.
 
-A second `listen` overload takes a `NetTlsConfig` and terminates TLS for every accepted connection, and `listenUnix` binds a Unix-domain server socket by path.
+A second `listen` overload takes a `NetTlsConfig` and terminates TLS for every accepted connection (see [TLS](#tls)), and `listenUnix` binds a Unix-domain server socket by path.
 
-## STARTTLS
+## TLS
 
-`upgradeToTls` turns an already-open plaintext connection into a TLS one in place (STARTTLS-style), after the pre-handshake bytes have been exchanged. It is supported on every platform. The returned fiber completes with the new TLS connection, or aborts a `NetException` when the connection cannot be upgraded or the handshake fails.
+A connection carries plaintext until you secure it, and there are two moments to do that. When the protocol is encrypted from its first byte, terminate TLS at the point of connect or accept. When the protocol speaks plaintext first and then negotiates the switch in band, upgrade the live connection in place. One `NetTlsConfig` drives both, on both the client and the server side.
 
-```scala
-import AllowUnsafe.embrace.danger
-import kyo.*
-import kyo.net.*
+When you control the endpoint and the protocol is TLS from the start (HTTPS, a TLS-only service), use `connect(tls)` on the client or `listen(tls)` on the server: the handshake completes before you see the first byte. When the protocol exchanges a plaintext preamble and then negotiates an upgrade (SMTP STARTTLS, an IMAP `STARTTLS`, a database `sslmode` handshake), use `upgradeToTls` on the already-open connection.
 
-def startTls(conn: Connection): Connection < (Async & Abort[NetException]) =
-    val tls = NetTlsConfig(sniHostname = Present("example.com"))
-    NetPlatform.transport.upgradeToTls(conn, tls, channelCapacity = 1024).safe.get
-end startTls
-```
+### Configuration
 
-## TLS configuration
+Which fields of `NetTlsConfig` you set depends on the role a connection plays, not on a client/server flag; the same type configures both:
 
-`NetTlsConfig` configures both client and server TLS. The fields you set depend on the role:
-
-- A verifying client needs a reference identity: set `sniHostname` (which both sends SNI and binds the verification name). `trustAll` disables verification for testing only.
+- A verifying client needs a reference identity: set `sniHostname` (which both sends SNI and binds the verification name). `trustAll` disables verification for testing only: setting `trustAll = true` disables all certificate validation and makes the connection vulnerable to MITM attacks, so use it only in development or integration test environments where you control both endpoints.
 - A server presents a certificate chain and key: `certChainPath` and `privateKeyPath`.
 - Mutual TLS adds client-certificate verification on the server: set `clientAuth` to `Required` or `Optional`, and point `trustStorePath` (falling back to `caCertPath`) at the CA that signs the client certs.
 - `minVersion` / `maxVersion` pin the TLS version window; the default floor is TLS 1.2.
+
+`tlsProvider` pins the TLS implementation for a single connection by id (`"boringssl"`, `"openssl"`, `"jdk"`, or `"node"`), the per-connection form of `-Dkyo.net.tls`. A pinned provider that the serving transport cannot drive, or that is not available on the host, fails the connection closed rather than substituting a different engine.
 
 ```scala
 import kyo.*
@@ -131,9 +131,41 @@ val serverTls = NetTlsConfig(
 
 The TLS implementation is selected by the platform: the bundled BoringSSL is the primary, system OpenSSL is the Native fallback, and the JDK `SSLEngine` is the JVM floor. You configure TLS through `NetTlsConfig`; you do not choose an engine.
 
+### TLS at connect and accept
+
+When the protocol is encrypted from its first byte, the `connect` overload that takes a `NetTlsConfig` terminates TLS as part of the connect, so the returned connection is already encrypted:
+
+```scala
+import AllowUnsafe.embrace.danger
+import kyo.*
+import kyo.net.*
+
+val tls = NetTlsConfig(sniHostname = Present("example.com"))
+
+val secured: Connection < (Async & Abort[NetException]) =
+    NetPlatform.transport.connect("example.com", 443, tls).safe.get
+```
+
+The matching `listen` overload takes a `NetTlsConfig` and completes the TLS handshake for every accepted connection before the handler runs, so the server side never sees a plaintext byte.
+
+### In-place upgrade (STARTTLS)
+
+When the protocol exchanges plaintext before it negotiates encryption, `upgradeToTls` turns an already-open connection into a TLS one in place, after the pre-handshake bytes have been exchanged. It is supported on every platform. The returned fiber completes with the new TLS connection, or aborts a `NetException` when the connection cannot be upgraded or the handshake fails.
+
+```scala
+import AllowUnsafe.embrace.danger
+import kyo.*
+import kyo.net.*
+
+def startTls(conn: Connection): Connection < (Async & Abort[NetException]) =
+    val tls = NetTlsConfig(sniHostname = Present("example.com"))
+    NetPlatform.transport.upgradeToTls(conn, tls, channelCapacity = 1024).safe.get
+end startTls
+```
+
 ## Configuring the transport
 
-`NetPlatform.transport` uses `TransportConfig.default`. To tune it, pass a `TransportConfig` to the `transport(config)` overload. Tune the config with `copy`:
+The process-global transport runs on `TransportConfig.default`. When you need to size channels or change a timeout, build your own transport from a `TransportConfig` and tune it with `copy`:
 
 ```scala
 import AllowUnsafe.embrace.danger
@@ -151,7 +183,7 @@ val tuned: Transport = NetPlatform.transport(config)
 
 A `transport(config)` instance owns its resources, so the caller MUST `close()` it. The process-global `NetPlatform.transport`, by contrast, is shared and must NOT be closed.
 
-A finite `handshakeTimeout` also arms the transport's own connect deadline: a connect to an unreachable peer then fails with `NetConnectTimeoutException` rather than hanging until the OS gives up, and on a TLS server it reaps a stalled handshake (a slowloris guard). The default `handshakeTimeout` is infinite, leaving timeout composition to the caller via `Async.timeout`.
+`connectTimeout` (default `30.seconds`) bounds a client TCP connect: if the OS delivers no connect outcome, connected or refused, within the deadline, the connect fails with `NetConnectTimeoutException`. `handshakeTimeout` (default `30.seconds`) bounds a server-side accept TLS handshake and reaps a connection that stalls mid-handshake, a slowloris guard (CWE-400). Both fields accept a positive `Duration` or `Duration.Infinity`.
 
 ## Errors
 
@@ -206,8 +238,7 @@ def request(host: String, port: Int, payload: Span[Byte]): Maybe[Span[Byte]] < (
     }
 ```
 
-## Known limitations
+## Platform capability differences
 
-- The whole surface is unsafe-tier by design. If you want a safe, composable HTTP API, use kyo-http; kyo-net is the floor it sits on.
-- `stdio` is supported on the posix and Node transports, not the pure-JDK NIO floor; it aborts `NetStdioUnsupportedException` where unsupported.
+- `stdio` is supported on the posix and Node transports, not the pure-JDK NIO floor; it aborts `NetStdioUnsupportedException` where unsupported, and `NetStdioAlreadyOpenException` if a stdio connection is already open (fds 0 and 1 are process-global, so only one can exist at a time).
 - io_uring requires Linux with a usable ring; where it is unavailable the transport falls back to epoll/kqueue or the NIO floor automatically.
