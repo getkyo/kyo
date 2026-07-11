@@ -399,6 +399,7 @@ final private[kyo] class NioWriteHandle(channel: FileChannel, path: Path) extend
         writeBytes(Chunk.from(s.getBytes(charset)))
 
     def finish()(using AllowUnsafe): Unit =
+        channel.force(true) // fsync: bytes are durable before the logical-completion flag
         finished = true
 
     def close()(using AllowUnsafe): Unit =

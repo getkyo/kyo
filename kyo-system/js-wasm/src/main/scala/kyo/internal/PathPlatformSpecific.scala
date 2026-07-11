@@ -36,6 +36,7 @@ private[kyo] object NodeFs extends js.Object:
     def writeSync(fd: Int, buffer: Uint8Array, offset: Int, length: Int, position: Double): Int = js.native
     def writeSync(fd: Int, data: String, position: Double, encoding: String): Int               = js.native
     def closeSync(fd: Int): Unit                                                                = js.native
+    def fsyncSync(fd: Int): Unit                                                                = js.native
     def fstatSync(fd: Int): NodeStats                                                           = js.native
     def symlinkSync(target: String, path: String): Unit                                         = js.native
     def mkdtempSync(prefix: String): String                                                     = js.native
@@ -576,6 +577,7 @@ final private[kyo] class NodeWriteHandle(fd: Int, path: Path) extends Path.Write
         writeBytes(Chunk.from(s.getBytes(charset)))
 
     def finish()(using AllowUnsafe): Unit =
+        NodeFs.fsyncSync(fd) // fsync: bytes are durable before the logical-completion flag
         finished = true
 
     def close()(using AllowUnsafe): Unit =

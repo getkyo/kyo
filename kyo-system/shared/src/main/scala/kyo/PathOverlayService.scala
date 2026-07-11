@@ -366,19 +366,28 @@ final private[kyo] class OverlayService[S](lower: Path.Service[S], state: Atomic
 
     val disposition: Path.Disposition = Path.Disposition.ManualCommit
 
-    // Unique hex identifier for this overlay instance, used to prefix staging directories so
-    // recover() can locate them. Stable for the lifetime of the object.
-    private val overlayId: String =
-        java.lang.Integer.toHexString(java.lang.System.identityHashCode(this))
+    // Startup seed: mixes nanosecond time with identity hash to be distinct across restarts
+    // and across concurrently-alive instances. Not cryptographic; collision probability is
+    // negligible for the expected number of commits per root.
+    private val instanceSeed: String =
+        (java.lang.System.nanoTime() ^ java.lang.System.identityHashCode(this).toLong).toHexString
+
+    // Per-instance monotone counter; combined with instanceSeed, makes each commit's staging
+    // dir name unique even if two commits race inside the same overlay instance.
+    private val commitSeq = new java.util.concurrent.atomic.AtomicLong(0L)
 
     // Crash-injection hooks for recovery tests; each marks a point where a test can inject a
     // failure to verify the commit is replayable from that position. Default no-ops; recovery
     // tests replace them with functions that throw. Single-writer semantics: only one test
     // sets and clears a hook at a time. private[kyo] so tests (same package) can reach them.
+    // Performance note: these hooks dispatch as no-op lambdas (default) on every commit.
+    // The per-commit overhead (N+3 Sync.Unsafe.defer dispatches) is negligible relative to the
+    // file I/O in the commit hot path.
     private[kyo] var afterStageHook: () => Unit              = () => ()
     private[kyo] var afterIntentLogHook: () => Unit          = () => ()
     private[kyo] var afterEntryApplyHook: (Int, Int) => Unit = (_, _) => ()
     private[kyo] var beforeMarkerHook: () => Unit            = () => ()
+    private[kyo] var afterMarkerHook: () => Unit             = () => ()
 
     // Tracks the staging directory handle of the current or most recent commit attempt.
     // Set in withCommit before applyResolved, cleared after successful cleanup. Left set
@@ -1270,8 +1279,9 @@ final private[kyo] class OverlayService[S](lower: Path.Service[S], state: Atomic
                             }
                             .andThen {
                                 runHook(beforeMarkerHook).andThen { // crash point 4
-                                    // crash points 5 (during write) and 6 (after write) are
-                                    // implicit at the writeCommittedMarker boundary.
+                                    // Crash during the marker write is not an independently injectable point:
+                                    // the sentinel either exists or does not; no partial state is possible.
+                                    // The afterMarkerHook fires in withCommit after applyResolved returns.
                                     writeCommittedMarker(stagingDir)
                                 }
                             }
@@ -1285,22 +1295,26 @@ final private[kyo] class OverlayService[S](lower: Path.Service[S], state: Atomic
     // On failure (crash hook throws or lower I/O error) the staging dir and stagingDirHandle
     // remain set so recover() can find and re-apply the partial commit.
     private def withCommit(journal: Chunk[WriteOp]): Unit < (S & Abort[FileException]) =
-        lower.tempDir(s"kyo-commit-$overlayId").map { handle =>
+        val commitId = s"$instanceSeed-${commitSeq.getAndIncrement().toHexString}"
+        lower.tempDir(s"kyo-commit-$commitId").map { handle =>
             // Unsafe: stores handle before applyResolved so recover() can find the staging dir
             // if applyResolved is interrupted by a crash hook throwing an exception.
             Sync.Unsafe.defer { stagingDirHandle = Present(handle) }
                 .asInstanceOf[Unit < (S & Abort[FileException])]
                 .andThen {
                     applyResolved(handle.path, journal).andThen {
-                        // Committed marker written; safe to remove staging dir.
-                        // Unsafe: clears handle reference and removes the staging directory.
-                        Sync.Unsafe.defer {
-                            stagingDirHandle = Absent
-                            handle.remove()
-                        }.asInstanceOf[Unit < (S & Abort[FileException])]
+                        runHook(afterMarkerHook).andThen { // crash point 6
+                            // Committed marker written; safe to remove staging dir.
+                            // Unsafe: clears handle reference and removes the staging directory.
+                            Sync.Unsafe.defer {
+                                stagingDirHandle = Absent
+                                handle.remove()
+                            }.asInstanceOf[Unit < (S & Abort[FileException])]
+                        }
                     }
                 }
         }
+    end withCommit
 
     private def applyEntry(path: Path, entry: Path.Entry): Unit < (S & Abort[FileException]) =
         entry match
@@ -1378,61 +1392,82 @@ final private[kyo] class OverlayService[S](lower: Path.Service[S], state: Atomic
             }
         }
 
+    // Recovers a single staging directory: reads the intent log, re-applies ops idempotently
+    // (skipping ops already applied to the lower), writes the committed marker if absent, then
+    // removes the staging directory via the lower service. Used by both recover() (live commit
+    // reference still in memory) and recoverFromDisk() (disk-scan after a process restart).
+    private def recoverStagingDir(stagingDir: Path): Unit < (S & Abort[FileException]) =
+        val logPath = stagingDir / "intent.kyo"
+        lower.exists(logPath).map { hasLog =>
+            if !hasLog then
+                // Staging dir exists but no intent log was written (crash before log write).
+                // The commit was never durable; remove the orphaned staging dir and treat as clean.
+                lower.removeAll(stagingDir)
+            else
+                lower.exists(stagingDir / "committed.marker").map { hasMarker =>
+                    if hasMarker then
+                        // Committed marker present; the commit was fully applied. Cleanup only.
+                        lower.removeAll(stagingDir)
+                    else
+                        lower.readBytes(logPath).map { logBytes =>
+                            WriteOpLog.decode(logPath, logBytes) match
+                                case Result.Success(Absent) =>
+                                    // Torn or CRC-failed log: crash artifact from an incomplete
+                                    // intent-log write (finish() never called). The commit was
+                                    // never durable; discard the staging dir and treat as clean.
+                                    lower.removeAll(stagingDir)
+                                case Result.Success(Present(journal)) =>
+                                    journal.zipWithIndex
+                                        .foldLeft[Unit < (S & Abort[FileException])](()) {
+                                            case (acc, (op, i)) =>
+                                                acc.andThen(applyOneOpIdempotent(stagingDir, i, op))
+                                        }
+                                        .andThen {
+                                            writeCommittedMarker(stagingDir).andThen {
+                                                lower.removeAll(stagingDir)
+                                            }
+                                        }
+                                case Result.Failure(e) =>
+                                    // Bad magic or unsupported version: not a crash artifact.
+                                    // Fail loudly so the caller can observe the unexpected state.
+                                    Abort.fail[FileException](e)
+                        }
+                }
+        }
+    end recoverStagingDir
+
     // Recovery driver: re-applies a partially-applied commit found via stagingDirHandle.
     // Called after a simulated mid-commit crash: the overlay object remains alive, so
     // stagingDirHandle still points to the staging dir created before the failure.
-    // If the intent log is present and committed.marker is absent, re-applies all ops
-    // idempotently (skipping already-moved staged files), then writes the committed marker.
     // private[kyo] so recovery tests (same package, outside this class) can call it.
     private[kyo] def recover(): Unit < (S & Abort[FileException]) =
         stagingDirHandle match
             case Absent => ()
             case Present(handle) =>
-                val stagingDir = handle.path
-                val logPath    = stagingDir / "intent.kyo"
-                lower.exists(logPath).map { hasLog =>
-                    if !hasLog then ()
-                    else
-                        lower.exists(stagingDir / "committed.marker").map { hasMarker =>
-                            if hasMarker then
-                                // Already fully committed; cleanup is safe.
-                                // Unsafe: clears handle and removes staging directory.
-                                Sync.Unsafe.defer {
-                                    stagingDirHandle = Absent
-                                    handle.remove()
-                                }.asInstanceOf[Unit < (S & Abort[FileException])]
-                            else
-                                lower.readBytes(logPath).map { logBytes =>
-                                    WriteOpLog.decode(logPath, logBytes) match
-                                        case Result.Success(Absent) =>
-                                            // Torn or CRC-failed log: crash artifact from an incomplete
-                                            // intent-log write (finish() never called). The commit was
-                                            // never durable; discard the staging dir and treat as clean.
-                                            Sync.Unsafe.defer {
-                                                stagingDirHandle = Absent
-                                                handle.remove()
-                                            }.asInstanceOf[Unit < (S & Abort[FileException])]
-                                        case Result.Success(Present(journal)) =>
-                                            journal.zipWithIndex
-                                                .foldLeft[Unit < (S & Abort[FileException])](()) {
-                                                    case (acc, (op, i)) =>
-                                                        acc.andThen(applyOneOpIdempotent(stagingDir, i, op))
-                                                }
-                                                .andThen {
-                                                    writeCommittedMarker(stagingDir).andThen {
-                                                        // Unsafe: clears handle and removes staging dir.
-                                                        Sync.Unsafe.defer {
-                                                            stagingDirHandle = Absent
-                                                            handle.remove()
-                                                        }.asInstanceOf[Unit < (S & Abort[FileException])]
-                                                    }
-                                                }
-                                        case Result.Failure(e) =>
-                                            // Bad magic or unsupported version: not a crash artifact.
-                                            // Fail loudly so the caller can observe the unexpected state.
-                                            Abort.fail[FileException](e)
-                                }
-                        }
+                recoverStagingDir(handle.path).andThen {
+                    // Clear the in-memory staging reference after recovery; subsequent calls to
+                    // recover() see Absent and exit as no-ops (idempotency guarantee).
+                    // Unsafe: mutation of stagingDirHandle outside the Kyo effect system.
+                    Sync.Unsafe.defer { stagingDirHandle = Absent }
+                        .asInstanceOf[Unit < (S & Abort[FileException])]
                 }
+
+    // Scans the lower service's root for orphaned staging directories (kyo-commit-* prefix)
+    // left by a prior process crash and recovers each via recoverStagingDir. Does NOT wire
+    // at OverlayService.init: wiring at init would require adding root: Path and
+    // Abort[FileException] to Service.overlay's public signature, which would change the
+    // established API. Call recoverFromDisk(root) explicitly immediately after
+    // Service.overlay(lower) to enable automatic crash recovery. private[kyo] so disk-scan
+    // recovery tests can call it directly.
+    private[kyo] def recoverFromDisk(root: Path): Unit < (S & Abort[FileException]) =
+        lower.list(root).map { entries =>
+            entries.foldLeft[Unit < (S & Abort[FileException])](()) { (acc, entry) =>
+                acc.andThen {
+                    entry.name match
+                        case Present(n) if n.startsWith("kyo-commit-") => recoverStagingDir(entry)
+                        case _                                         => ()
+                }
+            }
+        }
 
 end OverlayService

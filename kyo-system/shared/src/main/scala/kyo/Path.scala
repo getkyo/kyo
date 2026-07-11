@@ -519,13 +519,23 @@ object Path extends PathPlatformSpecific:
         def remove(path: Path): Boolean < (Sync & Abort[FileException])      = confined(path).andThen(host.remove(path))
         def removeExisting(path: Path): Unit < (Sync & Abort[FileException]) = confined(path).andThen(host.removeExisting(path))
         def removeAll(path: Path): Unit < (Sync & Abort[FileException])      = confined(path).andThen(host.removeAll(path))
-        // tempDir delegates to the underlying host service without confinement. Temporary directories
-        // are created in the OS-level temp area (e.g. /tmp) by OS convention, not under the
-        // confinement root. The confinement contract applies to persistent path operations on
-        // user-specified paths; ephemeral temp dir creation is outside that contract. The vended
-        // TempDirHandle's remove() routes through the creating host service, so cleanup is also
-        // outside the confinement root, which is correct: the handle removes the same dir it created.
-        def tempDir(prefix: String): Path.TempDirHandle < (Sync & Abort[FileException]) = host.tempDir(prefix)
+        // tempDir creates inside rootReal, not in the OS temp dir. Creating within root keeps
+        // staged paths confined: the overlay's commit protocol calls lower.move(stagingDir/eN.dat,
+        // target) through this service; if stagingDir were in OS temp the confinement check on
+        // the source path would fail. Creating in root also lets recoverFromDisk(root) scan for
+        // kyo-commit-* dirs without cross-filesystem access. Uniqueness: nanoTime XOR identityHash
+        // provides negligible collision probability for the expected number of concurrent commits.
+        def tempDir(prefix: String): Path.TempDirHandle < (Sync & Abort[FileException]) =
+            val uniqueSuffix =
+                java.lang.Long.toHexString(java.lang.System.nanoTime() ^ java.lang.System.identityHashCode(this).toLong)
+            val dir = rootReal / s"$prefix-$uniqueSuffix"
+            host.mkDir(dir).map { _ =>
+                new Path.TempDirHandle:
+                    def path: Path = dir
+                    // Unsafe: recursive host delete of the temp dir created within rootReal
+                    def remove()(using AllowUnsafe): Unit = discard(dir.unsafe.removeAll())
+            }
+        end tempDir
     end RootConfinedHostService
 
     // --- Runners ---
@@ -1340,8 +1350,10 @@ object Path extends PathPlatformSpecific:
         /** Writes a string to the channel using the given charset. */
         def writeString(s: String, charset: Charset)(using AllowUnsafe, Frame): Result[FileWriteException, Unit]
 
-        /** Marks the written content complete. If `close()` runs without a prior `finish()`, the partial
-          * entry is removed (the delete-on-failure contract the stream sinks rely on).
+        /** Marks the written content complete. On filesystem-backed handles, also flushes all written
+          * bytes to stable storage before returning (fsync). If `close()` runs without a prior
+          * `finish()`, the partial entry is removed (the delete-on-failure contract the stream sinks
+          * rely on).
           */
         def finish()(using AllowUnsafe): Unit
 
