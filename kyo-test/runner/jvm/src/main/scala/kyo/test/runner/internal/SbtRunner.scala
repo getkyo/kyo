@@ -131,7 +131,10 @@ final private[runner] class SbtRunner(
                     checkSockets = checkSockets,
                     idleBudgetNanos = 2_000_000_000L,
                     settleNanos = 200_000_000L,
-                    pollNanos = 10_000_000L
+                    pollNanos = 10_000_000L,
+                    // Forgive an async deferred close still discharging on the io_uring reap thread after scheduler quiescence: re-sample
+                    // the fd leak set for up to 2s so a completing teardown drains out, while a genuine leak (never closes) still fails.
+                    fdDrainBudgetNanos = 2_000_000_000L
                 ) match
                     case kyo.Maybe.Present(report) => throw new LeakCheck.Detected(report)
                     case kyo.Maybe.Absent          => ()
