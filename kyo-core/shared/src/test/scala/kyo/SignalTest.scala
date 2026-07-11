@@ -25,9 +25,9 @@ class SignalTest extends kyo.test.Test[Any]:
             "ok" in {
                 val sig = Signal.initConst(42)
                 for
-                    v1 <- sig.current
-                    v2 <- sig.next
-                yield assert(v1 == 42 && v2 == 42)
+                    v1      <- sig.current
+                    pending <- nextStaysPending(sig)
+                yield assert(v1 == 42 && pending)
                 end for
             }
             "missing CanEqual" in {
@@ -88,13 +88,13 @@ class SignalTest extends kyo.test.Test[Any]:
         "initConstWith" - {
             "ok" in {
                 for
-                    v <- Signal.initConstWith(42) { sig =>
+                    result <- Signal.initConstWith(42) { sig =>
                         for
-                            v1 <- sig.current
-                            v2 <- sig.next
-                        yield (v1, v2)
+                            v1      <- sig.current
+                            pending <- nextStaysPending(sig)
+                        yield (v1, pending)
                     }
-                yield assert(v == (42, 42))
+                yield assert(result == (42, true))
             }
             "missing CanEqual" in {
                 typeCheckFailure(
@@ -609,8 +609,9 @@ class SignalTest extends kyo.test.Test[Any]:
             val z = Signal.zipAll(Seq.empty[Signal[Int]])
             for
                 v1 <- z.current
-                v2 <- z.next
-            yield assert(v1 == Chunk.empty && v2 == Chunk.empty)
+                // No signals means nothing can ever change, so `next` parks like any constant signal.
+                pending <- nextStaysPending(z)
+            yield assert(v1 == Chunk.empty && pending)
             end for
         }
 
@@ -685,8 +686,9 @@ class SignalTest extends kyo.test.Test[Any]:
             val z = Signal.combineLatestAll(Seq.empty[Signal[Int]])
             for
                 v1 <- z.current
-                v2 <- z.next
-            yield assert(v1 == Chunk.empty && v2 == Chunk.empty)
+                // No signals means nothing can ever change, so `next` parks like any constant signal.
+                pending <- nextStaysPending(z)
+            yield assert(v1 == Chunk.empty && pending)
             end for
         }
 
@@ -807,6 +809,21 @@ class SignalTest extends kyo.test.Test[Any]:
         }
 
     }
+
+    // A constant (or otherwise never-changing) signal must never complete `next`. Fork `sig.next`, then
+    // drive a full round-trip on an independent ref (register a waiter, set, await delivery) so the
+    // scheduler has certainly advanced, and report whether the forked `next` is still pending.
+    private def nextStaysPending[A](sig: Signal[A])(using Frame, kyo.test.AssertScope): Boolean < Async =
+        for
+            f      <- Fiber.initUnscoped(sig.next)
+            ref    <- Signal.initRef(0)
+            w      <- Fiber.initUnscoped(ref.next)
+            _      <- assertEventually(ref.waiters.map(_ == 1))
+            _      <- ref.set(1)
+            _      <- w.get
+            polled <- f.poll
+            _      <- f.interrupt
+        yield polled.isEmpty
 
     private def pollUntil(cond: Boolean < Async, maxTries: Int = 3000)(using Frame): Boolean < Async =
         Loop.indexed { i =>
