@@ -26,7 +26,7 @@ private[machine] object MachineWindows extends Machine:
                         cpu = readCpu(b),
                         memory = readMemory(b),
                         swap = readSwap(b),
-                        disks = readDisks(b),
+                        disks = Chunk.empty,
                         load = Absent,
                         cgroup = Absent,
                         pressure = Absent,
@@ -36,6 +36,15 @@ private[machine] object MachineWindows extends Machine:
                     case ex: Throwable if scala.util.control.NonFatal(ex) || ex.isInstanceOf[LinkageError] =>
                         Machine.Reading.empty
             case Absent => Machine.Reading.empty
+
+    override def readDisks(sampler: MachineSampler)(using AllowUnsafe): Chunk[Machine.DiskReading] =
+        bindings match
+            case Present(b) =>
+                try readDisksImpl(b)
+                catch
+                    case ex: Throwable if scala.util.control.NonFatal(ex) || ex.isInstanceOf[LinkageError] =>
+                        Chunk.empty
+            case Absent => Chunk.empty
 
     private lazy val bindings: Maybe[WindowsBindings] =
         try Present(Ffi.load[WindowsBindings])
@@ -81,7 +90,7 @@ private[machine] object MachineWindows extends Machine:
                 finally out.close()
             case Absent => Absent
 
-    private def readDisks(b: WindowsBindings)(using AllowUnsafe): Chunk[Machine.DiskReading] =
+    private def readDisksImpl(b: WindowsBindings)(using AllowUnsafe): Chunk[Machine.DiskReading] =
         WindowsDisk.enumerate(b).map(d => WindowsDisk.stat(b, d))
 
 end MachineWindows

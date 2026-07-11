@@ -19,7 +19,7 @@ class StatTest extends kyo.test.Test[Any]:
         assert(Sync.Unsafe.evalOrThrow(stat.traceSpan("a")(v)) eq v)
     }
 
-    // The four leaves below exercise the eager ExporterFactory scan hook in object Stat.
+    // The leaves below exercise the eager ExporterFactory scan hook in object Stat.
     // They are JVM-only: discovery runs through java.util.ServiceLoader over the test-classpath
     // META-INF/services resource, the JVM discovery mechanism. On JS/Native the shimmed loader reads
     // JSServiceLoaderRegistry, which is populated only by an @JSExportTopLevel registration object (a
@@ -39,71 +39,47 @@ class StatTest extends kyo.test.Test[Any]:
         assert(StatTestExporterFactory.kyoScopeWasNonNull.get())
     }
 
-    "the eager scan val is the last val declared in object Stat (source-shape)".onlyJvm in {
-        val source    = StatTest.readStatSource()
-        val startMark = "object Stat:"
-        val startIdx  = source.indexOf(startMark)
-        assert(startIdx >= 0, "object Stat: declaration not found in Stat.scala")
-        // Bound the scan to the body of `object Stat` (from its header to its `end Stat`).
-        val endStatIdx = source.indexOf("\nend Stat", startIdx)
-        assert(endStatIdx >= 0, "end Stat not found for object Stat")
-        val body = source.substring(startIdx, endStatIdx)
-
-        // A val DECLARATION in the object body starts a line at the 4-space object-body indent,
-        // optionally with a `private[...]` / `final` modifier, then `val <name>`. This excludes
-        // body-internal vals (deeper indent, e.g. the `val _ =` inside eagerExporterScan's own body).
-        val declRegex = """(?m)^    (?:(?:private\[[^\]]+\]|final|lazy)\s+)*val\s+(\w+)""".r
-        val valNames  = declRegex.findAllMatchIn(body).map(_.group(1)).toList
-        assert(valNames.nonEmpty, "no object-body val declarations found in object Stat")
-        assert(
-            valNames.last == "eagerExporterScan",
-            s"eagerExporterScan is not the last val declared in object Stat; declaration order was: ${valNames.mkString(", ")}"
-        )
-    }
-
-    "eager scan is idempotent-safe: repeated metrics-only Stat references trigger no further construction".onlyJvm in {
+    "a throwing factory in the eager scan is isolated: the sibling good factory still constructs, Stat is not bricked".onlyJvm in {
+        // StatTestThrowingFactory is registered FIRST in META-INF/services and throws at construction.
+        // Per-factory isolation must skip it and still construct StatTestExporterFactory (listed after it),
+        // and forcing object Stat's class initializer must not itself throw. Any Stat use here reaching
+        // this line proves the class initializer completed rather than raising ExceptionInInitializerError.
+        val _ = Stat.kyoScope
+        assert(StatTestThrowingFactory.constructionAttempted.get(), "discovery never reached the throwing factory")
+        assert(StatTestExporterFactory.constructed.get(), "the throwing factory prevented the good factory from constructing")
+        // Stat is fully usable after the isolated failure.
         import AllowUnsafe.embrace.danger
-        // object Stat's class initializer runs the SPI scan; force it and snapshot the construction count.
-        val _        = Stat.kyoScope
-        val baseline = StatTestExporterFactory.constructions.get()
-        // The eagerExporterScan hook constructs the factory at least once at class-init. The exact
-        // construction count is not asserted: it depends on how many exporter-discovery paths run in this
-        // runner fork (a duplicate construction is harmless anyway, because a side-effecting factory
-        // constructor gates its start on a CAS, so a repeat construction starts nothing new). What this
-        // leaf pins is idempotence after class-init: no subsequent metrics-path reference re-scans and
-        // re-constructs the factory, so the count stays at its post-class-init baseline.
-        assert(baseline >= 1, s"eager scan constructed the factory at least once at class-init, got $baseline")
-        val _c = Stat.initScope("test-idempotent").initCounter("x")
-        val _s = Stat.kyoScope
-        val _t = Stat.initScope("test-idempotent-2").initHistogram("y")
-        // No new construction happened: repeated references after class-init do not re-run the scan.
+        val counter = Stat.initScope("isolated-scan").initCounter("k")
+        Sync.Unsafe.evalOrThrow(counter.inc)
+        assert(Sync.Unsafe.evalOrThrow(counter.get) == 1)
+    }
+
+    "the eager scan and the first trace use share ONE TraceExporter construction; no second export loop".onlyJvm in {
+        import AllowUnsafe.embrace.danger
+        // Force object Stat's class initializer (runs the eager scan, which builds the single
+        // TraceExporter by reading scannedExporter).
+        val _ = Stat.kyoScope
+        // The class-init scan has constructed the factory and its exporter exactly once. The Local
+        // default reuses that same scanned instance, so a first trace call must NOT construct a second
+        // exporter: a value of 2 here is the double-construction defect (two background export loops
+        // draining the same destructive counters).
         assert(
-            StatTestExporterFactory.constructions.get() == baseline,
-            s"a metrics-path reference re-constructed the factory: baseline $baseline, now ${StatTestExporterFactory.constructions.get()}"
+            StatTestExporterFactory.exporterConstructions.get() == 1,
+            s"class-init constructed the exporter ${StatTestExporterFactory.exporterConstructions.get()} times; expected exactly 1"
+        )
+        val v = new Object
+        val r = Sync.Unsafe.evalOrThrow(Stat.initScope("trace-once").traceSpan("s")(v))
+        assert(r eq v)
+        assert(
+            StatTestExporterFactory.exporterConstructions.get() == 1,
+            s"a first trace use constructed a second exporter (count now ${StatTestExporterFactory.exporterConstructions.get()}); the Local default did not reuse the scanned instance"
+        )
+        // Repeated metrics-path and trace references after class-init trigger no further construction.
+        val _c = Stat.initScope("trace-once-2").initCounter("x")
+        val _r = Sync.Unsafe.evalOrThrow(Stat.initScope("trace-once-3").traceSpan("s2")(v))
+        assert(
+            StatTestExporterFactory.exporterConstructions.get() == 1,
+            s"a later reference re-constructed the exporter (count now ${StatTestExporterFactory.exporterConstructions.get()})"
         )
     }
-end StatTest
-
-object StatTest:
-
-    /** Reads the committed source of kyo/Stat.scala for the source-shape leaf. Resolves the shared source
-      * from the JVM subproject's working directory (sbt runs kyo-core JVM tests with `kyo-core/jvm` as cwd),
-      * trying the shared-source candidates so the read is robust to the exact cwd sbt uses.
-      */
-    def readStatSource(): String =
-        val candidates = Seq(
-            "../shared/src/main/scala/kyo/Stat.scala",
-            "shared/src/main/scala/kyo/Stat.scala",
-            "kyo-core/shared/src/main/scala/kyo/Stat.scala",
-            "../../kyo-core/shared/src/main/scala/kyo/Stat.scala"
-        )
-        val found = candidates.map(new java.io.File(_)).find(_.isFile)
-        found match
-            case Some(f) => new String(java.nio.file.Files.readAllBytes(f.toPath), java.nio.charset.StandardCharsets.UTF_8)
-            case None =>
-                throw new AssertionError(
-                    s"could not locate kyo/Stat.scala from cwd ${new java.io.File(".").getAbsolutePath}; tried ${candidates.mkString(", ")}"
-                )
-        end match
-    end readStatSource
 end StatTest

@@ -16,15 +16,34 @@ class LinuxDecodersTest extends kyo.test.Test[Any]:
 
     "LinuxDecoders.cpu" - {
 
-        "scales the aggregate cpu line by the given jiffies-to-ns scale; total is the sum of present modes" in {
-            val (bytes, len) = span("cpu 100 0 50 800 20 0 0 0 0 0\n")
+        "scales the aggregate cpu line by the jiffies-to-ns scale; total sums every mode incl irq/softirq/steal; system folds in irq+softirq" in {
+            // Field order: cpu user(1) nice(2) system(3) idle(4) iowait(5) irq(6) softirq(7) steal(8)
+            //              guest(9) guest_nice(10). guest/guest_nice are already folded into user/nice by
+            //              the kernel, so they are NOT summed again.
+            val (bytes, len) = span("cpu 100 10 50 800 20 5 3 12 40 4\n")
             val result       = LinuxDecoders.cpu(bytes, len, 10000000L)
             assert(result == Present(Machine.CpuReading(
-                total = Present(9700000000L),
+                // total = (user 100 + nice 10 + system 50 + idle 800 + iowait 20 + irq 5 + softirq 3 + steal 12) = 1000 jiffies
+                total = Present(10000000000L),
                 user = Present(1000000000L),
-                system = Present(500000000L),
+                // system mode includes irq+softirq: (50 + 5 + 3) = 58 jiffies
+                system = Present(580000000L),
                 idle = Present(8000000000L),
                 iowait = Present(200000000L)
+            )))
+        }
+
+        "an older kernel line with only user/nice/system/idle omits the trailing modes without under-counting the columns it has" in {
+            // No iowait/irq/softirq/steal columns present: total sums the four present columns only, and
+            // the missing modes are Absent (never fabricated as 0).
+            val (bytes, len) = span("cpu 100 10 50 800\n")
+            val result       = LinuxDecoders.cpu(bytes, len, 10000000L)
+            assert(result == Present(Machine.CpuReading(
+                total = Present(9600000000L), // (100 + 10 + 50 + 800) = 960 jiffies
+                user = Present(1000000000L),
+                system = Present(500000000L), // no irq/softirq to fold in
+                idle = Present(8000000000L),
+                iowait = Absent
             )))
         }
 

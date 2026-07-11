@@ -36,16 +36,79 @@ private[machine] object LinuxDisk:
         "rpc_pipefs"
     )
 
+    /** Network/remote filesystems that are never enumerated. A statvfs against a dead network mount blocks
+      * indefinitely and would wedge the sampler tick, so remote mounts are excluded up front (the local
+      * fixed filesystems only contract, matching node_exporter's default filesystem filter). The `fuse.`
+      * prefix covers remote FUSE mounts (fuse.sshfs, fuse.rclone) alongside these named types.
+      */
+    val skipNetworkFstypes: Set[String] = Set(
+        "nfs",
+        "nfs4",
+        "cifs",
+        "smb",
+        "smbfs",
+        "smb3",
+        "afpfs",
+        "9p",
+        "ceph",
+        "glusterfs",
+        "lustre",
+        "webdav",
+        "davfs",
+        "ncpfs",
+        "afs",
+        "gfs",
+        "gfs2",
+        "beegfs",
+        "orangefs"
+    )
+
     def enumerate(s: MachineSampler)(using AllowUnsafe): Chunk[String] =
         s.readScoped(Path("/proc/mounts"), (b, n) => parseMounts(b, n)).getOrElse(Chunk.empty)
 
     def parseMounts(bytes: Span[Byte], len: Int): Chunk[String] =
         Chunk.from(Text.fromSpan(bytes, len).lines.flatMap { l =>
             l.split(" ") match
-                case a if a.length >= 3 && !skipFstypes.contains(a(2)) && !a(2).startsWith("fuse.") =>
-                    Iterator.single(a(1))
+                case a if a.length >= 3 && isPhysical(a(2)) =>
+                    Iterator.single(unescapeMount(a(1)))
                 case _ => Iterator.empty
         }.toSeq)
+
+    /** A fstype is enumerated only when it is neither a pseudo/virtual nor a network/remote filesystem, and
+      * is not a remote FUSE mount. `fuse.` covers remote FUSE transports; a plain local `fuse` (a local
+      * FUSE-backed filesystem) is not blocked, matching the prior behavior for the non-remote case.
+      */
+    private def isPhysical(fstype: String): Boolean =
+        !skipFstypes.contains(fstype) && !skipNetworkFstypes.contains(fstype) && !fstype.startsWith("fuse.")
+
+    /** Decodes the octal escapes the kernel writes into `/proc/mounts` for whitespace/backslash in a mount
+      * path: `\040` (space), `\011` (tab), `\012` (newline), `\134` (backslash). Any other backslash run is
+      * left verbatim. An escaped path is decoded so the store-name rule and statvfs see the real path.
+      */
+    def unescapeMount(path: String): String =
+        if !path.contains('\\') then path
+        else
+            val sb = new StringBuilder(path.length)
+            @scala.annotation.tailrec
+            def loop(i: Int): Unit =
+                if i >= path.length then ()
+                else if path.charAt(i) == '\\' && i + 3 < path.length && isOctal(path, i + 1) then
+                    val code = (digit(path.charAt(i + 1)) * 64) + (digit(path.charAt(i + 2)) * 8) + digit(path.charAt(i + 3))
+                    sb.append(code.toChar)
+                    loop(i + 4)
+                else
+                    sb.append(path.charAt(i))
+                    loop(i + 1)
+            loop(0)
+            sb.toString
+        end if
+    end unescapeMount
+
+    private def isOctal(s: String, i: Int): Boolean =
+        val a = s.charAt(i); val b = s.charAt(i + 1); val c = s.charAt(i + 2)
+        a >= '0' && a <= '7' && b >= '0' && b <= '7' && c >= '0' && c <= '7'
+
+    private def digit(c: Char): Int = c - '0'
 
     def stat(mount: String, statvfs: String => Maybe[(Long, Long)])(using AllowUnsafe): Machine.DiskReading =
         statvfs(mount) match

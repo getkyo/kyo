@@ -1141,13 +1141,29 @@ lazy val `kyo-stats-machine` =
         )
         .jvmSettings(
             mimaCheck(false),
-            Test / javaOptions += "--enable-native-access=ALL-UNNAMED"
+            Test / javaOptions += "--enable-native-access=ALL-UNNAMED",
+            // The module auto-starts a background host sampler on first Stat touch. Disable it for the
+            // module's OWN test runs so the once-per-second sampler does not race the suites' destructive
+            // counter-drain assertions on the shared process-global machine.* handles; a test that needs a
+            // sampler starts and stops its own explicitly (MachineStatFactoryTest, MachineHandlesTest).
+            Test / javaOptions += "-Dkyo.machine.disabled=true"
         )
-        .nativeSettings(`native-settings`)
+        .nativeSettings(
+            `native-settings`,
+            // Disable the auto-started sampler for the module's own Native test runs (see the JVM note).
+            Test / envVars += "KYO_MACHINE_DISABLED" -> "true"
+        )
         .jsSettings(
             `js-settings`,
             // koffi is loaded via CommonJS `require` at runtime, so align the linker.
             scalaJSLinkerConfig ~= { _.withModuleKind(ModuleKind.CommonJSModule) },
+            // Disable the auto-started sampler for the module's own JS test runs (see the JVM note); the
+            // opt-out is read via System.Unsafe.env, which resolves process.env on Node.
+            Test / jsEnv := new NodeJSEnv(
+                NodeJSEnv.Config()
+                    .withArgs(List("--max_old_space_size=5120"))
+                    .withEnv(Map("KYO_MACHINE_DISABLED" -> "true"))
+            ),
             // Bootstrap koffi into Node's resolver before tests run: LinuxBindings is kyo-stats-machine's
             // first Ffi binding, so its generated JS impl reaches for koffi at module load. Hooked on
             // Test / compile (not Test / test) so test, testOnly, and testQuick all trigger it, and

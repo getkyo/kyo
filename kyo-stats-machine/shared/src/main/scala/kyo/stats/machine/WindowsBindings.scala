@@ -34,6 +34,12 @@ private[machine] trait WindowsBindings extends Ffi:
     /** GetLogicalDrives bitmask of present drive letters (bit 0 = A:). */
     def getLogicalDrives()(using AllowUnsafe): Int
 
+    /** GetDriveTypeW(lpRootPathName): the drive-type code for a root path (`C:\`). Only DRIVE_FIXED (3) is
+      * a local fixed disk; network (4), removable (2), cdrom (5), and ramdisk (6) drives are excluded so a
+      * disconnected network drive's GetDiskFreeSpaceExW cannot block the sampler tick.
+      */
+    def getDriveType(root: String)(using AllowUnsafe): Int
+
     /** GetDiskFreeSpaceExW(lpDirectoryName, lpFreeBytesAvailableToCaller, lpTotalNumberOfBytes,
       * lpTotalNumberOfFreeBytes): three PULARGE_INTEGER out-params, each one int64. Returns non-zero on
       * success. Each buffer holds 1 long.
@@ -54,9 +60,15 @@ private[machine] object WindowsBindings
             "getSystemTimes"     -> "GetSystemTimes",
             "globalMemoryStatus" -> "GlobalMemoryStatusEx",
             "getLogicalDrives"   -> "GetLogicalDrives",
+            "getDriveType"       -> "GetDriveTypeW",
             "diskFreeSpace"      -> "GetDiskFreeSpaceExW"
         )
     ):
+
+    /** GetDriveTypeW's DRIVE_FIXED code: a local fixed disk. Only these drives are enumerated for disk
+      * metrics, so a network/removable/cdrom drive is never touched by GetDiskFreeSpaceExW.
+      */
+    val driveFixed: Int = 3
 
     /** sizeof(MEMORYSTATUSEX) in bytes; the struct is 64 bytes and its `dwLength` field must be preset to
       * this value before `GlobalMemoryStatusEx`, or the call fails.
@@ -69,11 +81,21 @@ private[machine] object WindowsBindings
       */
     def withMemoryStatus(b: WindowsBindings)(using AllowUnsafe): Maybe[Buffer[Long]] =
         val out = Buffer.alloc[Long](8)
-        out.set(0, memoryStatusExSize)
-        if b.globalMemoryStatus(out) == 0 then
+        // The buffer must be closed on EVERY non-success exit: a zero return, and also a throw from the
+        // binding before the success path takes ownership. Only the Present branch hands the still-open
+        // buffer to the caller (which closes it in its own finally); the failure and throw paths close here.
+        val ok =
+            try
+                out.set(0, memoryStatusExSize)
+                b.globalMemoryStatus(out) != 0
+            catch
+                case ex: Throwable if scala.util.control.NonFatal(ex) || ex.isInstanceOf[LinkageError] =>
+                    out.close()
+                    throw ex
+        if ok then Present(out)
+        else
             out.close()
             Absent
-        else Present(out)
         end if
     end withMemoryStatus
 

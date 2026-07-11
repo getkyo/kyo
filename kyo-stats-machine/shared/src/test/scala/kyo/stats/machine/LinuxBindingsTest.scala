@@ -36,25 +36,32 @@ class LinuxBindingsTest extends kyo.test.Test[Any]:
 
     "throw-to-Absent bridge" - {
 
-        "a thrown platform exception from a binding call is caught to Absent at the Machine impl boundary, no exception escapes" in {
+        "a thrown platform exception from a binding call is caught by the production Machine-impl bridge, no exception escapes" in {
             val throwing = new LinuxBindings:
                 def statvfs(path: String, out: Buffer[Long])(using AllowUnsafe): Int =
                     throw new java.io.IOException("no such file or directory")
                 def sysconf(name: Int)(using AllowUnsafe): Long =
                     throw new RuntimeException("sysconf failed")
 
-            def bridgedStatvfs(mount: String): Maybe[(Long, Long)] =
-                try LinuxDisk.statvfsRaw(throwing, mount)
-                catch case ex: Throwable if scala.util.control.NonFatal(ex) => Absent
+            // Drives the PRODUCTION bridge methods (MachineLinux.statvfsWith / jiffiesFromBinding) with a
+            // throwing binding, so the actual catch branches route to Absent / the default scale, rather
+            // than a test-local re-implementation of the same catch.
+            assert(MachineLinux.statvfsWith(throwing, "/does/not/exist") == Absent)
+            assert(MachineLinux.jiffiesFromBinding(throwing) == MachineLinux.defaultJiffiesToNanos)
+        }
 
-            def bridgedJiffiesToNanos: Long =
-                try
-                    val hz = throwing.sysconf(LinuxBindings.ScClkTck)
-                    if hz > 0 then 1000000000L / hz else 10000000L
-                catch case ex: Throwable if scala.util.control.NonFatal(ex) => 10000000L
+        "a sysconf returning a non-positive Hz falls back to the default jiffies scale, no throw" in {
+            val zeroHz = new LinuxBindings:
+                def statvfs(path: String, out: Buffer[Long])(using AllowUnsafe): Int = 1
+                def sysconf(name: Int)(using AllowUnsafe): Long                      = 0L
+            assert(MachineLinux.jiffiesFromBinding(zeroHz) == MachineLinux.defaultJiffiesToNanos)
+        }
 
-            assert(bridgedStatvfs("/does/not/exist") == Absent)
-            assert(bridgedJiffiesToNanos == 10000000L)
+        "a sysconf returning a positive Hz yields the exact ns-per-jiffy scale" in {
+            val hz100 = new LinuxBindings:
+                def statvfs(path: String, out: Buffer[Long])(using AllowUnsafe): Int = 1
+                def sysconf(name: Int)(using AllowUnsafe): Long                      = 100L
+            assert(MachineLinux.jiffiesFromBinding(hz100) == 10000000L)
         }
     }
 

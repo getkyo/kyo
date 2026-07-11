@@ -6,7 +6,24 @@ import kyo.ffi.*
 /** macOS per-mount disk enumeration over getmntinfo + statfs, fstype-filtered the same way as Linux. */
 private[machine] object MacosDisk:
 
-    val skipFstypes: Set[String] = Set("devfs", "autofs", "nullfs", "tmpfs", "fdesc")
+    /** Pseudo/virtual filesystems plus network/remote filesystems, none enumerated (local physical only).
+      * The network types (smbfs/nfs/afpfs/webdav/ftp) are excluded because a statfs against a dead remote
+      * mount blocks the sampler tick indefinitely.
+      */
+    val skipFstypes: Set[String] = Set(
+        "devfs",
+        "autofs",
+        "nullfs",
+        "tmpfs",
+        "fdesc",
+        "smbfs",
+        "nfs",
+        "afpfs",
+        "webdav",
+        "ftp",
+        "cifs",
+        "osxfuse"
+    )
 
     /** Enumerate mounts via the shim; each entry is a mount path. Physical filesystems only. */
     def enumerate(b: MacosBindings)(using AllowUnsafe): Chunk[String] =

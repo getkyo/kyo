@@ -9,13 +9,25 @@ class LinuxCgroupDecodeTest extends kyo.test.Test[Any]:
         val bytes = s.getBytes(StandardCharsets.US_ASCII)
         (Span.fromUnsafe(bytes), bytes.length)
 
-    "LinuxCgroup.readV1Limit sentinel (via LinuxCgroupDecode.singleLong)" - {
+    "LinuxCgroup.applyV1LimitSentinel (the production readV1Limit routing)" - {
 
         "a value at or above the v1 unlimited sentinel routes to Absent" in {
+            // Decode the raw limit exactly as production does, then route it through the production sentinel
+            // predicate (readV1Limit's own branch), never a test-local comparison.
             val (bytes, len) = span("9223372036854771712\n")
             val raw          = LinuxCgroupDecode.singleLong(bytes, len)
             assert(raw == Present(9223372036854771712L))
-            assert(raw.exists(_ >= LinuxCgroup.unlimitedSentinel))
+            assert(LinuxCgroup.applyV1LimitSentinel(raw) == Absent)
+        }
+
+        "a value below the sentinel passes through unchanged" in {
+            val (bytes, len) = span("1073741824\n")
+            val raw          = LinuxCgroupDecode.singleLong(bytes, len)
+            assert(LinuxCgroup.applyV1LimitSentinel(raw) == Present(1073741824L))
+        }
+
+        "an Absent raw read stays Absent through the sentinel routing" in {
+            assert(LinuxCgroup.applyV1LimitSentinel(Absent) == Absent)
         }
     }
 

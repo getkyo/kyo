@@ -37,36 +37,6 @@ class MachineMacosTest extends kyo.test.Test[Any]:
         def statfs(path: String, out: Buffer[Long])(using AllowUnsafe): Int = statfsFn(path, out)
     end StubBindings
 
-    "cgroup/pressure/cgroupPressure are always Absent" - {
-
-        "a macOS reading has cgroup, pressure, and cgroupPressure Absent and cpu Present, no throw" in {
-            val stub = new StubBindings
-            stub.hostCpuLoadFn = out =>
-                out.set(0, 1000000000L); out.set(1, 500000000L); out.set(2, 8000000000L); out.set(3, 0L)
-                0
-            for
-                handles <- MachineHandles.init
-                sampler = new MachineSampler(handles, MachineMacos)
-                reading = Machine.Reading(
-                    cpu = MachineMacos.readCpu(stub),
-                    memory = Absent,
-                    swap = Absent,
-                    disks = Chunk.empty,
-                    load = Absent,
-                    cgroup = Absent,
-                    pressure = Absent,
-                    cgroupPressure = Absent
-                )
-                _ = sampler.observe(reading)
-            yield
-                assert(reading.cgroup == Absent)
-                assert(reading.pressure == Absent)
-                assert(reading.cgroupPressure == Absent)
-                assert(reading.cpu.isDefined)
-            end for
-        }
-    }
-
     "load average" - {
 
         "load average is present on macOS (getloadavg), unlike Windows" in {
@@ -88,16 +58,31 @@ class MachineMacosTest extends kyo.test.Test[Any]:
         }
     }
 
-    "binding-load failure" - {
+    "read degradation on a non-macOS host" - {
 
-        "a binding-load failure (no koffi on browser-JS) degrades every macOS family to Absent, no throw" in {
-            def loadBindings(): Maybe[MacosBindings] =
-                try throw new RuntimeException("no koffi")
-                catch case ex: Throwable if scala.util.control.NonFatal(ex) => Absent
-            val reading = loadBindings() match
-                case Present(_) => fail("expected the load to fail in this scenario")
-                case Absent     => Machine.Reading.empty
-            assert(reading == Machine.Reading.empty)
+        // Exercises the REAL MachineMacos.read degrade path: off macOS the C shim's #else stubs return
+        // failure codes for every projection, so each family routes to Absent. Whether the binding loads
+        // (returning failure codes) or fails to load (bindings Absent), the read must not throw and the
+        // Linux-only families are always Absent. Gated off a real macOS host, where the shim returns live
+        // values and the families would be Present, which this degrade leaf is not asserting.
+        "off macOS every family degrades to Absent through the production read, no throw" in {
+            assume(
+                System.live.unsafe.operatingSystem() != System.OS.MacOS,
+                "the macOS shim returns live values on a real macOS host; this leaf asserts the off-macOS degrade"
+            )
+            for
+                handles <- MachineHandles.init
+                sampler = new MachineSampler(handles, MachineMacos)
+                reading = MachineMacos.read(sampler)
+            yield
+                assert(reading.cpu == Absent)
+                assert(reading.memory == Absent)
+                assert(reading.swap == Absent)
+                assert(reading.load == Absent)
+                assert(reading.cgroup == Absent)
+                assert(reading.pressure == Absent)
+                assert(reading.cgroupPressure == Absent)
+            end for
         }
     }
 
@@ -175,6 +160,22 @@ class MachineMacosTest extends kyo.test.Test[Any]:
             stub.mountFstypeFn = i => mounts(i)._2
             val result = MacosDisk.enumerate(stub)
             assert(result == Chunk("/"))
+        }
+
+        "disk enumeration filters network/remote filesystems (smbfs/nfs/afpfs); a hung remote mount is never statfs'd" in {
+            val stub = new StubBindings
+            val mounts = Vector(
+                ("/", "apfs"),
+                ("/Volumes/share", "smbfs"),
+                ("/Volumes/nfs", "nfs"),
+                ("/Volumes/afp", "afpfs"),
+                ("/data", "apfs")
+            )
+            stub.mountCountFn = () => mounts.length
+            stub.mountPathFn = i => mounts(i)._1
+            stub.mountFstypeFn = i => mounts(i)._2
+            val result = MacosDisk.enumerate(stub)
+            assert(result == Chunk("/", "/data"))
         }
     }
 

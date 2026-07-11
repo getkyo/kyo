@@ -55,16 +55,17 @@ final private[kyo] class MachineHandles private (root: Stat, cores: CounterGauge
     val cgCpuThrTimeHi    = cg.initHistogram("cpu.throttled.rate", "per-second throttled-time delta, ns/s", boundaries = nanosPerSec)
 
     // Config-value gauges (memory.limit, cpu.quota, cpu.period): a config value that is genuinely
-    // unavailable must not be registered or emitted at all. A CounterGauge whose poll returned a
-    // sentinel would export a fabricated number, because UnsafeCounterGauge.collect maps a negative
-    // poll to (Long.MaxValue + value) + 2. So each config gauge is created LAZILY on the FIRST Present
-    // observation (the same first-seen-then-retained model the per-store disk handles use): an unset
-    // limit/quota registers no handle and exports nothing; once a Present value is seen, the gauge is
-    // created once and its poll thereafter reads the last observed value from its holder.
+    // unavailable must not be registered or emitted at all. Each config gauge is created LAZILY on the
+    // FIRST Present observation (the same first-seen-then-retained model the per-store disk handles use):
+    // an unset limit/quota registers no handle and exports nothing; once a Present value is seen, the gauge
+    // is created once, SEEDED with that first value (so its first poll is never a transient 0), and its
+    // poll thereafter reads the last observed value from its holder. A config value is a point-in-time
+    // reading that can rise OR fall, so each is a plain Gauge (raw value, no delta), never a CounterGauge
+    // (whose delta wraps a decrease to garbage).
     private val configGauges = collection.mutable.HashMap.empty[String, ConfigGauge]
 
-    private def configFor(name: String, unit: String): ConfigGauge =
-        configGauges.getOrElseUpdate(name, ConfigGauge(cg, name, unit))
+    private def configFor(name: String, unit: String, first: Long): ConfigGauge =
+        configGauges.getOrElseUpdate(name, ConfigGauge(cg, name, unit, first))
 
     /** The system PSI and cgroup PSI families, each a full set of avg Histograms + total Counters + stall
       * Histograms for cpu.some, memory.some/full, io.some/full (cpu.full parsed but not emitted).
@@ -176,11 +177,13 @@ final private[kyo] class MachineHandles private (root: Stat, cores: CounterGauge
         reading match
             case Present(c) =>
                 c.memoryUsage.foreach(v => cgMemUsage.unsafe.observe(v))
-                // A config value only registers (and thereafter polls) its CounterGauge once a Present
-                // value is seen; an Absent config records nothing, so no fabricated value is ever exported.
-                c.memoryLimit.foreach(v => configFor("memory.limit", "bytes (config value)").set(v))
-                c.cpuQuota.foreach(v => configFor("cpu.quota", "ns (config value)").set(v))
-                c.cpuPeriod.foreach(v => configFor("cpu.period", "ns (config value)").set(v))
+                // A config value only registers (and thereafter polls) its Gauge once a Present value is
+                // seen; an Absent config records nothing, so no fabricated value is ever exported. The gauge
+                // is seeded with this first value at construction, and every later tick's value is set into
+                // the same holder.
+                c.memoryLimit.foreach(v => configFor("memory.limit", "bytes (config value)", v).set(v))
+                c.cpuQuota.foreach(v => configFor("cpu.quota", "ns (config value)", v).set(v))
+                c.cpuPeriod.foreach(v => configFor("cpu.period", "ns (config value)", v).set(v))
                 var s = advanceCounter(st, "cgroup.cpu.periods", c.periods, cgCpuPeriods)
                 s = advance(s, "cgroup.cpu.throttled.periods.total", c.throttledPeriods, cgCpuThrPeriods, cgCpuThrPeriodsHi)
                 s = advance(s, "cgroup.cpu.throttled.total", c.throttledTime, cgCpuThrTime, cgCpuThrTimeHi)
@@ -193,24 +196,29 @@ private[kyo] object MachineHandles:
 
     final case class DiskHandles(total: Histogram, free: Histogram)
 
-    /** A config-value CounterGauge created only once a genuine Present value has been observed. The gauge's
-      * poll reads the last observed value from the retained holder; the handle does not exist (and exports
+    /** A config-value Gauge created only once a genuine Present value has been observed. The gauge's poll
+      * reads the last observed value from the retained holder; the handle does not exist (and exports
       * nothing) until the gauge is constructed on first observation, so an unset config never emits a
-      * fabricated value. The holder is `kyo.AtomicLong.Unsafe`, the kyo opaque alias of the same underlying
-      * atomic: a single-owner cross-tick cell whose collect-time poll reads it with no capability available
-      * (the sanctioned category-B sidestep of the unsafe gate), while `set` takes the sampler tick's own
+      * fabricated value, and the gauge is seeded with the first observed value so its first poll is never a
+      * transient 0. A plain Gauge (not a CounterGauge) exports the raw value with no delta, correct for a
+      * point-in-time config value that can rise OR fall (a lowered cgroup limit at runtime); a CounterGauge
+      * would map a decrease to a wraparound.
+      *
+      * The holder is `kyo.AtomicLong.Unsafe`, the kyo opaque alias of the same underlying atomic: a
+      * single-owner cross-tick cell. The collect-time poll body runs on the registry flusher with no
+      * capability in scope, so it reads the raw atomic directly; `set` takes the sampler tick's own
       * propagated capability rather than re-embracing it.
       */
-    final class ConfigGauge private (holder: AtomicLong.Unsafe, gauge: CounterGauge):
+    final class ConfigGauge private (holder: AtomicLong.Unsafe, gauge: Gauge):
         def set(v: Long)(using AllowUnsafe): Unit = holder.set(v)
 
     object ConfigGauge:
-        def apply(cg: Stat, name: String, unit: String): ConfigGauge =
+        def apply(cg: Stat, name: String, unit: String, initial: Long): ConfigGauge =
             // Unsafe: constructed lazily from configFor, off any ambient effect context; the collect-time
             // poll body that reads this holder also runs with no capability available.
             import AllowUnsafe.embrace.danger
-            val holder = AtomicLong.Unsafe.init(0L)
-            new ConfigGauge(holder, cg.initCounterGauge(name, unit)(holder.get()))
+            val holder = AtomicLong.Unsafe.init(initial)
+            new ConfigGauge(holder, cg.initGauge(name, unit)(holder.get().toDouble))
         end apply
     end ConfigGauge
 

@@ -7,17 +7,27 @@ import kyo.*
   */
 private[machine] object LinuxDecoders:
 
-    /** Parses /proc/stat aggregate cpu line: `cpu user nice system idle iowait ...` in jiffies, scaling
-      * each mode to nanoseconds via `scale`. total = sum of the present modes.
+    /** Parses /proc/stat aggregate cpu line: `cpu user nice system idle iowait irq softirq steal ...` in
+      * jiffies, scaling each mode to nanoseconds via `scale`. Fields are present-guarded: an older kernel
+      * with fewer columns contributes only the columns it exposes.
+      *
+      * The kernel folds guest into user and guest_nice into nice, so those are not summed again (double
+      * count). The reported `system` mode includes irq + softirq (kernel-mode servicing time, the
+      * node_exporter/common convention). `total` sums every present column (user, nice, system, idle,
+      * iowait, irq, softirq, steal), so a `total - idle` utilization derivation on a virtualized host is
+      * not under-reported by the omitted irq/softirq/steal time.
       */
     def cpu(bytes: Span[Byte], len: Int, scale: Long): Maybe[Machine.CpuReading] =
         val text = Text.fromSpan(bytes, len)
         text.lineFields("cpu ") match
             case Present(f) if f.length >= 5 =>
-                def ns(i: Int): Maybe[Long] = field(f, i).map(_ * scale)
-                val user                    = ns(1); val nice = ns(2); val system = ns(3); val idle = ns(4)
-                val iowait                  = if f.length >= 6 then ns(5) else Absent
-                Present(Machine.CpuReading(sumPresent(user, nice, system, idle, iowait), user, system, idle, iowait))
+                def ns(i: Int): Maybe[Long] = if f.length > i then field(f, i).map(_ * scale) else Absent
+                val user                    = ns(1); val nice    = ns(2); val systemRaw = ns(3); val idle = ns(4)
+                val iowait                  = ns(5)
+                val irq                     = ns(6); val softirq = ns(7); val steal     = ns(8)
+                val system                  = sumPresent(systemRaw, irq, softirq)
+                val total                   = sumPresent(user, nice, systemRaw, idle, iowait, irq, softirq, steal)
+                Present(Machine.CpuReading(total, user, system, idle, iowait))
             case _ => Absent
         end match
     end cpu

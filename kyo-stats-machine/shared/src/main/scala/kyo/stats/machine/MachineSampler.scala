@@ -23,8 +23,15 @@ final private[kyo] class MachineSampler(handles: MachineHandles, machine: Machin
     private val fileHandles = collection.mutable.HashMap.empty[String, MachineSampler.FileSlot]
     private var priorState  = MachineSampler.PriorState.empty
 
-    /** Reads the host through the bound OS impl (the sampler is the impl's read context). */
+    /** Reads every non-disk metric family through the bound OS impl (the sampler is the impl's read
+      * context). Disk is read separately via `diskRead` so a hung mount cannot stall the fast reads.
+      */
     def machineRead()(using AllowUnsafe): Machine.Reading = machine.read(this)
+
+    /** Reads the per-mount disk metrics. Blockable (statvfs/statfs/GetDiskFreeSpaceExW), so the sampler
+      * runs this on its own timed fiber, off the tick loop's own fiber.
+      */
+    def diskRead()(using AllowUnsafe): Chunk[Machine.DiskReading] = machine.readDisks(this)
 
     /** Observes one tick's `Reading` into the retained handles, advancing every cumulative Counter and its
       * paired Histogram by the per-tick delta and observing every gauge. Absent fields are skipped.
@@ -75,11 +82,29 @@ private[kyo] object MachineSampler:
         prepared.map(sampler => Loop.forever(Async.sleep(1.seconds).andThen(tick(sampler))))
     end run
 
-    private def tick(sampler: MachineSampler)(using Frame): Unit < Sync =
-        Sync.Unsafe.defer {
-            val reading = sampler.machineRead()
-            sampler.observe(reading)
-        }
+    /** The blockable disk read is bounded so a slow or dead mount cannot stall the tick loop: if a read
+      * does not finish inside this window, the tick observes that tick's disk portion as empty and the loop
+      * proceeds. The window is generous relative to a healthy local statvfs (sub-ms) but well under the tick
+      * period, so a healthy read always completes in-band and only a genuinely stuck mount is dropped.
+      */
+    private val diskReadTimeout = 5.seconds
+
+    /** Reads the non-disk families synchronously (fast in-kernel/proc reads), reads disk on a separate
+      * timed fiber (blockable syscalls), merges the two, and observes the tick. A hung disk read is bounded
+      * by `Async.timeout`: on expiry the tick records no disk for that tick rather than parking the loop,
+      * and the scheduler's blocking compensation covers the parked disk-read worker.
+      */
+    private def tick(sampler: MachineSampler)(using Frame): Unit < Async =
+        for
+            reading <- Sync.Unsafe.defer(sampler.machineRead())
+            disks   <- readDisksBounded(sampler)
+            _       <- Sync.Unsafe.defer(sampler.observe(reading.copy(disks = disks)))
+        yield ()
+
+    private def readDisksBounded(sampler: MachineSampler)(using Frame): Chunk[Machine.DiskReading] < Async =
+        Abort.run[Timeout](
+            Async.timeout(diskReadTimeout)(Sync.Unsafe.defer(sampler.diskRead()))
+        ).map(_.getOrElse(Chunk.empty))
 
     // Unsafe: used only from the Scope finalizer callback (closeHandles), which itself runs outside
     // any AllowUnsafe-supplying effect context.

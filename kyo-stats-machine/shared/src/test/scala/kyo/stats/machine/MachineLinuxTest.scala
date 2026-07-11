@@ -70,19 +70,16 @@ class MachineLinuxTest extends kyo.test.Test[Any]:
             assert(dir == "/sys/fs/cgroup")
         }
 
-        "resource files reachable only under the resolved non-root dir would be Absent under a root-only read" in {
+        "a non-root process line resolves to the process cgroup dir, distinct from the mount root" in {
+            // The production v2Dir resolves the process cgroup dir from the 0::<path> line; a non-root
+            // process resolves to a dir UNDER the mount root, which is where LinuxCgroup.readV2 reads every
+            // resource file (never the bare mount root, where a non-root process's cpu.stat does not exist).
+            // The distinctness from the mount root is the property that makes the cgroup family reachable at
+            // all for a non-root process.
             val (bytes, len) = span("0::/system.slice/foo.service\n")
             val resolvedDir  = LinuxCgroupPath.v2Dir(bytes, len, "/sys/fs/cgroup")
             assert(resolvedDir == "/sys/fs/cgroup/system.slice/foo.service")
             assert(resolvedDir != "/sys/fs/cgroup")
-            // LinuxCgroup.readV2 reads every resource file at resolvedDir + "/cpu.stat" etc, never at
-            // the bare mount root; a v2 cgroup's resource files exist only under the non-root cgroup
-            // directory (never at the mount root itself), so joining to the resolved dir (not falling
-            // back to root) is what makes the cgroup family reachable at all for a non-root process.
-            val resourcePath = resolvedDir + "/cpu.stat"
-            val rootOnlyPath = "/sys/fs/cgroup" + "/cpu.stat"
-            assert(resourcePath == "/sys/fs/cgroup/system.slice/foo.service/cpu.stat")
-            assert(resourcePath != rootOnlyPath)
         }
     }
 

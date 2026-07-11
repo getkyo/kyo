@@ -11,7 +11,18 @@ import kyo.*
   * cross-platform kyo primitives (`kyo.Path` for files, its per-OS FFI binding for syscalls, `kyo.Stat`).
   */
 private[kyo] trait Machine:
+    /** Reads every NON-disk metric family for one tick. Disk enumeration is split out to `readDisks`
+      * because disk syscalls (statvfs/statfs/GetDiskFreeSpaceExW) are the one genuinely-blockable read: a
+      * slow or dead mount must not stall the fast in-kernel/proc reads that make up the rest of the tick.
+      * The returned `Reading` always carries `disks = Chunk.empty`; the sampler fills disks separately.
+      */
     def read(sampler: MachineSampler)(using AllowUnsafe): Machine.Reading
+
+    /** Reads the per-mount disk metrics for one tick. Run by the sampler on its own timed fiber so a hung
+      * mount is bounded and never stalls the tick loop. A reader with no disk source returns an empty set.
+      */
+    def readDisks(sampler: MachineSampler)(using AllowUnsafe): Chunk[Machine.DiskReading] = Chunk.empty
+end Machine
 
 private[kyo] object Machine:
 

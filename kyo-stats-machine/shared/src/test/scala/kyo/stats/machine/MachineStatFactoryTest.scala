@@ -33,20 +33,30 @@ class MachineStatFactoryTest extends kyo.test.Test[Any]:
 
     "triggerStart" - {
 
+        // Every leaf that actually starts a sampler (a winning triggerStart) stops it in a finally, so no
+        // leaf leaves a live detached sampler loop reading /proc behind it (stopForTest interrupts the
+        // started fiber and clears the CAS).
+
         "starts exactly one sampler on the first winning call" in {
             MachineStatFactory.resetForTest()
-            val started = MachineStatFactory.triggerStart(emptyReader)
-            assert(started)
-            assert(MachineStatFactory.hasStarted)
+            try
+                val started = MachineStatFactory.triggerStart(emptyReader)
+                assert(started)
+                assert(MachineStatFactory.hasStarted)
+            finally MachineStatFactory.stopForTest()
+            end try
         }
 
         "a second triggerStart call after the CAS fired does not start a second sampler" in {
             MachineStatFactory.resetForTest()
-            val first  = MachineStatFactory.triggerStart(emptyReader)
-            val second = MachineStatFactory.triggerStart(emptyReader)
-            assert(first)
-            assert(!second)
-            assert(MachineStatFactory.hasStarted)
+            try
+                val first  = MachineStatFactory.triggerStart(emptyReader)
+                val second = MachineStatFactory.triggerStart(emptyReader)
+                assert(first)
+                assert(!second)
+                assert(MachineStatFactory.hasStarted)
+            finally MachineStatFactory.stopForTest()
+            end try
         }
 
         "opt-out env KYO_MACHINE_DISABLED=true suppresses the start through the injectable reader" in {
@@ -55,6 +65,8 @@ class MachineStatFactoryTest extends kyo.test.Test[Any]:
             val started = MachineStatFactory.triggerStart(reader)
             assert(!started)
             assert(!MachineStatFactory.hasStarted)
+            // No sampler started, so nothing to stop; resetForTest suffices for the next leaf.
+            MachineStatFactory.resetForTest()
         }
 
         "opt-out property kyo.machine.disabled=true also suppresses the start (live-path system property)" in {
@@ -69,15 +81,19 @@ class MachineStatFactoryTest extends kyo.test.Test[Any]:
             finally
                 if prior eq null then discard(java.lang.System.clearProperty(prop))
                 else discard(java.lang.System.setProperty(prop, prior))
+                MachineStatFactory.resetForTest()
             end try
         }
 
         "an unparseable opt-out value enables the sampler (graceful default), never a thrown registration" in {
             MachineStatFactory.resetForTest()
-            val reader  = readerWithEnv("KYO_MACHINE_DISABLED", "yes")
-            val started = MachineStatFactory.triggerStart(reader)
-            assert(started)
-            assert(MachineStatFactory.hasStarted)
+            try
+                val reader  = readerWithEnv("KYO_MACHINE_DISABLED", "yes")
+                val started = MachineStatFactory.triggerStart(reader)
+                assert(started)
+                assert(MachineStatFactory.hasStarted)
+            finally MachineStatFactory.stopForTest()
+            end try
         }
     }
 
@@ -94,15 +110,19 @@ class MachineStatFactoryTest extends kyo.test.Test[Any]:
     // (populated only by the @JSExportTopLevel MachineRegistration object, a
     // main-source construct outside a test's reach), and Native's ServiceLoader
     // requires a build-time nativeConfig.withServiceProviders allowlist this test
-    // module does not declare. Referencing kyo.Stat.kyoScope forces object Stat's
-    // class initializer (once per test-runner fork; a no-op if already forced by an
-    // earlier test), which runs the eager scan that constructs the classpath-present
-    // MachineStatFactory and starts the sampler, with no traceSpan call anywhere in
-    // this driver: trace-independent auto-load reaches the factory through kyo.Stat
-    // alone.
-    "the eager Stat scan reaches the factory from a metrics-only driver".onlyJvm in {
-        val _ = Stat.kyoScope
-        assert(MachineStatFactory.hasStarted)
+    // module does not declare.
+    //
+    // The eager scan runs the per-factory-isolated discovery TraceExporter.getIsolated (the exact
+    // mechanism object Stat's class-init forces). Resetting the construction marker immediately before
+    // driving that same discovery, then asserting the marker flipped, proves the module's factory is
+    // reachable through the eager scan's mechanism without depending on class-init residue from an earlier
+    // suite: a factory that were not registered in META-INF/services would leave the marker false.
+    // (object Stat forcing the scan at class-init, trace-independently, is pinned separately by kyo-core's
+    // StatTest; this leaf owns the module-side "the factory is discoverable" half.)
+    "the module factory is reached by the eager scan's isolated ServiceLoader discovery".onlyJvm in {
+        MachineStatFactory.constructed.set(false)
+        val _ = kyo.stats.internal.TraceExporter.getIsolated
+        assert(MachineStatFactory.wasConstructed)
     }
 
 end MachineStatFactoryTest

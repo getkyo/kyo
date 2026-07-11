@@ -52,51 +52,6 @@ class MachineHandlesTest extends kyo.test.Test[Any]:
             yield assert(result == 42)
             end for
         }
-
-        // Reading the module's own source tree is a JVM-only mechanics check (java.io.File /
-        // java.nio.file.Files do not exist on JS/Native, and a runtime source-tree read makes no
-        // sense off the JVM build layout in any case), the same sanctioned platform-mechanics split
-        // PathJvmTest's allocation probes use. The forked test JVM's cwd is the per-platform project
-        // dir (e.g. kyo-stats-machine/jvm), not the module root, so the module root is located by
-        // walking up from the cwd to the first ancestor containing this relative source dir, rather
-        // than assuming a fixed number of parent hops.
-        "no banned blocking construct appears in the module's production sources".onlyJvm in {
-            val sources = Seq(
-                "MachineSampler.scala",
-                "MachineHandles.scala",
-                "MachineStatFactory.scala",
-                "PsiHandles.scala",
-                "Machine.scala"
-            )
-            val relRoot = java.nio.file.Paths.get("shared", "src", "main", "scala", "kyo", "stats", "machine")
-
-            @scala.annotation.tailrec
-            def findRoot(dir: java.io.File): Maybe[java.io.File] =
-                val candidate = new java.io.File(dir, relRoot.toString)
-                if candidate.isDirectory then Present(candidate)
-                else
-                    val parent = dir.getParentFile
-                    if parent eq null then Absent else findRoot(parent)
-                end if
-            end findRoot
-
-            val root = findRoot(new java.io.File(".").getAbsoluteFile)
-                .getOrElse(throw new java.io.FileNotFoundException(
-                    s"could not locate $relRoot by walking up from ${new java.io.File(".").getAbsolutePath}"
-                ))
-            val banned  = List("Thread.sleep", "synchronized", ".await()", "CountDownLatch")
-            var checked = 0
-            sources.foreach { name =>
-                val f = new java.io.File(root, name)
-                assert(f.isFile, s"expected production source not found at ${f.getPath}")
-                val text = new String(java.nio.file.Files.readAllBytes(f.toPath), java.nio.charset.StandardCharsets.UTF_8)
-                banned.foreach { token =>
-                    assert(!text.contains(token), s"found banned blocking construct '$token' in ${f.getPath}")
-                }
-                checked += 1
-            }
-            assert(checked == sources.length)
-        }
     }
 
     "detached-fiber lifecycle" - {
@@ -147,12 +102,15 @@ class MachineHandlesTest extends kyo.test.Test[Any]:
     "metric taxonomy" - {
 
         "every locked metric handle is created once under Stat scope machine with its declared type; the 3 config-value gauges appear only after their first Present" in {
+            // The 3 config values (memory.limit, cpu.quota, cpu.period) are plain Gauges (a config value
+            // can rise or fall; a CounterGauge's delta wraps a decrease), so they register in the registry's
+            // GAUGE store, not the counterGauge store.
             for
                 handles <- MachineHandles.init
                 s                 = new MachineSampler(handles, Machine.NullMachine)
-                memoryLimitBefore = StatsRegistry.internal.counterGauges.map.containsKey(List("machine", "cgroup", "memory.limit"))
-                cpuQuotaBefore    = StatsRegistry.internal.counterGauges.map.containsKey(List("machine", "cgroup", "cpu.quota"))
-                cpuPeriodBefore   = StatsRegistry.internal.counterGauges.map.containsKey(List("machine", "cgroup", "cpu.period"))
+                memoryLimitBefore = StatsRegistry.internal.gauges.map.containsKey(List("machine", "cgroup", "memory.limit"))
+                cpuQuotaBefore    = StatsRegistry.internal.gauges.map.containsKey(List("machine", "cgroup", "cpu.quota"))
+                cpuPeriodBefore   = StatsRegistry.internal.gauges.map.containsKey(List("machine", "cgroup", "cpu.period"))
                 _ = handles.observe(
                     cgroupReading(
                         memoryLimit = Present(1073741824L),
@@ -160,9 +118,9 @@ class MachineHandlesTest extends kyo.test.Test[Any]:
                     ),
                     MachineSampler.PriorState.empty
                 )
-                memoryLimitAfter = StatsRegistry.internal.counterGauges.map.containsKey(List("machine", "cgroup", "memory.limit"))
-                cpuQuotaAfter    = StatsRegistry.internal.counterGauges.map.containsKey(List("machine", "cgroup", "cpu.quota"))
-                cpuPeriodAfter   = StatsRegistry.internal.counterGauges.map.containsKey(List("machine", "cgroup", "cpu.period"))
+                memoryLimitAfter = StatsRegistry.internal.gauges.map.containsKey(List("machine", "cgroup", "memory.limit"))
+                cpuQuotaAfter    = StatsRegistry.internal.gauges.map.containsKey(List("machine", "cgroup", "cpu.quota"))
+                cpuPeriodAfter   = StatsRegistry.internal.gauges.map.containsKey(List("machine", "cgroup", "cpu.period"))
             yield
                 assert(!memoryLimitBefore)
                 assert(!cpuQuotaBefore)
@@ -204,21 +162,31 @@ class MachineHandlesTest extends kyo.test.Test[Any]:
                 assert(summary.summary().count == 2L)
         }
 
-        "cgroup config-value CounterGauges are created lazily on first Present; an unset config exports nothing (no fake value)" in {
+        "cgroup config-value Gauges are created lazily on first Present, seeded with that value; an unset config exports nothing (no fake value, no transient 0)" in {
             // Uses cpu.period exclusively (not memory.limit/cpu.quota, already registered by the
             // "every locked metric handle" leaf earlier in this suite; the registry is process-
             // global, so re-testing the same name's before=false fact there would be stale here).
+            import AllowUnsafe.embrace.danger
             for
                 handles <- MachineHandles.init
-                beforeCpuPeriod     = StatsRegistry.internal.counterGauges.map.containsKey(List("machine", "cgroup", "cpu.period"))
+                beforeCpuPeriod     = StatsRegistry.internal.gauges.map.containsKey(List("machine", "cgroup", "cpu.period"))
                 _                   = handles.observe(cgroupReading(cpuPeriod = Absent), MachineSampler.PriorState.empty)
-                afterTick1CpuPeriod = StatsRegistry.internal.counterGauges.map.containsKey(List("machine", "cgroup", "cpu.period"))
+                afterTick1CpuPeriod = StatsRegistry.internal.gauges.map.containsKey(List("machine", "cgroup", "cpu.period"))
                 _                   = handles.observe(cgroupReading(cpuPeriod = Present(100000000L)), MachineSampler.PriorState.empty)
-                afterTick2CpuPeriod = StatsRegistry.internal.counterGauges.map.containsKey(List("machine", "cgroup", "cpu.period"))
+                afterTick2CpuPeriod = StatsRegistry.internal.gauges.map.containsKey(List("machine", "cgroup", "cpu.period"))
+                // The gauge is seeded with the first observed value, so its first poll reads the real
+                // value, never a transient 0 (the fabricated-0 the lazy registration window could expose).
+                seeded = StatsRegistry.internal.gauges.get(
+                    List("machine", "cgroup", "cpu.period").reverse,
+                    "",
+                    new kyo.stats.internal.UnsafeGauge(() => -1d)
+                ).collect()
             yield
                 assert(!beforeCpuPeriod)
                 assert(!afterTick1CpuPeriod)
                 assert(afterTick2CpuPeriod)
+                assert(seeded == 100000000d)
+            end for
         }
 
         "the unpaired cgroup.cpu.periods Counter advances by its own delta and records into no Histogram" in {

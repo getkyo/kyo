@@ -65,7 +65,14 @@ private[machine] object LinuxCgroup:
     end readV1
 
     private def readV1Limit(s: MachineSampler, path: String)(using AllowUnsafe): Maybe[Long] =
-        readLong(s, path).flatMap(v => if v >= unlimitedSentinel then Absent else Present(v))
+        applyV1LimitSentinel(readLong(s, path))
+
+    /** The v1 memory-limit sentinel routing: a raw value at or above the unlimited sentinel (>= 1L<<62)
+      * is an "unlimited" marker and routes to Absent; any lower value passes through. Package-private and
+      * pure so the routing is testable directly, without staging a whole file read.
+      */
+    private[machine] def applyV1LimitSentinel(raw: Maybe[Long]): Maybe[Long] =
+        raw.flatMap(v => if v >= unlimitedSentinel then Absent else Present(v))
 
     private def exists(path: String)(using AllowUnsafe): Boolean =
         Path(path).unsafe.exists()

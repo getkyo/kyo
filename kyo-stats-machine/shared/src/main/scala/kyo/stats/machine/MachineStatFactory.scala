@@ -25,6 +25,7 @@ private[kyo] class MachineStatFactory extends ExporterFactory:
     // Unsafe: the factory is constructed by the stats service-loader at Stat class-init, which threads
     // no AllowUnsafe; starting the sampler here is the classpath-presence activation boundary.
     import AllowUnsafe.embrace.danger
+    MachineStatFactory.constructed.set(true)
     val _                                                                  = MachineStatFactory.triggerStart(System.live.unsafe)
     override def traceExporter()(using AllowUnsafe): Option[TraceExporter] = None
 end MachineStatFactory
@@ -36,6 +37,13 @@ private[kyo] object MachineStatFactory:
     import AllowUnsafe.embrace.danger
 
     private val started = AtomicBoolean.Unsafe.init(false)
+
+    /** Set true the first time any `MachineStatFactory` is CONSTRUCTED (service-loader discovery reached
+      * the provider), independent of whether the sampler then started. A test forces `object Stat`'s
+      * class-init eager scan and asserts this to prove the scan reaches the factory, even when the sampler
+      * start is opted out (as it is for the module's own test runs). Test-observation seam only.
+      */
+    private[machine] val constructed = AtomicBoolean.Unsafe.init(false)
 
     /** Names of the opt-out env var and system property. */
     private val disableEnv  = "KYO_MACHINE_DISABLED"
@@ -64,18 +72,40 @@ private[kyo] object MachineStatFactory:
     def triggerStart(env: System.Unsafe)(using AllowUnsafe): Boolean =
         if !disabled(env) && started.compareAndSet(false, true) then
             given Frame = Frame.internal
-            val _ = Sync.Unsafe.evalOrThrow {
+            val fiber = Sync.Unsafe.evalOrThrow {
                 Fiber.initUnscoped {
                     Scope.run {
                         MachineSampler.run
                     }
                 }
             }
+            startedFiber.set(Present(fiber.unsafe))
             true
         else false
 
+    /** The last-started sampler fiber, for the test seam below. Production never reads this (the sampler is
+      * a process-lifetime singleton), but a test that stages a start must be able to stop it rather than
+      * leak a forever-running detached fiber holding /proc read handles.
+      */
+    private val startedFiber: AtomicRef.Unsafe[Maybe[Fiber.Unsafe[Nothing, Any]]] =
+        AtomicRef.Unsafe.init(Absent)
+
+    /** Test-only seam: interrupts the last-started sampler fiber (if any) and clears the CAS, so a test that
+      * stages a `triggerStart` leaves no live sampler loop behind. Never called by production code.
+      */
+    private[machine] def stopForTest()(using AllowUnsafe): Unit =
+        given Frame = Frame.internal
+        startedFiber.getAndSet(Absent).foreach(f => discard(f.interrupt()))
+        started.set(false)
+    end stopForTest
+
     /** Test-only seam: whether the one-shot start CAS has already fired. */
     private[machine] def hasStarted(using AllowUnsafe): Boolean = started.get()
+
+    /** Test-only seam: whether any factory instance has been constructed (discovery reached the provider),
+      * regardless of whether the sampler start fired or was opted out.
+      */
+    private[machine] def wasConstructed(using AllowUnsafe): Boolean = constructed.get()
 
     /** Test-only seam: resets the one-shot start CAS so an ordered sequence of factory-start scenarios each
       * starts from a known false state. Never called by production code (no reset path exists at runtime; the

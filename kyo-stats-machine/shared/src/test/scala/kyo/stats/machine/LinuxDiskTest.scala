@@ -29,6 +29,52 @@ class LinuxDiskTest extends kyo.test.Test[Any]:
             val result = LinuxDisk.parseMounts(bytes, len)
             assert(result == Chunk("/", "/home"))
         }
+
+        "network/remote filesystem lines are filtered out (a dead network mount could wedge the tick)" in {
+            // nfs/nfs4/cifs/smb3/9p/ceph/glusterfs and a remote fuse.sshfs are all excluded; only the local
+            // ext4 and xfs mounts survive. A statvfs against a hung network mount blocks the sampler tick,
+            // so these must never be enumerated.
+            val (bytes, len) = span(
+                "/dev/sda1 / ext4 rw 0 0\n" +
+                    "nfs-server:/export /mnt/nfs nfs rw 0 0\n" +
+                    "nfs-server:/export4 /mnt/nfs4 nfs4 rw 0 0\n" +
+                    "//host/share /mnt/cifs cifs rw 0 0\n" +
+                    "//host/share3 /mnt/smb3 smb3 rw 0 0\n" +
+                    "host:/plan9 /mnt/9p 9p rw 0 0\n" +
+                    "ceph-mon:/ /mnt/ceph ceph rw 0 0\n" +
+                    "gluster:/vol /mnt/gluster glusterfs rw 0 0\n" +
+                    "sshfs#user@host:/ /mnt/ssh fuse.sshfs rw 0 0\n" +
+                    "/dev/sdb1 /data xfs rw 0 0\n"
+            )
+            val result = LinuxDisk.parseMounts(bytes, len)
+            assert(result == Chunk("/", "/data"))
+        }
+
+        "octal-escaped whitespace in a mount path is decoded so the real path is enumerated" in {
+            // The kernel writes \040 for a space in a mount path (and \011 tab, \134 backslash). The
+            // enumerated path must be the decoded real path, not the escaped bytes.
+            val (bytes, len) = span(
+                "/dev/sda1 /mnt/my\\040disk ext4 rw 0 0\n" +
+                    "/dev/sdb1 /mnt/tab\\011here xfs rw 0 0\n"
+            )
+            val result = LinuxDisk.parseMounts(bytes, len)
+            assert(result == Chunk("/mnt/my disk", "/mnt/tab\there"))
+        }
+    }
+
+    "LinuxDisk.unescapeMount" - {
+
+        "a path with no backslash is returned unchanged" in {
+            assert(LinuxDisk.unescapeMount("/mnt/data") == "/mnt/data")
+        }
+
+        "octal escapes for space, tab, and backslash are decoded; a non-octal backslash run is left verbatim" in {
+            assert(LinuxDisk.unescapeMount("/a\\040b") == "/a b")
+            assert(LinuxDisk.unescapeMount("/a\\011b") == "/a\tb")
+            assert(LinuxDisk.unescapeMount("/a\\134b") == "/a\\b")
+            // \\9 is not a valid three-octal-digit escape (9 is not octal), so it is left verbatim.
+            assert(LinuxDisk.unescapeMount("/a\\9b") == "/a\\9b")
+        }
     }
 
     "LinuxDisk.stat" - {

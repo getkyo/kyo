@@ -21,13 +21,18 @@ private[machine] object MachineMacos extends Machine:
                     cpu = readCpu(b),
                     memory = readMemory(b),
                     swap = readSwap(b),
-                    disks = readDisks(b),
+                    disks = Chunk.empty,
                     load = readLoad(b),
                     cgroup = Absent,
                     pressure = Absent,
                     cgroupPressure = Absent
                 )
             case Absent => Machine.Reading.empty
+
+    override def readDisks(sampler: MachineSampler)(using AllowUnsafe): Chunk[Machine.DiskReading] =
+        bindings match
+            case Present(b) => readDisksImpl(b)
+            case Absent     => Chunk.empty
 
     /** The binding, loaded once; a load failure (e.g. browser-JS with no koffi) degrades to Absent. */
     private lazy val bindings: Maybe[MacosBindings] =
@@ -77,7 +82,7 @@ private[machine] object MachineMacos extends Machine:
         end try
     end readLoad
 
-    private def readDisks(b: MacosBindings)(using AllowUnsafe): Chunk[Machine.DiskReading] =
+    private def readDisksImpl(b: MacosBindings)(using AllowUnsafe): Chunk[Machine.DiskReading] =
         MacosDisk.enumerate(b).map(m => MacosDisk.stat(b, m))
 
 end MachineMacos

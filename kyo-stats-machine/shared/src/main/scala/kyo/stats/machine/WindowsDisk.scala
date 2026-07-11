@@ -3,14 +3,21 @@ package kyo.stats.machine
 import kyo.*
 import kyo.ffi.*
 
-/** Windows fixed-drive enumeration via GetLogicalDrives, free/total via GetDiskFreeSpaceExW. */
+/** Windows fixed-drive enumeration via GetLogicalDrives + GetDriveTypeW, free/total via GetDiskFreeSpaceExW. */
 private[machine] object WindowsDisk:
 
-    /** Decode the GetLogicalDrives bitmask into drive-root strings (`C:\`, `D:\`, ...). */
+    /** Decode the GetLogicalDrives bitmask into drive-root strings (`C:\`, `D:\`, ...), keeping ONLY local
+      * fixed disks (GetDriveTypeW == DRIVE_FIXED). A network drive's GetDiskFreeSpaceExW can block the
+      * sampler tick indefinitely if the share is unreachable, so removable/network/cdrom/ramdisk drives are
+      * filtered out here rather than probed.
+      */
     def enumerate(b: WindowsBindings)(using AllowUnsafe): Chunk[String] =
         val mask = b.getLogicalDrives()
         Chunk.from((0 until 26).iterator.flatMap { i =>
-            if (mask & (1 << i)) != 0 then Iterator.single(('A' + i).toChar.toString + ":\\") else Iterator.empty
+            if (mask & (1 << i)) != 0 then
+                val root = ('A' + i).toChar.toString + ":\\"
+                if b.getDriveType(root) == WindowsBindings.driveFixed then Iterator.single(root) else Iterator.empty
+            else Iterator.empty
         }.toSeq)
     end enumerate
 

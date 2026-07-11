@@ -20,11 +20,21 @@
 #include <mach/mach.h>
 #include <mach/mach_host.h>
 
+// The mach host port, acquired once and reused. mach_host_self() returns a port user-reference on every
+// call, so calling it per tick leaks urefs for process lifetime (libtop/psutil acquire it once). The host
+// port is a process-lifetime singleton, so a one-time cache is correct and leak-free.
+static host_t g_host = 0;
+
+static host_t machine_macos_host(void) {
+    if (g_host == 0) g_host = mach_host_self();
+    return g_host;
+}
+
 // host_cpu_load_info projected to [user, system, idle, nice] in nanoseconds.
 int machine_macos_host_cpu_load(int64_t* out) {
     host_cpu_load_info_data_t info;
     mach_msg_type_number_t count = HOST_CPU_LOAD_INFO_COUNT;
-    if (host_statistics(mach_host_self(), HOST_CPU_LOAD_INFO, (host_info_t)&info, &count) != KERN_SUCCESS)
+    if (host_statistics(machine_macos_host(), HOST_CPU_LOAD_INFO, (host_info_t)&info, &count) != KERN_SUCCESS)
         return 1;
     long hz = sysconf(_SC_CLK_TCK);
     if (hz <= 0) hz = 100;
@@ -42,10 +52,10 @@ int machine_macos_vm_statistics(int64_t* out) {
     size_t len = sizeof(memsize);
     if (sysctlbyname("hw.memsize", &memsize, &len, NULL, 0) != 0) return 1;
     vm_size_t page = 0;
-    if (host_page_size(mach_host_self(), &page) != KERN_SUCCESS || page == 0) return 1;
+    if (host_page_size(machine_macos_host(), &page) != KERN_SUCCESS || page == 0) return 1;
     vm_statistics64_data_t vm;
     mach_msg_type_number_t count = HOST_VM_INFO64_COUNT;
-    if (host_statistics64(mach_host_self(), HOST_VM_INFO64, (host_info64_t)&vm, &count) != KERN_SUCCESS)
+    if (host_statistics64(machine_macos_host(), HOST_VM_INFO64, (host_info64_t)&vm, &count) != KERN_SUCCESS)
         return 1;
     out[0] = memsize;
     out[1] = (int64_t)vm.free_count * (int64_t)page;

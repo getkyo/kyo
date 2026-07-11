@@ -20,12 +20,14 @@ class MachineWindowsTest extends kyo.test.Test[Any]:
         var getSystemTimesFn: (Buffer[Long], Buffer[Long], Buffer[Long]) => Int        = (_, _, _) => 0
         var globalMemoryStatusFn: Buffer[Long] => Int                                  = _ => 0
         var getLogicalDrivesFn: () => Int                                              = () => 0
+        var getDriveTypeFn: String => Int                                              = _ => WindowsBindings.driveFixed
         var diskFreeSpaceFn: (String, Buffer[Long], Buffer[Long], Buffer[Long]) => Int = (_, _, _, _) => 0
 
         def getSystemTimes(idle: Buffer[Long], kernel: Buffer[Long], user: Buffer[Long])(using AllowUnsafe): Int =
             getSystemTimesFn(idle, kernel, user)
         def globalMemoryStatus(out: Buffer[Long])(using AllowUnsafe): Int = globalMemoryStatusFn(out)
         def getLogicalDrives()(using AllowUnsafe): Int                    = getLogicalDrivesFn()
+        def getDriveType(root: String)(using AllowUnsafe): Int            = getDriveTypeFn(root)
         def diskFreeSpace(
             drive: String,
             availToCaller: Buffer[Long],
@@ -34,58 +36,13 @@ class MachineWindowsTest extends kyo.test.Test[Any]:
         )(using AllowUnsafe): Int = diskFreeSpaceFn(drive, availToCaller, total, totalFree)
     end StubBindings
 
-    "load is always Absent on Windows" - {
-
-        "a Windows reading has load Absent (Windows has no load-average concept)" in {
-            for
-                handles <- MachineHandles.init
-                sampler = new MachineSampler(handles, MachineWindows)
-                reading = Machine.Reading(
-                    cpu = Absent,
-                    memory = Absent,
-                    swap = Absent,
-                    disks = Chunk.empty,
-                    load = Absent,
-                    cgroup = Absent,
-                    pressure = Absent,
-                    cgroupPressure = Absent
-                )
-                _ = sampler.observe(reading)
-            yield assert(reading.load == Absent)
-        }
-    }
-
-    "cgroup, pressure, and cgroupPressure are always Absent" - {
-
-        "a Windows reading has cgroup, pressure, and cgroupPressure Absent" in {
-            for
-                handles <- MachineHandles.init
-                sampler = new MachineSampler(handles, MachineWindows)
-                reading = Machine.Reading(
-                    cpu = Absent,
-                    memory = Absent,
-                    swap = Absent,
-                    disks = Chunk.empty,
-                    load = Absent,
-                    cgroup = Absent,
-                    pressure = Absent,
-                    cgroupPressure = Absent
-                )
-                _ = sampler.observe(reading)
-            yield
-                assert(reading.cgroup == Absent)
-                assert(reading.pressure == Absent)
-                assert(reading.cgroupPressure == Absent)
-            end for
-        }
-    }
-
     "GetLogicalDrives bitmask decode and per-drive GetDiskFreeSpaceEx failure isolation" - {
 
-        "the C: and D: roots are enumerated; D: is Absent total/free (skipped), C: recorded" in {
+        "the C: and D: fixed roots are enumerated; D: is Absent total/free (skipped), C: recorded" in {
             val stub = new StubBindings
             // bit 2 = C:, bit 3 = D:
             stub.getLogicalDrivesFn = () => (1 << 2) | (1 << 3)
+            stub.getDriveTypeFn = _ => WindowsBindings.driveFixed
             stub.diskFreeSpaceFn = (drive, _, totalB, freeB) =>
                 if drive == "D:\\" then 0
                 else
@@ -101,16 +58,49 @@ class MachineWindowsTest extends kyo.test.Test[Any]:
                 Machine.DiskReading("D:\\", Absent, Absent)
             ))
         }
+
+        "a network drive (GetDriveTypeW != DRIVE_FIXED) is filtered out, never probed by GetDiskFreeSpaceExW" in {
+            val stub = new StubBindings
+            // bit 2 = C: (fixed), bit 25 = Z: (mapped network share). A dead network drive's
+            // GetDiskFreeSpaceExW would block, so it must never be enumerated.
+            stub.getLogicalDrivesFn = () => (1 << 2) | (1 << 25)
+            val driveNetwork = 4
+            stub.getDriveTypeFn = root => if root == "Z:\\" then driveNetwork else WindowsBindings.driveFixed
+            stub.diskFreeSpaceFn = (drive, _, totalB, freeB) =>
+                assert(drive != "Z:\\", "the network drive Z: was probed by GetDiskFreeSpaceExW despite the DRIVE_FIXED filter")
+                totalB.set(0, 500000000000L); freeB.set(0, 100000000000L)
+                1
+
+            val roots = WindowsDisk.enumerate(stub)
+            assert(roots == Chunk("C:\\"))
+            val readings = roots.map(d => WindowsDisk.stat(stub, d))
+            assert(readings == Chunk(Machine.DiskReading("C:\\", Present(500000000000L), Present(100000000000L))))
+        }
     }
 
-    "binding-load failure degrades to empty" - {
+    "read degradation off a Windows host" - {
 
-        "a binding-load failure (kernel32 unresolvable off Windows) degrades every Windows family to Absent, no throw" in {
+        // Exercises the REAL MachineWindows.read degrade path: off Windows kernel32 is unresolvable, so the
+        // binding load or its first symbol lookup fails and every family degrades to Absent (Reading.empty).
+        // Gated off a real Windows host, where kernel32 loads and the reading is non-empty, which this
+        // degrade leaf is not asserting (mirrors the suite's own real-host gating).
+        "off Windows every family degrades to Absent through the production read, no throw" in {
+            assume(
+                System.live.unsafe.operatingSystem() != System.OS.Windows,
+                "kernel32 loads on a real Windows host; this leaf asserts the off-Windows degrade to empty"
+            )
             for
                 handles <- MachineHandles.init
                 sampler = new MachineSampler(handles, MachineWindows)
                 reading = MachineWindows.read(sampler)
-            yield assert(reading == Machine.Reading.empty)
+            yield
+                assert(reading == Machine.Reading.empty)
+                // The Windows-absent families are Absent regardless of the reading source.
+                assert(reading.load == Absent)
+                assert(reading.cgroup == Absent)
+                assert(reading.pressure == Absent)
+                assert(reading.cgroupPressure == Absent)
+            end for
         }
     }
 
