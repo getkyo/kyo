@@ -33,8 +33,8 @@ abstract class Transport:
     /** Open a connection over process stdin (fd 0, read) and stdout (fd 1, write). Returns a fiber that completes with the open connection,
       * or aborts [[NetStdioAlreadyOpenException]] when a stdio connection is already open (fds 0/1 are process-global).
       *
-      * A transport without stdio support aborts [[NetStdioUnsupportedException]]: stdio is supported by the PosixHandle-backed and Node-stream
-      * transports, not every transport.
+      * Every shipped backend supports stdio: the PosixHandle-backed transport, the JVM NIO floor, and the Node-stream transport.
+      * [[NetStdioUnsupportedException]] remains the contract for a transport with no byte stream to fd 0/1 (e.g. an in-memory transport).
       */
     def stdio()(using AllowUnsafe, Frame): Fiber.Unsafe[Connection, Abort[NetException]]
 

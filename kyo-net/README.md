@@ -28,7 +28,7 @@ val connected: Connection < (Async & Abort[NetException]) =
     NetPlatform.transport.connect("example.com", 80).safe.get
 ```
 
-`connectUnix` opens a Unix-domain socket connection by path, and `stdio` wraps the process's standard input and output as a connection where the platform supports it:
+`connectUnix` opens a Unix-domain socket connection by path, and `stdio` wraps the process's standard input and output as a connection:
 
 ```scala
 import AllowUnsafe.embrace.danger
@@ -240,5 +240,5 @@ def request(host: String, port: Int, payload: Span[Byte]): Maybe[Span[Byte]] < (
 
 ## Platform capability differences
 
-- `stdio` is supported on the posix and Node transports, not the pure-JDK NIO floor; it aborts `NetStdioUnsupportedException` where unsupported, and `NetStdioAlreadyOpenException` if a stdio connection is already open (fds 0 and 1 are process-global, so only one can exist at a time).
+- `stdio` is supported on every shipped transport: the posix transport, the pure-JDK NIO floor, and Node. It aborts `NetStdioAlreadyOpenException` if a stdio connection is already open (fds 0 and 1 are process-global, so only one can exist at a time); `NetStdioUnsupportedException` remains the contract for a transport with no byte stream to fds 0 and 1, such as an in-memory transport.
 - io_uring requires Linux with a usable ring; where it is unavailable the transport falls back to epoll/kqueue or the NIO floor automatically.

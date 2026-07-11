@@ -23,7 +23,7 @@ import kyo.net.NetConnectTimeoutException
 import kyo.net.NetDnsResolutionException
 import kyo.net.NetException
 import kyo.net.NetNotUpgradableException
-import kyo.net.NetStdioUnsupportedException
+import kyo.net.NetStdioAlreadyOpenException
 import kyo.net.NetTlsConfig
 import kyo.net.NetTlsHandshakeException
 import kyo.net.NetUnixConnectException
@@ -88,11 +88,26 @@ final private[kyo] class NioTransport private (
       */
     override private[net] def supportedTlsProviders: Set[String] = Set("jdk")
 
-    /** The NIO floor has no stdio transport: stdin/stdout are not registered with the NIO `Selector`. Aborts [[NetStdioUnsupportedException]];
-      * stdio is served by the PosixHandle-backed and Node-stream transports instead.
+    /** Claim flag for the process-global stdio connection, so stdio is claimed at most once (fds 0/1 must never be double-owned). Mirrors the
+      * posix and Node transports' claim.
+      */
+    // Unsafe: created at construction with no ambient AllowUnsafe; the danger bridge builds it here and its accesses run under the caller's
+    // AllowUnsafe.
+    private val stdioClaimed = AtomicBoolean.Unsafe.init(false)(using AllowUnsafe.embrace.danger)
+
+    /** Open a connection over process stdin (fd 0, read) and stdout (fd 1, write). stdin/stdout are not selectable, so the connection is a
+      * driverless [[NioStdioConnection]] pumped by dedicated blocking-read/write fibers rather than a `Selector`-registered handle. A second
+      * call aborts [[NetStdioAlreadyOpenException]] (the claim CAS lost: fds 0/1 are process-global). Closing the connection never closes fds
+      * 0/1 (the process owns them). Shared limitation with the posix `BlockingReaderDriver`: a read parked in stdin when the connection closes
+      * stays parked until the next stdin byte or EOF.
       */
     def stdio()(using AllowUnsafe, Frame): Fiber.Unsafe[NetConnection, Abort[NetException]] =
-        Fiber.Unsafe.fromResult(Result.fail(NetStdioUnsupportedException()))
+        if !stdioClaimed.compareAndSet(false, true) then
+            // Exactly one stdio per process (no double-ownership of fd 0/1).
+            Fiber.Unsafe.fromResult(Result.fail(NetStdioAlreadyOpenException()))
+        else
+            Fiber.Unsafe.init(NioStdioConnection.open(channelCapacity, readBufferSize))
+                .asInstanceOf[Fiber.Unsafe[NetConnection, Abort[NetException]]]
 
     /** Build the connect-stage [[NetException]] leaf for `host:port`: a TCP connect failure ([[NetConnectException]]), or a Unix-socket connect
       * failure ([[NetUnixConnectException]], signaled by the sentinel `port < 0` the Unix path passes since a Unix socket has no port).
