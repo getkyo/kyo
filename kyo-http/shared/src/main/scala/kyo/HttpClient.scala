@@ -102,6 +102,11 @@ object HttpClient:
 
         /** True once this client's pool has been closed. For testing the close/release path only (see [[init]]'s Scope release). */
         private[kyo] def isPoolClosed(using AllowUnsafe): Boolean = self.isPoolClosed
+
+        /** True when this client built and owns a per-config transport rather than sharing the process-global one. For testing the
+          * transport selection in [[initUnscoped]] only.
+          */
+        private[kyo] def hasOwnTransport(using AllowUnsafe): Boolean = self.hasOwnTransport
     end extension
 
     // --- Context management ---
@@ -195,11 +200,15 @@ object HttpClient:
         require(idleConnectionTimeout > Duration.Zero, s"idleConnectionTimeout must be positive: $idleConnectionTimeout")
         Sync.Unsafe.defer {
             // Reuse the process-global shared transport unless the config changes a byte-transport field (channelCapacity, readChunkSize,
-            // ioPoolSize, handshakeTimeout). When it does, build and OWN a per-config transport so those fields take effect rather than being
-            // ignored under the shared default transport, and close it when the client closes. A maxHeaderSize-only change keeps the shared
-            // transport (maxHeaderSize is an HTTP-parser limit honored by the backend, not a byte-transport field), avoiding a redundant driver.
+            // ioPoolSize, connectTimeout, handshakeTimeout). When it does, build and OWN a per-config transport so those fields take effect
+            // rather than being ignored under the shared default transport, and close it when the client closes. The customization baseline
+            // is kyo-http's OWN default translated to transport terms, never `kyo.net.TransportConfig.default`: the two libraries' defaults
+            // legitimately differ (kyo-http defaults `handshakeTimeout` to Infinity, kyo-net to 30 seconds), so a kyo-net baseline classifies
+            // every default-config client as customized, giving each client a private driver pool whose close then races the client's own
+            // in-flight connects. A maxHeaderSize-only change keeps the shared transport (maxHeaderSize is an HTTP-parser limit honored by
+            // the backend, not a byte-transport field), avoiding a redundant driver.
             val netConfig     = NetConfigTranslation.toNetTransportConfig(transportConfig)
-            val ownsTransport = netConfig != kyo.net.TransportConfig.default
+            val ownsTransport = netConfig != NetConfigTranslation.toNetTransportConfig(HttpTransportConfig.default)
             val transport =
                 if ownsTransport then kyo.net.NetPlatform.transport(netConfig)
                 else HttpPlatformTransport.transport

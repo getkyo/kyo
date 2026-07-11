@@ -26,6 +26,33 @@ class HttpTransportConfigTest extends BaseHttpTest:
         assert(config.handshakeTimeout == Duration.Infinity)
     }
 
+    "client transport ownership" - {
+
+        // The customization baseline is kyo-http's own default, not kyo.net's: the two libraries' defaults legitimately differ
+        // (handshakeTimeout Infinity vs 30 seconds), so a kyo-net baseline classifies EVERY default-config client as customized. Each
+        // such client then builds a private driver pool and closes it on closeNow, and that close races the client's own in-flight
+        // connects (an engine op armed after the driver's reap loop exits stalls until the transport's 30s connect deadline).
+
+        "default config shares the process-global transport" in {
+            HttpClient.init().map { c =>
+                Sync.Unsafe.defer(assert(!c.hasOwnTransport))
+            }
+        }
+
+        "maxHeaderSize-only change shares the process-global transport" in {
+            // maxHeaderSize is an HTTP-parser limit honored by the backend, not a byte-transport field.
+            HttpClient.init(transportConfig = HttpTransportConfig.default.maxHeaderSize(32768)).map { c =>
+                Sync.Unsafe.defer(assert(!c.hasOwnTransport))
+            }
+        }
+
+        "byte-transport field change builds an owned transport" in {
+            HttpClient.init(transportConfig = HttpTransportConfig.default.channelCapacity(8)).map { c =>
+                Sync.Unsafe.defer(assert(c.hasOwnTransport))
+            }
+        }
+    }
+
     "builder methods produce correct values" in {
         val config = HttpTransportConfig.default
             .channelCapacity(8)

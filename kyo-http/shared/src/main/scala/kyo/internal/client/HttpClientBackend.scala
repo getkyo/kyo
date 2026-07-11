@@ -1089,6 +1089,11 @@ final private[kyo] class HttpClientBackend private (
     /** True once `closeFiber` has closed the pool. For testing the Scope-based `init`'s release path only. */
     private[kyo] def isPoolClosed(using AllowUnsafe): Boolean = pool.isClosed
 
+    /** True when this client built and owns a per-config transport rather than sharing the process-global one. For testing the transport
+      * selection in `HttpClient.initUnscoped` only.
+      */
+    private[kyo] def hasOwnTransport(using AllowUnsafe): Boolean = ownsTransport
+
     def closeFiber(gracePeriod: Duration)(using AllowUnsafe, Frame): Fiber.Unsafe[Unit, Any] =
         // Mark closing FIRST so any new connection gets closed immediately by trackConn.
         closingGracePeriod = gracePeriod
