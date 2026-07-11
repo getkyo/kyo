@@ -35,9 +35,13 @@ final private[kyo] class Connection[Handle] private (
     private val readPump: ReadPump[Handle],
     private val writePump: WritePump[Handle],
     private val state: AtomicRef.Unsafe[ConnectionState],
-    private val closeFn: () => Unit
+    private val closeFn: () => Unit,
+    private val closingPromise: Promise.Unsafe[Unit, Any]
 ) extends kyo.net.Connection
     with kyo.net.Connection.UpgradableConnection:
+
+    /** The connection's close signal (see [[kyo.net.Connection.onClosing]]). Completed once in `closeFn`'s win-the-close branch. */
+    private[kyo] def onClosing: Fiber.Unsafe[Unit, Any] = closingPromise
 
     import scala.compiletime.uninitialized // TODO why do we need this?
 
@@ -221,6 +225,12 @@ private[kyo] object Connection:
                 // the transport's close() can close it explicitly instead of leaking its fd past the pool teardown.
                 onClose()
 
+        // The connection's close signal (kyo.net.Connection.onClosing). Completed once when closeFn wins the close, at close-START (before the
+        // channel drains and the handle teardown below), so an observer sees close-start not fd-release. completeDiscard is idempotent, so the
+        // re-entrant Closing branch and any repeat close are no-ops. Created before closeFn so the closure captures it. It never fires from
+        // detachForUpgrade (state=Upgrading bars this branch), which is correct: the upgraded connection is a fresh init with its own signal.
+        val closingPromise = Promise.Unsafe.init[Unit, Any]()
+
         val closeFn: () => Unit = () =>
             // Win the close by CASing a live state -> Closing. Created and Established both go to
             // Closing (a never-started connection closes too); Upgrading does NOT, since its fd is
@@ -229,6 +239,8 @@ private[kyo] object Connection:
             if state.compareAndSet(ConnectionState.Established, ConnectionState.Closing)
                 || state.compareAndSet(ConnectionState.Created, ConnectionState.Closing)
             then
+                // Fire the connection's close signal at close-start, before the drains and the handle teardown below.
+                closingPromise.completeDiscard(Result.succeed(()))
                 // Live -> ReleaseRequested: the close won; parked waiters are being unblocked by the drains below.
                 discard(teardown.compareAndSet(TeardownState.Live, TeardownState.ReleaseRequested))
                 // closeAwaitEmpty, not close: a consumer that has not yet drained the bytes the ReadPump staged before EOF can still take them
@@ -273,7 +285,7 @@ private[kyo] object Connection:
         val readPump  = new ReadPump(handle, driver, inbound, closeFn)
         val writePump = new WritePump(handle, driver, outbound, closeFn, AtomicRef.Unsafe.init[WriteState](WriteState.Idle))
 
-        new Connection(handle, driver, inbound, outbound, readPump, writePump, state, closeFn)
+        new Connection(handle, driver, inbound, outbound, readPump, writePump, state, closeFn, closingPromise)
     end init
 
     /** Create a driverless in-memory connection over two pre-existing channels.
@@ -287,9 +299,10 @@ private[kyo] object Connection:
         inbound: Channel.Unsafe[Span[Byte]],
         outbound: Channel.Unsafe[Span[Byte]]
     )(using AllowUnsafe, Frame): kyo.net.Connection =
-        val in         = inbound
-        val out        = outbound
-        val closedFlag = AtomicBoolean.Unsafe.init(false)
+        val in             = inbound
+        val out            = outbound
+        val closedFlag     = AtomicBoolean.Unsafe.init(false)
+        val closingPromise = Promise.Unsafe.init[Unit, Any]()
         new kyo.net.Connection:
             def inbound: Channel.Unsafe[Span[Byte]]  = in
             def outbound: Channel.Unsafe[Span[Byte]] = out
@@ -297,8 +310,10 @@ private[kyo] object Connection:
             def close()(using AllowUnsafe, Frame): Unit =
                 // Close both channels; there is no driver to cancel or handle to close. Idempotent via the CAS.
                 if closedFlag.compareAndSet(false, true) then
+                    closingPromise.completeDiscard(Result.succeed(()))
                     discard(in.close())
                     discard(out.close())
+            private[kyo] def onClosing: Fiber.Unsafe[Unit, Any]                        = closingPromise
             def detachForUpgrade()(using AllowUnsafe, Frame): Maybe[Chunk[Span[Byte]]] = Absent // not upgradable: no driver or socket
             private[net] def start()(using AllowUnsafe, Frame): Unit                   = ()     // no pumps to start
             // Plaintext, driverless connection: no peer certificate to hash and no close_notify exchange to observe.

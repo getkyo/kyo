@@ -409,13 +409,6 @@ object Channel:
         def close()(using Frame, AllowUnsafe): Maybe[Seq[A]]
         def closeAwaitEmpty()(using Frame, AllowUnsafe): Fiber.Unsafe[Boolean, Any]
 
-        /** Fiber that completes when the channel begins closing (`close()` or `closeAwaitEmpty()`). It NEVER consumes values: spans already
-          * queued stay takable by consumers, so a watcher built on it steals no pipelined data. Completes immediately when the channel is
-          * already closing or closed. Internal (`private[kyo]`), like [[reuseTake]]: a close-only await the parser-driven server dispatch
-          * uses to interrupt a handler whose connection went away, without racing the handler's own body reads on the same channel.
-          */
-        private[kyo] def awaitClose()(using AllowUnsafe, Frame): Fiber.Unsafe[Unit, Any]
-
         def empty()(using AllowUnsafe, Frame): Result[Closed, Boolean]
         def full()(using AllowUnsafe, Frame): Result[Closed, Boolean]
         def closed()(using AllowUnsafe): Boolean
@@ -476,18 +469,6 @@ object Channel:
                 require(takes.offer(promise), "reuseTake: unbounded queue offer must not fail")
                 flush()
             end reuseTake
-
-            // Non-consuming close notification (see Unsafe.awaitClose). One promise per channel, completed at the top of every close entry
-            // point via signalClose. completeDiscard is idempotent, so a repeat close is a no-op, and a close that happened before the first
-            // awaitClose leaves the promise already completed (awaitClose then returns a done fiber that fires its onComplete immediately).
-            // Never touches the value queues, so no queued (pipelined) span is consumed.
-            private val closePromise = Promise.Unsafe.init[Unit, Any]()
-
-            protected def signalClose()(using AllowUnsafe, Frame): Unit =
-                closePromise.completeDiscard(Result.succeed(()))
-
-            final private[kyo] def awaitClose()(using AllowUnsafe, Frame): Fiber.Unsafe[Unit, Any] =
-                closePromise
 
             /** Skip-if-cancelled poll: when the outer fiber that called Channel.put is interrupted while suspended on the put promise, the
               * promise transitions to an Error state but the Put.Value stays in the puts queue. Naive consumers would deliver the cancelled
@@ -626,12 +607,10 @@ object Channel:
             end drain
 
             def close()(using frame: Frame, allow: AllowUnsafe) =
-                signalClose()
                 if isClosed.getAndSet(true) then Absent
                 else
                     flush()
                     Present(Chunk.empty)
-                end if
             end close
 
             def closeAwaitEmpty()(using Frame, AllowUnsafe) =
@@ -787,15 +766,12 @@ object Channel:
             end drain
 
             def close()(using Frame, AllowUnsafe) =
-                signalClose()
                 queue.close().map { backlog =>
                     flush()
                     backlog
                 }
-            end close
 
             def closeAwaitEmpty()(using Frame, AllowUnsafe) =
-                signalClose()
                 val r = queue.closeAwaitEmpty()
                 r.onComplete(_ => flush())
                 r

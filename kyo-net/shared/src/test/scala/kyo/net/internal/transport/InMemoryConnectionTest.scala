@@ -52,6 +52,18 @@ class InMemoryConnectionTest extends Test:
             }
         }
 
+        "onClosing completes on close (and not before)" in {
+            val (a, _) = Connection.inMemoryPair()
+            assert(!a.onClosing.done(), "onClosing must not be complete on a live in-memory connection")
+            Sync.defer(a.close()).andThen {
+                assert(a.onClosing.done(), "onClosing must complete when the in-memory connection is closed")
+                Sync.defer(a.close()).andThen { // idempotent: a repeat close neither re-completes nor raises
+                    assert(a.onClosing.done(), "onClosing stays complete after a repeat close")
+                    succeed
+                }
+            }
+        }
+
         "is not upgradable: doUpgradeToTls returns a Closed failure fiber" in {
             val (a, _) = Connection.inMemoryPair()
             val tls    = NetTlsConfig.default

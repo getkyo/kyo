@@ -1845,7 +1845,7 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
 
     "ConnectionClose" - {
 
-        "handler parked on a foreign await is interrupted when inbound closes" in {
+        "handler parked on a foreign await is interrupted when the connection closes" in {
             Latch.initWith(1) { started =>
                 Latch.initWith(1) { terminated =>
                     val handler = HttpHandler.getText("park") { _ =>
@@ -1860,32 +1860,21 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
 
                     val inbound  = Channel.Unsafe.init[Span[Byte]](16)
                     val outbound = Channel.Unsafe.init[Span[Byte]](16)
+                    // The connection's close signal on this bare-channel path (kyo.net.Connection.onClosing in production).
+                    val closing = Promise.Unsafe.init[Unit, Any]()
                     sendRequest(inbound, "GET /park HTTP/1.1\r\nHost: localhost\r\n\r\n")
 
-                    UnsafeServerDispatch.serve(router, inbound, outbound, defaultConfig)
+                    UnsafeServerDispatch.serve(router, inbound, outbound, defaultConfig, Present(closing))
 
                     started.await.andThen {
-                        discard(inbound.close()) // the connection-close signal
+                        // Fire the connection-close signal, as closeFn does on a real connection.
+                        closing.completeDiscard(Result.succeed(()))
                         Async.timeout(5.seconds)(terminated.await).andThen(succeed)
                     }
                 }
             }
         }
 
-        // KNOWN FAILING (kernel-level gap, not a kyo-http wiring bug): the register-then-recheck path
-        // in dispatchHandler calls fiber.interrupt(...) synchronously, immediately after IOTask(...)
-        // schedules the fiber, i.e. before the fiber's first eval() cycle is guaranteed to have run.
-        // Reproduced in isolation (kyo-core, no kyo-http involved): scheduling an IOTask whose body is
-        // `Fiber.Promise.init[Unit, Any].map(p => Sync.ensure(finalizer)(p.get))` and calling
-        // `.interrupt(...)` on it synchronously, right after construction, does not reliably run the
-        // Sync.ensure finalizer -- ArrowEffect.handlePartial's partialLoop re-checks the interrupt
-        // (via `stop`) on every step, so an interrupt landing mid-walk, after the handler body already
-        // ran (side effects observed) but before Sync.ensure's Safepoint.ensure registered its
-        // finalizer with the IOTask, drops the finalizer registration entirely; IOTask.run's
-        // ensureInterrupt fallback does not recover it. This is exactly the pattern the recheck needs
-        // (a handler dispatched onto an already-closing connection), so it is a real gap in the
-        // interrupt-immediately-after-dispatch path, not an artifact of this test. Tracked for a
-        // kernel-level fix; left red on purpose per "reproduce before you fix" rather than weakened.
         "negative guard: a healthy handler is not interrupted by the watcher" in {
             Latch.initWith(1) { started =>
                 Latch.initWith(1) { terminated =>
@@ -1899,12 +1888,15 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
 
                         val inbound  = Channel.Unsafe.init[Span[Byte]](16)
                         val outbound = Channel.Unsafe.init[Span[Byte]](16)
+                        // Watcher IS armed (Present) but the close signal never fires: proves the watcher does not
+                        // spuriously interrupt a handler on a healthy, still-open connection.
+                        val closing = Promise.Unsafe.init[Unit, Any]()
                         sendRequest(inbound, "GET /park HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")
 
-                        UnsafeServerDispatch.serve(router, inbound, outbound, defaultConfig)
+                        UnsafeServerDispatch.serve(router, inbound, outbound, defaultConfig, Present(closing))
 
                         started.await.andThen {
-                            // The connection stays open (no inbound.close()): the handler completes
+                            // The connection stays open (closing never completed): the handler completes
                             // normally, and the watcher must never have interrupted it.
                             never.complete(Result.succeed(())).andThen {
                                 Async.timeout(5.seconds)(terminated.await).andThen {

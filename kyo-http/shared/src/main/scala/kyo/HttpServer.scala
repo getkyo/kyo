@@ -211,7 +211,18 @@ object HttpServer:
                 // surfacing on the accept path.
                 registry.pruneClosed(_.isOpen)
                 if registry.register(conn)(_.close()) then
-                    UnsafeServerDispatch.serve(router, conn.inbound, conn.outbound, config)
+                    // Pass the connection's close signal so a handler parked on a foreign await is interrupted when the
+                    // connection closes (kyo.net.Connection.onClosing, completed in closeFn's win branch), plus a close
+                    // hook the idle timer routes through so an idle-close also fires that signal (and flushes the
+                    // outbound tail) instead of racing the WritePump re-entry.
+                    UnsafeServerDispatch.serve(
+                        router,
+                        conn.inbound,
+                        conn.outbound,
+                        config,
+                        Present(conn.onClosing),
+                        Present(() => conn.close())
+                    )
                 else
                     (
                 )

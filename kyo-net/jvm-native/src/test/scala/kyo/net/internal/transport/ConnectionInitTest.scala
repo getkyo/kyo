@@ -134,4 +134,63 @@ class ConnectionInitTest extends Test:
         }
     }
 
+    // onClosing (the parked-handler close signal kyo-http observes) completes exactly when closeFn wins the close, and not before.
+    "onClosing completes when the connection is closed" in {
+        assumePoller()
+        val real = PollerIoDriver.init(transportConfig)
+        val spy  = new RecordingIoDriver(real)
+        discard(spy.start())
+        PosixTestSockets.loopbackPair().map { case (clientFd, peerFd) =>
+            val handle = PosixHandle.socket(clientFd, PosixHandle.DefaultReadBufferSize, Absent)
+            val conn   = Connection.init(handle, spy, channelCapacity = 8)
+            conn.start()
+            assert(!conn.onClosing.done(), "onClosing must not be complete on a live connection")
+            conn.close()
+            assert(conn.onClosing.done(), "onClosing must complete when close() wins the close")
+            spy.close()
+            discard(sock.close(peerFd))
+            succeed
+        }
+    }
+
+    // The production trigger: a peer FIN drives the ReadPump to EOF/teardown, which reaches closeFn and completes onClosing.
+    "onClosing completes on a peer-driven ReadPump teardown" in {
+        assumePoller()
+        val real = PollerIoDriver.init(transportConfig)
+        val spy  = new RecordingIoDriver(real)
+        discard(spy.start())
+        PosixTestSockets.loopbackPair().map { case (clientFd, peerFd) =>
+            val handle = PosixHandle.socket(clientFd, PosixHandle.DefaultReadBufferSize, Absent)
+            val conn   = Connection.init(handle, spy, channelCapacity = 8)
+            conn.start()
+            discard(sock.close(peerFd)) // peer FIN -> ReadPump EOF -> teardown -> closeFn
+            Async.timeout(5.seconds)(conn.onClosing.safe.get).andThen {
+                assert(conn.onClosing.done(), "onClosing must complete on a peer-driven ReadPump teardown")
+                spy.close()
+                succeed
+            }
+        }
+    }
+
+    // Safety property (documented on Connection.onClosing): a STARTTLS detach leaves the fd for the in-place upgrade and does NOT
+    // fire onClosing (state Upgrading bars closeFn's win branch); the upgraded connection is a fresh init with its own signal.
+    "onClosing does not complete on detachForUpgrade" in {
+        assumePoller()
+        val real = PollerIoDriver.init(transportConfig)
+        val spy  = new RecordingIoDriver(real)
+        discard(spy.start())
+        PosixTestSockets.loopbackPair().map { case (clientFd, peerFd) =>
+            val handle = PosixHandle.socket(clientFd, PosixHandle.DefaultReadBufferSize, Absent)
+            val conn   = Connection.init(handle, spy, channelCapacity = 8)
+            conn.start()
+            discard(conn.detachForUpgrade())
+            assert(!conn.onClosing.done(), "onClosing must NOT complete on a STARTTLS detach")
+            // The detach left the fd open for the (absent) upgrade; close it directly so the test leaks no fd.
+            discard(sock.close(clientFd))
+            discard(sock.close(peerFd))
+            spy.close()
+            succeed
+        }
+    }
+
 end ConnectionInitTest

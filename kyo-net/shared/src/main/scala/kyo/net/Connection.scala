@@ -25,6 +25,14 @@ abstract class Connection:
     /** Close the connection. Closes channels and the underlying socket. Synchronous, idempotent. */
     def close()(using AllowUnsafe, Frame): Unit
 
+    /** Fiber that completes when this connection begins closing: `close()` wins the close, or a peer FIN / read-error / write-error teardown
+      * reaches the connection's internal close. Never consumes inbound/outbound bytes, so an observer built on it steals no buffered data, and
+      * completes immediately if the connection is already closing. Does NOT fire on [[detachForUpgrade]] (a STARTTLS detach leaves the fd open
+      * for the in-place upgrade; the upgraded connection is a fresh [[Connection]] with its own signal). Internal: kyo-http's server dispatch
+      * observes it to interrupt a handler parked on a foreign await when its connection closes, instead of leaking the fiber.
+      */
+    private[kyo] def onClosing: Fiber.Unsafe[Unit, Any]
+
     /** Detach the underlying socket for reuse in a TLS upgrade, WITHOUT closing the socket.
       *
       * Closes the inbound/outbound channels (causing pumps to stop) and cancels the driver registration, but does not close the underlying
