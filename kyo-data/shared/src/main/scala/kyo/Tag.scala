@@ -4,9 +4,9 @@ import java.util.concurrent.ConcurrentHashMap
 import kyo.Tag.internal.Type.Entry.*
 import kyo.internal.Platform
 import kyo.internal.TagMacro
+import kyo.internal.XXHash
 import scala.annotation.tailrec
 import scala.collection.immutable.HashMap
-import scala.util.hashing.MurmurHash3
 
 /** Tag provides a lightweight, efficient representation of types that supports operations like equality checking, subtype testing, and type
   * composition.
@@ -124,13 +124,22 @@ object Tag:
           */
         def erased: Tag[Any] = self.asInstanceOf[Tag[Any]]
 
-        /** Computes a hash code for this Tag based on its type structure. This hash is used in the caching system for subtype checking.
+        /** A content-stable XXH32 hash of this Tag's type, stable across JVM processes.
+          *
+          * Static tags hash the encoded `String` form. Dynamic tags hash their encoded string and
+          * sorted dynamic sub-tag hashes. This is deliberately NOT the decoded `Type`'s `hashCode`,
+          * which is identity-influenced by the `Array`-backed `Span` fields and so is stable only
+          * within a single JVM. Cross-JVM stability is required because kyo-aeron derives aeron stream
+          * ids from this hash, so a publish and a subscribe of the same type in separate JVMs must
+          * hash identically.
           *
           * @return
-          *   A hash code for this Tag
+          *   A content-stable hash code for this Tag's type
           */
         def hash: Int =
-            self.tpe.hashCode()
+            self match
+                case self: String  => XXHash.hash32(self)
+                case self: Dynamic => self.hashCode
 
         /** Retrieves the decoded Type representation of this Tag. If the Tag is already a Type, it is returned directly. If it's an encoded
           * string, it is decoded (with caching) and then returned.
@@ -164,7 +173,7 @@ object Tag:
                     case self: String =>
                         that match
                             case that: String =>
-                                self.hashCode == that.hashCode
+                                XXHash.hash32(self) == XXHash.hash32(that)
                             case _ =>
                                 false
                     case _ =>
@@ -310,9 +319,22 @@ object Tag:
         private val cacheEntries = 128
         private val cacheSlots   = Array.ofDim[Long](threadSlots, cacheEntries)
 
+        private def dynamicHashCode(tag: String, map: Map[Entry.Id, Any]): Int =
+            val builder = new java.lang.StringBuilder(tag)
+            map.toSeq.sortBy(_._1).foreach { (key, value) =>
+                val valueHash =
+                    value match
+                        case value: String  => XXHash.hash32(value)
+                        case value: Dynamic => value.hashCode
+                        case value          => value.hashCode
+                builder.append('\u0000').append(key).append('\u0001').append(valueHash)
+            }
+            XXHash.hash32(builder.toString)
+        end dynamicHashCode
+
         final case class Dynamic(tag: String, map: Map[Entry.Id, Any]):
             lazy val tpe          = Type(decode(tag).staticDB, map.asInstanceOf[Map[Type.Entry.Id, Tag[Any]]])
-            override val hashCode = MurmurHash3.caseClassHash(this)
+            override val hashCode = dynamicHashCode(tag, map)
 
         enum Mode(val factor: Int) derives CanEqual:
             case Equality extends Mode(31)
@@ -353,7 +375,7 @@ object Tag:
           *   true if a is a subtype of b, false otherwise
           */
         def checkTypes[A, B](a: Tag[A], b: Tag[B], mode: Mode): Boolean =
-            var hash = (a.hashCode.toLong << 32) | (b.hashCode & 0xffffffffL)
+            var hash = (a.hash.toLong << 32) | (b.hash & 0xffffffffL)
             hash += mode.factor
             hash ^= (hash >>> 30)
             hash *= 0xbf58476d1ce4e5b9L

@@ -6,7 +6,7 @@ import scala.annotation.tailrec
 
 /** Writes values in Protocol Buffers wire format.
   *
-  * Field numbers are stable hash-based IDs computed from field names using MurmurHash3. This provides schema evolution compatibility -
+  * Field numbers are stable hash-based IDs computed from field names using XXH32. This provides schema evolution compatibility -
   * adding or removing fields doesn't affect existing field numbers.
   *
   * Field ID overrides can be configured via `withFieldIdOverrides` for interoperability with existing `.proto` definitions.
@@ -14,7 +14,8 @@ import scala.annotation.tailrec
   * Nested messages are handled with a stack of byte buffers. When a nested object starts, a fresh buffer is pushed. When it ends, the
   * nested bytes are length-prefixed and written to the parent buffer.
   *
-  * Repeated fields (arrays) write each element with its own tag, following standard protobuf packed=false encoding.
+  * Repeated fields write each element with its own tag (standard protobuf packed=false). A map is written as a repeated `MapEntry`
+  * message under the map field number, with the key at field 1 and the value at field 2 (standard proto3 `map<K, V>`).
   */
 final class ProtobufWriter extends Writer:
 
@@ -35,6 +36,27 @@ final class ProtobufWriter extends Writer:
     private var fieldNumberStack: List[Int] = Nil
     private var repeatedFieldNumber: Int    = 0
     private var inArray: Boolean            = false
+
+    // Saved (inArray, repeatedFieldNumber) pairs. A nested objectStart and a nested
+    // arrayStart each push the current array state and the matching objectEnd / arrayEnd
+    // restores it, so a repeated message's own fields are written under their own field
+    // numbers (not the enclosing list's) and nested arrays restore the outer array context.
+    private var arrayStateStack: List[(Boolean, Int)] = Nil
+
+    // Per-array packed accumulator for repeated SCALAR fields. arrayStart pushes a fresh buffer,
+    // each scalar element appends its raw value bytes (no per-element tag), and arrayEnd flushes
+    // the buffer as one length-delimited record under the repeated field number. Stacked so nested
+    // scalar arrays are isolated. A null head means the current array is not a packed-scalar array
+    // (its elements are strings/bytes/messages, which stay length-delimited per element).
+    private var packedBufferStack: List[java.io.ByteArrayOutputStream] = Nil
+
+    // Map encoding state. A map is a repeated MapEntry message under the map field number.
+    // mapStart records that field number and the buffer depth at the map level; a field(key)
+    // call at that depth opens a new entry message (key at field 1), the value writes at
+    // field 2, and the entry is length-prefixed on the next key or on mapEnd. Frames stack
+    // for a map-valued map.
+    final private class MapFrame(val fieldNumber: Int, val baseDepth: Int, var entryOpen: Boolean)
+    private var mapFrames: List[MapFrame] = Nil
 
     // Field ID overrides for interop with existing .proto definitions
     private var fieldIdOverrides: Map[String, Int] = Map.empty
@@ -59,8 +81,11 @@ final class ProtobufWriter extends Writer:
         if currentFieldNumber > 0 then
             // Nested message: push a new buffer and remember the outer field number
             // so objectEnd can length-prefix the nested bytes under the correct tag,
-            // even after inner fieldBytes calls overwrite currentFieldNumber.
+            // even after inner fieldBytes calls overwrite currentFieldNumber. Save the
+            // array context and reset it: the message's own fields are not array elements.
             fieldNumberStack = currentFieldNumber :: fieldNumberStack
+            arrayStateStack = (inArray, repeatedFieldNumber) :: arrayStateStack
+            inArray = false
             bufferStack = new java.io.ByteArrayOutputStream(128) :: bufferStack
     end objectStart
 
@@ -80,33 +105,98 @@ final class ProtobufWriter extends Writer:
             // continue to use the parent message's currentFieldNumber (e.g. repeated
             // nested messages in a List field share the same field number).
             currentFieldNumber = outerFieldNumber
+            arrayStateStack match
+                case (ia, rfn) :: rest =>
+                    inArray = ia
+                    repeatedFieldNumber = rfn
+                    arrayStateStack = rest
+                case Nil => ()
+            end match
     end objectEnd
 
     def fieldBytes(nameBytes: Array[Byte], fieldId: Int): Unit =
-        // Resolve field ID: check overrides only if configured (avoids allocation in common case)
-        currentFieldNumber =
-            if fieldIdOverrides.isEmpty then fieldId
-            else
-                val name = new String(nameBytes, java.nio.charset.StandardCharsets.UTF_8)
-                fieldIdOverrides.getOrElse(name, fieldId)
+        mapFrames match
+            case f :: _ if bufferStack.size == f.baseDepth + (if f.entryOpen then 1 else 0) =>
+                // Map key: close the previous entry, open a new MapEntry message, write key = field 1.
+                if f.entryOpen then closeMapEntry(f)
+                openMapEntry(f, nameBytes)
+            case _ =>
+                // Resolve field ID: check overrides only if configured (avoids allocation in common case)
+                currentFieldNumber =
+                    if fieldIdOverrides.isEmpty then fieldId
+                    else
+                        val name = new String(nameBytes, java.nio.charset.StandardCharsets.UTF_8)
+                        fieldIdOverrides.getOrElse(name, fieldId)
+        end match
+    end fieldBytes
+
+    private def openMapEntry(f: MapFrame, keyBytes: Array[Byte]): Unit =
+        // The entry message is emitted under the map field number; objectStart captures it.
+        currentFieldNumber = f.fieldNumber
+        objectStart("", 2)
+        // key = field 1, length-delimited
+        writeTag(1, LengthDelimited)
+        writeVarint(keyBytes.length.toLong)
+        current.write(keyBytes)
+        // value -> field 2
+        currentFieldNumber = 2
+        f.entryOpen = true
+    end openMapEntry
+
+    private def closeMapEntry(f: MapFrame): Unit =
+        objectEnd()
+        f.entryOpen = false
+    end closeMapEntry
 
     def arrayStart(size: Int): Unit =
+        arrayStateStack = (inArray, repeatedFieldNumber) :: arrayStateStack
+        packedBufferStack = new java.io.ByteArrayOutputStream(64) :: packedBufferStack
         repeatedFieldNumber = currentFieldNumber
         inArray = true
+    end arrayStart
 
     def arrayEnd(): Unit =
-        inArray = false
+        packedBufferStack match
+            case buf :: bufRest =>
+                if buf.size() > 0 then
+                    // Flush the accumulated scalars as one packed length-delimited record.
+                    val packed = buf.toByteArray
+                    writeTag(repeatedFieldNumber, LengthDelimited)
+                    writeVarint(packed.length.toLong)
+                    current.write(packed)
+                end if
+                packedBufferStack = bufRest
+            case Nil => ()
+        end match
+        arrayStateStack match
+            case (ia, rfn) :: rest =>
+                inArray = ia
+                repeatedFieldNumber = rfn
+                arrayStateStack = rest
+            case Nil => inArray = false
+        end match
+    end arrayEnd
+
+    private def packedTarget: java.io.ByteArrayOutputStream =
+        // Non-null head buffer means the current array packs its scalar elements.
+        if inArray then packedBufferStack.headOption.orNull else null
 
     def int(value: Int): Unit =
-        val fn = if inArray then repeatedFieldNumber else currentFieldNumber
-        writeTag(fn, Varint)
-        writeVarint(encodeZigZag32(value))
+        val buf = packedTarget
+        if buf != null then writeVarintTo(buf, encodeZigZag32(value))
+        else
+            writeTag(currentFieldNumber, Varint)
+            writeVarint(encodeZigZag32(value))
+        end if
     end int
 
     def long(value: Long): Unit =
-        val fn = if inArray then repeatedFieldNumber else currentFieldNumber
-        writeTag(fn, Varint)
-        writeVarint(encodeZigZag64(value))
+        val buf = packedTarget
+        if buf != null then writeVarintTo(buf, encodeZigZag64(value))
+        else
+            writeTag(currentFieldNumber, Varint)
+            writeVarint(encodeZigZag64(value))
+        end if
     end long
 
     def string(value: String): Unit =
@@ -118,21 +208,30 @@ final class ProtobufWriter extends Writer:
     end string
 
     def double(value: Double): Unit =
-        val fn = if inArray then repeatedFieldNumber else currentFieldNumber
-        writeTag(fn, Fixed64)
-        writeFixedLong(java.lang.Double.doubleToLongBits(value))
+        val buf = packedTarget
+        if buf != null then writeFixedLongTo(buf, java.lang.Double.doubleToLongBits(value))
+        else
+            writeTag(currentFieldNumber, Fixed64)
+            writeFixedLong(java.lang.Double.doubleToLongBits(value))
+        end if
     end double
 
     def float(value: Float): Unit =
-        val fn = if inArray then repeatedFieldNumber else currentFieldNumber
-        writeTag(fn, Fixed32)
-        writeFixedInt(java.lang.Float.floatToIntBits(value))
+        val buf = packedTarget
+        if buf != null then writeFixedIntTo(buf, java.lang.Float.floatToIntBits(value))
+        else
+            writeTag(currentFieldNumber, Fixed32)
+            writeFixedInt(java.lang.Float.floatToIntBits(value))
+        end if
     end float
 
     def boolean(value: Boolean): Unit =
-        val fn = if inArray then repeatedFieldNumber else currentFieldNumber
-        writeTag(fn, Varint)
-        writeVarint(if value then 1L else 0L)
+        val buf = packedTarget
+        if buf != null then writeVarintTo(buf, if value then 1L else 0L)
+        else
+            writeTag(currentFieldNumber, Varint)
+            writeVarint(if value then 1L else 0L)
+        end if
     end boolean
 
     def short(value: Short): Unit = int(value.toInt)
@@ -141,8 +240,17 @@ final class ProtobufWriter extends Writer:
 
     def nil(): Unit = () // protobuf has no null representation; omit the field
 
-    def mapStart(size: Int): Unit = objectStart("", size)
-    def mapEnd(): Unit            = objectEnd()
+    def mapStart(size: Int): Unit =
+        mapFrames = new MapFrame(currentFieldNumber, bufferStack.size, false) :: mapFrames
+    end mapStart
+
+    def mapEnd(): Unit =
+        mapFrames match
+            case f :: rest =>
+                if f.entryOpen then closeMapEntry(f)
+                mapFrames = rest
+            case Nil => ()
+    end mapEnd
 
     def bytes(value: Span[Byte]): Unit =
         val fn  = if inArray then repeatedFieldNumber else currentFieldNumber
@@ -156,15 +264,21 @@ final class ProtobufWriter extends Writer:
     def bigDecimal(value: BigDecimal): Unit = string(value.toString)
 
     def instant(value: java.time.Instant): Unit =
-        val fn = if inArray then repeatedFieldNumber else currentFieldNumber
-        writeTag(fn, Varint)
-        writeVarint(encodeZigZag64(value.toEpochMilli))
+        val buf = packedTarget
+        if buf != null then writeVarintTo(buf, encodeZigZag64(value.toEpochMilli))
+        else
+            writeTag(currentFieldNumber, Varint)
+            writeVarint(encodeZigZag64(value.toEpochMilli))
+        end if
     end instant
 
     def duration(value: java.time.Duration): Unit =
-        val fn = if inArray then repeatedFieldNumber else currentFieldNumber
-        writeTag(fn, Varint)
-        writeVarint(encodeZigZag64(value.toMillis))
+        val buf = packedTarget
+        if buf != null then writeVarintTo(buf, encodeZigZag64(value.toMillis))
+        else
+            writeTag(currentFieldNumber, Varint)
+            writeVarint(encodeZigZag64(value.toMillis))
+        end if
     end duration
 
     def resultBytes: Array[Byte] = bufferStack.last.toByteArray
@@ -193,6 +307,33 @@ final class ProtobufWriter extends Writer:
                 loop(i + 1)
         loop(0)
     end writeFixedLong
+
+    // OutputStream-targeted raw writers used to accumulate packed scalar elements (no tag).
+    private def writeVarintTo(out: java.io.ByteArrayOutputStream, value: Long): Unit =
+        @tailrec def loop(v: Long): Unit =
+            if (v & ~0x7fL) != 0L then
+                out.write(((v & 0x7f) | 0x80).toInt)
+                loop(v >>> 7)
+            else
+                out.write((v & 0x7f).toInt)
+        loop(value)
+    end writeVarintTo
+
+    private def writeFixedLongTo(out: java.io.ByteArrayOutputStream, value: Long): Unit =
+        @tailrec def loop(i: Int): Unit =
+            if i < 8 then
+                out.write(((value >>> (i * 8)) & 0xff).toInt)
+                loop(i + 1)
+        loop(0)
+    end writeFixedLongTo
+
+    private def writeFixedIntTo(out: java.io.ByteArrayOutputStream, value: Int): Unit =
+        @tailrec def loop(i: Int): Unit =
+            if i < 4 then
+                out.write(((value >>> (i * 8)) & 0xff).toInt)
+                loop(i + 1)
+        loop(0)
+    end writeFixedIntTo
 
     private def writeFixedInt(value: Int): Unit =
         @tailrec def loop(i: Int): Unit =

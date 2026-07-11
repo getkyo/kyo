@@ -126,7 +126,7 @@ final class Scheduler(
     private val concurrencyRegulator =
         new Concurrency(() => loadAvg(), updateWorkers, Sleep(_), () => System.nanoTime, timer)
 
-    private val top = new Reporter(status, enableTopJMX, enableTopConsoleMs, timer)
+    private val top = new Reporter(status, enableTopJMX, enableTopConsoleMs, topStatusFile, topStatusFileMs)
 
     private[scheduler] val blockingMonitor = new BlockingMonitor(workers, () => currentWorkers, maxWorkers, timerExecutor)
 
@@ -598,7 +598,9 @@ object Scheduler {
         timeSliceMs: Int,
         cycleIntervalNs: Int,
         enableTopJMX: Boolean,
-        enableTopConsoleMs: Int
+        enableTopConsoleMs: Int,
+        topStatusFile: String,
+        topStatusFileMs: Int
     )
     object Config {
         val default: Config = {
@@ -613,7 +615,9 @@ object Scheduler {
                 timeSliceMs(),
                 cycleIntervalNs(),
                 enableTopJMX(),
-                enableTopConsoleMs()
+                enableTopConsoleMs(),
+                topStatusFile(),
+                topStatusFileMs()
             )
         }
     }

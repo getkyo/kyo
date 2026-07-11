@@ -55,7 +55,8 @@ class BodyTreeErrorChannelTest extends kyo.test.Test[Any]:
             sectionBytes = Span.fromUnsafe(sectionBytes),
             names = Span.empty[Tasty.Name],
             sectionOffset = 0,
-            addrMap = IntMap.empty[SymbolId]
+            addrMap = IntMap.empty[SymbolId],
+            pickleId = 0
         )
         val binding = bindingWithBody(symbol, body)
         Abort.run[TastyError] {
@@ -96,7 +97,8 @@ class BodyTreeErrorChannelTest extends kyo.test.Test[Any]:
             sectionBytes = Span.fromUnsafe(tooShortBytes),
             names = Span.empty[Tasty.Name],
             sectionOffset = 0,
-            addrMap = IntMap.empty[SymbolId]
+            addrMap = IntMap.empty[SymbolId],
+            pickleId = 0
         )
         val binding = bindingWithBody(symbol, body)
         Abort.run[TastyError] {
@@ -138,7 +140,8 @@ class BodyTreeErrorChannelTest extends kyo.test.Test[Any]:
             sectionBytes = Span.fromUnsafe(sectionBytes),
             names = Span.empty[Tasty.Name],
             sectionOffset = 0,
-            addrMap = IntMap.empty[SymbolId]
+            addrMap = IntMap.empty[SymbolId],
+            pickleId = 0
         )
         val binding = bindingWithBody(symbol, body)
         for
@@ -170,7 +173,8 @@ class BodyTreeErrorChannelTest extends kyo.test.Test[Any]:
             sectionBytes = Span.fromUnsafe(sectionBytes),
             names = Span.empty[Tasty.Name],
             sectionOffset = 0,
-            addrMap = IntMap.empty[SymbolId]
+            addrMap = IntMap.empty[SymbolId],
+            pickleId = 0
         )
         val binding = bindingWithBody(symbol, body)
         Abort.run[TastyError] {

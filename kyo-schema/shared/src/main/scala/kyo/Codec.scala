@@ -108,6 +108,17 @@ object Codec:
           */
         def droppedFieldsMask(n: Int): Long = 0L
 
+        /** Returns a bitmask of absent fields that this reader can materialize from a typed empty seed.
+          *
+          * The macro-generated case-class decoder supplies `defaultableFieldsMask` with bit `i` set when constructor field `i` is a
+          * non-optional collection or map field that has a typed empty seed. A reader can return some or all of those bits when the wire
+          * format defines absence as the empty value for those field shapes, as Protobuf does for repeated and map fields.
+          *
+          * Self-describing codecs keep the default `0L`, so a missing required collection or map field still fails required-field validation.
+          * Only the low-order `n` bits are relevant; bits beyond that are ignored by the caller.
+          */
+        def absentDefaultedFieldsMask(n: Int, defaultableFieldsMask: Long): Long = 0L
+
         /** Parse the next field name and record it as internal state for [[matchField]] and [[lastFieldName]].
           *
           * Implementations should advance the wire stream past the field name (and any delimiters such as JSON's `:`) so subsequent value
@@ -229,6 +240,19 @@ object Codec:
           */
         def resultString: String =
             new String(result().toArrayUnsafe, java.nio.charset.StandardCharsets.UTF_8)
+
+        /** Projects this writer's serialization capabilities into a descriptor that drives
+          * representation selection for a chain-bearing sum schema. The default body reads the
+          * existing `canWriteTopLevelNonObject` opt-in, so an external codec participates in
+          * selection with no kyo-schema source change.
+          */
+        def capabilities: Codec.Capabilities = Codec.Capabilities(canWriteTopLevelNonObject)
     end Writer
+
+    /** Describes what wire shapes a codec can express, consulted by `Schema.representationFor`
+      * to select the highest-priority representation a chain admits. A single boolean axis today
+      * (`canWriteTopLevelNonObject`); future axes add fields without changing the selection arity.
+      */
+    final case class Capabilities(canWriteTopLevelNonObject: Boolean) derives CanEqual
 
 end Codec

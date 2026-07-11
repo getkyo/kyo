@@ -44,9 +44,12 @@ class SnapshotTypedRoundTripFullTest extends kyo.test.Test[Any]:
                     s"Symbol count mismatch: cold=${cold.length} warm=${warm.length}"
                 )
                 // Exact count: 7 fixture TASTy files loaded (PlainClass, SomeObject, SomeTrait, GenericBox, Outer, SomeCaseClass, Color).
+                // Each file's Pass 1 emits its own Package("") root plus a kyo.fixtures package partial (14 package partials total);
+                // finalizeMerge's package dedup collapses these to the 2 canonical Package symbols, removing 12
+                // duplicates (101 -> 89). The per-symbol round-trip loop below is the live guard that the deduped structure survives.
                 assert(
-                    cold.length == 101,
-                    s"Round-trip symbol count mismatch (expected 101): got ${cold.length}"
+                    cold.length == 89,
+                    s"Round-trip symbol count mismatch (expected 89): got ${cold.length}"
                 )
                 var i = 0
                 while i < cold.length do

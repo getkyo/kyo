@@ -45,8 +45,10 @@ class TestClasspaths2Test extends kyo.test.Test[Any]:
     "standard-classpath-includes-stdlib-kyodata-kyotasty" in {
         TestClasspaths.withClasspath(TestClasspaths2.standardRoots)(Tasty.classpath).map { classpath =>
             assert(
-                classpath.symbols.size >= 81000,
-                s"Expected >= 81,000 symbols (measured 81569), found ${classpath.symbols.size}"
+                // ~80,321 after finalizeMerge's package dedup removes per-file duplicate Package partials (was 81,569);
+                // real classes/members are unaffected (unioned into the canonical package), only duplicate Package headers collapse.
+                classpath.symbols.size >= 80000,
+                s"Expected >= 80,000 symbols (measured 80321 post-dedup), found ${classpath.symbols.size}"
             )
             val fileErrors = classpath.errors.filter {
                 case _: TastyError.CorruptedFile    => true

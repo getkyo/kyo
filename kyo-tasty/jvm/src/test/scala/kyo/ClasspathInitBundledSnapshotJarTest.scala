@@ -46,7 +46,8 @@ class ClasspathInitBundledSnapshotJarTest extends kyo.test.Test[Any]:
                 topLevelClassIds = Chunk.empty,
                 packageIds = Chunk.from(syms.map(_.id)),
                 unresolvedFullNameByNegId = Dict.empty,
-                diagnostics = Chunk.empty
+                diagnostics = Chunk.empty,
+                bySourceFile = Dict.empty
             ),
             errors = Chunk.empty,
             modules = Chunk.empty,

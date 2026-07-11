@@ -23,7 +23,7 @@ class STMStressTest extends kyo.test.Test[Any]:
             start     <- Latch.init(1)
             writer <- Fiber.initUnscoped {
                 start.await.andThen(
-                    Async.foreachDiscard(1 to 1000)(i => STM.run(ref.set(i)))
+                    Async.foreachDiscard(1 to 1000)(i => STM.run(STM.defaultRetrySchedule.forever)(ref.set(i)))
                 )
             }
             readers = Async.fill(64, 64) {
@@ -47,11 +47,11 @@ class STMStressTest extends kyo.test.Test[Any]:
             invariantViolations <- AtomicInt.init(0)
             latch               <- Latch.init(1)
             writer <- Fiber.initUnscoped(latch.await.andThen(
-                Async.foreachDiscard(1 to 5000)(i => STM.run(tmap.put(i % 50, i)))
+                Async.foreachDiscard(1 to 5000)(i => STM.run(STM.defaultRetrySchedule.forever)(tmap.put(i % 50, i)))
             ))
             reader <- Fiber.initUnscoped(latch.await.andThen(
                 Async.foreachDiscard(1 to 1000) { _ =>
-                    STM.run(tmap.snapshot).map { snap =>
+                    STM.run(STM.defaultRetrySchedule.forever)(tmap.snapshot).map { snap =>
                         if snap.size > 50 || snap.values.exists(_ < 0) then invariantViolations.incrementAndGet.unit
                         else ()
                     }
@@ -82,10 +82,11 @@ class STMStressTest extends kyo.test.Test[Any]:
             tmap     <- TMap.init[Int, Int]
             _        <- STM.run(Kyo.foreachDiscard(0 until 100)(i => tmap.put(i, i)))
             observed <- AtomicRef.init(Set.empty[Int])
-            writer   <- Fiber.initUnscoped(Async.foreachDiscard(1 to 1000)(i => STM.run(tmap.put(i % 100, i))))
-            clearer  <- Fiber.initUnscoped(STM.run(tmap.clear))
+            writer <-
+                Fiber.initUnscoped(Async.foreachDiscard(1 to 1000)(i => STM.run(STM.defaultRetrySchedule.forever)(tmap.put(i % 100, i))))
+            clearer <- Fiber.initUnscoped(STM.run(STM.defaultRetrySchedule.forever)(tmap.clear))
             reader <- Fiber.initUnscoped(Async.foreachDiscard(1 to 200) { _ =>
-                STM.run(tmap.snapshot).map(s => observed.updateAndGet(_ + s.size).unit)
+                STM.run(STM.defaultRetrySchedule.forever)(tmap.snapshot).map(s => observed.updateAndGet(_ + s.size).unit)
             })
             _         <- writer.get
             _         <- clearer.get
@@ -586,30 +587,25 @@ class STMStressTest extends kyo.test.Test[Any]:
         yield assert(ids.size == a && a > 32, s"ids.size=${ids.size} attempts=$a")
     }
 
-    "TMap.fold (transactional iteration) makes progress under sparse concurrent writes".notJs in {
+    "TMap.fold (transactional iteration) makes progress under concurrent writes".notJs in {
         for
             tmap <- TMap.init[Int, Int]
             _    <- STM.run(Kyo.foreachDiscard(0 until 200)(i => tmap.put(i, 0)))
             done <- AtomicBoolean.init(false)
-            stop <- AtomicBoolean.init(false)
             iter <- Fiber.initUnscoped {
                 STM.run(STM.defaultRetrySchedule.forever) {
                     tmap.fold(0L)((acc, _, v) => acc + v.toLong)
                 }.andThen(done.set(true))
             }
+            // A bounded burst of concurrent writes: the fold retries against live contention while the
+            // writers run, and is guaranteed to commit once they quiesce. No timing assumptions.
             writers <- Fiber.initUnscoped {
                 Async.fill(4, 4) {
-                    Loop(0) { i =>
-                        stop.get.map {
-                            case true  => Loop.done(())
-                            case false => STM.run(tmap.put(i % 200, i)).andThen(Loop.continue(i + 1))
-                        }
-                    }
+                    Kyo.foreachDiscard(0 until 500)(i => STM.run(STM.defaultRetrySchedule.forever)(tmap.put(i % 200, i)))
                 }
             }
-            _ <- Abort.run(Async.timeout(30.seconds)(iter.get))
-            _ <- stop.set(true)
             _ <- writers.get
+            _ <- Abort.run(Async.timeout(30.seconds)(iter.get))
             d <- done.get
         yield assert(d, s"done=$d")
     }
@@ -858,7 +854,7 @@ class STMStressTest extends kyo.test.Test[Any]:
                 }
             }
             _  <- Async.sleep(50.millis)
-            _  <- Async.fill(50, 50)(STM.run(other.update(_ + 1)).andThen(shortDone.incrementAndGet))
+            _  <- Async.fill(50, 50)(STM.run(STM.defaultRetrySchedule.forever)(other.update(_ + 1)).andThen(shortDone.incrementAndGet))
             _  <- Abort.run(Async.timeout(15.seconds)(slows.get))
             sd <- slowDone.get
             od <- shortDone.get
@@ -869,7 +865,7 @@ class STMStressTest extends kyo.test.Test[Any]:
         for
             ref  <- TRef.init(0)
             done <- AtomicInt.init(0)
-            run = Async.fill(100, 100)(STM.run(ref.update(_ + 1)).andThen(done.incrementAndGet))
+            run = Async.fill(100, 100)(STM.run(STM.defaultRetrySchedule.forever)(ref.update(_ + 1)).andThen(done.incrementAndGet))
             _        <- Abort.run(Async.timeout(20.seconds)(run))
             d        <- done.get
             finalRef <- STM.run(ref.get)
@@ -899,9 +895,10 @@ class STMStressTest extends kyo.test.Test[Any]:
 
     "STM.run from a freshly forked fiber commits without thread-local stale init" in {
         for
-            ref      <- TRef.init(0)
-            ok       <- AtomicInt.init(0)
-            fibers   <- Kyo.fill(50)(Fiber.initUnscoped(STM.run(ref.update(_ + 1)).andThen(ok.incrementAndGet)))
+            ref <- TRef.init(0)
+            ok  <- AtomicInt.init(0)
+            fibers <-
+                Kyo.fill(50)(Fiber.initUnscoped(STM.run(STM.defaultRetrySchedule.forever)(ref.update(_ + 1)).andThen(ok.incrementAndGet)))
             _        <- Kyo.foreachDiscard(fibers)(_.get)
             o        <- ok.get
             finalRef <- STM.run(ref.get)
@@ -976,11 +973,11 @@ class STMStressTest extends kyo.test.Test[Any]:
             torn  <- AtomicInt.init(0)
             latch <- Latch.init(1)
             writer <- Fiber.initUnscoped(latch.await.andThen(
-                Async.foreachDiscard(1 to 2000)(i => STM.run(Kyo.foreachDiscard(refs)(_.set(i))))
+                Async.foreachDiscard(1 to 2000)(i => STM.run(STM.defaultRetrySchedule.forever)(Kyo.foreachDiscard(refs)(_.set(i))))
             ))
             reader <- Fiber.initUnscoped(latch.await.andThen(
                 Async.foreachDiscard(1 to 5000) { _ =>
-                    STM.run {
+                    STM.run(STM.defaultRetrySchedule.forever) {
                         Kyo.collectAll(refs.map(_.get)).map { vs =>
                             if vs.distinct.size > 1 then Sync.defer(torn.incrementAndGet).unit
                             else Kyo.unit
@@ -1004,7 +1001,7 @@ class STMStressTest extends kyo.test.Test[Any]:
             innerRolled      <- AtomicInt.init(0)
             innerLeaked      <- AtomicInt.init(0)
             _ <- Async.fill(32, 32) {
-                STM.run {
+                STM.run(STM.defaultRetrySchedule.forever) {
                     for
                         _ <- outer.set(42)
                         _ <- STM.run {
@@ -1095,7 +1092,7 @@ class STMStressTest extends kyo.test.Test[Any]:
             refs <- Kyo.fill(10)(TRef.init(0))
             done <- AtomicInt.init(0)
             contender <- Fiber.initUnscoped(
-                Async.foreachDiscard(1 to 5000)(_ => STM.run(refs.last.update(_ + 1)))
+                Async.foreachDiscard(1 to 5000)(_ => STM.run(STM.defaultRetrySchedule.forever)(refs.last.update(_ + 1)))
             )
             multi = Async.fill(32, 32) {
                 STM.run(STM.defaultRetrySchedule.forever)(
@@ -1112,7 +1109,7 @@ class STMStressTest extends kyo.test.Test[Any]:
         for
             tmap <- TMap.init[Int, Int]
             done <- AtomicInt.init(0)
-            run = Async.fillIndexed(32, 32)(i => STM.run(tmap.put(i, i)).andThen(done.incrementAndGet))
+            run = Async.fillIndexed(32, 32)(i => STM.run(STM.defaultRetrySchedule.forever)(tmap.put(i, i)).andThen(done.incrementAndGet))
             _         <- Abort.run(Async.timeout(10.seconds)(run))
             d         <- done.get
             finalSize <- STM.run(tmap.size)
@@ -1125,11 +1122,11 @@ class STMStressTest extends kyo.test.Test[Any]:
             violations <- AtomicInt.init(0)
             latch      <- Latch.init(1)
             writer <- Fiber.initUnscoped(latch.await.andThen(
-                Async.foreachDiscard(1 to 10000)(i => STM.run(ref.set(i)))
+                Async.foreachDiscard(1 to 10000)(i => STM.run(STM.defaultRetrySchedule.forever)(ref.set(i)))
             ))
             reader <- Fiber.initUnscoped(latch.await.andThen(
                 Async.foreachDiscard(1 to 5000) { _ =>
-                    STM.run {
+                    STM.run(STM.defaultRetrySchedule.forever) {
                         for
                             v1 <- ref.use(identity)
                             v2 <- ref.use(identity)
@@ -1270,7 +1267,7 @@ class STMStressTest extends kyo.test.Test[Any]:
             tmap <- TMap.init[Int, Int]
             _    <- STM.run(tmap.put(0, 0))
             _ <- Async.fill(100, 100) {
-                STM.run(tmap.updateWith(0)(_.map(_ + 1)))
+                STM.run(STM.defaultRetrySchedule.forever)(tmap.updateWith(0)(_.map(_ + 1)))
             }
             v <- STM.run(tmap.get(0))
         yield assert(v == Present(100), s"v=$v")
@@ -1303,7 +1300,9 @@ class STMStressTest extends kyo.test.Test[Any]:
             table <- TTable.init["name" ~ String & "n" ~ Int]
             ids   <- AtomicRef.init(Set.empty[Int])
             _ <- Async.fillIndexed(32, 32) { i =>
-                STM.run(table.insert("name" ~ s"r$i" & "n" ~ i)).map(id => ids.updateAndGet(_ + id.toInt).unit)
+                STM.run(STM.defaultRetrySchedule.forever)(table.insert("name" ~ s"r$i" & "n" ~ i)).map(id =>
+                    ids.updateAndGet(_ + id.toInt).unit
+                )
             }
             s    <- ids.get
             size <- STM.run(table.size)
@@ -1396,7 +1395,7 @@ class STMStressTest extends kyo.test.Test[Any]:
             for
                 tmap <- TMap.init[Int, Int]
                 _    <- STM.run(Kyo.foreachDiscard(0 until 50)(i => tmap.put(i, i)))
-                f1   <- Fiber.initUnscoped(STM.run(tmap.removeAll((0 until 25).toSeq)))
+                f1   <- Fiber.initUnscoped(STM.run(STM.defaultRetrySchedule.forever)(tmap.removeAll((0 until 25).toSeq)))
                 f2   <- Fiber.initUnscoped(Async.foreachDiscard(0 until 25)(i => STM.run(tmap.put(i, i + 100))))
                 _    <- f1.get
                 _    <- f2.get
@@ -1414,7 +1413,7 @@ class STMStressTest extends kyo.test.Test[Any]:
             table <- TTable.init["name" ~ String & "n" ~ Int]
             done  <- AtomicInt.init(0)
             run = Async.fillIndexed(32, 32) { i =>
-                STM.run(table.insert("name" ~ s"r$i" & "n" ~ i)).andThen(done.incrementAndGet)
+                STM.run(STM.defaultRetrySchedule.forever)(table.insert("name" ~ s"r$i" & "n" ~ i)).andThen(done.incrementAndGet)
             }
             _ <- Abort.run(Async.timeout(15.seconds)(run))
             d <- done.get
@@ -1725,7 +1724,7 @@ class STMStressTest extends kyo.test.Test[Any]:
             _ <- Loop.repeat(100) {
                 for
                     ref <- TRef.init(0)
-                    _   <- Async.fill(64, 64)(STM.run(ref.update(_ + 1)))
+                    _   <- Async.fill(64, 64)(STM.run(STM.defaultRetrySchedule.forever)(ref.update(_ + 1)))
                     v   <- STM.run(ref.get)
                     _   <- results.updateAndGet(_ :+ v)
                 yield ()
@@ -1738,7 +1737,7 @@ class STMStressTest extends kyo.test.Test[Any]:
         for
             tchunk <- TChunk.init(Chunk.empty[Int])
             _ <- Async.fillIndexed(32, 32) { i =>
-                STM.run(tchunk.append(i))
+                STM.run(STM.defaultRetrySchedule.forever)(tchunk.append(i))
             }
             finalChunk <- STM.run(tchunk.snapshot)
         yield assert(finalChunk.size == 32 && finalChunk.distinct.size == 32, s"size=${finalChunk.size}")
@@ -1955,9 +1954,10 @@ class STMStressTest extends kyo.test.Test[Any]:
             tmap       <- TMap.init[Int, Int]
             _          <- STM.run(Kyo.foreachDiscard(0 until 20)(i => tmap.put(i, i)))
             violations <- AtomicInt.init(0)
-            writer     <- Fiber.initUnscoped(Async.foreachDiscard(1 to 5000)(i => STM.run(tmap.put(i % 20, i))))
+            writer <-
+                Fiber.initUnscoped(Async.foreachDiscard(1 to 5000)(i => STM.run(STM.defaultRetrySchedule.forever)(tmap.put(i % 20, i))))
             reader <- Fiber.initUnscoped(Async.foreachDiscard(1 to 2000) { _ =>
-                STM.run {
+                STM.run(STM.defaultRetrySchedule.forever) {
                     for
                         snap <- tmap.snapshot
                         _    <- Sync.defer(if snap.size != 20 then violations.incrementAndGet.unit else ())

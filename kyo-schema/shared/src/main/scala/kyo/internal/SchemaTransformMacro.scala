@@ -264,7 +264,8 @@ object SchemaTransformMacro:
         val tildeType = TypeRepr.of[Record.~]
 
         // For each field, check if its value type is a case class
-        val resultFields = fields.flatMap { (name, valueType) =>
+        val flattenedPairs = scala.collection.mutable.ListBuffer.empty[(String, String)]
+        val resultFieldEntries = fields.flatMap { (name, valueType) =>
             val sym = valueType.dealias.typeSymbol
             if sym.isClassDef && sym.flags.is(Flags.Case) then
                 // Expand the nested case class into its sub-fields
@@ -272,20 +273,27 @@ object SchemaTransformMacro:
                     val fieldName = field.name
                     val fieldType = valueType.dealias.memberType(field)
                     val nameType  = ConstantType(StringConstant(fieldName))
-                    tildeType.appliedTo(List(nameType, fieldType))
+                    flattenedPairs += fieldName -> name
+                    fieldName                   -> tildeType.appliedTo(List(nameType, fieldType))
                 }
                 nestedFields
             else
                 // Non-case-class: keep as-is
                 val nameType = ConstantType(StringConstant(name))
-                List(tildeType.appliedTo(List(nameType, valueType)))
+                List(name -> tildeType.appliedTo(List(nameType, valueType)))
             end if
         }
+        val resultFields = resultFieldEntries.map(_._2)
 
         if resultFields.isEmpty then
             // No fields at all, return same type
             meta
         else
+            val flattenedPairsExpr = Expr.ofList(
+                flattenedPairs.toList.map { (child, parent) =>
+                    '{ ${ Expr(child) } -> ${ Expr(parent) } }
+                }
+            )
             val newType = resultFields.reduce(AndType(_, _))
             newType.asType match
                 case '[f2] =>
@@ -294,7 +302,8 @@ object SchemaTransformMacro:
                             $meta,
                             $meta.checks,
                             $meta.computedFields,
-                            $meta.renamedFields
+                            $meta.renamedFields,
+                            flattenedReadFields = Chunk.from($flattenedPairsExpr)
                         )
                     }
             end match
@@ -490,6 +499,145 @@ object SchemaTransformMacro:
         val nameStr = extractFocusFieldName(focus.asTerm)
         dropImpl[A, F](meta, Expr(nameStr))
     end dropFocusImpl
+
+    /** Implements Schema[A].omit(_.field): extracts the field name at compile time and constructs
+      * the OmitWhen carrier directly. Returns Schema.OmitWhen[A, F] so the caller can chain
+      * .whenEmpty or .whenNone without an intermediate splice.
+      */
+    def omitFocusImpl[A: Type, F: Type, V: Type](
+        meta: Expr[Schema[A]],
+        focus: Expr[Focus.Select[A, F] => Focus.Select[A, ?]]
+    )(using Quotes): Expr[Schema.OmitWhen[A, F]] =
+        import quotes.reflect.*
+        val nameStr = extractFocusFieldName(focus.asTerm)
+        val schema  = meta.asExprOf[Schema[A] { type Focused = F }]
+        '{
+            val fieldSchema = scala.compiletime.summonInline[Schema[V]]
+            // Materialize the field's compile-time Scala default to a Structure.Value ONCE, through the
+            // field's own schema writer (the same path the encode side uses). The default is a constant,
+            // so the encode-time whenDefault comparison reuses this value rather than re-materializing it
+            // per record. The asInstanceOf[V] is safe: the value comes from Field[?, V].default which the
+            // derivation macro produces with the correct V type.
+            val materializedDefault: Maybe[Structure.Value] =
+                $schema.sourceFields.find(_.name == ${ Expr(nameStr) }) match
+                    case Some(field) =>
+                        field.default match
+                            case Maybe.Present(d) =>
+                                val writer = kyo.internal.StructureValueWriter()
+                                kyo.internal.writeField[V](fieldSchema, d.asInstanceOf[V], writer)
+                                Maybe(writer.getResult)
+                            case Maybe.Absent => Maybe.empty
+                    case None => Maybe.empty
+            new Schema.OmitWhen[A, F]($schema, ${ Expr(nameStr) }, materializedDefault)
+        }
+    end omitFocusImpl
+
+    def defaultFocusImpl[A: Type, F: Type, V: Type](
+        meta: Expr[Schema[A]],
+        focus: Expr[Focus.Select[A, F] => Focus.Select[A, V]],
+        supplier: Expr[V]
+    )(using Quotes): Expr[Schema[A] { type Focused = F }] =
+        import quotes.reflect.*
+        val nameStr = extractFocusFieldName(focus.asTerm)
+        val schema  = meta.asExprOf[Schema[A] { type Focused = F }]
+        '{
+            def sourceFieldName(name: String): String =
+                $schema.renamedFields.find(_._2 == name) match
+                    case Some((source, _)) => sourceFieldName(source)
+                    case None              => name
+                end match
+            end sourceFieldName
+            val fieldName   = sourceFieldName(${ Expr(nameStr) })
+            val fieldSchema = scala.compiletime.summonInline[Schema[V]]
+            val fieldDefault = Schema.FieldDefault(
+                () => $supplier,
+                (value: Any, writer: Codec.Writer) =>
+                    kyo.internal.writeField[V](fieldSchema, value.asInstanceOf[V], writer)
+            )
+            Schema.copyWith($schema)(
+                fieldDefaults = $schema.fieldDefaults.filterNot(_._1 == fieldName) :+ (fieldName -> fieldDefault)
+            ).asInstanceOf[Schema[A] { type Focused = F }]
+        }
+    end defaultFocusImpl
+
+    def transformFieldFocusImpl[A: Type, F: Type, V: Type](
+        meta: Expr[Schema[A]],
+        focus: Expr[Focus.Select[A, F] => Focus.Select[A, V]],
+        write: Expr[(V, Codec.Writer) => Unit],
+        read: Expr[Codec.Reader => V]
+    )(using Quotes): Expr[Schema[A] { type Focused = F }] =
+        transformFieldFocusImpl[A, F, V](meta, focus, Maybe(write), Maybe(read))
+    end transformFieldFocusImpl
+
+    def transformFieldWriteFocusImpl[A: Type, F: Type, V: Type](
+        meta: Expr[Schema[A]],
+        focus: Expr[Focus.Select[A, F] => Focus.Select[A, V]],
+        write: Expr[(V, Codec.Writer) => Unit]
+    )(using Quotes): Expr[Schema[A] { type Focused = F }] =
+        transformFieldFocusImpl[A, F, V](meta, focus, Maybe(write), Maybe.empty)
+    end transformFieldWriteFocusImpl
+
+    def transformFieldReadFocusImpl[A: Type, F: Type, V: Type](
+        meta: Expr[Schema[A]],
+        focus: Expr[Focus.Select[A, F] => Focus.Select[A, V]],
+        read: Expr[Codec.Reader => V]
+    )(using Quotes): Expr[Schema[A] { type Focused = F }] =
+        transformFieldFocusImpl[A, F, V](meta, focus, Maybe.empty, Maybe(read))
+    end transformFieldReadFocusImpl
+
+    private def transformFieldFocusImpl[A: Type, F: Type, V: Type](
+        meta: Expr[Schema[A]],
+        focus: Expr[Focus.Select[A, F] => Focus.Select[A, V]],
+        write: Maybe[Expr[(V, Codec.Writer) => Unit]],
+        read: Maybe[Expr[Codec.Reader => V]]
+    )(using Quotes): Expr[Schema[A] { type Focused = F }] =
+        import quotes.reflect.*
+        val nameStr = extractFocusFieldName(focus.asTerm)
+        val schema  = meta.asExprOf[Schema[A] { type Focused = F }]
+        val writeExpr: Expr[Maybe[(Any, Codec.Writer) => Unit]] =
+            write match
+                case Maybe.Present(writeFn) =>
+                    '{
+                        Maybe((value: Any, writer: Codec.Writer) =>
+                            $writeFn(value.asInstanceOf[V], writer)
+                        )
+                    }
+                case Maybe.Absent =>
+                    '{ Maybe.empty[(Any, Codec.Writer) => Unit] }
+        val readExpr: Expr[Maybe[Codec.Reader => Any]] =
+            read match
+                case Maybe.Present(readFn) =>
+                    '{
+                        Maybe((reader: Codec.Reader) => $readFn(reader))
+                    }
+                case Maybe.Absent =>
+                    '{ Maybe.empty[Codec.Reader => Any] }
+        val replaceWrite = Expr(write.isDefined)
+        val replaceRead  = Expr(read.isDefined)
+        '{
+            val fieldSchema = scala.compiletime.summonInline[Schema[V]]
+            val next = Schema.FieldTransform[A](
+                get = (value: A) =>
+                    val selected = $focus($schema.rootSelect)
+                    selected.getter(value) match
+                        case Maybe.Present(fieldValue) => fieldValue
+                        case Maybe.Absent              => kyo.bug("Focused field is not present: " + ${ Expr(nameStr) })
+                ,
+                write = $writeExpr,
+                read = $readExpr,
+                writeDerived = (value: Any, writer: Codec.Writer) =>
+                    kyo.internal.writeField[V](fieldSchema, value.asInstanceOf[V], writer)
+            )
+            val merged = Schema.mergeFieldTransform[A](
+                $schema.fieldTransforms,
+                ${ Expr(nameStr) },
+                next,
+                $replaceWrite,
+                $replaceRead
+            )
+            Schema.copyWith($schema)(fieldTransforms = merged).asInstanceOf[Schema[A] { type Focused = F }]
+        }
+    end transformFieldFocusImpl
 
     /** Implements Schema[A].rename(_.field, "to"): lambda overload.
       *

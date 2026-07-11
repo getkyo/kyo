@@ -1,7 +1,6 @@
 package kyo.internal
 
 import scala.quoted.*
-import scala.util.hashing.MurmurHash3
 
 /** Helper functions for codec/schema generation macros.
   *
@@ -10,13 +9,13 @@ import scala.util.hashing.MurmurHash3
   */
 object CodecMacro:
 
-    /** Computes a stable field ID from a field name using MurmurHash3.
+    /** Computes a stable field ID from a field name using XXH32.
       *
       * The ID is a 21-bit positive integer (0 to 2,097,151), which fits within protobuf's field number range (1 to 536,870,911) while
       * providing good collision resistance for typical schemas.
       */
     def fieldId(name: String): Int =
-        (MurmurHash3.stringHash(name) & 0x1fffff) + 1
+        (XXHash.hash32(name) & 0x1fffff) + 1
 
     /** Creates Array[Array[Byte]] without ClassTag (avoids scala.Array.apply varargs allocation) */
     def mkFieldBytesPublic(exprs: List[Expr[Array[Byte]]])(using Quotes): Expr[Array[Array[Byte]]] =

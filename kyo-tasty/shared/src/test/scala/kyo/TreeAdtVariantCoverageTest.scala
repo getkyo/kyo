@@ -60,7 +60,8 @@ class TreeAdtVariantCoverageTest extends kyo.test.Test[Any]:
                     sectionBytes = Span.fromUnsafe(pass1.sectionBytes),
                     names = Span.fromUnsafe(pass1.names),
                     sectionOffset = pass1.sectionOffset,
-                    addrMap = scala.collection.immutable.IntMap.empty
+                    addrMap = scala.collection.immutable.IntMap.empty,
+                    pickleId = 0
                 ))
             case None => Maybe.Absent
     end symbolBody

@@ -74,7 +74,7 @@ if [ "${1:-}" = "--self-test" ]; then
         local platform="$1" action="$2" body="$3"
         : > "$CALLS"; : > "$HEAP"
         make_fake_sbt "$body"
-        PATH="$SELFDIR:$PATH" MAX_RETRIES=2 STALE_TIMEOUT=2 POLL_INTERVAL=1 \
+        PATH="$SELFDIR:$PATH" MAX_RETRIES=2 STALE_TIMEOUT=2 POLL_INTERVAL=1 CI_MON=0 \
             "$SELF" "$platform" "$action" >/dev/null 2>&1
         CT_EXIT=$?
     }
@@ -87,7 +87,7 @@ if [ "${1:-}" = "--self-test" ]; then
         local platform="$1" action="$2" body="$3"
         : > "$CALLS"; : > "$HEAP"
         make_fake_sbt "$body"
-        PATH="$SELFDIR:$PATH" MAX_RETRIES=2 STALE_TIMEOUT=2 POLL_INTERVAL=1 \
+        PATH="$SELFDIR:$PATH" MAX_RETRIES=2 STALE_TIMEOUT=2 POLL_INTERVAL=1 CI_MON=0 \
             JAVA_OPTS="$CI_OPTS" JVM_OPTS="$CI_OPTS" \
             "$SELF" "$platform" "$action" >/dev/null 2>&1
         CT_EXIT=$?
@@ -408,8 +408,25 @@ run_native() {
 }
 
 # -- strategy derivation: the platform decides, never the caller --
+# The resource monitor wraps the whole run: it reports the kyo scheduler snapshot (cross-platform) and,
+# where available, an OS headline (/proc on Linux, vm_stat on macOS; scheduler-only otherwise).
+# The scheduler (JVM + Native) writes its compact top line to sched_file via the topStatusFile sink;
+# Native reads the flag from the environment (no -D) and forked JVMs inherit it, so exporting it here
+# reaches both. ci-monitor.sh self-gates (CI_MON=0 disables); a no-op where nothing can be sampled.
+monitor="$(cd "$(dirname "$0")" 2>/dev/null && pwd)/ci-monitor.sh"
+sched_file="${RUNNER_TEMP:-/tmp}/kyo-sched-$PLATFORM.status"
+rm -f "$sched_file"
+export KYO_SCHEDULER_TOPSTATUSFILE="$sched_file"
+export KYO_SCHEDULER_TOPSTATUSFILEMS=5000
+KYO_SCHED_FILE="$sched_file" bash "$monitor" &
+monitor_pid=$!
+
 if [ "$PLATFORM" = "Native" ]; then
-    run_native; exit $?
+    run_native; rc=$?
 else
-    run_phase_split; exit $?
+    run_phase_split; rc=$?
 fi
+
+kill "$monitor_pid" 2>/dev/null || true
+wait "$monitor_pid" 2>/dev/null || true
+exit "$rc"

@@ -39,7 +39,7 @@ end WorkflowSchema
 
 private[kyo] object WorkflowSchema:
 
-    /** SHA-256 hash of the flow's structure (names, types, node types). */
+    /** XXH32 hash of the flow's structure (names, types, node types). */
     def structuralHash(flow: Flow[?, ?, ?]): String =
         val structure = FlowFold(flow)(new FlowVisitorCollect[String]("", _ + "|" + _):
             override def onOutput[V](name: String, frame: Frame, meta: Flow.Meta)(using Tag[V], Schema[V]) = s"O:$name:${Tag[V].show}"
@@ -51,7 +51,7 @@ private[kyo] object WorkflowSchema:
             override def onLoop(name: String, frame: Frame, meta: Flow.Meta)                              = s"L:$name"
             override def onForEach(name: String, concurrency: Int, frame: Frame, meta: Flow.Meta)         = s"FE:$name:$concurrency"
             override def onSubflow(name: String, childFlow: Flow[?, ?, ?], frame: Frame, meta: Flow.Meta) = s"INV:$name")
-        scala.util.hashing.MurmurHash3.stringHash(structure).toHexString
+        java.lang.Integer.toHexString(XXHash.hash32(structure))
     end structuralHash
 
     import Flow.internal.*

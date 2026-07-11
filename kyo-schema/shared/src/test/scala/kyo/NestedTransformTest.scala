@@ -39,6 +39,14 @@ final case class NestedAddInner(x: Int) derives CanEqual
 given Schema[NestedAddInner] = Schema[NestedAddInner].add("derived")(_.x * 2)
 final case class NestedAddOuter(inner: NestedAddInner) derives CanEqual, Schema
 
+// --- per-collection-type decode-to-empty fixtures ---
+final case class NTChunk(xs: Chunk[Int]) derives CanEqual, Schema
+final case class NTList(xs: List[Int]) derives CanEqual, Schema
+final case class NTVector(xs: Vector[Int]) derives CanEqual, Schema
+final case class NTSet(xs: Set[Int]) derives CanEqual, Schema
+final case class NTSeq(xs: Seq[Int]) derives CanEqual, Schema
+final case class NTMap(xs: Map[String, Int]) derives CanEqual, Schema
+
 class NestedTransformTest extends kyo.test.Test[Any]:
 
     "discriminator survives one level of nesting (reporter's repro)" in {
@@ -147,7 +155,7 @@ class NestedTransformTest extends kyo.test.Test[Any]:
             val wrapperStructure = summon[Schema[NTWrapper]].structure
             val sealedTStructure = summon[Schema[NTSealedT]].structure
             wrapperStructure match
-                case Structure.Type.Product(_, _, _, fields) =>
+                case Structure.Type.Product(_, _, _, fields, _) =>
                     assert(
                         Structure.Type.compatible(fields(0).fieldType, sealedTStructure),
                         s"expected fields(0).fieldType compatible with sealedTStructure but fieldType=${fields(0).fieldType}"
@@ -157,6 +165,76 @@ class NestedTransformTest extends kyo.test.Test[Any]:
             end match
         }
 
+    }
+
+    "missing omit-configured collection/map field decodes to the typed empty" - {
+        val wire = "{}"
+
+        "Chunk field decodes to Chunk.empty" in {
+            val schema = Schema[NTChunk].omitEmptyCollections
+            val result = schema.decodeString[Json](wire)
+            assert(result == Result.succeed(NTChunk(Chunk.empty)), s"got: $result")
+            result match
+                case Result.Success(v) =>
+                    assert(v.xs.isInstanceOf[Chunk[?]], s"expected Chunk runtime type, got ${v.xs.getClass}")
+                case _ => ()
+            end match
+        }
+
+        "List field decodes to List.empty" in {
+            val schema = Schema[NTList].omitEmptyCollections
+            val result = schema.decodeString[Json](wire)
+            assert(result == Result.succeed(NTList(List.empty)), s"got: $result")
+            result match
+                case Result.Success(v) =>
+                    assert(v.xs.isInstanceOf[List[?]], s"expected List runtime type, got ${v.xs.getClass}")
+                case _ => ()
+            end match
+        }
+
+        "Vector field decodes to Vector.empty" in {
+            val schema = Schema[NTVector].omitEmptyCollections
+            val result = schema.decodeString[Json](wire)
+            assert(result == Result.succeed(NTVector(Vector.empty)), s"got: $result")
+            result match
+                case Result.Success(v) =>
+                    assert(v.xs.isInstanceOf[Vector[?]], s"expected Vector runtime type, got ${v.xs.getClass}")
+                case _ => ()
+            end match
+        }
+
+        "Set field decodes to Set.empty" in {
+            val schema = Schema[NTSet].omitEmptyCollections
+            val result = schema.decodeString[Json](wire)
+            assert(result == Result.succeed(NTSet(Set.empty)), s"got: $result")
+            result match
+                case Result.Success(v) =>
+                    assert(v.xs.isInstanceOf[Set[?]], s"expected Set runtime type, got ${v.xs.getClass}")
+                case _ => ()
+            end match
+        }
+
+        "Seq field decodes to Seq.empty" in {
+            val schema = Schema[NTSeq].omitEmptyCollections
+            val result = schema.decodeString[Json](wire)
+            assert(result == Result.succeed(NTSeq(Seq.empty)), s"got: $result")
+            result match
+                case Result.Success(v) =>
+                    assert(v.xs.isInstanceOf[Seq[?]], s"expected Seq runtime type, got ${v.xs.getClass}")
+                case _ => ()
+            end match
+        }
+
+        "Map field decodes to Map.empty" in {
+            val schema = Schema[NTMap].omitEmptyCollections
+            val result = schema.decodeString[Json](wire)
+            assert(result == Result.succeed(NTMap(Map.empty)), s"got: $result")
+            result match
+                case Result.Success(v) =>
+                    assert(v.xs.isInstanceOf[Map[?, ?]], s"expected Map runtime type, got ${v.xs.getClass}")
+                case _ => ()
+            end match
+        }
     }
 
 end NestedTransformTest

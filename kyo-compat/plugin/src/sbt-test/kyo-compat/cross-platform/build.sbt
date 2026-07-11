@@ -1,8 +1,7 @@
 // Scripted test — all 5 backends, all 3 platforms.
 //
 // Per-backend supportedPlatforms intersection means:
-//   Kyo / Zio       : JVM + JS + Native
-//   Ce              : JVM + JS         (Native skipped)
+//   Kyo / Zio / Ce  : JVM + JS + Native
 //   Future / Ox     : JVM              (JS + Native skipped)
 
 ThisBuild / scalaVersion     := "3.3.4"
@@ -22,7 +21,7 @@ lazy val myLib = (projectMatrix in file("my-lib"))
 // --------------------------------------------------------------------
 
 val checkProjects                     = taskKey[Unit]("verify exact project set")
-val checkSkippedCells                 = taskKey[Unit]("verify Ce/Native, Ox/JS, Ox/Native are not generated")
+val checkSkippedCells                 = taskKey[Unit]("verify Future/JS, Future/Native, Ox/JS, Ox/Native are not generated")
 val checkDepsPerPlatform              = taskKey[Unit]("verify per-platform cross-version on the kyo-compat-X dep")
 val checkSharedSourcesAcrossPlatforms = taskKey[Unit]("verify every per-platform project sees the shared dir")
 
@@ -33,7 +32,7 @@ checkProjects := {
         "myLibFuture",
         "myLibKyo",    "myLibKyoJS",    "myLibKyoNative",
         "myLibZio",    "myLibZioJS",    "myLibZioNative",
-        "myLibCe",     "myLibCeJS",
+        "myLibCe",     "myLibCeJS",     "myLibCeNative",
         "myLibOx"
     )
     val actual  = ext.structure.allProjectRefs.map(_.project).toSet
@@ -46,14 +45,14 @@ checkProjects := {
 checkSkippedCells := {
     val s   = Keys.state.value
     val ext = sbt.Project.extract(s)
-    val mustNotExist = Set("myLibFutureJS", "myLibFutureNative", "myLibCeNative", "myLibOxJS", "myLibOxNative")
+    val mustNotExist = Set("myLibFutureJS", "myLibFutureNative", "myLibOxJS", "myLibOxNative")
     val actual       = ext.structure.allProjectRefs.map(_.project).toSet
     val leaked       = mustNotExist intersect actual
     if (leaked.nonEmpty)
         sys.error(
             s"Cells the backend cannot support leaked into the project graph: $leaked"
         )
-    println("checkSkippedCells OK; Future/JS, Future/Native, Ce/Native, Ox/JS, Ox/Native are absent.")
+    println("checkSkippedCells OK; Future/JS, Future/Native, Ox/JS, Ox/Native are absent.")
 }
 
 checkDepsPerPlatform := {
@@ -71,6 +70,7 @@ checkDepsPerPlatform := {
         Case(myLib.kyo.js,        "kyo-compat-kyo",    "sjs1"),
         Case(myLib.zio.native,    "kyo-compat-zio",    "native"),
         Case(myLib.ce.js,         "kyo-compat-ce",     "sjs1"),
+        Case(myLib.ce.native,     "kyo-compat-ce",     "native"),
         Case(myLib.ox.jvm,        "kyo-compat-ox",     "jvm")
     )
 
@@ -124,7 +124,7 @@ checkSharedSourcesAcrossPlatforms := {
         myLib.future.jvm,
         myLib.kyo.jvm,    myLib.kyo.js,    myLib.kyo.native,
         myLib.zio.jvm,    myLib.zio.js,    myLib.zio.native,
-        myLib.ce.jvm,     myLib.ce.js,
+        myLib.ce.jvm,     myLib.ce.js,     myLib.ce.native,
         myLib.ox.jvm
     )
 

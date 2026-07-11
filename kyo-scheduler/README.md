@@ -171,7 +171,7 @@ When more work arrives than the scheduler can run on time, queuing delay rises a
 There are three rejection variants. They differ only in how they pick the sampling input that the admission percentage is compared against:
 
 - `reject(): Boolean` draws a fresh random integer per call.
-- `reject(key: String): Boolean` uses MurmurHash3 of `key`.
+- `reject(key: String): Boolean` uses XXH32 of `key`.
 - `reject(key: Int): Boolean` uses `key` directly.
 
 ### Random rejection
@@ -219,7 +219,7 @@ end if
 
 Both forms read the same admission percentage. Use `reject()` for traffic without a natural key, or when you specifically want each call to be an independent draw. Use `reject(key)` when related work should share a fate (a user's retries, a session's RPC calls, a batch job's sub-tasks) and when fairness across keys matters more than per-call randomness. The integer variant exists for cases where you have already computed a numeric key and want to skip the hash.
 
-> **Caution:** The integer-keyed hash is `(key * 2147483647 * windowId).abs % 100`. If your key set is small or correlated with a multiple of 100, distribution can be uneven. Prefer the `String` variant (MurmurHash3) for arbitrary inputs.
+> **Caution:** The integer-keyed hash is `(key * 2147483647 * windowId).abs % 100`. If your key set is small or correlated with a multiple of 100, distribution can be uneven. Prefer the `String` variant (XXH32) for arbitrary inputs.
 
 ### Reading the current admission percentage
 

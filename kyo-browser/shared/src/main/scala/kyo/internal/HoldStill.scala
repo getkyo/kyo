@@ -41,11 +41,11 @@ private[kyo] object HoldStill:
 
     /** Hash of the DECODED image bytes.
       *
-      * `Image.hashCode` is overridden to use `MurmurHash3.bytesHash` over the underlying byte
-      * array, giving content-equality semantics. Using `img.hashCode` (not `img.binary.hashCode`)
-      * is correct because `Span[Byte]` is opaque over `Array[Byte]` and `Array.hashCode` is
-      * reference identity, meaning two byte-identical frames would never match with
-      * `img.binary.hashCode`, making the loop never converge on identical content.
+      * `Image.hashCode` is overridden to use XXH32 over the underlying byte array, giving
+      * content-equality semantics. Using `img.hashCode` (not `img.binary.hashCode`) is correct
+      * because `Span[Byte]` is opaque over `Array[Byte]` and `Array.hashCode` is reference identity,
+      * meaning two byte-identical frames would never match with `img.binary.hashCode`, making the
+      * loop never converge on identical content.
       * `Image.hashCode` already implements the content hash the loop needs.
       */
     private[kyo] def frameHash(img: Image): Int = img.hashCode

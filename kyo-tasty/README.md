@@ -180,6 +180,23 @@ val anyDog: Chunk[Tasty.Symbol.Class] < (Async & Abort[TastyError]) =
 
 The result may have more than one element when the same simple name appears in different packages.
 
+### `symbolsInFile`, `symbolsByName`, `symbolsByPrefix`: all-kind lookups by file or name
+
+Three more lookups round out the family, each keyed differently from `find*`/`require*`. `symbolsInFile(sourceFile)` returns every symbol of any kind declared in that file. `symbolsByName(simpleName)` returns every symbol of any kind whose simple name matches exactly, unlike `findClassesByName` above, which narrows to `Symbol.Class`. `symbolsByPrefix(prefix)` returns every symbol whose simple name starts with `prefix`. All three read a resident index (`indices.bySourceFile` or `indices.bySimpleName`) built at classpath open time; no decode, no full name required.
+
+```scala
+val inFile: Chunk[Tasty.Symbol] < (Async & Abort[TastyError]) =
+    Tasty.withClasspath(shopRoots)(Tasty.symbolsInFile("Dog.scala"))
+
+val exactName: Chunk[Tasty.Symbol] < (Async & Abort[TastyError]) =
+    Tasty.withClasspath(shopRoots)(Tasty.symbolsByName("Dog"))
+
+val prefixed: Chunk[Tasty.Symbol] < (Async & Abort[TastyError]) =
+    Tasty.withClasspath(shopRoots)(Tasty.symbolsByPrefix("Animal"))
+```
+
+`symbolsInFile` is the data behind `textDocument/documentSymbol`; `symbolsByName` and `symbolsByPrefix` back the exact-match and incremental-typing arms of `workspace/symbol`. For the position side of the same query surface (cursor to symbol, symbol to every use site), see [Finding symbols by position](#finding-symbols-by-position).
+
 ### `classFullName[A]`: compile-time full name
 
 A macro that yields the dotted fully-qualified name of `A`. Use it when the type is known statically and you want the full name as a string without spelling it out.
@@ -287,6 +304,8 @@ val docs: Maybe[String] < (Async & Abort[TastyError]) =
 ```
 
 > **Note:** `scaladoc` returns the raw comment text including the `/**`, `*/` delimiters and the `*` margins on each line. No stripping, no markdown processing; treat it as bytes the compiler recorded. `Symbol.TypeParam`, `Symbol.Parameter`, and `Symbol.Package` always return `Maybe.Absent`; comments on those positions are not preserved.
+
+> **Note:** `sourcePosition` names only where a symbol is DECLARED. To go the other way (position to symbol, or symbol to every use site) see [Finding symbols by position](#finding-symbols-by-position).
 
 ### Rendering a symbol
 
@@ -618,6 +637,47 @@ val pretty: Maybe[String] < (Async & Abort[TastyError]) =
     }
 ```
 
+## Finding symbols by position
+
+The lookups above answer "what's the symbol for this name". Two more operations answer the opposite question: what's the symbol at this point in the source, and where else is it used, the pair an editor or LSP server needs for go-to-definition and find-references. Both are decode-backed like `bodyTree` above: the first query against a source file builds a per-file occurrence index lazily, memoized for the scope, so the cost is paid once per file, not once per query.
+
+### `Tasty.symbolAt(position)`: what's here?
+
+`Tasty.symbolAt(position)` takes a 1-based `Position`, the same shape as `Symbol.sourcePosition`, and returns the symbol that covers it: DEFINED there, when the position matches a declaration's own `sourcePosition` exactly, or REFERENCED there, when the position falls inside a use-site span recorded by the occurrence index. `Maybe.Absent` covers a position with no symbol at all (whitespace, a comment) and a call made outside any active `withClasspath`/`withPickles` scope, mirroring `bodyTree`; neither case is an abort.
+
+```scala
+val whatsHere: Maybe[Tasty.Symbol] < (Async & Abort[TastyError]) =
+    Tasty.withClasspath(shopRoots) {
+        Tasty.symbolAt(Tasty.Position("Dog.scala", 1, 7))
+    }
+```
+
+When several occurrences nest at the same position (a member selection whose receiver starts at the same column, `a.compute`), `symbolAt` resolves to the narrowest covering span, not the outermost.
+
+> **Note:** Like `bodyTree`, `symbolAt` needs a decode context. Under `withClasspath(classpath)` (the pre-built overload) it always returns `Maybe.Absent`, never an abort; use the roots-based `withClasspath` or `withPickles` when position queries are needed.
+
+### `Tasty.references(symbol)`: where else?
+
+`Tasty.references(symbol)` walks the other direction: every use site of `symbol` across the whole classpath, same-file and cross-file alike, as a `Chunk[SourceRange]`. `Tasty.SourceRange(sourceFile, startLine, startColumn, endLine, endColumn)` names one contiguous span in one file; all four coordinates are 1-based, start inclusive and end exclusive (`endColumn` is one past the span's last character), matching the half-open convention an editor range expects. Matching against `symbol` is `SymbolId` equality, immune to two unrelated symbols sharing a simple name. The declaration site itself is excluded, since it is already available as `symbol.sourcePosition`; a caller that wants it back (an LSP `includeDeclaration` request) re-adds it from that field.
+
+```scala
+val usages: Chunk[Tasty.SourceRange] < (Async & Abort[TastyError]) =
+    Tasty.withClasspath(shopRoots) {
+        for
+            animal <- Tasty.requireClassLike("shop.Animal")
+            refs   <- Tasty.references(animal)
+        yield refs
+    }
+```
+
+Each `SourceRange` returned is a use site of `symbol`, located by file and span. `references` collects TERM uses (a method call, a field access), TYPE-POSITION uses (the symbol used as a `val`, parameter, or result type, or as a type argument in a signature), and `extends`/`with` parent-clause uses (a subclass's reference to its superclass or mixin). The parent clause is stripped before the per-file body decode, so it is captured separately at load and merged into the occurrence index; a superclass relationship therefore surfaces by source location here as well as by symbol via `implementationsOf`/`parents`.
+
+> **Note:** `references` carries `Async`, unlike every other query in this README besides the entry binders: draining every indexed file's occurrence decode is itself a suspension the effect row makes visible, with cancellation observed between files, never mid-file. An interrupted drain leaves the per-file cache exactly as complete as the files it finished; never a torn entry for the file in flight.
+
+### `Tasty.declarationRange(symbol)`: how far?
+
+`Symbol.sourcePosition` gives only where a symbol's name STARTS. `Tasty.declarationRange(symbol)` returns the whole span the definition occupies, a method's entire `def ... = ...` region, a class's whole body, as a `Maybe[SourceRange]` whose start equals `sourcePosition` and whose end reaches one past the declaration's last character. It is the data behind an LSP `DocumentSymbol.range` (paired with `sourcePosition` as the `selectionRange`) and a move-refactoring that relocates a whole declaration. Like `symbolAt` and `references` it reads a cold-loaded classpath (the extent is computed at load, held in the decode context, never serialized into a snapshot), so a symbol looked up outside a roots-based `withClasspath`/`withPickles` scope, or one with no recorded extent (a package, a Java symbol), yields `Maybe.Absent`, never an abort.
+
 ## Java and JPMS metadata
 
 When a symbol comes from a `.class` file there is information that has no Scala-source analogue: JVM access flags, throws clauses, the enclosing-method record for inner classes, record components, the bootstrap-methods table for `invokedynamic`, JVM nest membership, parameter names, and runtime-visible type annotations. `Tasty.Java.Metadata` is the per-symbol container; `Symbol.javaMetadata: Maybe[Java.Metadata]` exposes it on every class-like and on `Symbol.Field` and `Symbol.Method`.
@@ -689,11 +749,12 @@ val errors: Chunk[TastyError] < (Async & Abort[TastyError]) =
 
 ### Composing on the effect row
 
-Three effect rows appear in this README:
+Four effect rows appear in this README:
 
 - `Tasty.withClasspath(roots, ...)` and `Tasty.withPickles(...)` introduce `Async & Abort[TastyError]` (the roots overload reads files; both consume `Scope` internally).
 - `Tasty.withClasspath(classpath)` introduces nothing: its row is identical to `f`'s row.
-- The companion lookup shortcuts (`findClass`, `findMethod`, `Tasty.classpath`, the `all*` family, `symbolsAnnotatedWith`) carry `< Sync` because they read the active binding. The `require*` variants carry `< (Sync & Abort[TastyError])`. `bodyTree` carries `< (Sync & Abort[TastyError])` for on-demand AST decoding. Once a `Classpath` value is in hand (via `Tasty.classpath`), navigation that needs classpath data (`show`, `signature`, `paramLists`, `parents`, `permittedSubclasses`, `members`, `findMember`, `hasAnnotation`, `findAnnotation`, `isSubtypeOf`, `typeShow`, `treeShow`) is a pure instance method with no effect row.
+- The companion lookup shortcuts (`findClass`, `findMethod`, `Tasty.classpath`, the `all*` family, `symbolsAnnotatedWith`, `symbolsInFile`, `symbolsByName`, `symbolsByPrefix`, `declarationRange`) carry `< Sync` because they read the active binding. The `require*` variants carry `< (Sync & Abort[TastyError])`. `bodyTree` and `symbolAt` carry `< (Sync & Abort[TastyError])` for their respective on-demand, decode-backed lookups; `declarationRange` reads a pre-computed extent from the active binding, so it stays `< Sync` and never aborts. Once a `Classpath` value is in hand (via `Tasty.classpath`), navigation that needs classpath data (`show`, `signature`, `paramLists`, `parents`, `permittedSubclasses`, `members`, `findMember`, `hasAnnotation`, `findAnnotation`, `isSubtypeOf`, `typeShow`, `treeShow`) is a pure instance method with no effect row.
+- `references` is the one query outside the entry binders that carries `Async & Abort[TastyError]`: draining every indexed file's occurrence decode is itself a suspension, with cancellation observed between files.
 
 Compose with `for`-comprehensions inside the `withClasspath` body:
 
@@ -732,7 +793,7 @@ The `Tasty.all*` aggregations mirror as `classpath.allSymbols`, `classpath.allCl
 
 Subclass-index operations: `classpath.directSubclassesOf(symbol)`, `classpath.subclassesOf(symbol)`, `classpath.implementationsOf(symbol)`.
 
-Misc: `classpath.companion(symbol)`, `classpath.fullName(symbol)`, `classpath.symbolsAnnotatedWith(fullName)`, `classpath.collisionReport`, `classpath.unresolvedTypeReferenceCount`, `classpath.topLevelClasses`, `classpath.packages`.
+Misc: `classpath.companion(symbol)`, `classpath.fullName(symbol)`, `classpath.symbolsAnnotatedWith(fullName)`, `classpath.symbolsInFile(sourceFile)`, `classpath.symbolsByName(simpleName)`, `classpath.symbolsByPrefix(prefix)`, `classpath.collisionReport`, `classpath.unresolvedTypeReferenceCount`, `classpath.topLevelClasses`, `classpath.packages`.
 
 ### `SymbolId` and `classpath.symbol(id)`
 
@@ -754,7 +815,7 @@ val bySymbol: Maybe[Tasty.Symbol] < (Async & Abort[TastyError]) =
 
 ### `Classpath.Indices` and diagnostics
 
-`Classpath.Indices` is the immutable index bundle: `byFullName`, `bySimpleName`, `packageIndex`, `subclassIndex`, `companionIndex`, `modulesIndex`, `topLevelClassIds`, `packageIds`, `unresolvedFullNameByNegId`, `diagnostics`. Direct access is rarely needed; the named queries cover the common cases.
+`Classpath.Indices` is the immutable index bundle: `byFullName`, `bySimpleName`, `packageIndex`, `subclassIndex`, `companionIndex`, `modulesIndex`, `topLevelClassIds`, `packageIds`, `unresolvedFullNameByNegId`, `diagnostics`, `bySourceFile`. Direct access is rarely needed; the named queries (`symbolsInFile`, `symbolsByName`, `symbolsByPrefix`, and the `find*`/`require*`/`all*` families) cover the common cases.
 
 `Classpath.Diagnostic` is a sealed trait; the only current concrete case is `Classpath.FullNameCollision(fullName, ids)` recording roots that registered the same fully-qualified name under `ErrorMode.SoftFail`.
 

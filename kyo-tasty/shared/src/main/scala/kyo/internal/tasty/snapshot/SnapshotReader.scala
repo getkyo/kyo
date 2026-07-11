@@ -418,6 +418,15 @@ object SnapshotReader:
             case _ => ()
         end match
 
+        // SRCPOS__ section: restore per-symbol sourcePosition so warm-loaded symbols carry
+        // positions. sourcePositionByIdx maps snapshot symIdx -> Tasty.Position.
+        val sourcePositionByIdx: scala.collection.immutable.IntMap[Tasty.Position] =
+            sectionMap.get(SnapshotFormat.sectionSRCPOS) match
+                case Some((off, len)) if len > 0 =>
+                    deserializeSourcePositions(bytes, off, len, namePool)
+                // Carve-out: stdlib Option from mutable.HashMap.get; absent or empty section
+                case _ => scala.collection.immutable.IntMap.empty[Tasty.Position]
+
         // Rebuild final immutable Symbols with all 14 fields populated.
         val finalSymbols = new Array[Tasty.Symbol](symCount)
         var si           = 0
@@ -445,7 +454,7 @@ object SnapshotReader:
                         kyo.Maybe.Absent
                 ,
                 scaladoc = partial.scaladoc,
-                sourcePosition = partial.sourcePosition,
+                sourcePosition = sourcePositionByIdx.get(si).fold(partial.sourcePosition)(pos => kyo.Maybe.Present(pos)),
                 javaMetadata = javaMetaByIdx(si) match
                     case kyo.Maybe.Present(flags) =>
                         kyo.Maybe(Tasty.Java.Metadata(
@@ -921,6 +930,15 @@ object SnapshotReader:
             case _ => ()
         end match
 
+        // SRCPOS__ section: restore per-symbol sourcePosition for warm-loaded symbols.
+        val sourcePositionByIdx2: scala.collection.immutable.IntMap[Tasty.Position] =
+            sectionMap.get(SnapshotFormat.sectionSRCPOS) match
+                case Some((off, len)) if len > 0 =>
+                    val secBytes = copyViewRange(view, off, off + len)
+                    deserializeSourcePositions(secBytes, 0, len, namePool)
+                // Carve-out: stdlib Option from mutable.HashMap.get; absent or empty section
+                case _ => scala.collection.immutable.IntMap.empty[Tasty.Position]
+
         val finalSymbols = new Array[Tasty.Symbol](symCount)
         var j            = 0
         while j < symCount do
@@ -947,7 +965,7 @@ object SnapshotReader:
                         kyo.Maybe.Absent
                 ,
                 scaladoc = partial.scaladoc,
-                sourcePosition = partial.sourcePosition,
+                sourcePosition = sourcePositionByIdx2.get(j).fold(partial.sourcePosition)(pos => kyo.Maybe.Present(pos)),
                 javaMetadata = javaMetaByIdxM(j) match
                     case kyo.Maybe.Present(flags) =>
                         kyo.Maybe(Tasty.Java.Metadata(
@@ -1216,6 +1234,35 @@ object SnapshotReader:
             Chunk.from(packages)
         )
     end readSymbolsMapped
+
+    /** Deserialize the SRCPOS__ section into a snapshot-symIdx -> Position map.
+      *
+      * Absent or empty section yields an empty map (a pre-minor-13 snapshot never reaches here:
+      * SnapshotReader rejects fileMinor < minorVersion at the header guard). The sourceFile name id
+      * resolves through the shared name pool.
+      */
+    private def deserializeSourcePositions(
+        bytes: Array[Byte],
+        offset: Int,
+        length: Int,
+        namePool: Array[String]
+    ): scala.collection.immutable.IntMap[Tasty.Position] =
+        val count = SnapshotFormat.readInt32LE(bytes, offset)
+        var m     = scala.collection.immutable.IntMap.empty[Tasty.Position]
+        var pos   = offset + 4
+        var i     = 0
+        // perf: sequential fixed-size record scan over raw bytes; while matches the section-parsing convention in this file
+        while i < count do
+            val symIdx = SnapshotFormat.readInt32LE(bytes, pos)
+            val nameId = SnapshotFormat.readInt32LE(bytes, pos + 4)
+            val line   = SnapshotFormat.readInt32LE(bytes, pos + 8)
+            val column = SnapshotFormat.readInt32LE(bytes, pos + 12)
+            m = m.updated(symIdx, Tasty.Position(namePool(nameId), line, column))
+            pos += 16
+            i += 1
+        end while
+        m
+    end deserializeSourcePositions
 
     /** Deserialize the FQNIDX__ section into a full Map[String, SymbolId].
       *

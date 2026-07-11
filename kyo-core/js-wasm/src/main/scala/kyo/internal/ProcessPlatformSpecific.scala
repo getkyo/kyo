@@ -314,11 +314,31 @@ final private[kyo] class NodeCommandUnsafe(
     def withCwd(path: kyo.Path): NodeCommandUnsafe = copy(workDir = Present(path))
     def withEnvAppend(vars: Map[String, String]): NodeCommandUnsafe =
         val newMode = envMode match
-            case EnvMode.Clear                 => EnvMode.ClearThenAppend(vars)
-            case EnvMode.ClearThenAppend(prev) => EnvMode.ClearThenAppend(prev ++ vars)
-            case _                             => EnvMode.Append(vars)
+            case EnvMode.Clear                         => EnvMode.ClearThenAppend(vars)
+            case EnvMode.ClearThenAppend(prev)         => EnvMode.ClearThenAppend(prev ++ vars)
+            case EnvMode.Remove(names)                 => EnvMode.AppendThenRemove(vars -- names, names)
+            case EnvMode.AppendThenRemove(prev, names) => EnvMode.AppendThenRemove((prev ++ vars) -- names, names)
+            case _                                     => EnvMode.Append(vars)
         copy(envMode = newMode)
     end withEnvAppend
+    def withEnvRemove(names: Set[String]): NodeCommandUnsafe =
+        val newMode = envMode match
+            case EnvMode.Inherit =>
+                EnvMode.Remove(names)
+            case EnvMode.Append(vars) =>
+                EnvMode.AppendThenRemove(vars -- names, names)
+            case EnvMode.Remove(prev) =>
+                EnvMode.Remove(prev ++ names)
+            case EnvMode.AppendThenRemove(vars, prev) =>
+                EnvMode.AppendThenRemove(vars -- names, prev ++ names)
+            case EnvMode.Replace(vars) =>
+                EnvMode.Replace(vars -- names)
+            case EnvMode.Clear =>
+                EnvMode.Clear
+            case EnvMode.ClearThenAppend(vars) =>
+                EnvMode.ClearThenAppend(vars -- names)
+        copy(envMode = newMode)
+    end withEnvRemove
     def withEnvReplace(vars: Map[String, String]): NodeCommandUnsafe = copy(envMode = EnvMode.Replace(vars))
     def withEnvClear: NodeCommandUnsafe                              = copy(envMode = EnvMode.Clear)
 
@@ -369,6 +389,21 @@ final private[kyo] class NodeCommandUnsafe(
                     js.Dynamic.global.process.env
                 )
                 vars.foreach { (k, v) => env.updateDynamic(k)(v) }
+                opts.env = env
+            case EnvMode.Remove(names) =>
+                val env = js.Dynamic.global.Object.assign(
+                    js.Dynamic.literal(),
+                    js.Dynamic.global.process.env
+                )
+                names.foreach(name => discard(js.Dynamic.global.Reflect.deleteProperty(env, name)))
+                opts.env = env
+            case EnvMode.AppendThenRemove(vars, names) =>
+                val env = js.Dynamic.global.Object.assign(
+                    js.Dynamic.literal(),
+                    js.Dynamic.global.process.env
+                )
+                vars.foreach { (k, v) => env.updateDynamic(k)(v) }
+                names.foreach(name => discard(js.Dynamic.global.Reflect.deleteProperty(env, name)))
                 opts.env = env
             case EnvMode.Replace(vars) =>
                 val env = js.Dynamic.literal()
@@ -600,6 +635,21 @@ final private[kyo] class NodeCommandUnsafe(
                                                     js.Dynamic.global.process.env
                                                 )
                                                 vars.foreach { (k, v) => env.updateDynamic(k)(v) }
+                                                opts.env = env
+                                            case EnvMode.Remove(names) =>
+                                                val env = js.Dynamic.global.Object.assign(
+                                                    js.Dynamic.literal(),
+                                                    js.Dynamic.global.process.env
+                                                )
+                                                names.foreach(name => discard(js.Dynamic.global.Reflect.deleteProperty(env, name)))
+                                                opts.env = env
+                                            case EnvMode.AppendThenRemove(vars, names) =>
+                                                val env = js.Dynamic.global.Object.assign(
+                                                    js.Dynamic.literal(),
+                                                    js.Dynamic.global.process.env
+                                                )
+                                                vars.foreach { (k, v) => env.updateDynamic(k)(v) }
+                                                names.foreach(name => discard(js.Dynamic.global.Reflect.deleteProperty(env, name)))
                                                 opts.env = env
                                             case EnvMode.Replace(vars) =>
                                                 val env = js.Dynamic.literal()

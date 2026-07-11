@@ -73,6 +73,16 @@ object Command:
                 }
             }
 
+        /** Spawns the process WITHOUT registering it with any `Scope`: the caller owns the process
+          * lifetime and must close it. The unscoped analog of [[spawn]] (mirrors `Fiber.initUnscoped`),
+          * for a process that outlives the spawning computation's scope, such as a long-lived worker a
+          * backend owns and closes explicitly.
+          */
+        def spawnUnscoped(using Frame): Process < (Sync & Abort[CommandException]) =
+            Sync.Unsafe.defer {
+                Abort.get(self.unsafe.spawn()).map(_.safe)
+            }
+
         /** Spawns the process, waits for it to complete, and returns its combined stdout as a UTF-8 string. */
         def text(using Frame): String < (Async & Abort[CommandException]) =
             Sync.Unsafe.defer(self.unsafe.text().safe.get)
@@ -145,6 +155,9 @@ object Command:
         /** Appends the given environment variables (merged on top of the inherited environment). */
         def envAppend(vars: Map[String, String]): Command = self.unsafe.withEnvAppend(vars).safe
 
+        /** Removes the given variables from the inherited or configured process environment. */
+        def envRemove(names: Iterable[String]): Command = self.unsafe.withEnvRemove(names.toSet).safe
+
         /** Replaces the entire environment with the given variables. */
         def envReplace(vars: Map[String, String]): Command = self.unsafe.withEnvReplace(vars).safe
 
@@ -211,6 +224,8 @@ object Command:
     private[kyo] enum EnvMode derives CanEqual:
         case Inherit
         case Append(vars: Map[String, String])
+        case Remove(names: Set[String])
+        case AppendThenRemove(vars: Map[String, String], names: Set[String])
         case Replace(vars: Map[String, String])
         case Clear
         case ClearThenAppend(vars: Map[String, String])
@@ -246,16 +261,19 @@ object Command:
 
         /** Returns the environment variables that will be appended/replaced, or empty if inheriting/cleared. */
         final def env: Map[String, String] = envMode match
-            case EnvMode.Inherit               => Map.empty
-            case EnvMode.Append(vars)          => vars
-            case EnvMode.Replace(vars)         => vars
-            case EnvMode.Clear                 => Map.empty
-            case EnvMode.ClearThenAppend(vars) => vars
+            case EnvMode.Inherit                   => Map.empty
+            case EnvMode.Append(vars)              => vars
+            case EnvMode.Remove(_)                 => Map.empty
+            case EnvMode.AppendThenRemove(vars, _) => vars
+            case EnvMode.Replace(vars)             => vars
+            case EnvMode.Clear                     => Map.empty
+            case EnvMode.ClearThenAppend(vars)     => vars
 
         // --- Pure builder methods (return new Unsafe instances) ---
 
         def withCwd(path: kyo.Path): Unsafe
         def withEnvAppend(vars: Map[String, String]): Unsafe
+        def withEnvRemove(names: Set[String]): Unsafe
         def withEnvReplace(vars: Map[String, String]): Unsafe
         def withEnvClear: Unsafe
         def withStdin(input: Process.Input): Unsafe

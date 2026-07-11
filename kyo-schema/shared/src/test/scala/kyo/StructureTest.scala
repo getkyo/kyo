@@ -57,6 +57,11 @@ object SealedNoArgVariants:
     case object Unit3                extends SealedNoArgVariants derives CanEqual
 end SealedNoArgVariants
 
+// annotations carrier fixtures
+final class L1NodeAnnotation extends scala.annotation.StaticAnnotation
+case class L1Plain(a: Int, b: String) derives Schema
+@L1NodeAnnotation case class L1Node(value: Int, @L1NodeAnnotation next: Maybe[L1Node]) derives Schema
+
 class StructureTest extends kyo.test.Test[Any]:
 
     given CanEqual[Any, Any]                       = CanEqual.derived
@@ -114,7 +119,7 @@ class StructureTest extends kyo.test.Test[Any]:
         "case class produces Product with fields in declaration order" in {
             val ref = Structure.of[MTPerson]
             ref match
-                case Structure.Type.Product(name, tag, _, fields) =>
+                case Structure.Type.Product(name, tag, _, fields, _) =>
                     assert(name == "MTPerson")
                     assert(tag =:= Tag[MTPerson])
                     assert(fields.size == 2)
@@ -127,7 +132,7 @@ class StructureTest extends kyo.test.Test[Any]:
         "each field has correct name, nested Structure, and default" in {
             val ref = Structure.of[MTConfig]
             ref match
-                case Structure.Type.Product(_, _, _, fields) =>
+                case Structure.Type.Product(_, _, _, fields, _) =>
                     assert(fields.size == 3)
 
                     // host: String, no default
@@ -162,7 +167,7 @@ class StructureTest extends kyo.test.Test[Any]:
         "sealed trait produces Sum with variants" in {
             val ref = Structure.of[MTShape]
             ref match
-                case Structure.Type.Sum(name, tag, _, variants, _) =>
+                case Structure.Type.Sum(name, tag, _, variants, _, _) =>
                     assert(name == "MTShape")
                     assert(tag =:= Tag[MTShape])
                     assert(variants.size == 2)
@@ -171,7 +176,7 @@ class StructureTest extends kyo.test.Test[Any]:
 
                     // Check variant types are Products
                     variants(0).variantType match
-                        case Structure.Type.Product(n, _, _, fields) =>
+                        case Structure.Type.Product(n, _, _, fields, _) =>
                             assert(n == "MTCircle")
                             assert(fields.size == 1)
                             assert(fields(0).name == "radius")
@@ -179,7 +184,7 @@ class StructureTest extends kyo.test.Test[Any]:
                     end match
 
                     variants(1).variantType match
-                        case Structure.Type.Product(n, _, _, fields) =>
+                        case Structure.Type.Product(n, _, _, fields, _) =>
                             assert(n == "MTRectangle")
                             assert(fields.size == 2)
                             assert(fields(0).name == "width")
@@ -193,7 +198,7 @@ class StructureTest extends kyo.test.Test[Any]:
         "Option[A] produces Optional" in {
             val ref = Structure.of[MTOptional]
             ref match
-                case Structure.Type.Product(_, _, _, fields) =>
+                case Structure.Type.Product(_, _, _, fields, _) =>
                     assert(fields.size == 2)
 
                     val nicknameField = fields(1)
@@ -213,14 +218,14 @@ class StructureTest extends kyo.test.Test[Any]:
         "Seq[A] produces Collection" in {
             val ref = Structure.of[MTOrder]
             ref match
-                case Structure.Type.Product(_, _, _, fields) =>
+                case Structure.Type.Product(_, _, _, fields, _) =>
                     val itemsField = fields(1)
                     assert(itemsField.name == "items")
                     itemsField.fieldType match
                         case Structure.Type.Collection(_, _, elem) =>
                             elem match
-                                case Structure.Type.Product(n, _, _, _) => assert(n == "MTItem")
-                                case other                              => fail(s"Expected Product element, got $other")
+                                case Structure.Type.Product(n, _, _, _, _) => assert(n == "MTItem")
+                                case other                                 => fail(s"Expected Product element, got $other")
                         case other => fail(s"Expected Collection, got $other")
                     end match
                 case other => fail(s"Expected Product, got $other")
@@ -244,13 +249,13 @@ class StructureTest extends kyo.test.Test[Any]:
         "nested case classes produce nested Product structures" in {
             val ref = Structure.of[MTSmallTeam]
             ref match
-                case Structure.Type.Product(_, _, _, fields) =>
+                case Structure.Type.Product(_, _, _, fields, _) =>
                     assert(fields.size == 2)
 
                     val leadField = fields(0)
                     assert(leadField.name == "lead")
                     leadField.fieldType match
-                        case Structure.Type.Product(n, _, _, innerFields) =>
+                        case Structure.Type.Product(n, _, _, innerFields, _) =>
                             assert(n == "MTPerson")
                             assert(innerFields.size == 2)
                             assert(innerFields(0).name == "name")
@@ -270,7 +275,7 @@ class StructureTest extends kyo.test.Test[Any]:
         "recursive types do not stack overflow" in {
             val ref = Structure.of[RTTree]
             ref match
-                case Structure.Type.Product(name, _, _, fields) =>
+                case Structure.Type.Product(name, _, _, fields, _) =>
                     assert(name == "RTTree")
                     assert(fields.size == 2)
                     assert(fields(0).name == "value")
@@ -281,7 +286,7 @@ class StructureTest extends kyo.test.Test[Any]:
                         case Structure.Type.Collection(_, _, elem) =>
                             // The recursive reference should be a Product (possibly with empty fields)
                             elem match
-                                case Structure.Type.Product(n, _, _, _) =>
+                                case Structure.Type.Product(n, _, _, _, _) =>
                                     assert(n == "RTTree")
                                 case other => fail(s"Expected Product for recursive element, got $other")
                         case other => fail(s"Expected Collection for children, got $other")
@@ -348,7 +353,7 @@ class StructureTest extends kyo.test.Test[Any]:
             assert(Structure.Type.compatible(fromDirect, fromSchema))
 
             (fromDirect, fromSchema) match
-                case (Structure.Type.Product(n1, _, _, f1), Structure.Type.Product(n2, _, _, f2)) =>
+                case (Structure.Type.Product(n1, _, _, f1, _), Structure.Type.Product(n2, _, _, f2, _)) =>
                     assert(n1 == n2)
                     assert(f1.size == f2.size)
                     assert(f1.zip(f2).forall { (field1, field2) =>
@@ -361,7 +366,7 @@ class StructureTest extends kyo.test.Test[Any]:
         "Structure.Field.doc is Maybe.empty by default" in {
             val ref = Structure.of[MTPerson]
             ref match
-                case Structure.Type.Product(_, _, _, fields) =>
+                case Structure.Type.Product(_, _, _, fields, _) =>
                     assert(fields.forall(_.doc.isEmpty))
                 case other => fail(s"Expected Product, got $other")
             end match
@@ -461,7 +466,7 @@ class StructureTest extends kyo.test.Test[Any]:
         "field defaults are captured" in {
             val tpe = Structure.of[MTAllDefaults]
             tpe match
-                case Structure.Type.Product(_, _, _, fields) =>
+                case Structure.Type.Product(_, _, _, fields, _) =>
                     assert(fields.size == 3)
 
                     // a: Int = 1
@@ -1136,8 +1141,10 @@ class StructureTest extends kyo.test.Test[Any]:
         }
 
         "protobuf mapStart/mapEnd" in {
-            // At the top level, mapStart/mapEnd are equivalent to objectStart/objectEnd
+            // A map is a repeated MapEntry message under its field number (proto3 map<K, V>), so the
+            // map must sit under a field. Each entry holds the key at field 1 and the value at field 2.
             val w = new ProtobufWriter
+            w.field("m", 5)
             w.mapStart(2)
             w.field("key1", 0)
             w.string("value1")
@@ -1146,14 +1153,15 @@ class StructureTest extends kyo.test.Test[Any]:
             w.mapEnd()
             val bytes = w.resultBytes
             assert(bytes.nonEmpty)
-            // Verify we can read it back
+            // Read it back: the enclosing field() consumes the first entry's tag, then the map drives entries.
             val r = new ProtobufReader(bytes)
+            val _ = r.field()
             val _ = r.mapStart()
             assert(r.hasNextEntry())
-            val _ = r.field()
+            assert(r.field() == "key1")
             assert(r.string() == "value1")
             assert(r.hasNextEntry())
-            val _ = r.field()
+            assert(r.field() == "key2")
             assert(r.int() == 42)
             assert(!r.hasNextEntry())
             r.mapEnd()
@@ -1602,6 +1610,173 @@ class StructureTest extends kyo.test.Test[Any]:
             // listSchema is a polymorphic given so two summons may yield different instances;
             // use compatible (structural equality) rather than reference equality
             assert(Structure.Type.compatible(Structure.of[List[String]], summon[Schema[List[String]]].structure))
+        }
+
+    }
+
+    // ==================== annotations carrier ====================
+
+    "annotations carrier" - {
+
+        "unannotated derivation is byte-identical to the pre-feature golden" in {
+            val plainGolden = """{"a":1,"b":"x"}"""
+            val encoded     = Json.encode(L1Plain(1, "x"))
+            assert(encoded == plainGolden, s"wire changed from pre-feature golden: got=$encoded expected=$plainGolden")
+            assert(!encoded.contains("\"annotations\""), s"annotations leaked into wire: $encoded")
+            val decoded = Json.decode[L1Plain](encoded).getOrThrow
+            assert(decoded == L1Plain(1, "x"), s"round-trip failed: $decoded")
+        }
+
+        "Field wire shape carries exactly the five pre-feature keys" in {
+            val ft      = Structure.Type.Primitive(Structure.PrimitiveKind.Int, Tag[Int].asInstanceOf[Tag[Any]])
+            val f       = Structure.Field("x", ft, Maybe.empty, Maybe.empty, false, Chunk[Any]("marker"))
+            val encoded = Json.encode[Structure.Field](f)
+            assert(encoded.contains("\"name\""), s"missing name key: $encoded")
+            assert(encoded.contains("\"fieldType\""), s"missing fieldType key: $encoded")
+            assert(encoded.contains("\"doc\""), s"missing doc key: $encoded")
+            assert(encoded.contains("\"default\""), s"missing default key: $encoded")
+            assert(encoded.contains("\"optional\""), s"missing optional key: $encoded")
+            assert(!encoded.contains("\"annotations\""), s"annotations appeared in Field wire: $encoded")
+        }
+
+        "compatible ignores annotations on Product and Sum" in {
+            val tag = Tag[String].asInstanceOf[Tag[Any]]
+            val p1  = Structure.Type.Product("P", tag, Chunk.empty, Chunk.empty, Chunk[Any]("x"))
+            val p2  = Structure.Type.Product("P", tag, Chunk.empty, Chunk.empty)
+            assert(Structure.Type.compatible(p1, p2), "Product compatible must ignore annotations")
+            assert(Structure.Type.compatible(p2, p1), "Product compatible must be symmetric under annotations")
+
+            val s1 = Structure.Type.Sum("S", tag, Chunk.empty, Chunk.empty, Chunk.empty, Chunk[Any]("y"))
+            val s2 = Structure.Type.Sum("S", tag, Chunk.empty, Chunk.empty, Chunk.empty)
+            assert(Structure.Type.compatible(s1, s2), "Sum compatible must ignore annotations")
+            assert(Structure.Type.compatible(s2, s1), "Sum compatible must be symmetric under annotations")
+        }
+
+        "Field equals and hashCode ignore annotations" in {
+            val ft = Structure.Type.Primitive(Structure.PrimitiveKind.Int, Tag[Int].asInstanceOf[Tag[Any]])
+            val a  = Structure.Field("x", ft, Maybe.empty, Maybe.empty, false, Chunk[Any]("x"))
+            val b  = Structure.Field("x", ft, Maybe.empty, Maybe.empty, false)
+            assert(a == b, s"Field.equals must ignore annotations: a=$a b=$b")
+            assert(a.hashCode == b.hashCode, s"Field.hashCode must ignore annotations: a.hc=${a.hashCode} b.hc=${b.hashCode}")
+        }
+
+        "self-recursive annotated case class derives without StackOverflowError" in {
+            val schema = summon[Schema[L1Node]]
+            schema.structure match
+                case Structure.Type.Product(name, _, _, fields, _) =>
+                    assert(name == "L1Node", s"expected name L1Node, got $name")
+                    assert(fields.size == 2, s"expected 2 fields, got ${fields.size}")
+                    assert(fields(0).name == "value")
+                    assert(fields(1).name == "next")
+                    assert(
+                        fields(1).annotations.exists(_.isInstanceOf[L1NodeAnnotation]),
+                        s"recursive field @L1NodeAnnotation must be captured; got ${fields(1).annotations}"
+                    )
+                case other => fail(s"Expected Product for L1Node, got $other")
+            end match
+        }
+
+        "unannotated node annotations default to Chunk.empty" in {
+            summon[Schema[L1Plain]].structure match
+                case p: Structure.Type.Product =>
+                    assert(p.annotations.isEmpty, s"Product annotations must default to Chunk.empty, got ${p.annotations}")
+                    p.fields.foreach { f =>
+                        assert(f.annotations.isEmpty, s"Field ${f.name} annotations must default to Chunk.empty, got ${f.annotations}")
+                    }
+                case other => fail(s"Expected Product for L1Plain, got $other")
+            end match
+        }
+
+        "Structure.Type meta-schema wire is byte-identical (Product and Sum, annotated and unannotated)" in {
+            val prodGolden =
+                """{"Product":{"name":"P","tag":"*8:C:java.io.Serializable:0:::4\n4:A\n5:C:java.lang.constant.Constable:0:::2\n0:C:java.lang.String:0:::1:5:6:7:8\n2:C:java.lang.Object:0:::3\n7:C:java.lang.Comparable:1:0:0:2\n3:C:scala.Matchable:0:::4\n6:C:java.lang.CharSequence:0:::2\n1:C:java.lang.constant.ConstantDesc:0:::2","typeParams":[],"fields":[]}}"""
+            val sumGolden =
+                """{"Sum":{"name":"S","tag":"*8:C:java.io.Serializable:0:::4\n4:A\n5:C:java.lang.constant.Constable:0:::2\n0:C:java.lang.String:0:::1:5:6:7:8\n2:C:java.lang.Object:0:::3\n7:C:java.lang.Comparable:1:0:0:2\n3:C:scala.Matchable:0:::4\n6:C:java.lang.CharSequence:0:::2\n1:C:java.lang.constant.ConstantDesc:0:::2","typeParams":[],"variants":[],"enumValues":[]}}"""
+
+            val tag              = Tag[String].asInstanceOf[Tag[Any]]
+            val prodPlain        = Structure.Type.Product("P", tag, Chunk.empty, Chunk.empty)
+            val prodAnnotated    = Structure.Type.Product("P", tag, Chunk.empty, Chunk.empty, Chunk[Any]("marker"))
+            val encProdPlain     = Json.encode[Structure.Type](prodPlain)
+            val encProdAnnotated = Json.encode[Structure.Type](prodAnnotated)
+            assert(
+                encProdPlain == prodGolden,
+                s"Product wire differs from pre-feature freeze golden: got=$encProdPlain expected=$prodGolden"
+            )
+            assert(
+                encProdPlain == encProdAnnotated,
+                s"Product wire must be identical regardless of annotations: plain=$encProdPlain annotated=$encProdAnnotated"
+            )
+            assert(!encProdAnnotated.contains("\"annotations\""), s"annotations key must not appear in Product wire: $encProdAnnotated")
+
+            val sumPlain        = Structure.Type.Sum("S", tag, Chunk.empty, Chunk.empty, Chunk.empty)
+            val sumAnnotated    = Structure.Type.Sum("S", tag, Chunk.empty, Chunk.empty, Chunk.empty, Chunk[Any]("marker"))
+            val encSumPlain     = Json.encode[Structure.Type](sumPlain)
+            val encSumAnnotated = Json.encode[Structure.Type](sumAnnotated)
+            assert(
+                encSumPlain == sumGolden,
+                s"Sum wire differs from pre-feature freeze golden: got=$encSumPlain expected=$sumGolden"
+            )
+            assert(
+                encSumPlain == encSumAnnotated,
+                s"Sum wire must be identical regardless of annotations: plain=$encSumPlain annotated=$encSumAnnotated"
+            )
+            assert(!encSumAnnotated.contains("\"annotations\""), s"annotations key must not appear in Sum wire: $encSumAnnotated")
+
+            val decodedProd = Json.decode[Structure.Type](encProdAnnotated).getOrThrow
+            assert(
+                Structure.Type.compatible(prodPlain, decodedProd),
+                s"Product round-trip must be structurally compatible: original=$prodPlain decoded=$decodedProd"
+            )
+            val decodedSum = Json.decode[Structure.Type](encSumAnnotated).getOrThrow
+            assert(
+                Structure.Type.compatible(sumPlain, decodedSum),
+                s"Sum round-trip must be structurally compatible: original=$sumPlain decoded=$decodedSum"
+            )
+        }
+
+        "Product equals and hashCode ignore annotations" in {
+            val tag = Tag[String].asInstanceOf[Tag[Any]]
+            val a1  = new L1NodeAnnotation
+            val a2  = new L1NodeAnnotation
+            val p1  = Structure.Type.Product("P", tag, Chunk.empty, Chunk.empty, Chunk[Any](a1))
+            val p2  = Structure.Type.Product("P", tag, Chunk.empty, Chunk.empty, Chunk[Any](a2))
+            val p3  = Structure.Type.Product("P", tag, Chunk.empty, Chunk.empty)
+            assert(p1 == p2, s"Product.equals must ignore annotations: p1=$p1 p2=$p2")
+            assert(p1.hashCode == p2.hashCode, s"Product.hashCode must ignore annotations: p1.hc=${p1.hashCode} p2.hc=${p2.hashCode}")
+            assert(p1 == p3, s"Annotated Product must equal annotation-stripped twin: p1=$p1 p3=$p3")
+            assert(p1.hashCode == p3.hashCode, "Annotated Product hashCode must equal annotation-stripped twin hashCode")
+            val p4 = Structure.Type.Product("Q", tag, Chunk.empty, Chunk.empty)
+            assert(p1 != p4, "Products with different names must not be equal")
+        }
+
+        "Sum equals and hashCode ignore annotations" in {
+            val tag = Tag[String].asInstanceOf[Tag[Any]]
+            val a1  = new L1NodeAnnotation
+            val a2  = new L1NodeAnnotation
+            val s1  = Structure.Type.Sum("S", tag, Chunk.empty, Chunk.empty, Chunk.empty, Chunk[Any](a1))
+            val s2  = Structure.Type.Sum("S", tag, Chunk.empty, Chunk.empty, Chunk.empty, Chunk[Any](a2))
+            val s3  = Structure.Type.Sum("S", tag, Chunk.empty, Chunk.empty, Chunk.empty)
+            assert(s1 == s2, s"Sum.equals must ignore annotations: s1=$s1 s2=$s2")
+            assert(s1.hashCode == s2.hashCode, s"Sum.hashCode must ignore annotations: s1.hc=${s1.hashCode} s2.hc=${s2.hashCode}")
+            assert(s1 == s3, s"Annotated Sum must equal annotation-stripped twin: s1=$s1 s3=$s3")
+            assert(s1.hashCode == s3.hashCode, "Annotated Sum hashCode must equal annotation-stripped twin hashCode")
+            val s4 = Structure.Type.Sum("T", tag, Chunk.empty, Chunk.empty, Chunk.empty)
+            assert(s1 != s4, "Sums with different names must not be equal")
+        }
+
+        "Variant equals and hashCode ignore annotations" in {
+            val vt = Structure.Type.Primitive(Structure.PrimitiveKind.Int, Tag[Int].asInstanceOf[Tag[Any]])
+            val a1 = new L1NodeAnnotation
+            val a2 = new L1NodeAnnotation
+            val v1 = Structure.Variant("V", vt, Chunk[Any](a1))
+            val v2 = Structure.Variant("V", vt, Chunk[Any](a2))
+            val v3 = Structure.Variant("V", vt)
+            assert(v1 == v2, s"Variant.equals must ignore annotations: v1=$v1 v2=$v2")
+            assert(v1.hashCode == v2.hashCode, s"Variant.hashCode must ignore annotations: v1.hc=${v1.hashCode} v2.hc=${v2.hashCode}")
+            assert(v1 == v3, s"Annotated Variant must equal annotation-stripped twin: v1=$v1 v3=$v3")
+            assert(v1.hashCode == v3.hashCode, "Annotated Variant hashCode must equal annotation-stripped twin hashCode")
+            val v4 = Structure.Variant("W", vt)
+            assert(v1 != v4, "Variants with different names must not be equal")
         }
 
     }

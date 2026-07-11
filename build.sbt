@@ -274,9 +274,11 @@ lazy val kyoJVM: Project = project
         `kyo-logging-slf4j`.jvm,
         `kyo-reactive-streams`.jvm,
         `kyo-aeron`.jvm,
+        `kyo-compiler`.jvm,
         `kyo-schema`.jvm,
         `kyo-http`.jvm,
         `kyo-flow`.jvm,
+        `kyo-ai`.jvm,
         `kyo-jsonrpc`.jvm,
         `kyo-jsonrpc-http`.jvm,
         `kyo-mcp`.jvm,
@@ -317,7 +319,8 @@ lazy val kyoJS = project
     .in(file("js"))
     .settings(
         name := "kyoJS",
-        `kyo-settings`
+        `kyo-settings`,
+        publish / skip := true
     )
     .disablePlugins(MimaPlugin, KyoDoctestPlugin)
     .aggregate(
@@ -346,6 +349,7 @@ lazy val kyoJS = project
         `kyo-schema`.js,
         `kyo-http`.js,
         `kyo-flow`.js,
+        `kyo-ai`.js,
         `kyo-jsonrpc`.js,
         `kyo-jsonrpc-http`.js,
         `kyo-mcp`.js,
@@ -371,7 +375,8 @@ lazy val kyoNative = project
     .in(file("native"))
     .settings(
         name := "kyoNative",
-        `native-settings`
+        `native-settings`,
+        publish / skip := true
     )
     .disablePlugins(MimaPlugin, KyoDoctestPlugin)
     .aggregate(
@@ -396,6 +401,7 @@ lazy val kyoNative = project
         `kyo-schema`.native,
         `kyo-http`.native,
         `kyo-flow`.native,
+        `kyo-ai`.native,
         `kyo-jsonrpc`.native,
         `kyo-jsonrpc-http`.native,
         `kyo-mcp`.native,
@@ -423,7 +429,8 @@ lazy val kyoWasm = project
     .in(file("wasm"))
     .settings(
         name := "kyoWasm",
-        `kyo-settings`
+        `kyo-settings`,
+        publish / skip := true
     )
     .disablePlugins(MimaPlugin, KyoDoctestPlugin)
     .aggregate(
@@ -450,6 +457,7 @@ lazy val kyoWasm = project
         `kyo-http`.wasm,
         `kyo-stats-otlp`.wasm,
         `kyo-flow`.wasm,
+        `kyo-ai`.wasm,
         `kyo-jsonrpc`.wasm,
         `kyo-jsonrpc-http`.wasm,
         `kyo-mcp`.wasm,
@@ -873,40 +881,15 @@ lazy val `kyo-ffi-plugin` =
             crossScalaVersions := Seq("2.12.20"),
             name               := "kyo-ffi-plugin",
             sbtPlugin          := true,
-            // Bundle the Scala 3 codegen JAR + its runtime deps as plugin resources so the
-            // 2.12 plugin can load them reflectively at task time.
+            // Bake this plugin's version into a resource so it can resolve the matching
+            // kyo-ffi-codegen (and its Scala 3 toolchain) from the user's resolvers at task time,
+            // instead of bundling the ~33 MB toolchain into the published plugin JAR.
             Compile / resourceGenerators += Def.task {
-                val codegenJar = (LocalProject("kyo-ffi-codegen") / Compile / packageBin).value
-                val codegenCp = (LocalProject("kyo-ffi-codegen") / Compile / fullClasspath).value
-                    .map(_.data)
                 val outDir = (Compile / resourceManaged).value / "kyo-ffi-plugin"
                 IO.createDirectory(outDir)
-                // Names of JARs we must bundle to make the codegen self-sufficient at runtime.
-                val names = Set(
-                    "scala3-tasty-inspector_3",
-                    "tasty-core_3",
-                    "scala3-compiler_3",
-                    "scala3-interfaces",
-                    "scala-asm",
-                    "compiler-interface",
-                    "util-interface",
-                    s"scala-library" // the REAL Scala 3 stdlib is published as `scala-library` at scala3 version
-                )
-                val bundledJars = codegenCp.filter { f =>
-                    val n = f.getName
-                    names.exists(prefix => n.startsWith(prefix + "-"))
-                }
-                val results = Seq(codegenJar -> "kyo-ffi-codegen.jar") ++
-                    bundledJars.map(j => j -> j.getName)
-                val copied = results.map { case (src, name) =>
-                    val dest = outDir / name
-                    IO.copyFile(src, dest)
-                    dest
-                }
-                // Write a manifest of bundled JAR names so the plugin can enumerate at runtime.
-                val manifest = outDir / "bundled.txt"
-                IO.write(manifest, results.map(_._2).mkString("\n"))
-                copied :+ manifest
+                val versionFile = outDir / "version.txt"
+                IO.write(versionFile, version.value)
+                Seq(versionFile)
             }.taskValue,
             scriptedLaunchOpts := {
                 scriptedLaunchOpts.value ++
@@ -949,6 +932,9 @@ lazy val `kyo-ffi-plugin` =
                 val c5 = (`kyo-scheduler`.js / publishLocal).value
                 val c6 = (`kyo-core`.js / publishLocal).value
                 val c7 = (`kyo-ffi`.js / publishLocal).value
+                // The plugin resolves kyo-ffi-codegen at task time, so publish it locally too:
+                // scripted tests resolve it from Ivy the way a downstream user resolves it from Central.
+                val d0 = (`kyo-ffi-codegen` / publishLocal).value
                 scriptedDependencies.value
             },
             publish   := {},
@@ -1069,7 +1055,10 @@ lazy val `kyo-tasty-fixtures-internal` =
         .crossType(CrossType.Full)
         .in(file("kyo-tasty/fixtures"))
         .withKyoTest
-        .settings(`kyo-settings`)
+        .settings(
+            `kyo-settings`,
+            publish / skip := true
+        )
         .jvmSettings(mimaCheck(false))
         .nativeSettings(`native-settings`)
         .jsSettings(`js-settings`)
@@ -1189,6 +1178,27 @@ lazy val `kyo-aeron` =
         )
         .jvmSettings(mimaCheck(false))
 
+lazy val `kyo-compiler` =
+    crossProject(JVMPlatform)
+        .crossType(CrossType.Full)
+        .in(file("kyo-compiler"))
+        .dependsOn(`kyo-core`, `kyo-aeron`, `kyo-ai` % Test)
+        .withKyoTest
+        .settings(
+            `kyo-settings`,
+            fork := true,
+            javaOptions ++= Seq(
+                "--add-opens=java.base/jdk.internal.misc=ALL-UNNAMED",
+                "--add-opens=java.base/java.lang=ALL-UNNAMED",
+                "--add-opens=java.base/java.nio=ALL-UNNAMED",
+                "--add-opens=java.base/sun.nio.ch=ALL-UNNAMED"
+            ),
+            libraryDependencies ++= Seq(
+                "org.scala-lang" %% "scala3-presentation-compiler" % scalaVersion.value
+            )
+        )
+        .jvmSettings(mimaCheck(false))
+
 lazy val `kyo-http` =
     crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
         .crossType(CrossType.Full)
@@ -1201,6 +1211,24 @@ lazy val `kyo-http` =
         .jvmSettings(
             mimaCheck(false)
         )
+        .jsSettings(
+            `js-settings`,
+            scalaJSLinkerConfig ~= { _.withModuleKind(ModuleKind.CommonJSModule) }
+        )
+        .nativeSettings(
+            `native-settings`,
+            `openssl-native-settings`
+        )
+        .wasmSettings(`wasm-settings`)
+
+lazy val `kyo-ai` =
+    crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
+        .crossType(CrossType.Full)
+        .in(file("kyo-ai"))
+        .dependsOn(`kyo-core`, `kyo-schema`, `kyo-http`, `kyo-actor`, `kyo-jsonrpc`, `kyo-jsonrpc-http`, `kyo-mcp`)
+        .withKyoTest
+        .settings(`kyo-settings`)
+        .jvmSettings(mimaCheck(false))
         .jsSettings(
             `js-settings`,
             scalaJSLinkerConfig ~= { _.withModuleKind(ModuleKind.CommonJSModule) }
@@ -2029,7 +2057,8 @@ lazy val `kyo-examples` =
                 "--add-opens=java.base/java.nio=ALL-UNNAMED",
                 "--add-opens=java.base/jdk.internal.misc=ALL-UNNAMED"
             ),
-            Compile / doc / sources := Seq.empty
+            Compile / doc / sources := Seq.empty,
+            publish / skip          := true
         )
 
 lazy val `kyo-bench` =
@@ -2049,6 +2078,7 @@ lazy val `kyo-bench` =
         .jvmConfigure(_.disablePlugins(KyoDoctestPlugin))
         .settings(
             `kyo-settings`,
+            publish / skip                          := true,
             libraryDependencies += "org.scalatest" %%% "scalatest" % scalaTestVersion % Test,
             Test / testForkedParallel               := true,
             // Forks each test suite individually

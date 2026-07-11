@@ -53,7 +53,7 @@ object KyoFfiPlugin extends AutoPlugin {
         )
         val ffiTargetPlatform = settingKey[String]("Target platform: 'JVM', 'Native', or 'JS'. Auto-detected.")
         val ffiCodegenClasspath = taskKey[Seq[File]](
-            "Explicit codegen classpath for in-repo bootstrap; when set, the plugin loads the codegen from here instead of the bundled plugin resource."
+            "Codegen classpath: kyo-ffi-codegen plus its Scala 3 toolchain. Defaults to resolving kyo-ffi-codegen from the project's resolvers; the in-repo integration test overrides it with the codegen project's classpath."
         )
 
         // Multi-library setting (DESIGN §3.4)
@@ -130,9 +130,36 @@ object KyoFfiPlugin extends AutoPlugin {
             "advapi32"
         ),
         ffiLibraries := Nil,
-        // Default empty: the plugin loads the codegen from its bundled resource. Set this to the
-        // codegen project's classpath for the in-repo bootstrap (no bundled resource, no reload).
-        ffiCodegenClasspath := Nil,
+        // Resolve kyo-ffi-codegen (and its transitive Scala 3 toolchain) from the project's
+        // resolvers, matched to this plugin's version. The in-repo integration test overrides this
+        // with the codegen project's own classpath (no resolution, no publishLocal round-trip).
+        ffiCodegenClasspath := {
+            val log     = streams.value.log
+            val depRes  = dependencyResolution.value
+            val version = CodegenBridge.pluginVersion
+            val codegen = "io.getkyo" % "kyo-ffi-codegen_3" % version
+            val descriptor = depRes.moduleDescriptor(
+                sbt.librarymanagement.ModuleDescriptorConfiguration(
+                    "io.getkyo" % "kyo-ffi-codegen-resolver" % version,
+                    sbt.librarymanagement.ModuleInfo("kyo-ffi-codegen-resolver")
+                ).withDependencies(Vector(codegen))
+                    .withConfigurations(Vector(sbt.librarymanagement.Configurations.Compile))
+                    .withScalaModuleInfo(None)
+            )
+            val files = depRes.update(
+                descriptor,
+                sbt.librarymanagement.UpdateConfiguration()
+                    .withLogging(sbt.librarymanagement.UpdateLogging.Quiet),
+                sbt.librarymanagement.UnresolvedWarningConfiguration(),
+                log
+            ) match {
+                case Right(report) => report.allFiles.distinct
+                case Left(warn)    => throw warn.resolveException
+            }
+            if (files.isEmpty)
+                sys.error(s"[kyo-ffi-plugin] resolved no artifacts for io.getkyo:kyo-ffi-codegen_3:$version")
+            files
+        },
         // Auto-detect: inspect the enabled auto-plugins. Scala Native (ScalaNativePlugin)
         // yields `Native`; Scala.js (ScalaJSPlugin) yields `JS`; otherwise JVM. The user
         // can still override explicitly.
