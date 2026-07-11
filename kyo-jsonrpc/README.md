@@ -260,7 +260,7 @@ The handler only forwards progress to the caller when a `JsonRpcProgressPolicy` 
 
 ## Transports
 
-`JsonRpcTransport` is the envelope-level seam between the handler and the underlying I/O. The trait has three methods (`send`, `incoming`, `close`); the companion ships factories for the four shapes a JSON-RPC peer typically needs: paired in-memory channels for tests, line-delimited stdio for CLI-style servers, Unix domain sockets for local-machine IPC on JVM, and WebSocket via the sibling `kyo-jsonrpc-http` subproject.
+`JsonRpcTransport` is the envelope-level seam between the handler and the underlying I/O. The trait has three methods (`send`, `incoming`, `close`); the companion ships factories for the four shapes a JSON-RPC peer typically needs: paired in-memory channels for tests, line-delimited stdio for CLI-style servers, Unix domain sockets for local-machine IPC, and WebSocket via the sibling `kyo-jsonrpc-http` subproject.
 
 ### In-memory pairs (testing)
 
@@ -296,7 +296,7 @@ The framer and codec default to `JsonRpcFramer.lineDelimited` and the strict `Sc
 
 > **Caution:** `lineDelimited.parse` skips empty lines and does not flush a partial line at EOF. Bytes sent without a trailing newline are silently dropped when the peer closes its stdout. Always terminate frames with `\n` and flush before closing.
 
-### Unix domain sockets (JVM-only)
+### Unix domain sockets
 
 `JsonRpcTransport.unixDomain(path)` binds a `ServerSocketChannel` using `StandardProtocolFamily.UNIX`, registers a `Scope` cleanup that closes the channel and deletes the socket file, and exposes the connection as a `JsonRpcTransport`.
 
@@ -307,11 +307,11 @@ val uds: Unit < (Async & Scope & Abort[Throwable]) =
     }
 ```
 
-> **Caution:** on Scala.js and Scala Native, `unixDomain` immediately aborts with an `UnsupportedOperationException` because the NIO UDS APIs are not available on those platforms. Cross-platform code that may run outside JVM must guard with `Abort.run` or pick a different transport per platform.
+> **Note:** `unixDomain` works on every platform kyo-net targets: JVM (the posix io_uring/epoll/kqueue backend, or the NIO floor), Native (posix), and JS/Wasm (Node's `net` module). On JS/Wasm it requires a Node.js runtime; a browser has no sockets.
 
-### Content-length stdio (JVM-only)
+### Content-length stdio
 
-For LSP/DAP/BSP-style stdio that frames each message with `Content-Length: N\r\n\r\n<N bytes>`, the JVM provides an extension factory:
+For LSP/DAP/BSP-style stdio that frames each message with `Content-Length: N\r\n\r\n<N bytes>`, the companion provides a cross-platform factory:
 
 ```scala doctest:expect=skipped
 import kyo.JsonRpcTransport
@@ -322,7 +322,7 @@ val lspServer: Unit < (Async & Scope) =
     }
 ```
 
-> **Caution:** `contentLengthStdio` is a JVM-only extension method (lives in `kyo-jsonrpc/jvm/src/main/scala`). Code that targets JS or Native must not import it; calling it under a cross-platform source root will fail to compile on those platforms.
+> **Caution:** `contentLengthStdio` is a cross-platform factory built over the platform kyo-net transport's stdio connection. Stdio is process-global: one stdio transport per process, so a second `contentLengthStdio()` call (or a `JsonRpcTransport.stdio()` byte-stream claim) in the same process aborts `NetStdioAlreadyOpenException`. To frame Content-Length messages over an arbitrary byte-stream pair (for example a spawned subprocess's pipes) rather than process stdio, implement the `JsonRpcWireTransport` seam and pass it to `fromWire` with `JsonRpcFramer.contentLength`.
 
 ### WebSocket (kyo-jsonrpc-http)
 
@@ -644,10 +644,10 @@ The shared API compiles and runs on JVM, JavaScript, and Scala Native. The cross
 | `JsonRpcTransport.inMemory` | yes | yes | yes |
 | `JsonRpcTransport.stdio` | yes | yes | yes |
 | `JsonRpcTransport.fromWire` + custom `JsonRpcWireTransport` | yes | yes | yes |
-| `JsonRpcTransport.unixDomain` | yes | aborts | aborts |
-| `JsonRpcTransport.contentLengthStdio` | yes | not on classpath | not on classpath |
+| `JsonRpcTransport.unixDomain` | yes | yes (Node) | yes |
+| `JsonRpcTransport.contentLengthStdio` | yes | yes (Node) | yes |
 | `JsonRpcHttpTransport.webSocket` (separate subproject) | yes | yes | yes |
 
-On Scala.js and Scala Native, `unixDomain` aborts with an `UnsupportedOperationException`. Code that targets all three platforms must guard the call or pick a different transport per platform. `contentLengthStdio` is JVM-only at the source level (it lives under `jvm/src/main/scala`); cross-platform code that references it will fail to compile on JS and Native rather than aborting at runtime.
+`unixDomain` and `contentLengthStdio` are cross-platform: both run over the platform kyo-net transport, which backs JS and Wasm with Node's `net`/stdio APIs. That means a Node.js runtime is required on JS/Wasm; a browser has no sockets or process stdio. Stdio is also process-global: only one stdio transport (`contentLengthStdio` or a `stdio()` byte-stream claim) may be open per process, and a second one aborts `NetStdioAlreadyOpenException`.
 
 The WebSocket transport requires the `kyo-jsonrpc-http` subproject, which depends on `kyo-http`. It compiles for all three platforms.

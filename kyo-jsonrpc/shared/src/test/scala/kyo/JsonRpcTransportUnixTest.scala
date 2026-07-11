@@ -1,10 +1,22 @@
 package kyo
 
-import java.net.UnixDomainSocketAddress
-import java.nio.ByteBuffer
-import java.nio.channels.SocketChannel
+import kyo.net.NetPlatform
 
+/** Unix-domain-socket transport tests, over kyo-net's cross-platform `connectUnix`/`listenUnix`. Runs identically on every platform kyo-net
+  * targets (JVM, JS, Native, Wasm); the client side uses a kyo-net `Connection` rather than a raw JVM `SocketChannel`, mirroring kyo-net's own
+  * `TransportUnixSocketTest`.
+  */
 class JsonRpcTransportUnixTest extends JsonRpcTest:
+
+    import AllowUnsafe.embrace.danger
+
+    /** Connect a client to `sock`, send `payload`, and close. kyo-net flushes the queued outbound bytes before releasing the socket, so the
+      * server receives the frame even though the client closes immediately after the put.
+      */
+    private def clientSend(sock: Path, payload: String)(using Frame): Unit < (Async & Abort[Throwable]) =
+        NetPlatform.transport.connectUnix(sock.toString).safe.get.map { client =>
+            client.outbound.safe.put(Span.fromUnsafe(payload.getBytes("UTF-8"))).andThen(Sync.defer(client.close()))
+        }
 
     "unixDomain binds and accepts a connection" in {
         Path.tempDir("kyo-jsonrpc-uds-").map { tempDir =>
@@ -12,11 +24,12 @@ class JsonRpcTransportUnixTest extends JsonRpcTest:
             Scope.run {
                 JsonRpcTransport.unixDomain(sock).map { _ =>
                     sock.exists.map(exists => assert(exists)).andThen {
-                        Sync.defer {
-                            val client = SocketChannel.open(UnixDomainSocketAddress.of(sock.toString))
-                            try assert(client.isConnected)
-                            finally client.close()
-                            end try
+                        NetPlatform.transport.connectUnix(sock.toString).safe.get.map { client =>
+                            Sync.defer {
+                                val open = client.isOpen
+                                client.close()
+                                assert(open)
+                            }
                         }
                     }
                 }
@@ -29,15 +42,7 @@ class JsonRpcTransportUnixTest extends JsonRpcTest:
             val sock = Path(tempDir, "test.sock")
             Scope.run {
                 JsonRpcTransport.unixDomain(sock).map { t =>
-                    Sync.defer {
-                        val client = SocketChannel.open(UnixDomainSocketAddress.of(sock.toString))
-                        try
-                            val payload = """{"jsonrpc":"2.0","method":"ping"}""" + "\n"
-                            discard(client.write(ByteBuffer.wrap(payload.getBytes("UTF-8"))))
-                            client.shutdownOutput()
-                        finally client.close()
-                        end try
-                    }.andThen {
+                    clientSend(sock, """{"jsonrpc":"2.0","method":"ping"}""" + "\n").andThen {
                         t.incoming.take(1).run.map { frames =>
                             assert(frames.size == 1)
                             frames.head match
@@ -66,16 +71,8 @@ class JsonRpcTransportUnixTest extends JsonRpcTest:
             val sock = Path(tempDir, "test.sock")
             Scope.run {
                 JsonRpcTransport.unixDomain(sock, framer = JsonRpcFramer.contentLength).map { t =>
-                    Sync.defer {
-                        val client = SocketChannel.open(UnixDomainSocketAddress.of(sock.toString))
-                        try
-                            val body    = """{"jsonrpc":"2.0","method":"p"}"""
-                            val payload = s"Content-Length: ${body.length}\r\n\r\n$body"
-                            discard(client.write(ByteBuffer.wrap(payload.getBytes("UTF-8"))))
-                            client.shutdownOutput()
-                        finally client.close()
-                        end try
-                    }.andThen {
+                    val body = """{"jsonrpc":"2.0","method":"p"}"""
+                    clientSend(sock, s"Content-Length: ${body.length}\r\n\r\n$body").andThen {
                         t.incoming.take(1).run.map { frames =>
                             assert(frames.size == 1)
                             frames.head match

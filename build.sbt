@@ -1620,9 +1620,14 @@ lazy val `kyo-jsonrpc` =
         .withKyoTest
         .settings(`kyo-settings`)
         .jvmSettings(mimaCheck(false))
-        .nativeSettings(`native-settings`)
+        // kyo-net's Native FFI links the BoringSSL/OpenSSL C shim unconditionally, so any downstream Native module needs the
+        // SSL link flags (-lssl -lcrypto). Same setting kyo-http and kyo-jsonrpc-http carry; the io_uring -luring flag propagates
+        // through the kyo-ffi plugin on Linux.
+        .nativeSettings(`native-settings`, `openssl-native-settings`)
         .wasmSettings(`wasm-settings`)
-        .jsSettings(`js-settings`)
+        // kyo-jsonrpc now depends on kyo-net, whose JS transports @JSImport Node built-ins (node:net, node:os, node:path),
+        // so the JS linker needs a module kind (default is NoModule). CommonJS matches kyo-net and kyo-jsonrpc-http.
+        .jsSettings(`js-settings`, scalaJSLinkerConfig ~= { _.withModuleKind(ModuleKind.CommonJSModule) })
 
 lazy val `kyo-jsonrpc-http` =
     crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
