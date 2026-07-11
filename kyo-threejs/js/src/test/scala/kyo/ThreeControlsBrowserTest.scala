@@ -54,7 +54,10 @@ class ThreeControlsBrowserTest extends WebGLSceneHarness:
     }
 
     private def recordFrames(using Frame): Chunk[ScreenshotFrame] < (Browser & Async & Abort[BrowserReadException]) =
-        Browser.screenshotFrames(maxDurationMs = 12000L, maxFrames = 2000) {
+        // Record over a generous window so at least a few frames land even when the headless browser renders
+        // slowly under full-suite parallel load. The JPEG byte-diff is sensitive, so a longer capture only adds
+        // certainty to the orbit assertion; the enclosing test timeout still bounds the run.
+        Browser.screenshotFrames(maxDurationMs = 30000L, maxFrames = 2000) {
             Abort.run[BrowserReadException](Browser.waitFor("window.__never === true", Present(recordWindow))).unit
         }.map { case (frames, _) => frames }
 
