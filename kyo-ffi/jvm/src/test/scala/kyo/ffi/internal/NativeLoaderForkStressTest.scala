@@ -49,51 +49,55 @@ class NativeLoaderForkStressTest extends Test:
     "fork N JVMs extract the same payload concurrently" in {
         val forkN   = sys.props.getOrElse("kyo.ffi.testForkN", "4").toInt
         val payload = ("F11-fork-stress-payload-" + java.util.UUID.randomUUID()).getBytes()
-        val dir     = Sync.Unsafe.evalOrThrow(Path.tempDir("kyo-ffi-fork-"))
         val libId   = s"forkstress_${java.lang.System.currentTimeMillis()}"
         val hex     = hexEncode(payload)
+        // Path.tempDir carries PathWrite & Sync & Scope; Path.run discharges PathWrite and adds Abort[FileException].
+        Abort.run[FileException](Path.run(Path.tempDir("kyo-ffi-fork-"))).map {
+            case Result.Success(dir) =>
+                val pool                   = Executors.newFixedThreadPool(forkN).nn
+                given ec: ExecutionContext = ExecutionContext.fromExecutorService(pool)
+                try
+                    val futures =
+                        (0 until forkN).map { _ =>
+                            Future {
+                                val pb = new ProcessBuilder(
+                                    javaBin.toString,
+                                    "-cp",
+                                    classpath,
+                                    "kyo.ffi.internal.NativeLoaderForkMain",
+                                    dir.toString,
+                                    libId,
+                                    hex
+                                )
+                                pb.redirectErrorStream(true)
+                                val proc       = pb.start().nn
+                                val finishedOk = proc.waitFor(60L, TimeUnit.SECONDS)
+                                val out        = new String(proc.getInputStream.nn.readAllBytes().nn).nn
+                                (finishedOk, proc.exitValue(), out.trim.nn)
+                            }
+                        }
 
-        val pool                   = Executors.newFixedThreadPool(forkN).nn
-        given ec: ExecutionContext = ExecutionContext.fromExecutorService(pool)
-        try
-            val futures =
-                (0 until forkN).map { _ =>
-                    Future {
-                        val pb = new ProcessBuilder(
-                            javaBin.toString,
-                            "-cp",
-                            classpath,
-                            "kyo.ffi.internal.NativeLoaderForkMain",
-                            dir.toString,
-                            libId,
-                            hex
-                        )
-                        pb.redirectErrorStream(true)
-                        val proc       = pb.start().nn
-                        val finishedOk = proc.waitFor(60L, TimeUnit.SECONDS)
-                        val out        = new String(proc.getInputStream.nn.readAllBytes().nn).nn
-                        (finishedOk, proc.exitValue(), out.trim.nn)
-                    }
-                }
+                    val results = Await.result(Future.sequence(futures), 120.seconds)
 
-            val results = Await.result(Future.sequence(futures), 120.seconds)
+                    // Child exit contract: all children must finish inside 60s, all with exit code 0.
+                    assert(results.map(_._1).forall(_ == true))
+                    assert(results.map(_._2).toSet == Set(0))
+                    // Every child sees the same final path (content-hashed name), proving hash agreement across JVMs.
+                    val reportedPaths = results.map(_._3).toSet
+                    assert(reportedPaths.size == 1)
 
-            // Child exit contract: all children must finish inside 60s, all with exit code 0.
-            assert(results.map(_._1).forall(_ == true))
-            assert(results.map(_._2).toSet == Set(0))
-            // Every child sees the same final path (content-hashed name), proving hash agreement across JVMs.
-            val reportedPaths = results.map(_._3).toSet
-            assert(reportedPaths.size == 1)
-
-            // The final extracted file exists, matches the payload byte-for-byte (atomic rename guarantee: no partial writes).
-            val finalPath = Path(reportedPaths.head)
-            assert(finalPath.unsafe.exists() == true)
-            assert(finalPath.unsafe.read().getOrThrow == new String(payload))
-            // No `.tmp-<uuid>` residue from any child; Path.Unsafe.list closes the dir stream as it collects (no leaked fd).
-            val residue = dir.unsafe.list().getOrThrow.map(_.name.getOrElse("")).filter(_.contains(".tmp-")).toList
-            assert(residue == Nil)
-        finally
-            pool.shutdownNow(): Unit
-        end try
+                    // The final extracted file exists, matches the payload byte-for-byte (atomic rename guarantee: no partial writes).
+                    val finalPath = Path(reportedPaths.head)
+                    assert(finalPath.unsafe.exists() == true)
+                    assert(finalPath.unsafe.read().getOrThrow == new String(payload))
+                    // No `.tmp-<uuid>` residue from any child; Path.Unsafe.list closes the dir stream as it collects (no leaked fd).
+                    val residue = dir.unsafe.list().getOrThrow.map(_.name.getOrElse("")).filter(_.contains(".tmp-")).toList
+                    assert(residue == Nil)
+                finally
+                    pool.shutdownNow(): Unit
+                end try
+            case Result.Failure(err) => throw err
+            case panic: Result.Panic => throw panic.exception
+        }
     }
 end NativeLoaderForkStressTest

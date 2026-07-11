@@ -41,7 +41,7 @@ class EventLogTest extends kyo.test.Test[Any]:
             case other                 => fail(s"expected empty chunk, got: $other")
     }
 
-    "append then read returns decoded payload with schema-derived event type and synthesized event id" in {
+    "append then read returns decoded payload with schema-derived event type and opaque event id" in {
         val schemaName = summon[Schema[LogTestEvent]].structure.name
         val event      = LogTestEvent("alice", 1)
         for
@@ -61,12 +61,13 @@ class EventLogTest extends kyo.test.Test[Any]:
                 assert(events.size == 1)
                 assert(events(0).payload == event)
                 assert(events(0).eventType.value == schemaName)
-                assert(events(0).eventId.value == s"${streamId.value}:0")
+                assert(events(0).eventId.value.nonEmpty)
+                assert(events(0).offset == StreamOffset.first)
             case other => fail(s"expected success, got: $other")
         end for
     }
 
-    "second append continues the synthesized event id sequence" in {
+    "second append produces distinct event ids and sequential offsets" in {
         val e1 = LogTestEvent("first", 1)
         val e2 = LogTestEvent("second", 2)
         for
@@ -85,8 +86,11 @@ class EventLogTest extends kyo.test.Test[Any]:
         yield result match
             case Result.Success(events) =>
                 assert(events.size == 2)
-                assert(events(0).eventId.value == s"${streamId.value}:0")
-                assert(events(1).eventId.value == s"${streamId.value}:1")
+                assert(events(0).eventId.value.nonEmpty)
+                assert(events(1).eventId.value.nonEmpty)
+                assert(events(0).eventId.value != events(1).eventId.value)
+                assert(events(0).offset.value == 0L)
+                assert(events(1).offset.value == 1L)
                 assert(events(0).payload == e1)
                 assert(events(1).payload == e2)
             case other => fail(s"expected success, got: $other")

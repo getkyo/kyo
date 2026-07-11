@@ -23,19 +23,20 @@ final class EventLog[A](using Schema[A]):
 
     private val codec = new SchemaPayloadCodec[A]
 
+    // Unsafe: counter and seed are allocated at construction without a Sync effect.
+    // AllowUnsafe sanctions the low-level atomic initialisation; the values never escape this instance.
+    import AllowUnsafe.embrace.danger
+    private val seed: Long          = java.lang.System.nanoTime() ^ java.lang.System.identityHashCode(this).toLong
+    private val counter: AtomicLong = AtomicLong.Unsafe.init(0L).safe
+
     /** Encodes each value in `events` and appends the batch atomically to `streamId`.
       *
       * The event type label for every event in the batch is derived from the schema's structure
-      * name: `Schema[A].structure.name`. Each event identifier is synthesized from the stream
-      * position observed just before the write: `"$streamId:$baseOffset"` for the first event,
-      * `"$streamId:${baseOffset+1}"` for the second, and so on; `baseOffset` is
-      * `streamInfo.lastOffset + 1` for an existing stream, or `0` for a new one.
-      *
-      * Synthesized identifiers are position estimates, not guarantees. The journal treats them as
-      * opaque and does not deduplicate on them. Under `ExpectedOffset.Any` the actual assigned
-      * offset can diverge from the pre-write estimate, so identifiers may not match the final
-      * stored position. Under `ExpectedOffset.Exact` the optimistic check ensures the estimate
-      * aligns with the actual commit position.
+      * name: `Schema[A].structure.name`. Each event identifier is an opaque producer token drawn
+      * from a per-instance monotonic counter seeded at construction time; identifiers carry no
+      * positional information and are not derived from the stream offset. The journal treats them
+      * as opaque and does not deduplicate on them. The true committed position of each event is
+      * always available as [[kyo.EventLog.Typed.offset]] after a `read`.
       *
       * @see [[kyo.ExpectedOffset]] for the concurrency semantics of `expected`
       */
@@ -52,37 +53,28 @@ final class EventLog[A](using Schema[A]):
                 EventType
             ]
         ).flatMap { eventType =>
-            Abort.run[JournalStreamInfoFailure](Journal.streamInfo(streamId)).flatMap {
-                case Result.Success(info) =>
-                    val baseOffset = info match
-                        case StreamInfo.Absent                  => 0L
-                        case StreamInfo.Existing(_, lastOffset) => lastOffset.value + 1L
-                    val buildResult: Result[JournalAppendFailure, Seq[EventEnvelope]] =
-                        Result.collect(
-                            (0 until events.size).map { idx =>
-                                val bytes = codec.encode(events(idx))
-                                val idStr = s"${streamId.value}:${baseOffset + idx}"
-                                EventId(idStr)
-                                    .mapFailure(e =>
-                                        JournalCorruptedError(Maybe(streamId), s"cannot synthesize event id '$idStr': ${e.getMessage}")
-                                    )
-                                    .map(id =>
-                                        EventEnvelope(id = id, eventType = eventType, payload = bytes, metadata = EventMetadata.empty)
-                                    )
-                            }
-                        )
-                    Abort.get(buildResult).flatMap { envelopes =>
-                        Journal.append(streamId, expected, Chunk.from(envelopes))
+            val buildResult: Result[JournalAppendFailure, Seq[EventEnvelope]] =
+                Result.collect(
+                    (0 until events.size).map { idx =>
+                        // Unsafe: counter.unsafe.getAndIncrement() bypasses the Sync wrapper;
+                        // AllowUnsafe is in scope from the class-level import above.
+                        val idStr = s"$seed-${counter.unsafe.getAndIncrement()}"
+                        EventId(idStr)
+                            .mapFailure(e =>
+                                JournalCorruptedError(Maybe(streamId), s"cannot build event id '$idStr': ${e.getMessage}")
+                            )
+                            .map(id =>
+                                EventEnvelope(
+                                    id = id,
+                                    eventType = eventType,
+                                    payload = codec.encode(events(idx)),
+                                    metadata = EventMetadata.empty
+                                )
+                            )
                     }
-                case Result.Failure(e: JournalCorruptedError) =>
-                    // JournalCorruptedError extends JournalAppendFailure; propagate as-is.
-                    Abort.fail[JournalAppendFailure](e)
-                case Result.Failure(e: JournalStorageError) =>
-                    // JournalStorageError is an I/O failure, not a corruption; propagate as-is.
-                    // It also extends JournalAppendFailure so the locked row holds.
-                    Abort.fail[JournalAppendFailure](e)
-                case p: Result.Panic =>
-                    throw p.exception
+                )
+            Abort.get(buildResult).flatMap { envelopes =>
+                Journal.append(streamId, expected, Chunk.from(envelopes))
             }
         }
     end append
