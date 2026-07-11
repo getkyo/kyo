@@ -1127,7 +1127,17 @@ lazy val `kyo-stats-machine` =
         .withKyoTest
         .settings(
             `kyo-settings`,
-            ffiCodegenClasspath := (LocalProject("kyo-ffi-codegen") / Compile / fullClasspath).value.map(_.data)
+            ffiCodegenClasspath := (LocalProject("kyo-ffi-codegen") / Compile / fullClasspath).value.map(_.data),
+            // MacosBindings declares library = "machine_macos", which is not a system library id
+            // (ffiSystemLibraries), so it needs an explicit FfiLibrary entry naming its bundled C
+            // source; LinuxBindings' library = "c" resolves through the system allowlist and needs
+            // no entry here.
+            ffiLibraries := Seq(
+                FfiLibrary(
+                    id = "machine_macos",
+                    cSources = Seq((baseDirectory.value / ".." / "shared" / "src" / "main" / "c" / "machine_macos.c").getAbsoluteFile)
+                )
+            )
         )
         .jvmSettings(
             mimaCheck(false),
