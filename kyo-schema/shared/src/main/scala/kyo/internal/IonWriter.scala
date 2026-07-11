@@ -1,12 +1,15 @@
 package kyo.internal
 
 import java.nio.charset.StandardCharsets
+import kyo.Chunk
 import kyo.Codec.Writer
+import kyo.Ion
 import kyo.Span
 
-final class IonWriter private (private val out: StringBuilder) extends Writer:
+final class IonWriter private (private val out: StringBuilder, private val config: Ion.Config) extends Writer:
 
     override def canWriteTopLevelNonObject: Boolean = true
+    override def canWriteAnnotations: Boolean       = config.annotationEmissionMode == Ion.AnnotationEmissionMode.Emit
     override def codecName: String                  = "Ion"
 
     private enum Context:
@@ -15,11 +18,17 @@ final class IonWriter private (private val out: StringBuilder) extends Writer:
 
     import Context.*
 
-    private var stack: List[Context] = Nil
-    private var afterField: Boolean  = false
+    private var stack: List[Context]               = Nil
+    private var afterField: Boolean                = false
+    private var pendingAnnotations: Vector[String] = Vector.empty
 
     // Reusable scratch buffer for Ryu float formatting (sized to RyuDouble.MaxOutputLen).
     private val numberBytes = new Array[Byte](24)
+
+    override def annotations(values: Chunk[Any]): Unit =
+        if canWriteAnnotations && values.nonEmpty then
+            pendingAnnotations = pendingAnnotations ++ values.map(annotationName).toSeq
+    end annotations
 
     def objectStart(name: String, size: Int): Unit =
         beforeValue()
@@ -150,7 +159,37 @@ final class IonWriter private (private val out: StringBuilder) extends Writer:
                     stack = Arr(false) :: tail
                 case _ => ()
             end match
+        end if
+        writePendingAnnotations()
     end beforeValue
+
+    private def writePendingAnnotations(): Unit =
+        pendingAnnotations.foreach { name =>
+            writeSymbolToken(name)
+            out.append("::")
+        }
+        pendingAnnotations = Vector.empty
+    end writePendingAnnotations
+
+    private def annotationName(value: Any): String =
+        value.getClass.getName.stripSuffix("$")
+
+    private def writeSymbolToken(value: String): Unit =
+        if isIdentifier(value) && !IonWriter.ReservedSymbols.contains(value) then out.append(value)
+        else
+            out.append('\'')
+            var i = 0
+            while i < value.length do
+                value.charAt(i) match
+                    case '\'' => out.append("\\'")
+                    case '\\' => out.append("\\\\")
+                    case c    => out.append(c)
+                end match
+                i += 1
+            end while
+            out.append('\'')
+        end if
+    end writeSymbolToken
 
     private def writeFloat(value: Double): Unit =
         if java.lang.Double.isNaN(value) then out.append("nan")
@@ -227,5 +266,5 @@ object IonWriter:
     private val ReservedSymbols: Set[String] =
         Set("null", "true", "false", "nan", "+inf", "-inf")
 
-    def apply(): IonWriter = new IonWriter(new StringBuilder(256))
+    def apply(config: Ion.Config = Ion.Config.Default): IonWriter = new IonWriter(new StringBuilder(256), config)
 end IonWriter

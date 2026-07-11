@@ -203,6 +203,41 @@ class ProtobufTest extends kyo.test.Test[Any]:
             assert(schema.contains(s"sint32 age = ${kyo.internal.CodecMacro.fieldId("age")};"))
         }
 
+        "ProtoSchema base value primitive types match protobuf writers" in {
+            val structure = Structure.Type.Product(
+                "BaseValues",
+                Tag[Any],
+                Chunk.empty,
+                Chunk(
+                    Structure.Field(
+                        "bytes",
+                        Structure.Type.Primitive(Structure.PrimitiveKind.Bytes, Tag[Span[Byte]].asInstanceOf[Tag[Any]]),
+                        Maybe.empty,
+                        Maybe.empty,
+                        false
+                    ),
+                    Structure.Field(
+                        "instant",
+                        Structure.Type.Primitive(Structure.PrimitiveKind.Instant, Tag[java.time.Instant].asInstanceOf[Tag[Any]]),
+                        Maybe.empty,
+                        Maybe.empty,
+                        false
+                    ),
+                    Structure.Field(
+                        "duration",
+                        Structure.Type.Primitive(Structure.PrimitiveKind.Duration, Tag[java.time.Duration].asInstanceOf[Tag[Any]]),
+                        Maybe.empty,
+                        Maybe.empty,
+                        false
+                    )
+                )
+            )
+            val schema = ProtoSchema.fromStructure(structure, Map.empty)
+            assert(schema.contains(s"bytes bytes = ${kyo.internal.CodecMacro.fieldId("bytes")};"))
+            assert(schema.contains(s"sint64 instant = ${kyo.internal.CodecMacro.fieldId("instant")};"))
+            assert(schema.contains(s"sint64 duration = ${kyo.internal.CodecMacro.fieldId("duration")};"))
+        }
+
         "ProtoSchema nested messages" in {
             val schema = ProtoSchema.from[MTTeam]
             assert(schema.contains("message MTTeam"))
@@ -365,6 +400,25 @@ class ProtobufTest extends kyo.test.Test[Any]:
             interceptThrown[IllegalArgumentException] {
                 ProtoSchema.fromStructure(productWithListKey, Map.empty)
             }
+        }
+
+        "ProtoSchema Map[Bytes, V] field emits entry message instead of map syntax" in {
+            val bytesKeyMapping = Structure.Type.Mapping(
+                "Map",
+                Tag[Any],
+                Structure.Type.Primitive(Structure.PrimitiveKind.Bytes, Tag[Span[Byte]].asInstanceOf[Tag[Any]]),
+                Structure.Type.Primitive(Structure.PrimitiveKind.Int, Tag[Int].asInstanceOf[Tag[Any]])
+            )
+            val productWithBytesKey = Structure.Type.Product(
+                "MapWithBytesKey",
+                Tag[Any],
+                Chunk.empty,
+                Chunk(Structure.Field("value", bytesKeyMapping, Maybe.empty, Maybe.empty, false))
+            )
+            val schema = ProtoSchema.fromStructure(productWithBytesKey, Map.empty)
+            assert(!schema.contains("map<bytes, sint32>"))
+            assert(schema.contains("repeated ValueEntry value"))
+            assert(schema.contains("bytes key = 1;"))
         }
 
         "ProtoSchema Map[K, V] with non-default key types emits map<K, V>" in {

@@ -133,6 +133,27 @@ abstract class Schema[A] @publicInBinary private[kyo] (
                     case Schema.UnionRepresentation.Untagged =>
                         internal.SchemaSerializer.readUntagged(this, reader)
 
+    /** Threads this schema's own field-id overrides onto a Protobuf writer/reader, at whatever nesting
+      * depth this schema is reached (the outermost schema passed to `Schema.encode[C]`/`Protobuf.encode`,
+      * a container element, or a product field). NON-inline for the same reason `transformedWrite` /
+      * `transformedRead` are: the `private[kyo]` `SchemaSerializer` reference is compiled here in
+      * `package kyo`, never inlined into a user `derives Schema` site, where a bare package-qualified
+      * reference inside `Schema.init`'s inline `serializeWrite` / `serializeRead` body would be re-emitted
+      * at the derivation call site and fail to resolve. `Schema.init`'s inline `serializeWrite` /
+      * `serializeRead` call these unconditionally, before branching on `hasTransforms` / `hasReadTransforms`,
+      * and pair each call with the matching `restoreFieldIdOverridesFor*` in a `finally` block, so a
+      * nested schema's own pin is scoped to its own call and never permanently replaces an ancestor's
+      * pin for the remainder of the ancestor's write/read.
+      */
+    @publicInBinary private[kyo] def threadFieldIdOverridesForWrite(writer: Writer): Maybe[Map[String, Int]] =
+        internal.SchemaSerializer.threadFieldIdOverridesForWrite(this, writer)
+    @publicInBinary private[kyo] def restoreFieldIdOverridesForWrite(writer: Writer, prior: Maybe[Map[String, Int]]): Unit =
+        internal.SchemaSerializer.restoreFieldIdOverridesForWrite(writer, prior)
+    @publicInBinary private[kyo] def threadFieldIdOverridesForRead(reader: Reader): Maybe[Map[String, Int]] =
+        internal.SchemaSerializer.threadFieldIdOverridesForRead(this, reader)
+    @publicInBinary private[kyo] def restoreFieldIdOverridesForRead(reader: Reader, prior: Maybe[Map[String, Int]]): Unit =
+        internal.SchemaSerializer.restoreFieldIdOverridesForRead(reader, prior)
+
     /** Get the focused value out of a root A. */
     @publicInBinary private[kyo] def getter(value: A): Maybe[Any]
 
@@ -192,6 +213,7 @@ abstract class Schema[A] @publicInBinary private[kyo] (
       *   the encoded bytes in the codec's wire format
       */
     def encode[C <: Codec](value: A)(using codec: C, frame: Frame): Span[Byte] =
+        codec.validate(structure)
         val w = codec.newWriter()
         writeTo(value, w)
         w.result()
@@ -214,6 +236,7 @@ abstract class Schema[A] @publicInBinary private[kyo] (
       *   the encoded value as a UTF-8 string
       */
     def encodeString[C <: Codec](value: A)(using codec: C, frame: Frame): String =
+        codec.validate(structure)
         val writer = codec.newWriter()
         internal.SchemaSerializer.writeTo(this, value, writer)
         writer.resultString
@@ -1053,6 +1076,12 @@ abstract class Schema[A] @publicInBinary private[kyo] (
       * Schema[User].fieldId(_.age)(42)  // Sets field ID 42 for the 'age' field
       * }}}
       *
+      * A sealed trait or Scala 3 enum always derives each of its own variants' Schema fresh, so a
+      * standalone `given Schema[Variant] = Schema[Variant].fieldId(...)` declared for one specific
+      * variant type is never consulted by the parent sum's derivation. To pin a field number on a
+      * specific variant's field, annotate that field directly with `@proto.fieldNumber(n)`
+      * (`kyo.schema.proto.fieldNumber`), which derivation captures straight off the variant's fields.
+      *
       * @param focus
       *   Focus lambda navigating to the field
       * @param id
@@ -1186,6 +1215,11 @@ abstract class Schema[A] @publicInBinary private[kyo] (
       * Mapping, or Open. Schema.transform preserves the structure of the source schema.
       */
     def structure: Structure.Type
+
+    @publicInBinary private[kyo] def writerForAnnotations(writer: Writer): Writer =
+        if writer.canWriteAnnotations then Schema.writerWithAnnotations(structure, writer)
+        else writer
+    end writerForAnnotations
 
     // --- Structural field operations ---
 
@@ -1475,6 +1509,171 @@ end Schema
 
 object Schema:
 
+    private[kyo] def annotationsFor(structure: Structure.Type): Chunk[Any] =
+        structure match
+            case product: Structure.Type.Product => product.annotations
+            case sum: Structure.Type.Sum         => sum.annotations
+            case _                               => Chunk.empty
+        end match
+    end annotationsFor
+
+    private[kyo] def writerWithAnnotations(structure: Structure.Type, writer: Writer): Writer =
+        if !writer.canWriteAnnotations then writer
+        else
+            val rootAnnotations = annotationsFor(structure)
+            val fieldAnnotations = structure match
+                case product: Structure.Type.Product =>
+                    product.fields.foldLeft(Map.empty[String, Chunk[Any]]) { (acc, field) =>
+                        if field.annotations.isEmpty then acc else acc.updated(field.name, field.annotations)
+                    }
+                case sum: Structure.Type.Sum =>
+                    sum.variants.foldLeft(Map.empty[String, Chunk[Any]]) { (acc, variant) =>
+                        if variant.annotations.isEmpty then acc else acc.updated(variant.name, variant.annotations)
+                    }
+                case _ =>
+                    Map.empty[String, Chunk[Any]]
+            if rootAnnotations.isEmpty && fieldAnnotations.isEmpty then writer
+            else
+                val annotated = AnnotationWriter(writer, fieldAnnotations)
+                annotated.annotations(rootAnnotations)
+                annotated
+            end if
+        end if
+    end writerWithAnnotations
+
+    final private class AnnotationWriter(delegate: Writer, fieldAnnotations: Map[String, Chunk[Any]]) extends Writer:
+        private var pendingAnnotations: Chunk[Any] = Chunk.empty
+
+        override def canWriteTopLevelNonObject: Boolean = delegate.canWriteTopLevelNonObject
+        override def canWriteAnnotations: Boolean       = delegate.canWriteAnnotations
+        override def codecName: String                  = delegate.codecName
+        override def capabilities: Codec.Capabilities   = delegate.capabilities
+
+        override def annotations(values: Chunk[Any]): Unit =
+            if values.nonEmpty then pendingAnnotations = pendingAnnotations ++ values
+        end annotations
+
+        def objectStart(name: String, size: Int): Unit =
+            beforeValue()
+            delegate.objectStart(name, size)
+        end objectStart
+
+        def objectEnd(): Unit =
+            delegate.objectEnd()
+
+        def arrayStart(size: Int): Unit =
+            beforeValue()
+            delegate.arrayStart(size)
+        end arrayStart
+
+        def arrayEnd(): Unit =
+            delegate.arrayEnd()
+
+        def fieldBytes(nameBytes: Array[Byte], fieldId: Int): Unit =
+            val name = new String(nameBytes, java.nio.charset.StandardCharsets.UTF_8)
+            delegate.fieldBytes(nameBytes, fieldId)
+            pendingAnnotations = fieldAnnotations.getOrElse(name, Chunk.empty)
+        end fieldBytes
+
+        override def field(name: String, fieldId: Int): Unit =
+            delegate.field(name, fieldId)
+            pendingAnnotations = fieldAnnotations.getOrElse(name, Chunk.empty)
+        end field
+
+        def string(value: String): Unit =
+            beforeValue()
+            delegate.string(value)
+        end string
+
+        def int(value: Int): Unit =
+            beforeValue()
+            delegate.int(value)
+        end int
+
+        def long(value: Long): Unit =
+            beforeValue()
+            delegate.long(value)
+        end long
+
+        def float(value: Float): Unit =
+            beforeValue()
+            delegate.float(value)
+        end float
+
+        def double(value: Double): Unit =
+            beforeValue()
+            delegate.double(value)
+        end double
+
+        def boolean(value: Boolean): Unit =
+            beforeValue()
+            delegate.boolean(value)
+        end boolean
+
+        def short(value: Short): Unit =
+            beforeValue()
+            delegate.short(value)
+        end short
+
+        def byte(value: Byte): Unit =
+            beforeValue()
+            delegate.byte(value)
+        end byte
+
+        def char(value: Char): Unit =
+            beforeValue()
+            delegate.char(value)
+        end char
+
+        def nil(): Unit =
+            beforeValue()
+            delegate.nil()
+        end nil
+
+        def mapStart(size: Int): Unit =
+            beforeValue()
+            delegate.mapStart(size)
+        end mapStart
+
+        def mapEnd(): Unit =
+            delegate.mapEnd()
+
+        def bytes(value: Span[Byte]): Unit =
+            beforeValue()
+            delegate.bytes(value)
+        end bytes
+
+        def bigInt(value: BigInt): Unit =
+            beforeValue()
+            delegate.bigInt(value)
+        end bigInt
+
+        def bigDecimal(value: BigDecimal): Unit =
+            beforeValue()
+            delegate.bigDecimal(value)
+        end bigDecimal
+
+        def instant(value: java.time.Instant): Unit =
+            beforeValue()
+            delegate.instant(value)
+        end instant
+
+        def duration(value: java.time.Duration): Unit =
+            beforeValue()
+            delegate.duration(value)
+        end duration
+
+        def result(): Span[Byte] =
+            delegate.result()
+
+        private def beforeValue(): Unit =
+            if pendingAnnotations.nonEmpty then
+                delegate.annotations(pendingAnnotations)
+                pendingAnnotations = Chunk.empty
+            end if
+        end beforeValue
+    end AnnotationWriter
+
     /** Core factory: inlines the caller's four lambdas into the abstract method bodies of a fresh `new Schema[A] { ... }` subclass.
       * Because `writeFn`, `readFn`, `getterFn`, `setterFn` are `inline` parameters, Scala 3 substitutes the caller's expression directly
       * into the method body: no `Function` closure is allocated.
@@ -1565,11 +1764,22 @@ object Schema:
             fieldMaterializedDefaults
         ):
             @publicInBinary def serializeWrite(value: A, writer: Writer): Unit =
-                if hasTransforms then transformedWrite(value, writer)
-                else rawSerializeWrite(value, writer)
+                val writeWriter           = writerForAnnotations(writer)
+                val priorFieldIdOverrides = threadFieldIdOverridesForWrite(writeWriter)
+                try
+                    if hasTransforms then transformedWrite(value, writeWriter)
+                    else rawSerializeWrite(value, writeWriter)
+                finally restoreFieldIdOverridesForWrite(writeWriter, priorFieldIdOverrides)
+                end try
+            end serializeWrite
             @publicInBinary def serializeRead(reader: Reader): A =
-                if hasReadTransforms then transformedRead(reader)
-                else rawSerializeRead(reader)
+                val priorFieldIdOverrides = threadFieldIdOverridesForRead(reader)
+                try
+                    if hasReadTransforms then transformedRead(reader)
+                    else rawSerializeRead(reader)
+                finally restoreFieldIdOverridesForRead(reader, priorFieldIdOverrides)
+                end try
+            end serializeRead
             @publicInBinary override def rawSerializeWrite(value: A, writer: Writer): Unit = writeFn(value, writer)
             @publicInBinary override def rawSerializeRead(reader: Reader): A               = readFn(reader)
             @publicInBinary def getter(value: A): Maybe[Any]                               = getterFn(value)
@@ -2180,7 +2390,7 @@ object Schema:
         Schema.init[java.time.Instant](
             writeFn = (v, w) => w.instant(v),
             readFn = _.instant(),
-            structure = Structure.Type.Primitive(Structure.PrimitiveKind.String, Tag[java.time.Instant].asInstanceOf[Tag[Any]])
+            structure = Structure.Type.Primitive(Structure.PrimitiveKind.Instant, Tag[java.time.Instant].asInstanceOf[Tag[Any]])
         )
 
     /** Schema for java.time.Duration values. */
@@ -2188,7 +2398,7 @@ object Schema:
         Schema.init[java.time.Duration](
             writeFn = (v, w) => w.duration(v),
             readFn = _.duration(),
-            structure = Structure.Type.Primitive(Structure.PrimitiveKind.String, Tag[java.time.Duration].asInstanceOf[Tag[Any]])
+            structure = Structure.Type.Primitive(Structure.PrimitiveKind.Duration, Tag[java.time.Duration].asInstanceOf[Tag[Any]])
         )
 
     /** Schema for kyo.Instant values. */
@@ -2248,7 +2458,7 @@ object Schema:
             writeFn = (v, w) => w.bytes(v),
             readFn = _.bytes(),
             absentDefaultValue = Maybe(Span.empty[Byte]),
-            structure = Structure.Type.Primitive(Structure.PrimitiveKind.String, Tag[Span[Byte]].asInstanceOf[Tag[Any]])
+            structure = Structure.Type.Primitive(Structure.PrimitiveKind.Bytes, Tag[Span[Byte]].asInstanceOf[Tag[Any]])
         )
 
     /** Frame schema: serializes as the raw encoded string. Frame is an opaque type backed by String at runtime.
@@ -3095,11 +3305,22 @@ object Schema:
             type Focused = E
             @publicInBinary override private[kyo] val flattenedReadFields: Chunk[(String, String)] = flattenedReadFields0
             @publicInBinary def serializeWrite(value: A, writer: Writer): Unit =
-                if hasTransforms then transformedWrite(value, writer)
-                else rawSerializeWrite(value, writer)
+                val writeWriter           = writerForAnnotations(writer)
+                val priorFieldIdOverrides = threadFieldIdOverridesForWrite(writeWriter)
+                try
+                    if hasTransforms then transformedWrite(value, writeWriter)
+                    else rawSerializeWrite(value, writeWriter)
+                finally restoreFieldIdOverridesForWrite(writeWriter, priorFieldIdOverrides)
+                end try
+            end serializeWrite
             @publicInBinary def serializeRead(reader: Reader): A =
-                if hasReadTransforms then transformedRead(reader)
-                else rawSerializeRead(reader)
+                val priorFieldIdOverrides = threadFieldIdOverridesForRead(reader)
+                try
+                    if hasReadTransforms then transformedRead(reader)
+                    else rawSerializeRead(reader)
+                finally restoreFieldIdOverridesForRead(reader, priorFieldIdOverrides)
+                end try
+            end serializeRead
             @publicInBinary override def rawSerializeWrite(value: A, writer: Writer): Unit = writeFn(value, writer)
             @publicInBinary override def rawSerializeRead(reader: Reader): A               = readFn(reader)
             @publicInBinary def getter(value: A): Maybe[Any]                               = getterFn(value)

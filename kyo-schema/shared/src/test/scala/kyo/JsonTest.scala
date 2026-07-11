@@ -876,6 +876,7 @@ class JsonTest extends kyo.test.Test[Any]:
         case class JSPerson(name: String, age: Int)
         case class JSWithDefault(name: String, count: Int = 0)
         case class JSNested(person: JSPerson, label: String)
+        case class JSBaseValues(bytes: Span[Byte], instant: java.time.Instant, duration: java.time.Duration)
         sealed trait JSShape
         case class JSCircle(radius: Double)              extends JSShape
         case class JSRect(width: Double, height: Double) extends JSShape
@@ -899,6 +900,18 @@ class JsonTest extends kyo.test.Test[Any]:
                     assert(obj.properties(0)._2 == JsonSchema.Str())
                     assert(obj.properties(1)._1 == "age")
                     assert(obj.properties(1)._2 == JsonSchema.Integer())
+                case other =>
+                    fail(s"Expected Obj, got $other")
+            end match
+        }
+
+        "base value primitive schemas match JSON string representation" in {
+            val schema = JsonSchema.from[JSBaseValues]
+            schema match
+                case obj: JsonSchema.Obj =>
+                    assert(obj.properties.find(_._1 == "bytes").map(_._2).contains(JsonSchema.Str()))
+                    assert(obj.properties.find(_._1 == "instant").map(_._2).contains(JsonSchema.Str()))
+                    assert(obj.properties.find(_._1 == "duration").map(_._2).contains(JsonSchema.Str()))
                 case other =>
                     fail(s"Expected Obj, got $other")
             end match

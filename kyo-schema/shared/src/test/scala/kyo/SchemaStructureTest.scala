@@ -1152,15 +1152,18 @@ class SchemaStructureTest extends kyo.test.Test[Any]:
         }
         "instantSchema" in {
             val s = summon[Schema[java.time.Instant]]
-            assert(s.structure == Structure.Type.Primitive(Structure.PrimitiveKind.String, Tag[java.time.Instant].asInstanceOf[Tag[Any]]))
+            assert(s.structure == Structure.Type.Primitive(Structure.PrimitiveKind.Instant, Tag[java.time.Instant].asInstanceOf[Tag[Any]]))
         }
         "durationSchema" in {
             val s = summon[Schema[java.time.Duration]]
-            assert(s.structure == Structure.Type.Primitive(Structure.PrimitiveKind.String, Tag[java.time.Duration].asInstanceOf[Tag[Any]]))
+            assert(s.structure == Structure.Type.Primitive(
+                Structure.PrimitiveKind.Duration,
+                Tag[java.time.Duration].asInstanceOf[Tag[Any]]
+            ))
         }
         "spanByteSchema" in {
             val s = summon[Schema[Span[Byte]]]
-            assert(s.structure == Structure.Type.Primitive(Structure.PrimitiveKind.String, Tag[Span[Byte]].asInstanceOf[Tag[Any]]))
+            assert(s.structure == Structure.Type.Primitive(Structure.PrimitiveKind.Bytes, Tag[Span[Byte]].asInstanceOf[Tag[Any]]))
         }
         "frameSchema" in {
             val s = summon[Schema[Frame]]

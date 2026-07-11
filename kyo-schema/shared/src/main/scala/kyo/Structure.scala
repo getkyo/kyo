@@ -91,6 +91,7 @@ object Structure:
         case Int, Long, Short, Byte, Char
         case Float, Double
         case BigInt, BigDecimal
+        case Bytes, Instant, Duration
         case String, Boolean, Unit
     end PrimitiveKind
 
@@ -746,7 +747,8 @@ object Structure:
     /** Untyped, format-neutral value tree produced by encoding a typed Scala value.
       *
       * Each variant corresponds to a structural category: Record for case classes, VariantCase for sealed trait instances, Sequence for
-      * collections, MapEntries for maps, and scalar variants (Str, Bool, Integer, Decimal, BigNum, Null) for primitives.
+      * collections, MapEntries for maps, and scalar variants (Str, Bool, Integer, Decimal, BigNum, Bytes, Instant, Duration, Null) for
+      * primitives.
       *
       * Values are produced by `Structure.encode` or `Schema.toStructureValue` and consumed by `Structure.decode` or navigation via `Path`.
       */
@@ -778,8 +780,77 @@ object Structure:
         /** An arbitrary-precision numeric scalar. */
         case BigNum(value: BigDecimal)
 
+        /** A byte sequence scalar. */
+        case Bytes(value: Span[Byte])
+
+        /** An instant scalar. */
+        case Instant(value: java.time.Instant)
+
+        /** A duration scalar. */
+        case Duration(value: java.time.Duration)
+
         /** Represents null or an absent optional. */
         case Null
+
+        override def equals(other: Any): Boolean =
+            def sameValue(a: Any, b: Any): Boolean =
+                if a.asInstanceOf[AnyRef] eq null then b.asInstanceOf[AnyRef] eq null
+                else a.equals(b)
+            end sameValue
+
+            other match
+                case that: Value if ordinal == that.ordinal =>
+                    val self = this.asInstanceOf[Product]
+                    val peer = that.asInstanceOf[Product]
+                    ordinal match
+                        case 0 => sameValue(self.productElement(0), peer.productElement(0))
+                        case 1 => sameValue(self.productElement(0), peer.productElement(0)) && sameValue(
+                                self.productElement(1),
+                                peer.productElement(1)
+                            )
+                        case 2 => sameValue(self.productElement(0), peer.productElement(0))
+                        case 3 => sameValue(self.productElement(0), peer.productElement(0))
+                        case 4 => sameValue(self.productElement(0), peer.productElement(0))
+                        case 5 => sameValue(self.productElement(0), peer.productElement(0))
+                        case 6 => sameValue(self.productElement(0), peer.productElement(0))
+                        case 7 =>
+                            self.productElement(0).asInstanceOf[Double] == peer.productElement(0).asInstanceOf[Double]
+                        case 8 => sameValue(self.productElement(0), peer.productElement(0))
+                        case 9 =>
+                            java.util.Arrays.equals(
+                                self.productElement(0).asInstanceOf[Span[Byte]].toArray,
+                                peer.productElement(0).asInstanceOf[Span[Byte]].toArray
+                            )
+                        case 10 => self.productElement(0).equals(peer.productElement(0))
+                        case 11 => self.productElement(0).equals(peer.productElement(0))
+                        case 12 => true
+                        case _  => false
+                    end match
+                case _ => false
+            end match
+        end equals
+
+        override def hashCode(): Int =
+            val self = this.asInstanceOf[Product]
+            ordinal match
+                case 0 => 31 * "Record".hashCode + self.productElement(0).hashCode
+                case 1 => 31 * (31 * "VariantCase".hashCode + self.productElement(0).hashCode) + self.productElement(1).hashCode
+                case 2 => 31 * "Sequence".hashCode + self.productElement(0).hashCode
+                case 3 => 31 * "MapEntries".hashCode + self.productElement(0).hashCode
+                case 4 => 31 * "Str".hashCode + self.productElement(0).hashCode
+                case 5 => 31 * "Bool".hashCode + self.productElement(0).hashCode
+                case 6 => 31 * "Integer".hashCode + self.productElement(0).hashCode
+                case 7 =>
+                    val value = self.productElement(0).asInstanceOf[Double]
+                    31 * "Decimal".hashCode + (if value == 0.0 then 0 else java.lang.Double.hashCode(value))
+                case 8  => 31 * "BigNum".hashCode + self.productElement(0).hashCode
+                case 9  => 31 * "Bytes".hashCode + java.util.Arrays.hashCode(self.productElement(0).asInstanceOf[Span[Byte]].toArray)
+                case 10 => 31 * "Instant".hashCode + self.productElement(0).hashCode
+                case 11 => 31 * "Duration".hashCode + self.productElement(0).hashCode
+                case 12 => "Null".hashCode
+                case _  => 0
+            end match
+        end hashCode
     end Value
 
     object Value:
@@ -837,6 +908,9 @@ object Structure:
             else if tag =:= Tag[Float] then Decimal(value.asInstanceOf[Float].toDouble)
             else if tag =:= Tag[BigDecimal] then BigNum(value.asInstanceOf[BigDecimal])
             else if tag =:= Tag[BigInt] then BigNum(BigDecimal(value.asInstanceOf[BigInt]))
+            else if tag =:= Tag[Span[Byte]] then Bytes(value.asInstanceOf[Span[Byte]])
+            else if tag =:= Tag[java.time.Instant] then Instant(value.asInstanceOf[java.time.Instant])
+            else if tag =:= Tag[java.time.Duration] then Duration(value.asInstanceOf[java.time.Duration])
             else if tag =:= Tag[Char] then Str(value.asInstanceOf[Char].toString)
             else Str(value.toString)
 
