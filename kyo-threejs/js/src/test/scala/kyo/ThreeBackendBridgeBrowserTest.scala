@@ -114,6 +114,53 @@ class ThreeBackendBridgeBrowserTest extends WebGLSceneHarness:
         }
     }
 
+    "a server SetProp that arrives BEFORE the island registers is buffered and flushed on registration, so the client converges (the pre-registration startup-race window is exercised, not masked)" in {
+        cancelOnUnsupportedPlatform {
+            for
+                label <- Signal.initRef("initial")
+                color <- Signal.initRef(Three.Color.red)
+                result <- servedPreRegister(label, color) { url =>
+                    swiftshaderLaunch.map { launch =>
+                        Browser.run(launch) {
+                            for
+                                _ <- Browser.goto(url)
+                                // The inline WS client is up and the island module has loaded, but its
+                                // backend registration is GATED; the server's initial SetProp is arriving.
+                                _ <- Browser.waitFor("window.__preRegisterReady === true").handle(diagnosePreRegisterTimeout)
+                                // The pre-registration race is REAL: the initial SetProp is buffered (it
+                                // arrived while no handle was registered), not dropped.
+                                _ <- Browser.waitFor(
+                                    "!!window.__kyoBackendsPending && !!window.__kyoBackendsPending['1'] && window.__kyoBackendsPending['1'].length >= 1"
+                                ).handle(diagnosePreRegisterTimeout)
+                                // Drive a fresh color BEFORE registration; its SetProp must also buffer.
+                                _ <- color.set(Three.Color.green)
+                                _ <- Browser.waitFor("window.__kyoBackendsPending['1'].length >= 2").handle(diagnosePreRegisterTimeout)
+                                // No backend handle is registered yet: nothing has been applied to the cube.
+                                registeredBefore <- Browser.eval("String(!!(window.__kyoBackends && window.__kyoBackends['1']))")
+                                // Release the gate: the island hydrates and registers, flushing the buffered
+                                // SetProps in arrival order.
+                                _          <- Browser.eval("window.__releaseHydrate()")
+                                _          <- Browser.waitFor("window.__bridgeReady === true").handle(diagnosePreRegisterTimeout)
+                                _          <- Browser.waitFor("window.__stageColor === '00ff00'").handle(diagnosePreRegisterColorTimeout)
+                                finalColor <- Browser.eval("String(window.__stageColor)")
+                                tuple: (String, String) = (registeredBefore, finalColor)
+                            yield tuple
+                        }
+                    }
+                }
+            yield
+                val (registeredBefore, finalColor) = result
+                assert(
+                    registeredBefore == "false",
+                    s"no backend handle may be registered while the gate holds (the race window must be real), got registeredBefore=$registeredBefore"
+                )
+                assert(
+                    finalColor == "00ff00",
+                    s"the SetProps buffered before registration must flush on registration so the cube converges to green, got '$finalColor'"
+                )
+        }
+    }
+
     /** Serves the SSR page for `demo.ServerBridgeScene.ui(label, color)` through the real
       * `UI.runHandlers`, alongside the linked demo bundle and the three.js sources its import map
       * resolves, and hands the served URL to `f`.
@@ -160,6 +207,78 @@ class ThreeBackendBridgeBrowserTest extends WebGLSceneHarness:
             result <- f(s"http://localhost:${server.port}/")
         yield result
     end servedBridge
+
+    /** Serves the SSR page for `demo.ServerBridgeScene.ui(label, color)` but links the GATED hydrate
+      * (`hydrateServerBridgePreRegister`), which blocks backend registration behind `window.__releaseHydrate()`
+      * so a test can drive the server signal during the pre-registration window. Mirrors `servedBridge`,
+      * pointed at the pre-register hydrate export instead.
+      */
+    private def servedPreRegister[A](label: SignalRef[String], color: SignalRef[Three.Color])(
+        f: String => A < (Async & Scope & Abort[BrowserException])
+    )(using Frame): A < (Async & Scope & Abort[BrowserException]) =
+        for
+            bundle    <- WebGLSceneHarness.readDemoBundle
+            module    <- WebGLSceneHarness.readThreeSource("three.module.js")
+            core      <- WebGLSceneHarness.readThreeSource("three.core.js")
+            gltf      <- WebGLSceneHarness.readThreeJsm("loaders/GLTFLoader.js")
+            bufUtils  <- WebGLSceneHarness.readThreeJsm("utils/BufferGeometryUtils.js")
+            skelUtils <- WebGLSceneHarness.readThreeJsm("utils/SkeletonUtils.js")
+            orbit     <- WebGLSceneHarness.readThreeJsm("controls/OrbitControls.js")
+            bootJs = """import { hydrateServerBridgePreRegister } from "/main.js"; hydrateServerBridgePreRegister();"""
+            head = UI.PageHead(
+                "kyo-threejs pre-register bridge test",
+                moduleScript = Present("/boot.js"),
+                importMap = Seq(
+                    "three"                                        -> "/three.module.js",
+                    "three/examples/jsm/loaders/GLTFLoader.js"     -> "/three/examples/jsm/loaders/GLTFLoader.js",
+                    "three/examples/jsm/controls/OrbitControls.js" -> "/three/examples/jsm/controls/OrbitControls.js"
+                )
+            )
+            appHandlers <- UI.runHandlers("/", head)(demo.ServerBridgeScene.ui(label, color))
+            server <- HttpServer.init(0, "localhost")(
+                (appHandlers ++ Seq(
+                    WebGLSceneHarness.jsHandler("boot.js", bootJs),
+                    WebGLSceneHarness.jsHandler("main.js", bundle),
+                    WebGLSceneHarness.jsHandler("three.module.js", module),
+                    WebGLSceneHarness.jsHandler("three.core.js", core),
+                    WebGLSceneHarness.jsHandler("three/examples/jsm/loaders/GLTFLoader.js", gltf),
+                    WebGLSceneHarness.jsHandler("three/examples/jsm/utils/BufferGeometryUtils.js", bufUtils),
+                    WebGLSceneHarness.jsHandler("three/examples/jsm/utils/SkeletonUtils.js", skelUtils),
+                    WebGLSceneHarness.jsHandler("three/examples/jsm/controls/OrbitControls.js", orbit)
+                ))*
+            )
+            result <- f(s"http://localhost:${server.port}/")
+        yield result
+    end servedPreRegister
+
+    /** On a pre-register timeout, surfaces the gate/buffer state so the cause is visible. */
+    private def diagnosePreRegisterTimeout(
+        wait: String < (Browser & Abort[BrowserReadException])
+    )(using Frame): String < (Browser & Abort[BrowserReadException]) =
+        Abort.recover[BrowserReadException] { _ =>
+            for
+                ready  <- Browser.eval("String(window.__preRegisterReady)")
+                bridge <- Browser.eval("String(window.__bridgeReady)")
+                buffered <- Browser.eval(
+                    "String(window.__kyoBackendsPending && window.__kyoBackendsPending['1'] ? window.__kyoBackendsPending['1'].length : 'none')"
+                )
+            yield Abort.fail(BrowserScriptErrorException(
+                s"pre-register bridge state never reached the awaited condition: preRegisterReady=$ready bridgeReady=$bridge buffered=$buffered"
+            ))
+        }(wait)
+
+    /** On a color-convergence timeout, surfaces the observed color and registration state. */
+    private def diagnosePreRegisterColorTimeout(
+        wait: String < (Browser & Abort[BrowserReadException])
+    )(using Frame): String < (Browser & Abort[BrowserReadException]) =
+        Abort.recover[BrowserReadException] { _ =>
+            for
+                color      <- Browser.eval("String(window.__stageColor)")
+                registered <- Browser.eval("String(!!(window.__kyoBackends && window.__kyoBackends['1']))")
+            yield Abort.fail(BrowserScriptErrorException(
+                s"cube never converged to the buffered green: stageColor=$color registered=$registered"
+            ))
+        }(wait)
 
     /** On a bridge-ready timeout, surfaces the page-side error (if any) as part of the failure. */
     private def diagnoseBridgeTimeout(

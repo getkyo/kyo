@@ -31,15 +31,16 @@ object ThreeMount:
         selector: String,
         frames: ThreeFrames = ThreeFrames.Raf
     )(using Frame): Unit < (Async & Scope & Abort[ThreeException]) =
-        // Resolves the canvas inline (a missing selector still surfaces as a typed ThreeException to
-        // this method's caller); once resolved, mounts through the SAME registry-dispatched backend
-        // the embed/hydrate path uses (ThreeBackend.mount), unifying both entries. mount's own row is
-        // (Async & Scope) only (it discharges a mount-pipeline failure to Log.error internally,
-        // matching hostMountPipeline's existing swallow-and-log contract), which widens into this
-        // method's declared Abort[ThreeException] row with no further handling needed here.
+        // Resolves the canvas inline (a missing selector surfaces CanvasNotFound), then runs the TYPED
+        // mount pipeline, which keeps its Abort[ThreeException] channel: an absent WebGL context, a
+        // materialize failure, or a texture/glTF load failure surfaces as a typed ThreeException to this
+        // method's caller. The swallow-and-log discharge lives ONLY at the kyo-ui Backend SPI seam
+        // (hostMountPipeline), whose mount-callback row cannot carry Abort; the direct runMount entry
+        // bypasses that seam so its declared typed channel is honored. This entry is client-local, so it
+        // needs neither the wire path->Live index nor the JS-handle registration the registry path builds.
         for
             canvas <- ThreeMount.resolveCanvas(selector)
-            _      <- kyo.internal.ThreeBackend.mount(Three.Ast.Embed(scene, camera, frames), canvas.asInstanceOf[dom.Element], Seq.empty)
+            _      <- ThreeMount.hostMountPipelineTyped(scene, camera, frames, canvas.asInstanceOf[dom.Element])
         yield ()
 
     /** Yields a deterministic [[Three.Driver]] over the materialized scene, the same driver the
@@ -58,6 +59,7 @@ object ThreeMount:
                 mountResult <- Reconciler.mount(scene)
                 (rootLive, mounted) = mountResult
                 cam    <- ThreeFacadeOps.makeCamera(camera)
+                _      <- ThreeMount.recordCamera(mounted, camera, cam)
                 _      <- ThreeMount.subscribeRegions(mounted)
                 _      <- ThreeMount.subscribeReactiveRegions(mounted)
                 driver <- ThreeMount.makeDriver(mounted, rootLive, cam)
@@ -91,6 +93,7 @@ object ThreeMount:
             mountResult <- Reconciler.mount(scene)
             (rootLive, mounted) = mountResult
             cam <- ThreeFacadeOps.makeCamera(camera)
+            _   <- ThreeMount.recordCamera(mounted, camera, cam)
             // A headless single-frame capture fills every structural reactive region and every
             // prop-level `Bound.Ref` from its signal's current value, so a reactive scene renders
             // its current state (no live loop).
@@ -101,6 +104,10 @@ object ThreeMount:
         yield Image.fromBinary(bytes)
 
     // private[kyo], not private: ThreeBackend.mount (kyo.internal) calls this directly.
+    // The kyo-ui Backend SPI seam: the mount callback type is dom.Element => Unit < (Async & Scope), a
+    // row that cannot carry Abort[ThreeException]. This wrapper discharges the typed pipeline's failure
+    // to Log.error (swallow-and-log) so the effect reaching the seam is (Async & Scope). The DIRECT
+    // public entry Three.runMount calls hostMountPipelineTyped instead, keeping the typed Abort channel.
     private[kyo] def hostMountPipeline(
         scene: Three,
         camera: Three.Ast.Camera,
@@ -109,11 +116,28 @@ object ThreeMount:
         onMounted: (Reconciler.Live, Reconciler.Mounted) => Unit < (Async & Scope & Abort[ThreeException]) =
             (_, _) => Kyo.unit
     )(using Frame): Unit < (Async & Scope) =
-        // The host hands a live dom.Element; cast to js.Dynamic exactly as resolveCanvas
-        // does, then run the runMount pipeline minus resolveCanvas on it, under the ambient
-        // page mount Scope. The pipeline's Abort[ThreeException] is discharged to a Log.error
-        // before the effect reaches the kyo-ui seam, so the seam stays Async & Scope (the
-        // kyo-ui mount callback type is dom.Element => Unit < (Async & Scope)).
+        Abort.run[ThreeException](hostMountPipelineTyped(scene, camera, frames, canvas, onMounted)).map {
+            case Result.Success(_) => (): Unit < Sync
+            case Result.Failure(e) => Log.error(s"Three.embed mount failed: ${e.getMessage}")
+            case Result.Panic(e) =>
+                if e.isInstanceOf[Interrupted] then (): Unit < Sync
+                else Log.error("Three.embed mount panicked", e)
+        }
+    end hostMountPipeline
+
+    // The typed mount pipeline shared by the direct entry (Three.runMount, which keeps the typed Abort)
+    // and the SPI seam wrapper (hostMountPipeline, which discharges it). The host hands a live
+    // dom.Element; cast to js.Dynamic exactly as resolveCanvas does, then run the full mount on it under
+    // the ambient page mount Scope. A WebGL/materialize/texture failure surfaces typed through the
+    // returned Abort[ThreeException].
+    private[kyo] def hostMountPipelineTyped(
+        scene: Three,
+        camera: Three.Ast.Camera,
+        frames: ThreeFrames,
+        canvas: org.scalajs.dom.Element,
+        onMounted: (Reconciler.Live, Reconciler.Mounted) => Unit < (Async & Scope & Abort[ThreeException]) =
+            (_, _) => Kyo.unit
+    )(using Frame): Unit < (Async & Scope & Abort[ThreeException]) =
         val canvasDyn = canvas.asInstanceOf[js.Dynamic]
         val pipeline: Unit < (Async & Scope & Abort[ThreeException]) =
             for
@@ -121,6 +145,7 @@ object ThreeMount:
                 mountResult <- Reconciler.mount(scene)
                 (rootLive, mounted) = mountResult
                 cam <- ThreeFacadeOps.makeCamera(camera)
+                _   <- ThreeMount.recordCamera(mounted, camera, cam)
                 _ <- Sync.Unsafe.defer {
                     // Unsafe: reads the live canvas layout dimensions and mutates the renderer/camera
                     // synchronously at mount; deferred so the FFI sizing stays inside the effect.
@@ -148,11 +173,12 @@ object ThreeMount:
                         end if
                     end if
                 }
-                _        <- ThreeMount.subscribeRegions(mounted)
-                _        <- ThreeMount.subscribeReactiveRegions(mounted)
-                _        <- ThreeMount.setupPointerDelegation(canvasDyn, mounted, cam)
-                controls <- ThreeMount.setupControls(canvasDyn, mounted, cam)
-                _        <- onMounted(rootLive, mounted)
+                serverDriven <- ThreeMount.serverSeamPresent
+                _            <- ThreeMount.subscribeRegions(mounted)
+                _            <- ThreeMount.subscribeReactiveRegions(mounted, serverDriven)
+                _            <- ThreeMount.setupPointerDelegation(canvasDyn, mounted, cam)
+                controls     <- ThreeMount.setupControls(canvasDyn, mounted, cam)
+                _            <- onMounted(rootLive, mounted)
                 _ <- Fiber.init {
                     Abort.run[ThreeException](ThreeMount.runLoop(mounted, rootLive, cam, renderer, frames, controls)).map {
                         case Result.Success(_) => (): Unit < Sync
@@ -163,14 +189,8 @@ object ThreeMount:
                     }
                 }.unit
             yield ()
-        Abort.run[ThreeException](pipeline).map {
-            case Result.Success(_) => (): Unit < Sync
-            case Result.Failure(e) => Log.error(s"Three.embed mount failed: ${e.getMessage}")
-            case Result.Panic(e) =>
-                if e.isInstanceOf[Interrupted] then (): Unit < Sync
-                else Log.error("Three.embed mount panicked", e)
-        }
-    end hostMountPipeline
+        pipeline
+    end hostMountPipelineTyped
 
     /** Resolves the `<canvas>` at `selector`; `CanvasNotFound` when no element matches. */
     def resolveCanvas(selector: String)(using Frame): js.Dynamic < (Sync & Abort[ThreeException]) =
@@ -183,25 +203,59 @@ object ThreeMount:
     /** Acquires a `WebGLRenderer` into the canvas under Scope; `WebGLUnavailable` on no GL context. */
     def makeRenderer(canvas: js.Dynamic)(using Frame): js.Dynamic < (Scope & Sync & Abort[ThreeException]) =
         Scope.acquireRelease(
-            // Unsafe: constructing the WebGLRenderer; if the context is null three.js throws, mapped below.
+            // Unsafe: constructing the WebGLRenderer. three.js signals an unavailable GL context two ways:
+            // its constructor throws ("Error creating WebGL context") when no context can be created, OR it
+            // returns a renderer whose getContext() is null. Catch the constructor throw so the acquire
+            // yields a Maybe the map below turns into the typed WebGLUnavailable leaf (never a raw throw the
+            // caller's Abort[ThreeException] row cannot see), and the release disposes only a constructed one.
             Sync.Unsafe.defer {
                 val opts = js.Dynamic.literal(canvas = canvas, antialias = true)
-                js.Dynamic.newInstance(ThreeFacade.WebGLRenderer)(opts)
+                try Maybe(js.Dynamic.newInstance(ThreeFacade.WebGLRenderer)(opts))
+                catch case scala.util.control.NonFatal(_) => Absent
             }
-        ) { renderer =>
+        ) { rendererMaybe =>
             // Unsafe: release the renderer's GL resources and its WebGL context on scope close. dispose()
             // frees the renderer's own GPU resources; forceContextLoss() releases the underlying context
             // so a mount/unmount cycle does not leak contexts toward the browser's per-page WebGL limit.
             Sync.Unsafe.defer {
-                discard(renderer.dispose())
-                discard(renderer.forceContextLoss())
+                rendererMaybe.foreach { renderer =>
+                    discard(renderer.dispose())
+                    discard(renderer.forceContextLoss())
+                }
             }
-        }.map { renderer =>
-            // Unsafe: a null GL context surfaces as the typed WebGLUnavailable leaf, never a raw throw.
-            Sync.Unsafe.defer(Maybe(renderer.getContext())).map {
-                case Present(_) => renderer: js.Dynamic < (Scope & Sync & Abort[ThreeException])
-                case Absent     => Abort.fail(ThreeException.WebGLUnavailable("no WebGL context for the canvas"))
-            }
+        }.map {
+            case Absent            => Abort.fail(ThreeException.WebGLUnavailable("could not create a WebGL context for the canvas"))
+            case Present(renderer) =>
+                // Unsafe: a null GL context surfaces as the typed WebGLUnavailable leaf, never a raw throw.
+                Sync.Unsafe.defer(Maybe(renderer.getContext())).map {
+                    case Present(_) => renderer: js.Dynamic < (Scope & Sync & Abort[ThreeException])
+                    case Absent     => Abort.fail(ThreeException.WebGLUnavailable("no WebGL context for the canvas"))
+                }
+        }
+
+    /** Records the render `camera`'s live object against its AST node in the mount's live map so the
+      * bound-prop subscription (`subscribeRegions` live, `fillBoundRefsOnce` headless) sees its
+      * signal-bound `lookAt`/`position` and re-aims the live camera on each emission, and a path-indexing
+      * backend can address it for a server-driven camera SetProp. The camera drives the view but is not
+      * part of the rendered scene graph, so it is recorded here rather than by the reconciler's scene walk.
+      */
+    private[kyo] def recordCamera(mounted: Reconciler.Mounted, camera: Three.Ast.Camera, cam: js.Dynamic)(using Frame): Unit < Sync =
+        // Unsafe: a synchronous write of the mount's live map; safe because it runs once at mount on the
+        // mount's own fiber before any bound-prop observe fiber fires.
+        Sync.Unsafe.defer(mounted.live.update(new Reconciler.IdentityKey(camera), new Reconciler.Live(cam, camera, Chunk.empty)))
+
+    /** True on a server-driven (hydrated) page, where the inline client installs the `__kyoPostBackendEvent`
+      * post seam and the server re-materializes structural regions over the wire; false for a client-local
+      * `runMount`/`embed` (no page WS) or a headless test. The reactive-region subscription reads this to
+      * keep the server the SINGLE writer of a server-driven region (no racing local watcher).
+      */
+    private[kyo] def serverSeamPresent(using Frame): Boolean < Sync =
+        // Unsafe: a one-shot read of the inline-client post seam on the live window; deferred so the FFI
+        // read stays inside the effect.
+        Sync.Unsafe.defer {
+            import AllowUnsafe.embrace.danger
+            js.typeOf(js.Dynamic.global.window) != "undefined" &&
+            !js.isUndefined(js.Dynamic.global.window.__kyoPostBackendEvent)
         }
 
     /** Forks one observe fiber per `Bound.Ref` region: each emission patches exactly the one bound
@@ -272,8 +326,19 @@ object ThreeMount:
       * interrupts it. A typed reconcile failure converts to a panic at this boundary so the row
       * matches the declared `(Async & Scope)`; a reached failure here is a reconciler bug, not a
       * recoverable case.
+      *
+      * `serverDriven` marks a mount whose structural regions the server re-materializes over the wire
+      * (a hydrated `Three.embed` page): a region that carries a server drive is then owned by the
+      * server's `ReplaceSubtree` via the backend drain, the SINGLE writer of that region's live state.
+      * Forking a local watcher for it too would make the local reconcile fiber a SECOND writer racing
+      * the drain (both dispose and re-materialize the same subtree, corrupting the path index), so it is
+      * skipped. A region without a server drive (`Three.reactive(Signal[Three])`, unserializable) still
+      * forks its local watcher even in a server-driven mount: the server cannot drive it.
       */
-    private[kyo] def subscribeReactiveRegions(mounted: Reconciler.Mounted)(using Frame): Unit < (Async & Scope) =
+    private[kyo] def subscribeReactiveRegions(
+        mounted: Reconciler.Mounted,
+        serverDriven: Boolean = false
+    )(using Frame): Unit < (Async & Scope) =
         // Unsafe: a synchronous write of the mount's `subscribeElement` hook field, no suspension; safe
         // because it runs once on the mount's drain fiber before any reactive region fires.
         Sync.Unsafe.defer {
@@ -286,17 +351,24 @@ object ThreeMount:
             }
         }.andThen {
             Kyo.foreachDiscard(Reconciler.reactiveRegions(mounted)) { region =>
-                Fiber.init {
-                    Abort.run[Throwable](Reconciler.runReactiveRegion(region, mounted)).map { result =>
-                        result.fold(
-                            _ => (): Unit < Sync,
-                            err => Log.error(s"Reactive region fiber failed: ${err.getMessage}"),
-                            panic =>
-                                if panic.isInstanceOf[Interrupted] then (): Unit < Sync
-                                else Log.error(s"Reactive region fiber panicked", panic)
-                        )
-                    }
-                }.unit
+                val serverOwned = serverDriven && (region.node match
+                    case r: Three.Ast.Reactive   => r.serverDrive.isDefined
+                    case _: Three.Ast.Foreach[?] => true
+                    case _                       => false)
+                if serverOwned then Kyo.unit
+                else
+                    Fiber.init {
+                        Abort.run[Throwable](Reconciler.runReactiveRegion(region, mounted)).map { result =>
+                            result.fold(
+                                _ => (): Unit < Sync,
+                                err => Log.error(s"Reactive region fiber failed: ${err.getMessage}"),
+                                panic =>
+                                    if panic.isInstanceOf[Interrupted] then (): Unit < Sync
+                                    else Log.error(s"Reactive region fiber panicked", panic)
+                            )
+                        }
+                    }.unit
+                end if
             }
         }
 

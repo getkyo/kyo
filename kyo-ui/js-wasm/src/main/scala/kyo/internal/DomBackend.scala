@@ -35,8 +35,8 @@ private[kyo] object DomBackend extends Backend:
 
     // The DOM backend is not on the reactive patch path: the server emits Replace for every DOM
     // region (never SetProp), so no server op reaches this. It exists to satisfy the SPI; were it
-    // called it would re-render the subtree at `path` and replace it (today's LocalExchange/Replace),
-    // ignoring `key` and treating `encoded` as rendered HTML.
+    // called it would re-render the subtree at `path` and replace it, ignoring `key` and treating
+    // `encoded` as rendered HTML (the same subtree-swap the DomRegion Replace path performs).
     def patch(path: Seq[String], key: String, encoded: String)(using Frame): Unit < Async =
         Sync.defer {
             val p  = path.mkString(".")
@@ -173,11 +173,12 @@ private[kyo] object DomBackend extends Backend:
                 Kyo.unit
     end fireHostMounts
 
-    /** Exchange that renders UI to HTML and applies directly to the DOM (a DomRegion), or patches a
-      * backend node's live prop directly (a PropRegion). The PropRegion arm is present but unreached
-      * until a backend node ancestor carries the `data-kyo-backend` marker (a later phase); it
-      * resolves the owning backend via the same up-the-tree walk the wire client's `backendForPath`
-      * uses, then routes to `Backend.patch`.
+    /** The client-local reactive exchange: a `DomRegion` renders UI to HTML and applies it directly to
+      * the DOM. A backend node's own reactivity, its bound props AND its structure, is owned by that
+      * backend's reconciler, which observes the same signals locally, so `PropRegion` and
+      * `StructuralRegion` are deliberate no-ops here: routing them to the backend would make this a
+      * SECOND writer of live state the reconciler already patches. The server exchange
+      * (`UIServer.wsExchange`) is the one that routes prop/structural regions over the wire.
       */
     private class LocalExchange(root: ReactiveUI) extends UIExchange:
         private def svgContextAt(path: Seq[String]): Boolean =
@@ -228,35 +229,16 @@ private[kyo] object DomBackend extends Backend:
                             end if
                         }
                     }
-                case prop: ReactiveUI.Region.PropRegion =>
-                    Sync.defer(backendForPath(prop.path)).map {
-                        case Present(backend) => backend.patch(prop.path, prop.key, prop.encode(value))
-                        case Absent           => Kyo.unit
-                    }
-                case _: ReactiveUI.Region.StructuralRegion =>
-                    // Deliberate no-op. In a client-local mount the 3D structure is driven
-                    // LOCALLY by the reconciler's own runReactiveRegion, the SINGLE writer of
-                    // region.prevKeyed. Routing this emission to a backend's replaceSubtree would make
-                    // LocalExchange a SECOND writer of the same keyed state, breaking dispose-once/keyed-
-                    // reuse. The client owns structure here.
+                case _: ReactiveUI.Region.PropRegion | _: ReactiveUI.Region.StructuralRegion =>
+                    // Deliberate no-op. In a client-local mount a backend node's bound props AND its
+                    // structure are driven LOCALLY by the backend's own reconciler (ThreeMount.forkBoundRef
+                    // for props, runReactiveRegion for structure), the SINGLE writer of that live state.
+                    // Routing a PropRegion/StructuralRegion emission to the backend here would make
+                    // LocalExchange a SECOND writer of the same live state, breaking dispose-once/keyed-
+                    // reuse. The client owns prop and structural reactivity here; the server exchange
+                    // routes these over the wire.
                     Kyo.unit
     end LocalExchange
-
-    /** Resolves the live backend owning `path`: walk up from the element at `path` to the nearest
-      * ancestor marked `data-kyo-backend` and look up its registered `Backend` by that marker's
-      * value. Mirrors the client's `backendForPath` (`HtmlRenderer.clientJs`); returns `Absent`
-      * until a backend node ancestor carries the marker (a later phase).
-      */
-    private def backendForPath(path: Seq[String]): Maybe[Backend] =
-        def walkUp(el: dom.Element): Maybe[Backend] =
-            if el == null || (el eq document.body) then Absent
-            else if el.hasAttribute("data-kyo-backend") then Backend.lookup(el.getAttribute("data-kyo-backend"))
-            else
-                el.parentNode match
-                    case p: dom.Element => walkUp(p)
-                    case _              => Absent
-        walkUp(document.querySelector(s"""[data-kyo-path="${path.mkString(".")}"]"""))
-    end backendForPath
 
     private def readSelection(el: dom.Element): (Maybe[Int], Maybe[Int]) =
         val dyn = el.asInstanceOf[scalajs.js.Dynamic]

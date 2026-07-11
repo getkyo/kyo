@@ -106,7 +106,7 @@ class ThreeBackendEventTest extends ThreeTest:
         yield assert(got == "x")
     }
 
-    "Embed hop: a relPath starting with \"0\" maps to the embedded scene, and a non-\"0\" leading segment is a no-op" in {
+    "Embed hop: a relPath starting with \"0\" maps to the embedded scene; \"1\" maps to the (non-clickable) camera and \"2\" has no child, both inert" in {
         for
             channel <- Channel.init[String](8)
             mesh = Three.mesh(Three.Geometry.box(), Three.Material.basic())
@@ -117,7 +117,8 @@ class ThreeBackendEventTest extends ThreeTest:
             encoded = PointerWire.encode(testPointer)
             _    <- embed.dispatchBackendEvent(Seq("0", "0"), encoded) // "0" -> scene, then "0" indexes the mesh
             got1 <- channel.take
-            _    <- embed.dispatchBackendEvent(Seq("1", "0"), encoded) // non-"0" leading segment: no-op
+            _    <- embed.dispatchBackendEvent(Seq("1", "0"), encoded) // "1" -> camera (no onClick): inert
+            _    <- embed.dispatchBackendEvent(Seq("2", "0"), encoded) // no such child index on an Embed: inert
             _    <- embed.dispatchBackendEvent(Seq("0", "0"), encoded) // sentinel, right after
             got2 <- channel.take
         yield

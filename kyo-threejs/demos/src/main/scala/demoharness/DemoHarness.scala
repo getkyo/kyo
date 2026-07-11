@@ -82,6 +82,41 @@ object DemoHarness:
         val _ = Sync.Unsafe.evalOrThrow(Fiber.initUnscoped(rendererReleaseProbe(selector)).unit)
     end mountRendererReleaseProbe
 
+    /** Runs [[Three.runMount]] at `selector` and records its outcome on `window.__runMountOutcome`,
+      * proving the DIRECT entry surfaces a mount-pipeline failure through its `Abort[ThreeException]`
+      * row rather than swallowing it (the registry/hydrate path swallow-and-logs, the direct entry must
+      * not). The serving page commits `selector`'s canvas to a 2D context first, so a WebGL context can
+      * never be created on it and `makeRenderer` fails typed: the outcome reads "typed:WebGLUnavailable",
+      * never "success". Sets `window.__runMountReady` when done.
+      */
+    @JSExportTopLevel("mountRunMountOutcomeProbe")
+    def mountRunMountOutcomeProbe(selector: String): Unit =
+        // Unsafe: the page-to-kyo boundary, mirroring mountRendererReleaseProbe; runs on a detached fiber.
+        import AllowUnsafe.embrace.danger
+        val _ = Sync.Unsafe.evalOrThrow(Fiber.initUnscoped(runMountOutcomeProbe(selector)).unit)
+    end mountRunMountOutcomeProbe
+
+    private def runMountOutcomeProbe(selector: String)(using Frame): Unit < Async =
+        val scene  = Three.scene(Three.mesh(Three.Geometry.box(), Three.Material.basic()))
+        val camera = Three.Camera.perspective()
+        Scope.run {
+            // Manual frames with a never-stepped driver: on the failure path makeRenderer fails before any
+            // frame, so the frame source is irrelevant; a parked driver avoids a live loop if a context
+            // were somehow available.
+            Abort.run[ThreeException](Three.runMount(scene, camera, selector, ThreeFrames.Manual(_ => Async.never))).map { result =>
+                // Unsafe: a one-shot record of the outcome on the live window at the page-to-kyo boundary.
+                Sync.Unsafe.defer {
+                    val w = dom.window.asInstanceOf[js.Dynamic]
+                    w.__runMountOutcome = result match
+                        case Result.Success(_) => "success"
+                        case Result.Failure(e) => s"typed:${e.getClass.getSimpleName}"
+                        case Result.Panic(e)   => s"panic:${Option(e.getMessage).getOrElse(e.getClass.getSimpleName)}"
+                    w.__runMountReady = true
+                }
+            }
+        }
+    end runMountOutcomeProbe
+
     /** Mounts the embedded-3D kyo-ui tree through `UI.runMount` into the page, so kyo-ui's
       * `DomBackend.fireHostMounts` fires the `Three.embed` host's mount on the live canvas, holds
       * it for one rendered frame, then closes the page Scope and records whether the embedded WebGL

@@ -23,9 +23,20 @@ object Three extends ThreeColorOps, ThreeVec3Ops, ThreeNormalOps, ThreeRadiansOp
 
     given CanEqual[Three, Three] = CanEqual.derived
 
+    /** The handle [[Three.embed]] returns: a kyo-ui backend node placing a 3D scene in a `UI` tree.
+      * `.id(v)` tags the SSR'd `<canvas>` so a caller can select the mounted element (a test locating
+      * the canvas, a stylesheet targeting it), the same chainable setter `Element.id` gives every
+      * kyo-ui node. A bare scene node carries no such setter: only an embed reaches a rendered element.
+      */
+    sealed trait Embedded extends UI.Ast.BackendNode:
+        def id(v: String): Embedded
+
     // ---- Scene-graph node factories ------------------------------------------------
 
-    /** The render root holding the object hierarchy; one `Scene` per mount. */
+    /** The render root holding the object hierarchy; one `Scene` per mount. A scene reaches a kyo-ui
+      * tree only through [[Three.embed]] (which pairs it with a camera); a bare node placed in a `UI`
+      * tree renders nothing.
+      */
     def scene(children: Three*)(using Frame): Ast.Scene =
         Ast.Scene(Ast.SceneProps(), Chunk.from(children))
 
@@ -37,7 +48,9 @@ object Three extends ThreeColorOps, ThreeVec3Ops, ThreeNormalOps, ThreeRadiansOp
         Ast.Group(Ast.MeshProps(), Chunk.from(children))
 
     /** The renderable: a geometry paired with a material. Both are required, so a mesh cannot be
-      * half-built. A `Mesh` is `Interactive` (raycast handlers) and `Animated` (`onFrame`).
+      * half-built. A `Mesh` is `Interactive` (raycast handlers) and `Animated` (`onFrame`). A mesh
+      * reaches a kyo-ui tree only through [[Three.embed]] (inside a scene + camera); a bare node in a
+      * `UI` tree renders nothing.
       */
     def mesh(geometry: Ast.Geometry, material: Ast.Material)(using Frame): Ast.Mesh =
         Ast.Mesh(geometry, material, Ast.MeshProps(), Chunk.empty)
@@ -53,8 +66,8 @@ object Three extends ThreeColorOps, ThreeVec3Ops, ThreeNormalOps, ThreeRadiansOp
       */
     def reactive(signal: Signal[Three])(using Frame): Ast.Reactive = Ast.Reactive(signal, Absent)
 
-    /** Shows `body` while `condition` holds, else `Three.empty`. Re-points to `render` (`Boolean` is
-      * serializable, so `when` gains server drive too); the public signature is unchanged.
+    /** Shows `body` while `condition` holds, else `Three.empty`. Delegates to `render`; `Boolean` is
+      * serializable, so the shown/hidden branch is server-drivable like any other `render` region.
       */
     def when(condition: Signal[Boolean])(body: => Three)(using Frame): Ast.Reactive =
         condition.render(c => if c then body else empty)
@@ -98,11 +111,11 @@ object Three extends ThreeColorOps, ThreeVec3Ops, ThreeNormalOps, ThreeRadiansOp
             // equality; widened explicitly here, mirroring ReactiveUI.normalize's same erasure.
             given CanEqual[Any, Any] = CanEqual.derived
             Ast.Reactive(
-                signal.map(f(_)),                   // client-local Signal[Three] (unchanged behaviour)
-                Present(Ast.StructuralDrive.Render( // NEW server-drive half
+                signal.map(f(_)),                   // the client-local Signal[Three] the reconciler renders
+                Present(Ast.StructuralDrive.Render( // the server-drive codec: encode the data, re-render client-side
                     dataSignal = signal.map(x => x: Any),
                     encode = a => Json.encode[A](a.asInstanceOf[A]),
-                    decodeOne = s => f(Json.decode[A](s).getOrThrow) // re-render client-side
+                    decodeOne = s => Json.decode[A](s).toMaybe.map(f) // re-render client-side; Absent on a bad wire value
                 ))
             )
     end extension
@@ -137,9 +150,9 @@ object Three extends ThreeColorOps, ThreeVec3Ops, ThreeNormalOps, ThreeRadiansOp
             dataSignal = signal.map(x => x: Any),
             encode = c => Json.encode[Chunk[A]](c.asInstanceOf[Chunk[A]]),
             decodeKeyed = s =>
-                Json.decode[Chunk[A]](s).getOrThrow.zipWithIndex.map { (item, i) =>
+                Json.decode[Chunk[A]](s).toMaybe.map(_.zipWithIndex.map { (item, i) =>
                     (key.fold(i.toString)(_(item)), render(i, item))
-                }
+                })
         )
     end foreachDrive
 
@@ -201,15 +214,8 @@ object Three extends ThreeColorOps, ThreeVec3Ops, ThreeNormalOps, ThreeRadiansOp
             } // NOT final: Ast.Embed overrides it (its addressable child is the scene, not children)
             private[kyo] def placeholder: UI.Ast.BackendNode.Placeholder =
                 UI.Ast.BackendNode.Placeholder("canvas", UI.Ast.Attrs()) // scene root only; inner nodes never SSR
-                // NOT final: Ast.Embed overrides it to read its own settable `attrs` (`.id`, below).
+                // NOT final: Ast.Embed overrides it to read its own settable `attrs` (the Embedded.id setter).
             private[kyo] def boundProps: Chunk[UI.Ast.BackendNode.BoundProp] = Ast.boundPropsOf(this)
-            // BackendNode.id's obligation, implemented ONCE as a no-op: HtmlRenderer.renderTo only ever
-            // reads `.placeholder` off the ONE BackendNode reachable from a real UI tree (the scene root,
-            // Ast.Embed; a nested Mesh/Group/etc. is walked by ReactiveUI.normalize for boundProps/
-            // structural-region discovery, never for its own placeholder), so `.id` on any other Node is
-            // dead by construction; a self-return keeps the chain typed without inventing behaviour that
-            // never renders. Ast.Embed overrides it to actually set the placeholder's id.
-            def id(v: String): Self = this.asInstanceOf[Self]
             // Decodes the wire Pointer once, walks this node's Three AST down relPath, runs the addressed
             // onClick. Pure server-side read of the same authoritative signals the structural region
             // drives; no live scene, no FFI.
@@ -343,15 +349,17 @@ object Three extends ThreeColorOps, ThreeVec3Ops, ThreeNormalOps, ThreeRadiansOp
             override private[kyo] def structuralRegion: Maybe[UI.Ast.BackendNode.StructuralBinding] =
                 serverDrive.map(sd => UI.Ast.BackendNode.StructuralBinding(sd.dataSignal, sd.encode))
             private[kyo] def decodeSubtree(encoded: String): Maybe[Three] =
-                serverDrive.map(_.decodeOne(encoded))
+                // Absent when there is no server drive OR the wire value fails to decode; applyReplace
+                // treats both as the same forward-compatible no-op.
+                serverDrive.flatMap(_.decodeOne(encoded))
         end Reactive
 
         final case class Foreach[A](
             signal: Signal[Chunk[A]],
             key: Maybe[A => String],
             render: (Int, A) => Three,
-            // Present for every foreach/foreachKeyed (they now capture Schema[A]); the FOREACH drive
-            // variant carries the WHOLE keyed decode captured where A + Schema[A] are in scope.
+            // Present for every foreach/foreachKeyed (each captures Schema[A]); the Foreach drive
+            // variant carries the whole keyed decode, captured where A + Schema[A] are in scope.
             private[kyo] serverDrive: Ast.StructuralDrive.Foreach
         )(using val frame: Frame) extends Node:
             type Self = Foreach[A]
@@ -363,7 +371,8 @@ object Three extends ThreeColorOps, ThreeVec3Ops, ThreeNormalOps, ThreeRadiansOp
             end structuralRegion
             // The CLIENT half: decode the wire snapshot straight to keyed Three children (the drive variant
             // captured `key`/`render` at construction, so this is a delegation with no erasure and no cast).
-            private[kyo] def decodeKeyed(encoded: String): Chunk[(String, Three)] = serverDrive.decodeKeyed(encoded)
+            // Absent when the wire value fails to decode; applyReplace routes that to a no-op.
+            private[kyo] def decodeKeyed(encoded: String): Maybe[Chunk[(String, Three)]] = serverDrive.decodeKeyed(encoded)
         end Foreach
 
         // The pure, FFI-free wire-codec bundle a structural region captures at construction, where
@@ -372,14 +381,14 @@ object Three extends ThreeColorOps, ThreeVec3Ops, ThreeNormalOps, ThreeRadiansOp
         // in shared/src/main. private[kyo].
         private[kyo] object StructuralDrive:
             final private[kyo] case class Render(
-                dataSignal: Signal[Any],   // Signal[A] widened
-                encode: Any => String,     // Json.encode[A] under the captured Schema
-                decodeOne: String => Three // s => f(Json.decode[A](s)): re-render one subtree client-side
+                dataSignal: Signal[Any],          // Signal[A] widened
+                encode: Any => String,            // Json.encode[A] under the captured Schema
+                decodeOne: String => Maybe[Three] // Json.decode[A](s).map(f): re-render one subtree client-side, Absent on a bad wire value
             )
             final private[kyo] case class Foreach(
-                dataSignal: Signal[Any],                      // Signal[Chunk[A]] widened
-                encode: Any => String,                        // Json.encode[Chunk[A]] under the captured Schema
-                decodeKeyed: String => Chunk[(String, Three)] // decode Chunk[A] then apply key/render, in scope
+                dataSignal: Signal[Any],                             // Signal[Chunk[A]] widened
+                encode: Any => String,                               // Json.encode[Chunk[A]] under the captured Schema
+                decodeKeyed: String => Maybe[Chunk[(String, Three)]] // decode Chunk[A] then apply key/render, Absent on a bad wire value
             )
         end StructuralDrive
 
@@ -404,9 +413,9 @@ object Three extends ThreeColorOps, ThreeVec3Ops, ThreeNormalOps, ThreeRadiansOp
         end Controls
 
         // The embed carrier: a private backend node bundling the scene + camera + frames so the
-        // registry-dispatched ThreeBackend.mount conveys them, while Three.embed returns a BackendNode.
-        // backendChildren is the scene so the kyo-ui reactive walk descends the scene's
-        // boundProps; registry-dispatched by `backend = "three"` (no mount-closure member).
+        // registry-dispatched ThreeBackend.mount conveys them; Three.embed returns it as the public
+        // Three.Embedded handle. backendChildren is (scene, camera) so the kyo-ui reactive walk descends
+        // both their boundProps; registry-dispatched by `backend = "three"` (no mount-closure member).
         // private[kyo]: not public surface.
         final private[kyo] case class Embed(
             scene: Three,
@@ -414,22 +423,22 @@ object Three extends ThreeColorOps, ThreeVec3Ops, ThreeNormalOps, ThreeRadiansOp
             frames: ThreeFrames,
             attrs: UI.Ast.Attrs = UI.Ast.Attrs()
         )(using val frame: Frame)
-            extends Node:
+            extends Node, Embedded:
             type Self = Embed
             def children: Chunk[Three] = Chunk.empty
-            // `scene` is a `Three` (sole subtype `Node`, a `UI` via BackendNode).
-            override private[kyo] def backendChildren: Chunk[UI]                      = Chunk(scene).map { case n: Node => n }
+            // The addressable backend children: the scene at index 0 and the render camera at index 1
+            // (each a `Three` whose sole subtype is `Node`, a `UI` via BackendNode). Indexing the camera
+            // here lets the reactive walk discover a signal-bound lookAt/position on it and drive it by
+            // path (a camera SetProp), matching the client-side camera index at path :+ "1".
+            override private[kyo] def backendChildren: Chunk[UI]                      = Chunk(scene, camera).map { case n: Node => n }
             override private[kyo] def boundProps: Chunk[UI.Ast.BackendNode.BoundProp] = Chunk.empty
             // Embed is the one Node the kyo-ui reactive walk SSRs a placeholder tag for (the scene root,
             // Node.placeholder's own comment); it reads its own settable `attrs` rather than the base's
-            // hardcoded empty one, so `.id` below actually reaches the rendered `<canvas>`.
+            // hardcoded empty one, so the Embedded.id setter reaches the rendered `<canvas>`.
             override private[kyo] def placeholder: UI.Ast.BackendNode.Placeholder =
                 UI.Ast.BackendNode.Placeholder("canvas", attrs)
-            // Embed cannot mix Element/Inline to inherit Element.id (Element.children: Chunk[UI] collides
-            // with Node.children: Chunk[Three], since Three is not a UI; the design doc's rationale for
-            // dropping Inline from BackendNode). Overrides BackendNode.id directly against its own
-            // placeholder's attrs, the same call-site shape as Element.id with no such collision.
-            override def id(v: String): Embed = copy(attrs = attrs.copy(identifier = Present(v)))
+            // The Embedded.id setter, implemented against Embed's own placeholder attrs.
+            def id(v: String): Embed = copy(attrs = attrs.copy(identifier = Present(v)))
             // Touches ThreeBackend so its object initializer (which self-registers into the client
             // Backend registry, mirroring how DomBackend pre-registers) runs at construction time,
             // guaranteeing registration before ANY later dispatch path (UI.runMount ->
@@ -878,15 +887,16 @@ object Three extends ThreeColorOps, ThreeVec3Ops, ThreeNormalOps, ThreeRadiansOp
                         }
                     case Seq() => Absent // the Foreach holder carries no onClick of its own
             case e: Ast.Embed =>
-                // The Embed carrier's ADDRESSABLE child is backendChildren(0) == scene; its `children` is
-                // EMPTY, so the generic Ast.Node arm below would index e.children -> out of range ->
-                // Absent, silently DROPPING every server-mode 3D click through the embed hop. A click
-                // arriving at the Embed carries relPath ["0", ...] (the scene is materialized/indexed at
-                // path :+ "0"; the ReactiveUI backendChildren descent puts it at path :+ "0"), so map the
-                // leading "0" segment to the scene and continue the walk there. Matched BEFORE the generic
-                // Ast.Node arm.
+                // The Embed carrier's ADDRESSABLE children are backendChildren = (scene, camera); its
+                // `children` is EMPTY, so the generic Ast.Node arm below would index e.children -> out of
+                // range -> Absent, silently DROPPING every server-mode 3D click through the embed hop. A
+                // click arriving at the Embed carries relPath ["0", ...] (the scene is indexed at
+                // path :+ "0"; the ReactiveUI backendChildren descent puts it there), so map the leading
+                // "0" segment to the scene and continue there. "1" addresses the camera (never clickable,
+                // so it resolves Absent), matching backendChildren(1). Matched BEFORE the generic Ast.Node arm.
                 relPath match
                     case "0" +: rest => resolveOnClick(e.scene, rest, pointer)
+                    case "1" +: rest => resolveOnClick(e.camera, rest, pointer)
                     case _           => Absent // no other child index exists on an Embed
             case n: Ast.Node =>
                 relPath match
@@ -1085,9 +1095,10 @@ object Three extends ThreeColorOps, ThreeVec3Ops, ThreeNormalOps, ThreeRadiansOp
     )(using Frame): kyo.internal.Image < (Async & Scope & Abort[ThreeException]) =
         ThreeMount.toImage(scene, camera, width, height)
 
-    /** Embeds `scene` as a first-class child of a kyo-ui tree: returns a `UI.Ast.BackendNode` whose
-      * `<canvas>` kyo-ui lays out and renders on every runner, registry-dispatched to `ThreeBackend`
-      * at mount. The 3D scene mounts at page mount and disposes at page teardown (client-side); the
+    /** Embeds `scene` as a first-class child of a kyo-ui tree: returns a [[Three.Embedded]] (a
+      * `UI.Ast.BackendNode`, so it is a valid `UI` child) whose `<canvas>` kyo-ui lays out and renders
+      * on every runner, registry-dispatched to `ThreeBackend` at mount. `.id(v)` on the result tags the
+      * `<canvas>`. The 3D scene mounts at page mount and disposes at page teardown (client-side); the
       * renderer, reconciler, GL contexts, and pointer listeners bind to the page mount Scope and are
       * released at teardown. The frame loop runs as a fiber forked under the page Scope: no leaked GL
       * context, no orphaned frame loop. Shared `SignalRef`s bridge exactly as in the side-by-side path.
@@ -1098,7 +1109,7 @@ object Three extends ThreeColorOps, ThreeVec3Ops, ThreeNormalOps, ThreeRadiansOp
         scene: Three,
         camera: Three.Ast.Camera,
         frames: ThreeFrames = ThreeFrames.Raf
-    )(using Frame): UI.Ast.BackendNode =
+    )(using Frame): Three.Embedded =
         Three.Ast.Embed(scene, camera, frames)
 
 end Three

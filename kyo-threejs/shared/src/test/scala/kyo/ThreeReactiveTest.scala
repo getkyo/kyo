@@ -1,6 +1,7 @@
 package kyo
 
 import kyo.internal.Reconciler
+import kyo.internal.ThreeFacadeOps
 
 /** Tests for the reactive-region observe wiring in [[ThreeMount]].
   *
@@ -9,6 +10,42 @@ import kyo.internal.Reconciler
   * spy call counts, no mock objects.
   */
 class ThreeReactiveTest extends ThreeTest:
+
+    "recordCamera makes the render camera's lookAt(Signal) discoverable in boundRefs, and applying its patch re-aims the live camera" in {
+        Signal.initRef(Three.Vec3.zero).map { lookRef =>
+            // A camera at (0,0,5) whose lookAt is signal-bound: recordCamera must place it in mounted.live
+            // so boundRefs discovers its lookAt Bound.Ref (the client-local reactivity the docs claim).
+            val cameraNode = Three.Camera.perspective(position = Three.Vec3(0, 0, 5)).lookAt(lookRef)
+            val scene      = Three.scene(Three.mesh(Three.Geometry.box(), Three.Material.basic()))
+            Scope.run {
+                for
+                    (_, mounted) <- Reconciler.mount(scene)
+                    cam          <- ThreeFacadeOps.makeCamera(cameraNode)
+                    _            <- ThreeMount.recordCamera(mounted, cameraNode, cam)
+                yield
+                    import AllowUnsafe.embrace.danger
+                    val refs   = ThreeMount.boundRefs(mounted)
+                    val camRef = refs.find { case (live, _, _) => live.obj eq cam }
+                    // The camera's lookAt Bound.Ref is present (before recordCamera it never was, because
+                    // the camera is not in mounted.live).
+                    assert(camRef.isDefined)
+                    val (_, patch, _) = camRef.get
+                    // Seed: camera at (0,0,5) looking at the origin (the Bound.Ref seed) -> rotation (0,0,0).
+                    val beforeY = cam.rotation.y.asInstanceOf[Double]
+                    // A lookAt emission targeting (5,0,5) aims the camera along +X: a clean -pi/2 rotation
+                    // about Y with no X/Z component (an off-axis target avoids the Euler ambiguity of a
+                    // 180-degree flip).
+                    patch(Three.Vec3(5, 0, 5))(cam)
+                    val ax = cam.rotation.x.asInstanceOf[Double]
+                    val ay = cam.rotation.y.asInstanceOf[Double]
+                    val az = cam.rotation.z.asInstanceOf[Double]
+                    assert(math.abs(beforeY) < 1e-6)
+                    assert(math.abs(ax) < 1e-3)
+                    assert(math.abs(az) < 1e-3)
+                    assert(math.abs(math.abs(ay) - math.Pi / 2) < 1e-3)
+            }
+        }
+    }
 
     "signal position emits a patch that mutates exactly the bound object" in {
         Signal.initRef(Three.Vec3(0, 0, 0)).map { posRef =>

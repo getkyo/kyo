@@ -239,11 +239,10 @@ class ReconcilerTest extends ThreeTest:
     }
 
     "a raw Three.reactive(Signal.initConst(...)) region does not churn: runReactiveRegion materializes it exactly once" in {
-        // Signal.initConst's current/next both resolve immediately with the SAME instance, so a bare
-        // Loop.foreach over signal.next would treat every resolution as a genuine change and fire step
-        // forever, continuously disposing and re-materializing the subtree. watchDistinct dedups the raw
-        // Absent arm the same way it already dedups the Foreach/render arms, so this region must
-        // materialize exactly once no matter how many scheduler turns the watcher fiber gets.
+        // Signal.initConst.current returns the value; its next parks (a constant has no next value), so
+        // watchDistinct materializes once on its first read and then parks on the dedup branch's next.
+        // This region therefore materializes exactly once no matter how many scheduler turns the watcher
+        // fiber gets; a bare Loop.foreach over signal.next would instead re-fire step on every wakeup.
         val leaf  = Three.mesh(Three.Geometry.box(), Three.Material.basic())
         val node  = Three.reactive(Signal.initConst(leaf: Three))
         val scene = Three.scene(node)
@@ -262,7 +261,7 @@ class ReconcilerTest extends ThreeTest:
                     yield ()
                 }
             )
-            // The first materialize is necessary (both the old bare loop and the fix reach it): wait for it.
+            // The first materialize always happens (a reactive region renders its initial value): wait for it.
             _          <- Abort.run[Closed](materialized.take)
             afterFirst <- matCount.get
             // Bounded scheduler-yield sweep (mirrors ThreeMountTest's "interrupt cascades" leaf): give the
@@ -282,6 +281,59 @@ class ReconcilerTest extends ThreeTest:
             assert(afterFirst == 1, s"the raw const-driven region must materialize exactly once, got $afterFirst")
             assert(!grew, "the raw const-driven region must not keep re-materializing across further scheduler turns")
             assert(finalCount == 1, s"a const-driven raw reactive must never churn past its first materialize, got $finalCount")
+        end for
+    }
+
+    "a const-driven raw reactive parks its watcher after the first reconcile (no next-spin)" in {
+        // The churn leaf above counts materializes, which fire once whether the watcher parks or spins, so
+        // it cannot see a spin. This leaf makes the parking observable: it wraps a real initConst in a
+        // counting delegate whose currentWith/nextWith increment counters before delegating, so the const's
+        // parked next is the parking under test. A parked watcher calls next exactly once and reads exactly
+        // three times (the fill read, the first loop read, the dedup re-read); a spinning watcher would
+        // drive both counters up on every scheduler turn.
+        val leaf = Three.mesh(Three.Geometry.box(), Three.Material.basic())
+        for
+            reads        <- AtomicInt.init
+            nexts        <- AtomicInt.init
+            materialized <- Channel.initUnscoped[Unit](1)
+            counting =
+                val inner = Signal.initConst(leaf: Three)
+                Signal.initRaw[Three](
+                    currentWith = [B, S] => f => reads.incrementAndGet.andThen(inner.currentWith(f)),
+                    nextWith = [B, S] => f => nexts.incrementAndGet.andThen(inner.nextWith(f))
+                )
+            scene = Three.scene(Three.reactive(counting))
+            fiber <- Fiber.initUnscoped(
+                Scope.run {
+                    for
+                        mountResult <- Reconciler.mount(scene)
+                        (_, mounted) = mountResult
+                        _            = mounted.subscribeElement = _ => Abort.run[Closed](materialized.offer(())).unit
+                        _ <- Reconciler.fillReactiveRegionsOnce(mounted)
+                        region = Reconciler.reactiveRegions(mounted).head
+                        _ <- Reconciler.runReactiveRegion(region, mounted)
+                    yield ()
+                }
+            )
+            // Wait for the first materialize, then give the watcher scheduler turns until its single dedup-
+            // branch next registers (proof it reached its park point). Both waits are bounded, no sleep.
+            _ <- Abort.run[Closed](materialized.take)
+            _ <- Loop.indexed { i =>
+                if i >= 50 then Loop.done(())
+                else Fiber.initUnscoped(Kyo.unit).map(_.get).andThen(nexts.get.map(n => if n >= 1 then Loop.done(()) else Loop.continue))
+            }
+            // 50 more scheduler turns: a parked watcher's counters stay frozen; a spinning one climbs.
+            grew <- Loop.indexed { i =>
+                if i >= 50 then Loop.done(false)
+                else Fiber.initUnscoped(Kyo.unit).map(_.get).andThen(nexts.get.map(n => if n > 1 then Loop.done(true) else Loop.continue))
+            }
+            finalNexts <- nexts.get
+            finalReads <- reads.get
+            _          <- fiber.interrupt
+        yield
+            assert(!grew, "a const-driven watcher must park on next, never spin across further scheduler turns")
+            assert(finalNexts == 1, s"the parked watcher calls next exactly once, got $finalNexts")
+            assert(finalReads == 3, s"reads freeze at 3 (fill + first loop read + dedup re-read), got $finalReads")
         end for
     }
 

@@ -4,9 +4,9 @@ import kyo.*
 import kyo.Svg
 import kyo.UI.*
 
-// The region-kind discriminator, replacing the earlier propMeta Maybe. The earlier two-way
-// Present/Absent becomes a THREE-way sealed kind (Dom / Prop / Structural) so a structural region has a
-// distinct outcome from a DOM subtree without a second cost-without-benefit Maybe beside propMeta.
+// The region-kind discriminator: a sealed three-way kind (Dom / Prop / Structural) so a structural
+// region has a distinct outcome from a DOM subtree and a bound-prop region, each routed to its own wire
+// op by subscribeScoped.
 sealed private[kyo] trait RegionKind derives CanEqual
 private[kyo] object RegionKind:
     case object Dom                                           extends RegionKind
@@ -102,10 +102,9 @@ private[kyo] object ReactiveUI:
             case bn: UI.Ast.BackendNode =>
                 // Assign this node's path, then descend backendChildren (index-addressed like DOM children,
                 // path :+ i), boundProps (each a per-key reactive region at path :+ key), and the structural
-                // region (at the node's OWN path), emitting NO HTML. Matches a backend node first/
-                // explicitly: a pure 3D node is not an Element (so it cannot fall through to the Element
-                // arm); placed BEFORE the Element arm only so the transitional Host (a BackendNode that also
-                // mixes Inline) is matched here.
+                // region (at the node's OWN path), emitting NO HTML. Matched BEFORE the Element arm: a
+                // BackendNode is not an Element, so it must be routed here (descend backendChildren/
+                // boundProps) rather than falling through to the Element arm's HTML descent.
                 for
                     childNodes <- Kyo.foreach(bn.backendChildren.toSeq.zipWithIndex) { (child, i) =>
                         normalize(child, path :+ i.toString, svg = false)
@@ -140,11 +139,11 @@ private[kyo] object ReactiveUI:
                 // changes), and subscribeScoped still walks `children` regardless of isConst, so the
                 // propRegions/structRegions/childNodes are subscribed either way. Marking this node
                 // non-const when boundProps/structuralRegion is nonempty would make subscribeScoped
-                // `observe` a signal that can never emit a second value, so its one-shot renderValue call
-                // (the Dom-kind branch) re-walks this same node via walkStatic -> normalize and
-                // re-subscribes a fresh copy of the whole subtree, forking without bound. Const avoids
-                // observing this node's own signal at all; only the propRegions'/structRegions' real
-                // (changing) signals are individually observed.
+                // `observe` a signal that never changes, running its Dom-kind renderValue once to
+                // redundantly re-walk this same node (walkStatic -> normalize, duplicating the children
+                // already normalized here) and then parking a fiber that can never make progress. Const
+                // avoids observing this node's own signal at all; only the propRegions'/structRegions'
+                // real (changing) signals are individually observed.
                 yield init(
                     path,
                     Signal.initConst(bn: Any),
@@ -463,10 +462,10 @@ private[kyo] object ReactiveUI:
                             targetSatisfies(e.children(i), nodePath :+ seg, targetPath, predicate)
                         case _ => false
                     end match
-            // Text, RawHtml, and a bare (non-Element) BackendNode are leaf content with no
-            // kyo-addressable Element children reachable through this walk, so no event target can
-            // resolve through them: none can satisfy an Element predicate. Every concrete BackendNode
-            // today (Host) also mixes Ast.Inline and is caught by the Element arm above.
+            // Text, RawHtml, and a BackendNode are leaf content for this Element-predicate walk: none
+            // exposes kyo-addressable Element children here, so no Element event target resolves through
+            // them. A BackendNode's own 3D targets route via UIEvent.BackendEvent (backendHandle), not
+            // this walk.
             case _: Text | _: RawHtml | _: BackendNode => false
 
     private def isTargetDisabled(elem: Element, myPath: Seq[String], targetPath: Seq[String])(using Frame): Boolean < Sync =
@@ -722,7 +721,7 @@ private[kyo] object ReactiveUI:
                             _   <- exchange.onChange(Region.StructuralRegion(rui.path, encode), current)
                         yield ()
                     case RegionKind.Dom =>
-                        // A DOM subtree region: value is a UI; render + re-walk children (today's path).
+                        // A DOM subtree region: value is a UI; render it and re-walk its children.
                         val ui = current.asInstanceOf[UI]
                         for
                             now          <- Clock.now

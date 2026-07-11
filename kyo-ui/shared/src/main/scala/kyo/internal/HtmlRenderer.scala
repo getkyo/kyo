@@ -161,9 +161,9 @@ private[kyo] object HtmlRenderer:
                 // <canvas data-kyo-path="1" data-kyo-backend="three"></canvas>.
                 val ph = bn.placeholder
                 w(sb, s"""<${ph.tag} data-kyo-path="${pathAttr(path)}" data-kyo-backend="${esc(bn.backend)}"""")
-                // id/class/style ride renderCommonAttrs (the same pure Attrs renderer the Element arm calls
-                // at :161); a bare placeholder binds no element-specific attr (no Button/Input/checked/href),
-                // so renderElementAttrs is NOT called and the arm stays pure. No children: the HTML descent stops.
+                // id/class/style ride renderCommonAttrs (the same pure Attrs renderer the Element arm uses);
+                // a bare placeholder binds no element-specific attr (no Button/Input/checked/href), so
+                // renderElementAttrs is NOT called and the arm stays pure. No children: the HTML descent stops.
                 renderCommonAttrs(sb, ph.attrs)
                 w(sb, s"></${ph.tag}>")
 
@@ -781,39 +781,58 @@ private[kyo] object HtmlRenderer:
            |    document.head.appendChild(s);
            |  }else if(op.SetProp){
            |    var p=op.SetProp.path;
-           |    var b=backendForPath(p);            // nearest [data-kyo-backend] root; null -> DOM handling
            |    // p's LAST segment is always op.SetProp.key itself (PropRegion's own path is the owning
            |    // node's path with the key appended, ReactiveUI.normalize's BackendNode arm); the node's
            |    // OWN path (what buildPathIndex/byPath key on) is p with that trailing segment dropped.
-           |    if(b){b.patch(p.slice(0,p.length-1),op.SetProp.key,op.SetProp.encoded);}
+           |    __kyoBackendOp(p,function(h){h.patch(p.slice(0,p.length-1),op.SetProp.key,op.SetProp.encoded);});
            |  }else if(op.ReplaceSubtree){
            |    var p=op.ReplaceSubtree.path;
-           |    var b=backendForPath(p);
-           |    if(b){b.replaceSubtree(p,op.ReplaceSubtree.encoded);}
+           |    __kyoBackendOp(p,function(h){h.replaceSubtree(p,op.ReplaceSubtree.encoded);});
            |  }
            |};
-           |// The client-side backend-handle registry: a backend island (ThreeBackend.mount) registers
-           |// {patch,replaceSubtree} keyed by its placeholder's data-kyo-path (the backend root). The SSR
-           |// placeholder is in the DOM before the island mounts, so there is no register-before-push race.
+           |// The client-side backend-handle registry plus a bounded per-root startup buffer. A backend
+           |// island (ThreeBackend.mount) registers its {patch,replaceSubtree} handle under its placeholder's
+           |// data-kyo-path (the backend root) via __kyoBackendsRegister, which runs only after the island
+           |// module loads, hydrates, and mounts. The WS session can push a SetProp/ReplaceSubtree for a root
+           |// BEFORE that root registers (observe fires the current value at subscribe time, inside the window
+           |// between WS-open and island registration); such an op is buffered per root (bounded, oldest
+           |// evicted on overflow so the newest snapshot is never dropped) and flushed in arrival order the
+           |// moment the root registers.
            |window.__kyoBackends=window.__kyoBackends||{};
-           |// Resolves the live backend handle owning `path`: shrink `path` one segment at a time (longest
-           |// prefix first) looking up the DOM element at each shrunk data-kyo-path, and return the first
-           |// one that itself carries data-kyo-backend. A DOM-ancestor walk from the exact `path` would
-           |// find nothing for a boundProp NESTED below a backend node's OWN root (e.g. a 3D scene's
-           |// material.color several AST levels under its <canvas>): the backend's HTML descent stops at
-           |// its own placeholder (HtmlRenderer's BackendNode arm), so no element ever carries a `path`
-           |// deeper than the root, and no such element has a DOM parent chain to climb. Shrinking the
-           |// PATH (not walking the DOM) reaches the root directly; it also covers the shallower case (a
-           |// DOM-rendered element inside a backend's own children) since an ancestor element's own
+           |window.__kyoBackendsPending=window.__kyoBackendsPending||{};
+           |var __kyoBackendsPendingMax=256;
+           |window.__kyoBackendsRegister=window.__kyoBackendsRegister||function(root,handle){
+           |  window.__kyoBackends[root]=handle;
+           |  var buf=window.__kyoBackendsPending[root];
+           |  if(buf){delete window.__kyoBackendsPending[root];buf.forEach(function(op){op(handle);});}
+           |};
+           |// Resolves the backend ROOT PATH owning `path`: shrink `path` one segment at a time (longest
+           |// prefix first) looking up the DOM element at each shrunk data-kyo-path, and return the first one
+           |// that itself carries data-kyo-backend. A DOM-ancestor walk from the exact `path` would find
+           |// nothing for a boundProp NESTED below a backend node's OWN root (e.g. a 3D scene's material.color
+           |// several AST levels under its <canvas>): the backend's HTML descent stops at its own placeholder
+           |// (HtmlRenderer's BackendNode arm), so no element ever carries a `path` deeper than the root.
+           |// Shrinking the PATH (not walking the DOM) reaches the root directly; it also covers the shallower
+           |// case (a DOM-rendered element inside a backend's own children) since an ancestor element's own
            |// data-kyo-path is a prefix of its descendant's by construction.
-           |function backendForPath(path){
+           |function backendRootPath(path){
            |  for(var i=path.length;i>0;i--){
            |    var el=document.querySelector('[data-kyo-path="'+path.slice(0,i).join(".")+'"]');
-           |    if(el&&el.hasAttribute&&el.hasAttribute("data-kyo-backend")){
-           |      return window.__kyoBackends[el.getAttribute("data-kyo-path")]||null;
-           |    }
+           |    if(el&&el.hasAttribute&&el.hasAttribute("data-kyo-backend")){return el.getAttribute("data-kyo-path");}
            |  }
            |  return null;
+           |}
+           |// Routes a backend op addressed by `path` to the owning root's registered handle, applying it
+           |// immediately if the root is registered or buffering `apply` (bounded, oldest evicted) until it
+           |// registers. No backend root -> no-op.
+           |function __kyoBackendOp(path,apply){
+           |  var root=backendRootPath(path);
+           |  if(root===null)return;
+           |  var h=window.__kyoBackends[root];
+           |  if(h){apply(h);return;}
+           |  var buf=window.__kyoBackendsPending[root]||(window.__kyoBackendsPending[root]=[]);
+           |  if(buf.length>=__kyoBackendsPendingMax)buf.shift();
+           |  buf.push(apply);
            |}
            |function fp(el){
            |  while(el&&el!==document.body){

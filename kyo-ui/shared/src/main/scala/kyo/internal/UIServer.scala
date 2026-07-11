@@ -59,7 +59,7 @@ private[kyo] object UIServer:
             def onChange(region: ReactiveUI.Region, value: Any)(using Frame): Unit < Async =
                 region match
                     case dom: ReactiveUI.Region.DomRegion =>
-                        // value is the rendered UI (the DOM region path, unchanged behavior).
+                        // value is the rendered UI: render it and push a Replace for the region's subtree.
                         HtmlRenderer.render(value.asInstanceOf[UI], dom.path).map { html =>
                             push(HtmlOp.Replace(dom.path, HtmlRenderer.wrapReactiveRegion(dom.path, svgContextAt(dom.path), html)))
                         }

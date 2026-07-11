@@ -311,20 +311,22 @@ private[kyo] object Reconciler:
       * New objects materialize under a per-element scope registered with the mount scope; removed
       * elements dispose their GL resources immediately and retire their `mounted.live` entries.
       *
-      * Dedups via [[watchDistinct]] rather than a bare `Loop.foreach(signal.next...)`: `Signal#next`
-      * is a wakeup hint, not a change guarantee (`Signal.initConst`'s `next` resolves immediately with
-      * the SAME value by design, exactly as its own `current` does), so a bare loop over it would
-      * busy-spin `step` forever on a `render`/`foreach` region driven by a constant signal, continuously
-      * disposing and re-materializing live GL resources. A `Foreach`'s own `signal: Signal[Chunk[A]]`
-      * carries the raw, un-rendered data, so it dedups directly. A `Reactive` built via `render`/`when`
-      * carries its raw pre-render data alongside in `serverDrive.dataSignal`; dedup runs on THAT (the
-      * rendered `Three` itself wraps a fresh `onClick` closure on every render, so two renders of the
-      * SAME underlying value are never `equals`, making the rendered value unusable as a dedup key). The
-      * raw `Three.reactive(Signal[Three])` constructor carries no pre-render source (its `serverDrive`
-      * is `Absent`), but its `signal` holds the caller's own `Three` values directly with no per-render
-      * `onClick` remapping, so dedup runs on `r.signal` itself: a `Signal.initConst`-driven raw reactive
-      * dedups reflexively (the SAME instance compares `equals` to itself), while a genuinely different
-      * `Three` value still fires `step`.
+      * Dedups via [[watchDistinct]] rather than a bare `Loop.foreach(signal.next...)`: a `SignalRef`'s
+      * `next` is a wakeup hint, not a change guarantee. Under an ABA write (read v1, a writer installs a
+      * fresh promise for v2, the watcher registers, the writer sets back to v1, the promise completes with
+      * v1) `next` can re-wake carrying a value `equals` to the last one observed, and re-running `step` on
+      * an unchanged value would needlessly dispose and re-materialize live GL resources; `watchDistinct`
+      * suppresses those equal re-wakes. A constant signal takes the same path harmlessly: its `next` parks
+      * (a constant has no next value), so the watcher suspends after the first `step` instead of spinning.
+      * A `Foreach`'s own `signal: Signal[Chunk[A]]` carries the raw, un-rendered data, so it dedups
+      * directly. A `Reactive` built via `render`/`when` carries its raw pre-render data alongside in
+      * `serverDrive.dataSignal`; dedup runs on THAT (the rendered `Three` itself wraps a fresh `onClick`
+      * closure on every render, so two renders of the SAME underlying value are never `equals`, making the
+      * rendered value unusable as a dedup key). The raw `Three.reactive(Signal[Three])` constructor carries
+      * no pre-render source (its `serverDrive` is `Absent`), but its `signal` holds the caller's own `Three`
+      * values directly with no per-render `onClick` remapping, so dedup runs on `r.signal` itself: two
+      * `equals` `Three` values re-wake without re-materializing, while a genuinely different `Three` value
+      * still fires `step`.
       */
     def runReactiveRegion(region: ReactiveRegion, mounted: Mounted)(using
         Frame

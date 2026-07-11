@@ -250,12 +250,13 @@ object UI:
 
     /** Server-push with a configurable page head: like the 1-arg `runHandlers`, but the SSR page
       * is built from `head` so a server-push app can declare a client island bundle through
-      * `head.moduleScript` (a `<script type="module" src="...">` linked into the page). This is
-      * what lets a server-push 3D host reach the browser: the island carries the Scala.js
-      * reconciler that mounts the host, and the page must link it. The 1-arg form delegates here
-      * with the default `PageHead("kyo-ui")`, so there is one implementation and no duplicated
-      * logic. The page GET stays pure SSR (no session, no fiber, no cookie); each WebSocket owns
-      * its own per-connection subscription tree.
+      * `head.moduleScript` (a `<script type="module" src="...">` linked into the page). A page that
+      * embeds a `UI.Ast.BackendNode` (a `Three.embed` canvas, say) links such an island: it hydrates
+      * each backend node's client mount onto the SSR'd placeholder so the backend has a live target,
+      * while the node's reactive props ride the page's own inline WebSocket listener. The 1-arg form
+      * delegates here with the default `PageHead("kyo-ui")`, so there is one implementation and no
+      * duplicated logic. The page GET stays pure SSR (no session, no fiber, no cookie); each WebSocket
+      * owns its own per-connection subscription tree.
       */
     def runHandlers(basePath: String, head: UI.PageHead)(ui: => UI < Async)(using Frame): Seq[HttpHandler[?, ?, ?]] < Sync =
         UIServer.handlers(basePath, head)(ui)
@@ -871,13 +872,9 @@ object UI:
           *
           * Every member is `private[kyo]`: the backend SPI the kyo-ui walk and the registered backends
           * consume, never a user call. PUBLIC as a TYPE so a kyo-threejs `Three.Ast.Node` extends it.
-          *
-          * The one exception is `id`: a `BackendNode` cannot mix `Element` (§ above), so it cannot pick
-          * up `Element.id` for free, yet a caller placing a backend node in a tree needs the same
-          * chainable DOM-id setter `Element.id` gives every other node (e.g. to locate the mounted
-          * `<canvas>` from a test). Declared ABSTRACT here (not defaulted) so it never conflicts with
-          * `Element.id`; kyo-threejs's `Three.Ast.Node`/`Three.Ast.Embed` implement it directly against
-          * their own placeholder.
+          * A backend node carries no chainable id setter here: a producer that wants one (to tag the
+          * SSR'd placeholder element) declares it on its own return type, as `Three.embed` does with
+          * `Three.Embedded.id`.
           */
         trait BackendNode extends UI, Ast.HtmlContent:
             type Self <: BackendNode
@@ -895,7 +892,6 @@ object UI:
             // unaffected; only Three.Ast.Node overrides it. Effectful (the resolution reads server-side
             // signals), exactly as the Reactive/Foreach DOM handle re-reads signal.current.
             private[kyo] def dispatchBackendEvent(relPath: Seq[String], encoded: String)(using Frame): Unit < Async = Kyo.unit
-            def id(v: String): Self
         end BackendNode
 
         object BackendNode:
