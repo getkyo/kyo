@@ -66,12 +66,12 @@ class StatTest extends kyo.test.Test[Any]:
         // object Stat's class initializer runs the SPI scan; force it and snapshot the construction count.
         val _        = Stat.kyoScope
         val baseline = StatTestExporterFactory.constructions.get()
-        // The scan constructs the factory at least once at class-init. object Stat forces TraceExporter.get
-        // from two independent vals (traceExporter's Local.init and the eagerExporterScan hook), so the
-        // class-init construction count is 2, not 1; a duplicate construction is tolerated because a
-        // side-effecting factory constructor (a collector-starting one) gates its start on a CAS, so a
-        // second construction starts nothing new. What this leaf pins is that class-init runs ONCE: no
-        // subsequent metrics-path reference re-scans and re-constructs the factory.
+        // The eagerExporterScan hook constructs the factory at least once at class-init. The exact
+        // construction count is not asserted: it depends on how many exporter-discovery paths run in this
+        // runner fork (a duplicate construction is harmless anyway, because a side-effecting factory
+        // constructor gates its start on a CAS, so a repeat construction starts nothing new). What this
+        // leaf pins is idempotence after class-init: no subsequent metrics-path reference re-scans and
+        // re-constructs the factory, so the count stays at its post-class-init baseline.
         assert(baseline >= 1, s"eager scan constructed the factory at least once at class-init, got $baseline")
         val _c = Stat.initScope("test-idempotent").initCounter("x")
         val _s = Stat.kyoScope
