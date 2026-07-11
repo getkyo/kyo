@@ -93,6 +93,52 @@ class IoUringDriverDeferredCloseGuardTest extends Test:
                 }
             }
         }
+
+        "does not strand the deferred close when one handle is closeHandle'd twice while a recv is in flight (one guard hold per closeAfterDrain entry)" in {
+            PosixTestSockets.assumeUring()
+            given Frame   = Frame.internal
+            val depth     = math.max(256, kyo.net.TransportConfig.default.ioPoolSize * 64)
+            val realUring = Ffi.load[IoUringBindings]
+            val realRing  = Buffer.alloc[Byte](realUring.kyo_uring_sizeof().toInt)
+            val rc        = realUring.io_uring_queue_init(depth, realRing, 0)
+            if rc != 0 then
+                realRing.close()
+                throw Closed("IoUringDriverDeferredCloseGuardTest", summon[Frame], s"queue_init failed: rc=$rc")
+            val spy    = RecordingSocketBindings(Ffi.load[SocketBindings])
+            val driver = TestDrivers.forBindings(realUring, realRing, spy)
+            discard(driver.start())
+            Sync.ensure(Sync.defer(driver.close())) {
+                PosixTestSockets.loopbackPair(spy).map { case (client, accepted) =>
+                    val handle = PosixHandle.socket(accepted, PosixHandle.DefaultReadBufferSize, Absent)
+                    handle.driver = driver
+                    Sync.ensure(Sync.defer(discard(spy.close(client)))) {
+                        val readPromise = Promise.Unsafe.init[ReadOutcome, Abort[Closed]]()
+                        driver.awaitRead(handle, readPromise)
+                        assertEventually(Sync.defer(driver.hasInFlightRead(handle))).map { _ =>
+                            // The production double-close shape (an onFatal closeHandle plus the ReadPump-teardown closeHandle, both drained
+                            // in one pass while an unrelated in-flight op keeps inFlight above zero), collapsed to its driver-level essence:
+                            // two closeHandle calls for the same handle. Both are adjacent in the engine queue and drain in one
+                            // drainEngineOps pass, before the SHUT_RD-forced EOF CQE can reap (the reap carrier runs the whole queued batch
+                            // to completion before it processes a CQE), so both observe inFlight == 1 and both take registerDeferredClose's
+                            // deferral branch. Under the bug the second stacks a redundant beginDeferredClose hold behind the single
+                            // closeAfterDrain entry: the one discharge under-releases the guard, freeResources never runs, and the installed
+                            // close(fd) credit strands forever.
+                            driver.closeHandle(handle)
+                            driver.closeHandle(handle)
+                            // Bounded, not a sleep: the real close(fd) runs only once the recv's CQE reaps and discharges closeAfterDrain,
+                            // on the driver's own dedicated reap thread. spy.closed is a per-fd latch completed only by the real close(fd).
+                            Abort.run[Closed | Timeout](Async.timeout(5.seconds)(spy.closed(accepted).safe.get)).map { outcome =>
+                                assert(
+                                    outcome.isSuccess,
+                                    "the real close(fd) never ran: a second closeHandle stacked a redundant deferred-close guard hold behind " +
+                                        s"the single closeAfterDrain entry, stranding the terminal free forever. Got $outcome"
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 
 end IoUringDriverDeferredCloseGuardTest

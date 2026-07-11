@@ -165,6 +165,42 @@ class IoUringDriverTest extends Test:
             }
         }
 
+        "real: connect armed after the reap loop exits fails Closed promptly (never stranded)" in {
+            PosixTestSockets.assumeUring()
+            // An engine op can land in the engine queue AFTER the reap loop's exit has run its one-shot final drain: the transport's
+            // pool.next() hands out a driver, the owner's close() then wins the race, and the op is offered to a loop that will never
+            // drain again. Without submitEngineOp's offer-then-recheck the op sat in the queue forever: its promise never completed (a
+            // connect arm hung until the transport's 30-second connect deadline) and the never-empty queue blocked the ring teardown.
+            // The recheck drains it on the submitting carrier, so the promise fails Closed promptly through submitConnect's
+            // driver-closed rejection. Waiting on start()'s done fiber makes the ordering deterministic: it completes only when the
+            // reap loop has returned, strictly after the final drain.
+            val driver = IoUringDriver.init(kyo.net.TransportConfig.default)
+            val done   = driver.start()
+            driver.close()
+            done.safe.get.map { _ =>
+                val sockR = sock.socket(PosixConstants.AF_INET, PosixConstants.SOCK_STREAM, 0)
+                val fd    = sockR.value
+                assert(fd >= 0, s"socket() failed: errno=${sockR.errorCode}")
+                SockAddr.encodeInet4(PosixConstants.AF_INET, "127.0.0.1", 9) match
+                    case Present((addr, len)) =>
+                        val handle = PosixHandle.socket(fd, PosixHandle.DefaultReadBufferSize, connectTarget = Present((addr, len)))
+                        handle.driver = driver
+                        val promise = Promise.Unsafe.init[Unit, Abort[Closed]]()
+                        driver.awaitConnect(handle, promise)
+                        Abort.run[Closed](promise.safe.get).map { result =>
+                            addr.close()
+                            discard(sock.close(fd))
+                            result match
+                                case Result.Failure(_: Closed) => succeed
+                                case other => fail(s"expected Closed for a connect armed after driver close, got $other")
+                        }
+                    case Absent =>
+                        discard(sock.close(fd))
+                        fail("could not encode the 127.0.0.1 sockaddr")
+                end match
+            }
+        }
+
         // ---- io_uring gate diagnosis leaves ----
 
         // Probes io_uring_queue_init at depths 2, 32, and 256. Linux-only; NOT gated by assumeUring so it runs even on

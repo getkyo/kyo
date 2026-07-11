@@ -467,6 +467,7 @@ final private[net] class IoUringDriver private[posix] (
     def awaitConnect(handle: PosixHandle, promise: Promise.Unsafe[Unit, Abort[Closed]])(using AllowUnsafe, Frame): Unit =
         // Arm the connect on the reap carrier (single get_sqe producer); see [[submitEngineOp]].
         submitEngineOp(() => submitConnect(promise, handle))
+    end awaitConnect
 
     /** Submit one connect SQE for `promise`, reading the stashed `connectTarget` off the handle. The public [[awaitConnect]] enters via the engine
       * queue; [[reArmStalledSubmits]] re-enters here directly after a CQE batch freed a slot. On a full SQ the connect parks in [[stalledSubmits]]
@@ -1101,9 +1102,18 @@ final private[net] class IoUringDriver private[posix] (
                 end if
                 // Register the deferred close, then re-check: if the reap loop drained the count between the read above and this put, it already
                 // ran (and removed) nothing, so claim the registration back and close here. This closes the close-vs-reap race either way.
-                discard(closeAfterDrain.put(handle.id.packed, handle))
-                if Maybe(inFlight.get(handle.id.packed)).getOrElse(0L) <= 0L then
+                // putIfAbsent, not put: a SECOND closeHandle for this same handle (production pair: an onFatal closeHandle plus the
+                // ReadPump-teardown closeHandle, both drained in one pass while an unrelated send SQE or the STARTTLS upgrade-window recv
+                // keeps inFlight above zero) reaches this branch with the handle ALREADY registered. Stacking a second beginDeferredClose
+                // hold behind the single map entry breaks the one-hold-per-entry pairing: the eventual discharge runs exactly one
+                // endDeferredClose, the guard never returns to zero holders, freeResources never runs, and the installed fdCloseSink credit
+                // strands so close(fd) never runs (the fd leaks with its buffers/engine). Release the redundant hold here to keep the pairing
+                // 1:1; the existing registration's own discharge (decrementInFlight, or teardownRing's sweep) still covers this close request.
+                if closeAfterDrain.putIfAbsent(handle.id.packed, handle) ne null then
+                    discard(handle.endDeferredClose())
+                else if Maybe(inFlight.get(handle.id.packed)).getOrElse(0L) <= 0L then
                     Maybe(closeAfterDrain.remove(handle.id.packed)).foreach(dischargeDeferredClose)
+                end if
             else
                 // A close was already requested by some other, unrelated closer before we could take the hold above: freeResources has
                 // either already run, or will run without ever waiting on a closeAfterDrain entry from us, so registering one here would
@@ -1265,7 +1275,10 @@ final private[net] class IoUringDriver private[posix] (
             // before this close), so go through tryTeardown rather than freeing the ring out from under it.
             if !started.get() then
                 reapExited.set(true)
-                tryTeardown()
+                // Drain anything already queued (each op fails through its driver-closed rejection; a never-started loop can never run
+                // them) before the teardown attempt, so a pre-start arming op cannot strand its promise or block the ring teardown.
+                drainAfterReapExit()
+            end if
         end if
     end close
 
@@ -1276,6 +1289,72 @@ final private[net] class IoUringDriver private[posix] (
       */
     private def tryTeardown()(using AllowUnsafe, Frame): Unit =
         if closedFlag.get() && reapExited.get() && engineQueue.isEmpty then teardownRing()
+
+    // Serializes post-reap-exit engine-queue drains (see drainAfterReapExit): once the reap carrier has exited, late-submitted ops are
+    // drained by the submitting carriers themselves, and this claim keeps those drains AND the ring teardown mutually exclusive so the
+    // engine FIFO's at-most-one-op-at-a-time guarantee holds through the terminal window, and so teardownRing never frees ring/handle
+    // state while another carrier is mid-execution of a drained op.
+    // Unsafe: body field created with no ambient AllowUnsafe; the danger bridge builds it here and its accesses run under the caller's
+    // AllowUnsafe (mirrors IoDriverPool.closedFlag).
+    private val lateDrainClaim = AtomicBoolean.Unsafe.init(false)(using AllowUnsafe.embrace.danger)
+
+    // The carrier thread currently holding lateDrainClaim, or null. Read by submitEngineOp's offer-then-recheck to detect a RE-ENTRANT
+    // offer: a drained op (a closeHandle thunk whose freeResources routes engineFreeSink through submitEngineOp while ringExited is still
+    // false) enqueues a follow-up op from INSIDE drainEngineOps, on the very carrier that holds the claim. That follow-up is already
+    // picked up by the ongoing tail-recursive drainEngineOps in the same pass, so re-entering drainAfterReapExit for it would only spin
+    // forever on the claim this carrier already holds. Skipping the recheck on the owning carrier avoids that self-deadlock.
+    @volatile private var lateDrainOwner: Thread = null
+
+    /** Drain the engine queue once the reap carrier can no longer do it (the reap loop exited, or `close()` ran with no loop ever started),
+      * then attempt the ring teardown, both under [[lateDrainClaim]]. This is the recheck half of [[submitEngineOp]]'s offer-then-recheck:
+      * an op that lands in [[engineQueue]] after the reap-loop exit's final drain has no executor left, so its promise never completes (a
+      * connect arm, for one, parks until the transport's connect deadline fails it 30 seconds later) and the never-empty queue blocks the
+      * ring teardown forever (the kernel ring and the wake eventfd leak). Every op drained here runs with `closedFlag` set, so the arming
+      * helpers fail their promises through their driver-closed rejection without touching the ring, exactly as the reap-loop exit's own
+      * final drain runs them.
+      *
+      * The [[lateDrainClaim]] CAS keeps post-exit drains AND the teardown mutually exclusive. The teardown attempt runs WHILE STILL
+      * HOLDING the claim, with the queue-empty recheck under the claim: `drainEngineOps` polls an op off the queue before running it, so a
+      * currently-executing op is invisible to `engineQueue.isEmpty`. Were the teardown outside the claim, `teardownRing` could clear
+      * `inFlight` / free a handle's engine and buffers while another carrier's drained op still reads them (a kernel UAF against a
+      * recv SQE whose hold is only released by `io_uring_queue_exit`, and a SIGSEGV against a freed engine). Holding the claim across both
+      * drain and teardown makes op execution and teardown non-overlapping, so a drained op runs either wholly before teardown (with
+      * bookkeeping still truthful) or wholly after (`ringExited == true`, where the close paths free inline and are UAF-safe by the ring
+      * doctrine).
+      *
+      * A carrier that loses the claim spins while the queue is non-empty (its own offered op is still pending, so it must drain it), and
+      * returns once the queue is observably empty (the holder has already polled every offered op and will run the emptiness recheck and
+      * teardown under its claim). The spin is bounded: post-close producers are finite and each op is a short rejection or inline-close path.
+      */
+    private def drainAfterReapExit()(using AllowUnsafe, Frame): Unit =
+        var settled = false
+        while !settled do
+            if lateDrainClaim.compareAndSet(false, true) then
+                lateDrainOwner = Thread.currentThread()
+                try
+                    drainEngineOps()
+                    // Recheck emptiness UNDER the claim: an op is either already drained above, or still queued (loop again to drain it),
+                    // so the teardown never fires while a drained op is mid-execution on another carrier.
+                    if engineQueue.isEmpty then
+                        tryTeardown()
+                        // Recheck AGAIN after the teardown: teardownRing fails every pending promise inline, and a Read/Connect
+                        // promise-completion callback can synchronously route a Connection close back into closeHandle -> submitEngineOp
+                        // on THIS (owner) carrier, whose recheck is skipped by the owner guard. Draining that late op needs one more
+                        // claimed pass (post-teardown execution is the safe inline-close path); the re-run tryTeardown is a teardownDone
+                        // no-op. Bounded: those callbacks are finite, so the queue empties and settles.
+                        settled = engineQueue.isEmpty
+                    end if
+                finally
+                    lateDrainOwner = null
+                    lateDrainClaim.set(false)
+                end try
+            else if engineQueue.isEmpty then
+                // The claim holder has already polled every offered op (that is why the queue reads empty) and will run the emptiness
+                // recheck and teardown under its claim; nothing is left for this carrier to drain.
+                settled = true
+            end if
+        end while
+    end drainAfterReapExit
 
     /** Tear the ring down exactly once: fail every pending op's promise, release the per-write buffers still held, drop the bookkeeping,
       * exit the kernel ring, and free the cqePtr scratch. Reached only through `tryTeardown`, which fires it from whichever of the reap-loop
@@ -1623,9 +1702,9 @@ final private[net] class IoUringDriver private[posix] (
             reapExited.set(true)
             // Run every still-queued op once more: closedFlag is set, so each arming op fails its promise through the `awaitRead`/`submitRecv`
             // driver-closed rejection rather than being dropped (which would strand a read/write pump waiting on a promise that never completes).
-            // The reap carrier is the sole ring owner, so once it has drained and exited no other carrier can touch the ring.
-            drainEngineOps()
-            tryTeardown()
+            // Routed through drainAfterReapExit (not a bare drainEngineOps): reapExited is already visible, so a concurrent submitEngineOp
+            // may be running its own post-exit drain, and the shared lateDrainClaim keeps the two mutually exclusive.
+            drainAfterReapExit()
         end if
     end reapLoop
 
@@ -2161,8 +2240,12 @@ final private[net] class IoUringDriver private[posix] (
     private def submitBatched()(using AllowUnsafe): Unit = discard(pendingSubmits.incrementAndGet())
 
     private def flushSubmits()(using AllowUnsafe, Frame): Unit =
-        val n = pendingSubmits.getAndSet(0L)
-        if n > 0L then submitPrepared(n, 0)
+        // Never submit on a ring that io_uring_queue_exit has already freed: a closeListener engine op drained AFTER the teardown (its
+        // thunk calls flushSubmits before closeFd) would otherwise io_uring_submit on the exited ring. `ringExited`, not `closedFlag`, is
+        // the precise gate: it flips only after queue_exit, so the graceful pre-teardown drain still flushes its prepared SQEs normally.
+        if !ringExited.get() then
+            val n = pendingSubmits.getAndSet(0L)
+            if n > 0L then submitPrepared(n, 0)
 
     /** Submit the `remaining` prepared SQEs, re-submitting on a short count and re-queuing on a transient failure so a prepared SQE is never
       * silently stranded (libuv #4598, CWE-252). `io_uring_submit` returns the count of SQEs it consumed, or a negative `-errno` (e.g. `-EBUSY`
@@ -2205,6 +2288,14 @@ final private[net] class IoUringDriver private[posix] (
         // unconditional (the kernel counter coalesces concurrent writes); a no-op when there is no wake eventfd (the loop then discovers the op via
         // its bounded fallback park).
         wakeReapLoop()
+        // Offer-then-recheck (mirrors closeHandle's pendingCloses put-then-recheck): once the reap loop has exited, its one-shot final
+        // drain never runs again, so an op that landed after that drain has no executor: its promise never completes (a client connect
+        // armed here hangs until the transport's connect deadline) and the never-empty queue blocks the ring teardown. reapExited is set
+        // strictly before the final drain, so either that drain sees this op, or this recheck observes reapExited and drains it here.
+        // Skipped when THIS carrier already holds the late-drain claim (a re-entrant offer from inside a drained op, e.g. engineFreeSink):
+        // the ongoing tail-recursive drainEngineOps polls the just-offered op in the same pass, so re-entering here would only spin on the
+        // claim this carrier holds (see lateDrainOwner).
+        if reapExited.get() && (lateDrainOwner ne Thread.currentThread()) then drainAfterReapExit()
     end submitEngineOp
 
     /** Drain every queued engine/submission op in order on the CURRENT (reap) carrier, running each to completion before the next, then return.
