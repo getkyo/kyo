@@ -270,6 +270,7 @@ lazy val kyoJVM: Project = project
         `kyo-stats-registry`.jvm,
         `kyo-config`.jvm,
         `kyo-stats-otlp`.jvm,
+        `kyo-machine`.jvm,
         `kyo-logging-jpl`.jvm,
         `kyo-logging-slf4j`.jvm,
         `kyo-reactive-streams`.jvm,
@@ -338,6 +339,7 @@ lazy val kyoJS = project
         `kyo-config`.js,
         `kyo-reactive-streams`.js,
         `kyo-stats-otlp`.js,
+        `kyo-machine`.js,
         `kyo-zio-test`.js,
         `kyo-zio`.js,
         `kyo-cats`.js,
@@ -410,6 +412,7 @@ lazy val kyoNative = project
         `kyo-zio-test`.native,
         `kyo-stm`.native,
         `kyo-stats-otlp`.native,
+        `kyo-machine`.native,
         `kyo-browser`.native,
         `kyo-slack`.native,
         `kyo-ui`.native,
@@ -1114,6 +1117,20 @@ lazy val `kyo-config` =
         .nativeSettings(`native-settings`)
         .jsSettings(`js-settings`)
         .wasmSettings(`wasm-settings`)
+
+lazy val `kyo-machine` =
+    crossProject(JVMPlatform, JSPlatform, NativePlatform)
+        .crossType(CrossType.Full)
+        .in(file("kyo-machine"))
+        .dependsOn(`kyo-ffi`)
+        .withKyoTest
+        .settings(`kyo-settings`)
+        .jvmSettings(mimaCheck(false))
+        .nativeSettings(`native-settings`)
+        .jsSettings(
+            `js-settings`,
+            scalaJSLinkerConfig ~= { _.withModuleKind(ModuleKind.CommonJSModule) }
+        )
 
 lazy val `kyo-stats-otlp` =
     crossProject(JVMPlatform, JSPlatform, NativePlatform, WasmPlatform)
