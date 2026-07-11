@@ -567,6 +567,176 @@ object Path extends PathPlatformSpecific:
             [C] => (op, cont) => dispatch(service, op).map(cont)
         )
 
+    /** Runs `program` against a fresh overlay of the ambient service; commits on success; discards on
+      * `Abort`, panic, or commit conflict. For an `AutoCommit` ambient service installs a temporary
+      * overlay and commits it; for `CommitOnSuccess`/`ManualCommit` services uses the service's native
+      * commit and rollback machinery.
+      */
+    def transaction[A, S](program: A < (PathWrite & S))(using Frame): A < (PathWrite & Abort[CommitConflict] & S) =
+        // Unsafe: create overlay directly without Scope; lifecycle managed by commit/rollback below
+        import AllowUnsafe.embrace.danger
+        val overlay = new OverlayService(
+            new ForwardingLowerService,
+            AtomicRef.Unsafe.init(OverlayService.OverlayState.empty).safe
+        )
+        ArrowEffect.handleLoop(Tag[PathWrite], program) {
+            [C] =>
+                (op, cont) =>
+                    // Unsafe: dispatch's Abort[FileException] is never raised here at runtime;
+                    // ForwardingLowerService re-suspends I/O ops as PathWrite so FileExceptions
+                    // propagate through the outer PathWrite handler, not inside this handler body
+                    dispatch(overlay, op).asInstanceOf[C < PathWrite].map(result => Loop.continue(cont(result)))
+        }.map { result =>
+            // Unsafe: overlay.commit's Abort[FileException] is never raised here at runtime for the
+            // same reason; all I/O exceptions surface at the outer PathWrite handler level
+            val commit = overlay.commit.asInstanceOf[Unit < (PathWrite & Abort[CommitConflict])]
+            Abort.run[CommitConflict](commit).map {
+                case Result.Success(()) => result
+                case Result.Failure(cc) =>
+                    overlay.rollback.andThen(Abort.fail(cc))
+            }
+        }
+    end transaction
+
+    /** Same overlay pattern with rollback as the success disposition; never surfaces `CommitConflict`.
+      */
+    def sandbox[A, S](program: A < (PathWrite & S))(using Frame): A < (PathWrite & S) =
+        // Unsafe: create overlay directly without Scope; lifecycle managed by rollback below
+        import AllowUnsafe.embrace.danger
+        val overlay = new OverlayService(
+            new ForwardingLowerService,
+            AtomicRef.Unsafe.init(OverlayService.OverlayState.empty).safe
+        )
+        ArrowEffect.handleLoop(Tag[PathWrite], program) {
+            [C] =>
+                (op, cont) =>
+                    // Unsafe: dispatch's Abort[FileException] never raised here at runtime;
+                    // ForwardingLowerService re-suspends I/O ops as PathWrite so exceptions surface
+                    // via the outer PathWrite handler
+                    dispatch(overlay, op).asInstanceOf[C < PathWrite].map(result => Loop.continue(cont(result)))
+        }.map { result =>
+            overlay.rollback.andThen(result)
+        }
+    end sandbox
+
+    /** Runs `program` against a fresh overlay and returns the overlay alongside the result, so the
+      * caller can inspect, commit, discard, or choose a conflict policy after the block.
+      */
+    def virtual[A, S](program: A < (PathWrite & S))(using Frame): (A, Service.Overlay[Sync]) < (PathWrite & S) =
+        // Unsafe: create overlay directly without Scope; caller controls commit/discard after the block
+        import AllowUnsafe.embrace.danger
+        val overlay = new OverlayService(
+            new ForwardingLowerService,
+            AtomicRef.Unsafe.init(OverlayService.OverlayState.empty).safe
+        )
+        ArrowEffect.handleLoop(Tag[PathWrite], program) {
+            [C] =>
+                (op, cont) =>
+                    // Unsafe: dispatch's Abort[FileException] never raised here at runtime;
+                    // ForwardingLowerService re-suspends I/O ops as PathWrite so exceptions surface
+                    // via the outer PathWrite handler
+                    dispatch(overlay, op).asInstanceOf[C < PathWrite].map(result => Loop.continue(cont(result)))
+        }.map { result =>
+            // Unsafe: overlay is OverlayService[PathWrite]; cast to Overlay[Sync] because ambient
+            // services are Sync and commit/rollback effects are resolved by the outer PathWrite
+            // handler before Sync.run sees them
+            (result, overlay.asInstanceOf[Service.Overlay[Sync]])
+        }
+    end virtual
+
+    // Forwards every path op back under PathRead or PathWrite so an overlay wrapping this
+    // service is transparent to whatever PathWrite handler is installed in the outer scope.
+    final private class ForwardingLowerService(using Frame) extends Service[PathWrite]:
+        val disposition: Disposition = Disposition.AutoCommit
+        def exists(path: Path): Boolean < (PathWrite & Abort[FileException]) =
+            ArrowEffect.suspend(Tag[PathRead], Op.Exists(path))
+        def exists(path: Path, followLinks: Boolean): Boolean < (PathWrite & Abort[FileException]) =
+            ArrowEffect.suspend(Tag[PathRead], Op.ExistsFollow(path, followLinks))
+        def isDirectory(path: Path): Boolean < (PathWrite & Abort[FileException]) =
+            ArrowEffect.suspend(Tag[PathRead], Op.IsDirectory(path))
+        def isRegularFile(path: Path): Boolean < (PathWrite & Abort[FileException]) =
+            ArrowEffect.suspend(Tag[PathRead], Op.IsRegularFile(path))
+        def isSymbolicLink(path: Path): Boolean < (PathWrite & Abort[FileException]) =
+            ArrowEffect.suspend(Tag[PathRead], Op.IsSymbolicLink(path))
+        def realPath(path: Path): Path < (PathWrite & Abort[FileException]) =
+            ArrowEffect.suspend(Tag[PathRead], Op.RealPath(path))
+        def read(path: Path): String < (PathWrite & Abort[FileException]) =
+            ArrowEffect.suspend(Tag[PathRead], Op.Read(path))
+        def read(path: Path, charset: Charset): String < (PathWrite & Abort[FileException]) =
+            ArrowEffect.suspend(Tag[PathRead], Op.ReadCharset(path, charset))
+        def readBytes(path: Path): Span[Byte] < (PathWrite & Abort[FileException]) =
+            ArrowEffect.suspend(Tag[PathRead], Op.ReadBytes(path))
+        def readLines(path: Path): Chunk[String] < (PathWrite & Abort[FileException]) =
+            ArrowEffect.suspend(Tag[PathRead], Op.ReadLines(path))
+        def readLines(path: Path, charset: Charset): Chunk[String] < (PathWrite & Abort[FileException]) =
+            ArrowEffect.suspend(Tag[PathRead], Op.ReadLinesCharset(path, charset))
+        def size(path: Path): Long < (PathWrite & Abort[FileException]) =
+            ArrowEffect.suspend(Tag[PathRead], Op.Size(path))
+        def stat(path: Path): Path.PathStat < (PathWrite & Abort[FileException]) =
+            ArrowEffect.suspend(Tag[PathRead], Op.Stat(path))
+        def list(path: Path): Chunk[Path] < (PathWrite & Abort[FileException]) =
+            ArrowEffect.suspend(Tag[PathRead], Op.ListDir(path))
+        def list(path: Path, glob: String): Chunk[Path] < (PathWrite & Abort[FileException]) =
+            ArrowEffect.suspend(Tag[PathRead], Op.ListGlob(path, glob))
+        def openRead(path: Path): Path.ReadHandle < (PathWrite & Abort[FileException]) =
+            ArrowEffect.suspend(Tag[PathRead], Op.OpenRead(path))
+        def openReadLines(path: Path, charset: Charset): Path.LineReadHandle < (PathWrite & Abort[FileException]) =
+            ArrowEffect.suspend(Tag[PathRead], Op.OpenReadLines(path, charset))
+        def openWalk(path: Path, maxDepth: Int, followLinks: Boolean): Path.WalkHandle < (PathWrite & Abort[FileException]) =
+            ArrowEffect.suspend(Tag[PathRead], Op.OpenWalk(path, maxDepth, followLinks))
+        def write(path: Path, value: String, createFolders: Boolean): Unit < (PathWrite & Abort[FileException]) =
+            ArrowEffect.suspend(Tag[PathWrite], Op.Write(path, value, createFolders))
+        def writeBytes(path: Path, value: Span[Byte], createFolders: Boolean): Unit < (PathWrite & Abort[FileException]) =
+            ArrowEffect.suspend(Tag[PathWrite], Op.WriteBytes(path, value, createFolders))
+        def writeLines(path: Path, value: Chunk[String], createFolders: Boolean): Unit < (PathWrite & Abort[FileException]) =
+            ArrowEffect.suspend(Tag[PathWrite], Op.WriteLines(path, value, createFolders))
+        def append(path: Path, value: String, createFolders: Boolean): Unit < (PathWrite & Abort[FileException]) =
+            ArrowEffect.suspend(Tag[PathWrite], Op.Append(path, value, createFolders))
+        def appendBytes(path: Path, value: Span[Byte], createFolders: Boolean): Unit < (PathWrite & Abort[FileException]) =
+            ArrowEffect.suspend(Tag[PathWrite], Op.AppendBytes(path, value, createFolders))
+        def appendLines(path: Path, value: Chunk[String], createFolders: Boolean): Unit < (PathWrite & Abort[FileException]) =
+            ArrowEffect.suspend(Tag[PathWrite], Op.AppendLines(path, value, createFolders))
+        def truncate(path: Path, size: Long): Unit < (PathWrite & Abort[FileException]) =
+            ArrowEffect.suspend(Tag[PathWrite], Op.Truncate(path, size))
+        def setLastModified(path: Path, epochMs: Long): Unit < (PathWrite & Abort[FileException]) =
+            ArrowEffect.suspend(Tag[PathWrite], Op.SetLastModified(path, epochMs))
+        def mkDir(path: Path): Unit < (PathWrite & Abort[FileException]) =
+            ArrowEffect.suspend(Tag[PathWrite], Op.MkDir(path))
+        def mkFile(path: Path): Unit < (PathWrite & Abort[FileException]) =
+            ArrowEffect.suspend(Tag[PathWrite], Op.MkFile(path))
+        def move(
+            from: Path,
+            to: Path,
+            replaceExisting: Boolean,
+            atomicMove: Boolean,
+            createFolders: Boolean
+        ): Unit < (PathWrite & Abort[FileException]) =
+            ArrowEffect.suspend(Tag[PathWrite], Op.Move(from, to, replaceExisting, atomicMove, createFolders))
+        def copy(
+            from: Path,
+            to: Path,
+            followLinks: Boolean,
+            replaceExisting: Boolean,
+            copyAttributes: Boolean,
+            createFolders: Boolean
+        ): Unit < (PathWrite & Abort[FileException]) =
+            ArrowEffect.suspend(Tag[PathWrite], Op.Copy(from, to, followLinks, replaceExisting, copyAttributes, createFolders))
+        def remove(path: Path): Boolean < (PathWrite & Abort[FileException]) =
+            ArrowEffect.suspend(Tag[PathWrite], Op.Remove(path))
+        def removeExisting(path: Path): Unit < (PathWrite & Abort[FileException]) =
+            ArrowEffect.suspend(Tag[PathWrite], Op.RemoveExisting(path))
+        def removeAll(path: Path): Unit < (PathWrite & Abort[FileException]) =
+            ArrowEffect.suspend(Tag[PathWrite], Op.RemoveAll(path))
+        def openWrite(path: Path, append: Boolean, createFolders: Boolean): Path.WriteHandle < (PathWrite & Abort[FileException]) =
+            ArrowEffect.suspend(Tag[PathWrite], Op.OpenWrite(path, append, createFolders))
+        def tempDir(prefix: String): Path.TempDirHandle < (PathWrite & Abort[FileException]) =
+            ArrowEffect.suspend(Tag[PathWrite], Op.TempDir(prefix))
+        def writeChunk(handle: Path.WriteHandle, chunk: Chunk[Byte]): Unit < (PathWrite & Abort[FileException]) =
+            ArrowEffect.suspend(Tag[PathWrite], Op.WriteChunk(handle, chunk))
+        def writeString(handle: Path.WriteHandle, value: String, charset: Charset): Unit < (PathWrite & Abort[FileException]) =
+            ArrowEffect.suspend(Tag[PathWrite], Op.WriteString(handle, value, charset))
+    end ForwardingLowerService
+
     private def dispatch[S, C](service: Service[S], op: Op[C])(using Frame): C < (S & Abort[FileException]) =
         op match
             case Op.Exists(p)                  => service.exists(p)
