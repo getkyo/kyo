@@ -68,4 +68,30 @@ class MachineTest extends kyo.test.Test[Any]:
         }
     }
 
+    "a full Linux-shaped read" - {
+
+        // The one leaf in this suite that reads the REAL host instead of a staged fixture: kyo's
+        // MachineLinux hardcodes the real /proc and /sys/fs/cgroup absolute paths with no
+        // fixture-root override, so this is the only way to exercise MachineLinux.read end to end.
+        // Gated to an actual Linux host with /proc present; skipped elsewhere (matching
+        // LinuxBindingsTest's real-host leaf, the sanctioned exception to the
+        // staged-fixture rule the rest of this phase's tests follow).
+        "cpu, memory, and load are recorded present; no exception escapes the read" in {
+            assume(
+                System.live.unsafe.operatingSystem() == System.OS.Linux,
+                "MachineLinux.read targets the real host /proc; only meaningful on Linux"
+            )
+            for
+                handles <- MachineHandles.init
+                sampler = new MachineSampler(handles, MachineLinux)
+                reading = sampler.machineRead()
+                _       = sampler.observe(reading)
+            yield
+                assert(reading.cpu.isDefined)
+                assert(reading.memory.isDefined)
+                assert(reading.load.isDefined)
+            end for
+        }
+    }
+
 end MachineTest

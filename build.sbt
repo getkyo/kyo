@@ -1122,14 +1122,49 @@ lazy val `kyo-machine` =
     crossProject(JVMPlatform, JSPlatform, NativePlatform)
         .crossType(CrossType.Full)
         .in(file("kyo-machine"))
+        .enablePlugins(KyoFfiPlugin)
         .dependsOn(`kyo-ffi`)
         .withKyoTest
-        .settings(`kyo-settings`)
-        .jvmSettings(mimaCheck(false))
+        .settings(
+            `kyo-settings`,
+            ffiCodegenClasspath := (LocalProject("kyo-ffi-codegen") / Compile / fullClasspath).value.map(_.data)
+        )
+        .jvmSettings(
+            mimaCheck(false),
+            Test / javaOptions += "--enable-native-access=ALL-UNNAMED"
+        )
         .nativeSettings(`native-settings`)
         .jsSettings(
             `js-settings`,
-            scalaJSLinkerConfig ~= { _.withModuleKind(ModuleKind.CommonJSModule) }
+            // koffi is loaded via CommonJS `require` at runtime, so align the linker.
+            scalaJSLinkerConfig ~= { _.withModuleKind(ModuleKind.CommonJSModule) },
+            // Bootstrap koffi into Node's resolver before tests run: LinuxBindings is kyo-machine's
+            // first Ffi binding, so its generated JS impl reaches for koffi at module load. Hooked on
+            // Test / compile (not Test / test) so test, testOnly, and testQuick all trigger it, and
+            // it re-runs after a clean wipes node_modules. Idempotent on the marker file.
+            Test / compile := (Test / compile).dependsOn(Def.task {
+                val log        = streams.value.log
+                val targetBase = target.value
+                val nodeMods   = targetBase / "node_modules"
+                val marker     = nodeMods / "koffi" / "package.json"
+                // Must match `kyo.ffi.internal.FfiPlatformErrors.KoffiSupportedRange`.
+                val koffiRange = "^2.7"
+                val pjContent =
+                    s"""{"name":"kyo-machine-js-test","private":true,"dependencies":{"koffi":"$koffiRange"}}"""
+                val pj = targetBase / "package.json"
+                if (!pj.exists() || IO.read(pj) != pjContent) {
+                    IO.createDirectory(targetBase)
+                    IO.write(pj, pjContent)
+                }
+                if (!marker.exists()) {
+                    log.info(s"[kyo-machine JS] installing koffi@$koffiRange into $targetBase ...")
+                    val rc = scala.sys.process.Process(
+                        Seq("npm", "install", "--no-audit", "--no-fund", "--silent"),
+                        targetBase
+                    ).!
+                    if (rc != 0) sys.error(s"npm install koffi failed (exit $rc)")
+                }
+            }).value
         )
 
 lazy val `kyo-stats-otlp` =
