@@ -1,6 +1,9 @@
 package kyo
 
+import java.lang.management.ManagementFactory
+import java.nio.charset.StandardCharsets
 import java.nio.file.Files as JFiles
+import scala.annotation.tailrec
 
 // JVM-only Path tests that require java.nio.file features not available on
 // Scala.js: toJava, Path.of(java.nio.file.Path), and symlink creation.
@@ -168,6 +171,186 @@ class PathJvmTest extends kyo.test.Test[Any]:
             isSymbolicLink <- dst.isSymbolicLink
             _              <- Path(tmp.toString).removeAll
         yield assert(isSymbolicLink)
+        end for
+    }
+
+    // =========================================================================
+    // Retained-ByteBuffer zero-allocation steady-state reads.
+    //
+    // With the NioReadHandle retained-ByteBuffer touch, repeatedly reading the same
+    // file through one handle rewound with position(0) into the SAME reused Array[Byte]
+    // wraps the buffer once and reuses that ByteBuffer thereafter, so the steady-state
+    // read allocates zero bytes per read (only the JDK-internal channel.read work, which
+    // is measured as the zero-payload bound). These are the REAL allocation-profiling
+    // leaves that CAN fail: a per-call ByteBuffer.wrap would show ~tens of bytes per read,
+    // far above the small probe-overhead slack asserted here.
+    //
+    // com.sun.management.ThreadMXBean.getThreadAllocatedBytes(long) is a HotSpot extension,
+    // per-thread and on-thread, so background JIT/compiler allocation on other threads does
+    // not pollute the measurement. The fixture asserts the bean supports allocation counting
+    // up front (fail loud, never silently report 0), then measures only the tight N-read loop.
+    // =========================================================================
+
+    private val allocBean: com.sun.management.ThreadMXBean =
+        ManagementFactory.getThreadMXBean() match
+            case bean: com.sun.management.ThreadMXBean => bean
+            case _                                     => null
+
+    "steady-state retained-handle read allocates at or below the zero-payload bound".onlyJvm in {
+        import AllowUnsafe.embrace.danger
+        for
+            dir <- Path.tempDir("kyo-alloc-steady")
+            file    = dir / "steady.txt"
+            content = "0123456789" * 10 // 100 bytes, fits in the fixed 256-byte reused buffer
+            _ <- file.write(content)
+        yield
+            assert(allocBean != null, "com.sun.management.ThreadMXBean unavailable on this JVM")
+            assert(
+                allocBean.isThreadAllocatedMemorySupported,
+                "ThreadMXBean.getThreadAllocatedBytes is unsupported on this JVM (cannot falsify the allocation bound)"
+            )
+            if !allocBean.isThreadAllocatedMemoryEnabled then allocBean.setThreadAllocatedMemoryEnabled(true)
+
+            val handle = file.unsafe.openRead().getOrThrow
+            try
+                val buffer = new Array[Byte](256)
+                val tid    = Thread.currentThread().getId
+
+                // One read installs the retained ByteBuffer for this backing array (the first-call
+                // miss is intentionally OUTSIDE the measured window).
+                handle.position(0L)
+                val _ = handle.readChunk(buffer)
+
+                // Read the whole small file once; it fits in the buffer, so this is a single chunk
+                // plus the EOF probe, all reusing the retained ByteBuffer.
+                def readWhole(): Int =
+                    handle.position(0L)
+                    @tailrec def loop(total: Int): Int =
+                        val r = handle.readChunk(buffer)
+                        if r.isEof then total else loop(total + r.bytesRead)
+                    loop(0)
+                end readWhole
+
+                // Warmup: settle the JIT on readChunk/position/channel.read before measuring. This read is a
+                // single-chunk read (100 bytes fit the 256-byte buffer) plus one EOF probe.
+                @tailrec def warmup(remaining: Int): Unit =
+                    if remaining > 0 then
+                        val _ = readWhole()
+                        warmup(remaining - 1)
+                warmup(20000)
+
+                val n = 2000
+
+                @tailrec def measured(remaining: Int, acc: Int): Int =
+                    if remaining <= 0 then acc
+                    else measured(remaining - 1, acc + readWhole())
+
+                val before = allocBean.getThreadAllocatedBytes(tid)
+                val total  = measured(n, 0)
+                val after  = allocBean.getThreadAllocatedBytes(tid)
+
+                // Guard against the compiler eliding the reads.
+                assert(total == content.length * n)
+
+                val perRead = (after - before).toDouble / n
+                // The bound is set for falsifiability: a regression to a per-call ByteBuffer.wrap would
+                // allocate a wrapper per readChunk (a full read here is one data chunk plus an EOF probe,
+                // ~2 wrappers/read, ~96 bytes), so the 16-byte bound still fails a genuine per-read wrap
+                // while absorbing residual probe/JIT noise; the retained buffer keeps perRead at ~0.
+                assert(perRead <= 16.0, s"steady-state per-read allocation was $perRead bytes (expected ~0 with the retained ByteBuffer)")
+            finally handle.close()
+            end try
+        end for
+    }
+
+    "grow-to-fit read: a file larger than the initial buffer allocates only the one grow, then 0 per read".onlyJvm in {
+        import AllowUnsafe.embrace.danger
+        for
+            dir <- Path.tempDir("kyo-alloc-grow")
+            file = dir / "grow.txt"
+            // 4000 bytes: larger than the 256-byte scratch chunk buffer, so a full read spans
+            // multiple chunks and the accumulating output buffer grows once to fit.
+            content = "abcdefghij" * 400
+            _ <- file.write(content)
+        yield
+            assert(allocBean != null, "com.sun.management.ThreadMXBean unavailable on this JVM")
+            assert(
+                allocBean.isThreadAllocatedMemorySupported,
+                "ThreadMXBean.getThreadAllocatedBytes is unsupported on this JVM (cannot falsify the allocation bound)"
+            )
+            if !allocBean.isThreadAllocatedMemoryEnabled then allocBean.setThreadAllocatedMemoryEnabled(true)
+
+            val handle = file.unsafe.openRead().getOrThrow
+            try
+                val scratch = new Array[Byte](256)
+                val tid     = Thread.currentThread().getId
+                // The output buffer is grown ONCE up front to a capacity that fits the whole file, so the
+                // measured steady-state loop below never grows it and never allocates: the reads assemble
+                // multi-chunk content into this fixed buffer, reusing the retained scratch ByteBuffer each read.
+                val out = new Array[Byte](256)
+
+                // capFor computes the smallest power-of-two capacity that fits `need`, the doubling grow
+                // policy a chunked accumulating reader uses so this fixture exercises the same shape.
+                @tailrec def capFor(cap: Int, need: Int): Int = if cap >= need then cap else capFor(cap * 2, need)
+
+                // Reads the whole retained handle into `dest` (no grow, `dest` is presized), returning the byte
+                // count. This is Int-returning and allocation-free per call: no tuple, no array is created here.
+                def readInto(dest: Array[Byte]): Int =
+                    handle.position(0L)
+                    @tailrec def loop(total: Int): Int =
+                        val r = handle.readChunk(scratch)
+                        if r.isEof then total
+                        else
+                            val n = r.bytesRead
+                            java.lang.System.arraycopy(scratch, 0, dest, total, n)
+                            loop(total + n)
+                        end if
+                    end loop
+                    loop(0)
+                end readInto
+
+                // The one grow-to-fit: size `out` to the full file once, OUTSIDE the measured window. This is
+                // the single legitimate allocation the grow path incurs.
+                val needed   = capFor(out.length, content.length)
+                val grown    = new Array[Byte](needed)
+                val firstLen = readInto(grown)
+                assert(firstLen == content.length)
+                assert(new String(grown, 0, firstLen, StandardCharsets.UTF_8) == content)
+
+                // Warmup on the already-grown buffer settles the JIT with no further grow. This read is a
+                // 16-chunk loop (4000 bytes / 256-byte scratch), so it needs heavier warmup than the
+                // single-chunk steady leaf to fully compile before the measured window; residual on-thread
+                // recompilation during measurement is what an under-warmed loop leaks into the counter.
+                @tailrec def warmup(remaining: Int): Unit =
+                    if remaining > 0 then
+                        val _ = readInto(grown)
+                        warmup(remaining - 1)
+                warmup(20000)
+
+                val n = 2000
+
+                @tailrec def measured(remaining: Int, accLen: Int): Int =
+                    if remaining <= 0 then accLen
+                    else measured(remaining - 1, accLen + readInto(grown))
+
+                val before   = allocBean.getThreadAllocatedBytes(tid)
+                val totalLen = measured(n, 0)
+                val after    = allocBean.getThreadAllocatedBytes(tid)
+
+                assert(totalLen == content.length * n)
+
+                val perRead = (after - before).toDouble / n
+                // After the single grow, steady-state reads reuse the retained scratch ByteBuffer and the
+                // grown output buffer, so per-read allocation is ~0. The bound is set for falsifiability: a
+                // regression to a per-call ByteBuffer.wrap would allocate one wrapper per readChunk, i.e. 16
+                // wrappers/read here (each ~48 bytes) = ~768 bytes/read, an order of magnitude above 64; the
+                // 64-byte bound absorbs residual JIT/probe noise while still failing a genuine per-read wrap.
+                assert(
+                    perRead <= 64.0,
+                    s"post-grow steady-state per-read allocation was $perRead bytes (expected ~0; only the one grow allocates)"
+                )
+            finally handle.close()
+            end try
         end for
     }
 

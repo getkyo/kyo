@@ -404,9 +404,21 @@ end NioWriteHandle
 /** Concrete read handle backed by a `java.nio.channels.FileChannel`. */
 final private[kyo] class NioReadHandle(channel: FileChannel) extends Path.ReadHandle:
 
+    // Single-owner cache of the last wrapped buffer: a repeated read into the same reused array reuses
+    // this ByteBuffer instead of allocating a fresh wrapper per call. Confined to this handle instance.
+    private var cached: java.nio.ByteBuffer = null
+
     def readChunk(buffer: Array[Byte])(using AllowUnsafe): Path.ReadResult =
-        val bb = java.nio.ByteBuffer.wrap(buffer)
+        val bb =
+            if (cached ne null) && (cached.array eq buffer) then
+                cached.clear()
+                cached
+            else
+                val fresh = java.nio.ByteBuffer.wrap(buffer)
+                cached = fresh
+                fresh
         Path.ReadResult(channel.read(bb))
+    end readChunk
 
     def position(offset: Long)(using AllowUnsafe): Unit =
         discard(channel.position(offset))

@@ -193,6 +193,19 @@ object Stat:
 
     private[kyo] val kyoScope = initScope("kyo")
 
+    /** Forces service-loader discovery of every classpath-present `ExporterFactory` at class
+      * initialization, so a metrics-only app that never opens a trace still constructs each factory.
+      * A factory whose construction starts a background collector (host-metrics sampling) activates
+      * on classpath presence alone. Must remain the last `val` in this object: a discovered factory
+      * constructor runs inside this class initializer and must not observe a later, not-yet-initialized
+      * field.
+      */
+    private[kyo] val eagerExporterScan: Unit =
+        import AllowUnsafe.embrace.danger
+        val _ = TraceExporter.get
+        ()
+    end eagerExporterScan
+
     /** Initialize a new Stat instance with a custom scope.
       * @param first
       *   The first element of the scope path

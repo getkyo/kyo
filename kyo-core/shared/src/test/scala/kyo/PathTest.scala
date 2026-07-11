@@ -2330,4 +2330,87 @@ class PathTest extends kyo.test.Test[Any]:
         yield ()
     }
 
+    // =========================================================================
+    // Retained read handle (NioReadHandle retained ByteBuffer): aliasing safety
+    // and position(0) re-read through a single handle.
+    //
+    // The retained-handle read path reuses one ByteBuffer wrapping the caller's
+    // reused Array[Byte] across calls, so a second readChunk overwrites the same
+    // backing array in place. A caller that copies a primitive out of the borrowed
+    // bytes before the next read is unaffected; a caller that retains the borrowed
+    // Span would see it mutate. These leaves assert the copy-out discipline and
+    // that position(0) rewinds and re-reads identical bytes through the same handle.
+    // =========================================================================
+
+    "the borrowed byte view does not escape the read callback (aliasing safety)" in {
+        import AllowUnsafe.embrace.danger
+        for
+            dir <- Path.tempDir("kyo-readhandle-alias")
+            fileA = dir / "a.txt"
+            fileB = dir / "b.txt"
+            _ <- fileA.write("aaaa")
+            _ <- fileB.write("bbbb")
+        yield
+            val buffer = new Array[Byte](4)
+
+            def readOnce(p: Path)(callback: (Span[Byte], Int) => Long): Long =
+                val handle = p.unsafe.openRead().getOrThrow
+                try
+                    val result = handle.readChunk(buffer)
+                    callback(Span.fromUnsafe(buffer), result.bytesRead)
+                finally handle.close()
+                end try
+            end readOnce
+
+            // The callback copies out a primitive checksum, never retaining the Span.
+            def checksum(span: Span[Byte], len: Int): Long =
+                (0 until len).foldLeft(0L)((sum, i) => sum * 31 + span(i))
+
+            val firstChecksum = readOnce(fileA)(checksum)
+            // A second read into the SAME buffer overwrites the backing array in place.
+            val secondChecksum = readOnce(fileB)(checksum)
+
+            // The copied-out primitive from the first read is unchanged by the second read
+            // overwriting the shared buffer; the two files have distinct content so the
+            // checksums differ, proving the second read really overwrote the array.
+            assert(firstChecksum != secondChecksum)
+            assert(firstChecksum == ("aaaa".getBytes(StandardCharsets.UTF_8).foldLeft(0L)((s, b) => s * 31 + b)))
+        end for
+    }
+
+    "position(0) re-reads the file from offset 0 through one retained handle" in {
+        import AllowUnsafe.embrace.danger
+        for
+            dir <- Path.tempDir("kyo-readhandle-reread")
+            file    = dir / "content.txt"
+            content = "hello-retained-handle"
+            _ <- file.write(content)
+        yield
+            val handle = file.unsafe.openRead().getOrThrow
+            try
+                val buffer = new Array[Byte](64)
+
+                def readAll(): String =
+                    @scala.annotation.tailrec
+                    def loop(acc: String): String =
+                        val result = handle.readChunk(buffer)
+                        if result.isEof then acc
+                        else loop(acc + new String(buffer, 0, result.bytesRead, StandardCharsets.UTF_8))
+                    end loop
+                    loop("")
+                end readAll
+
+                val first = readAll()
+                assert(first == content)
+                // position(0) rewinds; the cache key is the backing array identity, not the
+                // channel position, so the retained ByteBuffer stays valid for the re-read.
+                handle.position(0L)
+                val second = readAll()
+                assert(second == content)
+                assert(first == second)
+            finally handle.close()
+            end try
+        end for
+    }
+
 end PathTest
