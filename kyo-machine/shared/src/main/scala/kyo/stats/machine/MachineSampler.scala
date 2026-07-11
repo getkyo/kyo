@@ -16,6 +16,8 @@ import kyo.*
   */
 final private[kyo] class MachineSampler(handles: MachineHandles, machine: Machine):
 
+    // Unsafe: the sampler owns its retained per-file read handles and reused buffer as single-owner
+    // fields on one detached fiber, reading and rewinding them off the effect context at each tick.
     import AllowUnsafe.embrace.danger
 
     private val fileHandles = collection.mutable.HashMap.empty[String, MachineSampler.FileSlot]

@@ -22,6 +22,8 @@ import kyo.stats.internal.TraceExporter
   * JVM and JS need no such step (JVM reads `META-INF/services`; JS registers via `MachineRegistration`).
   */
 private[kyo] class MachineStatFactory extends ExporterFactory:
+    // Unsafe: the factory is constructed by the stats service-loader at Stat class-init, which threads
+    // no AllowUnsafe; starting the sampler here is the classpath-presence activation boundary.
     import AllowUnsafe.embrace.danger
     val _                                                                  = MachineStatFactory.triggerStart(System.live.unsafe)
     override def traceExporter()(using AllowUnsafe): Option[TraceExporter] = None
@@ -29,6 +31,8 @@ end MachineStatFactory
 
 private[kyo] object MachineStatFactory:
 
+    // Unsafe: the single-owner start flag and the injectable-System opt-out read run at
+    // classpath-presence activation, off any effect context that could supply AllowUnsafe.
     import AllowUnsafe.embrace.danger
 
     private val started = AtomicBoolean.Unsafe.init(false)
