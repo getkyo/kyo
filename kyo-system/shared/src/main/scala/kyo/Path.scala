@@ -287,6 +287,15 @@ object Path extends PathPlatformSpecific:
           * is `AutoCommit`.
           */
         def inMemory(using Frame): Service[Sync] < Sync = InMemoryService.init
+
+        /** Copy-on-write overlay over `lower`: reads fall through, writes stage in an upper layer, and
+          * an explicit commit replays the staged journal onto `lower`. Scope-managed; `ManualCommit`.
+          */
+        def overlay[S](lower: Service[S])(using Frame): Overlay[S] < (Sync & Scope) =
+            OverlayService.init(lower)
+
+        /** An overlay's public face: a [[CommitHandle]] whose disposition is `ManualCommit`. */
+        trait Overlay[S] extends CommitHandle[S]
     end Service
 
     final private class HostService(using Frame) extends Service[Sync]:
