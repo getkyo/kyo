@@ -1,7 +1,6 @@
 package kyo
 
 import demo.ServerBridgeScene
-import kyo.internal.DomBackend
 import kyo.internal.ThreeFacade
 import org.scalajs.dom
 import scala.scalajs.js
@@ -10,15 +9,16 @@ import scala.scalajs.js.annotation.JSExportTopLevel
 /** The client hydrate entry point for the kyo-threejs server-push bridge browser tests
   * (`ThreeBackendBridgeBrowserTest`, `ThreeStructuralBridgeBrowserTest`): rebuilds the SAME
   * `ServerBridgeScene.ui` tree client-side (so `data-kyo-path` matches the server's SSR markup by
-  * construction) and hydrates it onto the ALREADY-SSR'd DOM via
-  * `DomBackend.hydrateBackendNodes` -- registering the embedded `Three.embed` canvas's live mount
-  * WITHOUT touching `container.innerHTML`. Reactivity itself rides the page's own inline WS listener
-  * (`HtmlRenderer.clientJs`), unrelated to this entry point; this only gets the 3D canvas's live
-  * mount registered so that listener's dispatch has somewhere to land.
+  * construction) and hydrates it onto the ALREADY-SSR'd DOM via the public `UI.runHydrate` entry --
+  * registering the embedded `Three.embed` canvas's live mount WITHOUT touching `container.innerHTML`.
+  * Reactivity itself rides the page's own inline WS listener (`HtmlRenderer.clientJs`), unrelated to
+  * this entry point; this only gets the 3D canvas's live mount registered so that listener's dispatch
+  * has somewhere to land.
   *
-  * Lives in package `kyo` (not `demoharness`, unlike `DemoHarness`'s other entries) because
-  * `hydrateBackendNodes` is `private[kyo]`; `Frame.internal` is the zero-derivation frame this entry
-  * point needs since package `kyo` non-test code cannot auto-derive one.
+  * Lives in package `kyo` (not `demoharness`, unlike `DemoHarness`'s other entries) because it uses the
+  * `private[kyo]` `Frame.internal` and `kyo.internal.ThreeFacade` (the latter builds the pixel
+  * sentinel); `Frame.internal` is the zero-derivation frame this entry point needs since package `kyo`
+  * non-test code cannot auto-derive one.
   *
   * The mount stays live behind a `window.__closeBridge()` trigger (a `Promise` awaited instead of
   * `Async.never`) rather than parking forever: deterministic Scope-close teardown needs the
@@ -59,7 +59,7 @@ object ServerBridgeHydrate:
                 label.map(v => UI.span(v).id("label")),
                 Three.embed(probeScene, ServerBridgeScene.camera).id("stage")
             )
-            _           <- DomBackend.hydrateBackendNodes(tree)
+            _           <- UI.runHydrate(tree)
             closeSignal <- Promise.init[Unit, Any]
             _ <- Sync.defer {
                 val w = dom.window.asInstanceOf[js.Dynamic]

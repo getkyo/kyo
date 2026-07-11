@@ -1,7 +1,6 @@
 package kyo
 
 import demo.ClickBridgeScene
-import kyo.internal.DomBackend
 import org.scalajs.dom
 import scala.scalajs.js
 import scala.scalajs.js.annotation.JSExportTopLevel
@@ -9,7 +8,7 @@ import scala.scalajs.js.annotation.JSExportTopLevel
 /** The client hydrate entry point for the kyo-threejs interaction-half browser test
   * (`ThreeStructuralBridgeBrowserTest`'s click assertions): rebuilds the SAME `ClickBridgeScene.ui`
   * tree client-side (so `data-kyo-path` matches the server's SSR markup by construction) and hydrates
-  * it onto the ALREADY-SSR'd DOM via `DomBackend.hydrateBackendNodes`, mirroring `ServerBridgeHydrate`.
+  * it onto the ALREADY-SSR'd DOM via the public `UI.runHydrate` entry, mirroring `ServerBridgeHydrate`.
   * Both embedded canvases' live mounts register (raycast + pointer delegation), so a real click on
   * either canvas posts a `BackendEvent` the server resolves.
   */
@@ -33,7 +32,7 @@ object ClickBridgeHydrate:
             // subscribes no reactivity), only used to construct the identical tree shape.
             lastClicked <- Signal.initRef("none")
             tree = ClickBridgeScene.ui(lastClicked)
-            _ <- DomBackend.hydrateBackendNodes(tree)
+            _ <- UI.runHydrate(tree)
             _ <- Sync.defer(dom.window.asInstanceOf[js.Dynamic].__bridgeReady = true)
             _ <- Async.never
         yield ()

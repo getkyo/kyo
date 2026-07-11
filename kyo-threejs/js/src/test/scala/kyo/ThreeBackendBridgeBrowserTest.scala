@@ -3,7 +3,7 @@ package kyo
 /** The FULL server-push bridge, end to end, in a real browser. Serves `demo.ServerBridgeScene.ui`
   * through the REAL `UI.runHandlers` (SSR page GET + `/_kyo/ws` route), links the
   * `kyo-threejs-demos` bundle so the client rebuilds the IDENTICAL tree and hydrates the embedded
-  * `Three.embed` canvas via `DomBackend.hydrateBackendNodes` (`kyo.ServerBridgeHydrate`,
+  * `Three.embed` canvas via the public `UI.runHydrate` entry (`kyo.ServerBridgeHydrate`,
   * `@JSExportTopLevel("hydrateServerBridge")`), then drives BOTH a DOM-bound `Signal[String]` and a
   * `material.color`-bound `Signal[Three.Color]` from the SERVER side and asserts both reach the
   * client through the SAME ONE WebSocket. This is the central split the whole structural-reactivity
@@ -21,6 +21,12 @@ package kyo
   * `forceContextLoss`, the RAF loop's Scope-cancel, `ThreeBackend.mount`'s `unregisterJsHandle`), and
   * the test asserts the released GL context and the vanished `window.__kyoBackends` entry, driven
   * off the deterministic `window.__bridgeClosed` flag, never a sleep.
+  *
+  * A separate leaf proves the SAME wire path re-aims the CAMERA, not just a material prop: a
+  * perspective camera's `lookAt` binds to a server `Signal[Three.Vec3]` (`demo.ServerBridgeCameraScene`),
+  * and driving that signal from red to green plane centers, then back, swaps which unlit plane the
+  * sampled center pixel reads. It asserts on the RENDERED framebuffer pixel (never a directly-applied
+  * patch), so it fails if the camera `SetProp`/`applyByKey`/re-aim chain breaks.
   *
   * Runs in a real software-WebGL Chrome via CDP; cancels (skips) where no Chrome can be downloaded.
   */
@@ -161,6 +167,52 @@ class ThreeBackendBridgeBrowserTest extends WebGLSceneHarness:
         }
     }
 
+    "the server-driven camera lookAt re-aim swaps which unlit plane the frame center samples, over the one /_kyo/ws socket" in {
+        cancelOnUnsupportedPlatform {
+            for
+                target <- Signal.initRef(demo.ServerBridgeCameraScene.redTarget)
+                result <- servedCameraBridge(target) { url =>
+                    swiftshaderLaunch.map { launch =>
+                        Browser.run(launch) {
+                            for
+                                _ <- Browser.goto(url)
+                                _ <- Browser.waitFor("window.__bridgeReady === true").handle(diagnoseBridgeTimeout)
+                                // The initial aim (client-local seed at redTarget) centers the red plane, so the
+                                // sampled center pixel is red before any server re-aim.
+                                _            <- Browser.waitFor("window.__stageColor === 'ff0000'").handle(diagnoseCameraColorTimeout)
+                                initialColor <- Browser.eval("String(window.__stageColor)")
+                                // Re-aim the SERVER camera signal at the green plane. The lookAt SetProp must reach
+                                // the client and re-aim the LIVE camera, so the RENDERED center pixel converges to
+                                // green; this reads the framebuffer, never a directly-applied patch, so a broken
+                                // camera SetProp/applyByKey/re-aim chain would leave it red and time out here.
+                                _          <- target.set(demo.ServerBridgeCameraScene.greenTarget)
+                                _          <- Browser.waitFor("window.__stageColor === '00ff00'").handle(diagnoseCameraColorTimeout)
+                                greenColor <- Browser.eval("String(window.__stageColor)")
+                                // Re-aim back at the red plane: the re-aim is bidirectional over the same socket.
+                                _           <- target.set(demo.ServerBridgeCameraScene.redTarget)
+                                _           <- Browser.waitFor("window.__stageColor === 'ff0000'").handle(diagnoseCameraColorTimeout)
+                                backColor   <- Browser.eval("String(window.__stageColor)")
+                                canvasCount <- Browser.evalInt("document.querySelectorAll('canvas').length")
+                                tuple: (String, String, String, Int) = (initialColor, greenColor, backColor, canvasCount)
+                            yield tuple
+                        }
+                    }
+                }
+            yield
+                val (initialColor, greenColor, backColor, canvasCount) = result
+                assert(initialColor == "ff0000", s"the initial aim at redTarget must center the red plane (ff0000), got '$initialColor'")
+                assert(
+                    greenColor == "00ff00",
+                    s"the server re-aim at greenTarget must re-center the green plane (00ff00), got '$greenColor'"
+                )
+                assert(
+                    backColor == "ff0000",
+                    s"the server re-aim back at redTarget must re-center the red plane (ff0000), got '$backColor'"
+                )
+                assert(canvasCount == 1, s"exactly one canvas must ever exist for the one embed, got $canvasCount")
+        }
+    }
+
     /** Serves the SSR page for `demo.ServerBridgeScene.ui(label, color)` through the real
       * `UI.runHandlers`, alongside the linked demo bundle and the three.js sources its import map
       * resolves, and hands the served URL to `f`.
@@ -251,6 +303,49 @@ class ThreeBackendBridgeBrowserTest extends WebGLSceneHarness:
         yield result
     end servedPreRegister
 
+    /** Serves the SSR page for `demo.ServerBridgeCameraScene.ui(target)` through the real
+      * `UI.runHandlers`, linked to the camera hydrate export (`hydrateServerBridgeCamera`), so a test
+      * can drive the server `target` signal and watch the client camera re-aim. Mirrors `servedBridge`,
+      * pointed at the camera scene and its hydrate export instead.
+      */
+    private def servedCameraBridge[A](target: SignalRef[Three.Vec3])(
+        f: String => A < (Async & Scope & Abort[BrowserException])
+    )(using Frame): A < (Async & Scope & Abort[BrowserException]) =
+        for
+            bundle    <- WebGLSceneHarness.readDemoBundle
+            module    <- WebGLSceneHarness.readThreeSource("three.module.js")
+            core      <- WebGLSceneHarness.readThreeSource("three.core.js")
+            gltf      <- WebGLSceneHarness.readThreeJsm("loaders/GLTFLoader.js")
+            bufUtils  <- WebGLSceneHarness.readThreeJsm("utils/BufferGeometryUtils.js")
+            skelUtils <- WebGLSceneHarness.readThreeJsm("utils/SkeletonUtils.js")
+            orbit     <- WebGLSceneHarness.readThreeJsm("controls/OrbitControls.js")
+            bootJs = """import { hydrateServerBridgeCamera } from "/main.js"; hydrateServerBridgeCamera();"""
+            head = UI.PageHead(
+                "kyo-threejs camera bridge test",
+                moduleScript = Present("/boot.js"),
+                importMap = Seq(
+                    "three"                                        -> "/three.module.js",
+                    "three/examples/jsm/loaders/GLTFLoader.js"     -> "/three/examples/jsm/loaders/GLTFLoader.js",
+                    "three/examples/jsm/controls/OrbitControls.js" -> "/three/examples/jsm/controls/OrbitControls.js"
+                )
+            )
+            appHandlers <- UI.runHandlers("/", head)(demo.ServerBridgeCameraScene.ui(target))
+            server <- HttpServer.init(0, "localhost")(
+                (appHandlers ++ Seq(
+                    WebGLSceneHarness.jsHandler("boot.js", bootJs),
+                    WebGLSceneHarness.jsHandler("main.js", bundle),
+                    WebGLSceneHarness.jsHandler("three.module.js", module),
+                    WebGLSceneHarness.jsHandler("three.core.js", core),
+                    WebGLSceneHarness.jsHandler("three/examples/jsm/loaders/GLTFLoader.js", gltf),
+                    WebGLSceneHarness.jsHandler("three/examples/jsm/utils/BufferGeometryUtils.js", bufUtils),
+                    WebGLSceneHarness.jsHandler("three/examples/jsm/utils/SkeletonUtils.js", skelUtils),
+                    WebGLSceneHarness.jsHandler("three/examples/jsm/controls/OrbitControls.js", orbit)
+                ))*
+            )
+            result <- f(s"http://localhost:${server.port}/")
+        yield result
+    end servedCameraBridge
+
     /** On a pre-register timeout, surfaces the gate/buffer state so the cause is visible. */
     private def diagnosePreRegisterTimeout(
         wait: String < (Browser & Abort[BrowserReadException])
@@ -278,6 +373,17 @@ class ThreeBackendBridgeBrowserTest extends WebGLSceneHarness:
             yield Abort.fail(BrowserScriptErrorException(
                 s"cube never converged to the buffered green: stageColor=$color registered=$registered"
             ))
+        }(wait)
+
+    /** On a camera re-aim timeout, surfaces the observed center pixel so a broken lookAt SetProp chain
+      * is visible rather than an opaque timeout.
+      */
+    private def diagnoseCameraColorTimeout(
+        wait: String < (Browser & Abort[BrowserReadException])
+    )(using Frame): String < (Browser & Abort[BrowserReadException]) =
+        Abort.recover[BrowserReadException] { _ =>
+            for color <- Browser.eval("String(window.__stageColor)")
+            yield Abort.fail(BrowserScriptErrorException(s"camera re-aim center pixel never converged: stageColor=$color"))
         }(wait)
 
     /** On a bridge-ready timeout, surfaces the page-side error (if any) as part of the failure. */

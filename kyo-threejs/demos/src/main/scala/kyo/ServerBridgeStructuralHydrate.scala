@@ -2,7 +2,6 @@ package kyo
 
 import demo.ServerBridgeStructuralScene
 import demo.ServerBridgeStructuralScene.Item
-import kyo.internal.DomBackend
 import kyo.internal.ThreeFacade
 import org.scalajs.dom
 import scala.scalajs.js
@@ -11,9 +10,9 @@ import scala.scalajs.js.annotation.JSExportTopLevel
 /** The client hydrate entry point for the kyo-threejs server-push STRUCTURAL bridge browser test
   * (`ThreeStructuralBridgeBrowserTest`): rebuilds the SAME
   * `ServerBridgeStructuralScene.ui` tree client-side (so `data-kyo-path` matches the server's SSR
-  * markup by construction) and hydrates it onto the ALREADY-SSR'd DOM via
-  * `DomBackend.hydrateBackendNodes`, mirroring `ServerBridgeHydrate`. See that file for the package-
-  * `kyo`/`Frame.internal` rationale (unchanged here).
+  * markup by construction) and hydrates it onto the ALREADY-SSR'd DOM via the public `UI.runHydrate`
+  * entry, mirroring `ServerBridgeHydrate`. See that file for the package-`kyo`/`Frame.internal`
+  * rationale (unchanged here).
   *
   * Three client-only probes ride alongside the hydrated scene, all installed once at hydrate time:
   *   - a `BoxGeometry.prototype.dispose` patch counting every geometry disposal into
@@ -55,7 +54,7 @@ object ServerBridgeStructuralHydrate:
             baseScene  = ServerBridgeStructuralScene.scene(items)
             probeScene = baseScene.copy(children = baseScene.children :+ positionSentinel())
             tree       = UI.div(Three.embed(probeScene, ServerBridgeStructuralScene.camera).id("stage"))
-            _ <- DomBackend.hydrateBackendNodes(tree)
+            _ <- UI.runHydrate(tree)
             _ <- Sync.defer {
                 installReplaceSubtreeCounter()
                 dom.window.asInstanceOf[js.Dynamic].__bridgeReady = true
@@ -64,7 +63,7 @@ object ServerBridgeStructuralHydrate:
         yield ()
 
     /** Wraps the mounted backend's own `replaceSubtree` handle (`window.__kyoBackends[root]`,
-      * populated by `ThreeBackend.registerJsHandle` once `hydrateBackendNodes` above completes) so
+      * populated by `ThreeBackend.registerJsHandle` once `UI.runHydrate` above completes) so
       * every call increments `window.__replaceSubtreeCount` before delegating to the original handle
       * -- the deterministic "the op was received" signal a browser test polls for, since a pure
       * reorder is otherwise observationally silent (see the class doc). The mount root here is `"0"`

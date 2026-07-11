@@ -1,7 +1,6 @@
 package kyo
 
 import demo.ServerBridgeScene
-import kyo.internal.DomBackend
 import kyo.internal.ThreeFacade
 import org.scalajs.dom
 import scala.scalajs.js
@@ -10,8 +9,8 @@ import scala.scalajs.js.annotation.JSExportTopLevel
 /** The client hydrate for the register-before-push startup-buffer browser test
   * (`ThreeBackendBridgeBrowserTest`'s pre-registration leaf). Rebuilds the SAME `ServerBridgeScene.ui`
   * tree client-side, but GATES the backend registration behind `window.__releaseHydrate()`: it sets
-  * `window.__preRegisterReady` and installs the release trigger BEFORE calling
-  * `DomBackend.hydrateBackendNodes`, then parks on a `Promise` until the test releases it.
+  * `window.__preRegisterReady` and installs the release trigger BEFORE calling the public
+  * `UI.runHydrate` entry, then parks on a `Promise` until the test releases it.
   *
   * This opens the exact window CR-02 is about: the inline WebSocket client (in the SSR'd page) connects
   * and the server pushes its initial `SetProp` per bound prop immediately, while the island has not yet
@@ -19,8 +18,9 @@ import scala.scalajs.js.annotation.JSExportTopLevel
   * ops; the shipped startup buffer holds them per root and flushes them in order on registration, so the
   * live cube converges to whatever the server drove during the gap.
   *
-  * Lives in package `kyo` (not `demoharness`) because `hydrateBackendNodes` is `private[kyo]`;
-  * `Frame.internal` is the zero-derivation frame package `kyo` non-test code needs.
+  * Lives in package `kyo` (not `demoharness`) because it uses the `private[kyo]` `Frame.internal` and
+  * `kyo.internal.ThreeFacade` (the latter builds the pixel sentinel); `Frame.internal` is the
+  * zero-derivation frame package `kyo` non-test code needs.
   */
 object ServerBridgePreRegisterHydrate:
 
@@ -55,10 +55,10 @@ object ServerBridgePreRegisterHydrate:
                     gate.unsafe.completeUnitDiscard()
                 }
             }
-            _ <- gate.get                             // BLOCK: no backend registers until the test releases the gate
-            _ <- DomBackend.hydrateBackendNodes(tree) // registration flushes the buffered SetProps in order
+            _ <- gate.get            // BLOCK: no backend registers until the test releases the gate
+            _ <- UI.runHydrate(tree) // registration flushes the buffered SetProps in order
             _ <- Sync.defer(dom.window.asInstanceOf[js.Dynamic].__bridgeReady = true)
-            _ <- Async.never                          // park so the mount and its frame loop stay live
+            _ <- Async.never         // park so the mount and its frame loop stay live
         yield ()
 
     /** An invisible sentinel mesh whose `onAfterRender` republishes the rendered center pixel as a

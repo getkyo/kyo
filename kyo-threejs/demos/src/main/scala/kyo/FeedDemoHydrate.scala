@@ -1,19 +1,18 @@
 package kyo
 
-import kyo.internal.DomBackend
 import scala.scalajs.js.annotation.JSExportTopLevel
 
 /** Client hydrate entries for the server-driven demos (FeedClock, FeedChunk, FeedEmit, Flagship):
   * rebuilds the SAME scene-builder tree client-side (so `data-kyo-path` matches the server's SSR
-  * markup by construction) and hydrates it onto the ALREADY-SSR'd DOM via
-  * `DomBackend.hydrateBackendNodes` -- registering the embedded `Three.embed` canvas's live mount
-  * WITHOUT touching `container.innerHTML`. Reactivity rides the page's own inline WS listener
-  * (`HtmlRenderer.clientJs`); this only gets the 3D canvas's live mount registered so that listener's
-  * dispatch, and a click raycast's `BackendEvent` post, have somewhere to land.
+  * markup by construction) and hydrates it onto the ALREADY-SSR'd DOM via the public `UI.runHydrate`
+  * entry -- registering the embedded `Three.embed` canvas's live mount WITHOUT touching
+  * `container.innerHTML`. Reactivity rides the page's own inline WS listener (`HtmlRenderer.clientJs`);
+  * this only gets the 3D canvas's live mount registered so that listener's dispatch, and a click
+  * raycast's `BackendEvent` post, have somewhere to land.
   *
   * Lives in package `kyo` (not `demoharness`, unlike `DemoMounts`'s other entries) because
-  * `hydrateBackendNodes` is `private[kyo]`; `Frame.internal` is the zero-derivation frame each entry
-  * point needs since package `kyo` non-test code cannot auto-derive one. Mirrors `ServerBridgeHydrate`.
+  * `Frame.internal` is `private[kyo]`, the zero-derivation frame each entry point needs since package
+  * `kyo` non-test code cannot auto-derive one. Mirrors `ServerBridgeHydrate`.
   */
 object FeedDemoHydrate:
 
@@ -79,7 +78,7 @@ object FeedDemoHydrate:
             Scope.run {
                 for
                     t <- tree
-                    _ <- DomBackend.hydrateBackendNodes(t)
+                    _ <- UI.runHydrate(t)
                     _ <- Async.never
                 yield ()
             }
