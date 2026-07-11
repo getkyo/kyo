@@ -23,19 +23,6 @@ class JvmPosixBackendSelectionTest extends Test:
 
     private val transportConfig = TransportConfig.default
 
-    /** Runs `body` with `prop` set to `value`, restoring the prior value afterward. A dedicated prop name keeps the forced-selection leaf from
-      * touching the live `kyo.net.backend` the shared production transport reads.
-      */
-    private def withProp[A](prop: String, value: String)(body: => A): A =
-        val previous = Maybe(java.lang.System.getProperty(prop))
-        java.lang.System.setProperty(prop, value)
-        try body
-        finally previous match
-                case Present(v) => discard(java.lang.System.setProperty(prop, v))
-                case Absent     => discard(java.lang.System.clearProperty(prop))
-        end try
-    end withProp
-
     /** Drive a real loopback echo through `transport`: listen on an ephemeral port whose handler echoes one inbound chunk, connect, write the
       * payload, and read the echoed bytes back. Returns the bytes received by the client.
       */

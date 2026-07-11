@@ -33,19 +33,6 @@ class IoBackendRegistryTest extends Test:
             forcedProp
         )
 
-    /** Runs `body` with `prop` set to `value`, restoring the prior value afterward. The forced-selection leaves read a system property, so
-      * each uses a distinct prop name to stay isolated when tests run concurrently.
-      */
-    private def withProp[A](prop: String, value: String)(body: => A): A =
-        val previous = Maybe(java.lang.System.getProperty(prop))
-        java.lang.System.setProperty(prop, value)
-        try body
-        finally previous match
-                case Present(v) => discard(java.lang.System.setProperty(prop, v))
-                case Absent     => discard(java.lang.System.clearProperty(prop))
-        end try
-    end withProp
-
     "select returns the highest-priority available entry" in {
         val list = Chunk(Stub("io_uring", 30, true), Stub("epoll", 20, true), Stub("nio", 10, true))
         assert(select(list, "kyo.net.test.backend.empty").name == "io_uring")

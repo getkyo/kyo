@@ -178,4 +178,19 @@ abstract class Test extends kyo.test.Test[Any]:
         }
     end withTransport
 
+    /** Runs `body` with the system property `prop` set to `value`, restoring its prior value afterward (clearing it if it was unset). The
+      * forced-selection paths (`IoBackend.select` / `selectAndBuild` and their TLS/backend registries) read a system property, so each selection
+      * leaf passes a distinct, dedicated prop name here to stay isolated from both the live `kyo.net.backend`/`kyo.net.tls` the production
+      * transport reads and from other leaves under the parallel scheduler.
+      */
+    private[net] def withProp[A](prop: String, value: String)(body: => A): A =
+        val previous = Maybe(java.lang.System.getProperty(prop))
+        java.lang.System.setProperty(prop, value)
+        try body
+        finally previous match
+                case Present(v) => discard(java.lang.System.setProperty(prop, v))
+                case Absent     => discard(java.lang.System.clearProperty(prop))
+        end try
+    end withProp
+
 end Test

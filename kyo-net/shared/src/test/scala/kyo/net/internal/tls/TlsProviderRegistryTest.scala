@@ -15,28 +15,17 @@ class TlsProviderRegistryTest extends Test:
     import AllowUnsafe.embrace.danger
     given Frame = Frame.internal
 
-    private case class StubProvider(name: String, priority: Int, available: Boolean)
+    // A minimal TlsProvider registry entry: name/priority/isAvailable and nothing else. Both selection paths under test read only those three
+    // fields, so it carries no faked behavior; it is a data entry for the pure selection logic. It backs BOTH the generic IoBackend.select (via
+    // the field accessors) and TlsProvider.selectFor (as an actual TlsProvider), so the two suites share one stub rather than two near-copies.
+    private case class StubProvider(name: String, priority: Int, available: Boolean) extends TlsProvider:
+        def isAvailable(using AllowUnsafe): Boolean = available
 
     private def select(registered: Chunk[StubProvider], forcedProp: String): StubProvider =
         IoBackend.select[StubProvider](registered, _.name, _.priority, _.available, forcedProp)
 
-    // A minimal TlsProvider registry entry (same shape as StubProvider, but an actual TlsProvider so it can flow through selectFor). selectFor
-    // reads only name/priority/isAvailable, so this carries no faked behavior; it is a data entry for the pure selection logic.
-    private case class StubTlsProvider(name: String, priority: Int, avail: Boolean) extends TlsProvider:
-        def isAvailable(using AllowUnsafe): Boolean = avail
-
-    private def selectFor(registered: Chunk[StubTlsProvider], config: NetTlsConfig): StubTlsProvider =
-        TlsProvider.selectFor[StubTlsProvider](registered, config)
-
-    private def withProp[A](prop: String, value: String)(body: => A): A =
-        val previous = Option(java.lang.System.getProperty(prop))
-        java.lang.System.setProperty(prop, value)
-        try body
-        finally previous match
-                case Some(v) => discard(java.lang.System.setProperty(prop, v))
-                case None    => discard(java.lang.System.clearProperty(prop))
-        end try
-    end withProp
+    private def selectFor(registered: Chunk[StubProvider], config: NetTlsConfig): StubProvider =
+        TlsProvider.selectFor[StubProvider](registered, config)
 
     "TLS selection picks the highest-priority available provider via the shared select" in {
         val list = Chunk(StubProvider("boringssl", 30, true), StubProvider("jdk", 10, true))
@@ -64,24 +53,24 @@ class TlsProviderRegistryTest extends Test:
     }
 
     "selectFor with no pin defers to the shared select (highest-priority available provider)" in {
-        val list = Chunk(StubTlsProvider("boringssl", 30, true), StubTlsProvider("jdk", 10, true))
+        val list = Chunk(StubProvider("boringssl", 30, true), StubProvider("jdk", 10, true))
         assert(selectFor(list, NetTlsConfig.default).name == "boringssl")
     }
 
     "selectFor honors an available pin over the higher-priority provider" in {
-        val list = Chunk(StubTlsProvider("boringssl", 30, true), StubTlsProvider("jdk", 10, true))
+        val list = Chunk(StubProvider("boringssl", 30, true), StubProvider("jdk", 10, true))
         assert(selectFor(list, NetTlsConfig(tlsProvider = Present("jdk"))).name == "jdk")
     }
 
     "selectFor fails closed when the pinned provider is registered but unavailable (never substitutes)" in {
-        val list = Chunk(StubTlsProvider("boringssl", 30, false), StubTlsProvider("jdk", 10, true))
+        val list = Chunk(StubProvider("boringssl", 30, false), StubProvider("jdk", 10, true))
         val ex   = intercept[Closed](selectFor(list, NetTlsConfig(tlsProvider = Present("boringssl"))))
         assert(ex.getMessage.contains("boringssl"), s"message must name the pinned provider, got ${ex.getMessage}")
         assert(ex.getMessage.contains("not available"), s"message must state the unavailable reason, got ${ex.getMessage}")
     }
 
     "selectFor fails closed when the pinned provider is not registered (never substitutes)" in {
-        val list = Chunk(StubTlsProvider("jdk", 10, true))
+        val list = Chunk(StubProvider("jdk", 10, true))
         val ex   = intercept[Closed](selectFor(list, NetTlsConfig(tlsProvider = Present("boringssl"))))
         assert(ex.getMessage.contains("boringssl"), s"message must name the pinned provider, got ${ex.getMessage}")
         assert(ex.getMessage.contains("not supported"), s"message must state the unsupported reason, got ${ex.getMessage}")
