@@ -131,6 +131,10 @@ lazy val `kyo-settings` = Seq(
     Test / testOptions += Tests.Argument(TestFrameworks.ScalaTest, "-oDG"),
     ThisBuild / versionScheme := Some("early-semver"),
     Test / javaOptions += "--add-opens=java.base/java.lang=ALL-UNNAMED",
+    // Exclude generated FFI binding implementations from coverage. They are machine-generated glue
+    // (src_managed by the kyo-ffi codegen: the *BindingsImpl classes), so measuring their line
+    // coverage tracks the generator, not hand-written code, and skews the module coverage figure.
+    coverageExcludedFiles := ".*src_managed.*",
     // Compact object headers (JEP 519, a product flag in JDK 25 which the build requires) shrink the
     // per-object header from 12-16 to 8 bytes. The test forks allocate heavily (kyo-tasty decodes 80k
     // symbols), so this cuts heap pressure where the forks run closest to their cap.
@@ -164,6 +168,9 @@ lazy val `kyo-settings` = Seq(
 
 Global / excludeLintKeys += doctestPredef
 Global / excludeLintKeys += doctestExtraClasspath
+// coverageExcludedFiles is consumed only when the scoverage plugin is active (sbt coverage ...), so a
+// plain build/test would otherwise lint it as an unused setting.
+Global / excludeLintKeys += coverageExcludedFiles
 
 Global / onLoad := {
 

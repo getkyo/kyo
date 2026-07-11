@@ -219,6 +219,13 @@ run_in_container() {
     # podman-sandbox concern only, so it does not change observed behavior.)
     local args=(run --rm --security-opt label=disable --privileged --ulimit memlock=-1:-1 -v "$snap:/build-input:ro")
     [ -n "$platform_flag" ] && args+=(--platform "$platform_flag")
+    # Artifact extraction. The container is --rm, so its target/ (coverage reports, etc.) is discarded on exit. When KYO_BUILD_OUT names a host
+    # directory, mount it at /output; the inner script below copies the scoverage report/data dirs there after the run, so a coverage run's
+    # report survives the container. Unset by default, so a normal run is unaffected.
+    if [ -n "${KYO_BUILD_OUT:-}" ]; then
+        mkdir -p "$KYO_BUILD_OUT"
+        args+=(-v "$KYO_BUILD_OUT:/output")
+    fi
     local envs=()
     # Forward the leak-debug flag so the forked test JVM (which inherits the container env) runs leaves serially and attributes each leaked
     # descriptor to the test that opened it (see kyo.test.runner.internal.LeakDebug). Unset by default, so a normal run is unaffected.
@@ -253,8 +260,10 @@ run_in_container() {
 $provision
 mkdir -p /work && cd /work && tar xf /build-input/src.tar \
     && if [ -s /build-input/changes.patch ]; then patch -p1 < /build-input/changes.patch; fi \
-    && if [ \"\${STAGE_BORINGSSL:-}\" = 1 ]; then bash kyo-net/build/boringssl/build-boringssl.sh \"linux-\$(uname -m)\"; fi \
-    && $inner"
+    && if [ \"\${STAGE_BORINGSSL:-}\" = 1 ]; then bash kyo-net/build/boringssl/build-boringssl.sh \"linux-\$(uname -m)\"; fi
+if $inner; then __rc=0; else __rc=\$?; fi
+if [ -d /output ]; then find . -type d \\( -name scoverage-report -o -name scoverage-data \\) -exec cp -r --parents {} /output/ \\; 2>/dev/null || true; fi
+exit \${__rc:-1}"
     local rc=$?
     rm -rf "$snap"
     return $rc
