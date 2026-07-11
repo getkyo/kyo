@@ -37,6 +37,17 @@ private[kyo] object InMemoryService:
             root.children.get(parts.head) match
                 case Some(child) => root.copy(children = root.children.updated(parts.head, delete(child, parts.tail)))
                 case None        => root
+
+    // True when the immediate parent directory of parts exists in the tree. The root always exists,
+    // so single-segment paths (whose parent IS the root) always return true. Callers use this to
+    // enforce the createFolders = false contract: fail with FileNotFoundException when a required
+    // parent is absent rather than silently creating it.
+    private[kyo] def parentsExist(root: Node, parts: Chunk[String]): Boolean =
+        if parts.size <= 1 then true
+        else
+            lookup(root, parts.dropRight(1)) match
+                case Present(n) if n.file.isEmpty => true
+                case _                            => false
 end InMemoryService
 
 final private[kyo] class InMemoryService(state: AtomicRef[InMemoryService.State])(using Frame) extends Path.Service[Sync]:
@@ -102,19 +113,52 @@ final private[kyo] class InMemoryService(state: AtomicRef[InMemoryService.State]
         list(path).map(_.filter(p => p.name.exists(InMemoryHandles.matchesGlob(_, glob))))
     def write(path: Path, value: String, createFolders: Boolean): Unit < (Sync & Abort[FileException]) =
         writeBytes(path, Span.from(value.getBytes(java.nio.charset.StandardCharsets.UTF_8)), createFolders)
+    // createFolders = false fails with FileNotFoundException when the immediate parent does not exist.
+    // When true (the default), upsert creates all intermediate parent directories automatically
+    // (mkdir -p behavior). mkDir unconditionally uses mkdir -p; there is no per-mkDir createFolders flag.
     def writeBytes(path: Path, value: Span[Byte], createFolders: Boolean): Unit < (Sync & Abort[FileException]) =
-        now.map(t => modify(s => Result.succeed((s.copy(root = upsert(s.root, path.parts, Node.file(value, t), t)), ()))))
+        now.map(t =>
+            modify { s =>
+                if !createFolders && !parentsExist(s.root, path.parts) then
+                    Result.fail(FileNotFoundException(path))
+                else
+                    Result.succeed((s.copy(root = upsert(s.root, path.parts, Node.file(value, t), t)), ()))
+            }
+        )
     def writeLines(path: Path, value: Chunk[String], createFolders: Boolean): Unit < (Sync & Abort[FileException]) =
         write(path, value.mkString("", "\n", "\n"), createFolders)
     def append(path: Path, value: String, createFolders: Boolean): Unit < (Sync & Abort[FileException]) =
         appendBytes(path, Span.from(value.getBytes(java.nio.charset.StandardCharsets.UTF_8)), createFolders)
+    // appendBytes is a single CAS modify (atomic read-modify-write) so concurrent appends to the same
+    // path are serialized by the CAS loop and no update is lost. The non-atomic read-then-write pattern
+    // is invalid here: a concurrent write between the read and the CAS attempt would be silently dropped.
     def appendBytes(path: Path, value: Span[Byte], createFolders: Boolean): Unit < (Sync & Abort[FileException]) =
-        state.use(s => lookup(s.root, path.parts).flatMap(_.file).map(_.bytes).getOrElse(Span.empty[Byte]))
-            .map(existing => writeBytes(path, Span.fromUnsafe(existing.toArrayUnsafe ++ value.toArrayUnsafe), createFolders))
+        now.map(t =>
+            modify { s =>
+                if !createFolders && !parentsExist(s.root, path.parts) then
+                    Result.fail(FileNotFoundException(path))
+                else
+                    val existing = lookup(s.root, path.parts).flatMap(_.file).map(_.bytes).getOrElse(Span.empty[Byte])
+                    val merged   = Span.fromUnsafe(existing.toArrayUnsafe ++ value.toArrayUnsafe)
+                    Result.succeed((s.copy(root = upsert(s.root, path.parts, Node.file(merged, t), t)), ()))
+            }
+        )
     def appendLines(path: Path, value: Chunk[String], createFolders: Boolean): Unit < (Sync & Abort[FileException]) =
         append(path, value.mkString("", "\n", "\n"), createFolders)
+    // truncate is a single CAS modify (atomic read-modify-write) for the same reason as appendBytes.
     def truncate(path: Path, size: Long): Unit < (Sync & Abort[FileException]) =
-        readBytes(path).map(b => writeBytes(path, Span.fromUnsafe(b.toArrayUnsafe.take(size.toInt)), createFolders = false))
+        now.map(t =>
+            modify { s =>
+                lookup(s.root, path.parts) match
+                    case Absent => Result.fail(FileNotFoundException(path))
+                    case Present(n) =>
+                        n.file match
+                            case Absent => Result.fail(FileNotFoundException(path))
+                            case Present(body) =>
+                                val kept = Span.fromUnsafe(body.bytes.toArrayUnsafe.take(size.toInt))
+                                Result.succeed((s.copy(root = upsert(s.root, path.parts, Node.file(kept, t), t)), ()))
+            }
+        )
     def setLastModified(path: Path, epochMs: Long): Unit < (Sync & Abort[FileException]) =
         modify { s =>
             lookup(s.root, path.parts) match
@@ -124,13 +168,16 @@ final private[kyo] class InMemoryService(state: AtomicRef[InMemoryService.State]
                     ))
                 case Absent => Result.fail(FileNotFoundException(path))
         }
+    // mkDir always creates all intermediate parent directories (mkdir -p behavior): upsert creates
+    // missing parent nodes automatically. No createFolders flag; the mkdir -p contract is invariant.
     def mkDir(path: Path): Unit < (Sync & Abort[FileException]) =
         now.map(t => modify(s => Result.succeed((s.copy(root = upsert(s.root, path.parts, Node.dir(t), t)), ()))))
     def mkFile(path: Path): Unit < (Sync & Abort[FileException]) = writeBytes(path, Span.empty[Byte], createFolders = true)
     // The in-memory backend honors replaceExisting (aborts FileAlreadyExistsException when the target
-    // exists and replaceExisting is false). atomicMove is inherent to the CAS, and followLinks and
-    // copyAttributes are moot here (no symlinks; the stat travels with the node), so those flags are
-    // documented no-ops in this reference backend.
+    // exists and replaceExisting is false) and createFolders (aborts FileNotFoundException when the
+    // destination parent is absent and createFolders is false). atomicMove is inherent to the CAS, and
+    // followLinks and copyAttributes are moot here (no symlinks; the stat travels with the node), so
+    // those flags are documented no-ops in this reference backend.
     def move(
         from: Path,
         to: Path,
@@ -143,6 +190,7 @@ final private[kyo] class InMemoryService(state: AtomicRef[InMemoryService.State]
                 lookup(s.root, from.parts) match
                     case Absent                                                               => Result.fail(FileNotFoundException(from))
                     case Present(_) if lookup(s.root, to.parts).isDefined && !replaceExisting => Result.fail(FileAlreadyExistsException(to))
+                    case Present(_) if !createFolders && !parentsExist(s.root, to.parts)      => Result.fail(FileNotFoundException(to))
                     case Present(n) => Result.succeed((s.copy(root = delete(upsert(s.root, to.parts, n, t), from.parts)), ()))
             }
         )
@@ -159,6 +207,7 @@ final private[kyo] class InMemoryService(state: AtomicRef[InMemoryService.State]
                 lookup(s.root, from.parts) match
                     case Absent                                                               => Result.fail(FileNotFoundException(from))
                     case Present(_) if lookup(s.root, to.parts).isDefined && !replaceExisting => Result.fail(FileAlreadyExistsException(to))
+                    case Present(_) if !createFolders && !parentsExist(s.root, to.parts)      => Result.fail(FileNotFoundException(to))
                     case Present(n) => Result.succeed((s.copy(root = upsert(s.root, to.parts, n, t)), ()))
             }
         )
@@ -175,8 +224,14 @@ final private[kyo] class InMemoryService(state: AtomicRef[InMemoryService.State]
     def openWalk(path: Path, maxDepth: Int, followLinks: Boolean): Path.WalkHandle < (Sync & Abort[FileException]) =
         state.use(s => InMemoryHandles.walk(path, lookup(s.root, path.parts), maxDepth))
     def openWrite(path: Path, append: Boolean, createFolders: Boolean): Path.WriteHandle < (Sync & Abort[FileException]) =
-        state.use(s => lookup(s.root, path.parts).flatMap(_.file).map(_.bytes).getOrElse(Span.empty[Byte]))
-            .map(seed => InMemoryHandles.write(this, path, if append then seed else Span.empty[Byte]))
+        state.use { s =>
+            if !createFolders && !parentsExist(s.root, path.parts) then
+                Abort.fail(FileNotFoundException(path))
+            else
+                val seed =
+                    if append then lookup(s.root, path.parts).flatMap(_.file).map(_.bytes).getOrElse(Span.empty[Byte]) else Span.empty[Byte]
+                InMemoryHandles.write(this, path, seed)
+        }
     // writeChunk and writeString are abstract on Service[S]; every concrete service must implement
     // them. The in-memory form delegates into the handle's buffer accumulator.
     def writeChunk(handle: Path.WriteHandle, chunk: Chunk[Byte]): Unit < (Sync & Abort[FileException]) =

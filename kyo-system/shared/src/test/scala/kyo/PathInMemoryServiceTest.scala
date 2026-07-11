@@ -162,6 +162,41 @@ class PathInMemoryServiceTest extends kyo.test.Test[Any]:
         }
     }
 
+    "two concurrent appends to the same path both land without lost content" in {
+        Path.Service.inMemory.map { svc =>
+            val p = Path("concurrent-append.txt")
+            Path.runWith(svc)(p.write("")).andThen {
+                for
+                    gate   <- Latch.init(1)
+                    fiberA <- Fiber.initUnscoped(gate.await.andThen(Path.runWith(svc)(p.append("AAA"))))
+                    fiberB <- Fiber.initUnscoped(gate.await.andThen(Path.runWith(svc)(p.append("BBB"))))
+                    _      <- gate.release
+                    _      <- fiberA.get
+                    _      <- fiberB.get
+                    result <- Path.runWith(svc)(p.read)
+                yield
+                    // Both appends must land; order is non-deterministic under concurrent scheduling.
+                    assert(result == "AAABBB" || result == "BBBAAA", s"expected both appends to land, got: '$result'")
+                end for
+            }
+        }
+    }
+
+    "writeBytes with createFolders=false fails when parent directory does not exist" in {
+        Path.Service.inMemory.map { svc =>
+            val nested = Path("missing-parent", "file.txt")
+            Abort.run[FileException](
+                Path.runWith(svc)(nested.writeBytes(Span.from(Array[Byte](1, 2, 3)), createFolders = false))
+            ).map { result =>
+                assert(result.isFailure, "expected FileNotFoundException but got success")
+                assert(
+                    result.failure.exists(_.isInstanceOf[FileNotFoundException]),
+                    s"expected FileNotFoundException, got: ${result.failure}"
+                )
+            }
+        }
+    }
+
     "writeTo abort before finish leaves target absent" in {
         Path.Service.inMemory.map { svc =>
             val target = Path("sink-abort.bin")

@@ -1,7 +1,15 @@
 package kyo
 
-/** Raised by [[Path.CommitHandle.commit]] when the read-set no longer matches the live lower service.
-  * Carries every conflicting path so a caller can inspect or resolve them.
+/** Raised by [[Path.CommitHandle.commit]] when the commit validation detects that one or more
+  * lower-layer paths have diverged from the stamps the overlay recorded at observation time.
+  *
+  * Carries every [[Conflict]] as a [[Chunk]] so the caller can inspect each diverging path,
+  * compare the ancestor stamp against the live lower view, and decide how to proceed. Callers
+  * that want to resolve conflicts rather than abort should use [[Path.CommitHandle.commitWith]]
+  * instead, which applies a per-conflict resolution function and never raises `CommitConflict`.
+  *
+  * `CommitConflict` extends `KyoException`; it surfaces through `Abort[CommitConflict]` and is
+  * therefore typed and catchable at the call site, not an unchecked JVM exception.
   */
 final case class CommitConflict(conflicts: Chunk[Conflict])(using Frame) extends KyoException
 
@@ -20,7 +28,18 @@ final case class Conflict(
     theirs: Maybe[Path.Entry]
 ) derives CanEqual
 
-/** A per-conflict resolution supplied to [[Path.CommitHandle.commitWith]]. */
+/** A per-conflict resolution returned by the caller-supplied function in
+  * [[Path.CommitHandle.commitWith]], applied to each [[Conflict]] the commit validation detects.
+  *
+  * Four cases:
+  *   - `KeepOurs`: replay the overlay's staged entry, discarding the live lower value.
+  *   - `KeepTheirs`: skip this path in the replay, keeping the live lower value unchanged.
+  *   - `Write(entry)`: replace both the staged and live value with the supplied [[Path.Entry]].
+  *   - `Remove`: delete the path in the live lower service during replay.
+  *
+  * The resolution is applied path-by-path; non-conflicting staged entries are always replayed
+  * regardless of the resolution chosen for conflicting ones.
+  */
 enum Resolution derives CanEqual:
     case KeepOurs
     case KeepTheirs

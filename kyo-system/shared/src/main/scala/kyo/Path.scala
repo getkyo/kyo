@@ -507,9 +507,15 @@ object Path extends PathPlatformSpecific:
             createFolders: Boolean
         ): Unit < (Sync & Abort[FileException]) =
             confined(from).andThen(confined(to)).andThen(host.copy(from, to, followLinks, replaceExisting, copyAttributes, createFolders))
-        def remove(path: Path): Boolean < (Sync & Abort[FileException])                 = confined(path).andThen(host.remove(path))
-        def removeExisting(path: Path): Unit < (Sync & Abort[FileException])            = confined(path).andThen(host.removeExisting(path))
-        def removeAll(path: Path): Unit < (Sync & Abort[FileException])                 = confined(path).andThen(host.removeAll(path))
+        def remove(path: Path): Boolean < (Sync & Abort[FileException])      = confined(path).andThen(host.remove(path))
+        def removeExisting(path: Path): Unit < (Sync & Abort[FileException]) = confined(path).andThen(host.removeExisting(path))
+        def removeAll(path: Path): Unit < (Sync & Abort[FileException])      = confined(path).andThen(host.removeAll(path))
+        // tempDir delegates to the underlying host service without confinement. Temporary directories
+        // are created in the OS-level temp area (e.g. /tmp) by OS convention, not under the
+        // confinement root. The confinement contract applies to persistent path operations on
+        // user-specified paths; ephemeral temp dir creation is outside that contract. The vended
+        // TempDirHandle's remove() routes through the creating host service, so cleanup is also
+        // outside the confinement root, which is correct: the handle removes the same dir it created.
         def tempDir(prefix: String): Path.TempDirHandle < (Sync & Abort[FileException]) = host.tempDir(prefix)
     end RootConfinedHostService
 
@@ -605,18 +611,36 @@ object Path extends PathPlatformSpecific:
         def remove()(using AllowUnsafe): Unit
     end TempDirHandle
 
-    /** A committed filesystem entry surfaced by [[Conflict]] and [[Resolution.Write]]. Symlink entries
-      * are excluded until Path has public symlink operations.
+    /** A committed filesystem entry surfaced at commit time by [[Conflict]] (the live lower view and
+      * the staged overlay view) and accepted as input by [[Resolution.Write]] (a caller-supplied
+      * replacement entry for the conflicting path).
+      *
+      * Two cases: `File(bytes, stat)` carries the full byte content and stat metadata for a regular
+      * file; `Directory(stat)` carries only the stat for a directory. Symlink entries are excluded
+      * until `Path` grows public symlink operations.
+      *
+      * `Path.Entry` derives `CanEqual`. File content (a `Span[Byte]`) does not derive `CanEqual`,
+      * so equality on `File` entries compares the `Span` reference, not the content. To compare
+      * file bytes structurally use `bytes.toArrayUnsafe sameElements other.toArrayUnsafe`.
       */
     enum Entry derives CanEqual:
         case File(bytes: Span[Byte], stat: Path.PathStat)
         case Directory(stat: Path.PathStat)
 
-    /** The base observation the overlay records for a lower entry at first sight, and the value carried
-      * by [[Conflict.ancestor]]. It is exactly what the read-set stores, so a commit can surface it
-      * without re-reading the lower: the observed entry kind, the size for a regular file, the
-      * last-modified time where available, and a content hash only when the backend can supply one
-      * cheaply. No bytes are retained.
+    /** The base observation the overlay records for a lower entry at first sight, and the value
+      * carried by [[Conflict.ancestor]]. It is exactly what the read-set stores so that a commit
+      * can surface it without re-reading the lower: the observed entry kind, the size for a regular
+      * file, the last-modified time where available, and a content hash only when the backend can
+      * supply one cheaply.
+      *
+      * No bytes are retained. A `Stamp` is cheaper than a [[Path.Entry]] because it omits file
+      * content; the read-set records one stamp per observed path, not the bytes, keeping overlay
+      * memory cost proportional to the number of distinct paths touched rather than their content
+      * size. A stamp is also the unit of divergence detection at commit: the commit compares each
+      * stamped path against the live lower to decide whether a conflict exists.
+      *
+      * `contentHash` is an optional hook for backend-supplied fingerprints (for example, a block
+      * hash from a content-addressed store); the base host backend leaves it `Absent`.
       */
     final case class Stamp(
         entryType: Stamp.Kind,
@@ -626,15 +650,36 @@ object Path extends PathPlatformSpecific:
     ) derives CanEqual
 
     object Stamp:
-        /** The entry kind observed at stamp time. `Absent` records an observed-missing path, which is
-          * distinct from a `Maybe.Absent` [[Conflict.ancestor]] (the path was never observed).
+        /** The entry kind recorded by a [[Path.Stamp]] at the time the overlay first observed a
+          * lower-layer path.
+          *
+          * Three cases: `File` means the path existed as a regular file when observed; `Directory`
+          * means it existed as a directory; `Absent` means the path did not exist at observation time.
+          *
+          * Note the distinction between `Kind.Absent` and a `Maybe.Absent` [[Conflict.ancestor]]:
+          * `Kind.Absent` stamps a path that WAS observed but happened to not exist at that moment;
+          * `Maybe.Absent` ancestor means the path was NEVER read through the overlay at all, so no
+          * stamp was ever recorded for it. Both can appear on a [[Conflict]], but their semantics
+          * differ: `Kind.Absent` is a confirmed observation of absence; `Maybe.Absent` is a gap in
+          * the read-set.
           */
         enum Kind derives CanEqual:
             case File, Directory, Absent
     end Stamp
 
-    /** A [[Service]] whose writes stage until an explicit commit. The overlay ([[Service.overlay]]) is
-      * the in-scope implementation; its disposition is `ManualCommit`.
+    /** A [[Service]] extension whose writes stage locally until an explicit commit validates them
+      * against the underlying live service. The overlay ([[Service.overlay]]) is the in-scope
+      * implementation; its [[Service.disposition]] is `Disposition.ManualCommit`.
+      *
+      * Three commit strategies are available:
+      *   - [[commit]]: validates the read-set against the live lower; aborts `CommitConflict` if
+      *     any stamp has diverged, leaving the lower untouched.
+      *   - [[commitOverwrite]]: replays unconditionally (last-writer-wins) with no conflict check.
+      *   - [[commitWith]]: validates, then calls a caller-supplied `resolve` function for each
+      *     conflict to obtain a [[Resolution]] before replaying the resolved entries.
+      *
+      * [[rollback]] discards all staged writes without touching the lower service. Calling any
+      * write method after a commit or rollback is undefined behavior on the current implementation.
       */
     trait CommitHandle[S] extends Service[S]:
         /** Validates the read-set against the live lower service; replays if every stamp matches, else
