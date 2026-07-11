@@ -1108,15 +1108,31 @@ private[kyo] object FileJournalCore:
                             Absent
                         ))
                 diskFormatResult.flatMap { df =>
-                    if df != requestedFormat then
-                        val reqStr = requestedFormat match
-                            case FileJournal.SegmentFormat.Binary => "binary"
-                            case FileJournal.SegmentFormat.Jsonl  => "jsonl"
-                        Result.fail(JournalStorageError(
-                            s"Journal root '${dir.unsafe.show}' was created as $diskFormatStr; Config requests $reqStr",
-                            Absent
-                        ))
-                    else Result.succeed(df)
+                    // Validate version before the format-mismatch check so an unknown version
+                    // is always loud, even when the format value happens to match.
+                    val versionCheck = pairs.get("version") match
+                        case Some("1") => Result.succeed(())
+                        case Some(v) =>
+                            Result.fail(JournalStorageError(
+                                s"FORMAT file in '${dir.unsafe.show}' has version '$v'; supported: 1",
+                                Absent
+                            ))
+                        case None =>
+                            Result.fail(JournalStorageError(
+                                s"FORMAT file in '${dir.unsafe.show}' has no 'version' key",
+                                Absent
+                            ))
+                    versionCheck.flatMap { _ =>
+                        if df != requestedFormat then
+                            val reqStr = requestedFormat match
+                                case FileJournal.SegmentFormat.Binary => "binary"
+                                case FileJournal.SegmentFormat.Jsonl  => "jsonl"
+                            Result.fail(JournalStorageError(
+                                s"Journal root '${dir.unsafe.show}' was created as $diskFormatStr; Config requests $reqStr",
+                                Absent
+                            ))
+                        else Result.succeed(df)
+                    }
                 }
         end match
     end parseFormatMarker

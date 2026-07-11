@@ -13,11 +13,11 @@ import scala.annotation.tailrec
   * Line formats (both end with a `\n`):
   *
   * {{{
-  *   Record : {"offset":N,"eventId":"...","eventType":"...","metadata":{...},"payload":<value>,"crc":"0xHHHHHHHH"}
-  *   Commit : {"commit":N,"crc":"0xHHHHHHHH"}
+  *   Record : {"offset":N,"eventId":"...","eventType":"...","metadata":{...},"payload":<value>,"crc":"0xhhhhhhhh"}
+  *   Commit : {"commit":N,"crc":"0xhhhhhhhh"}
   * }}}
   *
-  * The 20-byte CRC suffix `,"crc":"0xHHHHHHHH"}` is always appended after a stripped closing
+  * The 20-byte CRC suffix `,"crc":"0xhhhhhhhh"}` is always appended after a stripped closing
   * brace of the covered JSON body; on read, the covered bytes are recovered by taking everything
   * before the suffix (bytes `[0, n-20)`) and appending a `}` byte, where `n` is the line length
   * without the newline. CRC32 operates on the UTF-8 bytes of the covered body.
@@ -30,7 +30,7 @@ import scala.annotation.tailrec
 final private[kyo] class JsonlSegmentCodec(payloadCodec: EventPayloadCodec) extends SegmentCodec:
 
     private val Utf8         = StandardCharsets.UTF_8
-    private val CrcSuffixLen = 20 // ,"crc":"0xHHHHHHHH"}
+    private val CrcSuffixLen = 20 // ,"crc":"0xhhhhhhhh"}
 
     def segmentExtension: String             = ".jsonl"
     def header: Array[Byte]                  = Array.emptyByteArray
@@ -89,14 +89,16 @@ final private[kyo] class JsonlSegmentCodec(payloadCodec: EventPayloadCodec) exte
     // --- scan ----------------------------------------------------------------------------------
 
     def scan(handle: SegmentStore.Handle, size: Long, isActive: Boolean)(using AllowUnsafe): ScanResult =
-        val committed    = Chunk.newBuilder[Long]
+        val committed = Chunk.newBuilder[Long]
+        // pendingBuf accumulates record positions for the current uncommitted batch. Using a
+        // mutable ArrayBuffer keeps append O(1) amortised; Chunk.append is O(n) per call.
+        val pendingBuf   = new scala.collection.mutable.ArrayBuffer[Long]()
         var pos          = 0L
         var committedEnd = 0L
         var batchStart   = 0L
-        var pending      = Chunk.empty[Long]
         @tailrec def loop(): ScanResult =
             if pos >= size then
-                if pending.isEmpty then ScanResult.Ok(committed.result(), committedEnd, Absent)
+                if pendingBuf.isEmpty then ScanResult.Ok(committed.result(), committedEnd, Absent)
                 else if isActive then ScanResult.Ok(committed.result(), committedEnd, Present(batchStart))
                 else ScanResult.Corrupt(s"unterminated batch at byte $batchStart in sealed segment")
             else
@@ -110,12 +112,12 @@ final private[kyo] class JsonlSegmentCodec(payloadCodec: EventPayloadCodec) exte
                         val lineLen = lineBytes.length.toLong + 1L // +1 for '\n'
                         if isCommitLine(lineBytes) then
                             parseCommitCount(lineBytes) match
-                                case Right(count) if count == pending.length && verifyCrcLine(lineBytes) =>
-                                    pending.foreach(p => discard(committed += p))
+                                case Right(count) if count == pendingBuf.length && verifyCrcLine(lineBytes) =>
+                                    pendingBuf.foreach(p => discard(committed += p))
                                     pos += lineLen
                                     committedEnd = pos
                                     batchStart = pos
-                                    pending = Chunk.empty
+                                    pendingBuf.clear()
                                     loop()
                                 case _ =>
                                     if isActive && !hasCommitAfter(handle, pos + lineLen, size) then
@@ -123,7 +125,7 @@ final private[kyo] class JsonlSegmentCodec(payloadCodec: EventPayloadCodec) exte
                                     else ScanResult.Corrupt(s"commit CRC/count mismatch at byte $pos")
                         else
                             if verifyCrcLine(lineBytes) then
-                                pending = pending.append(pos)
+                                discard(pendingBuf.addOne(pos))
                                 pos += lineLen
                                 loop()
                             else
@@ -173,7 +175,9 @@ final private[kyo] class JsonlSegmentCodec(payloadCodec: EventPayloadCodec) exte
                             ))
                         end if
         catch
-            case e: Exception => Result.fail(s"JSONL decode error at byte $pos: ${e.getMessage}")
+            // Narrow to the parse/decode failure types the JSON reader and payload codec produce.
+            // Broader exception types (NPE, IndexOutOfBounds) are defects and must propagate.
+            case e: DecodeException => Result.fail(s"JSONL decode error at byte $pos: ${e.getMessage}")
     end decodeRecordAt
 
     def hasCommitAfter(handle: SegmentStore.Handle, from: Long, size: Long)(using AllowUnsafe): Boolean =
@@ -211,10 +215,10 @@ final private[kyo] class JsonlSegmentCodec(payloadCodec: EventPayloadCodec) exte
 
     // Appends the 20-char CRC suffix and a newline to `bodyBytes`. The CRC covers `bodyBytes` as-is
     // (the complete JSON body including its closing `}`). The suffix replaces the trailing `}` with
-    // `,"crc":"0xHHHHHHHH"}\n` by stripping the last byte and appending the suffix.
+    // `,"crc":"0xhhhhhhhh"}\n` by stripping the last byte and appending the suffix.
     private def appendCrc(bodyBytes: Array[Byte]): Array[Byte] =
         val crc         = new CRC32(); crc.update(bodyBytes)
-        val suffixStr   = f""","crc":"0x${crc.value & 0xffffffffL}%08X"}""" + "\n"
+        val suffixStr   = f""","crc":"0x${crc.value & 0xffffffffL}%08x"}""" + "\n"
         val suffixBytes = suffixStr.getBytes(Utf8) // 21 ASCII bytes (20-char suffix + '\n')
         val out         = new Array[Byte](bodyBytes.length - 1 + suffixBytes.length)
         java.lang.System.arraycopy(bodyBytes, 0, out, 0, bodyBytes.length - 1)

@@ -306,6 +306,39 @@ class JsonlSegmentCodecTest extends kyo.test.Test[Any]:
         }
     }
 
+    // --- golden on-disk line bytes -----------------------------------------------------------
+
+    "golden on-disk line bytes" - {
+        "record and commit lines match the exact locked byte sequence including lowercase CRC suffix" in {
+            import AllowUnsafe.embrace.danger
+            // Fixed event: offset 0, eventId "e-0", eventType "T", empty metadata, raw payload "p0".
+            // BytesPayloadCodec base64-encodes 0x70 0x30 ("p0") as "cDA=", wrapped in JSON quotes.
+            // This test independently derives the expected bytes from the format spec and asserts
+            // byte-exact equality with frameBatch output, pinning the canonical JSONL line format
+            // against silent drift and confirming the CRC hex is lowercase.
+            def goldenLine(body: String): String =
+                val bodyBytes = body.getBytes(Utf8)
+                val crc       = new kyo.internal.CRC32()
+                crc.update(bodyBytes)
+                body.dropRight(1) + f""","crc":"0x${crc.value}%08x"}""" + "\n"
+            end goldenLine
+            val expectedRecord = goldenLine(
+                """{"offset":0,"eventId":"e-0","eventType":"T","metadata":{},"payload":"cDA="}"""
+            )
+            val expectedCommit = goldenLine("""{"commit":1}""")
+            val bytes          = codec.frameBatch(0L, Chunk(env(0)))
+            val lines          = new String(bytes, Utf8).split("\n", -1).dropRight(1)
+            assert(lines.length == 2)
+            assert(lines(0) + "\n" == expectedRecord)
+            assert(lines(1) + "\n" == expectedCommit)
+            // First byte of the segment is the opening '{' of the first JSON object.
+            assert(bytes(0) == '{'.toByte)
+            // Segment file extension and 20-digit zero-padded stem.
+            assert(codec.segmentExtension == ".jsonl")
+            assert(codec.segmentName(0L) == "00000000000000000000.jsonl")
+        }
+    }
+
     // --- torn JSONL line (no trailing newline) ------------------------------------------------
 
     "torn JSONL line (no trailing newline)" - {
