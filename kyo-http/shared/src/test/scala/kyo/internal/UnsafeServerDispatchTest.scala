@@ -1843,4 +1843,84 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
         }
     }
 
+    "ConnectionClose" - {
+
+        "handler parked on a foreign await is interrupted when inbound closes" in {
+            Latch.initWith(1) { started =>
+                Latch.initWith(1) { terminated =>
+                    val handler = HttpHandler.getText("park") { _ =>
+                        // Parks on a promise no one completes: touches neither inbound nor outbound.
+                        Fiber.Promise.init[Unit, Any].map { never =>
+                            Sync.ensure(terminated.release) {
+                                started.release.andThen(never.get).andThen("unreachable")
+                            }
+                        }
+                    }
+                    val router = HttpRouter(Seq(handler), Absent)
+
+                    val inbound  = Channel.Unsafe.init[Span[Byte]](16)
+                    val outbound = Channel.Unsafe.init[Span[Byte]](16)
+                    sendRequest(inbound, "GET /park HTTP/1.1\r\nHost: localhost\r\n\r\n")
+
+                    UnsafeServerDispatch.serve(router, inbound, outbound, defaultConfig)
+
+                    started.await.andThen {
+                        discard(inbound.close()) // the connection-close signal
+                        Async.timeout(5.seconds)(terminated.await).andThen(succeed)
+                    }
+                }
+            }
+        }
+
+        // KNOWN FAILING (kernel-level gap, not a kyo-http wiring bug): the register-then-recheck path
+        // in dispatchHandler calls fiber.interrupt(...) synchronously, immediately after IOTask(...)
+        // schedules the fiber, i.e. before the fiber's first eval() cycle is guaranteed to have run.
+        // Reproduced in isolation (kyo-core, no kyo-http involved): scheduling an IOTask whose body is
+        // `Fiber.Promise.init[Unit, Any].map(p => Sync.ensure(finalizer)(p.get))` and calling
+        // `.interrupt(...)` on it synchronously, right after construction, does not reliably run the
+        // Sync.ensure finalizer -- ArrowEffect.handlePartial's partialLoop re-checks the interrupt
+        // (via `stop`) on every step, so an interrupt landing mid-walk, after the handler body already
+        // ran (side effects observed) but before Sync.ensure's Safepoint.ensure registered its
+        // finalizer with the IOTask, drops the finalizer registration entirely; IOTask.run's
+        // ensureInterrupt fallback does not recover it. This is exactly the pattern the recheck needs
+        // (a handler dispatched onto an already-closing connection), so it is a real gap in the
+        // interrupt-immediately-after-dispatch path, not an artifact of this test. Tracked for a
+        // kernel-level fix; left red on purpose per "reproduce before you fix" rather than weakened.
+        "negative guard: a healthy handler is not interrupted by the watcher" in {
+            Latch.initWith(1) { started =>
+                Latch.initWith(1) { terminated =>
+                    Fiber.Promise.init[Unit, Any].map { never =>
+                        val handler = HttpHandler.getText("park") { _ =>
+                            Sync.ensure(terminated.release) {
+                                started.release.andThen(never.get).andThen("completed-normally")
+                            }
+                        }
+                        val router = HttpRouter(Seq(handler), Absent)
+
+                        val inbound  = Channel.Unsafe.init[Span[Byte]](16)
+                        val outbound = Channel.Unsafe.init[Span[Byte]](16)
+                        sendRequest(inbound, "GET /park HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")
+
+                        UnsafeServerDispatch.serve(router, inbound, outbound, defaultConfig)
+
+                        started.await.andThen {
+                            // The connection stays open (no inbound.close()): the handler completes
+                            // normally, and the watcher must never have interrupted it.
+                            never.complete(Result.succeed(())).andThen {
+                                Async.timeout(5.seconds)(terminated.await).andThen {
+                                    collectResponseAsync(outbound).map { response =>
+                                        assert(
+                                            response.contains("HTTP/1.1 200 OK") && response.contains("completed-normally"),
+                                            s"Expected 200 OK with a normal completion body from the un-interrupted handler, got: $response"
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
 end UnsafeServerDispatchTest

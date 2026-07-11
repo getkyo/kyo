@@ -1787,6 +1787,45 @@ class ChannelTest extends kyo.test.Test[Any]:
         }
     }
 
+    "awaitClose" - {
+        import AllowUnsafe.embrace.danger
+
+        "completes when close() is called" in {
+            val c       = Channel.Unsafe.init[Int](2)
+            val watcher = c.awaitClose()
+            assert(!watcher.done())
+            discard(c.close())
+            assert(watcher.done())
+        }
+
+        "completes on closeAwaitEmpty() while queued values remain, without consuming them" in {
+            val c = Channel.Unsafe.init[Int](2)
+            discard(c.offer(1))
+            discard(c.offer(2))
+            val watcher = c.awaitClose()
+            assert(!watcher.done())
+            discard(c.closeAwaitEmpty())
+            assert(watcher.done())
+            // Queued spans stay takable: the watcher consumed nothing.
+            assert(c.poll().contains(Maybe(1)))
+            assert(c.poll().contains(Maybe(2)))
+        }
+
+        "completes immediately when registered after the channel is already closed" in {
+            val c = Channel.Unsafe.init[Int](2)
+            discard(c.close())
+            assert(c.awaitClose().done())
+        }
+
+        "zero-capacity channel" in {
+            val c       = Channel.Unsafe.init[Int](0)
+            val watcher = c.awaitClose()
+            assert(!watcher.done())
+            discard(c.close())
+            assert(watcher.done())
+        }
+    }
+
     "pendingPuts and pendingTakes" - {
         "should return 0 for empty channel" in {
             for

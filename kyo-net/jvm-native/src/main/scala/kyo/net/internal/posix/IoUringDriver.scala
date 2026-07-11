@@ -1368,6 +1368,10 @@ final private[net] class IoUringDriver private[posix] (
             pending.forEach((_, op) => op.failPromise(closed))
             // The ring teardown reclaims any kernel-owned buffers; release every per-write buffer we still hold so none leaks.
             pending.forEach((_, op) => op.releaseBuffer())
+            // Close any accepted fd whose Accept CQE the reap loop never reaped (a peer connected in the window between the loop's final
+            // drainReady and here): io_uring_queue_exit below would abandon that kernel-created fd, leaking an established handler-less
+            // connection. Runs while `pending` still resolves the CQE's key to its Accept op; see closeOrphanedAcceptCqes.
+            closeOrphanedAcceptCqes()
             pending.clear()
             inFlight.clear()
             stalledRaw.clear()
@@ -1726,6 +1730,28 @@ final private[net] class IoUringDriver private[posix] (
             cqe = if uring.kyo_uring_peek_cqe(ring, cqePtr) == 0 then cqePtr.get(0) else 0L
         end while
     end drainReady
+
+    /** Reap every remaining ready CQE at ring teardown, closing any Accept completion's accepted fd. A successful accept CQE the reap loop
+      * never got to (a peer connected in the microsecond window between the loop's final `drainReady` and `teardownRing`) materialized a
+      * kernel-created fd that no bookkeeping tracks; `io_uring_queue_exit` then abandons it, leaking an established, handler-less socket
+      * whose peer hangs on its first read (no FIN/RST ever reaches it). This mirrors `drainReady`'s reaped-case orphan close
+      * (`PendingOp.Accept`, `res >= 0`, promise already failed): the accepted fd is the leak, so close it; the Accept op's own promise and
+      * buffers are handled by `teardownRing`'s pending sweep. Called from `teardownRing` while `pending` still resolves the CQE's key, and
+      * safe there because the reap loop has exited, so this teardown carrier is the sole CQE consumer (`cqePtr` and `ring` are still valid;
+      * `io_uring_queue_exit` runs after this). Every other op type's CQE is consumed here too (its op is being torn down regardless).
+      */
+    private def closeOrphanedAcceptCqes()(using AllowUnsafe, Frame): Unit =
+        var cqe = if uring.kyo_uring_peek_cqe(ring, cqePtr) == 0 then cqePtr.get(0) else 0L
+        while cqe != 0L do
+            val key = uring.kyo_uring_cqe_get_data64(cqe)
+            val res = uring.kyo_uring_cqe_res(cqe)
+            pending.get(key) match
+                case _: PendingOp.Accept if res >= 0 => discard(takeNow(sockets.close(res)))
+                case _                               => ()
+            uring.kyo_uring_cqe_seen(ring, cqe)
+            cqe = if uring.kyo_uring_peek_cqe(ring, cqePtr) == 0 then cqePtr.get(0) else 0L
+        end while
+    end closeOrphanedAcceptCqes
 
     /** Re-arm every operation that parked on a full submission queue: raw sends in [[stalledRaw]] and recv/accept/connect in [[stalledSubmits]].
       * Called once per reap turn from [[reapLoop]] AFTER the fused submit-and-wait has submitted the turn's accumulated SQEs to the kernel and

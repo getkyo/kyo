@@ -3801,4 +3801,34 @@ class HttpServerTest extends BaseHttpTest:
         }
     }
 
+    "connection close" - {
+        "parked handler is interrupted when the client disconnects" in {
+            Latch.initWith(1) { started =>
+                Latch.initWith(1) { terminated =>
+                    val handler = HttpHandler.getText("park") { _ =>
+                        // Parks on a promise no one completes: touches neither inbound nor outbound.
+                        Promise.init[Unit, Any].map { never =>
+                            Sync.ensure(terminated.release) {
+                                started.release.andThen(never.get).andThen("unreachable")
+                            }
+                        }
+                    }
+                    HttpServer.init(0, "localhost")(handler).map { server =>
+                        Sync.Unsafe.defer {
+                            val transport = kyo.net.NetPlatform.transport
+                            transport.connect("localhost", server.port).safe.get.map { conn =>
+                                val req = "GET /park HTTP/1.1\r\nHost: localhost\r\n\r\n"
+                                conn.outbound.safe.put(Span.fromUnsafe(req.getBytes("US-ASCII")))
+                                    .andThen(started.await)
+                                    .andThen(Sync.Unsafe.defer(conn.close())) // FIN -> server ReadPump PeerFin
+                                    .andThen(Async.timeout(10.seconds)(terminated.await))
+                                    .andThen(succeed)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
 end HttpServerTest

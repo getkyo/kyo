@@ -38,6 +38,13 @@ private[kyo] object UnsafeServerDispatch:
     private[kyo] val IdleTimerClosed: Closed =
         new Closed("idle timer", Frame.internal, "")(using Frame.internal)
 
+    /** Singleton used to interrupt a handler fiber still running when the connection closes (see `inflightHandler` in `serveH1`). Avoids
+      * allocating a new Closed instance on every dispatch. Observed only by the keep-alive `onComplete`, which ignores fiber results, so
+      * this never surfaces as a logged panic.
+      */
+    private[kyo] val HandlerConnectionClosed: Closed =
+        new Closed("connection", Frame.internal, "")(using Frame.internal)
+
     // -- Date header caching (RFC 9110 section 6.6.1) --
 
     private val dateFormatter: DateTimeFormatter =
@@ -92,6 +99,23 @@ private[kyo] object UnsafeServerDispatch:
         val idleTimeout                                    = config.idleTimeout
         val idleTimeoutEnabled                             = idleTimeout.isFinite
         var idleTimerFiber: Maybe[Fiber.Unsafe[Unit, Any]] = Absent
+
+        // Per-connection in-flight handler slot: HTTP/1.1 dispatch is serial (the next dispatch only
+        // happens after the previous handler's onComplete restarts the parser), so one slot suffices.
+        // AtomicRef, not a plain var like idleTimerFiber: the slot is read from the close watcher below
+        // (fires on a pump/driver thread) and written from dispatchHandler (a parser-callback thread).
+        val inflightHandler = AtomicRef.Unsafe.init[Maybe[Fiber.Unsafe[Unit, Any]]](Absent)
+
+        // Connection-close watcher: interrupts whatever handler is currently in flight when the inbound
+        // channel begins closing. This is the only trigger that is live WHILE a handler is running (the
+        // parser itself is dormant between onRequestParsed and the keep-alive restart), so it is what
+        // reclaims a handler parked on a foreign await (a backend call, a promise nobody completes) that
+        // never touches inbound/outbound and would otherwise leak for the process lifetime.
+        inbound.awaitClose().onComplete { _ =>
+            inflightHandler.get() match
+                case Present(fiber) => discard(fiber.interrupt(Result.Panic(HandlerConnectionClosed)))
+                case Absent         => ()
+        }
 
         def cancelIdleTimer(): Unit =
             idleTimerFiber match
@@ -178,7 +202,8 @@ private[kyo] object UnsafeServerDispatch:
                                     config,
                                     parser,
                                     lookup,
-                                    restartParserFn
+                                    restartParserFn,
+                                    inflightHandler
                                 )
                             case Result.Failure(error) =>
                                 writeErrorResponse(streamCtx, error)
@@ -220,6 +245,9 @@ private[kyo] object UnsafeServerDispatch:
       *
       * @param restartParser
       *   Callback to restart the parser for keep-alive, including idle timeout scheduling.
+      * @param inflightHandler
+      *   Connection-scoped slot tracking the currently running handler fiber, watched by the connection-close watcher armed in `serveH1`
+      *   (see `inbound.awaitClose()`) so a handler parked on a foreign await gets interrupted instead of leaking past connection close.
       */
     private def dispatchHandler(
         router: HttpRouter,
@@ -229,7 +257,8 @@ private[kyo] object UnsafeServerDispatch:
         config: HttpServerConfig,
         parser: Http1Parser,
         routeLookup: RouteLookup,
-        restartParser: () => Unit
+        restartParser: () => Unit,
+        inflightHandler: AtomicRef.Unsafe[Maybe[Fiber.Unsafe[Unit, Any]]]
     )(using AllowUnsafe, Frame): Unit =
         val endpoint = router.endpoint(lookup)
         endpoint match
@@ -255,6 +284,16 @@ private[kyo] object UnsafeServerDispatch:
                 end if
             case _ =>
                 val fiber = IOTask(serveRequest(router, endpoint, lookup, streamCtx, request, config), Trace.init, Context.empty)
+                    .asInstanceOf[Fiber.Unsafe[Unit, Any]]
+                inflightHandler.set(Present(fiber))
+                // Recheck: the watcher may have already fired (and seen Absent, or a prior completed
+                // fiber) before this fiber was registered. Must use the close-signal state, not
+                // closed() (which reports only FullyClosed): closeAwaitEmpty-based teardown (the peer-FIN
+                // path) sits in HalfOpen with pipelined bytes still queued while it interrupts handlers.
+                if streamCtx.inbound.awaitClose().done() then
+                    discard(fiber.interrupt(Result.Panic(HandlerConnectionClosed)))
+                // Registered for both keep-alive and Connection: close dispatches: the leak is identical
+                // for both, and interrupting an already-completed fiber is a harmless no-op.
                 if request.isKeepAlive then
                     fiber.onComplete { _ =>
                         val leftover = streamCtx.takeLeftover()
