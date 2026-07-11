@@ -20,7 +20,11 @@ private[kyo] def isNodeRuntime: Boolean =
   *   [[FileJournal.Config]] for the durability and rotation knobs
   */
 extension (backend: Journal.Backend.type)
-    def file(dir: Path, config: FileJournal.Config = FileJournal.Config.default)(using
+    def file(
+        dir: Path,
+        config: FileJournal.Config = FileJournal.Config.default,
+        payloadCodec: EventPayloadCodec = EventPayloadCodec.bytes
+    )(using
         Frame
     )
         : Journal.Backend[Sync] < (Sync & Scope & Abort[JournalStorageError]) =
@@ -30,5 +34,5 @@ extension (backend: Journal.Backend.type)
                 Absent
             ))
         else
-            FileJournalCore.open(dir, config, new NodeSegmentStore)
+            FileJournalCore.open(dir, config, new NodeSegmentStore, payloadCodec)
 end extension

@@ -6,7 +6,110 @@ import java.util.concurrent.atomic.AtomicReference
 import kyo.*
 import scala.annotation.tailrec
 
-// --- Stateless binary codec -----------------------------------------------------------------
+// --- SegmentCodec trait -----------------------------------------------------------------------
+
+/** Format-dispatch seam for segment encoding. Implementations encode and decode event records
+  * to and from segment files; the orchestration layer ([[FileJournalCore]]) is format-agnostic.
+  *
+  * Two implementations exist: [[BinarySegmentCodec]] (the original `KJN1` binary format) and
+  * [[kyo.internal.JsonlSegmentCodec]] (the one-JSON-object-per-line JSONL format). Both are
+  * `private[kyo]`; neither appears in public surface.
+  */
+private[kyo] trait SegmentCodec:
+
+    // --- identity ---
+
+    /** File extension for segment files, including the leading dot (e.g. `".seg"`, `".jsonl"`). */
+    def segmentExtension: String
+
+    /** The binary file header written at position 0 when a segment is first created. An empty
+      * array means no header (JSONL segments carry no file header).
+      */
+    def header: Array[Byte]
+
+    // --- header ---
+
+    /** Returns `Absent` if the segment header at position 0 is valid, or `Present(detail)` if
+      * it is missing, malformed, or from an unknown version. Called once per segment during
+      * recovery before any record scan. Must require [[AllowUnsafe]] because it reads from the
+      * segment handle.
+      */
+    def validateHeader(h: SegmentStore.Handle)(using AllowUnsafe): Maybe[String]
+
+    // --- write ---
+
+    /** Encodes `events` (starting at `firstOffset`) plus a batch-commit marker into a single
+      * contiguous byte array suitable for one positional write to the segment handle. The caller
+      * writes the returned bytes and then calls [[extractPositions]] to build the record index.
+      */
+    def frameBatch(firstOffset: Long, events: Chunk[EventEnvelope]): Array[Byte]
+
+    /** Per-record byte size for the binary format; used by the default [[extractPositions]]
+      * implementation. For binary segments this is computed analytically from the field lengths;
+      * for JSONL, [[extractPositions]] is overridden to scan the batch bytes for newlines, so
+      * this method is not used for position computation in JSONL mode.
+      */
+    def recordSize(env: EventEnvelope): Long
+
+    /** Extracts the per-record byte-start positions from the bytes returned by
+      * [[frameBatch]]. The default implementation uses [[recordSize]] per event. JSONL overrides
+      * this to scan for newline boundaries instead, because the JSONL line length depends on the
+      * encoded offset value and cannot be determined analytically without encoding.
+      */
+    def extractPositions(
+        firstOffset: Long,
+        events: Chunk[EventEnvelope],
+        batchBytes: Array[Byte],
+        startPos: Long
+    ): Array[Long] =
+        val positions = new Array[Long](events.length)
+        var p         = startPos
+        var i         = 0
+        while i < events.length do
+            positions(i) = p
+            p += recordSize(events(i))
+            i += 1
+        end while
+        positions
+    end extractPositions
+
+    // --- scan ---
+
+    /** Walks a segment from the beginning, grouping records by batch-commit markers. Returns a
+      * [[ScanResult]] describing the committed record positions, the committed-end byte offset,
+      * and any trailing torn batch. Called once per segment during first-touch recovery.
+      */
+    def scan(h: SegmentStore.Handle, size: Long, isActive: Boolean)(using AllowUnsafe): ScanResult
+
+    /** Reads the record (or commit line for JSONL) at byte position `pos` and verifies its
+      * integrity (CRC32). Returns `Result.fail(detail)` on corruption, `Result.succeed` on a
+      * valid record.
+      */
+    def decodeRecordAt(h: SegmentStore.Handle, pos: Long)(using AllowUnsafe): Result[String, DecodedRecord]
+
+    /** Returns true if a valid batch-commit marker exists anywhere in the segment between byte
+      * `from` (inclusive) and `size` (exclusive). Used to distinguish a torn tail from mid-file
+      * damage during scan.
+      */
+    def hasCommitAfter(h: SegmentStore.Handle, from: Long, size: Long)(using AllowUnsafe): Boolean
+
+    // --- shared concrete helpers (override if different) ---
+
+    /** Segment file name for the given base offset: a 20-digit zero-padded decimal stem plus
+      * [[segmentExtension]]. Both binary and JSONL use the same stem format.
+      */
+    final def segmentName(baseOffset: Long): String = f"$baseOffset%020d$segmentExtension"
+
+    /** Parses the base offset from a segment path by stripping the last
+      * `segmentExtension.length` characters from the filename stem.
+      */
+    final def parseSegmentName(path: Path): Long =
+        val name = path.parts.last
+        name.substring(0, name.length - segmentExtension.length).toLong
+
+end SegmentCodec
+
+// --- Binary segment codec (the original KJN1 format) -----------------------------------------
 
 /** Stateless binary codec: header, record frame (with CRC), batch-commit terminator, metadata (a
   * MsgPack map of tag-keyed `MetadataValue` nodes), and the injective streamId percent-encoding. No
@@ -16,7 +119,7 @@ import scala.annotation.tailrec
   *
   * Uses the shared pure [[CRC32]] on every platform; `java.util.zip.CRC32` is not referenced here.
   */
-private[kyo] object SegmentCodec:
+private[kyo] object BinarySegmentCodec extends SegmentCodec:
 
     val Magic: Array[Byte]         = Array[Byte]('K', 'J', 'N', '1') // 0x4B 0x4A 0x4E 0x31
     val Version: Byte              = 0x01
@@ -27,6 +130,9 @@ private[kyo] object SegmentCodec:
     val MetadataVersion: Byte      = 0x01                            // 0x01 = tagged map of MetadataValue
 
     private val Utf8 = StandardCharsets.UTF_8
+
+    def segmentExtension: String = ".seg"
+    def header: Array[Byte]      = SegmentHeader
 
     // --- header -------------------------------------------------------------------------------
 
@@ -154,6 +260,96 @@ private[kyo] object SegmentCodec:
         end if
     end readTerminator
 
+    // --- scan (moved from FileJournalCore.scanRecords) ----------------------------------------
+
+    def scan(handle: SegmentStore.Handle, size: Long, isActive: Boolean)(using AllowUnsafe): ScanResult =
+        val committed    = Chunk.newBuilder[Long]
+        var pos          = HeaderSize.toLong
+        var committedEnd = HeaderSize.toLong
+        var batchStart   = HeaderSize.toLong
+        var pending      = Chunk.empty[Long] // record positions in the current, not-yet-terminated batch
+        @tailrec def loop(): ScanResult =
+            if pos >= size then
+                // Reached EOF; any pending (unterminated) records are a torn tail.
+                if pending.isEmpty then ScanResult.Ok(committed.result(), committedEnd, Absent)
+                else if isActive then ScanResult.Ok(committed.result(), committedEnd, Present(batchStart))
+                else ScanResult.Corrupt(s"unterminated batch at byte $batchStart in sealed segment")
+            else
+                readTerminator(handle, pos) match
+                    case Present(count) if count == pending.length =>
+                        pending.foreach(p => discard(committed += p))
+                        pos += TerminatorSize.toLong
+                        committedEnd = pos
+                        batchStart = pos
+                        pending = Chunk.empty
+                        loop()
+                    case _ =>
+                        decodeRecordAt(handle, pos) match
+                            case Result.Success(dec) =>
+                                pending = pending.append(pos)
+                                pos += 8L + dec.bodyLen.toLong
+                                loop()
+                            case Result.Failure(detail) =>
+                                // A decode failure in the active segment is a torn tail only when no
+                                // valid terminator follows the failure point. A terminator surviving
+                                // after the bad record means the damage is mid-file and must not be
+                                // silently truncated away.
+                                if isActive && !hasCommitAfter(handle, pos + 1L, size) then
+                                    ScanResult.Ok(committed.result(), committedEnd, Present(batchStart))
+                                else ScanResult.Corrupt(detail)
+        loop()
+    end scan
+
+    def hasCommitAfter(handle: SegmentStore.Handle, from: Long, size: Long)(using AllowUnsafe): Boolean =
+        // Returns true if a valid 12-byte batch terminator exists at any byte offset from `from` to
+        // the end of the segment. The region is read in overlapping buffered windows and scanned in
+        // memory rather than issuing a 12-byte positional handle read per candidate offset. Windows
+        // overlap by TerminatorSize-1 so a terminator straddling a boundary is still found.
+        val window  = 1 << 16
+        val overlap = TerminatorSize.toLong - 1L
+        var winPos  = from
+        var found   = false
+        while !found && winPos <= size - TerminatorSize.toLong do
+            val len  = math.min(window.toLong, size - winPos).toInt
+            val arr  = handle.readAt(winPos, len)
+            val n    = arr.length
+            var i    = 0
+            val last = n - TerminatorSize
+            while !found && i <= last do
+                if terminatorAt(arr, i) then found = true
+                i += 1
+            end while
+            winPos += (window.toLong - overlap)
+        end while
+        found
+    end hasCommitAfter
+
+    // --- batch frame (moved from FileJournalCore.frameBatch) ----------------------------------
+
+    def frameBatch(firstOffset: Long, events: Chunk[EventEnvelope]): Array[Byte] =
+        // Assembles N record frames followed by a batch-commit terminator into one contiguous byte array.
+        val recs  = new Array[Array[Byte]](events.length)
+        var total = 0
+        var i     = 0
+        while i < events.length do
+            val e  = events(i)
+            val md = encodeMetadata(e.metadata)
+            val r  = encodeRecord(firstOffset + i, e.id.value, e.eventType.value, md, e.payload.toArray)
+            recs(i) = r; total += r.length; i += 1
+        end while
+        val term   = encodeTerminator(events.length)
+        val result = new Array[Byte](total + term.length)
+        var pos    = 0
+        i = 0
+        while i < recs.length do
+            java.lang.System.arraycopy(recs(i), 0, result, pos, recs(i).length)
+            pos += recs(i).length
+            i += 1
+        end while
+        java.lang.System.arraycopy(term, 0, result, pos, term.length)
+        result
+    end frameBatch
+
     // --- metadata ----------------------------------------------------------------------------
 
     def encodeMetadata(md: EventMetadata): Array[Byte] =
@@ -213,12 +409,6 @@ private[kyo] object SegmentCodec:
         sb.toString
     end encodeStreamId
 
-    def segmentName(baseOffset: Long): String = f"$baseOffset%020d.seg"
-
-    def parseSegmentName(path: Path): Long =
-        val name = path.parts.last
-        name.substring(0, name.length - 4).toLong // strip ".seg"
-
     // --- private byte helpers -----------------------------------------------------------------
 
     private def putLp(buf: ByteBuffer, bytes: Array[Byte]): Unit =
@@ -228,7 +418,7 @@ private[kyo] object SegmentCodec:
     private def getLpStr(buf: ByteBuffer): String = new String(getLpBytes(buf), Utf8)
     private def intBytes(v: Int): Array[Byte]     = ByteBuffer.allocate(4).putInt(v).array()
 
-end SegmentCodec
+end BinarySegmentCodec
 
 // --- Data types -------------------------------------------------------------------------------
 
@@ -285,17 +475,20 @@ private[kyo] enum ScanResult:
   * All platform I/O is delegated to the injected [[SegmentStore]]; no `FileChannel`, `toJava`, or
   * platform-specific types appear here. The [[CRC32]] used for every checksum is the shared pure
   * implementation, making segment bytes identical across JVM, Native, JS, and Wasm by construction.
+  * The segment encoding is delegated to the injected [[SegmentCodec]], which is selected by the
+  * FORMAT marker at open time.
   */
 final private[kyo] class FileJournalCore(
     rootKey: String,
     streamsDir: Path,
     config: FileJournal.Config,
     store: SegmentStore,
-    lock: SegmentStore.Lock
+    lock: SegmentStore.Lock,
+    codec: SegmentCodec,
+    payloadCodec: EventPayloadCodec
 )(using frame: Frame, allow: AllowUnsafe) extends Journal.Backend[Sync]:
 
     import FileJournal.*
-    import SegmentCodec.*
 
     // Recovery and indexing fail only with JournalStorageError or JournalCorruptedError; both mix
     // in all three per-op failure traits, so this union narrows cleanly into any Backend row
@@ -427,15 +620,8 @@ final private[kyo] class FileJournalCore(
             val (priorSegments, active) = rotateIfNeeded(streamId, s, firstOffset)
             val handle                  = handleFor(active.path)
             val startPos                = active.writePos
-            val bytes                   = frameBatch(firstOffset, events) // N record frames + terminator
-            val positions               = new Array[Long](events.length)
-            var p                       = startPos
-            var i                       = 0
-            while i < events.length do
-                positions(i) = p
-                p += recordSize(events(i))
-                i += 1
-            end while
+            val bytes                   = codec.frameBatch(firstOffset, events)
+            val positions               = codec.extractPositions(firstOffset, events, bytes, startPos)
             handle.writeAt(startPos, bytes)
             if config.fsync == Fsync.Always then handle.sync() // fdatasync-or-stronger
             val newWritePos = startPos + bytes.length.toLong
@@ -463,7 +649,7 @@ final private[kyo] class FileJournalCore(
     end writeBatch
 
     // Seal the active segment and start a new one when it has reached segmentSize (soft threshold).
-    // Creates the next segment file named by the next offset, writes its 5-byte header.
+    // Creates the next segment file named by the next offset, writes its header (if any).
     // Returns (segmentsBeforeActive, activeEntry). No rotation: the active segment stays in place
     // and the prior list is everything before it. Rotation: the filled segment is sealed and
     // appended to the prior list, and a fresh active segment is created.
@@ -491,13 +677,14 @@ final private[kyo] class FileJournalCore(
         // and only when the directory did not already exist (a rotation reuses an existing, already-
         // synced stream directory).
         if config.fsync == Fsync.Always && !existed then store.syncDir(streamsDir)
-        val segPath = dir / segmentName(baseOffset)
-        val handle  = handleFor(segPath) // opens + registers
-        handle.writeAt(0L, SegmentHeader)
+        val segPath   = dir / codec.segmentName(baseOffset)
+        val handle    = handleFor(segPath) // opens + registers
+        val headerLen = codec.header.length.toLong
+        if headerLen > 0L then handle.writeAt(0L, codec.header)
         // store.syncDir after creating the segment so its directory link survives a crash; the
         // subsequent handle.sync() in writeBatch covers the segment's data.
         if config.fsync == Fsync.Always then store.syncDir(dir)
-        SegmentEntry(baseOffset, segPath, Chunk.empty[Long], HeaderSize.toLong, HeaderSize.toLong)
+        SegmentEntry(baseOffset, segPath, Chunk.empty[Long], headerLen, headerLen)
     end createSegment
 
     // --- read path ---------------------------------------------------------------------------
@@ -567,7 +754,10 @@ final private[kyo] class FileJournalCore(
         if !dir.unsafe.exists() then Result.succeed(StreamState.emptyIndexed)
         else
             val segFiles = dir.unsafe.list() match
-                case Result.Success(paths) => paths.filter(_.unsafe.show.endsWith(".seg")).sortBy(_.unsafe.show)
+                // Extension-driven filtering: codec.segmentExtension selects which segment files
+                // belong to this root, so JSONL roots recover .jsonl files and Binary roots recover .seg files.
+                case Result.Success(paths) =>
+                    paths.filter(_.unsafe.show.endsWith(codec.segmentExtension)).sortBy(_.unsafe.show)
                 case Result.Failure(e) =>
                     return Result.fail(JournalStorageError(s"Cannot list segments for '${streamId.value}'", Present(e)))
             if segFiles.isEmpty then Result.succeed(StreamState.emptyIndexed)
@@ -592,11 +782,11 @@ final private[kyo] class FileJournalCore(
                 val isActive = idx == segFiles.length - 1
                 val handle   = handleFor(segPath)
                 val size     = handle.size()
-                validateHeader(handle) match
+                codec.validateHeader(handle) match
                     case Present(detail) => return Result.fail(JournalCorruptedError(Absent, detail))
                     case Absent          => ()
-                val baseOffset = parseSegmentName(segPath)
-                scanRecords(streamId, handle, size, isActive) match
+                val baseOffset = codec.parseSegmentName(segPath)
+                codec.scan(handle, size, isActive) match
                     case ScanResult.Corrupt(detail) =>
                         // `return` required: without it, Result.fail(...) is a non-unit value
                         // discarded in a while-loop body, failing under -Wconf:msg=discarded.*value:error.
@@ -635,7 +825,7 @@ final private[kyo] class FileJournalCore(
                 val seg    = segmentFor(s, off)
                 val handle = handleFor(seg.path)
                 val pos    = seg.recordPositions((off - seg.baseOffset).toInt)
-                decodeRecordAt(handle, pos) match
+                codec.decodeRecordAt(handle, pos) match
                     case Result.Failure(detail) =>
                         return Result.fail(JournalCorruptedError(Present(streamId), detail))
                     case Result.Success(dec) =>
@@ -656,7 +846,9 @@ final private[kyo] class FileJournalCore(
             for
                 eid <- EventId(dec.eventId)
                 etp <- EventType(dec.eventType)
-                md  <- decodeMetadata(dec.metadata)
+                // decodeMetadata expects MsgPack bytes; both BinarySegmentCodec.decodeRecordAt and
+                // JsonlSegmentCodec.decodeRecordAt store metadata in MsgPack form in DecodedRecord.
+                md <- BinarySegmentCodec.decodeMetadata(dec.metadata)
             yield RecordedEvent(
                 streamId = streamId,
                 offset = StreamOffset.fromUnchecked(dec.offset),
@@ -689,7 +881,7 @@ final private[kyo] class FileJournalCore(
         end match
     end handleFor
 
-    private def streamDir(streamId: StreamId): Path = streamsDir / encodeStreamId(streamId)
+    private def streamDir(streamId: StreamId): Path = streamsDir / BinarySegmentCodec.encodeStreamId(streamId)
 
     private def segmentFor(s: StreamState, off: Long): SegmentEntry =
         // Binary search the segment whose [base, base+len) contains off (segments offset-sorted).
@@ -719,102 +911,13 @@ final private[kyo] class FileJournalCore(
                     case StreamInfo.Existing(_, lastOffset) => lastOffset == offset
                     case StreamInfo.Absent                  => false
 
-    // Assembles N record frames followed by a batch-commit terminator into one contiguous byte array.
-    private def frameBatch(firstOffset: Long, events: Chunk[EventEnvelope])(using AllowUnsafe): Array[Byte] =
-        val recs  = new Array[Array[Byte]](events.length)
-        var total = 0
-        var i     = 0
-        while i < events.length do
-            val e  = events(i)
-            val md = encodeMetadata(e.metadata)
-            val r  = encodeRecord(firstOffset + i, e.id.value, e.eventType.value, md, e.payload.toArray)
-            recs(i) = r; total += r.length; i += 1
-        end while
-        val term   = encodeTerminator(events.length)
-        val result = new Array[Byte](total + term.length)
-        var pos    = 0
-        i = 0
-        while i < recs.length do
-            java.lang.System.arraycopy(recs(i), 0, result, pos, recs(i).length)
-            pos += recs(i).length
-            i += 1
-        end while
-        java.lang.System.arraycopy(term, 0, result, pos, term.length)
-        result
-    end frameBatch
-
-    // Walk records from HeaderSize, grouping by terminators; returns committed record byte-
-    // positions, the byte after the last valid terminator, and (for the active segment) where a
-    // trailing torn batch began. A CRC/framing failure that is NOT the trailing region of the
-    // active segment is Corrupt (mid-file damage).
-    private def scanRecords(streamId: StreamId, handle: SegmentStore.Handle, size: Long, isActive: Boolean)(using AllowUnsafe): ScanResult =
-        val committed    = Chunk.newBuilder[Long]
-        var pos          = HeaderSize.toLong
-        var committedEnd = HeaderSize.toLong
-        var batchStart   = HeaderSize.toLong
-        var pending      = Chunk.empty[Long] // record positions in the current, not-yet-terminated batch
-        // Returns true if a valid batch-commit terminator exists at any byte offset from `from` to
-        // the end of the segment. Used to distinguish a torn tail (no terminator follows the failure
-        // point) from mid-file damage (a committed terminator survives after the bad record). The
-        // region is read in overlapping buffered windows and scanned in memory rather than issuing a
-        // 12-byte positional handle read per candidate offset. Windows overlap by TerminatorSize-1
-        // so a terminator straddling a boundary is still found.
-        def hasTerminatorAfter(from: Long): Boolean =
-            val window  = 1 << 16
-            val overlap = TerminatorSize.toLong - 1L
-            var winPos  = from
-            var found   = false
-            while !found && winPos <= size - TerminatorSize.toLong do
-                val len  = math.min(window.toLong, size - winPos).toInt
-                val arr  = handle.readAt(winPos, len)
-                val n    = arr.length
-                var i    = 0
-                val last = n - TerminatorSize
-                while !found && i <= last do
-                    if terminatorAt(arr, i) then found = true
-                    i += 1
-                end while
-                winPos += (window.toLong - overlap)
-            end while
-            found
-        end hasTerminatorAfter
-        @tailrec def loop(): ScanResult =
-            if pos >= size then
-                // Reached EOF; any pending (unterminated) records are a torn tail.
-                if pending.isEmpty then ScanResult.Ok(committed.result(), committedEnd, Absent)
-                else if isActive then ScanResult.Ok(committed.result(), committedEnd, Present(batchStart))
-                else ScanResult.Corrupt(s"unterminated batch at byte $batchStart in sealed segment")
-            else
-                readTerminator(handle, pos) match
-                    case Present(count) if count == pending.length =>
-                        pending.foreach(p => discard(committed += p))
-                        pos += TerminatorSize.toLong
-                        committedEnd = pos
-                        batchStart = pos
-                        pending = Chunk.empty
-                        loop()
-                    case _ =>
-                        decodeRecordAt(handle, pos) match
-                            case Result.Success(dec) =>
-                                pending = pending.append(pos)
-                                pos += 8L + dec.bodyLen.toLong
-                                loop()
-                            case Result.Failure(detail) =>
-                                // A decode failure in the active segment is a torn tail only when no
-                                // valid terminator follows the failure point. A terminator surviving
-                                // after the bad record means the damage is mid-file and must not be
-                                // silently truncated away.
-                                if isActive && !hasTerminatorAfter(pos + 1L) then
-                                    ScanResult.Ok(committed.result(), committedEnd, Present(batchStart))
-                                else ScanResult.Corrupt(detail)
-        loop()
-    end scanRecords
-
 end FileJournalCore
 
 // --- Companion (in-process registry + open factory) ------------------------------------------
 
 private[kyo] object FileJournalCore:
+
+    private val Utf8 = StandardCharsets.UTF_8
 
     // Process-wide registry of canonical root paths currently held open. POSIX advisory locks
     // (fcntl) do not exclude the owning process from reacquiring the same lock, so in-process
@@ -838,21 +941,31 @@ private[kyo] object FileJournalCore:
       * via the supplied `SegmentStore`. Internal; the public entry point is the platform-specific
       * `Journal.Backend.file` extension.
       */
-    private[kyo] def open(dir: Path, config: FileJournal.Config, store: SegmentStore)(using
+    private[kyo] def open(
+        dir: Path,
+        config: FileJournal.Config,
+        store: SegmentStore,
+        payloadCodec: EventPayloadCodec
+    )(using
         frame: Frame
     )
         : Journal.Backend[Sync] < (Sync & Scope & Abort[JournalStorageError]) =
         Scope.acquireRelease(
             // Unsafe: creates the root, streams/ via Path.Unsafe and acquires the platform lock via
             // the injected SegmentStore; raw platform I/O is the only path to locking.
-            Sync.Unsafe.defer(Abort.get(FileJournalCore.acquire(dir, config, store)))
+            Sync.Unsafe.defer(Abort.get(FileJournalCore.acquire(dir, config, store, payloadCodec)))
         )(backend =>
             // Unsafe: bridges the raw platform release calls (lock release, handle closes) into the
             // Sync tier for the Scope.acquireRelease finalization callback.
             Sync.Unsafe.defer(backend.release())
         )
 
-    private def acquire(dir: Path, config: FileJournal.Config, store: SegmentStore)(using
+    private def acquire(
+        dir: Path,
+        config: FileJournal.Config,
+        store: SegmentStore,
+        payloadCodec: EventPayloadCodec
+    )(using
         frame: Frame,
         allow: AllowUnsafe
     )
@@ -878,7 +991,30 @@ private[kyo] object FileJournalCore:
                         unregisterRoot(rootKey)
                         Result.fail(err)
                     case Result.Success(acquiredLock) =>
-                        Result.succeed(new FileJournalCore(rootKey, streamsDir, config, store, acquiredLock))
+                        // FORMAT marker check/write runs after lock acquisition to prevent a TOCTOU
+                        // race where two processes both see a fresh root and both write FORMAT.
+                        checkOrWriteFormatMarker(dir, config.format) match
+                            case Result.Failure(err) =>
+                                // Unsafe: release the lock before propagating the format error.
+                                discard(Result.catching[Throwable](acquiredLock.release()))
+                                unregisterRoot(rootKey)
+                                Result.fail(err)
+                            case Result.Success(validatedFormat) =>
+                                val codec = validatedFormat match
+                                    case FileJournal.SegmentFormat.Binary => BinarySegmentCodec
+                                    case FileJournal.SegmentFormat.Jsonl  => new JsonlSegmentCodec(payloadCodec)
+                                Result.succeed(
+                                    new FileJournalCore(
+                                        rootKey,
+                                        streamsDir,
+                                        config,
+                                        store,
+                                        acquiredLock,
+                                        codec,
+                                        payloadCodec
+                                    )
+                                )
+                        end match
                 end match
             end if
         catch
@@ -887,5 +1023,102 @@ private[kyo] object FileJournalCore:
                 Result.fail(JournalStorageError(s"Failed to open journal root '${dir.unsafe.show}'", Present(e)))
         end try
     end acquire
+
+    // Reads or writes the FORMAT marker file in `dir`. Must be called AFTER the process-level
+    // lock is held to prevent TOCTOU races between concurrent opens of the same root.
+    //
+    // Rules:
+    //   - No FORMAT file + no existing stream directories: write FORMAT from requestedFormat; proceed.
+    //   - No FORMAT file + existing stream directories: infer Binary (legacy binary root created
+    //     before the FORMAT marker existed). If requestedFormat != Binary: fail loud. If
+    //     requestedFormat == Binary: proceed without writing FORMAT (backward compat; future opens
+    //     infer Binary again).
+    //   - FORMAT file with matching format: proceed.
+    //   - FORMAT file with mismatched format: fail with typed JournalStorageError.
+    //   - FORMAT file with unknown format value: fail with typed JournalStorageError.
+    private def checkOrWriteFormatMarker(
+        dir: Path,
+        requestedFormat: FileJournal.SegmentFormat
+    )(using frame: Frame, allow: AllowUnsafe): Result[JournalStorageError, FileJournal.SegmentFormat] =
+        val formatFile = dir / "FORMAT"
+        if formatFile.unsafe.exists() then
+            formatFile.unsafe.readBytes() match
+                case Result.Failure(e) =>
+                    Result.fail(JournalStorageError(s"Cannot read FORMAT file in '${dir.unsafe.show}'", Present(e)))
+                case Result.Success(bytes) =>
+                    parseFormatMarker(dir, bytes, requestedFormat)
+        else
+            // No FORMAT file. Check whether the streams/ directory has any entries, which would
+            // indicate a legacy binary root created before the FORMAT marker existed.
+            val streamsDir = dir / "streams"
+            val hasStreams = streamsDir.unsafe.exists() && (streamsDir.unsafe.list() match
+                case Result.Success(paths) => paths.nonEmpty
+                case Result.Failure(_)     => false)
+            if hasStreams && requestedFormat != FileJournal.SegmentFormat.Binary then
+                Result.fail(JournalStorageError(
+                    s"Journal root '${dir.unsafe.show}' has existing segments but no FORMAT marker; " +
+                        "inferred Binary; Config requests Jsonl",
+                    Absent
+                ))
+            else if hasStreams then
+                // Backward-compat: pre-existing Binary root with no FORMAT file.
+                // Do not write FORMAT; future opens will infer Binary from segment presence.
+                Result.succeed(FileJournal.SegmentFormat.Binary)
+            else
+                val content = requestedFormat match
+                    case FileJournal.SegmentFormat.Binary => "format: binary\nversion: 1\n"
+                    case FileJournal.SegmentFormat.Jsonl  => "format: jsonl\nversion: 1\n"
+                formatFile.unsafe.writeBytes(Span.from(content.getBytes(Utf8))) match
+                    case Result.Failure(e) =>
+                        Result.fail(JournalStorageError(
+                            s"Cannot write FORMAT file in '${dir.unsafe.show}'",
+                            Present(e)
+                        ))
+                    case Result.Success(_) =>
+                        Result.succeed(requestedFormat)
+                end match
+            end if
+        end if
+    end checkOrWriteFormatMarker
+
+    private def parseFormatMarker(
+        dir: Path,
+        bytes: Span[Byte],
+        requestedFormat: FileJournal.SegmentFormat
+    )(using Frame): Result[JournalStorageError, FileJournal.SegmentFormat] =
+        val content = new String(bytes.toArray, Utf8)
+        val pairs = content.split("\n").flatMap { line =>
+            val idx = line.indexOf(": ")
+            if idx < 0 then Array.empty[(String, String)]
+            else Array((line.substring(0, idx).trim, line.substring(idx + 2).trim))
+        }.toMap
+        pairs.get("format") match
+            case None =>
+                Result.fail(JournalStorageError(
+                    s"FORMAT file in '${dir.unsafe.show}' has no 'format' key",
+                    Absent
+                ))
+            case Some(diskFormatStr) =>
+                val diskFormatResult = diskFormatStr match
+                    case "binary" => Result.succeed(FileJournal.SegmentFormat.Binary)
+                    case "jsonl"  => Result.succeed(FileJournal.SegmentFormat.Jsonl)
+                    case other =>
+                        Result.fail(JournalStorageError(
+                            s"FORMAT file in '${dir.unsafe.show}' has unknown format value '$other'",
+                            Absent
+                        ))
+                diskFormatResult.flatMap { df =>
+                    if df != requestedFormat then
+                        val reqStr = requestedFormat match
+                            case FileJournal.SegmentFormat.Binary => "binary"
+                            case FileJournal.SegmentFormat.Jsonl  => "jsonl"
+                        Result.fail(JournalStorageError(
+                            s"Journal root '${dir.unsafe.show}' was created as $diskFormatStr; Config requests $reqStr",
+                            Absent
+                        ))
+                    else Result.succeed(df)
+                }
+        end match
+    end parseFormatMarker
 
 end FileJournalCore

@@ -1,11 +1,11 @@
 package kyo
 
 import java.nio.ByteBuffer
+import kyo.internal.BinarySegmentCodec
 import kyo.internal.CRC32
-import kyo.internal.SegmentCodec
 
 class FileJournalCodecTest extends kyo.test.Test[Any]:
-    import SegmentCodec.*
+    import BinarySegmentCodec.*
 
     "segment header" - {
         "is KJN1 followed by version 0x01" in {
@@ -50,8 +50,14 @@ class FileJournalCodecTest extends kyo.test.Test[Any]:
     }
 
     "Config.default" - {
-        "carries fsync=Always and segmentSize=64 MiB" in {
-            assert(FileJournal.Config.default == FileJournal.Config(fsync = FileJournal.Fsync.Always, segmentSize = 64L.mib))
+        "carries fsync=Always, segmentSize=64 MiB, and format=Binary" in {
+            assert(
+                FileJournal.Config.default == FileJournal.Config(
+                    fsync = FileJournal.Fsync.Always,
+                    segmentSize = 64L.mib,
+                    format = FileJournal.SegmentFormat.Binary
+                )
+            )
         }
     }
 end FileJournalCodecTest

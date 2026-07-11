@@ -131,7 +131,8 @@ object MetadataValue:
                 val b = Chunk.newBuilder[(Structure.Value, Structure.Value)]
                 while r.hasNextElement() do
                     discard(r.arrayStart())
-                    val k  = read(r): Structure.Value
+                    val k = read(r): Structure.Value
+                    discard(r.hasNextElement()) // consume ',' before the value element for text-format readers
                     val vv = read(r): Structure.Value
                     r.arrayEnd()
                     b += (k -> vv)
@@ -142,6 +143,7 @@ object MetadataValue:
                 discard(r.objectStart())
                 discard(r.field())
                 val name = r.string()
+                discard(r.hasNextField()) // consume ',' before the next field for text-format readers
                 discard(r.field())
                 val vv = read(r): Structure.Value
                 r.objectEnd()

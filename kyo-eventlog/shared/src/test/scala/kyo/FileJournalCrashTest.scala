@@ -1,13 +1,13 @@
 package kyo
 
-import kyo.internal.SegmentCodec
+import kyo.internal.BinarySegmentCodec
 
 class FileJournalCrashTest extends kyo.test.Test[Any]:
 
-    import SegmentCodec.HeaderSize
-    import SegmentCodec.TerminatorSize
-    import SegmentCodec.recordSize
-    import SegmentCodec.segmentName
+    import BinarySegmentCodec.HeaderSize
+    import BinarySegmentCodec.TerminatorSize
+    import BinarySegmentCodec.recordSize
+    import BinarySegmentCodec.segmentName
 
     private def valid[A](r: Result[JournalInvalidIdentifierError, A]): A =
         r.getOrElse(throw new AssertionError("valid identifier"))
@@ -261,13 +261,13 @@ class FileJournalCrashTest extends kyo.test.Test[Any]:
                     // Unsafe: raw byte-level segment rewrite to plant an unknown metadata version fixture.
                     Sync.Unsafe.defer {
                         val badMeta = Array[Byte](0x02.toByte) // unknown future version, no body
-                        val rec     = SegmentCodec.encodeRecord(0L, "e-0", "T", badMeta, "p0".getBytes("UTF-8"))
-                        val term    = SegmentCodec.encodeTerminator(1)
-                        val total   = SegmentCodec.HeaderSize + rec.length + term.length
+                        val rec     = BinarySegmentCodec.encodeRecord(0L, "e-0", "T", badMeta, "p0".getBytes("UTF-8"))
+                        val term    = BinarySegmentCodec.encodeTerminator(1)
+                        val total   = BinarySegmentCodec.HeaderSize + rec.length + term.length
                         val seg     = new Array[Byte](total)
-                        java.lang.System.arraycopy(SegmentCodec.SegmentHeader, 0, seg, 0, SegmentCodec.HeaderSize)
-                        java.lang.System.arraycopy(rec, 0, seg, SegmentCodec.HeaderSize, rec.length)
-                        java.lang.System.arraycopy(term, 0, seg, SegmentCodec.HeaderSize + rec.length, term.length)
+                        java.lang.System.arraycopy(BinarySegmentCodec.SegmentHeader, 0, seg, 0, BinarySegmentCodec.HeaderSize)
+                        java.lang.System.arraycopy(rec, 0, seg, BinarySegmentCodec.HeaderSize, rec.length)
+                        java.lang.System.arraycopy(term, 0, seg, BinarySegmentCodec.HeaderSize + rec.length, term.length)
                         segmentPath(dir).unsafe.writeBytes(Span.from(seg)) match
                             case Result.Success(_) => ()
                             case Result.Failure(e) => throw e
@@ -278,6 +278,77 @@ class FileJournalCrashTest extends kyo.test.Test[Any]:
                     case Result.Failure(_: JournalCorruptedError) => true
                     case _                                        => false
                 assert(isCorrupt)
+        }
+    }
+
+    "JSONL tail recovery" - {
+        "recovering a JSONL segment with a torn trailing line emits a WARN naming the segment and byte range" in {
+            import AllowUnsafe.embrace.danger
+            val captured = AtomicRef.Unsafe.init(List.empty[String])
+            val sink = new Log.Unsafe:
+                val level                                                          = Log.Level.warn
+                val name                                                           = "test"
+                def withName(n: String)                                            = this
+                private def rec(p: String, m: => String)(using AllowUnsafe)        = discard(captured.getAndUpdate(s"$p:$m" :: _))
+                def trace(m: => String)(using Frame, AllowUnsafe)                  = rec("trace", m)
+                def trace(m: => String, t: => Throwable)(using Frame, AllowUnsafe) = rec("trace", m)
+                def debug(m: => String)(using Frame, AllowUnsafe)                  = rec("debug", m)
+                def debug(m: => String, t: => Throwable)(using Frame, AllowUnsafe) = rec("debug", m)
+                def info(m: => String)(using Frame, AllowUnsafe)                   = rec("info", m)
+                def info(m: => String, t: => Throwable)(using Frame, AllowUnsafe)  = rec("info", m)
+                def warn(m: => String)(using Frame, AllowUnsafe)                   = rec("warn", m)
+                def warn(m: => String, t: => Throwable)(using Frame, AllowUnsafe)  = rec("warn", m)
+                def error(m: => String)(using Frame, AllowUnsafe)                  = rec("error", m)
+                def error(m: => String, t: => Throwable)(using Frame, AllowUnsafe) = rec("error", m)
+            val jsonlConfig  = FileJournal.Config(format = FileJournal.SegmentFormat.Jsonl)
+            val jsonlSegName = "00000000000000000000.jsonl"
+            for
+                dir <- freshDir
+                // Write [e0] and [e1] through a JSONL backend, close scope so lock releases.
+                _ <- Scope.run {
+                    Abort.run[JournalStorageError](Journal.Backend.file(dir, jsonlConfig)).map {
+                        case Result.Success(backend) =>
+                            Kyo.foreach(Seq(Chunk(env(0)), Chunk(env(1))).toList) { batch =>
+                                Abort.run[JournalError](backend.append(sid, ExpectedOffset.Any, batch)).map {
+                                    case Result.Success(_)   => ()
+                                    case Result.Failure(err) => throw new AssertionError(s"append failed: $err")
+                                    case panic: Result.Panic => throw panic.exception
+                                }
+                            }.map(_ => ())
+                        case Result.Failure(err) => throw err
+                        case panic: Result.Panic => throw panic.exception
+                    }
+                }
+                // Read the .jsonl segment, then rewrite it minus its last byte (tears the commit line).
+                full <- Sync.Unsafe.defer {
+                    val segPath = dir / "streams" / "crash-1" / jsonlSegName
+                    segPath.unsafe.readBytes() match
+                        case Result.Success(span) => span.toArray
+                        case Result.Failure(e)    => throw e
+                }
+                _ <- Sync.Unsafe.defer {
+                    val segPath = dir / "streams" / "crash-1" / jsonlSegName
+                    segPath.unsafe.writeBytes(Span.from(full.take(full.length - 1))) match
+                        case Result.Success(_) => ()
+                        case Result.Failure(e) => throw e
+                }
+                // Reopen under the log sink; recovery truncates the torn tail and emits a WARN.
+                res <- Log.let(Log(sink)) {
+                    Scope.run {
+                        Abort.run[JournalStorageError](Journal.Backend.file(dir, jsonlConfig)).map {
+                            case Result.Success(backend) =>
+                                Abort.run[JournalError](backend.read(sid, StreamOffset.first, Int.MaxValue))
+                            case Result.Failure(err) => throw err
+                            case panic: Result.Panic => throw panic.exception
+                        }
+                    }
+                }
+            yield
+                val events = res.getOrElse(throw new AssertionError(s"recovery read failed: $res"))
+                val warns  = captured.get().filter(_.startsWith("warn:"))
+                assert(events.map(_.offset.value) == List(0L))
+                assert(warns.exists(w => w.contains(".jsonl") && w.contains("byte")))
+            end for
         }
     }
 end FileJournalCrashTest

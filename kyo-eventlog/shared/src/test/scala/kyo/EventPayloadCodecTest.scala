@@ -38,4 +38,24 @@ class EventPayloadCodecTest extends kyo.test.Test[Any]:
             case other                   => fail(s"expected identity round-trip, got: $other")
     }
 
+    "schema codec round-trips a typed value through the JSONL transcode path" in {
+        // encodeForJsonl transcodes MsgPack bytes to a JSON value string; decodeFromJsonl reads
+        // a JSON reader positioned at that value and returns MsgPack bytes. The two together must
+        // reconstruct the original typed value, covering the MsgPack<->JSON path used by the
+        // JSONL segment writer and reader.
+        val event   = CodecTestEvent("roundtrip", 99)
+        val codec   = new SchemaPayloadCodec[CodecTestEvent]
+        val msgpack = codec.encode(event)
+        val jsonStr = codec.encodeForJsonl(msgpack)(using Frame.internal) match
+            case Result.Success(s) => s
+            case other             => fail(s"encodeForJsonl failed: $other")
+        val reader = new Json().newReader(Span.from(jsonStr.getBytes("UTF-8")))(using Frame.internal)
+        val recovered = codec.decodeFromJsonl(reader)(using Frame.internal) match
+            case Result.Success(bytes) => bytes
+            case other                 => fail(s"decodeFromJsonl failed: $other")
+        codec.decode(recovered)(using Frame.internal) match
+            case Result.Success(decoded) => assert(decoded == event)
+            case other                   => fail(s"final decode failed: $other")
+    }
+
 end EventPayloadCodecTest

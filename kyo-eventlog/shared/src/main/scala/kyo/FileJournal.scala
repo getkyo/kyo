@@ -20,6 +20,11 @@ package kyo
   *   after: a new segment starts on the next append once the active segment has reached this size.
   *   The active segment can therefore grow past the threshold, and a record larger than the
   *   threshold is written whole into the current active segment rather than a dedicated one.
+  * @param format
+  *   segment encoding fixed at root creation by the `FORMAT` marker. Defaults to
+  *   [[SegmentFormat.Binary]]. See [[SegmentFormat]] for the available encodings. The format cannot
+  *   be changed after the first open of a root directory; a mismatch with an existing root fails
+  *   the open with a typed [[kyo.JournalStorageError]].
   * @see
   *   [[Journal.Backend.file]] for the constructor that consumes this config
   */
@@ -49,9 +54,41 @@ object FileJournal:
         case Disabled
     end Fsync
 
+    /** On-disk encoding for segments in a file journal root, fixed at creation by the FORMAT marker.
+      *
+      * The format is chosen when a journal root is first opened and recorded in a `FORMAT` file at the
+      * root. All subsequent opens of the same root must request the same format; a mismatch fails with
+      * a [[kyo.JournalStorageError]]. The format cannot be changed after creation without destroying
+      * and recreating the root.
+      *
+      * Two formats are available:
+      *
+      *   - [[Binary]]: the default binary encoding. Segments use the `KJN1` header, length-prefixed
+      *     record frames with CRC32 verification, and `KJNC` batch-commit terminators. Files carry a
+      *     `.seg` extension.
+      *   - [[Jsonl]]: one JSON object per line per event, one commit line per batch, no binary file
+      *     header. Human-readable and compatible with standard JSONL tools. Files carry a `.jsonl`
+      *     extension. The payload encoding depends on the `payloadCodec` supplied to
+      *     [[Journal.Backend.file]]: a schema-derived codec embeds a typed JSON value; the bytes
+      *     identity codec base64-encodes the raw bytes.
+      *
+      * @see
+      *   [[Config]] for the config type that carries this format
+      * @see
+      *   [[Journal.Backend.file]] for the entry point that selects the codec
+      */
+    enum SegmentFormat derives CanEqual:
+        /** Default binary encoding; byte-identical to the original `.seg` format. */
+        case Binary
+
+        /** One JSON object per line; `.jsonl` segments. */
+        case Jsonl
+    end SegmentFormat
+
     final case class Config(
         fsync: Fsync = Fsync.Always,
-        segmentSize: FileSize = 64L.mib
+        segmentSize: FileSize = 64L.mib,
+        format: SegmentFormat = SegmentFormat.Binary
     ) derives CanEqual
 
     object Config:

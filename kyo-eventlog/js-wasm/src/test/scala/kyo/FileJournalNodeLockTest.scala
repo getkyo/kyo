@@ -1,8 +1,8 @@
 package kyo
 
+import kyo.internal.BinarySegmentCodec
 import kyo.internal.NodeFileLock
 import kyo.internal.NodeSegmentStore
-import kyo.internal.SegmentCodec
 import kyo.internal.bytesToUint8Array
 import scala.scalajs.js.annotation.*
 import scala.scalajs.js.typedarray.Uint8Array
@@ -248,7 +248,7 @@ class FileJournalNodeLockTest extends kyo.test.Test[Any]:
                 )
             )
             val segPath = (dir: Path) =>
-                dir / "streams" / SegmentCodec.encodeStreamId(streamId) / SegmentCodec.segmentName(0L)
+                dir / "streams" / BinarySegmentCodec.encodeStreamId(streamId) / BinarySegmentCodec.segmentName(0L)
             for
                 dir <- freshDir
                 _ <- Scope.run {

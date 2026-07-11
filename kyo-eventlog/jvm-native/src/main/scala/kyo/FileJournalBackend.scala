@@ -116,11 +116,17 @@ end FileChannelStore
   *
   * @see
   *   [[FileJournal.Config]] for the durability and rotation knobs
+  * @see
+  *   [[EventPayloadCodec]] for payload encoding strategies
   */
 extension (backend: Journal.Backend.type)
-    def file(dir: Path, config: FileJournal.Config = FileJournal.Config.default)(using
+    def file(
+        dir: Path,
+        config: FileJournal.Config = FileJournal.Config.default,
+        payloadCodec: EventPayloadCodec = EventPayloadCodec.bytes
+    )(using
         Frame
     )
         : Journal.Backend[Sync] < (Sync & Scope & Abort[JournalStorageError]) =
-        FileJournalCore.open(dir, config, new FileChannelStore)
+        FileJournalCore.open(dir, config, new FileChannelStore, payloadCodec)
 end extension
