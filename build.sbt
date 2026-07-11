@@ -1615,6 +1615,7 @@ lazy val `kyo-jsonrpc` =
         .dependsOn(`kyo-prelude`)
         .dependsOn(`kyo-core`)
         .dependsOn(`kyo-schema`)
+        .dependsOn(`kyo-net`)
         .in(file("kyo-jsonrpc"))
         .withKyoTest
         .settings(`kyo-settings`)
