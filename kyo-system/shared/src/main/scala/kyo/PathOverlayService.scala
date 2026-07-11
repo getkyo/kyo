@@ -49,6 +49,305 @@ private[kyo] object OverlayService:
 
 end OverlayService
 
+// Self-contained binary intent-log format for the overlay durable commit state machine.
+// Written to "intent.kyo" in the staging directory before any lower mutations.
+// The commit terminator (KYCT) seals the log; its absence means an incomplete write that
+// recovery skips. No dependency on kyo-eventlog (circular); pure kyo-system.
+private[kyo] object WriteOpLog:
+
+    private val OpWriteFile: Byte = 0x01
+    private val OpWriteDir: Byte  = 0x02
+    private val OpRemove: Byte    = 0x03
+    private val OpMove: Byte      = 0x04
+    private val OpCopy: Byte      = 0x05
+
+    private val TagFile: Byte = 0x01
+    private val TagDir: Byte  = 0x02
+
+    private val MagicHeader: Array[Byte]     = Array('K'.toByte, 'Y'.toByte, 'I'.toByte, 'L'.toByte)
+    private val Version: Byte                = 0x01
+    private val MagicTerminator: Array[Byte] = Array('K'.toByte, 'Y'.toByte, 'C'.toByte, 'T'.toByte)
+
+    // Pure-Scala CRC32 (IEEE 802.3 polynomial). No java.util.zip; works on JVM, JS, Native.
+    private val crc32Table: Array[Int] = Array.tabulate(256) { n =>
+        var c = n
+        var k = 0
+        while k < 8 do
+            c = if (c & 1) != 0 then 0xedb88320 ^ (c >>> 1) else c >>> 1
+            k += 1
+        c
+    }
+
+    private def crc32(bytes: Array[Byte], offset: Int, len: Int): Int =
+        var crc = 0xffffffff
+        var i   = offset
+        val end = offset + len
+        while i < end do
+            crc = (crc >>> 8) ^ crc32Table((crc ^ bytes(i).toInt) & 0xff)
+            i += 1
+        crc ^ 0xffffffff
+    end crc32
+
+    private def wI16(buf: scala.collection.mutable.ArrayBuffer[Byte], v: Int): Unit =
+        buf += ((v >>> 8) & 0xff).toByte
+        buf += (v & 0xff).toByte
+
+    private def wI32(buf: scala.collection.mutable.ArrayBuffer[Byte], v: Int): Unit =
+        buf += ((v >>> 24) & 0xff).toByte
+        buf += ((v >>> 16) & 0xff).toByte
+        buf += ((v >>> 8) & 0xff).toByte
+        buf += (v & 0xff).toByte
+    end wI32
+
+    private def wI64(buf: scala.collection.mutable.ArrayBuffer[Byte], v: Long): Unit =
+        buf += ((v >>> 56) & 0xff).toByte
+        buf += ((v >>> 48) & 0xff).toByte
+        buf += ((v >>> 40) & 0xff).toByte
+        buf += ((v >>> 32) & 0xff).toByte
+        buf += ((v >>> 24) & 0xff).toByte
+        buf += ((v >>> 16) & 0xff).toByte
+        buf += ((v >>> 8) & 0xff).toByte
+        buf += (v & 0xff).toByte
+    end wI64
+
+    private def rI16(arr: Array[Byte], pos: Int): Int =
+        ((arr(pos) & 0xff) << 8) | (arr(pos + 1) & 0xff)
+
+    private def rI32(arr: Array[Byte], pos: Int): Int =
+        ((arr(pos) & 0xff) << 24) | ((arr(pos + 1) & 0xff) << 16) |
+            ((arr(pos + 2) & 0xff) << 8) | (arr(pos + 3) & 0xff)
+
+    private def rI64(arr: Array[Byte], pos: Int): Long =
+        ((arr(pos) & 0xffL) << 56) | ((arr(pos + 1) & 0xffL) << 48) |
+            ((arr(pos + 2) & 0xffL) << 40) | ((arr(pos + 3) & 0xffL) << 32) |
+            ((arr(pos + 4) & 0xffL) << 24) | ((arr(pos + 5) & 0xffL) << 16) |
+            ((arr(pos + 6) & 0xffL) << 8) | (arr(pos + 7) & 0xffL)
+
+    private def encodeParts(buf: scala.collection.mutable.ArrayBuffer[Byte], parts: Chunk[String]): Unit =
+        wI32(buf, parts.size)
+        parts.foreach { part =>
+            val encoded = part.getBytes(java.nio.charset.StandardCharsets.UTF_8)
+            wI16(buf, encoded.length)
+            buf ++= encoded
+        }
+    end encodeParts
+
+    private def encodeEntry(buf: scala.collection.mutable.ArrayBuffer[Byte], entry: Path.Entry): Unit =
+        entry match
+            case Path.Entry.File(bytes, stat) =>
+                buf += TagFile
+                val arr = bytes.toArrayUnsafe
+                wI32(buf, arr.length)
+                buf ++= arr
+                wI64(buf, stat.lastModifiedMs)
+                wI64(buf, stat.sizeBytes)
+            case Path.Entry.Directory(stat) =>
+                buf += TagDir
+                wI64(buf, stat.lastModifiedMs)
+                wI64(buf, stat.sizeBytes)
+
+    private def encodeOp(op: WriteOp): Array[Byte] =
+        val buf = new scala.collection.mutable.ArrayBuffer[Byte](32)
+        op match
+            case WriteOp.WriteFile(parts, bytes, stat) =>
+                buf += OpWriteFile
+                encodeParts(buf, parts)
+                val arr = bytes.toArrayUnsafe
+                wI32(buf, arr.length)
+                buf ++= arr
+                wI64(buf, stat.lastModifiedMs)
+                wI64(buf, stat.sizeBytes)
+            case WriteOp.WriteDirectory(parts, opaque) =>
+                buf += OpWriteDir
+                encodeParts(buf, parts)
+                buf += (if opaque then 0x01.toByte else 0x00.toByte)
+            case WriteOp.Remove(parts) =>
+                buf += OpRemove
+                encodeParts(buf, parts)
+            case WriteOp.Move(from, to, resolved) =>
+                buf += OpMove
+                encodeParts(buf, from)
+                encodeParts(buf, to)
+                encodeEntry(buf, resolved)
+            case WriteOp.Copy(from, to, resolved) =>
+                buf += OpCopy
+                encodeParts(buf, from)
+                encodeParts(buf, to)
+                encodeEntry(buf, resolved)
+        end match
+        buf.toArray
+    end encodeOp
+
+    // Encodes the journal as: header | records | terminator.
+    // Record framing: len4 | crc4(body) | body.
+    // Terminator: "KYCT" | crc4(all prior bytes). Presence of the terminator = complete log.
+    def encode(journal: Chunk[WriteOp]): Span[Byte] =
+        val buf = new scala.collection.mutable.ArrayBuffer[Byte](64)
+        buf ++= MagicHeader
+        buf += Version
+        journal.foreach { op =>
+            val body = encodeOp(op)
+            wI32(buf, body.length)
+            wI32(buf, crc32(body, 0, body.length))
+            buf ++= body
+        }
+        val priorArr = buf.toArray
+        buf ++= MagicTerminator
+        wI32(buf, crc32(priorArr, 0, priorArr.length))
+        Span.fromUnsafe(buf.toArray)
+    end encode
+
+    // Returns Success(Present(journal)) on a valid sealed log.
+    // Returns Success(Absent) on truncation or any CRC failure: these are crash artifacts
+    // from an incomplete write (finish() was never called); the commit never became durable,
+    // so recovery can safely discard the staging dir.
+    // Returns Failure(FileIOException) on bad magic bytes or unsupported version: not a crash
+    // artifact; something else wrote the file or the format evolved. Fail loudly.
+    def decode(logPath: Path, bytes: Span[Byte]): Result[FileIOException, Maybe[Chunk[WriteOp]]] =
+        val arr = bytes.toArrayUnsafe
+        val len = arr.length
+        // Too short to even inspect magic: treat as truncated crash artifact.
+        if len < 5 then return Result.succeed(Absent)
+        // Bad magic: not our file at all. Fail loudly so the caller can observe it.
+        if arr(0) != 'K' || arr(1) != 'Y' || arr(2) != 'I' || arr(3) != 'L' then
+            return Result.fail(FileIOException(logPath, new java.io.IOException("bad magic bytes: expected KYIL"))(using Frame.internal))
+        // Wrong version: format evolved. Fail loudly.
+        if arr(4) != Version then
+            return Result.fail(
+                FileIOException(
+                    logPath,
+                    new java.io.IOException(s"unsupported version ${arr(4) & 0xff}, expected ${Version & 0xff}")
+                )(using Frame.internal)
+            )
+        end if
+        // Valid magic + version but too short for terminator: truncated crash artifact.
+        if len < 13 then return Result.succeed(Absent)
+        val termPos = len - 8
+        if arr(termPos) != 'K' || arr(termPos + 1) != 'Y' ||
+            arr(termPos + 2) != 'C' || arr(termPos + 3) != 'T'
+        then return Result.succeed(Absent) // terminator absent: crash artifact
+        val storedTermCrc = rI32(arr, termPos + 4)
+        if storedTermCrc != crc32(arr, 0, termPos) then return Result.succeed(Absent) // terminator CRC mismatch
+        var pos = 5
+        val ops = new scala.collection.mutable.ArrayBuffer[WriteOp]()
+        while pos < termPos do
+            if pos + 8 > termPos then return Result.succeed(Absent)
+            val bodyLen = rI32(arr, pos); pos += 4
+            val bodyCrc = rI32(arr, pos); pos += 4
+            if bodyLen < 0 || pos + bodyLen > termPos then return Result.succeed(Absent)
+            val bodyStart = pos
+            if bodyCrc != crc32(arr, pos, bodyLen) then return Result.succeed(Absent)
+            pos += bodyLen
+            decodeRecord(arr, bodyStart, bodyLen) match
+                case Absent      => return Result.succeed(Absent)
+                case Present(op) => ops += op
+        end while
+        Result.succeed(Present(Chunk.from(ops.toIndexedSeq)))
+    end decode
+
+    private def decodeRecord(arr: Array[Byte], offset: Int, len: Int): Maybe[WriteOp] =
+        if len < 1 then return Absent
+        val opcode = arr(offset)
+        var pos    = offset + 1
+        val end    = offset + len
+
+        def readParts(): Maybe[Chunk[String]] =
+            if pos + 4 > end then return Absent
+            val count = rI32(arr, pos); pos += 4
+            if count < 0 || count > 65536 then return Absent
+            val parts = new scala.collection.mutable.ArrayBuffer[String](math.min(count, 64))
+            var i     = 0
+            var ok    = true
+            while i < count && ok do
+                if pos + 2 > end then ok = false
+                else
+                    val sLen = rI16(arr, pos); pos += 2
+                    if sLen < 0 || pos + sLen > end then ok = false
+                    else
+                        parts += new String(arr, pos, sLen, java.nio.charset.StandardCharsets.UTF_8)
+                        pos += sLen
+                        i += 1
+                    end if
+            end while
+            if ok then Present(Chunk.from(parts.toIndexedSeq)) else Absent
+        end readParts
+
+        def readEntry(): Maybe[Path.Entry] =
+            if pos >= end then return Absent
+            val tag = arr(pos); pos += 1
+            if tag == TagFile then
+                if pos + 4 > end then return Absent
+                val bLen = rI32(arr, pos); pos += 4
+                if bLen < 0 || pos + bLen > end then return Absent
+                val bytes = Span.fromUnsafe(arr.slice(pos, pos + bLen)); pos += bLen
+                if pos + 16 > end then return Absent
+                val lm = rI64(arr, pos); pos += 8
+                val sz = rI64(arr, pos); pos += 8
+                Present(Path.Entry.File(bytes, Path.PathStat(lm, sz)))
+            else if tag == TagDir then
+                if pos + 16 > end then return Absent
+                val lm = rI64(arr, pos); pos += 8
+                val sz = rI64(arr, pos); pos += 8
+                Present(Path.Entry.Directory(Path.PathStat(lm, sz)))
+            else Absent
+            end if
+        end readEntry
+
+        if opcode == OpWriteFile then
+            readParts() match
+                case Absent => Absent
+                case Present(parts) =>
+                    if pos + 4 > end then Absent
+                    else
+                        val bLen = rI32(arr, pos); pos += 4
+                        if bLen < 0 || pos + bLen > end then Absent
+                        else
+                            val bytes = Span.fromUnsafe(arr.slice(pos, pos + bLen)); pos += bLen
+                            if pos + 16 > end then Absent
+                            else
+                                val lm = rI64(arr, pos); pos += 8
+                                val sz = rI64(arr, pos); pos += 8
+                                Present(WriteOp.WriteFile(parts, bytes, Path.PathStat(lm, sz)))
+                            end if
+                        end if
+        else if opcode == OpWriteDir then
+            readParts() match
+                case Absent => Absent
+                case Present(parts) =>
+                    if pos >= end then Absent
+                    else
+                        val opaque = arr(pos) != 0x00.toByte; pos += 1
+                        Present(WriteOp.WriteDirectory(parts, opaque))
+        else if opcode == OpRemove then
+            readParts() match
+                case Absent         => Absent
+                case Present(parts) => Present(WriteOp.Remove(parts))
+        else if opcode == OpMove then
+            readParts() match
+                case Absent => Absent
+                case Present(from) =>
+                    readParts() match
+                        case Absent => Absent
+                        case Present(to) =>
+                            readEntry() match
+                                case Absent            => Absent
+                                case Present(resolved) => Present(WriteOp.Move(from, to, resolved))
+        else if opcode == OpCopy then
+            readParts() match
+                case Absent => Absent
+                case Present(from) =>
+                    readParts() match
+                        case Absent => Absent
+                        case Present(to) =>
+                            readEntry() match
+                                case Absent            => Absent
+                                case Present(resolved) => Present(WriteOp.Copy(from, to, resolved))
+        else Absent
+        end if
+    end decodeRecord
+
+end WriteOpLog
+
 /** Copy-on-write overlay service. Reads check the upper layer first; writes stage in the upper
   * layer and append to the journal without touching lower. The journal is replayed onto lower on
   * commit. The read-set records a Path.Stamp for each lower path on its first observation; commit
@@ -66,6 +365,25 @@ final private[kyo] class OverlayService[S](lower: Path.Service[S], state: Atomic
     import OverlayService.*
 
     val disposition: Path.Disposition = Path.Disposition.ManualCommit
+
+    // Unique hex identifier for this overlay instance, used to prefix staging directories so
+    // recover() can locate them. Stable for the lifetime of the object.
+    private val overlayId: String =
+        java.lang.Integer.toHexString(java.lang.System.identityHashCode(this))
+
+    // Crash-injection hooks for recovery tests; each marks a point where a test can inject a
+    // failure to verify the commit is replayable from that position. Default no-ops; recovery
+    // tests replace them with functions that throw. Single-writer semantics: only one test
+    // sets and clears a hook at a time. private[kyo] so tests (same package) can reach them.
+    private[kyo] var afterStageHook: () => Unit              = () => ()
+    private[kyo] var afterIntentLogHook: () => Unit          = () => ()
+    private[kyo] var afterEntryApplyHook: (Int, Int) => Unit = (_, _) => ()
+    private[kyo] var beforeMarkerHook: () => Unit            = () => ()
+
+    // Tracks the staging directory handle of the current or most recent commit attempt.
+    // Set in withCommit before applyResolved, cleared after successful cleanup. Left set
+    // when applyResolved throws (crash simulation) so recover() can find the staging dir.
+    private var stagingDirHandle: Maybe[Path.TempDirHandle] = Absent
 
     // CAS modify loop for operations that may fail with FileException.
     private def modify[A](op: OverlayState => Result[FileException, (OverlayState, A)]): A < (Sync & Abort[FileException]) =
@@ -807,22 +1125,181 @@ final private[kyo] class OverlayService[S](lower: Path.Service[S], state: Atomic
             case Upper.OpaqueDir(st) => Present(Path.Entry.Directory(st))
             case Upper.Whiteout      => Absent
 
-    // Direct journal replay onto lower.
-    private def applyJournal(journal: Chunk[WriteOp]): Unit < (S & Abort[FileException]) =
-        journal.foldLeft[Unit < (S & Abort[FileException])](()) { (accKyo, op) =>
-            accKyo.andThen {
+    // Invoke a () => Unit hook synchronously. The hook may throw to halt the commit at the
+    // marked step; the thrown exception propagates as a Kyo panic through the effect stack.
+    private def runHook(hook: () => Unit): Unit < (S & Abort[FileException]) =
+        // Unsafe: hook may throw to halt the commit; exception propagates as a panic.
+        Sync.Unsafe.defer(hook()).asInstanceOf[Unit < (S & Abort[FileException])]
+
+    private def runHookKN(hook: (Int, Int) => Unit, k: Int, n: Int): Unit < (S & Abort[FileException]) =
+        // Unsafe: same halt-on-throw contract as runHook.
+        Sync.Unsafe.defer(hook(k, n)).asInstanceOf[Unit < (S & Abort[FileException])]
+
+    // Stage file content for every WriteOp that carries bytes. Writes each as "e<i>.dat"
+    // inside stagingDir via the lower service. Directory ops and removes have no staged file.
+    private def stageOps(stagingDir: Path, journal: Chunk[WriteOp]): Unit < (S & Abort[FileException]) =
+        journal.zipWithIndex.foldLeft[Unit < (S & Abort[FileException])](()) { case (acc, (op, i)) =>
+            acc.andThen {
                 op match
-                    case WriteOp.WriteFile(parts, bytes, _) =>
-                        lower.writeBytes(pathFrom(parts), bytes, createFolders = true)
-                    case WriteOp.WriteDirectory(parts, _) =>
-                        lower.mkDir(pathFrom(parts))
-                    case WriteOp.Remove(parts) =>
-                        lower.removeAll(pathFrom(parts))
-                    case WriteOp.Move(fromP, toP, resolved) =>
-                        lower.removeAll(pathFrom(fromP)).andThen(applyEntry(pathFrom(toP), resolved))
-                    case WriteOp.Copy(_, toP, resolved) =>
-                        applyEntry(pathFrom(toP), resolved)
+                    case WriteOp.WriteFile(_, bytes, stat) =>
+                        applyEntry(stagingDir / s"e$i.dat", Path.Entry.File(bytes, stat))
+                    case WriteOp.Move(_, _, entry @ Path.Entry.File(_, _)) =>
+                        applyEntry(stagingDir / s"e$i.dat", entry)
+                    case WriteOp.Copy(_, _, entry @ Path.Entry.File(_, _)) =>
+                        applyEntry(stagingDir / s"e$i.dat", entry)
+                    case _ => ()
             }
+        }
+
+    // Encodes the journal with WriteOpLog and writes it to "intent.kyo" in the staging dir
+    // via the openWrite/finish/close path. finish() is the completion boundary: its absence
+    // (crash during write) leaves the file absent or partial, so recovery skips. A plain
+    // writeBytes call lacks the two-phase open/finish contract; a crash mid-write leaves no sealed log.
+    private def writeIntentLog(stagingDir: Path, journal: Chunk[WriteOp]): Unit < (S & Abort[FileException]) =
+        val logBytes = WriteOpLog.encode(journal)
+        lower.openWrite(stagingDir / "intent.kyo", false, false).map { handle =>
+            lower.writeChunk(handle, Chunk.from(logBytes.toArray)).andThen(
+                // Unsafe: finish() seals the log as complete; close() releases the channel.
+                // Without finish(), a crash mid-write leaves no sealed log: recovery skips.
+                Sync.Unsafe.defer { handle.finish(); handle.close() }
+                    .asInstanceOf[Unit < (S & Abort[FileException])]
+            )
+        }
+    end writeIntentLog
+
+    // Writes the "committed.marker" sentinel via the openWrite/finish/close path so that a
+    // crash during the marker write leaves it absent (recovery re-applies), not partially
+    // written in an ambiguous state.
+    private def writeCommittedMarker(stagingDir: Path): Unit < (S & Abort[FileException]) =
+        lower.openWrite(stagingDir / "committed.marker", false, false).map { handle =>
+            // No content; finish() commits the zero-byte sentinel, close() releases the channel.
+            Sync.Unsafe.defer { handle.finish(); handle.close() }
+                .asInstanceOf[Unit < (S & Abort[FileException])]
+        }
+
+    // Apply one WriteOp during the commit apply phase. File entries move atomically from
+    // their staged copy to the final lower path (POSIX rename on host; CAS on in-memory).
+    // Non-idempotent: assumes the staged file still exists.
+    private def applyOneOp(stagingDir: Path, i: Int, op: WriteOp): Unit < (S & Abort[FileException]) =
+        op match
+            case WriteOp.WriteFile(parts, _, _) =>
+                lower.move(stagingDir / s"e$i.dat", pathFrom(parts), replaceExisting = true, atomicMove = true, createFolders = true)
+            case WriteOp.WriteDirectory(parts, _) =>
+                lower.mkDir(pathFrom(parts))
+            case WriteOp.Remove(parts) =>
+                lower.removeAll(pathFrom(parts))
+            case WriteOp.Move(fromP, toP, resolved) =>
+                lower.removeAll(pathFrom(fromP)).andThen {
+                    resolved match
+                        case _: Path.Entry.File =>
+                            lower.move(
+                                stagingDir / s"e$i.dat",
+                                pathFrom(toP),
+                                replaceExisting = true,
+                                atomicMove = true,
+                                createFolders = true
+                            )
+                        case _: Path.Entry.Directory =>
+                            lower.mkDir(pathFrom(toP))
+                }
+            case WriteOp.Copy(_, toP, resolved) =>
+                resolved match
+                    case _: Path.Entry.File =>
+                        lower.move(stagingDir / s"e$i.dat", pathFrom(toP), replaceExisting = true, atomicMove = true, createFolders = true)
+                    case _: Path.Entry.Directory =>
+                        lower.mkDir(pathFrom(toP))
+
+    // Idempotent variant used by recover(). Checks whether the staged file is still present
+    // before moving it: a prior partial apply may have already moved it to the final path.
+    // Converges to the correct final state regardless of how many ops were applied previously.
+    private def applyOneOpIdempotent(stagingDir: Path, i: Int, op: WriteOp): Unit < (S & Abort[FileException]) =
+        op match
+            case WriteOp.WriteFile(parts, _, _) =>
+                val staged = stagingDir / s"e$i.dat"
+                lower.exists(staged).map { has =>
+                    if has then lower.move(staged, pathFrom(parts), replaceExisting = true, atomicMove = true, createFolders = true)
+                    else ()
+                }
+            case WriteOp.WriteDirectory(parts, _) =>
+                lower.mkDir(pathFrom(parts))
+            case WriteOp.Remove(parts) =>
+                lower.removeAll(pathFrom(parts))
+            case WriteOp.Move(fromP, toP, resolved) =>
+                lower.exists(pathFrom(fromP)).map { exists =>
+                    if exists then lower.removeAll(pathFrom(fromP)) else ()
+                }.andThen {
+                    resolved match
+                        case _: Path.Entry.File =>
+                            val staged = stagingDir / s"e$i.dat"
+                            lower.exists(staged).map { has =>
+                                if has then
+                                    lower.move(staged, pathFrom(toP), replaceExisting = true, atomicMove = true, createFolders = true)
+                                else ()
+                            }
+                        case _: Path.Entry.Directory =>
+                            lower.mkDir(pathFrom(toP))
+                }
+            case WriteOp.Copy(_, toP, resolved) =>
+                resolved match
+                    case _: Path.Entry.File =>
+                        val staged = stagingDir / s"e$i.dat"
+                        lower.exists(staged).map { has =>
+                            if has then lower.move(staged, pathFrom(toP), replaceExisting = true, atomicMove = true, createFolders = true)
+                            else ()
+                        }
+                    case _: Path.Entry.Directory =>
+                        lower.mkDir(pathFrom(toP))
+
+    // 5-step durable commit protocol driven by a pre-created staging directory.
+    // (1) Stage file content; (2) write intent log + terminator; (3) atomic-move each entry
+    // with per-entry hook; (4) write committed.marker. Each crash hook is a test-injection
+    // point: recovery tests set the hook to throw, then call recover() to verify resumption.
+    private def applyResolved(stagingDir: Path, journal: Chunk[WriteOp]): Unit < (S & Abort[FileException]) =
+        val n = journal.size
+        stageOps(stagingDir, journal).andThen {
+            runHook(afterStageHook).andThen { // crash point 1
+                writeIntentLog(stagingDir, journal).andThen {
+                    runHook(afterIntentLogHook).andThen { // crash point 2
+                        journal.zipWithIndex
+                            .foldLeft[Unit < (S & Abort[FileException])](()) { case (acc, (op, i)) =>
+                                acc.andThen {
+                                    applyOneOp(stagingDir, i, op).andThen {
+                                        runHookKN(afterEntryApplyHook, i + 1, n) // crash point 3
+                                    }
+                                }
+                            }
+                            .andThen {
+                                runHook(beforeMarkerHook).andThen { // crash point 4
+                                    // crash points 5 (during write) and 6 (after write) are
+                                    // implicit at the writeCommittedMarker boundary.
+                                    writeCommittedMarker(stagingDir)
+                                }
+                            }
+                    }
+                }
+            }
+        }
+    end applyResolved
+
+    // Creates a staging dir, runs the durable commit protocol, and cleans up on success.
+    // On failure (crash hook throws or lower I/O error) the staging dir and stagingDirHandle
+    // remain set so recover() can find and re-apply the partial commit.
+    private def withCommit(journal: Chunk[WriteOp]): Unit < (S & Abort[FileException]) =
+        lower.tempDir(s"kyo-commit-$overlayId").map { handle =>
+            // Unsafe: stores handle before applyResolved so recover() can find the staging dir
+            // if applyResolved is interrupted by a crash hook throwing an exception.
+            Sync.Unsafe.defer { stagingDirHandle = Present(handle) }
+                .asInstanceOf[Unit < (S & Abort[FileException])]
+                .andThen {
+                    applyResolved(handle.path, journal).andThen {
+                        // Committed marker written; safe to remove staging dir.
+                        // Unsafe: clears handle reference and removes the staging directory.
+                        Sync.Unsafe.defer {
+                            stagingDirHandle = Absent
+                            handle.remove()
+                        }.asInstanceOf[Unit < (S & Abort[FileException])]
+                    }
+                }
         }
 
     private def applyEntry(path: Path, entry: Path.Entry): Unit < (S & Abort[FileException]) =
@@ -834,7 +1311,7 @@ final private[kyo] class OverlayService[S](lower: Path.Service[S], state: Atomic
         stateGet.map { s =>
             validate(s).map { conflicts =>
                 if conflicts.isEmpty then
-                    applyJournal(s.journal).andThen(modifyPure(_ => OverlayState.empty))
+                    withCommit(s.journal).andThen(modifyPure(_ => OverlayState.empty))
                 else
                     Abort.fail(CommitConflict(conflicts))
             }
@@ -842,7 +1319,7 @@ final private[kyo] class OverlayService[S](lower: Path.Service[S], state: Atomic
 
     def commitOverwrite(using Frame): Unit < (S & Abort[FileException]) =
         stateGet.map { s =>
-            applyJournal(s.journal).andThen(modifyPure(_ => OverlayState.empty))
+            withCommit(s.journal).andThen(modifyPure(_ => OverlayState.empty))
         }
 
     def commitWith[S2](resolve: Conflict => Resolution < S2)(using Frame): Unit < (S & Abort[FileException] & S2) =
@@ -895,10 +1372,67 @@ final private[kyo] class OverlayService[S](lower: Path.Service[S], state: Atomic
                                     (upper.updated(parts, Upper.Whiteout), stripped.appended(WriteOp.Remove(parts)))
                         }
                     modifyPure(_.copy(upper = newUpper, journal = replacedJournal)).andThen {
-                        applyJournal(replacedJournal).andThen(modifyPure(_ => OverlayState.empty))
+                        withCommit(replacedJournal).andThen(modifyPure(_ => OverlayState.empty))
                     }
                 }
             }
         }
+
+    // Recovery driver: re-applies a partially-applied commit found via stagingDirHandle.
+    // Called after a simulated mid-commit crash: the overlay object remains alive, so
+    // stagingDirHandle still points to the staging dir created before the failure.
+    // If the intent log is present and committed.marker is absent, re-applies all ops
+    // idempotently (skipping already-moved staged files), then writes the committed marker.
+    // private[kyo] so recovery tests (same package, outside this class) can call it.
+    private[kyo] def recover(): Unit < (S & Abort[FileException]) =
+        stagingDirHandle match
+            case Absent => ()
+            case Present(handle) =>
+                val stagingDir = handle.path
+                val logPath    = stagingDir / "intent.kyo"
+                lower.exists(logPath).map { hasLog =>
+                    if !hasLog then ()
+                    else
+                        lower.exists(stagingDir / "committed.marker").map { hasMarker =>
+                            if hasMarker then
+                                // Already fully committed; cleanup is safe.
+                                // Unsafe: clears handle and removes staging directory.
+                                Sync.Unsafe.defer {
+                                    stagingDirHandle = Absent
+                                    handle.remove()
+                                }.asInstanceOf[Unit < (S & Abort[FileException])]
+                            else
+                                lower.readBytes(logPath).map { logBytes =>
+                                    WriteOpLog.decode(logPath, logBytes) match
+                                        case Result.Success(Absent) =>
+                                            // Torn or CRC-failed log: crash artifact from an incomplete
+                                            // intent-log write (finish() never called). The commit was
+                                            // never durable; discard the staging dir and treat as clean.
+                                            Sync.Unsafe.defer {
+                                                stagingDirHandle = Absent
+                                                handle.remove()
+                                            }.asInstanceOf[Unit < (S & Abort[FileException])]
+                                        case Result.Success(Present(journal)) =>
+                                            journal.zipWithIndex
+                                                .foldLeft[Unit < (S & Abort[FileException])](()) {
+                                                    case (acc, (op, i)) =>
+                                                        acc.andThen(applyOneOpIdempotent(stagingDir, i, op))
+                                                }
+                                                .andThen {
+                                                    writeCommittedMarker(stagingDir).andThen {
+                                                        // Unsafe: clears handle and removes staging dir.
+                                                        Sync.Unsafe.defer {
+                                                            stagingDirHandle = Absent
+                                                            handle.remove()
+                                                        }.asInstanceOf[Unit < (S & Abort[FileException])]
+                                                    }
+                                                }
+                                        case Result.Failure(e) =>
+                                            // Bad magic or unsupported version: not a crash artifact.
+                                            // Fail loudly so the caller can observe the unexpected state.
+                                            Abort.fail[FileException](e)
+                                }
+                        }
+                }
 
 end OverlayService
