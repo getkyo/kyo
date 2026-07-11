@@ -200,6 +200,8 @@ object Stat:
       * constructor runs inside this class initializer and must not observe a later, not-yet-initialized
       * field.
       */
+    // Unsafe: runs inside this object's class initializer, before any effect handler exists to
+    // supply AllowUnsafe; TraceExporter.get is a plain value read with no Sync context available here.
     private[kyo] val eagerExporterScan: Unit =
         import AllowUnsafe.embrace.danger
         val _ = TraceExporter.get

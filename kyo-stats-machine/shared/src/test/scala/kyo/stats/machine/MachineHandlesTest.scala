@@ -56,7 +56,10 @@ class MachineHandlesTest extends kyo.test.Test[Any]:
         // Reading the module's own source tree is a JVM-only mechanics check (java.io.File /
         // java.nio.file.Files do not exist on JS/Native, and a runtime source-tree read makes no
         // sense off the JVM build layout in any case), the same sanctioned platform-mechanics split
-        // PathJvmTest's allocation probes use.
+        // PathJvmTest's allocation probes use. The forked test JVM's cwd is the per-platform project
+        // dir (e.g. kyo-stats-machine/jvm), not the module root, so the module root is located by
+        // walking up from the cwd to the first ancestor containing this relative source dir, rather
+        // than assuming a fixed number of parent hops.
         "no banned blocking construct appears in the module's production sources".onlyJvm in {
             val sources = Seq(
                 "MachineSampler.scala",
@@ -65,18 +68,34 @@ class MachineHandlesTest extends kyo.test.Test[Any]:
                 "PsiHandles.scala",
                 "Machine.scala"
             )
-            val root   = new java.io.File("shared/src/main/scala/kyo/stats/machine")
-            val banned = List("Thread.sleep", "synchronized", ".await()", "CountDownLatch")
+            val relRoot = java.nio.file.Paths.get("shared", "src", "main", "scala", "kyo", "stats", "machine")
+
+            @scala.annotation.tailrec
+            def findRoot(dir: java.io.File): Maybe[java.io.File] =
+                val candidate = new java.io.File(dir, relRoot.toString)
+                if candidate.isDirectory then Present(candidate)
+                else
+                    val parent = dir.getParentFile
+                    if parent eq null then Absent else findRoot(parent)
+                end if
+            end findRoot
+
+            val root = findRoot(new java.io.File(".").getAbsoluteFile)
+                .getOrElse(throw new java.io.FileNotFoundException(
+                    s"could not locate $relRoot by walking up from ${new java.io.File(".").getAbsolutePath}"
+                ))
+            val banned  = List("Thread.sleep", "synchronized", ".await()", "CountDownLatch")
+            var checked = 0
             sources.foreach { name =>
                 val f = new java.io.File(root, name)
-                if f.isFile then
-                    val text = new String(java.nio.file.Files.readAllBytes(f.toPath), java.nio.charset.StandardCharsets.UTF_8)
-                    banned.foreach { token =>
-                        assert(!text.contains(token), s"found banned blocking construct '$token' in ${f.getPath}")
-                    }
-                end if
+                assert(f.isFile, s"expected production source not found at ${f.getPath}")
+                val text = new String(java.nio.file.Files.readAllBytes(f.toPath), java.nio.charset.StandardCharsets.UTF_8)
+                banned.foreach { token =>
+                    assert(!text.contains(token), s"found banned blocking construct '$token' in ${f.getPath}")
+                }
+                checked += 1
             }
-            succeed
+            assert(checked == sources.length)
         }
     }
 

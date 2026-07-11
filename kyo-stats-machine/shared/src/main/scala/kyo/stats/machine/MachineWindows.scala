@@ -41,7 +41,7 @@ private[machine] object MachineWindows extends Machine:
         try Present(Ffi.load[WindowsBindings])
         catch case ex: Throwable if scala.util.control.NonFatal(ex) => Absent
 
-    private def readCpu(b: WindowsBindings)(using AllowUnsafe): Maybe[Machine.CpuReading] =
+    private[machine] def readCpu(b: WindowsBindings)(using AllowUnsafe): Maybe[Machine.CpuReading] =
         // GetSystemTimes takes three LPFILETIME out-params; each FILETIME is one little-endian 100ns int64.
         val idleB   = Buffer.alloc[Long](1)
         val kernelB = Buffer.alloc[Long](1)
@@ -60,7 +60,7 @@ private[machine] object MachineWindows extends Machine:
         end try
     end readCpu
 
-    private def readMemory(b: WindowsBindings)(using AllowUnsafe): Maybe[Machine.MemoryReading] =
+    private[machine] def readMemory(b: WindowsBindings)(using AllowUnsafe): Maybe[Machine.MemoryReading] =
         WindowsBindings.withMemoryStatus(b) match
             case Present(out) =>
                 try
@@ -71,7 +71,7 @@ private[machine] object MachineWindows extends Machine:
                 finally out.close()
             case Absent => Absent
 
-    private def readSwap(b: WindowsBindings)(using AllowUnsafe): Maybe[Machine.SwapReading] =
+    private[machine] def readSwap(b: WindowsBindings)(using AllowUnsafe): Maybe[Machine.SwapReading] =
         WindowsBindings.withMemoryStatus(b) match
             case Present(out) =>
                 // ullTotalPageFile/ullAvailPageFile are the commit limit (physical RAM plus page-file size), not

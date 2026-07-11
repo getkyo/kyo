@@ -26,7 +26,7 @@ private[kyo] object Machine:
             case _                 => NullMachine
 
     /** A flat, allocation-light snapshot of one tick's host readings. Every field is `Maybe`-typed so an
-      * unavailable metric is `Absent` and simply not observed by the sampler. This is NOT a public value
+      * unavailable metric is `Absent` and not observed by the sampler. This is NOT a public value
       * type: it never leaves the sampler, carries no nested public ADT tree, and exists only to hand one
       * tick's primitives from the OS reader to the observe step.
       */

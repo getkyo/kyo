@@ -79,7 +79,8 @@ private[kyo] object MachineStatFactory:
 
     /** Test-only seam: resets the one-shot start CAS so an ordered sequence of factory-start scenarios each
       * starts from a known false state. Never called by production code (no reset path exists at runtime; the
-      * sampler is a process-lifetime singleton). Present only so leaves 4-8 are stageable and order-independent.
+      * sampler is a process-lifetime singleton). Present only so the factory-start test scenarios are
+      * stageable and order-independent.
       */
     private[machine] def resetForTest()(using AllowUnsafe): Unit = started.set(false)
 

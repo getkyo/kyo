@@ -34,7 +34,7 @@ private[machine] object MachineMacos extends Machine:
         try Present(Ffi.load[MacosBindings])
         catch case ex: Throwable if scala.util.control.NonFatal(ex) => Absent
 
-    private def readCpu(b: MacosBindings)(using AllowUnsafe): Maybe[Machine.CpuReading] =
+    private[machine] def readCpu(b: MacosBindings)(using AllowUnsafe): Maybe[Machine.CpuReading] =
         val out = Buffer.alloc[Long](4)
         try
             if b.hostCpuLoad(out) != 0 then Absent
@@ -47,7 +47,7 @@ private[machine] object MachineMacos extends Machine:
         end try
     end readCpu
 
-    private def readMemory(b: MacosBindings)(using AllowUnsafe): Maybe[Machine.MemoryReading] =
+    private[machine] def readMemory(b: MacosBindings)(using AllowUnsafe): Maybe[Machine.MemoryReading] =
         val out = Buffer.alloc[Long](3)
         try
             if b.vmStatistics(out) != 0 then Absent
@@ -59,7 +59,7 @@ private[machine] object MachineMacos extends Machine:
         end try
     end readMemory
 
-    private def readSwap(b: MacosBindings)(using AllowUnsafe): Maybe[Machine.SwapReading] =
+    private[machine] def readSwap(b: MacosBindings)(using AllowUnsafe): Maybe[Machine.SwapReading] =
         val out = Buffer.alloc[Long](2)
         try
             if b.swapUsage(out) != 0 then Absent
@@ -68,7 +68,7 @@ private[machine] object MachineMacos extends Machine:
         end try
     end readSwap
 
-    private def readLoad(b: MacosBindings)(using AllowUnsafe): Maybe[Machine.LoadReading] =
+    private[machine] def readLoad(b: MacosBindings)(using AllowUnsafe): Maybe[Machine.LoadReading] =
         val out = Buffer.alloc[Double](3)
         try
             if b.getloadavg(out, 3) != 3 then Absent

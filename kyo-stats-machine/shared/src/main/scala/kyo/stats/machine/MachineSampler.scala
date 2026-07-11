@@ -81,6 +81,8 @@ private[kyo] object MachineSampler:
             sampler.observe(reading)
         }
 
+    // Unsafe: used only from the Scope finalizer callback (closeHandles), which itself runs outside
+    // any AllowUnsafe-supplying effect context.
     private inline def withUnsafe(inline body: AllowUnsafe ?=> Unit): Unit =
         import AllowUnsafe.embrace.danger
         body

@@ -75,7 +75,7 @@ class MachineTest extends kyo.test.Test[Any]:
         // fixture-root override, so this is the only way to exercise MachineLinux.read end to end.
         // Gated to an actual Linux host with /proc present; skipped elsewhere (matching
         // LinuxBindingsTest's real-host leaf, the sanctioned exception to the
-        // staged-fixture rule the rest of this phase's tests follow).
+        // staged-fixture rule the rest of this suite follows).
         "cpu, memory, and load are recorded present; no exception escapes the read" in {
             assume(
                 System.live.unsafe.operatingSystem() == System.OS.Linux,

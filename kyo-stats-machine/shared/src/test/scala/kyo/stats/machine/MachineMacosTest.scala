@@ -7,10 +7,12 @@ class MachineMacosTest extends kyo.test.Test[Any]:
 
     import AllowUnsafe.embrace.danger
 
-    given CanEqual[Machine.CpuReading, Machine.CpuReading]   = CanEqual.derived
-    given CanEqual[Machine.LoadReading, Machine.LoadReading] = CanEqual.derived
-    given CanEqual[Machine.DiskReading, Machine.DiskReading] = CanEqual.derived
-    given CanEqual[Machine.Reading, Machine.Reading]         = CanEqual.derived
+    given CanEqual[Machine.CpuReading, Machine.CpuReading]       = CanEqual.derived
+    given CanEqual[Machine.MemoryReading, Machine.MemoryReading] = CanEqual.derived
+    given CanEqual[Machine.SwapReading, Machine.SwapReading]     = CanEqual.derived
+    given CanEqual[Machine.LoadReading, Machine.LoadReading]     = CanEqual.derived
+    given CanEqual[Machine.DiskReading, Machine.DiskReading]     = CanEqual.derived
+    given CanEqual[Machine.Reading, Machine.Reading]             = CanEqual.derived
 
     /** A stub `MacosBindings` whose every method is overridable per test, defaulting to failure codes so
       * an un-stubbed call surfaces as an obvious Absent rather than a silent success.
@@ -46,7 +48,7 @@ class MachineMacosTest extends kyo.test.Test[Any]:
                 handles <- MachineHandles.init
                 sampler = new MachineSampler(handles, MachineMacos)
                 reading = Machine.Reading(
-                    cpu = readCpu(stub),
+                    cpu = MachineMacos.readCpu(stub),
                     memory = Absent,
                     swap = Absent,
                     disks = Chunk.empty,
@@ -72,8 +74,17 @@ class MachineMacosTest extends kyo.test.Test[Any]:
             stub.getloadavgFn = (out, n) =>
                 out.set(0, 1.5); out.set(1, 2.5); out.set(2, 3.5)
                 n
-            val result = readLoad(stub)
+            val result = MachineMacos.readLoad(stub)
             assert(result == Present(Machine.LoadReading(Present(1.5), Present(2.5), Present(3.5))))
+        }
+
+        "a getloadavg call returning fewer than 3 samples routes the whole reading to Absent" in {
+            val stub = new StubBindings
+            stub.getloadavgFn = (out, n) =>
+                out.set(0, 1.5)
+                1
+            val result = MachineMacos.readLoad(stub)
+            assert(result == Absent)
         }
     }
 
@@ -97,7 +108,7 @@ class MachineMacosTest extends kyo.test.Test[Any]:
             stub.hostCpuLoadFn = out =>
                 out.set(0, 1000000000L); out.set(1, 2000000000L); out.set(2, 7000000000L); out.set(3, 300000000L)
                 0
-            val result = readCpu(stub)
+            val result = MachineMacos.readCpu(stub)
             assert(result == Present(Machine.CpuReading(
                 total = Present(10300000000L),
                 user = Present(1000000000L),
@@ -105,6 +116,52 @@ class MachineMacosTest extends kyo.test.Test[Any]:
                 idle = Present(7000000000L),
                 iowait = Absent
             )))
+        }
+
+        "a hostCpuLoad failure routes the whole reading to Absent" in {
+            val stub = new StubBindings
+            stub.hostCpuLoadFn = _ => 1
+            assert(MachineMacos.readCpu(stub) == Absent)
+        }
+    }
+
+    "memory decode" - {
+
+        "memory decode: vm_statistics projects [total,free,available] bytes, re-ordered to (total,available,free)" in {
+            val stub = new StubBindings
+            stub.vmStatisticsFn = out =>
+                out.set(0, 17179869184L); out.set(1, 2147483648L); out.set(2, 6442450944L)
+                0
+            val result = MachineMacos.readMemory(stub)
+            assert(result == Present(Machine.MemoryReading(
+                total = Present(17179869184L),
+                available = Present(6442450944L),
+                free = Present(2147483648L)
+            )))
+        }
+
+        "a vm_statistics failure routes the whole reading to Absent" in {
+            val stub = new StubBindings
+            stub.vmStatisticsFn = _ => 1
+            assert(MachineMacos.readMemory(stub) == Absent)
+        }
+    }
+
+    "swap decode" - {
+
+        "swap decode: swap_usage projects [total,free] bytes unchanged" in {
+            val stub = new StubBindings
+            stub.swapUsageFn = out =>
+                out.set(0, 4294967296L); out.set(1, 1073741824L)
+                0
+            val result = MachineMacos.readSwap(stub)
+            assert(result == Present(Machine.SwapReading(total = Present(4294967296L), free = Present(1073741824L))))
+        }
+
+        "a swap_usage failure routes the whole reading to Absent" in {
+            val stub = new StubBindings
+            stub.swapUsageFn = _ => 1
+            assert(MachineMacos.readSwap(stub) == Absent)
         }
     }
 
@@ -136,33 +193,5 @@ class MachineMacosTest extends kyo.test.Test[Any]:
             assert(failed == Machine.DiskReading("/broken", Absent, Absent))
         }
     }
-
-    /** Mirrors `MachineMacos.readCpu`'s own buffer shape and close discipline, driven against a stub
-      * binding instead of the real shim.
-      */
-    private def readCpu(b: MacosBindings)(using AllowUnsafe): Maybe[Machine.CpuReading] =
-        val out = Buffer.alloc[Long](4)
-        try
-            if b.hostCpuLoad(out) != 0 then Absent
-            else
-                val user  = out.get(0); val system = out.get(1); val idle = out.get(2); val nice = out.get(3)
-                val total = user + system + idle + nice
-                Present(Machine.CpuReading(Present(total), Present(user), Present(system), Present(idle), Absent))
-            end if
-        finally out.close()
-        end try
-    end readCpu
-
-    /** Mirrors `MachineMacos.readLoad`'s own buffer shape and close discipline, driven against a stub
-      * binding instead of the real shim.
-      */
-    private def readLoad(b: MacosBindings)(using AllowUnsafe): Maybe[Machine.LoadReading] =
-        val out = Buffer.alloc[Double](3)
-        try
-            if b.getloadavg(out, 3) != 3 then Absent
-            else Present(Machine.LoadReading(Present(out.get(0)), Present(out.get(1)), Present(out.get(2))))
-        finally out.close()
-        end try
-    end readLoad
 
 end MachineMacosTest

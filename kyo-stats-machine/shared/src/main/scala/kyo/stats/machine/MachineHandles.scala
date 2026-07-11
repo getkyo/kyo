@@ -196,17 +196,20 @@ private[kyo] object MachineHandles:
     /** A config-value CounterGauge created only once a genuine Present value has been observed. The gauge's
       * poll reads the last observed value from the retained holder; the handle does not exist (and exports
       * nothing) until the gauge is constructed on first observation, so an unset config never emits a
-      * fabricated value. The holder is the raw `java.util.concurrent.atomic.AtomicLong` because the poll body
-      * runs at registry-collect time, outside any effect and any `AllowUnsafe` scope: a single-owner
-      * cross-tick cell whose get/set need no capability (the sanctioned category-B sidestep of the unsafe gate).
+      * fabricated value. The holder is `kyo.AtomicLong.Unsafe`, the kyo opaque alias of the same underlying
+      * atomic: a single-owner cross-tick cell whose collect-time poll reads it with no capability available
+      * (the sanctioned category-B sidestep of the unsafe gate), while `set` takes the sampler tick's own
+      * propagated capability rather than re-embracing it.
       */
-    final class ConfigGauge private (holder: java.util.concurrent.atomic.AtomicLong, gauge: CounterGauge):
-        def set(v: Long): Unit = holder.set(v)
+    final class ConfigGauge private (holder: AtomicLong.Unsafe, gauge: CounterGauge):
+        def set(v: Long)(using AllowUnsafe): Unit = holder.set(v)
 
     object ConfigGauge:
         def apply(cg: Stat, name: String, unit: String): ConfigGauge =
-            // Unsafe: cross-tick config-value cell read by the collect-time poll body; raw atomic, no capability.
-            val holder = new java.util.concurrent.atomic.AtomicLong(0L)
+            // Unsafe: constructed lazily from configFor, off any ambient effect context; the collect-time
+            // poll body that reads this holder also runs with no capability available.
+            import AllowUnsafe.embrace.danger
+            val holder = AtomicLong.Unsafe.init(0L)
             new ConfigGauge(holder, cg.initCounterGauge(name, unit)(holder.get()))
         end apply
     end ConfigGauge
