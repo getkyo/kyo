@@ -7,8 +7,8 @@ import scala.annotation.tailrec
   * Designed for zero-alloc reuse across HTTP requests on a single connection. The internal array grows as needed but is never shrunk, so
   * steady-state usage after warm-up allocates nothing. Only `toByteArray` allocates (a right-sized copy).
   */
-final private[kyo] class GrowableByteBuffer:
-    private var arr = new Array[Byte](512)
+final private[kyo] class GrowableByteBuffer(initialCapacity: Int = 512):
+    private var arr = new Array[Byte](math.max(1, initialCapacity))
     private var pos = 0
 
     /** Resets the buffer position to zero without clearing or reallocating. */
@@ -25,8 +25,9 @@ final private[kyo] class GrowableByteBuffer:
       * in `Long` and capping keeps the target representable, and a request beyond the largest allocatable array fails fast with a clear, bounded
       * error rather than wrapping. `pos` is incremented by callers only after this returns, so a failed growth leaves the position unchanged.
       */
+    // TODO private methods should come last in a source file
     private def ensureCapacity(needed: Int): Unit =
-        val required = pos.toLong + needed.toLong
+        val required = pos.toLong + needed.toLong // TODO do we really support sizes in the Long range?
         if required > arr.length then
             if required > GrowableByteBuffer.MaxArrayLength then
                 throw new IllegalArgumentException(
@@ -64,6 +65,7 @@ final private[kyo] class GrowableByteBuffer:
       * status lines, header names, and header values that are guaranteed ASCII per RFC 7230. For header values that may contain non-ASCII
       * octets, use `writeBytes` with `s.getBytes(StandardCharsets.UTF_8)` instead.
       */
+    // TODO I can't see where the truncation happens? is there a more efficient way to do this? isn't encoding a concern?
     def writeAscii(s: String): Unit =
         ensureCapacity(s.length)
         @tailrec def loop(i: Int): Unit =

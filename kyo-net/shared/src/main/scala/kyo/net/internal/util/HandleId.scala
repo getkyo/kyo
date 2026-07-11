@@ -1,5 +1,7 @@
 package kyo.net.internal.util
 
+import kyo.*
+
 /** A stable per-handle identity that pairs a file descriptor with a generation counter, so a
   * structure keyed on a handle survives the descriptor number being recycled.
   *
@@ -22,15 +24,17 @@ opaque type HandleId = Long
 
 object HandleId:
 
-    // A process-lifetime generation counter. This object singleton has no construction site to
-    // receive a propagated AllowUnsafe, so it uses the raw java.util.concurrent.atomic.AtomicLong
-    // (the type AtomicLong.Unsafe aliases) directly: a monotonic counter needs no capability.
-    private val genCounter = new java.util.concurrent.atomic.AtomicLong(0L)
+    // Unsafe: a process-lifetime monotonic generation counter is capability-free (no fd, no I/O), and this object singleton has no
+    // construction site to receive a propagated AllowUnsafe, so the danger bridge here is inert. AtomicLong.Unsafe is kyo's atomic-long
+    // primitive over the JDK AtomicLong.
+    private val genCounter = AtomicLong.Unsafe.init(0L)(using AllowUnsafe.embrace.danger)
 
     /** Allocate a fresh [[HandleId]] for `fd`, pairing it with the next process-monotonic generation. */
     def next(fd: Int): HandleId =
-        val generation = genCounter.getAndIncrement() & 0xffffffffL
+        // Unsafe: capability-free monotonic increment; see genCounter.
+        val generation = genCounter.getAndIncrement()(using AllowUnsafe.embrace.danger) & 0xffffffffL
         (fd.toLong << 32) | generation
+    end next
 
     /** Build a [[HandleId]] from an explicit `(fd, generation)` pair (the packing the kqueue udata
       * tag and the io_uring SQE user-data carry across the kernel boundary).
