@@ -386,21 +386,21 @@ final private[kyo] class NodeCommandUnsafe(
             case EnvMode.Append(vars) =>
                 val env = js.Dynamic.global.Object.assign(
                     js.Dynamic.literal(),
-                    js.Dynamic.global.process.env
+                    NodeGlobal.env
                 )
                 vars.foreach { (k, v) => env.updateDynamic(k)(v) }
                 opts.env = env
             case EnvMode.Remove(names) =>
                 val env = js.Dynamic.global.Object.assign(
                     js.Dynamic.literal(),
-                    js.Dynamic.global.process.env
+                    NodeGlobal.env
                 )
                 names.foreach(name => discard(js.Dynamic.global.Reflect.deleteProperty(env, name)))
                 opts.env = env
             case EnvMode.AppendThenRemove(vars, names) =>
                 val env = js.Dynamic.global.Object.assign(
                     js.Dynamic.literal(),
-                    js.Dynamic.global.process.env
+                    NodeGlobal.env
                 )
                 vars.foreach { (k, v) => env.updateDynamic(k)(v) }
                 names.foreach(name => discard(js.Dynamic.global.Reflect.deleteProperty(env, name)))
@@ -522,14 +522,14 @@ final private[kyo] class NodeCommandUnsafe(
                     else Present(ProgramNotFoundException(cmd))
                 else
                     // Bare command name: scan PATH
-                    val pathEnv = js.Dynamic.global.process.env.PATH
+                    val pathEnv = NodeGlobal.env.PATH
                     val pathStr = if js.typeOf(pathEnv) == "string" then pathEnv.asInstanceOf[String] else ""
                     val pathSep = if isWin then ";" else ":"
                     val dirs    = pathStr.split(pathSep)
                     // On Windows, check with PATHEXT extensions (.exe, .cmd, .bat, etc.)
                     val extensions =
                         if isWin then
-                            val pathExt = js.Dynamic.global.process.env.PATHEXT
+                            val pathExt = NodeGlobal.env.PATHEXT
                             if js.typeOf(pathExt) == "string" then pathExt.asInstanceOf[String].toLowerCase.split(";").toSeq
                             else Seq(".exe", ".cmd", ".bat", ".com")
                         else Seq("")
@@ -632,21 +632,21 @@ final private[kyo] class NodeCommandUnsafe(
                                             case EnvMode.Append(vars) =>
                                                 val env = js.Dynamic.global.Object.assign(
                                                     js.Dynamic.literal(),
-                                                    js.Dynamic.global.process.env
+                                                    NodeGlobal.env
                                                 )
                                                 vars.foreach { (k, v) => env.updateDynamic(k)(v) }
                                                 opts.env = env
                                             case EnvMode.Remove(names) =>
                                                 val env = js.Dynamic.global.Object.assign(
                                                     js.Dynamic.literal(),
-                                                    js.Dynamic.global.process.env
+                                                    NodeGlobal.env
                                                 )
                                                 names.foreach(name => discard(js.Dynamic.global.Reflect.deleteProperty(env, name)))
                                                 opts.env = env
                                             case EnvMode.AppendThenRemove(vars, names) =>
                                                 val env = js.Dynamic.global.Object.assign(
                                                     js.Dynamic.literal(),
-                                                    js.Dynamic.global.process.env
+                                                    NodeGlobal.env
                                                 )
                                                 vars.foreach { (k, v) => env.updateDynamic(k)(v) }
                                                 names.foreach(name => discard(js.Dynamic.global.Reflect.deleteProperty(env, name)))
