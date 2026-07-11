@@ -145,6 +145,20 @@ final private[kyo] class OverlayService[S](lower: Path.Service[S], state: Atomic
         if parts.isEmpty then Path("")
         else parts.tail.foldLeft(Path(parts.head))((acc, seg) => acc / seg)
 
+    // Walk ancestor prefixes from nearest to farthest. A Whiteout or OpaqueDir at the nearest
+    // found ancestor hides this path when it has no direct upper entry of its own. A positive
+    // Entry at an ancestor stops the walk: re-creation of that prefix makes its children visible.
+    // Only called in the case-None branch (a direct upper entry already takes precedence).
+    private def ancestorWhiteout(s: OverlayState, parts: Chunk[String]): Boolean =
+        (1 until parts.size).reverseIterator
+            .map(n => s.upper.get(parts.take(n)))
+            .collectFirst { case Some(v) => v }
+            .exists {
+                case Upper.Whiteout     => true
+                case Upper.OpaqueDir(_) => true
+                case _                  => false
+            }
+
     // --- Inspection ---
 
     def exists(path: Path): Boolean < (S & Abort[FileException]) =
@@ -153,15 +167,17 @@ final private[kyo] class OverlayService[S](lower: Path.Service[S], state: Atomic
                 case Some(Upper.Whiteout) => false
                 case Some(_)              => true
                 case None =>
-                    lower.exists(path).map { found =>
-                        if !found then stampAbsent(path.parts).andThen(false)
-                        else
-                            lower.stat(path).map { stat =>
-                                lower.isRegularFile(path).map { isFile =>
-                                    (if isFile then stampFile(path.parts, stat) else stampDir(path.parts, stat)).andThen(true)
+                    if ancestorWhiteout(s, path.parts) then false
+                    else
+                        lower.exists(path).map { found =>
+                            if !found then stampAbsent(path.parts).andThen(false)
+                            else
+                                lower.stat(path).map { stat =>
+                                    lower.isRegularFile(path).map { isFile =>
+                                        (if isFile then stampFile(path.parts, stat) else stampDir(path.parts, stat)).andThen(true)
+                                    }
                                 }
-                            }
-                    }
+                        }
         }
 
     def exists(path: Path, followLinks: Boolean): Boolean < (S & Abort[FileException]) = exists(path)
@@ -174,11 +190,13 @@ final private[kyo] class OverlayService[S](lower: Path.Service[S], state: Atomic
                 case Some(Upper.Entry(Path.Entry.Directory(_))) => true
                 case Some(Upper.Entry(Path.Entry.File(_, _)))   => false
                 case None =>
-                    lower.isDirectory(path).map { isDir =>
-                        lower.stat(path).map { stat =>
-                            (if isDir then stampDir(path.parts, stat) else stampFile(path.parts, stat)).andThen(isDir)
+                    if ancestorWhiteout(s, path.parts) then false
+                    else
+                        lower.isDirectory(path).map { isDir =>
+                            lower.stat(path).map { stat =>
+                                (if isDir then stampDir(path.parts, stat) else stampFile(path.parts, stat)).andThen(isDir)
+                            }
                         }
-                    }
         }
 
     def isRegularFile(path: Path): Boolean < (S & Abort[FileException]) =
@@ -189,11 +207,13 @@ final private[kyo] class OverlayService[S](lower: Path.Service[S], state: Atomic
                 case Some(Upper.Entry(Path.Entry.Directory(_))) => false
                 case Some(Upper.Entry(Path.Entry.File(_, _)))   => true
                 case None =>
-                    lower.isRegularFile(path).map { isFile =>
-                        lower.stat(path).map { stat =>
-                            (if isFile then stampFile(path.parts, stat) else stampDir(path.parts, stat)).andThen(isFile)
+                    if ancestorWhiteout(s, path.parts) then false
+                    else
+                        lower.isRegularFile(path).map { isFile =>
+                            lower.stat(path).map { stat =>
+                                (if isFile then stampFile(path.parts, stat) else stampDir(path.parts, stat)).andThen(isFile)
+                            }
                         }
-                    }
         }
 
     def isSymbolicLink(path: Path): Boolean < (S & Abort[FileException]) = false
@@ -214,11 +234,13 @@ final private[kyo] class OverlayService[S](lower: Path.Service[S], state: Atomic
                 case Some(Upper.Entry(Path.Entry.File(bytes, _))) => bytes
                 case Some(_)                                      => Abort.fail(FileNotFoundException(path))
                 case None =>
-                    lower.readBytes(path).map { bytes =>
-                        lower.stat(path).map { stat =>
-                            stampFile(path.parts, stat).andThen(bytes)
+                    if ancestorWhiteout(s, path.parts) then Abort.fail(FileNotFoundException(path))
+                    else
+                        lower.readBytes(path).map { bytes =>
+                            lower.stat(path).map { stat =>
+                                stampFile(path.parts, stat).andThen(bytes)
+                            }
                         }
-                    }
         }
 
     def readLines(path: Path): Chunk[String] < (S & Abort[FileException]) =
@@ -237,11 +259,13 @@ final private[kyo] class OverlayService[S](lower: Path.Service[S], state: Atomic
                 case Some(Upper.OpaqueDir(ps))                   => ps
                 case Some(Upper.Whiteout)                        => Abort.fail(FileNotFoundException(path))
                 case None =>
-                    lower.stat(path).map { ps =>
-                        lower.isRegularFile(path).map { isFile =>
-                            (if isFile then stampFile(path.parts, ps) else stampDir(path.parts, ps)).andThen(ps)
+                    if ancestorWhiteout(s, path.parts) then Abort.fail(FileNotFoundException(path))
+                    else
+                        lower.stat(path).map { ps =>
+                            lower.isRegularFile(path).map { isFile =>
+                                (if isFile then stampFile(path.parts, ps) else stampDir(path.parts, ps)).andThen(ps)
+                            }
                         }
-                    }
         }
 
     // --- Read handles ---
@@ -361,7 +385,9 @@ final private[kyo] class OverlayService[S](lower: Path.Service[S], state: Atomic
                     }
                 case _ =>
                     // Not in upper: read lower (stamp on first observation), then stage.
-                    lower.exists(path).map { found =>
+                    // Ancestor Whiteout hides lower content; treat as absent, start fresh.
+                    lower.exists(path).map { lowerFound =>
+                        val found = lowerFound && !ancestorWhiteout(s, path.parts)
                         val readLower: Span[Byte] < (S & Abort[FileException]) =
                             if !found then stampAbsent(path.parts).andThen(Span.empty[Byte])
                             else
@@ -398,20 +424,22 @@ final private[kyo] class OverlayService[S](lower: Path.Service[S], state: Atomic
                     }
                 case Some(_) => Abort.fail(FileNotFoundException(path))
                 case None =>
-                    lower.readBytes(path).map { bytes =>
-                        lower.stat(path).map { lStat =>
-                            stampFile(path.parts, lStat).andThen {
-                                val kept = Span.fromUnsafe(bytes.toArrayUnsafe.take(size.toInt))
-                                val stat = Path.PathStat(0L, kept.size.toLong)
-                                modifyPure { cur =>
-                                    cur.copy(
-                                        upper = cur.upper.updated(path.parts, Upper.Entry(Path.Entry.File(kept, stat))),
-                                        journal = cur.journal.appended(WriteOp.WriteFile(path.parts, kept, stat))
-                                    )
+                    if ancestorWhiteout(s, path.parts) then Abort.fail(FileNotFoundException(path))
+                    else
+                        lower.readBytes(path).map { bytes =>
+                            lower.stat(path).map { lStat =>
+                                stampFile(path.parts, lStat).andThen {
+                                    val kept = Span.fromUnsafe(bytes.toArrayUnsafe.take(size.toInt))
+                                    val stat = Path.PathStat(0L, kept.size.toLong)
+                                    modifyPure { cur =>
+                                        cur.copy(
+                                            upper = cur.upper.updated(path.parts, Upper.Entry(Path.Entry.File(kept, stat))),
+                                            journal = cur.journal.appended(WriteOp.WriteFile(path.parts, kept, stat))
+                                        )
+                                    }
                                 }
                             }
                         }
-                    }
         }
 
     def setLastModified(path: Path, epochMs: Long): Unit < (S & Abort[FileException]) =
@@ -443,30 +471,32 @@ final private[kyo] class OverlayService[S](lower: Path.Service[S], state: Atomic
                     }
                 case Some(Upper.Whiteout) => Abort.fail(FileNotFoundException(path))
                 case None =>
-                    lower.stat(path).map { stat =>
-                        lower.isRegularFile(path).map { isFile =>
-                            (if isFile then stampFile(path.parts, stat) else stampDir(path.parts, stat)).andThen {
-                                if isFile then
-                                    lower.readBytes(path).map { bytes =>
+                    if ancestorWhiteout(s, path.parts) then Abort.fail(FileNotFoundException(path))
+                    else
+                        lower.stat(path).map { stat =>
+                            lower.isRegularFile(path).map { isFile =>
+                                (if isFile then stampFile(path.parts, stat) else stampDir(path.parts, stat)).andThen {
+                                    if isFile then
+                                        lower.readBytes(path).map { bytes =>
+                                            val ns = stat.copy(lastModifiedMs = epochMs)
+                                            modifyPure { cur =>
+                                                cur.copy(
+                                                    upper = cur.upper.updated(path.parts, Upper.Entry(Path.Entry.File(bytes, ns))),
+                                                    journal = cur.journal.appended(WriteOp.WriteFile(path.parts, bytes, ns))
+                                                )
+                                            }
+                                        }
+                                    else
                                         val ns = stat.copy(lastModifiedMs = epochMs)
                                         modifyPure { cur =>
                                             cur.copy(
-                                                upper = cur.upper.updated(path.parts, Upper.Entry(Path.Entry.File(bytes, ns))),
-                                                journal = cur.journal.appended(WriteOp.WriteFile(path.parts, bytes, ns))
+                                                upper = cur.upper.updated(path.parts, Upper.Entry(Path.Entry.Directory(ns))),
+                                                journal = cur.journal.appended(WriteOp.WriteDirectory(path.parts, opaque = false))
                                             )
                                         }
-                                    }
-                                else
-                                    val ns = stat.copy(lastModifiedMs = epochMs)
-                                    modifyPure { cur =>
-                                        cur.copy(
-                                            upper = cur.upper.updated(path.parts, Upper.Entry(Path.Entry.Directory(ns))),
-                                            journal = cur.journal.appended(WriteOp.WriteDirectory(path.parts, opaque = false))
-                                        )
-                                    }
+                                }
                             }
                         }
-                    }
         }
 
     def mkDir(path: Path): Unit < (S & Abort[FileException]) =
@@ -582,26 +612,28 @@ final private[kyo] class OverlayService[S](lower: Path.Service[S], state: Atomic
                 case Some(Upper.OpaqueDir(stat)) => Path.Entry.Directory(stat): Path.Entry
                 case Some(Upper.Whiteout)        => Abort.fail(FileNotFoundException(path))
                 case None =>
-                    lower.exists(path).map { found =>
-                        if !found then Abort.fail(FileNotFoundException(path))
-                        else
-                            lower.isRegularFile(path).map { isFile =>
-                                if isFile then
-                                    lower.readBytes(path).map { bytes =>
-                                        lower.stat(path).map { stat =>
-                                            stampFile(path.parts, stat).andThen {
-                                                Path.Entry.File(bytes, stat): Path.Entry
+                    if ancestorWhiteout(s, path.parts) then Abort.fail(FileNotFoundException(path))
+                    else
+                        lower.exists(path).map { found =>
+                            if !found then Abort.fail(FileNotFoundException(path))
+                            else
+                                lower.isRegularFile(path).map { isFile =>
+                                    if isFile then
+                                        lower.readBytes(path).map { bytes =>
+                                            lower.stat(path).map { stat =>
+                                                stampFile(path.parts, stat).andThen {
+                                                    Path.Entry.File(bytes, stat): Path.Entry
+                                                }
                                             }
                                         }
-                                    }
-                                else
-                                    lower.stat(path).map { stat =>
-                                        stampDir(path.parts, stat).andThen {
-                                            Path.Entry.Directory(stat): Path.Entry
+                                    else
+                                        lower.stat(path).map { stat =>
+                                            stampDir(path.parts, stat).andThen {
+                                                Path.Entry.Directory(stat): Path.Entry
+                                            }
                                         }
-                                    }
-                            }
-                    }
+                                }
+                        }
         }
 
     def remove(path: Path): Boolean < (S & Abort[FileException]) =
@@ -750,15 +782,18 @@ final private[kyo] class OverlayService[S](lower: Path.Service[S], state: Atomic
                                     if stamp.entryType == liveStamp.entryType && stamp.lastModifiedMs == liveStamp.lastModifiedMs && stamp.size == liveStamp.size
                                     then acc
                                     else
-                                        val liveEntry: Maybe[Path.Entry] =
-                                            if isFile then Absent else Present(Path.Entry.Directory(liveStat))
-                                        val conflict = Conflict(
-                                            path,
-                                            Present(stamp),
-                                            s.upper.get(parts).fold[Maybe[Path.Entry]](Absent)(upperToEntry),
-                                            liveEntry
-                                        )
-                                        acc.appended(conflict)
+                                        // theirs: fresh bytes for file divergence; stat only for directory divergence.
+                                        val oursEntry = s.upper.get(parts).fold[Maybe[Path.Entry]](Absent)(upperToEntry)
+                                        val liveEntryKyo: Maybe[Path.Entry] < (S & Abort[FileException]) =
+                                            if isFile then
+                                                lower.readBytes(path).map { bytes =>
+                                                    (Present(Path.Entry.File(bytes, liveStat)): Maybe[Path.Entry])
+                                                }
+                                            else Present[Path.Entry](Path.Entry.Directory(liveStat))
+                                        liveEntryKyo.map { liveEntry =>
+                                            val conflict = Conflict(path, Present(stamp), oursEntry, liveEntry)
+                                            acc.appended(conflict)
+                                        }
                                     end if
                                 }
                             }

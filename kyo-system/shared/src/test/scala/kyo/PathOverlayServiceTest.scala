@@ -461,4 +461,108 @@ class PathOverlayServiceTest extends kyo.test.Test[Any]:
         }
     }
 
+    // F1: Conflict.theirs must carry the live lower entry, not Absent, for file divergence.
+
+    "Conflict.theirs is Present(File) with live bytes when lower file diverges" in {
+        withOverlay { (ov, lower) =>
+            val p = Path("f1-theirs-file.txt")
+            Path.runWith(lower)(p.write("original-content")).andThen {
+                Path.runWith(ov)(p.read).andThen { // stamps the file
+                    // Diverge lower with a different-length string so size-based conflict fires.
+                    Path.runWith(lower)(p.write("diverged-lower-content")).andThen {
+                        Abort.run[CommitConflict](ov.commit).map {
+                            case Result.Failure(cc) =>
+                                assert(cc.conflicts.size == 1)
+                                cc.conflicts.head.theirs match
+                                    case Present(Path.Entry.File(bytes, _)) =>
+                                        val content = new String(bytes.toArrayUnsafe, StandardCharsets.UTF_8)
+                                        assert(content == "diverged-lower-content")
+                                    case other =>
+                                        assert(false, s"expected Present(File(...)), got $other")
+                                end match
+                            case other =>
+                                assert(false, s"expected CommitConflict, got $other")
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    "Conflict.theirs is Absent when lower file was deleted after observation" in {
+        withOverlay { (ov, lower) =>
+            val p = Path("f1-theirs-deleted.txt")
+            Path.runWith(lower)(p.write("original-content")).andThen {
+                Path.runWith(ov)(p.read).andThen {          // stamps the file
+                    Path.runWith(lower)(p.remove).andThen { // delete from lower
+                        Abort.run[CommitConflict](ov.commit).map {
+                            case Result.Failure(cc) =>
+                                assert(cc.conflicts.size == 1)
+                                assert(cc.conflicts.head.theirs.isEmpty)
+                            case other =>
+                                assert(false, s"expected CommitConflict, got $other")
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // F2: Whiteout at /dir must hide all lower descendants, not just /dir itself.
+
+    "exists returns false for lower descendant of whiteout-removed directory" in {
+        withOverlay { (ov, lower) =>
+            val dir  = Path("wdir-exists")
+            val file = dir / "child.txt"
+            Path.runWith(lower)(dir.mkDir.andThen(file.write("content"))).andThen {
+                Path.runWith(ov) {
+                    dir.remove.andThen {
+                        file.exists.map { found =>
+                            assert(!found)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    "isRegularFile returns false for lower descendant of whiteout-removed directory" in {
+        withOverlay { (ov, lower) =>
+            val dir  = Path("wdir-read")
+            val file = dir / "child.txt"
+            Path.runWith(lower)(dir.mkDir.andThen(file.write("content"))).andThen {
+                Path.runWith(ov) {
+                    dir.remove.andThen {
+                        file.isRegularFile.map { isFile =>
+                            assert(!isFile)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    "re-creating a child under whiteout-removed directory makes it visible while lower siblings stay absent" in {
+        withOverlay { (ov, lower) =>
+            val dir     = Path("wdir-recreate")
+            val sibling = dir / "sibling.txt"
+            val newFile = dir / "new.txt"
+            Path.runWith(lower)(dir.mkDir.andThen(sibling.write("sibling-content"))).andThen {
+                Path.runWith(ov) {
+                    dir.remove.andThen {
+                        newFile.write("new-content").andThen {
+                            newFile.exists.map { newFound =>
+                                assert(newFound)
+                            }.andThen {
+                                sibling.exists.map { sibFound =>
+                                    assert(!sibFound)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
 end PathOverlayServiceTest
