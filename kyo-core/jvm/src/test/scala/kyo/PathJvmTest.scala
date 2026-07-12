@@ -354,4 +354,50 @@ class PathJvmTest extends kyo.test.Test[Any]:
         end for
     }
 
+    // =========================================================================
+    // readLong allocation bounds. The bound is 0 bytes per op, not a noise
+    // tolerance: readLong parses the value out of the handle's retained scan
+    // buffer in place, so a regression that reintroduces a per-read String, a
+    // Maybe box, or a per-read buffer wrapper makes the measurement nonzero.
+    // =========================================================================
+
+    "readLong on a present numeric value allocates zero bytes per op".onlyJvm in {
+        import AllowUnsafe.embrace.danger
+        for
+            dir <- Path.tempDir("kyo-readlong-alloc")
+            file = dir / "value"
+            _ <- file.write("123456\n")
+        yield
+            val handle = file.unsafe.openRead().getOrThrow
+            try
+                // The scan buffer is sized on the first call, outside the measured window.
+                assert(handle.readLong() == 123456L)
+                kyo.test.AllocationProbe.assertBoundedPerOp(20000, 2000, 0.0) {
+                    discard(handle.readLong())
+                }
+            finally handle.close()
+            end try
+        end for
+    }
+
+    "readLong on the AbsentLong path allocates zero bytes per op".onlyJvm in {
+        import AllowUnsafe.embrace.danger
+        for
+            dir <- Path.tempDir("kyo-readlong-absent-alloc")
+            file = dir / "empty"
+            _ <- file.write("")
+        yield
+            val handle = file.unsafe.openRead().getOrThrow
+            try
+                // A Maybe[Long]-returning implementation would box a java.lang.Long or allocate an
+                // Absent here; the primitive sentinel allocates nothing.
+                assert(handle.readLong() == Path.ReadHandle.AbsentLong)
+                kyo.test.AllocationProbe.assertBoundedPerOp(20000, 2000, 0.0) {
+                    discard(handle.readLong())
+                }
+            finally handle.close()
+            end try
+        end for
+    }
+
 end PathJvmTest

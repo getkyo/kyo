@@ -753,14 +753,57 @@ object Path extends PathPlatformSpecific:
 
     /** An open read channel returned by `Path.Unsafe.openRead`. Platform implementations provide the concrete class. */
     abstract private[kyo] class ReadHandle:
-        /** Reads up to `buffer.length` bytes into `buffer`. Returns a `ReadResult` — either `Eof` or a positive byte count. */
+        /** Reads up to `buffer.length` bytes into `buffer`. Returns a `ReadResult` that is either `Eof` or a positive byte count. */
         def readChunk(buffer: Array[Byte])(using AllowUnsafe): ReadResult
 
         /** Sets the channel position to `offset` bytes from the start of the file. */
         def position(offset: Long)(using AllowUnsafe): Unit
 
+        /** Reads the current content into the handle's own retained buffer and parses the first ASCII-decimal
+          * `Long` in place, with no intermediate `String` and no `Maybe` box. TOTAL: returns
+          * `ReadHandle.AbsentLong` (`Long.MinValue`) on empty content, on no leading digit after whitespace, or
+          * on overflow. The parser recognizes only ASCII decimal digits (no sign), so it can never itself
+          * produce a negative `Long`, which makes the sentinel collision-free by construction. Each call parses
+          * from the start of the content; it does not advance a cursor across calls.
+          */
+        def readLong()(using AllowUnsafe): Long
+
         /** Closes the channel, releasing all OS resources. */
         def close()(using AllowUnsafe): Unit
+    end ReadHandle
+
+    private[kyo] object ReadHandle:
+        /** The sentinel `readLong` returns for empty, unparseable, or overflowing content (`Long.MinValue`).
+          * A host metric `readLong` parses (bytes, nanoseconds, counts, pids) is non-negative, and the parser
+          * accepts no leading sign, so this value can never collide with a genuine parse result. Peer of the
+          * existing `Path.ReadResult.Eof` sentinel-on-companion pattern.
+          */
+        val AbsentLong: Long = Long.MinValue
+
+        /** Parses the first maximal ASCII-decimal run in `buf[0, len)` as a `Long`, skipping leading ASCII
+          * whitespace. Returns `AbsentLong` when no digit leads or the value overflows. Shared by the concrete
+          * platform `readLong` implementations after each fills its own retained buffer.
+          */
+        private[kyo] def parseLeadingLong(buf: Array[Byte], len: Int): Long =
+            @scala.annotation.tailrec
+            def skip(i: Int): Int =
+                if i < len && { val b = buf(i); b == ' ' || b == '\t' || b == '\n' || b == '\r' } then skip(i + 1)
+                else i
+            @scala.annotation.tailrec
+            def digits(i: Int, acc: Long, any: Boolean): Long =
+                if i >= len then (if any then acc else AbsentLong)
+                else
+                    val b = buf(i)
+                    if b >= '0' && b <= '9' then
+                        val d = (b - '0').toLong
+                        if acc > (Long.MaxValue - d) / 10L then AbsentLong
+                        else digits(i + 1, acc * 10L + d, true)
+                    else if any then acc
+                    else AbsentLong
+                    end if
+            val start = skip(0)
+            if start >= len then AbsentLong else digits(start, 0L, false)
+        end parseLeadingLong
     end ReadHandle
 
     /** An open buffered line reader returned by `Path.Unsafe.openReadLines`. Platform implementations provide the concrete class. */

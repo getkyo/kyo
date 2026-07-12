@@ -1,7 +1,6 @@
 package kyo
 
 import scala.annotation.implicitNotFound
-import scala.jdk.CollectionConverters.*
 
 /** Shared foundation for type-safe configuration flags backed by system properties and environment variables.
   *
@@ -63,7 +62,7 @@ abstract class Flag[A] private[kyo] (final val default: A, final val validate: A
         val prop = java.lang.System.getProperty(name)
         if (prop ne null) (Flag.Source.SystemProperty, prop)
         else {
-            val env = java.lang.System.getenv(envName)
+            val env = internal.FlagPlatform.env(envName)
             if (env ne null) (Flag.Source.EnvironmentVariable, env)
             else (Flag.Source.Default, "")
         }
@@ -228,7 +227,7 @@ object Flag {
         if (prop ne null) reader.parse(name, prop)
         else {
             val envName = name.replace('.', '_').toUpperCase
-            val env     = java.lang.System.getenv(envName)
+            val env     = internal.FlagPlatform.env(envName)
             if (env ne null) reader.parse(name, env)
             else default
         }
@@ -318,8 +317,7 @@ object Flag {
             }
             // Also check env vars for near-miss
             try {
-                val envMap = java.lang.System.getenv()
-                envMap.keySet().asScala.foreach { envKey =>
+                internal.FlagPlatform.envNames().foreach { envKey =>
                     if (envKey.toLowerCase == envNameLower && envKey != flag.envName) {
                         java.lang.System.err.println(
                             s"[kyo-config] Warning: Flag '${flag.name}' resolved to default \u2014 did you mean environment variable '$envKey'?"

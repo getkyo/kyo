@@ -2413,4 +2413,65 @@ class PathTest extends kyo.test.Test[Any]:
         end for
     }
 
+    // =========================================================================
+    // ReadHandle.readLong: parse-in-place of the first ASCII-decimal Long
+    // =========================================================================
+
+    "readLong parses the first ASCII-decimal Long out of a numeric file" in {
+        import AllowUnsafe.embrace.danger
+        for
+            dir <- Path.tempDir("kyo-readlong-happy")
+            file = dir / "value"
+            _ <- file.write("123456\n")
+        yield
+            val handle = file.unsafe.openRead().getOrThrow
+            try assert(handle.readLong() == 123456L)
+            finally handle.close()
+            end try
+        end for
+    }
+
+    "readLong returns AbsentLong for empty, non-numeric and leading-sign content" in {
+        import AllowUnsafe.embrace.danger
+        for
+            dir <- Path.tempDir("kyo-readlong-total")
+            empty      = dir / "empty"
+            nonNumeric = dir / "non-numeric"
+            negative   = dir / "negative"
+            _ <- empty.write("")
+            _ <- nonNumeric.write("not-a-number")
+            // The parser accepts no sign, so a negative value is unparseable. That is what keeps
+            // the negative sentinel collision-free: no parse can ever produce a negative Long.
+            _ <- negative.write("-5")
+        yield
+            def readLongOf(p: Path): Long =
+                val handle = p.unsafe.openRead().getOrThrow
+                try handle.readLong()
+                finally handle.close()
+                end try
+            end readLongOf
+
+            assert(readLongOf(empty) == Path.ReadHandle.AbsentLong)
+            assert(readLongOf(nonNumeric) == Path.ReadHandle.AbsentLong)
+            assert(readLongOf(negative) == Path.ReadHandle.AbsentLong)
+            assert(Path.ReadHandle.AbsentLong == Long.MinValue)
+        end for
+    }
+
+    "readLong returns AbsentLong on overflow rather than a wrapped negative Long" in {
+        import AllowUnsafe.embrace.danger
+        for
+            dir <- Path.tempDir("kyo-readlong-overflow")
+            file = dir / "overflow"
+            _ <- file.write("99999999999999999999999")
+        yield
+            val handle = file.unsafe.openRead().getOrThrow
+            try
+                val value = handle.readLong()
+                assert(value == Path.ReadHandle.AbsentLong)
+            finally handle.close()
+            end try
+        end for
+    }
+
 end PathTest

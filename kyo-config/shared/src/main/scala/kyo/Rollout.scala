@@ -693,7 +693,7 @@ object Rollout {
         if (prop != null) prop
         else {
             val env =
-                try java.lang.System.getenv(envVar)
+                try internal.FlagPlatform.env(envVar)
                 catch { case _: SecurityException => null }
             if (env != null) env
             else ""
@@ -741,7 +741,7 @@ object Rollout {
 
     private def env(name: String): String = {
         val v =
-            try java.lang.System.getenv(name)
+            try internal.FlagPlatform.env(name)
             catch { case _: SecurityException => null }
         if (v eq null) "" else v
     }

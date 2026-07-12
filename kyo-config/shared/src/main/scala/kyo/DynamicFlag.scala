@@ -103,7 +103,7 @@ abstract class DynamicFlag[A](default: A, validate: A => Either[Throwable, A] = 
             case Flag.Source.SystemProperty =>
                 Option(java.lang.System.getProperty(name))
             case Flag.Source.EnvironmentVariable =>
-                Option(java.lang.System.getenv(envName))
+                Option(internal.FlagPlatform.env(envName))
             case Flag.Source.Default =>
                 None
         }

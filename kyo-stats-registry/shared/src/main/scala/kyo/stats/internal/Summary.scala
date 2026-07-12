@@ -7,7 +7,8 @@ case class Summary(
     bucketCounts: Array[Long],
     count: Long,
     min: Double,
-    max: Double
+    max: Double,
+    sum: Double
 ) {
     def percentile(v: Double): Double = {
         val target = (v * count / 100.0).toLong

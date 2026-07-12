@@ -824,32 +824,8 @@ lazy val `kyo-ffi-it` =
                         .withEnv(Map("KYO_FFI_KYO_IT_BUNDLED_PATH" -> bundled.getAbsolutePath))
                 )
             },
-            // Bootstrap koffi into Node's resolver before tests run. Hooked on Test / compile (not
-            // Test / test) so test, testOnly, and testQuick all trigger it, and it re-runs after a
-            // clean wipes node_modules. Idempotent on the marker file.
-            Test / compile := (Test / compile).dependsOn(Def.task {
-                val log        = streams.value.log
-                val targetBase = target.value
-                val nodeMods   = targetBase / "node_modules"
-                val marker     = nodeMods / "koffi" / "package.json"
-                // Must match `kyo.ffi.internal.FfiErrors.KoffiSupportedRange`.
-                val koffiRange = "^2.7"
-                val pjContent =
-                    s"""{"name":"kyo-ffi-it-js-test","private":true,"dependencies":{"koffi":"$koffiRange"}}"""
-                val pj = targetBase / "package.json"
-                if (!pj.exists() || IO.read(pj) != pjContent) {
-                    IO.createDirectory(targetBase)
-                    IO.write(pj, pjContent)
-                }
-                if (!marker.exists()) {
-                    log.info(s"[kyo-ffi-it JS] installing koffi@$koffiRange into $targetBase ...")
-                    val rc = scala.sys.process.Process(
-                        Seq("npm", "install", "--no-audit", "--no-fund", "--silent"),
-                        targetBase
-                    ).!
-                    if (rc != 0) sys.error(s"npm install koffi failed (exit $rc)")
-                }
-            }).value
+            // koffi bootstrap (idempotent npm install, hooked on Test / compile) via the kyo-ffi plugin.
+            ffiKoffiJsBootstrap("kyo-ffi-it-js-test")
         )
 
 lazy val `kyo-ffi-codegen` =
@@ -1115,7 +1091,18 @@ lazy val `kyo-config` =
         )
         .jvmSettings(mimaCheck(false))
         .nativeSettings(`native-settings`)
-        .jsSettings(`js-settings`)
+        .jsSettings(
+            `js-settings`,
+            // Rollout reads KYO_ROLLOUT_PATH once, when its object initializes, which can happen before any
+            // test body runs. RolloutEnvTest asserts a StaticFlag rollout expression resolves against the
+            // topology path Node reports, so the variable has to be in the test process environment from the
+            // start rather than written by a test.
+            Test / jsEnv := new NodeJSEnv(
+                NodeJSEnv.Config()
+                    .withArgs(List("--max_old_space_size=5120"))
+                    .withEnv(Map("KYO_ROLLOUT_PATH" -> "prod/us-east-1"))
+            )
+        )
         .wasmSettings(`wasm-settings`)
 
 lazy val `kyo-stats-machine` =
@@ -1164,33 +1151,10 @@ lazy val `kyo-stats-machine` =
                     .withArgs(List("--max_old_space_size=5120"))
                     .withEnv(Map("KYO_MACHINE_DISABLED" -> "true"))
             ),
-            // Bootstrap koffi into Node's resolver before tests run: LinuxBindings is kyo-stats-machine's
-            // first Ffi binding, so its generated JS impl reaches for koffi at module load. Hooked on
-            // Test / compile (not Test / test) so test, testOnly, and testQuick all trigger it, and
-            // it re-runs after a clean wipes node_modules. Idempotent on the marker file.
-            Test / compile := (Test / compile).dependsOn(Def.task {
-                val log        = streams.value.log
-                val targetBase = target.value
-                val nodeMods   = targetBase / "node_modules"
-                val marker     = nodeMods / "koffi" / "package.json"
-                // Must match `kyo.ffi.internal.FfiPlatformErrors.KoffiSupportedRange`.
-                val koffiRange = "^2.7"
-                val pjContent =
-                    s"""{"name":"kyo-stats-machine-js-test","private":true,"dependencies":{"koffi":"$koffiRange"}}"""
-                val pj = targetBase / "package.json"
-                if (!pj.exists() || IO.read(pj) != pjContent) {
-                    IO.createDirectory(targetBase)
-                    IO.write(pj, pjContent)
-                }
-                if (!marker.exists()) {
-                    log.info(s"[kyo-stats-machine JS] installing koffi@$koffiRange into $targetBase ...")
-                    val rc = scala.sys.process.Process(
-                        Seq("npm", "install", "--no-audit", "--no-fund", "--silent"),
-                        targetBase
-                    ).!
-                    if (rc != 0) sys.error(s"npm install koffi failed (exit $rc)")
-                }
-            }).value
+            // koffi bootstrap (idempotent npm install, hooked on Test / compile) via the kyo-ffi plugin.
+            // The CommonJS linker setting above stays in this .jsSettings block: the plugin is a Scala 2.12
+            // sbt plugin with no sbt-scalajs dependency, so it cannot carry a scalaJSLinkerConfig setting.
+            ffiKoffiJsBootstrap("kyo-stats-machine-js-test")
         )
 
 lazy val `kyo-stats-otlp` =
