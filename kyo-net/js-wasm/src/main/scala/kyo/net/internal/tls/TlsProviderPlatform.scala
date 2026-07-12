@@ -21,6 +21,6 @@ private[net] object TlsProviderPlatform:
       * provider-name reporting; the Node transport terminates TLS itself, so no engine is built here.
       */
     def selected(using AllowUnsafe, Frame): TlsProvider =
-        IoBackend.select[TlsProvider](registered, _.name, _.priority, _.isAvailable, "kyo.net.tls").getOrThrow
+        IoBackend.select[TlsProvider](registered, _.name, _.priority, _.isAvailable, "kyo.net.tls")
 
 end TlsProviderPlatform

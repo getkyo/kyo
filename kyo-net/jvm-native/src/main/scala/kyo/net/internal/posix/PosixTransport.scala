@@ -554,16 +554,14 @@ final private[net] class PosixTransport private[posix] (
         tls match
             case Absent               => completeConnect(handle, driver, promise)
             case Present((cfg, host)) =>
-                // buildEngine fails closed with a typed NetException leaf when a verifying client has no reference identity (an empty connect
-                // host), when a pinned TLS provider is unavailable, or when configured TLS material is unreadable. A build failure must fail the
-                // connect promise and close the fd rather than escaping into the driver carrier. The leaf already names the precise cause, so it
-                // propagates AS-IS; re-wrapping it as a handshake failure would report a config error as a handshake error.
+                // buildEngine fails closed (throws Closed) when a verifying client has no reference identity (an empty connect host), so a
+                // build failure must fail the connect promise and close the fd rather than escaping into the driver carrier.
                 val engine =
                     try buildEngine(cfg, host, isServer = false)
                     catch
-                        case e: NetException =>
+                        case closed: Closed =>
                             closeUnwiredHandle(handle, driver, connectPhase = false)
-                            promise.completeDiscard(Result.fail(e))
+                            promise.completeDiscard(Result.fail(NetTlsHandshakeException(host, port, closed)))
                             return
                 // Register this in-flight client handshake so a transport `close()` racing it (no deadline exists on the connect path)
                 // reclaims the fd/engine and fails `promise` instead of leaking them / hanging the caller past shutdown. `driveHandshake`
@@ -582,7 +580,11 @@ final private[net] class PosixTransport private[posix] (
                         reaped.set(true)
                         closeUnwiredHandle(handle, driver, connectPhase = false)
                         engine.free()
-                        promise.completeDiscard(Result.fail(NetTlsHandshakeException(host, port, "transport closed during handshake")))
+                        promise.completeDiscard(Result.fail(NetTlsHandshakeException(
+                            host,
+                            port,
+                            Closed("PosixTransport", summon[Frame], "transport closed during handshake")
+                        )))
                     }
                 )
                 driveHandshake(
@@ -1050,11 +1052,8 @@ final private[net] class PosixTransport private[posix] (
                                     case hf: HandshakeFailure.EngineThrew => hf.cause
                                     case hf: HandshakeFailure             => hf.toString
                                     case st: (String | Throwable)         => st
-                                val causeDesc = causeMsg match
-                                    case t: Throwable => Maybe(t.getMessage).filter(_.nonEmpty).getOrElse(t.toString)
-                                    case s: String    => s
                                 Log.live.unsafe.warn(
-                                    s"PosixTransport server TLS handshake failed fd=$clientFd: $causeDesc"
+                                    s"PosixTransport server TLS handshake failed fd=$clientFd: ${NetException.show(causeMsg)}"
                                 )
                                 teardown(),
                         onPanic = e =>
@@ -1393,22 +1392,20 @@ final private[net] class PosixTransport private[posix] (
                         // Committed to the upgrade: mark it durably (see PosixHandle.isUpgraded) before any handshakeOwned recv can be armed, so
                         // the io_uring reap can recognize one that outlives onFinished's flag-clear even after upgradeActive/upgrading go false.
                         handle.isUpgraded = true
-                        // buildEngine fails closed with a typed NetException leaf when a verifying STARTTLS client has no reference identity (no
-                        // sniHostname), when a pinned TLS provider is unavailable, or when configured TLS material is unreadable. A build failure
-                        // must release the detached-but-open fd and fail the upgrade promise rather than escaping. No engine exists yet on this
-                        // path, so only the fd is released (releaseFailedUpgrade also frees the engine, which is absent here). The real close(fd)
-                        // is deferred to freeResources (via fdCloseSink) instead of running here directly, so a carrier still mid-syscall on this
-                        // fd under a live guard hold is never exposed to a fd number the kernel has already recycled. The leaf already names the
-                        // precise cause, so it propagates AS-IS rather than being re-wrapped as a handshake failure.
+                        // buildEngine fails closed (throws Closed) when a verifying STARTTLS client has no reference identity (no sniHostname),
+                        // so a build failure must release the detached-but-open fd and fail the upgrade promise rather than escaping. No engine
+                        // exists yet on this path, so only the fd is released (releaseFailedUpgrade also frees the engine, which is absent here).
+                        // The real close(fd) is deferred to freeResources (via fdCloseSink) instead of running here directly, so a carrier still
+                        // mid-syscall on this fd under a live guard hold is never exposed to a fd number the kernel has already recycled.
                         val engine =
                             try buildEngine(tls, upgradeHost(tls, isServer), isServer)
                             catch
-                                case e: NetException =>
+                                case closed: Closed =>
                                     if handle.claimFdClose() then
                                         discard(sockets.shutdown(handle.writeFd, PosixConstants.SHUT_RDWR))
                                         handle.fdCloseSink = Present(() => closeRawFd(handle.writeFd))
                                     PosixHandle.close(handle)
-                                    out.completeDiscard(Result.fail(e))
+                                    out.completeDiscard(Result.fail(NetTlsHandshakeException(upgradeHost(tls, isServer), -1, closed)))
                                     return out.asInstanceOf[Fiber.Unsafe[Connection, Abort[NetException]]]
                         // Feed every staged ciphertext byte into the engine before the first post-upgrade read.
                         feedStaged(engine, staged)
@@ -1453,7 +1450,7 @@ final private[net] class PosixTransport private[posix] (
                                 out.completeDiscard(Result.fail(NetTlsHandshakeException(
                                     upgradeHost(tls, isServer),
                                     -1,
-                                    "transport closed during handshake"
+                                    Closed("PosixTransport", summon[Frame], "transport closed during handshake")
                                 )))
                             }
                         )

@@ -5,7 +5,6 @@ import kyo.*
 import kyo.ffi.Buffer
 import kyo.ffi.Ffi
 import kyo.net.Connection
-import kyo.net.NetException
 import kyo.net.NetTlsConfig
 import kyo.net.Test
 import kyo.net.internal.tls.TlsProviderPlatform
@@ -59,13 +58,13 @@ class PosixTransportHandshakeBehaviorTest extends Test:
       * parked accept promise with `Closed`; that completion runs the accept loop's exit branch inline (`IOPromise.flush`), then the listener
       * `shutdown`s + closes the listen fd, all synchronously. So once `transport.close()` returns, no accept loop is still running.
       */
-    private def withTransport[A](body: PosixTransport => A < (Async & Abort[NetException | Closed] & Scope))(using
+    private def withTransport[A](body: PosixTransport => A < (Async & Abort[Closed] & Scope))(using
         Frame
-    ): A < (Async & Abort[NetException | Closed] & Scope) =
+    ): A < (Async & Abort[Closed] & Scope) =
         val driver    = PollerIoDriver.init(transportConfig)
         val transport = TestTransports.forTesting(transportConfig, driver, Ffi.load[SocketBindings], backendIsEpoll = false)
         discard(driver.start())
-        Abort.run[NetException | Closed](body(transport)).map { result =>
+        Abort.run[Closed](body(transport)).map { result =>
             Sync.defer(transport.close()).andThen(Sync.defer(driver.close())).andThen(Abort.get(result))
         }
     end withTransport
@@ -177,8 +176,8 @@ class PosixTransportHandshakeBehaviorTest extends Test:
                         // Close without sending anything: the TLS client will receive a truncated handshake.
                         serverConn.close()
                     }.safe.get
-                    outcome <- Abort.run[NetException | Closed](transport.connect("127.0.0.1", listener.port, clientTls).safe.get)
-                yield assert(outcome.isFailure, s"expected a failure on TLS-to-plaintext handshake mismatch, got $outcome")
+                    outcome <- Abort.run[Closed](transport.connect("127.0.0.1", listener.port, clientTls).safe.get)
+                yield assert(outcome.isFailure, s"expected Closed on TLS-to-plaintext handshake failure, got $outcome")
             }
         }
 

@@ -16,12 +16,12 @@ private[net] trait TlsProviderPlatformBase:
 
     /** The selected TLS provider honoring `-Dkyo.net.tls`. Reuses the SAME `IoBackend.select` as the I/O registry. */
     def selected(using AllowUnsafe, Frame): TlsEngineProvider =
-        IoBackend.select[TlsEngineProvider](registered, _.name, _.priority, _.isAvailable, "kyo.net.tls").getOrThrow
+        IoBackend.select[TlsEngineProvider](registered, _.name, _.priority, _.isAvailable, "kyo.net.tls")
 
     /** Build the TLS engine for the given config/hostname/role, honoring a [[NetTlsConfig.tlsProvider]] pin (fail-closed if unavailable) and
       * otherwise the platform-selected default.
       */
     def engine(config: NetTlsConfig, hostname: String, isServer: Boolean)(using AllowUnsafe, Frame): TlsEngine =
-        TlsProvider.selectFor(registered, config).getOrThrow.createEngine(config, hostname, isServer)
+        TlsProvider.selectFor(registered, config).createEngine(config, hostname, isServer)
 
 end TlsProviderPlatformBase

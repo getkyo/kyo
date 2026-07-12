@@ -55,7 +55,7 @@ class TransportTlsHostnameTest extends Test:
             transport.listen("127.0.0.1", 0, 16, serverTls)(_ => ()).safe.get.map { listener =>
                 // An empty host gives a verifying client nothing to check the certificate name against. It must NOT silently accept a chain-valid
                 // cert: the connect fails closed (either at the pre-connect identity guard or during the handshake). Bounded.
-                Abort.run[NetException | Closed | Timeout](
+                Abort.run[Closed | Timeout](
                     Async.timeout(5.seconds)(transport.connect("", listener.port, cli).safe.get)
                 ).map { outcome =>
                     listener.close()
@@ -77,7 +77,7 @@ class TransportTlsHostnameTest extends Test:
                 )
                 val cli = NetTlsConfig(caCertPath = Present(wrongCert), tlsProvider = clientTls.tlsProvider)
                 transport.listen("127.0.0.1", 0, 16, srv)(_ => ()).safe.get.map { listener =>
-                    Abort.run[NetException | Closed | Timeout](
+                    Abort.run[Closed | Timeout](
                         Async.timeout(5.seconds)(transport.connect("127.0.0.1", listener.port, cli).safe.get)
                     ).map { outcome =>
                         listener.close()

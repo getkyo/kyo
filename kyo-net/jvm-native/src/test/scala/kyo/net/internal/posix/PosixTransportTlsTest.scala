@@ -4,7 +4,6 @@ import kyo.*
 import kyo.ffi.Buffer
 import kyo.ffi.Ffi
 import kyo.net.Connection
-import kyo.net.NetException
 import kyo.net.NetTlsConfig
 import kyo.net.Test
 import kyo.net.internal.tls.TlsProviderPlatform
@@ -49,13 +48,13 @@ class PosixTransportTlsTest extends Test:
       * branch inline (`IOPromise.flush`), then the listener `shutdown`s + closes the listen fd, all synchronously. So once `transport.close()`
       * returns, no accept loop is still running and the fd is already closed: nothing to await.
       */
-    private def withTransport[A](body: PosixTransport => A < (Async & Abort[NetException | Closed] & Scope))(using
+    private def withTransport[A](body: PosixTransport => A < (Async & Abort[Closed] & Scope))(using
         Frame
-    ): A < (Async & Abort[NetException | Closed] & Scope) =
+    ): A < (Async & Abort[Closed] & Scope) =
         val driver    = PollerIoDriver.init(transportConfig)
         val transport = TestTransports.forTesting(transportConfig, driver, Ffi.load[SocketBindings], backendIsEpoll = false)
         discard(driver.start())
-        Abort.run[NetException | Closed](body(transport)).map { result =>
+        Abort.run[Closed](body(transport)).map { result =>
             Sync.defer(transport.close()).andThen(Sync.defer(driver.close())).andThen(Abort.get(result))
         }
     end withTransport
@@ -136,8 +135,8 @@ class PosixTransportTlsTest extends Test:
             assumeReady()
             withTransport { transport =>
                 deadPort().map { port =>
-                    Abort.run[NetException | Closed](transport.connect("127.0.0.1", port, clientTls).safe.get).map { outcome =>
-                        assert(outcome.isFailure, s"expected a failure connecting TLS to dead port $port, got $outcome")
+                    Abort.run[Closed](transport.connect("127.0.0.1", port, clientTls).safe.get).map { outcome =>
+                        assert(outcome.isFailure, s"expected Closed connecting TLS to dead port $port, got $outcome")
                     }
                 }
             }

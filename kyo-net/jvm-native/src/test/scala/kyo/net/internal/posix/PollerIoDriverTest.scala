@@ -3,7 +3,6 @@ package kyo.net.internal.posix
 import kyo.*
 import kyo.ffi.Buffer
 import kyo.ffi.Ffi
-import kyo.net.NetBackendInitException
 import kyo.net.Test
 import kyo.net.internal.tls.TlsEngine
 import kyo.net.internal.tls.TlsEngineLoopback
@@ -385,7 +384,7 @@ class PollerIoDriverTest extends Test:
             val spy      = RecordingPollerBackend(real)
             spy.forceRegisterWakeFail.set(true)
             val driver = TestDrivers.forBackend(spy, pollerFd)
-            val ex     = intercept[NetBackendInitException](discard(driver.start()))
+            val ex     = intercept[IllegalStateException](discard(driver.start()))
             assert(
                 ex.getMessage.contains("registerWake"),
                 s"error message should name the failed operation, got: ${ex.getMessage}"

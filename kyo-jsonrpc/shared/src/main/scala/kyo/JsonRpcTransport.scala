@@ -1,7 +1,6 @@
 package kyo
 
 import kyo.Stream
-import kyo.net.NetException
 import kyo.net.NetPlatform
 
 /** Envelope-level message channel between two JSON-RPC peers.
@@ -87,7 +86,7 @@ object JsonRpcTransport:
         sockPath: Path,
         framer: JsonRpcFramer = JsonRpcFramer.lineDelimited,
         codec: Schema[JsonRpcEnvelope] = summon[Schema[JsonRpcEnvelope]]
-    )(using Frame): JsonRpcTransport < (Async & Scope & Abort[NetException]) =
+    )(using Frame): JsonRpcTransport < (Async & Scope & Abort[Throwable]) =
         internal.transport.UdsBackend.connect(sockPath, framer, codec)
 
     /** Content-Length-framed stdio transport for JSON-RPC (LSP, DAP, BSP).
@@ -110,7 +109,7 @@ object JsonRpcTransport:
     def contentLengthStdio(
         framer: JsonRpcFramer = JsonRpcFramer.contentLength,
         codec: Schema[JsonRpcEnvelope] = summon[Schema[JsonRpcEnvelope]]
-    )(using Frame): JsonRpcTransport < (Async & Scope & Abort[NetException]) =
+    )(using Frame): JsonRpcTransport < (Async & Scope & Abort[Throwable]) =
         // Unsafe: Transport.stdio() is unsafe-tier; bridged once here.
         Sync.Unsafe.defer {
             NetPlatform.transport.stdio().safe.get.map { conn =>

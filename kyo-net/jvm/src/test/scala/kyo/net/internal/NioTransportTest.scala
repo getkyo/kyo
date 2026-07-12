@@ -5,7 +5,6 @@ import java.net.StandardProtocolFamily
 import java.nio.ByteBuffer
 import java.nio.channels.SocketChannel
 import kyo.*
-import kyo.net.NetException
 import kyo.net.NetTlsConfig
 import kyo.net.Test
 import kyo.net.internal.tls.TlsTestCert
@@ -101,7 +100,7 @@ class NioTransportTest extends Test:
         given Frame   = Frame.internal
         val transport = mkTransport()
         // Port 1: connection refused on loopback
-        Abort.run[NetException | Closed](transport.connect("127.0.0.1", 1).safe.get).map { result =>
+        Abort.run[Closed](transport.connect("127.0.0.1", 1).safe.get).map { result =>
             transport.close()
             // Either refused (Failure) or panicked; a success would be unusual but allowed
             // faithful port of the kyo-http original; OS-nondeterministic connect-refused-vs-reuse outcome covers all Result cases
@@ -149,7 +148,7 @@ class NioTransportTest extends Test:
 
         transport.listen("127.0.0.1", 0, 50)(_ => ()).safe.get.map { listener1 =>
             val port = listener1.port
-            Abort.run[NetException | Closed](transport.listen("127.0.0.1", port, 50)(_ => ()).safe.get).map { result2 =>
+            Abort.run[Closed](transport.listen("127.0.0.1", port, 50)(_ => ()).safe.get).map { result2 =>
                 listener1.close()
                 transport.close()
                 assert(result2.isFailure)
@@ -234,7 +233,7 @@ class NioTransportTest extends Test:
         }.safe.get.map { listener =>
             val port      = listener.port
             val clientTls = NetTlsConfig(trustAll = true)
-            Abort.run[NetException | Closed](transport.connect("127.0.0.1", port, clientTls).safe.get).map { result =>
+            Abort.run[Closed](transport.connect("127.0.0.1", port, clientTls).safe.get).map { result =>
                 listener.close()
                 transport.close()
                 result match
@@ -263,7 +262,7 @@ class NioTransportTest extends Test:
             assert(port > 0)
             listener.close()
             // After close, further connect attempts should fail or be refused
-            Abort.run[NetException | Closed](transport.connect("127.0.0.1", port).safe.get).map { result =>
+            Abort.run[Closed](transport.connect("127.0.0.1", port).safe.get).map { result =>
                 transport.close()
                 // Either connection refused (failure) or the port was taken; either way listener is closed
                 // faithful port of the kyo-http original; OS-nondeterministic listener-close outcome
@@ -313,7 +312,7 @@ class NioTransportTest extends Test:
         }.safe.get.map { listener =>
             val port      = listener.port
             val clientTls = NetTlsConfig(trustAll = true)
-            Abort.run[NetException | Closed](transport.connect("127.0.0.1", port, clientTls).safe.get).map { result =>
+            Abort.run[Closed](transport.connect("127.0.0.1", port, clientTls).safe.get).map { result =>
                 result match
                     case Result.Success(conn) =>
                         // Read the cert hash on the still-open connection (the server handler above does not close it).
@@ -382,7 +381,7 @@ class NioTransportTest extends Test:
         given Frame   = Frame.internal
         val transport = mkTransport()
         val badPath   = "/tmp/kyo-nio-test-does-not-exist-" + java.util.UUID.randomUUID() + ".sock"
-        Abort.run[NetException | Closed](transport.connectUnix(badPath).safe.get).map { result =>
+        Abort.run[Closed](transport.connectUnix(badPath).safe.get).map { result =>
             transport.close()
             assert(result.isFailure)
             succeed

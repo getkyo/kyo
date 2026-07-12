@@ -4,7 +4,6 @@ import java.io.PipedInputStream
 import java.io.PipedOutputStream
 import java.io.PrintStream
 import kyo.*
-import kyo.net.NetException
 import kyo.net.NetStdioAlreadyOpenException
 import kyo.net.Test
 
@@ -96,7 +95,7 @@ class NioTransportStdioTest extends Test:
                         stdoutSeen.safe.get.map { written =>
                             assert(containsSlice(written, outboundMessage), s"stdout round-trip mismatch: got ${written.toList}")
                             // A second stdio() while the first is open loses the claim CAS.
-                            Abort.run[NetException | Closed](transport.stdio().safe.get).map { second =>
+                            Abort.run[Closed](transport.stdio().safe.get).map { second =>
                                 second match
                                     case Result.Failure(_: NetStdioAlreadyOpenException) => ()
                                     case other => fail(s"expected NetStdioAlreadyOpenException, got $other")

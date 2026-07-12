@@ -1,7 +1,6 @@
 package kyo.internal.transport
 
 import kyo.*
-import kyo.net.NetException
 import kyo.net.NetPlatform
 
 /** Unix-domain-socket backend over kyo-net, shared across JVM, JS, Native, and Wasm.
@@ -17,7 +16,7 @@ private[kyo] object UdsBackend:
         sockPath: Path,
         framer: JsonRpcFramer = JsonRpcFramer.lineDelimited,
         codec: Schema[JsonRpcEnvelope] = summon[Schema[JsonRpcEnvelope]]
-    )(using Frame): JsonRpcTransport < (Async & Scope & Abort[NetException]) =
+    )(using Frame): JsonRpcTransport < (Async & Scope & Abort[Throwable]) =
         // Unsafe: listenUnix and Promise.Unsafe are unsafe-tier; the AllowUnsafe bridged here is captured by the accept-handler closure below.
         Sync.Unsafe.defer {
             val first = Promise.Unsafe.init[kyo.net.Connection, Abort[Closed]]()

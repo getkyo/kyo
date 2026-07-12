@@ -12,9 +12,7 @@ import kyo.net.NetException
 import kyo.net.NetNotUpgradableException
 import kyo.net.NetStdioAlreadyOpenException
 import kyo.net.NetTlsConfig
-import kyo.net.NetTlsConfigException
 import kyo.net.NetTlsHandshakeException
-import kyo.net.NetTlsProviderUnavailableException
 import kyo.net.NetUnixConnectException
 import kyo.net.internal.transport.*
 import kyo.scheduler.IOPromise
@@ -54,7 +52,7 @@ final private[kyo] class JsTransport private (
     override private[net] def supportedTlsProviders: Set[String] = Set("node")
 
     /** The fail-closed explanation for a [[NetTlsConfig.tlsProvider]] pin other than "node", shared by the three TLS entry points so all reject a
-      * non-node pin identically. Carried as the cause of a [[NetTlsProviderUnavailableException]].
+      * non-node pin identically. Carried as the cause of a [[NetTlsHandshakeException]].
       */
     private def rejectNonNodeProvider(tls: NetTlsConfig): String =
         s"pinned TLS provider '${tls.tlsProvider.getOrElse("")}' is not supported by the JS transport (only 'node')"
@@ -112,13 +110,18 @@ final private[kyo] class JsTransport private (
         // Honor a NetTlsConfig.tlsProvider pin: JS terminates TLS with Node's tls module, so it serves only the "node" implementation. A pin to
         // any other provider fails closed rather than silently using Node under a different provider's name (config truthfulness).
         if tls.tlsProvider.exists(_ != "node") then
-            Fiber.Unsafe.fromResult(Result.fail(NetTlsProviderUnavailableException(tls.tlsProvider.get, rejectNonNodeProvider(tls))))
+            Fiber.Unsafe.fromResult(Result.fail(NetTlsHandshakeException(host, port, rejectNonNodeProvider(tls))))
         // Verifying client with no reference identity: fail closed before connecting. An empty host gives the TLS layer nothing to check the
         // server certificate's name against, so a chain-valid certificate with no name bound would otherwise be accepted (RFC 9525 6.1, the
         // Go/rustls "no servername -> reject" rule). This matches SslEngineProvider/BoringSslProvider/SystemOpenSslProvider so the same
         // NetTlsConfig + host reaches the identical accept/reject decision on all four providers.
         else if !tls.trustAll && tls.hostnameVerification && host.isEmpty then
-            Fiber.Unsafe.fromResult(Result.fail(NetTlsConfigException()))
+            Fiber.Unsafe.fromResult(Result.fail(NetTlsHandshakeException(
+                host,
+                port,
+                "verifying client has no reference identity: a hostname is required to verify the server certificate (set trustAll or " +
+                    "hostnameVerification = false to opt out of name verification)"
+            )))
         else
             val opts = js.Dynamic.literal(host = host, port = port)
             // rejectUnauthorized drives certificate-chain validation only; hostname check is a
@@ -161,7 +164,7 @@ final private[kyo] class JsTransport private (
         // Honor a NetTlsConfig.tlsProvider pin: JS terminates TLS with Node's tls module, so a server pinned to any non-"node" provider fails
         // closed rather than silently serving with Node under another provider's name (config truthfulness).
         if tls.tlsProvider.exists(_ != "node") then
-            return Fiber.Unsafe.fromResult(Result.fail(NetTlsProviderUnavailableException(tls.tlsProvider.get, rejectNonNodeProvider(tls))))
+            return Fiber.Unsafe.fromResult(Result.fail(NetTlsHandshakeException(host, port, rejectNonNodeProvider(tls))))
         val serverOpts = js.Dynamic.literal()
         // Constrain the negotiated TLS version on the server side too: a server pinned to TLS1.3 must reject a TLS1.2 client (CWE-326).
         applyVersionBounds(serverOpts, tls)
@@ -611,7 +614,7 @@ final private[kyo] class JsTransport private (
         val upgradeHost = tls.sniHostname.getOrElse("")
         // Honor a NetTlsConfig.tlsProvider pin: JS upgrades via Node's tls module, so a pin to any non-"node" provider fails closed.
         if tls.tlsProvider.exists(_ != "node") then
-            return Fiber.Unsafe.fromResult(Result.fail(NetTlsProviderUnavailableException(tls.tlsProvider.get, rejectNonNodeProvider(tls))))
+            return Fiber.Unsafe.fromResult(Result.fail(NetTlsHandshakeException(upgradeHost, -1, rejectNonNodeProvider(tls))))
         // A non-upgradable connection (e.g. the in-memory connection, a plain kyo.net.Connection with no JsHandle) must abort, matching the posix
         // transport, rather than throwing a ClassCastException on the downcast below.
         if !conn.isInstanceOf[Connection[?]] || !conn.asInstanceOf[Connection[?]].handle.isInstanceOf[JsHandle] then
@@ -627,8 +630,12 @@ final private[kyo] class JsTransport private (
             !conn.asInstanceOf[Connection[JsHandle]].isServerOrigin && !tls.trustAll && tls.hostnameVerification &&
                 tls.sniHostname.getOrElse("").isEmpty
         if clientUpgradeNoIdentity then
-            return Fiber.Unsafe.fromResult(Result.fail(NetTlsConfigException()))
-                .asInstanceOf[Fiber.Unsafe[NetConnection, Abort[NetException]]]
+            return Fiber.Unsafe.fromResult(Result.fail(NetTlsHandshakeException(
+                upgradeHost,
+                -1,
+                "verifying client has no reference identity: upgradeToTls requires sniHostname to verify the server certificate (set trustAll " +
+                    "or hostnameVerification = false to opt out of name verification)"
+            ))).asInstanceOf[Fiber.Unsafe[NetConnection, Abort[NetException]]]
         end if
         val promise = new IOPromise[NetException, Connection[JsHandle]]
 

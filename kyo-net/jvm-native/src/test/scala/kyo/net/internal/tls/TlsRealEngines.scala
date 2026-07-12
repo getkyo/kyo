@@ -3,7 +3,6 @@ package kyo.net.internal.tls
 import kyo.*
 import kyo.ffi.Ffi
 import kyo.net.Connection
-import kyo.net.NetException
 import kyo.net.NetTlsConfig
 import kyo.net.TransportConfig
 import kyo.net.internal.posix.PollerIoDriver
@@ -137,7 +136,7 @@ object TlsRealEngines:
       */
     def realTlsLoopback[A, S](config: TransportConfig)(
         f: (Connection, Connection) => A < S
-    )(using Frame): A < (S & Async & Abort[NetException | Closed]) =
+    )(using Frame): A < (S & Async & Abort[Closed]) =
         import AllowUnsafe.embrace.danger
         val driver    = PollerIoDriver.init(config)
         val pool      = IoDriverPool.init(Array[IoDriver[PosixHandle]](driver))
@@ -145,7 +144,7 @@ object TlsRealEngines:
         discard(driver.start())
         val serverTls = serverConfig
         val clientTls = clientConfig
-        Abort.run[NetException | Closed] {
+        Abort.run[Closed] {
             val acceptedCh = Channel.Unsafe.init[Connection](1)
             val listenerF =
                 transport.listen("127.0.0.1", 0, 16, serverTls) { serverConn =>

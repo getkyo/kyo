@@ -2,7 +2,6 @@ package kyo.net.internal.posix
 
 import kyo.*
 import kyo.ffi.Ffi
-import kyo.net.NetException
 import kyo.net.NetTlsConfig
 import kyo.net.Test
 import kyo.net.TransportConfig
@@ -39,13 +38,13 @@ class PosixTransportHandshakeAlertTest extends Test:
             cancel("PosixTransport TLS handshake tests need epoll (Linux) or kqueue (macOS/BSD)")
 
     /** Build a transport over a fresh real poller driver, run `body`, then close the transport and the driver. */
-    private def withTransport[A](body: PosixTransport => A < (Async & Abort[NetException | Closed] & Scope))(using
+    private def withTransport[A](body: PosixTransport => A < (Async & Abort[Closed] & Scope))(using
         Frame
-    ): A < (Async & Abort[NetException | Closed] & Scope) =
+    ): A < (Async & Abort[Closed] & Scope) =
         val driver    = PollerIoDriver.init(transportConfig)
         val transport = TestTransports.forTesting(transportConfig, driver, Ffi.load[SocketBindings], backendIsEpoll = false)
         discard(driver.start())
-        Abort.run[NetException | Closed](body(transport)).map { result =>
+        Abort.run[Closed](body(transport)).map { result =>
             Sync.defer(transport.close()).andThen(Sync.defer(driver.close())).andThen(Abort.get(result))
         }
     end withTransport
@@ -71,9 +70,7 @@ class PosixTransportHandshakeAlertTest extends Test:
                 // Server accepts only TLS 1.3; the client offers only TLS 1.2, so the server's real engine rejects the ClientHello, queues a
                 // protocol_version fatal alert, and the accept handshake fails on the fatal (`-2`) arm.
                 transport.listen("127.0.0.1", 0, 16, serverTls(TLS13, TLS13)) { _ => () }.safe.get.map { listener =>
-                    Abort.run[NetException | Closed](
-                        transport.connect("127.0.0.1", listener.port, clientTls(TLS12, TLS12)).safe.get
-                    ).map { outcome =>
+                    Abort.run[Closed](transport.connect("127.0.0.1", listener.port, clientTls(TLS12, TLS12)).safe.get).map { outcome =>
                         val message = outcome match
                             case Result.Failure(closed) => closed.getMessage
                             case other                  => fail(s"expected the version-mismatch handshake to fail, got $other")

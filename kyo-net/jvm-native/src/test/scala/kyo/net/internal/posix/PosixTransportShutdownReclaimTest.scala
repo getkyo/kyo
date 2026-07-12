@@ -6,9 +6,7 @@ import java.util.concurrent.atomic.AtomicReference
 import kyo.*
 import kyo.ffi.Buffer
 import kyo.ffi.Ffi
-import kyo.net.NetException
 import kyo.net.NetTlsConfig
-import kyo.net.NetTlsHandshakeException
 import kyo.net.Test
 import kyo.net.internal.tls.TlsEngine
 import kyo.net.internal.tls.TlsProviderPlatform
@@ -316,20 +314,8 @@ class PosixTransportShutdownReclaimTest extends Test:
                         ol.close()
                 val engine = new SelfPerpetuatingFakeEngine(triggerAt = 3, onTrigger = () => transport.close())
                 transport.testEngineFactory = Present { (_, _, _) => engine }
-                Abort.run[NetException](transport.connect("127.0.0.1", port, NetTlsConfig(trustAll = true)).safe.get).map { outcome =>
-                    // The precise leaf is the contract, not merely "it failed": a close racing the in-flight handshake must surface the typed
-                    // NetTlsHandshakeException naming the close as its cause, never a Panic and never an unrelated leaf.
-                    outcome match
-                        case Result.Failure(e: NetTlsHandshakeException) =>
-                            assert(
-                                e.getMessage.contains("closed"),
-                                s"the connect handshake failed, but not for the racing-close reason: ${e.getMessage}"
-                            )
-                        case other =>
-                            fail(
-                                s"the connect handshake must fail with NetTlsHandshakeException once transport.close() races it, got $other"
-                            )
-                    end match
+                Abort.run[Closed](transport.connect("127.0.0.1", port, NetTlsConfig(trustAll = true)).safe.get).map { outcome =>
+                    assert(outcome.isFailure, s"the connect handshake must fail once transport.close() races it mid-flight, got $outcome")
                 }.andThen {
                     assertEventually(Sync.defer(engine.freed.get())).map { _ =>
                         assert(
@@ -360,23 +346,15 @@ class PosixTransportShutdownReclaimTest extends Test:
                     plaintext.start()
                     val engine = new SelfPerpetuatingFakeEngine(triggerAt = 3, onTrigger = () => transport.close())
                     transport.testEngineFactory = Present { (_, _, _) => engine }
-                    Abort.run[NetException](transport.upgradeToTls(
+                    Abort.run[Closed](transport.upgradeToTls(
                         plaintext,
                         NetTlsConfig(trustAll = true),
                         kyo.net.TransportConfig.default.channelCapacity
                     ).safe.get).map { outcome =>
-                        // As on the connect side: the typed leaf naming the racing close is the contract, not a bare "isFailure".
-                        outcome match
-                            case Result.Failure(e: NetTlsHandshakeException) =>
-                                assert(
-                                    e.getMessage.contains("closed"),
-                                    s"the STARTTLS upgrade failed, but not for the racing-close reason: ${e.getMessage}"
-                                )
-                            case other =>
-                                fail(
-                                    s"the STARTTLS upgrade must fail with NetTlsHandshakeException once transport.close() races it, got $other"
-                                )
-                        end match
+                        assert(
+                            outcome.isFailure,
+                            s"the STARTTLS upgrade must fail once transport.close() races it mid-flight, got $outcome"
+                        )
                     }.andThen {
                         assertEventually(Sync.defer(engine.freed.get())).map { _ =>
                             assert(

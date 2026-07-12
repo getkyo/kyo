@@ -3,7 +3,6 @@ package kyo.net.internal.tls
 import javax.net.ssl.SSLContext
 import kyo.*
 import kyo.net.NetTlsConfig
-import kyo.net.NetTlsConfigException
 import kyo.net.internal.NioTransport
 
 /** JVM-only pure-JDK TLS floor provider (priority-10 `jdk`), the SSLEngine fallback when BoringSSL is not staged/loadable or `-Dkyo.net.tls=jdk`
@@ -46,7 +45,14 @@ private[net] object SslEngineProvider extends TlsEngineProvider:
             // name check by default). With NO reference identity, FAIL CLOSED: a chain-valid certificate with no name bound is never an
             // acceptable silent outcome (RFC 9525 §6.1; the Go/rustls rule). This matches the BoringSSL and OpenSSL providers so the same
             // NetTlsConfig + host reaches the identical accept/reject decision on all three.
-            if hostname.isEmpty then throw NetTlsConfigException()
+            if hostname.isEmpty then
+                throw Closed(
+                    "SslEngineProvider",
+                    summon[Frame],
+                    "verifying client has no reference identity: a hostname is required to verify the server certificate (set trustAll or " +
+                        "hostnameVerification = false to opt out of name verification)"
+                )
+            end if
             val params = engine.getSSLParameters
             params.setEndpointIdentificationAlgorithm("HTTPS")
             engine.setSSLParameters(params)

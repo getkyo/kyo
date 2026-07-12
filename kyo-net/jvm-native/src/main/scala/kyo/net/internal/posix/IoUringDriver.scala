@@ -5,7 +5,6 @@ import java.util.concurrent.ConcurrentLinkedQueue
 import kyo.*
 import kyo.ffi.Buffer
 import kyo.ffi.Ffi
-import kyo.net.NetBackendInitException
 import kyo.net.internal.tls.TlsEngine
 import kyo.net.internal.transport.IoDriver
 import kyo.net.internal.transport.ReadOutcome
@@ -2441,8 +2440,8 @@ private[net] object IoUringDriver:
     private[posix] val WakeKey: Long = -1L
 
     /** Build a driver over a freshly initialized io_uring ring. The ring lives in a caller-owned `Buffer[Byte]` of `kyo_uring_sizeof()` bytes
-      * (the SQ/CQ mmaps are owned internally by liburing). Throws a recoverable [[kyo.net.NetBackendInitException]] if `io_uring_queue_init`
-      * fails (e.g. the kernel is too old or the process is sandboxed from io_uring at the production ring depth).
+      * (the SQ/CQ mmaps are owned internally by liburing). Throws `Closed` if `io_uring_queue_init` fails (e.g. the kernel is too old or
+      * the process is sandboxed from io_uring at the production ring depth).
       */
     def init(config: kyo.net.TransportConfig)(using AllowUnsafe, Frame): IoUringDriver =
         val uring = Ffi.load[IoUringBindings]
@@ -2462,9 +2461,7 @@ private[net] object IoUringDriver:
         val rc = uring.io_uring_queue_init(depth, ring, flags)
         if rc != 0 then
             ring.close()
-            // queue_init is io_uring-specific (RLIMIT_MEMLOCK / ring depth); a degrade to epoll helps, so this failure is recoverable.
-            throw NetBackendInitException("io_uring", s"queue_init failed: rc=$rc flags=$flags", recoverable = true)
-        end if
+            throw Closed("IoUringDriver", summon[Frame], s"queue_init failed: rc=$rc flags=$flags")
         // io_uring has no prep_close SQE, so the connection-close fd shutdown/close goes through SocketBindings (the same library the poller uses).
         init(uring, ring, Ffi.load[SocketBindings])
     end init
@@ -2474,7 +2471,7 @@ private[net] object IoUringDriver:
       * each field bridging it, so the class body never holds an ambient `AllowUnsafe` and every method keeps requiring its own. Shared by [[init]]
       * and the test construction helpers so the unsafe allocation lives in one place.
       */
-    private[posix] def init(uring: IoUringBindings, ring: Buffer[Byte], sockets: SocketBindings)(using AllowUnsafe, Frame): IoUringDriver =
+    private[posix] def init(uring: IoUringBindings, ring: Buffer[Byte], sockets: SocketBindings)(using AllowUnsafe): IoUringDriver =
         // Wake eventfd for the reap loop (EFD_NONBLOCK | EFD_CLOEXEC). Fatal on failure: without the eventfd a cross-carrier submission
         // has no signal to return the parked indefinite wait, making the loop unrecoverable. Symmetric with the poller's registerWake fatal
         // at start(). On failure the ring is torn down cleanly before throwing so the caller does not leak an initialized ring.
@@ -2482,12 +2479,8 @@ private[net] object IoUringDriver:
         if wakeFd < 0 then
             uring.io_uring_queue_exit(ring)
             ring.close()
-            // The wake eventfd is a shared liveness primitive; epoll's registerWake needs the same eventfd, so a fallback is pointless:
-            // this failure is non-recoverable and the typed leaf propagates instead of degrading.
-            throw NetBackendInitException(
-                "io_uring",
-                "eventfd creation failed; the wake eventfd is a liveness requirement for the indefinite park",
-                recoverable = false
+            throw new IllegalStateException(
+                "IoUringDriver: eventfd creation failed; the wake eventfd is a liveness requirement for the indefinite park"
             )
         end if
         // IORING_FEAT_NODROP (bit 1, kernel >= 5.5): the kernel guarantees no CQE is dropped, applying backpressure on submit instead.

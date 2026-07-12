@@ -17,7 +17,7 @@ class TransportFailureTaxonomyTest extends Test:
     import AllowUnsafe.embrace.danger
 
     "connect to an unresolvable host fails NetDnsResolutionException" - eachBackend { transport =>
-        Abort.run[NetException | Closed](transport.connect("nonexistent.invalid", 80).safe.get).map { result =>
+        Abort.run[Closed](transport.connect("nonexistent.invalid", 80).safe.get).map { result =>
             val ok = result match
                 case Result.Failure(_: NetDnsResolutionException) => true
                 case _                                            => false
@@ -28,7 +28,7 @@ class TransportFailureTaxonomyTest extends Test:
     "connect to a refused TCP port fails NetConnectException" - eachBackend { transport =>
         // 127.0.0.1:1 has no listener in any normal environment, so the loopback connect is refused with a RST (an immediate ECONNREFUSED,
         // never a filtered timeout, since loopback is not firewalled), deterministically across backends without a bind/close race.
-        Abort.run[NetException | Closed](transport.connect("127.0.0.1", 1).safe.get).map { result =>
+        Abort.run[Closed](transport.connect("127.0.0.1", 1).safe.get).map { result =>
             val ok = result match
                 case Result.Failure(_: NetConnectException) => true
                 case _                                      => false
@@ -38,7 +38,7 @@ class TransportFailureTaxonomyTest extends Test:
 
     "connectUnix to a missing socket fails NetUnixConnectException" - eachBackend { transport =>
         val path = s"/tmp/kyo-net-missing-${java.lang.System.nanoTime()}.sock"
-        Abort.run[NetException | Closed](transport.connectUnix(path).safe.get).map { result =>
+        Abort.run[Closed](transport.connectUnix(path).safe.get).map { result =>
             val ok = result match
                 case Result.Failure(_: NetUnixConnectException) => true
                 case _                                          => false

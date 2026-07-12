@@ -3,8 +3,6 @@ package kyo.net.internal.posix
 import kyo.*
 import kyo.ffi.Buffer
 import kyo.ffi.Ffi
-import kyo.net.NetException
-import kyo.net.NetStdioAlreadyOpenException
 import kyo.net.Test
 import kyo.net.internal.transport.IoDriver
 import kyo.net.internal.transport.WriteResult
@@ -68,18 +66,18 @@ class PosixTransportTest extends Test:
 
         // Anti-flakiness: the stdioClaimed CAS is synchronous; the transport.stdio() call is pure wrt the CAS.
         // The real PollerIoDriver is never invoked in this test (no I/O, just the CAS).
-        "a second concurrent stdio aborts NetStdioAlreadyOpenException (the stdioClaimed CAS)" in {
+        "a second concurrent stdio aborts Closed (the stdioClaimed CAS)" in {
             // Use a transport with a real PollerIoDriver (unstarted; no driver method is invoked here).
             // The test exercises the stdioClaimed CAS, not fstat.
             val driver    = PollerIoDriver.init(transportConfig)
             val transport = TestTransports.forTesting(transportConfig, driver, Ffi.load[SocketBindings], backendIsEpoll = false)
             transport.stdio().safe.use { first =>
                 Sync.Unsafe.defer(first.close()).andThen {
-                    Abort.run[NetException | Closed](transport.stdio().safe.get).map { result =>
+                    Abort.run[Closed](transport.stdio().safe.get).map { result =>
                         result match
-                            case Result.Failure(c: NetStdioAlreadyOpenException) =>
+                            case Result.Failure(c: Closed) =>
                                 assert(c.getMessage.contains("already open"), s"unexpected message: ${c.getMessage}")
-                            case other => fail(s"expected NetStdioAlreadyOpenException, got $other")
+                            case other => fail(s"expected Closed (stdio already open), got $other")
                         end match
                         driver.close()
                         succeed

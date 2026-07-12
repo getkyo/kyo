@@ -5,7 +5,6 @@ import java.util.concurrent.ConcurrentLinkedQueue
 import kyo.*
 import kyo.ffi.Buffer
 import kyo.ffi.Ffi
-import kyo.net.NetBackendInitException
 import kyo.net.internal.tls.TlsEngine
 import kyo.net.internal.transport.IoDriver
 import kyo.net.internal.transport.ReadOutcome
@@ -307,11 +306,8 @@ final private[net] class PollerIoDriver private[posix] (
         // that would wedge on the first park with no way to recover. Armed before the loop starts so the very first submitted change
         // can wake it.
         if !backend.registerWake(pollerFd, pollScratch) then
-            // epoll's own wakeup eventfd is the same shared liveness primitive; no fallback can supply it, so this failure is non-recoverable.
-            throw NetBackendInitException(
-                label,
-                "registerWake failed; the poll-loop wakeup is a liveness requirement for the indefinite park",
-                recoverable = false
+            throw new IllegalStateException(
+                s"$label: registerWake failed; the poll-loop wakeup is a liveness requirement for the indefinite park"
             )
         end if
         started.set(true)

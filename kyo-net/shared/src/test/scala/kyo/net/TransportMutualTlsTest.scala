@@ -29,7 +29,7 @@ class TransportMutualTlsTest extends Test:
         serverTls.copy(caCertPath = serverTls.certChainPath, clientAuth = NetTlsConfig.ClientAuth.Required)
 
     /** Listen with a clientAuth=Required server whose accepted connections echo their inbound stream. */
-    private def echoListener(transport: Transport, tls: NetTlsConfig)(using Frame): Listener < (Async & Abort[NetException]) =
+    private def echoListener(transport: Transport, tls: NetTlsConfig)(using Frame): Listener < (Async & Abort[Closed]) =
         transport.listen("127.0.0.1", 0, 16, tls) { serverConn =>
             discard(Sync.Unsafe.evalOrThrow {
                 Fiber.initUnscoped {
@@ -49,11 +49,11 @@ class TransportMutualTlsTest extends Test:
             // The client trusts the server but presents no certificate of its own; the cell pin is preserved on clientTls.
             echoListener(transport, serverMtls(serverTls)).map { listener =>
                 val message = "kyo-mtls-reject".getBytes("UTF-8")
-                Abort.run[NetException | Closed | Timeout](
+                Abort.run[Closed | Timeout](
                     Async.timeout(5.seconds)(
-                        (transport.connect("127.0.0.1", listener.port, clientTls).safe.get.map { client =>
+                        transport.connect("127.0.0.1", listener.port, clientTls).safe.get.map { client =>
                             client.outbound.safe.put(Span.fromUnsafe(message)).andThen(collect(client, message.length))
-                        }): Array[Byte] < (Async & Abort[NetException | Closed])
+                        }
                     )
                 ).map { outcome =>
                     listener.close()
@@ -74,11 +74,11 @@ class TransportMutualTlsTest extends Test:
                 // concurrently on a constrained runner it can take several seconds, so this inner bound is generous. It is only a hang-guard: a
                 // true deadlock still fails well within the suite's 60s leaf budget. Mirrors kyo.net.Test's generous-ceiling rationale; 5s was too
                 // tight for the cold/loaded gate and produced spurious timeouts on every cell at once.
-                Abort.run[NetException | Closed | Timeout](
+                Abort.run[Closed | Timeout](
                     Async.timeout(30.seconds)(
-                        (transport.connect("127.0.0.1", listener.port, clientWithCert).safe.get.map { client =>
+                        transport.connect("127.0.0.1", listener.port, clientWithCert).safe.get.map { client =>
                             client.outbound.safe.put(Span.fromUnsafe(message)).andThen(collect(client, message.length)).map(client -> _)
-                        }): (Connection, Array[Byte]) < (Async & Abort[NetException | Closed])
+                        }
                     )
                 ).map { outcome =>
                     listener.close()

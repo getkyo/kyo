@@ -48,9 +48,7 @@ abstract class Test extends kyo.test.Test[Any]:
       * stays visible as a canceled leaf instead of hiding a probe regression. The built transport is closed via [[Scope.ensure]], so it is
       * released regardless of how the scenario completes.
       */
-    def eachBackend(scenario: Transport => (kyo.test.AssertScope ?=> Unit < (Async & Abort[NetException | Closed] & Scope)))(using
-        Frame
-    ): Unit =
+    def eachBackend(scenario: Transport => (kyo.test.AssertScope ?=> Unit < (Async & Abort[Closed] & Scope)))(using Frame): Unit =
         backendLeaves(_ => Absent)(scenario)
 
     /** Like [[eachBackend]] but cancels (with the returned reason) the one cell whose backend name `skipCell` maps to `Present`, while every other
@@ -58,13 +56,13 @@ abstract class Test extends kyo.test.Test[Any]:
       * backends; the skip is keyed by backend name (combine with a platform check inside the predicate to target a backend-and-platform cell). The
       * skipped cell reports cancelled with the reason, exactly like the not-available cancel.
       */
-    def eachBackendExcept(scenario: Transport => (kyo.test.AssertScope ?=> Unit < (Async & Abort[NetException | Closed] & Scope)))(
+    def eachBackendExcept(scenario: Transport => (kyo.test.AssertScope ?=> Unit < (Async & Abort[Closed] & Scope)))(
         skipCell: String => Maybe[String]
     )(using Frame): Unit =
         backendLeaves(skipCell)(scenario)
 
     private def backendLeaves(skipCell: String => Maybe[String])(
-        scenario: Transport => (kyo.test.AssertScope ?=> Unit < (Async & Abort[NetException | Closed] & Scope))
+        scenario: Transport => (kyo.test.AssertScope ?=> Unit < (Async & Abort[Closed] & Scope))
     )(using Frame): Unit =
         TestBackends.all.foreach { entry =>
             s"[${entry.name}]" in {
@@ -100,11 +98,7 @@ abstract class Test extends kyo.test.Test[Any]:
       * [[TlsTestCertShared.writePems]].
       */
     def eachBackendTls(
-        scenario: (
-            Transport,
-            NetTlsConfig,
-            NetTlsConfig
-        ) => (kyo.test.AssertScope ?=> Unit < (Async & Abort[NetException | Closed] & Scope))
+        scenario: (Transport, NetTlsConfig, NetTlsConfig) => (kyo.test.AssertScope ?=> Unit < (Async & Abort[Closed] & Scope))
     )(using Frame): Unit =
         eachBackendTls(TransportConfig.default)(scenario)
 
@@ -113,11 +107,7 @@ abstract class Test extends kyo.test.Test[Any]:
       * pairs' coverage. The skipped cell reports cancelled with the reason, like the not-available / unsupported cancels.
       */
     def eachBackendTlsExcept(
-        scenario: (
-            Transport,
-            NetTlsConfig,
-            NetTlsConfig
-        ) => (kyo.test.AssertScope ?=> Unit < (Async & Abort[NetException | Closed] & Scope))
+        scenario: (Transport, NetTlsConfig, NetTlsConfig) => (kyo.test.AssertScope ?=> Unit < (Async & Abort[Closed] & Scope))
     )(skipCell: (String, String) => Maybe[String])(using Frame): Unit =
         tlsLeaves(TransportConfig.default)(skipCell)(scenario)
 
@@ -126,20 +116,12 @@ abstract class Test extends kyo.test.Test[Any]:
       * are identical to the no-config form.
       */
     def eachBackendTls(config: TransportConfig)(
-        scenario: (
-            Transport,
-            NetTlsConfig,
-            NetTlsConfig
-        ) => (kyo.test.AssertScope ?=> Unit < (Async & Abort[NetException | Closed] & Scope))
+        scenario: (Transport, NetTlsConfig, NetTlsConfig) => (kyo.test.AssertScope ?=> Unit < (Async & Abort[Closed] & Scope))
     )(using Frame): Unit =
         tlsLeaves(config)((_, _) => Absent)(scenario)
 
     private def tlsLeaves(config: TransportConfig)(skipCell: (String, String) => Maybe[String])(
-        scenario: (
-            Transport,
-            NetTlsConfig,
-            NetTlsConfig
-        ) => (kyo.test.AssertScope ?=> Unit < (Async & Abort[NetException | Closed] & Scope))
+        scenario: (Transport, NetTlsConfig, NetTlsConfig) => (kyo.test.AssertScope ?=> Unit < (Async & Abort[Closed] & Scope))
     )(using Frame): Unit =
         import AllowUnsafe.embrace.danger
         for
@@ -188,8 +170,8 @@ abstract class Test extends kyo.test.Test[Any]:
       * `scenario` against it. The close runs whether the scenario succeeds, fails, or aborts, so no backend leaks its driver pool.
       */
     private def withTransport(entry: TestBackends.Entry)(
-        scenario: Transport => (kyo.test.AssertScope ?=> Unit < (Async & Abort[NetException | Closed] & Scope))
-    )(using frame: Frame, as: kyo.test.AssertScope): Unit < (Async & Abort[NetException | Closed] & Scope) =
+        scenario: Transport => (kyo.test.AssertScope ?=> Unit < (Async & Abort[Closed] & Scope))
+    )(using frame: Frame, as: kyo.test.AssertScope): Unit < (Async & Abort[Closed] & Scope) =
         import AllowUnsafe.embrace.danger
         Sync.defer(entry.build(TransportConfig.default, frame)).map { transport =>
             Scope.ensure(Sync.defer(transport.close())).andThen(scenario(transport))

@@ -59,9 +59,9 @@ class CONC5Test extends Test:
                     Fiber.init {
                         // All N fibers park here until latch.release fires, maximizing upgrade overlap.
                         latch.await.flatMap { _ =>
-                            Abort.run[NetException | Timeout | Closed](
+                            Abort.run[Timeout | Closed](
                                 Async.timeout(30.seconds) {
-                                    (for
+                                    for
                                         conn    <- transport.connect("127.0.0.1", listener.port).safe.get
                                         _       <- conn.outbound.safe.put(upgradeSignal)
                                         _       <- conn.inbound.safe.take
@@ -74,7 +74,7 @@ class CONC5Test extends Test:
                                     yield
                                         tlsConn.close()
                                         java.util.Arrays.equals(echoed.take(payload.length), payload)
-                                    ): Boolean < (Async & Abort[NetException | Closed])
+                                    end for
                                 }
                             )
                         }

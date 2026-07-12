@@ -187,7 +187,7 @@ A `transport(config)` instance owns its resources, so the caller MUST `close()` 
 
 ## Errors
 
-Every transport operation aborts a `NetException`, the sealed error type for the module. `NetException` roots at `kyo.KyoException` as a sibling of `kyo.Closed` (never a subtype), so a transport-establishment failure is recovered by `Abort[NetException]` and is not swallowed by an `Abort[Closed]` handler meant for a closed channel; the leaves carry the specific failure:
+Every transport operation aborts a `NetException`, the sealed error type for the module. `NetException` extends `kyo.Closed`, so it flows through `Abort[Closed]` handlers, while the leaves carry the specific failure:
 
 - `NetConnectException` / `NetConnectTimeoutException`: the OS connect failed, or the transport's connect deadline fired.
 - `NetDnsResolutionException`: the host name did not resolve.
@@ -216,7 +216,7 @@ The I/O backend and the TLS provider are chosen at startup, highest-priority ava
 - `-Dkyo.net.backend` selects the I/O backend: `io_uring` (Linux), `epoll` / `kqueue`, `nio` (the JVM floor), `node` (JS).
 - `-Dkyo.net.tls` selects the TLS provider: `boringssl` (the primary), `openssl` (the Native system fallback), `jdk` (the JVM floor).
 
-A forced-but-unavailable backend or provider fails closed (aborts `NetBackendUnavailableException` or `NetTlsProviderUnavailableException`) rather than silently falling through to another, so a forced selection is honored or it errors.
+A forced-but-unavailable backend or provider fails closed (aborts `Closed`) rather than silently falling through to another, so a forced selection is honored or it errors.
 
 ## Putting it together
 

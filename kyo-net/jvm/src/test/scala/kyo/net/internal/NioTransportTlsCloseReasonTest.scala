@@ -11,7 +11,6 @@ import javax.net.ssl.SSLEngine
 import javax.net.ssl.SSLEngineResult
 import kyo.*
 import kyo.net.Connection as NetConnection
-import kyo.net.NetException
 import kyo.net.NetTlsConfig
 import kyo.net.Test
 import kyo.net.internal.tls.TlsTestCert
@@ -114,7 +113,7 @@ class NioTransportTlsCloseReasonTest extends Test:
       */
     private def runCloseReasonScenario(transport: NioTransport, closeMode: ServerClose)(using
         Frame
-    ): NetConnection.CloseReason < (Scope & Async & Abort[NetException | Closed]) =
+    ): NetConnection.CloseReason < (Scope & Async & Abort[Closed]) =
         for
             serverReady <- Channel.init[Int](1)
             _ = startRawJsseServer(serverReady, closeMode)

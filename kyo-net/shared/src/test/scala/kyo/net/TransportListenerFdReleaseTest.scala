@@ -28,7 +28,7 @@ class TransportListenerFdReleaseTest extends Test:
             // Re-bind the port until it succeeds (released) or the deadline passes (leaked). A failed re-listen's bind never registers accept
             // interest, so it cannot wake the original selector and mask a leak; a bounded-wait backend's own poll wave frees the fd meanwhile.
             Loop(0) { attempt =>
-                Abort.run[NetException | Closed](transport.listen("127.0.0.1", port, 16)(_ => ()).safe.get).map {
+                Abort.run[Closed](transport.listen("127.0.0.1", port, 16)(_ => ()).safe.get).map {
                     case Result.Success(reListener) =>
                         reListener.close()
                         Loop.done(true)
