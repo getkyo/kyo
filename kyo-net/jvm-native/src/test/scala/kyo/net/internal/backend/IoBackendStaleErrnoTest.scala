@@ -2,6 +2,7 @@ package kyo.net.internal.backend
 
 import kyo.*
 import kyo.ffi.Ffi
+import kyo.net.NetException
 import kyo.net.Test
 import kyo.net.TransportConfig
 import kyo.net.internal.posix.SocketBindings
@@ -46,9 +47,9 @@ class IoBackendStaleErrnoTest extends Test:
                     val transport =
                         try entry.build(TransportConfig.default)
                         catch
-                            case c: Closed =>
+                            case c: NetException =>
                                 fail(
-                                    s"#258: building the ${entry.name} transport threw Closed on a stale errno (errorCode=${dirty.errorCode}) " +
+                                    s"#258: building the ${entry.name} transport threw a NetException on a stale errno (errorCode=${dirty.errorCode}) " +
                                         s"although the backend is available. Backend init must read the syscall RETURN value, not the captured " +
                                         s"errno: ${c.getMessage}"
                                 )
@@ -57,7 +58,7 @@ class IoBackendStaleErrnoTest extends Test:
                         for
                             listener <- transport.listen("127.0.0.1", 0, 128)(_ => ()).safe.get
                             port = listener.port
-                            outcome <- Abort.run[Closed](transport.connect("127.0.0.1", port).safe.get)
+                            outcome <- Abort.run[NetException | Closed](transport.connect("127.0.0.1", port).safe.get)
                         yield
                             outcome match
                                 case Result.Success(conn) => conn.close()

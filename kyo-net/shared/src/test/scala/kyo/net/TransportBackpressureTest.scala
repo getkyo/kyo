@@ -19,7 +19,7 @@ class TransportBackpressureTest extends Test:
     import AllowUnsafe.embrace.danger
 
     /** A loopback listener that echoes every inbound chunk back to its sender, looping until the connection closes. */
-    private def echoListener(transport: Transport)(using Frame): Listener < (Async & Abort[Closed]) =
+    private def echoListener(transport: Transport)(using Frame): Listener < (Async & Abort[NetException]) =
         transport.listen("127.0.0.1", 0, 128) { serverConn =>
             discard(Sync.Unsafe.evalOrThrow {
                 Fiber.initUnscoped {

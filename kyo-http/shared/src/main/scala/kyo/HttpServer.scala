@@ -128,7 +128,7 @@ object HttpServer:
                 if ownsTransport then kyo.net.NetPlatform.transport(NetConfigTranslation.toNetTransportConfig(config.transportConfig))
                 else HttpPlatformTransport.transport
             val listenFiber = Unsafe.init(transport, config, filteredHandlers, ownsTransport)
-            Abort.run[Closed](listenFiber.safe.get).map {
+            Abort.run[kyo.net.NetException](listenFiber.safe.get).map {
                 case Result.Success(server) => server.safe
                 case Result.Failure(closed) =>
                     if ownsTransport then transport.close()
@@ -197,7 +197,7 @@ object HttpServer:
             config: HttpServerConfig,
             handlers: Seq[HttpHandler[?, ?, ?]],
             ownsTransport: Boolean = false
-        )(using AllowUnsafe, Frame): Fiber.Unsafe[Unsafe, Abort[Closed]] =
+        )(using AllowUnsafe, Frame): Fiber.Unsafe[Unsafe, Abort[kyo.net.NetException]] =
             val router = HttpRouter(handlers, config.cors)
             // Track every accepted connection so the server can close them on shutdown: the transport listener owns only
             // the listening socket, so an accepted keep-alive connection would otherwise stay open until a 60s idle timer

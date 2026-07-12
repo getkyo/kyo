@@ -71,7 +71,7 @@ class BackendEchoPilotTest extends Test:
             for
                 listener <- transport.listen("127.0.0.1", 0, 128)(echo).safe.get
                 _ <- Async.foreach(0 until conns, conns) { c =>
-                    transport.connect("127.0.0.1", listener.port).safe.get.map { conn =>
+                    (transport.connect("127.0.0.1", listener.port).safe.get.map { conn =>
                         val payload = Array.tabulate[Byte](total)(i => ((c * 131 + i) % 251).toByte)
                         val writer = Async.foreach(payload.grouped(chunkSize).toSeq, 1) { ch =>
                             conn.outbound.safe.put(Span.fromUnsafe(ch))
@@ -84,7 +84,7 @@ class BackendEchoPilotTest extends Test:
                                 s"conn $c full-duplex echo mismatch: ${echoed.length}/$total bytes round-tripped"
                             )
                         }
-                    }
+                    }): Unit < (Async & Abort[NetException | Closed])
                 }
             yield
                 listener.close()
@@ -124,7 +124,7 @@ class BackendEchoPilotTest extends Test:
             for
                 listener <- transport.listen("127.0.0.1", 0, 64, serverTls)(echo).safe.get
                 _ <- Async.foreach(0 until conns, conns) { c =>
-                    transport.connect("127.0.0.1", listener.port, clientTls).safe.get.map { conn =>
+                    (transport.connect("127.0.0.1", listener.port, clientTls).safe.get.map { conn =>
                         val payload = Array.tabulate[Byte](perConn)(i => ((c * 131 + i) % 251).toByte)
                         val writer = Async.foreach(payload.grouped(chunkSize).toSeq, 1) { ch =>
                             conn.outbound.safe.put(Span.fromUnsafe(ch))
@@ -137,7 +137,7 @@ class BackendEchoPilotTest extends Test:
                                 s"conn $c TLS bulk mismatch: ${echoed.length}/$perConn bytes round-tripped"
                             )
                         }
-                    }
+                    }): Unit < (Async & Abort[NetException | Closed])
                 }
             yield
                 listener.close()

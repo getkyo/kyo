@@ -3,6 +3,7 @@ package kyo.net.internal.tls
 import kyo.*
 import kyo.ffi.Ffi
 import kyo.net.NetTlsConfig
+import kyo.net.NetTlsSetupException
 import kyo.net.Test
 
 /** Reproduce-first fail-closed tests for an explicitly-configured but unreadable CA / cert / key PEM path, covering both native providers
@@ -38,19 +39,19 @@ class BoringSslProviderConfiguredPemTest extends Test:
     private def openSsl(using Frame): (NetTlsConfig, String, Boolean) => TlsEngine   = SystemOpenSslProvider.createEngine(_, _, _)
 
     /** Drive the configured-but-unreadable-CA repro against one provider's `createEngine`. A verifying client (the two defaults,
-      * `trustAll = false` and `hostnameVerification = true`) with `caCertPath` set to a nonexistent file must FAIL CLOSED (`Closed`) instead of
-      * silently building an engine that falls back to the system trust store.
+      * `trustAll = false` and `hostnameVerification = true`) with `caCertPath` set to a nonexistent file must FAIL CLOSED
+      * (`NetTlsSetupException`, the typed TLS-setup leaf) instead of silently building an engine that falls back to the system trust store.
       */
     private def assertCaFailsClosed(create: (NetTlsConfig, String, Boolean) => TlsEngine)(using Frame, kyo.test.AssertScope): Unit =
         val config = NetTlsConfig(caCertPath = Present(unreadablePath()))
-        val ex = intercept[Closed] {
+        val ex = intercept[NetTlsSetupException] {
             val engine = create(config, "localhost", false)
             // Defensive: if the bug is present, createEngine returns a live engine instead of throwing; free it so a failing run leaks nothing.
             engine.free()
         }
         assert(
             ex.getMessage.contains("PEM") || ex.getMessage.contains("read"),
-            "createEngine threw Closed but not for the configured-but-unreadable-PEM reason: " + ex.getMessage
+            "createEngine threw NetTlsSetupException but not for the configured-but-unreadable-PEM reason: " + ex.getMessage
         )
     end assertCaFailsClosed
 
@@ -63,25 +64,25 @@ class BoringSslProviderConfiguredPemTest extends Test:
     ): Unit =
         val badCertConfig = NetTlsConfig(certChainPath = Present(unreadablePath()), privateKeyPath = Present(TlsTestCert.keyPath))
         val badKeyConfig  = NetTlsConfig(certChainPath = Present(TlsTestCert.certPath), privateKeyPath = Present(unreadablePath()))
-        val certEx = intercept[Closed] {
+        val certEx = intercept[NetTlsSetupException] {
             val engine = create(badCertConfig, "localhost", true)
             engine.free()
         }
-        val keyEx = intercept[Closed] {
+        val keyEx = intercept[NetTlsSetupException] {
             val engine = create(badKeyConfig, "localhost", true)
             engine.free()
         }
         assert(
             (certEx.getMessage.contains("PEM") || certEx.getMessage.contains("read")) &&
                 (keyEx.getMessage.contains("PEM") || keyEx.getMessage.contains("read")),
-            "server createEngine threw Closed but not for the configured-but-unreadable-PEM reason: cert=" + certEx.getMessage + " key=" + keyEx.getMessage
+            "server createEngine threw NetTlsSetupException but not for the configured-but-unreadable-PEM reason: cert=" + certEx.getMessage + " key=" + keyEx.getMessage
         )
     end assertServerMaterialFailsClosed
 
     // The bug (CWE-295 silent weakening): a verifying client whose configured caCertPath is unreadable falls back to the system trust store
     // because readPem swallows the read error to Absent and applyConfig treats Absent as "no CA configured, use system trust". Before the fix
-    // createEngine SUCCEEDS (the pin is silently dropped); the CORRECT behavior is to reject (the JDK loadCaCertTrustManagers posture). This
-    // assertion FAILS today: no Closed is thrown.
+    // createEngine SUCCEEDS (the pin is silently dropped); the CORRECT behavior is to reject (the JDK loadCaCertTrustManagers posture), which it
+    // now does with the typed NetTlsSetupException naming the failed setup step.
     "BoringSSL: a verifying client with an unreadable configured caCertPath fails closed instead of falling back to system trust" in {
         if !TlsRealEngines.boringSslAvailable() then cancel("BoringSSL not staged for this host")
         Sync.defer(assertCaFailsClosed(boringSsl))

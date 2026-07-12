@@ -50,14 +50,21 @@ private[net] object IoBackendPlatform:
       * use, so adding a backend is a list edit, never a `select` edit.
       */
     def selected(using AllowUnsafe, Frame): Entry =
-        IoBackend.select[Entry](registered, _.name, _.priority, _.isAvailable, "kyo.net.backend")
+        IoBackend.select[Entry](registered, _.name, _.priority, _.isAvailable, "kyo.net.backend").getOrThrow
 
-    /** Build the selected JVM transport. Selection honors `-Dkyo.net.backend` (a forced-unavailable name aborts `Closed`); with no forced name
-      * it walks the priority gradient and builds the first backend that constructs, falling back to the next when a higher-priority one is
-      * available (its cheap probe passed) but fails to build at production scale (io_uring whose production-depth ring cannot init on a
-      * restricted host degrades to epoll rather than failing the whole transport).
+    /** Build the selected JVM transport. Selection honors `-Dkyo.net.backend` (a forced-unavailable name aborts [[kyo.net.NetException]]); with
+      * no forced name it walks the priority gradient and builds the first backend that constructs, falling back to the next when a
+      * higher-priority one is available (its cheap probe passed) but fails to build at production scale (io_uring whose production-depth ring
+      * cannot init on a restricted host degrades to epoll rather than failing the whole transport).
       */
     def transport(config: TransportConfig)(using AllowUnsafe, Frame): Transport =
-        IoBackend.selectAndBuild[Entry, Transport](registered, _.name, _.priority, _.isAvailable, _.build(config), "kyo.net.backend")
+        IoBackend.selectAndBuild[Entry, Transport](
+            registered,
+            _.name,
+            _.priority,
+            _.isAvailable,
+            _.build(config),
+            "kyo.net.backend"
+        ).getOrThrow
 
 end IoBackendPlatform

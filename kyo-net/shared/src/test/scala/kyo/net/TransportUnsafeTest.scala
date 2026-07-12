@@ -40,8 +40,8 @@ class TransportUnsafeTest extends Test:
     "connect to a port where nothing listens surfaces Closed" in {
         val transport = NetPlatform.transport
         // Use port 1: reserved, no service should be listening, and the connect must be refused.
-        Abort.run[Closed](transport.connect("127.0.0.1", 1).safe.get).map { result =>
-            assert(result.isFailure, s"expected Closed connecting to port 1 (refused/unreachable), got $result")
+        Abort.run[NetException | Closed](transport.connect("127.0.0.1", 1).safe.get).map { result =>
+            assert(result.isFailure, s"expected a failure connecting to port 1 (refused/unreachable), got $result")
         }
     }
 

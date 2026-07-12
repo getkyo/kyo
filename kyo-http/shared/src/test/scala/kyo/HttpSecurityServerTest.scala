@@ -25,7 +25,7 @@ class HttpSecurityServerTest extends BaseHttpTest:
         Sync.Unsafe.defer {
             val transport = internal.HttpPlatformTransport.transport
             val fiber     = transport.connect(host, port)
-            Abort.run[Closed](fiber.safe.get).map {
+            Abort.run[kyo.net.NetException](fiber.safe.get).map {
                 case Result.Success(conn) =>
                     val payload = Span.fromUnsafe(raw)
                     // Write the malicious request

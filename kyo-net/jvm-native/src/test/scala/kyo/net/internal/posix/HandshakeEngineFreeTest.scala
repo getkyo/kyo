@@ -3,6 +3,7 @@ package kyo.net.internal.posix
 import kyo.*
 import kyo.ffi.Buffer
 import kyo.ffi.Ffi
+import kyo.net.NetException
 import kyo.net.NetTlsConfig
 import kyo.net.Test
 import kyo.net.TransportConfig
@@ -114,18 +115,20 @@ class HandshakeEngineFreeTest extends Test:
     end settledOwnCount
 
     /** Build a transport over a fresh real poller driver, run `body`, then close the transport and the driver. */
-    private def withTransport[A](body: PosixTransport => A < (Async & Abort[Closed] & Scope))(using
+    private def withTransport[A](body: PosixTransport => A < (Async & Abort[NetException | Closed] & Scope))(using
         Frame
-    ): A < (Async & Abort[Closed] & Scope) =
+    ): A < (Async & Abort[NetException | Closed] & Scope) =
         val driver    = PollerIoDriver.init(transportConfig)
         val transport = TestTransports.forTesting(transportConfig, driver, Ffi.load[SocketBindings], backendIsEpoll = false)
         discard(driver.start())
-        Abort.run[Closed](body(transport)).map { result =>
+        Abort.run[NetException | Closed](body(transport)).map { result =>
             Sync.defer(transport.close()).andThen(Sync.defer(driver.close())).andThen(Abort.get(result))
         }
     end withTransport
 
-    private def soak(k: Int)(iter: Int => Any < (Async & Abort[Closed] & Scope))(using Frame): Unit < (Async & Abort[Closed] & Scope) =
+    private def soak(k: Int)(iter: Int => Any < (Async & Abort[NetException | Closed] & Scope))(using
+        Frame
+    ): Unit < (Async & Abort[NetException | Closed] & Scope) =
         Loop(0) { i =>
             if i >= k then Loop.done(())
             else iter(i).andThen(Loop.continue(i + 1))
@@ -145,10 +148,16 @@ class HandshakeEngineFreeTest extends Test:
                 transport.listen("127.0.0.1", 0, 16, serverTls(TLS13, TLS13)) { _ => () }.safe.get.map { listener =>
                     // Baseline after the listener + driver are up and one warmup failure has settled any lazy allocation. The count is of sockets
                     // with this listener's port at one end (accept-side local, connect-side peer), so it ignores other suites' descriptors.
-                    Abort.run[Closed](transport.connect("127.0.0.1", listener.port, clientTls(TLS12, TLS12)).safe.get).andThen {
+                    Abort.run[NetException | Closed](transport.connect(
+                        "127.0.0.1",
+                        listener.port,
+                        clientTls(TLS12, TLS12)
+                    ).safe.get).andThen {
                         Sync.defer(countSocketsOnPort(sockets, listener.port)).map { base =>
                             soak(k) { _ =>
-                                Abort.run[Closed](transport.connect("127.0.0.1", listener.port, clientTls(TLS12, TLS12)).safe.get).map {
+                                Abort.run[NetException | Closed](
+                                    transport.connect("127.0.0.1", listener.port, clientTls(TLS12, TLS12)).safe.get
+                                ).map {
                                     o =>
                                         assert(o.isFailure, s"expected the version-mismatch handshake to fail, got $o")
                                 }
@@ -180,7 +189,7 @@ class HandshakeEngineFreeTest extends Test:
                     val handle    = PosixHandle.socket(clientFd, PosixHandle.DefaultReadBufferSize, Absent)
                     val plaintext = transport.openWith(handle, transportDriver(transport))
                     plaintext.start()
-                    Abort.run[Closed](transport.upgradeToTls(
+                    Abort.run[NetException | Closed](transport.upgradeToTls(
                         plaintext,
                         clientTls(TLS12, TLS13),
                         transportConfig.channelCapacity
@@ -208,7 +217,7 @@ class HandshakeEngineFreeTest extends Test:
                                 val h  = PosixHandle.socket(cFd, PosixHandle.DefaultReadBufferSize, Absent)
                                 val pc = transport.openWith(h, transportDriver(transport))
                                 pc.start()
-                                Abort.run[Closed](transport.upgradeToTls(
+                                Abort.run[NetException | Closed](transport.upgradeToTls(
                                     pc,
                                     clientTls(TLS12, TLS13),
                                     transportConfig.channelCapacity
@@ -248,7 +257,7 @@ class HandshakeEngineFreeTest extends Test:
                         }
                     })
                 }.safe.get.map { listener =>
-                    def roundTrip(): Unit < (Async & Abort[Closed] & Scope) =
+                    def roundTrip(): Unit < (Async & Abort[NetException | Closed] & Scope) =
                         transport.connect("127.0.0.1", listener.port, clientTls(TLS12, TLS13)).safe.get.map { client =>
                             val msg = "soak-roundtrip".getBytes("UTF-8")
                             client.outbound.safe.put(Span.fromUnsafe(msg)).andThen {

@@ -57,7 +57,7 @@ private[kyo] object NetConfigTranslation:
         host: String,
         port: Int,
         tls: HttpTlsConfig
-    )(using AllowUnsafe, Frame): Fiber.Unsafe[kyo.net.Connection, Abort[Closed]] =
+    )(using AllowUnsafe, Frame): Fiber.Unsafe[kyo.net.Connection, Abort[kyo.net.NetException]] =
         transport.connect(host, port, toNetTlsConfig(tls))
 
     /** Wraps transport.listen with TLS config translation. Keeps the kyo.net.NetTlsConfig reference inside internal/. */
@@ -67,7 +67,7 @@ private[kyo] object NetConfigTranslation:
         port: Int,
         backlog: Int,
         tls: HttpTlsConfig
-    )(handler: kyo.net.Connection => Unit)(using AllowUnsafe, Frame): Fiber.Unsafe[kyo.net.Listener, Abort[Closed]] =
+    )(handler: kyo.net.Connection => Unit)(using AllowUnsafe, Frame): Fiber.Unsafe[kyo.net.Listener, Abort[kyo.net.NetException]] =
         transport.listen(host, port, backlog, toNetTlsConfig(tls))(handler)
 
     private def toNetClientAuth(auth: HttpTlsConfig.ClientAuth): NetTlsConfig.ClientAuth =

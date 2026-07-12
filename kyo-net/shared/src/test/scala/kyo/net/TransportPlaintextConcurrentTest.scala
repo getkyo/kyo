@@ -12,7 +12,7 @@ class TransportPlaintextConcurrentTest extends Test:
 
     private val concurrency = 128
 
-    private def echoServer(transport: Transport)(using Frame): Listener < (Async & Abort[Closed]) =
+    private def echoServer(transport: Transport)(using Frame): Listener < (Async & Abort[NetException]) =
         transport.listen("127.0.0.1", 0, 256) { serverConn =>
             discard(Sync.Unsafe.evalOrThrow {
                 Fiber.initUnscoped {

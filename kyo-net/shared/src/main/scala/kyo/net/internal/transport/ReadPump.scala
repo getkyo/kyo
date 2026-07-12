@@ -28,7 +28,8 @@ final private[kyo] class ReadPump[Handle](
     handle: Handle,
     driver: IoDriver[Handle],
     channel: Channel.Unsafe[Span[Byte]],
-    closeFn: () => Unit
+    closeFn: () => Unit,
+    recordTeardownCause: Closed => Unit = _ => ()
 ) extends IOPromise[Closed, Span[Byte]]:
 
     private val self: Promise.Unsafe[ReadOutcome, Abort[Closed]] =
@@ -46,24 +47,25 @@ final private[kyo] class ReadPump[Handle](
         // the actual runtime type; it is erased-safe since IOPromise type params are not reified.
         import AllowUnsafe.embrace.danger
         given Frame = Frame.internal
-        // TODO the cast seems unnecessary?
         this.asInstanceOf[kyo.scheduler.IOPromise[Closed, ReadOutcome]].poll() match
             case Present(Result.Success(outcome)) =>
                 outcome match
                     case ReadOutcome.Bytes(span)   => offerToChannel(span)
-                    case ReadOutcome.WouldBlock    => requestNextRead()         // EAGAIN: re-arm, NOT EOF
-                    case ReadOutcome.PeerFin       => teardown("PeerFin")       // orderly peer EOF
-                    case ReadOutcome.LocalShutdown => teardown("LocalShutdown") // our own shutdown(SHUT_RD)
-                    case ReadOutcome.CleanClose    => teardown("CleanClose")    // TLS close_notify consumed
+                    case ReadOutcome.WouldBlock    => requestNextRead()                     // EAGAIN: re-arm, NOT EOF
+                    case ReadOutcome.PeerFin       => teardown(readClosed("PeerFin"))       // orderly peer EOF
+                    case ReadOutcome.LocalShutdown => teardown(readClosed("LocalShutdown")) // our own shutdown(SHUT_RD)
+                    case ReadOutcome.CleanClose    => teardown(readClosed("CleanClose"))    // TLS close_notify consumed
                     case ReadOutcome.Failed(cause) =>
                         Log.live.unsafe.debug(s"ReadPump read failed on ${driver.handleLabel(handle)}: $cause")
-                        teardown(s"Failed($cause)")
+                        teardown(readClosed(s"read failed: ${cause.getMessage}"))
                 end match
             case Present(Result.Failure(cause)) =>
-                teardown(s"Result.Failure($cause)")
+                // The driver's own structural cause: this promise's failure channel is Closed, so it reaches the recorded teardown cause
+                // as-is instead of being stringified and dropped.
+                teardown(cause)
             case Present(Result.Panic(t)) =>
                 Log.live.unsafe.error(s"ReadPump error on ${driver.handleLabel(handle)}", t)
-                teardown(s"Result.Panic(${t.getMessage})")
+                teardown(readClosed(s"read panicked: ${t.getMessage}"))
         end match
     end onComplete
 
@@ -85,15 +87,16 @@ final private[kyo] class ReadPump[Handle](
                     result match
                         case Result.Success(_)         => requestNextRead()
                         case Result.Failure(_: Closed) => driver.onInboundClosedDuringRead(handle, bytes)
-                        case Result.Panic(t)           => teardown(s"putFiber Result.Panic(${t.getMessage})")
+                        case Result.Panic(t)           => teardown(readClosed(s"inbound put panicked: ${t.getMessage}"))
                     end match
                 }
-            case Result.Failure(_: Closed) =>
+            case Result.Failure(closed: Closed) =>
                 // The inbound channel is closed: normally these bytes are discarded with the teardown. But a STARTTLS upgrade closes inbound while
                 // this read may carry the peer's first TLS flight off the socket; the driver hook salvages those bytes for the handshake instead of
-                // losing them (default no-op for an ordinary close). See IoDriver.onInboundClosedDuringRead.
+                // losing them (default no-op for an ordinary close). See IoDriver.onInboundClosedDuringRead. The offer's own Closed is the cause
+                // the teardown records.
                 driver.onInboundClosedDuringRead(handle, bytes)
-                teardown("offer Result.Failure(Closed)")
+                teardown(closed)
         end match
     end offerToChannel
 
@@ -108,14 +111,23 @@ final private[kyo] class ReadPump[Handle](
         driver.awaitRead(handle, self)
     end requestNextRead
 
-    private def teardown(reason: String)(using AllowUnsafe, Frame): Unit =
-        // TODO WTF the reason is ignored? also, failure messages can ONLY be assembled in NetException.scala
-        // Tear the connection down on EOF/error. closeFn marks the inbound channel closing-for-writes via closeAwaitEmpty (NOT close): a consumer
-        // that has not drained the bytes the ReadPump staged ahead of EOF can still take them, then sees the channel FullyClosed once empty, so
-        // those bytes are not dropped (the kyo-pod ContainerItTest execStream case: a stderr frame buffered alongside stdout). The handle teardown
-        // is intentionally NOT gated on that drain: closeFn reclaims the socket fd as soon as the outbound side flushes, even when the consumer
-        // abandons the inbound channel (a pooled connection with no reader). Gating it on the drain leaked the fd: an abandoned inbound channel
-        // never empties, so the close never fired and the peer-FIN'd socket lingered in CLOSE_WAIT until process exit.
+    /** The structural cause the inbound channel's teardown carries: this connection's read side is closed, and `details` names the outcome
+      * that closed it. A cause the driver itself produced (a `Closed` on the promise's failure channel, or on a rejected offer) is threaded
+      * through untouched instead of being restated here.
+      */
+    private def readClosed(details: String)(using Frame): Closed = Closed("Transport", summon[Frame], details)
+
+    private def teardown(reason: Closed)(using AllowUnsafe, Frame): Unit =
+        // Tear the connection down on EOF/error. The structural `reason` is recorded on the owning Connection BEFORE closeFn runs, so a
+        // caller that reads it after teardown observes the actual cause (a peer FIN, a local shutdown, a clean TLS close, or the read
+        // failure's own message) instead of a stringified-and-discarded one. closeFn marks the inbound channel closing-for-writes via
+        // closeAwaitEmpty (NOT close): a consumer that has not drained the bytes the ReadPump staged ahead of EOF can still take them, then
+        // sees the channel FullyClosed once empty, so those bytes are not dropped (the kyo-pod ContainerItTest execStream case: a stderr frame
+        // buffered alongside stdout). The handle teardown is intentionally NOT gated on that drain: closeFn reclaims the socket fd as soon as
+        // the outbound side flushes, even when the consumer abandons the inbound channel (a pooled connection with no reader). Gating it on
+        // the drain leaked the fd: an abandoned inbound channel never empties, so the close never fired and the peer-FIN'd socket lingered in
+        // CLOSE_WAIT until process exit.
+        recordTeardownCause(reason)
         closeFn()
     end teardown
 

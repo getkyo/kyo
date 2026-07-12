@@ -5,6 +5,7 @@ import kyo.ffi.Buffer
 import kyo.ffi.Ffi
 import kyo.net.Connection
 import kyo.net.NetAddress
+import kyo.net.NetException
 import kyo.net.Test
 import kyo.net.internal.transport.Connection as InternalConnection
 
@@ -33,15 +34,15 @@ class PosixTransportSurfaceTest extends Test:
       * `shutdown`s + closes the listen fd, all synchronously. So once `transport.close()` returns, no accept loop is still running and the recycled
       * fd is already closed: a later leaf cannot have its connection stolen, and there is nothing to await.
       */
-    private def withTransport[A](body: PosixTransport => A < (Async & Abort[Closed] & Scope))(using
+    private def withTransport[A](body: PosixTransport => A < (Async & Abort[NetException | Closed] & Scope))(using
         Frame
-    ): A < (Async & Abort[Closed] & Scope) =
+    ): A < (Async & Abort[NetException | Closed] & Scope) =
         val driver    = PollerIoDriver.init(transportConfig)
         val transport = TestTransports.forTesting(transportConfig, driver, Ffi.load[SocketBindings], backendIsEpoll = false)
         discard(driver.start())
         // Run the body, then ALWAYS close the transport and driver, re-raising the body's outcome. transport.close() tears the readiness-driven
         // accept loops down synchronously (see the scaladoc), so no Async drain step is needed.
-        Abort.run[Closed](body(transport)).map { result =>
+        Abort.run[NetException | Closed](body(transport)).map { result =>
             Sync.defer(transport.close()).andThen(Sync.defer(driver.close())).andThen(Abort.get(result))
         }
     end withTransport
@@ -175,8 +176,8 @@ class PosixTransportSurfaceTest extends Test:
             withTransport { transport =>
                 // A port nothing listens on (a plain socket bound then closed, no accept loop), so the connect must be refused.
                 deadPort().map { port =>
-                    Abort.run[Closed](transport.connect("127.0.0.1", port).safe.get).map { outcome =>
-                        assert(outcome.isFailure, s"expected Closed connecting to dead port $port, got $outcome")
+                    Abort.run[NetException | Closed](transport.connect("127.0.0.1", port).safe.get).map { outcome =>
+                        assert(outcome.isFailure, s"expected a failure connecting to dead port $port, got $outcome")
                     }
                 }
             }
@@ -264,7 +265,7 @@ class PosixTransportSurfaceTest extends Test:
             // resolve-SUCCESS path against the real resolver.
             assumePoller()
             withTransport { transport =>
-                Abort.run[Closed | Timeout](
+                Abort.run[NetException | Closed | Timeout](
                     Async.timeout(10.seconds)(transport.connect("kyo-net-unresolvable-host.invalid", 80).safe.get)
                 ).map { outcome =>
                     assert(outcome.isFailure, s"expected a clean failure connecting to an unresolvable host, got $outcome")

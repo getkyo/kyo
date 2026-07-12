@@ -3,14 +3,18 @@ package kyo.net.internal.posix
 import kyo.*
 import kyo.ffi.Buffer
 import kyo.ffi.Ffi
+import kyo.net.NetException
 import kyo.net.NetTlsConfig
+import kyo.net.NetTlsHandshakeException
 import kyo.net.Test
 import kyo.net.internal.tls.BoringSslBindings
 import kyo.net.internal.tls.TlsTestCert
 
 /** Probes the STARTTLS upgrade racing a concurrent close: the upgrade detaches the plaintext connection (`detachForUpgrade`), builds a new
   * TLS engine, and re-handshakes over the SAME fd; a `closeHandle` fired while that re-handshake is in flight must not use-after-free, must
-  * not double-close the fd, must not hang, and must leave the connection in a consistent terminal state (a clean abort `Closed`).
+  * not double-close the fd, must not hang, and must leave the connection in a consistent terminal state (a clean abort: the transport surface is
+  * `Abort[NetException]`, so a close racing the handshake surfaces as the typed `NetTlsHandshakeException` naming "transport closed during
+  * handshake", never as a Panic).
   *
   * Driven over a real loopback socket pair with the real `PosixTransport.upgradeRole` and a real BoringSSL engine. Only the SERVER side
   * upgrades; the client never sends a ClientHello, so the server's re-handshake is GUARANTEED in flight (its `recvAndFeed` probes the socket,
@@ -104,7 +108,7 @@ class StartTlsUpgradeCloseRaceTest extends Test:
                             }
 
                             Fiber.initUnscoped(fireClose).map { closeFiber =>
-                                Abort.run[Closed](serverUpgrade.get).map { upgradeResult =>
+                                Abort.run[NetException](serverUpgrade.get).map { upgradeResult =>
                                     closeFiber.get.map { _ =>
                                         // Idempotent extra close of the plaintext connection.
                                         serverPlain.close()
@@ -115,7 +119,11 @@ class StartTlsUpgradeCloseRaceTest extends Test:
                                             s"[iter $iter] upgrading fd=$serverFd closed $closes times (expected exactly 1: no double-close, no leak)"
                                         )
                                         upgradeResult match
-                                            case Result.Failure(_: Closed) =>
+                                            case Result.Failure(e: NetTlsHandshakeException) =>
+                                                assert(
+                                                    e.getMessage.contains("closed"),
+                                                    s"[iter $iter] upgrade aborted, but not for the racing-close reason: ${e.getMessage}"
+                                                )
                                                 discard(abortBranch.incrementAndGet())
                                                 Loop.continue
                                             case Result.Success(conn) =>

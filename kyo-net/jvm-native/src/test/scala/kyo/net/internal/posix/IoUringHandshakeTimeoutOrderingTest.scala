@@ -3,6 +3,7 @@ package kyo.net.internal.posix
 import kyo.*
 import kyo.ffi.Buffer
 import kyo.ffi.Ffi
+import kyo.net.NetException
 import kyo.net.NetTlsConfig
 import kyo.net.Test
 import kyo.net.TlsTestCertShared
@@ -50,8 +51,8 @@ class IoUringHandshakeTimeoutOrderingTest extends Test:
       * over the SAME driver and the real socket bindings. Tears the ring down on exit.
       */
     private def withRecordingTransport[A](
-        body: (PosixTransport, RecordingIoUringBindings) => A < (Abort[Closed] & Async)
-    )(using Frame): A < (Abort[Closed] & Async) =
+        body: (PosixTransport, RecordingIoUringBindings) => A < (Abort[NetException | Closed] & Async)
+    )(using Frame): A < (Abort[NetException | Closed] & Async) =
         val depth     = 256
         val realUring = Ffi.load[IoUringBindings]
         val realRing  = Buffer.alloc[Byte](realUring.kyo_uring_sizeof().toInt)

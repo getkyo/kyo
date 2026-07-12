@@ -4,6 +4,7 @@ import kyo.*
 import kyo.ffi.Ffi
 import kyo.net.Connection
 import kyo.net.Listener
+import kyo.net.NetException
 import kyo.net.NetTlsConfig
 import kyo.net.Test
 import kyo.net.TlsTestCertShared
@@ -44,7 +45,7 @@ class IoUringMutualTlsStressTest extends Test:
             // stage; a non-empty record at the end fails the test. The list never being touched on the happy path keeps the success run allocation-free.
             val stalls = new java.util.concurrent.ConcurrentLinkedQueue[String]()
 
-            def startTlsEchoServer(transport: kyo.net.internal.posix.PosixTransport): Listener < (Async & Abort[Closed]) =
+            def startTlsEchoServer(transport: kyo.net.internal.posix.PosixTransport): Listener < (Async & Abort[NetException]) =
                 transport.listen("127.0.0.1", 0, 128) { serverConn =>
                     discard(Sync.Unsafe.evalOrThrow {
                         Fiber.initUnscoped {
@@ -72,9 +73,9 @@ class IoUringMutualTlsStressTest extends Test:
 
             def oneUpgrade(transport: kyo.net.internal.posix.PosixTransport, port: Int, tag: String): Unit < (Async & Abort[Closed]) =
                 val stage = new java.util.concurrent.atomic.AtomicReference[String]("init")
-                Abort.run[Closed | Timeout](
+                Abort.run[NetException | Closed | Timeout](
                     Async.timeout(8.seconds) {
-                        for
+                        (for
                             _       <- Sync.defer(stage.set("connect"))
                             conn    <- transport.connect("127.0.0.1", port).safe.get
                             _       <- Sync.defer(stage.set("put-signal"))
@@ -90,6 +91,7 @@ class IoUringMutualTlsStressTest extends Test:
                         yield
                             tlsConn.close()
                             echoed
+                        ): Array[Byte] < (Async & Abort[NetException | Closed])
                     }
                 ).map {
                     case Result.Success(echoed) =>
@@ -104,7 +106,7 @@ class IoUringMutualTlsStressTest extends Test:
                 }
             end oneUpgrade
 
-            def oneGroup(g: Int): Unit < (Async & Abort[Closed]) =
+            def oneGroup(g: Int): Unit < (Async & Abort[NetException | Closed]) =
                 val driver    = IoUringDriver.init(tcfg)
                 val transport = TestTransports.forTesting(tcfg, driver, Ffi.load[SocketBindings], backendIsEpoll = false)
                 discard(driver.start())

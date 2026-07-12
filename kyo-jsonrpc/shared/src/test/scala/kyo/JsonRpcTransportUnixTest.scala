@@ -1,5 +1,6 @@
 package kyo
 
+import kyo.net.NetException
 import kyo.net.NetPlatform
 
 /** Unix-domain-socket transport tests, over kyo-net's cross-platform `connectUnix`/`listenUnix`. Runs identically on every platform kyo-net
@@ -13,7 +14,7 @@ class JsonRpcTransportUnixTest extends JsonRpcTest:
     /** Connect a client to `sock`, send `payload`, and close. kyo-net flushes the queued outbound bytes before releasing the socket, so the
       * server receives the frame even though the client closes immediately after the put.
       */
-    private def clientSend(sock: Path, payload: String)(using Frame): Unit < (Async & Abort[Throwable]) =
+    private def clientSend(sock: Path, payload: String)(using Frame): Unit < (Async & Abort[NetException | Closed]) =
         NetPlatform.transport.connectUnix(sock.toString).safe.get.map { client =>
             client.outbound.safe.put(Span.fromUnsafe(payload.getBytes("UTF-8"))).andThen(Sync.defer(client.close()))
         }

@@ -20,7 +20,7 @@ class TransportStartTlsConcurrentTest extends Test:
     private val concurrency                = 128
 
     /** A server that, per accepted connection, waits for the 1-byte signal, replies ready, upgrades to TLS in `serverTls`, then echoes. */
-    private def startTlsEchoServer(transport: Transport, serverTls: NetTlsConfig)(using Frame): Listener < (Async & Abort[Closed]) =
+    private def startTlsEchoServer(transport: Transport, serverTls: NetTlsConfig)(using Frame): Listener < (Async & Abort[NetException]) =
         transport.listen("127.0.0.1", 0, 256) { serverConn =>
             discard(Sync.Unsafe.evalOrThrow {
                 Fiber.initUnscoped {
@@ -51,7 +51,7 @@ class TransportStartTlsConcurrentTest extends Test:
     /** One client: connect plaintext, signal, await ready, upgrade to TLS, send `msg`, read the echo back, return whether it round-tripped. */
     private def runClient(transport: Transport, port: Int, clientTls: NetTlsConfig, msg: Array[Byte])(using
         Frame
-    ): Boolean < (Async & Abort[Closed]) =
+    ): Boolean < (Async & Abort[NetException | Closed]) =
         for
             conn     <- transport.connect("127.0.0.1", port).safe.get
             _        <- conn.outbound.safe.put(upgradeRequest)
@@ -73,7 +73,7 @@ class TransportStartTlsConcurrentTest extends Test:
                     // bytes are distinct (header + index-derived fill) so the round-trip equality check confirms no cross-connection misrouting.
                     val header = s"starttls-concurrent-$i-".getBytes("UTF-8")
                     val msg    = header ++ Array.fill[Byte](24576)((i % 251 + 1).toByte)
-                    Abort.run[Closed](runClient(transport, listener.port, cli, msg)).map {
+                    Abort.run[NetException | Closed](runClient(transport, listener.port, cli, msg)).map {
                         case Result.Success(ok) => ok
                         case _                  => false
                     }

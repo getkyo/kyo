@@ -26,7 +26,7 @@ class TransportMutualTlsTrustAnchorTest extends Test:
         }
 
     /** Listen with a clientAuth=Required server whose accepted connections echo their inbound stream. */
-    private def echoListener(transport: Transport, tls: NetTlsConfig)(using Frame): Listener < (Async & Abort[Closed]) =
+    private def echoListener(transport: Transport, tls: NetTlsConfig)(using Frame): Listener < (Async & Abort[NetException]) =
         transport.listen("127.0.0.1", 0, 16, tls) { serverConn =>
             discard(Sync.Unsafe.evalOrThrow {
                 Fiber.initUnscoped {
@@ -54,11 +54,11 @@ class TransportMutualTlsTrustAnchorTest extends Test:
                 val message = "kyo-truststore".getBytes("UTF-8")
                 // Generous hang-guard: a mutual-TLS round-trip verifies a cert chain on both ends and is slow on a cold/loaded runner, so 5s timed
                 // out on every cell at once. A true deadlock still fails within the suite's 60s leaf budget (see kyo.net.Test); mirrors TransportMutualTlsTest.
-                Abort.run[Closed | Timeout](
+                Abort.run[NetException | Closed | Timeout](
                     Async.timeout(30.seconds)(
-                        transport.connect("127.0.0.1", listener.port, clientWithCert).safe.get.map { client =>
+                        (transport.connect("127.0.0.1", listener.port, clientWithCert).safe.get.map { client =>
                             client.outbound.safe.put(Span.fromUnsafe(message)).andThen(collect(client, message.length)).map(client -> _)
-                        }
+                        }): (Connection, Array[Byte]) < (Async & Abort[NetException | Closed])
                     )
                 ).map { outcome =>
                     listener.close()
@@ -88,11 +88,11 @@ class TransportMutualTlsTrustAnchorTest extends Test:
                 val untrustedClient = clientTls.copy(certChainPath = Present(untrustedCert), privateKeyPath = Present(untrustedKey))
                 echoListener(transport, serverMtls).map { listener =>
                     val message = "kyo-untrusted".getBytes("UTF-8")
-                    Abort.run[Closed | Timeout](
+                    Abort.run[NetException | Closed | Timeout](
                         Async.timeout(5.seconds)(
-                            transport.connect("127.0.0.1", listener.port, untrustedClient).safe.get.map { client =>
+                            (transport.connect("127.0.0.1", listener.port, untrustedClient).safe.get.map { client =>
                                 client.outbound.safe.put(Span.fromUnsafe(message)).andThen(collect(client, message.length))
-                            }
+                            }): Array[Byte] < (Async & Abort[NetException | Closed])
                         )
                     ).map { outcome =>
                         listener.close()
@@ -119,11 +119,11 @@ class TransportMutualTlsTrustAnchorTest extends Test:
                 echoListener(transport, serverMtls).map { listener =>
                     val message = "kyo-precedence".getBytes("UTF-8")
                     // Generous hang-guard (see the trustStorePath leaf above): a cold/loaded mutual-TLS round-trip exceeds a 5s bound.
-                    Abort.run[Closed | Timeout](
+                    Abort.run[NetException | Closed | Timeout](
                         Async.timeout(30.seconds)(
-                            transport.connect("127.0.0.1", listener.port, clientWithCert).safe.get.map { client =>
+                            (transport.connect("127.0.0.1", listener.port, clientWithCert).safe.get.map { client =>
                                 client.outbound.safe.put(Span.fromUnsafe(message)).andThen(collect(client, message.length)).map(client -> _)
-                            }
+                            }): (Connection, Array[Byte]) < (Async & Abort[NetException | Closed])
                         )
                     ).map { outcome =>
                         listener.close()

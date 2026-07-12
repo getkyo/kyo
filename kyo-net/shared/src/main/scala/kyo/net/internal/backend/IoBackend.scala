@@ -1,6 +1,9 @@
 package kyo.net.internal.backend
 
 import kyo.*
+import kyo.net.NetBackendInitException
+import kyo.net.NetBackendUnavailableException
+import kyo.net.NetException
 import kyo.net.TransportConfig
 import kyo.net.internal.transport.IoDriver
 import scala.annotation.tailrec
@@ -37,9 +40,9 @@ private[net] object IoBackend:
     /** The single selection function for BOTH registries (generic on the entry type). Selection logic never changes; adding an entry is
       * a list edit, never a `select` edit.
       *
-      * Resolution order: a forced name (`forcedProp` system property) is honored if its entry is available, and fails loudly with `Closed`
-      * if not (never a silent fall-through). With no forced name, the highest-priority available entry wins, walking the priority gradient.
-      * If nothing is available, `Closed` is thrown.
+      * Resolution order: a forced name (`forcedProp` system property) is honored if its entry is available, and fails loudly with
+      * [[NetBackendUnavailableException]] if not (never a silent fall-through). With no forced name, the highest-priority available
+      * entry wins, walking the priority gradient. If nothing is available, the same leaf is returned with `forced = Absent`.
       */
     def select[A](
         registered: Chunk[A],
@@ -47,24 +50,17 @@ private[net] object IoBackend:
         priority: A => Int,
         available: A => Boolean,
         forcedProp: String
-    )(using AllowUnsafe, Frame): A =
-        // TODO use Kyo's System.Unsafe. Review ALL use of java apis in the module
+    )(using AllowUnsafe, Frame): Result[NetException, A] =
         val forcedName = Maybe(java.lang.System.getProperty(forcedProp)).filter(_.nonEmpty)
         val forced     = forcedName.flatMap(n => Maybe.fromOption(registered.find(e => name(e) == n)))
         forced match
             case Present(entry) =>
-                if available(entry) then entry
-                else
-                    // TODO kyo.Log.Unsafe.warn
-                    throw Closed("IoBackend", summon[Frame], s"forced $forcedProp=${forcedName.get} is unavailable")
+                if available(entry) then Result.succeed(entry)
+                else Result.fail(NetBackendUnavailableException(Present(forcedName.get)))
             case Absent =>
-                // TODO kyo.Log.Unsafe.warn
-                Maybe.fromOption(registered.sortBy(e => -priority(e)).find(available))
-                    .getOrElse(throw Closed(
-                        "IoBackend",
-                        summon[Frame],
-                        "no available backend"
-                    )) // TODO we need much better errors for these closed excpeitons here
+                Maybe.fromOption(registered.sortBy(e => -priority(e)).find(available)) match
+                    case Present(entry) => Result.succeed(entry)
+                    case Absent         => Result.fail(NetBackendUnavailableException(Absent))
         end match
     end select
 
@@ -85,52 +81,52 @@ private[net] object IoBackend:
         available: A => Boolean,
         build: A => B,
         forcedProp: String
-    )(using AllowUnsafe, Frame): B =
-        val forcedName = Maybe(java.lang.System.getProperty(forcedProp)).filter(_.nonEmpty) // TODO why isn't this a StaticFlag?
+    )(using AllowUnsafe, Frame): Result[NetException, B] =
+        val forcedName = Maybe(java.lang.System.getProperty(forcedProp)).filter(_.nonEmpty)
         val forced     = forcedName.flatMap(n => Maybe.fromOption(registered.find(e => name(e) == n)))
         forced match
             case Present(entry) =>
                 // Forced: a build failure propagates (fail loud); a forced backend never silently falls through.
-                if available(entry) then build(entry)
-                else
-                    throw Closed(
-                        "IoBackend",
-                        summon[Frame],
-                        s"forced $forcedProp=${forcedName.get} is unavailable"
-                    ) // TODO do not throw, return a Result. Also, why don't you have a proper exception type for this? review all raw exceptions in the module
+                if available(entry) then Result.catching[NetException](build(entry))
+                else Result.fail(NetBackendUnavailableException(Present(forcedName.get)))
             case Absent =>
                 buildFirst(registered.sortBy(e => -priority(e)).filter(available).to(Chunk), name, build, Absent)
         end match
     end selectAndBuild
 
-    /** Build the first entry in priority order that constructs successfully, warning and falling through on each build failure. Rethrows the
-      * last failure (or a no-available-backend `Closed` when nothing was available) once the list is exhausted.
+    /** Build the first entry in priority order that constructs successfully, warning and falling through on each build failure. Returns the
+      * last failure (or a no-available-backend [[NetBackendUnavailableException]] when nothing was available) once the list is exhausted.
       */
     @tailrec
     private def buildFirst[A, B](
         ordered: Chunk[A],
         name: A => String,
         build: A => B,
-        lastError: Maybe[Closed]
-    )(using AllowUnsafe, Frame): B =
+        lastError: Maybe[NetException]
+    )(using AllowUnsafe, Frame): Result[NetException, B] =
         ordered.headMaybe match
             case Present(entry) =>
                 val rest = ordered.tail
-                val attempted =
-                    try Result.succeed(build(entry))
-                    catch case closed: Closed => Result.fail(closed)
+                // build throws NetBackendInitException at a driver-init failure; the recoverable predicate drives the degrade.
+                val attempted = Result.catching[NetException](build(entry))
                 attempted match
-                    case Result.Success(built) => built
-                    case Result.Failure(closed) =>
+                    case Result.Success(built)                                              => Result.succeed(built)
+                    case Result.Failure(init: NetBackendInitException) if !init.recoverable =>
+                        // Non-recoverable init failure (wake eventfd / registerWake): a shared liveness primitive no fallback can supply.
+                        // Do NOT degrade; propagate the typed leaf.
+                        Result.fail(init)
+                    case Result.Failure(failure) =>
                         Log.live.unsafe.warn(
                             s"IoBackend: backend '${name(entry)}' is available but failed to build; falling back to the next available backend",
-                            closed
+                            failure
                         )
-                        buildFirst(rest, name, build, Present(closed))
+                        buildFirst(rest, name, build, Present(failure))
+                    // A Panic is an unmodeled fatal that must PROPAGATE, never fold into the next-backend fallback. The compiler-mandated
+                    // exhaustive arm over the sealed Result.Error: statically required and semantically correct.
                     case Result.Panic(t) => throw t
                 end match
             case Absent =>
-                throw lastError.getOrElse(Closed("IoBackend", summon[Frame], "no available backend"))
+                Result.fail(lastError.getOrElse(NetBackendUnavailableException(Absent)))
         end match
     end buildFirst
 

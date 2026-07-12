@@ -10,13 +10,13 @@ import kyo.ffi.Ffi
 /** Marker for the io_uring ring handle. The ring itself lives in a caller-owned `Buffer[Byte]` of `kyo_uring_sizeof()` bytes (the SQ/CQ
   * mmaps are owned internally by liburing).
   */
-private[net] class IoUring
+final private[net] class IoUring
 
 /** Marker for an SQE pointer. The submission-queue entry is a 64-byte region owned by the ring; user code never reads it field by field, it
   * only fills it through the `kyo_uring_prep_*` helpers. Held as an opaque [[Ffi.Handle]] (the SQE's anonymous same-width unions and
   * `__u8` pad arrays cannot be modeled as a case class).
   */
-private[net] class IoUringSqe
+final private[net] class IoUringSqe
 
 /** liburing surface bound through the `kyo_uring.c` shim.
   *

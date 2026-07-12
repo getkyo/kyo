@@ -1,6 +1,7 @@
 package kyo.net.internal.backend
 
 import kyo.*
+import kyo.net.NetException
 import kyo.net.Test
 import kyo.net.TransportConfig
 import kyo.net.internal.posix.PosixConstants
@@ -28,7 +29,7 @@ class JvmPosixBackendSelectionTest extends Test:
       */
     private def echoRoundTrip(transport: kyo.net.Transport, payload: Array[Byte])(using
         Frame
-    ): Array[Byte] < (Async & Abort[Closed]) =
+    ): Array[Byte] < (Async & Abort[NetException | Closed]) =
         for
             listener <- transport.listen("127.0.0.1", 0, 128) { serverConn =>
                 discard(Sync.Unsafe.evalOrThrow {
@@ -90,7 +91,7 @@ class JvmPosixBackendSelectionTest extends Test:
                 _.priority,
                 _.isAvailable,
                 forcedProp
-            )
+            ).getOrThrow
         }
         assert(forced.name == "nio", s"forced selected=${forced.name}")
         // The forced floor must build the NioTransport, not a PosixTransport, and that floor must round-trip as production.
@@ -102,7 +103,7 @@ class JvmPosixBackendSelectionTest extends Test:
         }
     }
 
-    "the NioBackend floor stays registered so selection can never return Closed" in {
+    "the NioBackend floor stays registered so selection can never fail with no backend available" in {
         val nioEntries = IoBackendPlatform.registered.filter(_.name == "nio")
         assert(nioEntries.size == 1, s"expected exactly one nio floor entry, got ${IoBackendPlatform.registered.map(_.name)}")
         assert(nioEntries.head.priority == 10)

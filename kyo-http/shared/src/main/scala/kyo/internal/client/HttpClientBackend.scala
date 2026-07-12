@@ -47,7 +47,7 @@ final private[kyo] class HttpClientBackend private (
       * so a caller can still recover the specific transport reason. `eh`/`ep` are the display host/port used for a failure with no structured
       * host of its own.
       */
-    private def transportConnectFailure(failure: Closed, eh: String, ep: Int)(using Frame): HttpException =
+    private def transportConnectFailure(failure: kyo.net.NetException, eh: String, ep: Int)(using Frame): HttpException =
         failure match
             case e: kyo.net.NetDnsResolutionException  => HttpDnsResolutionException(e.host, e)
             case e: kyo.net.NetUnixConnectException    => HttpUnixConnectException(e.path, e)
@@ -71,7 +71,7 @@ final private[kyo] class HttpClientBackend private (
         val resultPromise = Promise.Unsafe.init[HttpConnection, Abort[HttpException]]()
         // Cast to IOPromise to get Result[Closed, transport.Connection] directly (no `< S` wrapper).
         // Fiber.Unsafe is an opaque wrapper over IOPromise - at runtime they are the same object.
-        connectFiber.asInstanceOf[IOPromise[Closed, kyo.net.Connection]].onComplete { result =>
+        connectFiber.asInstanceOf[IOPromise[kyo.net.NetException, kyo.net.Connection]].onComplete { result =>
             result match
                 case Result.Success(transportConn) =>
                     try
@@ -594,13 +594,13 @@ final private[kyo] class HttpClientBackend private (
         val timed =
             if connectTimeout == Duration.Infinity then connect
             else Async.timeout(connectTimeout)(connect)
-        Abort.runWith[Closed | Timeout](timed) {
+        Abort.runWith[kyo.net.NetException | Timeout](timed) {
             case Result.Success(connection) =>
                 runWsSessionWith(connection, url, headers, config, clientFilter, autoFilters)(f)
             case Result.Failure(_: Timeout) =>
                 Abort.fail(HttpConnectTimeoutException(eh, ep, connectTimeout))
-            case Result.Failure(closed: Closed) =>
-                Abort.fail(transportConnectFailure(closed, eh, ep))
+            case Result.Failure(net: kyo.net.NetException) =>
+                Abort.fail(transportConnectFailure(net, eh, ep))
             case Result.Panic(t) => throw t
         }
     end connectWebSocket
@@ -634,13 +634,13 @@ final private[kyo] class HttpClientBackend private (
         val timed =
             if connectTimeout == Duration.Infinity then connect
             else Async.timeout(connectTimeout)(connect)
-        Abort.runWith[Closed | Timeout](timed) {
+        Abort.runWith[kyo.net.NetException | Timeout](timed) {
             case Result.Success(connection) =>
                 setupRawConnection(connection, url, method, body, headers)
             case Result.Failure(_: Timeout) =>
                 Abort.fail(HttpConnectTimeoutException(eh, ep, connectTimeout))
-            case Result.Failure(closed: Closed) =>
-                Abort.fail(transportConnectFailure(closed, eh, ep))
+            case Result.Failure(net: kyo.net.NetException) =>
+                Abort.fail(transportConnectFailure(net, eh, ep))
             case Result.Panic(t) => throw t
         }
     end connectRaw

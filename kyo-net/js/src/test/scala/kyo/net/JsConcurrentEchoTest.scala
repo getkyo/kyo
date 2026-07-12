@@ -96,7 +96,7 @@ class JsConcurrentEchoTest extends Test:
         Async.zip(write, read).map((_, ok) => ok)
     end driveConnection
 
-    private def runEcho(tls: Boolean)(using Frame): Boolean < (Async & Abort[Closed] & Scope) =
+    private def runEcho(tls: Boolean)(using Frame): Boolean < (Async & Abort[NetException | Closed] & Scope) =
         val transport = NetPlatform.transport
         val serverHandler: Connection => Unit = serverConn =>
             // Echo loop using the Unsafe API: take a span from inbound, offer it back to outbound, repeat. Each connection's echo runs as its
@@ -119,7 +119,7 @@ class JsConcurrentEchoTest extends Test:
                 val connectFiber =
                     if tls then transport.connect("127.0.0.1", port, clientTls)
                     else transport.connect("127.0.0.1", port)
-                connectFiber.safe.get.map { conn =>
+                (connectFiber.safe.get.map { conn =>
                     Channel.init[Unit](window).map { permits =>
                         Kyo.foreach(0 until window)(_ => permits.put(())).andThen {
                             driveConnection(conn, connId, permits).map { ok =>
@@ -128,7 +128,7 @@ class JsConcurrentEchoTest extends Test:
                             }
                         }
                     }
-                }
+                }): Boolean < (Async & Abort[NetException | Closed] & Scope)
             }
         yield
             listener.close()

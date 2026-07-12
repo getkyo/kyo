@@ -12,7 +12,7 @@ class ConnectBurstTest extends Test:
 
     import AllowUnsafe.embrace.danger
 
-    private def echoListener(transport: Transport)(using Frame): Listener < (Async & Abort[Closed]) =
+    private def echoListener(transport: Transport)(using Frame): Listener < (Async & Abort[NetException]) =
         transport.listen("127.0.0.1", 0, 128) { serverConn =>
             discard(Sync.Unsafe.evalOrThrow {
                 Fiber.initUnscoped {
@@ -34,7 +34,7 @@ class ConnectBurstTest extends Test:
             Kyo.foreach(0 until size) { i =>
                 Fiber.initUnscoped {
                     latch.await.andThen {
-                        Abort.run[Closed] {
+                        Abort.run[NetException | Closed] {
                             transport.connect("127.0.0.1", port).safe.get.map { conn =>
                                 val msg = Span.from(Array[Byte]((i & 0x7f).toByte))
                                 conn.outbound.safe.put(msg).andThen(conn.inbound.safe.take).map { echo =>
@@ -47,7 +47,7 @@ class ConnectBurstTest extends Test:
                 }
             }.map { fibers =>
                 latch.release.andThen(Kyo.foreach(fibers)(_.get)).map { results =>
-                    val failures = results.collect { case Result.Failure(c: Closed) => c.getMessage }
+                    val failures = results.collect { case Result.Failure(c) => c.getMessage }
                     val echoes   = results.collect { case Result.Success(bytes) => bytes }
                     assert(failures.isEmpty, s"connect(s) failed under burst: $failures")
                     assert(echoes == (0 until size).map(i => List((i & 0x7f).toByte)).toSeq)

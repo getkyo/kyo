@@ -25,7 +25,9 @@ import kyo.net.NetException
 import kyo.net.NetNotUpgradableException
 import kyo.net.NetStdioAlreadyOpenException
 import kyo.net.NetTlsConfig
+import kyo.net.NetTlsConfigException
 import kyo.net.NetTlsHandshakeException
+import kyo.net.NetTlsProviderUnavailableException
 import kyo.net.NetUnixConnectException
 import kyo.net.internal.transport.*
 import kyo.scheduler.IOPromise
@@ -484,9 +486,7 @@ final private[kyo] class NioTransport private (
             // implementation. A pin to any other provider fails closed (caught below and reported on connectPromise) rather than silently
             // using the JDK engine under a different provider's name. Config truthfulness, mirroring TlsProvider.selectFor on the posix path.
             if tls.tlsProvider.exists(_ != "jdk") then
-                throw new IllegalStateException(
-                    s"pinned TLS provider '${tls.tlsProvider.get}' is not supported by the NIO transport (only 'jdk')"
-                )
+                throw NetTlsProviderUnavailableException(tls.tlsProvider.get)
             end if
             val sslContext = NioTransport.createSslContext(tls, isServer)
             val engine     = sslContext.createSSLEngine(host, port)
@@ -502,12 +502,7 @@ final private[kyo] class NioTransport private (
                 // path and the SSLEngine-provider path reach the identical accept/reject decision for the same NetTlsConfig + host. Reached
                 // via connect("", port, tls) and the STARTTLS upgrade with sniHostname = Absent (host = sniHostname.getOrElse("")).
                 if tls.hostnameVerification && !tls.trustAll && host.isEmpty then
-                    throw Closed(
-                        "NioTransport",
-                        summon[Frame],
-                        "verifying client has no reference identity: a hostname is required to verify the server certificate (set trustAll " +
-                            "or hostnameVerification = false to opt out of name verification)"
-                    )
+                    throw NetTlsConfigException()
                 end if
                 if host.nonEmpty then
                     // Only set endpoint identification when we have a real hostname to verify against.
@@ -580,6 +575,10 @@ final private[kyo] class NioTransport private (
 
             driveHandshake(handle, tlsState, host, port, connectPromise)
         catch
+            case e: NetException =>
+                // A typed leaf thrown above (the provider pin, the verifying-client-with-no-identity check) already names its own failure
+                // precisely; report it as-is instead of burying it as the cause of a generic NetTlsHandshakeException.
+                connectPromise.completeDiscard(Result.fail(e))
             case e: Exception =>
                 // The channel close is handled centrally by the connectPromise failure onComplete above (for a fresh channel); here just report the
                 // failure. A STARTTLS upgrade (existingHandle present) is closed by upgradeToTls.
@@ -1151,10 +1150,30 @@ final private[kyo] class NioTransport private (
         val promise = new IOPromise[NetException, Connection[NioHandle]]
         // The SNI host the upgrade engine verifies against; also the host reported by any handshake failure (an upgrade has no fresh port, so -1).
         val host = tls.sniHostname.getOrElse("")
+        // A misrouted upgrade (a non-NioHandle-backed Connection reaching the NIO transport) fails with a typed leaf, never a
+        // ClassCastException on the downcast below. Connection is a legitimately open public root, so a guarded match is the
+        // compensation for the absence of exhaustive matching.
+        conn match
+            case nioConn: Connection[NioHandle] @unchecked if nioConn.handle.isInstanceOf[NioHandle] =>
+                attemptUpgrade(nioConn, promise, host, tls, channelCapacity)
+            case _ =>
+                promise.completeDiscard(Result.fail(NetNotUpgradableException()))
+        end match
+        promise.asInstanceOf[Fiber.Unsafe[NetConnection, Abort[NetException]]]
+    end upgradeToTls
+
+    /** The body of [[upgradeToTls]] once `conn` is confirmed to be a NIO-backed [[Connection]]: detach the plaintext handle, re-register it
+      * with the driver, and drive the TLS handshake on the same channel. Completes `promise` on every outcome; never throws past this method.
+      */
+    private def attemptUpgrade(
+        nioConn: Connection[NioHandle],
+        promise: IOPromise[NetException, Connection[NioHandle]],
+        host: String,
+        tls: kyo.net.NetTlsConfig,
+        channelCapacity: Int
+    )(using AllowUnsafe, Frame): Unit =
         try
-            // Unsafe: NioTransport only creates Connection[NioHandle] instances, so this downcast is safe.
-            val nioConn = conn.asInstanceOf[Connection[NioHandle]]
-            val handle  = nioConn.handle
+            val handle = nioConn.handle
             // Central failure-close for the upgrade: detachForUpgrade gives up the plaintext connection's ownership of the channel WITHOUT closing
             // it, and on a STARTTLS handshake failure startTlsHandshake (existingHandle present) does not close it either, so the channel would leak
             // (e.g. a verifying client with no reference identity rejecting the upgrade). On success completeConnect wraps the channel in a new
@@ -1201,8 +1220,7 @@ final private[kyo] class NioTransport private (
             case e: Exception =>
                 promise.completeDiscard(Result.fail(NetTlsHandshakeException(host, -1, e)))
         end try
-        promise.asInstanceOf[Fiber.Unsafe[NetConnection, Abort[NetException]]]
-    end upgradeToTls
+    end attemptUpgrade
 
 end NioTransport
 

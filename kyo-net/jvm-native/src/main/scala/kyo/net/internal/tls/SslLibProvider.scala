@@ -2,6 +2,8 @@ package kyo.net.internal.tls
 
 import kyo.*
 import kyo.net.NetTlsConfig
+import kyo.net.NetTlsSetupException
+import scala.util.control.NonFatal
 
 /** Shared base for the two native TLS providers ([[BoringSslProvider]], [[SystemOpenSslProvider]]): one body over the backend-neutral
   * [[SslLibBindings]], so the BoringSSL primary and the system-OpenSSL fallback share their engine construction, config application, client
@@ -36,11 +38,11 @@ abstract private[net] class SslLibProvider extends TlsEngineProvider:
     def createEngine(config: NetTlsConfig, hostname: String, isServer: Boolean)(using AllowUnsafe, Frame): TlsEngine =
         val l   = lib
         val ctx = l.ctxNew(if isServer then 1 else 0)
-        if ctx == 0L then throw Closed(name, summon[Frame], "SSL_CTX_new failed")
+        if ctx == 0L then throw NetTlsSetupException("SSL_CTX_new")
         try
             applyConfig(l, ctx, config, isServer)
             val ssl = l.sslNew(ctx, hostname)
-            if ssl == 0L then throw Closed(name, summon[Frame], "SSL_new failed")
+            if ssl == 0L then throw NetTlsSetupException("SSL_new")
             bindClientIdentity(l, ssl, config, hostname, isServer)
             if isServer then l.sslSetAcceptState(ssl)
             else l.sslSetConnectState(ssl)
@@ -117,17 +119,17 @@ abstract private[net] class SslLibProvider extends TlsEngineProvider:
         case NetTlsConfig.Version.TLS13 => 3
 
     /** Read a configured PEM file. A `path` that was never set stays `Absent` so the caller keeps the system-trust default; a `Present` path that
-      * cannot be read or decoded FAILS CLOSED with `Closed` rather than degrading to `Absent`. Swallowing the read error would silently drop an
-      * operator's pinned private CA (or a server's configured cert/key) and fall back to the system trust store, the CWE-295 silent-weakening
-      * the JDK floor avoids (`NioTransport.loadCaCertTrustManagers` lets the file-open exception propagate). Distinguishing not-configured from
-      * configured-but-unreadable is the whole fix.
+      * cannot be read or decoded FAILS CLOSED with [[kyo.net.NetTlsSetupException]] rather than degrading to `Absent`. Swallowing the read error
+      * would silently drop an operator's pinned private CA (or a server's configured cert/key) and fall back to the system trust store, the
+      * CWE-295 silent-weakening the JDK floor avoids (`NioTransport.loadCaCertTrustManagers` lets the file-open exception propagate).
+      * Distinguishing not-configured from configured-but-unreadable is the whole fix.
       */
     private def readPem(path: Maybe[String])(using AllowUnsafe, Frame): Maybe[String] =
         path.map { p =>
             try new String(java.nio.file.Files.readAllBytes(java.nio.file.Paths.get(p)), java.nio.charset.StandardCharsets.UTF_8)
             catch
-                case t: Throwable =>
-                    throw Closed(name, summon[Frame], s"configured PEM file could not be read: $p (${t.getMessage})")
+                case t: Throwable if NonFatal(t) =>
+                    throw NetTlsSetupException(s"read PEM ($p)", t)
         }
 
 end SslLibProvider

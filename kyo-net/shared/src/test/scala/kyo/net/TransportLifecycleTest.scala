@@ -28,12 +28,12 @@ class TransportLifecycleTest extends Test:
             // port 40971). Retry on that reuse: a connect that unexpectedly succeeds means the port was rebound by another suite, so close that
             // connection and try a fresh port. The retry never weakens the contract: it asserts that a connect to a genuinely-unbound port fails, and
             // a real bug (the product returning a live connection for an unbound port) would make every attempt "succeed" and exhaust the retries.
-            def attempt(remaining: Int): Unit < (Async & Abort[Closed]) =
+            def attempt(remaining: Int): Unit < (Async & Abort[NetException | Closed]) =
                 transport.listen("127.0.0.1", 0, 128)(_ => ()).safe.get.map { listener =>
                     val port = listener.port
                     listener.close()
-                    Abort.run[Closed](transport.connect("127.0.0.1", port).safe.get).map { outcome =>
-                        val next: Unit < (Async & Abort[Closed]) =
+                    Abort.run[NetException | Closed](transport.connect("127.0.0.1", port).safe.get).map { outcome =>
+                        val next: Unit < (Async & Abort[NetException | Closed]) =
                             outcome match
                                 case Result.Success(conn) =>
                                     // The port was reused by a concurrently-running suite's listener: close the connection and retry a fresh port.

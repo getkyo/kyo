@@ -36,12 +36,19 @@ final private[kyo] class Connection[Handle] private (
     private val writePump: WritePump[Handle],
     private val state: AtomicRef.Unsafe[ConnectionState],
     private val closeFn: () => Unit,
-    private val closingPromise: Promise.Unsafe[Unit, Any]
+    private val closingPromise: Promise.Unsafe[Unit, Any],
+    private val readTeardownCauseRef: AtomicRef.Unsafe[Maybe[Closed]]
 ) extends kyo.net.Connection
     with kyo.net.Connection.UpgradableConnection: // TODO is this the only impl of Connection? if yes, why do we have a seaprate UpgradableConnection?
 
     /** The connection's close signal (see [[kyo.net.Connection.onClosing]]). Completed once in `closeFn`'s win-the-close branch. */
     private[kyo] def onClosing: Fiber.Unsafe[Unit, Any] = closingPromise
+
+    /** The structural cause this connection's [[ReadPump]] recorded when it began tearing down (a peer FIN, a local shutdown, a clean TLS
+      * close, or the underlying read failure), captured on the connection BEFORE the handle teardown runs. Absent while the connection is
+      * still reading, or when it was torn down by [[close]] / the write side rather than a read-side teardown.
+      */
+    private[kyo] def readTeardownCause(using AllowUnsafe): Maybe[Closed] = readTeardownCauseRef.get()
 
     import scala.compiletime.uninitialized // TODO why do we need this?
 
@@ -235,6 +242,12 @@ private[kyo] object Connection:
         // detachForUpgrade (state=Upgrading bars this branch), which is correct: the upgraded connection is a fresh init with its own signal.
         val closingPromise = Promise.Unsafe.init[Unit, Any]()
 
+        // The structural cause the ReadPump records when its teardown begins (a peer FIN, a local shutdown, a clean TLS close, or the
+        // underlying read failure), read back via [[readTeardownCause]]. Crosses from the ReadPump's scheduler-serialized teardown callback to
+        // any caller reading the connection afterward, so it is an AtomicRef rather than a plain var. Set at most once: teardown() records the
+        // cause before calling closeFn(), and the ReadPump's own onComplete is the single-owner callback the driver never re-enters concurrently.
+        val readTeardownCauseRef = AtomicRef.Unsafe.init[Maybe[Closed]](Absent)
+
         val closeFn: () => Unit = () =>
             // Win the close by CASing a live state -> Closing. Created and Established both go to
             // Closing (a never-started connection closes too); Upgrading does NOT, since its fd is
@@ -286,10 +299,16 @@ private[kyo] object Connection:
                 releaseHandle()
             end if
 
-        val readPump  = new ReadPump(handle, driver, inbound, closeFn)
+        val readPump = new ReadPump(
+            handle,
+            driver,
+            inbound,
+            closeFn,
+            recordTeardownCause = cause => readTeardownCauseRef.set(Present(cause))
+        )
         val writePump = new WritePump(handle, driver, outbound, closeFn, AtomicRef.Unsafe.init[WriteState](WriteState.Idle))
 
-        new Connection(handle, driver, inbound, outbound, readPump, writePump, state, closeFn, closingPromise)
+        new Connection(handle, driver, inbound, outbound, readPump, writePump, state, closeFn, closingPromise, readTeardownCauseRef)
     end init
 
     /** Create a driverless in-memory connection over two pre-existing channels.

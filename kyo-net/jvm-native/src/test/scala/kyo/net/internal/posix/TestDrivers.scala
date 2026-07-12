@@ -22,13 +22,13 @@ object TestDrivers:
       * bindings for the connection-close fd shutdown/close. The bindings are a recording decorator over a real ring or a single-result injector
       * over one (a real ring is still initialized by the caller).
       */
-    def forBindings(uring: IoUringBindings, ring: Buffer[Byte])(using AllowUnsafe): IoUringDriver =
+    def forBindings(uring: IoUringBindings, ring: Buffer[Byte])(using AllowUnsafe, Frame): IoUringDriver =
         IoUringDriver.init(uring, ring, Ffi.load[SocketBindings])
 
     /** As [[forBindings]] but over caller-supplied socket bindings (a recording decorator or the real bindings), so a test can observe the
       * connection-close fd shutdown/close.
       */
-    def forBindings(uring: IoUringBindings, ring: Buffer[Byte], sockets: SocketBindings)(using AllowUnsafe): IoUringDriver =
+    def forBindings(uring: IoUringBindings, ring: Buffer[Byte], sockets: SocketBindings)(using AllowUnsafe, Frame): IoUringDriver =
         IoUringDriver.init(uring, ring, sockets)
 
 end TestDrivers

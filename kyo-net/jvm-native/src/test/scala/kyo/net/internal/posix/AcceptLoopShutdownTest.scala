@@ -2,6 +2,7 @@ package kyo.net.internal.posix
 
 import kyo.*
 import kyo.ffi.Ffi
+import kyo.net.NetException
 import kyo.net.Test
 
 // This suite lives in jvm-native/src/test because PosixTransport's accept loop runs on JVM-posix and Native; JS uses the Node transport.
@@ -39,13 +40,13 @@ class AcceptLoopShutdownTest extends Test:
     /** Build a transport over a fresh real poller driver, run `body`, then close the driver. The body owns transport shutdown so each leaf can
       * assert the `activeAcceptLoops` count at the exact instant a `close()` returns.
       */
-    private def withTransport[A](body: PosixTransport => A < (Async & Abort[Closed] & Scope))(using
+    private def withTransport[A](body: PosixTransport => A < (Async & Abort[NetException | Closed] & Scope))(using
         Frame
-    ): A < (Async & Abort[Closed] & Scope) =
+    ): A < (Async & Abort[NetException | Closed] & Scope) =
         val driver    = PollerIoDriver.init(transportConfig)
         val transport = TestTransports.forTesting(transportConfig, driver, Ffi.load[SocketBindings], backendIsEpoll = false)
         discard(driver.start())
-        Abort.run[Closed](body(transport)).map { result =>
+        Abort.run[NetException | Closed](body(transport)).map { result =>
             Sync.defer(driver.close()).andThen(Abort.get(result))
         }
     end withTransport
@@ -62,7 +63,7 @@ class AcceptLoopShutdownTest extends Test:
         "transport.close() winds the accept loop down to 0 inline (no poll, no sleep)" in {
             assumePollerReady()
             withTransport { transport =>
-                for
+                (for
                     listener <- transport.listen("127.0.0.1", 0, 16)(_ => ()).safe.get
                     armed = transport.activeAcceptLoops
                     afterClose <- Sync.defer {
@@ -73,7 +74,7 @@ class AcceptLoopShutdownTest extends Test:
                     discard(listener)
                     assert(armed == 1L, s"accept loop should be armed (count 1) right after listen returns, was $armed")
                     assert(afterClose == 0L, s"accept loop must drain to 0 immediately after transport.close() returns, was $afterClose")
-                end for
+                ): Unit < (Async & Abort[NetException | Closed] & Scope)
             }
         }
 
@@ -85,7 +86,7 @@ class AcceptLoopShutdownTest extends Test:
         "listener.close() winds its own accept loop down to 0 inline (no poll, no sleep)" in {
             assumePollerReady()
             withTransport { transport =>
-                for
+                (for
                     listener <- transport.listen("127.0.0.1", 0, 16)(_ => ()).safe.get
                     armed = transport.activeAcceptLoops
                     afterClose <- Sync.defer {
@@ -95,6 +96,7 @@ class AcceptLoopShutdownTest extends Test:
                 yield
                     assert(armed == 1L, s"accept loop should be armed (count 1) right after listen returns, was $armed")
                     assert(afterClose == 0L, s"accept loop must drain to 0 immediately after listener.close() returns, was $afterClose")
+                ): Unit < (Async & Abort[NetException | Closed] & Scope)
             }
         }
 
@@ -107,7 +109,7 @@ class AcceptLoopShutdownTest extends Test:
         "transport.close() drains every listener's accept loop to 0 inline (no poll, no sleep)" in {
             assumePollerReady()
             withTransport { transport =>
-                for
+                (for
                     l1 <- transport.listen("127.0.0.1", 0, 16)(_ => ()).safe.get
                     l2 <- transport.listen("127.0.0.1", 0, 16)(_ => ()).safe.get
                     l3 <- transport.listen("127.0.0.1", 0, 16)(_ => ()).safe.get
@@ -123,7 +125,7 @@ class AcceptLoopShutdownTest extends Test:
                         afterClose == 0L,
                         s"all three accept loops must drain to 0 immediately after transport.close() returns, was $afterClose"
                     )
-                end for
+                ): Unit < (Async & Abort[NetException | Closed] & Scope)
             }
         }
 

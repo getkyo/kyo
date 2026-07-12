@@ -29,7 +29,7 @@ private[net] object IoBackendPlatform:
       * existed.
       */
     def selected(using AllowUnsafe, Frame): Backend =
-        IoBackend.select[Backend](registered, _.name, _.priority, _.isAvailable, "kyo.net.backend")
+        IoBackend.select[Backend](registered, _.name, _.priority, _.isAvailable, "kyo.net.backend").getOrThrow
 
     /** Build the selected JS driver. */
     def driver(config: TransportConfig)(using AllowUnsafe, Frame): IoDriver[JsHandle] =
