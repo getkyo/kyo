@@ -38,7 +38,7 @@ final private[kyo] class Connection[Handle] private (
     private val closeFn: () => Unit,
     private val closingPromise: Promise.Unsafe[Unit, Any]
 ) extends kyo.net.Connection
-    with kyo.net.Connection.UpgradableConnection:
+    with kyo.net.Connection.UpgradableConnection: // TODO is this the only impl of Connection? if yes, why do we have a seaprate UpgradableConnection?
 
     /** The connection's close signal (see [[kyo.net.Connection.onClosing]]). Completed once in `closeFn`'s win-the-close branch. */
     private[kyo] def onClosing: Fiber.Unsafe[Unit, Any] = closingPromise
@@ -100,9 +100,11 @@ final private[kyo] class Connection[Handle] private (
         if cas then
             readPump.start()
             writePump.start()
+        // TODO this method should return a boolan and callers should properly handle the case where start returns false. If it should never happen, then this method should throw if the cas fails
     end start
 
     /** Check if connection is still open. */
+    // TODO the logic should be in ConnectionState
     def isOpen(using AllowUnsafe): Boolean =
         state.get() match
             case ConnectionState.Created | ConnectionState.Established                        => true
@@ -141,6 +143,7 @@ final private[kyo] class Connection[Handle] private (
             case Present(fn) => fn(tls, frame)
             case Absent      =>
                 // Unsafe: this fallback only builds a failed Fiber.Unsafe.fromResult (no side effect), so the danger bridge is inert.
+                // TODO fix fromResult then! do not workaround issues
                 import AllowUnsafe.embrace.danger // TODO take the AllowUnsafe implicit in the method instead
                 given Frame = frame
                 Fiber.Unsafe.fromResult(Result.fail(kyo.net.NetNotUpgradableException()))
@@ -171,7 +174,7 @@ final private[kyo] class Connection[Handle] private (
             // Close inbound and capture any bytes the ReadPump already staged but nobody consumed.
             // These are raw network bytes (TLS ciphertext) that the handshake engine needs.
             val buffered = inbound.close()
-            discard(outbound.close())
+            discard(outbound.close()) // TODO why is discarding safe here?
             // Fail pending I/O promises (causes pumps to see failure and exit teardown). Routed through driver.detachForUpgrade rather than
             // driver.cancel so a driver can keep its transport registration for the upgrade: the NIO driver keeps the SelectionKey (avoiding a
             // cancel+re-register race), while other drivers fall back to cancel. Intentionally does NOT call driver.closeHandle so the fd stays open.
@@ -214,6 +217,7 @@ private[kyo] object Connection:
         // The AwaitingInFlight -> Released transition: gated on the per-backend canRelease predicate, performed by exactly one carrier (the CAS),
         // running cancel + closeHandle + onClose once. When canRelease is false the release is held; for the posix/JS backends canRelease is the
         // trivial () => true and the in-flight deferral happens inside driver.closeHandle.
+        // TODO it's odd to have these impls here, why can't they be in the Connection instance class?
         def releaseHandle(): Unit =
             if canRelease() && teardown.compareAndSet(TeardownState.AwaitingInFlight, TeardownState.Released) then
                 // Reflect the lifecycle terminal too, so isOpen reads Closed; the Released CAS above is the exactly-once gate, not this.

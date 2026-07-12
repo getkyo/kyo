@@ -48,7 +48,7 @@ private[net] object IoBackend:
         available: A => Boolean,
         forcedProp: String
     )(using AllowUnsafe, Frame): A =
-        // TODO use Kyo's System.Unsafe
+        // TODO use Kyo's System.Unsafe. Review ALL use of java apis in the module
         val forcedName = Maybe(java.lang.System.getProperty(forcedProp)).filter(_.nonEmpty)
         val forced     = forcedName.flatMap(n => Maybe.fromOption(registered.find(e => name(e) == n)))
         forced match
@@ -86,13 +86,18 @@ private[net] object IoBackend:
         build: A => B,
         forcedProp: String
     )(using AllowUnsafe, Frame): B =
-        val forcedName = Maybe(java.lang.System.getProperty(forcedProp)).filter(_.nonEmpty)
+        val forcedName = Maybe(java.lang.System.getProperty(forcedProp)).filter(_.nonEmpty) // TODO why isn't this a StaticFlag?
         val forced     = forcedName.flatMap(n => Maybe.fromOption(registered.find(e => name(e) == n)))
         forced match
             case Present(entry) =>
                 // Forced: a build failure propagates (fail loud); a forced backend never silently falls through.
                 if available(entry) then build(entry)
-                else throw Closed("IoBackend", summon[Frame], s"forced $forcedProp=${forcedName.get} is unavailable")
+                else
+                    throw Closed(
+                        "IoBackend",
+                        summon[Frame],
+                        s"forced $forcedProp=${forcedName.get} is unavailable"
+                    ) // TODO do not throw, return a Result. Also, why don't you have a proper exception type for this? review all raw exceptions in the module
             case Absent =>
                 buildFirst(registered.sortBy(e => -priority(e)).filter(available).to(Chunk), name, build, Absent)
         end match

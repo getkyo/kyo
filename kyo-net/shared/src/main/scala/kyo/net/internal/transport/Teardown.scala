@@ -20,6 +20,7 @@ package kyo.net.internal.transport
   *   - [[AwaitingInFlight]]: write-side drained; awaiting the in-flight count to reach zero.
   *   - [[Released]]: terminal; the fd is closed exactly once, resources freed exactly once.
   */
+// TODO move to the Conneciton companion
 private[kyo] enum TeardownState derives CanEqual:
     case Live
     case ReleaseRequested

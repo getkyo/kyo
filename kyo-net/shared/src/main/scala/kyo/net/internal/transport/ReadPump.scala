@@ -109,6 +109,7 @@ final private[kyo] class ReadPump[Handle](
     end requestNextRead
 
     private def teardown(reason: String)(using AllowUnsafe, Frame): Unit =
+        // TODO WTF the reason is ignored? also, failure messages can ONLY be assembled in NetException.scala
         // Tear the connection down on EOF/error. closeFn marks the inbound channel closing-for-writes via closeAwaitEmpty (NOT close): a consumer
         // that has not drained the bytes the ReadPump staged ahead of EOF can still take them, then sees the channel FullyClosed once empty, so
         // those bytes are not dropped (the kyo-pod ContainerItTest execStream case: a stderr frame buffered alongside stdout). The handle teardown

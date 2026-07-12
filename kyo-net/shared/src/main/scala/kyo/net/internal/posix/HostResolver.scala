@@ -22,19 +22,22 @@ import kyo.scheduler.IOPromise
 private[net] object HostResolver:
 
     /** A resolved answer: the address family (`AF_INET` / `AF_INET6`) and the raw network-order address bytes (4 or 16). */
-    type Resolved = (Int, Array[Byte])
+    type Resolved = (Int, Array[Byte]) // TODO use a proper case class
 
     /** A raw system resolver: resolve `host` for `familyHint` to a [[Resolved]] or fail `Closed`. The underlying call blocks on a dedicated
       * carrier (spawned via `Fiber.Unsafe.init`), so the result is a `Fiber.Unsafe` that can be consumed via `onComplete` without re-entering
       * the effect system. The seam is a function so tests can substitute a deterministic, call-counting resolver without a real DNS query.
       */
-    type RawResolver = (String, Int) => Fiber.Unsafe[Result[Closed, Resolved], Any]
+    type RawResolver = (String, Int) => Fiber.Unsafe[
+        Result[Closed, Resolved],
+        Any
+    ] // TODO can we remove this kijnd of alias? why the fuck would the fiber return a Reusult instead of trackign Abort?
 
     /** Default cache TTL: 30 seconds. Long enough that a burst of connects to the same host resolves once, short enough that a changed DNS
       * record is picked up promptly. A successful resolution is cached for this long; failures are NOT cached (a transient resolver hiccup
       * should not pin a host as unresolvable).
       */
-    val DefaultTtl: Duration = 30.seconds
+    val DefaultTtl: Duration = 30.seconds // TODO make this a StaticFlag
 
     /** Upper bound on cached entries. When inserting into a full cache the whole cache is cleared first (a simple, allocation-free bound that
       * never lets the map grow without limit); 1024 distinct hosts is far beyond any normal client's working set, so the clear is rare.
@@ -48,7 +51,7 @@ private[net] object HostResolver:
     // type, and the resolver runs in the unsafe Fiber tier (it returns Fiber.Unsafe and reads the monotonic clock without suspension), so an
     // effect-based map does not fit. Retained as a documented no-equivalent exception; entries expire by their monotonic-nanos deadline.
     // TODO this can produce a leak? can we use kyo.Cache?
-    private val cache = new ConcurrentHashMap[(String, Int), Entry]()
+    private val cache = new ConcurrentHashMap[(String, Int), Entry]() // TODO Why is this not using kyo.Cache?
 
     /** Resolve `host` for `familyHint` through the platform [[SystemResolver]], caching successful answers. This is the production entry point
       * `encodeInet` calls; see [[resolveWith]] for the cache semantics.

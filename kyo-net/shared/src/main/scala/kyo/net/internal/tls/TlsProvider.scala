@@ -11,6 +11,7 @@ import kyo.net.internal.backend.IoBackend
   * platform (including Wasm and JS, which have no FFI); the FFI-coupled engine-building surface lives in the `jvm-native` `TlsEngineProvider`
   * subtype.
   */
+// TODO we have a few packages with just a few types. Remove thse and move impls to kyo.net.internal instead
 private[net] trait TlsProvider:
 
     /** Stable id matched by `-Dkyo.net.tls` ("boringssl" | "jdk" | "openssl" | "node"). */
@@ -37,7 +38,11 @@ private[net] object TlsProvider:
                 Maybe.fromOption(registered.find(_.name == id)) match
                     case Present(p) if p.isAvailable => p
                     case Present(_) =>
-                        throw Closed("TlsProvider", summon[Frame], s"pinned TLS provider '$id' is not available on this host")
+                        throw Closed(
+                            "TlsProvider",
+                            summon[Frame],
+                            s"pinned TLS provider '$id' is not available on this host"
+                        ) // TODO WTF Closed has nothing to do with the actual issue. You MUST use properly typed exceptions!!!!!!
                     case Absent =>
                         throw Closed("TlsProvider", summon[Frame], s"pinned TLS provider '$id' is not supported by this transport")
             case Absent =>

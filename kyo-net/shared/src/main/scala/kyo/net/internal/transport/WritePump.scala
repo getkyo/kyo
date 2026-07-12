@@ -97,6 +97,7 @@ final private[kyo] class WritePump[Handle](
 
     // `current` is the STORED WriteState.Flushing instance. It must be passed through to every CAS
     // so that AtomicReference.compareAndSet (which uses reference equality) finds the right object.
+    // TODO it seems this method can discard the flushing bytes in mutliple paths?
     private def doWrite(current: WriteState.Flushing)(using AllowUnsafe, Frame): Unit =
         driver.write(handle, current.pending, current.offset) match
             case WriteResult.Done =>
@@ -145,7 +146,7 @@ final private[kyo] class WritePump[Handle](
         p.onComplete { r =>
             import AllowUnsafe.embrace.danger
             given Frame = Frame.internal
-            onTake(r.asInstanceOf[Result[Closed, Span[Byte]]])
+            onTake(r.asInstanceOf[Result[Closed, Span[Byte]]]) // TODO why do we need this cast? review all casts of the module
         }
         channel.reuseTake(p)
     end requestNextTake

@@ -28,7 +28,7 @@ import kyo.net.Transport
   *   - JVM: `PosixTransport` using io_uring/epoll/kqueue above the `NioTransport` (NIO Selector) floor
   *   - JS: `JsTransport` using Node.js net module
   */
-// TODO double check this is really necessary
+// TODO double check this is really necessary. If yes, the file name MUST match the type name
 abstract private[kyo] class TransportImpl[Handle] extends Transport:
 
     /** The driver pool powering this transport. The only member `TransportImpl` ADDS over the public `Transport` abstract; every other

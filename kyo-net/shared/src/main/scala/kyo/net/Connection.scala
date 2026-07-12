@@ -79,6 +79,7 @@ object Connection:
       * incomplete message as a truncation while still accepting a [[Truncated]] end after a complete length-framed message, the interop-safe
       * posture established stacks use (Go's `io.EOF` vs `io.ErrUnexpectedEOF`, OpenSSL's `ZERO_RETURN` vs `unexpected eof while reading`).
       */
+    // TODO isn't the actually Status?
     enum CloseReason derives CanEqual:
         /** The connection is still open: no close has been observed yet. */
         case Active
