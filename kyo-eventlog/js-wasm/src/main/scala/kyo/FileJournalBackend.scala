@@ -86,7 +86,14 @@ extension (backend: Journal.Backend.type)
 end extension
 
 extension (r: Journal.Reader.type)
-    /** Sync read-only open: skips the writer lock, reads to the last valid terminator / commit line. */
+    /** Sync read-only open: skips the writer lock, reads to the last valid terminator / commit line.
+      *
+      * Requires a Node.js runtime; on a browser runtime (no `node:fs`) the call fails immediately with
+      * a typed [[JournalStorageError]] rather than at first I/O, matching [[Journal.Backend.file]].
+      *
+      * Single-writer, multiple-reader (SWMR): readers never acquire the root lock. Overloads accept
+      * [[FileJournal.Config]] and [[EventPayloadCodec]].
+      */
     def file(dir: Path)(using Frame): Journal.Reader[Sync] < (Sync & Scope & Abort[JournalStorageError]) =
         if !isNodeRuntime then
             Abort.fail(JournalStorageError(
@@ -121,7 +128,9 @@ extension (r: Journal.Reader.type)
         else
             FileJournalCore.openReader(dir, config, StoreSeam.sync(new NodeSegmentStore, isReadOnly = true), payloadCodec)
 
-    /** Async read-only open. */
+    /** Async read-only open. Requires a Node.js runtime; browser runtimes fail immediately with a typed
+      * [[JournalStorageError]]. Store operations use `node:fs/promises`; same SWMR semantics as [[file]].
+      */
     def fileAsync(dir: Path)(using Frame): Journal.Reader[Async] < (Sync & Scope & Abort[JournalStorageError]) =
         if !isNodeRuntime then
             Abort.fail(JournalStorageError(

@@ -55,17 +55,19 @@ object ServeSite extends KyoApp:
     /** Load every regular file under `root` into memory, keyed by its forward-slash path relative to
       * `root` (so `root/latest/kyo-core/index.html` is keyed `latest/kyo-core/index.html`).
       */
-    private def loadDir(root: Path)(using Frame): Map[String, Span[Byte]] < (Async & Abort[FileFsException | FileReadException]) =
+    private def loadDir(root: Path)(using Frame): Map[String, Span[Byte]] < (Async & Abort[FileException]) =
         val depth = root.parts.size
-        Scope.run(root.walk.run).map { entries =>
-            Kyo.foreach(entries) { entry =>
-                entry.isDirectory.map {
-                    case true => Absent
-                    case false =>
-                        entry.readBytes.map(bytes => Present(entry.parts.drop(depth).mkString("/") -> bytes))
-                }
-            }.map(pairs => pairs.collect { case Present(kv) => kv }.toMap)
-        }
+        Path.runReadOnly(
+            Scope.run(root.walk.run).map { entries =>
+                Kyo.foreach(entries) { entry =>
+                    entry.isDirectory.map {
+                        case true => Absent
+                        case false =>
+                            entry.readBytes.map(bytes => Present(entry.parts.drop(depth).mkString("/") -> bytes))
+                    }
+                }.map(pairs => pairs.collect { case Present(kv) => kv }.toMap)
+            }
+        )
     end loadDir
 
     /** Resolve a request path to a stored file key: empty/`/` and trailing-slash paths map to `index.html`;
@@ -106,7 +108,7 @@ object ServeSite extends KyoApp:
         args.toList match
             case dir :: rest =>
                 val port = rest.headOption.flatMap(_.toIntOption).getOrElse(defaultPort)
-                Abort.run[FileFsException | FileReadException](loadDir(Path(dir))).map {
+                Abort.run[FileException](loadDir(Path(dir))).map {
                     case Result.Success(store) =>
                         for
                             server <- HttpServer.init(HttpServerConfig.default.port(port))(rootHandler(store), restHandler(store))

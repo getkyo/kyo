@@ -100,6 +100,25 @@ final class EventLog[A](using Schema[A]):
 end EventLog
 
 object EventLog:
+    /** Write-side decider pattern: read typed history, decide the next event, append with optimistic
+      * concurrency.
+      *
+      * A decider consumes the typed event stream through [[EventLog.read]], folds events into local
+      * state (a pure function over `Chunk[[Typed]]`), and produces the next domain event to append.
+      * The append uses [[ExpectedOffset]] so concurrent writers fail with [[JournalConflictError]];
+      * catch the conflict, re-read from `conflict.actual`, re-decide, and retry with the corrected
+      * guard (the same recovery loop documented in the kyo-eventlog README under Conflict recovery).
+      *
+      * Deciders do not require a separate public API type: they are ordinary `Journal.run` programs
+      * that call `EventLog[A]` methods. Read-model replay (folding events into state without writing)
+      * is the projection side; the decider is the write side that closes the loop by appending new
+      * events when the folded state says to act.
+      *
+      * @see
+      *   [[Typed]] for the decoded record type returned by `read`
+      * @see
+      *   [[kyo.ExpectedOffset]] for the append concurrency model
+      */
     /** A decoded record from the event log, with the raw payload decoded to the domain type `A`.
       *
       * Each field maps directly from the underlying [[kyo.RecordedEvent]]: `offset` locates the

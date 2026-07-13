@@ -218,24 +218,29 @@ class IonCorpusTest extends kyo.test.Test[Any]:
     // The JS test runner's working directory is the build root, while the JVM and Native runners use the
     // platform subproject directory. Resolve the repository root by walking up to the directory that holds
     // build.sbt, then read the shared corpus from there. This keeps the suite cross-platform with no classpath.
-    private def corpusRoot(using Frame): Path < Sync =
-        Path.cwd.map { cwd =>
-            cwd.ancestors.run.map { chain =>
-                def search(candidates: List[Path]): Path < Sync =
-                    candidates match
-                        case Nil => cwd
-                        case head :: tail =>
-                            (head / "build.sbt").isRegularFile.map { found =>
-                                if found then head else search(tail)
-                            }
-                search(chain.toList)
-            }
-        }
+    private def corpusRoot(using Frame): Path < (Sync & Abort[FileException]) =
+        Path.runReadOnly(
+            for
+                cwd   <- Path.cwd
+                chain <- cwd.ancestors.run
+                root  <- searchRepoRoot(cwd, chain.toList)
+            yield root
+        )
 
-    private def resource(name: String)(using Frame): String < (Sync & Abort[FileReadException]) =
-        corpusRoot.map { root =>
-            (root / "kyo-schema" / "shared" / "src" / "test" / "resources" / name.stripPrefix("/"))
-                .read(StandardCharsets.UTF_8)
+    private def searchRepoRoot(cwd: Path, candidates: List[Path])(using Frame): Path < PathRead =
+        candidates match
+            case Nil => Kyo.lift(cwd)
+            case head :: tail =>
+                (head / "build.sbt").isRegularFile.flatMap { found =>
+                    if found then Kyo.lift(head) else searchRepoRoot(cwd, tail)
+                }
+
+    private def resource(name: String)(using Frame): String < (Sync & Abort[FileException]) =
+        corpusRoot.flatMap { root =>
+            Path.runReadOnly(
+                (root / "kyo-schema" / "shared" / "src" / "test" / "resources" / name.stripPrefix("/"))
+                    .read(StandardCharsets.UTF_8)
+            )
         }
 
 end IonCorpusTest

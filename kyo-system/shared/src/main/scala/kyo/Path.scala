@@ -65,8 +65,14 @@ sealed trait PathRead extends ArrowEffect[[A] =>> Path.Op[A], Id]
   * context also satisfies read operations, a mixed read plus write program's row collapses to
   * `PathWrite`, and [[Path.runReadOnly]] rejects a program containing a write at the call site.
   *
+  * Discharge with [[Path.run]] or [[Path.runWith]]; only these runners (and [[Path.transaction]],
+  * [[Path.sandbox]], or [[Path.virtual]], which install a temporary overlay) can satisfy `PathWrite`
+  * in a program's row.
+  *
   * @see
   *   [[PathRead]] for the read capability this extends
+  * @see
+  *   [[Path.transaction]], [[Path.sandbox]], [[Path.virtual]] for overlay-based write scopes
   */
 sealed trait PathWrite extends PathRead
 
@@ -173,12 +179,19 @@ object Path extends PathPlatformSpecific:
 
     // --- Disposition ---
 
-    /** Write-durability contract a service declares. `AutoCommit`: a successful write is durable per
-      * the backend's normal persistence contract (host, default in-memory). `CommitOnSuccess`: writes
-      * stage during the enclosing run and commit on success (no in-scope backend in this release; the
-      * case ships as an extension point). `ManualCommit`: writes stage until an explicit commit handle
-      * call (overlay default). Adding a case is non-breaking; exhaustive match sites gain a compile
-      * error rather than silently defaulting.
+    /** Write-durability contract a [[Service]] declares. The disposition governs when staged bytes
+      * become visible to other readers of the same backend:
+      *
+      *   - `AutoCommit`: each successful write is durable immediately per the backend's normal contract
+      *     ([[Service.host]], [[Service.inMemory]]).
+      *   - `CommitOnSuccess`: writes stage during the enclosing run and commit when the run completes
+      *     successfully. Reserved for backends that stage writes for the enclosing run; not used by
+      *     [[Service.host]], [[Service.inMemory]], or [[Service.overlay]].
+      *   - `ManualCommit`: writes stage until an explicit [[CommitHandle.commit]] call
+      *     ([[Service.overlay]] default).
+      *
+      * Adding a case is non-breaking; exhaustive match sites gain a compile error rather than silently
+      * defaulting.
       */
     enum Disposition derives CanEqual:
         case AutoCommit
@@ -294,7 +307,17 @@ object Path extends PathPlatformSpecific:
         def overlay[S](lower: Service[S])(using Frame): Overlay[S] < (Sync & Scope) =
             OverlayService.init(lower)
 
-        /** An overlay's public face: a [[CommitHandle]] whose disposition is `ManualCommit`. */
+        /** An overlay's public face: a [[CommitHandle]] whose disposition is `ManualCommit`.
+          *
+          * Returned by [[overlay]] and by [[Path.virtual]] for caller-controlled commit. Reads fall
+          * through to the lower service; writes stage in the upper layer until [[commit]],
+          * [[commitWith]], or [[commitOverwrite]] replays them. [[rollback]] discards staged writes
+          * without touching the lower service.
+          *
+          * IMPORTANT: [[commit]] and [[commitWith]] abort `CommitConflict` when a read-set stamp
+          * diverges from the live lower view; use [[commitWith]] with a [[Resolution]] function when
+          * the caller wants to resolve conflicts instead of failing.
+          */
         trait Overlay[S] extends CommitHandle[S]
     end Service
 
@@ -540,8 +563,15 @@ object Path extends PathPlatformSpecific:
 
     // --- Runners ---
 
-    /** Runs `program`, discharging both write and read capabilities against the default host service.
+    /** Runs `program`, discharging both write and read capabilities against the default host service
+      * ([[Service.host]]). Every filesystem op inside `program` suspends under `PathWrite` or
+      * `PathRead` and is dispatched to the host backend; the residual folds the per-op
+      * `Abort[File*Exception]` markers into the umbrella `Abort[FileException]`.
+      *
       * Residual: `Sync & Abort[FileException] & S` (the caller's tail `S` rides through).
+      *
+      * @see
+      *   [[runWith]] to install a custom [[Service]] (in-memory, overlay, root-confined host)
       */
     def run[A, S](program: A < (PathWrite & S))(using Frame): A < (Sync & Abort[FileException] & S) =
         runWith(Service.host)(program)
@@ -549,19 +579,35 @@ object Path extends PathPlatformSpecific:
     /** Runs `program`, discharging the read capability only against the default host service. A write
       * op left in the program keeps `PathWrite` undischarged, so the ascribed read-only residual does
       * not compile (the negative capability law).
+      *
+      * Use this at API boundaries that must not mutate the filesystem (read-only config loaders,
+      * projection rebuilds). The effect row is identical to [[run]] except that write ops are rejected
+      * at the call site rather than at runtime.
+      *
+      * @see
+      *   [[runReadOnlyWith]] to install a custom read-only [[Service]]
       */
     def runReadOnly[A, S](program: A < (PathRead & S))(using Frame): A < (Sync & Abort[FileException] & S) =
         runReadOnlyWith(Service.host)(program)
 
     /** Runs `program` against an explicit `service`, discharging write and read; the backend's own
       * effect `S` rides the residual (the Journal `Backend[S]` mapping).
+      *
+      * Install [[Service.inMemory]] for hermetic tests, [[Service.overlay]] (wrapped in `Scope`) for
+      * copy-on-write staging, or [[Service.host]](root) for root-confined host I/O. The service's
+      * [[Disposition]] determines when writes become durable relative to the enclosing run.
       */
     def runWith[S, A, S2](service: Service[S])(program: A < (PathWrite & S2))(using Frame): A < (S & Abort[FileException] & S2) =
         ArrowEffect.handle(Tag[PathWrite], program)(
             [C] => (op, cont) => dispatch(service, op).map(cont)
         )
 
-    /** Runs `program` against an explicit `service`, discharging the read capability only. */
+    /** Runs `program` against an explicit `service`, discharging the read capability only.
+      *
+      * Same negative-capability law as [[runReadOnly]]: a write op in `program` keeps `PathWrite`
+      * undischarged and fails to compile. The service's effect `S` and the caller's tail `S2` both
+      * ride the residual unchanged.
+      */
     def runReadOnlyWith[S, A, S2](service: Service[S])(program: A < (PathRead & S2))(using Frame): A < (S & Abort[FileException] & S2) =
         ArrowEffect.handle(Tag[PathRead], program)(
             [C] => (op, cont) => dispatch(service, op).map(cont)
@@ -571,6 +617,14 @@ object Path extends PathPlatformSpecific:
       * `Abort`, panic, or commit conflict. For an `AutoCommit` ambient service installs a temporary
       * overlay and commits it; for `CommitOnSuccess`/`ManualCommit` services uses the service's native
       * commit and rollback machinery.
+      *
+      * On success the overlay's staged writes are validated against the read-set and replayed onto the
+      * lower service. On `Abort[CommitConflict]` the lower service is left untouched and staged writes
+      * are rolled back. Requires an ambient `PathWrite` scope (an enclosing [[runWith]] or [[run]]).
+      *
+      * WARNING: concurrent writers to the same lower paths between overlay observation and commit can
+      * produce `CommitConflict`; use [[Path.virtual]] plus [[CommitHandle.commitWith]] when the caller
+      * needs a custom resolution policy.
       */
     def transaction[A, S](program: A < (PathWrite & S))(using Frame): A < (PathWrite & Abort[CommitConflict] & S) =
         // Unsafe: create overlay directly without Scope; lifecycle managed by commit/rollback below
@@ -598,7 +652,12 @@ object Path extends PathPlatformSpecific:
         }
     end transaction
 
-    /** Same overlay pattern with rollback as the success disposition; never surfaces `CommitConflict`.
+    /** Same overlay pattern as [[transaction]] with rollback as the success disposition; never surfaces
+      * `CommitConflict`.
+      *
+      * Staged writes are visible inside `program` but are always discarded when `program` completes,
+      * whether normally or via `Abort`. Use for speculative writes, dry-run tooling, and tests that
+      * must not touch the lower filesystem. Requires an ambient `PathWrite` scope.
       */
     def sandbox[A, S](program: A < (PathWrite & S))(using Frame): A < (PathWrite & S) =
         // Unsafe: create overlay directly without Scope; lifecycle managed by rollback below
@@ -622,9 +681,13 @@ object Path extends PathPlatformSpecific:
     /** Runs `program` against a fresh overlay and returns the overlay alongside the result, so the
       * caller can inspect, commit, discard, or choose a conflict policy after the block.
       *
-      * The `commit` and `rollback` operations on the returned overlay must run within an ambient
-      * path scope (the same or an enclosing `runWith` call) for them to reach the backend.
-      * Calling them after PathWrite is discharged leaves path operations unresolved at runtime.
+      * The returned [[Service.Overlay]] is a [[CommitHandle]] with `ManualCommit` disposition.
+      * Call [[Service.Overlay.commit]], [[Service.Overlay.commitWith]], or
+      * [[Service.Overlay.rollback]] after inspecting staged state.
+      *
+      * IMPORTANT: `commit` and `rollback` on the returned overlay must run within an ambient
+      * `PathWrite` scope (the same or an enclosing [[runWith]] call). Calling them after `PathWrite`
+      * is discharged leaves path operations unresolved at runtime.
       */
     def virtual[A, S](program: A < (PathWrite & S))(using Frame): (A, Service.Overlay[Sync]) < (PathWrite & S) =
         // Unsafe: create overlay directly without Scope; caller controls commit/discard after the block
@@ -863,8 +926,8 @@ object Path extends PathPlatformSpecific:
     end Stamp
 
     /** A [[Service]] extension whose writes stage locally until an explicit commit validates them
-      * against the underlying live service. The overlay ([[Service.overlay]]) is the in-scope
-      * implementation; its [[Service.disposition]] is `Disposition.ManualCommit`.
+      * against the underlying live service. [[Service.overlay]] is the built-in manual-commit
+      * factory; its [[Service.disposition]] is `Disposition.ManualCommit`.
       *
       * Three commit strategies are available:
       *   - [[commit]]: validates the read-set against the live lower; aborts `CommitConflict` if
@@ -1537,6 +1600,14 @@ object Path extends PathPlatformSpecific:
           * bytes to stable storage before returning (fsync). If `close()` runs without a prior
           * `finish()`, the partial entry is removed (the delete-on-failure contract the stream sinks
           * rely on).
+          */
+        /** Marks the write channel as successfully completed: flushes buffered bytes and fsyncs when the
+          * platform supports it. After `finish()`, [[close]] releases OS resources without deleting the
+          * file.
+          *
+          * WARNING: if [[close]] is called without a prior `finish()`, the platform implementation
+          * deletes the partial entry (the delete-on-close-without-finish contract). Always call `finish()`
+          * before scope exit when the written content must be retained.
           */
         def finish()(using AllowUnsafe): Unit
 

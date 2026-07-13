@@ -41,8 +41,17 @@ object Journal:
     end Op
 
     /** Read-only view of a journal: read and stream inspection with no append. A read-only file open
-      * skips the writer lock and sees only committed data. Consumed directly (like the Backend SPI) and
-      * by subscription and projection layers built on top of it.
+      * skips the writer lock and sees only committed data (single-writer, multiple-reader semantics).
+      *
+      * Consumed directly by subscription and projection layers, and extended by [[Backend]] which adds
+      * `append`. Effect-polymorphic in `S`: a sync reader runs under `Sync`, an async reader under
+      * `Async`. Factory methods live on [[Reader.file]] and [[Reader.fileAsync]] in each platform tree's
+      * `FileJournalBackend.scala`.
+      *
+      * @tparam S
+      *   the effect the reader's operations run under
+      * @see
+      *   [[Backend]] for the read-write storage contract
       */
     trait Reader[S]:
         /** Reads at most `maxCount` events from `from` in offset order. */

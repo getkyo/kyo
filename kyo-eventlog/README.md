@@ -132,6 +132,84 @@ def nextOffset(conflict: JournalConflictError): ExpectedOffset =
 
 When `actual` is `Existing`, `last` is the current last offset; pass it as `Exact` on the retry append. When `actual` is `Absent`, the stream was concurrently deleted; use `NoStream` or abandon.
 
+## Typed events with EventLog
+
+`EventLog[A]` wraps raw `Journal` operations with schema-driven encoding and decoding for domain type `A`. Construct with `new EventLog[A]` (requires `Schema[A]` in implicit scope). Call its methods inside `Journal.run(backend)(...)` exactly as you would call `Journal.append`, `Journal.read`, and `Journal.streamInfo`:
+
+```scala
+sealed trait OrderEvent derives Schema
+case class ItemAdded(sku: String, qty: Int) extends OrderEvent derives Schema
+
+val log = new EventLog[OrderEvent]
+
+val appended: AppendResult < (Sync & Abort[JournalAppendFailure]) =
+    for
+        backend <- Journal.Backend.inMemory
+        result <- Journal.run(backend) {
+            log.append(sid, ExpectedOffset.NoStream, Chunk(ItemAdded("widget", 10)))
+        }
+    yield result
+```
+
+`read` returns `Chunk[EventLog.Typed[A]]` with the decoded payload in `.payload`. Decode failures surface as `JournalCorruptedError` on the read row.
+
+`EventPayloadCodec` selects how event payloads are stored on disk. Pass it to `Journal.Backend.file` and `Journal.Backend.fileAsync`:
+
+| Codec | Behavior |
+|---|---|
+| `EventPayloadCodec.bytes` (default) | Raw `Span[Byte]` identity encoding |
+| `EventPayloadCodec.schema[A]` | Schema-derived JSON (requires `Schema[A]`) |
+
+`FileJournal.SegmentFormat` chooses the on-disk segment encoding, fixed at journal root creation:
+
+| Format | Segment files | Notes |
+|---|---|---|
+| `SegmentFormat.Binary` (default) | `.seg` with `KJN1` header | CRC32-verified binary frames |
+| `SegmentFormat.Jsonl` | `.jsonl` lines | Human-readable; payload shape follows the selected codec |
+
+Set `format` on `FileJournal.Config` when opening a new root.
+
+## Write-side deciders
+
+A decider reads typed history, folds it into local state, and appends the next domain event when the state says to act. It is an ordinary `Journal.run` program using `EventLog[A]`: no separate decider API type is required.
+
+The write loop follows three steps: read the stream, decide the next event (a pure function over `Chunk[EventLog.Typed[A]]`), append with an `ExpectedOffset` guard. When a concurrent writer causes `JournalConflictError`, inspect `conflict.actual`, re-read if needed, and retry with the corrected guard (see Conflict recovery above).
+
+```scala
+sealed trait CounterEvent derives Schema
+case class Incremented(amount: Int) extends CounterEvent derives Schema
+
+def total(events: Chunk[EventLog.Typed[CounterEvent]]): Int =
+    events.foldLeft(0) { (sum, e) =>
+        e.payload match
+            case Incremented(amount) => sum + amount
+    }
+
+def decideNext(events: Chunk[EventLog.Typed[CounterEvent]]): Maybe[CounterEvent] =
+    if total(events) < 100 then Present(Incremented(1)) else Absent
+
+val deciderStep: Unit < (Sync & Abort[JournalAppendFailure | JournalReadFailure]) =
+    for
+        backend <- Journal.Backend.inMemory
+        log = new EventLog[CounterEvent]
+        _ <- Journal.run(backend) {
+            for
+                events <- log.read(sid, StreamOffset.first, maxCount = 1000)
+                _ <- decideNext(events) match
+                    case Present(event) =>
+                        val expected = events.lastOption match
+                            case Some(last) => ExpectedOffset.Exact(last.offset)
+                            case None       => ExpectedOffset.NoStream
+                        log.append(sid, expected, Chunk(event)).map(_ => ())
+                    case Absent =>
+                        Sync.defer(())
+            yield ()
+        }
+    yield ()
+```
+
+Projection (replaying events into a read model without writing) is the companion pattern: fold `Chunk[EventLog.Typed[A]]` with a pure function, as in the kyo-examples car rental demo.
+
 ## Reading events
 
 `Journal.read` returns a bounded slice of a stream's events in ascending offset order. `Journal.read(streamId, from, maxCount)` returns `Chunk[RecordedEvent] < (Journal & Abort[JournalReadFailure])`.
@@ -231,19 +309,22 @@ val inMem: Journal.Backend[Sync] < Sync =
 ```scala doctest:expect=skipped
 val dir: Path = Path("my-journal")
 val backend: Journal.Backend[Sync] < (Sync & Scope & Abort[JournalStorageError]) =
-    Journal.Backend.file(dir)
+    Journal.Backend.file(dir, payloadCodec = EventPayloadCodec.bytes)
 ```
+
+`Journal.Backend.fileAsync` opens the same on-disk format under `Backend[Async]`. `Journal.Reader.file` and `Journal.Reader.fileAsync` open a read-only view that skips the writer lock (single-writer, multiple-reader).
 
 This constructor is available on JVM, Native, and Node.js (including Wasm-under-Node). On a browser runtime (no `node:fs`) it fails immediately with a typed `JournalStorageError` rather than at first I/O; no browser persistence backend exists. The `dir` parameter is a `Path` from `kyo-system`. `Scope` finalization releases the root lock and closes all open segment channels. A second open of a held root directory fails immediately with `JournalStorageError`.
 
 On JVM and Native the root lock is an advisory file lock (`FileChannel.tryLock`); the OS drops it on process death, so no cleanup is needed after a crash. On Node.js the lock is an `O_EXCL` lockfile carrying the holder's pid and hostname. On the next open after a crash, the dead holder's pid is probed with `process.kill(pid, 0)`; an `ESRCH` result (no such process) triggers an atomic reclaim, and the open succeeds. An unparseable lock or a lock from another host is never reclaimed and fails closed. The crash-recovery guarantee (a dead holder's lock is always reclaimed on the next open) is the same on all platforms.
 
-Pass `FileJournal.Config` to override two knobs:
+Pass `FileJournal.Config` to override three knobs:
 
 | Field | Default | Notes |
 |---|---|---|
 | `fsync` | `Fsync.Always` | Flush each acknowledged append to stable storage before returning. Set to `Fsync.Disabled` only in tests; the crash-survival guarantee does not hold when `Fsync.Disabled` is set. |
 | `segmentSize` | `64L.mib` (64 MiB) | Soft rotation threshold. The threshold is checked before an append, not after, so the active segment can grow past it: a record larger than the threshold is written whole into the current active segment rather than a dedicated one. |
+| `format` | `SegmentFormat.Binary` | On-disk segment encoding; fixed at root creation via the `FORMAT` marker file. |
 
 Every acknowledged append (with `fsync = Fsync.Always`) survives a crash. A torn tail at the end of the active segment (from a prior crash) is silently truncated at recovery; prior committed events are never lost. Recovery runs lazily on the first touch of a stream, and a `read` or `streamInfo` can be that first touch, so a nominally read-only call can perform the one-time torn-tail truncation on disk. Non-tail corruption and unknown segment versions are fatal (`JournalCorruptedError`). Metadata values round-trip exactly through the file backend: all ten `Structure.Value` constructors encode without loss.
 

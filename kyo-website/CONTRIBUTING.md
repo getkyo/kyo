@@ -795,7 +795,7 @@ normalize away positional `data-kyo-path` values
   (`WebsiteContentTest.scala:283-299,343-353`).
 - JVM tests locate the repo root by walking up from `user.dir` until `build.sbt` is
   found (`WebsiteBuildGraphTest.scala:9-16`, `DeployWorkflowTest.scala:20-27`). A
-  `readFile` helper maps `FileReadException` into `WebsiteEmitException` and
+  `readFile` helper maps `FileException` into `WebsiteEmitException` and
   re-raises `Panic` (`WebsiteGeneratorTest.scala:78-83`,
   `WebsiteMainTest.scala:31-36`).
 - Error-path leaves assert on the typed failure via `Abort.run[WebsiteException](...)`

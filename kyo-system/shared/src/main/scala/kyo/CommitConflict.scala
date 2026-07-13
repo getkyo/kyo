@@ -15,11 +15,15 @@ final case class CommitConflict(conflicts: Chunk[Conflict])(using Frame) extends
 
 /** One read-set divergence detected at commit: the base observation stamped when the overlay first saw
   * the lower entry (`ancestor`), the overlay's staged view (`ours`), and the live lower entry (`theirs`).
+  *
   * `ancestor` is a `Maybe[Path.Stamp]`, not a `Path.Entry`, because the read-set records only a stamp at
   * observation (no bytes, by the overlay's one-stat-per-observation cost model), so the base bytes were
   * never stored; `ours` and `theirs` carry full entries because their bytes exist at commit time (the
   * staged upper entry, and a fresh read of the live lower path). `ancestor` is `Absent` only when the
   * conflicting path was never observed.
+  *
+  * Inspect each field to choose a [[Resolution]] in [[Path.CommitHandle.commitWith]], or let
+  * [[Path.transaction]] abort with [[CommitConflict]] when any divergence is unacceptable.
   */
 final case class Conflict(
     path: Path,

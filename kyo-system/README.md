@@ -1,20 +1,64 @@
 # kyo-system
 
-`kyo-system` provides file I/O, OS process execution, and system environment access. All three are effect-tracked: reads carry `Abort[FileReadException]`, writes carry `Abort[FileWriteException]`, and process launches carry `Abort[CommandException]`. File handles and process handles are `Scope`-managed for automatic cleanup, and the same API compiles across JVM, Scala Native, and JavaScript (Node.js).
+`kyo-system` provides file I/O, OS process execution, and system environment access. File operations are tracked through the `PathRead` and `PathWrite` capabilities: reads and writes suspend under these effects and are discharged by a runner (`Path.run`, `Path.runReadOnly`, or their `runWith` variants), which folds the per-operation `Abort[File*Exception]` markers into the umbrella `Abort[FileException]`. Process launches carry `Abort[CommandException]`, and handles are `Scope`-managed for automatic cleanup. The same API compiles across JVM, Scala Native, and JavaScript (Node.js).
 
-The following example reads a configuration file, fetches a git revision, runs a build step, and writes an artifact record:
+The following example reads a configuration file, fetches a git revision, runs a build step, and writes an artifact record. Every filesystem op runs inside `Path.run`, which installs the default host service and discharges both capabilities:
 
 ```scala
 import kyo.*
 
 val deploy =
-    for
-        config  <- (Path / "etc" / "deploy.toml").read
-        version <- Command("git", "rev-parse", "--short", "HEAD").text
-        _       <- Command("sbt", "assembly").cwd(Path("backend")).waitForSuccess
-        _       <- (Path("dist") / "version.txt").write(version)
-    yield ()
+    Path.run {
+        for
+            config  <- (Path / "etc" / "deploy.toml").read
+            version <- Command("git", "rev-parse", "--short", "HEAD").text
+            _       <- Command("sbt", "assembly").cwd(Path("backend")).waitForSuccess
+            _       <- (Path("dist") / "version.txt").write(version)
+        yield ()
+    }
 ```
+
+## Path capabilities
+
+Filesystem I/O is capability-tracked, not method-tracked. A program that only reads carries `< PathRead` in its row; a program that writes carries `< PathWrite` (which also satisfies reads). `Sync`, `Scope`, and the `Abort[FileException]` umbrella appear on the runner residual after discharge, not on individual extension methods.
+
+| Runner | Discharges | Residual (host service) |
+|---|---|---|
+| `Path.run(program)` | `PathWrite` (and `PathRead` via subtyping) | `Sync & Abort[FileException] & S` |
+| `Path.runReadOnly(program)` | `PathRead` only | `Sync & Abort[FileException] & S` |
+| `Path.runWith(service)(program)` | `PathWrite` against a custom service | `S & Abort[FileException] & S2` |
+| `Path.runReadOnlyWith(service)(program)` | `PathRead` against a custom service | `S & Abort[FileException] & S2` |
+
+`PathWrite <: PathRead`: a write-capable context also satisfies read operations, and `Path.runReadOnly` rejects write programs at the call site (the negative capability law).
+
+Install a custom backend with `Path.runWith`: `Service.host` (default), `Service.host(root)` (root-confined), `Service.inMemory` (hermetic tests), or `Service.overlay(lower)` (copy-on-write staging with explicit commit).
+
+Overlay combinators for transactional writes:
+
+```scala
+import kyo.*
+
+// Commit staged writes on success; rollback on Abort or CommitConflict
+val committed: String < (Sync & Abort[FileException] & Abort[CommitConflict]) =
+    Path.run {
+        Path.transaction {
+            for
+                _ <- (Path("data") / "draft.txt").write("hello")
+                t <- (Path("data") / "draft.txt").read
+            yield t
+        }
+    }
+
+// Discard staged writes unconditionally
+val dryRun: Unit < (Sync & Abort[FileException]) =
+    Path.run {
+        Path.sandbox {
+            (Path("data") / "probe.txt").write("test")
+        }
+    }
+```
+
+`Path.tempDir(prefix)` creates a directory through the active service and returns a `TempDirHandle` whose cleanup runs through that service's removal path when the enclosing `Scope` exits.
 
 ## File paths
 
@@ -29,6 +73,18 @@ val data: Path   = Path("var", "data", "myapp")
 // Splice an existing Path into another path
 val base: Path   = Path("home") / "user"
 val nested: Path = base / Path("projects", "kyo")
+
+// Pure accessors require no Path capability
+val parts: Chunk[String] = config.parts
+```
+
+Filesystem reads and writes require a runner. Wrap read-only programs in `Path.runReadOnly` and read-write programs in `Path.run`:
+
+```scala
+import kyo.*
+
+val text: String < (Sync & Abort[FileException]) =
+    Path.runReadOnly((Path / "etc" / "app.toml").read)
 ```
 
 `Path.fileSeparator` is the segment separator (`"/"` or `"\\"`) and `Path.pathSeparator` is the classpath-style delimiter (`":"` or `";"`) for the current OS.
@@ -51,24 +107,28 @@ import kyo.*
 val src: Path = Path("home") / "user" / "project" / "src"
 
 // Walk toward the root; return the first ancestor that contains build.sbt
-val projectRoot: Maybe[Path] < Sync =
-    src.ancestors.find(ancestor => (ancestor / "build.sbt").exists)
+val projectRoot: Maybe[Path] < (Sync & Abort[FileException]) =
+    Path.runReadOnly {
+        src.ancestors.find(ancestor => (ancestor / "build.sbt").exists)
+    }
 ```
 
 ## Inspecting files
 
-`exists`, `isDirectory`, `isRegularFile`, and `isSymbolicLink` return `Boolean < Sync` with no `Abort`. An inaccessible path produces `false` rather than failing:
+`exists`, `isDirectory`, `isRegularFile`, and `isSymbolicLink` suspend under `PathRead`. An inaccessible path produces `false` rather than failing. Run them inside `Path.runReadOnly`:
 
 ```scala
 import kyo.*
 
 val path: Path = Path / "dist" / "release" / "artifact.jar"
 
-val checks: (Boolean, Boolean) < Sync =
-    for
-        e <- path.exists
-        f <- path.isRegularFile
-    yield (e, f)
+val checks: (Boolean, Boolean) < (Sync & Abort[FileException]) =
+    Path.runReadOnly {
+        for
+            e <- path.exists
+            f <- path.isRegularFile
+        yield (e, f)
+    }
 ```
 
 `exists(followLinks: Boolean)` controls symlink traversal. All four methods return `false` on any permission or access failure.
@@ -82,7 +142,9 @@ val root: Path = Path / "var" / "uploads"
 
 // Adversarial traversal is rejected after symlink resolution
 val safe: Path < (Sync & Abort[FileException]) =
-    (root / "../../etc/passwd").confinedTo(root)
+    Path.runReadOnly {
+        (root / "../../etc/passwd").confinedTo(root)
+    }
 ```
 
 `realPath` resolves every symbolic link in the chain and returns the canonical absolute path, without any containment check. It fails with `FileNotFoundException` if any element of the path does not exist, or `FileAccessDeniedException` if the filesystem denies access:
@@ -91,21 +153,26 @@ val safe: Path < (Sync & Abort[FileException]) =
 import kyo.*
 
 val canonical: Path < (Sync & Abort[FileException]) =
-    (Path / "var" / "run" / "app.sock").realPath
+    Path.runReadOnly {
+        (Path / "var" / "run" / "app.sock").realPath
+    }
 ```
 
 ## Reading files
 
-Bulk reads load the entire file and return `< (Sync & Abort[FileReadException])`:
+Bulk reads suspend under `PathRead`. After `Path.runReadOnly`, the residual is `Sync & Abort[FileException]`:
 
 ```scala
 import kyo.*
 
 val path: Path = Path / "etc" / "app" / "config.toml"
 
-val text: String < (Sync & Abort[FileReadException])         = path.read
-val bytes: Span[Byte] < (Sync & Abort[FileReadException])    = path.readBytes
-val lines: Chunk[String] < (Sync & Abort[FileReadException]) = path.readLines
+val text: String < (Sync & Abort[FileException]) =
+    Path.runReadOnly(path.read)
+val bytes: Span[Byte] < (Sync & Abort[FileException]) =
+    Path.runReadOnly(path.readBytes)
+val lines: Chunk[String] < (Sync & Abort[FileException]) =
+    Path.runReadOnly(path.readLines)
 ```
 
 All three accept an optional `java.nio.charset.Charset`; the default is UTF-8.
@@ -115,11 +182,11 @@ All three accept an optional `java.nio.charset.Charset`; the default is UTF-8.
 ```scala
 import kyo.*
 
-val info: Path.PathStat < (Sync & Abort[FileReadException]) =
-    (Path / "var" / "data" / "records.db").stat
+val info: Path.PathStat < (Sync & Abort[FileException]) =
+    Path.runReadOnly((Path / "var" / "data" / "records.db").stat)
 
-val sz: Long < (Sync & Abort[FileReadException]) =
-    (Path / "var" / "data" / "records.db").size
+val sz: Long < (Sync & Abort[FileException]) =
+    Path.runReadOnly((Path / "var" / "data" / "records.db").size)
 ```
 
 Streaming reads keep only a buffer in memory at a time. The OS handle is opened when the stream starts and released when the enclosing `Scope` closes, whether by normal completion, error, or cancellation. All streaming read methods carry `Scope` in the stream's effect row:
@@ -127,10 +194,12 @@ Streaming reads keep only a buffer in memory at a time. The OS handle is opened 
 ```scala
 import kyo.*
 
-val processed: Unit < (Async & Sync & Scope & Abort[FileReadException]) =
-    Path("var", "log", "events.ndjson")
-        .readLinesStream
-        .foreach(line => Sync.defer(println(line)))
+val processed: Unit < (Sync & Scope & Abort[FileException]) =
+    Path.runReadOnly {
+        Path("var", "log", "events.ndjson")
+            .readLinesStream
+            .foreach(line => Sync.defer(println(line)))
+    }
 ```
 
 `readStream(charset, bufferSize)` and `readBytesStream(bufferSize)` expose the buffer-size parameter for tuning. `walk` is a Scope-managed stream of directory entries (covered under Directory operations).
@@ -140,42 +209,47 @@ val processed: Unit < (Async & Sync & Scope & Abort[FileReadException]) =
 ```scala
 import kyo.*
 
-val errors: Unit < (Async & Scope & Sync & Abort[FileReadException]) =
-    Path("var", "app.log")
-        .tail(500.millis)
-        .filter(_.contains("ERROR"))
-        .foreach(line => Sync.defer(println(line)))
+val errors: Unit < (Async & Scope & Sync & Abort[FileException]) =
+    Path.runReadOnly {
+        Path("var", "app.log")
+            .tail(500.millis)
+            .filter(_.contains("ERROR"))
+            .foreach(line => Sync.defer(println(line)))
+    }
 ```
 
 ## Writing files
 
-Write methods create parent directories by default (`createFolders = true`). Pass `createFolders = false` to fail when the parent is absent:
+Write methods suspend under `PathWrite`. Run them inside `Path.run`. Write methods create parent directories by default (`createFolders = true`). Pass `createFolders = false` to fail when the parent is absent:
 
 ```scala
 import kyo.*
 
 val out: Path = Path("dist") / "build" / "version.txt"
 
-val w: Unit < (Sync & Abort[FileWriteException])  = out.write("1.0.0")
-val a: Unit < (Sync & Abort[FileWriteException])  = out.append("\nbuilt by CI\n")
-val l: Unit < (Sync & Abort[FileWriteException])  = out.writeLines(Chunk("line1", "line2"))
-val data: Span[Byte]                              = Span.from(Array[Byte](0x50.toByte, 0x4b.toByte))
-val wb: Unit < (Sync & Abort[FileWriteException]) = out.writeBytes(data)
-val ab: Unit < (Sync & Abort[FileWriteException]) = out.appendBytes(data)
+val w: Unit < (Sync & Abort[FileException]) =
+    Path.run(out.write("1.0.0"))
+val a: Unit < (Sync & Abort[FileException]) =
+    Path.run(out.append("\nbuilt by CI\n"))
+val data: Span[Byte] = Span.from(Array[Byte](0x50.toByte, 0x4b.toByte))
+val wb: Unit < (Sync & Abort[FileException]) =
+    Path.run(out.writeBytes(data))
 ```
 
 `writeLines` and `appendLines` follow each line with the platform line separator including the last line. Use `write(lines.mkString(sep))` to control the trailing newline yourself. `truncate(size)` shrinks or pads a file to exactly `size` bytes. `setLastModified(epochMs)` sets the last-modified timestamp.
 
-`Stream[Byte, S].writeTo(path)`, `Stream[String, S].writeTo(path, charset)`, and `Stream[String, S].writeLinesTo(path, charset)` are stream sinks that acquire a write handle in a `Scope`. The `writeTo` variant for a `String` stream writes each element as-is; `writeLinesTo` appends the platform line separator after each element. If the stream fails with a `FileWriteException`, the partially written file is deleted before the error is re-raised:
+`Stream[Byte, S].writeTo(path)`, `Stream[String, S].writeTo(path, charset)`, and `Stream[String, S].writeLinesTo(path, charset)` are stream sinks that acquire a write handle in a `Scope`. The sinks carry `PathWrite` in their row. If the stream fails, the partially written file is deleted before the error is re-raised:
 
 ```scala
 import kyo.*
 
 val sink: Unit < (Async & Scope & Sync & Abort[FileException]) =
-    Path("var", "app.log")
-        .tail
-        .filter(_.contains("ERROR"))
-        .writeLinesTo(Path("var", "errors.log"))
+    Path.run {
+        Path("var", "app.log")
+            .tail
+            .filter(_.contains("ERROR"))
+            .writeLinesTo(Path("var", "errors.log"))
+    }
 ```
 
 ## Directory operations
@@ -187,11 +261,12 @@ import kyo.*
 
 val dir: Path = Path("var", "uploads")
 
-val mk: Unit < (Sync & Abort[FileFsException])                   = dir.mkDir
-val all: Chunk[Path] < (Sync & Abort[FileFsException])           = dir.list
-val images: Chunk[Path] < (Sync & Abort[FileFsException])        = dir.list("*.{jpg,png,gif}")
-val tree: Stream[Path, Sync & Scope & Abort[FileFsException]]    = dir.walk
-val shallow: Stream[Path, Sync & Scope & Abort[FileFsException]] = dir.walk(maxDepth = 1)
+val mk: Unit < (Sync & Abort[FileException]) =
+    Path.run(dir.mkDir)
+val all: Chunk[Path] < (Sync & Abort[FileException]) =
+    Path.runReadOnly(dir.list)
+val tree: Stream[Path, PathRead & Scope & Sync] =
+    dir.walk
 ```
 
 `move` and `copy` each accept optional flags for atomic moves, attribute copying, and symlink handling. `remove` returns `true` when the path was deleted and `false` when it was absent. `removeExisting` raises `FileNotFoundException` when the path does not exist. `removeAll` recursively deletes a directory and all its contents:
@@ -202,10 +277,10 @@ import kyo.*
 val src: Path = Path("tmp") / "build-output"
 val dst: Path = Path("dist") / "release"
 
-val moved: Unit < (Sync & Abort[FileFsException])      = src.move(dst)
-val copied: Unit < (Sync & Abort[FileFsException])     = src.copy(dst, replaceExisting = true)
-val deleted: Boolean < (Sync & Abort[FileFsException]) = src.remove
-val purged: Unit < (Sync & Abort[FileFsException])     = dst.removeAll
+val moved: Unit < (Sync & Abort[FileException]) =
+    Path.run(src.move(dst))
+val deleted: Boolean < (Sync & Abort[FileException]) =
+    Path.run(src.remove)
 ```
 
 ## Error handling
@@ -222,15 +297,17 @@ val purged: Unit < (Sync & Abort[FileFsException])     = dst.removeAll
 | `FileDirectoryNotEmptyException` | | | yes |
 | `FileIOException` | yes | yes | yes |
 
-Each concrete exception implements only the marker traits that apply to it. This makes `Abort.recover` precise: recovering from `FileNotFoundException` does not suppress other read or write failures:
+Each concrete exception implements only the marker traits that apply to it. After `Path.runReadOnly`, the runner folds the markers into `Abort[FileException]`:
 
 ```scala
 import kyo.*
 
-val content: String < (Sync & Abort[FileReadException]) =
-    Abort.recover[FileNotFoundException] { _ =>
-        "# default config\n"
-    }(Path("etc", "app.toml").read)
+val content: String < (Sync & Abort[FileException]) =
+    Path.runReadOnly {
+        Abort.recover[FileNotFoundException] { _ =>
+            "# default config\n"
+        }(Path("etc", "app.toml").read)
+    }
 ```
 
 To materialize the error as a `Result` and decide what to do at the call site:
@@ -238,8 +315,10 @@ To materialize the error as a `Result` and decide what to do at the call site:
 ```scala
 import kyo.*
 
-val result: Result[FileReadException, String] < Sync =
-    Abort.run[FileReadException](Path("etc", "app.toml").read)
+val result: Result[FileException, String] < Sync =
+    Abort.run[FileException] {
+        Path.runReadOnly(Path("etc", "app.toml").read)
+    }
 ```
 
 `CommandException` is the sealed hierarchy for pre-launch failures:
@@ -254,7 +333,8 @@ val result: Result[FileReadException, String] < Sync =
 ```scala
 import kyo.*
 
-val cwd: Path < Sync = Path.cwd
+val cwd: Path < (Sync & Abort[FileException]) =
+    Path.runReadOnly(Path.cwd)
 ```
 
 `Path.basePaths` and `Path.userPaths` are lazy vals that provide OS-appropriate paths without requiring an application identity. On Linux they follow the XDG Base Directory Specification; on macOS they use the `Library` hierarchy; on Windows they use `APPDATA` and `LOCALAPPDATA`:
@@ -291,19 +371,15 @@ val appData: Path   = proj.data
 
 `ProjectPaths` fields: `path`, `cache`, `config`, `data`, `dataLocal`, `preference`, `runtime`.
 
-Temporary paths are companion-level and available on JVM, Native, and JavaScript. `Path.tempScoped` registers the file for deletion when the enclosing `Scope` closes; `Path.temp` and `Path.tempDir` do not:
+Temporary paths are service-scoped through the active runner. `Path.tempDir(prefix)` creates a directory and registers recursive removal when the enclosing `Scope` closes:
 
 ```scala
 import kyo.*
 
-val tmpFile: Path < (Sync & Abort[FileFsException]) =
-    Path.temp("kyo-", ".tmp")
-
-val tmpDir: Path < (Sync & Abort[FileFsException]) =
-    Path.tempDir("kyo-build-")
-
-val managed: Path < (Sync & Scope & Abort[FileFsException]) =
-    Path.tempScoped("kyo-", ".tmp")
+val tmpDir: Path < (Sync & Scope & Abort[FileException]) =
+    Path.run {
+        Path.tempDir("kyo-build-")
+    }
 ```
 
 On JVM and Scala Native, `path.toJava: java.nio.file.Path` converts to the standard library type without a cast. It is not available on Scala.js.

@@ -12,18 +12,21 @@ kyo-eventlog owns the Journal capability and its backing infrastructure:
 
 | File | Purpose |
 |---|---|
-| `Journal.scala` | `Journal` sealed trait; `Op` enum (GADT); `Backend[S]` SPI; `append`, `read`, `streamInfo` public ops; `run` handler; `Unsafe` forwarders |
+| `Journal.scala` | `Journal` sealed trait; `Op` enum (GADT); `Reader[S]`; `Backend[S] extends Reader[S]`; public ops; `run` handler; `Unsafe` forwarders |
+| `EventLog.scala` | Typed facade `EventLog[A]` and `EventLog.Typed[A]` over raw journal ops |
+| `EventPayloadCodec.scala` | Payload encoding strategies (`bytes`, `schema[A]`) for file backends |
 | `JournalError.scala` | Sealed `KyoException` hierarchy: umbrella base, three per-op traits, five leaves |
 | `JournalEvent.scala` | Wire-vocabulary types: `StreamId`, `EventId`, `EventType`, `StreamOffset`, `StreamVersion`, `ExpectedOffset`, `StreamInfo`, `EventEnvelope`, `RecordedEvent`, `AppendResult` |
 | `JournalMetadata.scala` | `EventMetadata` case class; `MetadataKey` opaque type |
 | `internal/InMemoryJournal.scala` | Ephemeral in-memory backend: CAS over `AtomicRef`, `Loop`-based retry |
-| `FileJournal.scala` | `FileJournal.Config` and `FileJournal.Fsync` (the durability and rotation knobs; the `Backend.file` extension lives in each platform tree's `FileJournalBackend.scala`) |
+| `FileJournal.scala` | `FileJournal.Config`, `Fsync`, `SegmentFormat`; platform `Backend.file` / `Reader.file` extensions |
 | `internal/FileJournalCore.scala` | Shared orchestration: recovery driver, segment index, in-process root registry, CAS claim, rotation, read path |
-| `internal/SegmentStore.scala` | Platform I/O seam (`open`, `acquireLock`, `syncDir`); each platform tree supplies one concrete implementation |
+| `internal/SegmentStore.scala` | Platform I/O seam (`open`, `acquireLock`, `syncDir`); effect-polymorphic store seam for Sync vs Async |
+| `internal/SegmentCodec.scala`, `internal/JsonlSegmentCodec.scala` | Binary and JSONL segment codecs selected by `Config.format` |
 | `internal/CRC32.scala` | Table-driven pure Scala CRC32 (reflected IEEE 802.3 polynomial `0xEDB88320`); byte-identical on every platform |
-| `jvm-native/src/main/scala/kyo/FileJournalBackend.scala` | `FileChannel`-backed `SegmentStore`; `FileChannel.tryLock` cross-process lock; `Backend.file` for JVM and Native |
-| `js-wasm/src/main/scala/kyo/FileJournalBackend.scala` | `isNodeRuntime` predicate; `Backend.file` for JS and Wasm (requires a Node.js runtime) |
-| `js-wasm/src/main/scala/kyo/internal/NodeJournalStore.scala` | `NodeFsSync` / `NodeOsHost` facades; `NodeSegmentStore`, `NodeHandle`, `NodeFileLock` |
+| `jvm-native/src/main/scala/kyo/FileJournalBackend.scala` | `FileChannel`-backed store; `Backend.file`, `Backend.fileAsync`, `Reader.file`, `Reader.fileAsync` |
+| `js-wasm/src/main/scala/kyo/FileJournalBackend.scala` | `isNodeRuntime` predicate; sync and async file backends; reader extensions |
+| `js-wasm/src/main/scala/kyo/internal/NodeJournalStore.scala` | `NodeFsSync` / `NodeAsyncJournalStore` facades; `NodeSegmentStore`, `NodeHandle`, `NodeFileLock` |
 
 **Dependency rule:** kyo-eventlog depends on `kyo-core`, `kyo-schema`, and `kyo-system`. `kyo-schema` is pulled in for `Structure.Value`, `Codec.Writer`/`Reader`, and `Schema.init`, which `MetadataValue`'s constructor-exact codec uses. `kyo-system` is pulled in by the file backend: the shared orchestration uses `Path.Unsafe` for cross-platform directory operations (exists, mkdir, list), and the jvm-native backend additionally uses the `toJava` extension for `FileChannel.open`. The journal-specific Node facades (`NodeFsSync`, `NodeOsHost`, and the durability primitives `fdatasyncSync`/`fsyncSync`/`ftruncateSync`) live in the kyo-eventlog `js-wasm` tree rather than kyo-system, to keep those journal-specific bindings scoped to the module that needs them. No other kyo module is a compile-time dependency. [`build.sbt:675`]
 
@@ -261,22 +264,41 @@ These are plain `final case class` values.
 
 ---
 
+## Typed event layer (EventLog)
+
+[`EventLog.scala`, `EventPayloadCodec.scala`]
+
+`EventLog[A]` wraps `Journal` with schema-driven encode/decode for domain type `A`. Methods mirror `Journal` ops and carry the same per-op `Abort` traits. No backend is captured at construction; call inside `Journal.run(backend)(...)`.
+
+`EventPayloadCodec` selects on-disk payload shape for file backends:
+
+| Value | Encoding |
+|---|---|
+| `EventPayloadCodec.bytes` | Raw `Span[Byte]` identity |
+| `EventPayloadCodec.schema[A]` | Schema-derived JSON (requires `Schema[A]`) |
+
+Write-side deciders are ordinary `Journal.run` programs: read typed history, fold to state, append the next event with `ExpectedOffset` conflict recovery. See the kyo-eventlog README decider section and `EventLog` companion scaladoc.
+
+---
+
 ## Backend SPI
 
 ### Contract
 
-[`Journal.scala:59-76`]
+[`Journal.scala:43-82`]
 
-`Journal.Backend[S]` is the storage contract that `Journal.run` dispatches to:
+`Journal.Reader[S]` is the read-only contract (`read`, `streamInfo`). `Journal.Backend[S] extends Reader[S]` adds `append`:
 
 ```scala
-trait Backend[S]:
-    def append(streamId, expected, events): AppendResult < (S & Abort[JournalAppendFailure])
+trait Reader[S]:
     def read(streamId, from, maxCount): Chunk[RecordedEvent] < (S & Abort[JournalReadFailure])
     def streamInfo(streamId): StreamInfo < (S & Abort[JournalStreamInfoFailure])
+
+trait Backend[S] extends Reader[S]:
+    def append(streamId, expected, events): AppendResult < (S & Abort[JournalAppendFailure])
 ```
 
-Each method names its precise failure trait in the `Abort` row. The type parameter `S` is the backend's own effect: `Sync` for the in-memory backend, `Async` for a future asynchronous backend.
+Each method names its precise failure trait in the `Abort` row. The type parameter `S` is the backend's own effect: `Sync` for the in-memory and sync file backends, `Async` for `Backend.fileAsync` and `Reader.fileAsync`.
 
 ### No Frame on methods; Frame at construction
 
@@ -328,21 +350,31 @@ The contract exercised covers:
 
 [`shared/src/main/scala/kyo/FileJournal.scala`, `jvm-native/src/main/scala/kyo/FileJournalBackend.scala`, `js-wasm/src/main/scala/kyo/FileJournalBackend.scala`]
 
-`FileJournal` is the durable file backend: an append-only segment log on disk, available on JVM, Native, JS-under-Node, and Wasm-under-Node. The public entry point is `Journal.Backend.file`, an extension on `Journal.Backend.type`:
+`FileJournal` is the durable file backend: an append-only segment log on disk, available on JVM, Native, JS-under-Node, and Wasm-under-Node. Public entry points are extensions on `Journal.Backend.type` and `Journal.Reader.type` in each platform tree's `FileJournalBackend.scala`:
 
 ```scala
-Journal.Backend.file(dir: Path, config: FileJournal.Config = FileJournal.Config.default)
+Journal.Backend.file(dir: Path, config: FileJournal.Config = default, payloadCodec: EventPayloadCodec = EventPayloadCodec.bytes)
     : Journal.Backend[Sync] < (Sync & Scope & Abort[JournalStorageError])
+
+Journal.Backend.fileAsync(dir: Path, config: FileJournal.Config = default, payloadCodec: EventPayloadCodec = EventPayloadCodec.bytes)
+    : Journal.Backend[Async] < (Sync & Scope & Abort[JournalStorageError])
+
+Journal.Reader.file(dir: Path, config: FileJournal.Config = default, payloadCodec: EventPayloadCodec = EventPayloadCodec.bytes)
+    : Journal.Reader[Sync] < (Sync & Scope & Abort[JournalStorageError])
+
+Journal.Reader.fileAsync(dir: Path, ...)
+    : Journal.Reader[Async] < (Sync & Scope & Abort[JournalStorageError])
 ```
 
-The `dir` parameter is a `Path` from `kyo-system`. `Scope` finalization releases the advisory LOCK and closes all open segment channels. A second `Backend.file` open of a held root directory fails immediately with `JournalStorageError`.
+The `dir` parameter is a `Path` from `kyo-system`. `Scope` finalization releases the advisory LOCK and closes all open segment channels. A second `Backend.file` open of a held root directory fails immediately with `JournalStorageError`. Reader opens skip the writer lock (SWMR).
 
-`FileJournal.Config` has two fields:
+`FileJournal.Config` has three fields:
 
 | Field | Default | Notes |
 |---|---|---|
 | `fsync: Fsync` | `Fsync.Always` | Flush each acknowledged append to stable storage before returning. Set to `Fsync.Disabled` only in tests; the crash-survival guarantee does not hold when `Fsync.Disabled` is set. |
-| `segmentSize: FileSize` | `64L.mib` (64 MiB) | Soft rotation threshold. The threshold is checked before an append, not after, so the active segment can grow past it: a record larger than the threshold is written whole into the current active segment rather than a dedicated one. |
+| `segmentSize: FileSize` | `64L.mib` (64 MiB) | Soft rotation threshold. Checked before an append, not after. |
+| `format: SegmentFormat` | `SegmentFormat.Binary` | Fixed at root creation via the `FORMAT` marker file. `Binary` (`.seg`, CRC32 frames) or `Jsonl` (`.jsonl`, one JSON object per line). |
 
 **Segment format:** each segment file begins with `KJN1` + `0x01` (4-byte magic + 1-byte version). Record frames follow with the layout `length(4) | crc32(4) | body`; the CRC covers the body only. Each append batch is closed by a terminator (`KJNC` + record count + CRC), which is the commit boundary. A torn tail in the active segment (no valid terminator after the trailing record group, from a prior crash) is silently truncated at recovery with a WARN log entry naming the segment and byte range. Non-tail corruption and unknown segment versions are fatal (`JournalCorruptedError`).
 
@@ -355,7 +387,9 @@ The `dir` parameter is a `Path` from `kyo-system`. `Scope` finalization releases
 
 A second open of a held root always fails immediately with `JournalStorageError`, regardless of platform.
 
-**Same-stream append serialization.** `FileJournal` is a `Journal.Backend[Sync]`, so `append` returns a `Sync` computation with no suspension point: the whole critical section (offset check, frame, positional write, fsync, index publish) runs inside one `Sync.Unsafe.defer`. Concurrent appends to the same stream serialize on a per-stream CAS flag (`StreamState.writer`) taken in `claim`. The spin-wait behavior is platform-split via `yieldCurrentThread()` in `internal/PlatformSupport.scala`: on JVM and Native it calls `Thread.yield()` so a waiter releases its carrier thread while the holder's blocking fsync runs; on JS and Wasm it is a no-op because those runtimes are single-threaded and the CAS loop terminates immediately on first success. `Thread.onSpinWait` is deliberately not used on JVM/Native: it is a same-core busy hint that would still hold the carrier hot across the fsync. A truly suspending per-stream mutex (a `Meter` or a mailbox `Fiber`) would move the serialization into `Async`, which requires a `Journal.Backend[Async]` and a change to the `Sync`-typed `JournalBackendTest` contract suite; that is out of the file backend's current contract. The `concurrency` leaf of `JournalBackendTest` is the correctness oracle for this serialization.
+**Same-stream append serialization (Sync backend).** `Journal.Backend.file` returns `Backend[Sync]`: the whole critical section (offset check, frame, positional write, fsync, index publish) runs inside one `Sync.Unsafe.defer`. Concurrent appends to the same stream serialize on a per-stream CAS flag (`StreamState.writer`) taken in `claim`. The spin-wait behavior is platform-split via `yieldCurrentThread()` in `internal/PlatformSupport.scala`.
+
+**Async backend (`fileAsync`).** `Journal.Backend.fileAsync` returns `Backend[Async]`. Store I/O runs through the effect-polymorphic store seam: JVM/Native use `Async.defer(Sync.Unsafe.defer(...))` blocking offload; Node uses `NodeAsyncJournalStore` with `fs.promises`. Concurrent appenders coalesce durability flushes via group commit (`GroupCommitCoordinator` + parked claim permits). `JournalBackendTest` remains Sync-typed; async backends have dedicated liveness tests.
 
 **Directory durability.** `FileChannel.force` on a segment file flushes its data but not the parent directory's link to it; on POSIX a newly created file or directory is not durable until its containing directory is fsync'd. On the `Fsync.Always` path `createSegment` therefore fsyncs the stream directory after creating a segment (and the `streams/` directory when the stream directory is new) via `fsyncDir`, which opens the directory read-only and forces it. Windows cannot open a directory as a `FileChannel`, so that open throws `IOException` and is tolerated (the platform makes the entry durable without an explicit directory sync); a force failure on an opened directory propagates and maps to `JournalStorageError`. This path is not black-box testable: it needs a power loss between the directory write and its sync.
 

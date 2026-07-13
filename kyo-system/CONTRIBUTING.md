@@ -4,6 +4,8 @@ Module-specific guide for kyo-system. Read the repository-root [CONTRIBUTING.md]
 
 **The headline invariant:** every public operation in kyo-system is backed by two tiers that are structurally coupled. The safe tier (`Path`, `Command`, `Process`, `System`) tracks all I/O in the type system and lifts platform I/O through `Sync.Unsafe.defer`. The unsafe tier (`Path.Unsafe`, `Command.Unsafe`, `Process.Unsafe`, `System.Unsafe`) is the single place where platform-specific I/O actually executes. The two tiers must stay in sync: every abstract method added to an `Unsafe` class requires a matching safe-tier extension method that lifts it, and every platform split requires a stub in every platform leaf.
 
+For `Path`, filesystem I/O is further tracked through the `PathRead` and `PathWrite` capabilities (`ArrowEffect`): operations suspend under the capability, and a runner (`Path.run`, `Path.runReadOnly`, or their `runWith` variants) discharges it and folds per-op `Abort[File*Exception]` markers into the umbrella `Abort[FileException]` on the residual.
+
 ---
 
 ## Architecture overview
@@ -12,11 +14,11 @@ kyo-system owns five capabilities:
 
 | Capability | Safe type | Unsafe abstract class | Effect row |
 |---|---|---|---|
-| File paths and I/O | `Path` (opaque) | `Path.Unsafe` | `Sync`, `Abort[FileReadException]`, `Abort[FileWriteException]`, `Abort[FileFsException]`, `Scope` |
+| File paths and I/O | `Path` (opaque); capabilities `PathRead` / `PathWrite` | `Path.Unsafe` | `PathRead` / `PathWrite` (discharged by runners); residual `Sync & Abort[FileException]`; `Scope` on streaming ops |
 | OS process launch | `Command` (opaque) | `Command.Unsafe` | `Sync`, `Async`, `Abort[CommandException]`, `Scope` |
 | Running process handle | `Process` (opaque) | `Process.Unsafe` | `Sync`, `Async`, `Scope` |
 | System environment | `System` (abstract class) | `System.Unsafe` | `Sync`, `Abort[E]` |
-| Stream-to-file sinks | `StreamFileExtensions` (object) | (no separate unsafe class; delegates to `Path.WriteHandle`) | `Scope`, `Sync`, `Abort[FileException]` |
+| Stream-to-file sinks | `StreamFileExtensions` (object) | (delegates to `Path.WriteHandle` via `PathWrite` ops) | `Scope`, `PathWrite`, `Sync`, `Abort[FileException]` |
 
 The typed error hierarchies for the two operation families are:
 
@@ -60,36 +62,90 @@ kyo-system/
 
 ---
 
+## Path capability model
+
+### Capabilities and subtyping
+
+[`Path.scala:49-71`]
+
+- `PathRead`: read-group ops (`exists`, `read`, `list`, `walk`, `realPath`, `confinedTo`, streaming reads).
+- `PathWrite <: PathRead`: write-group ops (`write`, `append`, `mkDir`, `move`, scoped `tempDir`, handle writes).
+- Safe extension methods suspend under `Tag[PathRead]` or `Tag[PathWrite]` via `ArrowEffect.suspend`; they do not carry `Sync` or per-op `Abort` on the extension row itself.
+- Runners discharge the capability and expose `Sync & Abort[FileException]` (plus the service effect `S` when using `runWith`).
+
+### Runners
+
+[`Path.scala:541-568`]
+
+| Runner | Discharges | Residual |
+|---|---|---|
+| `Path.run(program)` | `PathWrite` (+ `PathRead` via subtyping) against `Service.host` | `Sync & Abort[FileException] & S2` |
+| `Path.runReadOnly(program)` | `PathRead` only against `Service.host` | `Sync & Abort[FileException] & S2` |
+| `Path.runWith(service)(program)` | `PathWrite` against explicit service | `S & Abort[FileException] & S2` |
+| `Path.runReadOnlyWith(service)(program)` | `PathRead` only against explicit service | `S & Abort[FileException] & S2` |
+
+The negative capability law: a write op left in a `runReadOnly` program keeps `PathWrite` undischarged and fails to compile.
+
+### Service SPI and factories
+
+[`Path.scala:191-299`]
+
+`Path.Service[S]` is effect-polymorphic in `S` (the Journal `Backend[S]` precedent). Methods take no `(using Frame)`; the service captures its frame at construction. Every method carries `Abort[FileException]` (umbrella, not per-op markers).
+
+| Factory | Disposition | Notes |
+|---|---|---|
+| `Service.host` | `AutoCommit` | Default; delegates to `Path.Unsafe` |
+| `Service.host(root)` | `AutoCommit` | Root-confined; `realPath` prefix check |
+| `Service.inMemory` | `AutoCommit` | Immutable tree behind `AtomicRef` CAS |
+| `Service.overlay(lower)` | `ManualCommit` | Copy-on-write; returns `Service.Overlay[S]` |
+
+`Path.Disposition` enum: `AutoCommit`, `CommitOnSuccess` (reserved; stages writes until run completion; no shipped factory uses it), `ManualCommit`.
+
+### Overlay commit types
+
+[`CommitConflict.scala`, `Path.scala:865-893`]
+
+- `CommitConflict`: raised when read-set stamps diverge at commit; carries `Chunk[Conflict]`.
+- `Conflict`: one path's `ancestor` stamp, staged `ours`, live `theirs`.
+- `Resolution`: per-conflict choice in `commitWith` (`KeepOurs`, `KeepTheirs`, `Write(entry)`, `Remove`).
+- `Path.Entry` / `Path.Stamp`: committed entry and observation stamp types.
+- `CommitHandle[S]`: `commit`, `commitOverwrite`, `commitWith`, `rollback`.
+
+### Transaction, sandbox, and virtual
+
+[`Path.scala:570-629`]
+
+| Combinator | Success disposition | `CommitConflict` in row? |
+|---|---|---|
+| `Path.transaction(program)` | commit overlay | yes |
+| `Path.sandbox(program)` | rollback overlay | no |
+| `Path.virtual(program)` | returns `(result, Overlay)` for caller-controlled commit | no (until caller commits) |
+
+All three require an ambient `PathWrite` scope from an enclosing runner.
+
+### Scoped tempDir
+
+[`Path.scala:848-868`]
+
+`Path.tempDir(prefix)` suspends under `PathWrite`, creates through the active service, and registers service-correct recursive removal on `Scope` exit via `TempDirHandle`. There is no unscoped public temp-directory primitive.
+
+---
+
 ## Path API
 
 ### Safe-tier surface
 
-`Path` is an opaque type wrapping `Path.Unsafe`. The safe tier (extension methods on `Path`, defined in `object Path`) provides effect-tracked I/O:
+`Path` is an opaque type wrapping `Path.Unsafe`. Extension methods suspend under `PathRead` or `PathWrite`; discharge with a runner. After `Path.run` / `Path.runReadOnly`, the residual carries `Sync & Abort[FileException]`:
 
-| Safe method | Effect row |
-|---|---|
-| `path.exists` | `Boolean < Sync` |
-| `path.isDirectory` | `Boolean < Sync` |
-| `path.isRegularFile` | `Boolean < Sync` |
-| `path.isSymbolicLink` | `Boolean < Sync` |
-| `path.realPath` | `Path < (Sync & Abort[FileException])` |
-| `path.stat` | `PathStat < (Sync & Abort[FileReadException])` |
-| `path.size` | `Long < (Sync & Abort[FileReadException])` |
-| `path.read` | `String < (Sync & Abort[FileReadException])` |
-| `path.readBytes` | `Span[Byte] < (Sync & Abort[FileReadException])` |
-| `path.readLines` | `Chunk[String] < (Sync & Abort[FileReadException])` |
-| `path.readStream` | `Stream[String, Scope & Sync & Abort[FileReadException]]` |
-| `path.readBytesStream` | `Stream[Byte, Scope & Sync & Abort[FileReadException]]` |
-| `path.readLinesStream` | `Stream[String, Scope & Sync & Abort[FileReadException]]` |
-| `path.tail` | `Stream[String, Async & Scope & Abort[FileReadException]]` |
-| `path.write`, `writeBytes`, `writeLines` | `Unit < (Sync & Abort[FileWriteException])` |
-| `path.append`, `appendBytes`, `appendLines` | `Unit < (Sync & Abort[FileWriteException])` |
-| `path.truncate`, `path.setLastModified` | `Unit < (Sync & Abort[FileWriteException])` |
-| `path.mkDir`, `path.mkFile` | `Unit < (Sync & Abort[FileFsException])` |
-| `path.list` | `Chunk[Path] < (Sync & Abort[FileFsException])` |
-| `path.walk` | `Stream[Path, Sync & Scope & Abort[FileFsException]]` |
-| `path.move`, `path.copy`, `path.remove`, `path.removeAll` | `(Unit | Boolean) < (Sync & Abort[FileFsException])` |
-| `path.confinedTo(root)` | `Path < (Sync & Abort[FileException])` |
+| Safe method | Capability | Notes |
+|---|---|---|
+| `path.exists`, `isDirectory`, `isRegularFile`, `isSymbolicLink` | `PathRead` | return `false` on inaccessible paths |
+| `path.realPath`, `read`, `readBytes`, `readLines`, `stat`, `size`, `list` | `PathRead` | |
+| `path.readStream`, `readBytesStream`, `readLinesStream`, `walk` | `PathRead & Scope` | handle closed on scope exit |
+| `path.tail` | `PathRead & Async & Scope` | poll loop |
+| `path.confinedTo(root)` | `PathRead & Abort[FileException]` | realpath prefix check |
+| `path.write`, `append`, `truncate`, `mkDir`, `mkFile`, `move`, `copy`, `remove` | `PathWrite` | |
+| `Path.tempDir(prefix)` | `PathWrite & Scope` | service-scoped cleanup |
 
 #### Companion-level constants
 
@@ -135,8 +191,11 @@ Four abstract handle classes live in `object Path` as `private[kyo]`:
 |---|---|---|
 | `ReadHandle` | `Path.Unsafe.openRead` | `readChunk(buf: Array[Byte]): ReadResult` |
 | `LineReadHandle` | `Path.Unsafe.openReadLines(charset)` | `readLine(): Maybe[String]` |
-| `WriteHandle` | `Path.Unsafe.openWrite(append, createFolders)` | `writeBytes`, `writeString` |
+| `WriteHandle` | `Path.Unsafe.openWrite(append, createFolders)` | `writeBytes`, `writeString`, `finish()` |
 | `WalkHandle` | `Path.Unsafe.openWalk(maxDepth, followLinks)` | `next(): Maybe[Path]` |
+| `TempDirHandle` | `Service.tempDir` | `path`, `remove()` (internal) |
+
+`WriteHandle.finish()` marks the channel complete (flush + fsync). If `close()` runs without a prior `finish()`, the platform deletes the partial entry (delete-on-close-without-finish contract).
 
 All four have a `close()(using AllowUnsafe): Unit` method. The safe tier always acquires them with `Scope.acquireRelease` so they are closed when the scope exits. Never hold a handle outside a `Scope`.
 

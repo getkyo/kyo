@@ -227,7 +227,16 @@ extension (backend: Journal.Backend.type)
     end fileAsync
 end extension
 
-/** Sync read-only open: skips the writer lock, reads to the last valid terminator / commit line. */
+/** Sync read-only open: skips the writer lock, reads to the last valid terminator / commit line.
+  *
+  * Single-writer, multiple-reader (SWMR): concurrent writers must use [[Journal.Backend.file]] or
+  * [[Journal.Backend.fileAsync]]; readers opened through this extension never acquire the root lock and
+  * observe only data committed before the open. A recovery pass may truncate a torn tail in the active
+  * segment on first touch, so a nominally read-only call can perform one-time disk repair.
+  *
+  * Overloads accept [[FileJournal.Config]] and [[EventPayloadCodec]]; defaults match
+  * [[Journal.Backend.file]].
+  */
 extension (r: Journal.Reader.type)
     def file(dir: Path)(using Frame): Journal.Reader[Sync] < (Sync & Scope & Abort[JournalStorageError]) =
         file(dir, FileJournal.Config.default, EventPayloadCodec.bytes)
@@ -245,7 +254,9 @@ extension (r: Journal.Reader.type)
         : Journal.Reader[Sync] < (Sync & Scope & Abort[JournalStorageError]) =
         FileJournalCore.openReader(dir, config, StoreSeam.sync(new FileChannelStore, isReadOnly = true), payloadCodec)
 
-    /** Async read-only open. */
+    /** Async read-only open. Store operations run through the platform async path (blocking offload on
+      * JVM/Native, `node:fs/promises` on Node.js). Same SWMR semantics as [[file]].
+      */
     def fileAsync(dir: Path)(using Frame): Journal.Reader[Async] < (Sync & Scope & Abort[JournalStorageError]) =
         fileAsync(dir, FileJournal.Config.default, EventPayloadCodec.bytes)
 
