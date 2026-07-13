@@ -42,17 +42,22 @@ end NodeWriteResult
   * the [[NodeFileLock]] O_EXCL primitive, acquired once at open time (not per record);
   * every other operation bridges a `node:fs/promises` `Promise` into `Async` via [[fromPromise]].
   */
-final private[kyo] class NodeAsyncJournalStore extends StoreSeam[Async]:
+final private[kyo] class NodeAsyncJournalStore(isReadOnly: Boolean = false) extends StoreSeam[Async]:
+    override def readOnly: Boolean = isReadOnly
 
     def open(path: Path)(using Frame): StoreSeam.Handle[Async] < (Async & Abort[JournalStorageError]) =
         Abort.catching[Exception](e => JournalStorageError(s"Cannot open segment '${path.unsafe.show}'", Present(e))) {
             val pathStr = path.unsafe.show
-            // Unsafe: existence check to pick create-vs-reopen flags, deferred through Sync so it
-            // widens into the Async row rather than requiring AllowUnsafe on this method.
-            Sync.Unsafe.defer(path.unsafe.exists()).map { exists =>
-                val flags = if exists then "r+" else "w+"
-                fromPromise(NodeFsPromises.open(pathStr, flags)).map(fh => new NodeAsyncHandle(fh))
-            }
+            if isReadOnly then
+                fromPromise(NodeFsPromises.open(pathStr, "r")).map(fh => new NodeAsyncHandle(fh))
+            else
+                // Unsafe: existence check to pick create-vs-reopen flags, deferred through Sync so it
+                // widens into the Async row rather than requiring AllowUnsafe on this method.
+                Sync.Unsafe.defer(path.unsafe.exists()).map { exists =>
+                    val flags = if exists then "r+" else "w+"
+                    fromPromise(NodeFsPromises.open(pathStr, flags)).map(fh => new NodeAsyncHandle(fh))
+                }
+            end if
         }
 
     def acquireLock(root: Path)(using Frame): SegmentStore.Lock < (Sync & Abort[JournalStorageError]) =

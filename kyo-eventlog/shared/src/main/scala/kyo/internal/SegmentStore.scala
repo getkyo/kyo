@@ -15,6 +15,7 @@ import kyo.*
   */
 private[kyo] trait SegmentStore:
     def open(path: Path)(using AllowUnsafe): SegmentStore.Handle
+    def openReadOnly(path: Path)(using AllowUnsafe): SegmentStore.Handle
     def acquireLock(root: Path)(using AllowUnsafe, Frame): Result[JournalStorageError, SegmentStore.Lock]
     def syncDir(dir: Path)(using AllowUnsafe): Unit
 end SegmentStore
@@ -53,13 +54,14 @@ end SegmentStore
 
 /** Effect-polymorphic counterpart to [[SegmentStore]]: `open` and `syncDir` return `< S` instead
   * of requiring [[AllowUnsafe]] on the calling carrier, so [[FileJournalCore]] is generalized over
-  * this seam so the same orchestration runs whether `S` is `Sync` (the synchronous
-  * synchronous store, wrapped byte-identically) or `Async` (a platform adapter that genuinely
-  * suspends). `acquireLock` is always `< Sync`: the cross-process root lock is acquired exactly
-  * once at journal-open time (never on the per-record hot path), so it never needs the
-  * blocking-offload treatment the per-handle operations get.
+  * this seam so the same orchestration runs whether `S` is `Sync` (the synchronous store, wrapped
+  * byte-identically) or `Async` (a platform adapter that genuinely suspends). `acquireLock` is
+  * always `< Sync`: the cross-process root lock is acquired exactly once at journal-open time
+  * (never on the per-record hot path), so it never needs the blocking-offload treatment the
+  * per-handle operations get.
   */
 private[kyo] trait StoreSeam[S]:
+    def readOnly: Boolean = false
     def open(path: Path)(using Frame): StoreSeam.Handle[S] < (S & Abort[JournalStorageError])
     def acquireLock(root: Path)(using Frame): SegmentStore.Lock < (Sync & Abort[JournalStorageError])
     def syncDir(dir: Path)(using Frame): Unit < S
@@ -82,26 +84,43 @@ private[kyo] object StoreSeam:
     /** Wraps a synchronous [[SegmentStore]] as a `StoreSeam[Sync]`: every call defers through
       * [[Sync.Unsafe.defer]] with no suspension point, forwarding to the underlying store.
       */
-    def sync(store: SegmentStore): StoreSeam[Sync] = new StoreSeam[Sync]:
+    def sync(store: SegmentStore, isReadOnly: Boolean = false): StoreSeam[Sync] = new StoreSeam[Sync]:
+        override def readOnly: Boolean = isReadOnly
+
         def open(path: Path)(using Frame): Handle[Sync] < (Sync & Abort[JournalStorageError]) =
             Abort.catching[Exception](e => JournalStorageError(s"Cannot open segment '${path.unsafe.show}'", Present(e))) {
-                Sync.Unsafe.defer(syncHandle(store.open(path)))
+                // Unsafe: bridges raw platform segment open into the Sync tier.
+                Sync.Unsafe.defer(syncHandle(if isReadOnly then store.openReadOnly(path) else store.open(path)))
             }
 
         def acquireLock(root: Path)(using Frame): SegmentStore.Lock < (Sync & Abort[JournalStorageError]) =
+            // Unsafe: bridges raw platform root-lock acquisition into the Sync tier.
             Sync.Unsafe.defer(Abort.get(store.acquireLock(root)))
 
         def syncDir(dir: Path)(using Frame): Unit < Sync =
+            // Unsafe: bridges raw platform directory sync into the Sync tier.
             Sync.Unsafe.defer(store.syncDir(dir))
     end sync
 
     private def syncHandle(h: SegmentStore.Handle): Handle[Sync] = new Handle[Sync]:
-        def readAt(pos: Long, len: Int)(using Frame): Array[Byte] < Sync     = Sync.Unsafe.defer(h.readAt(pos, len))
-        def writeAt(pos: Long, bytes: Array[Byte])(using Frame): Unit < Sync = Sync.Unsafe.defer(h.writeAt(pos, bytes))
-        def sync()(using Frame): Unit < Sync                                 = Sync.Unsafe.defer(h.sync())
-        def truncate(size: Long)(using Frame): Unit < Sync                   = Sync.Unsafe.defer(h.truncate(size))
-        def size()(using Frame): Long < Sync                                 = Sync.Unsafe.defer(h.size())
-        def close()(using Frame): Unit < Sync                                = Sync.Unsafe.defer(h.close())
+        def readAt(pos: Long, len: Int)(using Frame): Array[Byte] < Sync =
+            // Unsafe: bridges raw positioned read into the Sync tier.
+            Sync.Unsafe.defer(h.readAt(pos, len))
+        def writeAt(pos: Long, bytes: Array[Byte])(using Frame): Unit < Sync =
+            // Unsafe: bridges raw positioned write into the Sync tier.
+            Sync.Unsafe.defer(h.writeAt(pos, bytes))
+        def sync()(using Frame): Unit < Sync =
+            // Unsafe: bridges raw durability flush into the Sync tier.
+            Sync.Unsafe.defer(h.sync())
+        def truncate(size: Long)(using Frame): Unit < Sync =
+            // Unsafe: bridges raw truncate into the Sync tier.
+            Sync.Unsafe.defer(h.truncate(size))
+        def size()(using Frame): Long < Sync =
+            // Unsafe: bridges raw size query into the Sync tier.
+            Sync.Unsafe.defer(h.size())
+        def close()(using Frame): Unit < Sync =
+            // Unsafe: bridges raw handle close into the Sync tier.
+            Sync.Unsafe.defer(h.close())
     end syncHandle
 
 end StoreSeam

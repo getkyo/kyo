@@ -560,6 +560,14 @@ private[kyo] object ClaimSeam:
         end release
     end async
 
+    /** Reader-only no-op claim: indexing never takes the write permit. */
+    def noop[S]: ClaimSeam[S] = new ClaimSeam[S]:
+        def holdThroughFlush: Boolean = true
+        def acquire(streamId: StreamId, ref: AtomicRef.Unsafe[StreamState])(using AllowUnsafe, Frame): StreamState < S =
+            ref.get()
+        def release(streamId: StreamId, ref: AtomicRef.Unsafe[StreamState])(using AllowUnsafe, Frame): Unit < Sync = ()
+    end noop
+
 end ClaimSeam
 
 // --- Group commit: coalesces durability flushes across concurrent appenders to one handle ------
@@ -696,6 +704,16 @@ private[kyo] object FlushStrategy:
             }
     end groupCommit
 
+    /** Reader-only no-op flush: append is never invoked on a read-only open. */
+    def noop[S]: FlushStrategy[S] = new FlushStrategy[S]:
+        def confirmDurable(
+            handle: StoreSeam.Handle[S],
+            key: String,
+            ref: AtomicRef.Unsafe[StreamState],
+            targetOffset: Long
+        )(using AllowUnsafe, Frame): Unit < S = ()
+    end noop
+
 end FlushStrategy
 
 // --- Shared orchestration class ---------------------------------------------------------------
@@ -724,7 +742,8 @@ final private[kyo] class FileJournalCore[S >: (Async & Abort[Throwable]) <: Sync
     codec: SegmentCodec,
     payloadCodec: EventPayloadCodec,
     claimSeam: ClaimSeam[S],
-    flushStrategy: FlushStrategy[S]
+    flushStrategy: FlushStrategy[S],
+    readerMode: Boolean = false
 )(using frame: Frame, allow: AllowUnsafe) extends Journal.Backend[S]:
 
     import FileJournal.*
@@ -774,7 +793,7 @@ final private[kyo] class FileJournalCore[S >: (Async & Abort[Throwable]) <: Sync
         Kyo.foreachDiscard(Chunk.from(handles.get().values)) { h =>
             Abort.run(Abort.catching[Throwable](h.close())).map(_ => ())
         }.map { _ =>
-            FileJournalCore.unregisterRoot(rootKey)
+            if !readerMode then FileJournalCore.unregisterRoot(rootKey)
         }
     end release
 
@@ -967,11 +986,13 @@ final private[kyo] class FileJournalCore[S >: (Async & Abort[Throwable]) <: Sync
         log: Log.Unsafe
     )(using AllowUnsafe, Frame): Result[JournalReadFailure, Chunk[RecordedEvent]] < S =
         val ref = cell(streamId)
-        ensureFirstTouch(streamId, ref, log).map:
+        touchForRead(streamId, ref, log).map:
             case Result.Failure(err) => Result.fail(err)
             case Result.Success(s) =>
                 if maxCount <= 0 || from.value > s.durableOffset then Result.succeed(Chunk.empty)
-                else readRange(streamId, s, from.value, math.min(from.value + maxCount.toLong - 1L, s.durableOffset))
+                else
+                    val toOff = math.min(from.value + maxCount.toLong - 1L, s.durableOffset)
+                    readRangeWithRelist(streamId, ref, s, from.value, toOff, log)
     end readCriticalSection
 
     private def streamInfoCriticalSection(streamId: StreamId, log: Log.Unsafe)(using
@@ -979,12 +1000,32 @@ final private[kyo] class FileJournalCore[S >: (Async & Abort[Throwable]) <: Sync
         Frame
     ): Result[JournalStreamInfoFailure, StreamInfo] < S =
         val ref = cell(streamId)
-        ensureFirstTouch(streamId, ref, log).map(_.map(infoOf))
+        touchForRead(streamId, ref, log).map(_.map(infoOf))
     end streamInfoCriticalSection
 
     // --- indexing / recovery entry points -----------------------------------------------------
 
     // Read path first-touch: recover under a one-shot claim if not yet indexed, then release it.
+    // Reader mode rescans from disk on every call without taking the write claim.
+    private def touchForRead(streamId: StreamId, ref: AtomicRef.Unsafe[StreamState], log: Log.Unsafe)(using
+        AllowUnsafe,
+        Frame
+    ): Result[IndexFailure, StreamState] < S =
+        if readerMode then refreshFromDisk(streamId, ref, log)
+        else ensureFirstTouch(streamId, ref, log)
+    end touchForRead
+
+    private def refreshFromDisk(streamId: StreamId, ref: AtomicRef.Unsafe[StreamState], log: Log.Unsafe)(using
+        AllowUnsafe,
+        Frame
+    ): Result[IndexFailure, StreamState] < S =
+        recover(streamId, log).map:
+            case Result.Failure(err) => Result.fail(err)
+            case Result.Success(recovered) =>
+                ref.set(recovered)
+                Result.succeed(recovered)
+    end refreshFromDisk
+
     private def ensureFirstTouch(streamId: StreamId, ref: AtomicRef.Unsafe[StreamState], log: Log.Unsafe)(using
         AllowUnsafe,
         Frame
@@ -1071,15 +1112,18 @@ final private[kyo] class FileJournalCore[S >: (Async & Abort[Throwable]) <: Sync
                                                 JournalCorruptedError(Present(streamId), s"$detail in segment '${segPath.unsafe.show}'")
                                             ))
                                         case ScanResult.Ok(positions, committedEnd, tornAt) =>
-                                            (tornAt match
-                                                case Present(from) if isActive =>
-                                                    handle.truncate(committedEnd).map { _ =>
-                                                        log.warn(
-                                                            s"FileJournal recovered stream '${streamId.value}': truncated torn tail of segment '${segPath.unsafe.show}' from byte $from to $committedEnd"
-                                                        )(using frame, summon[AllowUnsafe])
-                                                    }
-                                                case _ => (()): Unit < S
-                                            ).map { _ =>
+                                            val truncateTorn: Unit < S =
+                                                if readerMode then ((): Unit < S)
+                                                else
+                                                    tornAt match
+                                                        case Present(from) if isActive =>
+                                                            handle.truncate(committedEnd).map { _ =>
+                                                                log.warn(
+                                                                    s"FileJournal recovered stream '${streamId.value}': truncated torn tail of segment '${segPath.unsafe.show}' from byte $from to $committedEnd"
+                                                                )(using frame, summon[AllowUnsafe])
+                                                            }
+                                                        case _ => ((): Unit < S)
+                                            truncateTorn.map { _ =>
                                                 val entry = SegmentEntry(
                                                     baseOffset,
                                                     segPath,
@@ -1099,6 +1143,30 @@ final private[kyo] class FileJournalCore[S >: (Async & Abort[Throwable]) <: Sync
     end scanSegments
 
     // --- shared helpers -----------------------------------------------------------------------
+
+    private def offsetInSegments(s: StreamState, off: Long): Boolean =
+        s.segments.exists { e =>
+            off >= e.baseOffset && off < e.baseOffset + e.recordPositions.size.toLong
+        }
+    end offsetInSegments
+
+    private def readRangeWithRelist(
+        streamId: StreamId,
+        ref: AtomicRef.Unsafe[StreamState],
+        s: StreamState,
+        fromOff: Long,
+        toOff: Long,
+        log: Log.Unsafe
+    )(using AllowUnsafe, Frame): Result[JournalReadFailure, Chunk[RecordedEvent]] < S =
+        Loop.indexed(s, false) { (idx, state, relisted) =>
+            if readerMode && !relisted && fromOff <= state.durableOffset && !offsetInSegments(state, fromOff) then
+                refreshFromDisk(streamId, ref, log).map:
+                    case Result.Failure(err)   => Loop.done(Result.fail(err))
+                    case Result.Success(fresh) => Loop.continue(fresh, true)
+                    case Result.Panic(e)       => throw e
+            else
+                readRange(streamId, state, fromOff, toOff).map(r => Loop.done(r))
+        }
 
     private def readRange(streamId: StreamId, s: StreamState, fromOff: Long, toOff: Long)(using
         AllowUnsafe,
@@ -1284,6 +1352,69 @@ private[kyo] object FileJournalCore:
             Sync.Unsafe.defer(backend.release())
         )
 
+    /** Opens an existing journal root for read-only access, skipping the writer lock and in-process
+      * root registration. Internal; the public entry points are the platform-specific
+      * `Journal.Reader.file` / `Journal.Reader.fileAsync` extensions.
+      */
+    private[kyo] def openReader[S >: (Async & Abort[Throwable]) <: Sync](
+        dir: Path,
+        config: FileJournal.Config,
+        seam: StoreSeam[S],
+        payloadCodec: EventPayloadCodec
+    )(using
+        frame: Frame
+    ): Journal.Reader[S] < (Sync & Scope & Abort[JournalStorageError]) =
+        Scope.acquireRelease(
+            // Unsafe: validates the root via Path.Unsafe and constructs the read-only core without
+            // acquiring the platform writer lock.
+            Sync.Unsafe.defer(FileJournalCore.acquireReader(dir, config, seam, payloadCodec).map(Abort.get))
+        )(reader =>
+            // Unsafe: bridges handle closes into the Sync tier for the Scope.acquireRelease finalizer.
+            Sync.Unsafe.defer(reader.release())
+        )
+
+    private def acquireReader[S >: (Async & Abort[Throwable]) <: Sync](
+        dir: Path,
+        config: FileJournal.Config,
+        seam: StoreSeam[S],
+        payloadCodec: EventPayloadCodec
+    )(using
+        frame: Frame,
+        allow: AllowUnsafe
+    ): Result[JournalStorageError, FileJournalCore[S]] < Sync =
+        val rootKey = dir.unsafe.show
+        if !dir.unsafe.exists() then
+            Result.fail(JournalStorageError(s"Journal root '${dir.unsafe.show}' does not exist", Absent))
+        else if !dir.unsafe.isDirectory() then
+            Result.fail(JournalStorageError(s"Journal root '${dir.unsafe.show}' exists and is not a directory", Absent))
+        else
+            val streamsDir = dir / "streams"
+            validateFormatMarker(dir, config.format, writeIfMissing = false) match
+                case Result.Failure(err) => Result.fail(err)
+                case Result.Success(validatedFormat) =>
+                    val codec = validatedFormat match
+                        case FileJournal.SegmentFormat.Binary => BinarySegmentCodec
+                        case FileJournal.SegmentFormat.Jsonl  => new JsonlSegmentCodec(payloadCodec)
+                    val noOpLock = new SegmentStore.Lock:
+                        def release()(using AllowUnsafe): Unit = ()
+                    Result.succeed(
+                        new FileJournalCore[S](
+                            rootKey,
+                            streamsDir,
+                            config,
+                            seam,
+                            noOpLock,
+                            codec,
+                            payloadCodec,
+                            ClaimSeam.noop,
+                            FlushStrategy.noop,
+                            readerMode = true
+                        )
+                    )
+            end match
+        end if
+    end acquireReader
+
     private def acquire[S >: (Async & Abort[Throwable]) <: Sync](
         dir: Path,
         config: FileJournal.Config,
@@ -1358,9 +1489,11 @@ private[kyo] object FileJournalCore:
     //   - FORMAT file with matching format: proceed.
     //   - FORMAT file with mismatched format: fail with typed JournalStorageError.
     //   - FORMAT file with unknown format value: fail with typed JournalStorageError.
-    private def checkOrWriteFormatMarker(
+    // Read-only FORMAT validation: never writes the marker file.
+    private def validateFormatMarker(
         dir: Path,
-        requestedFormat: FileJournal.SegmentFormat
+        requestedFormat: FileJournal.SegmentFormat,
+        writeIfMissing: Boolean
     )(using frame: Frame, allow: AllowUnsafe): Result[JournalStorageError, FileJournal.SegmentFormat] =
         val formatFile = dir / "FORMAT"
         if formatFile.unsafe.exists() then
@@ -1386,7 +1519,7 @@ private[kyo] object FileJournalCore:
                 // Backward-compat: pre-existing Binary root with no FORMAT file.
                 // Do not write FORMAT; future opens will infer Binary from segment presence.
                 Result.succeed(FileJournal.SegmentFormat.Binary)
-            else
+            else if writeIfMissing then
                 val content = requestedFormat match
                     case FileJournal.SegmentFormat.Binary => "format: binary\nversion: 1\n"
                     case FileJournal.SegmentFormat.Jsonl  => "format: jsonl\nversion: 1\n"
@@ -1399,8 +1532,20 @@ private[kyo] object FileJournalCore:
                     case Result.Success(_) =>
                         Result.succeed(requestedFormat)
                 end match
+            else
+                Result.fail(JournalStorageError(
+                    s"Journal root '${dir.unsafe.show}' has no FORMAT marker and no segments",
+                    Absent
+                ))
             end if
         end if
+    end validateFormatMarker
+
+    private def checkOrWriteFormatMarker(
+        dir: Path,
+        requestedFormat: FileJournal.SegmentFormat
+    )(using frame: Frame, allow: AllowUnsafe): Result[JournalStorageError, FileJournal.SegmentFormat] =
+        validateFormatMarker(dir, requestedFormat, writeIfMissing = true)
     end checkOrWriteFormatMarker
 
     private def parseFormatMarker(

@@ -40,6 +40,22 @@ object Journal:
         case StreamInfo(streamId: StreamId)                              extends Op[Result[JournalStreamInfoFailure, kyo.StreamInfo]]
     end Op
 
+    /** Read-only view of a journal: read and stream inspection with no append. A read-only file open
+      * skips the writer lock and sees only committed data. Consumed directly (like the Backend SPI) and
+      * by subscription and projection layers built on top of it.
+      */
+    trait Reader[S]:
+        /** Reads at most `maxCount` events from `from` in offset order. */
+        def read(
+            streamId: StreamId,
+            from: StreamOffset,
+            maxCount: Int
+        ): Chunk[RecordedEvent] < (S & Abort[JournalReadFailure])
+
+        /** Reports the stream's current state. */
+        def streamInfo(streamId: StreamId): StreamInfo < (S & Abort[JournalStreamInfoFailure])
+    end Reader
+
     /** Storage contract behind the [[Journal]] capability.
       *
       * A backend provides atomic optimistic appends, bounded ordered reads, and stream inspection under its own effect `S`. Each method's
@@ -56,24 +72,16 @@ object Journal:
       * @see
       *   [[kyo.Journal.run]] which installs a backend for a journal program
       */
-    trait Backend[S]:
+    trait Backend[S] extends Reader[S]:
         /** Appends a batch of events to a stream after checking the expected offset. */
         def append(
             streamId: StreamId,
             expected: ExpectedOffset,
             events: Chunk[EventEnvelope]
         ): AppendResult < (S & Abort[JournalAppendFailure])
-
-        /** Reads at most `maxCount` events from `from` in offset order. */
-        def read(
-            streamId: StreamId,
-            from: StreamOffset,
-            maxCount: Int
-        ): Chunk[RecordedEvent] < (S & Abort[JournalReadFailure])
-
-        /** Reports the stream's current state. */
-        def streamInfo(streamId: StreamId): StreamInfo < (S & Abort[JournalStreamInfoFailure])
     end Backend
+
+    object Reader
 
     object Backend:
         /** Creates a fresh ephemeral in-memory backend. Separate calls do not share streams. */

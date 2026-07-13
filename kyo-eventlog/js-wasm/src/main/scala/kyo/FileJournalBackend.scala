@@ -16,6 +16,10 @@ private[kyo] def isNodeRuntime: Boolean =
         js.typeOf(js.Dynamic.global.process.versions) != "undefined" &&
         !js.isUndefined(js.Dynamic.global.process.versions.node)
 
+private[kyo] def platformSyncStore: StoreSeam[Sync] = StoreSeam.sync(new NodeSegmentStore)
+
+private[kyo] def platformAsyncStore: StoreSeam[Async] = new NodeAsyncJournalStore()
+
 /** Opens (or creates) a file-backed journal rooted at `dir`. Requires a Node.js runtime; on
   * a browser runtime (no `node:fs`) the call fails immediately with a typed
   * [[JournalStorageError]] rather than at first I/O. Available on JS and
@@ -78,5 +82,78 @@ extension (backend: Journal.Backend.type)
                     flushFor
                 )
             }
+    end fileAsync
+end extension
+
+extension (r: Journal.Reader.type)
+    /** Sync read-only open: skips the writer lock, reads to the last valid terminator / commit line. */
+    def file(dir: Path)(using Frame): Journal.Reader[Sync] < (Sync & Scope & Abort[JournalStorageError]) =
+        if !isNodeRuntime then
+            Abort.fail(JournalStorageError(
+                "FileJournal requires a Node.js runtime; no browser persistence backend exists",
+                Absent
+            ))
+        else
+            file(dir, FileJournal.Config.default, EventPayloadCodec.bytes)
+
+    def file(dir: Path, config: FileJournal.Config)(using Frame): Journal.Reader[Sync] < (Sync & Scope & Abort[JournalStorageError]) =
+        if !isNodeRuntime then
+            Abort.fail(JournalStorageError(
+                "FileJournal requires a Node.js runtime; no browser persistence backend exists",
+                Absent
+            ))
+        else
+            file(dir, config, EventPayloadCodec.bytes)
+
+    def file(
+        dir: Path,
+        config: FileJournal.Config,
+        payloadCodec: EventPayloadCodec
+    )(using
+        Frame
+    )
+        : Journal.Reader[Sync] < (Sync & Scope & Abort[JournalStorageError]) =
+        if !isNodeRuntime then
+            Abort.fail(JournalStorageError(
+                "FileJournal requires a Node.js runtime; no browser persistence backend exists",
+                Absent
+            ))
+        else
+            FileJournalCore.openReader(dir, config, StoreSeam.sync(new NodeSegmentStore, isReadOnly = true), payloadCodec)
+
+    /** Async read-only open. */
+    def fileAsync(dir: Path)(using Frame): Journal.Reader[Async] < (Sync & Scope & Abort[JournalStorageError]) =
+        if !isNodeRuntime then
+            Abort.fail(JournalStorageError(
+                "FileJournal requires a Node.js runtime; no browser persistence backend exists",
+                Absent
+            ))
+        else
+            fileAsync(dir, FileJournal.Config.default, EventPayloadCodec.bytes)
+
+    def fileAsync(dir: Path, config: FileJournal.Config)(using Frame): Journal.Reader[Async] < (Sync & Scope & Abort[JournalStorageError]) =
+        if !isNodeRuntime then
+            Abort.fail(JournalStorageError(
+                "FileJournal requires a Node.js runtime; no browser persistence backend exists",
+                Absent
+            ))
+        else
+            fileAsync(dir, config, EventPayloadCodec.bytes)
+
+    def fileAsync(
+        dir: Path,
+        config: FileJournal.Config,
+        payloadCodec: EventPayloadCodec
+    )(using
+        Frame
+    )
+        : Journal.Reader[Async] < (Sync & Scope & Abort[JournalStorageError]) =
+        if !isNodeRuntime then
+            Abort.fail(JournalStorageError(
+                "FileJournal requires a Node.js runtime; no browser persistence backend exists",
+                Absent
+            ))
+        else
+            FileJournalCore.openReader(dir, config, new NodeAsyncJournalStore(isReadOnly = true), payloadCodec)
     end fileAsync
 end extension

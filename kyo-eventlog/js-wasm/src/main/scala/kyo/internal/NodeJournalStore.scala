@@ -61,6 +61,13 @@ final private[kyo] class NodeSegmentStore extends SegmentStore:
         new NodeHandle(fd)
     end open
 
+    def openReadOnly(path: Path)(using AllowUnsafe): SegmentStore.Handle =
+        // Unsafe: raw fd acquired read-only via openSync; the segment file must already exist.
+        val pathStr = path.unsafe.show
+        val fd      = NodeFsSync.openSync(pathStr, "r")
+        new NodeHandle(fd)
+    end openReadOnly
+
     // Unsafe: opens the directory fd and fsyncs it so newly created children (stream
     // directories, segment files) are durably linked before an acknowledged append.
     // On platforms where opening a directory fd is unsupported (Windows) the openSync

@@ -27,6 +27,15 @@ final private class FileChannelStore extends SegmentStore:
             StandardOpenOption.READ,
             StandardOpenOption.WRITE
         )
+        fileChannelHandle(ch)
+    end open
+
+    def openReadOnly(path: Path)(using AllowUnsafe): SegmentStore.Handle =
+        val ch = FileChannel.open(path.toJava, StandardOpenOption.READ)
+        fileChannelHandle(ch)
+    end openReadOnly
+
+    private def fileChannelHandle(ch: FileChannel): SegmentStore.Handle =
         new SegmentStore.Handle:
             def readAt(pos: Long, len: Int)(using AllowUnsafe): Array[Byte] =
                 val buf     = ByteBuffer.allocate(len)
@@ -56,7 +65,7 @@ final private class FileChannelStore extends SegmentStore:
             def size()(using AllowUnsafe): Long               = ch.size()
             def close()(using AllowUnsafe): Unit              = ch.close()
         end new
-    end open
+    end fileChannelHandle
 
     def acquireLock(root: Path)(using AllowUnsafe, Frame): Result[JournalStorageError, SegmentStore.Lock] =
         val lockPath = root / "LOCK"
@@ -116,32 +125,53 @@ final private class FileChannelStore extends SegmentStore:
 
 end FileChannelStore
 
+private[kyo] def platformSyncStore: StoreSeam[Sync] = StoreSeam.sync(new FileChannelStore)
+
+private[kyo] def platformAsyncStore: StoreSeam[Async] = offloadStore(new FileChannelStore)
+
 /** Wraps a [[SegmentStore]] as a `StoreSeam[Async]` for the Async backend: every call defers
   * through [[Sync.Unsafe.defer]] (the identical blocking `FileChannel` call the Sync backend
   * makes) and then [[Async.defer]] to add `Async` to the residual. `Async.defer` runs on the
   * current carrier; the kyo scheduler's `BlockingMonitor` detects the blocked carrier and
   * compensates, so no dedicated thread pool or explicit offload primitive is needed.
   */
-private def offloadStore(store: SegmentStore): StoreSeam[Async] = new StoreSeam[Async]:
+private def offloadStore(store: SegmentStore, isReadOnly: Boolean = false): StoreSeam[Async] = new StoreSeam[Async]:
+    override def readOnly: Boolean = isReadOnly
+
     def open(path: Path)(using Frame): StoreSeam.Handle[Async] < (Async & Abort[JournalStorageError]) =
         Abort.catching[Exception](e => JournalStorageError(s"Cannot open segment '${path.unsafe.show}'", Present(e))) {
-            Async.defer(Sync.Unsafe.defer(offloadHandle(store.open(path))))
+            // Unsafe: bridges raw platform segment open into Async via Sync defer.
+            Async.defer(Sync.Unsafe.defer(offloadHandle(if isReadOnly then store.openReadOnly(path) else store.open(path))))
         }
 
     def acquireLock(root: Path)(using Frame): SegmentStore.Lock < (Sync & Abort[JournalStorageError]) =
+        // Unsafe: bridges raw platform root-lock acquisition into the Sync tier.
         Sync.Unsafe.defer(Abort.get(store.acquireLock(root)))
 
     def syncDir(dir: Path)(using Frame): Unit < Async =
+        // Unsafe: bridges raw platform directory sync into Async via Sync defer.
         Async.defer(Sync.Unsafe.defer(store.syncDir(dir)))
 end offloadStore
 
 private def offloadHandle(h: SegmentStore.Handle): StoreSeam.Handle[Async] = new StoreSeam.Handle[Async]:
-    def readAt(pos: Long, len: Int)(using Frame): Array[Byte] < Async     = Async.defer(Sync.Unsafe.defer(h.readAt(pos, len)))
-    def writeAt(pos: Long, bytes: Array[Byte])(using Frame): Unit < Async = Async.defer(Sync.Unsafe.defer(h.writeAt(pos, bytes)))
-    def sync()(using Frame): Unit < Async                                 = Async.defer(Sync.Unsafe.defer(h.sync()))
-    def truncate(size: Long)(using Frame): Unit < Async                   = Async.defer(Sync.Unsafe.defer(h.truncate(size)))
-    def size()(using Frame): Long < Async                                 = Async.defer(Sync.Unsafe.defer(h.size()))
-    def close()(using Frame): Unit < Async                                = Async.defer(Sync.Unsafe.defer(h.close()))
+    def readAt(pos: Long, len: Int)(using Frame): Array[Byte] < Async =
+        // Unsafe: bridges raw positioned read into Async via Sync defer.
+        Async.defer(Sync.Unsafe.defer(h.readAt(pos, len)))
+    def writeAt(pos: Long, bytes: Array[Byte])(using Frame): Unit < Async =
+        // Unsafe: bridges raw positioned write into Async via Sync defer.
+        Async.defer(Sync.Unsafe.defer(h.writeAt(pos, bytes)))
+    def sync()(using Frame): Unit < Async =
+        // Unsafe: bridges raw durability flush into Async via Sync defer.
+        Async.defer(Sync.Unsafe.defer(h.sync()))
+    def truncate(size: Long)(using Frame): Unit < Async =
+        // Unsafe: bridges raw truncate into Async via Sync defer.
+        Async.defer(Sync.Unsafe.defer(h.truncate(size)))
+    def size()(using Frame): Long < Async =
+        // Unsafe: bridges raw size query into Async via Sync defer.
+        Async.defer(Sync.Unsafe.defer(h.size()))
+    def close()(using Frame): Unit < Async =
+        // Unsafe: bridges raw handle close into Async via Sync defer.
+        Async.defer(Sync.Unsafe.defer(h.close()))
 end offloadHandle
 
 /** Opens (or creates) a file-backed journal rooted at `dir`. Available on JVM and Native only.
@@ -194,5 +224,42 @@ extension (backend: Journal.Backend.type)
                 flushFor
             )
         }
+    end fileAsync
+end extension
+
+/** Sync read-only open: skips the writer lock, reads to the last valid terminator / commit line. */
+extension (r: Journal.Reader.type)
+    def file(dir: Path)(using Frame): Journal.Reader[Sync] < (Sync & Scope & Abort[JournalStorageError]) =
+        file(dir, FileJournal.Config.default, EventPayloadCodec.bytes)
+
+    def file(dir: Path, config: FileJournal.Config)(using Frame): Journal.Reader[Sync] < (Sync & Scope & Abort[JournalStorageError]) =
+        file(dir, config, EventPayloadCodec.bytes)
+
+    def file(
+        dir: Path,
+        config: FileJournal.Config,
+        payloadCodec: EventPayloadCodec
+    )(using
+        Frame
+    )
+        : Journal.Reader[Sync] < (Sync & Scope & Abort[JournalStorageError]) =
+        FileJournalCore.openReader(dir, config, StoreSeam.sync(new FileChannelStore, isReadOnly = true), payloadCodec)
+
+    /** Async read-only open. */
+    def fileAsync(dir: Path)(using Frame): Journal.Reader[Async] < (Sync & Scope & Abort[JournalStorageError]) =
+        fileAsync(dir, FileJournal.Config.default, EventPayloadCodec.bytes)
+
+    def fileAsync(dir: Path, config: FileJournal.Config)(using Frame): Journal.Reader[Async] < (Sync & Scope & Abort[JournalStorageError]) =
+        fileAsync(dir, config, EventPayloadCodec.bytes)
+
+    def fileAsync(
+        dir: Path,
+        config: FileJournal.Config,
+        payloadCodec: EventPayloadCodec
+    )(using
+        Frame
+    )
+        : Journal.Reader[Async] < (Sync & Scope & Abort[JournalStorageError]) =
+        FileJournalCore.openReader(dir, config, offloadStore(new FileChannelStore, isReadOnly = true), payloadCodec)
     end fileAsync
 end extension
