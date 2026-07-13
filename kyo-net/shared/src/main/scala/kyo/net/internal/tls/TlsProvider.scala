@@ -2,6 +2,7 @@ package kyo.net.internal.tls
 
 import kyo.*
 import kyo.net.NetTlsConfig
+import kyo.net.NetTlsProviderUnavailableException
 import kyo.net.internal.backend.IoBackend
 
 /** A capability-probed TLS provider. Identical selection shape to `IoBackend`, and it reuses the SAME `IoBackend.select` so both registries
@@ -28,25 +29,21 @@ end TlsProvider
 private[net] object TlsProvider:
 
     /** Choose the provider to build for `config` from `registered`. A [[NetTlsConfig.tlsProvider]] pin is honored first: the provider with that
-      * id is used if it is registered AND available, and FAILS CLOSED with `Closed` otherwise (an unregistered or unavailable pinned id never
-      * silently falls through to a different implementation, mirroring the forced-name contract of [[IoBackend.select]]). With no pin, selection
-      * defers to the SAME `IoBackend.select` the unpinned path has always used (highest-priority available provider, honoring `-Dkyo.net.tls`).
+      * id is used if it is registered AND available, and FAILS CLOSED with [[NetTlsProviderUnavailableException]] otherwise (an unregistered
+      * or unavailable pinned id never silently falls through to a different implementation, mirroring the forced-name contract of
+      * [[IoBackend.select]]). With no pin, selection defers to the SAME `IoBackend.select` the unpinned path has always used (highest-priority
+      * available provider, honoring `-Dkyo.net.tls`).
       */
     def selectFor[P <: TlsProvider](registered: Chunk[P], config: NetTlsConfig)(using AllowUnsafe, Frame): P =
         config.tlsProvider match
             case Present(id) =>
                 Maybe.fromOption(registered.find(_.name == id)) match
                     case Present(p) if p.isAvailable => p
-                    case Present(_) =>
-                        throw Closed(
-                            "TlsProvider",
-                            summon[Frame],
-                            s"pinned TLS provider '$id' is not available on this host"
-                        ) // TODO WTF Closed has nothing to do with the actual issue. You MUST use properly typed exceptions!!!!!!
-                    case Absent =>
-                        throw Closed("TlsProvider", summon[Frame], s"pinned TLS provider '$id' is not supported by this transport")
+                    case Present(_)                  => throw NetTlsProviderUnavailableException(id)
+                    case Absent                      => throw NetTlsProviderUnavailableException(id)
             case Absent =>
-                IoBackend.select[P](registered, _.name, _.priority, _.isAvailable, "kyo.net.tls")
+                try IoBackend.select[P](registered, _.name, _.priority, _.isAvailable, "kyo.net.tls")
+                catch case _: Closed => throw NetTlsProviderUnavailableException("<default>")
     end selectFor
 
 end TlsProvider

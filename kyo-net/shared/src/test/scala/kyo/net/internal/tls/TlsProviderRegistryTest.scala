@@ -2,6 +2,7 @@ package kyo.net.internal.tls
 
 import kyo.*
 import kyo.net.NetTlsConfig
+import kyo.net.NetTlsProviderUnavailableException
 import kyo.net.Test
 import kyo.net.internal.backend.IoBackend
 
@@ -57,6 +58,12 @@ class TlsProviderRegistryTest extends Test:
         assert(selectFor(list, NetTlsConfig.default).name == "boringssl")
     }
 
+    "selectFor with no pin and no available provider wraps the shared select's Closed into NetTlsProviderUnavailableException" in {
+        val list = Chunk(StubProvider("boringssl", 30, false), StubProvider("jdk", 10, false))
+        val ex   = intercept[NetTlsProviderUnavailableException](selectFor(list, NetTlsConfig.default))
+        assert(ex.provider == "<default>", s"the unpinned wrap must name the default fallback, got ${ex.provider}")
+    }
+
     "selectFor honors an available pin over the higher-priority provider" in {
         val list = Chunk(StubProvider("boringssl", 30, true), StubProvider("jdk", 10, true))
         assert(selectFor(list, NetTlsConfig(tlsProvider = Present("jdk"))).name == "jdk")
@@ -64,16 +71,16 @@ class TlsProviderRegistryTest extends Test:
 
     "selectFor fails closed when the pinned provider is registered but unavailable (never substitutes)" in {
         val list = Chunk(StubProvider("boringssl", 30, false), StubProvider("jdk", 10, true))
-        val ex   = intercept[Closed](selectFor(list, NetTlsConfig(tlsProvider = Present("boringssl"))))
-        assert(ex.getMessage.contains("boringssl"), s"message must name the pinned provider, got ${ex.getMessage}")
+        val ex   = intercept[NetTlsProviderUnavailableException](selectFor(list, NetTlsConfig(tlsProvider = Present("boringssl"))))
+        assert(ex.provider == "boringssl", s"exception must carry the pinned provider id, got ${ex.provider}")
         assert(ex.getMessage.contains("not available"), s"message must state the unavailable reason, got ${ex.getMessage}")
     }
 
     "selectFor fails closed when the pinned provider is not registered (never substitutes)" in {
         val list = Chunk(StubProvider("jdk", 10, true))
-        val ex   = intercept[Closed](selectFor(list, NetTlsConfig(tlsProvider = Present("boringssl"))))
-        assert(ex.getMessage.contains("boringssl"), s"message must name the pinned provider, got ${ex.getMessage}")
-        assert(ex.getMessage.contains("not supported"), s"message must state the unsupported reason, got ${ex.getMessage}")
+        val ex   = intercept[NetTlsProviderUnavailableException](selectFor(list, NetTlsConfig(tlsProvider = Present("boringssl"))))
+        assert(ex.provider == "boringssl", s"exception must carry the pinned provider id, got ${ex.provider}")
+        assert(ex.getMessage.contains("not available"), s"message must state the unavailable reason, got ${ex.getMessage}")
     }
 
 end TlsProviderRegistryTest

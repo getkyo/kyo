@@ -25,6 +25,8 @@ import kyo.net.NetException
 import kyo.net.NetNotUpgradableException
 import kyo.net.NetStdioAlreadyOpenException
 import kyo.net.NetTlsConfig
+import kyo.net.NetTlsConfigException
+import kyo.net.NetTlsException
 import kyo.net.NetTlsHandshakeException
 import kyo.net.NetUnixConnectException
 import kyo.net.internal.transport.*
@@ -502,9 +504,7 @@ final private[kyo] class NioTransport private (
                 // path and the SSLEngine-provider path reach the identical accept/reject decision for the same NetTlsConfig + host. Reached
                 // via connect("", port, tls) and the STARTTLS upgrade with sniHostname = Absent (host = sniHostname.getOrElse("")).
                 if tls.hostnameVerification && !tls.trustAll && host.isEmpty then
-                    throw Closed(
-                        "NioTransport",
-                        summon[Frame],
+                    throw NetTlsConfigException(
                         "verifying client has no reference identity: a hostname is required to verify the server certificate (set trustAll " +
                             "or hostnameVerification = false to opt out of name verification)"
                     )
@@ -580,6 +580,8 @@ final private[kyo] class NioTransport private (
 
             driveHandshake(handle, tlsState, host, port, connectPromise)
         catch
+            case e: NetTlsException =>
+                connectPromise.completeDiscard(Result.fail(e))
             case e: Exception =>
                 // The channel close is handled centrally by the connectPromise failure onComplete above (for a fresh channel); here just report the
                 // failure. A STARTTLS upgrade (existingHandle present) is closed by upgradeToTls.

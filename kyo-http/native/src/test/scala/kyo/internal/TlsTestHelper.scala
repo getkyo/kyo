@@ -26,7 +26,8 @@ L0EkUFC6vJZSasbuKodoDw40h7jV8thZpX6EIO0mVRMxH/JWW25FRpwuZVJuYB3x
 ZbZPly1rRWq83H0K4TwRFCwS1443xqe5utKprcrcTLNbvcQ9K1xwRUBHF+rKbx84
 rxenpAdlMNUX7MtOfDCzGj8UnveDCVAhuIwxcSoUuZ1FTh696IP2Teso8XWO1xqq
 acWGmcG78K0jVPd3Mzpv
------END CERTIFICATE-----"""
+-----END CERTIFICATE-----
+"""
 
     private val keyPem = """-----BEGIN PRIVATE KEY-----
 MIIEvAIBADANBgkqhkiG9w0BAQEFAASCBKYwggSiAgEAAoIBAQCkTAeZ1rQQoosZ
@@ -55,7 +56,8 @@ Ph+Tc6+ayWRmcoEwynwVsw8oA1iMSiyrb28JNYECgYA/6oVFnSh6YsjO+UIKnkkB
 Yqx/cLCRhSGU5TJp9y0bgp9wI16SfVZ7sbFL8Q/JHb3DVyc3B+Ob8gffY5xFZsKk
 G97a4B6FbMcb17nLrkt9+RtD1yWt+tlFOVpz9OMXHiZAE2b0eCSx3cafONHN9nrN
 nExc1OKAJ9rzBEd8BEySPQ==
------END PRIVATE KEY-----"""
+-----END PRIVATE KEY-----
+"""
 
     lazy val (certPath, keyPath): (String, String) =
         val certFile = java.io.File.createTempFile("kyo-tls-cert", ".pem")

@@ -18,6 +18,7 @@ import kyo.net.NetException
 import kyo.net.NetNotUpgradableException
 import kyo.net.NetStdioAlreadyOpenException
 import kyo.net.NetTlsConfig
+import kyo.net.NetTlsException
 import kyo.net.NetTlsHandshakeException
 import kyo.net.NetUnixConnectException
 import kyo.net.internal.tls.HandshakeFailure
@@ -560,9 +561,9 @@ final private[net] class PosixTransport private[posix] (
                 val engine =
                     try buildEngine(cfg, host, isServer = false)
                     catch
-                        case closed: Closed =>
+                        case e: NetTlsException =>
                             closeUnwiredHandle(handle, driver, connectPhase = false)
-                            promise.completeDiscard(Result.fail(NetTlsHandshakeException(host, port, closed)))
+                            promise.completeDiscard(Result.fail(e))
                             return
                 // Register this in-flight client handshake so a transport `close()` racing it (no deadline exists on the connect path)
                 // reclaims the fd/engine and fails `promise` instead of leaking them / hanging the caller past shutdown. `driveHandshake`
@@ -973,7 +974,13 @@ final private[net] class PosixTransport private[posix] (
                 case Absent =>
                     spawnHandler(openTracked(handle, driver), driver, handler)
                 case Present(cfg) =>
-                    val engine = buildEngine(cfg, "", isServer = true)
+                    val engine =
+                        try buildEngine(cfg, "", isServer = true)
+                        catch
+                            case e: NetTlsException =>
+                                Log.live.unsafe.error(s"PosixTransport server TLS engine setup failed fd=$clientFd", e)
+                                closeRawFd(clientFd)
+                                return
                     // Once the teardown has run, every still-enqueued engine-touching handshake thunk must skip (it would otherwise feed a freed
                     // engine). The reap flag is set by teardown BEFORE engine.free and read by the driveHandshake / recvAndFeed / awaitReadCiphertext
                     // thunks via the isReaped guard; teardown and those thunks all run on the one per-driver engine FIFO worker, so the set is
@@ -1397,12 +1404,12 @@ final private[net] class PosixTransport private[posix] (
                         val engine =
                             try buildEngine(tls, upgradeHost(tls, isServer), isServer)
                             catch
-                                case closed: Closed =>
+                                case e: NetTlsException =>
                                     if handle.claimFdClose() then
                                         discard(sockets.shutdown(handle.writeFd, PosixConstants.SHUT_RDWR))
                                         handle.fdCloseSink = Present(() => closeRawFd(handle.writeFd))
                                     PosixHandle.close(handle)
-                                    out.completeDiscard(Result.fail(NetTlsHandshakeException(upgradeHost(tls, isServer), -1, closed)))
+                                    out.completeDiscard(Result.fail(e))
                                     return out.asInstanceOf[Fiber.Unsafe[Connection, Abort[NetException]]]
                         // Feed every staged ciphertext byte into the engine before the first post-upgrade read.
                         feedStaged(engine, staged)

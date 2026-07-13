@@ -2,6 +2,7 @@ package kyo.net.internal.tls
 
 import kyo.*
 import kyo.net.NetTlsConfig
+import kyo.net.NetTlsConfigException
 
 /** Shared base for the two native TLS providers ([[BoringSslProvider]], [[SystemOpenSslProvider]]): one body over the backend-neutral
   * [[SslLibBindings]], so the BoringSSL primary and the system-OpenSSL fallback share their engine construction, config application, client
@@ -36,11 +37,11 @@ abstract private[net] class SslLibProvider extends TlsEngineProvider:
     def createEngine(config: NetTlsConfig, hostname: String, isServer: Boolean)(using AllowUnsafe, Frame): TlsEngine =
         val l   = lib
         val ctx = l.ctxNew(if isServer then 1 else 0)
-        if ctx == 0L then throw Closed(name, summon[Frame], "SSL_CTX_new failed")
+        if ctx == 0L then throw NetTlsConfigException("SSL_CTX_new failed")
         try
             applyConfig(l, ctx, config, isServer)
             val ssl = l.sslNew(ctx, hostname)
-            if ssl == 0L then throw Closed(name, summon[Frame], "SSL_new failed")
+            if ssl == 0L then throw NetTlsConfigException("SSL_new failed")
             bindClientIdentity(l, ssl, config, hostname, isServer)
             if isServer then l.sslSetAcceptState(ssl)
             else l.sslSetConnectState(ssl)
@@ -127,7 +128,7 @@ abstract private[net] class SslLibProvider extends TlsEngineProvider:
             try new String(java.nio.file.Files.readAllBytes(java.nio.file.Paths.get(p)), java.nio.charset.StandardCharsets.UTF_8)
             catch
                 case t: Throwable =>
-                    throw Closed(name, summon[Frame], s"configured PEM file could not be read: $p (${t.getMessage})")
+                    throw NetTlsConfigException(new java.io.IOException(s"configured PEM file could not be read: $p", t))
         }
 
 end SslLibProvider

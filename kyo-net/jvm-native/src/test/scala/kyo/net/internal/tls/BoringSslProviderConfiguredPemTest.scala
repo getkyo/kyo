@@ -3,6 +3,7 @@ package kyo.net.internal.tls
 import kyo.*
 import kyo.ffi.Ffi
 import kyo.net.NetTlsConfig
+import kyo.net.NetTlsConfigException
 import kyo.net.Test
 
 /** Reproduce-first fail-closed tests for an explicitly-configured but unreadable CA / cert / key PEM path, covering both native providers
@@ -43,14 +44,14 @@ class BoringSslProviderConfiguredPemTest extends Test:
       */
     private def assertCaFailsClosed(create: (NetTlsConfig, String, Boolean) => TlsEngine)(using Frame, kyo.test.AssertScope): Unit =
         val config = NetTlsConfig(caCertPath = Present(unreadablePath()))
-        val ex = intercept[Closed] {
+        val ex = intercept[NetTlsConfigException] {
             val engine = create(config, "localhost", false)
             // Defensive: if the bug is present, createEngine returns a live engine instead of throwing; free it so a failing run leaks nothing.
             engine.free()
         }
         assert(
             ex.getMessage.contains("PEM") || ex.getMessage.contains("read"),
-            "createEngine threw Closed but not for the configured-but-unreadable-PEM reason: " + ex.getMessage
+            "createEngine threw NetTlsConfigException but not for the configured-but-unreadable-PEM reason: " + ex.getMessage
         )
     end assertCaFailsClosed
 
@@ -63,18 +64,18 @@ class BoringSslProviderConfiguredPemTest extends Test:
     ): Unit =
         val badCertConfig = NetTlsConfig(certChainPath = Present(unreadablePath()), privateKeyPath = Present(TlsTestCert.keyPath))
         val badKeyConfig  = NetTlsConfig(certChainPath = Present(TlsTestCert.certPath), privateKeyPath = Present(unreadablePath()))
-        val certEx = intercept[Closed] {
+        val certEx = intercept[NetTlsConfigException] {
             val engine = create(badCertConfig, "localhost", true)
             engine.free()
         }
-        val keyEx = intercept[Closed] {
+        val keyEx = intercept[NetTlsConfigException] {
             val engine = create(badKeyConfig, "localhost", true)
             engine.free()
         }
         assert(
             (certEx.getMessage.contains("PEM") || certEx.getMessage.contains("read")) &&
                 (keyEx.getMessage.contains("PEM") || keyEx.getMessage.contains("read")),
-            "server createEngine threw Closed but not for the configured-but-unreadable-PEM reason: cert=" + certEx.getMessage + " key=" + keyEx.getMessage
+            "server createEngine threw NetTlsConfigException but not for the configured-but-unreadable-PEM reason: cert=" + certEx.getMessage + " key=" + keyEx.getMessage
         )
     end assertServerMaterialFailsClosed
 
