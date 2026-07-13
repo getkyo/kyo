@@ -5,89 +5,102 @@ import kyo.*
 
 class LinuxCgroupDecodeTest extends kyo.test.Test[Any]:
 
+    import AllowUnsafe.embrace.danger
+
     private def span(s: String): (Span[Byte], Int) =
         val bytes = s.getBytes(StandardCharsets.US_ASCII)
         (Span.fromUnsafe(bytes), bytes.length)
 
-    "LinuxCgroup.applyV1LimitSentinel (the production readV1Limit routing)" - {
+    "LinuxCgroup.limit" - {
 
-        "a value at or above the v1 unlimited sentinel routes to Absent" in {
-            // Decode the raw limit exactly as production does, then route it through the production sentinel
-            // predicate (readV1Limit's own branch), never a test-local comparison.
-            val (bytes, len) = span("9223372036854771712\n")
-            val raw          = LinuxCgroupDecode.singleLong(bytes, len)
-            assert(raw == Present(9223372036854771712L))
-            assert(LinuxCgroup.applyV1LimitSentinel(raw) == Absent)
-        }
-
-        "a value below the sentinel passes through unchanged" in {
-            val (bytes, len) = span("1073741824\n")
-            val raw          = LinuxCgroupDecode.singleLong(bytes, len)
-            assert(LinuxCgroup.applyV1LimitSentinel(raw) == Present(1073741824L))
-        }
-
-        "an Absent raw read stays Absent through the sentinel routing" in {
-            assert(LinuxCgroup.applyV1LimitSentinel(Absent) == Absent)
+        "the v1 unlimited-memory marker routes to AbsentLong through the production LinuxCgroup.limit" in {
+            for
+                handles <- MachineHandles.init
+                sampler = new MachineSampler(handles)
+                cgroup  = new LinuxCgroup(handles, sampler)
+            yield
+                assert(cgroup.limit(1L << 62) == Path.ReadHandle.AbsentLong)
+                assert(cgroup.limit((1L << 62) + 1L) == Path.ReadHandle.AbsentLong)
+                assert(cgroup.limit(Path.ReadHandle.AbsentLong) == Path.ReadHandle.AbsentLong)
+                assert(cgroup.limit((1L << 62) - 1L) == (1L << 62) - 1L)
+            end for
         }
     }
 
-    "LinuxCgroupDecode.statField" - {
+    "process-cgroup path resolution" - {
 
-        "nr_bursts/burst_usec are ignored; nr_throttled/throttled_usec decode correctly" in {
+        "v2 cgroup root resolves from a non-default mountinfo cgroup2 mount point" in {
+            val (mountinfoBytes, mountinfoLen) = span("24 1 0:21 / /host/sys/fs/cgroup rw,nosuid - cgroup2 cgroup2 rw\n")
+            val (cgroupBytes, cgroupLen)       = span("0::/some/cg\n")
+            val root                           = LinuxCgroupPath.mountRootV2(mountinfoBytes, mountinfoLen)
+            assert(root == Present("/host/sys/fs/cgroup"))
+            val dir = LinuxCgroupPath.v2Dir(cgroupBytes, cgroupLen, root.getOrElse("/sys/fs/cgroup"))
+            assert(dir == "/host/sys/fs/cgroup/some/cg")
+            assert(root != Present("/sys/fs/cgroup"))
+        }
+
+        "mountinfo with no cgroup mount falls back to the conventional /sys/fs/cgroup root" in {
             val (bytes, len) = span(
-                "nr_periods 500\n" +
-                    "nr_throttled 12\n" +
-                    "throttled_usec 5000\n" +
-                    "nr_bursts 3\n" +
-                    "burst_usec 700\n"
+                "24 1 0:21 / / rw - ext4 /dev/sda1 rw\n" +
+                    "25 1 0:22 / /tmp rw - tmpfs tmpfs rw\n"
             )
-            val throttled     = LinuxCgroupDecode.statField(bytes, len, "nr_throttled", 1L)
-            val throttledUsec = LinuxCgroupDecode.statField(bytes, len, "throttled_usec", 1000L)
-            assert(throttled == Present(12L))
-            assert(throttledUsec == Present(5000000L))
+            assert(LinuxCgroupPath.mountRootV2(bytes, len) == Absent)
         }
 
-        "v2 microsecond scale (x1000) vs v1 nanosecond scale (x1) on the same raw field value" in {
-            val (bytes, len) = span("throttled_usec 5000\nthrottled_time 5000000\n")
-            val v2Scaled     = LinuxCgroupDecode.statField(bytes, len, "throttled_usec", 1000L)
-            val v1Scaled     = LinuxCgroupDecode.statField(bytes, len, "throttled_time", 1L)
-            assert(v2Scaled == Present(5000000L))
-            assert(v1Scaled == Present(5000000L))
+        "a v1 compound cpu,cpuacct mount maps each controller under its individual key" in {
+            val (bytes, len) = span(
+                "26 1 0:23 / /sys/fs/cgroup/cpu,cpuacct rw,nosuid,nodev,noexec,relatime shared:11 - cgroup cgroup rw,cpu,cpuacct\n"
+            )
+            val roots = LinuxCgroupPath.v1MountRoots(bytes, len)
+            assert(roots.get("cpu") == Some("/sys/fs/cgroup/cpu,cpuacct"))
+            assert(roots.get("cpuacct") == Some("/sys/fs/cgroup/cpu,cpuacct"))
+            assert(!roots.contains("cpu,cpuacct"))
+        }
+
+        "a v1 controller mounted at a path not matching its name still resolves via mountinfo reconciliation" in {
+            val (mountinfoBytes, mountinfoLen) =
+                span("30 1 0:24 / /sys/fs/cgroup/mem-alias rw,nosuid shared:12 - cgroup cgroup rw,memory\n")
+            val (cgroupBytes, cgroupLen) = span("N:memory:/svc\n")
+            val mountRoots               = LinuxCgroupPath.v1MountRoots(mountinfoBytes, mountinfoLen)
+            val rels                     = LinuxCgroupPath.v1Rel(cgroupBytes, cgroupLen)
+            val reconciled               = LinuxCgroupPath.reconcileV1(mountRoots, rels, "/sys/fs/cgroup")
+            assert(reconciled.get("memory") == Some("/sys/fs/cgroup/mem-alias/svc"))
+            assert(reconciled.get("memory") != Some("/sys/fs/cgroup/memory/svc"))
+        }
+
+        "reconcileV1 falls back to the conventional per-controller layout for a controller absent from mountinfo" in {
+            val reconciled = LinuxCgroupPath.reconcileV1(Map.empty, Map("cpu" -> "/svc"), "/sys/fs/cgroup")
+            assert(reconciled.get("cpu") == Some("/sys/fs/cgroup/cpu/svc"))
+
+            val (bytes, len) = span("1:cpu,cpuacct:/svc\n")
+            val dirs         = LinuxCgroupPath.v1Dirs(bytes, len, "/sys/fs/cgroup")
+            assert(dirs.get("cpu") == Some("/sys/fs/cgroup/cpu,cpuacct/svc"))
+            assert(dirs.get("cpuacct") == Some("/sys/fs/cgroup/cpu,cpuacct/svc"))
+        }
+
+        "a malformed mountinfo line with no separator is skipped without throwing" in {
+            val (bytes, len) = span(
+                "24 1 0:21 / /truncated-line-no-dash\n" +
+                    "25 1 0:22 / /too-short - x\n" +
+                    "26 1 0:23 / /sys/fs/cgroup rw - cgroup2 cgroup2 rw\n"
+            )
+            val root  = LinuxCgroupPath.mountRootV2(bytes, len)
+            val roots = LinuxCgroupPath.v1MountRoots(bytes, len)
+            assert(root == Present("/sys/fs/cgroup"))
+            assert(roots.isEmpty)
         }
     }
 
-    "LinuxCgroupDecode.v2Limit" - {
+    "cgroup v2 vs v1 unit scale" - {
 
-        "the literal max routes memoryLimit to Absent" in {
-            val (bytes, len) = span("max\n")
-            assert(LinuxCgroupDecode.v2Limit(bytes, len) == Absent)
-        }
-
-        "a numeric value passes through unchanged" in {
-            val (bytes, len) = span("1073741824\n")
-            assert(LinuxCgroupDecode.v2Limit(bytes, len) == Present(1073741824L))
-        }
-    }
-
-    "LinuxCgroupDecode.v2Quota" - {
-
-        "the literal max quota routes to Absent; a numeric quota scales microseconds to nanoseconds" in {
-            val (maxBytes, maxLen) = span("max 100000\n")
-            assert(LinuxCgroupDecode.v2Quota(maxBytes, maxLen) == Absent)
-
-            val (numBytes, numLen) = span("200000 100000\n")
-            assert(LinuxCgroupDecode.v2Quota(numBytes, numLen) == Present(200000000L))
-        }
-    }
-
-    "LinuxCgroupDecode.v2Period" - {
-
-        "the second token scales microseconds to nanoseconds; a single-token line routes to Absent" in {
-            val (bytes, len) = span("200000 100000\n")
-            assert(LinuxCgroupDecode.v2Period(bytes, len) == Present(100000000L))
-
-            val (truncBytes, truncLen) = span("200000\n")
-            assert(LinuxCgroupDecode.v2Period(truncBytes, truncLen) == Absent)
+        "cgroup v2 microsecond fields scale x1000 to nanoseconds while v1 nanosecond fields stay x1" in {
+            val (v2Bytes, v2Len) = span("nr_periods 10\nnr_throttled 2\nthrottled_usec 5000\n")
+            val (v1Bytes, v1Len) = span("nr_periods 10\nnr_throttled 2\nthrottled_time 5000000\n")
+            val v2Scaled         = LinuxScan.keyedLong(v2Bytes, v2Len, LinuxCgroup.ThrottledUsec, 0, 1000L)
+            val v1Scaled         = LinuxScan.keyedLong(v1Bytes, v1Len, LinuxCgroup.ThrottledTime, 0, 1L)
+            assert(v2Scaled == 5000000L)
+            assert(v1Scaled == 5000000L)
+            assert(v2Scaled == v1Scaled)
         }
     }
 

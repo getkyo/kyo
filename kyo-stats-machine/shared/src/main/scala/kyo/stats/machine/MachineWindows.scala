@@ -3,94 +3,88 @@ package kyo.stats.machine
 import kyo.*
 import kyo.ffi.*
 
-/** The Windows host reader: cpu-time via `GetSystemTimes`, memory/swap via `GlobalMemoryStatusEx`,
-  * per-drive disk via `GetLogicalDrives`+`GetDiskFreeSpaceEx`, core count via the shared gauge. Win32 is
-  * bound directly against `kernel32` (no bundled C). Load average and cgroup/PSI do not exist on Windows
-  * and are always Absent. The behavioral read is validated on a Windows host, not this Linux-only CI.
+/** The Windows host reader: cpu-time through `GetSystemTimes`, memory and swap through
+  * `GlobalMemoryStatusEx`, per-drive disk through `GetLogicalDrives` and `GetDiskFreeSpaceEx`. Win32 is
+  * bound directly against kernel32.
+  *
+  * The out-buffers are RETAINED, allocated once at construction and closed by the sampler's Scope
+  * finalizer, and `GlobalMemoryStatusEx` is called ONCE per tick, with the memory and the swap rows reading
+  * the same filled buffer.
+  *
+  * Load averages and cgroup and PSI do not exist on Windows, so those cells are never written and their
+  * series are never registered. Memory has no distinct free-versus-available concept on Windows, so
+  * `memory.free` is never written either, rather than reporting the available figure under a second label.
   */
-private[machine] object MachineWindows extends Machine:
+final private[machine] class MachineWindows(h: MachineHandles, s: MachineSampler)(using AllowUnsafe) extends Machine:
 
-    // Unsafe: the reader runs inside the sampler's tick and bridges the Ffi.load initializer and the
-    // kernel32 syscall reads, all of which require the capability.
-    import AllowUnsafe.embrace.danger
+    private val idleOut   = Buffer.alloc[Long](1)
+    private val kernelOut = Buffer.alloc[Long](1)
+    private val userOut   = Buffer.alloc[Long](1)
+    private val memOut    = Buffer.alloc[Long](8)
 
-    def read(sampler: MachineSampler)(using AllowUnsafe): Machine.Reading =
+    private val disk = new WindowsDisk(h)
+
+    def read()(using AllowUnsafe): Unit =
         bindings match
             case Present(b) =>
-                // A library that resolves at Ffi.load time can still fail its first real symbol lookup
-                // lazily (the generated impl's static initializer runs on first call, wrapping a missing
-                // Win32 export in ExceptionInInitializerError, a LinkageError NonFatal excludes): this is
-                // the Machine-impl degradation boundary, so any such failure degrades to empty here too.
+                // A library that resolves at load time can still fail its first real symbol lookup lazily
+                // (the generated implementation's static initializer runs on the first call and wraps a
+                // missing Win32 export in an ExceptionInInitializerError, a LinkageError that NonFatal
+                // excludes). This is the reader's degradation boundary, so such a failure degrades here too.
                 try
-                    Machine.Reading(
-                        cpu = readCpu(b),
-                        memory = readMemory(b),
-                        swap = readSwap(b),
-                        disks = Chunk.empty,
-                        load = Absent,
-                        cgroup = Absent,
-                        pressure = Absent,
-                        cgroupPressure = Absent
-                    )
+                    readCpu(b)
+                    readMemoryAndSwap(b)
                 catch
-                    case ex: Throwable if scala.util.control.NonFatal(ex) || ex.isInstanceOf[LinkageError] =>
-                        Machine.Reading.empty
-            case Absent => Machine.Reading.empty
+                    case ex: Throwable if scala.util.control.NonFatal(ex) || ex.isInstanceOf[LinkageError] => ()
+            case Absent => ()
 
-    override def readDisks(sampler: MachineSampler)(using AllowUnsafe): Chunk[Machine.DiskReading] =
+    def readDisks()(using AllowUnsafe): Unit =
         bindings match
             case Present(b) =>
-                try readDisksImpl(b)
+                try disk.read(b)
                 catch
-                    case ex: Throwable if scala.util.control.NonFatal(ex) || ex.isInstanceOf[LinkageError] =>
-                        Chunk.empty
-            case Absent => Chunk.empty
+                    case ex: Throwable if scala.util.control.NonFatal(ex) || ex.isInstanceOf[LinkageError] => ()
+            case Absent => ()
+
+    def close()(using AllowUnsafe): Unit =
+        idleOut.close()
+        kernelOut.close()
+        userOut.close()
+        memOut.close()
+        disk.close()
+    end close
 
     private lazy val bindings: Maybe[WindowsBindings] =
         try Present(Ffi.load[WindowsBindings])
         catch case ex: Throwable if scala.util.control.NonFatal(ex) => Absent
 
-    private[machine] def readCpu(b: WindowsBindings)(using AllowUnsafe): Maybe[Machine.CpuReading] =
-        // GetSystemTimes takes three LPFILETIME out-params; each FILETIME is one little-endian 100ns int64.
-        val idleB   = Buffer.alloc[Long](1)
-        val kernelB = Buffer.alloc[Long](1)
-        val userB   = Buffer.alloc[Long](1)
-        try
-            if b.getSystemTimes(idleB, kernelB, userB) == 0 then Absent
-            else
-                // FILETIME is in 100ns units; scale to ns (x100). Kernel time INCLUDES idle on Windows.
-                val idle   = idleB.get(0) * 100L; val kernel = kernelB.get(0) * 100L; val user = userB.get(0) * 100L
-                val system = kernel - idle
-                val total  = kernel + user
-                Present(Machine.CpuReading(Present(total), Present(user), Present(system), Present(idle), Absent))
-            end if
-        finally
-            idleB.close(); kernelB.close(); userB.close()
-        end try
+    private[machine] def readCpu(b: WindowsBindings)(using AllowUnsafe): Unit =
+        // GetSystemTimes takes three out-params, each a FILETIME: one little-endian 100ns int64.
+        if b.getSystemTimes(idleOut, kernelOut, userOut) != 0 then
+            val idle   = idleOut.get(0) * 100L
+            val kernel = kernelOut.get(0) * 100L
+            val user   = userOut.get(0) * 100L
+            // Kernel time INCLUDES idle on Windows, so system time is kernel minus idle.
+            h.cpuUser.observe(user)
+            h.cpuSystem.observe(kernel - idle)
+            h.cpuIdle.observe(idle)
+            h.cpuTotal.observe(kernel + user)
+        end if
     end readCpu
 
-    private[machine] def readMemory(b: WindowsBindings)(using AllowUnsafe): Maybe[Machine.MemoryReading] =
-        WindowsBindings.withMemoryStatus(b) match
-            case Present(out) =>
-                try
-                    // GlobalMemoryStatusEx exposes ullTotalPhys and ullAvailPhys only; Windows has no distinct
-                    // free-vs-available concept, so free is Absent rather than reporting available's value under
-                    // a different label, a fabricated-signal shape the reader must not produce even for a real number.
-                    Present(Machine.MemoryReading(Present(out.get(1)), Present(out.get(2)), Absent))
-                finally out.close()
-            case Absent => Absent
-
-    private[machine] def readSwap(b: WindowsBindings)(using AllowUnsafe): Maybe[Machine.SwapReading] =
-        WindowsBindings.withMemoryStatus(b) match
-            case Present(out) =>
-                // ullTotalPageFile/ullAvailPageFile are the commit limit (physical RAM plus page-file size), not
-                // a page-file-only figure the way Linux SwapTotal/SwapFree are; Windows exposes no narrower swap
-                // concept, so the commit limit is the closest honest mapping and is reported as-is.
-                try Present(Machine.SwapReading(Present(out.get(3)), Present(out.get(4))))
-                finally out.close()
-            case Absent => Absent
-
-    private def readDisksImpl(b: WindowsBindings)(using AllowUnsafe): Chunk[Machine.DiskReading] =
-        WindowsDisk.enumerate(b).map(d => WindowsDisk.stat(b, d))
+    private[machine] def readMemoryAndSwap(b: WindowsBindings)(using AllowUnsafe): Unit =
+        if WindowsBindings.fillMemoryStatus(b, memOut) then
+            // Index 1 is ullTotalPhys and index 2 ullAvailPhys. Windows exposes no distinct free-versus-
+            // available figure, so memory.free is not written.
+            h.memTotal.set(memOut.get(1))
+            h.memAvailable.observe(memOut.get(2))
+            // Indexes 3 and 4 are ullTotalPageFile and ullAvailPageFile: the system COMMIT LIMIT (physical
+            // memory plus the page file) and its remainder, not a page-file-only figure the way Linux
+            // SwapTotal and SwapFree are. Windows exposes no narrower swap concept, so the commit limit is
+            // the closest honest mapping and is reported as-is.
+            h.swapTotal.set(memOut.get(3))
+            h.swapFree.observe(memOut.get(4))
+        end if
+    end readMemoryAndSwap
 
 end MachineWindows

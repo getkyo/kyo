@@ -2,80 +2,42 @@ package kyo.stats.machine
 
 import kyo.*
 
-/** One PSI family's retained handles (system or cgroup). For cpu.some, memory.some/full, io.some/full
-  * each carries three avg Histograms, a cumulative stall total Counter, and a paired per-second stall
-  * Histogram. cpu.full is intentionally omitted (present-but-pinned-zero, not emitted). observe advances
-  * each total Counter by the per-tick delta and observes the same delta into the paired stall Histogram.
+/** One PSI family's retained cells (the system family, or the cgroup family).
+  *
+  * Each emitted resource-and-kind pair carries three pre-averaged kernel percentages, which are Gauges, and
+  * one per-second stall flow, which is a Histogram whose running sum also carries the cumulative stall time
+  * (so there is no separate cumulative Counter). `cpu.full` is parsed by the kernel but is not emitted, so
+  * it has no cells at all.
   */
 final private[machine] class PsiHandles private (
-    cpuSome: PsiHandles.One,
-    memSome: PsiHandles.One,
-    memFull: PsiHandles.One,
-    ioSome: PsiHandles.One,
-    ioFull: PsiHandles.One
-):
-    def observe(reading: Maybe[Machine.PressureReading], st: MachineSampler.PriorState, family: String)(using
-        AllowUnsafe
-    ): MachineSampler.PriorState =
-        reading match
-            case Present(p) =>
-                var s = cpuSome.observe(p.cpuSome, st, family + ".cpu.some")
-                s = memSome.observe(p.memorySome, s, family + ".memory.some")
-                s = memFull.observe(p.memoryFull, s, family + ".memory.full")
-                s = ioSome.observe(p.ioSome, s, family + ".io.some")
-                s = ioFull.observe(p.ioFull, s, family + ".io.full")
-                s
-            case Absent => st
-end PsiHandles
+    val cpuSome: PsiHandles.One,
+    val memorySome: PsiHandles.One,
+    val memoryFull: PsiHandles.One,
+    val ioSome: PsiHandles.One,
+    val ioFull: PsiHandles.One
+)
 
 private[machine] object PsiHandles:
 
-    final class One private[PsiHandles] (
-        avg10: Histogram,
-        avg60: Histogram,
-        avg300: Histogram,
-        total: Counter,
-        rate: Histogram
-    ):
-        def observe(r: Machine.PsiReading, st: MachineSampler.PriorState, key: String)(using
-            AllowUnsafe
-        ): MachineSampler.PriorState =
-            r.avg10.foreach(v => avg10.unsafe.observe(v))
-            r.avg60.foreach(v => avg60.unsafe.observe(v))
-            r.avg300.foreach(v => avg300.unsafe.observe(v))
-            r.total match
-                case Present(cur) =>
-                    st.get(key) match
-                        case Present(prev) =>
-                            val delta = cur - prev
-                            val adv   = if delta < 0 then 0L else delta
-                            total.unsafe.add(adv)
-                            rate.unsafe.observe(adv)
-                            st.set(key, cur)
-                        case Absent => st.set(key, cur)
-                case Absent => st
-            end match
-        end observe
+    import MachineHandles.*
+
+    /** The cells for one resource-and-kind pair (`cpu.some`, `memory.full`, ...). */
+    final class One private[PsiHandles] (scope: Stat, nanosPerSec: Array[Double]):
+        val avg10  = DoubleGaugeCell(scope, "avg10", "percent 0..100")
+        val avg60  = DoubleGaugeCell(scope, "avg60", "percent 0..100")
+        val avg300 = DoubleGaugeCell(scope, "avg300", "percent 0..100")
+        val rate   = RateCell(scope, "rate", "per-second stall-time delta, ns/s", nanosPerSec)
     end One
 
-    private def one(scope: Stat, res: String, kind: String): One =
-        val s = scope.scope(res, kind)
-        One(
-            s.initHistogram("avg10", "percent 0..100", boundaries = MachineHandles.percent),
-            s.initHistogram("avg60", "percent 0..100", boundaries = MachineHandles.percent),
-            s.initHistogram("avg300", "percent 0..100", boundaries = MachineHandles.percent),
-            s.initCounter("total", "cumulative stall time, ns"),
-            s.initHistogram("rate", "per-second stall-time delta, ns/s", boundaries = MachineHandles.nanosPerSec)
-        )
-    end one
-
-    def init(scope: Stat): PsiHandles =
+    def apply(scope: Stat, nanosPerSec: Array[Double]): PsiHandles =
+        def one(res: String, kind: String) = new One(scope.scope(res, kind), nanosPerSec)
         new PsiHandles(
-            one(scope, "cpu", "some"),
-            one(scope, "memory", "some"),
-            one(scope, "memory", "full"),
-            one(scope, "io", "some"),
-            one(scope, "io", "full")
+            one("cpu", "some"),
+            one("memory", "some"),
+            one("memory", "full"),
+            one("io", "some"),
+            one("io", "full")
         )
+    end apply
 
 end PsiHandles

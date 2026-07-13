@@ -2,68 +2,76 @@ package kyo.stats.machine
 
 import kyo.*
 
-/** Total decoders for the Linux text files, parsing over a borrowed byte span decoded to `Text`. Every
-  * field routes to `Absent` on a malformed, truncated, non-numeric, or missing value, never a throw.
+/** The Linux proc-file decoders. Each reads primitives in place out of the sampler's retained buffer and
+  * writes them straight into the retained cells: no `String`, no `split`, no collection, no carrier, and no
+  * boxed absent value. Every field is total: a malformed, truncated, missing or non-numeric value decodes
+  * to the primitive sentinel, which the cell skips, so it is never recorded and never registered.
   */
 private[machine] object LinuxDecoders:
 
-    /** Parses /proc/stat aggregate cpu line: `cpu user nice system idle iowait irq softirq steal ...` in
-      * jiffies, scaling each mode to nanoseconds via `scale`. Fields are present-guarded: an older kernel
-      * with fewer columns contributes only the columns it exposes.
+    private val CpuLine   = LinuxScan.ascii("cpu ")
+    private val MemTotal  = LinuxScan.ascii("MemTotal:")
+    private val MemAvail  = LinuxScan.ascii("MemAvailable:")
+    private val MemFree   = LinuxScan.ascii("MemFree:")
+    private val SwapTotal = LinuxScan.ascii("SwapTotal:")
+    private val SwapFree  = LinuxScan.ascii("SwapFree:")
+
+    /** `/proc/stat`'s aggregate cpu line: `cpu user nice system idle iowait irq softirq steal ...`, in
+      * jiffies, each column scaled to nanoseconds. An older kernel with fewer columns contributes only the
+      * columns it exposes, because a missing column decodes to the sentinel and the sentinel-aware sum
+      * skips it.
       *
-      * The kernel folds guest into user and guest_nice into nice, so those are not summed again (double
-      * count). The reported `system` mode includes irq + softirq (kernel-mode servicing time, the
-      * node_exporter/common convention). `total` sums every present column (user, nice, system, idle,
-      * iowait, irq, softirq, steal), so a `total - idle` utilization derivation on a virtualized host is
-      * not under-reported by the omitted irq/softirq/steal time.
+      * The kernel folds guest into user and guest_nice into nice, so neither is summed again. The reported
+      * system mode includes irq and softirq (kernel-mode servicing time, the common convention). The total
+      * sums every present column, so a `total - idle` derivation on a virtualized host is not
+      * under-reported by omitted irq, softirq or steal time. Steal is ALSO emitted on its own, as the
+      * hypervisor-contention signal a cloud host needs; it has no macOS or Windows equivalent, so that cell
+      * is never written there and the series is never registered there.
       */
-    def cpu(bytes: Span[Byte], len: Int, scale: Long): Maybe[Machine.CpuReading] =
-        val text = Text.fromSpan(bytes, len)
-        text.lineFields("cpu ") match
-            case Present(f) if f.length >= 5 =>
-                def ns(i: Int): Maybe[Long] = if f.length > i then field(f, i).map(_ * scale) else Absent
-                val user                    = ns(1); val nice    = ns(2); val systemRaw = ns(3); val idle = ns(4)
-                val iowait                  = ns(5)
-                val irq                     = ns(6); val softirq = ns(7); val steal     = ns(8)
-                val system                  = sumPresent(systemRaw, irq, softirq)
-                val total                   = sumPresent(user, nice, systemRaw, idle, iowait, irq, softirq, steal)
-                Present(Machine.CpuReading(total, user, system, idle, iowait))
-            case _ => Absent
-        end match
+    def cpu(bytes: Span[Byte], len: Int, scale: Long, h: MachineHandles)(using AllowUnsafe): Unit =
+        val from = LinuxScan.lineFields(bytes, len, CpuLine)
+        if from >= 0 then
+            val user    = LinuxScan.longField(bytes, len, from, 0, scale)
+            val nice    = LinuxScan.longField(bytes, len, from, 1, scale)
+            val system  = LinuxScan.longField(bytes, len, from, 2, scale)
+            val idle    = LinuxScan.longField(bytes, len, from, 3, scale)
+            val iowait  = LinuxScan.longField(bytes, len, from, 4, scale)
+            val irq     = LinuxScan.longField(bytes, len, from, 5, scale)
+            val softirq = LinuxScan.longField(bytes, len, from, 6, scale)
+            val steal   = LinuxScan.longField(bytes, len, from, 7, scale)
+            h.cpuUser.observe(user)
+            h.cpuSystem.observe(LinuxScan.plus(LinuxScan.plus(system, irq), softirq))
+            h.cpuIdle.observe(idle)
+            h.cpuIowait.observe(iowait)
+            h.cpuSteal.observe(steal)
+            h.cpuTotal.observe(
+                LinuxScan.plus(
+                    LinuxScan.plus(
+                        LinuxScan.plus(LinuxScan.plus(LinuxScan.plus(user, nice), system), idle),
+                        LinuxScan.plus(iowait, irq)
+                    ),
+                    LinuxScan.plus(softirq, steal)
+                )
+            )
+        end if
     end cpu
 
-    def memory(bytes: Span[Byte], len: Int): Maybe[Machine.MemoryReading] =
-        val text = Text.fromSpan(bytes, len)
-        Present(Machine.MemoryReading(
-            total = text.kbField("MemTotal:").map(_ * 1024L),
-            available = text.kbField("MemAvailable:").map(_ * 1024L),
-            free = text.kbField("MemFree:").map(_ * 1024L)
-        ))
-    end memory
+    /** `/proc/meminfo`, read and decoded ONCE per tick for BOTH the memory and the swap rows. Each
+      * `Name:  <n> kB` value is scaled to bytes.
+      */
+    def meminfo(bytes: Span[Byte], len: Int, h: MachineHandles)(using AllowUnsafe): Unit =
+        h.memTotal.set(LinuxScan.keyedLong(bytes, len, MemTotal, 0, 1024L))
+        h.memAvailable.observe(LinuxScan.keyedLong(bytes, len, MemAvail, 0, 1024L))
+        h.memFree.observe(LinuxScan.keyedLong(bytes, len, MemFree, 0, 1024L))
+        h.swapTotal.set(LinuxScan.keyedLong(bytes, len, SwapTotal, 0, 1024L))
+        h.swapFree.observe(LinuxScan.keyedLong(bytes, len, SwapFree, 0, 1024L))
+    end meminfo
 
-    def swap(bytes: Span[Byte], len: Int): Maybe[Machine.SwapReading] =
-        val text = Text.fromSpan(bytes, len)
-        Present(Machine.SwapReading(
-            total = text.kbField("SwapTotal:").map(_ * 1024L),
-            free = text.kbField("SwapFree:").map(_ * 1024L)
-        ))
-    end swap
-
-    def load(bytes: Span[Byte], len: Int): Maybe[Machine.LoadReading] =
-        val ts = Text.fromSpan(bytes, len).tokens
-        if ts.length >= 3 then
-            Present(Machine.LoadReading(parseDouble(ts, 0), parseDouble(ts, 1), parseDouble(ts, 2)))
-        else Absent
+    /** `/proc/loadavg`: `<one> <five> <fifteen> ...`, three pre-averaged kernel averages. */
+    def load(bytes: Span[Byte], len: Int, h: MachineHandles)(using AllowUnsafe): Unit =
+        h.loadOne.set(LinuxScan.doubleField(bytes, len, 0, 0))
+        h.loadFive.set(LinuxScan.doubleField(bytes, len, 0, 1))
+        h.loadFifteen.set(LinuxScan.doubleField(bytes, len, 0, 2))
     end load
-
-    private def field(fields: IndexedSeq[String], i: Int): Maybe[Long] =
-        if i < fields.length then fields(i).toLongOption.fold(Absent)(Present(_)) else Absent
-
-    private def parseDouble(fields: IndexedSeq[String], i: Int): Maybe[Double] =
-        if i < fields.length then fields(i).toDoubleOption.fold(Absent)(Present(_)) else Absent
-
-    private def sumPresent(vs: Maybe[Long]*): Maybe[Long] =
-        val present = vs.collect { case Present(v) => v }
-        if present.isEmpty then Absent else Present(present.sum)
 
 end LinuxDecoders

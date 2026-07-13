@@ -3,79 +3,77 @@ package kyo.stats.machine
 import kyo.*
 import kyo.ffi.*
 
-/** The Linux host reader: `/proc` and `/sys/fs/cgroup` files via the sampler-owned readScoped helper,
-  * disk free/total via the statvfs binding. cgroup (v1 and v2) and PSI are Linux-only and read here.
+/** The Linux host reader: the proc and cgroup files through the sampler's retained read handles, disk free
+  * and total through the statvfs binding. cgroup (v1 and v2) and PSI are Linux-only and are read here.
   *
-  * Every parse is total: a malformed, truncated, non-numeric, or wrong-order field routes to `Absent`
-  * for that field, never a throw. cgroup files are read at the resolved process cgroup path from
-  * `/proc/self/cgroup` (not the hierarchy root). System PSI (`/proc/pressure/{cpu,memory,io}`) and cgroup v2 PSI
-  * (`*.pressure` under the resolved dir) are two distinct families.
+  * Everything a tick touches is retained and built once: one read handle per file, one decode callback per
+  * file, and the cgroup layout, which is resolved a single time at construction. Every parse is total: a
+  * malformed, truncated, non-numeric or missing field decodes to the primitive absent sentinel, which its
+  * cell skips, so it is never recorded and never registered.
   */
-private[machine] object MachineLinux extends Machine:
+final private[machine] class MachineLinux(h: MachineHandles, s: MachineSampler)(using AllowUnsafe) extends Machine:
 
-    // Unsafe: the reader runs inside the sampler's tick and bridges the readScoped file reads and the
-    // statvfs/sysconf FFI calls, all of which require the capability.
-    import AllowUnsafe.embrace.danger
+    private val statSlot = s.openSlot(Path("/proc/stat"))
+    private val memSlot  = s.openSlot(Path("/proc/meminfo"))
+    private val loadSlot = s.openSlot(Path("/proc/loadavg"))
 
-    def read(sampler: MachineSampler)(using AllowUnsafe): Machine.Reading =
-        Machine.Reading(
-            cpu = readCpu(sampler),
-            memory = readMemory(sampler),
-            swap = readSwap(sampler),
-            disks = Chunk.empty,
-            load = readLoad(sampler),
-            cgroup = LinuxCgroup.read(sampler),
-            pressure = LinuxPressure.readSystem(sampler),
-            cgroupPressure = LinuxPressure.readCgroup(sampler)
-        )
+    private val decodeCpu: MachineSampler.Decode = new MachineSampler.Decode:
+        def apply(b: Span[Byte], n: Int)(using AllowUnsafe): Unit = LinuxDecoders.cpu(b, n, jiffiesToNanos, h)
 
-    override def readDisks(sampler: MachineSampler)(using AllowUnsafe): Chunk[Machine.DiskReading] =
-        readDisksImpl(sampler)
+    private val decodeMeminfo: MachineSampler.Decode = new MachineSampler.Decode:
+        def apply(b: Span[Byte], n: Int)(using AllowUnsafe): Unit = LinuxDecoders.meminfo(b, n, h)
 
-    private def readCpu(s: MachineSampler)(using AllowUnsafe): Maybe[Machine.CpuReading] =
-        s.readScoped(Path("/proc/stat"), (b, n) => LinuxDecoders.cpu(b, n, jiffiesToNanos)).flatten
+    private val decodeLoad: MachineSampler.Decode = new MachineSampler.Decode:
+        def apply(b: Span[Byte], n: Int)(using AllowUnsafe): Unit = LinuxDecoders.load(b, n, h)
 
-    private def readMemory(s: MachineSampler)(using AllowUnsafe): Maybe[Machine.MemoryReading] =
-        s.readScoped(Path("/proc/meminfo"), (b, n) => LinuxDecoders.memory(b, n)).flatten
+    private val cgroup   = new LinuxCgroup(h, s)
+    private val pressure = new LinuxPressure(h, s, cgroup)
+    private val disk     = new LinuxDisk(h, s)
 
-    private def readSwap(s: MachineSampler)(using AllowUnsafe): Maybe[Machine.SwapReading] =
-        s.readScoped(Path("/proc/meminfo"), (b, n) => LinuxDecoders.swap(b, n)).flatten
+    def read()(using AllowUnsafe): Unit =
+        discard(s.readInto(statSlot, decodeCpu))
+        discard(s.readInto(memSlot, decodeMeminfo))
+        discard(s.readInto(loadSlot, decodeLoad))
+        cgroup.read()
+        pressure.read()
+    end read
 
-    private def readLoad(s: MachineSampler)(using AllowUnsafe): Maybe[Machine.LoadReading] =
-        s.readScoped(Path("/proc/loadavg"), (b, n) => LinuxDecoders.load(b, n)).flatten
+    def readDisks()(using AllowUnsafe): Unit = disk.read(bindings)
 
-    private def readDisksImpl(s: MachineSampler)(using AllowUnsafe): Chunk[Machine.DiskReading] =
-        LinuxDisk.enumerate(s).map(m => LinuxDisk.stat(m, statvfs))
+    def close()(using AllowUnsafe): Unit = disk.close()
 
-    /** ns-per-jiffy scale from sysconf(_SC_CLK_TCK); resolved once, Absent-safe on a binding-load failure. */
-    private lazy val jiffiesToNanos: Long =
-        try jiffiesFromBinding(Ffi.load[LinuxBindings])
-        catch case ex: Throwable if scala.util.control.NonFatal(ex) => defaultJiffiesToNanos
-
-    private def statvfs(mount: String)(using AllowUnsafe): Maybe[(Long, Long)] =
-        try statvfsWith(Ffi.load[LinuxBindings], mount)
+    /** The binding, loaded once and cached, the same shape the macOS and Windows readers use. A load failure
+      * (no libc binding available on this platform) degrades every reading that needs it to absent.
+      */
+    private lazy val bindings: Maybe[LinuxBindings] =
+        try Present(Ffi.load[LinuxBindings])
         catch case ex: Throwable if scala.util.control.NonFatal(ex) => Absent
 
-    /** The jiffies-to-ns fallback used when sysconf is unavailable or non-positive (100 Hz, the Linux
-      * default): `1e9 / 100`.
+    /** The nanoseconds-per-jiffy scale from sysconf(_SC_CLK_TCK), resolved once. Falls back to the 100 Hz
+      * Linux default when sysconf is unavailable or returns a non-positive value.
+      */
+    private lazy val jiffiesToNanos: Long =
+        bindings match
+            case Present(b) => MachineLinux.jiffiesFromBinding(b)
+            case Absent     => MachineLinux.defaultJiffiesToNanos
+
+end MachineLinux
+
+private[machine] object MachineLinux:
+
+    /** The jiffies-to-nanoseconds fallback used when sysconf is unavailable or non-positive (100 Hz, the
+      * Linux default).
       */
     private[machine] val defaultJiffiesToNanos: Long = 10000000L
 
-    /** The jiffies-to-ns computation from a binding, with the same throw-to-fallback bridge the production
-      * lazy val uses. Package-private so a test drives it with a throwing binding and exercises the real
-      * catch, rather than re-implementing the catch inline.
+    /** The jiffies-to-nanoseconds computation from a binding, with the same throw-to-fallback bridge the
+      * production path uses. Package-private so a test drives it with a throwing binding and exercises the
+      * real catch rather than re-implementing it.
       */
     private[machine] def jiffiesFromBinding(bindings: LinuxBindings)(using AllowUnsafe): Long =
         try
             val hz = bindings.sysconf(LinuxBindings.ScClkTck)
             if hz > 0 then 1000000000L / hz else defaultJiffiesToNanos
         catch case ex: Throwable if scala.util.control.NonFatal(ex) => defaultJiffiesToNanos
-
-    /** The statvfs read from a binding, with the same throw-to-Absent bridge the production `statvfs` uses.
-      * Package-private so a test drives it with a throwing binding and exercises the real catch.
-      */
-    private[machine] def statvfsWith(bindings: LinuxBindings, mount: String)(using AllowUnsafe): Maybe[(Long, Long)] =
-        try LinuxDisk.statvfsRaw(bindings, mount)
-        catch case ex: Throwable if scala.util.control.NonFatal(ex) => Absent
 
 end MachineLinux

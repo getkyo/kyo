@@ -3,13 +3,80 @@ package kyo.stats.machine
 import kyo.*
 import kyo.ffi.*
 
-/** Enumerates physical mounts from `/proc/mounts` (fstype-filtered), reads free/total via statvfs, and
-  * sanitizes each mount path into a Stat scope segment. A per-mount statvfs failure skips only that
-  * mount; an unreadable mounts file yields an empty set, never a throw.
+/** Enumerates the physical mounts from `/proc/mounts`, reads each one's free and total space through the
+  * statvfs binding, and writes both into that mount's retained store cells. A per-mount statvfs failure
+  * skips only that mount; an unreadable mounts file yields no mounts at all, never a throw.
+  *
+  * The mount set is RETAINED: each physical mount gets one `Store` holding its statvfs out-buffer and a
+  * direct reference to its cells, resolved once and rebuilt only when the mount table actually changes
+  * (detected by byte-comparing `/proc/mounts` against a retained fingerprint). A steady disk read iterates
+  * those retained references and writes primitives straight into the cells: it consults the store map
+  * never, and allocates no out-buffer, so the disk path holds no per-read allocation.
+  *
+  * The fstype allow and deny lists are the real defense against a hung mount: a statvfs against a dead
+  * network mount blocks until the kernel gives up, and no timeout can interrupt a syscall that has no
+  * suspension point, so remote and virtual filesystems are excluded up front rather than probed. The lists
+  * are best-effort by nature: a novel remote filesystem type nobody has listed can still be probed, which
+  * is why the disk read runs on its own fiber, off the tick loop, guarded so a stuck mount is read once.
   */
+final private[machine] class LinuxDisk(h: MachineHandles, s: MachineSampler)(using AllowUnsafe):
+
+    private var fingerprint: Array[Byte]       = LinuxDisk.NoFingerprint
+    private var stores: Chunk[LinuxDisk.Store] = Chunk.empty
+
+    def read(bindings: Maybe[LinuxBindings])(using AllowUnsafe): Unit =
+        bindings match
+            case Present(b) =>
+                refresh(b)
+                @scala.annotation.tailrec
+                def loop(i: Int): Unit =
+                    if i < stores.length then
+                        LinuxDisk.statvfsInto(b, stores(i))
+                        loop(i + 1)
+                loop(0)
+            case Absent => ()
+    end read
+
+    /** Releases every retained statvfs out-buffer. Invoked once by the sampler's Scope finalizer. */
+    def close()(using AllowUnsafe): Unit =
+        stores.foreach(_.out.close())
+        stores = Chunk.empty
+
+    /** Re-derives the retained store set only when `/proc/mounts` changed since the last read, so the store
+      * map is consulted at init and on a mount-table change, never on the steady read. On a change the old
+      * out-buffers are closed and one new `Store` per physical mount is built with a retained out-buffer and
+      * a direct reference to its cells.
+      */
+    private def refresh(b: LinuxBindings)(using AllowUnsafe): Unit =
+        s.readOnce(Path("/proc/mounts"), (bytes, n) => LinuxDisk.snapshot(bytes, n)) match
+            case Present(snap) if !java.util.Arrays.equals(snap.raw, fingerprint) =>
+                stores.foreach(_.out.close())
+                val names = MachineHandles.storeNames(snap.mounts)
+                stores = Chunk.from(snap.mounts.indices.map { i =>
+                    new LinuxDisk.Store(snap.mounts(i), Buffer.alloc[Long](16), h.diskStore(names(i)))
+                })
+                fingerprint = snap.raw
+            case _ => ()
+    end refresh
+
+end LinuxDisk
+
 private[machine] object LinuxDisk:
 
-    /** Pseudo/virtual filesystems that are never enumerated (physical filesystems only). */
+    private val NoFingerprint: Array[Byte] = Array.empty[Byte]
+
+    /** One mount's retained disk state: the decoded mount path, the reused statvfs out-buffer, and a direct
+      * reference to its cells. Held for the mount's lifetime; `out` is closed on `LinuxDisk.close` or on the
+      * mount-table change that drops the mount.
+      */
+    final class Store(val mount: String, val out: Buffer[Long], val cell: MachineHandles.DiskStore)
+
+    /** One `/proc/mounts` read: the raw bytes retained as the change fingerprint, and the physical mount
+      * paths parsed once from them. Built on the mount-change path only, so it may allocate.
+      */
+    final class Snapshot(val raw: Array[Byte], val mounts: Chunk[String])
+
+    /** Pseudo and virtual filesystems that are never enumerated (physical filesystems only). */
     val skipFstypes: Set[String] = Set(
         "proc",
         "sysfs",
@@ -36,10 +103,9 @@ private[machine] object LinuxDisk:
         "rpc_pipefs"
     )
 
-    /** Network/remote filesystems that are never enumerated. A statvfs against a dead network mount blocks
-      * indefinitely and would wedge the sampler tick, so remote mounts are excluded up front (the local
-      * fixed filesystems only contract, matching node_exporter's default filesystem filter). The `fuse.`
-      * prefix covers remote FUSE mounts (fuse.sshfs, fuse.rclone) alongside these named types.
+    /** Network and remote filesystems that are never enumerated. A statvfs against a dead network mount
+      * blocks until the kernel gives up and would wedge the disk read, so remote mounts are excluded up
+      * front. The `fuse.` prefix covers remote FUSE transports alongside these named types.
       */
     val skipNetworkFstypes: Set[String] = Set(
         "nfs",
@@ -63,27 +129,26 @@ private[machine] object LinuxDisk:
         "orangefs"
     )
 
-    def enumerate(s: MachineSampler)(using AllowUnsafe): Chunk[String] =
-        s.readScoped(Path("/proc/mounts"), (b, n) => parseMounts(b, n)).getOrElse(Chunk.empty)
+    /** Copies the raw `/proc/mounts` bytes (the change fingerprint) and parses the physical mount paths. */
+    def snapshot(bytes: Span[Byte], len: Int): Snapshot =
+        new Snapshot(bytes.toArray.take(len), parseMounts(bytes, len))
 
     def parseMounts(bytes: Span[Byte], len: Int): Chunk[String] =
-        Chunk.from(Text.fromSpan(bytes, len).lines.flatMap { l =>
+        Chunk.from(LinuxText.lines(bytes, len).flatMap { l =>
             l.split(" ") match
-                case a if a.length >= 3 && isPhysical(a(2)) =>
-                    Iterator.single(unescapeMount(a(1)))
-                case _ => Iterator.empty
+                case a if a.length >= 3 && isPhysical(a(2)) => Iterator.single(unescapeMount(a(1)))
+                case _                                      => Iterator.empty
         }.toSeq)
 
-    /** A fstype is enumerated only when it is neither a pseudo/virtual nor a network/remote filesystem, and
-      * is not a remote FUSE mount. `fuse.` covers remote FUSE transports; a plain local `fuse` (a local
-      * FUSE-backed filesystem) is not blocked, matching the prior behavior for the non-remote case.
+    /** A fstype is enumerated only when it is neither a pseudo or virtual filesystem nor a network or
+      * remote one. `fuse.` covers remote FUSE transports; a plain local `fuse` filesystem is not blocked.
       */
     private def isPhysical(fstype: String): Boolean =
         !skipFstypes.contains(fstype) && !skipNetworkFstypes.contains(fstype) && !fstype.startsWith("fuse.")
 
-    /** Decodes the octal escapes the kernel writes into `/proc/mounts` for whitespace/backslash in a mount
-      * path: `\040` (space), `\011` (tab), `\012` (newline), `\134` (backslash). Any other backslash run is
-      * left verbatim. An escaped path is decoded so the store-name rule and statvfs see the real path.
+    /** Decodes the octal escapes the kernel writes into `/proc/mounts` for whitespace and backslash in a
+      * mount path: `\040` (space), `\011` (tab), `\012` (newline), `\134` (backslash). Any other backslash
+      * run is left verbatim, so the store-name rule and statvfs both see the real path.
       */
     def unescapeMount(path: String): String =
         if !path.contains('\\') then path
@@ -110,29 +175,27 @@ private[machine] object LinuxDisk:
 
     private def digit(c: Char): Int = c - '0'
 
-    def stat(mount: String, statvfs: String => Maybe[(Long, Long)])(using AllowUnsafe): Machine.DiskReading =
-        statvfs(mount) match
-            case Present((total, free)) => Machine.DiskReading(mount, Present(total), Present(free))
-            case Absent                 => Machine.DiskReading(mount, Absent, Absent)
-
-    /** statvfs via the Linux binding: total = f_blocks*f_frsize, free = f_bavail*f_frsize. Absent on error.
+    /** Reads one mount through the binding and writes its two decoded primitives STRAIGHT into that mount's
+      * retained cells. Nothing is returned: no tuple, no boxed value, no carrier of any kind, on any OS. A
+      * failed call or a throw writes nothing, so that mount simply records no value this read (the whole
+      * kyo-ffi binding surface is the throwing unsafe tier, and the caller bridges at its own call site).
+      * The out-buffer is the store's RETAINED 16-long buffer, reused every read, so this read allocates none.
       *
-      * `struct statvfs` is 112 bytes on LP64 glibc and musl; the C library writes the whole struct, so the
-      * out buffer is sized to 16 longs (128 bytes) to hold it with headroom, never the 8 longs that would
-      * take a 48-byte overwrite past the end. glibc and musl agree on the first five unsigned-long fields:
-      * f_bsize at index 0, f_frsize at 1, f_blocks at 2, f_bfree at 3, f_bavail at 4. Bytes/block come from
-      * f_frsize (the fragment size), so total = f_blocks * f_frsize and free = f_bavail * f_frsize.
+      * `struct statvfs` is 112 bytes on LP64 glibc and musl, so the out buffer is sized to 16 longs to hold
+      * it with headroom. glibc and musl agree on the first five unsigned-long fields: f_bsize at index 0,
+      * f_frsize at 1, f_blocks at 2, f_bfree at 3, f_bavail at 4. Bytes per block come from f_frsize, the
+      * fragment size.
       */
-    def statvfsRaw(bindings: LinuxBindings, mount: String)(using AllowUnsafe): Maybe[(Long, Long)] =
-        val buf = Buffer.alloc[Long](16)
+    private[machine] def statvfsInto(bindings: LinuxBindings, store: Store)(using AllowUnsafe): Unit =
         try
-            if bindings.statvfs(mount, buf) != 0 then Absent
-            else
-                val frsize = buf.get(1); val blocks = buf.get(2); val bavail = buf.get(4)
-                Present((blocks * frsize, bavail * frsize))
+            if bindings.statvfs(store.mount, store.out) == 0 then
+                val frsize = store.out.get(1)
+                val blocks = store.out.get(2)
+                val bavail = store.out.get(4)
+                store.cell.total.set(blocks * frsize)
+                store.cell.free.observe(bavail * frsize)
             end if
-        finally buf.close()
-        end try
-    end statvfsRaw
+        catch case ex: Throwable if scala.util.control.NonFatal(ex) => ()
+    end statvfsInto
 
 end LinuxDisk

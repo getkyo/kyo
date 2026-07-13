@@ -2,20 +2,21 @@ package kyo.stats.machine
 
 import kyo.*
 import kyo.ffi.*
+import kyo.stats.internal.StatsRegistry
+import kyo.stats.internal.Summary
+import kyo.stats.internal.UnsafeGauge
+import kyo.stats.internal.UnsafeHistogram
 
 class MachineWindowsTest extends kyo.test.Test[Any]:
 
+    // Every leaf's MachineHandles.init shares the SAME process-global StatsRegistry scope ("machine"),
+    // shared with MachineLinuxTest and MachineMacosTest's own decode leaves. Every assertion below
+    // therefore reads a DELTA or a before/after comparison, never an absolute registered/absent fact on
+    // a shared path, so a concurrently-running sibling suite's own observations cannot corrupt it.
+    override def config: kyo.test.RunConfig = super.config.sequential
+
     import AllowUnsafe.embrace.danger
 
-    given CanEqual[Machine.Reading, Machine.Reading]             = CanEqual.derived
-    given CanEqual[Machine.DiskReading, Machine.DiskReading]     = CanEqual.derived
-    given CanEqual[Machine.CpuReading, Machine.CpuReading]       = CanEqual.derived
-    given CanEqual[Machine.MemoryReading, Machine.MemoryReading] = CanEqual.derived
-    given CanEqual[Machine.SwapReading, Machine.SwapReading]     = CanEqual.derived
-
-    /** A stub `WindowsBindings` whose every method is overridable per test, defaulting to failure codes so
-      * an un-stubbed call surfaces as an obvious Absent rather than a silent success.
-      */
     private class StubBindings extends WindowsBindings:
         var getSystemTimesFn: (Buffer[Long], Buffer[Long], Buffer[Long]) => Int        = (_, _, _) => 0
         var globalMemoryStatusFn: Buffer[Long] => Int                                  = _ => 0
@@ -36,135 +37,112 @@ class MachineWindowsTest extends kyo.test.Test[Any]:
         )(using AllowUnsafe): Int = diskFreeSpaceFn(drive, availToCaller, total, totalFree)
     end StubBindings
 
-    "GetLogicalDrives bitmask decode and per-drive GetDiskFreeSpaceEx failure isolation" - {
+    private def gaugePath(path: String*): Double =
+        StatsRegistry.internal.gauges.get(path.toList.reverse, "", new UnsafeGauge(() => -1d)).collect()
 
-        "the C: and D: fixed roots are enumerated; D: is Absent total/free (skipped), C: recorded" in {
+    private def gaugeRegistered(path: String*): Boolean =
+        StatsRegistry.internal.gauges.map.containsKey(path.toList)
+
+    private def histogramSummary(path: String*): Summary =
+        StatsRegistry.internal.histograms.get(path.toList.reverse, "", new UnsafeHistogram(Array(0d))).summary()
+
+    "cpu decode" - {
+
+        "scales FILETIME by 100 to ns and computes cpu.system as kernel minus idle" in {
             val stub = new StubBindings
-            // bit 2 = C:, bit 3 = D:
-            stub.getLogicalDrivesFn = () => (1 << 2) | (1 << 3)
-            stub.getDriveTypeFn = _ => WindowsBindings.driveFixed
-            stub.diskFreeSpaceFn = (drive, _, totalB, freeB) =>
-                if drive == "D:\\" then 0
-                else
-                    totalB.set(0, 500000000000L); freeB.set(0, 100000000000L)
-                    1
-
-            val roots = WindowsDisk.enumerate(stub)
-            assert(roots == Chunk("C:\\", "D:\\"))
-
-            val readings = roots.map(d => WindowsDisk.stat(stub, d))
-            assert(readings == Chunk(
-                Machine.DiskReading("C:\\", Present(500000000000L), Present(100000000000L)),
-                Machine.DiskReading("D:\\", Absent, Absent)
-            ))
-        }
-
-        "a network drive (GetDriveTypeW != DRIVE_FIXED) is filtered out, never probed by GetDiskFreeSpaceExW" in {
-            val stub = new StubBindings
-            // bit 2 = C: (fixed), bit 25 = Z: (mapped network share). A dead network drive's
-            // GetDiskFreeSpaceExW would block, so it must never be enumerated.
-            stub.getLogicalDrivesFn = () => (1 << 2) | (1 << 25)
-            val driveNetwork = 4
-            stub.getDriveTypeFn = root => if root == "Z:\\" then driveNetwork else WindowsBindings.driveFixed
-            stub.diskFreeSpaceFn = (drive, _, totalB, freeB) =>
-                assert(drive != "Z:\\", "the network drive Z: was probed by GetDiskFreeSpaceExW despite the DRIVE_FIXED filter")
-                totalB.set(0, 500000000000L); freeB.set(0, 100000000000L)
-                1
-
-            val roots = WindowsDisk.enumerate(stub)
-            assert(roots == Chunk("C:\\"))
-            val readings = roots.map(d => WindowsDisk.stat(stub, d))
-            assert(readings == Chunk(Machine.DiskReading("C:\\", Present(500000000000L), Present(100000000000L))))
-        }
-    }
-
-    "read degradation off a Windows host" - {
-
-        // Exercises the REAL MachineWindows.read degrade path: off Windows kernel32 is unresolvable, so the
-        // binding load or its first symbol lookup fails and every family degrades to Absent (Reading.empty).
-        // Gated off a real Windows host, where kernel32 loads and the reading is non-empty, which this
-        // degrade leaf is not asserting (mirrors the suite's own real-host gating).
-        "off Windows every family degrades to Absent through the production read, no throw" in {
-            assume(
-                System.live.unsafe.operatingSystem() != System.OS.Windows,
-                "kernel32 loads on a real Windows host; this leaf asserts the off-Windows degrade to empty"
-            )
+            stub.getSystemTimesFn = (idle, kernel, user) =>
+                idle.set(0, 1000000L); kernel.set(0, 3000000L); user.set(0, 2000000L); 1
             for
                 handles <- MachineHandles.init
-                sampler = new MachineSampler(handles, MachineWindows)
-                reading = MachineWindows.read(sampler)
+                sampler = new MachineSampler(handles)
+                machine = new MachineWindows(handles, sampler)
             yield
-                assert(reading == Machine.Reading.empty)
-                // The Windows-absent families are Absent regardless of the reading source.
-                assert(reading.load == Absent)
-                assert(reading.cgroup == Absent)
-                assert(reading.pressure == Absent)
-                assert(reading.cgroupPressure == Absent)
+                machine.readCpu(stub) // baseline
+                val userSumBefore   = histogramSummary("machine", "cpu", "user.rate").sum
+                val systemSumBefore = histogramSummary("machine", "cpu", "system.rate").sum
+                val idleSumBefore   = histogramSummary("machine", "cpu", "idle.rate").sum
+                val totalSumBefore  = histogramSummary("machine", "cpu", "total.rate").sum
+                stub.getSystemTimesFn = (idle, kernel, user) =>
+                    idle.set(0, 2000000L); kernel.set(0, 6000000L); user.set(0, 4000000L); 1
+                machine.readCpu(stub)
+                assert(histogramSummary("machine", "cpu", "user.rate").sum - userSumBefore == 200000000.0)
+                assert(histogramSummary("machine", "cpu", "system.rate").sum - systemSumBefore == 200000000.0) // (kernel-idle) delta
+                assert(histogramSummary("machine", "cpu", "idle.rate").sum - idleSumBefore == 100000000.0)
+                assert(histogramSummary("machine", "cpu", "total.rate").sum - totalSumBefore == 500000000.0)
             end for
         }
     }
 
-    "cpu decode" - {
+    "memory and swap decode" - {
 
-        "cpu decode: FILETIME 100ns units scale to ns (x100); kernel includes idle, so system = kernel - idle" in {
+        "maps the page-file commit limit to swap.* and never writes memory.free" in {
+            val stub = new StubBindings
+            stub.globalMemoryStatusFn = out =>
+                out.set(1, 17179869184L); out.set(2, 6442450944L); out.set(3, 25769803776L); out.set(4, 12884901888L); 1
+            // memTotal/swapTotal are LongGaugeCells rooted at the shared "machine" scope also written by
+            // MachineLinuxTest's and MachineMacosTest's own decode leaves; StatsRegistry keeps only the
+            // first-ever-registered cell for a path canonical for the process lifetime, so a poll against
+            // the shared scope could read a value a different suite registered first. A uniquely-scoped
+            // MachineHandles avoids the race entirely.
+            val handles            = MachineHandles.initForTest(Stat.initScope("mwintest-memory-swap-decode"), 8L)
+            val sampler            = new MachineSampler(handles)
+            val machine            = new MachineWindows(handles, sampler)
+            val memAvailSumBefore  = histogramSummary("mwintest-memory-swap-decode", "memory", "available").sum
+            val memFreeCountBefore = histogramSummary("mwintest-memory-swap-decode", "memory", "free").count
+            val swapFreeSumBefore  = histogramSummary("mwintest-memory-swap-decode", "swap", "free").sum
+            machine.readMemoryAndSwap(stub)
+            assert(gaugePath("mwintest-memory-swap-decode", "memory", "total") == 17179869184.0)
+            assert(histogramSummary("mwintest-memory-swap-decode", "memory", "available").sum - memAvailSumBefore == 6442450944.0)
+            assert(gaugePath("mwintest-memory-swap-decode", "swap", "total") == 25769803776.0)
+            assert(histogramSummary("mwintest-memory-swap-decode", "swap", "free").sum - swapFreeSumBefore == 12884901888.0)
+            assert(
+                histogramSummary("mwintest-memory-swap-decode", "memory", "free").count == memFreeCountBefore
+            ) // never written on Windows
+        }
+    }
+
+    "family independence" - {
+
+        "a windows-shaped read registers no cpu.steal, cpu.iowait, or load.* series" in {
             val stub = new StubBindings
             stub.getSystemTimesFn = (idle, kernel, user) =>
-                idle.set(0, 1000000L); kernel.set(0, 3000000L); user.set(0, 2000000L)
-                1
-            val result = MachineWindows.readCpu(stub)
-            assert(result == Present(Machine.CpuReading(
-                total = Present(500000000L),
-                user = Present(200000000L),
-                system = Present(200000000L),
-                idle = Present(100000000L),
-                iowait = Absent
-            )))
-        }
-
-        "a getSystemTimes failure routes the whole reading to Absent" in {
-            val stub = new StubBindings
-            stub.getSystemTimesFn = (_, _, _) => 0
-            assert(MachineWindows.readCpu(stub) == Absent)
-        }
-    }
-
-    "memory decode" - {
-
-        "memory decode: MEMORYSTATUSEX index 1/2 project to total/available; free is Absent (no Windows concept)" in {
-            val stub = new StubBindings
+                idle.set(0, 1L); kernel.set(0, 2L); user.set(0, 1L); 1
             stub.globalMemoryStatusFn = out =>
-                out.set(1, 17179869184L); out.set(2, 6442450944L)
-                1
-            val result = MachineWindows.readMemory(stub)
-            assert(result == Present(Machine.MemoryReading(
-                total = Present(17179869184L),
-                available = Present(6442450944L),
-                free = Absent
-            )))
+                out.set(1, 1L); out.set(2, 1L); out.set(3, 1L); out.set(4, 1L); 1
+            for
+                handles <- MachineHandles.init
+                sampler = new MachineSampler(handles)
+                machine = new MachineWindows(handles, sampler)
+            yield
+                val stealCountBefore        = histogramSummary("machine", "cpu", "steal.rate").count
+                val iowaitCountBefore       = histogramSummary("machine", "cpu", "iowait.rate").count
+                val loadOneRegisteredBefore = gaugeRegistered("machine", "load", "one")
+                val loadOnePolledBefore     = if loadOneRegisteredBefore then gaugePath("machine", "load", "one") else Double.NaN
+                machine.readCpu(stub); machine.readMemoryAndSwap(stub)
+                assert(histogramSummary("machine", "cpu", "steal.rate").count == stealCountBefore)
+                assert(histogramSummary("machine", "cpu", "iowait.rate").count == iowaitCountBefore)
+                assert(gaugeRegistered("machine", "load", "one") == loadOneRegisteredBefore) // no new registration
+                if loadOneRegisteredBefore then assert(gaugePath("machine", "load", "one") == loadOnePolledBefore)
+            end for
         }
 
-        "a globalMemoryStatus failure routes the whole reading to Absent" in {
+        "a windows-shaped read registers no cgroup.* or pressure.* (PSI) series" in {
             val stub = new StubBindings
-            stub.globalMemoryStatusFn = _ => 0
-            assert(MachineWindows.readMemory(stub) == Absent)
-        }
-    }
-
-    "swap decode" - {
-
-        "swap decode: MEMORYSTATUSEX index 3/4 project to the page-file commit limit as total/free" in {
-            val stub = new StubBindings
+            stub.getSystemTimesFn = (idle, kernel, user) =>
+                idle.set(0, 1L); kernel.set(0, 2L); user.set(0, 1L); 1
             stub.globalMemoryStatusFn = out =>
-                out.set(3, 25769803776L); out.set(4, 12884901888L)
-                1
-            val result = MachineWindows.readSwap(stub)
-            assert(result == Present(Machine.SwapReading(total = Present(25769803776L), free = Present(12884901888L))))
-        }
-
-        "a globalMemoryStatus failure routes the whole reading to Absent" in {
-            val stub = new StubBindings
-            stub.globalMemoryStatusFn = _ => 0
-            assert(MachineWindows.readSwap(stub) == Absent)
+                out.set(1, 1L); out.set(2, 1L); out.set(3, 1L); out.set(4, 1L); 1
+            for
+                handles <- MachineHandles.init
+                sampler = new MachineSampler(handles)
+                machine = new MachineWindows(handles, sampler)
+            yield
+                val cgMemUsageCountBefore    = histogramSummary("machine", "cgroup", "memory.usage").count
+                val pressureRegisteredBefore = gaugeRegistered("machine", "pressure", "cpu", "some", "avg10")
+                machine.readCpu(stub); machine.readMemoryAndSwap(stub)
+                assert(histogramSummary("machine", "cgroup", "memory.usage").count == cgMemUsageCountBefore)
+                assert(gaugeRegistered("machine", "pressure", "cpu", "some", "avg10") == pressureRegisteredBefore)
+            end for
         }
     }
 

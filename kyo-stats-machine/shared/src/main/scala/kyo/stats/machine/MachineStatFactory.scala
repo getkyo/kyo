@@ -49,12 +49,22 @@ private[kyo] object MachineStatFactory:
     private val disableEnv  = "KYO_MACHINE_DISABLED"
     private val disableProp = "kyo.machine.disabled"
 
-    /** Reads the opt-out once from the given environment reader. Set to a truthy value suppresses the sampler;
-      * unset or unparseable enables (graceful default). Takes a `System.Unsafe` so the read source is
+    /** Reads the opt-out once from the given environment reader. A truthy value suppresses the sampler; unset or
+      * unparseable enables (a graceful, fail-open default). Takes a `System.Unsafe` so the read source is
       * injectable: production passes `System.live.unsafe`; a test passes a staged reader with a chosen env/prop
       * map, since `System.let` swaps `System.local` and cannot reach `System.live`, and a real env var cannot be
       * set inside a running JVM. No effect is needed at the read (the SPI factory constructor has no Frame, the
       * established kyo-stats-otlp pattern).
+      *
+      * The lever is a direct env/property read, not a `kyo.config.StaticFlag`, on purpose: it is read at
+      * classpath-presence activation, which runs at `kyo.Stat` class init, before and independently of any
+      * kyo-config initialization, and must resolve on JVM, Node and Native alike. It reads through
+      * `System.Unsafe.env`, so it resolves `process.env` on Node, where `java.lang.System.getenv` returns null;
+      * the nearest sibling, kyo-stats-otlp, reads its own activation env the same bootstrap-time way.
+      *
+      * The environment variable deliberately takes precedence over the system property: the env var is the
+      * per-host bootstrap lever set on the deployment, and the system property is the local development override.
+      * This precedence is intentional, distinct from the property-first order a `StaticFlag` resolves.
       */
     private def disabled(env: System.Unsafe)(using AllowUnsafe): Boolean =
         val raw = env.env(disableEnv).orElse(env.property(disableProp))
@@ -87,7 +97,7 @@ private[kyo] object MachineStatFactory:
       * a process-lifetime singleton), but a test that stages a start must be able to stop it rather than
       * leak a forever-running detached fiber holding /proc read handles.
       */
-    private val startedFiber: AtomicRef.Unsafe[Maybe[Fiber.Unsafe[Nothing, Any]]] =
+    private val startedFiber: AtomicRef.Unsafe[Maybe[Fiber.Unsafe[Unit, Any]]] =
         AtomicRef.Unsafe.init(Absent)
 
     /** Test-only seam: interrupts the last-started sampler fiber (if any) and clears the CAS, so a test that

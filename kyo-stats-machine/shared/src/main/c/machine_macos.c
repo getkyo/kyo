@@ -4,7 +4,7 @@
 //
 // The whole shim is guarded on __APPLE__: the kyo-ffi plugin compiles every declared C source on the
 // BUILD HOST for JVM/JS, and Scala Native compiles it into the binary on every OS, so on a non-macOS
-// host (the Linux-only CI) the mach/sysctl headers do not exist. The #else branch provides same-signature
+// host (a Linux build host) the mach/sysctl headers do not exist. The #else branch provides same-signature
 // stubs returning failure codes, so the file compiles on every host and every symbol resolves; the
 // binding methods then return non-zero / 0 count / "" off macOS, which MachineMacos already maps to Absent.
 #include <stdint.h>
@@ -79,23 +79,41 @@ int machine_macos_getloadavg(double* out, int n) {
     return getloadavg(out, n);
 }
 
-// A getmntinfo snapshot cached across mountCount/mountPath/mountFstype for one enumeration pass.
-static struct statfs* g_mnt = NULL;
-static int g_mnt_count = 0;
-
-int machine_macos_mount_count(void) {
-    g_mnt_count = getmntinfo(&g_mnt, MNT_NOWAIT);
-    return g_mnt_count;
-}
-
-const char* machine_macos_mount_path(int i) {
-    if (g_mnt == NULL || i < 0 || i >= g_mnt_count) return "";
-    return g_mnt[i].f_mntonname;
-}
-
-const char* machine_macos_mount_fstype(int i) {
-    if (g_mnt == NULL || i < 0 || i >= g_mnt_count) return "";
-    return g_mnt[i].f_fstypename;
+// Enumerate the mounted filesystems into the CALLER's buffer as NUL-separated
+// <mntonname>\0<fstypename>\0 pairs, and return the mount count (or -1 when the buffer is too small).
+//
+// getfsstat into a locally-owned array is re-entrant. getmntinfo is not: it returns a pointer into
+// libc-owned static memory that every caller in the process shares, so a second call from any thread
+// overwrites the view another caller is still reading, and the caller never owns the buffer. Filling a
+// buffer the caller owns removes both hazards and keeps the enumeration coherent for a mount table that
+// changes between calls. The struct array this function fills lives inside the call and is freed before
+// it returns, so it is a C-heap allocation only, never a managed-heap one.
+int machine_macos_mounts(char* out, int32_t cap) {
+    int count = getfsstat(NULL, 0, MNT_NOWAIT);
+    if (count <= 0) return count;
+    size_t bytes = (size_t)count * sizeof(struct statfs);
+    struct statfs* mnt = (struct statfs*)malloc(bytes);
+    if (mnt == NULL) return -1;
+    count = getfsstat(mnt, (int)bytes, MNT_NOWAIT);
+    if (count <= 0) {
+        free(mnt);
+        return count;
+    }
+    int32_t at = 0;
+    for (int i = 0; i < count; i++) {
+        size_t plen = strlen(mnt[i].f_mntonname);
+        size_t flen = strlen(mnt[i].f_fstypename);
+        if (at + (int32_t)plen + (int32_t)flen + 2 > cap) {
+            free(mnt);
+            return -1;
+        }
+        memcpy(out + at, mnt[i].f_mntonname, plen + 1);
+        at += (int32_t)plen + 1;
+        memcpy(out + at, mnt[i].f_fstypename, flen + 1);
+        at += (int32_t)flen + 1;
+    }
+    free(mnt);
+    return count;
 }
 
 // statfs(path) projected to [total, free] bytes.
@@ -110,15 +128,14 @@ int machine_macos_statfs(const char* path, int64_t* out) {
 #else
 
 // Non-macOS host: same-signature stubs so the file compiles and every symbol resolves. Each returns a
-// failure code (non-zero int, 0 mount count, "" path), which MachineMacos maps to Absent. MachineMacos
+// failure code (a non-zero int, or a 0 mount/sample count), which MachineMacos maps to Absent. MachineMacos
 // is only ever selected when System.operatingSystem is MacOS, so these stubs never run at runtime.
 int machine_macos_host_cpu_load(int64_t* out) { (void)out; return 1; }
 int machine_macos_vm_statistics(int64_t* out) { (void)out; return 1; }
 int machine_macos_swap_usage(int64_t* out) { (void)out; return 1; }
 int machine_macos_getloadavg(double* out, int n) { (void)out; (void)n; return 0; }
-int machine_macos_mount_count(void) { return 0; }
-const char* machine_macos_mount_path(int i) { (void)i; return ""; }
-const char* machine_macos_mount_fstype(int i) { (void)i; return ""; }
+int machine_macos_mounts(char* out, int32_t cap) { (void)out; (void)cap; return 0; }
 int machine_macos_statfs(const char* path, int64_t* out) { (void)path; (void)out; return 1; }
 
 #endif
+

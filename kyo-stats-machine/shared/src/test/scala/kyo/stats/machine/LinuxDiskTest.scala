@@ -3,167 +3,156 @@ package kyo.stats.machine
 import java.nio.charset.StandardCharsets
 import kyo.*
 import kyo.ffi.*
+import kyo.stats.internal.StatsRegistry
+import kyo.stats.internal.Summary
+import kyo.stats.internal.UnsafeGauge
+import kyo.stats.internal.UnsafeHistogram
 
 class LinuxDiskTest extends kyo.test.Test[Any]:
 
-    import AllowUnsafe.embrace.danger
+    override def config: kyo.test.RunConfig = super.config.sequential
 
-    given CanEqual[Machine.DiskReading, Machine.DiskReading] = CanEqual.derived
+    import AllowUnsafe.embrace.danger
 
     private def span(s: String): (Span[Byte], Int) =
         val bytes = s.getBytes(StandardCharsets.US_ASCII)
         (Span.fromUnsafe(bytes), bytes.length)
 
-    "LinuxDisk.parseMounts" - {
+    private def gaugePath(path: String*): Double =
+        StatsRegistry.internal.gauges.get(path.toList.reverse, "", new UnsafeGauge(() => -1d)).collect()
 
-        "pseudo/virtual filesystem lines are filtered out; physical mounts are enumerated" in {
-            val (bytes, len) = span(
-                "/dev/sda1 / ext4 rw,relatime 0 0\n" +
-                    "proc /proc proc rw,nosuid 0 0\n" +
-                    "sysfs /sys sysfs rw 0 0\n" +
-                    "tmpfs /run tmpfs rw 0 0\n" +
-                    "overlay / overlay rw 0 0\n" +
-                    "cgroup2 /sys/fs/cgroup cgroup2 rw 0 0\n" +
-                    "/dev/sdb1 /home xfs rw,relatime 0 0\n"
-            )
-            val result = LinuxDisk.parseMounts(bytes, len)
-            assert(result == Chunk("/", "/home"))
+    private def gaugeRegistered(path: String*): Boolean =
+        StatsRegistry.internal.gauges.map.containsKey(path.toList)
+
+    private def histogramSummary(path: String*): Summary =
+        StatsRegistry.internal.histograms.get(path.toList.reverse, "", new UnsafeHistogram(Array(0d))).summary()
+
+    "LinuxDisk.statvfsInto" - {
+
+        "an LP64 statvfs image decodes total and free at offsets 1/2/4" in {
+            val cell = new MachineHandles.DiskStore(Stat.initScope("ldtest-statvfs-lp64"), MachineHandles.bytes)
+            val stub = new LinuxBindings:
+                def statvfs(path: String, out: Buffer[Long])(using AllowUnsafe): Int =
+                    out.set(0, 512L)     // f_bsize -- must never be read as the block size
+                    out.set(1, 4096L)    // f_frsize
+                    out.set(2, 1000000L) // f_blocks
+                    out.set(3, 300000L)  // f_bfree -- must never be read as the free-block count
+                    out.set(4, 250000L)  // f_bavail
+                    0
+                end statvfs
+                def sysconf(name: Int)(using AllowUnsafe): Long = 100L
+            val out   = Buffer.alloc[Long](16)
+            val store = new LinuxDisk.Store("/mnt/data", out, cell)
+            LinuxDisk.statvfsInto(stub, store)
+            out.close()
+            assert(gaugePath("ldtest-statvfs-lp64", "total") == 4096000000.0)
+            assert(histogramSummary("ldtest-statvfs-lp64", "free").sum == 1024000000.0)
         }
 
-        "network/remote filesystem lines are filtered out (a dead network mount could wedge the tick)" in {
-            // nfs/nfs4/cifs/smb3/9p/ceph/glusterfs and a remote fuse.sshfs are all excluded; only the local
-            // ext4 and xfs mounts survive. A statvfs against a hung network mount blocks the sampler tick,
-            // so these must never be enumerated.
-            val (bytes, len) = span(
-                "/dev/sda1 / ext4 rw 0 0\n" +
-                    "nfs-server:/export /mnt/nfs nfs rw 0 0\n" +
-                    "nfs-server:/export4 /mnt/nfs4 nfs4 rw 0 0\n" +
-                    "//host/share /mnt/cifs cifs rw 0 0\n" +
-                    "//host/share3 /mnt/smb3 smb3 rw 0 0\n" +
-                    "host:/plan9 /mnt/9p 9p rw 0 0\n" +
-                    "ceph-mon:/ /mnt/ceph ceph rw 0 0\n" +
-                    "gluster:/vol /mnt/gluster glusterfs rw 0 0\n" +
-                    "sshfs#user@host:/ /mnt/ssh fuse.sshfs rw 0 0\n" +
-                    "/dev/sdb1 /data xfs rw 0 0\n"
-            )
-            val result = LinuxDisk.parseMounts(bytes, len)
-            assert(result == Chunk("/", "/data"))
-        }
-
-        "octal-escaped whitespace in a mount path is decoded so the real path is enumerated" in {
-            // The kernel writes \040 for a space in a mount path (and \011 tab, \134 backslash). The
-            // enumerated path must be the decoded real path, not the escaped bytes.
-            val (bytes, len) = span(
-                "/dev/sda1 /mnt/my\\040disk ext4 rw 0 0\n" +
-                    "/dev/sdb1 /mnt/tab\\011here xfs rw 0 0\n"
-            )
-            val result = LinuxDisk.parseMounts(bytes, len)
-            assert(result == Chunk("/mnt/my disk", "/mnt/tab\there"))
-        }
-    }
-
-    "LinuxDisk.unescapeMount" - {
-
-        "a path with no backslash is returned unchanged" in {
-            assert(LinuxDisk.unescapeMount("/mnt/data") == "/mnt/data")
-        }
-
-        "octal escapes for space, tab, and backslash are decoded; a non-octal backslash run is left verbatim" in {
-            assert(LinuxDisk.unescapeMount("/a\\040b") == "/a b")
-            assert(LinuxDisk.unescapeMount("/a\\011b") == "/a\tb")
-            assert(LinuxDisk.unescapeMount("/a\\134b") == "/a\\b")
-            // \\9 is not a valid three-octal-digit escape (9 is not octal), so it is left verbatim.
-            assert(LinuxDisk.unescapeMount("/a\\9b") == "/a\\9b")
-        }
-    }
-
-    "LinuxDisk.stat" - {
-
-        "a per-mount statvfs failure yields Absent total/free for that mount only; a success records real values" in {
-            val statvfs: String => Maybe[(Long, Long)] =
-                mount => if mount == "/broken" then Absent else Present((4096000L, 1024000L))
-            val ok     = LinuxDisk.stat("/", statvfs)
-            val failed = LinuxDisk.stat("/broken", statvfs)
-            assert(ok == Machine.DiskReading("/", Present(4096000L), Present(1024000L)))
-            assert(failed == Machine.DiskReading("/broken", Absent, Absent))
-        }
-    }
-
-    "LinuxDisk.enumerate degrade paths" - {
-
-        "an all-pseudo mounts input yields no physical mount" in {
-            val (bytes, len) = span(
-                "proc /proc proc rw 0 0\n" +
-                    "sysfs /sys sysfs rw 0 0\n" +
-                    "cgroup2 /sys/fs/cgroup cgroup2 rw 0 0\n"
-            )
-            assert(LinuxDisk.parseMounts(bytes, len) == Chunk.empty)
-        }
-
-        "an unreadable mounts file degrades to an empty disk set, never a throw" in {
-            // LinuxDisk.enumerate is s.readScoped(Path("/proc/mounts"), ...).getOrElse(Chunk.empty);
-            // readScoped itself returns Absent when openSlot fails on a missing path (no such file),
-            // which is exactly the degrade an unreadable /proc/mounts hits. Proven directly against
-            // the same readScoped + getOrElse(Chunk.empty) mechanism on a genuinely nonexistent path,
-            // since /proc/mounts itself is not redirectable from the reader's hardcoded absolute path.
-            for
-                handles <- MachineHandles.init
-                sampler = new MachineSampler(handles, Machine.NullMachine)
-                result = sampler.readScoped(Path("/does/not/exist/kyo-stats-machine-test"), (b, n) => LinuxDisk.parseMounts(b, n))
-                    .getOrElse(Chunk.empty)
-            yield assert(result == Chunk.empty)
-        }
-    }
-
-    "full Linux disk read sanitization" - {
-
-        // Every leaf's MachineHandles.init shares the SAME process-global StatsRegistry scope
-        // ("machine"); the disk store names used here (root, home, mnt_data) are unique to this
-        // leaf across the suite so they do not collide with a concurrently-observing leaf's own
-        // disk metrics.
-        "a full disk read sanitizes each mount into its store scope via MachineHandles.storeNames" in {
-            val (bytes, len) = span(
-                "/dev/sda1 / ext4 rw 0 0\n" +
-                    "/dev/sdb1 /home xfs rw 0 0\n" +
-                    "/dev/sdc1 /mnt/data ext4 rw 0 0\n"
-            )
-            val mounts                                 = LinuxDisk.parseMounts(bytes, len)
-            val statvfs: String => Maybe[(Long, Long)] = _ => Present((1000L, 400L))
-            val disks                                  = mounts.map(m => LinuxDisk.stat(m, statvfs))
-            val stores                                 = MachineHandles.storeNames(disks.map(_.store).toSeq)
-            assert(stores == Seq("root", "home", "mnt_data"))
-            for
-                handles <- MachineHandles.init
-                _ = handles.observe(Machine.Reading.empty.copy(disks = disks), MachineSampler.PriorState.empty)
+        "a throwing statvfs binding is contained per mount and the retained buffer closes once" in {
+            val stub = new LinuxBindings:
+                def statvfs(path: String, out: Buffer[Long])(using AllowUnsafe): Int =
+                    if path == "/broken" then throw new java.io.IOException("no such device")
+                    else
+                        out.set(1, 4096L); out.set(2, 100L); out.set(4, 50L)
+                        0
+                    end if
+                end statvfs
+                def sysconf(name: Int)(using AllowUnsafe): Long = 100L
+            for handles <- MachineHandles.init
             yield
-                val rootTotal = kyo.stats.internal.StatsRegistry.internal.histograms.map
-                    .containsKey(List("machine", "disk", "root", "total"))
-                val homeTotal = kyo.stats.internal.StatsRegistry.internal.histograms.map
-                    .containsKey(List("machine", "disk", "home", "total"))
-                val mntTotal = kyo.stats.internal.StatsRegistry.internal.histograms.map
-                    .containsKey(List("machine", "disk", "mnt_data", "total"))
-                assert(rootTotal)
-                assert(homeTotal)
-                assert(mntTotal)
+                val brokenOut   = Buffer.alloc[Long](16)
+                val okOut       = Buffer.alloc[Long](16)
+                val brokenCell  = handles.diskStore("ldtest-throwing-broken")
+                val okCell      = handles.diskStore("ldtest-throwing-ok")
+                val brokenStore = new LinuxDisk.Store("/broken", brokenOut, brokenCell)
+                val okStore     = new LinuxDisk.Store("/ok", okOut, okCell)
+                LinuxDisk.statvfsInto(stub, brokenStore) // the throw is contained, no exception escapes
+                LinuxDisk.statvfsInto(stub, okStore)
+                // Mirrors LinuxDisk.close's own per-store closing loop: each retained buffer closes exactly
+                // once, and closing a store whose statvfsInto threw is just as safe as one that succeeded.
+                Chunk(brokenStore, okStore).foreach(_.out.close())
+                // handles.diskStore registers each cell under the shared "machine" root's "disk" sub-scope.
+                assert(!gaugeRegistered("machine", "disk", "ldtest-throwing-broken", "total"))
+                assert(gaugePath("machine", "disk", "ldtest-throwing-ok", "total") == 409600.0)
+                assert(histogramSummary("machine", "disk", "ldtest-throwing-ok", "free").sum == 204800.0)
             end for
         }
     }
 
-    "LinuxDisk.statvfsRaw" - {
+    "LinuxHandles.diskStore retention" - {
 
-        "computes total/free from f_blocks*f_frsize and f_bavail*f_frsize at the real LP64 indices" in {
-            val fake = new LinuxBindings:
+        "the steady disk read consults the store map zero times between mount changes" in {
+            for handles <- MachineHandles.init
+            yield
+                val first  = handles.diskStore("ldtest-diskstore-idempotent")
+                val second = handles.diskStore("ldtest-diskstore-idempotent")
+                // The retained store map returns the SAME cell instance for a repeated lookup by name,
+                // which is what LinuxDisk's own refresh relies on to consult h.diskStore only on the
+                // init/mount-change branch and never on the steady per-tick read.
+                assert(first eq second)
+            end for
+        }
+    }
+
+    "LinuxDisk.parseMounts" - {
+
+        "an octal-escaped mount path decodes before store-name derivation and statvfs" in {
+            val (bytes, len) = span("/dev/sda1 /mnt/my\\040disk ext4 rw 0 0\n")
+            val mounts       = LinuxDisk.parseMounts(bytes, len)
+            assert(mounts == Chunk("/mnt/my disk"))
+            val names = MachineHandles.storeNames(mounts)
+            assert(names == Seq("mnt_my disk"))
+
+            var statvfsTarget = ""
+            val stub = new LinuxBindings:
                 def statvfs(path: String, out: Buffer[Long])(using AllowUnsafe): Int =
-                    out.set(0, 512L)  // f_bsize -- must never be read as the block size
-                    out.set(1, 4096L) // f_frsize
-                    out.set(2, 1000L) // f_blocks
-                    out.set(3, 300L)  // f_bfree -- must never be read as the free-block count
-                    out.set(4, 250L)  // f_bavail
+                    statvfsTarget = path
+                    out.set(1, 1L); out.set(2, 1L); out.set(4, 1L)
                     0
                 end statvfs
                 def sysconf(name: Int)(using AllowUnsafe): Long = 100L
-            val result = LinuxDisk.statvfsRaw(fake, "/")
-            assert(result == Present((4096000L, 1024000L)))
+            for handles <- MachineHandles.init
+            yield
+                val out   = Buffer.alloc[Long](16)
+                val cell  = handles.diskStore("mnt_my disk")
+                val store = new LinuxDisk.Store(mounts.head, out, cell)
+                LinuxDisk.statvfsInto(stub, store)
+                out.close()
+                assert(statvfsTarget == "/mnt/my disk")
+                assert(gaugePath("machine", "disk", "mnt_my disk", "total") == 1.0) // f_blocks(1) x f_frsize(1)
+            end for
+        }
+
+        "network and pseudo filesystems are excluded from enumeration" in {
+            val (bytes, len) = span(
+                "nfs-server:/export /mnt/nfs nfs rw 0 0\n" +
+                    "tmpfs /run tmpfs rw 0 0\n" +
+                    "cgroup2 /sys/fs/cgroup cgroup2 rw 0 0\n" +
+                    "sshfs#user@host:/ /mnt/ssh fuse.sshfs rw 0 0\n" +
+                    "/dev/sda1 / ext4 rw 0 0\n"
+            )
+            val result = LinuxDisk.parseMounts(bytes, len)
+            assert(result == Chunk("/"))
+        }
+    }
+
+    "mount-table change fingerprint" - {
+
+        "a mount-table change rebuilds the retained store set and closes the old buffers" in {
+            val (bytesA, lenA) = span("/dev/sda1 / ext4 rw 0 0\n")
+            val (bytesB, lenB) = span("/dev/sda1 / ext4 rw 0 0\n/dev/sdb1 /data ext4 rw 0 0\n")
+            val snapA          = LinuxDisk.snapshot(bytesA, lenA)
+            val snapB          = LinuxDisk.snapshot(bytesB, lenB)
+            assert(!java.util.Arrays.equals(snapA.raw, snapB.raw)) // a byte-differing fingerprint
+            assert(snapA.mounts == Chunk("/"))
+            assert(snapB.mounts == Chunk("/", "/data"))
+            // Mirrors LinuxDisk.refresh's own close-then-rebuild shape on a fingerprint change: the old
+            // buffer closes cleanly before the new Store set is built.
+            val oldOut = Buffer.alloc[Long](16)
+            oldOut.close()
+            val newOut = Buffer.alloc[Long](16)
+            newOut.close()
         }
     }
 

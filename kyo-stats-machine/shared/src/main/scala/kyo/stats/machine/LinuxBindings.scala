@@ -19,5 +19,11 @@ private[machine] trait LinuxBindings extends Ffi:
 end LinuxBindings
 
 private[machine] object LinuxBindings extends Ffi.Config(library = "c"):
-    /** _SC_CLK_TCK on Linux glibc. */
+    /** The `_SC_CLK_TCK` sysconf REQUEST constant, whose enum value is 2 on Linux glibc and musl. It names
+      * WHICH system limit `sysconf` returns (the clock-tick Hz), not the Hz itself: the actual scale is
+      * resolved at runtime by `MachineLinux.jiffiesFromBinding` via `sysconf(ScClkTck)`, which falls back to
+      * the 100 Hz Linux default when that call is unavailable or returns a non-positive result. This enum
+      * value is not portable to other C libraries, which is the reason for that runtime fallback.
+      */
     val ScClkTck: Int = 2
+end LinuxBindings

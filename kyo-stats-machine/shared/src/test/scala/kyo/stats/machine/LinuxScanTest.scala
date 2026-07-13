@@ -119,4 +119,17 @@ class LinuxScanTest extends kyo.test.Test[Any]:
         }
     }
 
+    "totality on an empty buffer" - {
+
+        "every byte-scan entry point is total on an empty buffer (len 0), the shape MachineSampler.readInto passes when fill returns 0 on a transient proc file" in {
+            val empty = Span.empty[Byte]
+            assert(LinuxScan.lineFields(empty, 0, LinuxScan.ascii("MemTotal:")) == -1)
+            assert(LinuxScan.longField(empty, 0, 0, 0, 1000L) == Path.ReadHandle.AbsentLong)
+            assert(LinuxScan.keyedLong(empty, 0, LinuxScan.ascii("cpu "), 0, 1L) == Path.ReadHandle.AbsentLong)
+            assert(LinuxScan.doubleField(empty, 0, 0, 0).isNaN)
+            assert(LinuxScan.taggedDouble(empty, 0, 0, LinuxScan.ascii("avg10=")).isNaN)
+            assert(LinuxScan.taggedLong(empty, 0, 0, LinuxScan.ascii("total="), 1L) == Path.ReadHandle.AbsentLong)
+        }
+    }
+
 end LinuxScanTest

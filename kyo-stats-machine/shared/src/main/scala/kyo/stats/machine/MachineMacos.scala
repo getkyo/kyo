@@ -3,86 +3,88 @@ package kyo.stats.machine
 import kyo.*
 import kyo.ffi.*
 
-/** The macOS host reader: cpu-time via mach `host_statistics` (host_cpu_load_info), memory/swap via
-  * `sysctl` + mach `vm_statistics64`, load via `getloadavg`, per-mount disk via `getmntinfo`+`statfs`.
-  * All syscalls go through `MacosBindings` over a small projection C shim that flattens the nested/array
-  * structs into flat primitive out-params. cgroup and PSI are Linux-only and always Absent here.
+/** The macOS host reader: cpu-time through mach `host_statistics`, memory and swap through `sysctl` plus
+  * mach `vm_statistics64`, load averages through `getloadavg`, and per-mount disk through the mount
+  * enumeration and `statfs`. All syscalls go through a small projection shim that flattens the nested and
+  * array struct fields the FFI struct layer cannot read into flat primitive out-params.
+  *
+  * The four out-buffers are RETAINED, allocated once at construction and closed by the sampler's Scope
+  * finalizer: `Buffer.alloc` opens a fresh memory arena per call, so allocating them per read allocated
+  * four arenas on every tick. cgroup and PSI are Linux-only and are never written here, and macOS has no
+  * iowait or steal concept, so those cells are never written either and their series are never registered.
   */
-private[machine] object MachineMacos extends Machine:
+final private[machine] class MachineMacos(h: MachineHandles, s: MachineSampler)(using AllowUnsafe) extends Machine:
 
-    // Unsafe: the reader runs inside the sampler's tick and bridges the sysctl/mach/getmntinfo FFI
-    // calls, which require the capability.
-    import AllowUnsafe.embrace.danger
+    private val cpuOut  = Buffer.alloc[Long](4)
+    private val memOut  = Buffer.alloc[Long](3)
+    private val swapOut = Buffer.alloc[Long](2)
+    private val loadOut = Buffer.alloc[Double](3)
 
-    def read(sampler: MachineSampler)(using AllowUnsafe): Machine.Reading =
+    private val disk = new MacosDisk(h)
+
+    def read()(using AllowUnsafe): Unit =
         bindings match
             case Present(b) =>
-                Machine.Reading(
-                    cpu = readCpu(b),
-                    memory = readMemory(b),
-                    swap = readSwap(b),
-                    disks = Chunk.empty,
-                    load = readLoad(b),
-                    cgroup = Absent,
-                    pressure = Absent,
-                    cgroupPressure = Absent
-                )
-            case Absent => Machine.Reading.empty
+                readCpu(b)
+                readMemory(b)
+                readSwap(b)
+                readLoad(b)
+            case Absent => ()
 
-    override def readDisks(sampler: MachineSampler)(using AllowUnsafe): Chunk[Machine.DiskReading] =
+    def readDisks()(using AllowUnsafe): Unit =
         bindings match
-            case Present(b) => readDisksImpl(b)
-            case Absent     => Chunk.empty
+            case Present(b) => disk.read(b)
+            case Absent     => ()
 
-    /** The binding, loaded once; a load failure (e.g. browser-JS with no koffi) degrades to Absent. */
+    def close()(using AllowUnsafe): Unit =
+        cpuOut.close()
+        memOut.close()
+        swapOut.close()
+        loadOut.close()
+        disk.close()
+    end close
+
+    /** The binding, loaded once; a load failure (a host with no koffi, for instance) degrades every
+      * reading to absent.
+      */
     private lazy val bindings: Maybe[MacosBindings] =
         try Present(Ffi.load[MacosBindings])
         catch case ex: Throwable if scala.util.control.NonFatal(ex) => Absent
 
-    private[machine] def readCpu(b: MacosBindings)(using AllowUnsafe): Maybe[Machine.CpuReading] =
-        val out = Buffer.alloc[Long](4)
-        try
-            if b.hostCpuLoad(out) != 0 then Absent
-            else
-                val user  = out.get(0); val system = out.get(1); val idle = out.get(2); val nice = out.get(3)
-                val total = user + system + idle + nice
-                Present(Machine.CpuReading(Present(total), Present(user), Present(system), Present(idle), Absent))
-            end if
-        finally out.close()
-        end try
+    private[machine] def readCpu(b: MacosBindings)(using AllowUnsafe): Unit =
+        if b.hostCpuLoad(cpuOut) == 0 then
+            val user   = cpuOut.get(0)
+            val system = cpuOut.get(1)
+            val idle   = cpuOut.get(2)
+            val nice   = cpuOut.get(3)
+            h.cpuUser.observe(user)
+            h.cpuSystem.observe(system)
+            h.cpuIdle.observe(idle)
+            h.cpuTotal.observe(user + system + idle + nice)
+        end if
     end readCpu
 
-    private[machine] def readMemory(b: MacosBindings)(using AllowUnsafe): Maybe[Machine.MemoryReading] =
-        val out = Buffer.alloc[Long](3)
-        try
-            if b.vmStatistics(out) != 0 then Absent
-            else
-                val total = out.get(0); val free = out.get(1); val available = out.get(2)
-                Present(Machine.MemoryReading(Present(total), Present(available), Present(free)))
-            end if
-        finally out.close()
-        end try
+    private[machine] def readMemory(b: MacosBindings)(using AllowUnsafe): Unit =
+        if b.vmStatistics(memOut) == 0 then
+            h.memTotal.set(memOut.get(0))
+            h.memFree.observe(memOut.get(1))
+            h.memAvailable.observe(memOut.get(2))
+        end if
     end readMemory
 
-    private[machine] def readSwap(b: MacosBindings)(using AllowUnsafe): Maybe[Machine.SwapReading] =
-        val out = Buffer.alloc[Long](2)
-        try
-            if b.swapUsage(out) != 0 then Absent
-            else Present(Machine.SwapReading(Present(out.get(0)), Present(out.get(1))))
-        finally out.close()
-        end try
+    private[machine] def readSwap(b: MacosBindings)(using AllowUnsafe): Unit =
+        if b.swapUsage(swapOut) == 0 then
+            h.swapTotal.set(swapOut.get(0))
+            h.swapFree.observe(swapOut.get(1))
+        end if
     end readSwap
 
-    private[machine] def readLoad(b: MacosBindings)(using AllowUnsafe): Maybe[Machine.LoadReading] =
-        val out = Buffer.alloc[Double](3)
-        try
-            if b.getloadavg(out, 3) != 3 then Absent
-            else Present(Machine.LoadReading(Present(out.get(0)), Present(out.get(1)), Present(out.get(2))))
-        finally out.close()
-        end try
+    private[machine] def readLoad(b: MacosBindings)(using AllowUnsafe): Unit =
+        if b.getloadavg(loadOut, 3) == 3 then
+            h.loadOne.set(loadOut.get(0))
+            h.loadFive.set(loadOut.get(1))
+            h.loadFifteen.set(loadOut.get(2))
+        end if
     end readLoad
-
-    private def readDisksImpl(b: MacosBindings)(using AllowUnsafe): Chunk[Machine.DiskReading] =
-        MacosDisk.enumerate(b).map(m => MacosDisk.stat(b, m))
 
 end MachineMacos

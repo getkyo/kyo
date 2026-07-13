@@ -2,246 +2,235 @@ package kyo.stats.machine
 
 import kyo.*
 
-/** Every `kyo.Stat` metric handle the sampler retains, created once under `Stat.scope("machine")`.
+/** Every `kyo.Stat` metric cell the sampler retains, created once under `Stat.scope("machine")`.
   *
-  * The handle set is the machine.* taxonomy: cpu.<mode>.total Counters paired with cpu.<mode>.rate Histograms
-  * (dual-treatment), memory/swap/load gauge Histograms, cpu.cores CounterGauge, the cgroup family, and
-  * the two PSI families (system and cgroup). Each cumulative-time Counter is created alongside its
-  * per-second-delta Histogram so the pairing is structural. `observe` advances every paired Counter by
-  * the per-tick delta on the scaled value and observes that same delta into its paired Histogram; an
-  * unpaired Counter (cgroup.cpu.periods, which the taxonomy declares with no dual) advances by its own
-  * delta and records into no Histogram. Every gauge is observed; an Absent field is skipped and does
-  * not advance its Counter or prior. Disk handles are created per fixed mount at init by the sampler
-  * and observed the same way.
+  * A CELL is the one thing a decoder writes to. It owns its `kyo.Stat` handle, its prior-cumulative value
+  * when it has one, and its holder when it is a gauge; it takes a decoded PRIMITIVE and does the rest. A
+  * decoder therefore never builds a value to hand over, never wraps an absent reading, and never looks a
+  * handle up: it calls a field.
+  *
+  * Every cell registers its handle on its FIRST Present observation and reads it as a field thereafter, so
+  * a metric this host never produces (load averages on Windows, cgroup and PSI off Linux, cpu.steal off
+  * Linux, cpu.iowait on macOS) registers no series at all, and a gauge is seeded with its first real value
+  * BEFORE it is registered, so its first poll is never a transient zero.
+  *
+  * The taxonomy: a per-second `.rate` is a flow whose within-window distribution is the metric, so it is a
+  * `Histogram` whose running sum also carries the cumulative total (which is why no metric with a `.rate`
+  * carries a separate cumulative Counter). A genuinely varying byte level is a `Histogram` too, because a
+  * 1 Hz sample over the export window captures a spike a poll-at-flush would miss. A fixed total, a
+  * pre-averaged kernel average, a config value and the core count neither rise nor fall within a window in
+  * a way a distribution would describe, so each is a `Gauge` backed by a retained holder the sampler writes
+  * and the registry polls. `machine.cgroup.cpu.periods` is the one cumulative with no `.rate` pair, so it
+  * is the one Counter.
   */
-final private[kyo] class MachineHandles private (root: Stat, cores: CounterGauge):
+final private[kyo] class MachineHandles private (root: Stat, coreCount: Long):
 
+    // Unsafe: the cells are single-owner sampler state, written from the one sampler fiber and read by the
+    // registry flusher through the Stat handles they hold.
+    import AllowUnsafe.embrace.danger
     import MachineHandles.*
 
-    private val cpu    = root.scope("cpu")
-    val cpuTimeTotal   = cpu.initCounter("total.total", "cumulative cpu-time, ns")
-    val cpuTimeUser    = cpu.initCounter("user.total", "cumulative cpu-time, ns")
-    val cpuTimeSystem  = cpu.initCounter("system.total", "cumulative cpu-time, ns")
-    val cpuTimeIdle    = cpu.initCounter("idle.total", "cumulative cpu-time, ns")
-    val cpuTimeIowait  = cpu.initCounter("iowait.total", "cumulative cpu-time, ns")
-    val cpuUsageTotal  = cpu.initHistogram("total.rate", "per-second cpu-time delta, ns/s", boundaries = nanosPerSec)
-    val cpuUsageUser   = cpu.initHistogram("user.rate", "per-second cpu-time delta, ns/s", boundaries = nanosPerSec)
-    val cpuUsageSystem = cpu.initHistogram("system.rate", "per-second cpu-time delta, ns/s", boundaries = nanosPerSec)
-    val cpuUsageIdle   = cpu.initHistogram("idle.rate", "per-second cpu-time delta, ns/s", boundaries = nanosPerSec)
-    val cpuUsageIowait = cpu.initHistogram("iowait.rate", "per-second cpu-time delta, ns/s", boundaries = nanosPerSec)
+    /** The per-second cpu-time boundaries, derived from the host core count at init: a fixed 8-core ceiling
+      * put every observation of a larger host into the overflow bucket and collapsed its percentiles.
+      */
+    val nanosPerSec: Array[Double] = nanosPerSecFor(coreCount)
+
+    private val cpu = root.scope("cpu")
+    val cpuTotal    = RateCell(cpu, "total.rate", "per-second cpu-time delta, ns/s", nanosPerSec)
+    val cpuUser     = RateCell(cpu, "user.rate", "per-second cpu-time delta, ns/s", nanosPerSec)
+    val cpuSystem   = RateCell(cpu, "system.rate", "per-second cpu-time delta, ns/s", nanosPerSec)
+    val cpuIdle     = RateCell(cpu, "idle.rate", "per-second cpu-time delta, ns/s", nanosPerSec)
+    val cpuIowait   = RateCell(cpu, "iowait.rate", "per-second cpu-time delta, ns/s", nanosPerSec)
+    val cpuSteal    = RateCell(cpu, "steal.rate", "per-second cpu-time delta, ns/s", nanosPerSec)
+    val cpuCores    = LongGaugeCell(cpu, "cores", "count (fixed process core count)")
 
     private val mem  = root.scope("memory")
-    val memTotal     = mem.initHistogram("total", "bytes", boundaries = bytes)
-    val memAvailable = mem.initHistogram("available", "bytes", boundaries = bytes)
-    val memFree      = mem.initHistogram("free", "bytes", boundaries = bytes)
+    val memTotal     = LongGaugeCell(mem, "total", "bytes")
+    val memAvailable = LevelCell(mem, "available", "bytes", bytes)
+    val memFree      = LevelCell(mem, "free", "bytes", bytes)
 
     private val swp = root.scope("swap")
-    val swapTotal   = swp.initHistogram("total", "bytes", boundaries = bytes)
-    val swapFree    = swp.initHistogram("free", "bytes", boundaries = bytes)
+    val swapTotal   = LongGaugeCell(swp, "total", "bytes")
+    val swapFree    = LevelCell(swp, "free", "bytes", bytes)
 
     private val ld  = root.scope("load")
-    val loadOne     = ld.initHistogram("one", "load units", boundaries = load)
-    val loadFive    = ld.initHistogram("five", "load units", boundaries = load)
-    val loadFifteen = ld.initHistogram("fifteen", "load units", boundaries = load)
+    val loadOne     = DoubleGaugeCell(ld, "one", "load units")
+    val loadFive    = DoubleGaugeCell(ld, "five", "load units")
+    val loadFifteen = DoubleGaugeCell(ld, "fifteen", "load units")
 
-    val coresGauge = cores
+    private val cg   = root.scope("cgroup")
+    val cgMemUsage   = LevelCell(cg, "memory.usage", "bytes", bytes)
+    val cgMemLimit   = LongGaugeCell(cg, "memory.limit", "bytes (config value)")
+    val cgCpuQuota   = LongGaugeCell(cg, "cpu.quota", "nanoseconds (config value)")
+    val cgCpuPeriod  = LongGaugeCell(cg, "cpu.period", "nanoseconds (config value)")
+    val cgCpuPeriods = CounterCell(cg, "cpu.periods", "cumulative count")
+    val cgThrPeriods = RateCell(cg, "cpu.throttled.periods.rate", "throttled periods per second", countPerSec)
+    val cgThrTime    = RateCell(cg, "cpu.throttled.rate", "per-second throttled-time delta, ns/s", nanosPerSec)
 
-    private val cg        = root.scope("cgroup")
-    val cgMemUsage        = cg.initHistogram("memory.usage", "bytes", boundaries = bytes)
-    val cgCpuPeriods      = cg.initCounter("cpu.periods", "cumulative count")
-    val cgCpuThrPeriods   = cg.initCounter("cpu.throttled.periods.total", "cumulative count")
-    val cgCpuThrPeriodsHi = cg.initHistogram("cpu.throttled.periods.rate", "throttled periods per second", boundaries = countPerSec)
-    val cgCpuThrTime      = cg.initCounter("cpu.throttled.total", "cumulative throttled time, ns")
-    val cgCpuThrTimeHi    = cg.initHistogram("cpu.throttled.rate", "per-second throttled-time delta, ns/s", boundaries = nanosPerSec)
+    /** The two PSI families, kept distinct so system-wide and per-cgroup pressure never mix. */
+    val systemPressure = PsiHandles(root.scope("pressure"), nanosPerSec)
+    val cgroupPressure = PsiHandles(root.scope("cgroup", "pressure"), nanosPerSec)
 
-    // Config-value gauges (memory.limit, cpu.quota, cpu.period): a config value that is genuinely
-    // unavailable must not be registered or emitted at all. Each config gauge is created LAZILY on the
-    // FIRST Present observation (the same first-seen-then-retained model the per-store disk handles use):
-    // an unset limit/quota registers no handle and exports nothing; once a Present value is seen, the gauge
-    // is created once, SEEDED with that first value (so its first poll is never a transient 0), and its
-    // poll thereafter reads the last observed value from its holder. A config value is a point-in-time
-    // reading that can rise OR fall, so each is a plain Gauge (raw value, no delta), never a CounterGauge
-    // (whose delta wraps a decrease to garbage).
-    private val configGauges = collection.mutable.HashMap.empty[String, ConfigGauge]
+    // The ONE surviving registry. The mount set is genuinely dynamic (unknown at init, and a filesystem
+    // mounted later must still be picked up), so a per-store cell set cannot be a fixed field. It is
+    // consulted ONLY when the reader derives its store set, which happens at init and again only when the
+    // mount table actually changes, never per observation: the readers hold direct references to the cells
+    // they write on the steady-state tick.
+    private val diskScope  = root.scope("disk")
+    private val diskStores = collection.mutable.LinkedHashMap.empty[String, DiskStore]
 
-    private def configFor(name: String, unit: String, first: Long): ConfigGauge =
-        configGauges.getOrElseUpdate(name, ConfigGauge(cg, name, unit, first))
+    def diskStore(store: String): DiskStore =
+        diskStores.getOrElseUpdate(store, new DiskStore(diskScope.scope(store), bytes))
 
-    /** The system PSI and cgroup PSI families, each a full set of avg Histograms + total Counters + stall
-      * Histograms for cpu.some, memory.some/full, io.some/full (cpu.full parsed but not emitted).
-      */
-    val systemPressure = PsiHandles.init(root.scope("pressure"))
-    val cgroupPressure = PsiHandles.init(root.scope("cgroup", "pressure"))
-
-    /** Per-store disk handles, created ONCE per mount (init-once retained-handle model). The store set is
-      * fixed the first time a mount is seen; sanitized store names come from the disk reader.
-      */
-    private val diskHandles = collection.mutable.LinkedHashMap.empty[String, DiskHandles]
-
-    private def diskFor(store: String): DiskHandles =
-        diskHandles.getOrElseUpdate(
-            store, {
-                val d = root.scope("disk", store)
-                DiskHandles(d.initHistogram("total", "bytes", boundaries = bytes), d.initHistogram("free", "bytes", boundaries = bytes))
-            }
-        )
-
-    /** Observes one reading; returns the updated prior-cumulative state. The delta/scale/dual logic lives
-      * here so the sampler tick is a single call. Absent fields are skipped.
-      */
-    def observe(reading: Machine.Reading, prior: MachineSampler.PriorState)(using
-        AllowUnsafe
-    ): MachineSampler.PriorState =
-        var st     = prior
-        val stores = MachineHandles.storeNames(reading.disks.map(_.store))
-        reading.disks.zip(stores).foreach { case (d, store) =>
-            val h = diskFor(store)
-            d.total.foreach(v => h.total.unsafe.observe(v))
-            d.free.foreach(v => h.free.unsafe.observe(v))
-        }
-        reading.cpu.foreach { c =>
-            st = advance(st, "cpu.total.total", c.total, cpuTimeTotal, cpuUsageTotal)
-            st = advance(st, "cpu.user.total", c.user, cpuTimeUser, cpuUsageUser)
-            st = advance(st, "cpu.system.total", c.system, cpuTimeSystem, cpuUsageSystem)
-            st = advance(st, "cpu.idle.total", c.idle, cpuTimeIdle, cpuUsageIdle)
-            st = advance(st, "cpu.iowait.total", c.iowait, cpuTimeIowait, cpuUsageIowait)
-        }
-        reading.memory.foreach { m =>
-            m.total.foreach(v => memTotal.unsafe.observe(v))
-            m.available.foreach(v => memAvailable.unsafe.observe(v))
-            m.free.foreach(v => memFree.unsafe.observe(v))
-        }
-        reading.swap.foreach { s =>
-            s.total.foreach(v => swapTotal.unsafe.observe(v))
-            s.free.foreach(v => swapFree.unsafe.observe(v))
-        }
-        reading.load.foreach { l =>
-            l.one.foreach(v => loadOne.unsafe.observe(v))
-            l.five.foreach(v => loadFive.unsafe.observe(v))
-            l.fifteen.foreach(v => loadFifteen.unsafe.observe(v))
-        }
-        st = observeCgroup(reading.cgroup, st)
-        st = systemPressure.observe(reading.pressure, st, "pressure")
-        st = cgroupPressure.observe(reading.cgroupPressure, st, "cgroup.pressure")
-        st
-    end observe
-
-    /** Advances a Counter by the per-tick delta on the scaled value and observes the same delta into the
-      * paired Histogram. First tick records the baseline (advance 0); a negative delta clamps to 0; an
-      * Absent read leaves the Counter and prior unchanged.
-      */
-    private def advance(
-        st: MachineSampler.PriorState,
-        key: String,
-        value: Maybe[Long],
-        counter: Counter,
-        histogram: Histogram
-    )(using AllowUnsafe): MachineSampler.PriorState =
-        step(st, key, value)((adv, next) =>
-            counter.unsafe.add(adv); histogram.unsafe.observe(adv); next
-        )
-
-    /** Advances an UNPAIRED Counter by the per-tick delta with no Histogram. Used for a metric that carries
-      * no dual in the taxonomy (cgroup.cpu.periods): the delta advances the Counter and nothing more.
-      */
-    private def advanceCounter(
-        st: MachineSampler.PriorState,
-        key: String,
-        value: Maybe[Long],
-        counter: Counter
-    )(using AllowUnsafe): MachineSampler.PriorState =
-        step(st, key, value)((adv, next) =>
-            counter.unsafe.add(adv); next
-        )
-
-    private inline def step(
-        st: MachineSampler.PriorState,
-        key: String,
-        value: Maybe[Long]
-    )(inline record: (Long, MachineSampler.PriorState) => MachineSampler.PriorState): MachineSampler.PriorState =
-        value match
-            case Present(cur) =>
-                st.get(key) match
-                    case Present(prev) =>
-                        val delta = cur - prev
-                        val adv   = if delta < 0 then 0L else delta
-                        record(adv, st.set(key, cur))
-                    case Absent =>
-                        st.set(key, cur)
-            case Absent => st
-
-    private def observeCgroup(
-        reading: Maybe[Machine.CgroupReading],
-        st: MachineSampler.PriorState
-    )(using AllowUnsafe): MachineSampler.PriorState =
-        reading match
-            case Present(c) =>
-                c.memoryUsage.foreach(v => cgMemUsage.unsafe.observe(v))
-                // A config value only registers (and thereafter polls) its Gauge once a Present value is
-                // seen; an Absent config records nothing, so no fabricated value is ever exported. The gauge
-                // is seeded with this first value at construction, and every later tick's value is set into
-                // the same holder.
-                c.memoryLimit.foreach(v => configFor("memory.limit", "bytes (config value)", v).set(v))
-                c.cpuQuota.foreach(v => configFor("cpu.quota", "ns (config value)", v).set(v))
-                c.cpuPeriod.foreach(v => configFor("cpu.period", "ns (config value)", v).set(v))
-                var s = advanceCounter(st, "cgroup.cpu.periods", c.periods, cgCpuPeriods)
-                s = advance(s, "cgroup.cpu.throttled.periods.total", c.throttledPeriods, cgCpuThrPeriods, cgCpuThrPeriodsHi)
-                s = advance(s, "cgroup.cpu.throttled.total", c.throttledTime, cgCpuThrTime, cgCpuThrTimeHi)
-                s
-            case Absent => st
+    // The core count is available on every OS, so its gauge is seeded and registered at init.
+    cpuCores.set(coreCount)
 
 end MachineHandles
 
 private[kyo] object MachineHandles:
 
-    final case class DiskHandles(total: Histogram, free: Histogram)
-
-    /** A config-value Gauge created only once a genuine Present value has been observed. The gauge's poll
-      * reads the last observed value from the retained holder; the handle does not exist (and exports
-      * nothing) until the gauge is constructed on first observation, so an unset config never emits a
-      * fabricated value, and the gauge is seeded with the first observed value so its first poll is never a
-      * transient 0. A plain Gauge (not a CounterGauge) exports the raw value with no delta, correct for a
-      * point-in-time config value that can rise OR fall (a lowered cgroup limit at runtime); a CounterGauge
-      * would map a decrease to a wraparound.
-      *
-      * The holder is `kyo.AtomicLong.Unsafe`, the kyo opaque alias of the same underlying atomic: a
-      * single-owner cross-tick cell. The collect-time poll body runs on the registry flusher with no
-      * capability in scope, so it reads the raw atomic directly; `set` takes the sampler tick's own
-      * propagated capability rather than re-embracing it.
+    /** A cumulative reading's cell: it holds its OWN prior value, so no key, no map and no cross-metric
+      * aliasing exist. The first tick baselines (nothing is observed); each later tick observes
+      * `current - prior`, clamped at zero so a counter reset or a wraparound cannot record a negative flow.
+      * The `.rate` Histogram's running sum carries the cumulative total, which is why no paired cumulative
+      * Counter exists.
       */
-    final class ConfigGauge private (holder: AtomicLong.Unsafe, gauge: Gauge):
-        def set(v: Long)(using AllowUnsafe): Unit = holder.set(v)
+    final private[machine] class RateCell(scope: Stat, name: String, description: String, boundaries: Array[Double]):
+        // Unsafe: single-owner cell state on the sampler fiber.
+        import AllowUnsafe.embrace.danger
+        private val prior                    = AtomicLong.Unsafe.init(Path.ReadHandle.AbsentLong)
+        private var handle: Maybe[Histogram] = Absent
 
-    object ConfigGauge:
-        def apply(cg: Stat, name: String, unit: String, initial: Long): ConfigGauge =
-            // Unsafe: constructed lazily from configFor, off any ambient effect context; the collect-time
-            // poll body that reads this holder also runs with no capability available.
-            import AllowUnsafe.embrace.danger
-            val holder = AtomicLong.Unsafe.init(initial)
-            new ConfigGauge(holder, cg.initGauge(name, unit)(holder.get().toDouble))
-        end apply
-    end ConfigGauge
+        def observe(cur: Long)(using AllowUnsafe): Unit =
+            if cur != Path.ReadHandle.AbsentLong then
+                val prev = prior.getAndSet(cur)
+                if prev != Path.ReadHandle.AbsentLong then
+                    val delta = cur - prev
+                    histogram().unsafe.observe(if delta < 0L then 0L else delta)
+        end observe
 
-    val nanosPerSec: Array[Double] =
-        Array(0d, 1000000d, 10000000d, 50000000d, 100000000d, 250000000d, 500000000d, 1000000000d,
-            2000000000d, 4000000000d, 8000000000d)
+        private def histogram(): Histogram =
+            handle match
+                case Present(h) => h
+                case Absent =>
+                    val h = scope.initHistogram(name, description, boundaries = boundaries)
+                    handle = Present(h)
+                    h
+    end RateCell
+
+    /** A genuinely varying level's cell: every Present sample is observed into its Histogram, so a
+      * within-window spike survives the export window a poll-at-flush would average away.
+      */
+    final private[machine] class LevelCell(scope: Stat, name: String, description: String, boundaries: Array[Double]):
+        private var handle: Maybe[Histogram] = Absent
+
+        def observe(v: Long)(using AllowUnsafe): Unit =
+            if v != Path.ReadHandle.AbsentLong then histogram().unsafe.observe(v.toDouble)
+
+        private def histogram(): Histogram =
+            handle match
+                case Present(h) => h
+                case Absent =>
+                    val h = scope.initHistogram(name, description, boundaries = boundaries)
+                    handle = Present(h)
+                    h
+    end LevelCell
+
+    /** The one standalone cumulative with no `.rate` pair (`cgroup.cpu.periods`): it advances a Counter by
+      * its own per-tick delta, baselining on the first tick, and records into no Histogram.
+      */
+    final private[machine] class CounterCell(scope: Stat, name: String, description: String):
+        // Unsafe: single-owner cell state on the sampler fiber.
+        import AllowUnsafe.embrace.danger
+        private val prior                  = AtomicLong.Unsafe.init(Path.ReadHandle.AbsentLong)
+        private var handle: Maybe[Counter] = Absent
+
+        def observe(cur: Long)(using AllowUnsafe): Unit =
+            if cur != Path.ReadHandle.AbsentLong then
+                val prev = prior.getAndSet(cur)
+                if prev != Path.ReadHandle.AbsentLong then
+                    val delta = cur - prev
+                    counter().unsafe.add(if delta < 0L then 0L else delta)
+        end observe
+
+        private def counter(): Counter =
+            handle match
+                case Present(c) => c
+                case Absent =>
+                    val c = scope.initCounter(name, description)
+                    handle = Present(c)
+                    c
+    end CounterCell
+
+    /** A point-in-time value's cell: the sampler writes each tick's value into a retained holder, and the
+      * Gauge the registry polls reads that holder. `kyo.Stat.Gauge` is pull-based and has no push or set,
+      * which is why the holder exists. The Gauge is created on the first Present value, AFTER the holder is
+      * seeded with it, so an unavailable metric registers nothing and a registered one never polls a
+      * transient zero. A plain Gauge, not a CounterGauge: a config value or a level can fall, and a
+      * CounterGauge would map a decrease to a wraparound.
+      */
+    final private[machine] class LongGaugeCell(scope: Stat, name: String, description: String):
+        // Unsafe: single-owner holder; the collect-time poll body reads it with no capability in scope.
+        import AllowUnsafe.embrace.danger
+        private val holder               = AtomicLong.Unsafe.init(0L)
+        private var handle: Maybe[Gauge] = Absent
+
+        def set(v: Long)(using AllowUnsafe): Unit =
+            if v != Path.ReadHandle.AbsentLong then
+                holder.set(v)
+                if handle.isEmpty then
+                    handle = Present(scope.initGauge(name, description)(holder.get().toDouble))
+        end set
+    end LongGaugeCell
+
+    /** A fixed-point point-in-time value's cell (a load average, a PSI percentage): the raw Double bits ride
+      * the same retained `AtomicLong` holder, so the value crosses to the pull-based Gauge with no box and
+      * no second holder type. `Double.NaN` is the absent marker, and a load average or a PSI percentage is
+      * never legitimately NaN, so the sentinel is collision-free.
+      */
+    final private[machine] class DoubleGaugeCell(scope: Stat, name: String, description: String):
+        // Unsafe: single-owner holder; the collect-time poll body reads it with no capability in scope.
+        import AllowUnsafe.embrace.danger
+        private val holder               = AtomicLong.Unsafe.init(java.lang.Double.doubleToRawLongBits(0.0))
+        private var handle: Maybe[Gauge] = Absent
+
+        def set(v: Double)(using AllowUnsafe): Unit =
+            if !java.lang.Double.isNaN(v) then
+                holder.set(java.lang.Double.doubleToRawLongBits(v))
+                if handle.isEmpty then
+                    handle = Present(
+                        scope.initGauge(name, description)(java.lang.Double.longBitsToDouble(holder.get()))
+                    )
+                end if
+        end set
+    end DoubleGaugeCell
+
+    /** One mount's cells: a fixed capacity (a Gauge) and a varying free space (a Histogram). */
+    final private[machine] class DiskStore(scope: Stat, boundaries: Array[Double]):
+        val total = LongGaugeCell(scope, "total", "bytes")
+        val free  = LevelCell(scope, "free", "bytes", boundaries)
+    end DiskStore
+
+    /** The per-second cpu-time boundary set, topped at one core-second per core per second so a host with
+      * more than 8 cores does not saturate the overflow bucket. Derived once, at sampler init.
+      */
+    def nanosPerSecFor(cores: Long): Array[Double] =
+        val top  = math.max(1L, cores).toDouble * 1000000000d
+        val base = Array(0d, 100000000d, 500000000d, 1000000000d, 2000000000d, 4000000000d, 8000000000d)
+        if top <= 8000000000d then base
+        else base ++ Array(top / 2, top * 3 / 4, top).filter(_ > base.last)
+    end nanosPerSecFor
 
     val bytes: Array[Double] =
         Array(0d, 1048576d, 16777216d, 67108864d, 268435456d, 1073741824d, 4294967296d, 17179869184d,
             68719476736d, 274877906944d)
 
-    val load: Array[Double] =
-        Array(0d, 0.25d, 0.5d, 1d, 2d, 4d, 8d, 16d, 32d, 64d, 128d)
-
-    val percent: Array[Double] =
-        Array(0d, 1d, 5d, 10d, 25d, 50d, 75d, 90d, 95d, 99d, 100d)
-
     val countPerSec: Array[Double] =
         Array(0d, 1d, 2d, 4d, 8d, 16d, 32d, 64d, 128d, 256d)
 
-    /** Deterministic Stat scope segment per mount path: `/` -> `root`; else strip the leading `/` and
-      * replace every remaining `/` and `.` with `_`; a collision gets a stable numeric suffix in
-      * enumeration order (`_2`, `_3`). The sampler owns the mount identity, so this rule lives here.
+    /** A deterministic Stat scope segment per mount path: `/` becomes `root`; otherwise the leading `/` is
+      * stripped and every remaining `/` and `.` becomes `_`; a collision takes a stable numeric suffix in
+      * enumeration order. Run when the store set is derived, never on a tick.
       */
     def storeNames(mounts: Seq[String]): Seq[String] =
         val seen = collection.mutable.HashMap.empty[String, Int]
@@ -255,9 +244,13 @@ private[kyo] object MachineHandles:
 
     def init(using Frame): MachineHandles < Sync =
         System.availableProcessors.map { cores =>
-            val root  = Stat.initScope("machine")
-            val gauge = root.scope("cpu").initCounterGauge("cores", "count (fixed process core count)")(cores.toLong)
-            Sync.Unsafe.defer(new MachineHandles(root, gauge))
+            Sync.Unsafe.defer(new MachineHandles(Stat.initScope("machine"), cores.toLong))
         }
+
+    /** Test-only seam: a `MachineHandles` rooted at an arbitrary scope instead of the shared "machine"
+      * root every `init` call resolves to, so a test can observe its own cells without racing another
+      * leaf's or suite's registration of the same well-known path. Never called by production code.
+      */
+    private[machine] def initForTest(scope: Stat, cores: Long): MachineHandles = new MachineHandles(scope, cores)
 
 end MachineHandles

@@ -3,123 +3,200 @@ package kyo.stats.machine
 import kyo.*
 
 /** The single detached fiber that samples the host once per second straight into retained `kyo.Stat`
-  * handles, with a zero-allocation steady-state read path.
+  * handles.
   *
-  * It creates every metric handle once at init and holds it in a field for its whole life (a
-  * WeakReference-backed registry entry that is not retained can be collected and silently reset). Each
-  * tick it reads the host through the OS `Machine` impl and observes each value directly: a cumulative
-  * time value advances a Counter by the per-tick delta on the unit-scaled nanosecond value and observes
-  * that same delta into a paired per-second-delta Histogram; a point-in-time gauge is observed into a
-  * Histogram. It owns, per proc file it reads, one `Path.ReadHandle` opened once (rewound each tick) and
-  * one reused byte buffer, so file reads allocate no per-read payload. All waits are kyo `Async`
-  * suspension: no thread is ever blocked.
+  * The READ, DECODE and OBSERVE path of a steady-state tick allocates ZERO heap bytes on every supported
+  * OS, and that claim is MEASURED, on the real per-OS decode callbacks, at a per-op bound of zero bytes. It
+  * holds because everything a tick touches is retained and built once: one `Path.ReadHandle` per proc file,
+  * opened at init and rewound each tick into its own reused buffer; one decode callback per file, so a tick
+  * passes a field reference rather than allocating a closure; one FFI out-buffer per syscall; and one cell
+  * per metric, which the decoder writes its decoded primitives into directly, with the primitive
+  * `Path.ReadHandle.AbsentLong` (or `Double.NaN`) standing for an unavailable value so that absence never
+  * boxes. The `Async`, `Clock` and fiber machinery the tick RIDES (fiber, continuation, schedule state) is
+  * effect-system allocation and is outside that claim, which is stated for exactly the path it covers.
+  *
+  * The tick LOOP fiber never blocks: every wait is kyo `Async` suspension. The disk read wraps a genuinely
+  * blocking syscall on its own fiber (see `readDisksBounded`).
   */
-final private[kyo] class MachineSampler(handles: MachineHandles, machine: Machine):
+final private[kyo] class MachineSampler(handles: MachineHandles):
 
-    // Unsafe: the sampler owns its retained per-file read handles and reused buffer as single-owner
-    // fields on one detached fiber, reading and rewinding them off the effect context at each tick.
+    // Unsafe: the sampler owns its retained read handles and reused buffers as single-owner fields on one
+    // detached fiber, reading and rewinding them off the effect context at each tick.
     import AllowUnsafe.embrace.danger
 
-    private val fileHandles = collection.mutable.HashMap.empty[String, MachineSampler.FileSlot]
-    private var priorState  = MachineSampler.PriorState.empty
+    private val opened = collection.mutable.ArrayBuffer.empty[MachineSampler.FileSlot]
 
-    /** Reads every non-disk metric family through the bound OS impl (the sampler is the impl's read
-      * context). Disk is read separately via `diskRead` so a hung mount cannot stall the fast reads.
+    // Guards the disk read against overlapping itself. A statvfs/statfs/GetDiskFreeSpaceEx against a dead
+    // mount has no suspension point, so Async.timeout cannot interrupt it: a timed-out read leaves a worker
+    // parked inside the syscall until the kernel gives up. This flag is set before a disk read starts and
+    // cleared only when that read GENUINELY returns, so while a stuck read is outstanding the disk fiber
+    // skips its next cycle rather than launching a second read against the same stuck mount. A dead mount is
+    // therefore read exactly once for the process lifetime, bounding leaked blocked workers to one.
+    private val diskInFlight = AtomicBoolean.Unsafe.init(false)
+
+    /** True while a prior disk read is still outstanding (parked in a blocking syscall a timeout could not
+      * interrupt). The disk fiber reads this to skip a cycle rather than overlap a stuck read.
       */
-    def machineRead()(using AllowUnsafe): Machine.Reading = machine.read(this)
+    def diskReadInFlight()(using AllowUnsafe): Boolean = diskInFlight.get()
 
-    /** Reads the per-mount disk metrics. Blockable (statvfs/statfs/GetDiskFreeSpaceExW), so the sampler
-      * runs this on its own timed fiber, off the tick loop's own fiber.
+    /** Marks a disk read as started; returns false when one is already outstanding, so the caller skips this
+      * cycle. Paired with `diskReadDone`, which the disk read calls in a `finally` on genuine completion.
       */
-    def diskRead()(using AllowUnsafe): Chunk[Machine.DiskReading] = machine.readDisks(this)
+    def diskReadBegin()(using AllowUnsafe): Boolean = diskInFlight.compareAndSet(false, true)
 
-    /** Observes one tick's `Reading` into the retained handles, advancing every cumulative Counter and its
-      * paired Histogram by the per-tick delta and observing every gauge. Absent fields are skipped.
+    /** Clears the in-flight guard once a disk read genuinely returns (never on timeout: a timed-out read is
+      * still parked in its syscall and must not be relaunched).
       */
-    def observe(reading: Machine.Reading)(using AllowUnsafe): Unit =
-        priorState = handles.observe(reading, priorState)
+    def diskReadDone()(using AllowUnsafe): Unit = diskInFlight.set(false)
 
-    /** Reads and rewinds one retained proc-file handle, handing the reused buffer's borrowed bytes and the
-      * byte count to `f`. The borrowed `Span[Byte]` must not escape `f`.
+    /** Opens ONE retained read handle for `path`, at reader construction. A file that does not exist stays
+      * `Absent`, and its per-tick read is then a branch, not a lookup: no map, no key, and no
+      * `path.toString` on the tick. A reference-typed `Maybe` carries no wrapper, so matching the returned
+      * slot every tick allocates nothing.
       */
-    def readScoped[A](path: Path, f: (Span[Byte], Int) => A)(using AllowUnsafe): Maybe[A] =
-        val key = path.toString
-        val slot = fileHandles.get(key) match
-            case Some(s) => Present(s)
-            case None => MachineSampler.openSlot(path).map { s =>
-                    fileHandles.update(key, s); s
-                }
-        slot.map { s =>
-            s.handle.position(0L)
-            val len = MachineSampler.fill(s)
-            f(Span.fromUnsafe(s.buffer), len)
-        }
-    end readScoped
+    def openSlot(path: Path)(using AllowUnsafe): Maybe[MachineSampler.FileSlot] =
+        MachineSampler.openSlot(path) match
+            case Present(slot) =>
+                opened.append(slot)
+                Present(slot)
+            case Absent => Absent
 
-    /** Closes every retained proc-file handle (invoked on sampler teardown by the owning Scope). */
+    /** Rewinds the retained handle, refills its retained buffer, and hands the borrowed bytes to the
+      * retained decoder, which writes its decoded primitives into the cells. Returns false when the file is
+      * absent. The borrowed `Span[Byte]` must not escape the decoder.
+      */
+    def readInto(slot: Maybe[MachineSampler.FileSlot], decode: MachineSampler.Decode)(using AllowUnsafe): Boolean =
+        slot match
+            case Present(fs) =>
+                fs.handle.position(0L)
+                // fill may grow and rebind `fs.buffer`, so the span must be taken after it returns:
+                // taken before, it would borrow the pre-grow array and read past its end.
+                val len = MachineSampler.fill(fs)
+                decode(Span.fromUnsafe(fs.buffer), len)
+                true
+            case Absent => false
+
+    /** Reads a single ASCII-decimal `Long` straight out of the retained handle, with no intermediate
+      * `String` and no box. Returns `Path.ReadHandle.AbsentLong` when the file is absent, empty or
+      * unparseable, which is exactly the value every cell skips.
+      */
+    def readLongFrom(slot: Maybe[MachineSampler.FileSlot])(using AllowUnsafe): Long =
+        slot match
+            case Present(fs) => fs.handle.readLong()
+            case Absent      => Path.ReadHandle.AbsentLong
+
+    /** A ONE-SHOT read used at init and on a mount-table change only: it opens, reads, closes, and hands
+      * the bytes to `f`. It is never called on the tick, which is why it may allocate.
+      */
+    def readOnce[A](path: Path, f: (Span[Byte], Int) => A)(using AllowUnsafe): Maybe[A] =
+        MachineSampler.openSlot(path) match
+            case Present(slot) =>
+                val len = MachineSampler.fill(slot)
+                val out = f(Span.fromUnsafe(slot.buffer), len)
+                slot.handle.close()
+                Present(out)
+            case Absent => Absent
+
+    /** Closes every retained read handle. Invoked on sampler teardown by the owning Scope. */
     def closeHandles()(using AllowUnsafe): Unit =
-        fileHandles.valuesIterator.foreach(_.handle.close())
-        fileHandles.clear()
+        opened.foreach(_.handle.close())
+        opened.clear()
 
 end MachineSampler
 
 private[kyo] object MachineSampler:
 
-    /** Builds the sampler, creates every metric handle once, resolves the OS impl once, and drives the tick
-      * loop UNDER this Scope so the loop and the retained handles share one lifetime: an interrupt of this
-      * effect stops the loop, then the Scope finalizer closes the handles, so no tick reads a closed handle.
-      * The loop itself keeps this Scope open, so no separate keep-alive is needed. Runs forever until
-      * interrupted.
-      */
-    def run(using Frame): Nothing < (Async & Scope) =
-        val prepared: MachineSampler < (Async & Scope) =
-            for
-                os      <- System.operatingSystem
-                handles <- MachineHandles.init
-                sampler <- Sync.Unsafe.defer(new MachineSampler(handles, Machine.forOs(os)))
-                _       <- Scope.ensure(Sync.Unsafe.defer(withUnsafe(sampler.closeHandles())))
-            yield sampler
-        prepared.map(sampler => Loop.forever(Async.sleep(1.seconds).andThen(tick(sampler))))
-    end run
+    // Unsafe: the sampler's retained state is constructed and closed off any effect context that could
+    // supply the capability, the same class-level bridge five sibling readers carry.
+    import AllowUnsafe.embrace.danger
 
-    /** The blockable disk read is bounded so a slow or dead mount cannot stall the tick loop: if a read
-      * does not finish inside this window, the tick observes that tick's disk portion as empty and the loop
-      * proceeds. The window is generous relative to a healthy local statvfs (sub-ms) but well under the tick
-      * period, so a healthy read always completes in-band and only a genuinely stuck mount is dropped.
+    /** A retained decode callback: ONE instance per proc file, built once at reader construction, so a tick
+      * passes a field reference. A capturing lambda written at the read site would allocate one closure per
+      * read per tick and survive only by escape analysis, which is the kind of unmeasured assumption this
+      * module must not rest on.
       */
-    private val diskReadTimeout = 5.seconds
+    private[machine] trait Decode:
+        def apply(bytes: Span[Byte], len: Int)(using AllowUnsafe): Unit
 
-    /** Reads the non-disk families synchronously (fast in-kernel/proc reads), reads disk on a separate
-      * timed fiber (blockable syscalls), merges the two, and observes the tick. A hung disk read is bounded
-      * by `Async.timeout`: on expiry the tick records no disk for that tick rather than parking the loop,
-      * and the scheduler's blocking compensation covers the parked disk-read worker.
+    /** Builds the sampler, creates every metric cell once, constructs the OS reader once, and drives the
+      * drift-corrected tick loop under this Scope, so the loop and the retained handles share one lifetime.
+      *
+      * Two fibers run under this Scope. The FAST fiber reads the in-kernel and proc families on a
+      * drift-corrected 1 Hz anchored schedule. The DISK fiber reads the one genuinely blockable family on its
+      * OWN cadence, and the fast fiber never awaits it, so a slow or dead mount can never delay a fast read of
+      * the same or the next tick. Both fibers are registered with the Scope for interrupt BEFORE the effect
+      * parks, and the buffer-closing finalizer is registered FIRST so it runs LAST (Scope finalizers are
+      * LIFO): closing the Scope interrupts both fibers, then closes the reader's buffers and file handles, so
+      * no fiber can read a closed handle. Awaiting the fast fiber's `get` (it never returns) keeps the Scope
+      * open for the process lifetime, the same detached-fiber shape `OTLPClient.startExportLoop` ships.
       */
-    private def tick(sampler: MachineSampler)(using Frame): Unit < Async =
+    def run(using Frame): Unit < (Async & Scope) =
         for
-            reading <- Sync.Unsafe.defer(sampler.machineRead())
-            disks   <- readDisksBounded(sampler)
-            _       <- Sync.Unsafe.defer(sampler.observe(reading.copy(disks = disks)))
+            os      <- System.operatingSystem
+            handles <- MachineHandles.init
+            _       <- runWith(handles, sampler => Sync.Unsafe.defer(Machine.forOs(os, handles, sampler)))
         yield ()
 
-    private def readDisksBounded(sampler: MachineSampler)(using Frame): Chunk[Machine.DiskReading] < Async =
-        Abort.run[Timeout](
-            Async.timeout(diskReadTimeout)(Sync.Unsafe.defer(sampler.diskRead()))
-        ).map(_.getOrElse(Chunk.empty))
+    /** Drives the loop over a caller-supplied handle set and a reader built from the sampler. Production
+      * passes the OS-selected reader; a test passes a staged reader (a recording decode, a never-completing
+      * disk read) and a controlled `Clock`, so the tick cadence, the disk-fiber isolation and the teardown
+      * ordering are exercised deterministically. `private[machine]`; production reaches the loop only through
+      * `run`.
+      */
+    private[machine] def runWith(
+        handles: MachineHandles,
+        buildMachine: MachineSampler => Machine < Sync
+    )(using Frame): Unit < (Async & Scope) =
+        for
+            sampler <- Sync.Unsafe.defer(new MachineSampler(handles))
+            machine <- buildMachine(sampler)
+            _ <- Scope.ensure(Sync.Unsafe.defer {
+                machine.close()
+                sampler.closeHandles()
+            })
+            disk <- Clock.repeatAtInterval(diskInterval)(readDisksBounded(sampler, machine))
+            _    <- Scope.ensure(disk.interrupt.unit)
+            fast <- Clock.repeatAtInterval(Schedule.anchored(1.second))(readFast(machine))
+            _    <- Scope.ensure(fast.interrupt.unit)
+            _    <- fast.get
+        yield ()
+    end runWith
 
-    // Unsafe: used only from the Scope finalizer callback (closeHandles), which itself runs outside
-    // any AllowUnsafe-supplying effect context.
-    private inline def withUnsafe(inline body: AllowUnsafe ?=> Unit): Unit =
-        import AllowUnsafe.embrace.danger
-        body
+    /** The disk read runs at this cadence on its own fiber. A cycle waits at most `diskReadTimeout` before it
+      * yields to the next cycle CHECK; the in-flight guard then keeps that next cycle from launching a second
+      * read while a timed-out one is still parked in its syscall. The timeout only bounds the DISK fiber; the
+      * fast fiber never waits on it, so its value is decoupled from the fast-read cadence.
+      */
+    private val diskInterval    = 1.second
+    private val diskReadTimeout = 4.seconds
+
+    /** The fast tick: reads every non-disk family straight into the retained cells. It never touches the disk
+      * read, so nothing on this path can block on a mount.
+      */
+    private def readFast(machine: Machine)(using Frame): Unit < Async =
+        Sync.Unsafe.defer(machine.read())
+
+    /** One disk cycle on the detached disk fiber. It skips itself when a prior read is still outstanding
+      * (parked in a blocking syscall), so a dead mount is read exactly once and never overlapped. Otherwise
+      * it runs the bounded read; the read clears the guard in a `finally` only when it GENUINELY returns, so a
+      * timed-out read that is still parked keeps the guard set and is not relaunched. The scheduler's blocking
+      * compensation covers the parked worker.
+      */
+    private def readDisksBounded(sampler: MachineSampler, machine: Machine)(using Frame): Unit < Async =
+        Sync.Unsafe.defer(sampler.diskReadBegin()).map { began =>
+            if !began then ()
+            else
+                Abort.run[Timeout](
+                    Async.timeout(diskReadTimeout)(
+                        Sync.Unsafe.defer {
+                            try machine.readDisks()
+                            finally sampler.diskReadDone()
+                        }
+                    )
+                ).unit
+        }
 
     final private[machine] case class FileSlot(handle: Path.ReadHandle, var buffer: Array[Byte], scratch: Array[Byte])
-
-    /** The sampler's per-tick prior cumulative values, keyed by metric path, for delta computation. */
-    final private[machine] case class PriorState(values: Map[String, Long]):
-        def get(key: String): Maybe[Long]         = values.get(key).fold(Absent)(Present(_))
-        def set(key: String, v: Long): PriorState = PriorState(values.updated(key, v))
-    private[machine] object PriorState:
-        val empty: PriorState = PriorState(Map.empty)
 
     private def openSlot(path: Path)(using AllowUnsafe): Maybe[FileSlot] =
         given Frame = Frame.internal
@@ -128,12 +205,11 @@ private[kyo] object MachineSampler:
             case _                 => Absent
     end openSlot
 
-    /** Reads the whole retained handle into the slot's reused output buffer and returns the total byte
-      * count. Each `readChunk` fills the SAME reused scratch array from index 0, so the retained
-      * ByteBuffer inside the handle is reused on every read (no per-chunk wrap allocation); the bytes are
-      * appended into the output buffer at the running offset, so a multi-chunk read accumulates without
-      * losing its tail. The output buffer grows to fit once when a large file first exceeds it; steady
-      * state re-reads the same small /proc snapshot with no allocation.
+    /** Reads the whole retained handle into the slot's reused output buffer and returns the byte count. Each
+      * `readChunk` fills the SAME reused scratch array from index 0, so the retained ByteBuffer inside the
+      * handle is reused on every read; the bytes are appended into the output buffer at the running offset,
+      * so a multi-chunk read keeps its tail. The output buffer grows to fit once when a large file first
+      * exceeds it; the steady state re-reads the same small proc snapshot with no allocation.
       */
     private def fill(slot: FileSlot)(using AllowUnsafe): Int =
         @scala.annotation.tailrec

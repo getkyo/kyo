@@ -23,19 +23,12 @@ private[machine] trait MacosBindings extends Ffi:
     /** getloadavg into [one, five, fifteen]; returns the number of samples written (3 on ok). */
     def getloadavg(out: Buffer[Double], n: Int)(using AllowUnsafe): Int
 
-    /** getmntinfo count of mounted filesystems (snapshot taken by the shim). */
-    def mountCount()(using AllowUnsafe): Int
-
-    /** The i-th mount's path, copied out of the getmntinfo snapshot. The C side returns a `const char*` into
-      * the snapshot it owns, so the return is `Ffi.Borrowed[String]`: the codegen copies the NUL-terminated
-      * bytes into an independently-owned Scala String the caller reads with `.value`.
+    /** Enumerates the mounted filesystems into the CALLER's buffer as NUL-separated
+      * `<mount-point>\0<fstype>\0` pairs, and returns the mount count (or -1 when the buffer is too small).
+      * The buffer belongs to the caller, which is what keeps the call re-entrant: getmntinfo returns a
+      * pointer into libc-owned static memory that every caller in the process shares.
       */
-    def mountPath(i: Int)(using AllowUnsafe): Ffi.Borrowed[String]
-
-    /** The i-th mount's fstype name, copied out of the getmntinfo snapshot. Borrowed `const char*` return,
-      * unwrapped with `.value` at the call site (see `mountPath`).
-      */
-    def mountFstype(i: Int)(using AllowUnsafe): Ffi.Borrowed[String]
+    def mounts(out: Buffer[Byte], cap: Int)(using AllowUnsafe): Int
 
     /** statfs(path) projected to [total, free] bytes. Returns 0 on ok. */
     def statfs(path: String, out: Buffer[Long])(using AllowUnsafe): Int

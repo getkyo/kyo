@@ -4,166 +4,182 @@ import kyo.*
 
 class MachineSamplerTest extends kyo.test.Test[Any]:
 
-    // Every leaf's MachineHandles.init shares the SAME process-global StatsRegistry scope
-    // ("machine"), since the scope root is locked and every MachineHandles instance across every
-    // leaf and every suite resolves to the identical retained handles by path. Running leaves in
-    // parallel would race concurrent observe/drain calls against those shared handles; sequential
-    // execution keeps each leaf's Counter drain (destructive sumThenReset) and delta assertions
-    // meaningful.
+    // The retained-Decode-identity and large-file leaves share no state with the fiber-driven leaves
+    // below, but every leaf still runs sequentially: the fiber-driven leaves construct their own
+    // MachineHandles.init (the process-global "machine" scope), and a parallel run would race one
+    // leaf's virtual-clock advance against another leaf's tick assertions.
     override def config: kyo.test.RunConfig = super.config.sequential
 
     import AllowUnsafe.embrace.danger
 
-    private def cpuTotalReading(total: Long): Machine.Reading =
-        Machine.Reading.empty.copy(cpu = Present(Machine.CpuReading(Present(total), Absent, Absent, Absent, Absent)))
+    "readInto" - {
 
-    private def sampler(handles: MachineHandles): MachineSampler =
-        new MachineSampler(handles, Machine.NullMachine)
-
-    "cumulative-time advance" - {
-
-        "cumulative-time Counter advances by 0 on the first tick, no absolute-value spike" in {
+        "passes the SAME retained Decode instance every tick (one Decode per proc file, identity stable)" in {
+            val identities = collection.mutable.ArrayBuffer.empty[Int]
+            val decode = new MachineSampler.Decode:
+                def apply(bytes: Span[Byte], len: Int)(using AllowUnsafe): Unit =
+                    discard(identities += java.lang.System.identityHashCode(this))
             for
                 handles <- MachineHandles.init
-                s       = sampler(handles)
-                _       = s.observe(cpuTotalReading(5000000000L))
-                advance = handles.cpuTimeTotal.unsafe.get()
-            yield assert(advance == 0L)
-        }
-
-        "cumulative-time Counter advances by the delta on tick 2, never the absolute" in {
-            for
-                handles <- MachineHandles.init
-                s       = sampler(handles)
-                _       = s.observe(cpuTotalReading(5000000000L))
-                _       = handles.cpuTimeTotal.unsafe.get() // drain tick-1 baseline advance (0)
-                _       = s.observe(cpuTotalReading(6000000000L))
-                advance = handles.cpuTimeTotal.unsafe.get()
-            yield assert(advance == 1000000000L)
-        }
-
-        "a per-source scale is applied before the delta (jiffies scaled to ns; microseconds scaled to ns)" in {
-            // jiffies-source: 100 jiffies/s clock, scale factor 10000000 (1e9 / 100)
-            val jiffyScale = 10000000L
-            val jiffyTicks = 100L // one second's worth of jiffies
-            // microsecond-source: scale factor 1000 (1e9 / 1e6)
-            val usScale = 1000L
-            val usTicks = 1000000L // one second's worth of microseconds
-            for
-                jHandles <- MachineHandles.init
-                jSampler   = sampler(jHandles)
-                _          = jSampler.observe(cpuTotalReading(0L * jiffyScale))
-                _          = jHandles.cpuTimeTotal.unsafe.get()
-                _          = jSampler.observe(cpuTotalReading(jiffyTicks * jiffyScale))
-                jiffyDelta = jHandles.cpuTimeTotal.unsafe.get()
-                uHandles <- MachineHandles.init
-                uSampler = sampler(uHandles)
-                _        = uSampler.observe(cpuTotalReading(0L * usScale))
-                _        = uHandles.cpuTimeTotal.unsafe.get()
-                _        = uSampler.observe(cpuTotalReading(usTicks * usScale))
-                usDelta  = uHandles.cpuTimeTotal.unsafe.get()
+                dir     <- Path.tempDir("kyo-stats-machine-sampler-identity")
+                file = dir / "small.txt"
+                _ <- file.write("hello")
+                sampler = new MachineSampler(handles)
+                slot    = sampler.openSlot(file)
+                first   = sampler.readInto(slot, decode)
+                second  = sampler.readInto(slot, decode)
+                _ <- dir.removeAll
             yield
-                assert(jiffyDelta == 1000000000L)
-                assert(usDelta == 1000000000L)
-                assert(jiffyDelta == usDelta)
+                assert(first)
+                assert(second)
+                assert(identities.size == 2)
+                assert(identities(0) == identities(1))
             end for
         }
 
-        "an Absent read leaves the Counter and prior unchanged; a later good read advances against the last good prior" in {
+        "binds fill length before taking the span so a file larger than the initial 8192 buffer decodes in full" in {
+            var decodedLen  = 0
+            var decodedText = ""
+            val decode = new MachineSampler.Decode:
+                def apply(bytes: Span[Byte], len: Int)(using AllowUnsafe): Unit =
+                    decodedLen = len
+                    decodedText = new String(bytes.toArrayUnsafe, 0, len, java.nio.charset.StandardCharsets.US_ASCII)
+            val content = "0123456789" * 2000 // 20000 bytes, larger than the sampler's 8192-byte initial slot
             for
                 handles <- MachineHandles.init
-                s            = sampler(handles)
-                _            = s.observe(cpuTotalReading(5000000000L))
-                _            = handles.cpuTimeTotal.unsafe.get()
-                _            = s.observe(Machine.Reading.empty)        // tick 2: Absent
-                tick2Advance = handles.cpuTimeTotal.unsafe.get()
-                _            = s.observe(cpuTotalReading(7000000000L)) // tick 3: good read
-                tick3Advance = handles.cpuTimeTotal.unsafe.get()
+                dir     <- Path.tempDir("kyo-stats-machine-sampler-large")
+                file = dir / "large.txt"
+                _ <- file.write(content)
+                sampler = new MachineSampler(handles)
+                slot    = sampler.openSlot(file)
+                ok      = sampler.readInto(slot, decode)
+                _ <- dir.removeAll
             yield
-                assert(tick2Advance == 0L)
-                assert(tick3Advance == 2000000000L)
-        }
-
-        "a negative raw delta (counter reset) clamps to a non-advance" in {
-            for
-                handles <- MachineHandles.init
-                s           = sampler(handles)
-                _           = s.observe(cpuTotalReading(8000000000L))
-                _           = handles.cpuTimeTotal.unsafe.get()
-                _           = s.observe(cpuTotalReading(3000000000L)) // kernel counter reset
-                advance     = handles.cpuTimeTotal.unsafe.get()
-                _           = s.observe(cpuTotalReading(3500000000L)) // next tick advances from the reset value
-                nextAdvance = handles.cpuTimeTotal.unsafe.get()
-            yield
-                assert(advance == 0L)
-                assert(nextAdvance == 500000000L)
+                assert(ok)
+                assert(decodedLen == 20000)
+                assert(decodedText == content)
+            end for
         }
     }
 
-    "dual-treatment" - {
+    "disk in-flight guard" - {
 
-        "the same per-tick delta feeds the Counter and its paired rate Histogram" in {
-            for
-                handles <- MachineHandles.init
-                countBefore = handles.cpuUsageTotal.unsafe.summary().count
-                s           = sampler(handles)
-                _           = s.observe(cpuTotalReading(5000000000L))
-                _           = handles.cpuTimeTotal.unsafe.get()
-                _           = s.observe(cpuTotalReading(6000000000L))
-                advance     = handles.cpuTimeTotal.unsafe.get()
-                rateSummary = handles.cpuUsageTotal.unsafe.summary()
-            yield
-                assert(advance == 1000000000L)
-                // The Histogram is process-global and cumulative across every leaf that shares this
-                // handle (min/max never reset), so the DELTA in count (exactly one new observation
-                // from this leaf's single advancing tick) is the meaningful cross-leaf-safe
-                // assertion; the exact observed value (the same 1000000000 delta the co-located
-                // Counter advanced by, proving dual-treatment feeds both from one scaled delta) is
-                // already pinned by the `advance` assertion above.
-                assert(rateSummary.count == countBefore + 1L)
-                assert(rateSummary.max >= 1000000000.0)
-        }
-
-        "every cumulative-time Counter the factory creates has a matching per-second-delta Histogram handle" in {
+        "admits exactly one disk read and refuses a second while it is outstanding" in {
             for handles <- MachineHandles.init
             yield
-                assert((handles.cpuTimeTotal ne null) && (handles.cpuUsageTotal ne null))
-                assert((handles.cpuTimeUser ne null) && (handles.cpuUsageUser ne null))
-                assert((handles.cpuTimeSystem ne null) && (handles.cpuUsageSystem ne null))
-                assert((handles.cpuTimeIdle ne null) && (handles.cpuUsageIdle ne null))
-                assert((handles.cpuTimeIowait ne null) && (handles.cpuUsageIowait ne null))
-                assert((handles.cgCpuThrPeriods ne null) && (handles.cgCpuThrPeriodsHi ne null))
-                assert((handles.cgCpuThrTime ne null) && (handles.cgCpuThrTimeHi ne null))
+                val sampler                    = new MachineSampler(handles)
+                val first                      = sampler.diskReadBegin()
+                val second                     = sampler.diskReadBegin()
+                val inFlightWhileSecondRefused = sampler.diskReadInFlight()
+                sampler.diskReadDone()
+                val third = sampler.diskReadBegin()
+                assert(first)
+                assert(!second)
+                assert(inFlightWhileSecondRefused)
+                assert(third)
+            end for
         }
     }
 
-    "handle retention" - {
+    "detached-fiber tick loop" - {
 
-        "the sampler retains a handle across a GC: the Counter series is continuous over System.gc()" in {
-            for
-                handles <- MachineHandles.init
-                s       = sampler(handles)
-                _       = s.observe(cpuTotalReading(1000000000L))
-                _       = handles.cpuTimeTotal.unsafe.get()
-                _       = java.lang.System.gc()
-                _       = s.observe(cpuTotalReading(2000000000L))
-                advance = handles.cpuTimeTotal.unsafe.get()
-            yield assert(advance == 1000000000L)
+        "teardown interrupts BOTH the fast and disk fibers before the close-buffers finalizer runs, and no read observes a closed handle" in {
+            val markers = AtomicRef.Unsafe.init(Chunk.empty[String])
+            val machine = new Machine:
+                def read()(using AllowUnsafe): Unit      = discard(markers.updateAndGet(_.append("read")))
+                def readDisks()(using AllowUnsafe): Unit = discard(markers.updateAndGet(_.append("readDisks")))
+                def close()(using AllowUnsafe): Unit     = discard(markers.updateAndGet(_.append("close")))
+            Clock.withTimeControl { tc =>
+                for
+                    handles <- MachineHandles.init
+                    clock   <- Clock.get
+                    fiber   <- Fiber.initUnscoped(Clock.let(clock)(Scope.run(MachineSampler.runWith(handles, _ => machine))))
+                    // A zero-duration advance with a real wall-clock pause lets the freshly-spawned fiber
+                    // actually reach both Clock.repeatAtInterval registrations before virtual time moves, so
+                    // neither schedule's anchor point races the fiber's own async startup.
+                    _           <- tc.advance(Duration.Zero, 100.millis)
+                    _           <- tc.advance(1.seconds)
+                    interrupted <- fiber.interrupt
+                    // fiber.get suspends until the fiber's promise genuinely resolves (including every
+                    // registered Scope finalizer, which Scope.run awaits before its own computation
+                    // completes), a stronger synchronization point than a bare done-flag poll.
+                    _    <- Abort.run(fiber.get)
+                    done <- fiber.done
+                    _    <- tc.advance(Duration.Zero, 500.millis)
+                    snapshot = markers.get()
+                yield
+                    assert(interrupted)
+                    assert(done)
+                    assert(snapshot.count(_ == "close") == 1)
+                    assert(snapshot.lastOption.contains("close"))
+                end for
+            }
         }
 
-        "no metric handle is re-inited after start" in {
-            for
-                handles <- MachineHandles.init
-                s                  = sampler(handles)
-                cpuTimeTotalBefore = handles.cpuTimeTotal
-                _                  = s.observe(cpuTotalReading(1000000000L))
-                _                  = s.observe(cpuTotalReading(2000000000L))
-                _                  = s.observe(cpuTotalReading(3000000000L))
-                cpuTimeTotalAfter  = handles.cpuTimeTotal
-                // Drain the shared cpuTimeTotal Counter so this leaf's N ticks leave no residual
-                // delta for a later leaf reading the same process-global handle.
-                _ = handles.cpuTimeTotal.unsafe.get()
-            yield assert(cpuTimeTotalBefore eq cpuTimeTotalAfter)
+        "a never-completing readDisks leaves the fast cells advancing at the anchored 1 Hz" in {
+            val tickCount    = AtomicLong.Unsafe.init(0L)
+            val innerSampler = AtomicRef.Unsafe.init(Maybe.empty[MachineSampler])
+            Clock.withTimeControl { tc =>
+                for
+                    handles <- MachineHandles.init
+                    clock   <- Clock.get
+                    gate    <- Channel.init[Unit](1)
+                    machine = new Machine:
+                        def read()(using AllowUnsafe): Unit =
+                            discard(tickCount.getAndSet(tickCount.get() + 1L))
+                        def readDisks()(using AllowUnsafe): Unit =
+                            // Parks a real worker thread on the channel's take, exactly the shape a genuinely
+                            // blocking statvfs/GetDiskFreeSpaceEx syscall has: no kyo suspension point the
+                            // Async.timeout race can preempt mid-flight. The gate is fed only at teardown
+                            // (below), so this call never returns during the test's own assertions.
+                            given Frame = Frame.internal
+                            discard(Sync.Unsafe.evalOrThrow(Fiber.initUnscoped(gate.take).flatMap(_.block(Duration.Infinity))))
+                        end readDisks
+                        def close()(using AllowUnsafe): Unit = ()
+                    buildMachine = (s: MachineSampler) =>
+                        innerSampler.set(Present(s))
+                        machine
+                    fiber <- Fiber.initUnscoped(Clock.let(clock)(Scope.run(MachineSampler.runWith(handles, buildMachine))))
+                    _     <- tc.advance(Duration.Zero, 100.millis) // let the fiber reach both schedule registrations first
+                    _     <- tc.advance(1.seconds)
+                    _     <- tc.advance(1.seconds)
+                    _     <- tc.advance(1.seconds)
+                    _     <- tc.advance(1.seconds)
+                    _     <- tc.advance(1.seconds)
+                    inFlightAfterFive = innerSampler.get() match
+                        case Present(s) => s.diskReadInFlight()
+                        case Absent     => false
+                    _ <- gate.offerDiscard(())
+                    _ <- fiber.interrupt
+                yield
+                    assert(tickCount.get() == 5L)
+                    assert(inFlightAfterFive)
+                end for
+            }
+        }
+
+        "N ticks fire at the anchored instants with no accumulated drift" in {
+            val recorded = AtomicRef.Unsafe.init(Chunk.empty[Duration])
+            Clock.withTimeControl { tc =>
+                for
+                    handles <- MachineHandles.init
+                    clock   <- Clock.get
+                    machine = new Machine:
+                        def read()(using AllowUnsafe): Unit      = discard(recorded.updateAndGet(_.append(clock.unsafe.nowMonotonic())))
+                        def readDisks()(using AllowUnsafe): Unit = ()
+                        def close()(using AllowUnsafe): Unit     = ()
+                    fiber <- Fiber.initUnscoped(Clock.let(clock)(Scope.run(MachineSampler.runWith(handles, _ => machine))))
+                    _     <- tc.advance(Duration.Zero, 100.millis) // let the fiber reach the fast-fiber schedule registration first
+                    _     <- tc.advance(1.seconds)
+                    _     <- tc.advance(1.seconds)
+                    _     <- tc.advance(1.seconds)
+                    _     <- tc.advance(1.seconds)
+                    _     <- tc.advance(1.seconds)
+                    _     <- fiber.interrupt
+                    snapshot = recorded.get()
+                yield assert(snapshot == Chunk(1.seconds, 2.seconds, 3.seconds, 4.seconds, 5.seconds))
+                end for
+            }
         }
     }
 

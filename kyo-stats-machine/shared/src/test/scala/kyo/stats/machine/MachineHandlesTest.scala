@@ -2,229 +2,210 @@ package kyo.stats.machine
 
 import kyo.*
 import kyo.stats.internal.StatsRegistry
+import kyo.stats.internal.Summary
+import kyo.stats.internal.UnsafeCounter
+import kyo.stats.internal.UnsafeGauge
+import kyo.stats.internal.UnsafeHistogram
 
 class MachineHandlesTest extends kyo.test.Test[Any]:
 
     // Every leaf's MachineHandles.init shares the SAME process-global StatsRegistry scope
     // ("machine"), since the scope root is locked and every MachineHandles instance across every
     // leaf and every suite resolves to the identical retained handles by path. Running leaves in
-    // parallel would race concurrent observe calls against those shared handles; sequential
-    // execution keeps each leaf's before/after and delta assertions meaningful.
+    // parallel would race concurrent observe/set calls against those shared handles; sequential
+    // execution keeps each leaf's before/after and delta assertions meaningful. The standalone-cell
+    // leaves below each construct their OWN uniquely-named scope instead, so they need no such
+    // sharing, but stay under the same sequential policy for consistency with the suite.
     override def config: kyo.test.RunConfig = super.config.sequential
 
     import AllowUnsafe.embrace.danger
 
-    private def diskReading(store: String, total: Long, free: Long): Machine.Reading =
-        Machine.Reading.empty.copy(disks = Chunk(Machine.DiskReading(store, Present(total), Present(free))))
+    private def gaugePath(path: String*): Double =
+        StatsRegistry.internal.gauges.get(path.toList.reverse, "", new UnsafeGauge(() => -1d)).collect()
 
-    private def cgroupReading(
-        memoryLimit: Maybe[Long] = Absent,
-        cpuQuota: Maybe[Long] = Absent,
-        cpuPeriod: Maybe[Long] = Absent,
-        periods: Maybe[Long] = Absent,
-        throttledPeriods: Maybe[Long] = Absent
-    ): Machine.Reading =
-        Machine.Reading.empty.copy(cgroup =
-            Present(Machine.CgroupReading(
-                memoryUsage = Absent,
-                memoryLimit = memoryLimit,
-                cpuQuota = cpuQuota,
-                cpuPeriod = cpuPeriod,
-                periods = periods,
-                throttledPeriods = throttledPeriods,
-                throttledTime = Absent
-            ))
-        )
+    private def gaugeRegistered(path: String*): Boolean =
+        StatsRegistry.internal.gauges.map.containsKey(path.toList)
 
-    "no thread blocking" - {
+    private def counterGaugeRegistered(path: String*): Boolean =
+        StatsRegistry.internal.counterGauges.map.containsKey(path.toList)
 
-        "the sampler blocks no thread: N ticks on a single-worker scheduler do not starve other submitted work" in {
-            for
-                handles <- MachineHandles.init
-                sampler = new MachineSampler(handles, Machine.NullMachine)
-                coSubmitted <- Fiber.initUnscoped(42)
-                _ = (1 to 5).foreach(i => sampler.observe(cpuTotal(i.toLong * 1000000000L)))
-                result <- coSubmitted.get
-                // Drain the shared cpuTimeTotal Counter (a destructive sumThenReset): this leaf's
-                // own N ticks otherwise leave a residual delta that would corrupt a later leaf's
-                // (in this suite or another) baseline read of the same process-global handle.
-                _ = handles.cpuTimeTotal.unsafe.get()
-            yield assert(result == 42)
-            end for
+    private def histogramRegistered(path: String*): Boolean =
+        StatsRegistry.internal.histograms.map.containsKey(path.toList)
+
+    private def histogramSummary(boundaries: Array[Double], path: String*): Summary =
+        StatsRegistry.internal.histograms.get(path.toList.reverse, "", new UnsafeHistogram(boundaries)).summary()
+
+    private def counterValue(path: String*): Long =
+        StatsRegistry.internal.counters.get(path.toList.reverse, "", new UnsafeCounter()).get()
+
+    "RateCell" - {
+
+        "clamps a decreasing raw delta to a non-negative observation" in {
+            val boundaries = MachineHandles.nanosPerSecFor(8L)
+            val cell       = new MachineHandles.RateCell(Stat.initScope("mhtest-ratecell-clamp"), "rate", "d", boundaries)
+            cell.observe(100000000000L) // tick 1: baseline, no observation
+            cell.observe(50000000000L)  // tick 2: cur < prior, delta clamps to 0
+            cell.observe(80000000000L)  // tick 3: delta 30e9
+            val summary = histogramSummary(boundaries, "mhtest-ratecell-clamp", "rate")
+            assert(summary.count == 2L)
+            // min/max are packed as 32-bit floats (UnsafeHistogram's documented ~7-significant-digit
+            // precision), so an exact-value check at this magnitude belongs on sum (full Double precision,
+            // never packed) instead; min == 0.0 is still exact since 0.0 has no float rounding.
+            assert(summary.sum == 30000000000.0)
+            assert(summary.min == 0.0)
+        }
+
+        "carries the cumulative total in its running sum so the removed `.total` Counter loses no signal" in {
+            val boundaries = MachineHandles.nanosPerSecFor(8L)
+            val cell       = new MachineHandles.RateCell(Stat.initScope("mhtest-ratecell-runningsum"), "rate", "d", boundaries)
+            cell.observe(1000000000L) // baseline
+            cell.observe(3000000000L) // delta 2e9
+            cell.observe(4000000000L) // delta 1e9
+            val summary = histogramSummary(boundaries, "mhtest-ratecell-runningsum", "rate")
+            assert(summary.sum == 3000000000.0)
+        }
+
+        "is retained as a live val so state persists across a forced GC (val->def would reset it)" in {
+            val boundaries = MachineHandles.nanosPerSecFor(8L)
+            val cell       = new MachineHandles.RateCell(Stat.initScope("mhtest-ratecell-gc"), "rate", "d", boundaries)
+            cell.observe(1000000000L) // baseline
+            java.lang.System.gc()
+            cell.observe(2000000000L) // delta 1e9, only meaningful if the prior AtomicLong survived the GC
+            val summary = histogramSummary(boundaries, "mhtest-ratecell-gc", "rate")
+            assert(summary.count == 1L)
+            assert(summary.sum == 1000000000.0) // sum is never float-packed, unlike min/max
         }
     }
 
-    "detached-fiber lifecycle" - {
+    "CounterCell" - {
 
-        "the sampler fiber survives its triggering call's own scope closing (detached-fiber keep-alive)" in {
-            // Mirrors MachineStatFactory.triggerStart's own shape exactly: Scope.run wraps
-            // MachineSampler.run INSIDE the detached fiber body, so the sampler's own Scope belongs
-            // to the fiber, independent of whatever scope surrounds the Fiber.initUnscoped call
-            // itself (the "triggering call's own scope"). Wrapping Scope.run OUTSIDE
-            // Fiber.initUnscoped instead would close that scope the instant initUnscoped returns,
-            // orphaning the fiber's own Scope.ensure finalizer (observed as a kyo.Closed panic).
-            Clock.withTimeControl { tc =>
-                for
-                    clock <- Clock.get
-                    fiber <- Fiber.initUnscoped {
-                        Clock.let(clock)(Scope.run(MachineSampler.run))
-                    }
-                    // The triggering call's own scope (this for-comprehension's ambient scope) is
-                    // unrelated to the fiber's own Scope, kept open independently by the tick loop.
-                    _     <- tc.advance(1.seconds, Duration.Zero)
-                    done1 <- fiber.done
-                    _     <- tc.advance(1.seconds, Duration.Zero)
-                    done2 <- fiber.done
-                    _     <- fiber.interrupt
-                yield
-                    assert(!done1)
-                    assert(!done2)
-            }
+        "advances by its own clamped delta and records into no Histogram" in {
+            val cell = new MachineHandles.CounterCell(Stat.initScope("mhtest-countercell"), "periods", "d")
+            cell.observe(100L) // baseline, advances 0
+            cell.observe(150L) // advances 50
+            cell.observe(120L) // reset, clamps to 0
+            val total = counterValue("mhtest-countercell", "periods")
+            assert(total == 50L)
+            assert(!histogramRegistered("mhtest-countercell", "periods"))
         }
+    }
 
-        "tearing down the sampler stops the tick loop BEFORE closing the handles: no read of a closed handle" in {
-            Clock.withTimeControl { tc =>
-                for
-                    clock <- Clock.get
-                    fiber <- Fiber.initUnscoped {
-                        Clock.let(clock)(Scope.run(MachineSampler.run))
-                    }
-                    _           <- tc.advance(1.seconds, Duration.Zero)
-                    interrupted <- fiber.interrupt
-                    done        <- fiber.done
-                yield
-                    assert(interrupted)
-                    assert(done)
-            }
+    "config LongGaugeCell" - {
+
+        "is a plain Gauge in the gauges store, and a decreasing config reports the raw lower value not a wraparound" in {
+            val cell = new MachineHandles.LongGaugeCell(Stat.initScope("mhtest-configgauge"), "memory.limit", "d")
+            cell.set(1073741824L)
+            val registeredAsGauge        = gaugeRegistered("mhtest-configgauge", "memory.limit")
+            val registeredAsCounterGauge = counterGaugeRegistered("mhtest-configgauge", "memory.limit")
+            cell.set(536870912L) // a lower limit
+            val polled = gaugePath("mhtest-configgauge", "memory.limit")
+            assert(registeredAsGauge)
+            assert(!registeredAsCounterGauge)
+            assert(polled == 536870912.0)
+        }
+    }
+
+    "DoubleGaugeCell" - {
+
+        "a NaN observation registers nothing; a real value round-trips through the bit-packed AtomicLong holder" in {
+            val cell = new MachineHandles.DoubleGaugeCell(Stat.initScope("mhtest-doublegauge"), "one", "d")
+            cell.set(Double.NaN)
+            val afterNaN = gaugeRegistered("mhtest-doublegauge", "one")
+            cell.set(1.5)
+            val afterReal = gaugeRegistered("mhtest-doublegauge", "one")
+            val polled    = gaugePath("mhtest-doublegauge", "one")
+            assert(!afterNaN)
+            assert(afterReal)
+            assert(polled == 1.5)
+        }
+    }
+
+    "lazy-on-first-Present registration" - {
+
+        "a host-absent metric registers no handle and a seeded gauge's first poll is the real value not a transient 0" in {
+            val cell      = new MachineHandles.LongGaugeCell(Stat.initScope("mhtest-lazy-present"), "cpu.period", "d")
+            val beforeAny = gaugeRegistered("mhtest-lazy-present", "cpu.period")
+            cell.set(Path.ReadHandle.AbsentLong) // a tick where the host produced nothing
+            val afterAbsentTick = gaugeRegistered("mhtest-lazy-present", "cpu.period")
+            cell.set(100000000L)
+            val afterPresentTick = gaugeRegistered("mhtest-lazy-present", "cpu.period")
+            val polled           = gaugePath("mhtest-lazy-present", "cpu.period")
+            assert(!beforeAny)
+            assert(!afterAbsentTick)
+            assert(afterPresentTick)
+            assert(polled == 100000000.0)
+        }
+    }
+
+    "PsiHandles" - {
+
+        "builds exactly five `One` and never a cpu.full cell" in {
+            val nanosPerSec = MachineHandles.nanosPerSecFor(8L)
+            val psi         = PsiHandles(Stat.initScope("mhtest-psi-five"), nanosPerSec)
+            psi.cpuSome.rate.observe(1000000000L)
+            assert(psi.cpuSome ne null)
+            assert(psi.memorySome ne null)
+            assert(psi.memoryFull ne null)
+            assert(psi.ioSome ne null)
+            assert(psi.ioFull ne null)
+            assert(!histogramRegistered("mhtest-psi-five", "cpu", "full", "rate"))
         }
     }
 
     "metric taxonomy" - {
 
-        "every locked metric handle is created once under Stat scope machine with its declared type; the 3 config-value gauges appear only after their first Present" in {
-            // The 3 config values (memory.limit, cpu.quota, cpu.period) are plain Gauges (a config value
-            // can rise or fall; a CounterGauge's delta wraps a decrease), so they register in the registry's
-            // GAUGE store, not the counterGauge store.
-            for
-                handles <- MachineHandles.init
-                s                 = new MachineSampler(handles, Machine.NullMachine)
-                memoryLimitBefore = StatsRegistry.internal.gauges.map.containsKey(List("machine", "cgroup", "memory.limit"))
-                cpuQuotaBefore    = StatsRegistry.internal.gauges.map.containsKey(List("machine", "cgroup", "cpu.quota"))
-                cpuPeriodBefore   = StatsRegistry.internal.gauges.map.containsKey(List("machine", "cgroup", "cpu.period"))
-                _ = handles.observe(
-                    cgroupReading(
-                        memoryLimit = Present(1073741824L),
-                        cpuQuota = Present(200000000L)
-                    ),
-                    MachineSampler.PriorState.empty
-                )
-                memoryLimitAfter = StatsRegistry.internal.gauges.map.containsKey(List("machine", "cgroup", "memory.limit"))
-                cpuQuotaAfter    = StatsRegistry.internal.gauges.map.containsKey(List("machine", "cgroup", "cpu.quota"))
-                cpuPeriodAfter   = StatsRegistry.internal.gauges.map.containsKey(List("machine", "cgroup", "cpu.period"))
+        "each reclassified metric maps to its concrete new cell type, asserted per name" in {
+            for handles <- MachineHandles.init
             yield
-                assert(!memoryLimitBefore)
-                assert(!cpuQuotaBefore)
-                assert(!cpuPeriodBefore)
-                assert(memoryLimitAfter)
-                assert(cpuQuotaAfter)
-                assert(!cpuPeriodAfter) // cpuPeriod stayed Absent this tick, so no gauge registers yet
-                assert(handles.coresGauge ne null)
-                assert(handles.cgMemUsage ne null)
-        }
-
-        "storeNames sanitization: root-slash-to-root, dotted-path-to-underscored, nested-path-to-underscored" in {
-            val result = MachineHandles.storeNames(Seq("/", "/home/user.name", "/mnt/data"))
-            assert(result == Seq("root", "home_user_name", "mnt_data"))
-        }
-
-        "storeNames collision gets a stable numeric suffix in enumeration order" in {
-            // /mnt/data and /mnt.data both sanitize to the same base segment "mnt_data"
-            // ('/' and '.' both map to '_'), a genuine collision on the full sanitized path.
-            val result = MachineHandles.storeNames(Seq("/mnt/data", "/mnt.data"))
-            assert(result == Seq("mnt_data", "mnt_data_2"))
-        }
-
-        "disk observe creates a per-store handle once and records total/free into it each tick" in {
-            for
-                handles <- MachineHandles.init
-                _      = handles.observe(diskReading("data", 1000L, 400L), MachineSampler.PriorState.empty)
-                after1 = StatsRegistry.internal.histograms.map.containsKey(List("machine", "disk", "data", "total"))
-                _      = handles.observe(diskReading("data", 1000L, 300L), MachineSampler.PriorState.empty)
-                summary = StatsRegistry.internal.histograms.get(
-                    List("machine", "disk", "data", "total").reverse,
-                    "",
-                    new kyo.stats.internal.UnsafeHistogram(MachineHandles.bytes)
-                )
-            yield
-                assert(after1)
-                // Two ticks each observed total=1000: the SAME retained handle accumulated two observations
-                // (never re-created), proving the once-per-store init-once model.
-                assert(summary.summary().count == 2L)
-        }
-
-        "cgroup config-value Gauges are created lazily on first Present, seeded with that value; an unset config exports nothing (no fake value, no transient 0)" in {
-            // Uses cpu.period exclusively (not memory.limit/cpu.quota, already registered by the
-            // "every locked metric handle" leaf earlier in this suite; the registry is process-
-            // global, so re-testing the same name's before=false fact there would be stale here).
-            import AllowUnsafe.embrace.danger
-            for
-                handles <- MachineHandles.init
-                beforeCpuPeriod     = StatsRegistry.internal.gauges.map.containsKey(List("machine", "cgroup", "cpu.period"))
-                _                   = handles.observe(cgroupReading(cpuPeriod = Absent), MachineSampler.PriorState.empty)
-                afterTick1CpuPeriod = StatsRegistry.internal.gauges.map.containsKey(List("machine", "cgroup", "cpu.period"))
-                _                   = handles.observe(cgroupReading(cpuPeriod = Present(100000000L)), MachineSampler.PriorState.empty)
-                afterTick2CpuPeriod = StatsRegistry.internal.gauges.map.containsKey(List("machine", "cgroup", "cpu.period"))
-                // The gauge is seeded with the first observed value, so its first poll reads the real
-                // value, never a transient 0 (the fabricated-0 the lazy registration window could expose).
-                seeded = StatsRegistry.internal.gauges.get(
-                    List("machine", "cgroup", "cpu.period").reverse,
-                    "",
-                    new kyo.stats.internal.UnsafeGauge(() => -1d)
-                ).collect()
-            yield
-                assert(!beforeCpuPeriod)
-                assert(!afterTick1CpuPeriod)
-                assert(afterTick2CpuPeriod)
-                assert(seeded == 100000000d)
+                assert(handles.cpuCores.isInstanceOf[MachineHandles.LongGaugeCell])
+                assert(handles.memTotal.isInstanceOf[MachineHandles.LongGaugeCell])
+                assert(handles.swapTotal.isInstanceOf[MachineHandles.LongGaugeCell])
+                assert(handles.loadOne.isInstanceOf[MachineHandles.DoubleGaugeCell])
+                assert(handles.loadFive.isInstanceOf[MachineHandles.DoubleGaugeCell])
+                assert(handles.loadFifteen.isInstanceOf[MachineHandles.DoubleGaugeCell])
+                assert(handles.systemPressure.cpuSome.avg10.isInstanceOf[MachineHandles.DoubleGaugeCell])
+                assert(handles.cgroupPressure.ioSome.avg60.isInstanceOf[MachineHandles.DoubleGaugeCell])
+                assert(handles.diskStore("mhtest-reclassify-disk").total.isInstanceOf[MachineHandles.LongGaugeCell])
             end for
         }
 
-        "the unpaired cgroup.cpu.periods Counter advances by its own delta and records into no Histogram" in {
-            for
-                handles <- MachineHandles.init
-                throttledRateCountBefore = handles.cgCpuThrPeriodsHi.unsafe.summary().count
-                st1                      = handles.observe(cgroupReading(periods = Present(100L)), MachineSampler.PriorState.empty)
-                _                        = handles.cgCpuPeriods.unsafe.get() // drain tick-1 baseline (0)
-                _                        = handles.observe(cgroupReading(periods = Present(150L)), st1)
-                advance                  = handles.cgCpuPeriods.unsafe.get()
-                throttledRateCountAfter  = handles.cgCpuThrPeriodsHi.unsafe.summary().count
-            yield
-                assert(advance == 50L)
-                // No new observation into the paired rate Histogram: the count is unchanged across
-                // the two ticks (the Histogram is process-global and cumulative, so the DELTA, not
-                // the absolute count, is the meaningful assertion here).
-                assert(throttledRateCountAfter == throttledRateCountBefore)
+        "the CPU-time histogram boundaries are derived from the injected core count, never a fixed 8-core ceiling" in {
+            val b16 = MachineHandles.nanosPerSecFor(16L)
+            val b4  = MachineHandles.nanosPerSecFor(4L)
+            assert(b16.length == 9)
+            assert(b16.last == 16000000000.0)
+            // 12e9 falls UNDER the 16e9 top boundary, not funneled into the overflow bucket.
+            assert(b16.exists(bound => 12000000000.0 <= bound && bound < 16000000000.0))
+            assert(b4.length == 7)
+            assert(b4.sameElements(Array(0d, 100000000d, 500000000d, 1000000000d, 2000000000d, 4000000000d, 8000000000d)))
+            assert(!b16.sameElements(b4))
         }
 
-        "throttled.periods.rate receives exactly one observation per tick, from the throttledPeriods delta only" in {
-            for
-                handles <- MachineHandles.init
-                countBefore = handles.cgCpuThrPeriodsHi.unsafe.summary().count
-                st1 = handles.observe(
-                    cgroupReading(periods = Present(100L), throttledPeriods = Present(10L)),
-                    MachineSampler.PriorState.empty
+        "a core count strictly between 8 and 16 (the common real-host range) yields boundaries a real histogram accepts" in {
+            // Regression guard for a fixed production bug: the naive top/2 for cores=12 is 6e9, which
+            // falls BELOW the base array's own 8e9 ceiling, so an unfiltered boundary set is not
+            // strictly ascending. UnsafeHistogram's own constructor rejects such an array outright,
+            // which is what would actually surface on a revert: MachineHandles.init would throw on its
+            // first real cpu observation on any such host. The exact-value check pins the array shape;
+            // constructing a real histogram from it is the end-to-end proof.
+            val boundaries = MachineHandles.nanosPerSecFor(12L)
+            assert(boundaries.sliding(2).forall { case Array(a, b) => a < b })
+            assert(
+                boundaries.sameElements(
+                    Array(0d, 100000000d, 500000000d, 1000000000d, 2000000000d, 4000000000d, 8000000000d, 9000000000d,
+                        12000000000d)
                 )
-                _            = handles.observe(cgroupReading(periods = Present(150L), throttledPeriods = Present(13L)), st1)
-                afterSummary = handles.cgCpuThrPeriodsHi.unsafe.summary()
+            )
+            val histogram = new UnsafeHistogram(boundaries)
+            assert(histogram.summary().count == 0L)
+        }
+
+        "cpuCores is seeded and registered at init because the core count is available on every OS" in {
+            for handles <- MachineHandles.init
             yield
-                // Exactly one new observation across the two ticks (tick 1 records the baseline
-                // with no observe; tick 2 observes the throttledPeriods delta of 3).
-                assert(afterSummary.count == countBefore + 1L)
-                assert(afterSummary.max == 3.0)
+                assert(gaugeRegistered("machine", "cpu", "cores"))
+                assert(gaugePath("machine", "cpu", "cores") > 0.0)
         }
     }
-
-    private def cpuTotal(total: Long): Machine.Reading =
-        Machine.Reading.empty.copy(cpu = Present(Machine.CpuReading(Present(total), Absent, Absent, Absent, Absent)))
 
 end MachineHandlesTest
