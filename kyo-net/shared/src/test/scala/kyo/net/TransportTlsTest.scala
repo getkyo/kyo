@@ -60,7 +60,7 @@ class TransportTlsTest extends Test:
         val srv = serverTls.copy(minVersion = TLS13, maxVersion = TLS13)
         val cli = clientTls.copy(minVersion = TLS12, maxVersion = TLS12)
         transport.listen("127.0.0.1", 0, 16, srv)(_ => ()).safe.get.map { listener =>
-            Abort.run[Closed | Timeout](
+            Abort.run[NetException | Closed | Timeout](
                 Async.timeout(5.seconds)(transport.connect("127.0.0.1", listener.port, cli).safe.get)
             ).map { outcome =>
                 listener.close()
@@ -73,7 +73,7 @@ class TransportTlsTest extends Test:
         // The server is plaintext and closes each accepted connection immediately, so it never performs a TLS handshake. A connect(tls) client
         // must fail (the handshake aborts on EOF), not hang or silently succeed. Bounded so a cell that hung would fail the guard.
         transport.listen("127.0.0.1", 0, 16)(conn => conn.close()).safe.get.map { listener =>
-            Abort.run[Closed | Timeout](
+            Abort.run[NetException | Closed | Timeout](
                 Async.timeout(5.seconds)(transport.connect("127.0.0.1", listener.port, clientTls).safe.get)
             ).map { outcome =>
                 listener.close()

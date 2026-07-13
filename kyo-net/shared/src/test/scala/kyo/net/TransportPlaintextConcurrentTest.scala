@@ -12,7 +12,7 @@ class TransportPlaintextConcurrentTest extends Test:
 
     private val concurrency = 128
 
-    private def echoServer(transport: Transport)(using Frame): Listener < (Async & Abort[Closed]) =
+    private def echoServer(transport: Transport)(using Frame): Listener < (Async & Abort[NetException]) =
         transport.listen("127.0.0.1", 0, 256) { serverConn =>
             discard(Sync.Unsafe.evalOrThrow {
                 Fiber.initUnscoped {
@@ -35,7 +35,7 @@ class TransportPlaintextConcurrentTest extends Test:
         echoServer(transport).map { listener =>
             Async.fillIndexed(concurrency, concurrency) { i =>
                 val msg = s"plaintext-concurrent-$i".getBytes("UTF-8")
-                Abort.run[Closed](
+                Abort.run[NetException | Closed](
                     transport.connect("127.0.0.1", listener.port).safe.get.flatMap { conn =>
                         conn.outbound.safe.put(Span.fromUnsafe(msg)).andThen {
                             collectToLen(conn, msg.length).map { echoed =>

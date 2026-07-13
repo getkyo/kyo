@@ -3,6 +3,7 @@ package kyo.net.internal.posix
 import kyo.*
 import kyo.ffi.Buffer
 import kyo.ffi.Ffi
+import kyo.net.NetException
 import kyo.net.Test
 import kyo.net.TransportConfig
 import kyo.net.internal.transport.IoDriver
@@ -47,15 +48,18 @@ class PosixTransportSocketOptionsTest extends Test:
     end getIntOpt
 
     /** Build a real transport backed by one PollerIoDriver, connect a loopback client, run `body` with the real client fd, then close. */
-    private def withRealClientFd[A](config: TransportConfig)(body: (SocketBindings, Int) => A < (Async & Abort[Closed] & Scope))(using
+    private def withRealClientFd[A](config: TransportConfig)(body: (
+        SocketBindings,
+        Int
+    ) => A < (Async & Abort[NetException | Closed] & Scope))(using
         Frame
-    ): A < (Async & Abort[Closed] & Scope) =
+    ): A < (Async & Abort[NetException | Closed] & Scope) =
         val sockets   = Ffi.load[SocketBindings]
         val driver    = PollerIoDriver.init(config)
         val pool      = IoDriverPool.init(Array[IoDriver[PosixHandle]](driver))
         val transport = PosixTransport.init(config, pool)
         pool.start()
-        Abort.run[Closed] {
+        Abort.run[NetException | Closed] {
             transport.listen("127.0.0.1", 0, 4)(_ => ()).safe.get.map { listener =>
                 transport.connect("127.0.0.1", listener.port).safe.get.map { conn =>
                     val fd = conn.asInstanceOf[kyo.net.internal.transport.Connection[PosixHandle]].handle.readFd

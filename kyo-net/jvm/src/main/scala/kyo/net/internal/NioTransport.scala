@@ -1148,13 +1148,25 @@ final private[kyo] class NioTransport private (
         tls: kyo.net.NetTlsConfig,
         channelCapacity: Int
     )(using AllowUnsafe, Frame): Fiber.Unsafe[NetConnection, Abort[NetException]] =
+        conn match
+            case nioConn: Connection[NioHandle] @unchecked if nioConn.handle.isInstanceOf[NioHandle] =>
+                upgradeToTlsNio(nioConn, tls, channelCapacity)
+            case _ =>
+                // Not an upgradable NIO connection (e.g. Connection.inMemory): abort typed, never a cast crash.
+                Fiber.Unsafe.fromResult(Result.fail(NetNotUpgradableException()))
+        end match
+    end upgradeToTls
+
+    private def upgradeToTlsNio(
+        nioConn: Connection[NioHandle],
+        tls: kyo.net.NetTlsConfig,
+        channelCapacity: Int
+    )(using AllowUnsafe, Frame): Fiber.Unsafe[NetConnection, Abort[NetException]] =
         val promise = new IOPromise[NetException, Connection[NioHandle]]
         // The SNI host the upgrade engine verifies against; also the host reported by any handshake failure (an upgrade has no fresh port, so -1).
         val host = tls.sniHostname.getOrElse("")
         try
-            // Unsafe: NioTransport only creates Connection[NioHandle] instances, so this downcast is safe.
-            val nioConn = conn.asInstanceOf[Connection[NioHandle]]
-            val handle  = nioConn.handle
+            val handle = nioConn.handle
             // Central failure-close for the upgrade: detachForUpgrade gives up the plaintext connection's ownership of the channel WITHOUT closing
             // it, and on a STARTTLS handshake failure startTlsHandshake (existingHandle present) does not close it either, so the channel would leak
             // (e.g. a verifying client with no reference identity rejecting the upgrade). On success completeConnect wraps the channel in a new
@@ -1202,7 +1214,7 @@ final private[kyo] class NioTransport private (
                 promise.completeDiscard(Result.fail(NetTlsHandshakeException(host, -1, e)))
         end try
         promise.asInstanceOf[Fiber.Unsafe[NetConnection, Abort[NetException]]]
-    end upgradeToTls
+    end upgradeToTlsNio
 
 end NioTransport
 

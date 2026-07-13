@@ -28,7 +28,7 @@ class JvmPosixBackendSelectionTest extends Test:
       */
     private def echoRoundTrip(transport: kyo.net.Transport, payload: Array[Byte])(using
         Frame
-    ): Array[Byte] < (Async & Abort[Closed]) =
+    ): Array[Byte] < (Async & Abort[kyo.net.NetException | Closed]) =
         for
             listener <- transport.listen("127.0.0.1", 0, 128) { serverConn =>
                 discard(Sync.Unsafe.evalOrThrow {

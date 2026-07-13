@@ -22,13 +22,13 @@ class TransportListenerTest extends Test:
             }
         }
 
-        "listening on an already-bound port fails Closed" in {
+        "listening on an already-bound port fails NetBindException" in {
             val transport = NetPlatform.transport
             transport.listen("127.0.0.1", 0, 16)(_ => ()).safe.get.map { first =>
-                Abort.run[Closed](transport.listen("127.0.0.1", first.port, 16)(_ => ()).safe.get).map { second =>
+                Abort.run[NetException](transport.listen("127.0.0.1", first.port, 16)(_ => ()).safe.get).map { second =>
                     second.foreach(_.close())
                     first.close()
-                    assert(second.isFailure, s"a second listen on an in-use port must fail Closed, got $second")
+                    assert(second.isFailure, s"a second listen on an in-use port must fail NetBindException, got $second")
                 }
             }
         }

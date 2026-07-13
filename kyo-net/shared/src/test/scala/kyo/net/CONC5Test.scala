@@ -56,29 +56,28 @@ class CONC5Test extends Test:
                 // Latch(1): one release unblocks all N waiters simultaneously.
                 latch <- Latch.init(1)
                 fibers <- Kyo.foreach(Chunk.from(1 to concurrency)) { i =>
-                    Fiber.init {
+                    val attempt: Boolean < (Async & Abort[NetException | Closed]) =
+                        for
+                            conn    <- transport.connect("127.0.0.1", listener.port).safe.get
+                            _       <- conn.outbound.safe.put(upgradeSignal)
+                            _       <- conn.inbound.safe.take
+                            tlsConn <- transport.upgradeToTls(conn, cli, 16).safe.get
+                            // Post-upgrade write immediately: exercises the cross-tail defer/kick when the
+                            // handshake's raw final flight may not yet have reaped its CQE.
+                            payload = Array.fill[Byte](1024)((i % 127 + 1).toByte)
+                            _      <- tlsConn.outbound.safe.put(Span.fromUnsafe(payload))
+                            echoed <- collectN(tlsConn, payload.length)
+                        yield
+                            tlsConn.close()
+                            java.util.Arrays.equals(echoed.take(payload.length), payload)
+                        end for
+                    end attempt
+                    val body: Result[NetException | Timeout | Closed, Boolean] < Async =
                         // All N fibers park here until latch.release fires, maximizing upgrade overlap.
                         latch.await.flatMap { _ =>
-                            Abort.run[Timeout | Closed](
-                                Async.timeout(30.seconds) {
-                                    for
-                                        conn    <- transport.connect("127.0.0.1", listener.port).safe.get
-                                        _       <- conn.outbound.safe.put(upgradeSignal)
-                                        _       <- conn.inbound.safe.take
-                                        tlsConn <- transport.upgradeToTls(conn, cli, 16).safe.get
-                                        // Post-upgrade write immediately: exercises the cross-tail defer/kick when the
-                                        // handshake's raw final flight may not yet have reaped its CQE.
-                                        payload = Array.fill[Byte](1024)((i % 127 + 1).toByte)
-                                        _      <- tlsConn.outbound.safe.put(Span.fromUnsafe(payload))
-                                        echoed <- collectN(tlsConn, payload.length)
-                                    yield
-                                        tlsConn.close()
-                                        java.util.Arrays.equals(echoed.take(payload.length), payload)
-                                    end for
-                                }
-                            )
+                            Abort.run[NetException | Timeout | Closed](Async.timeout(30.seconds)(attempt))
                         }
-                    }
+                    Fiber.init(body)
                 }
                 _       <- latch.release
                 results <- Kyo.foreach(fibers)(_.get)

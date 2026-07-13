@@ -146,10 +146,10 @@ class IoUringUpgradeHandoffDropTest extends Test:
 
                         // Mirrors PosixTransport.driveUpgradeRead's own Waiter construction (PosixTransport.scala:1868-1883): a raw
                         // IOPromise observed via onComplete, wrapped as the Promise.Unsafe the UpgradeHandoff slot carries.
-                        val delivered = new java.util.concurrent.atomic.AtomicReference[Result[Closed, Span[Byte]]](null)
-                        val raw       = new kyo.scheduler.IOPromise[Closed, Span[Byte]]
+                        val delivered = new java.util.concurrent.atomic.AtomicReference[Result[kyo.net.NetException, Span[Byte]]](null)
+                        val raw       = new kyo.scheduler.IOPromise[kyo.net.NetException, Span[Byte]]
                         raw.onComplete(result => delivered.set(result))
-                        val waiterPromise = raw.asInstanceOf[Promise.Unsafe[Span[Byte], Abort[Closed]]]
+                        val waiterPromise = raw.asInstanceOf[Promise.Unsafe[Span[Byte], Abort[kyo.net.NetException]]]
                         handle.upgradeHandoff.set(PosixHandle.UpgradeHandoff.Waiter(waiterPromise, summon[Frame]))
 
                         val bytes = Array[Byte](11, 22, 33)

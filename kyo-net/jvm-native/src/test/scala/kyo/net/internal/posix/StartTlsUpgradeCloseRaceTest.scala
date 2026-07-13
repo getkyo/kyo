@@ -3,6 +3,8 @@ package kyo.net.internal.posix
 import kyo.*
 import kyo.ffi.Buffer
 import kyo.ffi.Ffi
+import kyo.net.NetConnectionClosedException
+import kyo.net.NetException
 import kyo.net.NetTlsConfig
 import kyo.net.Test
 import kyo.net.internal.tls.BoringSslBindings
@@ -24,7 +26,10 @@ import kyo.net.internal.tls.TlsTestCert
   * of the 40 iterations creates a FRESH `RecordingSocketBindings` with a fresh `onRecvEagain` set (C5). No sleep.
   *
   * Uses `RecordingSocketBindings` with `onRecvEagain` to latch on the server-side EAGAIN that signals the re-handshake is in flight.
-  * Asserts `spy.closeCounts.getOrDefault(serverFd, 0) == 1` (no double-close), `latchFired == 40`, and `abortBranch > 0`.
+  * Asserts `spy.closeCounts.getOrDefault(serverFd, 0) == 1` (no double-close), `latchFired == 40`, and `abortBranch > 0`. The abort branch
+  * additionally asserts the failure is [[NetConnectionClosedException]] with `.operation` naming `"handshake"` or `"upgrade"`, never
+  * [[kyo.net.NetTlsHandshakeException]] and never a message-text match: `upgradeRole`'s failure channel is `Abort[NetException]`, disjoint
+  * from `Closed`, so the close-mid-handshake case must surface as a typed leaf rather than an embedded `Closed` cause.
   *
   * The upgrade-handshake read no longer races the concurrent close. The detached plaintext `ReadPump` can re-arm a read on the fd the upgrade keeps
   * open (`detachForUpgrade` is a live withdrawal, `fdClosing=false`), but the poll carrier rejects that stray re-arm while the handle is upgrading and
@@ -104,7 +109,7 @@ class StartTlsUpgradeCloseRaceTest extends Test:
                             }
 
                             Fiber.initUnscoped(fireClose).map { closeFiber =>
-                                Abort.run[Closed](serverUpgrade.get).map { upgradeResult =>
+                                Abort.run[NetException](serverUpgrade.get).map { upgradeResult =>
                                     closeFiber.get.map { _ =>
                                         // Idempotent extra close of the plaintext connection.
                                         serverPlain.close()
@@ -115,13 +120,19 @@ class StartTlsUpgradeCloseRaceTest extends Test:
                                             s"[iter $iter] upgrading fd=$serverFd closed $closes times (expected exactly 1: no double-close, no leak)"
                                         )
                                         upgradeResult match
-                                            case Result.Failure(_: Closed) =>
+                                            case Result.Failure(e: NetConnectionClosedException) =>
+                                                assert(
+                                                    e.operation == "handshake" || e.operation == "upgrade",
+                                                    s"[iter $iter] close-mid-upgrade failure must name handshake or upgrade, got operation=${e.operation}"
+                                                )
                                                 discard(abortBranch.incrementAndGet())
                                                 Loop.continue
                                             case Result.Success(conn) =>
                                                 conn.close()
                                                 assert(!conn.isOpen, s"[iter $iter] upgraded connection left open after a concurrent close")
                                                 Loop.continue
+                                            case Result.Failure(other) =>
+                                                fail(s"[iter $iter] close-mid-upgrade failed with an unexpected NetException leaf: $other")
                                             case Result.Panic(e) =>
                                                 fail(s"[iter $iter] upgrade racing close panicked (crash, not a clean state): $e")
                                         end match

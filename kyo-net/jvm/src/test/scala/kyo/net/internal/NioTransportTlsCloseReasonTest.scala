@@ -113,7 +113,7 @@ class NioTransportTlsCloseReasonTest extends Test:
       */
     private def runCloseReasonScenario(transport: NioTransport, closeMode: ServerClose)(using
         Frame
-    ): NetConnection.CloseReason < (Scope & Async & Abort[Closed]) =
+    ): NetConnection.CloseReason < (Scope & Async & Abort[kyo.net.NetException | Closed]) =
         for
             serverReady <- Channel.init[Int](1)
             _ = startRawJsseServer(serverReady, closeMode)

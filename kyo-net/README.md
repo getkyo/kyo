@@ -187,12 +187,13 @@ A `transport(config)` instance owns its resources, so the caller MUST `close()` 
 
 ## Errors
 
-Every transport operation aborts a `NetException`, the sealed error type for the module. `NetException` extends `kyo.Closed`, so it flows through `Abort[Closed]` handlers, while the leaves carry the specific failure:
+Every transport operation aborts a `NetException`, the sealed error type for the module, rooted directly in `KyoException` and disjoint from `kyo.Closed`: a transport failure travels its own `Abort[NetException]` row, separate from the `Abort[Closed]` row a connection's inbound/outbound channels use for a genuine close. The leaves carry the specific failure:
 
 - `NetConnectException` / `NetConnectTimeoutException`: the OS connect failed, or the transport's connect deadline fired.
 - `NetDnsResolutionException`: the host name did not resolve.
 - `NetBindException`: the listener could not bind.
 - `NetTlsHandshakeException`: the TLS handshake failed.
+- `NetConnectionClosedException`: the transport closed while a read, send, TLS handshake, or STARTTLS upgrade was in flight (`.operation` names which).
 
 ```scala
 import AllowUnsafe.embrace.danger

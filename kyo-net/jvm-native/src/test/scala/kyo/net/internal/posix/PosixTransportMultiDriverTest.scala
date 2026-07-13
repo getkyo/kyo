@@ -3,6 +3,7 @@ package kyo.net.internal.posix
 import java.util.Collections
 import java.util.IdentityHashMap
 import kyo.*
+import kyo.net.NetException
 import kyo.net.Test
 import kyo.net.TestBackends
 import kyo.net.TransportConfig
@@ -29,15 +30,15 @@ class PosixTransportMultiDriverTest extends Test:
         ()
 
     /** Build a real transport backed by `n` real PollerIoDriver instances, start the pool, run `body`, then close the transport. */
-    private def withNDriverTransport[A](n: Int)(body: PosixTransport => A < (Async & Abort[Closed] & Scope))(using
+    private def withNDriverTransport[A](n: Int)(body: PosixTransport => A < (Async & Abort[NetException | Closed] & Scope))(using
         Frame
-    ): A < (Async & Abort[Closed] & Scope) =
+    ): A < (Async & Abort[NetException | Closed] & Scope) =
         val drivers: Array[IoDriver[PosixHandle]] =
             Array.fill(n)(PollerIoDriver.init(TransportConfig.default).asInstanceOf[IoDriver[PosixHandle]])
         val pool      = IoDriverPool.init(drivers)
         val transport = PosixTransport.init(TransportConfig.default, pool)
         pool.start()
-        Abort.run[Closed](body(transport)).map { result =>
+        Abort.run[NetException | Closed](body(transport)).map { result =>
             Sync.defer(transport.close()).andThen(Abort.get(result))
         }
     end withNDriverTransport
@@ -65,7 +66,7 @@ class PosixTransportMultiDriverTest extends Test:
         val poolDriverSet = Collections.newSetFromMap(new IdentityHashMap[IoDriver[PosixHandle], java.lang.Boolean]())
         driverArray.foreach(d => discard(poolDriverSet.add(d)))
 
-        Abort.run[Closed] {
+        Abort.run[NetException | Closed] {
             transport.listen("127.0.0.1", 0, M + 4)(_ => ()).safe.get.map { listener =>
                 val port = listener.port
                 Kyo.foreach(0 until M) { _ =>
@@ -106,10 +107,10 @@ class PosixTransportMultiDriverTest extends Test:
         exercisesRealParallelismBody
     }
 
-    private def exercisesRealParallelismBody(using Frame, kyo.test.AssertScope): Unit < (Async & Abort[Closed] & Scope) =
+    private def exercisesRealParallelismBody(using Frame, kyo.test.AssertScope): Unit < (Async & Abort[NetException | Closed] & Scope) =
         assumePoller()
 
-        def runWithN(n: Int)(using Frame): Int < (Async & Abort[Closed] & Scope) =
+        def runWithN(n: Int)(using Frame): Int < (Async & Abort[NetException | Closed] & Scope) =
             withNDriverTransport(n) { transport =>
                 val M           = n * 2 + 2
                 val driversSeen = Collections.newSetFromMap(new IdentityHashMap[IoDriver[PosixHandle], java.lang.Boolean]())
@@ -124,29 +125,33 @@ class PosixTransportMultiDriverTest extends Test:
                     // Each fiber holds its connection open until the orchestrator releases it.
                     Kyo.foreach(0 until M) { i =>
                         Fiber.initUnscoped {
-                            transport.connect("127.0.0.1", port).safe.get.map { client =>
-                                val handle = client.asInstanceOf[kyo.net.internal.transport.Connection[PosixHandle]].handle
-                                discard(driversSeen.add(handle.driver))
-                                // Signal registration (non-blocking since capacity is M).
-                                registeredCh.safe.put(()).andThen {
-                                    // Block until the orchestrator releases this connection.
-                                    releaseLatches(i).safe.take.andThen {
-                                        Sync.defer(client.close())
+                            val connected: Unit < (Async & Abort[NetException | Closed]) =
+                                transport.connect("127.0.0.1", port).safe.get.map { client =>
+                                    val handle = client.asInstanceOf[kyo.net.internal.transport.Connection[PosixHandle]].handle
+                                    discard(driversSeen.add(handle.driver))
+                                    // Signal registration (non-blocking since capacity is M).
+                                    registeredCh.safe.put(()).andThen {
+                                        // Block until the orchestrator releases this connection.
+                                        releaseLatches(i).safe.take.andThen {
+                                            Sync.defer(client.close())
+                                        }
                                     }
                                 }
-                            }
+                            connected
                         }
                     }.map { connFibers =>
                         // Wait for all M fibers to register their drivers (all M in-flight simultaneously).
-                        Kyo.foreach(0 until M)(_ => registeredCh.safe.take).andThen {
-                            // Release all M connections simultaneously.
-                            Kyo.foreach(0 until M)(i => releaseLatches(i).safe.put(())).andThen {
-                                Kyo.foreach(connFibers)(_.get).map { _ =>
-                                    listener.close()
-                                    driversSeen.size()
+                        val released: Int < (Async & Abort[NetException | Closed]) =
+                            Kyo.foreach(0 until M)(_ => registeredCh.safe.take).andThen {
+                                // Release all M connections simultaneously.
+                                Kyo.foreach(0 until M)(i => releaseLatches(i).safe.put(())).andThen {
+                                    Kyo.foreach(connFibers)(_.get).map { _ =>
+                                        listener.close()
+                                        driversSeen.size()
+                                    }
                                 }
                             }
-                        }
+                        released
                     }
                 }
             }
@@ -179,7 +184,7 @@ class PosixTransportMultiDriverTest extends Test:
         pool.start()
 
         // Open one real connection so the accept loop is live, then close everything.
-        Abort.run[Closed] {
+        Abort.run[NetException | Closed] {
             transport.listen("127.0.0.1", 0, 4)(_ => ()).safe.get.map { listener =>
                 transport.connect("127.0.0.1", listener.port).safe.get.map { conn =>
                     conn.close()

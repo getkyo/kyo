@@ -3,6 +3,7 @@ package kyo.net.internal.posix
 import kyo.*
 import kyo.ffi.Ffi
 import kyo.net.Connection
+import kyo.net.NetException
 import kyo.net.NetTlsConfig
 import kyo.net.Test
 import kyo.net.internal.tls.TlsProviderPlatform
@@ -43,13 +44,13 @@ class PosixTransportTlsHandshakeReuseTest extends Test:
         if !tlsAvailable then cancel("No TLS provider staged for this host")
     end assumeTlsReady
 
-    private def withTransport[A](body: PosixTransport => A < (Async & Abort[Closed] & Scope))(using
+    private def withTransport[A](body: PosixTransport => A < (Async & Abort[NetException | Closed] & Scope))(using
         Frame
-    ): A < (Async & Abort[Closed] & Scope) =
+    ): A < (Async & Abort[NetException | Closed] & Scope) =
         val driver    = PollerIoDriver.init(transportConfig)
         val transport = TestTransports.forTesting(transportConfig, driver, Ffi.load[SocketBindings], backendIsEpoll = false)
         discard(driver.start())
-        Abort.run[Closed](body(transport)).map { result =>
+        Abort.run[NetException | Closed](body(transport)).map { result =>
             Sync.defer(transport.close()).andThen(Sync.defer(driver.close())).andThen(Abort.get(result))
         }
     end withTransport

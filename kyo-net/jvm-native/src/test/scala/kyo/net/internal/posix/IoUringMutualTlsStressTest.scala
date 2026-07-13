@@ -4,6 +4,7 @@ import kyo.*
 import kyo.ffi.Ffi
 import kyo.net.Connection
 import kyo.net.Listener
+import kyo.net.NetException
 import kyo.net.NetTlsConfig
 import kyo.net.Test
 import kyo.net.TlsTestCertShared
@@ -44,11 +45,11 @@ class IoUringMutualTlsStressTest extends Test:
             // stage; a non-empty record at the end fails the test. The list never being touched on the happy path keeps the success run allocation-free.
             val stalls = new java.util.concurrent.ConcurrentLinkedQueue[String]()
 
-            def startTlsEchoServer(transport: kyo.net.internal.posix.PosixTransport): Listener < (Async & Abort[Closed]) =
+            def startTlsEchoServer(transport: kyo.net.internal.posix.PosixTransport): Listener < (Async & Abort[NetException]) =
                 transport.listen("127.0.0.1", 0, 128) { serverConn =>
                     discard(Sync.Unsafe.evalOrThrow {
                         Fiber.initUnscoped {
-                            Abort.run[Closed] {
+                            Abort.run[NetException | Closed] {
                                 serverConn.inbound.safe.take.flatMap { _ =>
                                     serverConn.outbound.safe.put(upgradeReady).andThen {
                                         transport.upgradeToTls(serverConn, serverTls, 16).safe.get.flatMap { tlsConn =>
@@ -70,28 +71,32 @@ class IoUringMutualTlsStressTest extends Test:
             val width  = 12
             val rounds = 4
 
-            def oneUpgrade(transport: kyo.net.internal.posix.PosixTransport, port: Int, tag: String): Unit < (Async & Abort[Closed]) =
+            def oneUpgrade(
+                transport: kyo.net.internal.posix.PosixTransport,
+                port: Int,
+                tag: String
+            ): Unit < (Async & Abort[NetException | Closed]) =
                 val stage = new java.util.concurrent.atomic.AtomicReference[String]("init")
-                Abort.run[Closed | Timeout](
-                    Async.timeout(8.seconds) {
-                        for
-                            _       <- Sync.defer(stage.set("connect"))
-                            conn    <- transport.connect("127.0.0.1", port).safe.get
-                            _       <- Sync.defer(stage.set("put-signal"))
-                            _       <- conn.outbound.safe.put(upgradeRequest)
-                            _       <- Sync.defer(stage.set("await-ready"))
-                            _       <- conn.inbound.safe.take
-                            _       <- Sync.defer(stage.set("upgrade"))
-                            tlsConn <- transport.upgradeToTls(conn, clientTls, 16).safe.get
-                            _       <- Sync.defer(stage.set("put-payload"))
-                            _       <- tlsConn.outbound.safe.put(Span.fromUnsafe(payload))
-                            _       <- Sync.defer(stage.set("collect"))
-                            echoed  <- collectN(tlsConn, payload.length)
-                        yield
-                            tlsConn.close()
-                            echoed
-                    }
-                ).map {
+                val attempt: Array[Byte] < (Async & Abort[NetException | Closed]) =
+                    for
+                        _       <- Sync.defer(stage.set("connect"))
+                        conn    <- transport.connect("127.0.0.1", port).safe.get
+                        _       <- Sync.defer(stage.set("put-signal"))
+                        _       <- conn.outbound.safe.put(upgradeRequest)
+                        _       <- Sync.defer(stage.set("await-ready"))
+                        _       <- conn.inbound.safe.take
+                        _       <- Sync.defer(stage.set("upgrade"))
+                        tlsConn <- transport.upgradeToTls(conn, clientTls, 16).safe.get
+                        _       <- Sync.defer(stage.set("put-payload"))
+                        _       <- tlsConn.outbound.safe.put(Span.fromUnsafe(payload))
+                        _       <- Sync.defer(stage.set("collect"))
+                        echoed  <- collectN(tlsConn, payload.length)
+                    yield
+                        tlsConn.close()
+                        echoed
+                val outcome: Result[NetException | Closed | Timeout, Array[Byte]] < Async =
+                    Abort.run[NetException | Closed | Timeout](Async.timeout(8.seconds)(attempt))
+                outcome.map {
                     case Result.Success(echoed) =>
                         assert(
                             echoed.length == payload.length && echoed.sameElements(payload),
@@ -104,7 +109,7 @@ class IoUringMutualTlsStressTest extends Test:
                 }
             end oneUpgrade
 
-            def oneGroup(g: Int): Unit < (Async & Abort[Closed]) =
+            def oneGroup(g: Int): Unit < (Async & Abort[NetException | Closed]) =
                 val driver    = IoUringDriver.init(tcfg)
                 val transport = TestTransports.forTesting(tcfg, driver, Ffi.load[SocketBindings], backendIsEpoll = false)
                 discard(driver.start())

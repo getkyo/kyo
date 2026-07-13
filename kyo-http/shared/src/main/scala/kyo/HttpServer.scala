@@ -6,6 +6,7 @@ import kyo.internal.codec.OpenApiGenerator
 import kyo.internal.server.HttpRouter
 import kyo.internal.server.UnsafeServerDispatch
 import kyo.internal.transport.NetConfigTranslation
+import kyo.net.NetException
 
 /** HTTP server that binds one or more handlers to a port and manages the server lifecycle.
   *
@@ -128,14 +129,14 @@ object HttpServer:
                 if ownsTransport then kyo.net.NetPlatform.transport(NetConfigTranslation.toNetTransportConfig(config.transportConfig))
                 else HttpPlatformTransport.transport
             val listenFiber = Unsafe.init(transport, config, filteredHandlers, ownsTransport)
-            Abort.run[Closed](listenFiber.safe.get).map {
+            Abort.run[NetException](listenFiber.safe.get).map {
                 case Result.Success(server) => server.safe
-                case Result.Failure(closed) =>
+                case Result.Failure(netEx) =>
                     if ownsTransport then transport.close()
                     val bindTarget = config.unixSocket match
                         case Present(path) => path
                         case Absent        => config.host
-                    throw HttpBindException(bindTarget, config.port, new java.io.IOException(closed.getMessage))
+                    throw HttpBindException(bindTarget, config.port, new java.io.IOException(netEx.getMessage))
                 case Result.Panic(t) =>
                     if ownsTransport then transport.close()
                     throw t
@@ -197,7 +198,7 @@ object HttpServer:
             config: HttpServerConfig,
             handlers: Seq[HttpHandler[?, ?, ?]],
             ownsTransport: Boolean = false
-        )(using AllowUnsafe, Frame): Fiber.Unsafe[Unsafe, Abort[Closed]] =
+        )(using AllowUnsafe, Frame): Fiber.Unsafe[Unsafe, Abort[NetException]] =
             val router = HttpRouter(handlers, config.cors)
             // Track every accepted connection so the server can close them on shutdown: the transport listener owns only
             // the listening socket, so an accepted keep-alive connection would otherwise stay open until a 60s idle timer

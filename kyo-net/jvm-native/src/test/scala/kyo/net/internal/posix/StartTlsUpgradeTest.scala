@@ -4,6 +4,8 @@ import kyo.*
 import kyo.ffi.Buffer
 import kyo.ffi.Ffi
 import kyo.net.Connection
+import kyo.net.NetException
+import kyo.net.NetNotUpgradableException
 import kyo.net.NetTlsConfig
 import kyo.net.Test
 import kyo.net.internal.tls.BoringSslBindings
@@ -91,17 +93,16 @@ class StartTlsUpgradeTest extends Test:
         }
     }
 
-    "STARTTLS on a non-upgradable in-memory connection aborts Closed" in {
+    "STARTTLS on a non-upgradable in-memory connection aborts NetNotUpgradableException" in {
         val driver    = PollerIoDriver.init(transportConfig)
         val transport = TestTransports.forTesting(transportConfig, driver, Ffi.load[SocketBindings], backendIsEpoll = false)
         Sync.ensure(Sync.defer(driver.close())) {
             val inbound  = Channel.Unsafe.init[Span[Byte]](8)
             val outbound = Channel.Unsafe.init[Span[Byte]](8)
             val inMem    = InternalConnection.inMemory(inbound, outbound)
-            Abort.run[Closed](transport.upgradeToTls(inMem, clientTls, transportConfig.channelCapacity).safe.get).map {
-                case Result.Failure(c: Closed) =>
-                    assert(c.getMessage.contains("not upgradable"), s"unexpected message: ${c.getMessage}")
-                case other => fail(s"expected Closed (non-upgradable), got $other")
+            Abort.run[NetException](transport.upgradeToTls(inMem, clientTls, transportConfig.channelCapacity).safe.get).map {
+                case Result.Failure(_: NetNotUpgradableException) => succeed
+                case other                                        => fail(s"expected NetNotUpgradableException, got $other")
             }
         }
     }

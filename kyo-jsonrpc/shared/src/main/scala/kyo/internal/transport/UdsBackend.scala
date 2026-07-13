@@ -1,6 +1,7 @@
 package kyo.internal.transport
 
 import kyo.*
+import kyo.net.NetException
 import kyo.net.NetPlatform
 
 /** Unix-domain-socket backend over kyo-net, shared across JVM, JS, Native, and Wasm.
@@ -19,7 +20,7 @@ private[kyo] object UdsBackend:
     )(using Frame): JsonRpcTransport < (Async & Scope & Abort[Throwable]) =
         // Unsafe: listenUnix and Promise.Unsafe are unsafe-tier; the AllowUnsafe bridged here is captured by the accept-handler closure below.
         Sync.Unsafe.defer {
-            val first = Promise.Unsafe.init[kyo.net.Connection, Abort[Closed]]()
+            val first = Promise.Unsafe.init[kyo.net.Connection, Abort[NetException | Closed]]()
             NetPlatform.transport.listenUnix(sockPath.toString, backlog = 1) { conn =>
                 // Single-client server: the first accept wins and becomes the wire; a later client is closed immediately rather than left
                 // un-accepted in the kernel backlog.
@@ -41,18 +42,31 @@ end UdsBackend
   * `close` unblocks a never-connected wire by failing the promise Closed, and closes the accepted connection if one exists.
   */
 final private[kyo] class UdsServerWireTransport(
-    first: Promise.Unsafe[kyo.net.Connection, Abort[Closed]]
+    first: Promise.Unsafe[kyo.net.Connection, Abort[NetException | Closed]]
 ) extends JsonRpcWireTransport:
 
     def send(bytes: Chunk[Byte])(using Frame): Unit < (Async & Abort[Closed]) =
-        first.safe.get.map(conn => conn.outbound.safe.put(Span.fromUnsafe(bytes.toArray)))
+        val p: Promise[kyo.net.Connection, Abort[NetException | Closed]]         = first.safe
+        val pending: kyo.net.Connection < (Async & Abort[NetException | Closed]) = p.get
+        Abort.run[NetException | Closed](pending).map {
+            case Result.Success(conn)           => conn.outbound.safe.put(Span.fromUnsafe(bytes.toArray))
+            case Result.Failure(closed: Closed) => Abort.fail(closed)
+            case Result.Failure(e: NetException) =>
+                Abort.panic(e) // a transport failure reaching the first-accept promise surfaces typed, never silently
+            case Result.Panic(e) => Abort.panic(e)
+        }
+    end send
 
     def incoming(using Frame): Stream[Chunk[Byte], Async & Abort[Closed]] =
         Stream:
-            Abort.run[Closed](first.safe.get).map {
-                case Result.Success(conn) => ConnectionWireTransport(conn).incoming.emit
-                case Result.Failure(_)    => () // closed before any client connected: empty stream, orderly end
-                case Result.Panic(e)      => Abort.panic(e)
+            val p: Promise[kyo.net.Connection, Abort[NetException | Closed]]         = first.safe
+            val pending: kyo.net.Connection < (Async & Abort[NetException | Closed]) = p.get
+            Abort.run[NetException | Closed](pending).map {
+                case Result.Success(conn)      => ConnectionWireTransport(conn).incoming.emit
+                case Result.Failure(_: Closed) => () // closed before any client connected: empty stream, orderly end
+                case Result.Failure(e: NetException) =>
+                    Abort.panic(e) // a transport failure reaching the first-accept promise surfaces typed, never silently
+                case Result.Panic(e) => Abort.panic(e)
             }
 
     def close(using Frame): Unit < Async =

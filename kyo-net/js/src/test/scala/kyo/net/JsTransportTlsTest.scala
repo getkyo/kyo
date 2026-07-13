@@ -124,7 +124,7 @@ class JsTransportTlsTest extends Test:
         for
             serverAndPort <- startPinnedTlsServer("TLSv1.2")
             (server, port) = serverAndPort
-            result <- Abort.run[Closed](transport.connect("127.0.0.1", port, clientTls13).safe.get)
+            result <- Abort.run[NetException](transport.connect("127.0.0.1", port, clientTls13).safe.get)
         yield
             discard(server.close())
             assert(result.isFailure, s"a TLS1.3-only client must be rejected by a TLS1.2-only server, got: $result")
@@ -144,7 +144,7 @@ class JsTransportTlsTest extends Test:
         for
             serverAndPort <- startPinnedTlsServer("TLSv1.3")
             (server, port) = serverAndPort
-            result <- Abort.run[Closed](transport.connect("127.0.0.1", port, clientTls13).safe.get)
+            result <- Abort.run[NetException](transport.connect("127.0.0.1", port, clientTls13).safe.get)
         yield
             discard(server.close())
             assert(result.isSuccess, s"a TLS1.3 client against a TLS1.3 server must succeed, got: $result")
@@ -201,7 +201,7 @@ class JsTransportTlsTest extends Test:
                 })
             }.safe.get
             port = listener.port
-            result <- Abort.run[Closed](transport.connect("", port, verifyingClient).safe.get)
+            result <- Abort.run[NetException](transport.connect("", port, verifyingClient).safe.get)
         yield
             listener.close()
             assert(result.isFailure, s"a verifying client with an empty host must fail closed, got: $result")
@@ -234,7 +234,7 @@ class JsTransportTlsTest extends Test:
                 })
             }.safe.get
             port = listener.port
-            result <- Abort.run[Closed](transport.connect("localhost", port, verifyingClient).safe.get)
+            result <- Abort.run[NetException](transport.connect("localhost", port, verifyingClient).safe.get)
         yield
             listener.close()
             assert(result.isSuccess, s"a verifying client with a matching host must connect, got: $result")

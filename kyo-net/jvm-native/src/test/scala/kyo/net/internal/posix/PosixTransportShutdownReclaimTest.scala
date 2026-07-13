@@ -6,6 +6,7 @@ import java.util.concurrent.atomic.AtomicReference
 import kyo.*
 import kyo.ffi.Buffer
 import kyo.ffi.Ffi
+import kyo.net.NetException
 import kyo.net.NetTlsConfig
 import kyo.net.Test
 import kyo.net.internal.tls.TlsEngine
@@ -314,7 +315,7 @@ class PosixTransportShutdownReclaimTest extends Test:
                         ol.close()
                 val engine = new SelfPerpetuatingFakeEngine(triggerAt = 3, onTrigger = () => transport.close())
                 transport.testEngineFactory = Present { (_, _, _) => engine }
-                Abort.run[Closed](transport.connect("127.0.0.1", port, NetTlsConfig(trustAll = true)).safe.get).map { outcome =>
+                Abort.run[NetException](transport.connect("127.0.0.1", port, NetTlsConfig(trustAll = true)).safe.get).map { outcome =>
                     assert(outcome.isFailure, s"the connect handshake must fail once transport.close() races it mid-flight, got $outcome")
                 }.andThen {
                     assertEventually(Sync.defer(engine.freed.get())).map { _ =>
@@ -346,7 +347,7 @@ class PosixTransportShutdownReclaimTest extends Test:
                     plaintext.start()
                     val engine = new SelfPerpetuatingFakeEngine(triggerAt = 3, onTrigger = () => transport.close())
                     transport.testEngineFactory = Present { (_, _, _) => engine }
-                    Abort.run[Closed](transport.upgradeToTls(
+                    Abort.run[NetException](transport.upgradeToTls(
                         plaintext,
                         NetTlsConfig(trustAll = true),
                         kyo.net.TransportConfig.default.channelCapacity

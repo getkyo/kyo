@@ -5,6 +5,7 @@ import java.util.concurrent.ConcurrentLinkedQueue
 import kyo.*
 import kyo.ffi.Buffer
 import kyo.ffi.Ffi
+import kyo.net.NetConnectionClosedException
 import kyo.net.internal.tls.TlsEngine
 import kyo.net.internal.transport.IoDriver
 import kyo.net.internal.transport.ReadOutcome
@@ -1766,11 +1767,9 @@ final private[net] class PollerIoDriver private[posix] (
                 discard(handle.upgradeHandoff.compareAndSet(parked, UpgradeHandoff.Idle))
                 if eof then parked.promise.completeDiscard(Result.succeed(Span.empty[Byte]))
                 else
-                    parked.promise.completeDiscard(Result.fail(Closed(
-                        label,
-                        summon[Frame],
-                        s"recv failed fd=${handle.readFd} errno=$errno"
-                    )))
+                    parked.promise.completeDiscard(
+                        Result.fail(NetConnectionClosedException("upgrade", s"recv failed fd=${handle.readFd} errno=$errno"))
+                    )
                 end if
             case _ => ()
         end match

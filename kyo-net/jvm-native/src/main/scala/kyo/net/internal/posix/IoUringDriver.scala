@@ -5,6 +5,7 @@ import java.util.concurrent.ConcurrentLinkedQueue
 import kyo.*
 import kyo.ffi.Buffer
 import kyo.ffi.Ffi
+import kyo.net.NetConnectionClosedException
 import kyo.net.internal.tls.TlsEngine
 import kyo.net.internal.transport.IoDriver
 import kyo.net.internal.transport.ReadOutcome
@@ -1944,7 +1945,10 @@ final private[net] class IoUringDriver private[posix] (
                                         discard(h.upgradeHandoff.compareAndSet(parked, UpgradeHandoff.Idle))
                                         if res == 0 then parked.promise.completeDiscard(Result.succeed(Span.empty[Byte]))
                                         else
-                                            parked.promise.completeDiscard(Result.fail(Closed(label, summon[Frame], s"read errno=${-res}")))
+                                            parked.promise.completeDiscard(
+                                                Result.fail(NetConnectionClosedException("upgrade", s"read errno=${-res}"))
+                                            )
+                                        end if
                                     case _ => ()
                             end if
                         else if res > 0 then

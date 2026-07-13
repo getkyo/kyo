@@ -2,6 +2,7 @@ package kyo.net.internal.posix
 
 import kyo.*
 import kyo.ffi.Buffer
+import kyo.net.NetException
 import kyo.net.internal.tls.TlsEngine
 import kyo.net.internal.transport.IoDriver
 import kyo.net.internal.transport.ReadOutcome
@@ -605,7 +606,7 @@ private[net] object PosixHandle:
     private[posix] enum UpgradeHandoff derives CanEqual:
         case Idle
         case Carryover(bytes: Array[Byte])
-        case Waiter(promise: Promise.Unsafe[Span[Byte], Abort[Closed]], frame: Frame)
+        case Waiter(promise: Promise.Unsafe[Span[Byte], Abort[NetException]], frame: Frame)
     end UpgradeHandoff
 
     /** A recv request [[IoUringDriver.submitRecv]] deferred instead of submitting, because another recv was already kernel-owned and in flight
@@ -741,9 +742,7 @@ private[net] object PosixHandle:
         // holds the resources, so this read-then-set never races a concurrent CAS from either carrier.
         h.upgradeHandoff.getAndSet(PosixHandle.UpgradeHandoff.Idle) match
             case PosixHandle.UpgradeHandoff.Waiter(p, fr) =>
-                p.completeDiscard(Result.fail(kyo.Closed("PosixHandle", fr, s"fd=${h.readFd}/${h.writeFd} closed during upgrade")(using
-                    fr
-                )))
+                p.completeDiscard(Result.fail(kyo.net.NetConnectionClosedException("upgrade")(using fr)))
             case _ => ()
         end match
         h.upgradeActive = false

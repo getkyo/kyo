@@ -2,6 +2,7 @@ package kyo.net.internal.posix
 
 import kyo.*
 import kyo.ffi.Ffi
+import kyo.net.NetException
 import kyo.net.Test
 
 // This suite lives in jvm-native/src/test because PosixTransport's accept loop runs on JVM-posix and Native; JS uses the Node transport.
@@ -39,13 +40,13 @@ class AcceptLoopShutdownTest extends Test:
     /** Build a transport over a fresh real poller driver, run `body`, then close the driver. The body owns transport shutdown so each leaf can
       * assert the `activeAcceptLoops` count at the exact instant a `close()` returns.
       */
-    private def withTransport[A](body: PosixTransport => A < (Async & Abort[Closed] & Scope))(using
+    private def withTransport[A](body: PosixTransport => A < (Async & Abort[NetException | Closed] & Scope))(using
         Frame
-    ): A < (Async & Abort[Closed] & Scope) =
+    ): A < (Async & Abort[NetException | Closed] & Scope) =
         val driver    = PollerIoDriver.init(transportConfig)
         val transport = TestTransports.forTesting(transportConfig, driver, Ffi.load[SocketBindings], backendIsEpoll = false)
         discard(driver.start())
-        Abort.run[Closed](body(transport)).map { result =>
+        Abort.run[NetException | Closed](body(transport)).map { result =>
             Sync.defer(driver.close()).andThen(Abort.get(result))
         }
     end withTransport

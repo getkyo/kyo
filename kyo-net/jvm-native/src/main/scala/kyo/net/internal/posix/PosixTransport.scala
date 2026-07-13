@@ -10,6 +10,7 @@ import kyo.net.NetAddress
 import kyo.net.NetAlreadyDetachedException
 import kyo.net.NetBindException
 import kyo.net.NetConnectException
+import kyo.net.NetConnectionClosedException
 import kyo.net.NetConnectTimeoutException
 import kyo.net.NetDnsResolutionException
 import kyo.net.NetErrno
@@ -580,11 +581,7 @@ final private[net] class PosixTransport private[posix] (
                         reaped.set(true)
                         closeUnwiredHandle(handle, driver, connectPhase = false)
                         engine.free()
-                        promise.completeDiscard(Result.fail(NetTlsHandshakeException(
-                            host,
-                            port,
-                            Closed("PosixTransport", summon[Frame], "transport closed during handshake")
-                        )))
+                        promise.completeDiscard(Result.fail(NetConnectionClosedException("handshake")))
                     }
                 )
                 driveHandshake(
@@ -1447,13 +1444,21 @@ final private[net] class PosixTransport private[posix] (
                             handle.driver.submitEngineOp { () =>
                                 reaped.set(true)
                                 releaseFailedUpgrade(handle, engine)
-                                out.completeDiscard(Result.fail(NetTlsHandshakeException(
-                                    upgradeHost(tls, isServer),
-                                    -1,
-                                    Closed("PosixTransport", summon[Frame], "transport closed during handshake")
-                                )))
+                                out.completeDiscard(Result.fail(NetConnectionClosedException("handshake")))
                             }
                         )
+                        // driveUpgradeRead's parked waiter fails with the transport's own typed leaf (a close raced the in-flight read): surface
+                        // it directly rather than re-wrapping a transport failure as a handshake one. Any other cause is a genuine handshake
+                        // failure (protocol error, engine throw), wrapped as NetTlsHandshakeException as before.
+                        def completeUpgradeFailure(cause: HandshakeFailure | String | Throwable): Unit =
+                            cause match
+                                case netEx: NetException => out.completeDiscard(Result.fail(netEx))
+                                case other =>
+                                    val causeMsg: String | Throwable = other match
+                                        case hf: HandshakeFailure.EngineThrew => hf.cause
+                                        case hf: HandshakeFailure             => hf.toString
+                                        case st: (String | Throwable)         => st
+                                    out.completeDiscard(Result.fail(NetTlsHandshakeException(upgradeHost(tls, isServer), -1, causeMsg)))
                         driveHandshake(
                             handle,
                             engine,
@@ -1541,12 +1546,8 @@ final private[net] class PosixTransport private[posix] (
                                 if handshakeDisarm() then
                                     unregisterHandshake(handshakeToken)
                                     reaped.set(true)
-                                    val causeMsg: String | Throwable = cause match
-                                        case hf: HandshakeFailure.EngineThrew => hf.cause
-                                        case hf: HandshakeFailure             => hf.toString
-                                        case st: (String | Throwable)         => st
                                     releaseFailedUpgrade(handle, engine)
-                                    out.completeDiscard(Result.fail(NetTlsHandshakeException(upgradeHost(tls, isServer), -1, causeMsg))),
+                                    completeUpgradeFailure(cause),
                             onPanic = e =>
                                 if handshakeDisarm() then
                                     unregisterHandshake(handshakeToken)
@@ -1927,8 +1928,11 @@ final private[net] class PosixTransport private[posix] (
             feedCiphertextThenCont(handle, engine, arr, cont, onPanic, isReaped)
 
         // Build the fiber-parking waiter the I/O carrier fulfils when it delivers a peer flight. Parking suspends a fiber, never a thread.
+        // The promise's error channel is NetException (PosixHandle.close's :744 completer fails it with NetConnectionClosedException, never
+        // Closed): constructing it as anything else here would be a lie the compiler cannot catch (IOPromise's type parameter is erased at
+        // the completion boundary), so it must match what actually completes the promise.
         val waiter =
-            val p = new IOPromise[Closed, Span[Byte]]
+            val p = new IOPromise[NetException, Span[Byte]]
             p.onComplete {
                 case Result.Success(bytes) =>
                     // An empty read is EOF mid-handshake: the peer closed before completing it. Surface that as the failure cause (rendered as a
@@ -1936,12 +1940,12 @@ final private[net] class PosixTransport private[posix] (
                     // engine-level failure, never this phrase): the dropped-alert symptom PosixTransportHandshakeAlertTest guards against.
                     if bytes.isEmpty then onFailed("peer closed during read")
                     else feedCiphertextThenCont(handle, engine, bytes.toArrayUnsafe, cont, onPanic, isReaped)
-                case Result.Failure(closed) =>
-                    onFailed(closed)
+                case Result.Failure(netEx) =>
+                    onFailed(netEx)
                 case Result.Panic(e) =>
                     onPanic(e)
             }
-            UpgradeHandoff.Waiter(p.asInstanceOf[Promise.Unsafe[Span[Byte], Abort[Closed]]], summon[Frame])
+            UpgradeHandoff.Waiter(p.asInstanceOf[Promise.Unsafe[Span[Byte], Abort[NetException]]], summon[Frame])
         end waiter
 
         handle.upgradeHandoff.get() match

@@ -2,6 +2,7 @@ package kyo.net.internal.posix
 
 import kyo.*
 import kyo.ffi.Ffi
+import kyo.net.NetException
 import kyo.net.NetTlsConfig
 import kyo.net.Test
 import kyo.net.TransportConfig
@@ -38,13 +39,13 @@ class PosixTransportHandshakeAlertTest extends Test:
             cancel("PosixTransport TLS handshake tests need epoll (Linux) or kqueue (macOS/BSD)")
 
     /** Build a transport over a fresh real poller driver, run `body`, then close the transport and the driver. */
-    private def withTransport[A](body: PosixTransport => A < (Async & Abort[Closed] & Scope))(using
+    private def withTransport[A](body: PosixTransport => A < (Async & Abort[NetException | Closed] & Scope))(using
         Frame
-    ): A < (Async & Abort[Closed] & Scope) =
+    ): A < (Async & Abort[NetException | Closed] & Scope) =
         val driver    = PollerIoDriver.init(transportConfig)
         val transport = TestTransports.forTesting(transportConfig, driver, Ffi.load[SocketBindings], backendIsEpoll = false)
         discard(driver.start())
-        Abort.run[Closed](body(transport)).map { result =>
+        Abort.run[NetException | Closed](body(transport)).map { result =>
             Sync.defer(transport.close()).andThen(Sync.defer(driver.close())).andThen(Abort.get(result))
         }
     end withTransport
@@ -70,22 +71,23 @@ class PosixTransportHandshakeAlertTest extends Test:
                 // Server accepts only TLS 1.3; the client offers only TLS 1.2, so the server's real engine rejects the ClientHello, queues a
                 // protocol_version fatal alert, and the accept handshake fails on the fatal (`-2`) arm.
                 transport.listen("127.0.0.1", 0, 16, serverTls(TLS13, TLS13)) { _ => () }.safe.get.map { listener =>
-                    Abort.run[Closed](transport.connect("127.0.0.1", listener.port, clientTls(TLS12, TLS12)).safe.get).map { outcome =>
-                        val message = outcome match
-                            case Result.Failure(closed) => closed.getMessage
-                            case other                  => fail(s"expected the version-mismatch handshake to fail, got $other")
-                        // The fix drains + sends the server's fatal alert before close; the client's engine consumes it and the connect fails with the
-                        // engine-level handshake failure (a NetTlsHandshakeException, "TLS handshake with <host>:<port> failed[: <cause>]"). Before
-                        // the fix the server bare-closes, so the client reads a bare EOF mid-handshake and the failure cause is "peer closed during
-                        // read": the dropped-alert symptom. So the failure must be a TLS-handshake failure that is NOT a bare-EOF close.
-                        assert(
-                            message.contains("TLS handshake with"),
-                            s"expected a TLS handshake failure (the client received and processed the server's fatal alert), got: $message"
-                        )
-                        assert(
-                            !message.contains("peer closed during read"),
-                            s"the client received a bare close, not the server's fatal alert (the alert was dropped before fd close): $message"
-                        )
+                    Abort.run[NetException | Closed](transport.connect("127.0.0.1", listener.port, clientTls(TLS12, TLS12)).safe.get).map {
+                        outcome =>
+                            val message = outcome match
+                                case Result.Failure(e) => e.getMessage
+                                case other             => fail(s"expected the version-mismatch handshake to fail, got $other")
+                            // The fix drains + sends the server's fatal alert before close; the client's engine consumes it and the connect fails with the
+                            // engine-level handshake failure (a NetTlsHandshakeException, "TLS handshake with <host>:<port> failed[: <cause>]"). Before
+                            // the fix the server bare-closes, so the client reads a bare EOF mid-handshake and the failure cause is "peer closed during
+                            // read": the dropped-alert symptom. So the failure must be a TLS-handshake failure that is NOT a bare-EOF close.
+                            assert(
+                                message.contains("TLS handshake with"),
+                                s"expected a TLS handshake failure (the client received and processed the server's fatal alert), got: $message"
+                            )
+                            assert(
+                                !message.contains("peer closed during read"),
+                                s"the client received a bare close, not the server's fatal alert (the alert was dropped before fd close): $message"
+                            )
                     }
                 }
             }
