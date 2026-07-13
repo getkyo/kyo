@@ -1983,6 +1983,7 @@ lazy val `kyo-examples` =
         .dependsOn(`kyo-core`)
         .dependsOn(`kyo-actor`)
         .dependsOn(`kyo-system`)
+        .dependsOn(`kyo-eventlog`)
         .disablePlugins(MimaPlugin)
         .settings(
             `kyo-settings`,
