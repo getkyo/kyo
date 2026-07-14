@@ -17,7 +17,7 @@ final class Bson(val config: Bson.Config = Bson.Config.Default) extends Codec:
     def newWriter(): Codec.Writer = BsonWriter(config)
 
     def newReader(input: Span[Byte])(using Frame): Codec.Reader =
-        BsonReader(input.toArray, config)
+        BsonReader(input, config)
     end newReader
 end Bson
 

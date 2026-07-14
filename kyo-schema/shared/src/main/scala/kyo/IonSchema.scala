@@ -101,8 +101,13 @@ object IonSchema:
       * The document is written incrementally as it renders, with no intermediate full-document
       * string materialized. The write happens synchronously on the calling thread. The stream is
       * flushed once rendering completes but is never closed; the caller owns its lifecycle.
+      *
+      * Requires `AllowUnsafe`: this writes directly to a caller-supplied [[OutputStream]] outside
+      * the effect system, so the caller opts into the side effect.
       */
-    def encodeTo(schema: IonSchema, out: OutputStream): Unit =
+    def encodeTo(schema: IonSchema, out: OutputStream)(using AllowUnsafe): Unit =
+        // Unsafe: the write is a synchronous, unsuspended side effect on the caller's OutputStream.
+        // AllowUnsafe is the caller's proof that they own the stream and opt into the write.
         val writer = new OutputStreamWriter(out, StandardCharsets.UTF_8)
         render(schema, writer)
         writer.flush()
@@ -141,8 +146,13 @@ object IonSchema:
       * The document is written incrementally as it renders, with no intermediate full-document
       * string materialized. The write happens synchronously on the calling thread. The stream is
       * flushed once rendering completes but is never closed; the caller owns its lifecycle.
+      *
+      * Requires `AllowUnsafe`: this writes directly to a caller-supplied [[OutputStream]] outside
+      * the effect system, so the caller opts into the side effect.
       */
-    inline def encodeTo[A](out: OutputStream, config: Config = Config.Default)(using schema: Schema[A]): Unit =
+    inline def encodeTo[A](out: OutputStream, config: Config = Config.Default)(using schema: Schema[A], allow: AllowUnsafe): Unit =
+        // Unsafe: the write is a synchronous, unsuspended side effect on the caller's OutputStream.
+        // AllowUnsafe is the caller's proof that they own the stream and opt into the write.
         IonSchema.encodeTo(fromSchema(schema, config), out)
     end encodeTo
 

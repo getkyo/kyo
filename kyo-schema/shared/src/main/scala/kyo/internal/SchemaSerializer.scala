@@ -82,7 +82,11 @@ private[kyo] object SchemaSerializer:
                 val overrides = schema.fieldIdNameOverrides
                 if overrides.nonEmpty then
                     val prior = pw.fieldIdOverridesSnapshot
-                    val _     = pw.withFieldIdOverrides(overrides)
+                    // Installs this schema's pins on the writer: withFieldIdOverrides mutates the
+                    // writer's active override map (the side effect is the purpose) and returns the
+                    // writer for chaining, discarded here because `prior` captured above is what the
+                    // caller restores once this schema's write completes.
+                    val _ = pw.withFieldIdOverrides(overrides)
                     Maybe.Present(prior)
                 else Maybe.Absent
                 end if

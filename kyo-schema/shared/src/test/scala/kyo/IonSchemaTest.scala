@@ -89,6 +89,7 @@ class IonSchemaTest extends kyo.test.Test[Any]:
         }
 
         "encodes ISL text to an output stream" in {
+            import AllowUnsafe.embrace.danger
             val schema = IonSchema.from[ISTPerson]
             val out    = new java.io.ByteArrayOutputStream
 
@@ -100,6 +101,7 @@ class IonSchemaTest extends kyo.test.Test[Any]:
         }
 
         "derives and encodes ISL text to an output stream" in {
+            import AllowUnsafe.embrace.danger
             val out = new java.io.ByteArrayOutputStream
 
             IonSchema.encodeTo[ISTPerson](out)
@@ -110,6 +112,7 @@ class IonSchemaTest extends kyo.test.Test[Any]:
         }
 
         "streams ISL text to an output stream across more than one write call" in {
+            import AllowUnsafe.embrace.danger
             val fieldCount = 300
             val fields = Chunk.from((1 to fieldCount).map { i =>
                 IonSchema.Field(f"wideField$i%04d", IonSchema.TypeExpr.Scalar("string"), required = true)

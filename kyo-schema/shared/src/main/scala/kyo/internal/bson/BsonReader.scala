@@ -391,20 +391,20 @@ final class BsonReader private (
 end BsonReader
 
 object BsonReader:
-    def apply(input: Array[Byte], config: kyo.Bson.Config)(using frame: kyo.Frame): BsonReader =
+    def apply(input: Span[Byte], config: kyo.Bson.Config)(using frame: kyo.Frame): BsonReader =
         val parser = Parser(input, config, frame)
         new BsonReader(parser.parse(), frame, config)
     end apply
 
-    final private class Parser(input: Array[Byte], config: kyo.Bson.Config, frame: kyo.Frame):
+    final private class Parser(input: Span[Byte], config: kyo.Bson.Config, frame: kyo.Frame):
         import BsonFormat.*
         import BsonValue.*
 
         private var pos = 0
 
         def parse(): BsonValue =
-            val root = parseDocument(depth = 1, array = false, limit = input.length)
-            if pos != input.length then fail("end of BSON document")
+            val root = parseDocument(depth = 1, array = false, limit = input.size)
+            if pos != input.size then fail("end of BSON document")
             root
         end parse
 
@@ -416,14 +416,14 @@ object BsonReader:
             val len = readInt32(limit)
             if len < MinDocumentLength then failAt("document length", start)
             val end = start + len
-            if end < start || end > limit || end > input.length then truncated("document body")
+            if end < start || end > limit || end > input.size then truncated("document body")
             if input(end - 1) != 0 then failAt("document terminator", end - 1)
 
             if array then
                 val values = Vector.newBuilder[BsonValue]
                 var index  = 0
                 while pos < end - 1 do
-                    val tag = readByte(input.length)
+                    val tag = readByte(input.size)
                     val key = readCString(end)
                     if key != index.toString then failAt("array index " + index, pos)
                     index += 1
@@ -437,7 +437,7 @@ object BsonReader:
                 val fields = Vector.newBuilder[(String, BsonValue)]
                 var count  = 0
                 while pos < end - 1 do
-                    val tag  = readByte(input.length)
+                    val tag  = readByte(input.size)
                     val name = readCString(end)
                     count += 1
                     if count > config.maxCollectionSize then
@@ -470,14 +470,14 @@ object BsonReader:
                         val innerLen   = readInt32(payloadEnd)
                         if innerLen != len - 4 then fail("old binary inner length")
                         requireRemaining(innerLen, "old binary payload", payloadEnd)
-                        val bytes = java.util.Arrays.copyOfRange(input, pos, pos + innerLen)
+                        val bytes = input.slice(pos, pos + innerLen)
                         pos += innerLen
-                        BinaryValue(Span.from(bytes), subtype)
+                        BinaryValue(bytes, subtype)
                     else if subtype == BinarySubtypeGeneric then
                         requireRemaining(len, "binary data", limit)
-                        val bytes = java.util.Arrays.copyOfRange(input, pos, pos + len)
+                        val bytes = input.slice(pos, pos + len)
                         pos += len
-                        BinaryValue(Span.from(bytes), subtype)
+                        BinaryValue(bytes, subtype)
                     else
                         fail("a supported BSON binary subtype (rejected 0x" + java.lang.Integer.toHexString(subtype) + ")")
                     end if
@@ -496,7 +496,7 @@ object BsonReader:
                     Int64Value(readInt64(limit))
                 case Decimal128 =>
                     requireRemaining(16, "decimal128", limit)
-                    val bytes = java.util.Arrays.copyOfRange(input, pos, pos + 16)
+                    val bytes = input.slice(pos, pos + 16).toArrayUnsafe
                     pos += 16
                     Decimal128Value(BsonDecimal128.decode(bytes, kyo.Bson(config), preview)(using frame))
                 case other =>
@@ -529,7 +529,7 @@ object BsonReader:
             result
         end readByte
 
-        private def readInt32(limit: Int = input.length): Int =
+        private def readInt32(limit: Int = input.size): Int =
             requireRemaining(4, "int32", limit)
             val result =
                 (input(pos) & 0xff) |
@@ -553,14 +553,14 @@ object BsonReader:
         end readInt64
 
         private def requireRemaining(count: Int, detail: String, limit: Int): Unit =
-            if count < 0 || limit < pos || count > limit - pos || count > input.length - pos then truncated(detail)
+            if count < 0 || limit < pos || count > limit - pos || count > input.size - pos then truncated(detail)
         end requireRemaining
 
         private def decodeUtf8(start: Int, length: Int): String =
             val decoder = StandardCharsets.UTF_8.newDecoder()
                 .onMalformedInput(CodingErrorAction.REPORT)
                 .onUnmappableCharacter(CodingErrorAction.REPORT)
-            try decoder.decode(java.nio.ByteBuffer.wrap(input, start, length)).toString
+            try decoder.decode(java.nio.ByteBuffer.wrap(input.toArrayUnsafe, start, length)).toString
             catch
                 case _: java.nio.charset.CharacterCodingException =>
                     throw ParseException(kyo.Bson(config), preview, "valid UTF-8", position = start)(using frame)
