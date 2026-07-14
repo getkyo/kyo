@@ -22,6 +22,15 @@ import java.nio.charset.StandardCharsets
 abstract class Codec:
     def newWriter(): Codec.Writer
     def newReader(input: Span[Byte])(using Frame): Codec.Reader
+
+    /** Validates that `structure` can be canonically represented by this codec before any bytes are written.
+      *
+      * The default accepts every shape. A built-in codec with format-specific canonicalization rules (Protobuf's proto3 conformance, which rejects
+      * a non-scalar map key) overrides this to reject an unrepresentable shape up front. Every `Schema` encode entry point
+      * (`encode`/`encodeString`) calls this before writing, so the check applies uniformly regardless of which entry point the caller
+      * uses, rather than only the codec's own companion-object encode method.
+      */
+    private[kyo] def validate(structure: Structure.Type)(using Frame): Unit = ()
 end Codec
 
 object Codec:
@@ -215,6 +224,20 @@ object Codec:
         def instant(value: java.time.Instant): Unit
         def duration(value: java.time.Duration): Unit
         def result(): Span[Byte]
+
+        /** Supplies schema annotation metadata for the next value written.
+          *
+          * Codecs that can represent metadata may override this hook. The default is a no-op, so existing codecs ignore annotations and
+          * keep their wire output unchanged.
+          */
+        def annotations(values: Chunk[Any]): Unit = ()
+
+        /** Whether this writer consumes schema annotation metadata.
+          *
+          * Schema traversal uses this as a positive capability before inspecting structure annotations, so formats that cannot emit
+          * annotations skip annotation handling entirely.
+          */
+        def canWriteAnnotations: Boolean = false
 
         /** Whether this writer can express a top-level non-object value: a top-level array, a bare
           * top-level scalar, or a top-level null. Self-describing codecs (Json, Yaml, Ion, MsgPack)

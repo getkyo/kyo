@@ -1,8 +1,225 @@
 package kyo
 
+import scala.annotation.publicInBinary
+
+final case class IonAnnotated(value: Int) derives CanEqual
+
+final class IonRootAnnotation
+final class IonFieldAnnotation
+final case class IonSpecAnnotated(value: Int) derives CanEqual
+
+final class IonSpecCustomTypeAnnotation
+final class IonSpecInt32Annotation
+final class IonSpecDegreesAnnotation
+final class IonSpecCelsiusAnnotation
+
+final case class IonNestedAnnotated(value: Int) derives CanEqual
+
+object IonAnnotationMarkers:
+    final class NestedRootMarker
+end IonAnnotationMarkers
+
+case object IonCaseFieldMarker
+
+object IonAnnotated:
+
+    private val fieldName    = "value"
+    private val valueFieldId = kyo.internal.CodecMacro.fieldId(fieldName)
+
+    private val rootAnnotations  = Chunk(IonRootAnnotation())
+    private val fieldAnnotations = Chunk(IonFieldAnnotation())
+
+    given Schema[IonAnnotated] =
+        new Schema[IonAnnotated](Nil):
+            type Focused = IonAnnotated
+
+            private val annotatedStructure =
+                Structure.Type.Product(
+                    "IonAnnotated",
+                    Tag[IonAnnotated].asInstanceOf[Tag[Any]],
+                    Chunk.empty,
+                    Chunk(Structure.Field(
+                        fieldName,
+                        summon[Schema[Int]].structure,
+                        annotations = fieldAnnotations
+                    )),
+                    rootAnnotations
+                )
+
+            @publicInBinary override private[kyo] def serializeWrite(value: IonAnnotated, writer: Codec.Writer): Unit =
+                val writeWriter = writerForAnnotations(writer)
+                writeWriter.objectStart("IonAnnotated", 1)
+                writeWriter.field(fieldName, valueFieldId)
+                writeWriter.int(value.value)
+                writeWriter.objectEnd()
+            end serializeWrite
+
+            @publicInBinary override private[kyo] def serializeRead(reader: Codec.Reader): IonAnnotated =
+                reader.objectStart()
+                var value = Maybe.empty[Int]
+                while reader.hasNextField() do
+                    reader.field() match
+                        case `fieldName` => value = Maybe(reader.int())
+                        case _           => reader.skip()
+                    end match
+                end while
+                reader.objectEnd()
+                value match
+                    case Maybe.Present(v) => IonAnnotated(v)
+                    case Maybe.Absent     => throw MissingFieldException(Seq.empty, fieldName)(using reader.frame)
+            end serializeRead
+
+            @publicInBinary override private[kyo] def getter(value: IonAnnotated): Maybe[Any] =
+                Maybe(value)
+
+            @publicInBinary override private[kyo] def setter(value: IonAnnotated, next: Any): IonAnnotated =
+                next.asInstanceOf[IonAnnotated]
+
+            override def structure: Structure.Type = annotatedStructure
+        end new
+    end given
+end IonAnnotated
+
+object IonSpecAnnotated:
+
+    private val fieldName    = "value"
+    private val valueFieldId = kyo.internal.CodecMacro.fieldId(fieldName)
+
+    private val rootAnnotations = Chunk(IonSpecCustomTypeAnnotation())
+    private val fieldAnnotations = Chunk(
+        IonSpecInt32Annotation(),
+        IonSpecDegreesAnnotation(),
+        IonSpecCelsiusAnnotation()
+    )
+
+    given Schema[IonSpecAnnotated] =
+        new Schema[IonSpecAnnotated](Nil):
+            type Focused = IonSpecAnnotated
+
+            private val annotatedStructure =
+                Structure.Type.Product(
+                    "IonSpecAnnotated",
+                    Tag[IonSpecAnnotated].asInstanceOf[Tag[Any]],
+                    Chunk.empty,
+                    Chunk(Structure.Field(
+                        fieldName,
+                        summon[Schema[Int]].structure,
+                        annotations = fieldAnnotations
+                    )),
+                    rootAnnotations
+                )
+
+            @publicInBinary override private[kyo] def serializeWrite(value: IonSpecAnnotated, writer: Codec.Writer): Unit =
+                val writeWriter = writerForAnnotations(writer)
+                writeWriter.objectStart("IonSpecAnnotated", 1)
+                writeWriter.field(fieldName, valueFieldId)
+                writeWriter.int(value.value)
+                writeWriter.objectEnd()
+            end serializeWrite
+
+            @publicInBinary override private[kyo] def serializeRead(reader: Codec.Reader): IonSpecAnnotated =
+                reader.objectStart()
+                var value = Maybe.empty[Int]
+                while reader.hasNextField() do
+                    reader.field() match
+                        case `fieldName` => value = Maybe(reader.int())
+                        case _           => reader.skip()
+                    end match
+                end while
+                reader.objectEnd()
+                value match
+                    case Maybe.Present(v) => IonSpecAnnotated(v)
+                    case Maybe.Absent     => throw MissingFieldException(Seq.empty, fieldName)(using reader.frame)
+            end serializeRead
+
+            @publicInBinary override private[kyo] def getter(value: IonSpecAnnotated): Maybe[Any] =
+                Maybe(value)
+
+            @publicInBinary override private[kyo] def setter(value: IonSpecAnnotated, next: Any): IonSpecAnnotated =
+                next.asInstanceOf[IonSpecAnnotated]
+
+            override def structure: Structure.Type = annotatedStructure
+        end new
+    end given
+end IonSpecAnnotated
+
+object IonNestedAnnotated:
+
+    private val fieldName    = "value"
+    private val valueFieldId = kyo.internal.CodecMacro.fieldId(fieldName)
+
+    private val rootAnnotations  = Chunk(IonAnnotationMarkers.NestedRootMarker())
+    private val fieldAnnotations = Chunk(IonCaseFieldMarker)
+
+    given Schema[IonNestedAnnotated] =
+        new Schema[IonNestedAnnotated](Nil):
+            type Focused = IonNestedAnnotated
+
+            private val annotatedStructure =
+                Structure.Type.Product(
+                    "IonNestedAnnotated",
+                    Tag[IonNestedAnnotated].asInstanceOf[Tag[Any]],
+                    Chunk.empty,
+                    Chunk(Structure.Field(
+                        fieldName,
+                        summon[Schema[Int]].structure,
+                        annotations = fieldAnnotations
+                    )),
+                    rootAnnotations
+                )
+
+            @publicInBinary override private[kyo] def serializeWrite(value: IonNestedAnnotated, writer: Codec.Writer): Unit =
+                val writeWriter = writerForAnnotations(writer)
+                writeWriter.objectStart("IonNestedAnnotated", 1)
+                writeWriter.field(fieldName, valueFieldId)
+                writeWriter.int(value.value)
+                writeWriter.objectEnd()
+            end serializeWrite
+
+            @publicInBinary override private[kyo] def serializeRead(reader: Codec.Reader): IonNestedAnnotated =
+                reader.objectStart()
+                var value = Maybe.empty[Int]
+                while reader.hasNextField() do
+                    reader.field() match
+                        case `fieldName` => value = Maybe(reader.int())
+                        case _           => reader.skip()
+                    end match
+                end while
+                reader.objectEnd()
+                value match
+                    case Maybe.Present(v) => IonNestedAnnotated(v)
+                    case Maybe.Absent     => throw MissingFieldException(Seq.empty, fieldName)(using reader.frame)
+            end serializeRead
+
+            @publicInBinary override private[kyo] def getter(value: IonNestedAnnotated): Maybe[Any] =
+                Maybe(value)
+
+            @publicInBinary override private[kyo] def setter(value: IonNestedAnnotated, next: Any): IonNestedAnnotated =
+                next.asInstanceOf[IonNestedAnnotated]
+
+            override def structure: Structure.Type = annotatedStructure
+        end new
+    end given
+end IonNestedAnnotated
+
 class IonTest extends kyo.test.Test[Any]:
 
     given CanEqual[Any, Any] = CanEqual.derived
+
+    private def assertFailure[A](
+        result: Result[DecodeException, A],
+        expectedClassName: String,
+        messageFragment: String
+    )(using kyo.test.AssertScope): Unit =
+        if result.failure.isEmpty then fail(s"Expected $expectedClassName, got $result")
+        val ex     = result.failure.get
+        val actual = ex.getClass.getName
+        assert(
+            actual.endsWith(expectedClassName) || actual.contains(expectedClassName),
+            s"Expected $expectedClassName, got $actual"
+        )
+        assert(ex.getMessage.contains(messageFragment))
+    end assertFailure
 
     "encode/decode" - {
 
@@ -23,6 +240,109 @@ class IonTest extends kyo.test.Test[Any]:
             assert(decoded == person)
         }
 
+        "ion config defaults select text" in {
+            assert(Ion.Config() == Ion.Config.Default)
+            assert(Ion.Config().format == Ion.Format.Text)
+            assert(Ion().config == Ion.Config.Default)
+            assert(summon[Ion].config == Ion.Config.Default)
+            assert(summon[Ion.Config] == Ion.Config.Default)
+        }
+
+        "ion no-config helpers force text with contextual binary ion" in {
+            given Ion = Ion(Ion.Config(format = Ion.Format.Binary))
+
+            val person  = MTPerson("Alice", 30)
+            val encoded = """{name:"Alice",age:30}"""
+            val bytes   = Span.from(encoded.getBytes(java.nio.charset.StandardCharsets.UTF_8))
+
+            assert(Ion.encode[MTPerson](person) == encoded)
+            assert(new String(Ion.encodeBytes[MTPerson](person).toArray, java.nio.charset.StandardCharsets.UTF_8) == encoded)
+            assert(Ion.decode[MTPerson](encoded).getOrThrow == person)
+            assert(Ion.decodeBytes[MTPerson](bytes).getOrThrow == person)
+        }
+
+        "ion text aliases match no-config helpers" in {
+            val person  = MTPerson("Alice", 30)
+            val encoded = Ion.encode[MTPerson](person)
+            val bytes   = Ion.encodeBytes[MTPerson](person)
+
+            assert(Ion.encodeText[MTPerson](person) == encoded)
+            assert(CodecTestSupport.sameBytes(Ion.encodeTextBytes[MTPerson](person), bytes))
+            assert(Ion.decodeText[MTPerson](encoded) == Ion.decode[MTPerson](encoded))
+            assert(Ion.decodeTextBytes[MTPerson](bytes) == Ion.decodeBytes[MTPerson](bytes))
+        }
+
+        "ion configured text helpers match no-config helpers" in {
+            val config  = Ion.Config(format = Ion.Format.Text)
+            val person  = MTPerson("Alice", 30)
+            val encoded = Ion.encode[MTPerson](person)
+            val bytes   = Ion.encodeBytes[MTPerson](person)
+
+            assert(Ion.encode[MTPerson](person, config) == encoded)
+            assert(CodecTestSupport.sameBytes(Ion.encodeBytes[MTPerson](person, config), bytes))
+            assert(Ion.decode[MTPerson](encoded, config) == Ion.decode[MTPerson](encoded))
+            assert(Ion.decode[MTPerson](bytes, config) == Ion.decodeBytes[MTPerson](bytes))
+            assert(Ion.decodeBytes[MTPerson](bytes, config) == Ion.decodeBytes[MTPerson](bytes))
+        }
+
+        "ion configured annotation writing wraps text output" in {
+            val value = IonAnnotated(7)
+
+            assert(Ion.encode(value) == "{value:7}")
+            assert(Ion.encode(value, Ion.Config()) == "{value:7}")
+
+            val config = Ion.Config(annotationEmissionMode = Ion.AnnotationEmissionMode.Emit)
+            assert(Ion.encode(value, config) == "'kyo.IonRootAnnotation'::{value:'kyo.IonFieldAnnotation'::7}")
+            assert(
+                new String(Ion.encodeBytes(value, config).toArray, java.nio.charset.StandardCharsets.UTF_8) ==
+                    "'kyo.IonRootAnnotation'::{value:'kyo.IonFieldAnnotation'::7}"
+            )
+            val decoded = Ion.decode[IonAnnotated](Ion.encode(value, config)).getOrThrow
+            assert(decoded == value)
+
+            val writer = Ion(config).newWriter()
+            summon[Schema[IonAnnotated]].writeTo(value, writer)
+            val codecBytes = writer.result()
+            assert(CodecTestSupport.sameBytes(codecBytes, Ion.encodeBytes(value, config)))
+        }
+
+        "canWriteAnnotations is true only when annotation emission is enabled" in {
+            val emitting = Ion(Ion.Config(annotationEmissionMode = Ion.AnnotationEmissionMode.Emit))
+            assert(emitting.newWriter().canWriteAnnotations)
+            assert(!Ion().newWriter().canWriteAnnotations)
+            assert(!Json().newWriter().canWriteAnnotations)
+        }
+
+        "ion configured binary string helpers reject text-shaped calls" in {
+            val config = Ion.Config(format = Ion.Format.Binary)
+
+            Result.catching[SchemaException](Ion.encode[MTPerson](MTPerson("Alice", 30), config)) match
+                case Result.Failure(ex: SchemaNotSerializableException) =>
+                    assert(ex.getMessage.contains("Ion.encodeBytes"))
+                case other => fail(s"Expected SchemaNotSerializableException, got $other")
+            end match
+
+            Ion.decode[MTPerson]("""{name:"Alice",age:30}""", config) match
+                case Result.Failure(ex: DecodeException) =>
+                    assert(ex.getMessage.contains("Span[Byte]"))
+                    assert(ex.getMessage.contains("Ion.decodeBytes"))
+                case other => fail(s"Expected DecodeException failure, got $other")
+            end match
+        }
+
+        "ion binary helpers route through IonBinary internals" in {
+            val config = Ion.Config(format = Ion.Format.Binary)
+            val value  = MTPerson("Alice", 30)
+            val bytes  = IonBinary.encode(value)
+
+            assert(Ion.decodeBinary[MTPerson](bytes).getOrThrow == value)
+            assert(Ion.decode[MTPerson](Ion.encodeBytes(value, config), config).getOrThrow == value)
+            assert(Ion.decodeBytes[MTPerson](bytes, config).getOrThrow == value)
+
+            given Ion = Ion(config)
+            assert(Schema[MTPerson].decode[Ion](Schema[MTPerson].encode[Ion](value)).getOrThrow == value)
+        }
+
         "ion works with nested case classes and collections" in {
             val team    = MTSmallTeam(MTPerson("Alice", 30), 5)
             val encoded = Ion.encode(team)
@@ -40,7 +360,7 @@ class IonTest extends kyo.test.Test[Any]:
             val bytes   = Span.from("To infinity... and beyond!".getBytes(java.nio.charset.StandardCharsets.UTF_8))
             val encoded = Ion.encode(bytes)
             assert(encoded == "{{VG8gaW5maW5pdHkuLi4gYW5kIGJleW9uZCE=}}")
-            assert(Ion.decode[Span[Byte]](encoded).getOrThrow.toArray.toSeq == bytes.toArray.toSeq)
+            assert(CodecTestSupport.sameBytes(Ion.decode[Span[Byte]](encoded).getOrThrow, bytes))
         }
 
         "ion sealed traits use wrapper structs" in {
@@ -56,6 +376,34 @@ class IonTest extends kyo.test.Test[Any]:
             val encoded = """shape::{type:"MTRectangle",width:3.0e0,height:4.0e0}"""
             val decoded = Ion.decode[MTShape](encoded).getOrThrow
             assert(decoded == MTRectangle(3.0, 4.0))
+        }
+
+        "ion decodes spec type annotation examples as metadata" in {
+            assert(Ion.decode[Int]("int32::12").getOrThrow == 12)
+            assert(Ion.decode[Int]("degrees::'celsius'::100").getOrThrow == 100)
+            assert(Ion.decode[IonTest.Point]("'my.custom.type'::{x:12,y:-1}").getOrThrow == IonTest.Point(12, -1))
+            assert(Ion.decode[Map[String, String]]("{field:some_annotation::value}").getOrThrow == Map("field" -> "value"))
+        }
+
+        "ion emits spec-shaped type annotation placements" in {
+            val value   = IonSpecAnnotated(100)
+            val config  = Ion.Config(annotationEmissionMode = Ion.AnnotationEmissionMode.Emit)
+            val encoded = Ion.encode(value, config)
+
+            assert(
+                encoded ==
+                    "'kyo.IonSpecCustomTypeAnnotation'::{value:'kyo.IonSpecInt32Annotation'::'kyo.IonSpecDegreesAnnotation'::'kyo.IonSpecCelsiusAnnotation'::100}"
+            )
+            assert(Ion.decode[IonSpecAnnotated](encoded).getOrThrow == value)
+        }
+
+        "ion emits the concrete symbol for a nested class marker and a case object marker" in {
+            val value    = IonNestedAnnotated(7)
+            val config   = Ion.Config(annotationEmissionMode = Ion.AnnotationEmissionMode.Emit)
+            val expected = "'kyo.IonAnnotationMarkers$NestedRootMarker'::{value:'kyo.IonCaseFieldMarker'::7}"
+
+            assert(Ion.encode(value, config) == expected)
+            assert(Ion.decode[IonNestedAnnotated](Ion.encode(value, config)).getOrThrow == value)
         }
     }
 
@@ -158,19 +506,33 @@ class IonTest extends kyo.test.Test[Any]:
         }
 
         "rejects non-finite Ion floats for BigDecimal" in {
-            assert(Ion.decode[BigDecimal]("nan").isFailure)
-            assert(Ion.decode[BigDecimal]("+inf").isFailure)
+            assertFailure(
+                Ion.decode[BigDecimal]("nan"),
+                "TypeMismatchException",
+                "expected finite decimal but got float"
+            )
+
+            assertFailure(
+                Ion.decode[BigDecimal]("+inf"),
+                "TypeMismatchException",
+                "expected finite decimal but got float"
+            )
         }
 
         "rejects trailing content after the decoded root value" in {
-            assert(Ion.decode[Int]("0 1").isFailure)
+            assertFailure(
+                Ion.decode[Int]("0 1"),
+                "ParseException",
+                "Unexpected trailing content"
+            )
         }
 
         "rejects Unicode escapes above the valid code point range" in {
-            Ion.decode[String]("\"\\UFFFFFFFF\"") match
-                case Result.Failure(e: ParseException) => assert(e.getMessage.contains("Unicode code point"))
-                case other                             => fail(s"Expected ParseException failure, got $other")
-            end match
+            assertFailure(
+                Ion.decode[String]("\"\\UFFFFFFFF\""),
+                "ParseException",
+                "Unicode code point"
+            )
         }
 
         "decodes timestamp tokens as instants" in {
@@ -179,8 +541,39 @@ class IonTest extends kyo.test.Test[Any]:
         }
 
         "enforces decode limits" in {
-            assert(Ion.decode[List[List[Int]]]("[[1]]", maxDepth = 1).isFailure)
-            assert(Ion.decode[List[Int]]("[1,2]", maxCollectionSize = 1).isFailure)
+            assertFailure(
+                Ion.decode[List[List[Int]]]("[[1]]", maxDepth = 1),
+                "LimitExceededException",
+                "Nesting depth 2 exceeds maximum 1"
+            )
+
+            assertFailure(
+                Ion.decode[List[Int]]("[1,2]", maxCollectionSize = 1),
+                "LimitExceededException",
+                "Collection size 2 exceeds maximum 1"
+            )
+
+            assertFailure(
+                Ion.decode[List[List[Int]]]("[[1]]", 1, 2),
+                "LimitExceededException",
+                "Nesting depth 2 exceeds maximum 1"
+            )
+
+            assertFailure(
+                Ion.decode[List[Int]]("[1,2]", 2, 1),
+                "LimitExceededException",
+                "Collection size 2 exceeds maximum 1"
+            )
+        }
+
+        "schema decode applies contextual ion limits" in {
+            given Ion = Ion(Ion.Config(maxDepth = 1))
+
+            assertFailure(
+                Schema[MTSmallTeam].decodeString[Ion]("""{lead:{name:"Alice",age:30},size:5}"""),
+                "LimitExceededException",
+                "Nesting depth 2 exceeds maximum 1"
+            )
         }
     }
 
@@ -189,4 +582,5 @@ end IonTest
 object IonTest:
     case class UpstreamStruct(a: String, c: Int, d: Map[String, String], g: Int) derives CanEqual
     case class Pet(name: String, age: Int, toys: List[String]) derives CanEqual
+    case class Point(x: Int, y: Int) derives CanEqual
 end IonTest

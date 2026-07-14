@@ -1302,7 +1302,7 @@ class SchemaCodecTest extends kyo.test.Test[Any]:
             val encoded = Json.encode(bytes)
             // Raw bytes are encoded as base64 string, not as array of ints
             val decoded = Json.decode[kyo.Span[Byte]](encoded).getOrThrow
-            assert(decoded.toArray.toSeq == bytes.toArray.toSeq)
+            assert(CodecTestSupport.sameBytes(decoded, bytes))
         }
 
         "Span[Int] uses generic array schema" in {

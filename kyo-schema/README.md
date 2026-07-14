@@ -37,7 +37,7 @@ These are the top-level entry points:
 
 | Entry point | Purpose |
 |-------------|---------|
-| `Json` / `Ion` / `Yaml` / `Protobuf` / `MsgPack` | Serialize to JSON strings, Ion text, YAML documents, Protocol Buffers bytes, or MessagePack bytes |
+| `Json` / `Ion` / `Yaml` / `Bson` / `Protobuf` / `MsgPack` | Serialize to JSON strings, Ion text or binary, YAML documents, BSON bytes, Protocol Buffers bytes, or MessagePack bytes |
 | `Focus` | Type-safe lens for reading, writing, and updating fields at any depth |
 | `Compare` | Read-only field-by-field comparison of two values |
 | `Modify` | Batched field mutations applied as a single unit |
@@ -383,9 +383,43 @@ Ion.decode[User](
 // Result.Success(alice)
 ```
 
-Ion type annotations are accepted as input syntax and ignored as metadata during schema decoding. They are not preserved by `Ion.decode` or emitted by `Ion.encode`.
+Ion type annotations are accepted as input syntax and ignored as metadata during schema decoding. By default (`Ion.AnnotationEmissionMode.Suppress`), they are not preserved by `Ion.decode` or emitted by `Ion.encode`. Setting `annotationEmissionMode = Ion.AnnotationEmissionMode.Emit` on `Ion.Config` makes `Ion.encode` emit captured schema annotations as Ion type annotations instead.
 
 `Ion.decode` and `Ion.decodeBytes` accept the same `maxDepth` and `maxCollectionSize` safety limits as `Json.decode`.
+
+`Ion.Config` also selects the wire format: setting `format = Ion.Format.Binary` routes the byte helpers through Ion Binary, a self-describing binary encoding for the same Ion data model, instead of text:
+
+```scala
+val config            = Ion.Config(format = Ion.Format.Binary)
+val bytes: Span[Byte] = Ion.encodeBytes(alice, config)
+
+Ion.decode[User](bytes, config)
+// Result.Success(alice)
+```
+
+`IonBinary` exposes the same binary encoding as a standalone byte-oriented entry point (`IonBinary.encode`/`IonBinary.decode`), useful when code selects a codec value directly rather than through `Ion.Config`. An Ion Schema Language document describing a type's wire shape can also be derived from its `Schema`; see the Ion Schema section under Validation.
+
+### BSON
+
+BSON is the document-oriented binary format used by MongoDB. Its top-level value must be object-shaped: a case class or a string-keyed map. `Bson.encode` produces `Span[Byte]`; `Bson.decode` reads it back:
+
+```scala
+val bytes: Span[Byte] = Bson.encode(alice)
+
+Bson.decode[User](bytes)
+// Result.Success(alice)
+```
+
+Case classes encode as a BSON document keyed by field name, collections as BSON arrays, `Span[Byte]` as BSON binary, and `java.time.Instant` as the BSON UTC datetime type. BSON's datetime type is millisecond-precision only; encoding an `Instant` carrying sub-millisecond precision raises `SchemaNotSerializableException`. A `BigInt` field encodes only within the signed 64-bit range that BSON's int64 type supports; a value outside that range fails encoding with `SchemaNotSerializableException` rather than being truncated. `BigDecimal` has no such limit: it encodes losslessly up to 34 decimal digits through the BSON Decimal128 type.
+
+`Bson.decode` accepts the same `maxDepth` and `maxCollectionSize` safety limits as `Json.decode`, configurable through `Bson.Config`:
+
+```scala
+val config = Bson.Config(maxDepth = 8, maxCollectionSize = 64)
+
+Bson.decode[User](Bson.encode(alice, config), config)
+// Result.Success(alice)
+```
 
 ### YAML
 
@@ -1090,6 +1124,42 @@ given Schema[Product] =
 val enriched = Json.jsonSchema[Product]
 // The "price" property now includes minimum=0.0, maximum=99999.99, and description="Product price in USD"
 ```
+
+### Ion Schema
+
+`Ion.ionSchemaString[A]()` derives an Ion Schema Language (ISL) 2.0 document describing a type's wire shape and renders it to ISL text. `Ion.ionSchema[A]()` returns the `IonSchema` document value instead, and `IonSchema.encode` renders any document value:
+
+```scala
+val isl: String = Ion.ionSchemaString[User]()
+// $ion_schema_2_0 followed by one type::{ name: User, type: struct, fields: closed::{ ... } } definition
+```
+
+Products become closed structs, collections become `list`, `Option`/`Maybe` fields become `$null_or::` type arguments, string-keyed maps become `field_names: string` structs, and sealed traits become `one_of` alternatives matching their configured object representation.
+
+Validation metadata registered on the `Schema` carries into the document: `checkMin`/`checkMax` become `valid_values: range::`, `checkMinLength`/`checkMaxLength` become `codepoint_length`, `checkMinItems`/`checkMaxItems` become `container_length`, and `checkUniqueItems` marks list elements `distinct::`:
+
+```scala
+case class Product(name: String, price: Double, quantity: Int)
+
+given Schema[Product] =
+    Schema[Product]
+        .checkMin(_.price)(0.0)
+        .checkMax(_.price)(99999.99)
+
+val islProduct: String = Ion.ionSchemaString[Product]()
+// the "price" field carries valid_values: range::[0, 99999.99] from its checkMin/checkMax bounds
+```
+
+`IonSchema.Config(version, closedStructs, annotationEmissionMode)` controls the ISL version marker, whether structs render `closed::`, and whether captured annotations are emitted. Set `annotationEmissionMode = Ion.AnnotationEmissionMode.Emit` to include them as ISL `annotations` constraints:
+
+```scala
+val annotated: String =
+    Ion.ionSchemaString[User](
+        IonSchema.Config(annotationEmissionMode = Ion.AnnotationEmissionMode.Emit)
+    )
+```
+
+> **Note:** This derives an ISL document describing the wire shape; it does not validate values. Runtime value checking stays with `Schema.decode` and `Schema.validate`, since Ion Schema validates the full Ion data model (annotations and typed nulls included) that ordinary value decoding intentionally erases. kyo does not ship an ISL evaluator.
 
 ## Navigation and lenses
 

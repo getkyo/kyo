@@ -84,6 +84,10 @@ jobs:
       # in-heap optimizer.
       JAVA_OPTS: "-Xmx${{ matrix.target == 'Native' && '8G' || '12G' }} -Xss10M -XX:+UseG1GC -XX:+UseCompactObjectHeaders -XX:MaxMetaspaceSize=2G -XX:ReservedCodeCacheSize=256M -Dfile.encoding=UTF-8"
       JVM_OPTS:  "-Xmx${{ matrix.target == 'Native' && '8G' || '12G' }} -Xss10M -XX:+UseG1GC -XX:+UseCompactObjectHeaders -XX:MaxMetaspaceSize=2G -XX:ReservedCodeCacheSize=256M -Dfile.encoding=UTF-8"
+      # Link kyo-schema's native test binary in its own sbt driver before the aggregate link: its
+      # whole-program optimize peaks ~7.7G RSS, which OOM-killed the 8G-capped aggregate driver once
+      # ~10 prior modules had filled metaspace. ci-test.sh honors this only for the Native target.
+      NATIVE_HEAVY: "${{ matrix.target == 'Native' && 'kyo-schema' || '' }}"
 
     steps:
       - uses: actions/checkout@v7.0.0

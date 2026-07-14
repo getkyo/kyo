@@ -19,10 +19,10 @@ end Json
   */
 object Json:
     /** Default maximum nesting depth for objects/arrays in JSON decoding (DoS limit). */
-    val DefaultMaxDepth: Int = 512
+    inline val DefaultMaxDepth = 512
 
     /** Default maximum number of entries in any single collection or object in JSON decoding (DoS limit). */
-    val DefaultMaxCollectionSize: Int = 100000
+    inline val DefaultMaxCollectionSize = 100000
 
     given Json = Json()
 
@@ -627,8 +627,10 @@ object Json:
                             Structure.PrimitiveKind.BigInt => Integer()
                         case Structure.PrimitiveKind.Double | Structure.PrimitiveKind.Float |
                             Structure.PrimitiveKind.BigDecimal => Num()
-                        case Structure.PrimitiveKind.String | Structure.PrimitiveKind.Char => Str()
-                        case Structure.PrimitiveKind.Boolean                               => Bool()
+                        case Structure.PrimitiveKind.String | Structure.PrimitiveKind.Char |
+                            Structure.PrimitiveKind.Bytes | Structure.PrimitiveKind.Instant |
+                            Structure.PrimitiveKind.Duration => Str()
+                        case Structure.PrimitiveKind.Boolean => Bool()
                         // Unit maps to an empty object on the wire (see `Schema.unitSchema`). Describing it as
                         // `{"type":"null"}` here would mismatch the actual wire shape AND violate consumers
                         // that require an object-typed schema (e.g. MCP tool `inputSchema`).

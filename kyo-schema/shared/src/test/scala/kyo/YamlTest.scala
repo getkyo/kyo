@@ -49,6 +49,9 @@ case class YamlAdjRabbit(host: String) extends YamlAdjSource derives CanEqual, S
 given Schema[YamlAdjSource] = Schema.derived[YamlAdjSource].adjacent("type", "content")
 case class YamlAdjRoot(sources: List[YamlAdjSource]) derives CanEqual, Schema
 
+case class YamlBytesHolder(data: Span[Byte]) derives CanEqual, Schema
+case class YamlTimesHolder(at: java.time.Instant, span: java.time.Duration) derives CanEqual, Schema
+
 class YamlTest extends kyo.test.Test[Any]:
 
     given CanEqual[Any, Any] = CanEqual.derived
@@ -1368,6 +1371,22 @@ class YamlTest extends kyo.test.Test[Any]:
                 "t1",
                 YamlRabbit("localhost", Absent)
             )))))
+        }
+
+        "round trips Span[Byte] as a base64 scalar" in {
+            val value   = YamlBytesHolder(Span.from(Array[Byte](1, 2, 3)))
+            val yaml    = Yaml.encode(value)
+            val decoded = Yaml.decode[YamlBytesHolder](yaml)
+            assert(CodecTestSupport.sameBytes(decoded.getOrThrow.data, value.data))
+        }
+
+        "round trips Instant and Duration as quoted scalars" in {
+            val value = YamlTimesHolder(
+                java.time.Instant.parse("2026-07-09T12:00:00.500Z"),
+                java.time.Duration.ofSeconds(12, 345)
+            )
+            val yaml = Yaml.encode(value)
+            assert(Yaml.decode[YamlTimesHolder](yaml) == Result.succeed(value))
         }
 
     }

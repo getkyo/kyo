@@ -10,7 +10,7 @@ import kyo.Codec.Reader
   * standard Reader protocol so that Schema-derived codecs can reconstruct a typed Scala value from the universal representation.
   *
   *   - Navigates [[kyo.Structure.Value.Record]], [[kyo.Structure.Value.Sequence]], typed primitive nodes (Str, Bool, Integer, Decimal,
-  *     BigNum), and [[kyo.Structure.Value.VariantCase]] nodes
+  *     BigNum, Bytes, Instant, Duration), and [[kyo.Structure.Value.VariantCase]] nodes
   *   - Maintains a stack of frames matching the nesting depth of the value tree
   *   - Supports `captureValue()` for deferred sub-tree reading (used by sum type codecs)
   *
@@ -207,6 +207,7 @@ final class StructureValueReader(root: Structure.Value)(using _frame: Frame) ext
 
     def bytes(): Span[Byte] =
         currentValue match
+            case Structure.Value.Bytes(value) => value
             case Structure.Value.Str(s) =>
                 Span.from(java.util.Base64.getDecoder.decode(s))
             case other => throw TypeMismatchException(Seq.empty, "Span[Byte]", other.toString)
@@ -226,12 +227,14 @@ final class StructureValueReader(root: Structure.Value)(using _frame: Frame) ext
 
     def instant(): java.time.Instant =
         currentValue match
-            case Structure.Value.Str(s) => java.time.Instant.parse(s)
-            case other                  => throw TypeMismatchException(Seq.empty, "Instant", other.toString)
+            case Structure.Value.Instant(value) => value
+            case Structure.Value.Str(s)         => java.time.Instant.parse(s)
+            case other                          => throw TypeMismatchException(Seq.empty, "Instant", other.toString)
 
     def duration(): java.time.Duration =
         currentValue match
-            case Structure.Value.Str(s) => java.time.Duration.parse(s)
-            case other                  => throw TypeMismatchException(Seq.empty, "Duration", other.toString)
+            case Structure.Value.Duration(value) => value
+            case Structure.Value.Str(s)          => java.time.Duration.parse(s)
+            case other                           => throw TypeMismatchException(Seq.empty, "Duration", other.toString)
 
 end StructureValueReader

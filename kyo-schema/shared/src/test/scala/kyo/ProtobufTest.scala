@@ -118,7 +118,7 @@ class ProtobufTest extends kyo.test.Test[Any]:
             val person = MTPerson("Charlie", 40)
             val bytes1 = Protobuf.encode[MTPerson](person)
             val bytes2 = Protobuf.encode[MTPerson](person)
-            assert(bytes1.toArray.toSeq == bytes2.toArray.toSeq)
+            assert(CodecTestSupport.sameBytes(bytes1, bytes2))
         }
 
         "protobuf round-trip via Protobuf.decode" in {
@@ -201,6 +201,41 @@ class ProtobufTest extends kyo.test.Test[Any]:
             assert(schema.contains("message MTPerson"))
             assert(schema.contains(s"string name = ${kyo.internal.CodecMacro.fieldId("name")};"))
             assert(schema.contains(s"sint32 age = ${kyo.internal.CodecMacro.fieldId("age")};"))
+        }
+
+        "ProtoSchema base value primitive types match protobuf writers" in {
+            val structure = Structure.Type.Product(
+                "BaseValues",
+                Tag[Any],
+                Chunk.empty,
+                Chunk(
+                    Structure.Field(
+                        "bytes",
+                        Structure.Type.Primitive(Structure.PrimitiveKind.Bytes, Tag[Span[Byte]].asInstanceOf[Tag[Any]]),
+                        Maybe.empty,
+                        Maybe.empty,
+                        false
+                    ),
+                    Structure.Field(
+                        "instant",
+                        Structure.Type.Primitive(Structure.PrimitiveKind.Instant, Tag[java.time.Instant].asInstanceOf[Tag[Any]]),
+                        Maybe.empty,
+                        Maybe.empty,
+                        false
+                    ),
+                    Structure.Field(
+                        "duration",
+                        Structure.Type.Primitive(Structure.PrimitiveKind.Duration, Tag[java.time.Duration].asInstanceOf[Tag[Any]]),
+                        Maybe.empty,
+                        Maybe.empty,
+                        false
+                    )
+                )
+            )
+            val schema = ProtoSchema.fromStructure(structure, Map.empty)
+            assert(schema.contains(s"bytes bytes = ${kyo.internal.CodecMacro.fieldId("bytes")};"))
+            assert(schema.contains(s"sint64 instant = ${kyo.internal.CodecMacro.fieldId("instant")};"))
+            assert(schema.contains(s"sint64 duration = ${kyo.internal.CodecMacro.fieldId("duration")};"))
         }
 
         "ProtoSchema nested messages" in {
@@ -365,6 +400,25 @@ class ProtobufTest extends kyo.test.Test[Any]:
             interceptThrown[IllegalArgumentException] {
                 ProtoSchema.fromStructure(productWithListKey, Map.empty)
             }
+        }
+
+        "ProtoSchema Map[Bytes, V] field emits entry message instead of map syntax" in {
+            val bytesKeyMapping = Structure.Type.Mapping(
+                "Map",
+                Tag[Any],
+                Structure.Type.Primitive(Structure.PrimitiveKind.Bytes, Tag[Span[Byte]].asInstanceOf[Tag[Any]]),
+                Structure.Type.Primitive(Structure.PrimitiveKind.Int, Tag[Int].asInstanceOf[Tag[Any]])
+            )
+            val productWithBytesKey = Structure.Type.Product(
+                "MapWithBytesKey",
+                Tag[Any],
+                Chunk.empty,
+                Chunk(Structure.Field("value", bytesKeyMapping, Maybe.empty, Maybe.empty, false))
+            )
+            val schema = ProtoSchema.fromStructure(productWithBytesKey, Map.empty)
+            assert(!schema.contains("map<bytes, sint32>"))
+            assert(schema.contains("repeated ValueEntry value"))
+            assert(schema.contains("bytes key = 1;"))
         }
 
         "ProtoSchema Map[K, V] with non-default key types emits map<K, V>" in {
@@ -799,7 +853,7 @@ class ProtobufTest extends kyo.test.Test[Any]:
         val nativeBytes =
             given Schema[CFPerson] = Schema[CFPerson]
             Protobuf.encode(CFPerson("Bob", 30))
-        assert(bytes.toArray.toSeq == nativeBytes.toArray.toSeq, s"wire bytes must reflect write transform (age=30 on wire)")
+        assert(CodecTestSupport.sameBytes(bytes, nativeBytes), s"wire bytes must reflect write transform (age=30 on wire)")
     }
 
     "strict decode treats a unicode-digit wire key as an unknown name, not a numeric field id" in {
@@ -928,7 +982,7 @@ class ProtobufTest extends kyo.test.Test[Any]:
             assert(decoded.s.toSeq == v.s.toSeq)
             assert(decoded.set == v.set)
             assert(decoded.c == v.c)
-            assert(decoded.sp.toArray.toSeq == v.sp.toArray.toSeq)
+            assert(CodecTestSupport.sameBytes(decoded.sp, v.sp))
             assert(decoded.m == v.m)
             assert(decoded.n == v.n)
         }
@@ -1326,7 +1380,7 @@ class ProtobufTest extends kyo.test.Test[Any]:
                     // Set is unordered; element equality suffices.
                     assert(d.set == v.set)
                     assert(d.c == v.c)
-                    assert(d.sp.toArray.toSeq == v.sp.toArray.toSeq)
+                    assert(CodecTestSupport.sameBytes(d.sp, v.sp))
                     assert(d.m == v.m)
                     assert(d.n == v.n)
                 case other => fail(s"PB1716Collections encode/decode failed: $other")
