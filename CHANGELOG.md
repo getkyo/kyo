@@ -19,6 +19,7 @@ All breaking API changes to this project will be documented in this file.
 
 ### Changed
 
+- [kyo-schema] `Schema.dictSchema`: non-String-key `Dict` now serializes each entry as a two-field `key`/`value` record (the same form `mapSchema` uses) instead of a bare two-element array. BREAKING: previously-serialized MsgPack bytes for a non-String-key `Dict` cannot be read by the new code. MsgPack was the only codec that decoded the old form; the other six failed to decode and Protobuf silently emitted corrupt bytes.
 - [kyo-core] `Fiber.init`: use `Scope` effect to guarantee termination of forked fiber
 - [kyo-combinators] `.fork`: apply `Fiber.init` (formerly `.forkScoped`)
 - [kyo-prelude] The `Parse` effect has been moved to a new `kyo-parse` module

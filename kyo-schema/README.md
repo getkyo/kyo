@@ -814,7 +814,9 @@ Schemas are provided for all common types out of the box:
 
 Any case class or sealed trait composed of these types derives a `Schema` automatically. Nested case classes work without additional setup.
 
-`Map[String, V]` and `Dict[String, V]` both serialize as JSON objects, because JSON object keys must be strings. `Dict[K, V]` with a non-string key type serializes as an array of `[key, value]` pairs. `Span[Byte]` is specialized to serialize as a primitive byte sequence rather than an array of individual bytes.
+`Map[String, V]` and `Dict[String, V]` both serialize as JSON objects, because JSON object keys must be strings. `Map[K, V]` and `Dict[K, V]` with a non-string key type serialize as an array of two-field `{key, value}` records, which the Protobuf codec renders as a standard proto3 `MapEntry`. `Span[Byte]` is specialized to serialize as a primitive byte sequence rather than an array of individual bytes.
+
+> **Note:** a map entry whose value is an empty collection can decode incorrectly on the Protobuf codec. proto3 has no representation for an empty `repeated` field, so the entry is written without its value and the decode reads whatever follows in its place, which either fails or yields a wrong value. Entries whose values are non-empty are unaffected, and the other codecs are unaffected. This is a shared codec defect in the `mapSchema`, `dictSchema`, and `orderedMapSchema` givens alike, not a property of any one map type. It is tracked in [getkyo/kyo#1747](https://github.com/getkyo/kyo/issues/1747) and will be fixed in a follow-up.
 
 ### Custom Types
 

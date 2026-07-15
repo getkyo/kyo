@@ -3061,7 +3061,14 @@ object Schema:
         )
     end stringDictSchema
 
-    /** Schema for Dict[K, V] with non-String keys - serializes as array of [k, v] pairs. */
+    /** Schema for Dict[K, V] with non-String keys.
+      *
+      * `stringDictSchema` is the more specific given for `Dict[String, V]` (object encoding); this
+      * general given covers every other key type so `Dict[Int, V]` and friends derive and round-trip
+      * on all codecs. Each entry is written as a two-field record (`key`, `value`): the Protobuf
+      * codec renders this as a standard proto3 `MapEntry` message, and self-describing codecs render
+      * an array of `{key, value}` objects (a non-String key cannot be an object field name).
+      */
     given dictSchema[K, V](using kSchema0: => Schema[K], vSchema0: => Schema[V]): Schema[Dict[K, V]] =
         lazy val kSchema = kSchema0
         lazy val vSchema = vSchema0
@@ -3069,10 +3076,12 @@ object Schema:
             writeFn = (value, writer) =>
                 writer.arrayStart(value.size)
                 value.foreach { (k, v) =>
-                    writer.arrayStart(2)
+                    writer.objectStart("", 2)
+                    writer.field("key", 1)
                     kSchema.serializeWrite(k, writer)
+                    writer.field("value", 2)
                     vSchema.serializeWrite(v, writer)
-                    writer.arrayEnd()
+                    writer.objectEnd()
                 }
                 writer.arrayEnd()
             ,
@@ -3082,10 +3091,16 @@ object Schema:
                 def loop(dict: Dict[K, V], count: Int): Dict[K, V] =
                     if reader.hasNextElement() then
                         reader.checkCollectionSize(count)
-                        discard(reader.arrayStart())
+                        discard(reader.objectStart())
+                        // hasNextField advances past the inter-field separator (a no-op for
+                        // Protobuf, the comma for a self-describing codec) before each field read.
+                        discard(reader.hasNextField())
+                        val _ = reader.field() // "key"
                         val k = kSchema.serializeRead(reader)
+                        discard(reader.hasNextField())
+                        val _ = reader.field() // "value"
                         val v = vSchema.serializeRead(reader)
-                        reader.arrayEnd()
+                        reader.objectEnd()
                         loop(dict.update(k, v), count + 1)
                     else dict
                 val dict = loop(Dict.empty[K, V], 1)

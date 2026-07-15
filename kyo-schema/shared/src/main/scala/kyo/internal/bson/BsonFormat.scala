@@ -22,9 +22,9 @@ private[kyo] object BsonFormat:
 end BsonFormat
 
 private[kyo] enum BsonValue derives CanEqual:
-    // Document field store preserves insertion order by type. Well-formed documents (unique field
-    // names) are byte-identical to the prior Vector store; a malformed document with duplicate field
-    // names collapses to one entry at the first-seen position holding the last-written value.
+    // Document field store preserves insertion order. A well-formed document (unique field names)
+    // encodes each field once, in insertion order. A malformed document with duplicate field names
+    // collapses to one entry at the first-seen position holding the last-written value.
     case DocumentValue(fields: OrderedMap[String, BsonValue])
     case ArrayValue(values: Vector[BsonValue])
     case StringValue(value: String)

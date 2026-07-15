@@ -1222,14 +1222,10 @@ class SchemaCodecTest extends kyo.test.Test[Any]:
         }
 
         "Schema Dict[K, V] encode/decode - non-string key" in {
-            // Non-string key Dict uses array-of-pairs encoding, which doesn't work well with JSON
-            // reader that expects string keys for maps. Use token-based round-trip instead.
-            val dictSchema = summon[Schema[Dict[Int, String]]]
-            val original   = Dict(1 -> "one", 2 -> "two")
-            val w          = new TestWriter
-            dictSchema.serializeWrite(original, w)
-            val r       = new TestReader(w.resultTokens)
-            val decoded = dictSchema.serializeRead(r)
+            given Schema[Dict[Int, String]] = summon[Schema[Dict[Int, String]]]
+            val original                    = Dict(1 -> "one", 2 -> "two")
+            val encoded                     = Json.encodeBytes(original)
+            val decoded                     = Json.decodeBytes[Dict[Int, String]](encoded).getOrThrow
             assert(decoded.size == original.size)
             assert(decoded.get(1) == Maybe("one"))
             assert(decoded.get(2) == Maybe("two"))
@@ -2262,7 +2258,8 @@ class SchemaCodecTest extends kyo.test.Test[Any]:
             "Dict[Int, String] schema round-trip (non-string key)" in {
                 given schema: Schema[Dict[Int, String]] = Schema.dictSchema[Int, String]
                 val v                                   = Dict(1 -> "one", 2 -> "two")
-                val decoded                             = roundTrip(v)(using schema)
+                val encoded                             = Json.encodeBytes(v)
+                val decoded                             = Json.decodeBytes[Dict[Int, String]](encoded).getOrThrow
                 assert(decoded.get(1) == Maybe("one"))
                 assert(decoded.get(2) == Maybe("two"))
             }
