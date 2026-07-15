@@ -195,9 +195,9 @@ class IonBinaryTest extends kyo.test.Test[Any]:
         }
     }
 
-    // dictSchema non-String-key Dict (R-022): real-codec reproduction of the bare-array
-    // wire-form decode bug, before the object-form fix lands.
-    "dictSchema non-String-key Dict (R-022)" - {
+    // Non-String-key Dict round-trips through the real codec. Each entry is a two-field
+    // {key, value} record.
+    "dictSchema non-String-key Dict" - {
 
         "round-trips a non-String-key Dict" in {
             val holder  = MTIntStringDict(Dict(1 -> "one", 2 -> "two", 3 -> "three"))

@@ -1648,9 +1648,9 @@ class ProtobufTest extends kyo.test.Test[Any]:
 
     }
 
-    // dictSchema non-String-key Dict (R-022): real-codec reproduction of the bare-array
-    // wire-form bug (silent encode-time corruption, INV-OM-24), before the object-form fix lands.
-    "dictSchema non-String-key Dict (R-022)" - {
+    // Non-String-key Dict round-trips through the real codec, and encode emits one
+    // length-delimited proto3 MapEntry per entry with the key tag before the value tag.
+    "dictSchema non-String-key Dict" - {
 
         "round-trips a non-String-key Dict" in {
             val holder  = MTIntStringDict(Dict(1 -> "one", 2 -> "two", 3 -> "three"))
@@ -1663,9 +1663,11 @@ class ProtobufTest extends kyo.test.Test[Any]:
 
         "round-trips a non-String-key Dict with non-empty collection values" in {
             val holder  = MTIntChunkDict(Dict(1 -> Chunk("a", "b"), 2 -> Chunk("c")))
-            val decoded = Protobuf.decode[MTIntChunkDict](Protobuf.encode(holder)).getOrThrow
+            val encoded = Protobuf.encode(holder)
+            val decoded = Protobuf.decode[MTIntChunkDict](encoded).getOrThrow
             assert(decoded.d.get(1) == Maybe(Chunk("a", "b")))
             assert(decoded.d.get(2) == Maybe(Chunk("c")))
+            assert(encoded.size == 23)
         }
 
         "encode emits one length-delimited MapEntry per entry with the key tag before the value tag" in {

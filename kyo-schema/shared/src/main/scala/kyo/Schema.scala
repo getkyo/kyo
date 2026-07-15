@@ -3064,8 +3064,8 @@ object Schema:
     /** Schema for Dict[K, V] with non-String keys.
       *
       * `stringDictSchema` is the more specific given for `Dict[String, V]` (object encoding); this
-      * general given covers every other key type so `Dict[Int, V]` and friends derive and round-trip
-      * on all codecs. Each entry is written as a two-field record (`key`, `value`): the Protobuf
+      * general given covers every other key type, so `Dict[Int, V]` and friends derive. Each entry
+      * is written as a two-field record (`key`, `value`): the Protobuf
       * codec renders this as a standard proto3 `MapEntry` message, and self-describing codecs render
       * an array of `{key, value}` objects (a non-String key cannot be an object field name).
       */

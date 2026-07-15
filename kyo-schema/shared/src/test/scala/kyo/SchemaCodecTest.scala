@@ -1222,10 +1222,9 @@ class SchemaCodecTest extends kyo.test.Test[Any]:
         }
 
         "Schema Dict[K, V] encode/decode - non-string key" in {
-            given Schema[Dict[Int, String]] = summon[Schema[Dict[Int, String]]]
-            val original                    = Dict(1 -> "one", 2 -> "two")
-            val encoded                     = Json.encodeBytes(original)
-            val decoded                     = Json.decodeBytes[Dict[Int, String]](encoded).getOrThrow
+            val original = Dict(1 -> "one", 2 -> "two")
+            val encoded  = Json.encodeBytes(original)
+            val decoded  = Json.decodeBytes[Dict[Int, String]](encoded).getOrThrow
             assert(decoded.size == original.size)
             assert(decoded.get(1) == Maybe("one"))
             assert(decoded.get(2) == Maybe("two"))

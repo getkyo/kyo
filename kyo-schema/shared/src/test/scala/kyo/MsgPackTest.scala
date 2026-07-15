@@ -508,11 +508,11 @@ class MsgPackTest extends kyo.test.Test[Any]:
         }
     }
 
-    // ===== dictSchema non-String-key Dict (R-022) =====
+    // ===== dictSchema non-String-key Dict =====
 
-    "dictSchema non-String-key Dict (R-022)" - {
+    "dictSchema non-String-key Dict" - {
 
-        "round-trips a non-String-key Dict (accepted-break control: PASSES before and after the fix)" in {
+        "round-trips a non-String-key Dict" in {
             val holder  = MTIntStringDict(Dict(1 -> "one", 2 -> "two", 3 -> "three"))
             val decoded = MsgPack.decode[MTIntStringDict](MsgPack.encode(holder)).getOrThrow
             assert(decoded.d.get(1) == Maybe("one"))
