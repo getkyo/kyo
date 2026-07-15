@@ -508,6 +508,28 @@ class MsgPackTest extends kyo.test.Test[Any]:
         }
     }
 
+    // ===== dictSchema non-String-key Dict (R-022) =====
+
+    "dictSchema non-String-key Dict (R-022)" - {
+
+        "round-trips a non-String-key Dict (accepted-break control: PASSES before and after the fix)" in {
+            val holder  = MTIntStringDict(Dict(1 -> "one", 2 -> "two", 3 -> "three"))
+            val decoded = MsgPack.decode[MTIntStringDict](MsgPack.encode(holder)).getOrThrow
+            assert(decoded.d.get(1) == Maybe("one"))
+            assert(decoded.d.get(2) == Maybe("two"))
+            assert(decoded.d.get(3) == Maybe("three"))
+            assert(decoded.d.size == 3)
+        }
+
+        "round-trips a non-String-key Dict with non-empty collection values" in {
+            val holder  = MTIntChunkDict(Dict(1 -> Chunk("a", "b"), 2 -> Chunk("c")))
+            val decoded = MsgPack.decode[MTIntChunkDict](MsgPack.encode(holder)).getOrThrow
+            assert(decoded.d.get(1) == Maybe(Chunk("a", "b")))
+            assert(decoded.d.get(2) == Maybe(Chunk("c")))
+        }
+
+    }
+
 end MsgPackTest
 
 // ===== test fixtures (each shares a name prefix with no source file; local to this suite) =====

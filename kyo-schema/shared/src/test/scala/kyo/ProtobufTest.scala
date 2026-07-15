@@ -1648,6 +1648,84 @@ class ProtobufTest extends kyo.test.Test[Any]:
 
     }
 
+    // dictSchema non-String-key Dict (R-022): real-codec reproduction of the bare-array
+    // wire-form bug (silent encode-time corruption, INV-OM-24), before the object-form fix lands.
+    "dictSchema non-String-key Dict (R-022)" - {
+
+        "round-trips a non-String-key Dict" in {
+            val holder  = MTIntStringDict(Dict(1 -> "one", 2 -> "two", 3 -> "three"))
+            val decoded = Protobuf.decode[MTIntStringDict](Protobuf.encode(holder)).getOrThrow
+            assert(decoded.d.get(1) == Maybe("one"))
+            assert(decoded.d.get(2) == Maybe("two"))
+            assert(decoded.d.get(3) == Maybe("three"))
+            assert(decoded.d.size == 3)
+        }
+
+        "round-trips a non-String-key Dict with non-empty collection values" in {
+            val holder  = MTIntChunkDict(Dict(1 -> Chunk("a", "b"), 2 -> Chunk("c")))
+            val decoded = Protobuf.decode[MTIntChunkDict](Protobuf.encode(holder)).getOrThrow
+            assert(decoded.d.get(1) == Maybe(Chunk("a", "b")))
+            assert(decoded.d.get(2) == Maybe(Chunk("c")))
+        }
+
+        "encode emits one length-delimited MapEntry per entry with the key tag before the value tag" in {
+            // Distinct from the round-trip leaves above: the bare-array form corrupts the wire
+            // bytes SILENTLY at encode time (no exception), so a decode-only assertion would pass
+            // for the wrong reason. This inspects the encoded bytes directly.
+            val holder  = MTIntStringDict(Dict(1 -> "one", 2 -> "two", 3 -> "three"))
+            val encoded = Protobuf.encode(holder).toArray
+            val dField  = CodecMacro.fieldId("d")
+
+            @tailrec def readVarint(bytes: Array[Byte], pos: Int, v: Long, sh: Int): (Long, Int) =
+                if pos >= bytes.length then (v, pos)
+                else
+                    val b  = bytes(pos) & 0xff
+                    val nv = v | ((b & 0x7f).toLong << sh)
+                    if (b & 0x80) != 0 then readVarint(bytes, pos + 1, nv, sh + 7)
+                    else (nv, pos + 1)
+
+            def skipNonDelimited(bytes: Array[Byte], pos: Int, wireType: Int): Int =
+                wireType match
+                    case 0 => readVarint(bytes, pos, 0L, 0)._2
+                    case 1 => pos + 8
+                    case 5 => pos + 4
+                    case _ => bytes.length
+
+            // Walks the top-level tag/value pairs and captures the CONTENT bytes (the length
+            // varint itself excluded) of every length-delimited record for `dField` (the outer
+            // array/MapEntry slot for `d`).
+            @tailrec def entryPayloads(bytes: Array[Byte], pos: Int, acc: List[Array[Byte]]): List[Array[Byte]] =
+                if pos >= bytes.length then acc.reverse
+                else
+                    val (tagVal, p1) = readVarint(bytes, pos, 0L, 0)
+                    val fieldNum     = (tagVal >>> 3).toInt
+                    val wireType     = (tagVal & 0x7).toInt
+                    if wireType == 2 then
+                        val (len, contentStart) = readVarint(bytes, p1, 0L, 0)
+                        val next                = contentStart + len.toInt
+                        if fieldNum == dField then
+                            entryPayloads(bytes, next, bytes.slice(contentStart, next) :: acc)
+                        else
+                            entryPayloads(bytes, next, acc)
+                        end if
+                    else
+                        entryPayloads(bytes, skipNonDelimited(bytes, p1, wireType), acc)
+                    end if
+
+            // A proto3 MapEntry payload leads with the key field's tag (field 1, Varint: 0x08).
+            def isMapEntry(payload: Array[Byte]): Boolean =
+                payload.length >= 2 && (payload(0) & 0xff) == 0x08
+
+            val payloads = entryPayloads(encoded, 0, Nil)
+            assert(
+                payloads.size == 3 && payloads.forall(isMapEntry),
+                "expected three MapEntry records with the key tag (0x08) leading each payload, got " +
+                    payloads.map(_.map(b => f"${b & 0xff}%02x").mkString).mkString("[", ", ", "]")
+            )
+        }
+
+    }
+
 end ProtobufTest
 
 // Top-level to avoid issues with derives Schema inside nested definitions

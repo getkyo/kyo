@@ -117,3 +117,8 @@ case class MTSuspended(reason: String) extends MTStatus derives CanEqual
 
 // Plain two-coordinate product, shared by the codec suites that each declared their own Point.
 case class MTPoint(x: Int, y: Int) derives CanEqual
+
+// dictSchema non-String-key round-trip fixtures, shared by every codec suite's reproduction and
+// regression leaves for the object-form wire fix (scalar and non-empty-collection value axes).
+case class MTIntStringDict(d: Dict[Int, String]) derives CanEqual, Schema
+case class MTIntChunkDict(d: Dict[Int, Chunk[String]]) derives CanEqual, Schema
