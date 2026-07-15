@@ -1,5 +1,6 @@
 package kyo.internal.bson
 
+import kyo.OrderedMap
 import kyo.Span
 
 private[kyo] object BsonFormat:
@@ -21,7 +22,10 @@ private[kyo] object BsonFormat:
 end BsonFormat
 
 private[kyo] enum BsonValue derives CanEqual:
-    case DocumentValue(fields: Vector[(String, BsonValue)])
+    // Document field store preserves insertion order by type. Well-formed documents (unique field
+    // names) are byte-identical to the prior Vector store; a malformed document with duplicate field
+    // names collapses to one entry at the first-seen position holding the last-written value.
+    case DocumentValue(fields: OrderedMap[String, BsonValue])
     case ArrayValue(values: Vector[BsonValue])
     case StringValue(value: String)
     case DoubleValue(value: Double)

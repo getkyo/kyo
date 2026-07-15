@@ -3,8 +3,11 @@ package kyo.internal.bson
 import java.io.ByteArrayOutputStream
 import java.nio.charset.StandardCharsets
 import kyo.Codec
+import kyo.OrderedMap
+import kyo.OrderedMapBuilder
 import kyo.SchemaNotSerializableException
 import kyo.Span
+import kyo.discard
 import scala.collection.mutable
 
 final class BsonWriter(config: kyo.Bson.Config) extends Codec.Writer:
@@ -18,9 +21,9 @@ final class BsonWriter(config: kyo.Bson.Config) extends Codec.Writer:
     override def codecName: String = "Bson"
 
     final private class WriteFrame(val kind: FrameKind):
-        val fields: mutable.ArrayBuffer[(String, BsonValue)] = mutable.ArrayBuffer.empty
-        val values: mutable.ArrayBuffer[BsonValue]           = mutable.ArrayBuffer.empty
-        var pendingField: Option[String]                     = None
+        val fields: OrderedMapBuilder[String, BsonValue] = OrderedMapBuilder.init[String, BsonValue]
+        val values: mutable.ArrayBuffer[BsonValue]       = mutable.ArrayBuffer.empty
+        var pendingField: Option[String]                 = None
     end WriteFrame
 
     private var stack: List[WriteFrame] = Nil
@@ -33,7 +36,7 @@ final class BsonWriter(config: kyo.Bson.Config) extends Codec.Writer:
     def objectEnd(): Unit =
         val frame = popFrame(KindDocument)
         if frame.pendingField.nonEmpty then invalid("BSON document field is missing a value")
-        pushValue(DocumentValue(frame.fields.toVector))
+        pushValue(DocumentValue(frame.fields.result()))
     end objectEnd
 
     def arrayStart(size: Int): Unit =
@@ -98,7 +101,7 @@ final class BsonWriter(config: kyo.Bson.Config) extends Codec.Writer:
     end instant
 
     def duration(value: java.time.Duration): Unit =
-        pushValue(DocumentValue(Vector(
+        pushValue(DocumentValue(OrderedMap(
             "seconds" -> Int64Value(value.getSeconds),
             "nanos"   -> Int32Value(value.getNano)
         )))
@@ -137,7 +140,7 @@ final class BsonWriter(config: kyo.Bson.Config) extends Codec.Writer:
             case frame :: _ =>
                 frame.pendingField match
                     case Some(name) =>
-                        frame.fields += name -> value
+                        discard(frame.fields.add(name, value))
                         frame.pendingField = None
                     case None =>
                         invalid("BSON document value has no field name")
@@ -154,7 +157,7 @@ final class BsonWriter(config: kyo.Bson.Config) extends Codec.Writer:
                 invalid("BSON writer container stack is inconsistent")
     end popFrame
 
-    private def writeDocument(fields: Vector[(String, BsonValue)]): Array[Byte] =
+    private def writeDocument(fields: OrderedMap[String, BsonValue]): Array[Byte] =
         val body = new ByteArrayOutputStream(128)
         fields.foreach { (name, value) =>
             writeElement(body, name, value)
@@ -199,8 +202,9 @@ final class BsonWriter(config: kyo.Bson.Config) extends Codec.Writer:
                 val bytes = writeDocument(fields)
                 out.write(bytes, 0, bytes.length)
             case ArrayValue(values) =>
-                val fields = values.zipWithIndex.map { (value, index) => index.toString -> value }
-                val bytes  = writeDocument(fields)
+                val builder = OrderedMapBuilder.init[String, BsonValue]
+                values.zipWithIndex.foreach { (value, index) => discard(builder.add(index.toString, value)) }
+                val bytes = writeDocument(builder.result())
                 out.write(bytes, 0, bytes.length)
             case BinaryValue(value, subtype) =>
                 val bytes = value.toArray
