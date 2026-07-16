@@ -1415,4 +1415,17 @@ class YamlTest extends kyo.test.Test[Any]:
 
     }
 
+    // OrderedMap Schema given: insertion-order round-trip.
+    "OrderedMap Schema given" - {
+
+        "OrderedMap[String, V] field preserves insertion order across encode/decode" in {
+            val holder =
+                MTOrderedMapConfig(OrderedMap("zeta" -> 30, "alpha" -> 3, "mike" -> 8080, "bravo" -> 5, "yankee" -> 100, "delta" -> 42))
+            val encoded = Yaml.encode(holder)
+            val decoded = Yaml.decode[MTOrderedMapConfig](encoded).getOrThrow
+            assert(decoded.settings.toChunk.map(_._1) == Chunk("zeta", "alpha", "mike", "bravo", "yankee", "delta"))
+        }
+
+    }
+
 end YamlTest

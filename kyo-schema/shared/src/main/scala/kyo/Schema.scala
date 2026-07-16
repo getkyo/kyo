@@ -3117,6 +3117,115 @@ object Schema:
         )
     end dictSchema
 
+    /** Schema for OrderedMap[String, V] - serializes as a JSON object.
+      *
+      * Note: the map's insertion order survives an encode/decode round-trip. Encoding walks the map
+      * in insertion order and decoding rebuilds it by inserting entries in wire order, so wire order
+      * becomes insertion order. For the Protobuf codec this holds between a kyo-schema encode and a
+      * kyo-schema decode: the generated `.proto` declares a `map<K, V>` field, and proto3 does
+      * not mandate entry order for map fields, so a foreign Protobuf implementation may
+      * reorder entries.
+      */
+    given stringOrderedMapSchema[V](using vSchema0: => Schema[V]): Schema[OrderedMap[String, V]] =
+        lazy val vSchema = vSchema0
+        Schema.init[OrderedMap[String, V]](
+            writeFn = (value, writer) =>
+                writer.mapStart(value.size)
+                discard(value.foldLeft(0) { (idx, k, v) =>
+                    writer.field(k, idx)
+                    vSchema.serializeWrite(v, writer)
+                    idx + 1
+                })
+                writer.mapEnd()
+            ,
+            readFn = reader =>
+                discard(reader.mapStart())
+                @tailrec
+                def loop(map: OrderedMap[String, V], count: Int): OrderedMap[String, V] =
+                    if reader.hasNextEntry() then
+                        reader.checkCollectionSize(count)
+                        val k = reader.field()
+                        val v = vSchema.serializeRead(reader)
+                        loop(map.update(k, v), count + 1)
+                    else map
+                val map = loop(OrderedMap.empty[String, V], 1)
+                reader.mapEnd()
+                map
+            ,
+            // Non-inline givens have no implicit Tag[V] in scope; fall back to Tag[Any].
+            structure = Structure.Type.Mapping(
+                "OrderedMap",
+                Tag[Any],
+                Structure.Type.Primitive(Structure.PrimitiveKind.String, Tag[String].asInstanceOf[Tag[Any]]),
+                vSchema.structure
+            )
+        )
+    end stringOrderedMapSchema
+
+    /** Schema for OrderedMap[K, V] with non-String keys.
+      *
+      * `stringOrderedMapSchema` is the more specific given for `OrderedMap[String, V]` (object
+      * encoding); this general given covers every other key type. Each entry is written as a
+      * two-field record (`key`, `value`), the same form `mapSchema` and `dictSchema` use: the
+      * Protobuf codec renders this as a standard proto3 `MapEntry` message, and self-describing
+      * codecs render an array of `{key, value}` objects (a non-String key cannot be an object field
+      * name).
+      *
+      * Note: the map's insertion order survives an encode/decode round-trip. Encoding walks the map
+      * in insertion order and decoding rebuilds it by inserting entries in wire order, so wire order
+      * becomes insertion order. For the Protobuf codec this holds between a kyo-schema encode and
+      * a kyo-schema decode: for every key type reachable under the default `Conformance.Strict` the
+      * generated `.proto` declares a `map<K, V>` field, and proto3 does not mandate entry order for
+      * map fields, so a foreign Protobuf implementation may reorder entries.
+      */
+    given orderedMapSchema[K, V](using kSchema0: => Schema[K], vSchema0: => Schema[V]): Schema[OrderedMap[K, V]] =
+        lazy val kSchema = kSchema0
+        lazy val vSchema = vSchema0
+        Schema.init[OrderedMap[K, V]](
+            writeFn = (value, writer) =>
+                writer.arrayStart(value.size)
+                value.foreach { (k, v) =>
+                    writer.objectStart("", 2)
+                    writer.field("key", 1)
+                    kSchema.serializeWrite(k, writer)
+                    writer.field("value", 2)
+                    vSchema.serializeWrite(v, writer)
+                    writer.objectEnd()
+                }
+                writer.arrayEnd()
+            ,
+            readFn = reader =>
+                discard(reader.arrayStart())
+                @tailrec
+                def loop(map: OrderedMap[K, V], count: Int): OrderedMap[K, V] =
+                    if reader.hasNextElement() then
+                        reader.checkCollectionSize(count)
+                        discard(reader.objectStart())
+                        // hasNextField advances past the inter-field separator (a no-op for
+                        // Protobuf, the comma for a self-describing codec) before each field read.
+                        discard(reader.hasNextField())
+                        val _ = reader.field() // "key"
+                        val k = kSchema.serializeRead(reader)
+                        discard(reader.hasNextField())
+                        val _ = reader.field() // "value"
+                        val v = vSchema.serializeRead(reader)
+                        reader.objectEnd()
+                        loop(map.update(k, v), count + 1)
+                    else map
+                val map = loop(OrderedMap.empty[K, V], 1)
+                reader.arrayEnd()
+                map
+            ,
+            // Non-inline givens have no implicit Tag[K] + Tag[V] in scope; fall back to Tag[Any].
+            structure = Structure.Type.Mapping(
+                "OrderedMap",
+                Tag[Any],
+                kSchema.structure,
+                vSchema.structure
+            )
+        )
+    end orderedMapSchema
+
     // --- Internal helpers ---
 
     /** Derives an Ordering[A] for a case class by comparing fields in declaration order.

@@ -2262,4 +2262,38 @@ class JsonTest extends kyo.test.Test[Any]:
 
     }
 
+    // ===================================================================
+    // OrderedMap Schema givens: insertion-order round-trip and the
+    // per-element checkCollectionSize DoS guard.
+    // ===================================================================
+
+    "OrderedMap Schema givens" - {
+
+        "OrderedMap[String, V] field preserves insertion order across encode/decode" in {
+            val holder =
+                MTOrderedMapConfig(OrderedMap("zeta" -> 30, "alpha" -> 3, "mike" -> 8080, "bravo" -> 5, "yankee" -> 100, "delta" -> 42))
+            val encoded = Json.encode(holder)
+            val decoded = Json.decode[MTOrderedMapConfig](encoded).getOrThrow
+            assert(decoded.settings.toChunk.map(_._1) == Chunk("zeta", "alpha", "mike", "bravo", "yankee", "delta"))
+        }
+
+        "OrderedMap[Int, String] field round-trips as a JSON array of {key,value} objects preserving insertion order, not sorted" in {
+            val holder =
+                MTOrderedMapLevels(OrderedMap(30 -> "gold", 10 -> "bronze", 20 -> "silver", 50 -> "copper", 40 -> "tin", 60 -> "iron"))
+            val encoded = Json.encode(holder)
+            assert(
+                encoded == """{"byLevel":[{"key":30,"value":"gold"},{"key":10,"value":"bronze"},{"key":20,"value":"silver"},{"key":50,"value":"copper"},{"key":40,"value":"tin"},{"key":60,"value":"iron"}]}"""
+            )
+            val decoded = Json.decode[MTOrderedMapLevels](encoded).getOrThrow
+            assert(decoded.byLevel.toChunk.map(_._1) == Chunk(30, 10, 20, 50, 40, 60))
+        }
+
+        "an oversized OrderedMap[String, V] field decodes to a typed failure, not a bare thrown exception" in {
+            val json   = (0 until 20000).map(n => s""""k$n":$n""").mkString("""{"settings":{""", ",", "}}")
+            val result = Json.decode[MTOrderedMapConfig](json, maxCollectionSize = 10000)
+            assert(result.isFailure, "OrderedMap should reject an oversized entry count via maxCollectionSize")
+        }
+
+    }
+
 end JsonTest

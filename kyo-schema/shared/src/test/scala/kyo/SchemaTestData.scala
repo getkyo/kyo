@@ -122,3 +122,9 @@ case class MTPoint(x: Int, y: Int) derives CanEqual
 // regression leaves for the object-form wire fix (scalar and non-empty-collection value axes).
 case class MTIntStringDict(d: Dict[Int, String]) derives CanEqual, Schema
 case class MTIntChunkDict(d: Dict[Int, Chunk[String]]) derives CanEqual, Schema
+
+// OrderedMap Schema given round-trip fixtures, shared by every codec suite's insertion-order
+// leaf: MTOrderedMapConfig resolves stringOrderedMapSchema (String key, object wire form) and
+// MTOrderedMapLevels resolves orderedMapSchema (non-String key, array-of-{key,value} wire form).
+case class MTOrderedMapConfig(settings: OrderedMap[String, Int]) derives CanEqual, Schema
+case class MTOrderedMapLevels(byLevel: OrderedMap[Int, String]) derives CanEqual, Schema

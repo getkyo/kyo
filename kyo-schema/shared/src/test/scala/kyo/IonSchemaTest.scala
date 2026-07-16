@@ -209,6 +209,25 @@ class IonSchemaTest extends kyo.test.Test[Any]:
             assert(Ion.ionSchemaString[ISTIntKeyedMap]() == expected)
         }
 
+        // IonSchema is not a Codec (no newWriter/newReader), so this asserts the Mapping
+        // node's shape only; no value round-trip exists for OrderedMap to preserve order
+        // through here.
+        "describes an OrderedMap-typed field via the Mapping node (shape only)" in {
+            val expected =
+                """$ion_schema_2_0
+                  |
+                  |type::{
+                  |  name: MTOrderedMapConfig,
+                  |  type: struct,
+                  |  fields: closed::{
+                  |    settings: { type: struct, field_names: string, element: int, occurs: required },
+                  |  },
+                  |}
+                  |""".stripMargin
+
+            assert(Ion.ionSchemaString[MTOrderedMapConfig]() == expected)
+        }
+
         "emits sealed traits as ISL one_of alternatives for discriminator wrappers" in {
             given Schema[MTShape] = Schema[MTShape].discriminator("type")
 

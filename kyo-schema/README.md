@@ -807,12 +807,14 @@ Schemas are provided for all common types out of the box:
 | Primitives | `String`, `Boolean`, `Int`, `Long`, `Float`, `Double`, `Short`, `Byte`, `Char`, `BigDecimal`, `BigInt`, `Unit` |
 | Time | `java.time.Instant`, `java.time.Duration`, `kyo.Instant`, `kyo.Duration`, `LocalDate`, `LocalTime`, `LocalDateTime` |
 | Identifiers | `UUID`, `Frame`, `Tag[A]` |
-| Collections | `List[A]`, `Vector[A]`, `Set[A]`, `Seq[A]`, `Chunk[A]`, `Span[A]`, `Map[String, V]`, `Dict[K, V]` |
+| Collections | `List[A]`, `Vector[A]`, `Set[A]`, `Seq[A]`, `Chunk[A]`, `Span[A]`, `Map[String, V]`, `Dict[K, V]`, `OrderedMap[K, V]` |
 | Optional | `Option[A]`, `Maybe[A]` |
 | Sums | `Either[A, B]`, `Result[E, A]` |
 | Tuples | `(A, B)`, `(A, B, C)`, `(A, B, C, D)`, `(A, B, C, D, E)` |
 
 Any case class or sealed trait composed of these types derives a `Schema` automatically. Nested case classes work without additional setup.
+
+`OrderedMap[K, V]` serializes in the same shape as `Dict[K, V]` and additionally preserves insertion order across an encode/decode round-trip: encoding walks the map in insertion order, and decoding rebuilds it by inserting entries in wire order.
 
 `Map[String, V]` and `Dict[String, V]` both serialize as JSON objects, because JSON object keys must be strings. `Map[K, V]` and `Dict[K, V]` with a non-string key type serialize as an array of two-field `{key, value}` records, which the Protobuf codec renders as a standard proto3 `MapEntry`. `Span[Byte]` is specialized to serialize as a primitive byte sequence rather than an array of individual bytes.
 

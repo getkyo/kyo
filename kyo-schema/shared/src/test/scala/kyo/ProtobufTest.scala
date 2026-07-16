@@ -1728,6 +1728,30 @@ class ProtobufTest extends kyo.test.Test[Any]:
 
     }
 
+    // OrderedMap Schema givens: both order round-trips are scoped in-process (no
+    // cross-implementation interop claim). kyo's own Protobuf writer emits one MapEntry per
+    // entry in call order and its reader walks pos forward through consecutive
+    // length-delimited submessages, so the round-trip preserves order; proto3 disclaims
+    // map-entry order for foreign implementations, so no cross-implementation guarantee is
+    // asserted.
+    "OrderedMap Schema givens" - {
+
+        "OrderedMap[String, V] field preserves insertion order across encode/decode (resolves stringOrderedMapSchema)" in {
+            val holder =
+                MTOrderedMapConfig(OrderedMap("zeta" -> 30, "alpha" -> 3, "mike" -> 8080, "bravo" -> 5, "yankee" -> 100, "delta" -> 42))
+            val decoded = Protobuf.decode[MTOrderedMapConfig](Protobuf.encode(holder)).getOrThrow
+            assert(decoded.settings.toChunk.map(_._1) == Chunk("zeta", "alpha", "mike", "bravo", "yankee", "delta"))
+        }
+
+        "OrderedMap[Int, String] field preserves insertion order across encode/decode (resolves orderedMapSchema, not stringOrderedMapSchema)" in {
+            val holder =
+                MTOrderedMapLevels(OrderedMap(30 -> "gold", 10 -> "bronze", 20 -> "silver", 50 -> "copper", 40 -> "tin", 60 -> "iron"))
+            val decoded = Protobuf.decode[MTOrderedMapLevels](Protobuf.encode(holder)).getOrThrow
+            assert(decoded.byLevel.toChunk.map(_._1) == Chunk(30, 10, 20, 50, 40, 60))
+        }
+
+    }
+
 end ProtobufTest
 
 // Top-level to avoid issues with derives Schema inside nested definitions
