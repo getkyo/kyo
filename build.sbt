@@ -1277,6 +1277,32 @@ def stripSystemOpensslForStagedBoringSsl(kyoNetBase: File)(base: NativeConfig): 
         base.withLinkingOptions(strippedLinking).withCompileOptions(bsslInc +: strippedCompile)
     }
 
+// The staged BoringSSL force-load LINK window for kyo-net's OWN staged archives, in the byte-identical spelling
+// kyo-net's Native link emits via `ffiNativeLinkingOptions` (which routes through
+// `CCompiler.vendoredArchiveForceLoadFlags`):
+//   - linux: `-L<stagedLib> -Wl,--whole-archive -lssl -lcrypto -Wl,--no-whole-archive`
+//   - darwin: `-Wl,-force_load,<stagedLib>/libssl.a -Wl,-force_load,<stagedLib>/libcrypto.a`
+// followed by the dynamic C++ runtime BoringSSL's C++ archives reference (`-lstdc++` on linux, `-lc++` on
+// darwin). Force-loading pulls every archive member regardless of link order, so a bundled TLS shim's
+// `SSL_*`/`crypto_*` references resolve wherever Scala Native places the compiled C. A no-op (empty Seq) when
+// BoringSSL is not staged for the host os-arch (the documented system-OpenSSL fallback stands). `kyoNetBase`
+// must resolve to kyo-net's OWN directory (the staged archives live there), regardless of the caller's own
+// `baseDirectory`. This reconstructs (rather than reuses) the plugin's flags because `CCompiler` is
+// `private[sbt]` to `kyo.ffi.sbt` and a downstream module (kyo-http) that does not own the FFI libraries has
+// no `ffiNativeLinkingOptions` task to read; the spelling here is kept identical to the plugin's.
+def stagedBoringSslForceLoadLinkOpts(kyoNetBase: File): Seq[String] =
+    if (!boringSslStaged(kyoNetBase)) Nil
+    else {
+        val libDir = boringSslStagedDir(kyoNetBase) / "lib"
+        val isMac  = System.getProperty("os.name", "").toLowerCase.contains("mac")
+        val forceLoad =
+            if (isMac)
+                Seq("libssl.a", "libcrypto.a").map(a => s"-Wl,-force_load,${(libDir / a).getAbsolutePath}")
+            else
+                Seq(s"-L${libDir.getAbsolutePath}", "-Wl,--whole-archive", "-lssl", "-lcrypto", "-Wl,--no-whole-archive")
+        forceLoad ++ boringSslCxxRuntimeFlags
+    }
+
 lazy val `kyo-net` =
     crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
         .crossType(CrossType.Full)
@@ -1603,16 +1629,37 @@ lazy val `kyo-http` =
             // kyo-http does not own the BoringSSL/OpenSSL FFI libraries itself (only kyo-net enables
             // KyoFfiPlugin); it inherits the bundled TLS shim C and its manifest-derived link/compile flags
             // transitively via `native-settings`'s classpath fold, PLUS `openssl-native-settings`'s own system
-            // OpenSSL flags above. Left as-is, the shim's bundled C compiles against system OpenSSL headers
-            // (the transitive fold gives no ordering guarantee that BoringSSL's `-I` precedes the system one),
-            // so `SSL_set_tlsext_host_name` expands to the OpenSSL `SSL_ctrl` macro and segfaults when called
-            // on a BoringSSL `SSL*` (a client TLS handshake to a hostname, e.g. HttpClientTest's "tls" variant:
-            // EXC_BAD_ACCESS at PC=0 inside SSL_ctrl's tail dispatch). Applying the same BoringSSL-staging strip
-            // kyo-net's own Native build uses (`stripSystemOpensslForStagedBoringSsl`) makes the bundled C see
-            // BoringSSL headers here too, eliminating the SSL_ctrl reference entirely. `kyoNetBase` resolves to
-            // kyo-net's own directory (two levels up from kyo-http's Native `baseDirectory`, then across), since
-            // the staged BoringSSL archives live there, not under kyo-http.
-            nativeConfig := stripSystemOpensslForStagedBoringSsl(baseDirectory.value / ".." / ".." / "kyo-net")(nativeConfig.value),
+            // OpenSSL flags above. Two things must hold on this Native binary:
+            //
+            // COMPILE: left as-is, the shim's bundled C compiles against system OpenSSL headers (the transitive
+            // fold gives no ordering guarantee that BoringSSL's `-I` precedes the system one), so
+            // `SSL_set_tlsext_host_name` expands to the OpenSSL `SSL_ctrl` macro and segfaults when called on a
+            // BoringSSL `SSL*` (a client TLS handshake to a hostname, e.g. HttpClientTest's "tls" variant:
+            // EXC_BAD_ACCESS at PC=0 inside SSL_ctrl's tail dispatch). `stripSystemOpensslForStagedBoringSsl`
+            // prepends BoringSSL's `-I` so the bundled C sees BoringSSL headers here too, removing the SSL_ctrl
+            // reference. It also strips the system `-lssl -lcrypto` (BoringSSL is the one TLS impl).
+            //
+            // LINK: that strip removes `-lssl -lcrypto` WHEREVER it occurs, and on Linux kyo-net's
+            // transitively-folded BoringSSL `--whole-archive` window spells its archives with the IDENTICAL
+            // `-lssl -lcrypto`, so the strip empties that window too and every SSL_*/crypto_* symbol goes
+            // undefined at nativeLink (the link line reports "Linking with [pthread, dl, m]", no SSL library).
+            // Re-append kyo-net's own staged BoringSSL force-load window (the byte-identical spelling
+            // `ffiNativeLinkingOptions` emits for kyo-net) so the archives are force-loaded here, matching how
+            // kyo-net links. Restricted to non-darwin: on darwin the folded BoringSSL window force-loads by
+            // archive PATH (`-Wl,-force_load,<archive>`), which the `-lssl -lcrypto` strip never matches, so
+            // its manifest flags survive intact and a second copy would `-force_load` each archive twice
+            // (duplicate symbols). When BoringSSL is not staged, both the strip and the re-append are no-ops
+            // (the system-OpenSSL fallback stands). `kyoNetBase` resolves to kyo-net's own directory (two
+            // levels up from kyo-http's Native `baseDirectory`, then across), since the staged BoringSSL
+            // archives live there, not under kyo-http.
+            nativeConfig := {
+                val kyoNetBase   = baseDirectory.value / ".." / ".." / "kyo-net"
+                val stripped     = stripSystemOpensslForStagedBoringSsl(kyoNetBase)(nativeConfig.value)
+                val isMac        = System.getProperty("os.name", "").toLowerCase.contains("mac")
+                val bsslReappend = if (isMac) Nil else stagedBoringSslForceLoadLinkOpts(kyoNetBase)
+                if (bsslReappend.isEmpty) stripped
+                else stripped.withLinkingOptions(stripped.linkingOptions ++ bsslReappend)
+            },
             // Scala Native resolves `java.util.ServiceLoader.load` at LINK time: a provider present in
             // META-INF/services is linked only when ALSO enlisted here. Enlist the shared test factory so the
             // auto-filter tests exercise real ServiceLoader discovery on Native, the same way a Native user
