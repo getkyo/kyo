@@ -568,4 +568,118 @@ class OverlayFileSystemTest extends kyo.test.Test[Any]:
         }
     }
 
+    // --- First lower observation matrix: absent-in-both vs present-in-lower-only ---
+    //
+    // The overlay's case-None branch (no upper entry) is the first place a path is observed
+    // against the lower service. Every predicate and reader must agree with the host/in-memory
+    // contract on both a path missing from both layers and a path present only in lower:
+    // exists/isDirectory/isRegularFile return false on absent (never abort), stat/size abort
+    // FileNotFoundException on absent (mirroring host and in-memory), and all five report the
+    // lower observation faithfully when the path is present only in lower.
+
+    "exists returns false for a path absent in both layers" in {
+        withOverlay { (ov, _) =>
+            val p = Path("nowhere.txt")
+            Path.runWith(ov)(p.exists).map { found =>
+                assert(!found)
+            }
+        }
+    }
+
+    "isDirectory returns false for a path absent in both layers" in {
+        withOverlay { (ov, _) =>
+            val p = Path("nowhere-dir")
+            Path.runWith(ov)(p.isDirectory).map { isDir =>
+                assert(!isDir)
+            }
+        }
+    }
+
+    "isRegularFile returns false for a path absent in both layers" in {
+        withOverlay { (ov, _) =>
+            val p = Path("nowhere-file.txt")
+            Path.runWith(ov)(p.isRegularFile).map { isFile =>
+                assert(!isFile)
+            }
+        }
+    }
+
+    "stat aborts FileNotFoundException for a path absent in both layers" in {
+        withOverlay { (ov, _) =>
+            val p = Path("nowhere-stat.txt")
+            Abort.run[FileException](Path.runWith(ov)(p.stat)).map {
+                case Result.Failure(_: FileNotFoundException) => succeed("expected FileNotFoundException for absent path")
+                case other                                    => fail(s"Expected Failure(FileNotFoundException), got: $other")
+            }
+        }
+    }
+
+    "size aborts FileNotFoundException for a path absent in both layers" in {
+        withOverlay { (ov, _) =>
+            val p = Path("nowhere-size.txt")
+            Abort.run[FileException](Path.runWith(ov)(p.size)).map {
+                case Result.Failure(_: FileNotFoundException) => succeed("expected FileNotFoundException for absent path")
+                case other                                    => fail(s"Expected Failure(FileNotFoundException), got: $other")
+            }
+        }
+    }
+
+    "exists returns true for a path present only in lower" in {
+        withOverlay { (ov, lower) =>
+            val p = Path("lower-exists-only.txt")
+            Path.runWith(lower)(p.write("content")).andThen {
+                Path.runWith(ov)(p.exists).map { found =>
+                    assert(found)
+                }
+            }
+        }
+    }
+
+    "isDirectory returns true for a directory present only in lower" in {
+        withOverlay { (ov, lower) =>
+            val dir = Path("lower-dir-only")
+            Path.runWith(lower)(dir.mkDir).andThen {
+                Path.runWith(ov)(dir.isDirectory).map { isDir =>
+                    assert(isDir)
+                }
+            }
+        }
+    }
+
+    "isRegularFile returns true for a file present only in lower" in {
+        withOverlay { (ov, lower) =>
+            val p = Path("lower-file-only.txt")
+            Path.runWith(lower)(p.write("content")).andThen {
+                Path.runWith(ov)(p.isRegularFile).map { isFile =>
+                    assert(isFile)
+                }
+            }
+        }
+    }
+
+    "stat returns the lower stat for a path present only in lower" in {
+        withOverlay { (ov, lower) =>
+            val p = Path("lower-stat-only.txt")
+            Path.runWith(lower)(p.write("content")).andThen {
+                Path.runWith(lower)(p.stat).map { lowerStat =>
+                    Path.runWith(ov)(p.stat).map { overlayStat =>
+                        assert(overlayStat.sizeBytes == lowerStat.sizeBytes)
+                        assert(overlayStat.lastModifiedMs == lowerStat.lastModifiedMs)
+                    }
+                }
+            }
+        }
+    }
+
+    "size returns the lower size for a path present only in lower" in {
+        withOverlay { (ov, lower) =>
+            val p = Path("lower-size-only.txt")
+            Path.runWith(lower)(p.write("content")).andThen {
+                Path.runWith(ov)(p.size).map { size =>
+                    assert(size == "content".getBytes(StandardCharsets.UTF_8).length.toLong)
+                }
+            }
+        }
+    }
+
 end OverlayFileSystemTest

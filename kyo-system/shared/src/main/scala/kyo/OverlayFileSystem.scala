@@ -531,11 +531,15 @@ final private[kyo] class OverlayFileSystem[S](
                 case None =>
                     if ancestorWhiteout(s, path.parts) then false
                     else
-                        lower.isDirectory(path).map { isDir =>
-                            lower.stat(path).map { stat =>
-                                (if isDir then stampDir(path.parts, stat)
-                                 else lower.readBytes(path).map(bytes => stampFile(path.parts, stat, bytes))).andThen(isDir)
-                            }
+                        lower.exists(path).map { found =>
+                            if !found then stampAbsent(path.parts).andThen(false)
+                            else
+                                lower.isDirectory(path).map { isDir =>
+                                    lower.stat(path).map { stat =>
+                                        (if isDir then stampDir(path.parts, stat)
+                                         else lower.readBytes(path).map(bytes => stampFile(path.parts, stat, bytes))).andThen(isDir)
+                                    }
+                                }
                         }
         }
 
@@ -549,11 +553,15 @@ final private[kyo] class OverlayFileSystem[S](
                 case None =>
                     if ancestorWhiteout(s, path.parts) then false
                     else
-                        lower.isRegularFile(path).map { isFile =>
-                            lower.stat(path).map { stat =>
-                                (if isFile then lower.readBytes(path).map(bytes => stampFile(path.parts, stat, bytes))
-                                 else stampDir(path.parts, stat)).andThen(isFile)
-                            }
+                        lower.exists(path).map { found =>
+                            if !found then stampAbsent(path.parts).andThen(false)
+                            else
+                                lower.isRegularFile(path).map { isFile =>
+                                    lower.stat(path).map { stat =>
+                                        (if isFile then lower.readBytes(path).map(bytes => stampFile(path.parts, stat, bytes))
+                                         else stampDir(path.parts, stat)).andThen(isFile)
+                                    }
+                                }
                         }
         }
 

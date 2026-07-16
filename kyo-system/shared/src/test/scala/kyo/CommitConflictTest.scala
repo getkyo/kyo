@@ -3,7 +3,7 @@ package kyo
 /** Construction and equality round-trip tests for the commit-conflict value types. Covers
   * `CommitConflict`, `Conflict`, `Resolution` (all four cases), `Path.Entry` (both variants),
   * `Path.Stamp`, and `Path.Stamp.Kind` (all three cases including `Absent`; `Path.Stamp` is
-  * retained as a public type though the overlay read-set no longer constructs it). Also asserts
+  * retained as a public type though the overlay read-set does not construct it). Also asserts
   * that `Conflict.ancestor` carries a `Maybe[Path.Entry]`: the read-set records the full observed
   * entry (bytes and stat for a regular file, stat for a directory) at observation time.
   */
