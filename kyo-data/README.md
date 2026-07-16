@@ -268,6 +268,26 @@ val merged: Dict[Int, User]  = byId ++ Dict(3 -> bob)
 
 > **Note:** `Dict` is opaque and provides no `CanEqual` instance. Use `dict.is(other)` for structural equality, not `==`.
 
+`Dict`'s hash-backed representation leaves iteration order unspecified. When the order of the keys is part of what you are modelling, `OrderedMap[K, V]` iterates in insertion order at every size. It adapts its representation the same way `Dict` does: a flat `Span` for 8 or fewer entries, and a `TreeSeqMap` ordered by insertion beyond that.
+
+```scala
+import kyo.*
+
+val stages: OrderedMap[String, Int] = OrderedMap("draft" -> 1, "review" -> 2, "published" -> 3)
+
+val order: Chunk[String] = stages.toChunk.map(_._1) // "draft", "review", "published"
+
+// Updating an existing key replaces the value and keeps the key where it was.
+val restaged: OrderedMap[String, Int] = stages.update("draft", 9)
+
+// A new key appends at the end, and re-adding a removed key appends it afresh.
+val appended: OrderedMap[String, Int] = stages.remove("draft").update("draft", 1)
+```
+
+A `case class` with an `OrderedMap` field derives a `Schema` in `kyo-schema`, and the order survives an encode and decode round-trip.
+
+> **Note:** like `Dict`, `OrderedMap` is opaque and provides no `CanEqual` instance. Use `map.is(other)` for structural equality, not `==`.
+
 > **Note:** `Dict` switches representations at 8 entries. Lookup semantics are stable across the switch; performance characteristics differ.
 
 Iteration and transformation take key and value as separate parameters rather than a `(K, V)` tuple, avoiding tuple allocation in hot paths.
