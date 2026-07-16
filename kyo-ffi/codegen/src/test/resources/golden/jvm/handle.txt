@@ -17,7 +17,7 @@ final class HandleBindingsImpl extends HandleBindings:
         val __kyoMark$ = __kyoScratch$.mark()
         try
             val pathSeg = __kyoScratch$.allocUtf8(path, "kyo.example.HandleBindings", "open")
-            val errnoSeg = __kyoScratch$.alloc(4L, 4L, "kyo.example.HandleBindings", "open")
+            val errnoSeg = __kyoScratch$.alloc(captureLayout.byteSize(), captureLayout.byteAlignment(), "kyo.example.HandleBindings", "open")
             val retVal: MemorySegment = openMH.invokeExact(errnoSeg, pathSeg)
             if retVal.address() == 0L then throw new kyo.ffi.FfiNullPointer("kyo.example.HandleBindings.open returned null") else Ffi.Handle.wrap(retVal)
         finally __kyoScratch$.reset(__kyoMark$)
@@ -27,7 +27,7 @@ final class HandleBindingsImpl extends HandleBindings:
         val __kyoMark$ = __kyoScratch$.mark()
         try
             val hSeg = kyo.ffi.internal.FfiUnsafe.expect[MemorySegment](Ffi.Handle.unwrap(h).asInstanceOf[AnyRef], classOf[MemorySegment], "MemorySegment on JVM", "kyo.example.HandleBindings", "close")
-            val errnoSeg = __kyoScratch$.alloc(4L, 4L, "kyo.example.HandleBindings", "close")
+            val errnoSeg = __kyoScratch$.alloc(captureLayout.byteSize(), captureLayout.byteAlignment(), "kyo.example.HandleBindings", "close")
             val _: Unit = closeMH.invokeExact(errnoSeg, hSeg)
             ()
         finally __kyoScratch$.reset(__kyoMark$)
@@ -38,6 +38,7 @@ object HandleBindingsImpl:
     private val lib      = NativeLoader.load("kyo_handle")
     private val linker   = Linker.nativeLinker()
     private val capture  = Linker.Option.captureCallState("errno")
+    private val captureLayout = Linker.Option.captureStateLayout()
 
     private val openMH: MethodHandle = linker.downcallHandle(
         lib.find("open").orElseThrow(),

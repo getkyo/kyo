@@ -17,7 +17,7 @@ final class BorrowedStringBindingsImpl extends BorrowedStringBindings:
         val __kyoMark$ = __kyoScratch$.mark()
         try
             val nameSeg = __kyoScratch$.allocUtf8(name, "kyo.example.BorrowedStringBindings", "getenvLike")
-            val errnoSeg = __kyoScratch$.alloc(4L, 4L, "kyo.example.BorrowedStringBindings", "getenvLike")
+            val errnoSeg = __kyoScratch$.alloc(captureLayout.byteSize(), captureLayout.byteAlignment(), "kyo.example.BorrowedStringBindings", "getenvLike")
             val retVal: MemorySegment = getenvLikeMH.invokeExact(errnoSeg, nameSeg)
             Ffi.Borrowed.wrap(if retVal.address() == 0L then null else Scratch.readCStringBounded(retVal.reinterpret(4096L), 0L, 4096L, "kyo.example.BorrowedStringBindings", "getenvLike", "<return>"))
         finally __kyoScratch$.reset(__kyoMark$)
@@ -28,6 +28,7 @@ object BorrowedStringBindingsImpl:
     private val lib      = NativeLoader.load("kyo_borrowed_str")
     private val linker   = Linker.nativeLinker()
     private val capture  = Linker.Option.captureCallState("errno")
+    private val captureLayout = Linker.Option.captureStateLayout()
 
     private val getenvLikeMH: MethodHandle = linker.downcallHandle(
         lib.find("getenv").orElseThrow(),
