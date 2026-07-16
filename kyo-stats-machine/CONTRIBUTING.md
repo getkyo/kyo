@@ -413,22 +413,23 @@ above do.
   steady-state disk read leaf). That closes the direct-production-path gap;
   the real-syscall gap (an actual `statvfs(2)` call against the real libc,
   the counterpart to the macOS/Windows `Ffi.load` leaves below) remains open.
-- **The Windows and macOS real-host leaves run on their own CI job.**
-  `WindowsBindingsTest`'s and `MacosBindingsTest`'s real-host leaves, gated
-  `.onlyJvm` plus an `assume` on the matching `System.OS` as above, now run
-  for real: the `machine-stats-windows` and
-  `machine-stats-macos` CI jobs (`.github/workflows/ci.yml`) each run
-  `sbt "kyo-stats-machineJVM/test"` on a real Windows or macOS host, so these
-  leaves execute in CI rather than being skipped everywhere but a manual run
-  (`WindowsBindingsTest.scala:159-160`; `MacosBindingsTest.scala:60-61,76-77,96-97`).
+- **The macOS real-host leaves run on their own CI job.**
+  `MacosBindingsTest`'s real-host leaves, gated `.onlyJvm` plus an `assume` on
+  `System.OS.MacOS` as above, run for real on the `machine-stats-macos` CI job
+  (`.github/workflows/ci.yml`), which runs `sbt "kyo-stats-machineJVM/test"` on
+  a real macOS host so those leaves execute in CI rather than being skipped
+  everywhere but a manual run (`MacosBindingsTest.scala:60-61,76-77,96-97`).
+  `WindowsBindingsTest`'s real-host leaves have no standing CI job; they run
+  only on a manual `kyo-stats-machineJVM/test` on a Windows host
+  (`WindowsBindingsTest.scala:159-160`).
 - **The module opts out of its own auto-start during its own tests.** Every
   platform's test config disables the sampler so the once-per-second tick
   does not race the suites' destructive counter-drain assertions against
   the shared process-global `machine.*` handles: JVM sets
-  `-Dkyo.machine.disabled=true` (`build.sbt:1136`), Native sets
-  `KYO_MACHINE_DISABLED=true` as an env var (`build.sbt:1141`), and JS sets
+  `-Dkyo.machine.disabled=true` (`build.sbt:1134`), Native sets
+  `KYO_MACHINE_DISABLED=true` as an env var (`build.sbt:1139`), and JS sets
   the same env var through the Node test environment config
-  (`build.sbt:1152`). A test that needs an actually-running sampler starts
+  (`build.sbt:1150`). A test that needs an actually-running sampler starts
   and stops it explicitly and locally (`MachineStatFactoryTest`,
   sequential-suite `stopForTest`/`resetForTest` seams,
   `MachineStatFactoryTest.scala:10,36-47`).

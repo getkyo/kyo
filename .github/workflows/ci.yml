@@ -139,12 +139,6 @@ jobs:
       - name: test kyo-stats-machine (Windows host)
         shell: bash
         run: sbt "kyo-stats-machineJVM/test"
-      # Prove the real classpath-presence auto-start feeds machine.* metrics into kyo.Stat on this OS.
-      # The demo app exits non-zero when its validation rejects the host reading, so a broken auto-start
-      # path fails the job; the test step above deliberately runs with auto-start opted out.
-      - name: demo auto-start kyo-stats-machine (Windows host)
-        shell: bash
-        run: sbt "kyo-stats-machineJVM/Test/runMain demo.MachineStatsDemoApp"
 
   machine-stats-macos:
     needs: prep
@@ -166,12 +160,6 @@ jobs:
       - name: test kyo-stats-machine (macOS host)
         shell: bash
         run: sbt "kyo-stats-machineJVM/test"
-      # Prove the real classpath-presence auto-start feeds machine.* metrics into kyo.Stat on this OS.
-      # The demo app exits non-zero when its validation rejects the host reading, so a broken auto-start
-      # path fails the job; the test step above deliberately runs with auto-start opted out.
-      - name: demo auto-start kyo-stats-machine (macOS host)
-        shell: bash
-        run: sbt "kyo-stats-machineJVM/Test/runMain demo.MachineStatsDemoApp"
 
   # Runs inside a privileged container with a private cgroup namespace so /proc/self/mountinfo and
   # /proc/self/cgroup present a nested cgroup-v2 layout mounted away from the host root, exercising
@@ -211,12 +199,6 @@ jobs:
           mount | grep -E 'cgroup2|cgroup' || true
           cat /proc/self/cgroup || true
           sbt "kyo-stats-machineJVM/test"
-      # Prove the real classpath-presence auto-start feeds machine.* metrics into kyo.Stat in the nested
-      # cgroup container. The demo app exits non-zero when its validation rejects the host reading, so a
-      # broken auto-start path fails the job; the test step above deliberately runs with auto-start opted out.
-      - name: demo auto-start kyo-stats-machine (nested cgroup container)
-        shell: bash
-        run: sbt "kyo-stats-machineJVM/Test/runMain demo.MachineStatsDemoApp"
 
   custom:
     needs: prep

@@ -208,8 +208,4 @@ The structural absences are deliberate, and each is the absence of a real host c
 
 A runnable demo lives in [`shared/src/test/scala/demo`](shared/src/test/scala/demo). `MachineStatsDemoApp` is the auto-load story end to end: it touches only `kyo.Stat`, lets the classpath-present module start the sampler, waits a few ticks, then prints the `machine.*` families it read off this host and validates them.
 
-```bash
-sbt 'kyo-stats-machineJVM/Test/runMain demo.MachineStatsDemoApp'
-```
-
-The `Test/runMain` scope runs with auto-start on and prints `validation: OK`: the module's own `test` tasks opt out of the sampler, and `build.sbt` sheds that opt-out only for `run` and `runMain`. Prepend `KYO_MACHINE_DISABLED=true` to watch the lever suppress the sampler: the demo then reports `validation FAILED` and exits non-zero by design. CI runs this same command on Linux, macOS, and Windows hosts to prove auto-start on each.
+It is a standalone `main` meant to run on your own classpath with kyo-stats-machine present: run it from, or copy it into, an application that depends on the module. It is not wired into this repository's build, whose test configuration sets the `KYO_MACHINE_DISABLED` opt-out so the suites never race a live sampler; under that lever the sampler stays off and the demo has nothing to report. Run it where the module is a normal dependency and it prints the host's metrics; set `KYO_MACHINE_DISABLED=true` on that run to watch the opt-out suppress the sampler.

@@ -1,6 +1,10 @@
 package kyo.stats.machine
 
 import kyo.*
+import kyo.stats.internal.StatsRegistry
+import kyo.stats.internal.Summary
+import kyo.stats.internal.UnsafeGauge
+import kyo.stats.internal.UnsafeHistogram
 
 class MachineTest extends kyo.test.Test[Any]:
 
@@ -33,6 +37,17 @@ class MachineTest extends kyo.test.Test[Any]:
         collect(registry.gauges.map)
         keys.toSet
     end machineKeys
+
+    // Value readers for a metric path (scope, family, leaf), mirroring the other suites' helpers. The
+    // WeakReference dereference these perform is JVM-only, so their callers are `.onlyJvm`-gated.
+    private def gaugePath(path: String*): Double =
+        StatsRegistry.internal.gauges.get(path.toList.reverse, "", new UnsafeGauge(() => -1d)).collect()
+
+    private def histogramSummary(path: String*): Summary =
+        StatsRegistry.internal.histograms.get(path.toList.reverse, "", new UnsafeHistogram(Array(0d))).summary()
+
+    private def histogramRegistered(path: String*): Boolean =
+        StatsRegistry.internal.histograms.map.containsKey(path.toList)
 
     "NullMachine read/readDisks/close are no-ops that register zero machine.* series and never throw" in {
         // Captured back-to-back on one thread with no suspension in between, the same zero-window idiom
@@ -83,6 +98,31 @@ class MachineTest extends kyo.test.Test[Any]:
             end if
             assert(after.exists(_.path.startsWith("machine.disk.")))
         end for
+    }
+
+    "the assembled host reader wires memory.total in bytes: a plausible RAM total dominating available and free".onlyJvm in {
+        val hostOs = System.live.unsafe.operatingSystem()
+        assume(
+            hostOs == System.OS.Linux || hostOs == System.OS.MacOS || hostOs == System.OS.Windows,
+            "this leaf drives the fully assembled per-OS reader and needs a host OS with a dedicated Machine implementation"
+        )
+        // A uniquely-scoped MachineHandles keeps this real-host read's gauge writes out of the shared "machine"
+        // scope, so the absolute memory.total value read back is this reader's own and cannot be poisoned by a
+        // sibling suite writing the same first-registered process-global cell.
+        val scope   = "mtest-hostmem-floor"
+        val handles = MachineHandles.initForTest(Stat.initScope(scope), System.live.unsafe.availableProcessors().toLong)
+        val sampler = new MachineSampler(handles)
+        val machine = Machine.forOs(hostOs, handles, sampler)
+        machine.read()
+        val total = gaugePath(scope, "memory", "total")
+        // A real host reports more than 256 MiB of total RAM. This is the unit-scaling guard: a KB-vs-bytes
+        // wiring error (a /proc/meminfo KiB figure read as bytes, or a dropped x1024) lands far below it.
+        assert(total >= 268435456.0)
+        // Total RAM dominates the available and free levels the same read produced, where the OS exposes them.
+        if histogramRegistered(scope, "memory", "available") then
+            assert(total >= histogramSummary(scope, "memory", "available").sum)
+        if histogramRegistered(scope, "memory", "free") then
+            assert(total >= histogramSummary(scope, "memory", "free").sum)
     }
 
 end MachineTest

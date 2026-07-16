@@ -65,14 +65,14 @@ class MachineStatFactoryJvmTest extends kyo.test.Test[Any]:
         }
     }
 
-    "test-run opt-out" - {
+    "auto-start opt-out" - {
 
-        "the module's own forked test JVM has the auto-start opt-out property set".onlyJvm in {
-            // The build forces `-Dkyo.machine.disabled=true` into this module's Test-config javaOptions
-            // (build.sbt), so every leaf here runs where auto-start is suppressed and the once-per-second
-            // sampler cannot race the suites' destructive counter-drain reads on the shared machine.*
-            // handles. The demo entry point runs in the run scope, which sheds this opt-out; asserting the
-            // property here guards that the test scope keeps it, so neither carve-out leaks into the other.
+        "the module's own test JVM runs with the host sampler opted out".onlyJvm in {
+            // Module invariant: the suites must never run with a live sampler. The once-per-second sampler
+            // mutates the shared process-global machine.* handles, so if it auto-started during a test it
+            // would race the suites' destructive counter-drain reads and make them flaky. The build disables
+            // it for this module's Test config (`-Dkyo.machine.disabled=true`); this leaf asserts the forked
+            // test JVM actually carries that property, so a build change that dropped it fails loudly here.
             assert(java.lang.System.getProperty("kyo.machine.disabled") == "true")
         }
     }

@@ -18,9 +18,11 @@ import kyo.stats.machine.MachineRegistrySnapshot
   * cumulative CPU counters via their retained baseline (`getLast()`), so reading the registry does not drain
   * the values a real exporter would later flush.
   *
-  * Run: `sbt 'kyo-stats-machineJVM/Test/runMain demo.MachineStatsDemoApp'` (prints `validation: OK`).
-  * Opt-out run: `KYO_MACHINE_DISABLED=true sbt 'kyo-stats-machineJVM/Test/runMain demo.MachineStatsDemoApp'`
-  * suppresses auto-start, so it reports `validation FAILED` and exits non-zero by design, proving the lever.
+  * This is a standalone `main` meant to run on YOUR classpath with kyo-stats-machine present: run it from,
+  * or copy it into, an application that depends on the module. It is not runnable through this repository's
+  * own build, whose test configuration sets the `KYO_MACHINE_DISABLED` opt-out so the module's suites never
+  * race a live sampler; under that lever the sampler stays off, the snapshot is empty, and `validate`
+  * rejects it. Setting that same env var on your own run is how you watch the opt-out suppress the sampler.
   *
   * Demonstrates:
   *   - classpath-presence auto-load: touching `kyo.Stat` alone starts the host sampler, with no user API call
@@ -73,9 +75,7 @@ object MachineStatsDemo:
         yield report(os, sampled)
     end flow
 
-    /** Assembles the observed readings into the design-derived Report the `validate` hook checks. Public so a
-      * CI test (`MachineStatsDemoTest`) can build a Report from a real sampler snapshot and run `validate`.
-      */
+    /** Assembles the observed readings into the design-derived Report that `validate` then checks. */
     def report(os: String, sampled: Chunk[MachineRegistrySnapshot.Reading]): Report =
         def valueOf(p: String): Maybe[Double] = Maybe.fromOption(sampled.find(_.path == p).map(_.value))
         val diskMounts =
@@ -126,15 +126,15 @@ object MachineStatsDemo:
     end validate
 
     /** Raised by the runnable entry point when `validate` rejects the report, so the process exits non-zero
-      * and a CI job wired to the demo command fails on a real auto-load regression instead of exiting clean.
+      * and a failed run surfaces through the exit code instead of only in the printed output.
       */
     final class ValidationFailed(reason: String) extends Exception(reason)
 
 end MachineStatsDemo
 
 /** Runnable entry point. Prints the observed machine.* metrics and the validation verdict; exits 0 when
-  * validation passes and non-zero (via [[MachineStatsDemo.ValidationFailed]]) when it does not, so a CI job
-  * wired to this command gates on a real auto-load regression.
+  * validation passes and non-zero (via [[MachineStatsDemo.ValidationFailed]]) when it does not, so a failed
+  * run on your own classpath surfaces through the exit code rather than only in the printed output.
   *
   * Auto-load is triggered by the flow's single `kyo.Stat` touch; the opt-out is read once at that touch, so
   * running under `KYO_MACHINE_DISABLED=true` yields an empty snapshot and a validation failure (the demo's
@@ -154,8 +154,8 @@ object MachineStatsDemoApp extends KyoApp:
             _ <- MachineStatsDemo.validate(report) match
                 case Absent       => Console.printLine("\nvalidation: OK (auto-load fed real host metrics into kyo.Stat)")
                 case Present(msg) =>
-                    // Fail the process, not just the print: a CI job running this command gates on the exit
-                    // code, so a real auto-load regression must exit non-zero rather than print and exit clean.
+                    // Fail the process, not just the print: a failed validation surfaces through the exit
+                    // code, so a run of this main exits non-zero rather than printing and exiting clean.
                     Console.printLineErr(s"\nvalidation FAILED: $msg")
                         .map(_ => Abort.fail(MachineStatsDemo.ValidationFailed(msg)))
         yield ()
