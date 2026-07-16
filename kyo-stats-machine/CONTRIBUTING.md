@@ -102,8 +102,9 @@ The sampler starts with zero explicit user call, mirroring
 ## The metric model
 
 Every metric lives under the `machine.*` `Stat` scope, created once in
-`MachineHandles` under `Stat.scope("machine")`
-(`shared/src/main/scala/kyo/stats/machine/MachineHandles.scala`).
+`MachineHandles` under the `Stat.initScope("machine")` root
+(`shared/src/main/scala/kyo/stats/machine/MachineHandles.scala:254`), with each
+family a `root.scope(...)` child.
 
 **The rate rule (the cumulative rides the histogram sum).** A per-second flow
 (cpu-time per mode, cgroup cpu-throttling, PSI stall time) is a single `.rate`
@@ -144,13 +145,15 @@ a retained `val` field for the sampler lifetime: the registry keys entries by
 `WeakReference`, so a handle constructed locally per tick, or a cell dropped
 from `val` to `def`, would compile cleanly while silently resetting the metric.
 
-cgroup v1/v2 detection and PSI are Linux-only: v2 unified is chosen iff
-`/sys/fs/cgroup/cgroup.controllers` exists (`LinuxCgroup.v2`,
-`shared/src/main/scala/kyo/stats/machine/LinuxCgroup.scala:26`), else v1
-legacy; the resolved process cgroup path is read from `/proc/self/cgroup`,
-not the hierarchy root (`LinuxCgroup.resolveV2Dir`/`resolveV1Dirs`,
-`LinuxCgroup.scala:92-108`), because v2 resource-control files exist only on
-non-root cgroups. System PSI (`/proc/pressure/*`) and cgroup v2 PSI (the
+cgroup v1/v2 detection and PSI are Linux-only. The cgroup filesystem root is
+resolved once from `/proc/self/mountinfo` (`LinuxCgroup.resolveV2Mount`,
+`shared/src/main/scala/kyo/stats/machine/LinuxCgroup.scala:25,89-90`), falling
+back to the conventional `/sys/fs/cgroup` only when mountinfo lists no cgroup2
+mount; v2 unified is then chosen iff `<root>/cgroup.controllers` exists
+(`LinuxCgroup.v2`, `LinuxCgroup.scala:26`), else v1 legacy. The resolved process
+cgroup path is read from `/proc/self/cgroup`, not the hierarchy root
+(`LinuxCgroup.resolveV2Dir`/`resolveV1Dirs`, `LinuxCgroup.scala:92-108`), because
+v2 resource-control files exist only on non-root cgroups. System PSI (`/proc/pressure/*`) and cgroup v2 PSI (the
 resolved dir's `*.pressure`) are recorded into two SEPARATE families through
 distinct retained decode callbacks, one set writing `h.systemPressure` and
 the other `h.cgroupPressure`, both invoked from the one `LinuxPressure.read`
@@ -245,11 +248,14 @@ impl catches to `Absent`.
   non-Windows Native build emits runtime stubs instead of a `@link("kernel32")`
   that would fail to link.
 
-Every binding uses raw `Buffer.get`/`Buffer.alloc` accessors for its
-out-params, never `StructLayout`: each syscall's wanted fields are
-hand-projected into a flat `Buffer[Long]`/`Buffer[Double]` scratch area (see
-`MacosBindings.hostCpuLoad`'s doc, `MacosBindings.scala:14`, and every
-`Machine` impl's `readCpu`/`readMemory`/etc.). Every out-buffer is RETAINED:
+Every reader hand-projects each syscall's wanted fields into a flat
+`Buffer[Long]`/`Buffer[Double]` scratch area, allocated with `Buffer.alloc` and
+read back through `Buffer`'s NON-generic `getLong`/`getDouble`/`setLong`
+accessors, never the generic `get`/`set` (which box every element through the
+`UnsafeLayout[A]` typeclass dispatch) and never `StructLayout` (see
+`MacosBindings.hostCpuLoad`'s doc, `MacosBindings.scala:14`; the
+non-generic-accessor rationale on `MachineMacos`, `MachineMacos.scala:13-16`;
+and every `Machine` impl's `readCpu`/`readMemory`/etc.). Every out-buffer is RETAINED:
 allocated exactly once, at reader construction (`MachineMacos.scala:21-24`,
 `MachineWindows.scala:20-23`), never per read, since `Buffer.alloc` opens a
 fresh memory arena per call. Each reader's `close()` method closes every
@@ -261,17 +267,20 @@ shared `MEMORYSTATUSEX` buffer's `dwLength` field before the one-per-tick
 filled buffer from a single syscall (`WindowsBindings.scala:88-91`).
 
 Every `AllowUnsafe.embrace.danger` import is scoped to the single field
-initializer that needs it, never the whole class body, and carries a
+initializer (or, in the one class-body case below, the single trailing init
+statement) that needs it, never the whole class body, and carries a
 `// Unsafe:` comment naming the specific bridge it opens: the disk fiber's
 in-flight guard flag, a single-owner `AtomicBoolean` (`MachineSampler.scala:33`);
 the module-init SPI activation boundary and the opt-out read
 (`MachineStatFactory.scala:27,37`); `LinuxDisk`'s retained `/proc/mounts` read
-handle, opened once at construction (`LinuxDisk.scala:28`); and every metric
+handle, opened once at construction (`LinuxDisk.scala:28`); every metric
 cell that owns its own unsafely-constructed field state, `RateCell`,
 `CounterCell`, `LongGaugeCell`, and `DoubleGaugeCell`, each of which builds an
-`AtomicLong.Unsafe.init` holder at construction
-(`MachineHandles.scala:84,100,146,178,199`); `LevelCell` carries no import of
-its own, since it holds only a plain `var` and observes through the
+`AtomicLong.Unsafe.init` holder in its field initializer
+(`MachineHandles.scala:100,146,178,199`); and the init-time core-count seed
+(`MachineHandles.scala:84`), the one class-body import, placed last so it covers
+only the trailing `cpuCores.set(coreCount)` statement. `LevelCell` carries no
+import of its own, since it holds only a plain `var` and observes through the
 capability its caller already supplies. `MachineSampler`'s companion object
 carries no `embrace.danger` import of its own: its two unsafe-tier helpers,
 `openSlot` and `fill`, each redeclare `(using AllowUnsafe)` on their own
@@ -295,7 +304,7 @@ An unavailable metric is `Absent`, NEVER a fake zero and NEVER a throw
   (`Path.ReadHandle.AbsentLong`, or `Double.NaN` for a fixed-point value) when
   the key is missing, the line is truncated, or the value is non-numeric, with
   no `String`, no `split`, and no exhaustive match to maintain
-  (`LinuxScan.scala:36-70`). The v1 memory-limit "unlimited" sentinel
+  (`LinuxScan.scala:36-72`). The v1 memory-limit "unlimited" sentinel
   (`>= 1L << 62`) routes to `Absent` rather than being recorded as a
   ~9.2e18-byte limit, through the package-private pure routing function
   `LinuxCgroup.limit` (`private[machine] def limit(v: Long): Long`), which the
@@ -305,8 +314,9 @@ An unavailable metric is `Absent`, NEVER a fake zero and NEVER a throw
   `cpu.full` series is ever registered (`LinuxPressure.scala:26,57-64`); a
   cgroup `cpu.stat` field this module has no cell for (a kernel that also
   reports `nr_bursts`/`burst_usec`/`burst_time`, for instance) is simply never
-  scanned for, since `decodeCpuStat` only looks up the four keys it has cells
-  for (`LinuxCgroup.scala:62-67,116-119`).
+  scanned for, since `decodeCpuStat` only looks up the three keys it has cells
+  for (`nr_periods`, `nr_throttled`, and the version-selected throttled field,
+  `LinuxCgroup.scala:62-67,116-119`).
 - **Per-OS binding-load failure degrades that whole OS's syscall-backed
   families uniformly**, never a partial throw: `MachineMacos.bindings` and
   `MachineWindows.bindings` catch a load failure (e.g. browser-JS with no
@@ -322,12 +332,12 @@ An unavailable metric is `Absent`, NEVER a fake zero and NEVER a throw
   set: `LinuxDisk.statvfsInto`, `MacosDisk.statfsInto`, and
   `WindowsDisk.diskFreeInto` each write NOTHING for the one failing mount
   (a non-zero return code or a caught `NonFatal` exception both fall through
-  to no cell write, `LinuxDisk.scala:210-220`) and the enumeration loop
+  to no cell write, `LinuxDisk.scala:212-222`) and the enumeration loop
   continues to the next store; an all-failing or all-filtered mount set
   yields no disk metrics at all, never a throw.
 - **An OS with no dedicated `Machine` impl** (`Machine.forOs`'s wildcard
   case) degrades to `NullMachine`, whose `read`/`readDisks`/`close` each write
-  nothing unconditionally (`Machine.scala:47-54`), never a throw at sampler
+  nothing unconditionally (`Machine.scala:48,54-57`), never a throw at sampler
   init.
 
 ## Unit scaling
@@ -367,8 +377,8 @@ above do.
   a per-OS binding subclass whose every method is a settable function field,
   defaulting to a failure code so an un-stubbed call surfaces as an obvious
   `Absent` rather than a silent success. Tests then call the REAL
-  `MachineWindows.readCpu`/`readMemoryAndSwap`/etc. against the stub (or, for
-  the shared byte-span primitives, `MachineLinux.jiffiesFromBinding`,
+  `MachineWindows.readCpu`/`readMemoryAndSwap`/etc. against the stub (or, for a
+  binding-driven production helper, `MachineLinux.jiffiesFromBinding`,
   `LinuxBindingsTest.scala:10-42`, and `LinuxDisk.statvfsInto`,
   `LinuxDiskTest.scala`), so the assertion exercises the actual production
   catch/scale/decode logic.

@@ -18,8 +18,9 @@ import kyo.stats.machine.MachineRegistrySnapshot
   * cumulative CPU counters via their retained baseline (`getLast()`), so reading the registry does not drain
   * the values a real exporter would later flush.
   *
-  * Run: `sbt 'kyo-stats-machineJVM/Test/runMain demo.MachineStatsDemoApp'`
+  * Run: `sbt 'kyo-stats-machineJVM/Test/runMain demo.MachineStatsDemoApp'` (prints `validation: OK`).
   * Opt-out run: `KYO_MACHINE_DISABLED=true sbt 'kyo-stats-machineJVM/Test/runMain demo.MachineStatsDemoApp'`
+  * suppresses auto-start, so it reports `validation FAILED` and exits non-zero by design, proving the lever.
   *
   * Demonstrates:
   *   - classpath-presence auto-load: touching `kyo.Stat` alone starts the host sampler, with no user API call
@@ -102,7 +103,7 @@ object MachineStatsDemo:
             Present("no machine.* metrics in the registry: auto-load did not start the sampler")
         else if r.memoryTotalBytes.isEmpty then
             Present("machine.memory.total absent: the sampler did not observe host memory")
-        // A real host reports more than 256 MiB of total RAM; the histogram max lands in a high byte bucket.
+        // A real host reports more than 256 MiB of total RAM; the memory.total gauge holds that byte count.
         else if r.memoryTotalBytes.exists(_ < 268435456.0) then
             Present(s"machine.memory.total implausibly small (${r.memoryTotalBytes}); expected > 256 MiB of real RAM")
         else if r.diskMounts.isEmpty then
@@ -124,9 +125,16 @@ object MachineStatsDemo:
         else Absent
     end validate
 
+    /** Raised by the runnable entry point when `validate` rejects the report, so the process exits non-zero
+      * and a CI job wired to the demo command fails on a real auto-load regression instead of exiting clean.
+      */
+    final class ValidationFailed(reason: String) extends Exception(reason)
+
 end MachineStatsDemo
 
-/** Runnable entry point. Prints the observed machine.* metrics and the validation verdict, then exits.
+/** Runnable entry point. Prints the observed machine.* metrics and the validation verdict; exits 0 when
+  * validation passes and non-zero (via [[MachineStatsDemo.ValidationFailed]]) when it does not, so a CI job
+  * wired to this command gates on a real auto-load regression.
   *
   * Auto-load is triggered by the flow's single `kyo.Stat` touch; the opt-out is read once at that touch, so
   * running under `KYO_MACHINE_DISABLED=true` yields an empty snapshot and a validation failure (the demo's
@@ -145,7 +153,11 @@ object MachineStatsDemoApp extends KyoApp:
             _ <- Console.printLine(s"PSI family present:    ${report.pressurePresent} (Linux-only)")
             _ <- MachineStatsDemo.validate(report) match
                 case Absent       => Console.printLine("\nvalidation: OK (auto-load fed real host metrics into kyo.Stat)")
-                case Present(msg) => Console.printLineErr(s"\nvalidation FAILED: $msg")
+                case Present(msg) =>
+                    // Fail the process, not just the print: a CI job running this command gates on the exit
+                    // code, so a real auto-load regression must exit non-zero rather than print and exit clean.
+                    Console.printLineErr(s"\nvalidation FAILED: $msg")
+                        .map(_ => Abort.fail(MachineStatsDemo.ValidationFailed(msg)))
         yield ()
     }
 end MachineStatsDemoApp

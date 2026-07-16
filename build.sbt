@@ -1133,12 +1133,21 @@ lazy val `kyo-stats-machine` =
             // module's OWN test runs so the once-per-second sampler does not race the suites' destructive
             // counter-drain assertions on the shared process-global machine.* handles; a test that needs a
             // sampler starts and stops its own explicitly (MachineStatFactoryTest, MachineHandlesTest).
-            Test / javaOptions += "-Dkyo.machine.disabled=true"
+            Test / javaOptions += "-Dkyo.machine.disabled=true",
+            // The run scope (shared by `run` and `runMain`) sheds that test-only opt-out so the demo
+            // entry point `Test/runMain demo.MachineStatsDemoApp` exercises the real classpath-presence
+            // auto-start. The test tasks keep the opt-out; only run/runMain drop it. A caller that exports
+            // KYO_MACHINE_DISABLED=true still suppresses auto-start for a demonstrated opt-out run, because
+            // the forked run JVM inherits the caller's environment and the env var takes read precedence.
+            Test / run / javaOptions := (Test / javaOptions).value.filterNot(_ == "-Dkyo.machine.disabled=true")
         )
         .nativeSettings(
             `native-settings`,
             // Disable the auto-started sampler for the module's own Native test runs (see the JVM note).
-            Test / envVars += "KYO_MACHINE_DISABLED" -> "true"
+            Test / envVars += "KYO_MACHINE_DISABLED" -> "true",
+            // The run scope sheds the test-only opt-out so a Native demo run exercises the real
+            // auto-start, mirroring the JVM run-scope carve-out above; the test tasks keep it.
+            Test / run / envVars := (Test / envVars).value - "KYO_MACHINE_DISABLED"
         )
         .jsSettings(
             `js-settings`,
