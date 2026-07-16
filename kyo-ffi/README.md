@@ -54,13 +54,14 @@ def useValue(value: Int): Unit   = ()
 
 # kyo-ffi
 
-Call C functions directly from Scala. kyo-ffi lets you define a Scala trait that mirrors a C API, and the build plugin generates all the platform-specific code to make the calls work on JVM, Scala Native, and Scala.js. The same Scala source compiles on all three platforms.
+Call C functions directly from Scala. kyo-ffi lets you define a Scala trait that mirrors a C API, and the build plugin generates all the platform-specific code to make the calls work on JVM, Scala Native, and Scala.js (both the JavaScript and the WebAssembly backends). The same Scala source compiles on all of them.
 
 | Platform | Mechanism |
 |----------|-----------|
 | JVM | [Java Panama](https://docs.oracle.com/en/java/javase/22/docs/api/java.base/java/lang/foreign/package-summary.html) (`java.lang.foreign`) |
 | Native | Scala Native [`@extern`](https://scala-native.org/en/stable/user/interop.html) |
 | JS | [koffi](https://koffi.dev) (Node only) |
+| Wasm | [koffi](https://koffi.dev) (Node only), the same Scala.js emitter path under `ModuleKind.ESModule` |
 
 The sbt plugin inspects your trait via TASTy, generates platform-specific implementations, compiles your C into a shared library, and packages everything into the JAR. No macros at call sites, no `MemorySegment` / `CString` / `Ptr` in user code. The only annotation is `@Ffi.blocking` for methods whose C implementation may block; everything else is expressed through types and structural patterns.
 

@@ -7,13 +7,18 @@ import scala.scalajs.js.annotation.*
 /** Thin Scala.js facade over the [koffi](https://koffi.dev) npm package. koffi is the runtime native-call dispatcher for the kyo-ffi JS
   * backend, a pure JS FFI alternative to N-API.
   *
-  * The `native`-marked `Koffi` object maps to the `koffi` module. Members mirror the real koffi API surface used by generated code and by
-  * user-facing helpers in [[KoffiFacade]]. Runtime correctness (semantics, out-param marshalling, callback lifetime) is validated only in
-  * the scripted integration tests against a real Node + koffi install; the tests in this module exercise only structural shape (no calls into
-  * koffi) so they are runnable without koffi installed.
+  * The `native`-marked `Koffi` object maps to the `koffi` module's `module.exports` via a DEFAULT import. koffi is a CommonJS native addon:
+  * under every module kind kyo-ffi links against (ESModule for its own js and wasm axes, CommonJS for consumers such as kyo-stats-machine),
+  * a default import binds `module.exports`, which carries koffi's members (`.load`, `.func`, `.version`, ...). A NAMESPACE import instead
+  * yields an empty binding under Node's ESModule→CommonJS interop, because `cjs-module-lexer` cannot statically detect koffi's
+  * imperatively-built exports, so `Koffi.version` and every method read as `undefined` at runtime. Members mirror the real koffi API surface
+  * used by generated code and by user-facing helpers
+  * in [[KoffiFacade]]. Runtime correctness (semantics, out-param marshalling, callback lifetime) is validated only in the scripted
+  * integration tests against a real Node + koffi install; the tests in this module exercise only structural shape (no calls into koffi) so
+  * they are runnable without koffi installed.
   */
 @js.native
-@JSImport("koffi", JSImport.Namespace)
+@JSImport("koffi", JSImport.Default)
 private[ffi] object Koffi extends js.Object:
 
     /** koffi 2.x helper that pins a JS value to a specific koffi type. Used for variadic call sites where each vararg must be typed at call

@@ -5,7 +5,6 @@ import kyo.ffi.Buffer
 import kyo.internal.BorrowOwner
 import kyo.internal.UnsafeBuffer
 import kyo.internal.UnsafeLayout
-import scala.scalajs.js
 import scala.scalajs.js.typedarray.ArrayBuffer
 import scala.scalajs.js.typedarray.Uint8Array
 
@@ -76,8 +75,7 @@ private[ffi] object BufferFactory extends BufferFactoryBase:
     private def mmapImpl(path: String, offset: Long, size: Long): Buffer[Byte] =
         // Unsafe: read the file region into a JS ArrayBuffer (not a true mmap on JS) and wrap it.
         import AllowUnsafe.embrace.danger
-        val fs         = js.Dynamic.global.require("fs")
-        val nodeBuffer = fs.readFileSync(path)
+        val nodeBuffer = NodeFs.readFileSync(path)
         val fileLength = nodeBuffer.length.asInstanceOf[Int]
         val start      = offset.toInt
         val end        = if size < 0 then fileLength else math.min(start + size.toInt, fileLength)

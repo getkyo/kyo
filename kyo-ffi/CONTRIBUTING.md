@@ -100,17 +100,26 @@ A change to any of these primitives updates this section.
 
 ## Cross-platform layout
 
-Source defaults to `shared/src`. A `jvm/`, `js/`, `native/`, or `jvm-native/` leaf
-is used only when a platform primitive has no cross-platform Kyo wrapper:
+Source defaults to `shared/src`. A `jvm/`, `js-wasm/`, `native/`, or `jvm-native/`
+leaf is used only when a platform primitive has no cross-platform Kyo wrapper:
 
 - `jvm/`: Panama (`MemorySegment`, `Arena`), `java.lang.ref.Cleaner` leak
   detection, JVM reflection (`FfiReflect`).
 - `native/`: Scala Native pointers, the sweep-based `NativeLeakDetector`.
-- `js/`: koffi async dispatch, `Uint8Array` buffers; the no-op
-  `GuardDrainSupport` (JS is single-threaded, nothing to park).
-- `jvm-native/`: JVM and Native SHARE, JS diverges. `GuardDrainSupport`/
+- `js-wasm/`: koffi async dispatch, `Uint8Array` buffers, the `node:fs` mmap
+  facade; the no-op `GuardDrainSupport` (single-threaded, nothing to park). Shared
+  by the JS and Wasm backends, both linked as `ModuleKind.ESModule` (the wasm
+  backend forces it; the js backend selects it to match, so `require` is absent on
+  both and the browser gate behaves identically). The koffi and node-builtin facades
+  are `@JSImport` module ids (`koffi`, `node:fs`) rather than a
+  `js.Dynamic.global.require`, which has no `require` global under ESM. koffi is
+  imported as a DEFAULT import, not a namespace import: a namespace import of the
+  CommonJS koffi addon yields an empty binding under Node's ESM interop. The same
+  facades also link under a CommonJS consumer (kyo-stats-machine's js axis), where
+  a default import of a CommonJS module likewise binds `module.exports`.
+- `jvm-native/`: JVM and Native SHARE, JS/Wasm diverge. `GuardDrainSupport`/
   `BlockingBridge` use `LockSupport.parkNanos` / carrier-thread parking, present on
-  JVM and Native but absent on JS. This is established kyo precedent (kyo-core,
+  JVM and Native but absent on JS/Wasm. This is established kyo precedent (kyo-core,
   kyo-data, kyo-net, kyo-scheduler all use `jvm-native/`).
 
 ## Config is a compile-time TASTy literal

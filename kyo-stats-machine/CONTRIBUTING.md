@@ -35,7 +35,7 @@ cross-platform kyo primitives" (`Machine.scala:15-16`).
 The ONLY per-platform Scala leaves in the whole module are the two files the
 auto-registration mechanism genuinely requires:
 
-- `js/src/main/scala/kyo/stats/machine/MachineRegistration.scala` (JS/Wasm
+- `js-wasm/src/main/scala/kyo/stats/machine/MachineRegistration.scala` (JS/Wasm
   `@JSExportTopLevel` registration; JVM/Native use classpath
   `META-INF/services` discovery instead, so they need no such file).
 - `jvm/src/test/scala/kyo/stats/machine/MachineSamplerJvmTest.scala` (a
@@ -44,7 +44,7 @@ auto-registration mechanism genuinely requires:
 
 Everything else, including all three `Machine` impls, every decoder, the
 sampler, the handle set, and every per-OS FFI binding trait, is
-`shared/src/main`. A change that adds a `jvm/`, `js/`, or `native/` leaf
+`shared/src/main`. A change that adds a `jvm/`, `js-wasm/`, or `native/` leaf
 outside those two exceptions is very likely the wrong shape: reach for
 `kyo.Path` and a kyo-ffi binding first.
 

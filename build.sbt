@@ -445,6 +445,7 @@ lazy val kyoWasm = project
         `kyo-schema`.wasm,
         `kyo-scheduler`.wasm,
         `kyo-core`.wasm,
+        `kyo-ffi`.wasm,
         `kyo-direct`.wasm,
         `kyo-stm`.wasm,
         `kyo-combinators`.wasm,
@@ -458,6 +459,7 @@ lazy val kyoWasm = project
         `kyo-compat-zio`.wasm,
         `kyo-http`.wasm,
         `kyo-stats-otlp`.wasm,
+        `kyo-stats-machine`.wasm,
         `kyo-flow`.wasm,
         `kyo-ai`.wasm,
         `kyo-jsonrpc`.wasm,
@@ -703,7 +705,7 @@ lazy val `kyo-offheap` =
         )
 
 lazy val `kyo-ffi` =
-    crossProject(JSPlatform, JVMPlatform, NativePlatform)
+    crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
         .crossType(CrossType.Full)
         .in(file("kyo-ffi"))
         .dependsOn(`kyo-core`)
@@ -725,7 +727,16 @@ lazy val `kyo-ffi` =
                 CallbackShapesGen.generate((Compile / sourceManaged).value)
             }.taskValue
         )
-        .jsSettings(`js-settings`)
+        .jsSettings(
+            `js-settings`,
+            // koffi and the node:fs mmap facade are @JSImport modules, so the JS backend needs a module kind
+            // (the default NoModule cannot link an @JSImport). Use ESModule to match the wasm backend: under a
+            // CommonJS module Node keeps `require` module-scoped, which the browser-gate reads (and its
+            // BrowserDetectionTest simulation) cannot observe, whereas ESModule has no `require` and the gate
+            // behaves identically to the wasm axis.
+            scalaJSLinkerConfig ~= { _.withModuleKind(ModuleKind.ESModule) }
+        )
+        .wasmSettings(`wasm-settings`)
 
 // Declared at top level so the key resolves in the crossProject's native sub-project scope.
 lazy val buildKyoItBundled =
@@ -1104,7 +1115,7 @@ lazy val `kyo-config` =
         .wasmSettings(`wasm-settings`)
 
 lazy val `kyo-stats-machine` =
-    crossProject(JVMPlatform, JSPlatform, NativePlatform)
+    crossProject(JVMPlatform, JSPlatform, NativePlatform, WasmPlatform)
         .crossType(CrossType.Full)
         .in(file("kyo-stats-machine"))
         .enablePlugins(KyoFfiPlugin)
@@ -1153,6 +1164,23 @@ lazy val `kyo-stats-machine` =
             // The CommonJS linker setting above stays in this .jsSettings block: the plugin is a Scala 2.12
             // sbt plugin with no sbt-scalajs dependency, so it cannot carry a scalaJSLinkerConfig setting.
             ffiKoffiJsBootstrap("kyo-stats-machine-js-test")
+        )
+        .wasmSettings(
+            `wasm-settings`,
+            // Disable the auto-started sampler for the module's own wasm test runs (see the JVM note); the
+            // opt-out is read via System.Unsafe.env, which resolves process.env on Node. The wasm backend
+            // forces ESModule, so the CommonJSModule linker line from .jsSettings is intentionally not
+            // repeated here; the Test / jsEnv override fully replaces wasm-settings' jsEnv, so it re-adds
+            // --experimental-wasm-exnref (the flag Node needs to load the WasmGC module).
+            Test / jsEnv := new NodeJSEnv(
+                NodeJSEnv.Config()
+                    .withArgs(List(
+                        "--max_old_space_size=5120",
+                        "--experimental-wasm-exnref"
+                    ))
+                    .withEnv(Map("KYO_MACHINE_DISABLED" -> "true"))
+            ),
+            ffiKoffiJsBootstrap("kyo-stats-machine-wasm-test")
         )
 
 lazy val `kyo-stats-otlp` =
