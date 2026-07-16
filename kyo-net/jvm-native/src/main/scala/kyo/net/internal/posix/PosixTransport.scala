@@ -194,7 +194,11 @@ final private[net] class PosixTransport private[posix] (
             Fiber.Unsafe.init {
                 val handle           = PosixHandle.stdio(PosixHandle.DefaultReadBufferSize)
                 val conn: Connection = openWith(handle, selectDriver(handle.readFd))
-                conn.start()
+                if !conn.start() then
+                    // Unreachable: openWith (:211-217) registers the connection nowhere a concurrent close could reach before start() runs
+                    // immediately above, so the Created -> Established CAS cannot lose here. Defensive assertion, not a reachable path.
+                    throw new IllegalStateException("stdio connection start lost its CAS immediately after construction")
+                end if
                 conn
             }.asInstanceOf[Fiber.Unsafe[Connection, Abort[NetException]]]
 
@@ -641,10 +645,14 @@ final private[net] class PosixTransport private[posix] (
         // (loopback delivers the final handshake flight and the first data together). That plaintext is in the engine buffer, NOT the socket, so
         // the ReadPump's socket-readiness read would never fire for it. Deliver it into inbound before starting the pumps so it is not stranded.
         deliverHandshakePlaintext(handle, connection.inbound)
-        connection.start()
-        if !promise.complete(Result.succeed(connection)) then
-            // The connect was interrupted before delivery: nobody will use this connection, so close it.
-            connection.close()
+        if connection.start() then
+            if !promise.complete(Result.succeed(connection)) then
+                // The connect was interrupted before delivery: nobody will use this connection, so close it.
+                connection.close()
+        else
+            // The connection raced to a terminal/Upgrading state before start (a close won); it must not be handed out as open.
+            promise.completeDiscard(Result.fail(NetConnectionClosedException("start")))
+        end if
     end completeConnect
 
     /** Drain any application plaintext the TLS handshake already decrypted into the engine buffer, delivering it into `inbound` before the pumps
@@ -1122,14 +1130,19 @@ final private[net] class PosixTransport private[posix] (
         // Deliver any application plaintext the server handshake already decrypted (the client's first record may have arrived with the final
         // handshake flight) before the pumps start, so it is not stranded in the engine awaiting a socket read that never comes.
         deliverHandshakePlaintext(connection.handle, connection.inbound)
-        connection.start()
-        discard(Fiber.Unsafe.init {
-            // Contain ANY throw from the user handler (not just NonFatal): a throw must never escape to the carrier, abort the process, or stall
-            // the accept loop. On Scala Native an exception that unwinds out of the carrier can abort via the libunwind compact-unwind walk, so the
-            // containment is mandatory on every platform, including for the fatal/control throwables NonFatal would let through.
-            try handler(connection)
-            catch case e: Throwable => Log.live.unsafe.error("listen handler panic", e)
-        })
+        if connection.start() then
+            discard(Fiber.Unsafe.init {
+                // Contain ANY throw from the user handler (not just NonFatal): a throw must never escape to the carrier, abort the process, or stall
+                // the accept loop. On Scala Native an exception that unwinds out of the carrier can abort via the libunwind compact-unwind walk, so the
+                // containment is mandatory on every platform, including for the fatal/control throwables NonFatal would let through.
+                try handler(connection)
+                catch case e: Throwable => Log.live.unsafe.error("listen handler panic", e)
+            })
+        else
+            // The connection raced to a terminal/Upgrading state before start (the transport's close swept it, or a detach won);
+            // it is not usable, so the handler is never spawned.
+            Log.live.unsafe.info(s"PosixTransport accepted connection closed before start; handler not spawned")
+        end if
     end spawnHandler
 
     /** Shut the transport down: close every still-open connection, then every live listener (so the driver completes each pending accept promise
@@ -1532,8 +1545,13 @@ final private[net] class PosixTransport private[posix] (
                                     // the blocking variant). The ordering invariant instead lives entirely in IoUringDriver.awaitRead/submitRecv: the
                                     // new ReadPump's first recv arm QUEUES behind a still-in-flight orphan (PosixHandle.queuedRecv) rather than racing
                                     // it for the same staging buffer, and fires the moment that orphan's CQE reaps -- non-blocking, no fiber parked.
-                                    upgraded.start()
-                                    out.completeDiscard(Result.succeed(upgraded: Connection))
+                                    if upgraded.start() then
+                                        out.completeDiscard(Result.succeed(upgraded: Connection))
+                                    else
+                                        // The upgraded connection raced to a terminal/Upgrading state before start (a close won); it must not be
+                                        // handed out as open.
+                                        out.completeDiscard(Result.fail(NetConnectionClosedException("start")))
+                                    end if
                                 end if
                             ,
                             onFailed = cause =>

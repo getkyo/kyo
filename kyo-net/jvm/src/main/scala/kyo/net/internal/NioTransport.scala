@@ -19,6 +19,7 @@ import kyo.net.Listener as NetListener
 import kyo.net.NetAddress
 import kyo.net.NetBindException
 import kyo.net.NetConnectException
+import kyo.net.NetConnectionClosedException
 import kyo.net.NetConnectTimeoutException
 import kyo.net.NetDnsResolutionException
 import kyo.net.NetException
@@ -240,11 +241,15 @@ final private[kyo] class NioTransport private (
         // Deliver any application plaintext the handshake decrypted during a STARTTLS upgrade (peer data coalesced with its final flight) BEFORE
         // the pumps start, so it precedes anything the ReadPump reads next. A no-op for a fresh handshake (nothing captured).
         deliverUpgradeAppData(handle, connection.inbound)
-        connection.start()
-        val completed = promise.complete(Result.succeed(connection))
-        if !completed then
-            // Promise was already interrupted: nobody will use this connection, close it
-            connection.close()
+        if connection.start() then
+            val completed = promise.complete(Result.succeed(connection))
+            if !completed then
+                // Promise was already interrupted: nobody will use this connection, close it
+                connection.close()
+            end if
+        else
+            // The connection raced to a terminal/Upgrading state before start (a close won); it must not be handed out as open.
+            promise.completeDiscard(Result.fail(NetConnectionClosedException("start")))
         end if
     end completeConnect
 
@@ -358,16 +363,20 @@ final private[kyo] class NioTransport private (
                     // Cache the cert hash once here (pre-start, engine quiescent); a live read would race the Selector's engine ops (see completeConnect).
                     val cachedCertHash = NioTransport.serverCertificateHash(handle)
                     connection.certHashFn = Present(() => if connection.isOpen then cachedCertHash else Absent)
-                    connection.start()
-
-                    // Spawn the handler in its own carrier fiber. The connection lifecycle is managed by its pumps;
-                    // the handler is fire-and-forget. A throw from the handler is logged and does not propagate here.
-                    discard(Fiber.Unsafe.init {
-                        // Contain ANY throw from the user handler (not just NonFatal): a throw must never escape to the carrier, abort the process,
-                        // or stall the accept loop. Uniform with the posix and node backends.
-                        try handler(connection)
-                        catch case e: Throwable => Log.live.unsafe.error(s"Connection handler panic", e)
-                    })
+                    if connection.start() then
+                        // Spawn the handler in its own carrier fiber. The connection lifecycle is managed by its pumps;
+                        // the handler is fire-and-forget. A throw from the handler is logged and does not propagate here.
+                        discard(Fiber.Unsafe.init {
+                            // Contain ANY throw from the user handler (not just NonFatal): a throw must never escape to the carrier, abort the process,
+                            // or stall the accept loop. Uniform with the posix and node backends.
+                            try handler(connection)
+                            catch case e: Throwable => Log.live.unsafe.error(s"Connection handler panic", e)
+                        })
+                    else
+                        // The connection raced to a terminal/Upgrading state before start (the transport's close swept it, or a detach won);
+                        // it is not usable, so the handler is never spawned.
+                        Log.live.unsafe.info(s"NioTransport accepted connection closed before start; handler not spawned")
+                    end if
                     true   // accepted one, try again
                 else false // no more pending
                 end if

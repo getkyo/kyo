@@ -20,14 +20,16 @@ class ConnectionStateTest extends Test:
     final private class SpyDriver extends IoDriver[Unit]:
         val cancelCount      = AtomicInt.Unsafe.init(0)
         val closeHandleCount = AtomicInt.Unsafe.init(0)
+        val awaitReadCount   = AtomicInt.Unsafe.init(0)
 
         def start()(using AllowUnsafe, Frame): Fiber.Unsafe[Unit, Any] =
             Promise.Unsafe.init[Unit, Any]().asInstanceOf[Fiber.Unsafe[Unit, Any]]
-        def awaitRead(handle: Unit, promise: Promise.Unsafe[ReadOutcome, Abort[Closed]])(using AllowUnsafe, Frame): Unit = ()
-        def awaitWritable(handle: Unit, promise: Promise.Unsafe[Unit, Abort[Closed]])(using AllowUnsafe, Frame): Unit    = ()
-        def awaitConnect(handle: Unit, promise: Promise.Unsafe[Unit, Abort[Closed]])(using AllowUnsafe, Frame): Unit     = ()
-        def awaitAccept(handle: Unit, promise: Promise.Unsafe[Int, Abort[Closed]])(using AllowUnsafe, Frame): Unit       = ()
-        def write(handle: Unit, data: Span[Byte], offset: Int)(using AllowUnsafe): WriteResult                           = WriteResult.Done
+        def awaitRead(handle: Unit, promise: Promise.Unsafe[ReadOutcome, Abort[Closed]])(using AllowUnsafe, Frame): Unit =
+            discard(awaitReadCount.incrementAndGet())
+        def awaitWritable(handle: Unit, promise: Promise.Unsafe[Unit, Abort[Closed]])(using AllowUnsafe, Frame): Unit = ()
+        def awaitConnect(handle: Unit, promise: Promise.Unsafe[Unit, Abort[Closed]])(using AllowUnsafe, Frame): Unit  = ()
+        def awaitAccept(handle: Unit, promise: Promise.Unsafe[Int, Abort[Closed]])(using AllowUnsafe, Frame): Unit    = ()
+        def write(handle: Unit, data: Span[Byte], offset: Int)(using AllowUnsafe): WriteResult                        = WriteResult.Done
         def cancel(handle: Unit)(using AllowUnsafe, Frame): Unit      = discard(cancelCount.incrementAndGet())
         def closeHandle(handle: Unit)(using AllowUnsafe, Frame): Unit = discard(closeHandleCount.incrementAndGet())
         def close()(using AllowUnsafe, Frame): Unit                   = ()
@@ -95,6 +97,37 @@ class ConnectionStateTest extends Test:
             assert(result.isEmpty, s"detachForUpgrade after close must return Absent, got $result")
             // No second teardown: closeHandle count is exactly 1 from the close() path.
             assert(spy.closeHandleCount.get() == 1, s"closeHandle must be called exactly once, got ${spy.closeHandleCount.get()}")
+        }
+    }
+
+    "start-loses-cas-when-close-wins-first" in {
+        // A close before start wins the Created -> Closing CAS, so start()'s own Created -> Established CAS is lost.
+        // No latch is needed: close() and start() are both synchronous, non-suspending calls, so calling them in sequence on the same
+        // carrier deterministically orders the close before the start, the same sequential-CAS shape as close-then-detach-loses-cas above.
+        val spy  = new SpyDriver
+        val conn = Connection.init[Unit]((), spy, 1)
+        Sync.defer {
+            conn.close()
+            val started = conn.start()
+            assert(!started, "start() must return false when a close already won the Created -> Established CAS")
+            assert(
+                spy.awaitReadCount.get() == 0,
+                s"the read pump must not start after a lost CAS, got ${spy.awaitReadCount.get()} awaitRead calls"
+            )
+        }
+    }
+
+    "start-wins-cas-on-the-uncontested-happy-path" in {
+        // Paired with the leaf above: with nothing racing, start() wins the CAS, returns true, and the read pump registers its first read.
+        val spy  = new SpyDriver
+        val conn = Connection.init[Unit]((), spy, 1)
+        Sync.defer {
+            val started = conn.start()
+            assert(started, "start() must return true when it wins the Created -> Established CAS")
+            assert(
+                spy.awaitReadCount.get() == 1,
+                s"the read pump must start exactly once, got ${spy.awaitReadCount.get()} awaitRead calls"
+            )
         }
     }
 

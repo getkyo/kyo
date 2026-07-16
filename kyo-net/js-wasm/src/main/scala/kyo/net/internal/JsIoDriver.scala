@@ -50,7 +50,7 @@ final private[kyo] class JsIoDriver private (
         if handle.socket.destroyed.asInstanceOf[Boolean] then
             promise.completeDiscard(Result.fail(Closed(label, summon[Frame], s"socket destroyed")))
         else
-            handle.pendingRead = promise
+            handle.pendingRead = Present(promise)
             // If there's leftover data from a previous oversized chunk, deliver it immediately
             if handle.hasLeftover then
                 deliverLeftover(handle)
@@ -121,12 +121,13 @@ final private[kyo] class JsIoDriver private (
 
     def cancel(handle: JsHandle)(using AllowUnsafe, Frame): Unit =
         discard(handle.socket.pause())
-        val closed  = Closed(label, summon[Frame], s"${handleLabel(handle)} canceled")
-        val pending = handle.pendingRead
-        if !isNull(pending) then
-            pending.nn.completeDiscard(Result.fail(closed))
-            handle.clearPendingRead()
-        end if
+        val closed = Closed(label, summon[Frame], s"${handleLabel(handle)} canceled")
+        handle.pendingRead match
+            case Present(pending) =>
+                pending.completeDiscard(Result.fail(closed))
+                handle.clearPendingRead()
+            case Absent => ()
+        end match
     end cancel
 
     def closeHandle(handle: JsHandle)(using AllowUnsafe, Frame): Unit =
@@ -142,19 +143,23 @@ final private[kyo] class JsIoDriver private (
     end close
 
     private def deliverLeftover(handle: JsHandle)(using AllowUnsafe): Unit =
-        val (leftoverBuf, leftoverOff, leftoverLen) = handle.leftover
-        val arr =
-            if leftoverOff == 0 && leftoverLen == leftoverBuf.length then
-                // Whole-array leftover: transfer ownership directly without copying.
-                leftoverBuf
-            else
-                java.util.Arrays.copyOfRange(leftoverBuf, leftoverOff, leftoverOff + leftoverLen)
-        handle.clearLeftover()
-        val pending = handle.pendingRead
-        if !isNull(pending) then
-            handle.clearPendingRead()
-            pending.nn.completeDiscard(Result.succeed(ReadOutcome.Bytes(Span.fromUnsafe(arr))))
-        end if
+        handle.leftover match
+            case Present(JsHandle.Leftover(buf, off, len)) =>
+                val arr =
+                    if off == 0 && len == buf.length then
+                        // Whole-array leftover: transfer ownership directly without copying.
+                        buf
+                    else
+                        java.util.Arrays.copyOfRange(buf, off, off + len)
+                handle.clearLeftover()
+                handle.pendingRead match
+                    case Present(pending) =>
+                        handle.clearPendingRead()
+                        pending.completeDiscard(Result.succeed(ReadOutcome.Bytes(Span.fromUnsafe(arr))))
+                    case Absent => ()
+                end match
+            case Absent => ()
+        end match
     end deliverLeftover
 
     private def toNodeBuffer(span: Span[Byte], offset: Int): js.Dynamic =

@@ -45,8 +45,11 @@ abstract class Connection:
       */
     def detachForUpgrade()(using AllowUnsafe, Frame): Maybe[Chunk[Span[Byte]]]
 
-    /** Start the connection. Begins pumping data between socket and channels. Called by Transport after creating the connection. */
-    private[net] def start()(using AllowUnsafe, Frame): Unit
+    /** Start the connection. Begins pumping data between socket and channels. Called by Transport after creating the connection. Returns true
+      * when the Created -> Established CAS won and the pumps started; false when the connection had already raced to a terminal or Upgrading
+      * state before start (a close or detachForUpgrade racing start), in which case the caller must not hand it out as open.
+      */
+    private[net] def start()(using AllowUnsafe, Frame): Boolean
 
     /** Returns the SHA-256 hash of the server's leaf certificate DER bytes (RFC 5929 tls-server-end-point), or Absent if the connection is
       * not TLS, has no peer certificate, or is already closed.
@@ -101,7 +104,7 @@ object Connection:
 
     /** Internal marker trait for connections that support post-connect TLS upgrade. */
     private[net] trait UpgradableConnection extends Connection:
-        private[net] def doUpgradeToTls(tls: NetTlsConfig, frame: Frame): Fiber.Unsafe[Connection, Abort[NetException]]
+        private[net] def doUpgradeToTls(tls: NetTlsConfig, frame: Frame)(using AllowUnsafe): Fiber.Unsafe[Connection, Abort[NetException]]
     end UpgradableConnection
 
 end Connection

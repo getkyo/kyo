@@ -92,7 +92,7 @@ private[kyo] object NioStdioConnection:
             def close()(using AllowUnsafe, Frame): Unit                                = closeConnection()
             private[kyo] def onClosing: Fiber.Unsafe[Unit, Any]                        = closingPromise
             def detachForUpgrade()(using AllowUnsafe, Frame): Maybe[Chunk[Span[Byte]]] = Absent // not upgradable: no driver or socket
-            private[net] def start()(using AllowUnsafe, Frame): Unit                   = ()     // pumps already started at open
+            private[net] def start()(using AllowUnsafe, Frame): Boolean                = true   // pumps already started at open
             // Plaintext, driverless connection: no peer certificate to hash and no close_notify exchange to observe.
             def serverCertificateHash: Maybe[Span[Byte]] = Absent
             def closeReason: NetConnection.CloseReason   = NetConnection.CloseReason.Active

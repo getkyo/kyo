@@ -6,6 +6,7 @@ import kyo.net.Listener as NetListener
 import kyo.net.NetAddress
 import kyo.net.NetBindException
 import kyo.net.NetConnectException
+import kyo.net.NetConnectionClosedException
 import kyo.net.NetConnectTimeoutException
 import kyo.net.NetDnsResolutionException
 import kyo.net.NetException
@@ -333,8 +334,12 @@ final private[kyo] class JsTransport private (
                 // record layer away: empirically (Node v23) a clean close (close_notify then FIN) and a truncation (bare FIN, no close_notify)
                 // surface as the identical `end` + `close(hadError=false)` events, and no public or stable-private signal distinguishes them. So
                 // the truncation distinction cannot be reported on the Node backend; this is a validated platform exception, not a missing wiring.
-                connection.start()
-                promise.completeDiscard(Result.succeed(connection))
+                if connection.start() then
+                    promise.completeDiscard(Result.succeed(connection))
+                else
+                    // The connection raced to a terminal/Upgrading state before start (a close won); it must not be handed out as open.
+                    promise.completeDiscard(Result.fail(NetConnectionClosedException("start")))
+                end if
             }: js.Function0[Unit]
         ))
 
@@ -402,17 +407,20 @@ final private[kyo] class JsTransport private (
                     given Frame = frame
                     upgradeToTls(connection, tls, channelCapacity)
                 }
-                connection.start()
-
-                // Spawn the handler in its own carrier fiber. The connection lifecycle is managed by its pumps.
-                // The handler is fire-and-forget; a throw from the handler is logged and does not propagate here.
-                discard(Fiber.Unsafe.init {
-                    // Contain ANY throw from the user handler (not just NonFatal): a throw must never escape to the carrier, abort the process, or
-                    // stall the accept loop. The containment is uniform across all backends (posix, NIO, node) so a throwing handler is a single
-                    // contained-connection event everywhere, never a process-level fault.
-                    try handler(connection)
-                    catch case e: Throwable => Log.live.unsafe.error(s"Connection handler panic", e)
-                })
+                if connection.start() then
+                    // Spawn the handler in its own carrier fiber. The connection lifecycle is managed by its pumps.
+                    // The handler is fire-and-forget; a throw from the handler is logged and does not propagate here.
+                    discard(Fiber.Unsafe.init {
+                        // Contain ANY throw from the user handler (not just NonFatal): a throw must never escape to the carrier, abort the process, or
+                        // stall the accept loop. The containment is uniform across all backends (posix, NIO, node) so a throwing handler is a single
+                        // contained-connection event everywhere, never a process-level fault.
+                        try handler(connection)
+                        catch case e: Throwable => Log.live.unsafe.error(s"Connection handler panic", e)
+                    })
+                else
+                    // The connection raced to a terminal/Upgrading state before start (a close won); it is not usable, so the handler is never spawned.
+                    Log.live.unsafe.info(s"JsTransport accepted connection closed before start; handler not spawned")
+                end if
             }: js.Function1[js.Dynamic, Unit]
         ))
 
@@ -461,8 +469,12 @@ final private[kyo] class JsTransport private (
                     given Frame = frame
                     upgradeToTls(connection, tls, channelCapacity)
                 }
-                connection.start()
-                promise.completeDiscard(Result.succeed(connection))
+                if connection.start() then
+                    promise.completeDiscard(Result.succeed(connection))
+                else
+                    // The connection raced to a terminal/Upgrading state before start (a close won); it must not be handed out as open.
+                    promise.completeDiscard(Result.fail(NetConnectionClosedException("start")))
+                end if
             }: js.Function0[Unit]
         ))
 
@@ -489,8 +501,14 @@ final private[kyo] class JsTransport private (
             val shim       = stdioShim()
             val handle     = JsHandle.init(shim, driver)
             val connection = Connection.init(handle, driver, channelCapacity)
-            connection.start()
-            Fiber.Unsafe.fromResult(Result.succeed(connection: NetConnection))
+            if connection.start() then
+                Fiber.Unsafe.fromResult(Result.succeed(connection: NetConnection))
+            else
+                // Unreachable: Connection.init registers nothing a concurrent close could reach before start() runs immediately above.
+                // Surfaced as a typed failure (not a Panic) since the return type already supports it and the shape here is eager/synchronous,
+                // unlike the deferred PosixTransport.stdio() (see PosixTransport.scala:197 above).
+                Fiber.Unsafe.fromResult(Result.fail(NetConnectionClosedException("start")))
+            end if
     end stdio
 
     /** Build the stdin/stdout duplex shim. The readable side (`on`, `pause`, `resume`) delegates to `process.stdin`; the writable side
@@ -569,16 +587,19 @@ final private[kyo] class JsTransport private (
                     given Frame = frame
                     upgradeToTls(connection, tls, channelCapacity)
                 }
-                connection.start()
-
-                // Spawn the handler in its own carrier fiber. Fire-and-forget; a throw is logged and does not propagate.
-                discard(Fiber.Unsafe.init {
-                    // Contain ANY throw from the user handler (not just NonFatal): a throw must never escape to the carrier, abort the process, or
-                    // stall the accept loop. The containment is uniform across all backends (posix, NIO, node) so a throwing handler is a single
-                    // contained-connection event everywhere, never a process-level fault.
-                    try handler(connection)
-                    catch case e: Throwable => Log.live.unsafe.error(s"Connection handler panic", e)
-                })
+                if connection.start() then
+                    // Spawn the handler in its own carrier fiber. Fire-and-forget; a throw is logged and does not propagate.
+                    discard(Fiber.Unsafe.init {
+                        // Contain ANY throw from the user handler (not just NonFatal): a throw must never escape to the carrier, abort the process, or
+                        // stall the accept loop. The containment is uniform across all backends (posix, NIO, node) so a throwing handler is a single
+                        // contained-connection event everywhere, never a process-level fault.
+                        try handler(connection)
+                        catch case e: Throwable => Log.live.unsafe.error(s"Connection handler panic", e)
+                    })
+                else
+                    // The connection raced to a terminal/Upgrading state before start (a close won); it is not usable, so the handler is never spawned.
+                    Log.live.unsafe.info(s"JsTransport accepted connection closed before start; handler not spawned")
+                end if
             }: js.Function1[js.Dynamic, Unit]
         ))
 
@@ -765,8 +786,12 @@ final private[kyo] class JsTransport private (
                 // Install certHashFn so SCRAM-PLUS channel binding (RFC 5929
                 // tls-server-end-point) can read the peer-cert SHA-256.
                 installCertHashFn(newConn, tlsSocket)
-                newConn.start()
-                promise.completeDiscard(Result.succeed(newConn))
+                if newConn.start() then
+                    promise.completeDiscard(Result.succeed(newConn))
+                else
+                    // The upgraded connection raced to a terminal/Upgrading state before start (a close won); it must not be handed out as open.
+                    promise.completeDiscard(Result.fail(NetConnectionClosedException("start")))
+                end if
             }: js.Function0[Unit]
         ))
 

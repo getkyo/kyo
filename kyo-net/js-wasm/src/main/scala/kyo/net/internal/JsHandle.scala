@@ -3,51 +3,43 @@ package kyo.net.internal
 import kyo.*
 import kyo.net.internal.transport.*
 import kyo.net.internal.util.HandleId
-import scala.compiletime.uninitialized
 import scala.scalajs.js
 
 /** Connection handle for `JsIoDriver`, wrapping a paused Node.js socket.
   *
   * Mutable state (`pendingRead`, leftover fields) is safe because JavaScript is single-threaded and the driver never accesses a handle from
-  * concurrent callbacks. `pendingRead` holds at most one outstanding read promise; once satisfied it is nulled out to avoid
-  * double-delivery.
+  * concurrent callbacks. `pendingRead` holds at most one outstanding read promise; once satisfied it is cleared to avoid double-delivery.
   *
   * Leftover bytes are stored when a `"data"` chunk arrives before `awaitRead` has been called (or when a chunk contains more data than the
   * pending read can consume). They are delivered on the next `awaitRead` call without resuming the socket.
   */
 final private[kyo] class JsHandle private[kyo] (val socket: js.Dynamic, val id: HandleId):
-    // Pending read promise (at most one). Null when no read is pending.
-    var pendingRead: Promise.Unsafe[ReadOutcome, Abort[Closed]] = uninitialized
+    // Pending read promise (at most one). Absent when no read is pending.
+    var pendingRead: Maybe[Promise.Unsafe[ReadOutcome, Abort[Closed]]] = Absent
 
     // Leftover bytes from an oversized chunk
-    private var leftoverBuf: Array[Byte] = uninitialized
-    private var leftoverOff: Int         = 0
-    private var leftoverLen: Int         = 0
+    private var leftoverState: Maybe[JsHandle.Leftover] = Absent
 
-    def hasLeftover: Boolean = !isNull(leftoverBuf)
+    def hasLeftover: Boolean = leftoverState.isDefined
 
-    def leftover: (Array[Byte], Int, Int) =
-        (leftoverBuf, leftoverOff, leftoverLen)
+    def leftover: Maybe[JsHandle.Leftover] = leftoverState
 
     def setLeftover(buf: Array[Byte], off: Int, len: Int): Unit =
-        leftoverBuf = buf
-        leftoverOff = off
-        leftoverLen = len
-    end setLeftover
+        leftoverState = Present(JsHandle.Leftover(buf, off, len))
 
     def clearLeftover(): Unit =
-        leftoverBuf = null.asInstanceOf[Array[Byte]]
-        leftoverOff = 0
-        leftoverLen = 0
-    end clearLeftover
+        leftoverState = Absent
 
     def clearPendingRead(): Unit =
-        pendingRead = null.asInstanceOf[Promise.Unsafe[ReadOutcome, Abort[Closed]]]
+        pendingRead = Absent
 
 end JsHandle
 
 /** Factory for `JsHandle`. Registers permanent event listeners on the Node.js socket. */
 private[kyo] object JsHandle:
+
+    /** An oversized chunk's undelivered tail: `buf` sliced `[off, off + len)`. */
+    private[kyo] case class Leftover(buf: Array[Byte], off: Int, len: Int)
 
     /** Create a `JsHandle` from a connected, paused Node.js socket and attach permanent `data`, `end`, `close`, and `error` listeners. */
     def init(socket: js.Dynamic, driver: IoDriver[JsHandle])(using AllowUnsafe, Frame): JsHandle =
@@ -62,35 +54,35 @@ private[kyo] object JsHandle:
                 val nodeBuffer = chunk.asInstanceOf[js.typedarray.Uint8Array]
                 val arr        = copyFromNodeBuffer(nodeBuffer, nodeBuffer.length)
 
-                val pending = handle.pendingRead
-                if !isNull(pending) then
-                    handle.clearPendingRead()
-                    pending.nn.completeDiscard(Result.succeed(ReadOutcome.Bytes(Span.fromUnsafe(arr))))
-                else
-                    // No pending read: store as leftover
-                    handle.setLeftover(arr, 0, arr.length)
-                end if
+                handle.pendingRead match
+                    case Present(pending) =>
+                        handle.clearPendingRead()
+                        pending.completeDiscard(Result.succeed(ReadOutcome.Bytes(Span.fromUnsafe(arr))))
+                    case Absent =>
+                        // No pending read: store as leftover
+                        handle.setLeftover(arr, 0, arr.length)
+                end match
             }: js.Function1[js.Dynamic, Unit]
         ))
 
         // EOF/close/error listeners
         val signalEof: js.Function0[Unit] = () =>
-            val pending = handle.pendingRead
-            if !isNull(pending) then
-                handle.clearPendingRead()
-                pending.nn.completeDiscard(Result.succeed(ReadOutcome.PeerFin))
-            end if
+            handle.pendingRead match
+                case Present(pending) =>
+                    handle.clearPendingRead()
+                    pending.completeDiscard(Result.succeed(ReadOutcome.PeerFin))
+                case Absent => ()
 
         discard(socket.on("end", signalEof))
         discard(socket.on("close", signalEof))
         discard(socket.on(
             "error",
             { (_: js.Dynamic) =>
-                val pending = handle.pendingRead
-                if !isNull(pending) then
-                    handle.clearPendingRead()
-                    pending.nn.completeDiscard(Result.fail(Closed(driver.label, summon[Frame], "socket error")))
-                end if
+                handle.pendingRead match
+                    case Present(pending) =>
+                        handle.clearPendingRead()
+                        pending.completeDiscard(Result.fail(Closed(driver.label, summon[Frame], "socket error")))
+                    case Absent => ()
             }: js.Function1[js.Dynamic, Unit]
         ))
 

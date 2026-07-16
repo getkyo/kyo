@@ -43,12 +43,11 @@ final private[kyo] class Connection[Handle] private (
     /** The connection's close signal (see [[kyo.net.Connection.onClosing]]). Completed once in `closeFn`'s win-the-close branch. */
     private[kyo] def onClosing: Fiber.Unsafe[Unit, Any] = closingPromise
 
-    import scala.compiletime.uninitialized // TODO why do we need this?
-
     /** Set after construction by the transport (the posix transport on JVM/Native, the Node transport on JS). Left uninitialized on platforms
       * without STARTTLS support.
       */
-    // TODO can we make these vars private not private[kyo]? mutable state should be as isolated as possible. Or even better: can we avoid some of these vars?
+    // Set post-construction by the owning transport (a different package), so private[kyo] cross-package visibility is required;
+    // @volatile because the write and the pump/caller reads happen on different carriers.
     @volatile private[kyo] var upgradeFn: Maybe[(NetTlsConfig, Frame) => Fiber.Unsafe[kyo.net.Connection, Abort[kyo.net.NetException]]] =
         Absent
 
@@ -91,16 +90,19 @@ final private[kyo] class Connection[Handle] private (
     override def closeReason: kyo.net.Connection.CloseReason =
         closeReasonFn.map(fn => fn()).getOrElse(kyo.net.Connection.CloseReason.Active)
 
-    /** Start the connection. Begins pumping data between socket and channels. */
-    private[kyo] def start()(using AllowUnsafe, Frame): Unit =
+    /** Start the connection. Begins pumping data between socket and channels. Returns true when the Created -> Established CAS won and the
+      * pumps started; false when the connection had already raced to a terminal or Upgrading state (see [[kyo.net.Connection.start]]).
+      */
+    private[kyo] def start()(using AllowUnsafe, Frame): Boolean =
         Log.live.unsafe.info(s"Connection starting")
         // Created -> Established: pumps begin I/O. A connection detached or closed before start
-        // (CAS lost) stays in its terminal/Upgrading state and the pumps are not started.
-        val cas = state.compareAndSet(ConnectionState.Created, ConnectionState.Established)
-        if cas then
+        // (CAS lost) stays in its terminal/Upgrading state and the pumps are not started; the
+        // false return tells the caller not to hand the connection out as open.
+        val won = state.compareAndSet(ConnectionState.Created, ConnectionState.Established)
+        if won then
             readPump.start()
             writePump.start()
-        // TODO this method should return a boolan and callers should properly handle the case where start returns false. If it should never happen, then this method should throw if the cas fails
+        won
     end start
 
     /** Check if connection is still open. */
@@ -138,13 +140,12 @@ final private[kyo] class Connection[Handle] private (
       * Returns a Fiber.Unsafe that completes with the new TLS connection, or aborts [[kyo.net.NetException]] if the upgrade fails or is
       * unsupported on this platform.
       */
-    private[net] def doUpgradeToTls(tls: NetTlsConfig, frame: Frame): Fiber.Unsafe[kyo.net.Connection, Abort[kyo.net.NetException]] =
+    private[net] def doUpgradeToTls(tls: NetTlsConfig, frame: Frame)(using
+        AllowUnsafe
+    ): Fiber.Unsafe[kyo.net.Connection, Abort[kyo.net.NetException]] =
         upgradeFn match
             case Present(fn) => fn(tls, frame)
-            case Absent      =>
-                // Unsafe: this fallback only builds a failed Fiber.Unsafe.fromResult (no side effect), so the danger bridge is inert.
-                // TODO fix fromResult then! do not workaround issues
-                import AllowUnsafe.embrace.danger // TODO take the AllowUnsafe implicit in the method instead
+            case Absent =>
                 given Frame = frame
                 Fiber.Unsafe.fromResult(Result.fail(kyo.net.NetNotUpgradableException()))
     end doUpgradeToTls
@@ -174,7 +175,9 @@ final private[kyo] class Connection[Handle] private (
             // Close inbound and capture any bytes the ReadPump already staged but nobody consumed.
             // These are raw network bytes (TLS ciphertext) that the handshake engine needs.
             val buffered = inbound.close()
-            discard(outbound.close()) // TODO why is discarding safe here?
+            // The outbound close result is intentionally discarded: detachForUpgrade hands the fd to the TLS upgrade, so any queued outbound
+            // bytes are abandoned by design (the upgrade re-drives the socket); unlike inbound, whose staged ciphertext the handshake needs.
+            discard(outbound.close())
             // Fail pending I/O promises (causes pumps to see failure and exit teardown). Routed through driver.detachForUpgrade rather than
             // driver.cancel so a driver can keep its transport registration for the upgrade: the NIO driver keeps the SelectionKey (avoiding a
             // cancel+re-register race), while other drivers fall back to cancel. Intentionally does NOT call driver.closeHandle so the fd stays open.
@@ -319,7 +322,7 @@ private[kyo] object Connection:
                     discard(out.close())
             private[kyo] def onClosing: Fiber.Unsafe[Unit, Any]                        = closingPromise
             def detachForUpgrade()(using AllowUnsafe, Frame): Maybe[Chunk[Span[Byte]]] = Absent // not upgradable: no driver or socket
-            private[net] def start()(using AllowUnsafe, Frame): Unit                   = ()     // no pumps to start
+            private[net] def start()(using AllowUnsafe, Frame): Boolean                = true   // no pumps; immediately usable
             // Plaintext, driverless connection: no peer certificate to hash and no close_notify exchange to observe.
             def serverCertificateHash: Maybe[Span[Byte]]    = Absent
             def closeReason: kyo.net.Connection.CloseReason = kyo.net.Connection.CloseReason.Active
