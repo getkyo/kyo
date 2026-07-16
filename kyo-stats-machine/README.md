@@ -63,16 +63,8 @@ There is no Scala value to read. You consume `machine.*` the same way you consum
 Every metric in the taxonomy is one of three `kyo.Stat` types:
 
 - **Gauge**: a point-in-time value read raw on each poll, with no delta. This is the largest group: fixed totals (core count, physical memory total, per-mount capacity), pre-averaged values (load average, PSI `avg10/60/300` percentages), and the cgroup config values that can rise or fall at runtime.
-- **Histogram**: a bucketed distribution of per-tick observations. Some histograms observe a point-in-time level each tick (available/free memory and swap, per-mount free space); others observe a per-second delta (CPU usage, cgroup throttling, PSI stall time). A `.rate` histogram's running sum is its own cumulative total (see below), so a rate series needs no separate counter.
+- **Histogram**: a bucketed distribution of per-tick observations. Some histograms observe a point-in-time level each tick (available/free memory and swap, per-mount free space); others observe a per-second delta (CPU usage, cgroup throttling, PSI stall time). A `.rate` histogram's running sum is its own cumulative total, exported under cumulative aggregation temporality so the lifetime total survives every flush, and a rate series therefore needs no separate counter.
 - **Counter**: monotonic and cumulative. Exactly one metric is a Counter: `machine.cgroup.cpu.periods`, the scheduling-period count that has no per-second `.rate` companion. Every other cumulative signal is carried inside a `.rate` histogram's sum.
-
-### Series-shape changes
-
-If you consumed an earlier build of this module, two shape changes are user-visible in the exported series set. Neither drops a signal; both make the taxonomy honest.
-
-> **Note:** the per-mode cumulative `.total` Counter series are gone. Earlier builds emitted a separate `machine.cpu.<mode>.total` Counter beside each `machine.cpu.<mode>.rate` Histogram, and the same doubling for cgroup CPU throttling and every PSI stall total. Those `.total` Counters are removed. The cumulative they carried now rides the paired `.rate` Histogram's own running sum, exported as the histogram's `sum` under CUMULATIVE aggregation temporality (kyo-stats-otlp re-sends it every cycle, so the lifetime total is never lost). Query the `.rate` histogram's sum where you previously read the `.total` Counter; the distribution the Counter alone could not show you is in the same series' buckets.
-
-> **Note:** `machine.cpu.steal.rate` is new, Linux only. It is the per-second hypervisor-steal time a cloud or virtualized host needs to distinguish "my CPU is busy" from "my CPU was taken by a noisy neighbor." macOS and Windows have no steal-time concept, so the series is never registered there (see the coverage table).
 
 ## The machine.* metric taxonomy
 
@@ -91,6 +83,8 @@ Per-second CPU-usage histograms, plus the fixed core count. The histogram bucket
 | `machine.cpu.iowait.rate` | Histogram | ns/s | Linux only; sum carries cumulative ns |
 | `machine.cpu.steal.rate` | Histogram | ns/s | Linux only; hypervisor-steal signal; sum carries cumulative ns |
 | `machine.cpu.cores` | Gauge | count | fixed for process lifetime, every OS |
+
+`machine.cpu.steal.rate` is the per-second time a hypervisor gives this host's CPU to another tenant, distinguishing "my CPU is busy" from "my CPU was taken", and it exists on Linux only.
 
 ### Memory and swap
 
