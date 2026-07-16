@@ -725,6 +725,7 @@ When `kyo-config` is on the classpath, kyo-data types can be used directly as `F
 | `Chunk[A]` | comma-separated | `"a,b,c"` |
 | `Span[A]` | comma-separated | `"1,2,3"` |
 | `Dict[K,V]` | key=value pairs, comma-separated | `"host=localhost,port=8080"` |
+| `OrderedMap[K,V]` | key=value pairs, comma-separated, order preserved | `"host=localhost,port=8080"` |
 | `Instant` | ISO-8601 | `"2024-01-15T10:30:00Z"` |
 | `Record[F]` | key=value pairs, validated against field schema | `"host=localhost,port=8080"` |
 
