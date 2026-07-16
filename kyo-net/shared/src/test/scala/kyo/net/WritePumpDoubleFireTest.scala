@@ -3,6 +3,7 @@ package kyo.net
 import kyo.*
 import kyo.net.internal.transport.IoDriver
 import kyo.net.internal.transport.ReadOutcome
+import kyo.net.internal.transport.TeardownCause
 import kyo.net.internal.transport.WritePump
 import kyo.net.internal.transport.WriteResult
 import kyo.net.internal.transport.WriteState
@@ -69,7 +70,7 @@ class WritePumpDoubleFireTest extends Test:
             val driver  = new AlwaysPartialDriver
             val channel = Channel.Unsafe.init[Span[Byte]](4)
             val state   = AtomicRef.Unsafe.init[WriteState](WriteState.Idle)
-            val pump    = new WritePump((), driver, channel, () => discard(channel.close()), state)
+            val pump    = new WritePump((), driver, channel, (_: TeardownCause) => discard(channel.close()), state)
 
             val payload = Span.fromUnsafe(Array[Byte](1, 2, 3, 4))
             discard(channel.offer(payload))
@@ -151,7 +152,7 @@ class WritePumpDoubleFireTest extends Test:
             val driver  = new PartialThenDoneDriver
             val channel = Channel.Unsafe.init[Span[Byte]](4)
             val state   = AtomicRef.Unsafe.init[WriteState](WriteState.Idle)
-            val pump    = new WritePump((), driver, channel, () => discard(channel.close()), state)
+            val pump    = new WritePump((), driver, channel, (_: TeardownCause) => discard(channel.close()), state)
 
             val payload = Span.fromUnsafe(Array[Byte](10, 20, 30, 40))
             discard(channel.offer(payload))

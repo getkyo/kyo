@@ -35,7 +35,7 @@ final private[kyo] class Connection[Handle] private (
     private val readPump: ReadPump[Handle],
     private val writePump: WritePump[Handle],
     private val state: AtomicRef.Unsafe[ConnectionState],
-    private val closeFn: () => Unit,
+    private val closeFn: TeardownCause => Unit,
     private val closingPromise: Promise.Unsafe[Unit, Any]
 ) extends kyo.net.Connection
     with kyo.net.Connection.UpgradableConnection: // TODO is this the only impl of Connection? if yes, why do we have a seaprate UpgradableConnection?
@@ -90,6 +90,11 @@ final private[kyo] class Connection[Handle] private (
     override def closeReason: kyo.net.Connection.CloseReason =
         closeReasonFn.map(fn => fn()).getOrElse(kyo.net.Connection.CloseReason.Active)
 
+    /** Set inside `closeFn`'s win-the-close branch, once, to the [[TeardownCause]] that drove this connection's teardown (a pump's observed
+      * end, or an explicit close). `Absent` until the connection has actually started closing.
+      */
+    @volatile private[kyo] var teardownCause: Maybe[TeardownCause] = Absent
+
     /** Start the connection. Begins pumping data between socket and channels. Returns true when the Created -> Established CAS won and the
       * pumps started; false when the connection had already raced to a terminal or Upgrading state (see [[kyo.net.Connection.start]]).
       */
@@ -113,7 +118,7 @@ final private[kyo] class Connection[Handle] private (
             case ConnectionState.Upgrading | ConnectionState.Closing | ConnectionState.Closed => false
 
     /** Close the connection. Closes channels and handle. Idempotent. */
-    def close()(using AllowUnsafe, Frame): Unit = closeFn()
+    def close()(using AllowUnsafe, Frame): Unit = closeFn(TeardownCause.ChannelClosed)
 
     /** Force this connection's handle closed even while `Upgrading`, where ordinary [[close]] is a no-op by design (the fd is owned by the
       * in-flight TLS upgrade, which is responsible for its own success/failure cleanup -- see [[ConnectionState.Upgrading]]). Used ONLY by the
@@ -238,7 +243,12 @@ private[kyo] object Connection:
         // detachForUpgrade (state=Upgrading bars this branch), which is correct: the upgraded connection is a fresh init with its own signal.
         val closingPromise = Promise.Unsafe.init[Unit, Any]()
 
-        val closeFn: () => Unit = () =>
+        // Forward reference to the Connection instance closeFn records the teardown cause on. Set once, synchronously, right after the
+        // instance is constructed below, before closeFn can ever run (closeFn only fires once a pump starts or close() is called, both of
+        // which happen strictly after init returns the constructed connection to its caller).
+        var self: Connection[Handle] = null.asInstanceOf[Connection[Handle]]
+
+        val closeFn: TeardownCause => Unit = (cause: TeardownCause) =>
             // Win the close by CASing a live state -> Closing. Created and Established both go to
             // Closing (a never-started connection closes too); Upgrading does NOT, since its fd is
             // owned by the TLS upgrade. A second close loses the CAS and falls to the re-entrant
@@ -246,6 +256,8 @@ private[kyo] object Connection:
             if state.compareAndSet(ConnectionState.Established, ConnectionState.Closing)
                 || state.compareAndSet(ConnectionState.Created, ConnectionState.Closing)
             then
+                // Record the teardown cause on this connection before winning the close.
+                self.teardownCause = Present(cause)
                 // Fire the connection's close signal at close-start, before the drains and the handle teardown below.
                 closingPromise.completeDiscard(Result.succeed(()))
                 // Live -> ReleaseRequested: the close won; parked waiters are being unblocked by the drains below.
@@ -292,7 +304,8 @@ private[kyo] object Connection:
         val readPump  = new ReadPump(handle, driver, inbound, closeFn)
         val writePump = new WritePump(handle, driver, outbound, closeFn, AtomicRef.Unsafe.init[WriteState](WriteState.Idle))
 
-        new Connection(handle, driver, inbound, outbound, readPump, writePump, state, closeFn, closingPromise)
+        self = new Connection(handle, driver, inbound, outbound, readPump, writePump, state, closeFn, closingPromise)
+        self
     end init
 
     /** Create a driverless in-memory connection over two pre-existing channels.

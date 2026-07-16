@@ -39,8 +39,8 @@ class PosixHandleInvariantsTest extends Test:
                 // These compile iff the constructors are generic over PosixHandle.
                 // The dummy driver satisfies the type without exercising any real I/O.
                 val driver: kyo.net.internal.transport.IoDriver[kyo.net.internal.posix.PosixHandle] = ???
-                val _rp = new kyo.net.internal.transport.ReadPump[kyo.net.internal.posix.PosixHandle](handle, driver, ch, () => ())
-                val _wp = new kyo.net.internal.transport.WritePump[kyo.net.internal.posix.PosixHandle](handle, driver, ch, () => (), kyo.AtomicRef.Unsafe.init[kyo.net.internal.transport.WriteState](kyo.net.internal.transport.WriteState.Idle))
+                val _rp = new kyo.net.internal.transport.ReadPump[kyo.net.internal.posix.PosixHandle](handle, driver, ch, (_: kyo.net.internal.transport.TeardownCause) => ())
+                val _wp = new kyo.net.internal.transport.WritePump[kyo.net.internal.posix.PosixHandle](handle, driver, ch, (_: kyo.net.internal.transport.TeardownCause) => (), kyo.AtomicRef.Unsafe.init[kyo.net.internal.transport.WriteState](kyo.net.internal.transport.WriteState.Idle))
             """)
             val handle = PosixHandle.socket(3, PosixHandle.DefaultReadBufferSize, Absent)
             assert(handle.readFd == 3 && handle.writeFd == 3)

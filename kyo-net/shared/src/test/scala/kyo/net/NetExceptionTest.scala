@@ -120,6 +120,47 @@ class NetExceptionTest extends Test:
         )
     }
 
+    "getCause forwards the constructor cause for every cause-carrying leaf" in {
+        val cause = new java.io.IOException("boom")
+
+        assert(
+            NetConnectException("h", 1, cause).getCause == cause,
+            "NetConnectException.getCause must return the constructor cause"
+        )
+        assert(
+            NetDnsResolutionException("h", cause).getCause == cause,
+            "NetDnsResolutionException.getCause must return the constructor cause"
+        )
+        assert(
+            NetUnixConnectException("/tmp/sock", cause).getCause == cause,
+            "NetUnixConnectException.getCause must return the constructor cause"
+        )
+        assert(
+            NetBindException("h", 1, cause).getCause == cause,
+            "NetBindException.getCause must return the constructor cause"
+        )
+        assert(
+            NetConnectionClosedException("read", cause).getCause == cause,
+            "NetConnectionClosedException.getCause must return the constructor cause"
+        )
+        assert(
+            NetTlsHandshakeException("h", 1, cause).getCause == cause,
+            "NetTlsHandshakeException.getCause must return the constructor cause"
+        )
+        assert(
+            NetTlsProviderUnavailableException("boringssl", cause).getCause == cause,
+            "NetTlsProviderUnavailableException.getCause must return the constructor cause"
+        )
+        assert(
+            NetTlsConfigException(cause).getCause == cause,
+            "NetTlsConfigException.getCause must return the constructor cause"
+        )
+        assert(
+            NetBackendUnavailableException(Present("io_uring"), cause).getCause == cause,
+            "NetBackendUnavailableException.getCause must return the constructor cause"
+        )
+    }
+
     "a Closed handler does not catch a NetException (the intended correction)" in {
         val widened: Unit < Abort[NetException | Closed]                   = Abort.fail(NetConnectException("h", 1))
         val afterClosedHandler: Result[Closed, Unit] < Abort[NetException] = Abort.run[Closed](widened)

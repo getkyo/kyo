@@ -2,6 +2,8 @@ package kyo.net.internal.transport
 
 import kyo.*
 import kyo.ffi.Ffi
+import kyo.net.NetConnectionClosedException
+import kyo.net.NetDnsResolutionException
 import kyo.net.Test
 import kyo.net.internal.posix.PollerIoDriver
 import kyo.net.internal.posix.PosixHandle
@@ -95,7 +97,7 @@ class ReadPumpTest extends Test:
                 val handle  = PosixHandle.socket(clientFd, PosixHandle.DefaultReadBufferSize, Absent)
                 val channel = Channel.Unsafe.init[Span[Byte]](16)
                 val closed  = scala.collection.mutable.ListBuffer[String]()
-                val pump    = new ReadPump(handle, spy, channel, () => closed += "closed")
+                val pump    = new ReadPump(handle, spy, channel, (_: TeardownCause) => closed += "closed")
 
                 pump.start()
                 assert(spy.awaitReadCalls.get() == 1, "start must register first read")
@@ -139,7 +141,7 @@ class ReadPumpTest extends Test:
                     handle,
                     spy,
                     channel,
-                    () =>
+                    (_: TeardownCause) =>
                         closed += "closed"
                         closedLatch.completeDiscard(Result.succeed(()))
                 )
@@ -168,7 +170,7 @@ class ReadPumpTest extends Test:
                 val handle  = PosixHandle.socket(clientFd, PosixHandle.DefaultReadBufferSize, Absent)
                 val channel = Channel.Unsafe.init[Span[Byte]](16)
                 val closed  = scala.collection.mutable.ListBuffer[String]()
-                val pump    = new ReadPump(handle, spy, channel, () => closed += "closed")
+                val pump    = new ReadPump(handle, spy, channel, (_: TeardownCause) => closed += "closed")
 
                 pump.start()
 
@@ -204,7 +206,7 @@ class ReadPumpTest extends Test:
                 val handle  = PosixHandle.socket(clientFd, PosixHandle.DefaultReadBufferSize, Absent)
                 val channel = Channel.Unsafe.init[Span[Byte]](1)
                 val closed  = scala.collection.mutable.ListBuffer[String]()
-                val pump    = new ReadPump(handle, spy, channel, () => closed += "closed")
+                val pump    = new ReadPump(handle, spy, channel, (_: TeardownCause) => closed += "closed")
                 val payload = Array.tabulate[Byte](128 * 1024)(i => (i % 251).toByte)
 
                 pump.start()
@@ -234,7 +236,7 @@ class ReadPumpTest extends Test:
                 val handle  = PosixHandle.socket(clientFd, PosixHandle.DefaultReadBufferSize, Absent)
                 val channel = Channel.Unsafe.init[Span[Byte]](1)
                 val closed  = scala.collection.mutable.ListBuffer[String]()
-                val pump    = new ReadPump(handle, spy, channel, () => closed += "closed")
+                val pump    = new ReadPump(handle, spy, channel, (_: TeardownCause) => closed += "closed")
 
                 discard(channel.offer(Span.fromUnsafe("prefill".getBytes("UTF-8"))))
                 pump.start()
@@ -270,7 +272,7 @@ class ReadPumpTest extends Test:
                     handle,
                     spy,
                     channel,
-                    () =>
+                    (_: TeardownCause) =>
                         closed += "closed"
                         closedLatch.completeDiscard(Result.succeed(()))
                 )
@@ -304,7 +306,7 @@ class ReadPumpTest extends Test:
                     handle,
                     spy,
                     channel,
-                    () =>
+                    (_: TeardownCause) =>
                         closed += "closed"
                         closedLatch.completeDiscard(Result.succeed(()))
                 )
@@ -344,7 +346,7 @@ class ReadPumpTest extends Test:
                     handle,
                     spy,
                     channel,
-                    () =>
+                    (_: TeardownCause) =>
                         closed += "closed"
                         closedLatch.completeDiscard(Result.succeed(()))
                 )
@@ -410,7 +412,7 @@ class ReadPumpTest extends Test:
                     handle,
                     spy,
                     channel,
-                    () =>
+                    (_: TeardownCause) =>
                         closed += "closed"
                         closedLatch.completeDiscard(Result.succeed(()))
                 )
@@ -444,7 +446,7 @@ class ReadPumpTest extends Test:
                     handle,
                     spy,
                     channel,
-                    () =>
+                    (_: TeardownCause) =>
                         closed += "closed"
                         closedLatch.completeDiscard(Result.succeed(()))
                 )
@@ -477,6 +479,47 @@ class ReadPumpTest extends Test:
                     }
                 }
             }
+        }
+
+        // Anti-flakiness: the stub driver completes the read promise with ReadOutcome.Failed(cause) synchronously inside awaitRead itself, so
+        // onComplete runs inline before start() returns; no latch, real socket, or sleep is needed. Proves ReadPump.teardown's own
+        // typed-cause threading in isolation (a test-local closeFn records the received TeardownCause directly), not the Connection-level field.
+        "a Failed read outcome threads the typed NetException cause to closeFn (not a re-derived string)" in {
+            val underlyingCause                = NetDnsResolutionException("induced-host", "induced failure")
+            var recorded: Maybe[TeardownCause] = Absent
+
+            final class FailingReadDriver extends IoDriver[Unit]:
+                def start()(using AllowUnsafe, Frame): Fiber.Unsafe[Unit, Any] =
+                    Promise.Unsafe.init[Unit, Any]().asInstanceOf[Fiber.Unsafe[Unit, Any]]
+                def awaitRead(handle: Unit, promise: Promise.Unsafe[ReadOutcome, Abort[Closed]])(using AllowUnsafe, Frame): Unit =
+                    promise.completeDiscard(Result.succeed(ReadOutcome.Failed(underlyingCause)))
+                def awaitWritable(handle: Unit, promise: Promise.Unsafe[Unit, Abort[Closed]])(using AllowUnsafe, Frame): Unit = ()
+                def awaitConnect(handle: Unit, promise: Promise.Unsafe[Unit, Abort[Closed]])(using AllowUnsafe, Frame): Unit  = ()
+                def awaitAccept(handle: Unit, promise: Promise.Unsafe[Int, Abort[Closed]])(using AllowUnsafe, Frame): Unit    = ()
+                def write(handle: Unit, data: Span[Byte], offset: Int)(using AllowUnsafe): WriteResult = WriteResult.Done
+                def cancel(handle: Unit)(using AllowUnsafe, Frame): Unit                               = ()
+                def closeHandle(handle: Unit)(using AllowUnsafe, Frame): Unit                          = ()
+                def close()(using AllowUnsafe, Frame): Unit                                            = ()
+                def label: String                                                                      = "FailingReadDriver"
+                def handleLabel(handle: Unit): String                                                  = "stub"
+            end FailingReadDriver
+
+            val driver  = new FailingReadDriver
+            val channel = Channel.Unsafe.init[Span[Byte]](16)
+            val pump    = new ReadPump((), driver, channel, (cause: TeardownCause) => recorded = Present(cause))
+
+            pump.start()
+
+            recorded match
+                case Present(TeardownCause.Failed(wrapped: NetConnectionClosedException)) =>
+                    assert(wrapped.operation == "read", s"the wrapped leaf must name the read operation, got ${wrapped.operation}")
+                    assert(
+                        wrapped.getCause == underlyingCause,
+                        s"the original typed NetException must be threaded as the wrapped leaf's cause, not re-derived as a string, got ${wrapped.getCause}"
+                    )
+                case other =>
+                    fail(s"a Failed read outcome must thread TeardownCause.Failed(_: NetConnectionClosedException), got $other")
+            end match
         }
     }
 

@@ -46,14 +46,14 @@ private[net] object SystemResolver:
                         Result.fail(NetDnsResolutionException(host, s"resolve: unexpected address class for $host"))
                 end match
             catch
-                case _: UnknownHostException =>
-                    Result.fail(NetDnsResolutionException(host, s"resolve: unknown host $host"))
+                case e: UnknownHostException =>
+                    Result.fail(NetDnsResolutionException(host, e))
                 case e: SecurityException =>
-                    Result.fail(NetDnsResolutionException(host, s"resolve: resolution of $host denied: ${e.getMessage}"))
+                    Result.fail(NetDnsResolutionException(host, e))
                 case scala.util.control.NonFatal(e) =>
                     // Any other resolver failure (e.g. a malformed host the JDK rejects) becomes a typed failure too, so resolution never
                     // surfaces as a panic that could strand the connect promise. Fatal errors (OOM, etc.) still propagate.
-                    Result.fail(NetDnsResolutionException(host, s"resolve: failed to resolve $host: ${e.getMessage}"))
+                    Result.fail(NetDnsResolutionException(host, e))
             end try
         }
     end resolveRaw

@@ -1,6 +1,7 @@
 package kyo.net.internal.transport
 
 import kyo.*
+import kyo.net.NetConnectionClosedException
 
 /** Pump that drains an outbound channel and writes bytes to the socket via the driver.
   *
@@ -39,7 +40,7 @@ final private[kyo] class WritePump[Handle](
     handle: Handle,
     driver: IoDriver[Handle],
     channel: Channel.Unsafe[Span[Byte]],
-    closeFn: () => Unit,
+    closeFn: TeardownCause => Unit,
     private val state: AtomicRef.Unsafe[WriteState],
     private val log: Log.Unsafe = Log.live.unsafe
 ):
@@ -66,10 +67,10 @@ final private[kyo] class WritePump[Handle](
                     doWrite(flushing)
                 // else: state is TornDown (a concurrent close won); drop the span, teardown already ran.
             case Result.Failure(_: Closed) =>
-                teardown()
+                teardown(TeardownCause.ChannelClosed)
             case Result.Panic(t) =>
                 log.error(s"WritePump take panic on ${driver.handleLabel(handle)}", t)
-                teardown()
+                teardown(TeardownCause.Failed(NetConnectionClosedException("send", t)))
         end match
     end onTake
 
@@ -90,20 +91,25 @@ final private[kyo] class WritePump[Handle](
                         if state.compareAndSet(s, flushing) then doWrite(flushing)
                     case _ => () // Idle/Flushing/TornDown: a stale writable, drop it.
                 end match
-            case Result.Failure(_) | Result.Panic(_) =>
-                teardown()
+            case Result.Failure(closed) =>
+                teardown(TeardownCause.Failed(NetConnectionClosedException("send", closed)))
+            case Result.Panic(t) =>
+                teardown(TeardownCause.Failed(NetConnectionClosedException("send", t)))
         end match
     end onWritable
 
     // `current` is the STORED WriteState.Flushing instance. It must be passed through to every CAS
     // so that AtomicReference.compareAndSet (which uses reference equality) finds the right object.
-    // TODO it seems this method can discard the flushing bytes in mutliple paths?
+    // A lost CAS at any of the three capture sites (onTake, onWritable, doWrite) means teardown() won: it is the only unconditional
+    // WriteState writer (state.set(WriteState.TornDown)), so the socket is being torn down and the captured bytes are undeliverable. The drop
+    // is correct and never retried: a re-CAS would resurrect a torn-down pump and write into a handle whose teardown is freeing resources (a
+    // use-after-free). A graceful local close never reaches a losing CAS here; its tail is flushed by closeFn/closeAwaitEmpty through the
+    // normal onWritable -> doWrite flow before teardown.
     private def doWrite(current: WriteState.Flushing)(using AllowUnsafe, Frame): Unit =
         driver.write(handle, current.pending, current.offset) match
             case WriteResult.Done =>
-                // Flushing -> Idle, then take the next span. The CAS from the stored `current` instance
-                // is the single winner; a racing teardown that swung TornDown makes this lose and stop.
                 if state.compareAndSet(current, WriteState.Idle) then requestNextTake()
+                else () // teardown won (TornDown): the socket is unwritable; the write completed, nothing to drop here.
             case WriteResult.Partial(remaining, newOffset) =>
                 // Park on socket writability with a FRESH promise (no reused promise). Flushing -> AwaitingWritable
                 // carries the tail inline; the fresh promise's completion runs onWritable.
@@ -116,6 +122,9 @@ final private[kyo] class WritePump[Handle](
                         onWritable(r.asInstanceOf[Result[Closed, Unit]])
                     }
                     driver.awaitWritable(handle, p)
+                else
+                    (
+                ) // teardown won (TornDown): the socket is unwritable; the captured tail in `next` is undeliverable, nothing to drop here.
                 end if
             case WriteResult.TailPartial(remaining, newOffset) =>
                 // Park on the write-tail backpressure bound with a FRESH promise. Flushing -> Backpressured
@@ -133,10 +142,13 @@ final private[kyo] class WritePump[Handle](
                         onWritable(r.asInstanceOf[Result[Closed, Unit]])
                     }
                     driver.awaitWritable(handle, p)
+                else
+                    (
+                ) // teardown won (TornDown): the socket is unwritable; the captured tail in `next` is undeliverable, nothing to drop here.
                 end if
             case WriteResult.Error =>
                 log.debug(s"WritePump write error on ${driver.handleLabel(handle)}")
-                teardown()
+                teardown(TeardownCause.Failed(NetConnectionClosedException("send")))
         end match
     end doWrite
 
@@ -151,11 +163,11 @@ final private[kyo] class WritePump[Handle](
         channel.reuseTake(p)
     end requestNextTake
 
-    private def teardown()(using AllowUnsafe, Frame): Unit =
+    private def teardown(cause: TeardownCause)(using AllowUnsafe, Frame): Unit =
         // Swing the state to TornDown so a racing take/writable completion loses its CAS and no-ops.
         state.set(WriteState.TornDown)
         discard(channel.close())
-        closeFn()
+        closeFn(cause)
     end teardown
 
 end WritePump

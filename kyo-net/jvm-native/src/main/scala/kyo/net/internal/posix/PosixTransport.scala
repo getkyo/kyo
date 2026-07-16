@@ -1784,7 +1784,7 @@ final private[net] class PosixTransport private[posix] (
         handle: PosixHandle,
         engine: TlsEngine,
         cont: () => Unit,
-        onFailed: (String | Throwable) => Unit,
+        onFailed: (NetException | Throwable) => Unit,
         onPanic: Throwable => Unit
     )(using AllowUnsafe, Frame): Unit =
         try
@@ -1811,13 +1811,13 @@ final private[net] class PosixTransport private[posix] (
         data: Span[Byte],
         offset: Int,
         cont: () => Unit,
-        onFailed: (String | Throwable) => Unit,
+        onFailed: (NetException | Throwable) => Unit,
         onPanic: Throwable => Unit
     )(using AllowUnsafe, Frame): Unit =
         try
             handle.driver.write(handle, data, offset) match
                 case WriteResult.Done  => cont()
-                case WriteResult.Error => onFailed("server-send-error")
+                case WriteResult.Error => onFailed(NetConnectionClosedException("send"))
                 case WriteResult.Partial(rem, newOffset) =>
                     awaitWritable(handle, cont = () => sendAll(handle, rem, newOffset, cont, onFailed, onPanic), onFailed, onPanic)
                 case WriteResult.TailPartial(rem, newOffset) =>
@@ -1834,7 +1834,7 @@ final private[net] class PosixTransport private[posix] (
     private def awaitWritable(
         handle: PosixHandle,
         cont: () => Unit,
-        onFailed: (String | Throwable) => Unit,
+        onFailed: (NetException | Throwable) => Unit,
         onPanic: Throwable => Unit
     )(using AllowUnsafe, Frame): Unit =
         val writablePromise = new IOPromise[Closed, Unit]
@@ -1862,7 +1862,7 @@ final private[net] class PosixTransport private[posix] (
         handle: PosixHandle,
         engine: TlsEngine,
         cont: () => Unit,
-        onFailed: (String | Throwable) => Unit,
+        onFailed: (NetException | Throwable) => Unit,
         onPanic: Throwable => Unit,
         isReaped: () => Boolean
     )(using AllowUnsafe, Frame): Unit =
@@ -1916,7 +1916,7 @@ final private[net] class PosixTransport private[posix] (
         handle: PosixHandle,
         engine: TlsEngine,
         cont: () => Unit,
-        onFailed: (String | Throwable) => Unit,
+        onFailed: (NetException | Throwable) => Unit,
         onPanic: Throwable => Unit,
         isReaped: () => Boolean
     )(using AllowUnsafe, Frame): Unit =
@@ -1947,10 +1947,10 @@ final private[net] class PosixTransport private[posix] (
             val p = new IOPromise[NetException, Span[Byte]]
             p.onComplete {
                 case Result.Success(bytes) =>
-                    // An empty read is EOF mid-handshake: the peer closed before completing it. Surface that as the failure cause (rendered as a
-                    // ": peer closed during read" suffix) so a bare close is distinguishable from a received fatal alert (which carries its own
-                    // engine-level failure, never this phrase): the dropped-alert symptom PosixTransportHandshakeAlertTest guards against.
-                    if bytes.isEmpty then onFailed("peer closed during read")
+                    // An empty read is EOF mid-handshake: the peer closed before completing it. Surface that as the failure cause (a typed
+                    // NetConnectionClosedException("read")) so a bare close is distinguishable from a received fatal alert (which carries its own
+                    // engine-level failure, never this leaf): the dropped-alert symptom PosixTransportHandshakeAlertTest guards against.
+                    if bytes.isEmpty then onFailed(NetConnectionClosedException("read"))
                     else feedCiphertextThenCont(handle, engine, bytes.toArrayUnsafe, cont, onPanic, isReaped)
                 case Result.Failure(netEx) =>
                     onFailed(netEx)
@@ -2012,7 +2012,7 @@ final private[net] class PosixTransport private[posix] (
         handle: PosixHandle,
         engine: TlsEngine,
         cont: () => Unit,
-        onFailed: (String | Throwable) => Unit,
+        onFailed: (NetException | Throwable) => Unit,
         onPanic: Throwable => Unit,
         isReaped: () => Boolean
     )(using AllowUnsafe, Frame): Unit =
@@ -2041,9 +2041,9 @@ final private[net] class PosixTransport private[posix] (
                         end try
                 }
             else if n == 0 then
-                // EOF mid-handshake: the peer closed before completing it. The descriptive cause distinguishes a bare close from a received fatal
+                // EOF mid-handshake: the peer closed before completing it. The typed leaf distinguishes a bare close from a received fatal
                 // alert (see awaitReadCiphertext / PosixTransportHandshakeAlertTest).
-                onFailed("peer closed during read")
+                onFailed(NetConnectionClosedException("read"))
             else if isWouldBlock(result.errorCode) then
                 awaitReadCiphertext(handle, engine, cont, onFailed, onPanic, isReaped)
             else
@@ -2066,7 +2066,7 @@ final private[net] class PosixTransport private[posix] (
         handle: PosixHandle,
         engine: TlsEngine,
         cont: () => Unit,
-        onFailed: (String | Throwable) => Unit,
+        onFailed: (NetException | Throwable) => Unit,
         onPanic: Throwable => Unit,
         isReaped: () => Boolean
     )(using AllowUnsafe, Frame): Unit =
@@ -2095,9 +2095,9 @@ final private[net] class PosixTransport private[posix] (
                         }
                     case _ =>
                         // PeerFin, CleanClose, LocalShutdown, WouldBlock, Failed: the peer closed or the read could not deliver ciphertext.
-                        // The descriptive cause distinguishes a bare close from a received fatal alert (which fails the handshake with its
-                        // own engine-level cause, never this phrase): the dropped-alert symptom PosixTransportHandshakeAlertTest guards against.
-                        onFailed("peer closed during read")
+                        // The typed leaf distinguishes a bare close from a received fatal alert (which fails the handshake with its
+                        // own engine-level cause, never this leaf): the dropped-alert symptom PosixTransportHandshakeAlertTest guards against.
+                        onFailed(NetConnectionClosedException("read"))
                 end match
             case Result.Failure(closed) => onFailed(closed)
             case Result.Panic(e)        => onPanic(e)

@@ -54,7 +54,7 @@ class WritePumpTest extends Test:
                     handle,
                     spy,
                     channel,
-                    () => discard(channel.close()),
+                    (_: TeardownCause) => discard(channel.close()),
                     AtomicRef.Unsafe.init[WriteState](WriteState.Idle),
                     logger
                 )
@@ -106,7 +106,13 @@ class WritePumpTest extends Test:
                 val handle  = PosixHandle.socket(clientFd, PosixHandle.DefaultReadBufferSize, Absent)
                 val channel = Channel.Unsafe.init[Span[Byte]](16)
                 val closed  = scala.collection.mutable.ListBuffer[String]()
-                val pump = new WritePump(handle, spy, channel, () => closed += "closed", AtomicRef.Unsafe.init[WriteState](WriteState.Idle))
+                val pump = new WritePump(
+                    handle,
+                    spy,
+                    channel,
+                    (_: TeardownCause) => closed += "closed",
+                    AtomicRef.Unsafe.init[WriteState](WriteState.Idle)
+                )
 
                 val payload = Array.tabulate[Byte](32)(i => (i + 1).toByte)
                 val span    = Span.fromUnsafe(payload)
@@ -144,7 +150,13 @@ class WritePumpTest extends Test:
                 val handle  = PosixHandle.socket(clientFd, PosixHandle.DefaultReadBufferSize, Absent)
                 val channel = Channel.Unsafe.init[Span[Byte]](16)
                 val closed  = scala.collection.mutable.ListBuffer[String]()
-                val pump = new WritePump(handle, spy, channel, () => closed += "closed", AtomicRef.Unsafe.init[WriteState](WriteState.Idle))
+                val pump = new WritePump(
+                    handle,
+                    spy,
+                    channel,
+                    (_: TeardownCause) => closed += "closed",
+                    AtomicRef.Unsafe.init[WriteState](WriteState.Idle)
+                )
 
                 // 128 KB payload guarantees EAGAIN on a 4KB buffer pair.
                 val payload = Array.fill[Byte](128 * 1024)(42)
@@ -194,7 +206,7 @@ class WritePumpTest extends Test:
                     handle,
                     spy,
                     channel,
-                    () =>
+                    (_: TeardownCause) =>
                         closed += "closed"
                         closedLatch.completeDiscard(Result.succeed(()))
                     ,
@@ -239,7 +251,7 @@ class WritePumpTest extends Test:
                     handle,
                     spy,
                     channel,
-                    () =>
+                    (_: TeardownCause) =>
                         closed += "closed"
                         closedLatch.completeDiscard(Result.succeed(()))
                     ,
@@ -286,7 +298,13 @@ class WritePumpTest extends Test:
                 val handle  = PosixHandle.socket(clientFd, PosixHandle.DefaultReadBufferSize, Absent)
                 val channel = Channel.Unsafe.init[Span[Byte]](16)
                 val closed  = scala.collection.mutable.ListBuffer[String]()
-                val pump = new WritePump(handle, spy, channel, () => closed += "closed", AtomicRef.Unsafe.init[WriteState](WriteState.Idle))
+                val pump = new WritePump(
+                    handle,
+                    spy,
+                    channel,
+                    (_: TeardownCause) => closed += "closed",
+                    AtomicRef.Unsafe.init[WriteState](WriteState.Idle)
+                )
 
                 // No data: pump registers for take and parks.
                 pump.start()
@@ -313,7 +331,13 @@ class WritePumpTest extends Test:
                 val handle  = PosixHandle.socket(clientFd, PosixHandle.DefaultReadBufferSize, Absent)
                 val channel = Channel.Unsafe.init[Span[Byte]](16)
                 val closed  = scala.collection.mutable.ListBuffer[String]()
-                val pump = new WritePump(handle, spy, channel, () => closed += "closed", AtomicRef.Unsafe.init[WriteState](WriteState.Idle))
+                val pump = new WritePump(
+                    handle,
+                    spy,
+                    channel,
+                    (_: TeardownCause) => closed += "closed",
+                    AtomicRef.Unsafe.init[WriteState](WriteState.Idle)
+                )
 
                 discard(channel.offer(Span.empty[Byte]))
                 pump.start()
@@ -338,7 +362,13 @@ class WritePumpTest extends Test:
                 val handle  = PosixHandle.socket(clientFd, PosixHandle.DefaultReadBufferSize, Absent)
                 val channel = Channel.Unsafe.init[Span[Byte]](16)
                 val closed  = scala.collection.mutable.ListBuffer[String]()
-                val pump = new WritePump(handle, spy, channel, () => closed += "closed", AtomicRef.Unsafe.init[WriteState](WriteState.Idle))
+                val pump = new WritePump(
+                    handle,
+                    spy,
+                    channel,
+                    (_: TeardownCause) => closed += "closed",
+                    AtomicRef.Unsafe.init[WriteState](WriteState.Idle)
+                )
 
                 val firstPayload = Array.tabulate[Byte](8)(i => (i + 1).toByte)
                 discard(channel.offer(Span.fromUnsafe(firstPayload)))
@@ -385,7 +415,7 @@ class WritePumpTest extends Test:
                     handle,
                     spy,
                     channel,
-                    () =>
+                    (_: TeardownCause) =>
                         closed += "closed"
                         closedLatch.completeDiscard(Result.succeed(()))
                     ,
@@ -434,7 +464,13 @@ class WritePumpTest extends Test:
                 val handle  = PosixHandle.socket(clientFd, PosixHandle.DefaultReadBufferSize, Absent)
                 val channel = Channel.Unsafe.init[Span[Byte]](16)
                 val closed  = scala.collection.mutable.ListBuffer[String]()
-                val pump = new WritePump(handle, spy, channel, () => closed += "closed", AtomicRef.Unsafe.init[WriteState](WriteState.Idle))
+                val pump = new WritePump(
+                    handle,
+                    spy,
+                    channel,
+                    (_: TeardownCause) => closed += "closed",
+                    AtomicRef.Unsafe.init[WriteState](WriteState.Idle)
+                )
 
                 // 128 KB on a 4 KB pair guarantees EAGAIN, so the driver returns Partial and the pump re-presents the remainder.
                 val payload = Array.fill[Byte](128 * 1024)(0x42.toByte)
@@ -488,7 +524,13 @@ class WritePumpTest extends Test:
                 val handle  = PosixHandle.socket(clientFd, PosixHandle.DefaultReadBufferSize, Absent)
                 val channel = Channel.Unsafe.init[Span[Byte]](16)
                 val closed  = scala.collection.mutable.ListBuffer[String]()
-                val pump = new WritePump(handle, spy, channel, () => closed += "closed", AtomicRef.Unsafe.init[WriteState](WriteState.Idle))
+                val pump = new WritePump(
+                    handle,
+                    spy,
+                    channel,
+                    (_: TeardownCause) => closed += "closed",
+                    AtomicRef.Unsafe.init[WriteState](WriteState.Idle)
+                )
 
                 val payload = Array.fill[Byte](128 * 1024)(42)
                 discard(channel.offer(Span.fromUnsafe(payload)))
@@ -511,6 +553,99 @@ class WritePumpTest extends Test:
                     spy.close()
                     discard(sock.close(peerFd))
                     discard(sock.close(clientFd))
+                    succeed
+                }
+            }
+        }
+
+        // A 1 MB payload on smallBufferedPair(2048, 2048) guarantees EAGAIN on the first write, so the pump parks in AwaitingWritable. The
+        // onAwaitWritable hook fires on the pump's own carrier right after the writable promise is registered (the same one-shot,
+        // post-registration hook the writable-wait-failure test above uses) and performs the GRACEFUL local close a Connection's closeFn
+        // performs: closeAwaitEmpty marks the outbound channel closing-for-writes without dropping anything already taken off it. The
+        // channel is already empty at that point (the whole payload was taken in one span before the write parked), so the parked write is
+        // unaffected and resumes normally once the peer drains and the socket becomes writable. drainPeer confirms every byte still reaches
+        // the peer: a graceful close never loses the parked-partial tail.
+        "a graceful local close delivers the full parked-partial tail (no bytes dropped)" in {
+            assumePoller()
+            val real = PollerIoDriver.init(transportConfig)
+            val spy  = new RecordingIoDriver(real)
+            discard(spy.start())
+            PosixTestSockets.smallBufferedPair(2048, 2048).map { case (clientFd, peerFd) =>
+                val handle  = PosixHandle.socket(clientFd, PosixHandle.DefaultReadBufferSize, Absent)
+                val channel = Channel.Unsafe.init[Span[Byte]](16)
+                val pump = new WritePump(handle, spy, channel, (_: TeardownCause) => (), AtomicRef.Unsafe.init[WriteState](WriteState.Idle))
+
+                spy.onAwaitWritable = _ => discard(channel.closeAwaitEmpty())
+
+                // 1 MB payload guarantees EAGAIN on the 2KB pair: the first write is Partial and the pump parks in awaitWritable.
+                val payload = Array.fill[Byte](1024 * 1024)(42)
+                discard(channel.offer(Span.fromUnsafe(payload)))
+                pump.start()
+
+                PosixTestSockets.drainPeer(
+                    spy,
+                    PosixHandle.socket(peerFd, PosixHandle.DefaultReadBufferSize, Absent),
+                    peerFd,
+                    payload.length
+                ).map { received =>
+                    assert(received >= payload.length, s"every byte of the parked-partial tail must reach the peer, got $received")
+                    spy.close()
+                    discard(sock.close(peerFd))
+                    discard(sock.close(clientFd))
+                    succeed
+                }
+            }
+        }
+
+        // Mirrors the writable-wait-failure test above (same setup: smallBufferedPair(2048,2048), a 1 MB payload guaranteeing EAGAIN, the
+        // onAwaitWritable hook closing the handle the instant the writable wait registers), but pins the DROP-CORRECTNESS half of the lost-CAS
+        // contract this phase makes explicit: once teardown wins (state swings to TornDown), the pump must never resurrect and must never issue
+        // another write for the now-undeliverable captured tail. closedLatch latches the teardown; the two extra assertions (writeCalls stays
+        // at 1, state reads TornDown) are the load-bearing ones a CAS-retry regression would break.
+        "an error teardown racing a partial write drops the tail without resurrection" in {
+            assumePoller()
+            val real        = PollerIoDriver.init(transportConfig)
+            val spy         = new RecordingIoDriver(real)
+            val closedLatch = Promise.Unsafe.init[Unit, Any]()
+            discard(spy.start())
+            PosixTestSockets.smallBufferedPair(2048, 2048).map { case (clientFd, peerFd) =>
+                val handle  = PosixHandle.socket(clientFd, PosixHandle.DefaultReadBufferSize, Absent)
+                val channel = Channel.Unsafe.init[Span[Byte]](16)
+                val closed  = scala.collection.mutable.ListBuffer[String]()
+                val state   = AtomicRef.Unsafe.init[WriteState](WriteState.Idle)
+                val pump = new WritePump(
+                    handle,
+                    spy,
+                    channel,
+                    (_: TeardownCause) =>
+                        closed += "closed"
+                        closedLatch.completeDiscard(Result.succeed(()))
+                    ,
+                    state
+                )
+
+                // The instant the pump registers its writable wait, close the handle: closeHandle fails the just-registered writable promise
+                // with Closed, driving onWritable's Failure arm into teardown regardless of a racing writable event.
+                spy.onAwaitWritable = h => spy.closeHandle(h)
+
+                // 1 MB payload guarantees EAGAIN on the 2KB pair: the first write is Partial and the pump parks in awaitWritable.
+                val payload = Array.fill[Byte](1024 * 1024)(42)
+                discard(channel.offer(Span.fromUnsafe(payload)))
+                pump.start()
+
+                closedLatch.safe.get.map { _ =>
+                    assert(closed.nonEmpty, "pump must tear down when the writable wait fails with Closed")
+                    assert(
+                        state.get() == WriteState.TornDown,
+                        s"the pump must not be resurrected after teardown won, state was ${state.get()}"
+                    )
+                    assert(
+                        spy.writeCalls.get() == 1,
+                        s"no further write may be issued for the undeliverable captured tail after teardown won, got ${spy.writeCalls.get()} write calls"
+                    )
+                    spy.close()
+                    // closeHandle closed clientFd; only peerFd remains to close.
+                    discard(sock.close(peerFd))
                     succeed
                 }
             }

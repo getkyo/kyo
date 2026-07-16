@@ -47,15 +47,15 @@ sealed abstract class NetConnectionException(message: String, cause: String | Th
 
 /** A TCP connect to `host:port` failed (connection refused, host or network unreachable, reset, ...). */
 final case class NetConnectException(host: String, port: Int, cause: String | Throwable = "")(using Frame)
-    extends NetConnectionException(s"connect to $host:$port failed${NetException.suffix(cause)}")
+    extends NetConnectionException(s"connect to $host:$port failed${NetException.suffix(cause)}", cause)
 
 /** Name resolution for `host` failed (no such host, no address, temporary resolver failure, ...) before any socket could be created. */
 final case class NetDnsResolutionException(host: String, cause: String | Throwable = "")(using Frame)
-    extends NetConnectionException(s"DNS resolution failed for '$host'${NetException.suffix(cause)}")
+    extends NetConnectionException(s"DNS resolution failed for '$host'${NetException.suffix(cause)}", cause)
 
 /** A connect to the Unix-domain socket at `path` failed (no such file, connection refused, permission denied, ...). */
 final case class NetUnixConnectException(path: String, cause: String | Throwable = "")(using Frame)
-    extends NetConnectionException(s"connect to Unix socket '$path' failed${NetException.suffix(cause)}")
+    extends NetConnectionException(s"connect to Unix socket '$path' failed${NetException.suffix(cause)}", cause)
 
 /** A TCP connect to `host:port` did not complete within `timeout`. */
 final case class NetConnectTimeoutException(host: String, port: Int, timeout: Duration)(using Frame)
@@ -63,14 +63,14 @@ final case class NetConnectTimeoutException(host: String, port: Int, timeout: Du
 
 /** Binding/listening on `host:port` (or the bind step of a Unix listener) failed (address already in use, permission denied, ...). */
 final case class NetBindException(host: String, port: Int, cause: String | Throwable = "")(using Frame)
-    extends NetConnectionException(s"bind/listen on $host:$port failed${NetException.suffix(cause)}")
+    extends NetConnectionException(s"bind/listen on $host:$port failed${NetException.suffix(cause)}", cause)
 
 /** The transport closed while an in-flight operation was running: a close raced a read, send, TLS handshake, or STARTTLS upgrade.
   * `operation` names what the close interrupted ("read", "send", "handshake", or "upgrade"),
   * so no consumer branches on message text.
   */
 final case class NetConnectionClosedException(operation: String, cause: String | Throwable = "")(using Frame)
-    extends NetConnectionException(s"transport closed during $operation${NetException.suffix(cause)}")
+    extends NetConnectionException(s"transport closed during $operation${NetException.suffix(cause)}", cause)
 
 /** A TLS operation failed. Recover the whole family with `Abort.recover[NetTlsException]`. */
 sealed abstract class NetTlsException(message: String, cause: String | Throwable = "")(using Frame)
@@ -80,17 +80,17 @@ sealed abstract class NetTlsException(message: String, cause: String | Throwable
   * STARTTLS upgrade over an established connection there is no fresh port, so `port` is `-1`.
   */
 final case class NetTlsHandshakeException(host: String, port: Int, cause: String | Throwable = "")(using Frame)
-    extends NetTlsException(s"TLS handshake with $host:$port failed${NetException.suffix(cause)}")
+    extends NetTlsException(s"TLS handshake with $host:$port failed${NetException.suffix(cause)}", cause)
 
 /** The pinned or forced TLS provider is not available on this transport (an unregistered id, or one whose capability probe failed). */
 final case class NetTlsProviderUnavailableException(provider: String, cause: String | Throwable = "")(using Frame)
-    extends NetTlsException(s"TLS provider '$provider' is not available${NetException.suffix(cause)}")
+    extends NetTlsException(s"TLS provider '$provider' is not available${NetException.suffix(cause)}", cause)
 
 /** The TLS configuration could not be established: a PEM file could not be read, the SSL context/engine could not be initialized, or a verifying
   * client was given no reference identity. The specific reason is the `cause`.
   */
 final case class NetTlsConfigException(cause: String | Throwable = "")(using Frame)
-    extends NetTlsException(s"TLS configuration could not be established${NetException.suffix(cause)}")
+    extends NetTlsException(s"TLS configuration could not be established${NetException.suffix(cause)}", cause)
 
 /** The transport/connection does not support the requested operation. Recover the whole family with `Abort.recover[NetCapabilityException]`. */
 sealed abstract class NetCapabilityException(message: String, cause: String | Throwable = "")(using Frame)
@@ -102,7 +102,8 @@ final case class NetBackendUnavailableException(backend: Maybe[String], cause: S
         (backend match
             case Present(b) => s"I/O backend '$b' is unavailable"
             case Absent     => "no I/O backend is available"
-        ) + NetException.suffix(cause)
+        ) + NetException.suffix(cause),
+        cause
     )
 
 /** stdio is not supported by this transport (the default for transports without a stdio stream). */
