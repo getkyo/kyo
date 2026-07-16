@@ -22,11 +22,14 @@ import kyo.*
   * without the newline. CRC32 operates on the UTF-8 bytes of the covered body.
   *
   * The `metadata` field is encoded as a JSON object on write. On read the JSON object is
-  * converted to MsgPack bytes via [[BinarySegmentCodec.encodeMetadata]] so that
-  * [[DecodedRecord.metadata]] is always in MsgPack form regardless of the segment encoding, and
-  * [[FileJournalCore.rebuild]] requires no format-specific branching.
+  * converted to binary metadata bytes via the configured [[EventMetadataCodec]] so that
+  * [[DecodedRecord.metadata]] is always in the selected binary shadow form regardless of the
+  * segment encoding, and [[FileJournalCore.rebuild]] requires no format-specific branching.
   */
-final private[kyo] class JsonlSegmentCodec(payloadCodec: EventPayloadCodec) extends SegmentCodec:
+final private[kyo] class JsonlSegmentCodec(
+    payloadCodec: EventPayloadCodec,
+    metadataCodec: EventMetadataCodec
+) extends SegmentCodec:
 
     private val Utf8         = StandardCharsets.UTF_8
     private val CrcSuffixLen = 20 // ,"crc":"0xhhhhhhhh"}
@@ -95,18 +98,18 @@ final private[kyo] class JsonlSegmentCodec(payloadCodec: EventPayloadCodec) exte
                 else Loop.done(ScanResult.Corrupt(s"unterminated batch at byte ${pending.head} in sealed segment"))
             else
                 readLineAt(handle, pos, size).map {
-                    case null =>
+                    case Absent =>
                         // Truncated line with no terminating '\n'.
                         hasCommitAfter(handle, pos, size).map { hasMore =>
                             if isActive && !hasMore then
                                 Loop.done(ScanResult.Ok(committed, committedEnd, Present(pending.headMaybe.getOrElse(pos))))
                             else Loop.done(ScanResult.Corrupt(s"truncated JSONL line at byte $pos in sealed segment"))
                         }
-                    case lineBytes =>
+                    case Present(lineBytes) =>
                         val lineLen = lineBytes.length.toLong + 1L // +1 for '\n'
                         if isCommitLine(lineBytes) then
                             parseCommitCount(lineBytes) match
-                                case Right(count) if count == pending.length && verifyCrcLine(lineBytes) =>
+                                case Result.Success(count) if count == pending.length && verifyCrcLine(lineBytes) =>
                                     val newPos = pos + lineLen
                                     Loop.continue(newPos, newPos, Chunk.empty[Long], committed ++ pending)
                                 case _ =>
@@ -131,8 +134,8 @@ final private[kyo] class JsonlSegmentCodec(payloadCodec: EventPayloadCodec) exte
     def decodeRecordAt[S](handle: StoreSeam.Handle[S], pos: Long)(using Frame): Result[String, DecodedRecord] < S =
         handle.size().map { sz =>
             readLineAt(handle, pos, sz).map {
-                case null => Result.fail(s"truncated JSONL line at byte $pos")
-                case lineBytes =>
+                case Absent => Result.fail(s"truncated JSONL line at byte $pos")
+                case Present(lineBytes) =>
                     if !verifyCrcLine(lineBytes) then Result.fail(s"JSONL CRC mismatch at byte $pos")
                     else
                         try
@@ -181,8 +184,8 @@ final private[kyo] class JsonlSegmentCodec(payloadCodec: EventPayloadCodec) exte
             if pos >= size then Loop.done(false)
             else
                 readLineAt(handle, pos, size).map {
-                    case null => Loop.done(false) // no more complete lines
-                    case lineBytes =>
+                    case Absent => Loop.done(false) // no more complete lines
+                    case Present(lineBytes) =>
                         if isCommitLine(lineBytes) && verifyCrcLine(lineBytes) then Loop.done(true)
                         else Loop.continue(pos + lineBytes.length.toLong + 1L)
                 }
@@ -223,17 +226,17 @@ final private[kyo] class JsonlSegmentCodec(payloadCodec: EventPayloadCodec) exte
     end appendCrc
 
     // Reads one line starting at `pos`, scanning for `\n`. Resolves to the line bytes WITHOUT the
-    // trailing `\n`, or null if no `\n` exists before `size` (truncated file). Uses a 4 KiB
+    // trailing `\n`, or `Absent` if no `\n` exists before `size` (truncated file). Uses a 4 KiB
     // initial chunk and doubles on miss to avoid per-byte positional reads.
-    private def readLineAt[S](handle: StoreSeam.Handle[S], pos: Long, size: Long)(using Frame): Array[Byte] < S =
+    private def readLineAt[S](handle: StoreSeam.Handle[S], pos: Long, size: Long)(using Frame): Maybe[Array[Byte]] < S =
         val initLen = math.min(4096L, size - pos).toInt
-        if initLen <= 0 then (null: Array[Byte])
+        if initLen <= 0 then Absent
         else
             Loop(initLen) { chunkLen =>
                 handle.readAt(pos, chunkLen).map { chunk =>
                     val nlIdx = indexOf(chunk, '\n'.toByte)
-                    if nlIdx >= 0 then Loop.done(java.util.Arrays.copyOfRange(chunk, 0, nlIdx))
-                    else if chunk.length.toLong >= (size - pos) then Loop.done(null: Array[Byte])
+                    if nlIdx >= 0 then Loop.done(Present(java.util.Arrays.copyOfRange(chunk, 0, nlIdx)))
+                    else if chunk.length.toLong >= (size - pos) then Loop.done(Absent)
                     else Loop.continue(math.min(chunkLen * 2L, size - pos).toInt)
                 }
             }
@@ -255,10 +258,10 @@ final private[kyo] class JsonlSegmentCodec(payloadCodec: EventPayloadCodec) exte
             while i < CommitPrefix.length && lineBytes(i) == CommitPrefix(i) do i += 1
             i == CommitPrefix.length
 
-    // Parses the `commit` count from a commit line. Returns Right(count) on success. Does NOT
+    // Parses the `commit` count from a commit line. Returns `Result.succeed(count)` on success. Does NOT
     // verify the CRC (the caller may verify separately or pass through verifyCrcLine first).
-    private def parseCommitCount(lineBytes: Array[Byte]): Either[String, Int] =
-        try
+    private def parseCommitCount(lineBytes: Array[Byte]): Result[String, Int] =
+        Result.catching[Exception] {
             val reader = new Json().newReader(Span.from(lineBytes))(using Frame.internal)
             discard(reader.objectStart())
             var count = -1
@@ -268,8 +271,11 @@ final private[kyo] class JsonlSegmentCodec(payloadCodec: EventPayloadCodec) exte
                     case _        => reader.skip()
             end while
             reader.objectEnd()
-            if count < 0 then Left("missing commit count") else Right(count)
-        catch case e: Exception => Left(s"commit parse error: ${e.getMessage}")
+            count
+        }.mapFailure(e => s"commit parse error: ${e.getMessage}")
+            .flatMap { count =>
+                if count < 0 then Result.fail("missing commit count") else Result.succeed(count)
+            }
 
     // Verifies the CRC of a line (without the trailing `\n`).
     // CRC covers lineBytes[0, n-CrcSuffixLen) + `}`. The hex digits are at lineBytes[n-10, n-2).
@@ -301,8 +307,8 @@ final private[kyo] class JsonlSegmentCodec(payloadCodec: EventPayloadCodec) exte
     end encodeMetadataJson
 
     // Reads a JSON metadata object from `reader` (cursor positioned at the object value) and
-    // returns MsgPack bytes via BinarySegmentCodec.encodeMetadata. Invalid keys are silently
-    // dropped (they are not expected from correctly-encoded JSONL; if they appear, partial
+    // returns binary metadata bytes via the configured [[EventMetadataCodec]]. Invalid keys are
+    // silently dropped (they are not expected from correctly-encoded JSONL; if they appear, partial
     // metadata is preferable to a read failure).
     private def readMetadataJson(reader: Codec.Reader): Array[Byte] =
         discard(reader.objectStart())
@@ -315,7 +321,7 @@ final private[kyo] class JsonlSegmentCodec(payloadCodec: EventPayloadCodec) exte
                 case Result.Failure(_)  => () // skip invalid key
         end while
         reader.objectEnd()
-        BinarySegmentCodec.encodeMetadata(EventMetadata(pairs.result().toMap))
+        metadataCodec.encode(EventMetadata(pairs.result().toMap))
     end readMetadataJson
 
     // Minimal JSON string escaping. All 7-bit ASCII special chars that need escaping are handled;

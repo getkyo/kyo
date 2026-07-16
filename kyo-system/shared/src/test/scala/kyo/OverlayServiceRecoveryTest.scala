@@ -2,7 +2,7 @@ package kyo
 
 import java.nio.charset.StandardCharsets
 
-/** Recovery test suite for [[PathOverlayService]] durable commit.
+/** Recovery test suite for [[OverlayService]] durable commit.
   *
   * Exercises recovery after a crash at each step of the five-step durable commit protocol:
   * before the intent log is written, after the intent log, after individual journal entries
@@ -23,7 +23,7 @@ import java.nio.charset.StandardCharsets
   * file either exists or does not; no partial write state is observable. The before-marker and
   * after-marker crash tests together cover both outcomes.
   */
-class PathOverlayServiceRecoveryTest extends kyo.test.Test[Any]:
+class OverlayServiceRecoveryTest extends kyo.test.Test[Any]:
 
     // Distinct exception type thrown by crash hooks; lets attemptCrash distinguish an
     // intentional hook-injected crash from a genuine file error or unexpected panic.
@@ -758,4 +758,4 @@ class PathOverlayServiceRecoveryTest extends kyo.test.Test[Any]:
         }
     }
 
-end PathOverlayServiceRecoveryTest
+end OverlayServiceRecoveryTest

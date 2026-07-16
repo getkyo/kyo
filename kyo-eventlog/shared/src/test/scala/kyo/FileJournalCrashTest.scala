@@ -6,8 +6,9 @@ class FileJournalCrashTest extends kyo.test.Test[Any]:
 
     import BinarySegmentCodec.HeaderSize
     import BinarySegmentCodec.TerminatorSize
-    import BinarySegmentCodec.recordSize
     import BinarySegmentCodec.segmentName
+
+    private val binaryCodec = new BinarySegmentCodec(EventMetadataCodec.default)
 
     private def valid[A](r: Result[JournalInvalidIdentifierError, A]): A =
         r.getOrElse(throw new AssertionError("valid identifier"))
@@ -17,7 +18,7 @@ class FileJournalCrashTest extends kyo.test.Test[Any]:
 
     // Byte after the committed terminator of a single-event batch [e0]: the exhaustive sweep cuts from here
     // (e0 already durable) to EOF, so every cut drops only the torn trailing e1 batch.
-    private val e0End: Int = HeaderSize + recordSize(env(0)).toInt + TerminatorSize
+    private val e0End: Int = HeaderSize + binaryCodec.recordSize(env(0)).toInt + TerminatorSize
 
     // The single active segment file for `sid` (base offset 0; crash fixtures never rotate).
     private def segmentPath(dir: Path): Path = dir / "streams" / "crash-1" / segmentName(0L)
@@ -249,18 +250,16 @@ class FileJournalCrashTest extends kyo.test.Test[Any]:
                 assert(headerLevel)
         }
         "an unknown metadata version byte is fatal" in {
-            // Construct a raw segment whose single record carries metadata version byte 0x02 (an
+            // Construct a raw segment whose single record carries metadata version byte 0x03 (an
             // unknown future codec). The record CRC is valid, so the failure must originate in
-            // decodeMetadata, not in CRC verification. Without the fix, decodeMetadata silently
-            // returns EventMetadata.empty and the read succeeds; with the fix it fails and rebuild
-            // surfaces a JournalCorruptedError.
+            // metadata decode, not in CRC verification.
             for
                 dir <- freshDir
                 _   <- appendClosed(dir, Seq(Chunk(env(0)))) // creates streams/crash-1/ and the segment
                 _   <-
                     // Unsafe: raw byte-level segment rewrite to plant an unknown metadata version fixture.
                     Sync.Unsafe.defer {
-                        val badMeta = Array[Byte](0x02.toByte) // unknown future version, no body
+                        val badMeta = Array[Byte](0x03.toByte) // unknown future version, no body
                         val rec     = BinarySegmentCodec.encodeRecord(0L, "e-0", "T", badMeta, "p0".getBytes("UTF-8"))
                         val term    = BinarySegmentCodec.encodeTerminator(1)
                         val total   = BinarySegmentCodec.HeaderSize + rec.length + term.length

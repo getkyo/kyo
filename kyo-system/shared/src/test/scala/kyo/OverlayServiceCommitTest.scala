@@ -2,7 +2,7 @@ package kyo
 
 import java.nio.charset.StandardCharsets
 
-/** Tests for the durable overlay commit machinery in [[PathOverlayService]].
+/** Tests for the durable overlay commit machinery in [[OverlayService]].
   *
   * Covers conflict detection and abort, Move/Copy resolved-entry replay, the commitOverwrite
   * no-abort guarantee, all four commitWith resolution types, and the WriteOpLog decode-failure
@@ -11,7 +11,7 @@ import java.nio.charset.StandardCharsets
   * All arms use in-memory lower for determinism. Lower is mutated out-of-band to create conflict
   * conditions. No `Thread.sleep` anywhere.
   */
-class PathOverlayServiceCommitTest extends kyo.test.Test[Any]:
+class OverlayServiceCommitTest extends kyo.test.Test[Any]:
 
     private def withOverlay[A, S](
         program: (Path.Service.Overlay[Sync], Path.Service[Sync]) => A < (Sync & Abort[FileException] & S)
@@ -338,4 +338,4 @@ class PathOverlayServiceCommitTest extends kyo.test.Test[Any]:
             case other                  => assert(false, s"expected Success(Absent), got $other")
     }
 
-end PathOverlayServiceCommitTest
+end OverlayServiceCommitTest

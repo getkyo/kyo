@@ -6,8 +6,9 @@ class JournalReaderTest extends kyo.test.Test[Any]:
 
     import BinarySegmentCodec.HeaderSize
     import BinarySegmentCodec.TerminatorSize
-    import BinarySegmentCodec.recordSize
     import BinarySegmentCodec.segmentName
+
+    private val binaryCodec = new BinarySegmentCodec(EventMetadataCodec.default)
 
     private def valid[A](r: Result[JournalInvalidIdentifierError, A]): A =
         r.getOrElse(throw new AssertionError("valid identifier"))
@@ -15,7 +16,7 @@ class JournalReaderTest extends kyo.test.Test[Any]:
     private def env(n: Int): EventEnvelope =
         EventEnvelope(valid(EventId(s"e-$n")), valid(EventType("T")), Span.from(s"p$n".getBytes("UTF-8")), EventMetadata.empty)
 
-    private val e0End: Int = HeaderSize + recordSize(env(0)).toInt + TerminatorSize
+    private val e0End: Int = HeaderSize + binaryCodec.recordSize(env(0)).toInt + TerminatorSize
 
     private def freshDir(using Frame): Path < (Sync & Scope) =
         Abort.run[FileException](Path.run(Path.tempDir("fj-reader"))).map {

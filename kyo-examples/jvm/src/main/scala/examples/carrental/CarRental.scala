@@ -49,8 +49,8 @@ object CarRental extends KyoApp:
                     fleetId <- Abort.get(StreamId("fleet"))
                     backend <- Journal.Backend.file(dir)
                     _ <- Journal.run(backend) {
-                        val log = EventLog[RentalEvent]
                         for
+                            log <- EventLog[RentalEvent]
                             _ <- log.append(
                                 fleetId,
                                 ExpectedOffset.NoStream,

@@ -2,7 +2,7 @@ package kyo
 
 import java.nio.charset.StandardCharsets
 
-class PathInMemoryServiceTest extends kyo.test.Test[Any]:
+class InMemoryServiceTest extends kyo.test.Test[Any]:
 
     // Helper: run a path program through a fresh in-memory service.
     private def withInMem[A, S](program: Path.Service[Sync] => A < (Sync & Abort[FileException] & S))
@@ -285,4 +285,4 @@ class PathInMemoryServiceTest extends kyo.test.Test[Any]:
         assert(Path.Disposition.values.size == 3)
     }
 
-end PathInMemoryServiceTest
+end InMemoryServiceTest

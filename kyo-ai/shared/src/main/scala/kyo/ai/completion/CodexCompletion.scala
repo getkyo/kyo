@@ -425,11 +425,19 @@ private[completion] object CodexCompletion extends HarnessCompletion("Codex"):
     )(using Frame): OutputMode =
         val userTools = tools.filterNot(_.name == Completion.resultToolName)
         if userTools.nonEmpty then
-            OutputMode(toolCallOutputSchema(tools, resultSchema), raw => readStructuredOutput(raw))
+            OutputMode(outputSchemaFor(tools, resultSchema), raw => readStructuredOutput(raw))
         else
-            OutputMode(stringifiedResultSchema(closedSchema(resultSchema)), raw => resultOutput(raw))
+            OutputMode(outputSchemaFor(tools, resultSchema), raw => resultOutput(raw))
         end if
     end outputModeFor
+
+    private[kyo] def outputSchemaFor(tools: Chunk[Tool.internal.Info[?, ?, LLM]], resultSchema: JsonSchema)(using
+        Frame
+    ): Structure.Value =
+        val userTools = tools.filterNot(_.name == Completion.resultToolName)
+        if userTools.isEmpty then appServerSchema(resultSchema)
+        else toolCallOutputSchema(tools, resultSchema)
+    end outputSchemaFor
 
     private def toolCallOutputSchema(tools: Chunk[Tool.internal.Info[?, ?, LLM]], resultSchema: JsonSchema)(using
         Frame
@@ -438,13 +446,9 @@ private[completion] object CodexCompletion extends HarnessCompletion("Codex"):
             callObjectSchema(
                 enumSchema(tool.name),
                 if tool.name == Completion.resultToolName then
-                    val schema = closedSchema(resultSchema)
-                    if hasDynamicMap(schema) then stringifiedResultSchema(schema)
-                    else appServerCompatible(schema)
+                    appServerSchema(resultSchema)
                 else
-                    val schema = appServerSchema(Json.jsonSchema(using tool.inputSchema.asInstanceOf[Schema[Any]]))
-                    if hasDynamicMap(schema) then stringifiedJsonSchema(schema)
-                    else schema
+                    appServerSchema(Json.jsonSchema(using tool.inputSchema.asInstanceOf[Schema[Any]]))
             )
         })
         objectSchema(
@@ -497,37 +501,6 @@ private[completion] object CodexCompletion extends HarnessCompletion("Codex"):
             "additionalProperties" -> Structure.Value.Bool(false)
         ))
 
-    private def stringifiedResultSchema(realSchema: Structure.Value)(using Frame): Structure.Value =
-        objectSchema(
-            Chunk(
-                "resultValue" -> stringifiedJsonSchema(realSchema)
-            ),
-            Chunk("resultValue")
-        )
-    end stringifiedResultSchema
-
-    private def stringifiedJsonSchema(realSchema: Structure.Value)(using Frame): Structure.Value =
-        Structure.Value.Record(Chunk(
-            "type" -> Structure.Value.Str("string"),
-            "description" -> Structure.Value.Str(
-                s"JSON string whose parsed value matches this schema: ${Json.encode(realSchema)}"
-            )
-        ))
-    end stringifiedJsonSchema
-
-    private def hasDynamicMap(value: Structure.Value): Boolean =
-        value match
-            case Structure.Value.Record(fields) =>
-                isOpenMapObject(fields) || fields.exists((_, value) => hasDynamicMap(value))
-            case Structure.Value.Sequence(values) =>
-                values.exists(hasDynamicMap)
-            case Structure.Value.MapEntries(entries) =>
-                entries.exists((k, v) => hasDynamicMap(k) || hasDynamicMap(v))
-            case _ =>
-                false
-        end match
-    end hasDynamicMap
-
     private def outputInstructions(
         context: Context,
         tools: Chunk[Tool.internal.Info[?, ?, LLM]],
@@ -573,8 +546,7 @@ private[completion] object CodexCompletion extends HarnessCompletion("Codex"):
                     Return only JSON matching this output schema:
                     ${Json.encode(schema)}
                     Include every required property using the exact property name from the schema.
-                    When the schema contains a top-level property named 'resultValue', the response object must contain that exact property name.
-                    Put a valid JSON string inside 'resultValue'. The parsed string must match the schema described by the 'resultValue' property.
+                    Return the structured object directly. Do not wrap it in resultValue.
                     Never create property names from words in the user's request or answer.
                     Do not rename, abbreviate, split, merge, or omit schema properties.
                     Use the native injected conversation history and current turn input.
@@ -905,11 +877,12 @@ private[completion] object CodexCompletion extends HarnessCompletion("Codex"):
     end readStructuredOutput
 
     private def decodeHarnessMessages(raw: String)(using Frame): Result[String, List[HarnessAssistantMessage]] =
-        decodeHarnessOutput(raw) match
+        val normalized = normalizeHarnessOutput(raw)
+        decodeHarnessOutput(normalized) match
             case Result.Success(output) =>
                 Result.Success(output.messages)
             case Result.Failure(err) =>
-                val trimmed = raw.trim
+                val trimmed = normalized.trim
                 if trimmed.startsWith("[") then
                     decodeHarnessOutput(s"""{"messages":$trimmed}""") match
                         case Result.Success(output) => Result.Success(output.messages)
@@ -919,7 +892,15 @@ private[completion] object CodexCompletion extends HarnessCompletion("Codex"):
                 end if
             case Result.Panic(ex) =>
                 Result.Panic(ex)
+        end match
     end decodeHarnessMessages
+
+    private def normalizeHarnessOutput(raw: String): String =
+        raw.replaceAll(
+            """"id"\s*:\s*"([^"]+)function"\s*,\s*""\s*:\s*"([^"]+)"""",
+            """"id":"$1","function":"$2""""
+        )
+    end normalizeHarnessOutput
 
     private def decodeHarnessOutput(raw: String)(using Frame): Result[String, HarnessOutput] =
         Json.decode[HarnessOutput](raw) match

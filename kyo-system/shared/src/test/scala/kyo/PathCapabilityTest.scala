@@ -16,6 +16,16 @@ class PathCapabilityTest extends kyo.test.Test[Any]:
     val readRuns: String < (Sync & Abort[FileException]) = Path.runReadOnly(readOnly)
     val writeRuns: Unit < (Sync & Abort[FileException])  = Path.run(writer)
 
+    // --- Combinator effect rows (transaction, sandbox, virtual): Sync must not be required in the residual. ---
+    // S = Abort[String] does not subsume Sync; a widened Sync & PathWrite & S return would fail to ascribe.
+    val sandboxRow: Unit < (PathWrite & Abort[String]) =
+        Path.sandbox[Unit, Abort[String]](writer)
+    val transactionRow: Unit < (PathWrite & Abort[CommitConflict] & Abort[String]) =
+        Path.transaction[Unit, Abort[String]](writer)
+    val virtualRow: (Unit, Path.Service.Overlay[Sync]) < (PathWrite & Abort[String]) =
+        Path.virtual[Unit, Abort[String]](writer)
+    val sandboxRowNoSync: Unit < PathWrite = Path.sandbox(writer)
+
     "the read-only runner leaves a write undischarged so its residual does not type-check" in {
         val errors = typeCheckErrors(
             """

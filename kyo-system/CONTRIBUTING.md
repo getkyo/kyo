@@ -1,14 +1,14 @@
 # Contributing to kyo-system
 
-Module-specific guide for kyo-system. Read the repository-root [CONTRIBUTING.md](../CONTRIBUTING.md) first: it carries the conventions, naming rules, type vocabulary (`Maybe` / `Result` / `Chunk` / `Span`), `using`-clause ordering, Frame/Tag, inline guidelines, scaladoc, visibility tiers, the test framework, cross-platform placement, and the unsafe-tier boundary that apply across all of Kyo. This document records only what is specific to kyo-system.
+Module-specific guide for kyo-system. Read the repository-root [CONTRIBUTING.md](../CONTRIBUTING.md) first: it carries global conventions, the test framework, AllowUnsafe tiers, safe-to-unsafe bridging, non-blocking concurrency, visibility tiers, and platform-conditional test gates. This document records only what is specific to kyo-system.
 
-**The headline invariant:** every public operation in kyo-system is backed by two tiers that are structurally coupled. The safe tier (`Path`, `Command`, `Process`, `System`) tracks all I/O in the type system and lifts platform I/O through `Sync.Unsafe.defer`. The unsafe tier (`Path.Unsafe`, `Command.Unsafe`, `Process.Unsafe`, `System.Unsafe`) is the single place where platform-specific I/O actually executes. The two tiers must stay in sync: every abstract method added to an `Unsafe` class requires a matching safe-tier extension method that lifts it, and every platform split requires a stub in every platform leaf.
-
-For `Path`, filesystem I/O is further tracked through the `PathRead` and `PathWrite` capabilities (`ArrowEffect`): operations suspend under the capability, and a runner (`Path.run`, `Path.runReadOnly`, or their `runWith` variants) discharges it and folds per-op `Abort[File*Exception]` markers into the umbrella `Abort[FileException]` on the residual.
+**The headline invariant:** the negative capability law. A write op left in a program passed to a read-only runner keeps `PathWrite` undischarged, so the ascribed read-only residual does not compile [`Path.scala:579-581`]. Filesystem mutation boundaries are enforced in the type system: read-only contexts reject write programs at the call site, not at runtime [`Path.scala:63-66`]. Internalize this before touching runners, service backends, or overlay combinators.
 
 ---
 
 ## Architecture overview
+
+kyo-system compiles as a four-platform `crossProject` (JVM, JS, Native, Wasm) that depends only on `kyo-core` [`../build.sbt:695-699`]. `kyo-eventlog` is an inbound consumer of kyo-system, not an outbound dependency from kyo-system's side [`../build.sbt:671-675`]. Public APIs must compile on all four platforms [`../build.sbt:695-698`].
 
 kyo-system owns five capabilities:
 
@@ -20,26 +20,25 @@ kyo-system owns five capabilities:
 | System environment | `System` (abstract class) | `System.Unsafe` | `Sync`, `Abort[E]` |
 | Stream-to-file sinks | `StreamFileExtensions` (object) | (delegates to `Path.WriteHandle` via `PathWrite` ops) | `Scope`, `PathWrite`, `Sync`, `Abort[FileException]` |
 
-The typed error hierarchies for the two operation families are:
-
-- `FileException` and its sub-traits (`FileReadException`, `FileWriteException`, `FileFsException`) cover all Path I/O.
-- `CommandException` covers pre-launch failures for Command.
-
-**Dependency rule:** kyo-system depends on `kyo-core` only. No other kyo module is a compile-time dependency from kyo-system's side. `kyo-eventlog` depends on kyo-system (introduced with `FileJournal`, which uses `Path`, `Path.Unsafe`, and `toJava` for its segment files); no other inbound module edge exists.
+`object Path extends PathPlatformSpecific`, wiring the shared API to platform factories [`Path.scala:79`]. `StreamFileExtensions` lives in kyo-system because it couples to `Path` and `PathWrite` capability ops; kyo-core keeps the platform-neutral stream combinators [`StreamFileExtensions.scala:5-10`].
 
 ### Source layout
 
 ```
 kyo-system/
   shared/src/main/scala/kyo/
-    Path.scala                    # opaque type, safe tier, abstract Unsafe, handle types
-    Command.scala                 # opaque type, safe tier, abstract Unsafe, EnvMode
-    Process.scala                 # opaque type, safe tier, abstract Unsafe, ExitCode, Input
-    System.scala                  # abstract class, live impl, Local, Parser type class
-    StreamFileExtensions.scala    # stream-to-file sinks; exported to package
+    Path.scala                    # opaque type, PathRead/PathWrite capabilities, Service SPI, runners, combinators
+    HostService.scala             # private[kyo] host delegate + root-confined backend
+    InMemoryService.scala         # private[kyo] AutoCommit virtual backend
+    OverlayService.scala          # private[kyo] ManualCommit copy-on-write overlay + ForwardingLowerService
+    CommitConflict.scala          # CommitConflict, Conflict, Resolution value types
+    Command.scala                 # opaque type, safe tier, abstract Unsafe
+    Process.scala                 # opaque type, safe tier, abstract Unsafe, ExitCode export
+    System.scala                  # abstract class, live impl, Local, platform import
+    StreamFileExtensions.scala    # stream-to-file sinks
     FileException.scala           # sealed hierarchy with marker traits
     CommandException.scala        # sealed hierarchy for pre-launch failures
-    internal/PathDirectories.scala  # shared OS directory resolution logic (private[kyo])
+    internal/PathDirectories.scala  # shared OS directory resolution (private[kyo])
 
   jvm-native/src/main/scala/kyo/
     PathJvmNative.scala           # toJava extension (JVM + Native only)
@@ -48,499 +47,327 @@ kyo-system/
     internal/SystemPlatformSpecific.scala # delegates to java.lang.System
 
   js-wasm/src/main/scala/kyo/
-    internal/PathPlatformSpecific.scala   # Node.js-backed using NodeFs/NodePath facades
+    internal/PathPlatformSpecific.scala   # Node.js @JSImport facades (NodeFs, NodePath)
     internal/ProcessPlatformSpecific.scala
-    internal/SystemPlatformSpecific.scala # Node process.env / process.platform / process.arch
+    internal/SystemPlatformSpecific.scala # Node process.env / process.platform
 
   shared/src/test/scala/kyo/
-    PathTest.scala, PathSeparatorsTest.scala, PathSizeTest.scala, PathStatTest.scala
+    PathTest.scala, PathCapabilityTest.scala, PathTransactionTest.scala
+    PathConfinementTest.scala, InMemoryServiceTest.scala
+    OverlayServiceTest.scala, OverlayServiceCommitTest.scala, OverlayServiceRecoveryTest.scala
+    CommitConflictTest.scala
     CommandTest.scala, ProcessTest.scala, SystemTest.scala, FileExceptionTest.scala
 
   jvm/src/test/scala/kyo/
     PathJvmTest.scala             # JVM-only: toJava, JFiles.createSymbolicLink
+    PathConfinementJvmTest.scala  # JVM-only: Service.host(root) symlink escape
 ```
+
+Virtual filesystem backends (`InMemoryService`, `OverlayService`) live in `shared/src/main` as `private[kyo]` objects/classes in dedicated source files, not in platform trees [`InMemoryService.scala:5`, `InMemoryService.scala:53`, `OverlayService.scala:20`, `OverlayService.scala:366`]. Shared OS directory logic lives in `shared/src/main/internal`; both platform `PathPlatformSpecific` classes extend it [`PathDirectories.scala:5-8`].
+
+### End-to-end read call flow
+
+1. `path.read` suspends `Path.Op.Read` under `Tag[PathRead]` via `ArrowEffect.suspend` [`Path.scala:1085-1086`].
+2. A runner (`Path.run`, `Path.runReadOnly`, or `runWith`) discharges the capability via `ArrowEffect.handle` and routes the op through `dispatch` to the installed `Service` [`Path.scala:600-603`, `Path.scala:816-818`].
+3. `HostService.read` bridges `path.unsafe.read()` through `Sync.Unsafe.defer(Abort.get(...))` [`HostService.scala:35-37`].
+4. Platform I/O executes in `NioPathUnsafe` (JVM/Native, backed by `java.nio.file.Path`) or the Node.js-backed class (JS/Wasm, via `@JSImport` facades) [`jvm-native/src/main/scala/kyo/internal/PathPlatformSpecific.scala:24-25`, `js-wasm/src/main/scala/kyo/internal/PathPlatformSpecific.scala:13-15`].
+5. At the unsafe tier, `read()` returns `Result[FileReadException, String]` with `(using AllowUnsafe, Frame)` [`Path.scala:1536`].
 
 ---
 
-## Path capability model
+## The negative capability law (headline invariant)
 
-### Capabilities and subtyping
+### Goal
 
-[`Path.scala:49-71`]
+Filesystem I/O is tracked as separate read and write capabilities so mutation boundaries are visible in the effect row before a runner executes anything [`Path.scala:49-54`]. A computation that only reads carries `< PathRead`; a computation that writes carries `< PathWrite`, which subtypes `PathRead` [`Path.scala:63-66`]. The negative capability law is the compile-time gate: if a program contains a write op but the caller ascribes a read-only runner residual, `PathWrite` remains undischarged and the program does not compile [`Path.scala:579-581`, `Path.scala:607-608`].
 
-- `PathRead`: read-group ops (`exists`, `read`, `list`, `walk`, `realPath`, `confinedTo`, streaming reads).
-- `PathWrite <: PathRead`: write-group ops (`write`, `append`, `mkDir`, `move`, scoped `tempDir`, handle writes).
-- Safe extension methods suspend under `Tag[PathRead]` or `Tag[PathWrite]` via `ArrowEffect.suspend`; they do not carry `Sync` or per-op `Abort` on the extension row itself.
-- Runners discharge the capability and expose `Sync & Abort[FileException]` (plus the service effect `S` when using `runWith`).
+### Mechanisms
 
-### Runners
+**Separate capabilities over one op family.** `PathRead` and `PathWrite` are both `ArrowEffect` instances over a single reified `Path.Op` enum [`Path.scala:61`, `Path.scala:77`, `Path.scala:130-136`]. One shared op family serves both capabilities because a class cannot extend `ArrowEffect` twice with different inputs, and `PathWrite <: PathRead` inherits `PathRead`'s input constructor [`Path.scala:130-136`]. Read-group cases suspend under `Tag[PathRead]`; write-group cases suspend under `Tag[PathWrite]` [`Path.scala:137-157`].
 
-[`Path.scala:541-568`]
+**Subtyping collapses mixed rows.** Because `PathWrite <: PathRead`, a write-capable context also satisfies read operations; a mixed read-plus-write program's row collapses to `PathWrite` [`Path.scala:63-66`]. Write presence is always visible at the type level.
 
-| Runner | Discharges | Residual |
+**Safe methods hide Sync and Abort until discharge.** Safe extension methods suspend via `ArrowEffect.suspend` and carry only `PathRead` or `PathWrite` on the row, not `Sync` or per-op `Abort` [`Path.scala:1085-1086`, `Path.scala:1292-1293`]. `Sync` and the `Abort[FileException]` umbrella are folded into the capability and become visible only after a runner discharges it [`Path.scala:49-52`].
+
+**Runners discharge and expose backend effects.** Runners call `ArrowEffect.handle`, dispatch each op to the installed `Service`, and expose the backend effect `S` on the residual [`Path.scala:600-603`, `Path.scala:611-613`]:
+
+| Runner | Discharges | Input row | Residual |
+|---|---|---|---|
+| `Path.run` / `runWith(service)` | `PathWrite` (covers reads via subtyping) | `A < (PathWrite & S2)` | `A < (S & Abort[FileException] & S2)` |
+| `Path.runReadOnly` / `runReadOnlyWith(service)` | `PathRead` only | `A < (PathRead & S2)` | `A < (S & Abort[FileException] & S2)` |
+
+Both default to `Service.host`; residuals carry `Sync & Abort[FileException] & S` [`Path.scala:566-571`, `Path.scala:576-577`, `Path.scala:590-591`].
+
+### When each runner fires
+
+- **`Path.run` / `runWith`:** use when the program may read and write. Discharges both capabilities against the service backend [`Path.scala:566-571`].
+- **`Path.runReadOnly` / `runReadOnlyWith`:** use when the program must not mutate the filesystem. Discharges read capability only [`Path.scala:576-577`]. A write op in the program keeps `PathWrite` undischarged and fails to compile (the negative capability law) [`Path.scala:579-581`].
+- **`Path.runWith(service)` / `runReadOnlyWith(service)`:** use when testing or running against a non-host backend (`Service.inMemory`, `Service.overlay`, or a custom `Service[S]`) [`Path.scala:600-603`, `InMemoryServiceTest.scala:7-10`].
+
+### Decision rule
+
+Before ascribing a runner residual, ask: does this program contain any write-group op (`write`, `append`, `mkDir`, `move`, `tempDir`, etc.)? If yes, you must use `Path.run` or `runWith`, not `runReadOnly`. Passing a write program to `Path.runReadOnly` fails at compile time with an undischarged `PathWrite`, not at runtime [`PathCapabilityTest.scala:29-38`]. The compiler error mentions `PathWrite` [`PathCapabilityTest.scala:29-38`].
+
+Compile-time row ascriptions in `PathCapabilityTest` prove the law: a green compile is the assertion [`PathCapabilityTest.scala:11-17`]:
+
+```scala
+val readOnly: String < PathRead                      = somePath.read
+val writer: Unit < PathWrite                         = somePath.write("x")
+val mixed: String < PathWrite                        = somePath.read.map(s => otherPath.write(s).andThen(s))
+val readRuns: String < (Sync & Abort[FileException]) = Path.runReadOnly(readOnly)  // compiles
+// val bad = Path.runReadOnly(writer)  // does NOT compile: PathWrite undischarged
+```
+
+### Config knobs (capability-related)
+
+| Knob | Values | Effect |
 |---|---|---|
-| `Path.run(program)` | `PathWrite` (+ `PathRead` via subtyping) against `Service.host` | `Sync & Abort[FileException] & S2` |
-| `Path.runReadOnly(program)` | `PathRead` only against `Service.host` | `Sync & Abort[FileException] & S2` |
-| `Path.runWith(service)(program)` | `PathWrite` against explicit service | `S & Abort[FileException] & S2` |
-| `Path.runReadOnlyWith(service)(program)` | `PathRead` only against explicit service | `S & Abort[FileException] & S2` |
+| Runner | `run`, `runReadOnly`, `runWith`, `runReadOnlyWith` | Which capability tag is discharged |
+| Default service | `Service.host` | Host filesystem backend with `AutoCommit` disposition |
+| Custom service | `Service.inMemory`, `Service.overlay(lower)`, custom `Service[S]` | Virtual or confined backends; backend effect `S` rides the residual |
+| Service disposition | `AutoCommit`, `ManualCommit`, `CommitOnSuccess` (reserved) | When staged writes become visible (see Service SPI section) |
 
-The negative capability law: a write op left in a `runReadOnly` program keeps `PathWrite` undischarged and fails to compile.
+---
+
+## Safe and unsafe two-tier coupling (all four capabilities)
+
+Every public operation in kyo-system is backed by two structurally coupled tiers. This applies to `Path`, `Command`, `Process`, and `System`, not only Path.
+
+**Safe tier:** opaque types (`Path`, `Command`, `Process`) or abstract class (`System`) track I/O in the effect system. For Path, safe extension methods suspend under `ArrowEffect` capabilities rather than calling `Sync.Unsafe.defer` directly [`Path.scala:1030-1031`]. For Command, Process, and System, safe-tier methods lift through `Sync.Unsafe.defer`.
+
+**Unsafe tier:** `Path.Unsafe`, `Command.Unsafe`, `Process.Unsafe`, `System.Unsafe` are abstract classes where platform-specific I/O executes. Each public capability is an opaque type alias over its `Unsafe` class, exposing `.unsafe` to reach the platform tier [`Path.scala:45`, `Command.scala:47`, `Process.scala:40`]. Effectful unsafe methods take `(using AllowUnsafe, Frame)` and return typed `Result` errors at the unsafe tier, not `Abort` [`Path.scala:1501-1502`, `Path.scala:1536-1537`]. `Command.Unsafe.spawn` returns `Result[CommandException, Process.Unsafe]` so pre-launch failures stay typed before safe-tier lifting [`Command.scala:239-240`]. Pure builder methods on `Command` mutate the wrapped `Unsafe` value and return `.safe` without performing I/O [`Command.scala:171`].
+
+**Coupling rule:** every abstract method added to an `Unsafe` class requires a matching safe-tier lift (Path: extension method + `Op` case + service dispatch + platform impl in both leaves; Command/Process/System: safe-tier method). Adding an abstract method to `Path.Unsafe` without a matching safe-tier lift breaks the structurally coupled tiers [`Path.scala:45`, `Command.scala:47`, `Process.scala:40`].
+
+**Production unsafe bridging:** every call to an `Unsafe` method inside kyo-system production code must be wrapped in `Sync.Unsafe.defer(...)` and annotated with a `// Unsafe:` comment naming the safe-tier contract being bridged [`HostService.scala:17-18`, `StreamFileExtensions.scala:25`]. Do not introduce `import AllowUnsafe.embrace.danger` in kyo-system sources; all unsafe execution passes through `Sync.Unsafe.defer`. `HostService` lifts `Result`-returning unsafe ops with `Sync.Unsafe.defer(Abort.get(...))` and pairs each call with a `// Unsafe:` comment [`HostService.scala:35-37`]. Inspection unsafe ops that return plain values omit `Abort.get` inside `Sync.Unsafe.defer` [`HostService.scala:17-18`].
+
+**Target convention (not yet universal):** `Command` and `System` safe-tier lifts use `Sync.Unsafe.defer` but do not yet carry `// Unsafe:` comments, unlike `Path.HostService` [`Command.scala:67-68`, `System.scala:89`]. New lifts on Path backends, `StreamFileExtensions`, `InMemoryService`, and `OverlayService` must follow the annotated pattern.
+
+| Return shape at safe tier | Lift pattern | Example |
+|---|---|---|
+| `A < PathRead` or `A < PathWrite` | `ArrowEffect.suspend(Tag[...], Path.Op.X(...))` | `path.read` [`Path.scala:1085-1086`] |
+| `A < (Sync & Abort[E])` from `Result`-returning unsafe | `Sync.Unsafe.defer(Abort.get(unsafe.op()))` + `// Unsafe:` | `HostService.read` [`HostService.scala:35-37`] |
+| `A < Sync` from plain-value unsafe | `Sync.Unsafe.defer(unsafe.op())` + `// Unsafe:` | `HostService.exists` [`HostService.scala:17-18`] |
+| `Process < (Sync & Scope & Abort[CommandException])` | `Sync.Unsafe.defer { ... }` (comments pending) | `Command.spawn` [`Command.scala:67-68`] |
+
+---
+
+## Path capability model (supporting detail)
 
 ### Service SPI and factories
 
-[`Path.scala:191-299`]
+`Path.Service[S]` is the pluggable backend SPI. It is effect-polymorphic in `S` (the backend's own effect, exposed on a runner residual); methods take no `(using Frame)` because a service captures its `Frame` at construction; the umbrella `Abort[FileException]` is the uniform error row [`Path.scala:204-207`, `Path.scala:215-219`].
 
-`Path.Service[S]` is effect-polymorphic in `S` (the Journal `Backend[S]` precedent). Methods take no `(using Frame)`; the service captures its frame at construction. Every method carries `Abort[FileException]` (umbrella, not per-op markers).
+| Factory | Class | Disposition | Effect `S` | Role |
+|---|---|---|---|---|
+| `Service.host` | `HostService` | `AutoCommit` | `Sync` | Default host backend; delegates every op to `Path.Unsafe` [`Path.scala:288`, `HostService.scala:13-14`] |
+| `Service.host(root)` | rooted `HostService` | `AutoCommit` | `Sync` | Resolves `root.realPath` at construction; rejects ops whose canonical path escapes the confinement root [`HostService.scala:9-11`, `HostService.scala:155-158`] |
+| `Service.inMemory` | `InMemoryService` | `AutoCommit` | `Sync` | Immutable node tree keyed by `Path.parts` behind one `AtomicRef`, advanced by optimistic CAS [`Path.scala:298-302`, `InMemoryService.scala:53-55`] |
+| `Service.overlay(lower)` | `OverlayService` | `ManualCommit` | inherits `S` from lower | Copy-on-write over `lower`; reads fall through, writes stage in upper layer; scope-managed auto-rollback [`Path.scala:304-308`, `OverlayService.scala:363-374`] |
 
-| Factory | Disposition | Notes |
+**Disposition** governs when staged bytes become visible [`Path.scala:182-199`]:
+
+| Disposition | Contract | Used by |
 |---|---|---|
-| `Service.host` | `AutoCommit` | Default; delegates to `Path.Unsafe` |
-| `Service.host(root)` | `AutoCommit` | Root-confined; `realPath` prefix check |
-| `Service.inMemory` | `AutoCommit` | Immutable tree behind `AtomicRef` CAS |
-| `Service.overlay(lower)` | `ManualCommit` | Copy-on-write; returns `Service.Overlay[S]` |
+| `AutoCommit` | Each successful write is durable immediately | `Service.host`, `Service.inMemory` |
+| `ManualCommit` | Writes stage until explicit `CommitHandle.commit` | `Service.overlay` |
+| `CommitOnSuccess` | Writes stage during enclosing run, commit on success | Reserved; not used by shipped factories |
 
-`Path.Disposition` enum: `AutoCommit`, `CommitOnSuccess` (reserved; stages writes until run completion; no shipped factory uses it), `ManualCommit`.
+**Overlay internals (summary).** Staged writes are recorded as `WriteOp` journal entries, distinct from the read/write op-family partition in `Path.Op` [`OverlayService.scala:6-17`]. Upper-layer state uses `Upper` variants: staged `Entry`, deletion `Whiteout`, directory-hiding `OpaqueDir` [`OverlayService.scala:22-28`]. First observation of a lower path records a `Path.Stamp` in the read-set; commit compares stamps against live lower to detect divergence [`Path.scala:897-907`, `OverlayService.scala:436-442`]. Overlay commit machinery uses a self-contained binary intent log with no `kyo-eventlog` dependency to avoid circular module edges [`OverlayService.scala:55-58`].
 
-### Overlay commit types
+**Commit strategies** on `CommitHandle[S]` (extends `Service[S]`) [`Path.scala:937-964`]:
 
-[`CommitConflict.scala`, `Path.scala:865-893`]
-
-- `CommitConflict`: raised when read-set stamps diverge at commit; carries `Chunk[Conflict]`.
-- `Conflict`: one path's `ancestor` stamp, staged `ours`, live `theirs`.
-- `Resolution`: per-conflict choice in `commitWith` (`KeepOurs`, `KeepTheirs`, `Write(entry)`, `Remove`).
-- `Path.Entry` / `Path.Stamp`: committed entry and observation stamp types.
-- `CommitHandle[S]`: `commit`, `commitOverwrite`, `commitWith`, `rollback`.
-
-### Transaction, sandbox, and virtual
-
-[`Path.scala:570-629`]
-
-| Combinator | Success disposition | `CommitConflict` in row? |
+| Method | Behavior | Residual includes `Abort[CommitConflict]`? |
 |---|---|---|
-| `Path.transaction(program)` | commit overlay | yes |
-| `Path.sandbox(program)` | rollback overlay | no |
-| `Path.virtual(program)` | returns `(result, Overlay)` for caller-controlled commit | no (until caller commits) |
+| `commit` | Validates read-set; aborts `CommitConflict` if stamps diverged; lower untouched on conflict | Yes |
+| `commitOverwrite` | Replays unconditionally (last-writer-wins); no conflict check | No [`Path.scala:958`] |
+| `commitWith(resolve)` | Validates, calls `resolve` per conflict to obtain a `Resolution`, replays resolved entries | Yes (unless resolve handles all) |
+| `rollback` | Discards staged writes without touching lower | No |
 
-All three require an ambient `PathWrite` scope from an enclosing runner.
+`CommitConflict`, `Conflict`, and `Resolution` are public types in `CommitConflict.scala` [`CommitConflict.scala:3-9`, `CommitConflict.scala:28-33`, `CommitConflict.scala:47-51`]. `Conflict.ancestor` carries `Maybe[Path.Stamp]`, not `Maybe[Path.Entry]`, because the read-set records only a stamp at observation [`CommitConflict.scala:16-26`]. `Resolution` has four cases: `KeepOurs`, `KeepTheirs`, `Write(entry)`, `Remove` [`CommitConflict.scala:47-51`]. Non-conflicting staged entries replay regardless of per-conflict resolution choices [`CommitConflict.scala:44-45`].
 
-### Scoped tempDir
+**Overlay traps:**
 
-[`Path.scala:848-868`]
+- Calling `commit` or `rollback` on a virtual overlay after `PathWrite` is discharged leaves path operations unresolved at runtime [`Path.scala:708-710`]. `Path.virtual` commit outside an ambient `PathWrite` scope leaves suspensions unresolved; `evalNow` returns absent [`PathTransactionTest.scala:167-176`].
+- `Path.Stamp.Kind.Absent` stamps a path that was observed but happened to not exist at that moment; `Maybe.Absent` on `Conflict.ancestor` means the path was never read through the overlay at all [`Path.scala:926-931`].
 
-`Path.tempDir(prefix)` suspends under `PathWrite`, creates through the active service, and registers service-correct recursive removal on `Scope` exit via `TempDirHandle`. There is no unscoped public temp-directory primitive.
+### Overlay combinators (transaction, sandbox, virtual)
 
----
+These combinators share an overlay bootstrap that casts `Sync` off the residual so combinator return rows stay locked without `Sync`, the same way `exists`/`read` hide `Sync` behind suspend/dispatch [`Path.scala:616-621`].
 
-## Path API
-
-### Safe-tier surface
-
-`Path` is an opaque type wrapping `Path.Unsafe`. Extension methods suspend under `PathRead` or `PathWrite`; discharge with a runner. After `Path.run` / `Path.runReadOnly`, the residual carries `Sync & Abort[FileException]`:
-
-| Safe method | Capability | Notes |
+| Combinator | Return row | Disposition on success |
 |---|---|---|
-| `path.exists`, `isDirectory`, `isRegularFile`, `isSymbolicLink` | `PathRead` | return `false` on inaccessible paths |
-| `path.realPath`, `read`, `readBytes`, `readLines`, `stat`, `size`, `list` | `PathRead` | |
-| `path.readStream`, `readBytesStream`, `readLinesStream`, `walk` | `PathRead & Scope` | handle closed on scope exit |
-| `path.tail` | `PathRead & Async & Scope` | poll loop |
-| `path.confinedTo(root)` | `PathRead & Abort[FileException]` | realpath prefix check |
-| `path.write`, `append`, `truncate`, `mkDir`, `mkFile`, `move`, `copy`, `remove` | `PathWrite` | |
-| `Path.tempDir(prefix)` | `PathWrite & Scope` | service-scoped cleanup |
+| `Path.transaction` | `A < (PathWrite & Abort[CommitConflict] & S)` | Commits overlay; rolls back on `Abort[CommitConflict]` [`Path.scala:671`, `Path.scala:659-665`] |
+| `Path.sandbox` | `A < (PathWrite & S)` | Always rolls back; never surfaces `CommitConflict` [`Path.scala:686-693`] |
+| `Path.virtual` | `(A, Service.Overlay[Sync]) < (PathWrite & S)` | Caller must commit or rollback within ambient `PathWrite` scope [`Path.scala:701-712`] |
 
-#### Companion-level constants
+Overlay combinator residuals must not require `Sync`: compile-time row ascriptions prove `sandbox`/`transaction`/`virtual` preserve caller tail `S` without widening to `Sync` [`PathCapabilityTest.scala:19-27`]. `Abort[String]` is used as a service effect that does not subsume `Sync`; a widened `Sync & PathWrite & S` return would fail to ascribe [`PathCapabilityTest.scala:19-27`].
 
-```scala
-Path.pathSeparator  // ":" on Unix, ";" on Windows, Node's path.delimiter on JS
-Path.fileSeparator  // "/" on Unix, "\\" on Windows, Node's path.sep on JS
-```
+Overlay combinators forward lower I/O back through `ArrowEffect.suspend` so the ambient `PathWrite` handler stays transparent [`OverlayService.scala:1508-1509`, `OverlayService.scala:1523-1524`]. `ForwardingLowerService` re-suspends lower I/O as `PathRead`/`PathWrite` so exceptions propagate through the outer handler, not inside the overlay bootstrap handler [`Path.scala:406-408`, `OverlayService.scala:1507-1600`].
 
-Both are `val` on `object Path`, computed once at companion-object initialization via `platformPathSeparator` / `platformFileSeparator` on the `PathPlatformSpecific` trait.
-
-#### Key design points
-
-- `Path` is immutable. Every I/O method lifts through `Sync.Unsafe.defer` at the safe tier and through `AllowUnsafe` at the abstract-class tier.
-- Inspection methods (`exists`, `isDirectory`, `isRegularFile`, `isSymbolicLink`) require only `Sync`, not `Abort`: they return `false` for inaccessible or non-existent paths rather than failing.
-- Streaming methods (`readStream`, `readBytesStream`, `readLinesStream`, `walk`) carry `Scope` so the underlying OS handle is closed when the enclosing scope exits, whether it completes normally or aborts.
-- `path.tail` is the only streaming method that adds `Async` (it sleeps between polls).
-- `path.stat` returns a `PathStat(lastModifiedMs, sizeBytes)` from a single underlying syscall, guaranteeing that both values reflect the same instant.
-- `path.confinedTo(root)` resolves both paths through `realPath` before comparing prefixes, so a symlink inside the root that escapes to outside is caught. Use it anywhere a configured root is combined with user-supplied relative paths.
-
-### Unsafe tier
-
-`Path.Unsafe` is the abstract class that platform implementations extend. Each abstract method takes `(using AllowUnsafe, Frame)` for effectful operations, or just `(using AllowUnsafe)` for handle operations. The safe-tier extension methods delegate to `self.unsafe.*` inside `Sync.Unsafe.defer`.
-
-The safe-tier lift for a method that returns a `Result` is always:
-
-```scala
-def myOp(using Frame): T < (Sync & Abort[SomeException]) =
-    Sync.Unsafe.defer(Abort.get(self.unsafe.myOp()))
-```
-
-For a method that returns a plain value (no failure), omit `Abort.get`:
-
-```scala
-def myFlag(using Frame): Boolean < Sync =
-    Sync.Unsafe.defer(self.unsafe.myFlag())
-```
-
-### Handle types
-
-Four abstract handle classes live in `object Path` as `private[kyo]`:
-
-| Handle | Returned by | Key method |
-|---|---|---|
-| `ReadHandle` | `Path.Unsafe.openRead` | `readChunk(buf: Array[Byte]): ReadResult` |
-| `LineReadHandle` | `Path.Unsafe.openReadLines(charset)` | `readLine(): Maybe[String]` |
-| `WriteHandle` | `Path.Unsafe.openWrite(append, createFolders)` | `writeBytes`, `writeString`, `finish()` |
-| `WalkHandle` | `Path.Unsafe.openWalk(maxDepth, followLinks)` | `next(): Maybe[Path]` |
-| `TempDirHandle` | `Service.tempDir` | `path`, `remove()` (internal) |
-
-`WriteHandle.finish()` marks the channel complete (flush + fsync). If `close()` runs without a prior `finish()`, the platform deletes the partial entry (delete-on-close-without-finish contract).
-
-All four have a `close()(using AllowUnsafe): Unit` method. The safe tier always acquires them with `Scope.acquireRelease` so they are closed when the scope exits. Never hold a handle outside a `Scope`.
-
-`ReadResult` is an opaque `Int` wrapper. `ReadResult.Eof` signals end of file; a positive value is the byte count. Use `.isEof` and `.bytesRead` rather than comparing against `-1` directly.
-
-### Adding a new Path operation
-
-1. Add the abstract method to `Path.Unsafe` in `shared/src/main/scala/kyo/Path.scala`. Decide its `Result` error type: `FileReadException`, `FileWriteException`, or `FileFsException`.
-
-2. Add the safe-tier extension method directly below the other safe methods in `object Path` (`extension (self: Path)`). Always lift with `Sync.Unsafe.defer(Abort.get(...))`.
-
-3. Implement in `jvm-native/src/main/scala/kyo/internal/PathPlatformSpecific.scala` on `NioPathUnsafe` using `java.nio.file.*`.
-
-4. Implement in `js-wasm/src/main/scala/kyo/internal/PathPlatformSpecific.scala` on the Node.js-backed path class using `NodeFs` / `NodePath` facades.
-
-5. Add cross-platform test leaves in `shared/src/test/scala/kyo/PathTest.scala`. Place mechanics that genuinely require JVM APIs (for example symlink creation via `JFiles.createSymbolicLink`) in `jvm/src/test/scala/kyo/PathJvmTest.scala`. Contract-level tests belong in the cross-platform shared tree.
-
-### Cross-platform discipline for Path
-
-| Tree | Content |
-|---|---|
-| `shared/src/main` | `Path.scala` (opaque type, safe tier, abstract `Unsafe`, handle types), `internal/PathDirectories.scala` (shared OS directory logic) |
-| `jvm-native/src/main` | `NioPathUnsafe` backed by `java.nio.file.Path`; `PathJvmNative.scala` for `toJava` |
-| `js-wasm/src/main` | Node.js-backed impl using `NodeFs` / `NodePath` facades |
-
-The JS implementation uses `@JSImport("node:fs", ...)` and `@JSImport("node:path", ...)` facades. These facades are the only place where `js.native` / `@js.native` appears in path-related code.
-
-When adding a new platform-specific capability, supply a stub in every platform leaf. On a non-supporting platform the stub must raise the appropriate `FileException` or return a documented no-op; it must never throw a raw exception.
-
-`PathJvmNative.scala` exposes a `toJava: java.nio.file.Path` extension method. This extension lives in `jvm-native/` because `java.nio.file.Path` is absent on Scala.js. No JS-specific file lives directly under `kyo/` (only under `internal/`).
-
----
-
-## FileException hierarchy
-
-```
-FileException (sealed abstract class, extends KyoException)
-  FileReadException (sealed trait)
-  FileWriteException (sealed trait)
-  FileFsException (sealed trait)
-
-Concrete leaves and which marker traits they implement:
-  FileNotFoundException         - FileReadException, FileWriteException, FileFsException
-  FileAccessDeniedException     - FileReadException, FileWriteException, FileFsException
-  FileIsADirectoryException     - FileReadException, FileWriteException
-  FileNotADirectoryException    - FileFsException
-  FileAlreadyExistsException    - FileFsException
-  FileDirectoryNotEmptyException - FileFsException
-  FileIOException               - FileReadException, FileWriteException, FileFsException
-```
-
-Use the most specific subtype. Do not use `FileIOException` when a more specific variant exists (`FileNotFoundException` for a missing file, `FileAccessDeniedException` for a permission failure). Each leaf implements only the marker traits of operations that can actually produce it; this is what makes precise `Abort.recover[FileNotFoundException]` matching work at the call site.
-
-When adding a new leaf, determine which operation categories can produce it and mix in exactly those marker traits. A leaf that mixes in all three when only read operations can raise it is incorrect.
-
----
-
-## CommandException hierarchy
-
-```
-CommandException (sealed abstract class, extends KyoException)
-  ProgramNotFoundException(command: String)
-  PermissionDeniedException(command: String)
-  WorkingDirectoryNotFoundException(path: Path)
-```
-
-Unlike `FileException`, `CommandException` has no marker sub-traits. All three leaves extend `CommandException` directly and are exhaustively matchable as a sealed family. Each leaf carries the string or path that triggered the failure; its human-readable message is on the leaf constructor.
-
-`CommandException` covers only pre-launch failures (detectable before any OS process is created). It does not cover runtime process failures (non-zero exits); those surface as `Process.ExitCode` values.
-
-When adding a new `CommandException` leaf, extend `CommandException` directly (no marker traits), carry the relevant identifier as a constructor parameter, and place the human-readable message in the leaf's constructor body rather than at the catch site.
-
----
-
-## Command API
-
-### Builder and execution model
-
-`Command` is an opaque type wrapping `Command.Unsafe`. It is a pure value: all builder methods (`cwd`, `envAppend`, `envRemove`, `envReplace`, `envClear`, `stdin`, `inheritStdin`, `inheritStdout`, `inheritStderr`, `pipeStdin`, `inheritIO`, `stdoutToFile`, `stderrToFile`, `redirectErrorStream`, `andThen`) return a new `Command` without performing any I/O.
-
-Execution methods launch the process:
-
-| Method | Effect row | What it does |
-|---|---|---|
-| `spawn` | `Process < (Sync & Scope & Abort[CommandException])` | Spawns; registers with enclosing `Scope` for cleanup |
-| `spawnUnscoped` | `Process < (Sync & Abort[CommandException])` | Spawns; caller owns the lifetime |
-| `text` | `String < (Async & Abort[CommandException])` | Spawns, waits, returns stdout as UTF-8 |
-| `stream` | `Stream[Byte, Async & Scope & Abort[CommandException]]` | Spawns; returns stdout as a byte stream |
-| `waitFor` | `ExitCode < (Async & Abort[CommandException])` | Spawns, waits, returns exit code |
-| `waitForSuccess` | `Unit < (Async & Abort[CommandException | ExitCode])` | Spawns, waits, aborts on non-zero exit |
-| `textWithExitCode` | `(String, ExitCode) < (Async & Abort[CommandException])` | Spawns, drains stdout+stderr concurrently, returns both |
-
-`spawn` mirrors `Fiber.init` (scoped); `spawnUnscoped` mirrors `Fiber.initUnscoped`. Use `spawnUnscoped` only for long-lived worker processes that outlive the spawning computation's scope and are closed explicitly.
-
-`Abort[CommandException]` covers only pre-launch failures (program not found, permission denied, missing working directory). Runtime non-zero exits are `Process.ExitCode` values, not exceptions. Use `waitForSuccess` when a non-zero exit should abort the effect.
-
-### Shell interpretation and injection
-
-Arguments are passed as-is to the OS. There is no shell interpretation. Each `String` in `Command("prog", "arg1", "arg2")` becomes one process argument. Shell features (globbing, `|` pipes, variable expansion) require wrapping with `Command("sh", "-c", "...")` or equivalent.
-
-Use `andThen` for UNIX-style piping: `a.andThen(b)` routes `a`'s stdout into `b`'s stdin.
-
-### EnvMode
-
-`Command.EnvMode` (a `private[kyo]` enum) records how the child process environment is composed relative to the parent:
-
-| `EnvMode` case | Safe builder | Meaning |
-|---|---|---|
-| `Inherit` | (default) | Full parent environment |
-| `Append(vars)` | `envAppend(vars)` | Parent plus additional vars |
-| `Remove(names)` | `envRemove(names)` | Parent minus named vars |
-| `AppendThenRemove(vars, names)` | `envAppend` then `envRemove` | Parent plus vars, minus names |
-| `Replace(vars)` | `envReplace(vars)` | Exactly these vars; parent vars discarded |
-| `Clear` | `envClear` | No vars at all |
-| `ClearThenAppend(vars)` | `envClear` then `envAppend` | Exactly these vars from scratch |
-
-Never construct `EnvMode` values directly in tests or production code outside `Command.Unsafe` implementations.
-
-### `Command.Unsafe`
-
-`Command.Unsafe` is an abstract class (not a trait) marked `Serializable`. Its effectful methods return `Fiber.Unsafe` for async execution. The `spawn` method returns `Result[CommandException, Process.Unsafe]` so pre-launch failures are typed.
-
-Platform implementations live in `ProcessPlatformSpecific` in the `jvm-native/` and `js-wasm/` trees. The factory `ProcessPlatformSpecific.makeCommand(args: Chunk[String])` is the single entry point for constructing a platform `Command.Unsafe`; `Command.apply` delegates to it.
-
----
-
-## Process API
-
-### ExitCode
-
-`ExitCode` is exported to the `kyo` package (`export Process.ExitCode`). Its three cases:
-
-- `ExitCode.Success` (exit value 0)
-- `ExitCode.Failure(code)` (non-zero, non-signal)
-- `ExitCode.Signaled(number)` (exit value = 128 + signal number, POSIX convention)
-
-`ExitCode.apply(code: Int)` maps a raw integer to the right case. Named signal constants (`SIGHUP`, `SIGINT`, `SIGTERM`, etc.) are provided on the companion for pattern matching.
-
-`ExitCode` has a `Render[ExitCode]` given instance so it prints descriptively.
-
-### Process extension methods
-
-`Process` is an opaque type wrapping `Process.Unsafe`. Extension methods:
-
-| Method | Effect row | Note |
-|---|---|---|
-| `stdout` | `Stream[Byte, Sync & Scope]` | Scope-managed InputStream |
-| `stderr` | `Stream[Byte, Sync & Scope]` | Scope-managed InputStream |
-| `waitFor` | `ExitCode < Async` | Fiber-suspending, not thread-blocking |
-| `waitFor(timeout)` | `Maybe[ExitCode] < Async` | `Absent` on timeout |
-| `exitCode` | `Maybe[ExitCode] < Sync` | Non-blocking poll |
-| `collectOutput` | `(Chunk[Byte], Chunk[Byte]) < (Async & Scope)` | Concurrent stdout+stderr drain |
-| `isAlive` | `Boolean < Sync` | |
-| `pid` | `Long < Sync` | |
-| `destroy` | `Unit < Sync` | SIGTERM / equivalent |
-| `destroyForcibly` | `Unit < Sync` | SIGKILL / equivalent |
-
-**Critical:** reading `stdout` and `stderr` sequentially deadlocks when the process produces more than the OS pipe buffer (~64 KB) on both streams. Use `collectOutput` whenever both streams must be consumed. `Command.textWithExitCode` drains them concurrently for the same reason.
-
-`waitFor` suspends the current fiber using the platform's async notification mechanism (`Process.onExit()` on JVM/Native, the `'exit'` event on Node.js). No OS thread is blocked.
-
-### `Process.Input`
-
-`Process.Input` is a sealed trait with three cases:
-
-- `Input.Inherit` passes the parent's stdin through.
-- `Input.FromStream(stream: InputStream)` feeds the given stream into the child's stdin via a background fiber at spawn time.
-- `Input.Pipe` opens an unmanaged pipe; the caller drives writes directly via `proc.unsafe.stdinJava`. Use `Pipe` when wiring a child into a custom protocol (for example JSON-RPC over stdio) where the caller controls when bytes flow.
-
-Use `Command.pipeStdin` to set `Pipe` mode; then access `proc.unsafe.stdinJava(using allowUnsafe)` for direct write access.
-
----
-
-## System API
-
-### Structure and Local
-
-`System` is an abstract class backed by a `Local[System]` initialised to `System.live`. All companion-object methods (`env`, `property`, `lineSeparator`, etc.) read through `local.use(...)`. This means `System.let(customImpl)(body)` is the correct way to substitute a test implementation for the duration of `body`; there is no global mutable state.
-
-`System.live` is the default implementation. It reads environment variables and system properties through `SystemPlatformSpecific`, which is the only place the platform split appears.
-
-### Parser type class
-
-`System.Parser[E, A]` converts a `String` into `Result[E, A]`. Built-in instances cover:
-
-- Primitives: `String`, `Int`, `Long`, `Float`, `Double`, `Boolean`, `Byte`, `Short`, `Char`
-- JVM types: `java.util.UUID`, `java.net.URI`, `java.net.URL`
-- Temporal: `LocalDate`, `LocalTime`, `LocalDateTime`
-- Kyo types: `Duration`
-- Collections: `Seq[A]` (comma-split, then parse each element)
-
-Provide a custom parser with `Parser(v => Result.catching[E](...))`; the error type appears in the `Abort[E]` of the calling effect, so callers can recover it precisely.
-
-`System.env[A][E](name)` and `System.property[A][E](name)` use `Reducible[Abort[E]]` to eliminate `Abort[Nothing]` from the row when the parser's error type is `Nothing` (the `String` parser).
-
-### Platform split for System
-
-| Tree | What it provides |
-|---|---|
-| `jvm-native/internal/SystemPlatformSpecific` | `java.lang.System.getenv`, `java.lang.System.getProperty`, `java.lang.System.getProperty("os.name")` |
-| `js-wasm/internal/SystemPlatformSpecific` | `process.env` for environment variables; `process.platform` and `process.arch` for OS and CPU detection (Scala.js returns `null` for `os.name`/`os.arch` Java properties) |
-
-The shared `System.live` implementation does OS detection in one place by normalising the string returned by `SystemPlatformSpecific.osName()`. Do not add OS-detection logic outside `System.live`; add a new case to its `if/else` chain instead.
-
-### `kyo.System` shadows `java.lang.System`
-
-Within any file that imports `kyo.*`, the unqualified name `System` refers to `kyo.System`. Always use the fully-qualified name `java.lang.System` when the Java class is needed (for example `java.lang.System.arraycopy`).
-
----
-
-## StreamFileExtensions
-
-`StreamFileExtensions` provides file-write sinks on two element types:
-
-- `Stream[Byte, S]` gets `writeTo(path)`.
-- `Stream[String, S]` gets `writeTo(path, charset)` and `writeLinesTo(path, charset)`.
-
-`writeLinesTo` exists only on `Stream[String, S]`; there is no byte-stream counterpart. It lives in kyo-system (not kyo-core) because it couples to `Path` and `Path.WriteHandle`, which are kyo-system types.
-
-The private `writeWith(path)(body)` helper implements the shared write contract:
-
-1. Acquires a `WriteHandle` via `Path.Unsafe.openWrite` inside a `Scope.acquireRelease`.
-2. Runs `body(handle)` inside `Abort.run[FileWriteException]`.
-3. On failure, deletes the partially-written file with `path.remove` before re-raising the error.
-
-Every call to platform I/O inside `StreamFileExtensions` must carry a `// Unsafe:` comment explaining which safe-tier contract it bridges. The four existing sites are:
-
-- In `writeWith` (opening the write handle): `Sync.Unsafe.defer(Abort.get(path.unsafe.openWrite(...)))` with comment `// Unsafe: bridges Path.Unsafe.openWrite into the safe tier; the handle is released by the enclosing Scope.`
-- In `writeTo[Byte]` (writing a byte chunk): `Sync.Unsafe.defer(Abort.get(handle.writeBytes(chunk)))` with comment `// Unsafe: bridges Path.WriteHandle.writeBytes into the safe tier under the acquired Scope handle.`
-- In `writeTo[String]` (writing a string chunk): `Sync.Unsafe.defer(Abort.get(handle.writeString(s, charset)))` with comment `// Unsafe: bridges Path.WriteHandle.writeString into the safe tier under the acquired Scope handle.`
-- In `writeLinesTo` (writing a line with separator): `Sync.Unsafe.defer(Abort.get(handle.writeString(s + sep, charset)))` with comment `// Unsafe: bridges Path.WriteHandle.writeString into the safe tier under the acquired Scope handle.`
-
-`writeLinesTo` reads `java.lang.System.lineSeparator()` inside `Sync.defer` so the separator is captured at effect-run time, not at definition time. On Scala.js the shim returns `\n`.
-
-All three extension groups are exported to the `kyo` package via `export StreamFileExtensions.*` at the bottom of the file.
-
----
-
-## Kyo primitives mandate
-
-See the root [CONTRIBUTING.md](../CONTRIBUTING.md) for the full `Maybe` / `Result` / `Chunk` / `Span` vocabulary that applies across all of Kyo.
-
-The one module-specific exception: raw `java.util.Arrays.copyOf` / `java.lang.System.arraycopy` are permitted inside performance-critical private implementation paths (for example the streaming read and `tail` loops inside `Path.scala`), because `Chunk` does not expose a fast-arraycopy path for partial buffer slices.
+All three require an ambient `PathWrite` scope (an enclosing `runWith` or `run`) [`Path.scala:659-665`, `Path.scala:686-693`].
 
 ---
 
 ## Cross-platform discipline
 
-All public APIs live in `shared/src/main`. Every API that appears there must compile and behave correctly on JVM, Scala.js (Node.js), Scala Native, and Wasm. The `jvm-native/` and `js-wasm/` source trees are for platform backend implementations only; nothing user-facing goes there.
+Public APIs compile on JVM, JS, Native, and Wasm [`../build.sbt:695-698`].
 
-| Tree | Permitted content |
-|---|---|
-| `shared/src/main` | All public APIs, shared logic, abstract `Unsafe` classes |
-| `jvm-native/src/main` | `NioPathUnsafe`, JVM/Native process backend, `SystemPlatformSpecific` delegating to `java.lang.System`, `PathJvmNative.toJava` |
-| `js-wasm/src/main` | Node.js path and process backends, JS `SystemPlatformSpecific` using `process.*` |
-| `jvm/src/test` | Tests that require `java.nio.file.Files` APIs absent on other platforms (symlink creation, `toJava`) |
-| `shared/src/test` | All other tests; must pass on all four platforms |
-
-When adding a new platform-specific capability, supply a concrete implementation in every platform leaf. A non-supporting platform must either raise the appropriate typed exception or return a documented no-op; it must never throw a raw exception or call `???`.
-
-Never move a test from `shared/src/test` into a platform-specific tree to avoid a platform cost. Fix the underlying issue instead.
-
----
-
-## `AllowUnsafe` discipline
-
-Every call to an `Unsafe` method inside kyo-system must be wrapped in `Sync.Unsafe.defer(...)` and annotated with a `// Unsafe:` comment that names the safe-tier contract being bridged. The pattern is:
-
-```scala
-// Unsafe: <reason: what safe-tier contract this bridges>
-Sync.Unsafe.defer(Abort.get(self.unsafe.someOp()))
-```
-
-For operations on handles that are already inside an acquired `Scope`, the comment names the handle and the Scope ownership:
-
-```scala
-// Unsafe: bridges Path.WriteHandle.writeBytes into the safe tier under the acquired Scope handle.
-Sync.Unsafe.defer(Abort.get(handle.writeBytes(chunk)))
-```
-
-Do not introduce `import AllowUnsafe.embrace.danger` in kyo-system sources. All unsafe execution passes through `Sync.Unsafe.defer`.
-
----
-
-## Test file naming
-
-See the root [CONTRIBUTING.md](../CONTRIBUTING.md) for the global 1:1 naming rule, the orphan-test prohibition, and the scratch-file cleanup requirement. The module-specific mapping is:
-
-| Source | Test file(s) | Note |
+| Concern | JVM + Native | JS + Wasm |
 |---|---|---|
-| `Path.scala` | `PathTest.scala`, `PathSeparatorsTest.scala`, `PathSizeTest.scala`, `PathStatTest.scala` | Aspect split; all in `shared/src/test` |
-| `Path.scala` | `PathJvmTest.scala` | JVM-only; in `jvm/src/test` |
-| `Command.scala` | `CommandTest.scala` | |
-| `Process.scala` | `ProcessTest.scala` | |
-| `System.scala` | `SystemTest.scala` | |
-| `FileException.scala` | `FileExceptionTest.scala` | |
-| `StreamFileExtensions.scala` | `PathTest.scala` | No separate file; `writeTo` and `writeLinesTo` leaves are folded into `PathTest.scala` because `StreamFileExtensions` is the write side of the `Path` surface |
-| `CommandException.scala` | `CommandTest.scala` | No separate file; all three exception leaves are exercised in `CommandTest.scala` because `CommandException` types are raised exclusively by `Command` operations |
+| Path I/O | `NioPathUnsafe` in `jvm-native/internal/PathPlatformSpecific.scala`, backed by `java.nio.file.Path` [`jvm-native/src/main/scala/kyo/internal/PathPlatformSpecific.scala:24-25`] | Node.js `@JSImport` facades (`NodeFs`, `NodePath`) confined to `js-wasm/internal/PathPlatformSpecific.scala` [`js-wasm/src/main/scala/kyo/internal/PathPlatformSpecific.scala:13-15`] |
+| OS directories | Both platform `PathPlatformSpecific` classes extend `internal/PathDirectories.scala` [`PathDirectories.scala:5-8`] | Same shared trait |
+| JVM interop | `PathJvmNative.toJava` in `jvm-native/` (precise `java.nio.file.Path`, no cast) [`PathJvmNative.scala:6-13`] | Absent (`java.nio.file.Path` unavailable on Scala.js) |
+| Process/Command | `ProcessPlatformSpecific.makeCommand` is the single construction entry point [`jvm-native/src/main/scala/kyo/internal/ProcessPlatformSpecific.scala:526-528`] | Platform-specific impl in `js-wasm/` |
+| System | JVM/Native delegates to `java.lang.System` [`jvm-native/src/main/scala/kyo/internal/SystemPlatformSpecific.scala:5-7`] | JS uses `process.env` and `process.platform` fallbacks [`js-wasm/src/main/scala/kyo/internal/SystemPlatformSpecific.scala:13-19`, `js-wasm/src/main/scala/kyo/internal/SystemPlatformSpecific.scala:26-42`] |
 
-`PathJvmTest.scala` lives in `jvm/src/test` because its content genuinely requires `JFiles.createSymbolicLink` (symlink creation) and `java.nio.file.Path` interop via `Path.toJava` / `Path.of(jpath)`, neither of which has an equivalent on Scala.js or Scala Native.
+For global cross-platform placement rules (when code belongs in `shared/` vs platform trees, visibility tiers), defer to the root [CONTRIBUTING.md](../CONTRIBUTING.md).
 
----
-
-## Building and testing
-
-```sh
-export JAVA_OPTS="-Xms3G -Xmx4G -Xss10M -XX:MaxMetaspaceSize=512M -XX:ReservedCodeCacheSize=128M -Dfile.encoding=UTF-8"
-export JVM_OPTS="$JAVA_OPTS"
-
-# All tests on JVM
-sbt 'kyo-systemJVM/test'
-
-# A single test class
-sbt 'kyo-systemJVM/testOnly kyo.PathTest'
-
-# Validate README code blocks
-sbt 'kyo-systemJVM/doctest'
-```
-
-Building automatically runs scalafmt. Re-read any file you edit after building; formatting may have changed it. See the root [CONTRIBUTING.md](../CONTRIBUTING.md) for naming, scaladoc, inline guidelines, `using`-clause ordering, and the pre-submission checklist.
+JVM-only tests requiring `java.nio.file` APIs (`toJava`, symlink creation) live in `jvm/src/test` [`PathJvmTest.scala:5-7`]. Confinement symlink-escape tests are JVM-only; the missing-parent arm stays cross-platform in `PathConfinementTest` [`PathConfinementJvmTest.scala:6-11`, `PathConfinementTest.scala:3-7`].
 
 ---
 
-## Decision checklist: before adding or changing X
+## Conventions
 
-Run through this list before touching the internals or adding a new public surface.
+### Error hierarchies
 
-1. **New Path operation.** Is the abstract method on `Path.Unsafe` (with `using AllowUnsafe, Frame`)? Is there a safe-tier extension method that lifts with `Sync.Unsafe.defer(Abort.get(...))`? Is there a concrete implementation in both `jvm-native/` and `js-wasm/`? Is the `Result` error type the most specific of `FileReadException`, `FileWriteException`, or `FileFsException`? Is there a cross-platform test leaf in `shared/src/test`? [`Path.scala`]
+- `FileException` and marker traits (`FileReadException`, `FileWriteException`, `FileFsException`): each concrete exception implements only the traits of operations that can actually raise it [`FileException.scala:12-13`, `FileException.scala:62-64`]. Reserve `FileIOException` for low-level I/O not covered by more specific subtypes [`FileException.scala:93-94`].
+- `CommandException`: pre-launch failures for `Command`.
 
-2. **New streaming Path operation.** Does it return a `Stream` that carries `Scope`? Is the OS handle acquired with `Scope.acquireRelease`? Is `tail` the only method that adds `Async`? [`Path.scala:246-409`]
+### Return-type discriminator (Path operations)
 
-3. **New FileException leaf.** Does it mix in exactly the marker traits whose operations can actually raise it? Is its message string on the leaf itself (not in the catching code)? Is `FileIOException` used only when no more specific variant exists? [`FileException.scala`]
+| If the operation... | Safe-tier return type | Suspension tag |
+|---|---|---|
+| Reads (exists, read, list, walk, stat, ...) | `A < PathRead` | `Tag[PathRead]` |
+| Mutates (write, append, mkDir, move, tempDir, ...) | `A < PathWrite` | `Tag[PathWrite]` |
+| Runs against host after runner discharge | `A < (Sync & Abort[FileException])` | (capability discharged) |
+| Runs against custom service `S` | `A < (S & Abort[FileException])` | (capability discharged) |
 
-4. **New CommandException leaf.** Does it extend `CommandException` directly (no marker traits)? Does it carry the relevant identifier (program name or path) as a constructor parameter? Is the human-readable message in the leaf constructor body, not at the catch site? Is it added to the exhaustive match in `CommandTest.scala`? [`CommandException.scala`, `CommandTest.scala:330-341`]
+Safe-tier Path extension methods never call `Sync.Unsafe.defer` directly; they suspend under the capability tag [`Path.scala:1030-1031`]. Lifting happens in `HostService` and platform `Unsafe` implementations.
 
-5. **New Command builder method.** Does it return a new `Command` (via `self.unsafe.withX(...).safe`)? Does it compose correctly with `andThen`? Is the corresponding abstract method on `Command.Unsafe`? [`Command.scala`]
+### Scope-managed handles
 
-6. **New Command execution method.** Does `Abort[CommandException]` cover only pre-launch failures? Are runtime non-zero exits surfaced as `ExitCode` values, not exceptions? Does a method that reads both stdout and stderr drain them concurrently? [`Command.scala:87-137`]
+`StreamFileExtensions` acquires write handles via capability ops in a `Scope`; on failure the partially-written file is removed (delete-on-close) [`StreamFileExtensions.scala:5-10`]. Handle cleanup at the safe tier uses `Sync.Unsafe.defer` with an inline `// Unsafe:` comment on the release line [`StreamFileExtensions.scala:25`].
 
-7. **New System capability.** Is it accessed through the ambient `local` (not a field) so `System.let` still works in tests? If a new `SystemPlatformSpecific` method is needed, does it appear in both `jvm-native/` and `js-wasm/` with the correct fallback on JS? [`System.scala`]
+### System ambient instance
 
-8. **New Parser given.** Is the error type in `Parser[E, A]` exactly the exception type thrown by the underlying parse call? Does the given instance use `Result.catching[E]` rather than a try/catch? [`System.scala:258-293`]
+`System` is an abstract class with a `Local[System]` ambient instance initialized via `Local.init(live)` [`System.scala:41-42`, `System.scala:96`]; platform I/O is isolated in `SystemPlatformSpecific` [`System.scala:9`].
 
-9. **New StreamFileExtensions sink.** Does it follow the `writeWith` pattern (acquire handle, run body, delete partial file on failure)? Does every platform I/O call carry a `// Unsafe:` comment? Is it exported at the bottom of the file? Is it a sink on `Stream[String, S]` if it requires string semantics (not on `Stream[Byte, S]`)? [`StreamFileExtensions.scala`]
+---
 
-10. **New dependency from kyo-system.** kyo-system depends on `kyo-core` only. `kyo-eventlog` depends on kyo-system; no outbound edge from kyo-system to kyo-eventlog or any other kyo module exists. Adding any further inbound module edge requires explicit authorisation. [`build.sbt:695-705`]
+## Extension recipes
 
-11. **New test.** Does it extend `kyo.test.Test[Any]`? Does it assert concrete values? Does it live in `shared/src/test` unless it genuinely requires a JVM-only API? Is it folded into the matching `*Test.scala` for the source it covers? Does it include at least one edge case (empty path, non-existent file, non-zero exit, missing env variable)?
+### Adding a new Path operation (11 steps)
+
+1. **Add a `Path.Op` case**, choosing read-group (`Tag[PathRead]`) or write-group (`Tag[PathWrite]`) [`Path.scala:130-165`].
+2. **Add the abstract method to `Path.Unsafe`** with the most specific `Result[File*Exception, A]` error type [`Path.scala:1569-1570`].
+3. **Add the safe-tier extension method** that suspends under the correct capability tag via `ArrowEffect.suspend` [`Path.scala:1323-1332`].
+4. **Add the method to `Path.Service[S]`** with umbrella `Abort[FileException]` [`Path.scala:247-248`].
+5. **Wire `HostService`** to bridge `Path.Unsafe` through `Sync.Unsafe.defer(Abort.get(...))` with a `// Unsafe:` comment [`HostService.scala:35-37`].
+6. **Add a `dispatch` case** so runners route the new `Op` to the active service [`Path.scala:842-843`].
+7. **Implement on `NioPathUnsafe`** in `jvm-native/` using `java.nio.file.*` [`jvm-native/src/main/scala/kyo/internal/PathPlatformSpecific.scala:183-194`].
+8. **Implement on the Node.js-backed class** in `js-wasm/` using `NodeFs` / `NodePath` facades [`js-wasm/src/main/scala/kyo/internal/PathPlatformSpecific.scala:297-308`].
+9. **Implement on `InMemoryService`** (optimistic CAS over immutable tree state) [`InMemoryService.scala:149-170`].
+10. **Implement on `OverlayService`** (stage into upper map and append to journal) [`OverlayService.scala:743-753`].
+11. **Add cross-platform test leaves** in `shared/src/test/scala/kyo/PathTest.scala` [`PathTest.scala:676-685`].
+
+Do not lift safe-tier extension methods with `Sync.Unsafe.defer(Abort.get(...))` directly; that is the pre-capability model. Safe-tier Path methods suspend under `ArrowEffect`.
+
+### Adding a new FileException leaf
+
+1. Extend `FileException`; put the human-readable message in the leaf constructor; mix in exactly the marker traits whose operations can raise it [`FileException.scala:12-13`, `FileException.scala:62-64`].
+2. Update exhaustive match tests in `FileExceptionTest.scala` so the compiler catches missing subtypes [`FileExceptionTest.scala:22-24`].
+3. Reserve `FileIOException` for low-level I/O not covered by more specific subtypes [`FileException.scala:93-94`].
+
+### Adding a new Path.Service backend
+
+1. Implement `Path.Service[S]`; declare the correct `Disposition` (`AutoCommit` for immediate backends, `ManualCommit` for staged backends) [`Path.scala:215-216`, `InMemoryService.scala:53-55`, `OverlayService.scala:374`].
+2. Methods take no `(using Frame)`; capture frame at construction [`Path.scala:206-207`].
+3. Every method returns `A < (S & Abort[FileException])` with the umbrella error row.
+4. For host-backed variants: bridge each op to `Path.Unsafe` inside `Sync.Unsafe.defer(Abort.get(...))` with `// Unsafe:` comments; register a factory on `Path.Service` [`Path.scala:288`, `HostService.scala:13-14`].
+5. For in-memory backends: immutable state behind `AtomicRef` with optimistic CAS; expose via `Path.Service.inMemory` [`Path.scala:298-302`, `InMemoryService.scala:53-55`].
+6. For copy-on-write overlays: wrap lower in `OverlayService.init`, scope-register state for auto-rollback, return `Path.Service.Overlay[S]` [`OverlayService.scala:44-51`, `Path.scala:304-306`].
+7. Test with `Path.runWith(service)(...)` [`InMemoryServiceTest.scala:7-10`, `InMemoryServiceTest.scala:12-17`].
+
+### Resolving overlay commit conflicts with commitWith
+
+1. Seed lower, read through overlay to stamp read-set, stage writes, diverge lower [`OverlayServiceCommitTest.scala:168-198`].
+2. Call `commitWith` with a per-conflict `resolve` function returning a `Resolution` [`Path.scala:960-961`].
+3. Apply resolution per path:
+   - `KeepOurs`: replay overlay's staged entry, discarding live lower value [`CommitConflict.scala:39-40`].
+   - `KeepTheirs`: skip path in replay, keeping live lower unchanged [`CommitConflict.scala:40-41`].
+   - `Write(entry)`: replace both staged and live with supplied `Path.Entry` [`CommitConflict.scala:41-42`].
+   - `Remove`: delete path in live lower during replay [`CommitConflict.scala:42-43`].
+4. Inside `OverlayService.commitWith`, each `Resolution` case rebuilds upper state and journal before replay [`OverlayService.scala:1372-1404`].
+
+---
+
+## Testing
+
+kyo-system uses `.withKyoTest` (kyo test runner classpath and `kyo.test.runner.SbtFramework` on JVM) with no module-specific `fork` or `parallelExecution` overrides [`../build.sbt:695-705`, `../project/WithKyoTest.scala:37-45`]. For the test framework base class, compile-time test helpers, and non-blocking concurrency rules, defer to the root [CONTRIBUTING.md](../CONTRIBUTING.md).
+
+### Test file naming and aspect splits
+
+Every test file shares a name prefix with a source file. When one source needs multiple test files, split by aspect keeping the source as prefix:
+
+| Source | Base test | Aspect tests |
+|---|---|---|
+| `Path.scala` (capability model) | `PathTest.scala` | `PathCapabilityTest.scala` (compile-time row laws), `PathTransactionTest.scala` (transaction/sandbox/virtual combinators) |
+| `Path.scala` (confinement) | `PathConfinementTest.scala` (cross-platform) | `PathConfinementJvmTest.scala` (symlink escape, JVM-only) |
+| `InMemoryService.scala` | `InMemoryServiceTest.scala` | (1:1) |
+| `OverlayService.scala` | `OverlayServiceTest.scala` (base COW semantics) | `OverlayServiceCommitTest.scala` (conflict/commit machinery), `OverlayServiceRecoveryTest.scala` (crash recovery) |
+| `CommitConflict.scala` | `CommitConflictTest.scala` (value-type round trips) | (1:1) |
+
+Create a new `{Source}{Aspect}Test` when the base `*Test.scala` would grow unwieldy; fold single-concern tests into the base file otherwise.
+
+### Capability law tests
+
+`PathCapabilityTest` proves compile-time capability rows via top-level `val` ascriptions and `typeCheckErrors` [`PathCapabilityTest.scala:11-17`, `PathCapabilityTest.scala:29-38`]. Negative capability law tests assert the compiler error mentions `PathWrite` [`PathCapabilityTest.scala:29-38`]. Row-guard `val` ascriptions lock streaming, walk, `tempDir`, `tail`, and sink method rows [`PathCapabilityTest.scala:41-57`]. Overlay combinator rows prove `Sync` must not appear in the residual [`PathCapabilityTest.scala:19-27`]. Runtime checks exercise host service via `Path.run` inside `Scope.run`, asserting concrete values and exception subtypes [`PathCapabilityTest.scala:59-79`].
+
+### Overlay and transaction tests
+
+Transaction combinator tests use `Path.Service.inMemory` and `Path.runWith(lower)` for deterministic lower inspection; no `Thread.sleep` anywhere [`PathTransactionTest.scala:5-9`]. `PathTransactionTest` locks the public sandbox row positively and proves transaction adds `Abort[CommitConflict]` via `typeCheckErrors` [`PathTransactionTest.scala:90-106`].
+
+Overlay tests build via `Path.Service.inMemory` then `Path.Service.overlay(lower)`, exposing both overlay and lower [`OverlayServiceTest.scala:7-17`]. Copy-on-write semantics: write through `Path.runWith(ov)`, inspect lower via `Path.runWith(lower)` before commit [`OverlayServiceTest.scala:163-176`]. Stamp correctness avoids mtime flakiness by forcing `File→Absent` conflicts via lower removal, not re-write [`OverlayServiceTest.scala:208-212`].
+
+`OverlayServiceCommitTest` creates conflicts by observing through overlay, staging writes, then mutating lower out-of-band with different-size content [`OverlayServiceCommitTest.scala:5-12`]. `commitOverwrite` must not carry `Abort[CommitConflict]` in its effect row; the test proves this by calling it without `Abort.run[CommitConflict]` [`OverlayServiceCommitTest.scala:115-127`]. `WriteOpLog.decode` failure modes are tested as pure `Result` matches without a service fixture [`OverlayServiceCommitTest.scala:305-338`].
+
+### Recovery tests
+
+`OverlayServiceRecoveryTest` injects crashes via `private[kyo]` hooks on `OverlayService` (default no-ops) [`OverlayService.scala:382-393`]. Recovery tests distinguish intentional hook crashes from real file errors using a `SyntheticCrash` exception type and `attemptCrash` [`OverlayServiceRecoveryTest.scala:28-50`]. Every crash point has paired `"in-memory:"` and `"host:"` test leaves in `shared/src/test` [`OverlayServiceRecoveryTest.scala:7-11`]. Host recovery tests use `Path.Service.host(root)` with a scoped `tempDir` as the rooted lower [`OverlayServiceRecoveryTest.scala:65-82`].
+
+### In-memory service tests
+
+`InMemoryServiceTest` obtains a fresh service per test via `Path.Service.inMemory.map` [`InMemoryServiceTest.scala:7-10`]. Service-level `Abort` from `Path.runWith` propagates outside the inner scope; `Abort.run` must wrap `Path.runWith`, not sit inside it [`InMemoryServiceTest.scala:95-100`]. Concurrency tests synchronize fibers with `Latch.init`/`gate.release` instead of sleeps [`InMemoryServiceTest.scala:143-156`].
+
+### Deterministic timing
+
+Overlay and transaction test suites default to in-memory lowers for cross-platform determinism [`PathTransactionTest.scala:9`]. Never use blocking primitives in tests; use `Async`-based suspension (root [CONTRIBUTING.md](../CONTRIBUTING.md)).
+
+---
+
+## Decision checklist
+
+Run through this list before submitting a kyo-system change.
+
+1. **New Path operation.** Is there a `Path.Op` case (read-group or write-group)? Is the abstract method on `Path.Unsafe` with `(using AllowUnsafe, Frame)` and the most specific `Result[File*Exception, A]`? Is there a safe-tier extension method that suspends via `ArrowEffect.suspend` (not `Sync.Unsafe.defer`)? Is there a `Path.Service[S]` method and a `dispatch` case? Is `HostService` wired with `Sync.Unsafe.defer(Abort.get(...))` and a `// Unsafe:` comment? Are there concrete implementations in `jvm-native/` and `js-wasm/`, plus `InMemoryService` and `OverlayService`? Is there a cross-platform test leaf in `shared/src/test`?
+
+2. **New streaming Path operation.** Does it return a `Stream` that carries `Scope`? Is the OS handle acquired with `Scope.acquireRelease`? Is `tail` the only method that adds `Async`?
+
+3. **New FileException leaf.** Does it mix in exactly the marker traits whose operations can actually raise it? Is its message string on the leaf itself? Is `FileIOException` used only when no more specific variant exists?
+
+4. **New Path.Service backend.** Does it implement `Path.Service[S]` with the correct `Disposition`? Are methods frame-free (frame captured at construction)? Does every method return `A < (S & Abort[FileException])`? For host backends, is each op bridged through `Sync.Unsafe.defer` with `// Unsafe:` comments? Is there a factory registered on `Path.Service`? Are there tests via `Path.runWith(service)(...)`?
+
+5. **Overlay commitWith resolution handler.** Does the resolve function return a `Resolution` per conflict? Are all four cases (`KeepOurs`, `KeepTheirs`, `Write`, `Remove`) handled where needed? Do non-conflicting staged entries still replay regardless of per-conflict choices?
+
+6. **Runner choice (negative capability law).** Does a write op appear anywhere in the program? If yes, are you using `Path.run` or `runWith`, not `runReadOnly`? Does the ascribed residual match the discharged capability?
+
+7. **Overlay combinator usage.** Does the combinator run inside an ambient `PathWrite` scope? For `virtual`, will commit/rollback run before `PathWrite` is discharged? Is the return row ascribed without `Sync` (`PathWrite & S`, transaction adds `Abort[CommitConflict]`, sandbox does not)?
+
+8. **Unsafe tier change.** Is every new `Unsafe` abstract method matched by a safe-tier lift on all four capabilities that need it? Are platform stubs present in every platform leaf?
+
+9. **Production unsafe bridging.** Is every production `Unsafe` call wrapped in `Sync.Unsafe.defer` with a `// Unsafe:` comment? Is `embrace.danger` absent from main sources?
+
+10. **New dependency from kyo-system.** kyo-system depends on `kyo-core` only [`../build.sbt:695-699`]. No outbound edges to other kyo modules.
+
+11. **New test.** Does it extend `kyo.test.Test[Any]`? Does it assert concrete values? Does it live in `shared/src/test` unless it genuinely requires a JVM-only API? Is it folded into the matching `*Test.scala` for the source it covers (or a justified `{Source}{Aspect}Test` split)? Does it include at least one edge case?

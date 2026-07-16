@@ -2,7 +2,6 @@ package kyo.internal
 
 import java.nio.ByteBuffer
 import java.nio.charset.StandardCharsets
-import java.util.concurrent.atomic.AtomicReference
 import kyo.*
 import scala.annotation.tailrec
 
@@ -13,9 +12,9 @@ import scala.annotation.tailrec
   * Every operation that reads from a handle is polymorphic in the handle's effect `S`, so the
   * same codec instance drives both the synchronous and the asynchronous backend.
   *
-  * Two implementations exist: [[BinarySegmentCodec]] (the original `KJN1` binary format) and
-  * [[kyo.internal.JsonlSegmentCodec]] (the one-JSON-object-per-line JSONL format). Both are
-  * `private[kyo]`; neither appears in public surface.
+  * Two implementations exist: [[BinarySegmentCodec]] (the original `KJN1` binary format, wired to
+  * [[EventMetadataCodec]]) and [[kyo.internal.JsonlSegmentCodec]] (the one-JSON-object-per-line
+  * JSONL format). Both are `private[kyo]`; neither appears in public surface.
   */
 private[kyo] trait SegmentCodec:
 
@@ -112,15 +111,13 @@ end SegmentCodec
 
 // --- Binary segment codec (the original KJN1 format) -----------------------------------------
 
-/** Stateless binary codec: header, record frame (with CRC), batch-commit terminator, metadata (a
-  * MsgPack map of tag-keyed `MetadataValue` nodes), and the injective streamId percent-encoding. No
-  * open handles, no implicit position; all operations work on [[StoreSeam.Handle]] via explicit
-  * byte positions or on in-memory arrays. `private[kyo]` so codec unit tests can drive it in
-  * isolation; out of public surface.
+/** Stateless binary codec helpers: header, record frame (with CRC), batch-commit terminator, and
+  * the injective streamId percent-encoding. The [[BinarySegmentCodec]] class wires these helpers
+  * to a configurable [[EventMetadataCodec]] for segment encoding.
   *
   * Uses the shared pure [[CRC32]] on every platform; `java.util.zip.CRC32` is not referenced here.
   */
-private[kyo] object BinarySegmentCodec extends SegmentCodec:
+private[kyo] object BinarySegmentCodec:
 
     val Magic: Array[Byte]         = Array[Byte]('K', 'J', 'N', '1') // 0x4B 0x4A 0x4E 0x31
     val Version: Byte              = 0x01
@@ -128,29 +125,11 @@ private[kyo] object BinarySegmentCodec extends SegmentCodec:
     val SegmentHeader: Array[Byte] = Magic :+ Version
     val CommitMagic: Array[Byte]   = Array[Byte]('K', 'J', 'N', 'C')
     val TerminatorSize: Int        = 12                              // KJNC(4) + recordCount(4) + crc(4)
-    val MetadataVersion: Byte      = 0x01                            // 0x01 = tagged map of MetadataValue
+    val segmentExtension: String   = ".seg"
 
-    private val Utf8 = StandardCharsets.UTF_8
+    private[kyo] val Utf8 = StandardCharsets.UTF_8
 
-    def segmentExtension: String = ".seg"
-    def header: Array[Byte]      = SegmentHeader
-
-    // --- header -------------------------------------------------------------------------------
-
-    // Returns Present(detail) if the 5-byte header is missing/malformed/unknown-version, else Absent.
-    def validateHeader[S](handle: StoreSeam.Handle[S])(using Frame): Maybe[String] < S =
-        handle.readAt(0L, HeaderSize).map { arr =>
-            if arr.length < HeaderSize then Present(s"segment header truncated (${arr.length} bytes)")
-            else
-                val m = java.util.Arrays.copyOfRange(arr, 0, 4)
-                val v = arr(4)
-                if !java.util.Arrays.equals(m, Magic) then Present("segment magic is not KJN1")
-                else if v != Version then Present(s"unknown segment format version 0x${(v & 0xff).toHexString}")
-                else Absent
-        }
-    end validateHeader
-
-    // --- record frame -------------------------------------------------------------------------
+    def segmentName(baseOffset: Long): String = f"$baseOffset%020d$segmentExtension"
 
     // Body = StreamOffset(8) | lp(eventId) | lp(eventType) | lp(metadata) | lp(payload); lp = len(4)+bytes.
     // Frame = length(4, = body length) | crc32(4, over body) | body. Consumes 8 + length bytes.
@@ -170,56 +149,6 @@ private[kyo] object BinarySegmentCodec extends SegmentCodec:
         frame.putInt(crcPos, (crc.value & 0xffffffffL).toInt)
         arr
     end encodeRecord
-
-    def recordSize(env: EventEnvelope): Long =
-        val idB = env.id.value.getBytes(Utf8)
-        val tpB = env.eventType.value.getBytes(Utf8)
-        val md  = encodeMetadata(env.metadata)
-        val pl  = env.payload.toArray
-        // 8 = frame prefix (length(4) + crc(4)); 8 = StreamOffset; every variable field carries its
-        // own 4-byte length prefix. Equals encodeRecord's bodyLen + 8 exactly.
-        8L + 8 + (4 + idB.length) + (4 + tpB.length) + (4 + md.length) + (4 + pl.length)
-    end recordSize
-
-    // Reads one record at position pos; verifies CRC. Result.Failure carries the corruption detail,
-    // Result.Success the decoded record.
-    def decodeRecordAt[S](handle: StoreSeam.Handle[S], pos: Long)(using Frame): Result[String, DecodedRecord] < S =
-        handle.readAt(pos, 8).map { head =>
-            if head.length < 8 then Result.fail("record header truncated")
-            else
-                val headBuf = ByteBuffer.wrap(head)
-                val bodyLen = headBuf.getInt()
-                val crcExp  = headBuf.getInt()
-                handle.size().map { sz =>
-                    // Bound the body length before allocating: a negative length (a flipped high bit) or
-                    // one that runs past EOF is corruption, not a record. Without this guard a corrupt
-                    // length drives ByteBuffer.allocate into IllegalArgumentException or
-                    // OutOfMemoryError, which would escape the modeled JournalCorruptedError channel as
-                    // an unhandled panic.
-                    val maxBody = sz - pos - 8L
-                    if bodyLen < 0 || bodyLen.toLong > maxBody then Result.fail(s"record length out of range at byte $pos")
-                    else
-                        handle.readAt(pos + 8L, bodyLen).map { bodyArr =>
-                            if bodyArr.length < bodyLen then Result.fail("record body truncated")
-                            else
-                                val crc = new CRC32(); crc.update(bodyArr, 0, bodyLen)
-                                if (crc.value & 0xffffffffL).toInt != crcExp then Result.fail(s"record CRC mismatch at byte $pos")
-                                else
-                                    val body     = ByteBuffer.wrap(bodyArr)
-                                    val offset   = body.getLong()
-                                    val eventId  = getLpStr(body)
-                                    val eventTp  = getLpStr(body)
-                                    val metadata = getLpBytes(body)
-                                    val payload  = getLpBytes(body)
-                                    Result.succeed(DecodedRecord(offset, eventId, eventTp, metadata, payload, bodyLen))
-                                end if
-                        }
-                    end if
-                }
-        }
-    end decodeRecordAt
-
-    // --- batch-commit terminator --------------------------------------------------------------
 
     def encodeTerminator(recordCount: Int): Array[Byte] =
         val buf = ByteBuffer.allocate(TerminatorSize)
@@ -249,150 +178,6 @@ private[kyo] object BinarySegmentCodec extends SegmentCodec:
             end if
     end terminatorAt
 
-    // Returns Present(recordCount) if a valid terminator sits at pos, else Absent (torn/absent).
-    def readTerminator[S](handle: StoreSeam.Handle[S], pos: Long)(using Frame): Maybe[Int] < S =
-        handle.readAt(pos, TerminatorSize).map { arr =>
-            if arr.length < TerminatorSize then Absent
-            else
-                val buf    = ByteBuffer.wrap(arr)
-                val m      = new Array[Byte](4); buf.get(m)
-                val count  = buf.getInt()
-                val crcExp = buf.getInt()
-                val crc    = new CRC32(); crc.update(CommitMagic); crc.update(intBytes(count))
-                if java.util.Arrays.equals(m, CommitMagic) && (crc.value & 0xffffffffL).toInt == crcExp then Present(count)
-                else Absent
-        }
-    end readTerminator
-
-    // --- segment record scan ------------------------------------------------------------------
-
-    def scan[S](handle: StoreSeam.Handle[S], size: Long, isActive: Boolean)(using Frame): ScanResult < S =
-        Loop(HeaderSize.toLong, HeaderSize.toLong, Chunk.empty[Long], Chunk.empty[Long]) {
-            (pos, committedEnd, pending, committed) =>
-                if pos >= size then
-                    if pending.isEmpty then Loop.done(ScanResult.Ok(committed, committedEnd, Absent))
-                    else if isActive then Loop.done(ScanResult.Ok(committed, committedEnd, Present(pending.head)))
-                    else Loop.done(ScanResult.Corrupt(s"unterminated batch at byte ${pending.head} in sealed segment"))
-                else
-                    readTerminator(handle, pos).map {
-                        case Present(count) if count == pending.length =>
-                            val newCommitted = committed ++ pending
-                            val newPos       = pos + TerminatorSize.toLong
-                            Loop.continue(newPos, newPos, Chunk.empty[Long], newCommitted)
-                        case _ =>
-                            decodeRecordAt(handle, pos).map {
-                                case Result.Success(dec) =>
-                                    Loop.continue(pos + 8L + dec.bodyLen.toLong, committedEnd, pending.append(pos), committed)
-                                case Result.Failure(detail) =>
-                                    // A decode failure in the active segment is a torn tail only when no
-                                    // valid terminator follows the failure point. A terminator surviving
-                                    // after the bad record means the damage is mid-file and must not be
-                                    // silently truncated away.
-                                    if isActive then
-                                        hasCommitAfter(handle, pos + 1L, size).map { hasMore =>
-                                            if !hasMore then
-                                                Loop.done(ScanResult.Ok(committed, committedEnd, Present(pending.headMaybe.getOrElse(pos))))
-                                            else Loop.done(ScanResult.Corrupt(detail))
-                                        }
-                                    else Loop.done(ScanResult.Corrupt(detail))
-                            }
-                    }
-        }
-    end scan
-
-    def hasCommitAfter[S](handle: StoreSeam.Handle[S], from: Long, size: Long)(using Frame): Boolean < S =
-        // Returns true if a valid 12-byte batch terminator exists at any byte offset from `from` to
-        // the end of the segment. The region is read in overlapping buffered windows and scanned in
-        // memory rather than issuing a 12-byte positional handle read per candidate offset. Windows
-        // overlap by TerminatorSize-1 so a terminator straddling a boundary is still found.
-        val window  = 1 << 16
-        val overlap = TerminatorSize.toLong - 1L
-        Loop(from) { winPos =>
-            if winPos > size - TerminatorSize.toLong then Loop.done(false)
-            else
-                val len = math.min(window.toLong, size - winPos).toInt
-                handle.readAt(winPos, len).map { arr =>
-                    if scanWindowForTerminator(arr) then Loop.done(true)
-                    else Loop.continue(winPos + (window.toLong - overlap))
-                }
-        }
-    end hasCommitAfter
-
-    @tailrec private def scanWindowForTerminator(arr: Array[Byte], i: Int = 0): Boolean =
-        val last = arr.length - TerminatorSize
-        if i > last then false
-        else if terminatorAt(arr, i) then true
-        else scanWindowForTerminator(arr, i + 1)
-    end scanWindowForTerminator
-
-    // --- batch framing ------------------------------------------------------------------------
-
-    def frameBatch(firstOffset: Long, events: Chunk[EventEnvelope]): Array[Byte] =
-        // Assembles N record frames followed by a batch-commit terminator into one contiguous byte array.
-        val recs  = new Array[Array[Byte]](events.length)
-        var total = 0
-        var i     = 0
-        while i < events.length do
-            val e  = events(i)
-            val md = encodeMetadata(e.metadata)
-            val r  = encodeRecord(firstOffset + i, e.id.value, e.eventType.value, md, e.payload.toArray)
-            recs(i) = r; total += r.length; i += 1
-        end while
-        val term   = encodeTerminator(events.length)
-        val result = new Array[Byte](total + term.length)
-        var pos    = 0
-        i = 0
-        while i < recs.length do
-            java.lang.System.arraycopy(recs(i), 0, result, pos, recs(i).length)
-            pos += recs(i).length
-            i += 1
-        end while
-        java.lang.System.arraycopy(term, 0, result, pos, term.length)
-        result
-    end frameBatch
-
-    // --- metadata ----------------------------------------------------------------------------
-
-    def encodeMetadata(md: EventMetadata): Array[Byte] =
-        val writer = MsgPack().newWriter()
-        writer.mapStart(md.values.size)
-        md.values.foreach((k, v) =>
-            writer.field(k.value, 0); MetadataValue.write(writer, v)
-        )
-        writer.mapEnd()
-        val body = writer.result().toArray
-        val out  = new Array[Byte](1 + body.length)
-        out(0) = MetadataVersion
-        java.lang.System.arraycopy(body, 0, out, 1, body.length)
-        out
-    end encodeMetadata
-
-    def decodeMetadata(bytes: Array[Byte])(using Frame): Result[JournalInvalidIdentifierError, EventMetadata] =
-        if bytes.isEmpty then Result.succeed(EventMetadata.empty)
-        else if bytes(0) != MetadataVersion then
-            Result.fail(JournalInvalidIdentifierError("metadata encoding version", s"unknown byte 0x${(bytes(0) & 0xff).toHexString}"))
-        else
-            val payload = Span.from(java.util.Arrays.copyOfRange(bytes, 1, bytes.length))
-            val reader  = MsgPack().newReader(payload)
-            try
-                discard(reader.objectStart())
-                val rawPairs = Chunk.newBuilder[(String, MetadataValue)]
-                while reader.hasNextField() do
-                    val keyStr = reader.field()
-                    val v      = MetadataValue.read(reader)
-                    rawPairs += (keyStr -> v)
-                end while
-                reader.objectEnd()
-                val pairs = rawPairs.result().map((k, v) => MetadataKey(k).map(mk => (mk, v)))
-                Result.collect(pairs).map(ps => EventMetadata(ps.toMap))
-            catch
-                case e: DecodeException =>
-                    Result.fail(JournalInvalidIdentifierError("metadata value tag", e.getMessage))
-            end try
-    end decodeMetadata
-
-    // --- streamId percent-encoding (injective, filesystem-safe) ------------------------------
-
     def encodeStreamId(streamId: StreamId): String =
         val bytes = streamId.value.getBytes(Utf8)
         val sb    = new java.lang.StringBuilder(bytes.length)
@@ -410,14 +195,164 @@ private[kyo] object BinarySegmentCodec extends SegmentCodec:
         sb.toString
     end encodeStreamId
 
-    // --- private byte helpers -----------------------------------------------------------------
-
-    private def putLp(buf: ByteBuffer, bytes: Array[Byte]): Unit =
+    private[kyo] def putLp(buf: ByteBuffer, bytes: Array[Byte]): Unit =
         buf.putInt(bytes.length); discard(buf.put(bytes))
-    private def getLpBytes(buf: ByteBuffer): Array[Byte] =
+    private[kyo] def getLpBytes(buf: ByteBuffer): Array[Byte] =
         val n = buf.getInt(); val a = new Array[Byte](n); buf.get(a); a
-    private def getLpStr(buf: ByteBuffer): String = new String(getLpBytes(buf), Utf8)
-    private def intBytes(v: Int): Array[Byte]     = ByteBuffer.allocate(4).putInt(v).array()
+    private[kyo] def getLpStr(buf: ByteBuffer): String = new String(getLpBytes(buf), Utf8)
+    private[kyo] def intBytes(v: Int): Array[Byte]     = ByteBuffer.allocate(4).putInt(v).array()
+
+end BinarySegmentCodec
+
+/** Binary segment codec wired to a configurable [[EventMetadataCodec]]. */
+final private[kyo] class BinarySegmentCodec(metadataCodec: EventMetadataCodec) extends SegmentCodec:
+
+    def segmentExtension: String = ".seg"
+    def header: Array[Byte]      = BinarySegmentCodec.SegmentHeader
+
+    // Returns Present(detail) if the 5-byte header is missing/malformed/unknown-version, else Absent.
+    def validateHeader[S](handle: StoreSeam.Handle[S])(using Frame): Maybe[String] < S =
+        handle.readAt(0L, BinarySegmentCodec.HeaderSize).map { arr =>
+            if arr.length < BinarySegmentCodec.HeaderSize then Present(s"segment header truncated (${arr.length} bytes)")
+            else
+                val m = java.util.Arrays.copyOfRange(arr, 0, 4)
+                val v = arr(4)
+                if !java.util.Arrays.equals(m, BinarySegmentCodec.Magic) then Present("segment magic is not KJN1")
+                else if v != BinarySegmentCodec.Version then Present(s"unknown segment format version 0x${(v & 0xff).toHexString}")
+                else Absent
+        }
+    end validateHeader
+
+    def recordSize(env: EventEnvelope): Long =
+        val idB = env.id.value.getBytes(BinarySegmentCodec.Utf8)
+        val tpB = env.eventType.value.getBytes(BinarySegmentCodec.Utf8)
+        val md  = metadataCodec.encode(env.metadata)
+        val pl  = env.payload.toArray
+        8L + 8 + (4 + idB.length) + (4 + tpB.length) + (4 + md.length) + (4 + pl.length)
+    end recordSize
+
+    // Reads one record at position pos; verifies CRC. Result.Failure carries the corruption detail,
+    // Result.Success the decoded record.
+    def decodeRecordAt[S](handle: StoreSeam.Handle[S], pos: Long)(using Frame): Result[String, DecodedRecord] < S =
+        handle.readAt(pos, 8).map { head =>
+            if head.length < 8 then Result.fail("record header truncated")
+            else
+                val headBuf = ByteBuffer.wrap(head)
+                val bodyLen = headBuf.getInt()
+                val crcExp  = headBuf.getInt()
+                handle.size().map { sz =>
+                    val maxBody = sz - pos - 8L
+                    if bodyLen < 0 || bodyLen.toLong > maxBody then Result.fail(s"record length out of range at byte $pos")
+                    else
+                        handle.readAt(pos + 8L, bodyLen).map { bodyArr =>
+                            if bodyArr.length < bodyLen then Result.fail("record body truncated")
+                            else
+                                val crc = new CRC32(); crc.update(bodyArr, 0, bodyLen)
+                                if (crc.value & 0xffffffffL).toInt != crcExp then Result.fail(s"record CRC mismatch at byte $pos")
+                                else
+                                    val body     = ByteBuffer.wrap(bodyArr)
+                                    val offset   = body.getLong()
+                                    val eventId  = BinarySegmentCodec.getLpStr(body)
+                                    val eventTp  = BinarySegmentCodec.getLpStr(body)
+                                    val metadata = BinarySegmentCodec.getLpBytes(body)
+                                    val payload  = BinarySegmentCodec.getLpBytes(body)
+                                    Result.succeed(DecodedRecord(offset, eventId, eventTp, metadata, payload, bodyLen))
+                                end if
+                        }
+                    end if
+                }
+        }
+    end decodeRecordAt
+
+    // Returns Present(recordCount) if a valid terminator sits at pos, else Absent (torn/absent).
+    def readTerminator[S](handle: StoreSeam.Handle[S], pos: Long)(using Frame): Maybe[Int] < S =
+        handle.readAt(pos, BinarySegmentCodec.TerminatorSize).map { arr =>
+            if arr.length < BinarySegmentCodec.TerminatorSize then Absent
+            else
+                val buf    = ByteBuffer.wrap(arr)
+                val m      = new Array[Byte](4); buf.get(m)
+                val count  = buf.getInt()
+                val crcExp = buf.getInt()
+                val crc    = new CRC32(); crc.update(BinarySegmentCodec.CommitMagic); crc.update(BinarySegmentCodec.intBytes(count))
+                if java.util.Arrays.equals(m, BinarySegmentCodec.CommitMagic) && (crc.value & 0xffffffffL).toInt == crcExp then
+                    Present(count)
+                else Absent
+        }
+    end readTerminator
+
+    def scan[S](handle: StoreSeam.Handle[S], size: Long, isActive: Boolean)(using Frame): ScanResult < S =
+        Loop(BinarySegmentCodec.HeaderSize.toLong, BinarySegmentCodec.HeaderSize.toLong, Chunk.empty[Long], Chunk.empty[Long]) {
+            (pos, committedEnd, pending, committed) =>
+                if pos >= size then
+                    if pending.isEmpty then Loop.done(ScanResult.Ok(committed, committedEnd, Absent))
+                    else if isActive then Loop.done(ScanResult.Ok(committed, committedEnd, Present(pending.head)))
+                    else Loop.done(ScanResult.Corrupt(s"unterminated batch at byte ${pending.head} in sealed segment"))
+                else
+                    readTerminator(handle, pos).map {
+                        case Present(count) if count == pending.length =>
+                            val newCommitted = committed ++ pending
+                            val newPos       = pos + BinarySegmentCodec.TerminatorSize.toLong
+                            Loop.continue(newPos, newPos, Chunk.empty[Long], newCommitted)
+                        case _ =>
+                            decodeRecordAt(handle, pos).map {
+                                case Result.Success(dec) =>
+                                    Loop.continue(pos + 8L + dec.bodyLen.toLong, committedEnd, pending.append(pos), committed)
+                                case Result.Failure(detail) =>
+                                    if isActive then
+                                        hasCommitAfter(handle, pos + 1L, size).map { hasMore =>
+                                            if !hasMore then
+                                                Loop.done(ScanResult.Ok(committed, committedEnd, Present(pending.headMaybe.getOrElse(pos))))
+                                            else Loop.done(ScanResult.Corrupt(detail))
+                                        }
+                                    else Loop.done(ScanResult.Corrupt(detail))
+                            }
+                    }
+        }
+    end scan
+
+    def hasCommitAfter[S](handle: StoreSeam.Handle[S], from: Long, size: Long)(using Frame): Boolean < S =
+        val window  = 1 << 16
+        val overlap = BinarySegmentCodec.TerminatorSize.toLong - 1L
+        Loop(from) { winPos =>
+            if winPos > size - BinarySegmentCodec.TerminatorSize.toLong then Loop.done(false)
+            else
+                val len = math.min(window.toLong, size - winPos).toInt
+                handle.readAt(winPos, len).map { arr =>
+                    if scanWindowForTerminator(arr) then Loop.done(true)
+                    else Loop.continue(winPos + (window.toLong - overlap))
+                }
+        }
+    end hasCommitAfter
+
+    @tailrec private def scanWindowForTerminator(arr: Array[Byte], i: Int = 0): Boolean =
+        val last = arr.length - BinarySegmentCodec.TerminatorSize
+        if i > last then false
+        else if BinarySegmentCodec.terminatorAt(arr, i) then true
+        else scanWindowForTerminator(arr, i + 1)
+    end scanWindowForTerminator
+
+    def frameBatch(firstOffset: Long, events: Chunk[EventEnvelope]): Array[Byte] =
+        val recs  = new Array[Array[Byte]](events.length)
+        var total = 0
+        var i     = 0
+        while i < events.length do
+            val e  = events(i)
+            val md = metadataCodec.encode(e.metadata)
+            val r  = BinarySegmentCodec.encodeRecord(firstOffset + i, e.id.value, e.eventType.value, md, e.payload.toArray)
+            recs(i) = r; total += r.length; i += 1
+        end while
+        val term   = BinarySegmentCodec.encodeTerminator(events.length)
+        val result = new Array[Byte](total + term.length)
+        var pos    = 0
+        i = 0
+        while i < recs.length do
+            java.lang.System.arraycopy(recs(i), 0, result, pos, recs(i).length)
+            pos += recs(i).length
+            i += 1
+        end while
+        java.lang.System.arraycopy(term, 0, result, pos, term.length)
+        result
+    end frameBatch
 
 end BinarySegmentCodec
 
@@ -483,8 +418,8 @@ private[kyo] enum ScanResult:
   */
 private[kyo] trait ClaimSeam[S]:
     def holdThroughFlush: Boolean
-    def acquire(streamId: StreamId, ref: AtomicRef.Unsafe[StreamState])(using AllowUnsafe, Frame): StreamState < S
-    def release(streamId: StreamId, ref: AtomicRef.Unsafe[StreamState])(using AllowUnsafe, Frame): Unit < Sync
+    def acquire(streamId: StreamId, ref: AtomicRef.Unsafe[StreamState])(using Frame): StreamState < S
+    def release(streamId: StreamId, ref: AtomicRef.Unsafe[StreamState])(using Frame): Unit < Sync
 end ClaimSeam
 
 private[kyo] object ClaimSeam:
@@ -500,22 +435,30 @@ private[kyo] object ClaimSeam:
     val sync: ClaimSeam[Sync] = new ClaimSeam[Sync]:
         def holdThroughFlush: Boolean = true
 
-        @tailrec def acquire(streamId: StreamId, ref: AtomicRef.Unsafe[StreamState])(using AllowUnsafe, Frame): StreamState < Sync =
+        def acquire(streamId: StreamId, ref: AtomicRef.Unsafe[StreamState])(using Frame): StreamState < Sync =
+            // Unsafe: bridges raw CAS spin claim into the Sync tier.
+            Sync.Unsafe.defer(acquireUnsafe(streamId, ref))
+
+        @tailrec private def acquireUnsafe(streamId: StreamId, ref: AtomicRef.Unsafe[StreamState])(using AllowUnsafe): StreamState =
             val s = ref.get()
             if s.writer then
                 yieldCurrentThread()
-                acquire(streamId, ref)
+                acquireUnsafe(streamId, ref)
             else
                 val claimed = s.copy(writer = true)
                 if ref.compareAndSet(s, claimed) then claimed
-                else acquire(streamId, ref)
+                else acquireUnsafe(streamId, ref)
             end if
-        end acquire
+        end acquireUnsafe
 
-        def release(streamId: StreamId, ref: AtomicRef.Unsafe[StreamState])(using AllowUnsafe, Frame): Unit < Sync =
+        def release(streamId: StreamId, ref: AtomicRef.Unsafe[StreamState])(using Frame): Unit < Sync =
+            // Unsafe: bridges raw CAS release into the Sync tier.
+            Sync.Unsafe.defer(releaseUnsafe(streamId, ref))
+
+        private def releaseUnsafe(streamId: StreamId, ref: AtomicRef.Unsafe[StreamState])(using AllowUnsafe): Unit =
             val cur = ref.get()
             if cur.writer then discard(ref.compareAndSet(cur, cur.copy(writer = false)))
-        end release
+        end releaseUnsafe
     end sync
 
     /** A fresh per-instance async claim: a lazily created, per-stream `Channel[Unit]` of capacity
@@ -541,31 +484,37 @@ private[kyo] object ClaimSeam:
             end match
         end permitFor
 
-        def acquire(streamId: StreamId, ref: AtomicRef.Unsafe[StreamState])(using AllowUnsafe, Frame): StreamState < Async =
-            val permit = permitFor(streamId)
-            Abort.run[Closed](permit.take).map:
-                case Result.Success(_) => ref.get()
-                case Result.Failure(closed) =>
-                    throw new IllegalStateException(s"stream permit channel for '${streamId.value}' closed unexpectedly: $closed")
-                case Result.Panic(e) => throw e
+        def acquire(streamId: StreamId, ref: AtomicRef.Unsafe[StreamState])(using Frame): StreamState < Async =
+            // Unsafe: resolves the per-stream permit and reads stream state after take.
+            Sync.Unsafe.defer(permitFor(streamId)).flatMap { permit =>
+                Abort.run[Closed](permit.take).flatMap:
+                    case Result.Success(_) =>
+                        Sync.Unsafe.defer(ref.get()).asInstanceOf[StreamState < Async]
+                    case Result.Failure(closed) =>
+                        throw new IllegalStateException(s"stream permit channel for '${streamId.value}' closed unexpectedly: $closed")
+                    case Result.Panic(e) => throw e
+            }
         end acquire
 
-        def release(streamId: StreamId, ref: AtomicRef.Unsafe[StreamState])(using AllowUnsafe, Frame): Unit < Sync =
-            val permit = permitFor(streamId)
-            Abort.run[Closed](permit.offerDiscard(())).map:
-                case Result.Success(_) => ()
-                case Result.Failure(closed) =>
-                    throw new IllegalStateException(s"stream permit channel for '${streamId.value}' closed unexpectedly: $closed")
-                case Result.Panic(e) => throw e
+        def release(streamId: StreamId, ref: AtomicRef.Unsafe[StreamState])(using Frame): Unit < Sync =
+            // Unsafe: resolves the per-stream permit and returns the mutex token.
+            Sync.Unsafe.defer(permitFor(streamId)).flatMap { permit =>
+                Abort.run[Closed](permit.offerDiscard(())).map:
+                    case Result.Success(_) => ()
+                    case Result.Failure(closed) =>
+                        throw new IllegalStateException(s"stream permit channel for '${streamId.value}' closed unexpectedly: $closed")
+                    case Result.Panic(e) => throw e
+            }
         end release
     end async
 
     /** Reader-only no-op claim: indexing never takes the write permit. */
     def noop[S]: ClaimSeam[S] = new ClaimSeam[S]:
         def holdThroughFlush: Boolean = true
-        def acquire(streamId: StreamId, ref: AtomicRef.Unsafe[StreamState])(using AllowUnsafe, Frame): StreamState < S =
-            ref.get()
-        def release(streamId: StreamId, ref: AtomicRef.Unsafe[StreamState])(using AllowUnsafe, Frame): Unit < Sync = ()
+        def acquire(streamId: StreamId, ref: AtomicRef.Unsafe[StreamState])(using Frame): StreamState < S =
+            // Unsafe: bridges raw atomic read into the Sync tier.
+            Sync.Unsafe.defer(ref.get()).asInstanceOf[StreamState < S]
+        def release(streamId: StreamId, ref: AtomicRef.Unsafe[StreamState])(using Frame): Unit < Sync = ()
     end noop
 
 end ClaimSeam
@@ -585,10 +534,10 @@ end ClaimSeam
   * One coordinator instance is shared by a [[FileJournalCore]], keyed by the same path-string key
   * as the handle registry, so distinct streams (distinct handles) coalesce independently.
   */
-final private[kyo] class GroupCommitCoordinator(using allow: AllowUnsafe):
-    // Unsafe: bootstraps an empty in-process map; never touches platform I/O and is always safe.
+final private[kyo] class GroupCommitCoordinator(
+    private val coordinators: AtomicRef.Unsafe[Map[String, AtomicRef.Unsafe[GroupCommitCoordinator.State]]]
+):
     import GroupCommitCoordinator.State
-    private val coordinators: AtomicRef.Unsafe[Map[String, AtomicRef.Unsafe[State]]] = AtomicRef.Unsafe.init(Map.empty)
 
     @tailrec private def stateFor(key: String)(using AllowUnsafe): AtomicRef.Unsafe[State] =
         val m = coordinators.get()
@@ -651,9 +600,12 @@ final private[kyo] class GroupCommitCoordinator(using allow: AllowUnsafe):
 end GroupCommitCoordinator
 
 private[kyo] object GroupCommitCoordinator:
-    private enum State derives CanEqual:
+    enum State derives CanEqual:
         case Idle
         case Flushing(waiters: List[Channel[Unit]])
+
+    def init(using AllowUnsafe): GroupCommitCoordinator =
+        new GroupCommitCoordinator(AtomicRef.Unsafe.init(Map.empty))
 end GroupCommitCoordinator
 
 // --- Flush strategy: how a batch's durability is confirmed, one implementation per effect ------
@@ -743,8 +695,10 @@ final private[kyo] class FileJournalCore[S >: (Async & Abort[Throwable]) <: Sync
     payloadCodec: EventPayloadCodec,
     claimSeam: ClaimSeam[S],
     flushStrategy: FlushStrategy[S],
+    handles: AtomicRef.Unsafe[Map[String, StoreSeam.Handle[S]]],
+    streams: AtomicRef.Unsafe[Map[StreamId, AtomicRef.Unsafe[StreamState]]],
     readerMode: Boolean = false
-)(using frame: Frame, allow: AllowUnsafe) extends Journal.Backend[S]:
+)(using frame: Frame) extends Journal.Backend[S]:
 
     import FileJournal.*
 
@@ -752,16 +706,6 @@ final private[kyo] class FileJournalCore[S >: (Async & Abort[Throwable]) <: Sync
     // in all three per-op failure traits, so this union narrows cleanly into any Backend row
     // (append/read/streamInfo) at each forward site.
     private type IndexFailure = JournalStorageError | JournalCorruptedError
-
-    // Registry of open segment handles, keyed by path string. Handles open lazily during
-    // recovery/rotation and close on release. The per-stream state below references segments by
-    // path; this map owns the handle lifecycle.
-    private val handles: AtomicRef.Unsafe[Map[String, StoreSeam.Handle[S]]] =
-        AtomicRef.Unsafe.init(Map.empty)
-
-    // StreamId -> its mutable state cell. get-or-create by CAS.
-    private val streams: AtomicRef.Unsafe[Map[StreamId, AtomicRef.Unsafe[StreamState]]] =
-        AtomicRef.Unsafe.init(Map.empty)
 
     def append(
         streamId: StreamId,
@@ -771,7 +715,9 @@ final private[kyo] class FileJournalCore[S >: (Async & Abort[Throwable]) <: Sync
         if events.isEmpty then Abort.fail(JournalEmptyAppendError())
         else
             Log.use { log =>
-                appendCriticalSection(streamId, expected, events, cell(streamId), log.unsafe).map(Abort.get)
+                // Unsafe: bridges Log.unsafe into the append critical section.
+                Sync.Unsafe.defer(appendCriticalSection(streamId, expected, events, cell(streamId), log.unsafe).map(Abort.get))
+                    .asInstanceOf[AppendResult < (S & Abort[JournalAppendFailure])]
             }
 
     def read(
@@ -780,12 +726,16 @@ final private[kyo] class FileJournalCore[S >: (Async & Abort[Throwable]) <: Sync
         maxCount: Int
     ): Chunk[RecordedEvent] < (S & Abort[JournalReadFailure]) =
         Log.use { log =>
-            readCriticalSection(streamId, from, maxCount, log.unsafe).map(Abort.get)
+            // Unsafe: bridges Log.unsafe into the read critical section.
+            Sync.Unsafe.defer(readCriticalSection(streamId, from, maxCount, log.unsafe).map(Abort.get))
+                .asInstanceOf[Chunk[RecordedEvent] < (S & Abort[JournalReadFailure])]
         }
 
     def streamInfo(streamId: StreamId): StreamInfo < (S & Abort[JournalStreamInfoFailure]) =
         Log.use { log =>
-            streamInfoCriticalSection(streamId, log.unsafe).map(Abort.get)
+            // Unsafe: bridges Log.unsafe into the streamInfo critical section.
+            Sync.Unsafe.defer(streamInfoCriticalSection(streamId, log.unsafe).map(Abort.get))
+                .asInstanceOf[StreamInfo < (S & Abort[JournalStreamInfoFailure])]
         }
 
     private[kyo] def release()(using AllowUnsafe, Frame): Unit < S =
@@ -1206,9 +1156,9 @@ final private[kyo] class FileJournalCore[S >: (Async & Abort[Throwable]) <: Sync
             for
                 eid <- EventId(dec.eventId)
                 etp <- EventType(dec.eventType)
-                // decodeMetadata expects MsgPack bytes; both BinarySegmentCodec.decodeRecordAt and
-                // JsonlSegmentCodec.decodeRecordAt store metadata in MsgPack form in DecodedRecord.
-                md <- BinarySegmentCodec.decodeMetadata(dec.metadata)
+                // decodeMetadata uses the configured metadata codec; both BinarySegmentCodec.decodeRecordAt and
+                // JsonlSegmentCodec.decodeRecordAt store metadata in the selected binary shadow form in DecodedRecord.
+                md <- config.metadataCodec.decode(dec.metadata)
             yield RecordedEvent(
                 streamId = streamId,
                 offset = StreamOffset.fromUnchecked(dec.offset),
@@ -1313,17 +1263,24 @@ private[kyo] object FileJournalCore:
     // (fcntl) do not exclude the owning process from reacquiring the same lock, so in-process
     // exclusion must be enforced separately. This registry provides that layer on all platforms;
     // the platform lock still provides cross-process exclusion.
-    private val heldRoots: AtomicReference[Set[String]] =
-        new AtomicReference(Set.empty[String])
+    private var heldRootsCell: Maybe[AtomicRef.Unsafe[Set[String]]] = Absent
 
-    @tailrec private[kyo] def registerRoot(key: String): Boolean =
+    private def heldRoots(using AllowUnsafe): AtomicRef.Unsafe[Set[String]] =
+        heldRootsCell match
+            case Present(r) => r
+            case Absent =>
+                val r = AtomicRef.Unsafe.init(Set.empty[String])
+                heldRootsCell = Present(r)
+                r
+
+    @tailrec private[kyo] def registerRoot(key: String)(using AllowUnsafe): Boolean =
         val snap = heldRoots.get()
         if snap.contains(key) then false
         else if heldRoots.compareAndSet(snap, snap + key) then true
         else registerRoot(key)
     end registerRoot
 
-    @tailrec private[kyo] def unregisterRoot(key: String): Unit =
+    @tailrec private[kyo] def unregisterRoot(key: String)(using AllowUnsafe): Unit =
         val snap = heldRoots.get()
         if !heldRoots.compareAndSet(snap, snap - key) then unregisterRoot(key)
 
@@ -1393,8 +1350,8 @@ private[kyo] object FileJournalCore:
                 case Result.Failure(err) => Result.fail(err)
                 case Result.Success(validatedFormat) =>
                     val codec = validatedFormat match
-                        case FileJournal.SegmentFormat.Binary => BinarySegmentCodec
-                        case FileJournal.SegmentFormat.Jsonl  => new JsonlSegmentCodec(payloadCodec)
+                        case FileJournal.SegmentFormat.Binary => new BinarySegmentCodec(config.metadataCodec)
+                        case FileJournal.SegmentFormat.Jsonl  => new JsonlSegmentCodec(payloadCodec, config.metadataCodec)
                     val noOpLock = new SegmentStore.Lock:
                         def release()(using AllowUnsafe): Unit = ()
                     Result.succeed(
@@ -1408,6 +1365,8 @@ private[kyo] object FileJournalCore:
                             payloadCodec,
                             ClaimSeam.noop,
                             FlushStrategy.noop,
+                            AtomicRef.Unsafe.init(Map.empty),
+                            AtomicRef.Unsafe.init(Map.empty),
                             readerMode = true
                         )
                     )
@@ -1457,8 +1416,8 @@ private[kyo] object FileJournalCore:
                             Result.fail(err)
                         case Result.Success(validatedFormat) =>
                             val codec = validatedFormat match
-                                case FileJournal.SegmentFormat.Binary => BinarySegmentCodec
-                                case FileJournal.SegmentFormat.Jsonl  => new JsonlSegmentCodec(payloadCodec)
+                                case FileJournal.SegmentFormat.Binary => new BinarySegmentCodec(config.metadataCodec)
+                                case FileJournal.SegmentFormat.Jsonl  => new JsonlSegmentCodec(payloadCodec, config.metadataCodec)
                             Result.succeed(
                                 new FileJournalCore[S](
                                     rootKey,
@@ -1469,7 +1428,9 @@ private[kyo] object FileJournalCore:
                                     codec,
                                     payloadCodec,
                                     claimSeam,
-                                    flushStrategyFor(config.fsync)
+                                    flushStrategyFor(config.fsync),
+                                    AtomicRef.Unsafe.init(Map.empty),
+                                    AtomicRef.Unsafe.init(Map.empty)
                                 )
                             )
                     end match

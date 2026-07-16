@@ -19,15 +19,9 @@ package kyo
   * @see [[kyo.EventLog.Typed]] for the decoded record type returned by `read`
   * @see [[kyo.EventPayloadCodec]] for the underlying codec abstraction
   */
-final class EventLog[A](using Schema[A]):
+final class EventLog[A] private (seed: Long, counter: AtomicLong)(using Schema[A]):
 
     private val codec = new SchemaPayloadCodec[A]
-
-    // Unsafe: counter and seed are allocated at construction without a Sync effect.
-    // AllowUnsafe sanctions the low-level atomic initialisation; the values never escape this instance.
-    import AllowUnsafe.embrace.danger
-    private val seed: Long          = java.lang.System.nanoTime() ^ java.lang.System.identityHashCode(this).toLong
-    private val counter: AtomicLong = AtomicLong.Unsafe.init(0L).safe
 
     /** Encodes each value in `events` and appends the batch atomically to `streamId`.
       *
@@ -53,11 +47,9 @@ final class EventLog[A](using Schema[A]):
                 EventType
             ]
         ).flatMap { eventType =>
-            val buildResult: Result[JournalAppendFailure, Seq[EventEnvelope]] =
+            Sync.Unsafe.defer {
                 Result.collect(
                     (0 until events.size).map { idx =>
-                        // Unsafe: counter.unsafe.getAndIncrement() bypasses the Sync wrapper;
-                        // AllowUnsafe is in scope from the class-level import above.
                         val idStr = s"$seed-${counter.unsafe.getAndIncrement()}"
                         EventId(idStr)
                             .mapFailure(e =>
@@ -73,8 +65,10 @@ final class EventLog[A](using Schema[A]):
                             )
                     }
                 )
-            Abort.get(buildResult).flatMap { envelopes =>
-                Journal.append(streamId, expected, Chunk.from(envelopes))
+            }.asInstanceOf[Result[JournalAppendFailure, Seq[EventEnvelope]] < Journal].flatMap { buildResult =>
+                Abort.get(buildResult).flatMap { envelopes =>
+                    Journal.append(streamId, expected, Chunk.from(envelopes))
+                }
             }
         }
     end append
@@ -100,25 +94,17 @@ final class EventLog[A](using Schema[A]):
 end EventLog
 
 object EventLog:
-    /** Write-side decider pattern: read typed history, decide the next event, append with optimistic
-      * concurrency.
-      *
-      * A decider consumes the typed event stream through [[EventLog.read]], folds events into local
-      * state (a pure function over `Chunk[[Typed]]`), and produces the next domain event to append.
-      * The append uses [[ExpectedOffset]] so concurrent writers fail with [[JournalConflictError]];
-      * catch the conflict, re-read from `conflict.actual`, re-decide, and retry with the corrected
-      * guard (the same recovery loop documented in the kyo-eventlog README under Conflict recovery).
-      *
-      * Deciders do not require a separate public API type: they are ordinary `Journal.run` programs
-      * that call `EventLog[A]` methods. Read-model replay (folding events into state without writing)
-      * is the projection side; the decider is the write side that closes the loop by appending new
-      * events when the folded state says to act.
-      *
-      * @see
-      *   [[Typed]] for the decoded record type returned by `read`
-      * @see
-      *   [[kyo.ExpectedOffset]] for the append concurrency model
-      */
+    /** Constructs an [[EventLog]] with a fresh seed and counter. */
+    def init[A: Schema](using AllowUnsafe): EventLog[A] =
+        val marker = new Object()
+        val seed   = java.lang.System.nanoTime() ^ java.lang.System.identityHashCode(marker).toLong
+        new EventLog[A](seed, AtomicLong.Unsafe.init(0L).safe)
+    end init
+
+    /** Constructs an [[EventLog]] under a single unsafe bootstrap boundary. */
+    def apply[A: Schema](using Frame): EventLog[A] < Sync =
+        Sync.Unsafe.defer(init[A])
+
     /** A decoded record from the event log, with the raw payload decoded to the domain type `A`.
       *
       * Each field maps directly from the underlying [[kyo.RecordedEvent]]: `offset` locates the

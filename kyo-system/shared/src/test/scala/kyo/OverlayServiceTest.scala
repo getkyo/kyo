@@ -2,7 +2,7 @@ package kyo
 
 import java.nio.charset.StandardCharsets
 
-class PathOverlayServiceTest extends kyo.test.Test[Any]:
+class OverlayServiceTest extends kyo.test.Test[Any]:
 
     // Helper: run a program through a fresh overlay over a fresh in-memory lower service.
     // The inner function receives both the overlay (as CommitHandle so callers can commit) and
@@ -565,4 +565,4 @@ class PathOverlayServiceTest extends kyo.test.Test[Any]:
         }
     }
 
-end PathOverlayServiceTest
+end OverlayServiceTest

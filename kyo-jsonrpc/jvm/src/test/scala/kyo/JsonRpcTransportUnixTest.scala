@@ -4,6 +4,7 @@ import java.net.UnixDomainSocketAddress
 import java.nio.ByteBuffer
 import java.nio.channels.SocketChannel
 
+/** JVM-only transport test: exercises Unix domain socket bind/accept mechanics unavailable on JS/Native. */
 class JsonRpcTransportUnixTest extends JsonRpcTest:
 
     "unixDomain binds and accepts a connection" in {

@@ -14,7 +14,7 @@ class PathTest extends kyo.test.Test[Any]:
         assert(p.parts == Chunk("a", "b"))
     }
 
-    // Unix-style absolute paths (/usr/...) have no Windows equivalent — drive letter required
+    // Unix-style absolute paths (/usr/...) have no Windows equivalent; drive letter required
     "absolute path with dot and dotdot normalizes" in {
         assume(!Platform.isWindows, "Unix absolute path syntax")
         val p = Path / "/usr" / "local" / "." / "bin" / ".." / "lib"
@@ -876,12 +876,12 @@ class PathTest extends kyo.test.Test[Any]:
                 file = dir / "mixed-encoding.bin"
                 // Write raw ISO-8859-1 bytes: "héllo\n" where é = 0xE9 in ISO-8859-1
                 _ <- file.writeBytes(Span.from(Array[Byte](0x68, 0xe9.toByte, 0x6c, 0x6c, 0x6f, 0x0a)))
-                // appendLines writes UTF-8 — "wörld" where ö is 2 bytes in UTF-8
+                // appendLines writes UTF-8; "wörld" where ö is 2 bytes in UTF-8
                 _     <- file.appendLines(Chunk("wörld"))
                 bytes <- file.readBytes
                 _     <- dir.removeAll
             yield
-                // The file now has mixed encodings — ISO-8859-1 then UTF-8
+                // The file now has mixed encodings: ISO-8859-1 then UTF-8
                 // This documents that appendLines has no charset parameter
                 assert(bytes.size > 0)
             end for
@@ -1447,7 +1447,7 @@ class PathTest extends kyo.test.Test[Any]:
 
     "copy on non-empty directory does not copy children" in {
         Scope.run(Path.run {
-            // Files.copy creates an empty dir at destination — children are silently lost
+            // Files.copy creates an empty dir at destination; children are silently lost
             for
                 dir <- Path.tempDir("kyo-path-dir-test")
                 src = dir / "copy-dir-src"
@@ -1998,7 +1998,7 @@ class PathTest extends kyo.test.Test[Any]:
 
     "parent of absolute single-component path represents root" in {
         assume(!Platform.isWindows, "Unix absolute path syntax")
-        // Path("", "etc") represents /etc — its parent should be "/"
+        // Path("", "etc") represents /etc; its parent should be "/"
         val p = Path("", "etc")
         p.parent match
             case Present(root) =>
@@ -2051,11 +2051,11 @@ class PathTest extends kyo.test.Test[Any]:
     }
 
     "Path with mid-segment absolute string documents actual behavior" in {
-        // Path("a", "/b") — the second segment starts with "/" which may be treated
+        // Path("a", "/b"): the second segment starts with "/" which may be treated
         // as absolute. Document what actually happens.
         val p = Path("a", "/b")
         // On JVM/native, java.nio.Path.resolve("/b") discards the left side and
-        // returns an absolute path. Parts become ("", "b") — absolute.
+        // returns an absolute path. Parts become ("", "b"): absolute.
         // The test captures the real platform behavior without prescribing a fix.
         val partsStr = p.parts.toList
         // Either the path is relative ["a", "b"] or absolute ["", "b"] depending on platform.
@@ -2072,7 +2072,7 @@ class PathTest extends kyo.test.Test[Any]:
 
     "Path('..') single-dotdot segment normalises or is preserved" in {
         val p = Path("..")
-        // ".." with no parent to resolve against — document whether it is kept or dropped.
+        // ".." with no parent to resolve against: document whether it is kept or dropped.
         assert(p.parts.nonEmpty || p.parts.isEmpty)
         // At minimum the string representation must not throw.
         assert(p.toString != null)
@@ -2174,7 +2174,7 @@ class PathTest extends kyo.test.Test[Any]:
             // The question is whether tail picks up the new content or gets confused after
             // truncation (the file position may be beyond EOF).
             // If tail does NOT recover the test will hang and the framework timeout will
-            // kill it — that itself documents the issue.
+            // kill it; that itself documents the issue.
             Clock.withTimeControl { control =>
                 for
                     dir <- Path.tempDir("kyo-test")
@@ -2183,7 +2183,7 @@ class PathTest extends kyo.test.Test[Any]:
                     tailFiber <- Fiber.initUnscoped(
                         Path.run(Scope.run(file.tail(50.millis).take(1).run))
                     )
-                    _     <- control.advance(50.millis) // wake up tail's first poll (sees nothing new — initial content is skipped)
+                    _     <- control.advance(50.millis) // wake up tail's first poll (sees nothing new; initial content is skipped)
                     _     <- file.truncate(0L)          // truncate to empty
                     _     <- control.advance(50.millis) // wake up tail's second poll (position reset after truncation)
                     _     <- file.appendLines(Chunk("after-truncate"))
@@ -2252,7 +2252,7 @@ class PathTest extends kyo.test.Test[Any]:
     }
 
     // =========================================================================
-    // Regression tests — inspired by known issues in fs2, os-lib, and zio-process
+    // Regression tests inspired by known issues in fs2, os-lib, and zio-process
     // =========================================================================
 
     // Inspired by fs2 #3667: writeTo should not leave a file containing partial data
@@ -2279,11 +2279,11 @@ class PathTest extends kyo.test.Test[Any]:
                 _      <- dir.removeAll
             yield
                 assert(result.isFailure)
-                // The file should either not exist or be empty — not contain partial data.
+                // The file should either not exist or be empty, not contain partial data.
                 // If this assertion fails it means partial data was written and left behind.
                 bytes match
                     case Result.Success(b) => assert(b.isEmpty, s"Partial data left in file: ${b.size} bytes")
-                    case Result.Failure(_) => () // file doesn't exist — also acceptable
+                    case Result.Failure(_) => () // file doesn't exist; also acceptable
             end for
         })
     }
@@ -2291,7 +2291,7 @@ class PathTest extends kyo.test.Test[Any]:
     // Inspired by fs2 #1005: buffer reuse corruption after rechunking.
     // Each chunk read from readBytesStream must be an independent copy, not aliased
     // to the same mutable read buffer.
-    "readBytesStream chunks are independent copies — buffer not reused" in {
+    "readBytesStream chunks are independent copies, buffer not reused" in {
         Scope.run(Path.run {
             // Write a pattern where the value at offset i is (i % 256).toByte
             val size = 20000
@@ -2329,7 +2329,7 @@ class PathTest extends kyo.test.Test[Any]:
                 file = dir / "interrupt.bin"
                 // Write enough data so the file cannot be read in a single chunk
                 _ <- file.write("x" * 100000)
-                // Read the stream but stop after the first chunk — this interrupts the rest
+                // Read the stream but stop after the first chunk; this interrupts the rest
                 firstChunks <- Scope.run(file.readBytesStream.take(1).run)
                 // If the file handle was leaked, attempting to write here would either
                 // fail (Windows) or eventually exhaust file descriptors (Unix).
@@ -2424,14 +2424,14 @@ class PathTest extends kyo.test.Test[Any]:
                 result <- file.readLines
                 _      <- dir.removeAll
             yield
-                assert(result.contains("first"), s"'first' was lost — appendLines may have overwritten from position 0")
+                assert(result.contains("first"), s"'first' was lost; appendLines may have overwritten from position 0")
                 assert(result.contains("second"), s"'second' was not written")
             end for
         })
     }
 
     // =========================================================================
-    // System directories — all userPaths fields
+    // System directories: all userPaths fields
     // =========================================================================
 
     "userPaths all fields are populated" in {

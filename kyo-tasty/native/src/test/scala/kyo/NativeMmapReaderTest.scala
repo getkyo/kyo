@@ -3,12 +3,7 @@ package kyo
 import kyo.internal.tasty.binary.MappedByteView
 import kyo.internal.tasty.snapshot.NativeMmapReader
 
-/** Tests for NativeMmapReader: read behavior inside and after a Scope.
-  *
-  * Verifies that reading inside an open Scope succeeds, and that after the Scope closes the AtomicBoolean
-  * flag prevents further reads by throwing IllegalStateException("mmap arena closed") rather than allowing
-  * a use-after-munmap access.
-  */
+/** Native-only mmap guard test: verifies use-after-close throws after Scope exit on the mmap arena. */
 class NativeMmapReaderTest extends kyo.test.Test[Any]:
 
     private def tmpPath(name: String): String =

@@ -74,7 +74,7 @@ class FileJournalSwmrTest extends kyo.test.Test[Any]:
                 batch1Go      <- Channel.initUnscoped[Unit](1)
                 readerDone    <- Channel.initUnscoped[Chunk[RecordedEvent]](1)
                 (seam, claim, flushFor) <- Sync.Unsafe.defer {
-                    val coordinator = new GroupCommitCoordinator
+                    val coordinator = GroupCommitCoordinator.init
                     (
                         gatedAsyncStore(platformAsyncStore, gate, holdNextWrite, TerminatorSize),
                         ClaimSeam.async(),

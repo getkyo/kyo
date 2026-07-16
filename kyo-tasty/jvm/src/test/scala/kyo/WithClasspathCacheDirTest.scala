@@ -1,8 +1,6 @@
 package kyo
 
-/** Verifies withClasspath(roots, Present(cacheDir)) using a real temp directory: writes a snapshot on first call (miss) and reads it back on
-  * the second call (hit).
-  */
+/** JVM-only classpath cache test: discovers fixture jars from `java.class.path`, which has no JS/Native equivalent. */
 class WithClasspathCacheDirTest extends kyo.test.Test[Any]:
 
     "withClasspath(roots, Present(cacheDir)) writes snapshot on miss, reads on hit" in {

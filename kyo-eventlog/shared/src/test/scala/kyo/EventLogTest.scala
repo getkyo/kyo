@@ -12,7 +12,8 @@ class EventLogTest extends kyo.test.Test[Any]:
     private val eventType = valid(EventType("LogRecord"))
 
     "EventLog operations expose Journal capability and per-op Abort rows" in {
-        val log = new EventLog[LogTestEvent]
+        import AllowUnsafe.embrace.danger
+        val log = EventLog.init[LogTestEvent]
         // Compile-time row checks: each operation carries its own per-op Abort row.
         val _: AppendResult < (Journal & Abort[JournalAppendFailure]) =
             log.append(streamId, ExpectedOffset.NoStream, Chunk(LogTestEvent("x", 1)))
@@ -33,7 +34,10 @@ class EventLogTest extends kyo.test.Test[Any]:
             backend <- Journal.Backend.inMemory
             result <- Abort.run[JournalReadFailure] {
                 Journal.run(backend) {
-                    new EventLog[LogTestEvent].read(streamId, StreamOffset.first, 10)
+                    for
+                        log    <- EventLog[LogTestEvent]
+                        events <- log.read(streamId, StreamOffset.first, 10)
+                    yield events
                 }
             }
         yield result match
@@ -48,8 +52,8 @@ class EventLogTest extends kyo.test.Test[Any]:
             backend <- Journal.Backend.inMemory
             result <- Abort.run[JournalError] {
                 Journal.run(backend) {
-                    val log = new EventLog[LogTestEvent]
                     for
+                        log    <- EventLog[LogTestEvent]
                         _      <- log.append(streamId, ExpectedOffset.NoStream, Chunk(event))
                         events <- log.read(streamId, StreamOffset.first, 10)
                     yield events
@@ -74,8 +78,8 @@ class EventLogTest extends kyo.test.Test[Any]:
             backend <- Journal.Backend.inMemory
             result <- Abort.run[JournalError] {
                 Journal.run(backend) {
-                    val log = new EventLog[LogTestEvent]
                     for
+                        log    <- EventLog[LogTestEvent]
                         _      <- log.append(streamId, ExpectedOffset.NoStream, Chunk(e1))
                         _      <- log.append(streamId, ExpectedOffset.Any, Chunk(e2))
                         events <- log.read(streamId, StreamOffset.first, 10)
@@ -104,8 +108,8 @@ class EventLogTest extends kyo.test.Test[Any]:
             backend <- Journal.Backend.inMemory
             result <- Abort.run[JournalError] {
                 Journal.run(backend) {
-                    val log = new EventLog[LogTestEvent]
                     for
+                        log    <- EventLog[LogTestEvent]
                         r1     <- log.append(streamId, ExpectedOffset.NoStream, Chunk(e1))
                         _      <- log.append(streamId, ExpectedOffset.Exact(r1.lastOffset), Chunk(e2))
                         events <- log.read(streamId, StreamOffset.first, 10)

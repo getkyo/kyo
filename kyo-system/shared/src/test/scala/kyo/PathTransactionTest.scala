@@ -88,20 +88,20 @@ class PathTransactionTest extends kyo.test.Test[Any]:
     }
 
     "sandbox return type lacks Abort[CommitConflict]" in {
-        // Positive: sandbox result fits into PathWrite & Sync without CommitConflict
+        // Positive: locked sandbox row is PathWrite & S with S that does not subsume Sync
         val errors1 = typeCheckErrors("""
             given kyo.Frame = kyo.Frame.internal
             val prog: Unit < kyo.PathWrite = ???
-            val _: Unit < (kyo.PathWrite & kyo.Sync) =
-                kyo.Path.sandbox[Unit, kyo.Sync](prog)
+            val _: Unit < kyo.PathWrite = kyo.Path.sandbox(prog)
+            val _: Unit < (kyo.PathWrite & kyo.Abort[String]) =
+                kyo.Path.sandbox[Unit, kyo.Abort[String]](prog)
             """)
-        assert(errors1.isEmpty, s"sandbox return type should be CommitConflict-free but got: $errors1")
-        // Negative: transaction result does not fit the same type (it adds Abort[CommitConflict])
+        assert(errors1.isEmpty, s"sandbox return type should match locked sandbox row but got: $errors1")
+        // Negative: transaction result does not fit PathWrite alone (it adds Abort[CommitConflict])
         val errors2 = typeCheckErrors("""
             given kyo.Frame = kyo.Frame.internal
             val prog: Unit < kyo.PathWrite = ???
-            val _: Unit < (kyo.PathWrite & kyo.Sync) =
-                kyo.Path.transaction[Unit, kyo.Sync](prog)
+            val _: Unit < kyo.PathWrite = kyo.Path.transaction(prog)
             """)
         assert(errors2.nonEmpty, "transaction return type should include Abort[CommitConflict]")
     }

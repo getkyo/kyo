@@ -2,6 +2,7 @@ package kyo
 
 import java.nio.charset.Charset
 import java.nio.charset.StandardCharsets
+import kyo.kernel.ArrowEffect
 
 // The overlay's staged-journal operation record. Unrelated to the conceptual Path.WriteOp
 // write-group partition of Path.Op (a private[kyo] read/write op family); despite sharing a
@@ -45,7 +46,10 @@ private[kyo] object OverlayService:
         Scope.acquireRelease(AtomicRef.init(OverlayState.empty)) { ref =>
             // Unsafe: resets staged state on scope exit (auto-rollback); no Sync dispatch needed.
             Sync.Unsafe.defer { discard(ref.unsafe.updateAndGet(_ => OverlayState.empty)) }
-        }.map(ref => new OverlayService(lower, ref))
+        }.flatMap { ref =>
+            // Unsafe: allocates per-instance commit counter at construction
+            Sync.Unsafe.defer(new OverlayService(lower, ref, AtomicLong.Unsafe.init(0L).safe))
+        }
 
 end OverlayService
 
@@ -360,7 +364,11 @@ end WriteOpLog
   * Scope-managed: the enclosing Scope bounds its lifetime; on scope exit the staged state is
   * reset (auto-rollback). disposition is ManualCommit.
   */
-final private[kyo] class OverlayService[S](lower: Path.Service[S], state: AtomicRef[OverlayService.OverlayState])(using Frame)
+final private[kyo] class OverlayService[S](
+    lower: Path.Service[S],
+    state: AtomicRef[OverlayService.OverlayState],
+    commitSeq: AtomicLong
+)(using Frame)
     extends Path.Service.Overlay[S]:
     import OverlayService.*
 
@@ -371,10 +379,6 @@ final private[kyo] class OverlayService[S](lower: Path.Service[S], state: Atomic
     // negligible for the expected number of commits per root.
     private val instanceSeed: String =
         (java.lang.System.nanoTime() ^ java.lang.System.identityHashCode(this).toLong).toHexString
-
-    // Per-instance monotone counter; combined with instanceSeed, makes each commit's staging
-    // dir name unique even if two commits race inside the same overlay instance.
-    private val commitSeq = new java.util.concurrent.atomic.AtomicLong(0L)
 
     // Crash-injection hooks for recovery tests; each marks a point where a test can inject a
     // failure to verify the commit is replayable from that position. Default no-ops; recovery
@@ -1207,84 +1211,54 @@ final private[kyo] class OverlayService[S](lower: Path.Service[S], state: Atomic
     // Apply one WriteOp during the commit apply phase. File entries move atomically from
     // their staged copy to the final lower path (POSIX rename on host; CAS on in-memory).
     // Each atomic move is followed by a best-effort parent-dir sync so the renamed dirent
-    // is durable after power loss. Non-idempotent: assumes the staged file still exists.
-    private def applyOneOp(stagingDir: Path, i: Int, op: WriteOp): Unit < (S & Abort[FileException]) =
-        op match
-            case WriteOp.WriteFile(parts, _, _) =>
-                val target = pathFrom(parts)
-                lower.move(stagingDir / s"e$i.dat", target, replaceExisting = true, atomicMove = true, createFolders = true)
-                    .andThen(syncParentOf(target))
-            case WriteOp.WriteDirectory(parts, _) =>
-                lower.mkDir(pathFrom(parts))
-            case WriteOp.Remove(parts) =>
-                lower.removeAll(pathFrom(parts))
-            case WriteOp.Move(fromP, toP, resolved) =>
-                lower.removeAll(pathFrom(fromP)).andThen {
-                    resolved match
-                        case _: Path.Entry.File =>
-                            val target = pathFrom(toP)
-                            lower.move(
-                                stagingDir / s"e$i.dat",
-                                target,
-                                replaceExisting = true,
-                                atomicMove = true,
-                                createFolders = true
-                            ).andThen(syncParentOf(target))
-                        case _: Path.Entry.Directory =>
-                            lower.mkDir(pathFrom(toP))
-                }
-            case WriteOp.Copy(_, toP, resolved) =>
-                resolved match
-                    case _: Path.Entry.File =>
-                        val target = pathFrom(toP)
-                        lower.move(stagingDir / s"e$i.dat", target, replaceExisting = true, atomicMove = true, createFolders = true)
-                            .andThen(syncParentOf(target))
-                    case _: Path.Entry.Directory =>
-                        lower.mkDir(pathFrom(toP))
-
-    // Idempotent variant used by recover(). Checks whether the staged file is still present
-    // before moving it: a prior partial apply may have already moved it to the final path.
-    // Converges to the correct final state regardless of how many ops were applied previously.
-    private def applyOneOpIdempotent(stagingDir: Path, i: Int, op: WriteOp): Unit < (S & Abort[FileException]) =
-        op match
-            case WriteOp.WriteFile(parts, _, _) =>
-                val staged = stagingDir / s"e$i.dat"
-                // Invariant: staged is absent only when a prior recovery pass already moved it
-                // to the final path. The staged write (in stageOps) uses the durable write path
-                // (openWrite/finish/close with fsync), so absence here means moved, never lost.
-                lower.exists(staged).map { has =>
-                    if has then lower.move(staged, pathFrom(parts), replaceExisting = true, atomicMove = true, createFolders = true)
+    // is durable after power loss. When `idempotent` is true, file arms check staged
+    // existence before moving (recovery may have already applied the move).
+    private def applyOneOp(stagingDir: Path, i: Int, op: WriteOp, idempotent: Boolean = false): Unit < (S & Abort[FileException]) =
+        def moveStagedFile(staged: Path, target: Path, syncParent: Boolean): Unit < (S & Abort[FileException]) =
+            if idempotent then
+                lower.exists(staged).flatMap { has =>
+                    if has then
+                        lower.move(staged, target, replaceExisting = true, atomicMove = true, createFolders = true)
+                            .andThen(if syncParent then syncParentOf(target) else ())
                     else ()
                 }
+            else
+                lower.move(staged, target, replaceExisting = true, atomicMove = true, createFolders = true)
+                    .andThen(if syncParent then syncParentOf(target) else ())
+        end moveStagedFile
+
+        op match
+            case WriteOp.WriteFile(parts, _, _) =>
+                moveStagedFile(stagingDir / s"e$i.dat", pathFrom(parts), syncParent = !idempotent)
             case WriteOp.WriteDirectory(parts, _) =>
                 lower.mkDir(pathFrom(parts))
             case WriteOp.Remove(parts) =>
                 lower.removeAll(pathFrom(parts))
             case WriteOp.Move(fromP, toP, resolved) =>
-                lower.exists(pathFrom(fromP)).map { exists =>
-                    if exists then lower.removeAll(pathFrom(fromP)) else ()
-                }.andThen {
+                val removeFrom =
+                    if idempotent then
+                        lower.exists(pathFrom(fromP)).flatMap { exists =>
+                            if exists then lower.removeAll(pathFrom(fromP)) else ()
+                        }
+                    else lower.removeAll(pathFrom(fromP))
+                removeFrom.andThen {
                     resolved match
                         case _: Path.Entry.File =>
-                            val staged = stagingDir / s"e$i.dat"
-                            lower.exists(staged).map { has =>
-                                if has then
-                                    lower.move(staged, pathFrom(toP), replaceExisting = true, atomicMove = true, createFolders = true)
-                                else ()
-                            }
+                            moveStagedFile(stagingDir / s"e$i.dat", pathFrom(toP), syncParent = !idempotent)
                         case _: Path.Entry.Directory =>
                             lower.mkDir(pathFrom(toP))
                 }
             case WriteOp.Copy(_, toP, resolved) =>
                 resolved match
                     case _: Path.Entry.File =>
-                        val staged = stagingDir / s"e$i.dat"
-                        lower.exists(staged).map { has =>
-                            if has then lower.move(staged, pathFrom(toP), replaceExisting = true, atomicMove = true, createFolders = true)
-                            else ()
-                        }
+                        moveStagedFile(stagingDir / s"e$i.dat", pathFrom(toP), syncParent = !idempotent)
                     case _: Path.Entry.Directory =>
                         lower.mkDir(pathFrom(toP))
+        end match
+    end applyOneOp
+
+    private def applyOneOpIdempotent(stagingDir: Path, i: Int, op: WriteOp): Unit < (S & Abort[FileException]) =
+        applyOneOp(stagingDir, i, op, idempotent = true)
 
     // 5-step durable commit protocol driven by a pre-created staging directory.
     // (1) Stage file content; (2) write intent log + terminator; (3) atomic-move each entry
@@ -1322,34 +1296,39 @@ final private[kyo] class OverlayService[S](lower: Path.Service[S], state: Atomic
     // On failure (crash hook throws or lower I/O error) the staging dir and stagingDirHandle
     // remain set so recover() can find and re-apply the partial commit.
     private def withCommit(journal: Chunk[WriteOp]): Unit < (S & Abort[FileException]) =
-        val commitId = s"$instanceSeed-${commitSeq.getAndIncrement().toHexString}"
-        lower.tempDir(s"kyo-commit-$commitId").map { handle =>
-            // Write the ownership sentinel as the first entry in the staging dir. recoverFromDisk
-            // skips any kyo-commit-* dir that lacks it to prevent misclassifying user directories
-            // as orphaned staging dirs. A crash between staging dir creation and sentinel write
-            // leaks an empty dir; disk-scan skips it (no sentinel). Accepted trade.
-            lower.writeBytes(handle.path / ".kyo-staging", Span.from(Array.empty[Byte]), createFolders = false).andThen {
-                // Unsafe: stores handle after sentinel write so recover() can find the staging dir
-                // if applyResolved is interrupted; also best-effort syncs the parent dir so the
-                // staging dir's own dirent is durable.
-                Sync.Unsafe.defer {
-                    stagingDirHandle = Present(handle)
-                    pathFrom(handle.path.parts.dropRight(1)).unsafe.syncDir()
-                }.asInstanceOf[Unit < (S & Abort[FileException])]
-                    .andThen {
-                        applyResolved(handle.path, journal).andThen {
-                            runHook(afterMarkerHook).andThen { // crash point 6
-                                // Committed marker written; safe to remove staging dir.
-                                // Unsafe: clears handle reference and removes the staging directory.
-                                Sync.Unsafe.defer {
-                                    stagingDirHandle = Absent
-                                    handle.remove()
-                                }.asInstanceOf[Unit < (S & Abort[FileException])]
+        // Unsafe: monotone counter increment for unique staging dir names
+        Sync.Unsafe.defer(commitSeq.unsafe.getAndIncrement())
+            .asInstanceOf[Long < (S & Abort[FileException])]
+            .flatMap { seq =>
+                val commitId = s"$instanceSeed-${seq.toHexString}"
+                lower.tempDir(s"kyo-commit-$commitId").map { handle =>
+                    // Write the ownership sentinel as the first entry in the staging dir. recoverFromDisk
+                    // skips any kyo-commit-* dir that lacks it to prevent misclassifying user directories
+                    // as orphaned staging dirs. A crash between staging dir creation and sentinel write
+                    // leaks an empty dir; disk-scan skips it (no sentinel). Accepted trade.
+                    lower.writeBytes(handle.path / ".kyo-staging", Span.from(Array.empty[Byte]), createFolders = false).andThen {
+                        // Unsafe: stores handle after sentinel write so recover() can find the staging dir
+                        // if applyResolved is interrupted; also best-effort syncs the parent dir so the
+                        // staging dir's own dirent is durable.
+                        Sync.Unsafe.defer {
+                            stagingDirHandle = Present(handle)
+                            pathFrom(handle.path.parts.dropRight(1)).unsafe.syncDir()
+                        }.asInstanceOf[Unit < (S & Abort[FileException])]
+                            .andThen {
+                                applyResolved(handle.path, journal).andThen {
+                                    runHook(afterMarkerHook).andThen { // crash point 6
+                                        // Committed marker written; safe to remove staging dir.
+                                        // Unsafe: clears handle reference and removes the staging directory.
+                                        Sync.Unsafe.defer {
+                                            stagingDirHandle = Absent
+                                            handle.remove()
+                                        }.asInstanceOf[Unit < (S & Abort[FileException])]
+                                    }
+                                }
                             }
-                        }
                     }
+                }
             }
-        }
     end withCommit
 
     // Best-effort: syncs the parent directory of `path` so that a newly-moved file's
@@ -1525,3 +1504,96 @@ final private[kyo] class OverlayService[S](lower: Path.Service[S], state: Atomic
         }
 
 end OverlayService
+
+// Forwards every path op back under PathRead or PathWrite so an overlay wrapping this
+// service is transparent to whatever PathWrite handler is installed in the outer scope.
+final private[kyo] class ForwardingLowerService(using Frame) extends Path.Service[PathWrite]:
+    val disposition: Path.Disposition = Path.Disposition.AutoCommit
+    def exists(path: Path): Boolean < (PathWrite & Abort[FileException]) =
+        ArrowEffect.suspend(Tag[PathRead], Path.Op.Exists(path))
+    def exists(path: Path, followLinks: Boolean): Boolean < (PathWrite & Abort[FileException]) =
+        ArrowEffect.suspend(Tag[PathRead], Path.Op.ExistsFollow(path, followLinks))
+    def isDirectory(path: Path): Boolean < (PathWrite & Abort[FileException]) =
+        ArrowEffect.suspend(Tag[PathRead], Path.Op.IsDirectory(path))
+    def isRegularFile(path: Path): Boolean < (PathWrite & Abort[FileException]) =
+        ArrowEffect.suspend(Tag[PathRead], Path.Op.IsRegularFile(path))
+    def isSymbolicLink(path: Path): Boolean < (PathWrite & Abort[FileException]) =
+        ArrowEffect.suspend(Tag[PathRead], Path.Op.IsSymbolicLink(path))
+    def realPath(path: Path): Path < (PathWrite & Abort[FileException]) =
+        ArrowEffect.suspend(Tag[PathRead], Path.Op.RealPath(path))
+    def read(path: Path): String < (PathWrite & Abort[FileException]) =
+        ArrowEffect.suspend(Tag[PathRead], Path.Op.Read(path))
+    def read(path: Path, charset: Charset): String < (PathWrite & Abort[FileException]) =
+        ArrowEffect.suspend(Tag[PathRead], Path.Op.ReadCharset(path, charset))
+    def readBytes(path: Path): Span[Byte] < (PathWrite & Abort[FileException]) =
+        ArrowEffect.suspend(Tag[PathRead], Path.Op.ReadBytes(path))
+    def readLines(path: Path): Chunk[String] < (PathWrite & Abort[FileException]) =
+        ArrowEffect.suspend(Tag[PathRead], Path.Op.ReadLines(path))
+    def readLines(path: Path, charset: Charset): Chunk[String] < (PathWrite & Abort[FileException]) =
+        ArrowEffect.suspend(Tag[PathRead], Path.Op.ReadLinesCharset(path, charset))
+    def size(path: Path): Long < (PathWrite & Abort[FileException]) =
+        ArrowEffect.suspend(Tag[PathRead], Path.Op.Size(path))
+    def stat(path: Path): Path.PathStat < (PathWrite & Abort[FileException]) =
+        ArrowEffect.suspend(Tag[PathRead], Path.Op.Stat(path))
+    def list(path: Path): Chunk[Path] < (PathWrite & Abort[FileException]) =
+        ArrowEffect.suspend(Tag[PathRead], Path.Op.ListDir(path))
+    def list(path: Path, glob: String): Chunk[Path] < (PathWrite & Abort[FileException]) =
+        ArrowEffect.suspend(Tag[PathRead], Path.Op.ListGlob(path, glob))
+    def openRead(path: Path): Path.ReadHandle < (PathWrite & Abort[FileException]) =
+        ArrowEffect.suspend(Tag[PathRead], Path.Op.OpenRead(path))
+    def openReadLines(path: Path, charset: Charset): Path.LineReadHandle < (PathWrite & Abort[FileException]) =
+        ArrowEffect.suspend(Tag[PathRead], Path.Op.OpenReadLines(path, charset))
+    def openWalk(path: Path, maxDepth: Int, followLinks: Boolean): Path.WalkHandle < (PathWrite & Abort[FileException]) =
+        ArrowEffect.suspend(Tag[PathRead], Path.Op.OpenWalk(path, maxDepth, followLinks))
+    def write(path: Path, value: String, createFolders: Boolean): Unit < (PathWrite & Abort[FileException]) =
+        ArrowEffect.suspend(Tag[PathWrite], Path.Op.Write(path, value, createFolders))
+    def writeBytes(path: Path, value: Span[Byte], createFolders: Boolean): Unit < (PathWrite & Abort[FileException]) =
+        ArrowEffect.suspend(Tag[PathWrite], Path.Op.WriteBytes(path, value, createFolders))
+    def writeLines(path: Path, value: Chunk[String], createFolders: Boolean): Unit < (PathWrite & Abort[FileException]) =
+        ArrowEffect.suspend(Tag[PathWrite], Path.Op.WriteLines(path, value, createFolders))
+    def append(path: Path, value: String, createFolders: Boolean): Unit < (PathWrite & Abort[FileException]) =
+        ArrowEffect.suspend(Tag[PathWrite], Path.Op.Append(path, value, createFolders))
+    def appendBytes(path: Path, value: Span[Byte], createFolders: Boolean): Unit < (PathWrite & Abort[FileException]) =
+        ArrowEffect.suspend(Tag[PathWrite], Path.Op.AppendBytes(path, value, createFolders))
+    def appendLines(path: Path, value: Chunk[String], createFolders: Boolean): Unit < (PathWrite & Abort[FileException]) =
+        ArrowEffect.suspend(Tag[PathWrite], Path.Op.AppendLines(path, value, createFolders))
+    def truncate(path: Path, size: Long): Unit < (PathWrite & Abort[FileException]) =
+        ArrowEffect.suspend(Tag[PathWrite], Path.Op.Truncate(path, size))
+    def setLastModified(path: Path, epochMs: Long): Unit < (PathWrite & Abort[FileException]) =
+        ArrowEffect.suspend(Tag[PathWrite], Path.Op.SetLastModified(path, epochMs))
+    def mkDir(path: Path): Unit < (PathWrite & Abort[FileException]) =
+        ArrowEffect.suspend(Tag[PathWrite], Path.Op.MkDir(path))
+    def mkFile(path: Path): Unit < (PathWrite & Abort[FileException]) =
+        ArrowEffect.suspend(Tag[PathWrite], Path.Op.MkFile(path))
+    def move(
+        from: Path,
+        to: Path,
+        replaceExisting: Boolean,
+        atomicMove: Boolean,
+        createFolders: Boolean
+    ): Unit < (PathWrite & Abort[FileException]) =
+        ArrowEffect.suspend(Tag[PathWrite], Path.Op.Move(from, to, replaceExisting, atomicMove, createFolders))
+    def copy(
+        from: Path,
+        to: Path,
+        followLinks: Boolean,
+        replaceExisting: Boolean,
+        copyAttributes: Boolean,
+        createFolders: Boolean
+    ): Unit < (PathWrite & Abort[FileException]) =
+        ArrowEffect.suspend(Tag[PathWrite], Path.Op.Copy(from, to, followLinks, replaceExisting, copyAttributes, createFolders))
+    def remove(path: Path): Boolean < (PathWrite & Abort[FileException]) =
+        ArrowEffect.suspend(Tag[PathWrite], Path.Op.Remove(path))
+    def removeExisting(path: Path): Unit < (PathWrite & Abort[FileException]) =
+        ArrowEffect.suspend(Tag[PathWrite], Path.Op.RemoveExisting(path))
+    def removeAll(path: Path): Unit < (PathWrite & Abort[FileException]) =
+        ArrowEffect.suspend(Tag[PathWrite], Path.Op.RemoveAll(path))
+    def openWrite(path: Path, append: Boolean, createFolders: Boolean): Path.WriteHandle < (PathWrite & Abort[FileException]) =
+        ArrowEffect.suspend(Tag[PathWrite], Path.Op.OpenWrite(path, append, createFolders))
+    def tempDir(prefix: String): Path.TempDirHandle < (PathWrite & Abort[FileException]) =
+        ArrowEffect.suspend(Tag[PathWrite], Path.Op.TempDir(prefix))
+    def writeChunk(handle: Path.WriteHandle, chunk: Chunk[Byte]): Unit < (PathWrite & Abort[FileException]) =
+        ArrowEffect.suspend(Tag[PathWrite], Path.Op.WriteChunk(handle, chunk))
+    def writeString(handle: Path.WriteHandle, value: String, charset: Charset): Unit < (PathWrite & Abort[FileException]) =
+        ArrowEffect.suspend(Tag[PathWrite], Path.Op.WriteString(handle, value, charset))
+end ForwardingLowerService

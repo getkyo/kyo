@@ -285,15 +285,14 @@ object Path extends PathPlatformSpecific:
           * `Result[File*Exception, A]` into `Abort[FileException]`, so it preserves current `Path`
           * behavior exactly. Its disposition is `AutoCommit`.
           */
-        def host(using Frame): Service[Sync] = new HostService
+        def host(using Frame): Service[Sync] = HostService()
 
         /** Root-confined host backend: resolves `root.realPath` at construction and rejects any op whose
           * canonical path (following every symlink) escapes it; writes to missing entries validate the
           * nearest existing parent. Prefix-only checking without realpath is a security defect.
           */
         def host(root: Path)(using Frame): Service[Sync] < (Sync & Abort[FileException]) =
-            // Unsafe: resolves the confinement root's real path once at construction
-            Sync.Unsafe.defer(Abort.get(root.unsafe.realPath())).map(rootReal => new RootConfinedHostService(rootReal))
+            HostService.rootConfined(root)
 
         /** In-memory backend: an immutable node tree keyed by `Path.parts` behind one `AtomicRef`,
           * advanced by an optimistic CAS loop. `isSymbolicLink` always returns `false`. Its disposition
@@ -320,246 +319,6 @@ object Path extends PathPlatformSpecific:
           */
         trait Overlay[S] extends CommitHandle[S]
     end Service
-
-    final private class HostService(using Frame) extends Service[Sync]:
-        val disposition: Path.Disposition = Path.Disposition.AutoCommit
-
-        def exists(path: Path): Boolean < (Sync & Abort[FileException]) =
-            // Unsafe: bridges Path.Unsafe.exists into the safe tier
-            Sync.Unsafe.defer(path.unsafe.exists())
-        def exists(path: Path, followLinks: Boolean): Boolean < (Sync & Abort[FileException]) =
-            // Unsafe: bridges Path.Unsafe.exists(followLinks) into the safe tier
-            Sync.Unsafe.defer(path.unsafe.exists(followLinks))
-        def isDirectory(path: Path): Boolean < (Sync & Abort[FileException]) =
-            // Unsafe: bridges Path.Unsafe.isDirectory into the safe tier
-            Sync.Unsafe.defer(path.unsafe.isDirectory())
-        def isRegularFile(path: Path): Boolean < (Sync & Abort[FileException]) =
-            // Unsafe: bridges Path.Unsafe.isRegularFile into the safe tier
-            Sync.Unsafe.defer(path.unsafe.isRegularFile())
-        def isSymbolicLink(path: Path): Boolean < (Sync & Abort[FileException]) =
-            // Unsafe: bridges Path.Unsafe.isSymbolicLink into the safe tier
-            Sync.Unsafe.defer(path.unsafe.isSymbolicLink())
-        def realPath(path: Path): Path < (Sync & Abort[FileException]) =
-            // Unsafe: bridges Path.Unsafe.realPath; the Result maps to Abort[FileException]
-            Sync.Unsafe.defer(Abort.get(path.unsafe.realPath()))
-        def read(path: Path): String < (Sync & Abort[FileException]) =
-            // Unsafe: bridges Path.Unsafe.read into the safe tier
-            Sync.Unsafe.defer(Abort.get(path.unsafe.read()))
-        def read(path: Path, charset: Charset): String < (Sync & Abort[FileException]) =
-            // Unsafe: bridges Path.Unsafe.read(charset) into the safe tier
-            Sync.Unsafe.defer(Abort.get(path.unsafe.read(charset)))
-        def readBytes(path: Path): Span[Byte] < (Sync & Abort[FileException]) =
-            // Unsafe: bridges Path.Unsafe.readBytes into the safe tier
-            Sync.Unsafe.defer(Abort.get(path.unsafe.readBytes()))
-        def readLines(path: Path): Chunk[String] < (Sync & Abort[FileException]) =
-            // Unsafe: bridges Path.Unsafe.readLines into the safe tier
-            Sync.Unsafe.defer(Abort.get(path.unsafe.readLines()))
-        def readLines(path: Path, charset: Charset): Chunk[String] < (Sync & Abort[FileException]) =
-            // Unsafe: bridges Path.Unsafe.readLines(charset) into the safe tier
-            Sync.Unsafe.defer(Abort.get(path.unsafe.readLines(charset)))
-        def size(path: Path): Long < (Sync & Abort[FileException]) =
-            // Unsafe: bridges Path.Unsafe.size into the safe tier
-            Sync.Unsafe.defer(Abort.get(path.unsafe.size()))
-        def stat(path: Path): Path.PathStat < (Sync & Abort[FileException]) =
-            // Unsafe: bridges Path.Unsafe.stat into the safe tier
-            Sync.Unsafe.defer(Abort.get(path.unsafe.stat()))
-        def openRead(path: Path): Path.ReadHandle < (Sync & Abort[FileException]) =
-            // Unsafe: bridges Path.Unsafe.openRead into the safe tier
-            Sync.Unsafe.defer(Abort.get(path.unsafe.openRead()))
-        def openReadLines(path: Path, charset: Charset): Path.LineReadHandle < (Sync & Abort[FileException]) =
-            // Unsafe: bridges Path.Unsafe.openReadLines into the safe tier
-            Sync.Unsafe.defer(Abort.get(path.unsafe.openReadLines(charset)))
-        def openWalk(path: Path, maxDepth: Int, followLinks: Boolean): Path.WalkHandle < (Sync & Abort[FileException]) =
-            // Unsafe: bridges Path.Unsafe.openWalk into the safe tier
-            Sync.Unsafe.defer(Abort.get(path.unsafe.openWalk(maxDepth, followLinks)))
-        def write(path: Path, value: String, createFolders: Boolean): Unit < (Sync & Abort[FileException]) =
-            // Unsafe: bridges Path.Unsafe.write into the safe tier
-            Sync.Unsafe.defer(Abort.get(path.unsafe.write(value, createFolders)))
-        def writeBytes(path: Path, value: Span[Byte], createFolders: Boolean): Unit < (Sync & Abort[FileException]) =
-            // Unsafe: bridges Path.Unsafe.writeBytes into the safe tier
-            Sync.Unsafe.defer(Abort.get(path.unsafe.writeBytes(value, createFolders)))
-        def writeLines(path: Path, value: Chunk[String], createFolders: Boolean): Unit < (Sync & Abort[FileException]) =
-            // Unsafe: bridges Path.Unsafe.writeLines into the safe tier
-            Sync.Unsafe.defer(Abort.get(path.unsafe.writeLines(value, createFolders)))
-        def append(path: Path, value: String, createFolders: Boolean): Unit < (Sync & Abort[FileException]) =
-            // Unsafe: bridges Path.Unsafe.append into the safe tier
-            Sync.Unsafe.defer(Abort.get(path.unsafe.append(value, createFolders)))
-        def appendBytes(path: Path, value: Span[Byte], createFolders: Boolean): Unit < (Sync & Abort[FileException]) =
-            // Unsafe: bridges Path.Unsafe.appendBytes into the safe tier
-            Sync.Unsafe.defer(Abort.get(path.unsafe.appendBytes(value, createFolders)))
-        def appendLines(path: Path, value: Chunk[String], createFolders: Boolean): Unit < (Sync & Abort[FileException]) =
-            // Unsafe: bridges Path.Unsafe.appendLines into the safe tier
-            Sync.Unsafe.defer(Abort.get(path.unsafe.appendLines(value, createFolders)))
-        def truncate(path: Path, size: Long): Unit < (Sync & Abort[FileException]) =
-            // Unsafe: bridges Path.Unsafe.truncate into the safe tier
-            Sync.Unsafe.defer(Abort.get(path.unsafe.truncate(size)))
-        def setLastModified(path: Path, epochMs: Long): Unit < (Sync & Abort[FileException]) =
-            // Unsafe: bridges Path.Unsafe.setLastModified into the safe tier
-            Sync.Unsafe.defer(Abort.get(path.unsafe.setLastModified(epochMs)))
-        def openWrite(path: Path, append: Boolean, createFolders: Boolean): Path.WriteHandle < (Sync & Abort[FileException]) =
-            // Unsafe: bridges Path.Unsafe.openWrite into the safe tier
-            Sync.Unsafe.defer(Abort.get(path.unsafe.openWrite(append, createFolders)))
-        def writeChunk(handle: Path.WriteHandle, chunk: Chunk[Byte]): Unit < (Sync & Abort[FileException]) =
-            // Unsafe: pumps a vended write handle into the safe tier
-            Sync.Unsafe.defer(Abort.get[FileException](handle.writeBytes(chunk)))
-        def writeString(handle: Path.WriteHandle, value: String, charset: Charset): Unit < (Sync & Abort[FileException]) =
-            // Unsafe: pumps a vended write handle into the safe tier
-            Sync.Unsafe.defer(Abort.get[FileException](handle.writeString(value, charset)))
-        def mkDir(path: Path): Unit < (Sync & Abort[FileException]) =
-            // Unsafe: bridges Path.Unsafe.mkDir into the safe tier
-            Sync.Unsafe.defer(Abort.get(path.unsafe.mkDir()))
-        def mkFile(path: Path): Unit < (Sync & Abort[FileException]) =
-            // Unsafe: bridges Path.Unsafe.mkFile into the safe tier
-            Sync.Unsafe.defer(Abort.get(path.unsafe.mkFile()))
-        def list(path: Path): Chunk[Path] < (Sync & Abort[FileException]) =
-            // Unsafe: bridges Path.Unsafe.list into the safe tier
-            Sync.Unsafe.defer(Abort.get(path.unsafe.list()))
-        def list(path: Path, glob: String): Chunk[Path] < (Sync & Abort[FileException]) =
-            // Unsafe: bridges Path.Unsafe.list(glob) into the safe tier
-            Sync.Unsafe.defer(Abort.get(path.unsafe.list(glob)))
-        def move(
-            from: Path,
-            to: Path,
-            replaceExisting: Boolean,
-            atomicMove: Boolean,
-            createFolders: Boolean
-        ): Unit < (Sync & Abort[FileException]) =
-            // Unsafe: bridges Path.Unsafe.move into the safe tier
-            Sync.Unsafe.defer(Abort.get(from.unsafe.move(to, replaceExisting, atomicMove, createFolders)))
-        def copy(
-            from: Path,
-            to: Path,
-            followLinks: Boolean,
-            replaceExisting: Boolean,
-            copyAttributes: Boolean,
-            createFolders: Boolean
-        ): Unit < (Sync & Abort[FileException]) =
-            // Unsafe: bridges Path.Unsafe.copy into the safe tier
-            Sync.Unsafe.defer(Abort.get(from.unsafe.copy(to, followLinks, replaceExisting, copyAttributes, createFolders)))
-        def remove(path: Path): Boolean < (Sync & Abort[FileException]) =
-            // Unsafe: bridges Path.Unsafe.remove into the safe tier
-            Sync.Unsafe.defer(Abort.get(path.unsafe.remove()))
-        def removeExisting(path: Path): Unit < (Sync & Abort[FileException]) =
-            // Unsafe: bridges Path.Unsafe.removeExisting into the safe tier
-            Sync.Unsafe.defer(Abort.get(path.unsafe.removeExisting()))
-        def removeAll(path: Path): Unit < (Sync & Abort[FileException]) =
-            // Unsafe: bridges Path.Unsafe.removeAll into the safe tier
-            Sync.Unsafe.defer(Abort.get(path.unsafe.removeAll()))
-        def tempDir(prefix: String): Path.TempDirHandle < (Sync & Abort[FileException]) =
-            tempDirUnscoped(prefix).map { dir =>
-                new Path.TempDirHandle:
-                    def path: Path = dir
-                    // Unsafe: recursive host delete of the created temp dir at Scope exit
-                    def remove()(using AllowUnsafe): Unit = discard(dir.unsafe.removeAll())
-            }
-    end HostService
-
-    final private class RootConfinedHostService(rootReal: Path)(using Frame) extends Service[Sync]:
-        private val host                  = new HostService
-        val disposition: Path.Disposition = Path.Disposition.AutoCommit
-
-        private def confined(path: Path): Path < (Sync & Abort[FileException]) =
-            // Unsafe: probes target existence to choose between realpath and nearest-parent checks
-            Sync.Unsafe.defer(path.unsafe.exists()).map {
-                case true  => Sync.Unsafe.defer(Abort.get(path.unsafe.realPath())).map(check)
-                case false => nearestExistingParent(path).map(check).andThen(path)
-            }
-        private def check(real: Path): Path < Abort[FileException] =
-            if real.parts.take(rootReal.parts.size) == rootReal.parts then real
-            else Abort.fail(FileAccessDeniedException(real))
-        private def nearestExistingParent(path: Path): Path < (Sync & Abort[FileException]) =
-            path.parent match
-                case Absent     => Abort.fail(FileNotFoundException(path))
-                case Present(p) =>
-                    // Unsafe: probes parent existence to walk to the nearest real ancestor
-                    Sync.Unsafe.defer(p.unsafe.exists()).map {
-                        case true  => Sync.Unsafe.defer(Abort.get(p.unsafe.realPath()))
-                        case false => nearestExistingParent(p)
-                    }
-
-        def exists(path: Path): Boolean < (Sync & Abort[FileException]) = confined(path).andThen(host.exists(path))
-        def exists(path: Path, followLinks: Boolean): Boolean < (Sync & Abort[FileException]) =
-            confined(path).andThen(host.exists(path, followLinks))
-        def isDirectory(path: Path): Boolean < (Sync & Abort[FileException])           = confined(path).andThen(host.isDirectory(path))
-        def isRegularFile(path: Path): Boolean < (Sync & Abort[FileException])         = confined(path).andThen(host.isRegularFile(path))
-        def isSymbolicLink(path: Path): Boolean < (Sync & Abort[FileException])        = confined(path).andThen(host.isSymbolicLink(path))
-        def realPath(path: Path): Path < (Sync & Abort[FileException])                 = confined(path).andThen(host.realPath(path))
-        def read(path: Path): String < (Sync & Abort[FileException])                   = confined(path).andThen(host.read(path))
-        def read(path: Path, charset: Charset): String < (Sync & Abort[FileException]) = confined(path).andThen(host.read(path, charset))
-        def readBytes(path: Path): Span[Byte] < (Sync & Abort[FileException])          = confined(path).andThen(host.readBytes(path))
-        def readLines(path: Path): Chunk[String] < (Sync & Abort[FileException])       = confined(path).andThen(host.readLines(path))
-        def readLines(path: Path, charset: Charset): Chunk[String] < (Sync & Abort[FileException]) =
-            confined(path).andThen(host.readLines(path, charset))
-        def size(path: Path): Long < (Sync & Abort[FileException])                = confined(path).andThen(host.size(path))
-        def stat(path: Path): Path.PathStat < (Sync & Abort[FileException])       = confined(path).andThen(host.stat(path))
-        def openRead(path: Path): Path.ReadHandle < (Sync & Abort[FileException]) = confined(path).andThen(host.openRead(path))
-        def openReadLines(path: Path, charset: Charset): Path.LineReadHandle < (Sync & Abort[FileException]) =
-            confined(path).andThen(host.openReadLines(path, charset))
-        def openWalk(path: Path, maxDepth: Int, followLinks: Boolean): Path.WalkHandle < (Sync & Abort[FileException]) =
-            confined(path).andThen(host.openWalk(path, maxDepth, followLinks))
-        def write(path: Path, value: String, createFolders: Boolean): Unit < (Sync & Abort[FileException]) =
-            confined(path).andThen(host.write(path, value, createFolders))
-        def writeBytes(path: Path, value: Span[Byte], createFolders: Boolean): Unit < (Sync & Abort[FileException]) =
-            confined(path).andThen(host.writeBytes(path, value, createFolders))
-        def writeLines(path: Path, value: Chunk[String], createFolders: Boolean): Unit < (Sync & Abort[FileException]) =
-            confined(path).andThen(host.writeLines(path, value, createFolders))
-        def append(path: Path, value: String, createFolders: Boolean): Unit < (Sync & Abort[FileException]) =
-            confined(path).andThen(host.append(path, value, createFolders))
-        def appendBytes(path: Path, value: Span[Byte], createFolders: Boolean): Unit < (Sync & Abort[FileException]) =
-            confined(path).andThen(host.appendBytes(path, value, createFolders))
-        def appendLines(path: Path, value: Chunk[String], createFolders: Boolean): Unit < (Sync & Abort[FileException]) =
-            confined(path).andThen(host.appendLines(path, value, createFolders))
-        def truncate(path: Path, size: Long): Unit < (Sync & Abort[FileException]) = confined(path).andThen(host.truncate(path, size))
-        def setLastModified(path: Path, epochMs: Long): Unit < (Sync & Abort[FileException]) =
-            confined(path).andThen(host.setLastModified(path, epochMs))
-        def openWrite(path: Path, append: Boolean, createFolders: Boolean): Path.WriteHandle < (Sync & Abort[FileException]) =
-            confined(path).andThen(host.openWrite(path, append, createFolders))
-        // writeChunk/writeString carry only a handle (no path), so confinement is not applicable; forward directly.
-        def writeChunk(handle: Path.WriteHandle, chunk: Chunk[Byte]): Unit < (Sync & Abort[FileException]) = host.writeChunk(handle, chunk)
-        def writeString(handle: Path.WriteHandle, value: String, charset: Charset): Unit < (Sync & Abort[FileException]) =
-            host.writeString(handle, value, charset)
-        def mkDir(path: Path): Unit < (Sync & Abort[FileException])                     = confined(path).andThen(host.mkDir(path))
-        def mkFile(path: Path): Unit < (Sync & Abort[FileException])                    = confined(path).andThen(host.mkFile(path))
-        def list(path: Path): Chunk[Path] < (Sync & Abort[FileException])               = confined(path).andThen(host.list(path))
-        def list(path: Path, glob: String): Chunk[Path] < (Sync & Abort[FileException]) = confined(path).andThen(host.list(path, glob))
-        def move(
-            from: Path,
-            to: Path,
-            replaceExisting: Boolean,
-            atomicMove: Boolean,
-            createFolders: Boolean
-        ): Unit < (Sync & Abort[FileException]) =
-            confined(from).andThen(confined(to)).andThen(host.move(from, to, replaceExisting, atomicMove, createFolders))
-        def copy(
-            from: Path,
-            to: Path,
-            followLinks: Boolean,
-            replaceExisting: Boolean,
-            copyAttributes: Boolean,
-            createFolders: Boolean
-        ): Unit < (Sync & Abort[FileException]) =
-            confined(from).andThen(confined(to)).andThen(host.copy(from, to, followLinks, replaceExisting, copyAttributes, createFolders))
-        def remove(path: Path): Boolean < (Sync & Abort[FileException])      = confined(path).andThen(host.remove(path))
-        def removeExisting(path: Path): Unit < (Sync & Abort[FileException]) = confined(path).andThen(host.removeExisting(path))
-        def removeAll(path: Path): Unit < (Sync & Abort[FileException])      = confined(path).andThen(host.removeAll(path))
-        // tempDir creates inside rootReal, not in the OS temp dir. Creating within root keeps
-        // staged paths confined: the overlay's commit protocol calls lower.move(stagingDir/eN.dat,
-        // target) through this service; if stagingDir were in OS temp the confinement check on
-        // the source path would fail. Creating in root also lets recoverFromDisk(root) scan for
-        // kyo-commit-* dirs without cross-filesystem access. Uniqueness: nanoTime XOR identityHash
-        // provides negligible collision probability for the expected number of concurrent commits.
-        def tempDir(prefix: String): Path.TempDirHandle < (Sync & Abort[FileException]) =
-            val uniqueSuffix =
-                java.lang.Long.toHexString(java.lang.System.nanoTime() ^ java.lang.System.identityHashCode(this).toLong)
-            val dir = rootReal / s"$prefix-$uniqueSuffix"
-            host.mkDir(dir).map { _ =>
-                new Path.TempDirHandle:
-                    def path: Path = dir
-                    // Unsafe: recursive host delete of the temp dir created within rootReal
-                    def remove()(using AllowUnsafe): Unit = discard(dir.unsafe.removeAll())
-            }
-        end tempDir
-    end RootConfinedHostService
 
     // --- Runners ---
 
@@ -613,10 +372,52 @@ object Path extends PathPlatformSpecific:
             [C] => (op, cont) => dispatch(service, op).map(cont)
         )
 
+    /** Shared overlay bootstrap for [[transaction]], [[sandbox]], and [[virtual]].
+      *
+      * Overlay construction uses `Sync.Unsafe.defer` inside the `handleLoop` handler (lazy first
+      * dispatch, or at `done` when the program raised no PathWrite ops). Sync is cast off the
+      * residual the same way `exists`/`read` hide Sync behind suspend/dispatch, so combinator
+      * return rows stay locked without `Sync`.
+      */
+    private def ephemeralOverlay[A, B, S2](
+        program: A < (PathWrite & S2),
+        finish: (A, OverlayService[PathWrite]) => B < (PathWrite & S2)
+    )(using Frame): B < (PathWrite & S2) =
+        def bootstrapOverlay: OverlayService[PathWrite] < PathWrite =
+            // Unsafe: create overlay without Scope; lifecycle managed by finish callback.
+            // Cast hides Sync (runs at dispatch/done time; outer runner folds Sync).
+            Sync.Unsafe.defer(
+                new OverlayService(
+                    new ForwardingLowerService,
+                    AtomicRef.Unsafe.init(OverlayService.OverlayState.empty).safe,
+                    AtomicLong.Unsafe.init(0L).safe
+                )
+            ).asInstanceOf[OverlayService[PathWrite] < PathWrite]
+
+        def ensureOverlay(state: Maybe[OverlayService[PathWrite]]): OverlayService[PathWrite] < PathWrite =
+            state match
+                case Present(overlay) => overlay
+                case Absent           => bootstrapOverlay
+
+        ArrowEffect.handleLoop(Tag[PathWrite], Maybe.empty[OverlayService[PathWrite]], program)(
+            [C] =>
+                (op, state, cont) =>
+                    ensureOverlay(state).map { overlay =>
+                        // Unsafe: dispatch's Abort[FileException] is never raised here at runtime;
+                        // ForwardingLowerService re-suspends I/O ops as PathWrite so FileExceptions
+                        // propagate through the outer PathWrite handler, not inside this handler body
+                        dispatch(overlay, op).asInstanceOf[C < PathWrite].map(result =>
+                            Loop.continue(Present(overlay), cont(result))
+                        )
+                },
+            done = (state, result) =>
+                ensureOverlay(state).flatMap(overlay => finish(result, overlay))
+        )
+    end ephemeralOverlay
+
     /** Runs `program` against a fresh overlay of the ambient service; commits on success; discards on
-      * `Abort`, panic, or commit conflict. For an `AutoCommit` ambient service installs a temporary
-      * overlay and commits it; for `CommitOnSuccess`/`ManualCommit` services uses the service's native
-      * commit and rollback machinery.
+      * `Abort`, panic, or commit conflict. Always installs a temporary overlay over the ambient
+      * `PathWrite` handler, then commits or rolls back that overlay.
       *
       * On success the overlay's staged writes are validated against the read-set and replayed onto the
       * lower service. On `Abort[CommitConflict]` the lower service is left untouched and staged writes
@@ -627,29 +428,18 @@ object Path extends PathPlatformSpecific:
       * needs a custom resolution policy.
       */
     def transaction[A, S](program: A < (PathWrite & S))(using Frame): A < (PathWrite & Abort[CommitConflict] & S) =
-        // Unsafe: create overlay directly without Scope; lifecycle managed by commit/rollback below
-        import AllowUnsafe.embrace.danger
-        val overlay = new OverlayService(
-            new ForwardingLowerService,
-            AtomicRef.Unsafe.init(OverlayService.OverlayState.empty).safe
+        ephemeralOverlay(
+            program,
+            (result, overlay) =>
+                // Unsafe: overlay.commit's Abort[FileException] is never raised here at runtime for the
+                // same reason; all I/O exceptions surface at the outer PathWrite handler level
+                val commit = overlay.commit.asInstanceOf[Unit < (PathWrite & Abort[CommitConflict])]
+                Abort.run[CommitConflict](commit).map {
+                    case Result.Success(()) => result
+                    case Result.Failure(cc) =>
+                        overlay.rollback.andThen(Abort.fail(cc))
+                }
         )
-        ArrowEffect.handleLoop(Tag[PathWrite], program) {
-            [C] =>
-                (op, cont) =>
-                    // Unsafe: dispatch's Abort[FileException] is never raised here at runtime;
-                    // ForwardingLowerService re-suspends I/O ops as PathWrite so FileExceptions
-                    // propagate through the outer PathWrite handler, not inside this handler body
-                    dispatch(overlay, op).asInstanceOf[C < PathWrite].map(result => Loop.continue(cont(result)))
-        }.map { result =>
-            // Unsafe: overlay.commit's Abort[FileException] is never raised here at runtime for the
-            // same reason; all I/O exceptions surface at the outer PathWrite handler level
-            val commit = overlay.commit.asInstanceOf[Unit < (PathWrite & Abort[CommitConflict])]
-            Abort.run[CommitConflict](commit).map {
-                case Result.Success(()) => result
-                case Result.Failure(cc) =>
-                    overlay.rollback.andThen(Abort.fail(cc))
-            }
-        }
     end transaction
 
     /** Same overlay pattern as [[transaction]] with rollback as the success disposition; never surfaces
@@ -660,22 +450,11 @@ object Path extends PathPlatformSpecific:
       * must not touch the lower filesystem. Requires an ambient `PathWrite` scope.
       */
     def sandbox[A, S](program: A < (PathWrite & S))(using Frame): A < (PathWrite & S) =
-        // Unsafe: create overlay directly without Scope; lifecycle managed by rollback below
-        import AllowUnsafe.embrace.danger
-        val overlay = new OverlayService(
-            new ForwardingLowerService,
-            AtomicRef.Unsafe.init(OverlayService.OverlayState.empty).safe
+        ephemeralOverlay(
+            program,
+            (result, overlay) =>
+                overlay.rollback.andThen(result)
         )
-        ArrowEffect.handleLoop(Tag[PathWrite], program) {
-            [C] =>
-                (op, cont) =>
-                    // Unsafe: dispatch's Abort[FileException] never raised here at runtime;
-                    // ForwardingLowerService re-suspends I/O ops as PathWrite so exceptions surface
-                    // via the outer PathWrite handler
-                    dispatch(overlay, op).asInstanceOf[C < PathWrite].map(result => Loop.continue(cont(result)))
-        }.map { result =>
-            overlay.rollback.andThen(result)
-        }
     end sandbox
 
     /** Runs `program` against a fresh overlay and returns the overlay alongside the result, so the
@@ -690,119 +469,15 @@ object Path extends PathPlatformSpecific:
       * is discharged leaves path operations unresolved at runtime.
       */
     def virtual[A, S](program: A < (PathWrite & S))(using Frame): (A, Service.Overlay[Sync]) < (PathWrite & S) =
-        // Unsafe: create overlay directly without Scope; caller controls commit/discard after the block
-        import AllowUnsafe.embrace.danger
-        val overlay = new OverlayService(
-            new ForwardingLowerService,
-            AtomicRef.Unsafe.init(OverlayService.OverlayState.empty).safe
+        ephemeralOverlay(
+            program,
+            (result, overlay) =>
+                // Unsafe: overlay is OverlayService[PathWrite]; cast to Overlay[Sync] because ambient
+                // services are Sync and commit/rollback effects are resolved by the outer PathWrite
+                // handler before Sync.run sees them
+                (result, overlay.asInstanceOf[Service.Overlay[Sync]])
         )
-        ArrowEffect.handleLoop(Tag[PathWrite], program) {
-            [C] =>
-                (op, cont) =>
-                    // Unsafe: dispatch's Abort[FileException] never raised here at runtime;
-                    // ForwardingLowerService re-suspends I/O ops as PathWrite so exceptions surface
-                    // via the outer PathWrite handler
-                    dispatch(overlay, op).asInstanceOf[C < PathWrite].map(result => Loop.continue(cont(result)))
-        }.map { result =>
-            // Unsafe: overlay is OverlayService[PathWrite]; cast to Overlay[Sync] because ambient
-            // services are Sync and commit/rollback effects are resolved by the outer PathWrite
-            // handler before Sync.run sees them
-            (result, overlay.asInstanceOf[Service.Overlay[Sync]])
-        }
     end virtual
-
-    // Forwards every path op back under PathRead or PathWrite so an overlay wrapping this
-    // service is transparent to whatever PathWrite handler is installed in the outer scope.
-    final private class ForwardingLowerService(using Frame) extends Service[PathWrite]:
-        val disposition: Disposition = Disposition.AutoCommit
-        def exists(path: Path): Boolean < (PathWrite & Abort[FileException]) =
-            ArrowEffect.suspend(Tag[PathRead], Op.Exists(path))
-        def exists(path: Path, followLinks: Boolean): Boolean < (PathWrite & Abort[FileException]) =
-            ArrowEffect.suspend(Tag[PathRead], Op.ExistsFollow(path, followLinks))
-        def isDirectory(path: Path): Boolean < (PathWrite & Abort[FileException]) =
-            ArrowEffect.suspend(Tag[PathRead], Op.IsDirectory(path))
-        def isRegularFile(path: Path): Boolean < (PathWrite & Abort[FileException]) =
-            ArrowEffect.suspend(Tag[PathRead], Op.IsRegularFile(path))
-        def isSymbolicLink(path: Path): Boolean < (PathWrite & Abort[FileException]) =
-            ArrowEffect.suspend(Tag[PathRead], Op.IsSymbolicLink(path))
-        def realPath(path: Path): Path < (PathWrite & Abort[FileException]) =
-            ArrowEffect.suspend(Tag[PathRead], Op.RealPath(path))
-        def read(path: Path): String < (PathWrite & Abort[FileException]) =
-            ArrowEffect.suspend(Tag[PathRead], Op.Read(path))
-        def read(path: Path, charset: Charset): String < (PathWrite & Abort[FileException]) =
-            ArrowEffect.suspend(Tag[PathRead], Op.ReadCharset(path, charset))
-        def readBytes(path: Path): Span[Byte] < (PathWrite & Abort[FileException]) =
-            ArrowEffect.suspend(Tag[PathRead], Op.ReadBytes(path))
-        def readLines(path: Path): Chunk[String] < (PathWrite & Abort[FileException]) =
-            ArrowEffect.suspend(Tag[PathRead], Op.ReadLines(path))
-        def readLines(path: Path, charset: Charset): Chunk[String] < (PathWrite & Abort[FileException]) =
-            ArrowEffect.suspend(Tag[PathRead], Op.ReadLinesCharset(path, charset))
-        def size(path: Path): Long < (PathWrite & Abort[FileException]) =
-            ArrowEffect.suspend(Tag[PathRead], Op.Size(path))
-        def stat(path: Path): Path.PathStat < (PathWrite & Abort[FileException]) =
-            ArrowEffect.suspend(Tag[PathRead], Op.Stat(path))
-        def list(path: Path): Chunk[Path] < (PathWrite & Abort[FileException]) =
-            ArrowEffect.suspend(Tag[PathRead], Op.ListDir(path))
-        def list(path: Path, glob: String): Chunk[Path] < (PathWrite & Abort[FileException]) =
-            ArrowEffect.suspend(Tag[PathRead], Op.ListGlob(path, glob))
-        def openRead(path: Path): Path.ReadHandle < (PathWrite & Abort[FileException]) =
-            ArrowEffect.suspend(Tag[PathRead], Op.OpenRead(path))
-        def openReadLines(path: Path, charset: Charset): Path.LineReadHandle < (PathWrite & Abort[FileException]) =
-            ArrowEffect.suspend(Tag[PathRead], Op.OpenReadLines(path, charset))
-        def openWalk(path: Path, maxDepth: Int, followLinks: Boolean): Path.WalkHandle < (PathWrite & Abort[FileException]) =
-            ArrowEffect.suspend(Tag[PathRead], Op.OpenWalk(path, maxDepth, followLinks))
-        def write(path: Path, value: String, createFolders: Boolean): Unit < (PathWrite & Abort[FileException]) =
-            ArrowEffect.suspend(Tag[PathWrite], Op.Write(path, value, createFolders))
-        def writeBytes(path: Path, value: Span[Byte], createFolders: Boolean): Unit < (PathWrite & Abort[FileException]) =
-            ArrowEffect.suspend(Tag[PathWrite], Op.WriteBytes(path, value, createFolders))
-        def writeLines(path: Path, value: Chunk[String], createFolders: Boolean): Unit < (PathWrite & Abort[FileException]) =
-            ArrowEffect.suspend(Tag[PathWrite], Op.WriteLines(path, value, createFolders))
-        def append(path: Path, value: String, createFolders: Boolean): Unit < (PathWrite & Abort[FileException]) =
-            ArrowEffect.suspend(Tag[PathWrite], Op.Append(path, value, createFolders))
-        def appendBytes(path: Path, value: Span[Byte], createFolders: Boolean): Unit < (PathWrite & Abort[FileException]) =
-            ArrowEffect.suspend(Tag[PathWrite], Op.AppendBytes(path, value, createFolders))
-        def appendLines(path: Path, value: Chunk[String], createFolders: Boolean): Unit < (PathWrite & Abort[FileException]) =
-            ArrowEffect.suspend(Tag[PathWrite], Op.AppendLines(path, value, createFolders))
-        def truncate(path: Path, size: Long): Unit < (PathWrite & Abort[FileException]) =
-            ArrowEffect.suspend(Tag[PathWrite], Op.Truncate(path, size))
-        def setLastModified(path: Path, epochMs: Long): Unit < (PathWrite & Abort[FileException]) =
-            ArrowEffect.suspend(Tag[PathWrite], Op.SetLastModified(path, epochMs))
-        def mkDir(path: Path): Unit < (PathWrite & Abort[FileException]) =
-            ArrowEffect.suspend(Tag[PathWrite], Op.MkDir(path))
-        def mkFile(path: Path): Unit < (PathWrite & Abort[FileException]) =
-            ArrowEffect.suspend(Tag[PathWrite], Op.MkFile(path))
-        def move(
-            from: Path,
-            to: Path,
-            replaceExisting: Boolean,
-            atomicMove: Boolean,
-            createFolders: Boolean
-        ): Unit < (PathWrite & Abort[FileException]) =
-            ArrowEffect.suspend(Tag[PathWrite], Op.Move(from, to, replaceExisting, atomicMove, createFolders))
-        def copy(
-            from: Path,
-            to: Path,
-            followLinks: Boolean,
-            replaceExisting: Boolean,
-            copyAttributes: Boolean,
-            createFolders: Boolean
-        ): Unit < (PathWrite & Abort[FileException]) =
-            ArrowEffect.suspend(Tag[PathWrite], Op.Copy(from, to, followLinks, replaceExisting, copyAttributes, createFolders))
-        def remove(path: Path): Boolean < (PathWrite & Abort[FileException]) =
-            ArrowEffect.suspend(Tag[PathWrite], Op.Remove(path))
-        def removeExisting(path: Path): Unit < (PathWrite & Abort[FileException]) =
-            ArrowEffect.suspend(Tag[PathWrite], Op.RemoveExisting(path))
-        def removeAll(path: Path): Unit < (PathWrite & Abort[FileException]) =
-            ArrowEffect.suspend(Tag[PathWrite], Op.RemoveAll(path))
-        def openWrite(path: Path, append: Boolean, createFolders: Boolean): Path.WriteHandle < (PathWrite & Abort[FileException]) =
-            ArrowEffect.suspend(Tag[PathWrite], Op.OpenWrite(path, append, createFolders))
-        def tempDir(prefix: String): Path.TempDirHandle < (PathWrite & Abort[FileException]) =
-            ArrowEffect.suspend(Tag[PathWrite], Op.TempDir(prefix))
-        def writeChunk(handle: Path.WriteHandle, chunk: Chunk[Byte]): Unit < (PathWrite & Abort[FileException]) =
-            ArrowEffect.suspend(Tag[PathWrite], Op.WriteChunk(handle, chunk))
-        def writeString(handle: Path.WriteHandle, value: String, charset: Charset): Unit < (PathWrite & Abort[FileException]) =
-            ArrowEffect.suspend(Tag[PathWrite], Op.WriteString(handle, value, charset))
-    end ForwardingLowerService
 
     private def dispatch[S, C](service: Service[S], op: Op[C])(using Frame): C < (S & Abort[FileException]) =
         op match
@@ -1130,6 +805,7 @@ object Path extends PathPlatformSpecific:
                         java.nio.ByteBuffer.allocate(bufferSize + maxTrailing) // extra space for incomplete trailing multi-byte sequence
                     val outBuf = java.nio.CharBuffer.allocate(math.ceil(bufferSize * decoder.maxCharsPerByte()).toInt)
                     Loop.foreach {
+                        // Unsafe: bridges vended read-handle chunk reads into the Sync tier.
                         Sync.Unsafe.defer {
                             val result = handle.readChunk(rawBuf)
                             if result.isEof then
@@ -1171,6 +847,7 @@ object Path extends PathPlatformSpecific:
                     ArrowEffect.suspend(Tag[PathRead], Path.Op.OpenRead(self))
                 )(handle => Sync.Unsafe.defer(handle.close())).map { handle => // Unsafe: closes the vended read handle at Scope exit
                     Loop.foreach {
+                        // Unsafe: bridges vended read-handle chunk reads into the Sync tier.
                         Sync.Unsafe.defer {
                             val buf    = new Array[Byte](bufferSize)
                             val result = handle.readChunk(buf)
@@ -1196,6 +873,7 @@ object Path extends PathPlatformSpecific:
                     ArrowEffect.suspend(Tag[PathRead], Path.Op.OpenReadLines(self, charset))
                 )(handle => Sync.Unsafe.defer(handle.close())).map { handle => // Unsafe: closes the vended read handle at Scope exit
                     Loop.foreach {
+                        // Unsafe: bridges vended line-read handle into the Sync tier.
                         Sync.Unsafe.defer {
                             handle.readLine() match
                                 case Absent        => Loop.done
@@ -1222,18 +900,21 @@ object Path extends PathPlatformSpecific:
                 )(handle => Sync.Unsafe.defer(handle.close())).map { handle => // Unsafe: closes the vended read handle at Scope exit
                     // Seek to end first, then poll for new content
                     ArrowEffect.suspend(Tag[PathRead], Path.Op.Size(self)).map { fileSize =>
+                        // Unsafe: bridges vended read-handle seek to end into the Sync tier.
                         Sync.Unsafe.defer {
                             handle.position(fileSize)
                             val buf = new Array[Byte](bufferSize)
                             // State: (file position, leftover bytes from incomplete UTF-8, pending incomplete line text)
                             val emptyBytes = new Array[Byte](0)
                             Loop((fileSize, emptyBytes, "")) { case (pos, leftover, pending) =>
+                                // Unsafe: bridges vended read-handle tail polling into the Sync tier.
                                 Sync.Unsafe.defer {
                                     val result = handle.readChunk(buf)
                                     if result.isEof then
                                         ArrowEffect.suspend(Tag[PathRead], Path.Op.Size(self)).map { currentSize =>
                                             if currentSize < pos then
                                                 // File was truncated -- reset to beginning
+                                                // Unsafe: bridges vended read-handle seek on truncate into the Sync tier.
                                                 Sync.Unsafe.defer(handle.position(0L))
                                                     .andThen(Loop.continue((0L, emptyBytes, "")))
                                             else
@@ -1347,6 +1028,7 @@ object Path extends PathPlatformSpecific:
                     ArrowEffect.suspend(Tag[PathRead], Path.Op.OpenWalk(self, maxDepth, followLinks))
                 )(handle => Sync.Unsafe.defer(handle.close())).map { handle => // Unsafe: closes the vended walk handle at Scope exit
                     Loop.foreach {
+                        // Unsafe: bridges vended walk-handle iteration into the Sync tier.
                         Sync.Unsafe.defer {
                             handle.next() match
                                 case Absent        => Loop.done
@@ -1400,7 +1082,9 @@ object Path extends PathPlatformSpecific:
       * different working dir) take effect on the next access. Use with `path.ancestors` for
       * "find the project root containing X" style lookups.
       */
-    def cwd(using Frame): Path < Sync = Sync.Unsafe.defer(cwdPath)
+    def cwd(using Frame): Path < Sync =
+        // Unsafe: bridges platform cwd lookup into the Sync tier.
+        Sync.Unsafe.defer(cwdPath)
 
     /** Well-known base directories for the current OS (cache, config, data, etc.). */
     lazy val basePaths: BasePaths = platformBasePaths

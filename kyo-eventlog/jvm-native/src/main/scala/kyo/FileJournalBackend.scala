@@ -212,7 +212,7 @@ extension (backend: Journal.Backend.type)
         : Journal.Backend[Async] < (Sync & Scope & Abort[JournalStorageError]) =
         // Unsafe: bootstraps in-process claim permits and group-commit coordinator maps.
         Sync.Unsafe.defer {
-            val coordinator = new GroupCommitCoordinator
+            val coordinator = GroupCommitCoordinator.init
             (ClaimSeam.async(), (fsync: FileJournal.Fsync) => FlushStrategy.groupCommit(fsync, coordinator))
         }.flatMap { (claim, flushFor) =>
             FileJournalCore.open(

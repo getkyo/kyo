@@ -25,6 +25,9 @@ package kyo
   *   [[SegmentFormat.Binary]]. See [[SegmentFormat]] for the available encodings. The format cannot
   *   be changed after the first open of a root directory; a mismatch with an existing root fails
   *   the open with a typed [[kyo.JournalStorageError]].
+  * @param metadataCodec
+  *   binary metadata encoding for segment records. Defaults to [[EventMetadataCodec.default]]
+  *   (Ion Binary). Pass [[EventMetadataCodec.msgPack]] to preserve the legacy MsgPack wire format.
   * @see
   *   [[Journal.Backend.file]] for the constructor that consumes this config
   */
@@ -88,7 +91,8 @@ object FileJournal:
     final case class Config(
         fsync: Fsync = Fsync.Always,
         segmentSize: FileSize = 64L.mib,
-        format: SegmentFormat = SegmentFormat.Binary
+        format: SegmentFormat = SegmentFormat.Binary,
+        metadataCodec: EventMetadataCodec = EventMetadataCodec.default
     ) derives CanEqual
 
     object Config:

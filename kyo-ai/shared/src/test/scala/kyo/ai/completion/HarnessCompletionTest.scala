@@ -10,6 +10,9 @@ import kyo.ai.Image
 class HarnessCompletionTest extends kyo.test.Test[Any]:
 
     case class CodexSchemaProbe(scores: Map[String, Int], note: Maybe[String]) derives Schema
+    case class CodexPromptAnswer(marker: String, primaryLabel: String, reminderLabel: String) derives Schema
+    case class CodexToolAnswer(marker: String, status: String, etaDays: Int, toolUsed: Boolean) derives Schema
+    case class CodexOrderQuery(orderId: Int) derives Schema
 
     "ClaudeCodeCompletion.inputJsonLines preserves roles, images, and native Kyo tool transcript records" in {
         val image = Image.fromBytes(Span.from(Array[Byte](1, 2, 3)))
@@ -117,6 +120,32 @@ class HarnessCompletionTest extends kyo.test.Test[Any]:
         assert(encoded.contains("\"note\":{\"type\":\"string\""), s"present nullable values should keep their value schema: $encoded")
     }
 
+    "CodexCompletion.outputSchemaFor exposes native result and tool-call objects to the app-server" in {
+        val direct = Json.encode(CodexCompletion.outputSchemaFor(Chunk.empty, Json.jsonSchema[CodexPromptAnswer]))
+        assert(direct.contains("\"marker\""), s"direct result schema should expose result fields: $direct")
+        assert(!direct.contains("\"resultValue\""), s"direct result schema should not force an internal envelope: $direct")
+        assert(
+            !direct.contains("JSON string whose parsed value matches this schema"),
+            s"direct result schema should not string-encode JSON: $direct"
+        )
+
+        val lookupOrder = Tool.init[CodexOrderQuery](
+            "lookup_order",
+            "Look up an order by id. Use this tool whenever an order status or ETA is requested."
+        )(_ => ())
+        val tools    = lookupOrder.infos ++ Tool.internal.resultToolInfo.infos
+        val toolTurn = Json.encode(CodexCompletion.outputSchemaFor(tools, Json.jsonSchema[CodexToolAnswer]))
+        assert(toolTurn.contains("\"lookup_order\""), s"tool schema should include the user tool: $toolTurn")
+        assert(toolTurn.contains("\"result_tool\""), s"tool schema should include the result tool: $toolTurn")
+        assert(toolTurn.contains("\"orderId\""), s"tool schema should expose native tool arguments: $toolTurn")
+        assert(toolTurn.contains("\"marker\""), s"result tool schema should expose native result fields: $toolTurn")
+        assert(!toolTurn.contains("\"resultValue\""), s"tool schema should not force the internal result envelope: $toolTurn")
+        assert(
+            !toolTurn.contains("JSON string whose parsed value matches this schema"),
+            s"tool schema should not string-encode JSON: $toolTurn"
+        )
+    }
+
     "CodexCompletion.readStructuredOutput accepts top-level assistant message arrays" in {
         val raw = """[{"content":"","calls":[{"id":"call_1","function":"lookup_order","arguments":{"orderId":733}}]}]"""
         Abort.run[AIGenException](CodexCompletion.readStructuredOutput(raw)).map {
@@ -128,6 +157,21 @@ class HarnessCompletionTest extends kyo.test.Test[Any]:
                 assert(msg.calls.head.arguments == """{"orderId":733}""")
             case other =>
                 fail(s"expected assistant tool call message, got: $other")
+        }
+    }
+
+    "CodexCompletion.readStructuredOutput repairs Codex fused id and empty function fields" in {
+        val raw =
+            """{"messages":[{"content":"","calls":[{"id":"call_1function","":"prompted_lookup","arguments":{"code":"tool_prompt_secret_503"}}]}]}"""
+        Abort.run[AIGenException](CodexCompletion.readStructuredOutput(raw)).map {
+            case Result.Success(Chunk(msg: AssistantMessage)) =>
+                assert(msg.content == "")
+                assert(msg.calls.size == 1)
+                assert(msg.calls.head.id == CallId("call_1"))
+                assert(msg.calls.head.function == "prompted_lookup")
+                assert(msg.calls.head.arguments == """{"code":"tool_prompt_secret_503"}""")
+            case other =>
+                fail(s"expected normalized assistant tool call message, got: $other")
         }
     }
 

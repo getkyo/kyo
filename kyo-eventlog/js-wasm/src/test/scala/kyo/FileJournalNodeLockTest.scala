@@ -219,13 +219,15 @@ class FileJournalNodeLockTest extends kyo.test.Test[Any]:
 
     // Byte-identity leaf: segments written by the Node backend must be byte-identical to
     // the JVM reference segment (same codec, same pure CRC32, same binary encoding).
-    // Reference: 188-byte segment, 3 events (offsets 0/1/2, ids e-1/e-2/e-3,
+    // Reference: 200-byte segment, 3 events (offsets 0/1/2, ids e-1/e-2/e-3,
     // type RefType, payloads ref-payload-1/2/3, empty metadata).
-    // SHA-256: b2361e08c0c2b7b4d5593318d5a337deae24c278577de422820dec7c1a36e1c7
+    // Empty metadata still carries metadata-version (0x02) plus Ion Binary empty struct (IVM),
+    // so the segment is longer than the legacy MsgPack-era 188-byte reference.
+    // SHA-256: a1f871e87a6265a58be510876984f1679db24271d6a2510643400ad6bf17216f
     "Node segment byte identity with JVM reference" - {
 
         "writes the reference segment byte-identical to the binary codec hash" in {
-            val refHash  = "b2361e08c0c2b7b4d5593318d5a337deae24c278577de422820dec7c1a36e1c7"
+            val refHash  = "a1f871e87a6265a58be510876984f1679db24271d6a2510643400ad6bf17216f"
             val streamId = valid(StreamId("ref-stream"))
             val events = Chunk(
                 EventEnvelope(
@@ -275,7 +277,7 @@ class FileJournalNodeLockTest extends kyo.test.Test[Any]:
                     NodeCryptoHash.createHash("sha256").update(uint8).digest("hex")
                 }
             yield
-                assert(bytes.length == 188, s"expected 188-byte reference segment but got ${bytes.length} bytes")
+                assert(bytes.length == 200, s"expected 200-byte reference segment but got ${bytes.length} bytes")
                 assert(hashHex == refHash, s"Node segment hash $hashHex != JVM reference $refHash")
             end for
         }

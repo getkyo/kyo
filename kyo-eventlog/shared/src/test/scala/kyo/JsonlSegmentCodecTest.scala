@@ -13,7 +13,7 @@ import kyo.internal.StoreSeam
 class JsonlSegmentCodecTest extends kyo.test.Test[Any]:
 
     private val Utf8  = StandardCharsets.UTF_8
-    private val codec = new JsonlSegmentCodec(EventPayloadCodec.bytes)
+    private val codec = new JsonlSegmentCodec(EventPayloadCodec.bytes, EventMetadataCodec.default)
 
     private def valid[A](r: Result[JournalInvalidIdentifierError, A]): A =
         r.getOrElse(throw new AssertionError(s"valid identifier: $r"))

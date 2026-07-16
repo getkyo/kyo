@@ -36,7 +36,7 @@ class FileJournalGroupCommitTest extends kyo.test.Test[Any]:
     "group commit" - {
         "requesters arriving while a round is in flight coalesce into it instead of starting their own" in {
             import AllowUnsafe.embrace.danger
-            val coordinator    = new GroupCommitCoordinator
+            val coordinator    = GroupCommitCoordinator.init
             val key            = "seg-1"
             val followerCount  = 5
             val requesterCount = followerCount + 1

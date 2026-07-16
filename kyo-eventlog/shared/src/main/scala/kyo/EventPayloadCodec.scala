@@ -9,8 +9,8 @@ import java.nio.charset.StandardCharsets
   * built-in codecs are available through the companion:
   *
   *   - [[kyo.EventPayloadCodec.schema]] derives a typed codec from a `Schema[A]`. Binary
-  *     segments store the payload as MsgPack bytes; JSONL segments embed the payload as a JSON
-  *     value by transcoding through the schema on write.
+  *     segments store the payload in the selected binary `Codec` (Ion Binary by default); JSONL
+  *     segments embed the payload as a JSON value by transcoding through the schema on write.
   *   - [[kyo.EventPayloadCodec.bytes]] is an identity codec for raw `Span[Byte]` payloads:
   *     binary segments store the bytes unchanged; JSONL segments base64-encode them.
   *
@@ -19,12 +19,13 @@ import java.nio.charset.StandardCharsets
   * @see [[kyo.EventLog]] for the typed event log that uses a schema-derived codec internally
   */
 trait EventPayloadCodec:
-    /** Transcodes a binary-encoded payload (MsgPack bytes for schema codecs, raw bytes for the
-      * identity codec) to a JSON-embeddable value string for the JSONL segment format.
+    /** Transcodes a binary-encoded payload (bytes from the selected binary codec for schema
+      * codecs, raw bytes for the identity codec) to a JSON-embeddable value string for the JSONL
+      * segment format.
       *
-      * For schema-derived codecs: decodes the MsgPack bytes to the typed value, then encodes the
+      * For schema-derived codecs: decodes the binary bytes to the typed value, then encodes the
       * value as a JSON value string (e.g. `{"n":1}` or `"hello"`). The returned string is a
-      * complete JSON value and is embedded literally in the JSONL record line. The MsgPack decode
+      * complete JSON value and is embedded literally in the JSONL record line. The binary decode
       * can fail if the stored bytes are malformed for the schema, so this method returns a
       * `Result`.
       *
@@ -35,10 +36,10 @@ trait EventPayloadCodec:
     private[kyo] def encodeForJsonl(bytes: Span[Byte])(using Frame): Result[DecodeException, String]
 
     /** Reads a payload value from a [[Codec.Reader]] positioned at the payload field of a JSONL
-      * record, and returns the binary (MsgPack or raw byte) form stored in [[DecodedRecord]].
+      * record, and returns the binary form stored in [[DecodedRecord]].
       *
       * For schema-derived codecs: reads the JSON value using the schema, then re-encodes to
-      * MsgPack bytes so the returned `Span[Byte]` is in the same binary form as a binary-format
+      * binary bytes so the returned `Span[Byte]` is in the same binary form as a binary-format
       * segment. This always returns the same binary form regardless of whether the segment is
       * Binary or JSONL.
       *
@@ -53,32 +54,41 @@ trait EventPayloadCodec:
 end EventPayloadCodec
 
 object EventPayloadCodec:
-    /** Schema-derived: binary = `MsgPack(A)`; JSONL = embedded `JSON(A)`. */
-    def schema[A](using Schema[A], Frame): EventPayloadCodec = new SchemaPayloadCodec[A]
+    /** Schema-derived: binary = Ion Binary by default; JSONL = embedded `JSON(A)`. */
+    def schema[A](using Schema[A], Frame): EventPayloadCodec = schema(IonBinary())
+
+    /** Schema-derived with an explicit binary `Codec` (MsgPack, Ion Binary, BSON where legal, etc.). */
+    def schema[A](binary: Codec)(using Schema[A], Frame): EventPayloadCodec = new SchemaPayloadCodec[A](binary)
 
     /** Identity over raw `Span[Byte]` payloads: binary = raw bytes, JSONL = base64 string. */
     val bytes: EventPayloadCodec = BytesPayloadCodec
 end EventPayloadCodec
 
-final private[kyo] class SchemaPayloadCodec[A](using private val schm: Schema[A]) extends EventPayloadCodec:
+final private[kyo] class SchemaPayloadCodec[A](private val binary: Codec = IonBinary())(using private val schema: Schema[A])
+    extends EventPayloadCodec:
     private val Utf8 = StandardCharsets.UTF_8
 
-    private[kyo] def encode(value: A)(using Frame): Span[Byte]                          = schm.encode[MsgPack](value)
-    private[kyo] def decode(bytes: Span[Byte])(using Frame): Result[DecodeException, A] = schm.decode[MsgPack](bytes)
+    private[kyo] def encode(value: A)(using Frame): Span[Byte] =
+        val w = binary.newWriter()
+        schema.writeTo(value, w)
+        w.result()
+    end encode
+
+    private[kyo] def decode(bytes: Span[Byte])(using Frame): Result[DecodeException, A] =
+        Result.catching[DecodeException] {
+            val reader = binary.newReader(bytes)
+            schema.readFrom(reader)
+        }
 
     private[kyo] def encodeForJsonl(bytes: Span[Byte])(using Frame): Result[DecodeException, String] =
-        // Decode MsgPack bytes to the typed value A, then re-encode as JSON.
-        // The MsgPack decode can fail if the stored bytes are malformed for this schema.
         decode(bytes).map { value =>
             val w = new Json().newWriter()
-            schm.writeTo(value, w)
+            schema.writeTo(value, w)
             new String(w.result().toArray, Utf8)
         }
 
     private[kyo] def decodeFromJsonl(reader: Codec.Reader)(using Frame): Result[DecodeException, Span[Byte]] =
-        // Read the JSON value using the schema, then re-encode to MsgPack so the payload bytes
-        // are in the same binary form as a binary-format segment.
-        Result.catching[DecodeException](encode(schm.readFrom(reader)))
+        Result.catching[DecodeException](encode(schema.readFrom(reader)))
 
 end SchemaPayloadCodec
 

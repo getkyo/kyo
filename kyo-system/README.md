@@ -1,6 +1,6 @@
 # kyo-system
 
-`kyo-system` provides file I/O, OS process execution, and system environment access. File operations are tracked through the `PathRead` and `PathWrite` capabilities: reads and writes suspend under these effects and are discharged by a runner (`Path.run`, `Path.runReadOnly`, or their `runWith` variants), which folds the per-operation `Abort[File*Exception]` markers into the umbrella `Abort[FileException]`. Process launches carry `Abort[CommandException]`, and handles are `Scope`-managed for automatic cleanup. The same API compiles across JVM, Scala Native, and JavaScript (Node.js).
+`kyo-system` is the file I/O, process execution, and environment layer for Kyo. File operations are tracked through the `PathRead` and `PathWrite` capabilities: reads and writes suspend under these effects and are discharged by a runner (`Path.run`, `Path.runReadOnly`, or their `runWith` variants), which folds the per-operation `Abort[File*Exception]` markers into the umbrella `Abort[FileException]`. Process launches carry `Abort[CommandException]`, and handles are `Scope`-managed for automatic cleanup. The same API compiles across JVM, Scala Native, and JavaScript (Node.js).
 
 The following example reads a configuration file, fetches a git revision, runs a build step, and writes an artifact record. Every filesystem op runs inside `Path.run`, which installs the default host service and discharges both capabilities:
 
@@ -33,6 +33,10 @@ Filesystem I/O is capability-tracked, not method-tracked. A program that only re
 
 Install a custom backend with `Path.runWith`: `Service.host` (default), `Service.host(root)` (root-confined), `Service.inMemory` (hermetic tests), or `Service.overlay(lower)` (copy-on-write staging with explicit commit).
 
+When you need real disk I/O against the host filesystem, use `Service.host` or `Service.host(root)` to confine all paths under a root. When you need hermetic unit tests with no disk side effects, use `Service.inMemory`. When you need to stage writes and commit or discard them as a unit, wrap a lower service with `Service.overlay(lower)`.
+
+`Service.overlay(lower)` is Scope-managed: when the enclosing Scope closes, staged upper state is reset automatically (rollback without an explicit `rollback` call).
+
 Overlay combinators for transactional writes:
 
 ```scala
@@ -58,11 +62,71 @@ val dryRun: Unit < (Sync & Abort[FileException]) =
     }
 ```
 
-`Path.tempDir(prefix)` creates a directory through the active service and returns a `TempDirHandle` whose cleanup runs through that service's removal path when the enclosing `Scope` exits.
+Besides `commit` (validate then replay) and `commitWith`, overlays expose `commitOverwrite` for unconditional last-writer-wins replay with no `CommitConflict` row.
+
+`Path.transaction` commits automatically on success and aborts with `CommitConflict` when a read-set stamp diverges from the live lower view. Use `Path.virtual` when the caller needs to inspect staged state or choose a conflict policy after the block completes. The combinator returns `(result, overlay)`; call `commit`, `commitWith`, or `rollback` on the overlay before leaving the ambient `PathWrite` scope:
+
+`commit`, `commitWith`, and `rollback` on a virtual overlay must run while `PathWrite` is still ambient (same or enclosing `runWith`); calling them after `PathWrite` is discharged leaves path operations unresolved at runtime.
+
+```scala
+import kyo.*
+
+val committed: String < (Sync & Abort[FileException] & Abort[CommitConflict]) =
+    Path.Service.inMemory.flatMap { lower =>
+        Path.runWith(lower) {
+            Path.virtual {
+                for
+                    _ <- (Path("data") / "draft.txt").write("hello")
+                    t <- (Path("data") / "draft.txt").read
+                yield t
+            }.flatMap { case (text, overlay) =>
+                overlay.commit.map(_ => text)
+            }
+        }
+    }
+```
+
+`Path.transaction`, `Path.sandbox`, and `Path.virtual` install a temporary overlay over the ambient `PathWrite` handler; they require an enclosing `Path.run` / `Path.runWith`, not a standalone host runner.
+
+When `overlay.commit` fails with `CommitConflict`, catch the failure row with `Abort.run` and inspect each `Conflict`:
+
+```scala
+import kyo.*
+
+val attempt: Result[CommitConflict, Unit] < (Sync & Abort[FileException]) =
+    Path.Service.inMemory.flatMap { lower =>
+        val p = Path("data") / "shared.txt"
+        Path.runWith(lower) {
+            Path.virtual(p.write("staged")).flatMap { case (_, overlay) =>
+                Abort.run[CommitConflict](overlay.commit)
+            }
+        }
+    }
+```
+
+On `Result.Failure(CommitConflict(conflicts))`, retry with a per-path resolution instead of aborting. `Resolution.KeepOurs` replays the overlay's staged entry; `Resolution.KeepTheirs` keeps the live lower value unchanged. `commitWith` resolutions also include `Resolution.Write(entry)` (replay a caller-supplied `Path.Entry`) and `Resolution.Remove` (delete the path on replay):
+
+```scala
+import kyo.*
+
+val resolved: Unit < (Sync & Abort[FileException]) =
+    Path.Service.inMemory.flatMap { lower =>
+        val p = Path("data") / "shared.txt"
+        Path.runWith(lower) {
+            Path.virtual(p.write("staged")).flatMap { case (_, overlay) =>
+                overlay.commitWith(_ => Resolution.KeepTheirs)
+            }
+        }
+    }
+```
+
+`Path.tempDir(prefix)` creates a directory through the active service, returns the `Path`, and registers recursive removal via the creating service when the enclosing `Scope` closes.
 
 ## File paths
 
-`Path` is an immutable value built with the `/` operator or the `apply` factory. The segment type `Part` accepts either a `String` or another `Path`; splicing a `Path` value expands its components inline:
+Before reading or writing, you need a path value that identifies the target without touching the disk. `Path` is an immutable value built with the `/` operator or the `apply` factory; pure accessors like `parts` and `parent` require no capability.
+
+The segment type `Part` accepts either a `String` or another `Path`; splicing a `Path` value expands its components inline:
 
 ```scala
 import kyo.*
@@ -113,9 +177,9 @@ val projectRoot: Maybe[Path] < (Sync & Abort[FileException]) =
     }
 ```
 
-## Inspecting files
+### Inspecting files
 
-`exists`, `isDirectory`, `isRegularFile`, and `isSymbolicLink` suspend under `PathRead`. An inaccessible path produces `false` rather than failing. Run them inside `Path.runReadOnly`:
+Before opening a file for read or write, check whether the path exists and what kind of entry it is. `exists`, `isDirectory`, `isRegularFile`, and `isSymbolicLink` suspend under `PathRead`. An inaccessible path produces `false` rather than failing, so a missing config file and a permission-denied path both return `false` instead of aborting. Run them inside `Path.runReadOnly`:
 
 ```scala
 import kyo.*
@@ -160,7 +224,7 @@ val canonical: Path < (Sync & Abort[FileException]) =
 
 ## Reading files
 
-Bulk reads suspend under `PathRead`. After `Path.runReadOnly`, the residual is `Sync & Abort[FileException]`:
+Once you know where a file lives, bulk reads and streams pull its contents under `PathRead`. After `Path.runReadOnly`, the residual is `Sync & Abort[FileException]`:
 
 ```scala
 import kyo.*
@@ -220,7 +284,7 @@ val errors: Unit < (Async & Scope & Sync & Abort[FileException]) =
 
 ## Writing files
 
-Write methods suspend under `PathWrite`. Run them inside `Path.run`. Write methods create parent directories by default (`createFolders = true`). Pass `createFolders = false` to fail when the parent is absent:
+Persisting output or mutating the tree requires `PathWrite`. Run write methods inside `Path.run`. Write methods create parent directories by default (`createFolders = true`). Pass `createFolders = false` to fail when the parent is absent:
 
 ```scala
 import kyo.*
@@ -252,9 +316,9 @@ val sink: Unit < (Async & Scope & Sync & Abort[FileException]) =
     }
 ```
 
-## Directory operations
+### Directory operations
 
-`mkDir` creates a directory and all missing parents. `mkFile` creates an empty file with missing parents. `list` returns direct children; `list(glob)` filters by a glob pattern supporting `*`, `**`, `?`, `[...]`, and `{a,b}` alternation. `walk` returns a Scope-managed stream of all entries in the tree:
+Creating directories, listing children, and moving or deleting entries are write-side mutations that belong with the other `PathWrite` operations. `mkDir` creates a directory and all missing parents. `mkFile` creates an empty file with missing parents. `list` returns direct children; `list(glob)` filters by a glob pattern supporting `*`, `**`, `?`, `[...]`, and `{a,b}` alternation. `walk` returns a Scope-managed stream of all entries in the tree:
 
 ```scala
 import kyo.*
@@ -386,7 +450,7 @@ On JVM and Scala Native, `path.toJava: java.nio.file.Path` converts to the stand
 
 ## Running commands
 
-`Command` is an immutable builder. Each builder method returns a new `Command`; construction performs no I/O. An execution method launches the process.
+When a deploy script, build tool, or health check needs to run an external program, `Command` builds an immutable process description and an execution method launches it. Each builder method returns a new `Command`; construction performs no I/O.
 
 Arguments are passed directly to the OS with no shell interpretation. Pipes, globs, and variable expansion require an explicit shell:
 
@@ -456,11 +520,13 @@ Execution methods:
 | `spawn` | `Process < (Sync & Scope & Abort[CommandException])` | process handle, Scope-managed |
 | `spawnUnscoped` | `Process < (Sync & Abort[CommandException])` | process handle, caller owns lifetime |
 
+When you need the full stdout as a string and the process exits before returning, use `text`. When you need only the exit code, use `waitFor` or `waitForSuccess`. When stdout is large or arrives incrementally, use `stream` or `spawn` with `collectOutput`. When the process outlives the current scope or you manage lifetime explicitly, use `spawnUnscoped`.
+
 The built `Command` is readable without launching: `args` returns `Chunk[String]`, `workDir` returns `Maybe[Path]` (the configured working directory, or `Absent` when none was set), and `env` returns `Map[String, String]` (the current environment snapshot reflecting any `envAppend`/`envRemove`/`envReplace` calls).
 
-## Process handles
+### Process handles
 
-`Command.spawn` registers the process with the enclosing `Scope`. When the scope closes before the process exits, the process is forcibly killed. `Command.spawnUnscoped` omits scope registration and is appropriate for long-lived workers whose lifetime is managed explicitly:
+After `spawn`, the returned `Process` handle exposes stdout and stderr streams, lifecycle controls, and concurrent output draining. `Command.spawn` registers the process with the enclosing `Scope`. When the scope closes before the process exits, the process is forcibly killed. `Command.spawnUnscoped` omits scope registration and is appropriate for long-lived workers whose lifetime is managed explicitly:
 
 ```scala
 import kyo.*
@@ -515,9 +581,9 @@ Other lifecycle operations on a `Process`:
 | `destroy` | `Unit < Sync` | Requests termination (SIGTERM or equivalent) |
 | `destroyForcibly` | `Unit < Sync` | Forces termination (SIGKILL or equivalent) |
 
-## Exit codes
+### Exit codes
 
-`ExitCode` is a three-case enum. `ExitCode.Signaled(number)` follows the POSIX shell convention where the raw integer value equals 128 + signal number:
+Once a process exits, interpret its status through `ExitCode`. `ExitCode` is a three-case enum. `ExitCode.Signaled(number)` follows the POSIX shell convention where the raw integer value equals 128 + signal number:
 
 - `ExitCode.Success`: raw value 0
 - `ExitCode.Failure(code)`: any non-zero value that does not encode a signal
@@ -613,3 +679,9 @@ val adapted: String < Sync =
         cpus <- System.availableProcessors
     yield s"$os / $arch, $cpus processors"
 ```
+
+## Demos
+
+Runnable demos live under `shared/src/test/scala/demo/`. Run with `sbt 'kyo-systemJVM/Test/runMain demo.<Name>'`.
+
+- [`ConfigWorkspaceDemo.scala`](shared/src/test/scala/demo/ConfigWorkspaceDemo.scala): config deploy workspace with overlay transaction and sandbox probe

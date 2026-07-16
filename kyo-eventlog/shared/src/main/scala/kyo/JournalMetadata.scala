@@ -22,10 +22,12 @@ end EventMetadata
   *
   * Backed by [[kyo.Structure.Value]] directly with no allocation overhead. The accompanying [[Schema]] encodes each of the ten
   * constructors as a one-field record keyed by a fixed tag string (str, int, bool, decimal, bignum, null, seq, record, entries, variant),
-  * so every constructor round-trips without loss through the self-describing MsgPack codec, which is the codec the file backend uses. This
-  * covers the three constructors the kyo-schema identity codec does not preserve: [[kyo.Structure.Value.VariantCase]],
-  * [[kyo.Structure.Value.MapEntries]] with all-string keys, and [[kyo.Structure.Value.BigNum]]. The text codecs do not read the tag-keyed
-  * open shape back for every constructor, so the round-trip guarantee is scoped to the binary MsgPack path.
+  * so every constructor round-trips without loss through the self-describing binary codecs the file
+  * backend uses (Ion Binary by default, MsgPack when selected explicitly). This covers the three
+  * constructors the kyo-schema identity codec does not preserve: [[kyo.Structure.Value.VariantCase]],
+  * [[kyo.Structure.Value.MapEntries]] with all-string keys, and [[kyo.Structure.Value.BigNum]]. The
+  * text codecs do not read the tag-keyed open shape back for every constructor, so the round-trip
+  * guarantee is scoped to the binary metadata path configured via [[kyo.EventMetadataCodec]].
   *
   * Construct with [[MetadataValue.apply]] and project with [[MetadataValue.value]]; the opaque wrapper does not auto-convert.
   *
@@ -47,8 +49,8 @@ object MetadataValue:
         def value: Structure.Value = self
 
     /** Constructor-exact codec: each of the ten [[kyo.Structure.Value]] constructors encodes as a one-field record keyed by its tag
-      * name and round-trips without loss through the self-describing MsgPack codec the file backend uses. The tag-keyed open shape is
-      * not read back by every text codec, so the guarantee is scoped to the binary MsgPack path.
+      * name and round-trips without loss through the binary metadata codec the file backend uses (Ion Binary by default). The tag-keyed
+      * open shape is not read back by every text codec, so the guarantee is scoped to the binary metadata path.
       */
     given metadataValueSchema: Schema[MetadataValue] = Schema.init[MetadataValue](
         writeFn = (v, w) => write(w, v),
@@ -87,17 +89,36 @@ object MetadataValue:
                 w.mapEnd()
             case Structure.Value.MapEntries(entries) =>
                 w.field("entries", 0)
-                w.arrayStart(entries.size)
-                entries.foreach((k, vv) =>
-                    w.arrayStart(2); write(w, k); write(w, vv); w.arrayEnd()
-                )
-                w.arrayEnd()
+                val allStringKeys = entries.forall {
+                    case (Structure.Value.Str(_), _) => true
+                    case _                           => false
+                }
+                if allStringKeys then
+                    w.mapStart(entries.size)
+                    entries.foreach {
+                        case (Structure.Value.Str(k), vv) => w.field(k, 0); write(w, vv)
+                        case _                            => ()
+                    }
+                    w.mapEnd()
+                else
+                    w.arrayStart(entries.size)
+                    entries.foreach((k, vv) =>
+                        w.arrayStart(2); write(w, k); write(w, vv); w.arrayEnd()
+                    )
+                    w.arrayEnd()
+                end if
             case Structure.Value.VariantCase(name, vv) =>
                 w.field("variant", 0)
                 w.mapStart(2)
                 w.field("name", 0); w.string(name)
                 w.field("value", 0); write(w, vv)
                 w.mapEnd()
+            case Structure.Value.Bytes(b) =>
+                w.field("bytes", 0); w.bytes(b)
+            case Structure.Value.Instant(i) =>
+                w.field("instant", 0); w.instant(i)
+            case Structure.Value.Duration(d) =>
+                w.field("duration", 0); w.duration(d)
         end match
         w.mapEnd()
     end write
@@ -126,19 +147,7 @@ object MetadataValue:
                     b += (n -> (read(r): Structure.Value))
                 r.objectEnd()
                 Structure.Value.Record(b.result())
-            case "entries" =>
-                discard(r.arrayStart())
-                val b = Chunk.newBuilder[(Structure.Value, Structure.Value)]
-                while r.hasNextElement() do
-                    discard(r.arrayStart())
-                    val k = read(r): Structure.Value
-                    discard(r.hasNextElement()) // consume ',' before the value element for text-format readers
-                    val vv = read(r): Structure.Value
-                    r.arrayEnd()
-                    b += (k -> vv)
-                end while
-                r.arrayEnd()
-                Structure.Value.MapEntries(b.result())
+            case "entries" => readMapEntries(r)
             case "variant" =>
                 discard(r.objectStart())
                 discard(r.field())
@@ -148,15 +157,140 @@ object MetadataValue:
                 val vv = read(r): Structure.Value
                 r.objectEnd()
                 Structure.Value.VariantCase(name, vv)
+            case "bytes" =>
+                Structure.Value.Bytes(r.bytes())
+            case "instant" =>
+                Structure.Value.Instant(r.instant())
+            case "duration" =>
+                Structure.Value.Duration(r.duration())
             case other =>
                 throw TypeMismatchException(
                     Seq.empty,
-                    "one of: str/int/bool/decimal/bignum/null/seq/record/entries/variant",
+                    "one of: str/int/bool/decimal/bignum/null/seq/record/entries/variant/bytes/instant/duration",
                     other
                 )(using Frame.internal)
         r.objectEnd()
         MetadataValue(node)
     end read
+
+    private def readMapEntries(r: Codec.Reader): Structure.Value.MapEntries =
+        r match
+            case ir: Codec.IntrospectingReader =>
+                readMapEntriesFromStructure(readCapturedStructure(ir))
+            case _ =>
+                readMapEntriesStreaming(r)
+    end readMapEntries
+
+    private def readCapturedStructure(ir: Codec.IntrospectingReader): Structure.Value =
+        ir.captureValue() match
+            case sub: Codec.IntrospectingReader => sub.readStructure()
+            case _ =>
+                throw TypeMismatchException(Seq.empty, "introspecting metadata reader", "non-introspecting capture")(using Frame.internal)
+    end readCapturedStructure
+
+    private def readMapEntriesFromStructure(v: Structure.Value): Structure.Value.MapEntries =
+        v match
+            case Structure.Value.Record(fields) =>
+                Structure.Value.MapEntries(Chunk.from(fields.map { (k, vv) =>
+                    Structure.Value.Str(k) -> decodeTaggedMetadataValue(vv)
+                }))
+            case Structure.Value.Sequence(elements) =>
+                Structure.Value.MapEntries(Chunk.from(elements.map {
+                    case Structure.Value.Sequence(Chunk(k, vv)) =>
+                        decodeTaggedMetadataValue(k) -> decodeTaggedMetadataValue(vv)
+                    case other =>
+                        throw TypeMismatchException(
+                            Seq.empty,
+                            "MapEntries pair [key, value]",
+                            other.toString
+                        )(using Frame.internal)
+                }))
+            case Structure.Value.MapEntries(entries) => Structure.Value.MapEntries(entries)
+            case other =>
+                throw TypeMismatchException(Seq.empty, "MapEntries map or pair array", other.toString)(using Frame.internal)
+    end readMapEntriesFromStructure
+
+    private def decodeTaggedMetadataValue(v: Structure.Value): Structure.Value =
+        v match
+            case Structure.Value.Record(Chunk((tag, inner))) =>
+                tag match
+                    case "str" | "int" | "bool" | "decimal" | "bignum" | "bytes" | "instant" | "duration" => inner
+                    case "null"                                                                           => Structure.Value.Null
+                    case "seq"                                                                            => decodeTaggedSequence(inner)
+                    case "record"                                                                         => decodeTaggedRecord(inner)
+                    case "entries" => readMapEntriesFromStructure(inner)
+                    case "variant" => decodeTaggedVariant(inner)
+                    case other =>
+                        throw TypeMismatchException(
+                            Seq.empty,
+                            "one of: str/int/bool/decimal/bignum/null/seq/record/entries/variant/bytes/instant/duration",
+                            other
+                        )(using Frame.internal)
+            case Structure.Value.Null => Structure.Value.Null
+            case other =>
+                throw TypeMismatchException(Seq.empty, "tagged metadata value", other.toString)(using Frame.internal)
+    end decodeTaggedMetadataValue
+
+    private def decodeTaggedSequence(v: Structure.Value): Structure.Value.Sequence =
+        v match
+            case Structure.Value.Sequence(elements) =>
+                Structure.Value.Sequence(elements.map(decodeTaggedMetadataValue))
+            case other =>
+                throw TypeMismatchException(Seq.empty, "seq elements", other.toString)(using Frame.internal)
+    end decodeTaggedSequence
+
+    private def decodeTaggedRecord(v: Structure.Value): Structure.Value.Record =
+        v match
+            case Structure.Value.Record(fields) =>
+                Structure.Value.Record(Chunk.from(fields.map((k, vv) => k -> decodeTaggedMetadataValue(vv))))
+            case other =>
+                throw TypeMismatchException(Seq.empty, "record fields", other.toString)(using Frame.internal)
+    end decodeTaggedRecord
+
+    private def decodeTaggedVariant(v: Structure.Value): Structure.Value.VariantCase =
+        v match
+            case Structure.Value.Record(fields) =>
+                var name: Maybe[String]           = Maybe.empty
+                var value: Maybe[Structure.Value] = Maybe.empty
+                fields.foreach {
+                    case ("name", Structure.Value.Str(n)) => name = Maybe(n)
+                    case ("value", vv)                    => value = Maybe(decodeTaggedMetadataValue(vv))
+                    case _                                => ()
+                }
+                (name, value) match
+                    case (Maybe.Present(n), Maybe.Present(vv)) => Structure.Value.VariantCase(n, vv)
+                    case _ =>
+                        throw TypeMismatchException(Seq.empty, "variant name and value", v.toString)(using Frame.internal)
+                end match
+            case other =>
+                throw TypeMismatchException(Seq.empty, "variant fields", other.toString)(using Frame.internal)
+    end decodeTaggedVariant
+
+    private def readMapEntriesStreaming(r: Codec.Reader): Structure.Value.MapEntries =
+        try
+            discard(r.objectStart())
+            val b = Chunk.newBuilder[(Structure.Value, Structure.Value)]
+            while r.hasNextField() do
+                val k = Structure.Value.Str(r.field())
+                b += (k -> (read(r): Structure.Value))
+            r.objectEnd()
+            Structure.Value.MapEntries(b.result())
+        catch
+            case _: TypeMismatchException =>
+                discard(r.arrayStart())
+                val b = Chunk.newBuilder[(Structure.Value, Structure.Value)]
+                while r.hasNextElement() do
+                    discard(r.arrayStart())
+                    discard(r.hasNextElement())
+                    val k = read(r): Structure.Value
+                    discard(r.hasNextElement())
+                    val vv = read(r): Structure.Value
+                    r.arrayEnd()
+                    b += (k -> vv)
+                end while
+                r.arrayEnd()
+                Structure.Value.MapEntries(b.result())
+    end readMapEntriesStreaming
 end MetadataValue
 
 /** Validated dotted-path metadata key, such as `trace.correlation_id`.

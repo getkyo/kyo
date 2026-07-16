@@ -20,6 +20,14 @@ private[kyo] def platformSyncStore: StoreSeam[Sync] = StoreSeam.sync(new NodeSeg
 
 private[kyo] def platformAsyncStore: StoreSeam[Async] = new NodeAsyncJournalStore()
 
+private def requireNode[A, E](body: => A < (E & Abort[JournalStorageError]))(using Frame): A < (E & Abort[JournalStorageError]) =
+    if !isNodeRuntime then
+        Abort.fail(JournalStorageError(
+            "FileJournal requires a Node.js runtime; no browser persistence backend exists",
+            Absent
+        ))
+    else body
+
 /** Opens (or creates) a file-backed journal rooted at `dir`. Requires a Node.js runtime; on
   * a browser runtime (no `node:fs`) the call fails immediately with a typed
   * [[JournalStorageError]] rather than at first I/O. Available on JS and
@@ -37,12 +45,7 @@ extension (backend: Journal.Backend.type)
         Frame
     )
         : Journal.Backend[Sync] < (Sync & Scope & Abort[JournalStorageError]) =
-        if !isNodeRuntime then
-            Abort.fail(JournalStorageError(
-                "FileJournal requires a Node.js runtime; no browser persistence backend exists",
-                Absent
-            ))
-        else
+        requireNode:
             FileJournalCore.open(dir, config, StoreSeam.sync(new NodeSegmentStore), payloadCodec, ClaimSeam.sync, FlushStrategy.inline)
 
     /** Opens (or creates) an Async-flavored file-backed journal rooted at `dir`. Requires a
@@ -62,15 +65,10 @@ extension (backend: Journal.Backend.type)
         Frame
     )
         : Journal.Backend[Async] < (Sync & Scope & Abort[JournalStorageError]) =
-        if !isNodeRuntime then
-            Abort.fail(JournalStorageError(
-                "FileJournal requires a Node.js runtime; no browser persistence backend exists",
-                Absent
-            ))
-        else
+        requireNode:
             // Unsafe: bootstraps in-process claim permits and group-commit coordinator maps.
             Sync.Unsafe.defer {
-                val coordinator = new GroupCommitCoordinator
+                val coordinator = GroupCommitCoordinator.init
                 (ClaimSeam.async(), (fsync: FileJournal.Fsync) => FlushStrategy.groupCommit(fsync, coordinator))
             }.flatMap { (claim, flushFor) =>
                 FileJournalCore.open(
@@ -95,22 +93,10 @@ extension (r: Journal.Reader.type)
       * [[FileJournal.Config]] and [[EventPayloadCodec]].
       */
     def file(dir: Path)(using Frame): Journal.Reader[Sync] < (Sync & Scope & Abort[JournalStorageError]) =
-        if !isNodeRuntime then
-            Abort.fail(JournalStorageError(
-                "FileJournal requires a Node.js runtime; no browser persistence backend exists",
-                Absent
-            ))
-        else
-            file(dir, FileJournal.Config.default, EventPayloadCodec.bytes)
+        file(dir, FileJournal.Config.default, EventPayloadCodec.bytes)
 
     def file(dir: Path, config: FileJournal.Config)(using Frame): Journal.Reader[Sync] < (Sync & Scope & Abort[JournalStorageError]) =
-        if !isNodeRuntime then
-            Abort.fail(JournalStorageError(
-                "FileJournal requires a Node.js runtime; no browser persistence backend exists",
-                Absent
-            ))
-        else
-            file(dir, config, EventPayloadCodec.bytes)
+        file(dir, config, EventPayloadCodec.bytes)
 
     def file(
         dir: Path,
@@ -120,34 +106,17 @@ extension (r: Journal.Reader.type)
         Frame
     )
         : Journal.Reader[Sync] < (Sync & Scope & Abort[JournalStorageError]) =
-        if !isNodeRuntime then
-            Abort.fail(JournalStorageError(
-                "FileJournal requires a Node.js runtime; no browser persistence backend exists",
-                Absent
-            ))
-        else
+        requireNode:
             FileJournalCore.openReader(dir, config, StoreSeam.sync(new NodeSegmentStore, isReadOnly = true), payloadCodec)
 
     /** Async read-only open. Requires a Node.js runtime; browser runtimes fail immediately with a typed
       * [[JournalStorageError]]. Store operations use `node:fs/promises`; same SWMR semantics as [[file]].
       */
     def fileAsync(dir: Path)(using Frame): Journal.Reader[Async] < (Sync & Scope & Abort[JournalStorageError]) =
-        if !isNodeRuntime then
-            Abort.fail(JournalStorageError(
-                "FileJournal requires a Node.js runtime; no browser persistence backend exists",
-                Absent
-            ))
-        else
-            fileAsync(dir, FileJournal.Config.default, EventPayloadCodec.bytes)
+        fileAsync(dir, FileJournal.Config.default, EventPayloadCodec.bytes)
 
     def fileAsync(dir: Path, config: FileJournal.Config)(using Frame): Journal.Reader[Async] < (Sync & Scope & Abort[JournalStorageError]) =
-        if !isNodeRuntime then
-            Abort.fail(JournalStorageError(
-                "FileJournal requires a Node.js runtime; no browser persistence backend exists",
-                Absent
-            ))
-        else
-            fileAsync(dir, config, EventPayloadCodec.bytes)
+        fileAsync(dir, config, EventPayloadCodec.bytes)
 
     def fileAsync(
         dir: Path,
@@ -157,12 +126,7 @@ extension (r: Journal.Reader.type)
         Frame
     )
         : Journal.Reader[Async] < (Sync & Scope & Abort[JournalStorageError]) =
-        if !isNodeRuntime then
-            Abort.fail(JournalStorageError(
-                "FileJournal requires a Node.js runtime; no browser persistence backend exists",
-                Absent
-            ))
-        else
+        requireNode:
             FileJournalCore.openReader(dir, config, new NodeAsyncJournalStore(isReadOnly = true), payloadCodec)
     end fileAsync
 end extension

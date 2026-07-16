@@ -487,6 +487,7 @@ abstract private[kyo] class PathPlatformSpecific extends PathDirectories:
         prefix: String = "kyo",
         suffix: String = ".tmp"
     )(using Frame): Path < (Sync & Abort[FileFsException]) =
+        // Unsafe: bridges JVM temp-file creation into the Sync tier.
         Sync.Unsafe.defer(
             Abort.get(
                 try
@@ -511,6 +512,7 @@ abstract private[kyo] class PathPlatformSpecific extends PathDirectories:
     def tempDirUnscoped(
         prefix: String = "kyo"
     )(using Frame): Path < (Sync & Abort[FileFsException]) =
+        // Unsafe: bridges JVM temp-directory creation into the Sync tier.
         Sync.Unsafe.defer(
             Abort.get(
                 try
