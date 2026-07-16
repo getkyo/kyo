@@ -23,11 +23,12 @@ final private[kyo] class MachineSampler(handles: MachineHandles):
     private val opened = collection.mutable.ArrayBuffer.empty[MachineSampler.FileSlot]
 
     // Guards the disk read against overlapping itself. A statvfs/statfs/GetDiskFreeSpaceEx against a dead
-    // mount has no suspension point, so Async.timeout cannot interrupt it: a timed-out read leaves a worker
-    // parked inside the syscall until the kernel gives up. This flag is set before a disk read starts and
-    // cleared only when that read GENUINELY returns, so while a stuck read is outstanding the disk fiber
-    // skips its next cycle rather than launching a second read against the same stuck mount. A dead mount is
-    // therefore read exactly once for the process lifetime, bounding leaked blocked workers to one.
+    // mount has no suspension point, so Async.timeout cannot interrupt it: a timed-out read leaves the
+    // sampler's dedicated disk thread (JVM/Native) parked inside the syscall until the kernel gives up. This
+    // flag is set before a disk read starts and cleared only when that read GENUINELY returns, so while a
+    // stuck read is outstanding the disk fiber skips its next cycle rather than launching a second read
+    // against the same stuck mount. A dead mount is therefore read exactly once for the process lifetime,
+    // bounding leaked blocked disk threads to one.
     private val diskInFlight =
         // Unsafe: single-owner guard flag, set and cleared only from the sampler's disk fiber.
         import AllowUnsafe.embrace.danger
@@ -144,13 +145,15 @@ private[kyo] object MachineSampler:
         buildMachine: MachineSampler => Machine < Sync
     )(using Frame): Unit < (Async & Scope) =
         for
-            sampler <- Sync.Unsafe.defer(new MachineSampler(handles))
-            machine <- buildMachine(sampler)
+            sampler  <- Sync.Unsafe.defer(new MachineSampler(handles))
+            machine  <- buildMachine(sampler)
+            diskExec <- Sync.Unsafe.defer(new DiskExecutor)
             _ <- Scope.ensure(Sync.Unsafe.defer {
                 machine.close()
                 sampler.closeHandles()
+                diskExec.close()
             })
-            disk <- Clock.repeatAtInterval(diskInterval)(readDisksBounded(sampler, machine))
+            disk <- Clock.repeatAtInterval(diskInterval)(readDisksBounded(sampler, machine, diskExec))
             _    <- Scope.ensure(disk.interrupt.unit)
             fast <- Clock.repeatAtInterval(Schedule.anchored(1.second))(readFast(machine))
             _    <- Scope.ensure(fast.interrupt.unit)
@@ -173,18 +176,21 @@ private[kyo] object MachineSampler:
         Sync.Unsafe.defer(machine.read())
 
     /** One disk cycle on the detached disk fiber. It skips itself when a prior read is still outstanding
-      * (parked in a blocking syscall), so a dead mount is read exactly once and never overlapped. Otherwise
-      * it runs the bounded read; the read clears the guard in a `finally` only when it GENUINELY returns, so a
-      * timed-out read that is still parked keeps the guard set and is not relaunched. The scheduler's blocking
-      * compensation covers the parked worker.
+      * (parked in a blocking syscall), so a dead mount is read exactly once and never overlapped. Otherwise it
+      * runs the bounded read; the read clears the guard in a `finally` only when it GENUINELY returns, so a
+      * timed-out read that is still parked keeps the guard set and is not relaunched. The read runs on the
+      * sampler's dedicated disk thread (JVM/Native; inline on JS/Wasm), never a scheduler worker, so a stuck
+      * mount parks that one thread alone: the fast fiber and the sampler's teardown never wait on the
+      * scheduler's blocking compensation to free a worker. `Async.timeout` bounds only the awaiting fiber; the
+      * dedicated thread keeps running the stuck read until the kernel returns.
       */
-    private def readDisksBounded(sampler: MachineSampler, machine: Machine)(using Frame): Unit < Async =
+    private def readDisksBounded(sampler: MachineSampler, machine: Machine, diskExec: DiskExecutor)(using Frame): Unit < Async =
         Sync.Unsafe.defer(sampler.diskReadBegin()).map { began =>
             if !began then ()
             else
                 Abort.run[Timeout](
                     Async.timeout(diskReadTimeout)(
-                        Sync.Unsafe.defer {
+                        diskExec.run {
                             try machine.readDisks()
                             finally sampler.diskReadDone()
                         }

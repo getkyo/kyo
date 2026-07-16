@@ -130,18 +130,15 @@ class MachineSamplerTest extends kyo.test.Test[Any]:
                         def read()(using AllowUnsafe): Unit =
                             discard(tickCount.getAndSet(tickCount.get() + 1L))
                         def readDisks()(using AllowUnsafe): Unit =
-                            // A real statvfs/statfs/GetDiskFreeSpaceEx against a dead mount is a native downcall
-                            // that does NOT observe JVM thread interrupts: when Async.timeout expires the
-                            // scheduler's blocking monitor dispatches Thread.interrupt at this parked worker to
-                            // unwind the read, and the syscall ignores it, staying parked until the kernel returns.
-                            // Model that faithfully by parking a REAL OS worker UNINTERRUPTIBLY until teardown
-                            // releases it (below), clearing rather than propagating the monitor's interrupt. An
-                            // interruptible `Fiber.block` would instead THROW InterruptedException here, which both
-                            // kills the scheduler worker and runs the read's `finally diskReadDone`, dropping the
-                            // one-shot in-flight guard so the disk fiber relaunches the read and leaks a fresh worker
-                            // per interrupt: the cascade that wedges the low-core CI scheduler. Because the read
-                            // parks a real OS thread with no kyo suspension point the Async.timeout race can preempt
-                            // mid-flight, this hazard, and therefore this leaf, is JVM/Native-only (JS has none).
+                            // Models a genuinely-blocking statvfs/statfs/GetDiskFreeSpaceEx against a dead mount:
+                            // a native downcall with no suspension point that ignores JVM thread interrupts. The
+                            // sampler runs this read on its DEDICATED disk thread, off the Async scheduler pool,
+                            // so parking here parks THAT thread, never a scheduler worker; the fast fiber and the
+                            // teardown keep running on the scheduler regardless, needing no blocking compensation.
+                            // Park uninterruptibly (clearing, never propagating, any interrupt, e.g. the disk
+                            // executor's shutdownNow at teardown) until the test releases it below, so the read
+                            // stays the ONE outstanding read. It parks a real OS thread, so this hazard, and
+                            // therefore this leaf, is JVM/Native-only (JS has no thread to off-load to): `.notJs`.
                             discard(readCount.getAndSet(readCount.get() + 1L))
                             parkedThread.set(Present(Thread.currentThread()))
                             @scala.annotation.tailrec
@@ -164,14 +161,14 @@ class MachineSamplerTest extends kyo.test.Test[Any]:
                     _     <- tc.advance(1.seconds)
                     _     <- tc.advance(1.seconds)
                     _     <- tc.advance(1.seconds)
-                    // Give the blocking monitor real wall-clock time to dispatch its unwind-interrupt at the parked
-                    // worker before the guards are read. A faithful uninterruptible read ignores it and stays the ONE
-                    // outstanding read; an interruptible `.block` would throw, drop the guard, and relaunch the read.
+                    // Let the disk read reach the dedicated disk thread and park before the guards are read; the
+                    // fast fiber advances on scheduler workers throughout, unaffected by the parked disk thread.
                     _ <- tc.advance(Duration.Zero, 500.millis)
                     inFlightAfterFive = innerSampler.get() match
                         case Present(s) => s.diskReadInFlight()
                         case Absent     => false
                     readsAfterFive = readCount.get()
+                    readThreadName = parkedThread.get().map(_.getName)
                     _ <- Sync.Unsafe.defer {
                         released.set(true)
                         parkedThread.get() match
@@ -183,6 +180,11 @@ class MachineSamplerTest extends kyo.test.Test[Any]:
                     assert(tickCount.get() == 5L)
                     assert(inFlightAfterFive)
                     assert(readsAfterFive == 1L)
+                    // The read ran OFF the scheduler pool, on the sampler's dedicated disk thread. A regression
+                    // that put it back on a scheduler worker (the interrupt/compensation-wedge hazard) fails here
+                    // loudly instead of wedging the run, since kyo-test's own per-leaf timeout runs on the same
+                    // scheduler and cannot fire once that scheduler is wedged.
+                    assert(readThreadName.exists(_.startsWith("kyo-stats-machine-disk")))
                 end for
             }
         }
