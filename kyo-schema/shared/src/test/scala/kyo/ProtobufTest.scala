@@ -1754,6 +1754,27 @@ class ProtobufTest extends kyo.test.Test[Any]:
             assert(decoded.d.isEmpty)
         }
 
+        "an empty OrderedMap field between two scalar fields round-trips, and the scalars survive" in {
+            val holder  = MTOrderedMapRecord("alice", OrderedMap.empty, 7)
+            val decoded = Protobuf.decode[MTOrderedMapRecord](Protobuf.encode(holder)).getOrThrow
+            assert(decoded.name == "alice")
+            assert(decoded.count == 7)
+            assert(decoded.settings.isEmpty)
+        }
+
+        "a populated OrderedMap field between two scalar fields keeps its order and the scalars" in {
+            val holder =
+                MTOrderedMapRecord(
+                    "alice",
+                    OrderedMap("zeta" -> 1, "alpha" -> 2, "mike" -> 3, "bravo" -> 4, "yankee" -> 5, "delta" -> 6),
+                    7
+                )
+            val decoded = Protobuf.decode[MTOrderedMapRecord](Protobuf.encode(holder)).getOrThrow
+            assert(decoded.name == "alice")
+            assert(decoded.count == 7)
+            assert(decoded.settings.toChunk.map(_._1) == Chunk("zeta", "alpha", "mike", "bravo", "yankee", "delta"))
+        }
+
         "OrderedMap[String, V] field preserves insertion order across encode/decode (resolves stringOrderedMapSchema)" in {
             val holder =
                 MTOrderedMapConfig(OrderedMap("zeta" -> 30, "alpha" -> 3, "mike" -> 8080, "bravo" -> 5, "yankee" -> 100, "delta" -> 42))
