@@ -31,9 +31,10 @@ class NativeResolverTest extends Test:
 
     "Native kyo_net_resolve shim" - {
         "resolves the IPv6 loopback literal under an AF_INET hint (v6-only host parity with JVM, was rejected before the fix)" in {
+            import AllowUnsafe.embrace.danger
             // The v4 hint must NOT restrict resolution: ::1 has no A form, so a forced AF_INET would fail. AF_UNSPEC + preference resolves it.
             SystemResolver.resolveRaw("::1", PosixConstants.AF_INET).safe.get.map {
-                case Result.Success((family, addr)) =>
+                case Result.Success(HostResolver.Resolved(family, addr)) =>
                     assert(family == PosixConstants.AF_INET6, s"expected AF_INET6 for ::1, got family=$family")
                     assert(v6Loopback(addr), s"expected ::1 bytes, got ${addr.toSeq}")
                 case other =>
@@ -42,9 +43,10 @@ class NativeResolverTest extends Test:
         }
 
         "resolves the IPv4 loopback literal under an AF_INET6 hint (preferred family absent: falls back to the only family)" in {
+            import AllowUnsafe.embrace.danger
             // The v6 hint must NOT restrict resolution: 127.0.0.1 has no AAAA form, so a forced AF_INET6 would fail. The fallback takes the v4.
             SystemResolver.resolveRaw("127.0.0.1", PosixConstants.AF_INET6).safe.get.map {
-                case Result.Success((family, addr)) =>
+                case Result.Success(HostResolver.Resolved(family, addr)) =>
                     assert(family == PosixConstants.AF_INET, s"expected AF_INET fallback for 127.0.0.1, got family=$family")
                     assert(v4Loopback(addr), s"expected 127.0.0.1 bytes, got ${addr.toSeq}")
                 case other =>
@@ -53,14 +55,16 @@ class NativeResolverTest extends Test:
         }
 
         "honours the hint as a preference: AF_INET on 127.0.0.1 returns v4, AF_INET6 on ::1 returns v6" in {
+            import AllowUnsafe.embrace.danger
             for
                 v4 <- SystemResolver.resolveRaw("127.0.0.1", PosixConstants.AF_INET).safe.get
                 v6 <- SystemResolver.resolveRaw("::1", PosixConstants.AF_INET6).safe.get
             yield
-                val (f4, a4) = v4.getOrElse(fail(s"127.0.0.1 under AF_INET failed: $v4"))
-                val (f6, a6) = v6.getOrElse(fail(s"::1 under AF_INET6 failed: $v6"))
+                val HostResolver.Resolved(f4, a4) = v4.getOrElse(fail(s"127.0.0.1 under AF_INET failed: $v4"))
+                val HostResolver.Resolved(f6, a6) = v6.getOrElse(fail(s"::1 under AF_INET6 failed: $v6"))
                 assert(f4 == PosixConstants.AF_INET && v4Loopback(a4), s"expected v4 loopback, got ($f4, ${a4.toSeq})")
                 assert(f6 == PosixConstants.AF_INET6 && v6Loopback(a6), s"expected v6 loopback, got ($f6, ${a6.toSeq})")
+            end for
         }
     }
 

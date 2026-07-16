@@ -5,6 +5,7 @@ import java.net.Inet6Address
 import java.net.InetAddress
 import java.net.UnknownHostException
 import kyo.*
+import kyo.net.NetDnsResolutionException
 
 /** JVM system resolver: resolves a hostname through `java.net.InetAddress`, offloaded as a blocking operation.
   *
@@ -21,13 +22,15 @@ import kyo.*
   */
 private[net] object SystemResolver:
 
-    /** Resolve `host` (for the advisory `familyHint`) to `(family, rawAddrBytes)` or fail `Closed`. Spawns `InetAddress.getByName` on a
-      * dedicated blocking carrier via `Fiber.Unsafe.init`; the `BlockingMonitor` compensates so other work is not starved while the carrier
-      * parks in the DNS syscall. The caller consumes the result via `onComplete`, never via `.safe.get`. An unknown host (or any resolver error)
-      * fails `Closed` cleanly rather than throwing.
+    /** Resolve `host` (for the advisory `familyHint`) to `(family, rawAddrBytes)` or fail `NetDnsResolutionException`. Spawns
+      * `InetAddress.getByName` on a dedicated blocking carrier via `Fiber.Unsafe.init`; the `BlockingMonitor` compensates so other work is
+      * not starved while the carrier parks in the DNS syscall. The caller consumes the result via `onComplete`, never via `.safe.get`. An
+      * unknown host (or any resolver error) fails `NetDnsResolutionException` cleanly rather than throwing.
       */
-    def resolveRaw(host: String, familyHint: Int)(using Frame): Fiber.Unsafe[Result[Closed, HostResolver.Resolved], Any] =
-        import AllowUnsafe.embrace.danger
+    def resolveRaw(host: String, familyHint: Int)(using
+        AllowUnsafe,
+        Frame
+    ): Fiber.Unsafe[Result[NetDnsResolutionException, HostResolver.Resolved], Any] =
         // Unsafe: InetAddress.getByName blocks the init carrier; BlockingMonitor compensates (the sanctioned DNS block).
         Fiber.Unsafe.init {
             try
@@ -35,22 +38,22 @@ private[net] object SystemResolver:
                 val bytes             = addr.getAddress
                 addr match
                     case _: Inet4Address =>
-                        Result.succeed((PosixConstants.AF_INET, bytes))
+                        Result.succeed(HostResolver.Resolved(PosixConstants.AF_INET, bytes))
                     case _: Inet6Address =>
-                        Result.succeed((PosixConstants.AF_INET6, bytes))
+                        Result.succeed(HostResolver.Resolved(PosixConstants.AF_INET6, bytes))
                     case _ =>
                         // Neither v4 nor v6 (cannot normally happen for a resolved host): fail rather than mis-encode.
-                        Result.fail(Closed("HostResolver", summon[Frame], s"resolve: unexpected address class for $host"))
+                        Result.fail(NetDnsResolutionException(host, s"resolve: unexpected address class for $host"))
                 end match
             catch
                 case _: UnknownHostException =>
-                    Result.fail(Closed("HostResolver", summon[Frame], s"resolve: unknown host $host"))
+                    Result.fail(NetDnsResolutionException(host, s"resolve: unknown host $host"))
                 case e: SecurityException =>
-                    Result.fail(Closed("HostResolver", summon[Frame], s"resolve: resolution of $host denied: ${e.getMessage}"))
+                    Result.fail(NetDnsResolutionException(host, s"resolve: resolution of $host denied: ${e.getMessage}"))
                 case scala.util.control.NonFatal(e) =>
-                    // Any other resolver failure (e.g. a malformed host the JDK rejects) becomes Closed too, so resolution never
+                    // Any other resolver failure (e.g. a malformed host the JDK rejects) becomes a typed failure too, so resolution never
                     // surfaces as a panic that could strand the connect promise. Fatal errors (OOM, etc.) still propagate.
-                    Result.fail(Closed("HostResolver", summon[Frame], s"resolve: failed to resolve $host: ${e.getMessage}"))
+                    Result.fail(NetDnsResolutionException(host, s"resolve: failed to resolve $host: ${e.getMessage}"))
             end try
         }
     end resolveRaw

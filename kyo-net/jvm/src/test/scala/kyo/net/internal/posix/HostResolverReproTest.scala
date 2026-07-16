@@ -15,27 +15,29 @@ import kyo.net.Test
   * answers from /etc/hosts) and asserts a loopback address comes back. JVM-placed because it exercises
   * the JVM system resolver (`java.net.InetAddress`); the cache/seam logic is covered cross-platform.
   *
-  * Both `HostResolver.resolve` and `SystemResolver.resolveRaw` return a `Fiber.Unsafe`; results are
-  * consumed via `.safe.get` at the test boundary (`.safe.get` is the sanctioned consumption in test source).
+  * `HostResolver.resolve` and `SystemResolver.resolveRaw` no longer share the same consumption shape: `resolve` is Abort-native
+  * (`Fiber.Unsafe[Resolved, Abort[NetDnsResolutionException]]`), so `.safe.get` yields the resolved value directly on success and aborts the
+  * test on failure; `SystemResolver.resolveRaw` still returns a `Fiber.Unsafe[Result[NetDnsResolutionException, Resolved], Any]` (its own,
+  * non-Abort-native shape), so `.safe.get` yields the inner `Result` to pattern-match. Both are consumed via `.safe.get` at the test boundary
+  * (`.safe.get` is the sanctioned consumption in test source).
   */
 class HostResolverReproTest extends Test:
 
     "HostResolver resolves 'localhost' through the full system resolver (not the loopback shortcut)" in {
+        import AllowUnsafe.embrace.danger
         HostResolver.resolve("localhost", PosixConstants.AF_INET).safe.get.map {
-            case Result.Success((family, addr)) =>
-                // localhost resolves to a loopback literal: 127.0.0.1 (4 bytes, AF_INET) or ::1 (16 bytes, AF_INET6).
+            case HostResolver.Resolved(family, addr) =>
                 val isV4Loopback = family == PosixConstants.AF_INET && addr.length == 4 && (addr(0) & 0xff) == 127
                 val isV6Loopback =
                     family == PosixConstants.AF_INET6 && addr.length == 16 && addr.take(15).forall(_ == 0) && addr(15) == 1
                 assert(isV4Loopback || isV6Loopback, s"unexpected localhost resolution: family=$family addr=${addr.toSeq}")
-            case other =>
-                fail(s"localhost should resolve via the system resolver, got $other")
         }
     }
 
     "SystemResolver.resolveRaw resolves 'localhost' on the JVM through InetAddress on a dedicated carrier" in {
+        import AllowUnsafe.embrace.danger
         SystemResolver.resolveRaw("localhost", PosixConstants.AF_INET).safe.get.map {
-            case Result.Success((family, addr)) =>
+            case Result.Success(HostResolver.Resolved(family, addr)) =>
                 val isV4Loopback = family == PosixConstants.AF_INET && addr.length == 4 && (addr(0) & 0xff) == 127
                 val isV6Loopback =
                     family == PosixConstants.AF_INET6 && addr.length == 16 && addr.take(15).forall(_ == 0) && addr(15) == 1

@@ -236,7 +236,7 @@ final private[net] class PosixTransport private[posix] (
       * The connect must return its `Fiber.Unsafe` synchronously, but resolution is an `< Async` step (it can suspend the fiber on the system
       * resolver). So this builds the result promise immediately, spawns a fiber that resolves + encodes the address, and on success hands the
       * encoded `sockaddr` to the existing synchronous [[connectImpl]] (which completes the same promise). A resolution failure (or a panic)
-      * fails the promise `Closed` without ever opening a socket. The numeric and loopback fast paths resolve inline, so the spawned fiber
+      * fails the promise `NetDnsResolutionException` without ever opening a socket. The numeric and loopback fast paths resolve inline, so the spawned fiber
       * completes without parking and the connect is no slower than before for them.
       */
     private def connectResolving(
@@ -248,24 +248,11 @@ final private[net] class PosixTransport private[posix] (
         val target  = s"$host:$port"
         val promise = new IOPromise[NetException, NetConnection]
         resolveAndEncode(host, port).onComplete {
-            case Result.Success(resolved) =>
-                resolved.eval match
-                    case Result.Success(encoded) =>
-                        connectImpl(Present(encoded), nodelay, target, host, port, tls, promise)
-                    case Result.Failure(closed) =>
-                        promise.completeDiscard(Result.fail(NetDnsResolutionException(host, closed)))
-                    case Result.Panic(e) =>
-                        promise.completeDiscard(Result.panic(e))
+            case Result.Success(pending) =>
+                // pending: (Int, Buffer[Byte], Int) < Any; .eval extracts the concrete tuple, mirroring resolveAndEncode's own identical step.
+                connectImpl(Present(pending.eval), nodelay, target, host, port, tls, promise)
             case Result.Failure(e) =>
-                // Resolve-fiber infrastructure failure (Any channel): a Closed is a name-resolution failure; anything else is a clean Panic.
-                e match
-                    case closed: Closed => promise.completeDiscard(Result.fail(NetDnsResolutionException(host, closed)))
-                    case t: Throwable   => promise.completeDiscard(Result.panic(t))
-                    case other => promise.completeDiscard(Result.panic(Closed(
-                            "PosixTransport",
-                            summon[Frame],
-                            s"unexpected resolver failure: $other"
-                        )))
+                promise.completeDiscard(Result.fail(e))
             case Result.Panic(e) =>
                 promise.completeDiscard(Result.panic(e))
         }
@@ -315,31 +302,43 @@ final private[net] class PosixTransport private[posix] (
       * The family hint passed to the resolver mirrors [[encodeInetFast]]'s dispatch: a host containing ':' requests `AF_INET6`, otherwise
       * `AF_INET`. The resolver returns the first A or AAAA, and its family drives the encoder (`encodeInet6Raw` vs `encodeInet4Raw`) on the
       * resolved bytes, so IPv4/IPv6 selection stays consistent with the synchronous fast path. A resolution failure (unknown host, resolver
-      * error) is surfaced as `Closed`, exactly the failure the caller already produced for an unencodable address.
+      * error) is surfaced as `NetDnsResolutionException`, exactly the failure the caller already produced for an unencodable address.
       */
     private def resolveAndEncode(host: String, port: Int)(using
         AllowUnsafe,
         Frame
-    ): Fiber.Unsafe[Result[Closed, (Int, Buffer[Byte], Int)], Any] =
+    ): Fiber.Unsafe[(Int, Buffer[Byte], Int), Abort[NetDnsResolutionException]] =
         encodeInetFast(host, port) match
             case Present(encoded) =>
                 // Numeric literal or loopback name: already-complete fiber, no resolver call.
-                Fiber.Unsafe.fromResult(Result.succeed(Result.succeed(encoded): Result[Closed, (Int, Buffer[Byte], Int)]))
+                Fiber.Unsafe.fromResult(Result.succeed(encoded))
             case Absent =>
                 val familyHint = if host.contains(':') then PosixConstants.AF_INET6 else PosixConstants.AF_INET
-                HostResolver.resolveWith(host, familyHint, SystemResolver.resolveRaw, HostResolver.DefaultTtl).map {
-                    case Result.Success((family, rawAddr)) =>
-                        encodeResolved(family, rawAddr, port) match
-                            case Present(encoded) => Result.succeed(encoded)
-                            case Absent =>
-                                Result.fail(Closed(
-                                    "PosixTransport",
-                                    summon[Frame],
-                                    s"connect: could not encode resolved address for $host"
-                                ))
-                    case Result.Failure(closed) => Result.fail(closed)
-                    case Result.Panic(e)        => Result.panic(e)
+                // Mirrors resolveWith's own out/onComplete/completeDiscard shape: the target Abort[NetDnsResolutionException] leaf can also
+                // come from encodeResolved's own (defensive, effectively unreachable) failure, so this cannot stay a total .map over the
+                // resolver's success channel alone; a fresh promise lets both the resolver's failure and encodeResolved's failure complete
+                // the same typed Abort row.
+                val out = Promise.Unsafe.init[(Int, Buffer[Byte], Int), Abort[NetDnsResolutionException]]()
+                HostResolver.resolveWith(host, familyHint, SystemResolver.resolveRaw).onComplete {
+                    case Result.Success(pending) =>
+                        // pending: Resolved < Any (kyo's opaque Pending type, `opaque type <[+A, -S] = A | Kyo[A, S]`,
+                        // kyo-kernel/shared/src/main/scala/kyo/kernel/Pending.scala:42) is NOT the same type as a bare Resolved, so it
+                        // cannot be destructured directly against the Resolved case-class pattern; .eval extracts the concrete value
+                        // (always immediately available here since S = Any carries no real suspension), mirroring resolveWith's own
+                        // identical innerPending.eval step above.
+                        pending.eval match
+                            case HostResolver.Resolved(family, rawAddr) =>
+                                encodeResolved(family, rawAddr, port) match
+                                    case Present(encoded) => out.completeDiscard(Result.succeed(encoded))
+                                    case Absent =>
+                                        out.completeDiscard(Result.fail(NetDnsResolutionException(
+                                            host,
+                                            s"connect: could not encode resolved address for $host"
+                                        )))
+                    case Result.Failure(e) => out.completeDiscard(Result.fail(e))
+                    case Result.Panic(e)   => out.completeDiscard(Result.panic(e))
                 }
+                out
         end match
     end resolveAndEncode
 
@@ -729,7 +728,7 @@ final private[net] class PosixTransport private[posix] (
       * Mirrors [[connectResolving]]: a `listen` returns its `Fiber.Unsafe` synchronously, but resolution is an `< Async` step, so this builds
       * the result promise immediately, spawns a fiber that resolves + encodes the bind address, and on success hands it to the synchronous
       * [[listenImpl]]. A bind host is almost always numeric or a loopback name (a server binds an interface, not a remote name), so resolution
-      * usually completes inline; resolving a bind hostname is supported for symmetry. A resolution failure fails the promise `Closed`.
+      * usually completes inline; resolving a bind hostname is supported for symmetry. A resolution failure fails the promise `NetDnsResolutionException`.
       */
     private def listenResolving(
         host: String,
@@ -740,24 +739,11 @@ final private[net] class PosixTransport private[posix] (
     )(using AllowUnsafe, Frame): Fiber.Unsafe[NetListener, Abort[NetException]] =
         val promise = new IOPromise[NetException, NetListener]
         resolveAndEncode(host, port).onComplete {
-            case Result.Success(resolved) =>
-                resolved.eval match
-                    case Result.Success(encoded) =>
-                        listenImpl(Present(encoded), nodelay = true, host, port, unixPath = Absent, backlog, handler, tls, promise)
-                    case Result.Failure(closed) =>
-                        promise.completeDiscard(Result.fail(NetDnsResolutionException(host, closed)))
-                    case Result.Panic(e) =>
-                        promise.completeDiscard(Result.panic(e))
+            case Result.Success(pending) =>
+                // pending: (Int, Buffer[Byte], Int) < Any; .eval extracts the concrete tuple, mirroring resolveAndEncode's own identical step.
+                listenImpl(Present(pending.eval), nodelay = true, host, port, unixPath = Absent, backlog, handler, tls, promise)
             case Result.Failure(e) =>
-                // Resolve-fiber infrastructure failure (Any channel): a Closed is a name-resolution failure; anything else is a clean Panic.
-                e match
-                    case closed: Closed => promise.completeDiscard(Result.fail(NetDnsResolutionException(host, closed)))
-                    case t: Throwable   => promise.completeDiscard(Result.panic(t))
-                    case other => promise.completeDiscard(Result.panic(Closed(
-                            "PosixTransport",
-                            summon[Frame],
-                            s"unexpected resolver failure: $other"
-                        )))
+                promise.completeDiscard(Result.fail(e))
             case Result.Panic(e) =>
                 promise.completeDiscard(Result.panic(e))
         }

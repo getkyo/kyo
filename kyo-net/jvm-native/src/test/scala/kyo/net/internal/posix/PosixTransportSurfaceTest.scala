@@ -263,15 +263,16 @@ class PosixTransportSurfaceTest extends Test:
             }
         }
 
-        "connect to an unresolvable hostname fails Closed cleanly (no hang, no crash)" in {
-            // A hostname that does not resolve must fail the connect Closed cleanly (not hang on the blocking pool, not panic). This exercises
-            // the full resolve-then-fail path through transport.connect: the host is non-numeric and not a loopback name, so it goes through
-            // HostResolver, the real system resolver yields a failure, and the connect promise must complete with it. The host is under the RFC
-            // 6761 reserved `.invalid` TLD, which never resolves (the system resolver returns NXDOMAIN), so the lookup fails against the REAL
-            // resolver with no injected stub. A real negative lookup is not bounded by the transport (a pathological host resolver can stall on
-            // an upstream query before returning NXDOMAIN), so a generous Async.timeout bounds it: either the resolver fails (Closed) or the
-            // bound expires (Timeout), both clean failures with no hang and no crash. The numeric and loopback round-trip leaves above cover the
-            // resolve-SUCCESS path against the real resolver.
+        "connect to an unresolvable hostname fails with a typed NetDnsResolutionException (no hang, no crash)" in {
+            // A hostname that does not resolve must fail the connect with a typed NetDnsResolutionException cleanly (not hang on the
+            // blocking pool, not panic). This exercises the full resolve-then-fail path through transport.connect: the host is non-numeric
+            // and not a loopback name, so it goes through HostResolver, the real system resolver yields a failure, and the connect promise
+            // must complete with it. The host is under the RFC 6761 reserved `.invalid` TLD, which never resolves (the system resolver
+            // returns NXDOMAIN), so the lookup fails against the REAL resolver with no injected stub. A real negative lookup is not bounded
+            // by the transport (a pathological host resolver can stall on an upstream query before returning NXDOMAIN), so a generous
+            // Async.timeout bounds it: either the resolver fails (NetDnsResolutionException) or the bound expires (Timeout), both clean
+            // failures with no hang and no crash. The numeric and loopback round-trip leaves above cover the resolve-SUCCESS path against
+            // the real resolver.
             assumePoller()
             withTransport { transport =>
                 Abort.run[NetException | Closed | Timeout](

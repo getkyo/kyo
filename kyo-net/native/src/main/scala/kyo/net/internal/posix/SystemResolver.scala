@@ -3,6 +3,7 @@ package kyo.net.internal.posix
 import kyo.*
 import kyo.ffi.Buffer
 import kyo.ffi.Ffi
+import kyo.net.NetDnsResolutionException
 
 /** Native system resolver: resolves a hostname through the `kyo_net_resolve` C shim, offloaded as a blocking operation.
   *
@@ -19,13 +20,15 @@ private[net] object SystemResolver:
 
     private def bindings(using AllowUnsafe): ResolveBindings = Ffi.load[ResolveBindings]
 
-    /** Resolve `host` for `familyHint` to `(family, rawAddrBytes)` or fail `Closed`. Spawns the `@Ffi.blocking kyo_net_resolve` shim on a
-      * dedicated carrier via `Fiber.Unsafe.init`; on Native the shim completes inline (BlockingBridge runs the call synchronously), so the
-      * result is extracted via `done()/poll()` inside the init body. Buffers are allocated and closed inside the init body's `finally` block.
-      * The caller consumes the result via `onComplete`, never via `.safe.get`.
+    /** Resolve `host` for `familyHint` to `(family, rawAddrBytes)` or fail `NetDnsResolutionException`. Spawns the `@Ffi.blocking
+      * kyo_net_resolve` shim on a dedicated carrier via `Fiber.Unsafe.init`; on Native the shim completes inline (BlockingBridge runs the
+      * call synchronously), so the result is extracted via `done()/poll()` inside the init body. Buffers are allocated and closed inside the
+      * init body's `finally` block. The caller consumes the result via `onComplete`, never via `.safe.get`.
       */
-    def resolveRaw(host: String, familyHint: Int)(using Frame): Fiber.Unsafe[Result[Closed, HostResolver.Resolved], Any] =
-        import AllowUnsafe.embrace.danger // TODO take as implicit
+    def resolveRaw(host: String, familyHint: Int)(using
+        AllowUnsafe,
+        Frame
+    ): Fiber.Unsafe[Result[NetDnsResolutionException, HostResolver.Resolved], Any] =
         // Unsafe: @Ffi.blocking kyo_net_resolve runs inline on Native (BlockingBridge); extract via done()/poll(), no .safe.get.
         Fiber.Unsafe.init {
             val outAddr   = Buffer.alloc[Byte](16)
@@ -39,12 +42,12 @@ private[net] object SystemResolver:
                         case _                          => -1
                 else -1 // should not occur on Native; treat as error
                 if rc != 0 then
-                    Result.fail(Closed("HostResolver", summon[Frame], s"resolve: getaddrinfo failed for $host (error $rc)"))
+                    Result.fail(NetDnsResolutionException(host, s"resolve: getaddrinfo failed for $host (error $rc)"))
                 else
                     val family = outFamily.get(0)
                     val width  = if family == PosixConstants.AF_INET6 then 16 else 4
                     val bytes  = Buffer.copyToArray[Byte](outAddr, 0, width)
-                    Result.succeed((family, bytes))
+                    Result.succeed(HostResolver.Resolved(family, bytes))
                 end if
             finally
                 outAddr.close()
