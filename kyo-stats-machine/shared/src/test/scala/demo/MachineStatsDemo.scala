@@ -19,10 +19,13 @@ import kyo.stats.machine.MachineRegistrySnapshot
   * the values a real exporter would later flush.
   *
   * This is a standalone `main` meant to run on YOUR classpath with kyo-stats-machine present: run it from,
-  * or copy it into, an application that depends on the module. It is not runnable through this repository's
-  * own build, whose test configuration sets the `KYO_MACHINE_DISABLED` opt-out so the module's suites never
-  * race a live sampler; under that lever the sampler stays off, the snapshot is empty, and `validate`
-  * rejects it. Setting that same env var on your own run is how you watch the opt-out suppress the sampler.
+  * or copy it into, an application that depends on the module. It runs on the JVM only, because its
+  * `MachineRegistrySnapshot` readback dereferences a `WeakReference`, which does not link under Scala.js/Wasm
+  * and throws under Scala Native; the module itself is cross-platform (the test suites cover js, wasm, and
+  * native). It is not runnable through this repository's own build, whose test configuration sets the
+  * `KYO_MACHINE_DISABLED` opt-out so the module's suites never race a live sampler; under that lever the
+  * sampler stays off, the snapshot is empty, and `validate` rejects it. Setting that same env var on your
+  * own run is how you watch the opt-out suppress the sampler.
   *
   * Demonstrates:
   *   - classpath-presence auto-load: touching `kyo.Stat` alone starts the host sampler, with no user API call
