@@ -6,6 +6,7 @@ import org.typelevel.scalacoptions.ScalacOption
 import org.typelevel.scalacoptions.ScalacOptions
 import org.typelevel.scalacoptions.ScalaVersion
 import sbtdynver.DynVerPlugin.autoImport.*
+import scala.scalanative.build.NativeConfig
 
 val scala3Version    = "3.8.4"
 val scala3LTSVersion = "3.3.8"
@@ -1224,10 +1225,62 @@ def systemOpensslIncludeDirs: Seq[File] =
 def systemOpensslLibDirs: Seq[File] =
     systemOpensslPrefix.map(p => Seq(p / "lib")).getOrElse(Nil)
 
+// The exact link/compile flags `openssl-native-settings` appends to a Native module's nativeConfig (system
+// OpenSSL: the brew openssl@3/openssl tree on macOS, the default system path on Linux, via
+// `systemOpensslPrefix`). Factored out so `stripSystemOpensslForStagedBoringSsl` below can recompute the
+// identical sequence to undo it by exact subsequence match, rather than a token-level filter: both
+// BoringSSL's own linkLibs and these use the identical `-lssl`/`-lcrypto` spelling on Linux (the Linux static
+// link wraps them `-Wl,-Bstatic ... -Wl,-Bdynamic`; darwin's staticLink instead force-loads BoringSSL by
+// archive path, so only Linux has this exact collision), so a bare token filter would strip BoringSSL's own
+// flags too wherever they already coexist in the same nativeConfig (a downstream module that inherits
+// BoringSSL's link flags transitively, before openssl-native-settings runs).
+def systemOpensslNativeLinkOpts: Seq[String] =
+    systemOpensslPrefix.map(p => Seq(s"-L${(p / "lib").getAbsolutePath}", "-lssl", "-lcrypto")).getOrElse(Seq("-lssl", "-lcrypto"))
+
+def systemOpensslNativeCompileOpts: Seq[String] =
+    systemOpensslPrefix.map(p => Seq(s"-I${(p / "include").getAbsolutePath}")).getOrElse(Nil)
+
+// Removes EVERY non-overlapping occurrence of `pattern` as a CONTIGUOUS subsequence of `xs`, wherever it
+// occurs (not only a prefix or suffix); a no-op if `pattern` is empty or does not occur. Native settings
+// compose across several sources that can each independently contribute the identical system-OpenSSL flag
+// sequence (a downstream module's transitively-folded FFI manifest AND openssl-native-settings' own literal
+// append both land the same `-I<system>/include`, for example), so the contribution this file needs to undo
+// is neither reliably the trailing slice of the combined list NOR guaranteed to occur only once.
+def removeSubsequence[A](xs: Seq[A], pattern: Seq[A]): Seq[A] =
+    if (pattern.isEmpty) xs
+    else {
+        @scala.annotation.tailrec
+        def loop(acc: Seq[A]): Seq[A] =
+            acc.indexOfSlice(pattern) match {
+                case -1  => acc
+                case idx => loop(acc.patch(idx, Nil, pattern.size))
+            }
+        loop(xs)
+    }
+
+// Undoes `openssl-native-settings`'s system-OpenSSL contribution (by exact subsequence removal, wherever it
+// landed in the combined list; see `removeSubsequence`) and prepends the staged BoringSSL include, so a
+// Native binary's bundled TLS shim (kyo_ssl_common.h, shared by the BoringSSL and OpenSSL FFI C) sees
+// BoringSSL headers rather than expanding `SSL_set_tlsext_host_name` to the system-OpenSSL `SSL_ctrl` macro,
+// which segfaults when called on a BoringSSL `SSL*` (a jump through a null vtable slot at the ABI mismatch;
+// diagnosed against kyo-http's Native binary, the fix is generic to any Native module linking this shim).
+// `kyoNetBase` must resolve to kyo-net's OWN directory (the staged archives live there), regardless of the
+// calling module's own `baseDirectory`. A no-op when BoringSSL is not staged for the host os-arch (the
+// documented system-OpenSSL fallback stands).
+def stripSystemOpensslForStagedBoringSsl(kyoNetBase: File)(base: NativeConfig): NativeConfig =
+    if (!boringSslStaged(kyoNetBase)) base
+    else {
+        val stagedDir       = boringSslStagedDir(kyoNetBase)
+        val strippedLinking = removeSubsequence(base.linkingOptions, systemOpensslNativeLinkOpts)
+        val strippedCompile = removeSubsequence(base.compileOptions, systemOpensslNativeCompileOpts)
+        val bsslInc         = s"-I${(stagedDir / "include").getAbsolutePath}"
+        base.withLinkingOptions(strippedLinking).withCompileOptions(bsslInc +: strippedCompile)
+    }
+
 lazy val `kyo-net` =
     crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
         .crossType(CrossType.Full)
-        .dependsOn(`kyo-core`)
+        .dependsOn(`kyo-core`, `kyo-config`)
         // FFI (Panama on JVM, Scala Native @extern) backs the posix transport on JVM and Native only.
         // The FFI bindings live in jvm-native/; JS and Wasm use the Node backend (no FFI). So the
         // KyoFfiPlugin, the kyo-ffi dependency, and the C-shim ffiLibraries are scoped to JVM and Native.
@@ -1385,34 +1438,17 @@ lazy val `kyo-net` =
             // When BoringSSL is UNstaged, none of this applies: the bundled BoringSSL stub C (no openssl
             // headers, no archive) links, the OpenSSL shim compiles against system OpenSSL, and the system
             // -lssl/-lcrypto from openssl-native-settings backs TLS (the documented fallback).
+            // The strip-and-prepend logic (drop openssl-native-settings' system OpenSSL flags, prepend the staged
+            // BoringSSL include) is factored into `stripSystemOpensslForStagedBoringSsl` so kyo-http's identical
+            // Native-linking need (see its own `nativeSettings` below) reuses the same idiom instead of a second
+            // copy; only the ffiLinking append is kyo-net-specific (it owns the FFI libraries directly, so its
+            // own staged-BoringSSL archive/link flags come from `ffiNativeLinkingOptions` rather than a
+            // downstream module's transitively-folded FFI manifest).
             nativeConfig := {
-                val base       = nativeConfig.value
                 val kyoNetBase = baseDirectory.value / ".."
-                val staged     = boringSslStaged(kyoNetBase)
-                val stagedDir  = boringSslStagedDir(kyoNetBase)
                 val ffiLinking = ffiNativeLinkingOptions.value
-                if (!staged)
-                    base.withLinkingOptions(base.linkingOptions ++ ffiLinking)
-                else {
-                    // The system OpenSSL link flags openssl-native-settings appended to base.linkingOptions: -lssl /
-                    // -lcrypto and the brew -L<prefix>/lib (macOS). Drop them from the BASE so the binary links ONLY
-                    // BoringSSL as the single TLS impl (BoringSSL exports the full SSL_*/crypto_* surface both shims
-                    // need). The BoringSSL archive flags come from ffiLinking (the staged FfiLibrary's libDirs/linkLibs)
-                    // and are appended AFTER the strip, so the BoringSSL -lssl / -lcrypto inside the force-load window
-                    // are NOT stripped (stripping the combined list would empty that window and undefine every SSL_*).
-                    val brewLib = systemOpensslPrefix.map(p => s"-L${(p / "lib").getAbsolutePath}")
-                    val strippedBase = base.linkingOptions.filterNot { o =>
-                        o == "-lssl" || o == "-lcrypto" || brewLib.contains(o)
-                    }
-                    val strippedLinking = strippedBase ++ ffiLinking
-                    // The system OpenSSL include flags openssl-native-settings appended (brew -I<prefix>/include
-                    // on macOS; none on Linux). Drop them, then prepend the staged BoringSSL include so
-                    // openssl/ssl.h resolves to BoringSSL for the bundled C of BOTH shims.
-                    val brewInc     = systemOpensslPrefix.map(p => s"-I${(p / "include").getAbsolutePath}")
-                    val bsslInc     = s"-I${(stagedDir / "include").getAbsolutePath}"
-                    val compileOpts = bsslInc +: base.compileOptions.filterNot(o => brewInc.contains(o))
-                    base.withLinkingOptions(strippedLinking).withCompileOptions(compileOpts)
-                }
+                val stripped   = stripSystemOpensslForStagedBoringSsl(kyoNetBase)(nativeConfig.value)
+                stripped.withLinkingOptions(stripped.linkingOptions ++ ffiLinking)
             },
             // The BoringSSL and OpenSSL shims (kyo_net_boringssl.c, kyo_net_openssl.c) share one TLS
             // state-machine body, kyo_ssl_common.h, pulled in by a quoted `#include "kyo_ssl_common.h"`.
@@ -1564,6 +1600,19 @@ lazy val `kyo-http` =
         .nativeSettings(
             `native-settings`,
             `openssl-native-settings`,
+            // kyo-http does not own the BoringSSL/OpenSSL FFI libraries itself (only kyo-net enables
+            // KyoFfiPlugin); it inherits the bundled TLS shim C and its manifest-derived link/compile flags
+            // transitively via `native-settings`'s classpath fold, PLUS `openssl-native-settings`'s own system
+            // OpenSSL flags above. Left as-is, the shim's bundled C compiles against system OpenSSL headers
+            // (the transitive fold gives no ordering guarantee that BoringSSL's `-I` precedes the system one),
+            // so `SSL_set_tlsext_host_name` expands to the OpenSSL `SSL_ctrl` macro and segfaults when called
+            // on a BoringSSL `SSL*` (a client TLS handshake to a hostname, e.g. HttpClientTest's "tls" variant:
+            // EXC_BAD_ACCESS at PC=0 inside SSL_ctrl's tail dispatch). Applying the same BoringSSL-staging strip
+            // kyo-net's own Native build uses (`stripSystemOpensslForStagedBoringSsl`) makes the bundled C see
+            // BoringSSL headers here too, eliminating the SSL_ctrl reference entirely. `kyoNetBase` resolves to
+            // kyo-net's own directory (two levels up from kyo-http's Native `baseDirectory`, then across), since
+            // the staged BoringSSL archives live there, not under kyo-http.
+            nativeConfig := stripSystemOpensslForStagedBoringSsl(baseDirectory.value / ".." / ".." / "kyo-net")(nativeConfig.value),
             // Scala Native resolves `java.util.ServiceLoader.load` at LINK time: a provider present in
             // META-INF/services is linked only when ALSO enlisted here. Enlist the shared test factory so the
             // auto-filter tests exercise real ServiceLoader discovery on Native, the same way a Native user
@@ -2458,18 +2507,8 @@ lazy val `kyo-test-readme` =
 
 lazy val `openssl-native-settings` = Seq(
     nativeConfig ~= { c =>
-        val isMac = System.getProperty("os.name").toLowerCase.contains("mac")
-        val opensslPrefix =
-            if (isMac) {
-                val p3 = new java.io.File("/opt/homebrew/opt/openssl@3")
-                val p1 = new java.io.File("/opt/homebrew/opt/openssl")
-                val p0 = new java.io.File("/usr/local/opt/openssl")
-                Some(if (p3.exists()) p3.getAbsolutePath else if (p1.exists()) p1.getAbsolutePath else p0.getAbsolutePath)
-            } else None
-        val linkOpts    = opensslPrefix.map(p => Seq(s"-L$p/lib", "-lssl", "-lcrypto")).getOrElse(Seq("-lssl", "-lcrypto"))
-        val compileOpts = opensslPrefix.map(p => Seq(s"-I$p/include")).getOrElse(Nil)
-        c.withLinkingOptions(c.linkingOptions ++ linkOpts)
-            .withCompileOptions(c.compileOptions ++ compileOpts)
+        c.withLinkingOptions(c.linkingOptions ++ systemOpensslNativeLinkOpts)
+            .withCompileOptions(c.compileOptions ++ systemOpensslNativeCompileOpts)
     }
 )
 

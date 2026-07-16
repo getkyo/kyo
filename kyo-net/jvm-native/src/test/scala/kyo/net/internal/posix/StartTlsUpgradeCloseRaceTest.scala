@@ -85,10 +85,17 @@ class StartTlsUpgradeCloseRaceTest extends Test:
                         val spy        = RecordingSocketBindings(real)
                         spy.onRecvEagain = (fd: Int) =>
                             if fd == serverFd then recvSignal.completeDiscard(Result.succeed(()))
-                        val driver = TestDrivers.forBackend(backend, pollerFd, spy)
-                        discard(driver.start())
-                        val transport = TestTransports.forTesting(transportConfig, driver, spy, backendIsEpoll = false)
-                        // Close the driver and the (never-upgraded) client fd at iteration end so fds do not leak across the 40 runs.
+                        val driver     = TestDrivers.forBackend(backend, pollerFd, spy)
+                        val driverDone = driver.start()
+                        val transport  = TestTransports.forTesting(transportConfig, driver, spy, backendIsEpoll = false)
+                        // Close the driver and the (never-upgraded) client fd at iteration end so fds do not leak across the 40 runs, then
+                        // await the driver's own poll-loop-exit fiber (not discarding it): close() only requests teardown and returns
+                        // immediately, without waiting for the poll-loop carrier to actually run it and release the fds it still holds.
+                        // Sync.ensure's finalizer type is Sync-only (no Async), so the fiber await is chained after the whole ensure block
+                        // instead, on the map that carries the loop outcome forward: discarding the exit fiber left a window where a
+                        // not-yet-fully-torn-down driver from a prior iteration could still be blocked in the kernel poll call against its
+                        // own (soon-to-be-reused) fd numbers when a later iteration's fresh driver and socket pair reused those same
+                        // numbers, misrouting an event.
                         Sync.ensure(Sync.defer { driver.close(); discard(real.close(clientFd)) }) {
                             val serverHandle = PosixHandle.socket(serverFd, PosixHandle.DefaultReadBufferSize, Absent)
                             val serverPlain  = transport.openWith(serverHandle, driver)
@@ -139,7 +146,7 @@ class StartTlsUpgradeCloseRaceTest extends Test:
                                     }
                                 }
                             }
-                        }
+                        }.map((loopOutcome: Loop.Outcome[Unit, Unit]) => Abort.run(driverDone.safe.get).unit.map(_ => loopOutcome))
                     }
             }
         }

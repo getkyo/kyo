@@ -1,6 +1,7 @@
 package kyo.net.internal.tls
 
 import kyo.*
+import kyo.net.NetTlsProviderUnavailableException
 import kyo.net.internal.backend.IoBackend
 
 /** JS/Wasm Node TLS provider. Node terminates TLS itself (the Node transport drives Node `tls`), so the only entry is `NodeTlsProvider` and
@@ -21,6 +22,13 @@ private[net] object TlsProviderPlatform:
       * provider-name reporting; the Node transport terminates TLS itself, so no engine is built here.
       */
     def selected(using AllowUnsafe, Frame): TlsProvider =
-        IoBackend.select[TlsProvider](registered, _.name, _.priority, _.isAvailable, "kyo.net.tls")
+        IoBackend.select[TlsProvider, NetTlsProviderUnavailableException](
+            registered,
+            _.name,
+            _.priority,
+            _.isAvailable,
+            forced = Maybe(kyo.net.tls()).filter(_.nonEmpty),
+            onUnavailable = _ => NetTlsProviderUnavailableException("<default>")
+        ).getOrThrow
 
 end TlsProviderPlatform

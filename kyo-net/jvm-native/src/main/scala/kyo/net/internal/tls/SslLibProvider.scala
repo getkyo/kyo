@@ -118,7 +118,7 @@ abstract private[net] class SslLibProvider extends TlsEngineProvider:
         case NetTlsConfig.Version.TLS13 => 3
 
     /** Read a configured PEM file. A `path` that was never set stays `Absent` so the caller keeps the system-trust default; a `Present` path that
-      * cannot be read or decoded FAILS CLOSED with `Closed` rather than degrading to `Absent`. Swallowing the read error would silently drop an
+      * cannot be read or decoded FAILS CLOSED with [[NetTlsConfigException]] rather than degrading to `Absent`. Swallowing the read error would silently drop an
       * operator's pinned private CA (or a server's configured cert/key) and fall back to the system trust store, the CWE-295 silent-weakening
       * the JDK floor avoids (`NioTransport.loadCaCertTrustManagers` lets the file-open exception propagate). Distinguishing not-configured from
       * configured-but-unreadable is the whole fix.

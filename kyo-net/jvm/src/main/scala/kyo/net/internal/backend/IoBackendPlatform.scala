@@ -1,6 +1,7 @@
 package kyo.net.internal.backend
 
 import kyo.*
+import kyo.net.NetBackendUnavailableException
 import kyo.net.Transport
 import kyo.net.TransportConfig
 import kyo.net.internal.NioTransport
@@ -16,7 +17,7 @@ import kyo.net.internal.posix.PosixTransport
   *
   * On a posix host the highest-priority available entry is a posix backend (io_uring on a capable Linux, epoll on any other Linux, kqueue on
   * macOS/BSD), so the production transport is the unified `PosixTransport`. `NioBackend` (priority 10, unconditionally available) is the floor:
-  * with it always registered, selection can never return `Closed` on a working JDK, and `-Dkyo.net.backend=nio` forces the floor. The posix
+  * with it always registered, selection can never fail on a working JDK, and `-Dkyo.net.backend=nio` forces the floor. The posix
   * entries reuse the posix backend objects' identity/probes from `PosixBackends.scala`; only their `build` thunk lives here (it is the
   * driver-start-plus-`PosixTransport.init` sequence the posix tests use).
   */
@@ -50,14 +51,29 @@ private[net] object IoBackendPlatform:
       * use, so adding a backend is a list edit, never a `select` edit.
       */
     def selected(using AllowUnsafe, Frame): Entry =
-        IoBackend.select[Entry](registered, _.name, _.priority, _.isAvailable, "kyo.net.backend")
+        IoBackend.select[Entry, NetBackendUnavailableException](
+            registered,
+            _.name,
+            _.priority,
+            _.isAvailable,
+            forced = Maybe(kyo.net.backend()).filter(_.nonEmpty),
+            onUnavailable = NetBackendUnavailableException(_)
+        ).getOrThrow
 
-    /** Build the selected JVM transport. Selection honors `-Dkyo.net.backend` (a forced-unavailable name aborts `Closed`); with no forced name
-      * it walks the priority gradient and builds the first backend that constructs, falling back to the next when a higher-priority one is
-      * available (its cheap probe passed) but fails to build at production scale (io_uring whose production-depth ring cannot init on a
-      * restricted host degrades to epoll rather than failing the whole transport).
+    /** Build the selected JVM transport. Selection honors `-Dkyo.net.backend` (a forced-unavailable name fails with
+      * [[NetBackendUnavailableException]]); with no forced name it walks the priority gradient and builds the first backend that constructs,
+      * falling back to the next when a higher-priority one is available (its cheap probe passed) but fails to build at production scale
+      * (io_uring whose production-depth ring cannot init on a restricted host degrades to epoll rather than failing the whole transport).
       */
     def transport(config: TransportConfig)(using AllowUnsafe, Frame): Transport =
-        IoBackend.selectAndBuild[Entry, Transport](registered, _.name, _.priority, _.isAvailable, _.build(config), "kyo.net.backend")
+        IoBackend.selectAndBuild[Entry, Transport](
+            registered,
+            _.name,
+            _.priority,
+            _.isAvailable,
+            _.build(config),
+            forced = Maybe(kyo.net.backend()).filter(_.nonEmpty),
+            onUnavailable = NetBackendUnavailableException(_)
+        ).getOrThrow
 
 end IoBackendPlatform

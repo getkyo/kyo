@@ -42,21 +42,27 @@ class PosixTransportTlsTest extends Test:
         if !tlsAvailable then cancel("No TLS provider staged for this host")
     end assumeReady
 
-    /** Build a transport over a fresh real poller driver, run `body`, then close the transport and the driver. The teardown needs no accept-loop
-      * drain: with the poller (epoll/kqueue) the accept loop never parks in a blocking `accept`, it is readiness-driven, so `transport.close()`
-      * tears it down synchronously. `close()` closes every listener, and `PosixListener.close()` (on the calling fiber) deregisters the accept
-      * interest via `driver.cancel`, which inline-completes the parked accept promise with `Closed`; that completion runs the accept loop's exit
-      * branch inline (`IOPromise.flush`), then the listener `shutdown`s + closes the listen fd, all synchronously. So once `transport.close()`
-      * returns, no accept loop is still running and the fd is already closed: nothing to await.
+    /** Build a transport over a fresh real poller driver, run `body`, then close the transport and the driver. `transport.close()` tears the
+      * accept loop down synchronously: with the poller (epoll/kqueue) the accept loop never parks in a blocking `accept`, it is
+      * readiness-driven, so closing every listener deregisters the accept interest via `driver.cancel`, which inline-completes the parked
+      * accept promise with `Closed` and runs the accept loop's exit branch (`IOPromise.flush`) before `transport.close()` returns.
+      *
+      * The driver's own poll-loop thread is a separate story: `driver.close()` only requests teardown (`submitEngineOp` + `triggerWake()`)
+      * and returns immediately, without waiting for the poll-loop carrier to actually run it. Awaiting the driver's own exit fiber after
+      * `close()` (rather than discarding it) makes the underlying thread provably gone before this computation completes, closing the window
+      * where, under kyo-test's full-suite concurrent leaf scheduling, a not-yet-fully-torn-down driver from an earlier leaf could still be
+      * alive when the next leaf's own transport starts.
       */
     private def withTransport[A](body: PosixTransport => A < (Async & Abort[NetException | Closed] & Scope))(using
         Frame
     ): A < (Async & Abort[NetException | Closed] & Scope) =
-        val driver    = PollerIoDriver.init(transportConfig)
-        val transport = TestTransports.forTesting(transportConfig, driver, Ffi.load[SocketBindings], backendIsEpoll = false)
-        discard(driver.start())
+        val driver     = PollerIoDriver.init(transportConfig)
+        val transport  = TestTransports.forTesting(transportConfig, driver, Ffi.load[SocketBindings], backendIsEpoll = false)
+        val driverDone = driver.start()
         Abort.run[NetException | Closed](body(transport)).map { result =>
-            Sync.defer(transport.close()).andThen(Sync.defer(driver.close())).andThen(Abort.get(result))
+            Sync.defer(transport.close()).andThen(Sync.defer(driver.close())).andThen(
+                Abort.run(driverDone.safe.get).unit
+            ).andThen(Abort.get(result))
         }
     end withTransport
 

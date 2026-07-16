@@ -22,35 +22,45 @@ class TlsProviderRegistryTest extends Test:
     private case class StubProvider(name: String, priority: Int, available: Boolean) extends TlsProvider:
         def isAvailable(using AllowUnsafe): Boolean = available
 
-    private def select(registered: Chunk[StubProvider], forcedProp: String): StubProvider =
-        IoBackend.select[StubProvider](registered, _.name, _.priority, _.available, forcedProp)
+    private def select(registered: Chunk[StubProvider], forced: Maybe[String]): Result[NetTlsProviderUnavailableException, StubProvider] =
+        IoBackend.select[StubProvider, NetTlsProviderUnavailableException](
+            registered,
+            _.name,
+            _.priority,
+            _.available,
+            forced = forced,
+            onUnavailable = f => NetTlsProviderUnavailableException(f.getOrElse("<default>"))
+        )
 
     private def selectFor(registered: Chunk[StubProvider], config: NetTlsConfig): StubProvider =
         TlsProvider.selectFor[StubProvider](registered, config)
 
     "TLS selection picks the highest-priority available provider via the shared select" in {
         val list = Chunk(StubProvider("boringssl", 30, true), StubProvider("jdk", 10, true))
-        assert(select(list, "kyo.net.test.tls.empty").name == "boringssl")
+        select(list, Absent) match
+            case Result.Success(p) => assert(p.name == "boringssl")
+            case other             => fail(other.toString)
     }
 
     "forced -Dkyo.net.tls overrides priority through the same select" in {
         val list = Chunk(StubProvider("boringssl", 30, true), StubProvider("jdk", 10, true))
-        withProp("kyo.net.test.tls.forced", "jdk") {
-            assert(select(list, "kyo.net.test.tls.forced").name == "jdk")
-        }
+        select(list, Present("jdk")) match
+            case Result.Success(p) => assert(p.name == "jdk")
+            case other             => fail(other.toString)
     }
 
     "TLS selection falls through an unavailable primary to the floor" in {
         val list = Chunk(StubProvider("boringssl", 30, false), StubProvider("openssl", 20, true), StubProvider("jdk", 10, true))
-        assert(select(list, "kyo.net.test.tls.empty").name == "openssl")
+        select(list, Absent) match
+            case Result.Success(p) => assert(p.name == "openssl")
+            case other             => fail(other.toString)
     }
 
-    "forced-but-unavailable TLS provider aborts Closed" in {
+    "forced-but-unavailable TLS provider surfaces NetTlsProviderUnavailableException" in {
         val list = Chunk(StubProvider("boringssl", 30, false), StubProvider("jdk", 10, true))
-        withProp("kyo.net.test.tls.forced2", "boringssl") {
-            val ex = intercept[Closed](select(list, "kyo.net.test.tls.forced2"))
-            assert(ex.getMessage.contains("boringssl"))
-        }
+        select(list, Present("boringssl")) match
+            case Result.Failure(e: NetTlsProviderUnavailableException) => assert(e.getMessage.contains("boringssl"))
+            case other                                                 => fail(other.toString)
     }
 
     "selectFor with no pin defers to the shared select (highest-priority available provider)" in {
@@ -58,7 +68,7 @@ class TlsProviderRegistryTest extends Test:
         assert(selectFor(list, NetTlsConfig.default).name == "boringssl")
     }
 
-    "selectFor with no pin and no available provider wraps the shared select's Closed into NetTlsProviderUnavailableException" in {
+    "selectFor with no pin and no available provider surfaces NetTlsProviderUnavailableException for the default fallback" in {
         val list = Chunk(StubProvider("boringssl", 30, false), StubProvider("jdk", 10, false))
         val ex   = intercept[NetTlsProviderUnavailableException](selectFor(list, NetTlsConfig.default))
         assert(ex.provider == "<default>", s"the unpinned wrap must name the default fallback, got ${ex.provider}")

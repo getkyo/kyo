@@ -2,6 +2,7 @@ package kyo.net.internal.tls
 
 import kyo.*
 import kyo.net.NetTlsConfig
+import kyo.net.NetTlsProviderUnavailableException
 import kyo.net.internal.backend.IoBackend
 
 /** Shared TLS-provider selection body for the JVM and Native `TlsProviderPlatform` objects. The `selected` and `engine` bodies are identical
@@ -16,7 +17,14 @@ private[net] trait TlsProviderPlatformBase:
 
     /** The selected TLS provider honoring `-Dkyo.net.tls`. Reuses the SAME `IoBackend.select` as the I/O registry. */
     def selected(using AllowUnsafe, Frame): TlsEngineProvider =
-        IoBackend.select[TlsEngineProvider](registered, _.name, _.priority, _.isAvailable, "kyo.net.tls")
+        IoBackend.select[TlsEngineProvider, NetTlsProviderUnavailableException](
+            registered,
+            _.name,
+            _.priority,
+            _.isAvailable,
+            forced = Maybe(kyo.net.tls()).filter(_.nonEmpty),
+            onUnavailable = _ => NetTlsProviderUnavailableException("<default>")
+        ).getOrThrow
 
     /** Build the TLS engine for the given config/hostname/role, honoring a [[NetTlsConfig.tlsProvider]] pin (fail-closed if unavailable) and
       * otherwise the platform-selected default.

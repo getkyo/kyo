@@ -217,7 +217,7 @@ The I/O backend and the TLS provider are chosen at startup, highest-priority ava
 - `-Dkyo.net.backend` selects the I/O backend: `io_uring` (Linux), `epoll` / `kqueue`, `nio` (the JVM floor), `node` (JS).
 - `-Dkyo.net.tls` selects the TLS provider: `boringssl` (the primary), `openssl` (the Native system fallback), `jdk` (the JVM floor).
 
-A forced-but-unavailable backend or provider fails closed (aborts `Closed`) rather than silently falling through to another, so a forced selection is honored or it errors.
+A forced-but-unavailable backend or provider fails closed (`NetBackendUnavailableException` / `NetTlsProviderUnavailableException`) rather than silently falling through to another, so a forced selection is honored or it errors.
 
 ## Putting it together
 

@@ -31,19 +31,28 @@ class PosixTransportSurfaceTest extends Test:
       * with the poller (epoll/kqueue) the accept loop is readiness-driven and never parks in a blocking `accept`. `transport.close()` closes every
       * listener, and `PosixListener.close()` (on the calling fiber) deregisters the accept interest via `driver.cancel`, which inline-completes the
       * parked accept promise with `Closed`; that completion runs the accept loop's exit branch inline (`IOPromise.flush`), then the listener
-      * `shutdown`s + closes the listen fd, all synchronously. So once `transport.close()` returns, no accept loop is still running and the recycled
-      * fd is already closed: a later leaf cannot have its connection stolen, and there is nothing to await.
+      * `shutdown`s + closes the listen fd, all synchronously.
+      *
+      * The driver's own poll-loop thread is a separate story from the listener fd closing synchronously above: `driver.close()` only requests
+      * teardown (`submitEngineOp` + `triggerWake()`) and returns immediately, without waiting for the poll-loop carrier to actually run it.
+      * Awaiting the driver's own exit fiber after `close()` (rather than discarding it) makes the underlying thread provably gone before this
+      * computation completes, closing the window where, under kyo-test's full-suite concurrent leaf scheduling, a not-yet-fully-torn-down
+      * driver from an earlier leaf could still be alive when the next leaf's own transport starts, letting a connection meant for the new
+      * leaf's listener land on the stale one instead.
       */
     private def withTransport[A](body: PosixTransport => A < (Async & Abort[NetException | Closed] & Scope))(using
         Frame
     ): A < (Async & Abort[NetException | Closed] & Scope) =
-        val driver    = PollerIoDriver.init(transportConfig)
-        val transport = TestTransports.forTesting(transportConfig, driver, Ffi.load[SocketBindings], backendIsEpoll = false)
-        discard(driver.start())
-        // Run the body, then ALWAYS close the transport and driver, re-raising the body's outcome. transport.close() tears the readiness-driven
-        // accept loops down synchronously (see the scaladoc), so no Async drain step is needed.
+        val driver     = PollerIoDriver.init(transportConfig)
+        val transport  = TestTransports.forTesting(transportConfig, driver, Ffi.load[SocketBindings], backendIsEpoll = false)
+        val driverDone = driver.start()
+        // Run the body, then ALWAYS close the transport and driver and await the driver's exit fiber, re-raising the body's outcome.
+        // transport.close() tears the readiness-driven accept loops down synchronously (see the scaladoc); the exit-fiber await is what
+        // proves the driver's own poll-loop thread has actually stopped, not just the listener fd.
         Abort.run[NetException | Closed](body(transport)).map { result =>
-            Sync.defer(transport.close()).andThen(Sync.defer(driver.close())).andThen(Abort.get(result))
+            Sync.defer(transport.close()).andThen(Sync.defer(driver.close())).andThen(
+                Abort.run(driverDone.safe.get).unit
+            ).andThen(Abort.get(result))
         }
     end withTransport
 

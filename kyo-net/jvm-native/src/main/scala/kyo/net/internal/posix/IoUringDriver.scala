@@ -5,6 +5,7 @@ import java.util.concurrent.ConcurrentLinkedQueue
 import kyo.*
 import kyo.ffi.Buffer
 import kyo.ffi.Ffi
+import kyo.net.NetBackendUnavailableException
 import kyo.net.NetConnectionClosedException
 import kyo.net.internal.tls.TlsEngine
 import kyo.net.internal.transport.IoDriver
@@ -2444,8 +2445,8 @@ private[net] object IoUringDriver:
     private[posix] val WakeKey: Long = -1L
 
     /** Build a driver over a freshly initialized io_uring ring. The ring lives in a caller-owned `Buffer[Byte]` of `kyo_uring_sizeof()` bytes
-      * (the SQ/CQ mmaps are owned internally by liburing). Throws `Closed` if `io_uring_queue_init` fails (e.g. the kernel is too old or
-      * the process is sandboxed from io_uring at the production ring depth).
+      * (the SQ/CQ mmaps are owned internally by liburing). Throws `NetBackendUnavailableException` if `io_uring_queue_init` fails (e.g. the
+      * kernel is too old or the process is sandboxed from io_uring at the production ring depth).
       */
     def init(config: kyo.net.TransportConfig)(using AllowUnsafe, Frame): IoUringDriver =
         val uring = Ffi.load[IoUringBindings]
@@ -2465,7 +2466,7 @@ private[net] object IoUringDriver:
         val rc = uring.io_uring_queue_init(depth, ring, flags)
         if rc != 0 then
             ring.close()
-            throw Closed("IoUringDriver", summon[Frame], s"queue_init failed: rc=$rc flags=$flags")
+            throw NetBackendUnavailableException(Present("io_uring"), s"queue_init failed: rc=$rc flags=$flags")
         // io_uring has no prep_close SQE, so the connection-close fd shutdown/close goes through SocketBindings (the same library the poller uses).
         init(uring, ring, Ffi.load[SocketBindings])
     end init

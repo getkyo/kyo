@@ -1,6 +1,7 @@
 package kyo.net.internal.backend
 
 import kyo.*
+import kyo.net.NetBackendUnavailableException
 import kyo.net.Transport
 import kyo.net.TransportConfig
 
@@ -28,14 +29,29 @@ private[net] object IoBackendPlatform:
       * through the same shared `IoBackend.select` the JVM and TLS registries use, so adding a backend is a list edit, never a `select` edit.
       */
     def selected(using AllowUnsafe, Frame): Entry =
-        IoBackend.select[Entry](registered, _.name, _.priority, _.isAvailable, "kyo.net.backend")
+        IoBackend.select[Entry, NetBackendUnavailableException](
+            registered,
+            _.name,
+            _.priority,
+            _.isAvailable,
+            forced = Maybe(kyo.net.backend()).filter(_.nonEmpty),
+            onUnavailable = NetBackendUnavailableException(_)
+        ).getOrThrow
 
-    /** Build the selected Native transport. Selection honors `-Dkyo.net.backend` (a forced-unavailable name aborts `Closed`); with no forced
-      * name it walks the priority gradient and builds the first backend that constructs, falling back to the next when a higher-priority one is
-      * available (its cheap probe passed) but fails to build at production scale (io_uring whose production-depth ring cannot init on a
-      * restricted host degrades to epoll rather than failing the whole transport).
+    /** Build the selected Native transport. Selection honors `-Dkyo.net.backend` (a forced-unavailable name fails with
+      * [[NetBackendUnavailableException]]); with no forced name it walks the priority gradient and builds the first backend that constructs,
+      * falling back to the next when a higher-priority one is available (its cheap probe passed) but fails to build at production scale
+      * (io_uring whose production-depth ring cannot init on a restricted host degrades to epoll rather than failing the whole transport).
       */
     def transport(config: TransportConfig)(using AllowUnsafe, Frame): Transport =
-        IoBackend.selectAndBuild[Entry, Transport](registered, _.name, _.priority, _.isAvailable, _.build(config), "kyo.net.backend")
+        IoBackend.selectAndBuild[Entry, Transport](
+            registered,
+            _.name,
+            _.priority,
+            _.isAvailable,
+            _.build(config),
+            forced = Maybe(kyo.net.backend()).filter(_.nonEmpty),
+            onUnavailable = NetBackendUnavailableException(_)
+        ).getOrThrow
 
 end IoBackendPlatform

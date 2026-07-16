@@ -42,8 +42,14 @@ private[net] object TlsProvider:
                     case Present(_)                  => throw NetTlsProviderUnavailableException(id)
                     case Absent                      => throw NetTlsProviderUnavailableException(id)
             case Absent =>
-                try IoBackend.select[P](registered, _.name, _.priority, _.isAvailable, "kyo.net.tls")
-                catch case _: Closed => throw NetTlsProviderUnavailableException("<default>")
+                IoBackend.select[P, NetTlsProviderUnavailableException](
+                    registered,
+                    _.name,
+                    _.priority,
+                    _.isAvailable,
+                    forced = Maybe(kyo.net.tls()).filter(_.nonEmpty),
+                    onUnavailable = _ => NetTlsProviderUnavailableException("<default>")
+                ).getOrThrow
     end selectFor
 
 end TlsProvider

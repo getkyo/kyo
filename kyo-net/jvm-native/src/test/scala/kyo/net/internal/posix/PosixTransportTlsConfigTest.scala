@@ -53,15 +53,25 @@ class PosixTransportTlsConfigTest extends Test:
         if !tlsAvailable then cancel("No TLS provider staged for this host")
     end assumeReady
 
-    /** Mirrors [[PosixTransportTlsTest.withTransport]]: a fresh real poller driver + transport, closed after `body` completes. */
+    /** Mirrors [[PosixTransportTlsTest.withTransport]]: a fresh real poller driver + transport, closed after `body` completes.
+      *
+      * Awaits the driver's own poll-loop-exit fiber after `close()` (rather than discarding it) so the underlying thread and listener
+      * socket are provably gone before this computation completes: `close()` itself only requests teardown (`submitEngineOp` +
+      * `triggerWake()`) and returns immediately, without waiting for the poll-loop carrier to actually run it. Discarding the exit
+      * fiber left a window, under kyo-test's full-suite concurrent leaf scheduling, where a not-yet-fully-torn-down driver from an
+      * earlier leaf could still be alive when the next leaf's own transport starts, letting a connection meant for the new leaf's
+      * listener land on the stale one instead.
+      */
     private def withTransport[A](body: PosixTransport => A < (Async & Abort[NetException | Closed] & Scope))(using
         Frame
     ): A < (Async & Abort[NetException | Closed] & Scope) =
-        val driver    = PollerIoDriver.init(transportConfig)
-        val transport = TestTransports.forTesting(transportConfig, driver, Ffi.load[SocketBindings], backendIsEpoll = false)
-        discard(driver.start())
+        val driver     = PollerIoDriver.init(transportConfig)
+        val transport  = TestTransports.forTesting(transportConfig, driver, Ffi.load[SocketBindings], backendIsEpoll = false)
+        val driverDone = driver.start()
         Abort.run[NetException | Closed](body(transport)).map { result =>
-            Sync.defer(transport.close()).andThen(Sync.defer(driver.close())).andThen(Abort.get(result))
+            Sync.defer(transport.close()).andThen(Sync.defer(driver.close())).andThen(
+                Abort.run(driverDone.safe.get).unit
+            ).andThen(Abort.get(result))
         }
     end withTransport
 

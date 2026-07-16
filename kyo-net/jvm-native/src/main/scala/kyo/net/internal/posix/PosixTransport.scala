@@ -531,6 +531,7 @@ final private[net] class PosixTransport private[posix] (
         testEngineFactory match
             case Present(f) => f(config, hostname, isServer)
             case Absent     => TlsProviderPlatform.engine(config, hostname, isServer)
+    end buildEngine
 
     /** The posix transport drives any TLS engine the platform registry exposes (BoringSSL and the JDK SslEngine on JVM; BoringSSL and system
       * OpenSSL on Native), so a connection may pin any of those via [[NetTlsConfig.tlsProvider]]. This is the architectural set; whether a given

@@ -24,7 +24,7 @@ class IoBackendPlatformTest extends Test:
     }
 
     "the JVM I/O registry selects the OS-appropriate posix backend over the NioBackend floor" in {
-        // The Nio floor stays registered (priority 10, unconditionally available) so selection can never return Closed.
+        // The Nio floor stays registered (priority 10, unconditionally available) so selection can never fail.
         val nioEntries = IoBackendPlatform.registered.filter(e => e.name == "nio")
         assert(nioEntries.size == 1, s"expected exactly one nio floor entry, got ${nioEntries.map(_.name)}")
         assert(nioEntries.head.priority == 10)
