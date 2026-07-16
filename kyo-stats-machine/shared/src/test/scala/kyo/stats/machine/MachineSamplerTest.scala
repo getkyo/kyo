@@ -118,24 +118,40 @@ class MachineSamplerTest extends kyo.test.Test[Any]:
 
         "a never-completing readDisks leaves the fast cells advancing at the anchored 1 Hz".notJs in {
             val tickCount    = AtomicLong.Unsafe.init(0L)
+            val readCount    = AtomicLong.Unsafe.init(0L)
             val innerSampler = AtomicRef.Unsafe.init(Maybe.empty[MachineSampler])
+            val released     = AtomicBoolean.Unsafe.init(false)
+            val parkedThread = AtomicRef.Unsafe.init(Maybe.empty[Thread])
             Clock.withTimeControl { tc =>
                 for
                     handles <- MachineHandles.init
                     clock   <- Clock.get
-                    gate    <- Channel.init[Unit](1)
                     machine = new Machine:
                         def read()(using AllowUnsafe): Unit =
                             discard(tickCount.getAndSet(tickCount.get() + 1L))
                         def readDisks()(using AllowUnsafe): Unit =
-                            // Parks a REAL OS worker thread on the channel's take, exactly the shape a genuinely
-                            // blocking statvfs/GetDiskFreeSpaceEx syscall has: no kyo suspension point the
-                            // Async.timeout race can preempt mid-flight. This hazard, and therefore this leaf,
-                            // is JVM/Native-only: JS has no OS thread to park, so `.block` cannot reproduce an
-                            // uninterruptible wait there. The gate is fed only at teardown (below), so this call
-                            // never returns during the test's own assertions.
-                            given Frame = Frame.internal
-                            discard(Sync.Unsafe.evalOrThrow(Fiber.initUnscoped(gate.take).flatMap(_.block(Duration.Infinity))))
+                            // A real statvfs/statfs/GetDiskFreeSpaceEx against a dead mount is a native downcall
+                            // that does NOT observe JVM thread interrupts: when Async.timeout expires the
+                            // scheduler's blocking monitor dispatches Thread.interrupt at this parked worker to
+                            // unwind the read, and the syscall ignores it, staying parked until the kernel returns.
+                            // Model that faithfully by parking a REAL OS worker UNINTERRUPTIBLY until teardown
+                            // releases it (below), clearing rather than propagating the monitor's interrupt. An
+                            // interruptible `Fiber.block` would instead THROW InterruptedException here, which both
+                            // kills the scheduler worker and runs the read's `finally diskReadDone`, dropping the
+                            // one-shot in-flight guard so the disk fiber relaunches the read and leaks a fresh worker
+                            // per interrupt: the cascade that wedges the low-core CI scheduler. Because the read
+                            // parks a real OS thread with no kyo suspension point the Async.timeout race can preempt
+                            // mid-flight, this hazard, and therefore this leaf, is JVM/Native-only (JS has none).
+                            discard(readCount.getAndSet(readCount.get() + 1L))
+                            parkedThread.set(Present(Thread.currentThread()))
+                            @scala.annotation.tailrec
+                            def parkUntilReleased(): Unit =
+                                if released.get() then ()
+                                else
+                                    java.util.concurrent.locks.LockSupport.park()
+                                    discard(Thread.interrupted())
+                                    parkUntilReleased()
+                            parkUntilReleased()
                         end readDisks
                         def close()(using AllowUnsafe): Unit = ()
                     buildMachine = (s: MachineSampler) =>
@@ -148,14 +164,25 @@ class MachineSamplerTest extends kyo.test.Test[Any]:
                     _     <- tc.advance(1.seconds)
                     _     <- tc.advance(1.seconds)
                     _     <- tc.advance(1.seconds)
+                    // Give the blocking monitor real wall-clock time to dispatch its unwind-interrupt at the parked
+                    // worker before the guards are read. A faithful uninterruptible read ignores it and stays the ONE
+                    // outstanding read; an interruptible `.block` would throw, drop the guard, and relaunch the read.
+                    _ <- tc.advance(Duration.Zero, 500.millis)
                     inFlightAfterFive = innerSampler.get() match
                         case Present(s) => s.diskReadInFlight()
                         case Absent     => false
-                    _ <- gate.offerDiscard(())
+                    readsAfterFive = readCount.get()
+                    _ <- Sync.Unsafe.defer {
+                        released.set(true)
+                        parkedThread.get() match
+                            case Present(t) => java.util.concurrent.locks.LockSupport.unpark(t)
+                            case Absent     => ()
+                    }
                     _ <- fiber.interrupt
                 yield
                     assert(tickCount.get() == 5L)
                     assert(inFlightAfterFive)
+                    assert(readsAfterFive == 1L)
                 end for
             }
         }
