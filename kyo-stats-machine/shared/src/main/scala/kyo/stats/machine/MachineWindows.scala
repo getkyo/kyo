@@ -61,9 +61,9 @@ final private[machine] class MachineWindows(h: MachineHandles, s: MachineSampler
     private[machine] def readCpu(b: WindowsBindings)(using AllowUnsafe): Unit =
         // GetSystemTimes takes three out-params, each a FILETIME: one little-endian 100ns int64.
         if b.getSystemTimes(idleOut, kernelOut, userOut) != 0 then
-            val idle   = idleOut.get(0) * 100L
-            val kernel = kernelOut.get(0) * 100L
-            val user   = userOut.get(0) * 100L
+            val idle   = idleOut.getLong(0) * 100L
+            val kernel = kernelOut.getLong(0) * 100L
+            val user   = userOut.getLong(0) * 100L
             // Kernel time INCLUDES idle on Windows, so system time is kernel minus idle.
             h.cpuUser.observe(user)
             h.cpuSystem.observe(kernel - idle)
@@ -76,14 +76,14 @@ final private[machine] class MachineWindows(h: MachineHandles, s: MachineSampler
         if WindowsBindings.fillMemoryStatus(b, memOut) then
             // Index 1 is ullTotalPhys and index 2 ullAvailPhys. Windows exposes no distinct free-versus-
             // available figure, so memory.free is not written.
-            h.memTotal.set(memOut.get(1))
-            h.memAvailable.observe(memOut.get(2))
+            h.memTotal.set(memOut.getLong(1))
+            h.memAvailable.observe(memOut.getLong(2))
             // Indexes 3 and 4 are ullTotalPageFile and ullAvailPageFile: the system COMMIT LIMIT (physical
             // memory plus the page file) and its remainder, not a page-file-only figure the way Linux
             // SwapTotal and SwapFree are. Windows exposes no narrower swap concept, so the commit limit is
             // the closest honest mapping and is reported as-is.
-            h.swapTotal.set(memOut.get(3))
-            h.swapFree.observe(memOut.get(4))
+            h.swapTotal.set(memOut.getLong(3))
+            h.swapFree.observe(memOut.getLong(4))
         end if
     end readMemoryAndSwap
 

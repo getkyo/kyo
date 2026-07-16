@@ -55,6 +55,118 @@ final class Buffer[A] private[ffi] (
         layout.write(underlying, i.toLong * layout.size, v)
     end set
 
+    /** Read the `Long` element at `i`, bypassing the [[kyo.internal.UnsafeLayout]] typeclass dispatch [[get]]
+      * goes through. `get`/`set` box every primitive through that generic dispatch (type erasure), which a hot
+      * read/compare loop cannot afford; this calls the underlying buffer's own non-generic primitive accessor
+      * directly, avoiding that boxing on every platform. Callable only when `A` is provably `Long`, which the
+      * compiler enforces via the evidence parameter, so it can never misread a differently-typed buffer's
+      * bytes. Same bounds/closed checks as [[get]].
+      */
+    def getLong(i: Int)(using ev: A =:= Long, allow: AllowUnsafe): Long =
+        core.checkOpen()
+        core.checkIndex(i)
+        underlying.getLong(i.toLong * layout.size)
+    end getLong
+
+    /** Write the `Long` `v` at index `i`, bypassing the typeclass dispatch [[set]] goes through. See
+      * [[getLong]] for why.
+      */
+    def setLong(i: Int, v: Long)(using ev: A =:= Long, allow: AllowUnsafe): Unit =
+        core.checkOpen()
+        core.checkIndex(i)
+        underlying.setLong(i.toLong * layout.size, v)
+    end setLong
+
+    /** Read the `Int` element at `i`, bypassing the typeclass dispatch [[get]] goes through. See [[getLong]]
+      * for why.
+      */
+    def getInt(i: Int)(using ev: A =:= Int, allow: AllowUnsafe): Int =
+        core.checkOpen()
+        core.checkIndex(i)
+        underlying.getInt(i.toLong * layout.size)
+    end getInt
+
+    /** Write the `Int` `v` at index `i`, bypassing the typeclass dispatch [[set]] goes through. See
+      * [[getLong]] for why.
+      */
+    def setInt(i: Int, v: Int)(using ev: A =:= Int, allow: AllowUnsafe): Unit =
+        core.checkOpen()
+        core.checkIndex(i)
+        underlying.setInt(i.toLong * layout.size, v)
+    end setInt
+
+    /** Read the `Short` element at `i`, bypassing the typeclass dispatch [[get]] goes through. See [[getLong]]
+      * for why.
+      */
+    def getShort(i: Int)(using ev: A =:= Short, allow: AllowUnsafe): Short =
+        core.checkOpen()
+        core.checkIndex(i)
+        underlying.getShort(i.toLong * layout.size)
+    end getShort
+
+    /** Write the `Short` `v` at index `i`, bypassing the typeclass dispatch [[set]] goes through. See
+      * [[getLong]] for why.
+      */
+    def setShort(i: Int, v: Short)(using ev: A =:= Short, allow: AllowUnsafe): Unit =
+        core.checkOpen()
+        core.checkIndex(i)
+        underlying.setShort(i.toLong * layout.size, v)
+    end setShort
+
+    /** Read the `Double` element at `i`, bypassing the typeclass dispatch [[get]] goes through. See
+      * [[getLong]] for why.
+      */
+    def getDouble(i: Int)(using ev: A =:= Double, allow: AllowUnsafe): Double =
+        core.checkOpen()
+        core.checkIndex(i)
+        underlying.getDouble(i.toLong * layout.size)
+    end getDouble
+
+    /** Write the `Double` `v` at index `i`, bypassing the typeclass dispatch [[set]] goes through. See
+      * [[getLong]] for why.
+      */
+    def setDouble(i: Int, v: Double)(using ev: A =:= Double, allow: AllowUnsafe): Unit =
+        core.checkOpen()
+        core.checkIndex(i)
+        underlying.setDouble(i.toLong * layout.size, v)
+    end setDouble
+
+    /** Read the `Float` element at `i`, bypassing the typeclass dispatch [[get]] goes through. See [[getLong]]
+      * for why.
+      */
+    def getFloat(i: Int)(using ev: A =:= Float, allow: AllowUnsafe): Float =
+        core.checkOpen()
+        core.checkIndex(i)
+        underlying.getFloat(i.toLong * layout.size)
+    end getFloat
+
+    /** Write the `Float` `v` at index `i`, bypassing the typeclass dispatch [[set]] goes through. See
+      * [[getLong]] for why.
+      */
+    def setFloat(i: Int, v: Float)(using ev: A =:= Float, allow: AllowUnsafe): Unit =
+        core.checkOpen()
+        core.checkIndex(i)
+        underlying.setFloat(i.toLong * layout.size, v)
+    end setFloat
+
+    /** Read the `Byte` element at `i`, bypassing the typeclass dispatch [[get]] goes through. See [[getLong]]
+      * for why.
+      */
+    def getByte(i: Int)(using ev: A =:= Byte, allow: AllowUnsafe): Byte =
+        core.checkOpen()
+        core.checkIndex(i)
+        underlying.getByte(i.toLong * layout.size)
+    end getByte
+
+    /** Write the `Byte` `v` at index `i`, bypassing the typeclass dispatch [[set]] goes through. See
+      * [[getLong]] for why.
+      */
+    def setByte(i: Int, v: Byte)(using ev: A =:= Byte, allow: AllowUnsafe): Unit =
+        core.checkOpen()
+        core.checkIndex(i)
+        underlying.setByte(i.toLong * layout.size, v)
+    end setByte
+
     /** Release the underlying memory. Idempotent -- subsequent calls are no-ops. */
     def close()(using AllowUnsafe): Unit =
         // For borrowed buffers `close` must be a true no-op -- including not flipping the closed flag --

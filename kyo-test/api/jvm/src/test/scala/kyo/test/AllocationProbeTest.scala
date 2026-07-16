@@ -28,6 +28,10 @@ class AllocationProbeTest extends AsyncFreeSpec with NonImplicitAssertions:
     private val warmupIters   = 20000
     private val measuredIters = 2000
 
+    // The probe checks the best of several independent post-warmup measurement windows (see
+    // AllocationProbe's `trials`), so the op runs warmupIters + trials * measuredIters times total.
+    private val trials = 5
+
     private val allocBean: ThreadMXBean =
         ManagementFactory.getThreadMXBean.asInstanceOf[ThreadMXBean]
 
@@ -40,7 +44,7 @@ class AllocationProbeTest extends AsyncFreeSpec with NonImplicitAssertions:
                     AllocationProbe.assertBoundedPerOp(warmupIters, measuredIters, 0.0) {
                         acc(0) = acc(0) + 1L
                     }
-                    assert(acc(0) == (warmupIters + measuredIters).toLong)
+                    assert(acc(0) == (warmupIters + trials * measuredIters).toLong)
                 }
         }.map {
             case _: TestResult.Passed => succeed
@@ -53,8 +57,9 @@ class AllocationProbeTest extends AsyncFreeSpec with NonImplicitAssertions:
             new kyo.test.Test[Any]:
                 "allocating" in {
                     AllocationProbe.assertBoundedPerOp(warmupIters, measuredIters, 0.0) {
-                        // 1 KiB per call: far above the JIT's scalar-replacement size limit, so this
-                        // allocation reaches the thread counter.
+                        // 1 KiB per call, on every call: the best-of-trials minimum cannot filter a
+                        // systematic per-op allocation, since it is identical (and far above the bound) in
+                        // every one of the trials, not just a spike confined to one of them.
                         val fresh = new Array[Byte](1024)
                         fresh(0) = 1
                         fresh
@@ -75,6 +80,28 @@ class AllocationProbeTest extends AsyncFreeSpec with NonImplicitAssertions:
                 )
                 succeed
             case other => fail(s"Expected Failed for a 1 KiB-per-op allocation at bound 0, got $other")
+        }
+    }
+
+    "a spike confined to a single trial is filtered by the best-of-trials minimum" in {
+        LeafHarness.runLeaf(Chunk(0), failOnNoAssertion = true) {
+            new kyo.test.Test[Any]:
+                "one-off-spike" in {
+                    val calls = new Array[Long](1)
+                    AllocationProbe.assertBoundedPerOp(warmupIters, measuredIters, 0.0) {
+                        calls(0) += 1
+                        // Allocates only during the first trial's measured window (right after warmup),
+                        // simulating a one-off JIT background-compile spike; warmup and the remaining four
+                        // trials are genuinely non-allocating. If the probe checked a single window, or the
+                        // MAXIMUM across trials, this op would fail; the minimum across trials filters it.
+                        if calls(0) > warmupIters && calls(0) <= warmupIters + measuredIters then
+                            discard(new Array[Byte](1024))
+                    }
+                }
+        }.map {
+            case _: TestResult.Passed => succeed
+            case other =>
+                fail(s"Expected Passed: a spike confined to one trial must be filtered by the minimum, got $other")
         }
     }
 

@@ -86,7 +86,7 @@ private[machine] object WindowsBindings
       * read the SAME filled buffer from ONE call per tick.
       */
     def fillMemoryStatus(b: WindowsBindings, out: Buffer[Long])(using AllowUnsafe): Boolean =
-        out.set(0, memoryStatusExSize)
+        out.setLong(0, memoryStatusExSize)
         b.globalMemoryStatus(out) != 0
     end fillMemoryStatus
 

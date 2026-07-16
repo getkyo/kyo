@@ -147,16 +147,23 @@ class MachineLinuxTest extends kyo.test.Test[Any]:
             val fixture =
                 "MemTotal:       16384 kB\nMemAvailable:    8192 kB\nMemFree:  4096 kB\nSwapTotal:  2048 kB\nSwapFree: 1024 kB\n"
             val (fixtureBytes, fixtureLen) = span(fixture)
+            // memTotal/swapTotal are LongGaugeCells: StatsRegistry keeps only the first-ever-registered
+            // cell for a path canonical for the process lifetime, so writing this fixture's tiny sizes
+            // into the shared "machine" scope would poison every OTHER suite's later poll of the same
+            // path (including a real-host acceptance leaf reading the SAME well-known path elsewhere in
+            // this module). A uniquely-scoped MachineHandles keeps the fixture write contained; the
+            // decode's own parsing is verified directly against the same scan primitive and scale
+            // LinuxDecoders.meminfo uses, decoupled from the gauge either way.
             for
-                handles <- MachineHandles.init
-                dir     <- Path.tempDir("kyo-stats-machine-linux-meminfo")
-                file = dir / "meminfo"
+                dir <- Path.tempDir("kyo-stats-machine-linux-meminfo")
+                handles = MachineHandles.initForTest(Stat.initScope("mlinuxtest-meminfo-decode"), 8L)
+                file    = dir / "meminfo"
                 _ <- file.write(fixture)
                 sampler           = new MachineSampler(handles)
                 slot              = sampler.openSlot(file)
-                memAvailSumBefore = histogramSummary("machine", "memory", "available").sum
-                memFreeSumBefore  = histogramSummary("machine", "memory", "free").sum
-                swapFreeSumBefore = histogramSummary("machine", "swap", "free").sum
+                memAvailSumBefore = histogramSummary("mlinuxtest-meminfo-decode", "memory", "available").sum
+                memFreeSumBefore  = histogramSummary("mlinuxtest-meminfo-decode", "memory", "free").sum
+                swapFreeSumBefore = histogramSummary("mlinuxtest-meminfo-decode", "swap", "free").sum
                 decode = new MachineSampler.Decode:
                     def apply(b: Span[Byte], n: Int)(using AllowUnsafe): Unit =
                         callCount += 1
@@ -166,51 +173,46 @@ class MachineLinuxTest extends kyo.test.Test[Any]:
             yield
                 assert(ok)
                 assert(callCount == 1)
-                // memTotal/swapTotal are LongGaugeCells rooted at the shared "machine" scope every leaf's
-                // own MachineHandles.init resolves to; StatsRegistry keeps only the first-ever-registered
-                // cell for a path canonical for the process lifetime, so a poll here could read a value a
-                // different leaf (in this file or another) registered first. The decode's own parsing is
-                // instead verified directly against the same scan primitive and scale LinuxDecoders.meminfo
-                // uses, decoupled from the shared gauge.
                 assert(LinuxScan.keyedLong(fixtureBytes, fixtureLen, LinuxScan.ascii("MemTotal:"), 0, 1024L) == 16777216L)
                 assert(LinuxScan.keyedLong(fixtureBytes, fixtureLen, LinuxScan.ascii("SwapTotal:"), 0, 1024L) == 2097152L)
-                assert(histogramSummary("machine", "memory", "available").sum - memAvailSumBefore == 8388608.0)
-                assert(histogramSummary("machine", "memory", "free").sum - memFreeSumBefore == 4194304.0)
-                assert(histogramSummary("machine", "swap", "free").sum - swapFreeSumBefore == 1048576.0)
+                assert(histogramSummary("mlinuxtest-meminfo-decode", "memory", "available").sum - memAvailSumBefore == 8388608.0)
+                assert(histogramSummary("mlinuxtest-meminfo-decode", "memory", "free").sum - memFreeSumBefore == 4194304.0)
+                assert(histogramSummary("mlinuxtest-meminfo-decode", "swap", "free").sum - swapFreeSumBefore == 1048576.0)
             end for
         }
 
         "a meminfo line missing MemAvailable and missing the swap lines routes those cells to Absent, never a fabricated 0" in {
             val fixture                    = "MemTotal:  1048576 kB\nMemFree:  204800 kB\n"
             val (fixtureBytes, fixtureLen) = span(fixture)
+            // See the meminfo-decode leaf above: a uniquely-scoped MachineHandles keeps this fixture's
+            // gauge writes from poisoning the shared "machine" scope's memTotal/swapTotal for a sibling
+            // suite's later poll.
             for
-                handles <- MachineHandles.init
-                dir     <- Path.tempDir("kyo-stats-machine-linux-meminfo-missing")
-                file = dir / "meminfo"
+                dir <- Path.tempDir("kyo-stats-machine-linux-meminfo-missing")
+                handles = MachineHandles.initForTest(Stat.initScope("mlinuxtest-meminfo-missing"), 8L)
+                file    = dir / "meminfo"
                 _ <- file.write(fixture)
                 sampler                   = new MachineSampler(handles)
                 slot                      = sampler.openSlot(file)
-                memFreeSumBefore          = histogramSummary("machine", "memory", "free").sum
-                availCountBefore          = histogramSummary("machine", "memory", "available").count
-                swapFreeCountBefore       = histogramSummary("machine", "swap", "free").count
-                swapTotalRegisteredBefore = gaugeRegistered("machine", "swap", "total")
+                memFreeSumBefore          = histogramSummary("mlinuxtest-meminfo-missing", "memory", "free").sum
+                availCountBefore          = histogramSummary("mlinuxtest-meminfo-missing", "memory", "available").count
+                swapFreeCountBefore       = histogramSummary("mlinuxtest-meminfo-missing", "swap", "free").count
+                swapTotalRegisteredBefore = gaugeRegistered("mlinuxtest-meminfo-missing", "swap", "total")
                 decode = new MachineSampler.Decode:
                     def apply(b: Span[Byte], n: Int)(using AllowUnsafe): Unit = LinuxDecoders.meminfo(b, n, handles)
                 ok = sampler.readInto(slot, decode)
                 _ <- dir.removeAll
             yield
                 assert(ok)
-                // `memTotal` is a LongGaugeCell rooted at the shared "machine" scope that every leaf's own
-                // MachineHandles.init resolves to; StatsRegistry keeps only the first-ever-registered cell
-                // for a path canonical for the process lifetime, so a poll here would read whichever leaf
-                // (in this file or another) happened to register first, not this leaf's own fixture. The
-                // decode's own parsing is instead verified directly against the same scan primitive and
-                // scale LinuxDecoders.meminfo uses, decoupled from the shared gauge.
                 assert(LinuxScan.keyedLong(fixtureBytes, fixtureLen, LinuxScan.ascii("MemTotal:"), 0, 1024L) == 1073741824L)
-                assert(histogramSummary("machine", "memory", "free").sum - memFreeSumBefore == 209715200.0)
-                assert(histogramSummary("machine", "memory", "available").count == availCountBefore) // structural absence
-                assert(histogramSummary("machine", "swap", "free").count == swapFreeCountBefore)     // structural absence
-                assert(gaugeRegistered("machine", "swap", "total") == swapTotalRegisteredBefore)     // no new registration
+                assert(histogramSummary("mlinuxtest-meminfo-missing", "memory", "free").sum - memFreeSumBefore == 209715200.0)
+                assert(histogramSummary(
+                    "mlinuxtest-meminfo-missing",
+                    "memory",
+                    "available"
+                ).count == availCountBefore)                                                                        // structural absence
+                assert(histogramSummary("mlinuxtest-meminfo-missing", "swap", "free").count == swapFreeCountBefore) // structural absence
+                assert(gaugeRegistered("mlinuxtest-meminfo-missing", "swap", "total") == swapTotalRegisteredBefore) // no new registration
             end for
         }
     }

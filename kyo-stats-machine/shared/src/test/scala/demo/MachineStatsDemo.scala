@@ -87,7 +87,9 @@ object MachineStatsDemo:
             memoryTotalBytes = valueOf("machine.memory.total"),
             diskMounts = diskMounts,
             loadOne = valueOf("machine.load.one"),
-            cpuTotalNs = Maybe.fromOption(sampled.find(_.path == "machine.cpu.total.total").map(_.value.toLong))
+            // The cpu.total.rate histogram's running sum carries the cumulative cpu-time total; no
+            // separate cumulative Counter exists for it (see MachineHandles' cell-taxonomy scaladoc).
+            cpuTotalNs = Maybe.fromOption(sampled.find(_.path == "machine.cpu.total.rate").map(_.sum.toLong))
         )
     end report
 
@@ -105,16 +107,20 @@ object MachineStatsDemo:
             Present(s"machine.memory.total implausibly small (${r.memoryTotalBytes}); expected > 256 MiB of real RAM")
         else if r.diskMounts.isEmpty then
             Present("no machine.disk.<mount> family: the sampler observed no physical mount")
-        else if r.loadOne.isEmpty then
-            Present("machine.load.one absent: macOS exposes load average, so it must be present")
+        // Windows has no load-average concept; Linux and macOS both expose one, so only those two hosts
+        // require it present.
+        else if r.os != "Windows" && r.loadOne.isEmpty then
+            Present(s"machine.load.one absent: ${r.os} exposes load average, so it must be present")
         else if r.cpuTotalNs.isEmpty then
-            Present("machine.cpu.total.total absent: the sampler did not accumulate cpu-time")
+            Present("machine.cpu.total.rate absent: the sampler did not accumulate cpu-time")
         else if r.cpuTotalNs.exists(_ <= 0L) then
-            Present(s"machine.cpu.total.total not advancing (${r.cpuTotalNs}); cumulative cpu-time must be > 0 after ticks")
-        else if r.cgroupPresent then
-            Present("machine.cgroup.* present on a non-Linux host: graceful degradation violated (cgroup must be Absent)")
-        else if r.pressurePresent then
-            Present("machine.pressure.* present on a non-Linux host: graceful degradation violated (PSI must be Absent)")
+            Present(s"machine.cpu.total.rate not advancing (${r.cpuTotalNs}); cumulative cpu-time must be > 0 after ticks")
+        // cgroup and PSI are Linux-only families: present is the correct outcome there, and their absence
+        // must hold everywhere else.
+        else if r.os != "Linux" && r.cgroupPresent then
+            Present(s"machine.cgroup.* present on a non-Linux host (${r.os}): graceful degradation violated (cgroup must be Absent)")
+        else if r.os != "Linux" && r.pressurePresent then
+            Present(s"machine.pressure.* present on a non-Linux host (${r.os}): graceful degradation violated (PSI must be Absent)")
         else Absent
     end validate
 
@@ -135,8 +141,8 @@ object MachineStatsDemoApp extends KyoApp:
             _ <- Kyo.foreachDiscard(report.sampled) { m =>
                 Console.printLine(f"  ${m.path}%-40s ${m.kind}%-14s value=${m.value}%,.1f  obs=${m.observations}")
             }
-            _ <- Console.printLine(s"cgroup family present: ${report.cgroupPresent} (macOS expects false)")
-            _ <- Console.printLine(s"PSI family present:    ${report.pressurePresent} (macOS expects false)")
+            _ <- Console.printLine(s"cgroup family present: ${report.cgroupPresent} (Linux-only)")
+            _ <- Console.printLine(s"PSI family present:    ${report.pressurePresent} (Linux-only)")
             _ <- MachineStatsDemo.validate(report) match
                 case Absent       => Console.printLine("\nvalidation: OK (auto-load fed real host metrics into kyo.Stat)")
                 case Present(msg) => Console.printLineErr(s"\nvalidation FAILED: $msg")

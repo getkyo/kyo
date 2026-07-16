@@ -116,7 +116,7 @@ class MachineSamplerTest extends kyo.test.Test[Any]:
             }
         }
 
-        "a never-completing readDisks leaves the fast cells advancing at the anchored 1 Hz" in {
+        "a never-completing readDisks leaves the fast cells advancing at the anchored 1 Hz".notJs in {
             val tickCount    = AtomicLong.Unsafe.init(0L)
             val innerSampler = AtomicRef.Unsafe.init(Maybe.empty[MachineSampler])
             Clock.withTimeControl { tc =>
@@ -128,10 +128,12 @@ class MachineSamplerTest extends kyo.test.Test[Any]:
                         def read()(using AllowUnsafe): Unit =
                             discard(tickCount.getAndSet(tickCount.get() + 1L))
                         def readDisks()(using AllowUnsafe): Unit =
-                            // Parks a real worker thread on the channel's take, exactly the shape a genuinely
+                            // Parks a REAL OS worker thread on the channel's take, exactly the shape a genuinely
                             // blocking statvfs/GetDiskFreeSpaceEx syscall has: no kyo suspension point the
-                            // Async.timeout race can preempt mid-flight. The gate is fed only at teardown
-                            // (below), so this call never returns during the test's own assertions.
+                            // Async.timeout race can preempt mid-flight. This hazard, and therefore this leaf,
+                            // is JVM/Native-only: JS has no OS thread to park, so `.block` cannot reproduce an
+                            // uninterruptible wait there. The gate is fed only at teardown (below), so this call
+                            // never returns during the test's own assertions.
                             given Frame = Frame.internal
                             discard(Sync.Unsafe.evalOrThrow(Fiber.initUnscoped(gate.take).flatMap(_.block(Duration.Infinity))))
                         end readDisks

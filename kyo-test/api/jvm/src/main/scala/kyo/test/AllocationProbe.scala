@@ -49,10 +49,19 @@ object AllocationProbe:
             def enable(): Unit                      = bean.setThreadAllocatedMemoryEnabled(true)
             def currentThreadAllocatedBytes(): Long = bean.getCurrentThreadAllocatedBytes()
 
-    /** Runs `op` `warmupIters` times to warm the JIT, then measures thread-allocated bytes before and
-      * after `measuredIters` further runs and requires `(after - before) / measuredIters <=
-      * maxBytesPerOp`. When the allocation counter is unsupported or cannot be enabled the probe FAILS
-      * LOUD rather than passing silently: an unmeasurable claim is not a satisfied one.
+    /** Independent post-warmup measurement windows the bound is checked against the MINIMUM of. A JIT
+      * background-compile finishing partway through a measurement window (a live race under CPU
+      * contention, not something warmup alone can rule out) attributes its one-off bookkeeping to at most
+      * one window; a genuine per-op allocation is deterministic and shows up in every window, so taking
+      * the minimum filters the former without hiding the latter.
+      */
+    private val trials = 5
+
+    /** Runs `op` `warmupIters` times to warm the JIT, then measures thread-allocated bytes across several
+      * independent windows of `measuredIters` further runs each and requires the best-of-[[trials]]
+      * `(after - before) / measuredIters <= maxBytesPerOp`. When the allocation counter is unsupported or
+      * cannot be enabled the probe FAILS LOUD rather than passing silently: an unmeasurable claim is not a
+      * satisfied one.
       */
     def assertBoundedPerOp[A](warmupIters: Int, measuredIters: Int, maxBytesPerOp: Double)(
         op: => A
@@ -75,13 +84,10 @@ object AllocationProbe:
         else
             if !counter.isEnabled then counter.enable()
             iterate(warmupIters, op)
-            val before = counter.currentThreadAllocatedBytes()
-            iterate(measuredIters, op)
-            val after = counter.currentThreadAllocatedBytes()
-            val perOp = (after - before).toDouble / measuredIters
-            if perOp > maxBytesPerOp then
+            val minPerOp = minPerOpAcrossTrials(counter, op, measuredIters)
+            if minPerOp > maxBytesPerOp then
                 violation(
-                    s"per-op allocation $perOp bytes exceeds the bound $maxBytesPerOp (measured over $measuredIters ops)"
+                    s"per-op allocation $minPerOp bytes exceeds the bound $maxBytesPerOp (measured over $measuredIters ops)"
                 )
             end if
         end if
@@ -101,5 +107,21 @@ object AllocationProbe:
                 loop(i + 1)
         loop(0)
     end iterate
+
+    /** Runs [[trials]] independent post-warmup windows of `measuredIters` calls each and returns the
+      * minimum measured `(after - before) / measuredIters`, per [[trials]]'s rationale.
+      */
+    private def minPerOpAcrossTrials[A](counter: AllocationCounter, op: => A, measuredIters: Int): Double =
+        @scala.annotation.tailrec
+        def loop(trial: Int, minPerOp: Double): Double =
+            if trial >= trials then minPerOp
+            else
+                val before = counter.currentThreadAllocatedBytes()
+                iterate(measuredIters, op)
+                val after = counter.currentThreadAllocatedBytes()
+                val perOp = (after - before).toDouble / measuredIters
+                loop(trial + 1, math.min(minPerOp, perOp))
+        loop(0, Double.MaxValue)
+    end minPerOpAcrossTrials
 
 end AllocationProbe

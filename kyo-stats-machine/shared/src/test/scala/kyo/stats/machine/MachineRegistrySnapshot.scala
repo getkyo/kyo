@@ -19,10 +19,13 @@ import kyo.stats.internal.StatsRegistry
   */
 object MachineRegistrySnapshot:
 
-    /** One machine.* metric: dotted path, kind, a representative value, and the observation count that proves
-      * the sampler ticked (histogram bucket count, or the cumulative counter/gauge value).
+    /** One machine.* metric: dotted path, kind, a representative value, the observation count that proves
+      * the sampler ticked (histogram bucket count, or the cumulative counter/gauge value), and the running
+      * sum. For a histogram, `sum` is the summary's own running sum (the cumulative total a `.rate`
+      * histogram carries in place of a separate cumulative Counter); for a counter, counter-gauge, or gauge,
+      * `sum` degenerates to the same number as `value`, since those kinds have no separate sum concept.
       */
-    case class Reading(path: String, kind: String, value: Double, observations: Long) derives CanEqual
+    case class Reading(path: String, kind: String, value: Double, observations: Long, sum: Double) derives CanEqual
 
     /** Every machine.* metric currently live in the registry, sorted by path. */
     def read(using AllowUnsafe): Chunk[Reading] =
@@ -34,7 +37,7 @@ object MachineRegistrySnapshot:
             if h != null && path.headOption.contains("machine") then
                 val s = h.summary()
                 if s.count > 0 then
-                    val _ = readings.addOne(Reading(path.mkString("."), "histogram", s.max, s.count))
+                    val _ = readings.addOne(Reading(path.mkString("."), "histogram", s.max, s.count, s.sum))
             end if
         }
         registry.counters.map.forEach { (path, tuple) =>
@@ -46,20 +49,21 @@ object MachineRegistrySnapshot:
                 // cumulative accessor on UnsafeCounter (get()/delta() both drain, by design).
                 val cumulative = c.delta()
                 if cumulative > 0L then
-                    val _ = readings.addOne(Reading(path.mkString("."), "counter", cumulative.toDouble, cumulative))
+                    val _ =
+                        readings.addOne(Reading(path.mkString("."), "counter", cumulative.toDouble, cumulative, cumulative.toDouble))
             end if
         }
         registry.counterGauges.map.forEach { (path, tuple) =>
             val g = tuple._1.get()
             if g != null && path.headOption.contains("machine") then
                 val v = g.collect()
-                val _ = readings.addOne(Reading(path.mkString("."), "counter-gauge", v.toDouble, v))
+                val _ = readings.addOne(Reading(path.mkString("."), "counter-gauge", v.toDouble, v, v.toDouble))
         }
         registry.gauges.map.forEach { (path, tuple) =>
             val g = tuple._1.get()
             if g != null && path.headOption.contains("machine") then
                 val v = g.collect()
-                val _ = readings.addOne(Reading(path.mkString("."), "gauge", v, 1L))
+                val _ = readings.addOne(Reading(path.mkString("."), "gauge", v, 1L, v))
         }
 
         readings.result().sortBy(_.path)

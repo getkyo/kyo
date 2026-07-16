@@ -9,9 +9,12 @@ import kyo.ffi.*
   * array struct fields the FFI struct layer cannot read into flat primitive out-params.
   *
   * The four out-buffers are RETAINED, allocated once at construction and closed by the sampler's Scope
-  * finalizer: `Buffer.alloc` opens a fresh memory arena per call, so allocating them per read allocated
-  * four arenas on every tick. cgroup and PSI are Linux-only and are never written here, and macOS has no
-  * iowait or steal concept, so those cells are never written either and their series are never registered.
+  * finalizer: `Buffer.alloc` opens a fresh memory arena per call, so allocating them per read would allocate
+  * four arenas on every tick. Every read is through `Buffer`'s non-generic `getLong`/`setLong`/`getDouble`
+  * accessors rather than the generic `get`/`set`, which box every element through the `UnsafeLayout[A]`
+  * typeclass dispatch (JVM erasure); the non-generic accessors bypass that dispatch, so a steady read
+  * allocates nothing. cgroup and PSI are Linux-only and are never written here, and macOS has no iowait or
+  * steal concept, so those cells are never written either and their series are never registered.
   */
 final private[machine] class MachineMacos(h: MachineHandles, s: MachineSampler)(using AllowUnsafe) extends Machine:
 
@@ -53,10 +56,10 @@ final private[machine] class MachineMacos(h: MachineHandles, s: MachineSampler)(
 
     private[machine] def readCpu(b: MacosBindings)(using AllowUnsafe): Unit =
         if b.hostCpuLoad(cpuOut) == 0 then
-            val user   = cpuOut.get(0)
-            val system = cpuOut.get(1)
-            val idle   = cpuOut.get(2)
-            val nice   = cpuOut.get(3)
+            val user   = cpuOut.getLong(0)
+            val system = cpuOut.getLong(1)
+            val idle   = cpuOut.getLong(2)
+            val nice   = cpuOut.getLong(3)
             h.cpuUser.observe(user)
             h.cpuSystem.observe(system)
             h.cpuIdle.observe(idle)
@@ -66,24 +69,24 @@ final private[machine] class MachineMacos(h: MachineHandles, s: MachineSampler)(
 
     private[machine] def readMemory(b: MacosBindings)(using AllowUnsafe): Unit =
         if b.vmStatistics(memOut) == 0 then
-            h.memTotal.set(memOut.get(0))
-            h.memFree.observe(memOut.get(1))
-            h.memAvailable.observe(memOut.get(2))
+            h.memTotal.set(memOut.getLong(0))
+            h.memFree.observe(memOut.getLong(1))
+            h.memAvailable.observe(memOut.getLong(2))
         end if
     end readMemory
 
     private[machine] def readSwap(b: MacosBindings)(using AllowUnsafe): Unit =
         if b.swapUsage(swapOut) == 0 then
-            h.swapTotal.set(swapOut.get(0))
-            h.swapFree.observe(swapOut.get(1))
+            h.swapTotal.set(swapOut.getLong(0))
+            h.swapFree.observe(swapOut.getLong(1))
         end if
     end readSwap
 
     private[machine] def readLoad(b: MacosBindings)(using AllowUnsafe): Unit =
         if b.getloadavg(loadOut, 3) == 3 then
-            h.loadOne.set(loadOut.get(0))
-            h.loadFive.set(loadOut.get(1))
-            h.loadFifteen.set(loadOut.get(2))
+            h.loadOne.set(loadOut.getDouble(0))
+            h.loadFive.set(loadOut.getDouble(1))
+            h.loadFifteen.set(loadOut.getDouble(2))
         end if
     end readLoad
 

@@ -139,20 +139,16 @@ class LinuxDiskTest extends kyo.test.Test[Any]:
 
     "mount-table change fingerprint" - {
 
-        "a mount-table change rebuilds the retained store set and closes the old buffers" in {
+        "an unchanged span matches the retained fingerprint in place, and a byte-differing span does not" in {
             val (bytesA, lenA) = span("/dev/sda1 / ext4 rw 0 0\n")
             val (bytesB, lenB) = span("/dev/sda1 / ext4 rw 0 0\n/dev/sdb1 /data ext4 rw 0 0\n")
-            val snapA          = LinuxDisk.snapshot(bytesA, lenA)
-            val snapB          = LinuxDisk.snapshot(bytesB, lenB)
-            assert(!java.util.Arrays.equals(snapA.raw, snapB.raw)) // a byte-differing fingerprint
-            assert(snapA.mounts == Chunk("/"))
-            assert(snapB.mounts == Chunk("/", "/data"))
-            // Mirrors LinuxDisk.refresh's own close-then-rebuild shape on a fingerprint change: the old
-            // buffer closes cleanly before the new Store set is built.
-            val oldOut = Buffer.alloc[Long](16)
-            oldOut.close()
-            val newOut = Buffer.alloc[Long](16)
-            newOut.close()
+            val fingerprintA   = bytesA.toArray.take(lenA)
+            // Mirrors LinuxDisk.decodeMounts's own in-place check: a re-read of the same content matches
+            // without touching the mount list, and a genuinely differing read is caught before any parse.
+            assert(LinuxDisk.sameFingerprint(bytesA, lenA, fingerprintA))
+            assert(!LinuxDisk.sameFingerprint(bytesB, lenB, fingerprintA))
+            assert(LinuxDisk.parseMounts(bytesA, lenA) == Chunk("/"))
+            assert(LinuxDisk.parseMounts(bytesB, lenB) == Chunk("/", "/data"))
         }
     }
 

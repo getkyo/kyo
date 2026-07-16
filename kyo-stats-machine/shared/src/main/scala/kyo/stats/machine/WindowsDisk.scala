@@ -107,14 +107,16 @@ private[machine] object WindowsDisk:
       * retained cells. Nothing is returned: no tuple, no boxed value, no carrier. The three out-params are
       * bytes available to the caller, total bytes, and total free bytes; total is the second and free is the
       * third (the total free space, not the caller-available space). The out-buffers are the store's RETAINED
-      * 1-long buffers, reused every read, so this read allocates none. A failed call, or a contained throw,
-      * writes nothing, so that drive records no value for this read.
+      * 1-long buffers, reused every read, and read back through `Buffer`'s non-generic `getLong` accessor
+      * rather than the generic `get`, which boxes every element through the `UnsafeLayout[A]` typeclass
+      * dispatch (JVM erasure), so this read allocates none. A failed call, or a contained throw, writes
+      * nothing, so that drive records no value for this read.
       */
     private[machine] def diskFreeInto(b: WindowsBindings, store: Store)(using AllowUnsafe): Unit =
         try
             if b.diskFreeSpace(store.drive, store.availToCaller, store.total, store.totalFree) != 0 then
-                store.cell.total.set(store.total.get(0))
-                store.cell.free.observe(store.totalFree.get(0))
+                store.cell.total.set(store.total.getLong(0))
+                store.cell.free.observe(store.totalFree.getLong(0))
             end if
         catch
             // The LinkageError arm is a containment boundary, not a swallowed bug: kernel32 does not exist

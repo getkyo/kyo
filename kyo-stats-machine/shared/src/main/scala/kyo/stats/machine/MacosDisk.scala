@@ -7,12 +7,14 @@ import kyo.ffi.*
   * through the statfs binding, and writes both into that mount's retained store cells. A per-mount statfs
   * failure skips only that mount; a failed or empty enumeration yields no mounts at all, never a throw.
   *
-  * The mount set is RETAINED: one `mounts` call fills a caller-owned buffer with NUL-separated
+  * The mount set is RETAINED: one `mounts` call refills the retained `mountsBuf` with NUL-separated
   * `<mount>\0<fstype>\0` pairs, and each physical mount gets one `Store` holding its statfs out-buffer and a
-  * direct reference to its cells, resolved once and rebuilt only when the mount table actually changes
-  * (detected by byte-comparing the enumeration buffer against a retained fingerprint). A steady disk read
-  * iterates those retained references and writes primitives straight into the cells: it consults the store
-  * map never, and allocates no out-buffer, so the disk path holds no per-read allocation.
+  * direct reference to its cells, resolved once and rebuilt only when the mount table actually changes. A
+  * steady disk read walks the refilled pairs' NUL terminators and byte-compares them against a retained
+  * fingerprint IN PLACE through `Buffer`'s non-generic `getByte` accessor, with no copy: only a mismatch
+  * copies the compared range into the new fingerprint, decodes the mount paths, and rebuilds the store set.
+  * A steady read therefore consults the store map never and allocates no out-buffer, no fingerprint copy
+  * and no decoded mount list, so the disk path holds no per-read allocation.
   *
   * The fstype allow and deny list is the real defense against a hung mount: a statfs against a dead network
   * mount blocks until the kernel gives up, and no timeout can interrupt a syscall that has no suspension
@@ -47,16 +49,18 @@ final private[machine] class MacosDisk(h: MachineHandles)(using AllowUnsafe):
     end close
 
     /** Re-derives the retained store set only when the mount table changed since the last read, so the store
-      * map is consulted at init and on a mount-table change, never on the steady read. On a change the old
-      * out-buffers are closed and one new `Store` per physical mount is built with a retained out-buffer and
-      * a direct reference to its cells. A failed or empty enumeration (a non-positive count, including the
+      * map is consulted at init and on a mount-table change, never on the steady read. The refilled pairs'
+      * byte range is located by walking NUL terminators only (no decode), then compared in place against
+      * the retained fingerprint; only a mismatch decodes the mount paths and rebuilds the store set, closing
+      * the old out-buffers first. A failed or empty enumeration (a non-positive count, including the
       * buffer-too-small -1) leaves the store set unchanged.
       */
     private def refresh(b: MacosBindings)(using AllowUnsafe): Unit =
         val count = b.mounts(mountsBuf, MacosDisk.MountsCap)
         if count > 0 then
-            val snap = MacosDisk.snapshot(mountsBuf, count)
-            if !java.util.Arrays.equals(snap.raw, fingerprint) then
+            val used = MacosDisk.usedBytes(mountsBuf, count)
+            if !MacosDisk.sameFingerprint(mountsBuf, used, fingerprint) then
+                val snap = MacosDisk.snapshot(mountsBuf, count)
                 stores.foreach(_.out.close())
                 val names = MachineHandles.storeNames(snap.mounts)
                 stores = Chunk.from(snap.mounts.indices.map { i =>
@@ -85,9 +89,37 @@ private[machine] object MacosDisk:
     final class Store(val mount: String, val out: Buffer[Long], val cell: MachineHandles.DiskStore)
 
     /** One enumeration read: the raw pair bytes retained as the change fingerprint, and the physical mount
-      * paths parsed once from them. Built on the mount-change path only, so it may allocate.
+      * paths decoded once from them. Built on the mount-change path only, so it may allocate.
       */
     final class Snapshot(val raw: Array[Byte], val mounts: Chunk[String])
+
+    /** Walks `count` NUL-separated pairs from buffer offset 0 and returns the offset just past the last
+      * pair, with no decoding: only NUL-terminator lookups through the non-boxing `getByte` accessor, so
+      * this walk allocates nothing. Bounds the in-place fingerprint compare before any decode.
+      */
+    private def usedBytes(buf: Buffer[Byte], count: Int)(using AllowUnsafe): Int =
+        @scala.annotation.tailrec
+        def loop(i: Int, at: Int): Int =
+            if i >= count then at
+            else
+                val mountEnd  = cStringEnd(buf, at)
+                val fstypeEnd = cStringEnd(buf, mountEnd + 1)
+                loop(i + 1, fstypeEnd + 1)
+        loop(0, 0)
+    end usedBytes
+
+    /** Byte-compares `buf[0, used)` against the retained `fingerprint` IN PLACE through the non-boxing
+      * `getByte` accessor: no copy, no allocation. A length mismatch short-circuits before any byte is
+      * read.
+      */
+    private def sameFingerprint(buf: Buffer[Byte], used: Int, fingerprint: Array[Byte])(using AllowUnsafe): Boolean =
+        @scala.annotation.tailrec
+        def loop(i: Int): Boolean =
+            if i >= used then true
+            else if buf.getByte(i) != fingerprint(i) then false
+            else loop(i + 1)
+        used == fingerprint.length && loop(0)
+    end sameFingerprint
 
     /** Pseudo and virtual filesystems plus network and remote filesystems, none enumerated (local physical
       * only). The network types are excluded because a statfs against a dead remote mount blocks until the
@@ -129,10 +161,13 @@ private[machine] object MacosDisk:
         new Snapshot(Buffer.copyToArray[Byte](buf, 0, used), mounts.result())
     end snapshot
 
-    /** Index of the NUL terminator at or after `at`. */
+    /** Index of the NUL terminator at or after `at`, read through the non-boxing `getByte` accessor so this
+      * scan allocates nothing (shared by the allocation-free `usedBytes` walk and the mismatch-branch
+      * `snapshot` decode).
+      */
     private def cStringEnd(buf: Buffer[Byte], at: Int)(using AllowUnsafe): Int =
         @scala.annotation.tailrec
-        def loop(i: Int): Int = if buf.get(i) == 0 then i else loop(i + 1)
+        def loop(i: Int): Int = if buf.getByte(i) == 0 then i else loop(i + 1)
         loop(at)
     end cStringEnd
 
@@ -144,15 +179,17 @@ private[machine] object MacosDisk:
       * retained cells. Nothing is returned: no tuple, no boxed value, no carrier of any kind, on any OS. A
       * failed call or a throw writes nothing, so that mount simply records no value this read (the whole
       * kyo-ffi binding surface is the throwing unsafe tier, and the caller bridges at its own call site). The
-      * out-buffer is the store's RETAINED 2-long buffer, reused every read, so this read allocates none.
+      * out-buffer is the store's RETAINED 2-long buffer, reused every read, and read back through `Buffer`'s
+      * non-generic `getLong` accessor rather than the generic `get`, which boxes every element through the
+      * `UnsafeLayout[A]` typeclass dispatch (JVM erasure), so this read allocates none.
       *
       * The shim projects `statfs` to [total, free] bytes: total at index 0, free at index 1.
       */
     private[machine] def statfsInto(b: MacosBindings, store: Store)(using AllowUnsafe): Unit =
         try
             if b.statfs(store.mount, store.out) == 0 then
-                store.cell.total.set(store.out.get(0))
-                store.cell.free.observe(store.out.get(1))
+                store.cell.total.set(store.out.getLong(0))
+                store.cell.free.observe(store.out.getLong(1))
             end if
         catch case ex: Throwable if scala.util.control.NonFatal(ex) => ()
     end statfsInto
