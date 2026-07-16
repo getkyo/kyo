@@ -419,6 +419,9 @@ final private[kyo] class NioReadHandle(channel: FileChannel) extends Path.ReadHa
     private var scanBuffer: java.nio.ByteBuffer = java.nio.ByteBuffer.wrap(scan)
 
     def readLong()(using AllowUnsafe): Long =
+        // readChunk and readLong share this channel's single OS position, so readLong reads from the start
+        // and then restores the caller's position, leaving an interleaved readChunk cursor undisturbed.
+        val resume = channel.position()
         position(0L)
         @scala.annotation.tailrec
         def fill(total: Int): Int =
@@ -434,6 +437,7 @@ final private[kyo] class NioReadHandle(channel: FileChannel) extends Path.ReadHa
             if n <= 0 then total else fill(total + n)
         end fill
         val len = fill(0)
+        position(resume)
         Path.ReadHandle.parseLeadingLong(scan, len)
     end readLong
 

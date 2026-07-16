@@ -355,6 +355,37 @@ class PathTest extends kyo.test.Test[Any]:
         end for
     }
 
+    "readLong reads from the start without disturbing an interleaved readChunk cursor" in {
+        import AllowUnsafe.embrace.danger
+        // A leading decimal token so readLong parses a real value, then known bytes so the interleaved
+        // readChunk cursor can be checked byte-for-byte.
+        val content = "12345 abcdefghij"
+        for
+            dir <- Path.tempDir("kyo-path-readlong-cursor")
+            file = dir / "readlong-cursor.txt"
+            _ <- file.write(content)
+        yield
+            val handle   = file.unsafe.openRead().getOrThrow
+            val expected = content.getBytes(StandardCharsets.US_ASCII)
+            try
+                val first   = new Array[Byte](5)
+                val firstN  = handle.readChunk(first).bytesRead
+                val parsed  = handle.readLong()
+                val second  = new Array[Byte](5)
+                val secondN = handle.readChunk(second).bytesRead
+                assert(firstN == 5)
+                assert(first.toList == expected.slice(0, 5).toList)
+                assert(parsed == 12345L)
+                // readLong rewinds to the start internally; the readChunk cursor must still resume at byte 5,
+                // so this chunk is bytes [5, 10). A cursor left at end-of-content instead would read the wrong
+                // window or hit EOF here.
+                assert(secondN == 5)
+                assert(second.toList == expected.slice(5, 10).toList)
+            finally handle.close()
+            end try
+        end for
+    }
+
     "readLines returns one element per line without trailing newlines" in {
         for
             dir <- Path.tempDir("kyo-path-read-test")

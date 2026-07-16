@@ -751,7 +751,11 @@ object Path extends PathPlatformSpecific:
         end extension
     end ReadResult
 
-    /** An open read channel returned by `Path.Unsafe.openRead`. Platform implementations provide the concrete class. */
+    /** An open read channel returned by `Path.Unsafe.openRead`. Platform implementations provide the concrete class.
+      *
+      * A handle is a single-consumer stateful resource: it carries a positional read cursor and a retained scan
+      * buffer, so it must never be shared across fibers or threads.
+      */
     abstract private[kyo] class ReadHandle:
         /** Reads up to `buffer.length` bytes into `buffer`. Returns a `ReadResult` that is either `Eof` or a positive byte count. */
         def readChunk(buffer: Array[Byte])(using AllowUnsafe): ReadResult
@@ -764,7 +768,8 @@ object Path extends PathPlatformSpecific:
           * `ReadHandle.AbsentLong` (`Long.MinValue`) on empty content, on no leading digit after whitespace, or
           * on overflow. The parser recognizes only ASCII decimal digits (no sign), so it can never itself
           * produce a negative `Long`, which makes the sentinel collision-free by construction. Each call parses
-          * from the start of the content; it does not advance a cursor across calls.
+          * from the start of the content; it does not advance a cursor across calls, and it does not disturb the
+          * `readChunk` cursor: an interleaved `readChunk` resumes exactly where it left off.
           */
         def readLong()(using AllowUnsafe): Long
 
