@@ -20,7 +20,7 @@ class PathConfinementTest extends kyo.test.Test[Any]:
                     case Present(parentDir) =>
                         val escapePath = parentDir / "conf-escaped.txt"
                         Abort.run[FileException](
-                            PathService.host(root).map { confined =>
+                            FileSystem.host(root).map { confined =>
                                 Path.runWith(confined)(escapePath.write("should not land"))
                             }
                         ).map { result =>

@@ -18,7 +18,7 @@ private[kyo] enum WriteOp:
     case Copy(from: Chunk[String], to: Chunk[String], resolved: Path.Entry)
 end WriteOp
 
-private[kyo] object OverlayService:
+private[kyo] object OverlayFileSystem:
 
     /** Upper-layer entry variants. `Entry` holds a staged file or directory; `Whiteout` marks a
       * deleted path; `OpaqueDir` marks a directory that hides all lower children.
@@ -45,16 +45,16 @@ private[kyo] object OverlayService:
     object OverlayState:
         val empty: OverlayState = OverlayState(Map.empty, Chunk.empty, Map.empty)
 
-    def init[S](lower: PathService[S])(using Frame): CommitHandle[S] < (Sync & Scope) =
+    def init[S](lower: FileSystem[S])(using Frame): FileSystem.CommitHandle[S] < (Sync & Scope) =
         Scope.acquireRelease(AtomicRef.init(OverlayState.empty)) { ref =>
             // Unsafe: resets staged state on scope exit (auto-rollback); no Sync dispatch needed.
             Sync.Unsafe.defer { discard(ref.unsafe.updateAndGet(_ => OverlayState.empty)) }
         }.flatMap { ref =>
             // Unsafe: allocates per-instance commit counter at construction
-            Sync.Unsafe.defer(new OverlayService(lower, ref, AtomicLong.Unsafe.init(0L).safe))
+            Sync.Unsafe.defer(new OverlayFileSystem(lower, ref, AtomicLong.Unsafe.init(0L).safe))
         }
 
-end OverlayService
+end OverlayFileSystem
 
 // Self-contained binary intent-log format for the overlay durable commit state machine.
 // Written to "intent.kyo" in the staging directory before any lower mutations.
@@ -365,17 +365,17 @@ end WriteOpLog
   * OverlayState). All state changes go through the CAS modify loop so concurrent access is safe.
   *
   * Scope-managed: the enclosing Scope bounds its lifetime; on scope exit the staged state is
-  * reset (auto-rollback). disposition is ManualCommit.
+  * reset (auto-rollback). commitStrategy is Manual.
   */
-final private[kyo] class OverlayService[S](
-    lower: PathService[S],
-    state: AtomicRef[OverlayService.OverlayState],
+final private[kyo] class OverlayFileSystem[S](
+    lower: FileSystem[S],
+    state: AtomicRef[OverlayFileSystem.OverlayState],
     commitSeq: AtomicLong
 )(using Frame)
-    extends CommitHandle[S]:
-    import OverlayService.*
+    extends FileSystem.CommitHandle[S]:
+    import OverlayFileSystem.*
 
-    val disposition: PathService.Disposition = PathService.Disposition.ManualCommit
+    val commitStrategy: FileSystem.CommitStrategy = FileSystem.CommitStrategy.Manual
 
     // Startup seed: mixes nanosecond time with identity hash to be distinct across restarts
     // and across concurrently-alive instances. Not cryptographic; collision probability is
@@ -416,7 +416,7 @@ final private[kyo] class OverlayService[S](
 
     // Reads the current snapshot and presents it as `S & Abort[FileException]` so callers can
     // sequence it with lower calls without leaking an extra Sync into their effect row.
-    // Safe because S = Sync at the only instantiation site (OverlayService.init).
+    // Safe because S = Sync at the only instantiation site (OverlayFileSystem.init).
     private def stateGet: OverlayState < (S & Abort[FileException]) =
         state.get.asInstanceOf[OverlayState < (S & Abort[FileException])]
 
@@ -1499,7 +1499,7 @@ final private[kyo] class OverlayService[S](
 
     // Scans the lower service's root for orphaned staging directories (kyo-commit-* prefix)
     // left by a prior process crash and recovers each via recoverStagingDir. Does NOT wire
-    // at OverlayService.init: wiring at init would require adding root: Path and
+    // at OverlayFileSystem.init: wiring at init would require adding root: Path and
     // Abort[FileException] to Service.overlay's public signature, which would change the
     // established API. Call recoverFromDisk(root) explicitly immediately after
     // Service.overlay(lower) to enable automatic crash recovery. private[kyo] so disk-scan
@@ -1515,12 +1515,12 @@ final private[kyo] class OverlayService[S](
             }
         }
 
-end OverlayService
+end OverlayFileSystem
 
 // Forwards every path op back under PathRead or PathWrite so an overlay wrapping this
 // service is transparent to whatever PathWrite handler is installed in the outer scope.
-final private[kyo] class ForwardingLowerService(using Frame) extends PathService[PathWrite]:
-    val disposition: PathService.Disposition = PathService.Disposition.AutoCommit
+final private[kyo] class ForwardingLowerFileSystem(using Frame) extends FileSystem[PathWrite]:
+    val commitStrategy: FileSystem.CommitStrategy = FileSystem.CommitStrategy.Auto
     def exists(path: Path): Boolean < (PathWrite & Abort[FileException]) =
         ArrowEffect.suspend(Tag[PathRead], Path.Op.Exists(path))
     def exists(path: Path, followLinks: Boolean): Boolean < (PathWrite & Abort[FileException]) =
@@ -1608,4 +1608,4 @@ final private[kyo] class ForwardingLowerService(using Frame) extends PathService
         ArrowEffect.suspend(Tag[PathWrite], Path.Op.WriteChunk(handle, chunk))
     def writeString(handle: Path.WriteHandle, value: String, charset: Charset): Unit < (PathWrite & Abort[FileException]) =
         ArrowEffect.suspend(Tag[PathWrite], Path.Op.WriteString(handle, value, charset))
-end ForwardingLowerService
+end ForwardingLowerFileSystem

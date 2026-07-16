@@ -2,7 +2,7 @@ package kyo
 
 import java.nio.charset.StandardCharsets
 
-/** Recovery test suite for [[OverlayService]] durable commit.
+/** Recovery test suite for [[OverlayFileSystem]] durable commit.
   *
   * Exercises recovery after a crash at each step of the five-step durable commit protocol:
   * before the intent log is written, after the intent log, after individual journal entries
@@ -10,7 +10,7 @@ import java.nio.charset.StandardCharsets
   * crash point is covered by two variants: an in-memory lower (deterministic, cross-platform)
   * and a host lower (real filesystem, exercises the NIO atomic-move and fsync paths).
   *
-  * Crash injection: test hooks on OverlayService throw a [[SyntheticCrash]] exception via
+  * Crash injection: test hooks on OverlayFileSystem throw a [[SyntheticCrash]] exception via
   * Sync.Unsafe.defer, causing the commit to panic at the designated step. attemptCrash captures
   * the panic and asserts it came from a crash hook; any other outcome (a real file error, or no
   * crash at all) fails the test.
@@ -23,7 +23,7 @@ import java.nio.charset.StandardCharsets
   * file either exists or does not; no partial write state is observable. The before-marker and
   * after-marker crash tests together cover both outcomes.
   */
-class OverlayServiceRecoveryTest extends kyo.test.Test[Any]:
+class OverlayFileSystemRecoveryTest extends kyo.test.Test[Any]:
 
     // Distinct exception type thrown by crash hooks; lets attemptCrash distinguish an
     // intentional hook-injected crash from a genuine file error or unexpected panic.
@@ -52,13 +52,13 @@ class OverlayServiceRecoveryTest extends kyo.test.Test[Any]:
             case Result.Failure(e)                  => throw e // unexpected typed Throwable abort
         }
 
-    /** Creates an in-memory overlay and exposes the underlying OverlayService for hook access. */
+    /** Creates an in-memory overlay and exposes the underlying OverlayFileSystem for hook access. */
     private def withInMemoryTestOverlay[A](
-        program: (OverlayService[Sync], PathService[Sync]) => A < (Sync & Scope & Abort[FileException])
+        program: (OverlayFileSystem[Sync], FileSystem[Sync]) => A < (Sync & Scope & Abort[FileException])
     ): A < (Sync & Scope & Abort[FileException]) =
-        PathService.inMemory.map { lower =>
-            PathService.overlay(lower).map { ov =>
-                program(ov.asInstanceOf[OverlayService[Sync]], lower)
+        FileSystem.inMemory.map { lower =>
+            FileSystem.overlay(lower).map { ov =>
+                program(ov.asInstanceOf[OverlayFileSystem[Sync]], lower)
             }
         }
 
@@ -66,17 +66,17 @@ class OverlayServiceRecoveryTest extends kyo.test.Test[Any]:
       * the enclosing Scope exits. Passes (overlay, lower, root) to `program`.
       */
     private def withHostTestOverlay[A](
-        program: (OverlayService[Sync], PathService[Sync], Path) => A < (Sync & Scope & Abort[FileException])
+        program: (OverlayFileSystem[Sync], FileSystem[Sync], Path) => A < (Sync & Scope & Abort[FileException])
     ): A < (Sync & Scope & Abort[FileException]) =
-        val defaultHost = PathService.host
+        val defaultHost = FileSystem.host
         Scope.acquireRelease(defaultHost.tempDir("kyo-recovery-test")) { handle =>
             // Unsafe: removes OS temp dir on scope exit
             Sync.Unsafe.defer { handle.remove() }
         }.map { handle =>
             val root = handle.path
-            PathService.host(root).map { lower =>
-                PathService.overlay(lower).map { ov =>
-                    program(ov.asInstanceOf[OverlayService[Sync]], lower, root)
+            FileSystem.host(root).map { lower =>
+                FileSystem.overlay(lower).map { ov =>
+                    program(ov.asInstanceOf[OverlayFileSystem[Sync]], lower, root)
                 }
             }
         }
@@ -88,8 +88,8 @@ class OverlayServiceRecoveryTest extends kyo.test.Test[Any]:
       * injected by the caller before calling commitOverwrite.
       */
     private def primeJournal(
-        ov: OverlayService[Sync],
-        lower: PathService[Sync],
+        ov: OverlayFileSystem[Sync],
+        lower: FileSystem[Sync],
         a: Path,
         d: Path,
         old: Path
@@ -107,7 +107,7 @@ class OverlayServiceRecoveryTest extends kyo.test.Test[Any]:
       * a.txt exists with "file-content", d exists as a directory, old.txt is absent.
       */
     private def assertFullyApplied(
-        lower: PathService[Sync],
+        lower: FileSystem[Sync],
         a: Path,
         d: Path,
         old: Path
@@ -132,7 +132,7 @@ class OverlayServiceRecoveryTest extends kyo.test.Test[Any]:
       * a.txt absent, d absent, old.txt present (the seed).
       */
     private def assertLowerUnchanged(
-        lower: PathService[Sync],
+        lower: FileSystem[Sync],
         a: Path,
         d: Path,
         old: Path
@@ -525,8 +525,8 @@ class OverlayServiceRecoveryTest extends kyo.test.Test[Any]:
                 lower.writeBytes(stagingDir / ".kyo-staging", Span.from(Array.empty[Byte]), createFolders = false).andThen {
                     lower.writeBytes(stagingDir / "intent.kyo", tornBytes, createFolders = false).andThen {
                         // Create a fresh overlay on the same lower for the disk-scan restart.
-                        PathService.overlay(lower).map { freshOv =>
-                            val overlay = freshOv.asInstanceOf[OverlayService[Sync]]
+                        FileSystem.overlay(lower).map { freshOv =>
+                            val overlay = freshOv.asInstanceOf[OverlayFileSystem[Sync]]
                             // recoverFromDisk finds kyo-commit-torn, reads the torn log, discards.
                             overlay.recoverFromDisk(root).andThen {
                                 // Staging dir should be gone after recoverStagingDir cleaned it up.
@@ -569,8 +569,8 @@ class OverlayServiceRecoveryTest extends kyo.test.Test[Any]:
                             // Write the valid intent log (WriteOpLog.encode returns Span[Byte] directly).
                             lower.writeBytes(stagingDir / "intent.kyo", WriteOpLog.encode(journal), createFolders = false).andThen {
                                 // Fresh overlay over the same lower; no in-memory stagingDirHandle.
-                                PathService.overlay(lower).map { freshOv =>
-                                    val overlay = freshOv.asInstanceOf[OverlayService[Sync]]
+                                FileSystem.overlay(lower).map { freshOv =>
+                                    val overlay = freshOv.asInstanceOf[OverlayFileSystem[Sync]]
                                     overlay.recoverFromDisk(root).andThen {
                                         // All three ops must be reflected in lower.
                                         assertFullyApplied(lower, a, d, old).andThen {
@@ -596,8 +596,8 @@ class OverlayServiceRecoveryTest extends kyo.test.Test[Any]:
     "recoverFromDisk on empty root completes cleanly with no changes to lower" in {
         withHostTestOverlay { (_, lower, root) =>
             // root is empty (no files seeded, no staging dirs).
-            PathService.overlay(lower).map { freshOv =>
-                val overlay = freshOv.asInstanceOf[OverlayService[Sync]]
+            FileSystem.overlay(lower).map { freshOv =>
+                val overlay = freshOv.asInstanceOf[OverlayFileSystem[Sync]]
                 overlay.recoverFromDisk(root).andThen {
                     // lower has no entries; root still empty.
                     lower.list(root).map { entries =>
@@ -642,8 +642,8 @@ class OverlayServiceRecoveryTest extends kyo.test.Test[Any]:
 
                     writeLog(staging1, journal1, Span.from("content1".getBytes(StandardCharsets.UTF_8))).andThen {
                         writeLog(staging2, journal2, Span.from("content2".getBytes(StandardCharsets.UTF_8))).andThen {
-                            PathService.overlay(lower).map { freshOv =>
-                                val overlay = freshOv.asInstanceOf[OverlayService[Sync]]
+                            FileSystem.overlay(lower).map { freshOv =>
+                                val overlay = freshOv.asInstanceOf[OverlayFileSystem[Sync]]
                                 // recoverFromDisk processes both staging dirs via foldLeft.
                                 overlay.recoverFromDisk(root).andThen {
                                     // Both batches reflected in lower.
@@ -683,8 +683,8 @@ class OverlayServiceRecoveryTest extends kyo.test.Test[Any]:
                     Span.from("user-data".getBytes(StandardCharsets.UTF_8)),
                     createFolders = false
                 ).andThen {
-                    PathService.overlay(lower).map { freshOv =>
-                        val overlay = freshOv.asInstanceOf[OverlayService[Sync]]
+                    FileSystem.overlay(lower).map { freshOv =>
+                        val overlay = freshOv.asInstanceOf[OverlayFileSystem[Sync]]
                         overlay.recoverFromDisk(root).andThen {
                             // Both the user dir and its file must survive intact.
                             lower.exists(userDir / "important.txt").map { still =>
@@ -704,8 +704,8 @@ class OverlayServiceRecoveryTest extends kyo.test.Test[Any]:
             val stagingDir = root / "kyo-commit-orphan-sentinel"
             lower.mkDir(stagingDir).andThen {
                 lower.writeBytes(stagingDir / ".kyo-staging", Span.from(Array.empty[Byte]), createFolders = false).andThen {
-                    PathService.overlay(lower).map { freshOv =>
-                        val overlay = freshOv.asInstanceOf[OverlayService[Sync]]
+                    FileSystem.overlay(lower).map { freshOv =>
+                        val overlay = freshOv.asInstanceOf[OverlayFileSystem[Sync]]
                         overlay.recoverFromDisk(root).andThen {
                             lower.exists(stagingDir).map { still =>
                                 assert(!still, "sentinel-only staging dir with no intent log must be removed by recoverFromDisk")
@@ -758,4 +758,4 @@ class OverlayServiceRecoveryTest extends kyo.test.Test[Any]:
         }
     }
 
-end OverlayServiceRecoveryTest
+end OverlayFileSystemRecoveryTest

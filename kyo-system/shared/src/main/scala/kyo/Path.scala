@@ -56,7 +56,7 @@ import kyo.kernel.ArrowEffect
   * @see
   *   [[Path.run]], [[Path.runReadOnly]], [[Path.runWith]], [[Path.runReadOnlyWith]] for the runners
   * @see
-  *   [[PathService]] for the pluggable backend the runners install
+  *   [[FileSystem]] for the pluggable backend the runners install
   */
 sealed trait PathRead extends ArrowEffect[[A] =>> Path.Op[A], Id]
 
@@ -180,17 +180,17 @@ object Path extends PathPlatformSpecific:
     // --- Runners ---
 
     /** Runs `program`, discharging both write and read capabilities against the default host service
-      * ([[PathService.host]]). Every filesystem op inside `program` suspends under `PathWrite` or
+      * ([[FileSystem.host]]). Every filesystem op inside `program` suspends under `PathWrite` or
       * `PathRead` and is dispatched to the host backend; the residual folds the per-op
       * `Abort[File*Exception]` markers into the umbrella `Abort[FileException]`.
       *
       * Residual: `Sync & Abort[FileException] & S` (the caller's tail `S` rides through).
       *
       * @see
-      *   [[runWith]] to install a custom [[PathService]] (in-memory, overlay, root-confined host)
+      *   [[runWith]] to install a custom [[FileSystem]] (in-memory, overlay, root-confined host)
       */
     def run[A, S](program: A < (PathWrite & S))(using Frame): A < (Sync & Abort[FileException] & S) =
-        runWith(PathService.host)(program)
+        runWith(FileSystem.host)(program)
 
     /** Runs `program`, discharging the read capability only against the default host service. A write
       * op left in the program keeps `PathWrite` undischarged, so the ascribed read-only residual does
@@ -201,20 +201,20 @@ object Path extends PathPlatformSpecific:
       * at the call site rather than at runtime.
       *
       * @see
-      *   [[runReadOnlyWith]] to install a custom read-only [[PathService]]
+      *   [[runReadOnlyWith]] to install a custom read-only [[FileSystem]]
       */
     def runReadOnly[A, S](program: A < (PathRead & S))(using Frame): A < (Sync & Abort[FileException] & S) =
-        runReadOnlyWith(PathService.host)(program)
+        runReadOnlyWith(FileSystem.host)(program)
 
     /** Runs `program` against an explicit `service`, discharging write and read; the backend's own
       * effect `S` rides the residual (the Journal `Backend[S]` mapping).
       *
-      * Install [[PathService.inMemory]] for hermetic tests, [[PathService.overlay]] (wrapped in `Scope`)
-      * for copy-on-write staging, or [[PathService.host]](root) for root-confined host I/O. The
-      * service's [[PathService.Disposition]] determines when writes become durable relative to the
+      * Install [[FileSystem.inMemory]] for hermetic tests, [[FileSystem.overlay]] (wrapped in `Scope`)
+      * for copy-on-write staging, or [[FileSystem.host]](root) for root-confined host I/O. The
+      * service's [[FileSystem.CommitStrategy]] determines when writes become durable relative to the
       * enclosing run.
       */
-    def runWith[S, A, S2](service: PathService[S])(program: A < (PathWrite & S2))(using Frame): A < (S & Abort[FileException] & S2) =
+    def runWith[S, A, S2](service: FileSystem[S])(program: A < (PathWrite & S2))(using Frame): A < (S & Abort[FileException] & S2) =
         ArrowEffect.handle(Tag[PathWrite], program)(
             [C] => (op, cont) => dispatch(service, op).map(cont)
         )
@@ -225,7 +225,7 @@ object Path extends PathPlatformSpecific:
       * undischarged and fails to compile. The service's effect `S` and the caller's tail `S2` both
       * ride the residual unchanged.
       */
-    def runReadOnlyWith[S, A, S2](service: PathService[S])(program: A < (PathRead & S2))(using Frame): A < (S & Abort[FileException] & S2) =
+    def runReadOnlyWith[S, A, S2](service: FileSystem[S])(program: A < (PathRead & S2))(using Frame): A < (S & Abort[FileException] & S2) =
         ArrowEffect.handle(Tag[PathRead], program)(
             [C] => (op, cont) => dispatch(service, op).map(cont)
         )
@@ -239,30 +239,30 @@ object Path extends PathPlatformSpecific:
       */
     private def ephemeralOverlay[A, B, S2](
         program: A < (PathWrite & S2),
-        finish: (A, OverlayService[PathWrite]) => B < (PathWrite & S2)
+        finish: (A, OverlayFileSystem[PathWrite]) => B < (PathWrite & S2)
     )(using Frame): B < (PathWrite & S2) =
-        def bootstrapOverlay: OverlayService[PathWrite] < PathWrite =
+        def bootstrapOverlay: OverlayFileSystem[PathWrite] < PathWrite =
             // Unsafe: create overlay without Scope; lifecycle managed by finish callback.
             // Cast hides Sync (runs at dispatch/done time; outer runner folds Sync).
             Sync.Unsafe.defer(
-                new OverlayService(
-                    new ForwardingLowerService,
-                    AtomicRef.Unsafe.init(OverlayService.OverlayState.empty).safe,
+                new OverlayFileSystem(
+                    new ForwardingLowerFileSystem,
+                    AtomicRef.Unsafe.init(OverlayFileSystem.OverlayState.empty).safe,
                     AtomicLong.Unsafe.init(0L).safe
                 )
-            ).asInstanceOf[OverlayService[PathWrite] < PathWrite]
+            ).asInstanceOf[OverlayFileSystem[PathWrite] < PathWrite]
 
-        def ensureOverlay(state: Maybe[OverlayService[PathWrite]]): OverlayService[PathWrite] < PathWrite =
+        def ensureOverlay(state: Maybe[OverlayFileSystem[PathWrite]]): OverlayFileSystem[PathWrite] < PathWrite =
             state match
                 case Present(overlay) => overlay
                 case Absent           => bootstrapOverlay
 
-        ArrowEffect.handleLoop(Tag[PathWrite], Maybe.empty[OverlayService[PathWrite]], program)(
+        ArrowEffect.handleLoop(Tag[PathWrite], Maybe.empty[OverlayFileSystem[PathWrite]], program)(
             [C] =>
                 (op, state, cont) =>
                     ensureOverlay(state).map { overlay =>
                         // Unsafe: dispatch's Abort[FileException] is never raised here at runtime;
-                        // ForwardingLowerService re-suspends I/O ops as PathWrite so FileExceptions
+                        // ForwardingLowerFileSystem re-suspends I/O ops as PathWrite so FileExceptions
                         // propagate through the outer PathWrite handler, not inside this handler body
                         dispatch(overlay, op).asInstanceOf[C < PathWrite].map(result =>
                             Loop.continue(Present(overlay), cont(result))
@@ -282,7 +282,7 @@ object Path extends PathPlatformSpecific:
       * are rolled back. Requires an ambient `PathWrite` scope (an enclosing [[runWith]] or [[run]]).
       *
       * WARNING: concurrent writers to the same lower paths between overlay observation and commit can
-      * produce `CommitConflict`; use [[Path.virtual]] plus [[CommitHandle.commitWith]] when the caller
+      * produce `CommitConflict`; use [[Path.virtual]] plus [[FileSystem.CommitHandle.commitWith]] when the caller
       * needs a custom resolution policy.
       */
     def transaction[A, S](program: A < (PathWrite & S))(using Frame): A < (PathWrite & Abort[CommitConflict] & S) =
@@ -318,25 +318,25 @@ object Path extends PathPlatformSpecific:
     /** Runs `program` against a fresh overlay and returns the overlay alongside the result, so the
       * caller can inspect, commit, discard, or choose a conflict policy after the block.
       *
-      * The returned [[CommitHandle]] has `ManualCommit` disposition. Call [[CommitHandle.commit]],
-      * [[CommitHandle.commitWith]], or [[CommitHandle.rollback]] after inspecting staged state.
+      * The returned [[FileSystem.CommitHandle]] has `Manual` commit strategy. Call [[FileSystem.CommitHandle.commit]],
+      * [[FileSystem.CommitHandle.commitWith]], or [[FileSystem.CommitHandle.rollback]] after inspecting staged state.
       *
       * IMPORTANT: `commit` and `rollback` on the returned overlay must run within an ambient
       * `PathWrite` scope (the same or an enclosing [[runWith]] call). Calling them after `PathWrite`
       * is discharged leaves path operations unresolved at runtime.
       */
-    def virtual[A, S](program: A < (PathWrite & S))(using Frame): (A, CommitHandle[Sync]) < (PathWrite & S) =
+    def virtual[A, S](program: A < (PathWrite & S))(using Frame): (A, FileSystem.CommitHandle[Sync]) < (PathWrite & S) =
         ephemeralOverlay(
             program,
             (result, overlay) =>
-                // Unsafe: overlay is OverlayService[PathWrite]; cast to CommitHandle[Sync] because
+                // Unsafe: overlay is OverlayFileSystem[PathWrite]; cast to FileSystem.CommitHandle[Sync] because
                 // ambient services are Sync and commit/rollback effects are resolved by the outer
                 // PathWrite handler before Sync.run sees them
-                (result, overlay.asInstanceOf[CommitHandle[Sync]])
+                (result, overlay.asInstanceOf[FileSystem.CommitHandle[Sync]])
         )
     end virtual
 
-    private def dispatch[S, C](service: PathService[S], op: Op[C])(using Frame): C < (S & Abort[FileException]) =
+    private def dispatch[S, C](service: FileSystem[S], op: Op[C])(using Frame): C < (S & Abort[FileException]) =
         op match
             case Op.Exists(p)                  => service.exists(p)
             case Op.ExistsFollow(p, f)         => service.exists(p, f)
@@ -393,7 +393,7 @@ object Path extends PathPlatformSpecific:
         )(handle => Sync.Unsafe.defer(handle.remove())) // Unsafe: service-vended recursive cleanup at Scope exit
             .map(_.path)
 
-    /** A handle to a service-created temporary directory. Vended by [[PathService.tempDir]] so the scoped
+    /** A handle to a service-created temporary directory. Vended by [[FileSystem.tempDir]] so the scoped
       * [[Path.tempDir]] finalizer removes through the creating service. Internal.
       */
     abstract private[kyo] class TempDirHandle:

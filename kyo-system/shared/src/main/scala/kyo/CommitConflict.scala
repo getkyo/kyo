@@ -1,11 +1,11 @@
 package kyo
 
-/** Raised by [[CommitHandle.commit]] when the commit validation detects that one or more
+/** Raised by [[FileSystem.CommitHandle.commit]] when the commit validation detects that one or more
   * lower-layer paths have diverged from the entries the overlay recorded at observation time.
   *
   * Carries every [[Conflict]] as a [[Chunk]] so the caller can inspect each diverging path,
   * compare the ancestor entry against the live lower view, and decide how to proceed. Callers
-  * that want to resolve conflicts rather than abort should use [[CommitHandle.commitWith]]
+  * that want to resolve conflicts rather than abort should use [[FileSystem.CommitHandle.commitWith]]
   * instead, which applies a per-conflict resolution function and never raises `CommitConflict`.
   *
   * `CommitConflict` extends `KyoException`; it surfaces through `Abort[CommitConflict]` and is
@@ -22,7 +22,7 @@ final case class CommitConflict(conflicts: Chunk[Conflict])(using Frame) extends
   * entry, and a fresh read of the live lower path). `ancestor` is `Absent` only when the conflicting
   * path was never observed.
   *
-  * Inspect each field to choose a [[Resolution]] in [[CommitHandle.commitWith]], or let
+  * Inspect each field to choose a [[Resolution]] in [[FileSystem.CommitHandle.commitWith]], or let
   * [[Path.transaction]] abort with [[CommitConflict]] when any divergence is unacceptable.
   */
 final case class Conflict(
@@ -33,7 +33,7 @@ final case class Conflict(
 ) derives CanEqual
 
 /** A per-conflict resolution returned by the caller-supplied function in
-  * [[CommitHandle.commitWith]], applied to each [[Conflict]] the commit validation detects.
+  * [[FileSystem.CommitHandle.commitWith]], applied to each [[Conflict]] the commit validation detects.
   *
   * Four cases:
   *   - `KeepOurs`: replay the overlay's staged entry, discarding the live lower value.

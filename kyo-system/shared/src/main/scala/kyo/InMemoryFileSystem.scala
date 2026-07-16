@@ -2,7 +2,7 @@ package kyo
 
 import java.nio.charset.Charset
 
-private[kyo] object InMemoryService:
+private[kyo] object InMemoryFileSystem:
     final case class FileBody(bytes: Span[Byte])
     final case class Node(children: Map[String, Node], file: Maybe[FileBody], stat: Path.PathStat)
     object Node:
@@ -10,9 +10,9 @@ private[kyo] object InMemoryService:
         def file(bytes: Span[Byte], now: Long): Node = Node(Map.empty, Present(FileBody(bytes)), Path.PathStat(now, bytes.size.toLong))
     final case class State(root: Node)
 
-    def init(using Frame): PathService[Sync] < Sync =
+    def init(using Frame): FileSystem[Sync] < Sync =
         Sync.defer(java.lang.System.currentTimeMillis()).map { now =>
-            AtomicRef.init(State(Node.dir(now))).map(ref => new InMemoryService(ref))
+            AtomicRef.init(State(Node.dir(now))).map(ref => new InMemoryFileSystem(ref))
         }
 
     // Pure tree navigation, keyed by Path.parts (platform normalization inherited from Path construction).
@@ -48,11 +48,11 @@ private[kyo] object InMemoryService:
             lookup(root, parts.dropRight(1)) match
                 case Present(n) if n.file.isEmpty => true
                 case _                            => false
-end InMemoryService
+end InMemoryFileSystem
 
-final private[kyo] class InMemoryService(state: AtomicRef[InMemoryService.State])(using Frame) extends PathService[Sync]:
-    import InMemoryService.*
-    val disposition: PathService.Disposition = PathService.Disposition.AutoCommit
+final private[kyo] class InMemoryFileSystem(state: AtomicRef[InMemoryFileSystem.State])(using Frame) extends FileSystem[Sync]:
+    import InMemoryFileSystem.*
+    val commitStrategy: FileSystem.CommitStrategy = FileSystem.CommitStrategy.Auto
 
     private def now: Long < Sync = Sync.defer(java.lang.System.currentTimeMillis())
 
@@ -232,7 +232,7 @@ final private[kyo] class InMemoryService(state: AtomicRef[InMemoryService.State]
                     if append then lookup(s.root, path.parts).flatMap(_.file).map(_.bytes).getOrElse(Span.empty[Byte]) else Span.empty[Byte]
                 InMemoryHandles.write(this, path, seed)
         }
-    // writeChunk and writeString are abstract on PathService[S]; every concrete service must implement
+    // writeChunk and writeString are abstract on FileSystem[S]; every concrete service must implement
     // them. The in-memory form delegates into the handle's buffer accumulator.
     def writeChunk(handle: Path.WriteHandle, chunk: Chunk[Byte]): Unit < (Sync & Abort[FileException]) =
         // Unsafe: delegates to the in-memory write handle's buffer accumulator
@@ -259,14 +259,14 @@ final private[kyo] class InMemoryService(state: AtomicRef[InMemoryService.State]
         val t = java.lang.System.currentTimeMillis()
         // AtomicRef.Unsafe exposes updateAndGet(f): A; discard the returned state.
         discard(state.unsafe.updateAndGet(s =>
-            s.copy(root = InMemoryService.upsert(s.root, path.parts, InMemoryService.Node.file(bytes, t), t))
+            s.copy(root = InMemoryFileSystem.upsert(s.root, path.parts, InMemoryFileSystem.Node.file(bytes, t), t))
         ))
     end commitBytesUnsafe
-end InMemoryService
+end InMemoryFileSystem
 
 // Backend-specific handles over the in-memory tree, and the glob matcher used by list(glob).
 private[kyo] object InMemoryHandles:
-    import InMemoryService.Node
+    import InMemoryFileSystem.Node
 
     def read(bytes: Span[Byte]): Path.ReadHandle =
         new Path.ReadHandle:
@@ -311,7 +311,7 @@ private[kyo] object InMemoryHandles:
                 p :: preorder(p, child, depth - 1)
             }
 
-    def write(service: InMemoryService, path: Path, seed: Span[Byte])(using Frame): Path.WriteHandle =
+    def write(service: InMemoryFileSystem, path: Path, seed: Span[Byte])(using Frame): Path.WriteHandle =
         new Path.WriteHandle:
             private var acc = seed.toArrayUnsafe
             def writeBytes(chunk: Chunk[Byte])(using AllowUnsafe, Frame): Result[FileWriteException, Unit] =

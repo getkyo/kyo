@@ -2,20 +2,20 @@ package kyo
 
 import java.nio.charset.StandardCharsets
 
-/** Tests for the top-level [[CommitHandle]] surface returned by [[PathService.overlay]]: the
-  * entry-valued read-set that [[CommitHandle.commit]] validates against the live lower service,
-  * and [[CommitHandle.commitOverwrite]]'s conflict-free last-writer-wins replay.
+/** Tests for the top-level [[FileSystem.CommitHandle]] surface returned by [[FileSystem.overlay]]: the
+  * entry-valued read-set that [[FileSystem.CommitHandle.commit]] validates against the live lower service,
+  * and [[FileSystem.CommitHandle.commitOverwrite]]'s conflict-free last-writer-wins replay.
   */
-class CommitHandleTest extends kyo.test.Test[Any]:
+class FileSystemCommitTest extends kyo.test.Test[Any]:
 
-    "PathService.overlay returns a CommitHandle whose commit validates the entry-valued read-set" in {
-        PathService.inMemory.map { lower =>
-            PathService.overlay(lower).map { handle =>
+    "FileSystem.overlay returns a FileSystem.CommitHandle whose commit validates the entry-valued read-set" in {
+        FileSystem.inMemory.map { lower =>
+            FileSystem.overlay(lower).map { handle =>
                 val p = Path("a")
                 // The out-of-band write below uses a DIFFERENT LENGTH from the seed ("longer-content"
                 // vs "1") so the divergence is size-driven, not mtime-driven: two same-length writes
                 // landing in the same millisecond would make the mtime+size comparison see no change
-                // (the OverlayServiceTest "records a Path.Entry" leaf avoids the same trap via removal
+                // (the OverlayFileSystemTest "records a Path.Entry" leaf avoids the same trap via removal
                 // instead of re-write).
                 Path.runWith(lower)(p.write("1")).andThen {
                     Path.runWith(lower)(p.stat).map { lowerStat =>
@@ -57,8 +57,8 @@ class CommitHandleTest extends kyo.test.Test[Any]:
     }
 
     "commitOverwrite has no CommitConflict in its row and applies last-writer-wins" in {
-        PathService.inMemory.map { lower =>
-            PathService.overlay(lower).map { handle =>
+        FileSystem.inMemory.map { lower =>
+            FileSystem.overlay(lower).map { handle =>
                 val p = Path("a")
                 Path.runWith(lower)(p.write("1")).andThen {
                     Path.runWith(handle)(p.read).andThen {
@@ -76,4 +76,4 @@ class CommitHandleTest extends kyo.test.Test[Any]:
         }
     }
 
-end CommitHandleTest
+end FileSystemCommitTest

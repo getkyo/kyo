@@ -2,16 +2,16 @@ package kyo
 
 import java.nio.charset.Charset
 
-private[kyo] object HostService:
+private[kyo] object HostFileSystem:
 
-    def apply()(using Frame): PathService[Sync] = new HostService
+    def apply()(using Frame): FileSystem[Sync] = new HostFileSystem
 
-    def rootConfined(root: Path)(using Frame): PathService[Sync] < (Sync & Abort[FileException]) =
+    def rootConfined(root: Path)(using Frame): FileSystem[Sync] < (Sync & Abort[FileException]) =
         // Unsafe: resolves the confinement root's real path once at construction
-        Sync.Unsafe.defer(Abort.get(root.unsafe.realPath())).map(rootReal => new RootConfinedHostService(rootReal))
+        Sync.Unsafe.defer(Abort.get(root.unsafe.realPath())).map(rootReal => new RootConfinedHostFileSystem(rootReal))
 
-    final class HostService(using Frame) extends PathService[Sync]:
-        val disposition: PathService.Disposition = PathService.Disposition.AutoCommit
+    final class HostFileSystem(using Frame) extends FileSystem[Sync]:
+        val commitStrategy: FileSystem.CommitStrategy = FileSystem.CommitStrategy.Auto
 
         def exists(path: Path): Boolean < (Sync & Abort[FileException]) =
             // Unsafe: bridges Path.Unsafe.exists into the safe tier
@@ -141,11 +141,11 @@ private[kyo] object HostService:
                     // Unsafe: recursive host delete of the created temp dir at Scope exit
                     def remove()(using AllowUnsafe): Unit = discard(dir.unsafe.removeAll())
             }
-    end HostService
+    end HostFileSystem
 
-    final class RootConfinedHostService(rootReal: Path)(using Frame) extends PathService[Sync]:
-        private val host                         = new HostService
-        val disposition: PathService.Disposition = PathService.Disposition.AutoCommit
+    final class RootConfinedHostFileSystem(rootReal: Path)(using Frame) extends FileSystem[Sync]:
+        private val host                              = new HostFileSystem
+        val commitStrategy: FileSystem.CommitStrategy = FileSystem.CommitStrategy.Auto
 
         private def confined(path: Path): Path < (Sync & Abort[FileException]) =
             // Unsafe: probes target existence to choose between realpath and nearest-parent checks
@@ -248,5 +248,5 @@ private[kyo] object HostService:
                     def remove()(using AllowUnsafe): Unit = discard(dir.unsafe.removeAll())
             }
         end tempDir
-    end RootConfinedHostService
-end HostService
+    end RootConfinedHostFileSystem
+end HostFileSystem

@@ -2,29 +2,29 @@ package kyo
 
 import java.nio.charset.StandardCharsets
 
-class OverlayServiceTest extends kyo.test.Test[Any]:
+class OverlayFileSystemTest extends kyo.test.Test[Any]:
 
     // Helper: run a program through a fresh overlay over a fresh in-memory lower service.
-    // The inner function receives both the overlay (as CommitHandle so callers can commit) and
+    // The inner function receives both the overlay (as FileSystem.CommitHandle so callers can commit) and
     // the lower service directly (for pre-/post-commit inspection by commit-isolation tests).
     private def withOverlay[A, S](
-        program: (CommitHandle[Sync], PathService[Sync]) => A < (Sync & Abort[FileException] & S)
+        program: (FileSystem.CommitHandle[Sync], FileSystem[Sync]) => A < (Sync & Abort[FileException] & S)
     ): A < (Sync & Scope & Abort[FileException] & S) =
-        PathService.inMemory.map { lower =>
-            PathService.overlay(lower).map { ov =>
+        FileSystem.inMemory.map { lower =>
+            FileSystem.overlay(lower).map { ov =>
                 program(ov, lower)
             }
         }
 
     // Helper: run through overlay only, lower not needed.
     private def withOv[A, S](
-        program: CommitHandle[Sync] => A < (Sync & Abort[FileException] & S)
+        program: FileSystem.CommitHandle[Sync] => A < (Sync & Abort[FileException] & S)
     ): A < (Sync & Scope & Abort[FileException] & S) =
         withOverlay((ov, _) => program(ov))
 
-    "overlay disposition is ManualCommit" in {
+    "overlay commitStrategy is Manual" in {
         withOv { ov =>
-            assert(ov.disposition == PathService.Disposition.ManualCommit)
+            assert(ov.commitStrategy == FileSystem.CommitStrategy.Manual)
         }
     }
 
@@ -568,4 +568,4 @@ class OverlayServiceTest extends kyo.test.Test[Any]:
         }
     }
 
-end OverlayServiceTest
+end OverlayFileSystemTest
