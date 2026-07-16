@@ -1736,6 +1736,24 @@ class ProtobufTest extends kyo.test.Test[Any]:
     // asserted.
     "OrderedMap Schema givens" - {
 
+        // proto3 writes nothing for an empty map field, so decode sees no field at all and falls back
+        // to the schema's absent default. Map, Dict and OrderedMap must agree here.
+        "an empty OrderedMap field round-trips" in {
+            val holder  = MTOrderedMapConfig(OrderedMap.empty)
+            val encoded = Protobuf.encode(holder)
+            assert(encoded.size == 0)
+            val decoded = Protobuf.decode[MTOrderedMapConfig](encoded).getOrThrow
+            assert(decoded.settings.isEmpty)
+        }
+
+        "an empty Dict field round-trips" in {
+            val holder  = MTIntStringDict(Dict.empty)
+            val encoded = Protobuf.encode(holder)
+            assert(encoded.size == 0)
+            val decoded = Protobuf.decode[MTIntStringDict](encoded).getOrThrow
+            assert(decoded.d.isEmpty)
+        }
+
         "OrderedMap[String, V] field preserves insertion order across encode/decode (resolves stringOrderedMapSchema)" in {
             val holder =
                 MTOrderedMapConfig(OrderedMap("zeta" -> 30, "alpha" -> 3, "mike" -> 8080, "bravo" -> 5, "yankee" -> 100, "delta" -> 42))

@@ -1,7 +1,5 @@
 package kyo
 
-import scala.util.control.NonFatal
-
 class OrderedMapTest extends kyo.test.Test[Any]:
 
     def largeMapInsertOrder: Seq[Int] = Seq(3, 1, 4, 0, 9, 2, 6, 5, 8, 7)
@@ -224,15 +222,9 @@ class OrderedMapTest extends kyo.test.Test[Any]:
         }
 
         "routes hostile input to Left without an escaping throw" in {
-            var escaped = false
-            val result =
-                try reader("=noKey,alsoBad")
-                catch
-                    case NonFatal(_) =>
-                        escaped = true
-                        Left(new IllegalStateException("unreachable"))
-            assert(!escaped)
-            assert(result.isLeft)
+            val outcome = Result.catching[Exception](reader("=noKey,alsoBad"))
+            assert(outcome.isSuccess)
+            assert(outcome.getOrThrow.isLeft)
         }
     }
 

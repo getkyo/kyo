@@ -2856,10 +2856,10 @@ object Schema:
                         // hasNextField advances past the inter-field separator (a no-op for
                         // Protobuf, the comma for a self-describing codec) before each field read.
                         discard(reader.hasNextField())
-                        val _ = reader.field() // "key"
+                        discard(reader.field()) // "key"
                         val k = kSchema.serializeRead(reader)
                         discard(reader.hasNextField())
-                        val _ = reader.field() // "value"
+                        discard(reader.field()) // "value"
                         val v = vSchema.serializeRead(reader)
                         reader.objectEnd()
                         builder += (k -> v)
@@ -3051,6 +3051,7 @@ object Schema:
                 reader.mapEnd()
                 dict
             ,
+            absentDefaultValue = Maybe(Dict.empty[String, V]),
             // Non-inline givens have no implicit Tag[V] in scope; fall back to Tag[Any].
             structure = Structure.Type.Mapping(
                 "Dict",
@@ -3095,10 +3096,10 @@ object Schema:
                         // hasNextField advances past the inter-field separator (a no-op for
                         // Protobuf, the comma for a self-describing codec) before each field read.
                         discard(reader.hasNextField())
-                        val _ = reader.field() // "key"
+                        discard(reader.field()) // "key"
                         val k = kSchema.serializeRead(reader)
                         discard(reader.hasNextField())
-                        val _ = reader.field() // "value"
+                        discard(reader.field()) // "value"
                         val v = vSchema.serializeRead(reader)
                         reader.objectEnd()
                         loop(dict.update(k, v), count + 1)
@@ -3107,6 +3108,7 @@ object Schema:
                 reader.arrayEnd()
                 dict
             ,
+            absentDefaultValue = Maybe(Dict.empty[K, V]),
             // Non-inline givens have no implicit Tag[K] + Tag[V] in scope; fall back to Tag[Any].
             structure = Structure.Type.Mapping(
                 "Dict",
@@ -3152,6 +3154,7 @@ object Schema:
                 reader.mapEnd()
                 map
             ,
+            absentDefaultValue = Maybe(OrderedMap.empty[String, V]),
             // Non-inline givens have no implicit Tag[V] in scope; fall back to Tag[Any].
             structure = Structure.Type.Mapping(
                 "OrderedMap",
@@ -3204,10 +3207,10 @@ object Schema:
                         // hasNextField advances past the inter-field separator (a no-op for
                         // Protobuf, the comma for a self-describing codec) before each field read.
                         discard(reader.hasNextField())
-                        val _ = reader.field() // "key"
+                        discard(reader.field()) // "key"
                         val k = kSchema.serializeRead(reader)
                         discard(reader.hasNextField())
-                        val _ = reader.field() // "value"
+                        discard(reader.field()) // "value"
                         val v = vSchema.serializeRead(reader)
                         reader.objectEnd()
                         loop(map.update(k, v), count + 1)
@@ -3216,6 +3219,7 @@ object Schema:
                 reader.arrayEnd()
                 map
             ,
+            absentDefaultValue = Maybe(OrderedMap.empty[K, V]),
             // Non-inline givens have no implicit Tag[K] + Tag[V] in scope; fall back to Tag[Any].
             structure = Structure.Type.Mapping(
                 "OrderedMap",
