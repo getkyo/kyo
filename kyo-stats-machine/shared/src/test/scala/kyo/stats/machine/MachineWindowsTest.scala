@@ -21,7 +21,7 @@ class MachineWindowsTest extends kyo.test.Test[Any]:
         var getSystemTimesFn: (Buffer[Long], Buffer[Long], Buffer[Long]) => Int        = (_, _, _) => 0
         var globalMemoryStatusFn: Buffer[Long] => Int                                  = _ => 0
         var getLogicalDrivesFn: () => Int                                              = () => 0
-        var getDriveTypeFn: String => Int                                              = _ => WindowsBindings.driveFixed
+        var getDriveTypeFn: String => Int                                              = _ => WindowsBindings.DriveFixed
         var diskFreeSpaceFn: (String, Buffer[Long], Buffer[Long], Buffer[Long]) => Int = (_, _, _, _) => 0
 
         def getSystemTimes(idle: Buffer[Long], kernel: Buffer[Long], user: Buffer[Long])(using AllowUnsafe): Int =

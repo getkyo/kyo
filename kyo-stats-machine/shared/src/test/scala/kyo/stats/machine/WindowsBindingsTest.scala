@@ -17,7 +17,7 @@ class WindowsBindingsTest extends kyo.test.Test[Any]:
         var getSystemTimesFn: (Buffer[Long], Buffer[Long], Buffer[Long]) => Int        = (_, _, _) => 0
         var globalMemoryStatusFn: Buffer[Long] => Int                                  = _ => 0
         var getLogicalDrivesFn: () => Int                                              = () => 0
-        var getDriveTypeFn: String => Int                                              = _ => WindowsBindings.driveFixed
+        var getDriveTypeFn: String => Int                                              = _ => WindowsBindings.DriveFixed
         var diskFreeSpaceFn: (String, Buffer[Long], Buffer[Long], Buffer[Long]) => Int = (_, _, _, _) => 0
 
         def getSystemTimes(idle: Buffer[Long], kernel: Buffer[Long], user: Buffer[Long])(using AllowUnsafe): Int =
@@ -56,7 +56,7 @@ class WindowsBindingsTest extends kyo.test.Test[Any]:
 
         "keeps only DRIVE_FIXED drives and filters a network drive out, never probing it" in {
             val stub = new StubBindings
-            stub.getDriveTypeFn = root => if root == "C:\\" then WindowsBindings.driveFixed else 4 // DRIVE_REMOTE
+            stub.getDriveTypeFn = root => if root == "C:\\" then WindowsBindings.DriveFixed else 4 // DRIVE_REMOTE
             val roots = WindowsDisk.enumerate(stub, (1 << 2) | (1 << 25)) // bit 2 = C:, bit 25 = Z:
             assert(roots == Chunk("C:\\"))
         }
@@ -119,7 +119,7 @@ class WindowsBindingsTest extends kyo.test.Test[Any]:
 
         "a changed GetLogicalDrives bitmask rebuilds the retained store set so a newly-mounted drive is read" in {
             val stub = new StubBindings
-            stub.getDriveTypeFn = _ => WindowsBindings.driveFixed
+            stub.getDriveTypeFn = _ => WindowsBindings.DriveFixed
             stub.diskFreeSpaceFn = (_, _, t, f) =>
                 t.set(0, 900L); f.set(0, 400L); 1
             for handles <- MachineHandles.init

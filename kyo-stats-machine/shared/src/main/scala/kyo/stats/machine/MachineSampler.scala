@@ -106,10 +106,6 @@ end MachineSampler
 
 private[kyo] object MachineSampler:
 
-    // Unsafe: the sampler's retained state is constructed and closed off any effect context that could
-    // supply the capability, the same class-level bridge five sibling readers carry.
-    import AllowUnsafe.embrace.danger
-
     /** A retained decode callback: ONE instance per proc file, built once at reader construction, so a tick
       * passes a field reference. A capturing lambda written at the read site would allocate one closure per
       * read per tick and survive only by escape analysis, which is the kind of unmeasured assumption this

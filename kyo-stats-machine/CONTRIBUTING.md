@@ -263,19 +263,20 @@ filled buffer from a single syscall (`WindowsBindings.scala:88-91`).
 Every `AllowUnsafe.embrace.danger` import carries a `// Unsafe:` comment
 naming the specific bridge it opens: the sampler's retained read handles and
 reused buffers, single-owner fields on the detached tick fiber
-(`MachineSampler.scala:25`); the sampler's own construction site, the same
-class-level bridge the OS reader and its FFI binding trait ride, since
-`Machine.forOs` is built under this capability and every per-OS reader method
-(`MachineLinux`, `MachineMacos`, `MachineWindows`, and each `LinuxBindings`/
-`MacosBindings`/`WindowsBindings` call) takes `AllowUnsafe` as a propagated
-parameter rather than importing its own (`MachineSampler.scala:111`); the
-module-init SPI activation boundary and the opt-out read
-(`MachineStatFactory.scala:27,37`); and every metric cell that owns its own
-unsafely-constructed field state, `RateCell`, `CounterCell`, `LongGaugeCell`,
-and `DoubleGaugeCell`, each of which builds an `AtomicLong.Unsafe.init`
-holder at construction (`MachineHandles.scala:30,100,144,174,193`);
-`LevelCell` carries no import of its own, since it holds only a plain `var`
-and observes through the capability its caller already supplies.
+(`MachineSampler.scala:25`); the module-init SPI activation boundary and the
+opt-out read (`MachineStatFactory.scala:27,37`); and every metric cell that
+owns its own unsafely-constructed field state, `RateCell`, `CounterCell`,
+`LongGaugeCell`, and `DoubleGaugeCell`, each of which builds an
+`AtomicLong.Unsafe.init` holder at construction
+(`MachineHandles.scala:30,100,144,174,193`); `LevelCell` carries no import of
+its own, since it holds only a plain `var` and observes through the
+capability its caller already supplies. `MachineSampler`'s companion object
+carries no `embrace.danger` import of its own: its two unsafe-tier helpers,
+`openSlot` and `fill`, each redeclare `(using AllowUnsafe)` on their own
+signature, and every caller that reaches them (`run`, `runWith`, `readFast`,
+`readDisksBounded`) does so from inside `Sync.Unsafe.defer`, which
+manufactures the capability internally rather than the caller supplying one
+ambiently (`kyo-core/shared/src/main/scala/kyo/Sync.scala:136-139`).
 
 ## Graceful degradation
 

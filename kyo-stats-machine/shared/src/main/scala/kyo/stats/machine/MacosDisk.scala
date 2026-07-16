@@ -125,7 +125,7 @@ private[machine] object MacosDisk:
       * only). The network types are excluded because a statfs against a dead remote mount blocks until the
       * kernel gives up, and no timeout can interrupt a syscall with no suspension point.
       */
-    val skipFstypes: Set[String] = Set(
+    val SkipFstypes: Set[String] = Set(
         "devfs",
         "autofs",
         "nullfs",
@@ -155,7 +155,7 @@ private[machine] object MacosDisk:
                 val fstypeAt  = mountEnd + 1
                 val fstypeEnd = cStringEnd(buf, fstypeAt)
                 val fstype    = utf8(buf, fstypeAt, fstypeEnd - fstypeAt)
-                if !skipFstypes.contains(fstype) then mounts += mount
+                if !SkipFstypes.contains(fstype) then mounts += mount
                 loop(i + 1, fstypeEnd + 1)
         val used = loop(0, 0)
         new Snapshot(Buffer.copyToArray[Byte](buf, 0, used), mounts.result())

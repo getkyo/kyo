@@ -100,7 +100,7 @@ private[machine] object LinuxDisk:
     end sameFingerprint
 
     /** Pseudo and virtual filesystems that are never enumerated (physical filesystems only). */
-    val skipFstypes: Set[String] = Set(
+    val SkipFstypes: Set[String] = Set(
         "proc",
         "sysfs",
         "cgroup",
@@ -130,7 +130,7 @@ private[machine] object LinuxDisk:
       * blocks until the kernel gives up and would wedge the disk read, so remote mounts are excluded up
       * front. The `fuse.` prefix covers remote FUSE transports alongside these named types.
       */
-    val skipNetworkFstypes: Set[String] = Set(
+    val SkipNetworkFstypes: Set[String] = Set(
         "nfs",
         "nfs4",
         "cifs",
@@ -163,7 +163,7 @@ private[machine] object LinuxDisk:
       * remote one. `fuse.` covers remote FUSE transports; a plain local `fuse` filesystem is not blocked.
       */
     private def isPhysical(fstype: String): Boolean =
-        !skipFstypes.contains(fstype) && !skipNetworkFstypes.contains(fstype) && !fstype.startsWith("fuse.")
+        !SkipFstypes.contains(fstype) && !SkipNetworkFstypes.contains(fstype) && !fstype.startsWith("fuse.")
 
     /** Decodes the octal escapes the kernel writes into `/proc/mounts` for whitespace and backslash in a
       * mount path: `\040` (space), `\011` (tab), `\012` (newline), `\134` (backslash). Any other backslash

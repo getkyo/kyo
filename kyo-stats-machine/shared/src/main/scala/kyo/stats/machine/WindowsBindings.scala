@@ -72,12 +72,12 @@ private[machine] object WindowsBindings
     /** GetDriveTypeA's DRIVE_FIXED code: a local fixed disk. Only these drives are enumerated for disk
       * metrics, so a network/removable/cdrom drive is never touched by GetDiskFreeSpaceExA.
       */
-    val driveFixed: Int = 3
+    val DriveFixed: Int = 3
 
     /** sizeof(MEMORYSTATUSEX) in bytes; the struct is 64 bytes and its `dwLength` field must be preset to
       * this value before `GlobalMemoryStatusEx`, or the call fails.
       */
-    val memoryStatusExSize: Long = 64L
+    val MemoryStatusExSize: Long = 64L
 
     /** Presets `dwLength` (the low DWORD of index 0) to 64 in the caller's RETAINED 8-long (64-byte)
       * MEMORYSTATUSEX buffer and calls `GlobalMemoryStatusEx`, returning true when the call succeeded. The
@@ -86,7 +86,7 @@ private[machine] object WindowsBindings
       * read the SAME filled buffer from ONE call per tick.
       */
     def fillMemoryStatus(b: WindowsBindings, out: Buffer[Long])(using AllowUnsafe): Boolean =
-        out.setLong(0, memoryStatusExSize)
+        out.setLong(0, MemoryStatusExSize)
         b.globalMemoryStatus(out) != 0
     end fillMemoryStatus
 

@@ -104,4 +104,31 @@ class LinuxCgroupDecodeTest extends kyo.test.Test[Any]:
         }
     }
 
+    "real-host resolution" - {
+
+        "the mountinfo-based cgroup root resolves to a real, readable cgroup directory for this process on a real Linux host".onlyJvm in {
+            assume(
+                System.live.unsafe.operatingSystem() == System.OS.Linux,
+                "LinuxCgroup's mountinfo-based resolution is Linux-only; this leaf holds on a real Linux host"
+            )
+            for
+                handles <- MachineHandles.init
+                sampler = new MachineSampler(handles)
+                cgroup  = new LinuxCgroup(handles, sampler)
+                _       = cgroup.read()
+                after   = MachineRegistrySnapshot.read
+            yield
+                def value(path: String): Double = after.find(_.path == path).map(_.value).getOrElse(0.0)
+                assert(
+                    value("machine.cgroup.cpu.period") > 0.0,
+                    "expected machine.cgroup.cpu.period to register with a plausible positive value; a silently mis-resolved cgroup directory would read no such file and leave this metric unregistered"
+                )
+                assert(
+                    value("machine.cgroup.memory.usage") > 0.0,
+                    "expected machine.cgroup.memory.usage to register with a plausible positive value for the same reason"
+                )
+            end for
+        }
+    }
+
 end LinuxCgroupDecodeTest

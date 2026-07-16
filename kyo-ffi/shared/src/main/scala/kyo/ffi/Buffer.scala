@@ -43,6 +43,7 @@ final class Buffer[A] private[ffi] (
     def get(i: Int)(using AllowUnsafe): A =
         core.checkOpen()
         core.checkIndex(i)
+        // Unsafe: raw off-heap read at the checked byte offset, through the UnsafeLayout typeclass dispatch.
         layout.read(underlying, i.toLong * layout.size)
     end get
 
@@ -52,6 +53,7 @@ final class Buffer[A] private[ffi] (
     def set(i: Int, v: A)(using AllowUnsafe): Unit =
         core.checkOpen()
         core.checkIndex(i)
+        // Unsafe: raw off-heap write at the checked byte offset, through the UnsafeLayout typeclass dispatch.
         layout.write(underlying, i.toLong * layout.size, v)
     end set
 
@@ -65,6 +67,7 @@ final class Buffer[A] private[ffi] (
     def getLong(i: Int)(using ev: A =:= Long, allow: AllowUnsafe): Long =
         core.checkOpen()
         core.checkIndex(i)
+        // Unsafe: raw off-heap Long read at the checked byte offset, bypassing the boxing UnsafeLayout dispatch.
         underlying.getLong(i.toLong * layout.size)
     end getLong
 
@@ -74,6 +77,7 @@ final class Buffer[A] private[ffi] (
     def setLong(i: Int, v: Long)(using ev: A =:= Long, allow: AllowUnsafe): Unit =
         core.checkOpen()
         core.checkIndex(i)
+        // Unsafe: raw off-heap Long write at the checked byte offset, bypassing the boxing UnsafeLayout dispatch.
         underlying.setLong(i.toLong * layout.size, v)
     end setLong
 
@@ -83,6 +87,7 @@ final class Buffer[A] private[ffi] (
     def getInt(i: Int)(using ev: A =:= Int, allow: AllowUnsafe): Int =
         core.checkOpen()
         core.checkIndex(i)
+        // Unsafe: raw off-heap Int read at the checked byte offset, bypassing the boxing UnsafeLayout dispatch.
         underlying.getInt(i.toLong * layout.size)
     end getInt
 
@@ -92,6 +97,7 @@ final class Buffer[A] private[ffi] (
     def setInt(i: Int, v: Int)(using ev: A =:= Int, allow: AllowUnsafe): Unit =
         core.checkOpen()
         core.checkIndex(i)
+        // Unsafe: raw off-heap Int write at the checked byte offset, bypassing the boxing UnsafeLayout dispatch.
         underlying.setInt(i.toLong * layout.size, v)
     end setInt
 
@@ -101,6 +107,7 @@ final class Buffer[A] private[ffi] (
     def getShort(i: Int)(using ev: A =:= Short, allow: AllowUnsafe): Short =
         core.checkOpen()
         core.checkIndex(i)
+        // Unsafe: raw off-heap Short read at the checked byte offset, bypassing the boxing UnsafeLayout dispatch.
         underlying.getShort(i.toLong * layout.size)
     end getShort
 
@@ -110,6 +117,7 @@ final class Buffer[A] private[ffi] (
     def setShort(i: Int, v: Short)(using ev: A =:= Short, allow: AllowUnsafe): Unit =
         core.checkOpen()
         core.checkIndex(i)
+        // Unsafe: raw off-heap Short write at the checked byte offset, bypassing the boxing UnsafeLayout dispatch.
         underlying.setShort(i.toLong * layout.size, v)
     end setShort
 
@@ -119,6 +127,7 @@ final class Buffer[A] private[ffi] (
     def getDouble(i: Int)(using ev: A =:= Double, allow: AllowUnsafe): Double =
         core.checkOpen()
         core.checkIndex(i)
+        // Unsafe: raw off-heap Double read at the checked byte offset, bypassing the boxing UnsafeLayout dispatch.
         underlying.getDouble(i.toLong * layout.size)
     end getDouble
 
@@ -128,6 +137,7 @@ final class Buffer[A] private[ffi] (
     def setDouble(i: Int, v: Double)(using ev: A =:= Double, allow: AllowUnsafe): Unit =
         core.checkOpen()
         core.checkIndex(i)
+        // Unsafe: raw off-heap Double write at the checked byte offset, bypassing the boxing UnsafeLayout dispatch.
         underlying.setDouble(i.toLong * layout.size, v)
     end setDouble
 
@@ -137,6 +147,7 @@ final class Buffer[A] private[ffi] (
     def getFloat(i: Int)(using ev: A =:= Float, allow: AllowUnsafe): Float =
         core.checkOpen()
         core.checkIndex(i)
+        // Unsafe: raw off-heap Float read at the checked byte offset, bypassing the boxing UnsafeLayout dispatch.
         underlying.getFloat(i.toLong * layout.size)
     end getFloat
 
@@ -146,6 +157,7 @@ final class Buffer[A] private[ffi] (
     def setFloat(i: Int, v: Float)(using ev: A =:= Float, allow: AllowUnsafe): Unit =
         core.checkOpen()
         core.checkIndex(i)
+        // Unsafe: raw off-heap Float write at the checked byte offset, bypassing the boxing UnsafeLayout dispatch.
         underlying.setFloat(i.toLong * layout.size, v)
     end setFloat
 
@@ -155,6 +167,7 @@ final class Buffer[A] private[ffi] (
     def getByte(i: Int)(using ev: A =:= Byte, allow: AllowUnsafe): Byte =
         core.checkOpen()
         core.checkIndex(i)
+        // Unsafe: raw off-heap Byte read at the checked byte offset, bypassing the boxing UnsafeLayout dispatch.
         underlying.getByte(i.toLong * layout.size)
     end getByte
 
@@ -164,6 +177,7 @@ final class Buffer[A] private[ffi] (
     def setByte(i: Int, v: Byte)(using ev: A =:= Byte, allow: AllowUnsafe): Unit =
         core.checkOpen()
         core.checkIndex(i)
+        // Unsafe: raw off-heap Byte write at the checked byte offset, bypassing the boxing UnsafeLayout dispatch.
         underlying.setByte(i.toLong * layout.size, v)
     end setByte
 

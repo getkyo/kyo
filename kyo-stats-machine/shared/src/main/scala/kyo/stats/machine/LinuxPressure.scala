@@ -54,7 +54,7 @@ private[machine] object LinuxPressure:
       * cells and the cumulative stall into the per-second rate cell, for the `some` row and, where the row
       * is emitted, the `full` row. Built once per file at reader construction.
       */
-    final private[machine] class PsiDecode(some: PsiHandles.One, full: Maybe[PsiHandles.One])
+    final private[machine] class PsiDecode(some: PsiHandles.Pair, full: Maybe[PsiHandles.Pair])
         extends MachineSampler.Decode:
         def apply(b: Span[Byte], n: Int)(using AllowUnsafe): Unit =
             observeLine(b, n, SomeLine, some)
@@ -68,7 +68,7 @@ private[machine] object LinuxPressure:
         b: Span[Byte],
         n: Int,
         prefix: Array[Byte],
-        cells: PsiHandles.One
+        cells: PsiHandles.Pair
     )(using AllowUnsafe): Unit =
         val from = LinuxScan.lineFields(b, n, prefix)
         if from >= 0 then

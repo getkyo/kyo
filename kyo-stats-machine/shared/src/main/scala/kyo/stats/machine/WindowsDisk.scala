@@ -16,7 +16,7 @@ import kyo.ffi.*
   * worker until the share times out, so removable, network, cdrom and ramdisk drives are filtered out up
   * front rather than probed.
   */
-final private[machine] class WindowsDisk(h: MachineHandles)(using AllowUnsafe):
+final private[machine] class WindowsDisk(h: MachineHandles):
 
     private var fingerprint: Int                 = WindowsDisk.NotEnumerated
     private var stores: Chunk[WindowsDisk.Store] = Chunk.empty
@@ -98,7 +98,7 @@ private[machine] object WindowsDisk:
         Chunk.from((0 until 26).iterator.flatMap { i =>
             if (mask & (1 << i)) != 0 then
                 val root = ('A' + i).toChar.toString + ":\\"
-                if b.getDriveType(root) == WindowsBindings.driveFixed then Iterator.single(root) else Iterator.empty
+                if b.getDriveType(root) == WindowsBindings.DriveFixed then Iterator.single(root) else Iterator.empty
             else Iterator.empty
         }.toSeq)
     end enumerate

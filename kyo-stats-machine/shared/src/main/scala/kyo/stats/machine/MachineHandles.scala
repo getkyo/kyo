@@ -46,12 +46,12 @@ final private[kyo] class MachineHandles private (root: Stat, coreCount: Long):
 
     private val mem  = root.scope("memory")
     val memTotal     = LongGaugeCell(mem, "total", "bytes")
-    val memAvailable = LevelCell(mem, "available", "bytes", bytes)
-    val memFree      = LevelCell(mem, "free", "bytes", bytes)
+    val memAvailable = LevelCell(mem, "available", "bytes", byteBoundaries)
+    val memFree      = LevelCell(mem, "free", "bytes", byteBoundaries)
 
     private val swp = root.scope("swap")
     val swapTotal   = LongGaugeCell(swp, "total", "bytes")
-    val swapFree    = LevelCell(swp, "free", "bytes", bytes)
+    val swapFree    = LevelCell(swp, "free", "bytes", byteBoundaries)
 
     private val ld  = root.scope("load")
     val loadOne     = DoubleGaugeCell(ld, "one", "load units")
@@ -59,7 +59,7 @@ final private[kyo] class MachineHandles private (root: Stat, coreCount: Long):
     val loadFifteen = DoubleGaugeCell(ld, "fifteen", "load units")
 
     private val cg   = root.scope("cgroup")
-    val cgMemUsage   = LevelCell(cg, "memory.usage", "bytes", bytes)
+    val cgMemUsage   = LevelCell(cg, "memory.usage", "bytes", byteBoundaries)
     val cgMemLimit   = LongGaugeCell(cg, "memory.limit", "bytes (config value)")
     val cgCpuQuota   = LongGaugeCell(cg, "cpu.quota", "nanoseconds (config value)")
     val cgCpuPeriod  = LongGaugeCell(cg, "cpu.period", "nanoseconds (config value)")
@@ -80,7 +80,7 @@ final private[kyo] class MachineHandles private (root: Stat, coreCount: Long):
     private val diskStores = collection.mutable.LinkedHashMap.empty[String, DiskStore]
 
     def diskStore(store: String): DiskStore =
-        diskStores.getOrElseUpdate(store, new DiskStore(diskScope.scope(store), bytes))
+        diskStores.getOrElseUpdate(store, new DiskStore(diskScope.scope(store), byteBoundaries))
 
     // The core count is available on every OS, so its gauge is seeded and registered at init.
     cpuCores.set(coreCount)
@@ -221,7 +221,7 @@ private[kyo] object MachineHandles:
         else base ++ Array(top / 2, top * 3 / 4, top).filter(_ > base.last)
     end nanosPerSecFor
 
-    val bytes: Array[Double] =
+    val byteBoundaries: Array[Double] =
         Array(0d, 1048576d, 16777216d, 67108864d, 268435456d, 1073741824d, 4294967296d, 17179869184d,
             68719476736d, 274877906944d)
 

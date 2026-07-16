@@ -30,7 +30,7 @@ class LinuxDiskTest extends kyo.test.Test[Any]:
     "LinuxDisk.statvfsInto" - {
 
         "an LP64 statvfs image decodes total and free at offsets 1/2/4" in {
-            val cell = new MachineHandles.DiskStore(Stat.initScope("ldtest-statvfs-lp64"), MachineHandles.bytes)
+            val cell = new MachineHandles.DiskStore(Stat.initScope("ldtest-statvfs-lp64"), MachineHandles.byteBoundaries)
             val stub = new LinuxBindings:
                 def statvfs(path: String, out: Buffer[Long])(using AllowUnsafe): Int =
                     out.set(0, 512L)     // f_bsize -- must never be read as the block size
