@@ -22,7 +22,7 @@ class PathCapabilityTest extends kyo.test.Test[Any]:
         Path.sandbox[Unit, Abort[String]](writer)
     val transactionRow: Unit < (PathWrite & Abort[CommitConflict] & Abort[String]) =
         Path.transaction[Unit, Abort[String]](writer)
-    val virtualRow: (Unit, Path.Service.Overlay[Sync]) < (PathWrite & Abort[String]) =
+    val virtualRow: (Unit, CommitHandle[Sync]) < (PathWrite & Abort[String]) =
         Path.virtual[Unit, Abort[String]](writer)
     val sandboxRowNoSync: Unit < PathWrite = Path.sandbox(writer)
 

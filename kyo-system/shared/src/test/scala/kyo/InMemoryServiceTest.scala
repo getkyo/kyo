@@ -5,9 +5,9 @@ import java.nio.charset.StandardCharsets
 class InMemoryServiceTest extends kyo.test.Test[Any]:
 
     // Helper: run a path program through a fresh in-memory service.
-    private def withInMem[A, S](program: Path.Service[Sync] => A < (Sync & Abort[FileException] & S))
+    private def withInMem[A, S](program: PathService[Sync] => A < (Sync & Abort[FileException] & S))
         : A < (Sync & Abort[FileException] & S) =
-        Path.Service.inMemory.map(svc => program(svc))
+        PathService.inMemory.map(svc => program(svc))
 
     "read after write returns the written string" in {
         withInMem { svc =>
@@ -141,7 +141,7 @@ class InMemoryServiceTest extends kyo.test.Test[Any]:
     }
 
     "two concurrent writes to sibling paths both land without lost updates" in {
-        Path.Service.inMemory.map { svc =>
+        PathService.inMemory.map { svc =>
             val aPath = Path("race-a.txt")
             val bPath = Path("race-b.txt")
             val aData = Span.from("alpha".getBytes(StandardCharsets.UTF_8))
@@ -163,7 +163,7 @@ class InMemoryServiceTest extends kyo.test.Test[Any]:
     }
 
     "two concurrent appends to the same path both land without lost content" in {
-        Path.Service.inMemory.map { svc =>
+        PathService.inMemory.map { svc =>
             val p = Path("concurrent-append.txt")
             Path.runWith(svc)(p.write("")).andThen {
                 for
@@ -183,7 +183,7 @@ class InMemoryServiceTest extends kyo.test.Test[Any]:
     }
 
     "writeBytes with createFolders=false fails when parent directory does not exist" in {
-        Path.Service.inMemory.map { svc =>
+        PathService.inMemory.map { svc =>
             val nested = Path("missing-parent", "file.txt")
             Abort.run[FileException](
                 Path.runWith(svc)(nested.writeBytes(Span.from(Array[Byte](1, 2, 3)), createFolders = false))
@@ -198,7 +198,7 @@ class InMemoryServiceTest extends kyo.test.Test[Any]:
     }
 
     "writeTo abort before finish leaves target absent" in {
-        Path.Service.inMemory.map { svc =>
+        PathService.inMemory.map { svc =>
             val target = Path("sink-abort.bin")
             // A stream that fails mid-way; the write handle's finish() is never called so no bytes land.
             val failingStream: Stream[Byte, Abort[FileException]] =
@@ -220,7 +220,7 @@ class InMemoryServiceTest extends kyo.test.Test[Any]:
     }
 
     "writeTo with a complete stream writes the exact bytes to the target" in {
-        Path.Service.inMemory.map { svc =>
+        PathService.inMemory.map { svc =>
             val target  = Path("sink-ok.bin")
             val payload = Chunk[Byte](10, 20, 30, 40)
             val prog =
@@ -236,7 +236,7 @@ class InMemoryServiceTest extends kyo.test.Test[Any]:
     }
 
     "tempDir scope cleanup removes only the in-memory entry and does not touch a coincident host directory" in {
-        Path.Service.inMemory.map { svc =>
+        PathService.inMemory.map { svc =>
             AtomicRef.init[Maybe[Path]](Absent).map { pathRef =>
                 // Open a scope that creates an in-memory temp dir; simultaneously create a
                 // real host directory at the same path string.
@@ -272,17 +272,17 @@ class InMemoryServiceTest extends kyo.test.Test[Any]:
     }
 
     "Service.host disposition is AutoCommit" in {
-        assert(Path.Service.host.disposition == Path.Disposition.AutoCommit)
+        assert(PathService.host.disposition == PathService.Disposition.AutoCommit)
     }
 
     "Service.inMemory disposition is AutoCommit" in {
-        Path.Service.inMemory.map { svc =>
-            assert(svc.disposition == Path.Disposition.AutoCommit)
+        PathService.inMemory.map { svc =>
+            assert(svc.disposition == PathService.Disposition.AutoCommit)
         }
     }
 
-    "Path.Disposition has exactly three cases" in {
-        assert(Path.Disposition.values.size == 3)
+    "PathService.Disposition has exactly three cases" in {
+        assert(PathService.Disposition.values.size == 3)
     }
 
 end InMemoryServiceTest

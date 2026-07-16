@@ -8,23 +8,23 @@ class OverlayServiceTest extends kyo.test.Test[Any]:
     // The inner function receives both the overlay (as CommitHandle so callers can commit) and
     // the lower service directly (for pre-/post-commit inspection by commit-isolation tests).
     private def withOverlay[A, S](
-        program: (Path.Service.Overlay[Sync], Path.Service[Sync]) => A < (Sync & Abort[FileException] & S)
+        program: (CommitHandle[Sync], PathService[Sync]) => A < (Sync & Abort[FileException] & S)
     ): A < (Sync & Scope & Abort[FileException] & S) =
-        Path.Service.inMemory.map { lower =>
-            Path.Service.overlay(lower).map { ov =>
+        PathService.inMemory.map { lower =>
+            PathService.overlay(lower).map { ov =>
                 program(ov, lower)
             }
         }
 
     // Helper: run through overlay only, lower not needed.
     private def withOv[A, S](
-        program: Path.Service.Overlay[Sync] => A < (Sync & Abort[FileException] & S)
+        program: CommitHandle[Sync] => A < (Sync & Abort[FileException] & S)
     ): A < (Sync & Scope & Abort[FileException] & S) =
         withOverlay((ov, _) => program(ov))
 
     "overlay disposition is ManualCommit" in {
         withOv { ov =>
-            assert(ov.disposition == Path.Disposition.ManualCommit)
+            assert(ov.disposition == PathService.Disposition.ManualCommit)
         }
     }
 
@@ -205,10 +205,10 @@ class OverlayServiceTest extends kyo.test.Test[Any]:
         }
     }
 
-    "first read of lower file records a Path.Stamp with correct type, size, and mtime" in {
-        // Verify via conflict detection: observe lower file (stamps it), then remove from lower
-        // so that the commit detects a File→Absent mismatch. The conflict's `ancestor` field
-        // IS the recorded stamp; checking it proves stamp.entryType, size, and mtime are correct.
+    "first read of lower file records a Path.Entry with correct type, size, and mtime" in {
+        // Verify via conflict detection: observe lower file (records its entry), then remove from
+        // lower so that the commit detects a File→Absent mismatch. The conflict's `ancestor` field
+        // IS the recorded entry; checking it proves the entry's type, size, and mtime are correct.
         // Using removal (not re-write) avoids timing flakiness from same-millisecond mtime updates.
         withOverlay { (ov, lower) =>
             val p = Path("stamped.txt")
@@ -223,11 +223,14 @@ class OverlayServiceTest extends kyo.test.Test[Any]:
                                     val conflict = cc.conflicts.head
                                     assert(conflict.path == p)
                                     conflict.ancestor match
-                                        case Absent => assert(false, "expected Present ancestor stamp")
-                                        case Present(stamp) =>
-                                            assert(stamp.entryType == Path.Stamp.Kind.File)
-                                            assert(stamp.size == Present(lowerStat.sizeBytes.bytes))
-                                            assert(stamp.lastModifiedMs == Present(lowerStat.lastModifiedMs))
+                                        case Absent => assert(false, "expected Present ancestor entry")
+                                        case Present(entry) =>
+                                            entry match
+                                                case Path.Entry.File(_, stat) =>
+                                                    assert(stat.sizeBytes == lowerStat.sizeBytes)
+                                                    assert(stat.lastModifiedMs == lowerStat.lastModifiedMs)
+                                                case Path.Entry.Directory(_) =>
+                                                    assert(false, "expected a File entry")
                                     end match
                                 case other =>
                                     assert(false, s"expected CommitConflict, got $other")

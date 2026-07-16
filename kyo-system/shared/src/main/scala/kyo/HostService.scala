@@ -4,14 +4,14 @@ import java.nio.charset.Charset
 
 private[kyo] object HostService:
 
-    def apply()(using Frame): Path.Service[Sync] = new HostService
+    def apply()(using Frame): PathService[Sync] = new HostService
 
-    def rootConfined(root: Path)(using Frame): Path.Service[Sync] < (Sync & Abort[FileException]) =
+    def rootConfined(root: Path)(using Frame): PathService[Sync] < (Sync & Abort[FileException]) =
         // Unsafe: resolves the confinement root's real path once at construction
         Sync.Unsafe.defer(Abort.get(root.unsafe.realPath())).map(rootReal => new RootConfinedHostService(rootReal))
 
-    final class HostService(using Frame) extends Path.Service[Sync]:
-        val disposition: Path.Disposition = Path.Disposition.AutoCommit
+    final class HostService(using Frame) extends PathService[Sync]:
+        val disposition: PathService.Disposition = PathService.Disposition.AutoCommit
 
         def exists(path: Path): Boolean < (Sync & Abort[FileException]) =
             // Unsafe: bridges Path.Unsafe.exists into the safe tier
@@ -143,9 +143,9 @@ private[kyo] object HostService:
             }
     end HostService
 
-    final class RootConfinedHostService(rootReal: Path)(using Frame) extends Path.Service[Sync]:
-        private val host                  = new HostService
-        val disposition: Path.Disposition = Path.Disposition.AutoCommit
+    final class RootConfinedHostService(rootReal: Path)(using Frame) extends PathService[Sync]:
+        private val host                         = new HostService
+        val disposition: PathService.Disposition = PathService.Disposition.AutoCommit
 
         private def confined(path: Path): Path < (Sync & Abort[FileException]) =
             // Unsafe: probes target existence to choose between realpath and nearest-parent checks

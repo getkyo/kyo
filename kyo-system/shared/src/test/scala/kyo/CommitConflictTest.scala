@@ -2,9 +2,10 @@ package kyo
 
 /** Construction and equality round-trip tests for the commit-conflict value types. Covers
   * `CommitConflict`, `Conflict`, `Resolution` (all four cases), `Path.Entry` (both variants),
-  * `Path.Stamp`, and `Path.Stamp.Kind` (all three cases including `Absent`). Also asserts that
-  * `Conflict.ancestor` carries a `Maybe[Path.Stamp]` rather than a `Maybe[Path.Entry]`, because
-  * the read-set records only a stamp at observation time, never the bytes.
+  * `Path.Stamp`, and `Path.Stamp.Kind` (all three cases including `Absent`; `Path.Stamp` is
+  * retained as a public type though the overlay read-set no longer constructs it). Also asserts
+  * that `Conflict.ancestor` carries a `Maybe[Path.Entry]`: the read-set records the full observed
+  * entry (bytes and stat for a regular file, stat for a directory) at observation time.
   */
 class CommitConflictTest extends kyo.test.Test[Any]:
 
@@ -107,13 +108,13 @@ class CommitConflictTest extends kyo.test.Test[Any]:
         assert(f != d)
     }
 
-    "Conflict construction with Maybe[Path.Stamp] ancestor" in {
-        val stamp    = Path.Stamp(Path.Stamp.Kind.File, Present(42L.bytes), Present(1L), Absent)
+    "Conflict construction with Maybe[Path.Entry] ancestor" in {
+        val entry    = Path.Entry.File(sampleBytes, sampleStat)
         val ours     = Present(Path.Entry.File(sampleBytes, sampleStat))
         val theirs   = Present(Path.Entry.Directory(sampleStat))
-        val conflict = Conflict(samplePath, Present(stamp), ours, theirs)
+        val conflict = Conflict(samplePath, Present(entry), ours, theirs)
         assert(conflict.path == samplePath)
-        assert(conflict.ancestor == Present(stamp))
+        assert(conflict.ancestor == Present(entry))
         assert(conflict.ours == ours)
         assert(conflict.theirs == theirs)
     }
@@ -126,9 +127,9 @@ class CommitConflictTest extends kyo.test.Test[Any]:
     }
 
     "Conflict derives CanEqual" in {
-        val stamp = Path.Stamp(Path.Stamp.Kind.File, Absent, Absent, Absent)
-        val c1    = Conflict(samplePath, Present(stamp), Absent, Absent)
-        val c2    = Conflict(samplePath, Present(stamp), Absent, Absent)
+        val entry = Path.Entry.File(sampleBytes, sampleStat)
+        val c1    = Conflict(samplePath, Present(entry), Absent, Absent)
+        val c2    = Conflict(samplePath, Present(entry), Absent, Absent)
         val c3    = Conflict(samplePath, Absent, Absent, Absent)
         assert(c1 == c2)
         assert(c1 != c3)
@@ -168,8 +169,8 @@ class CommitConflictTest extends kyo.test.Test[Any]:
     // --- CommitConflict ---
 
     "CommitConflict construction and conflict list access" in {
-        val stamp    = Path.Stamp(Path.Stamp.Kind.File, Absent, Absent, Absent)
-        val conflict = Conflict(samplePath, Present(stamp), Absent, Absent)
+        val entry    = Path.Entry.File(sampleBytes, sampleStat)
+        val conflict = Conflict(samplePath, Present(entry), Absent, Absent)
         val cc       = CommitConflict(Chunk(conflict))
         assert(cc.conflicts.size == 1)
         assert(cc.conflicts.head == conflict)

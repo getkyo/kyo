@@ -10,7 +10,7 @@ private[kyo] object InMemoryService:
         def file(bytes: Span[Byte], now: Long): Node = Node(Map.empty, Present(FileBody(bytes)), Path.PathStat(now, bytes.size.toLong))
     final case class State(root: Node)
 
-    def init(using Frame): Path.Service[Sync] < Sync =
+    def init(using Frame): PathService[Sync] < Sync =
         Sync.defer(java.lang.System.currentTimeMillis()).map { now =>
             AtomicRef.init(State(Node.dir(now))).map(ref => new InMemoryService(ref))
         }
@@ -50,9 +50,9 @@ private[kyo] object InMemoryService:
                 case _                            => false
 end InMemoryService
 
-final private[kyo] class InMemoryService(state: AtomicRef[InMemoryService.State])(using Frame) extends Path.Service[Sync]:
+final private[kyo] class InMemoryService(state: AtomicRef[InMemoryService.State])(using Frame) extends PathService[Sync]:
     import InMemoryService.*
-    val disposition: Path.Disposition = Path.Disposition.AutoCommit
+    val disposition: PathService.Disposition = PathService.Disposition.AutoCommit
 
     private def now: Long < Sync = Sync.defer(java.lang.System.currentTimeMillis())
 
@@ -232,7 +232,7 @@ final private[kyo] class InMemoryService(state: AtomicRef[InMemoryService.State]
                     if append then lookup(s.root, path.parts).flatMap(_.file).map(_.bytes).getOrElse(Span.empty[Byte]) else Span.empty[Byte]
                 InMemoryHandles.write(this, path, seed)
         }
-    // writeChunk and writeString are abstract on Service[S]; every concrete service must implement
+    // writeChunk and writeString are abstract on PathService[S]; every concrete service must implement
     // them. The in-memory form delegates into the handle's buffer accumulator.
     def writeChunk(handle: Path.WriteHandle, chunk: Chunk[Byte]): Unit < (Sync & Abort[FileException]) =
         // Unsafe: delegates to the in-memory write handle's buffer accumulator

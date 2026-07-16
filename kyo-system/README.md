@@ -31,11 +31,11 @@ Filesystem I/O is capability-tracked, not method-tracked. A program that only re
 
 `PathWrite <: PathRead`: a write-capable context also satisfies read operations, and `Path.runReadOnly` rejects write programs at the call site (the negative capability law).
 
-Install a custom backend with `Path.runWith`: `Service.host` (default), `Service.host(root)` (root-confined), `Service.inMemory` (hermetic tests), or `Service.overlay(lower)` (copy-on-write staging with explicit commit).
+Install a custom backend with `Path.runWith`: `PathService.host` (default), `PathService.host(root)` (root-confined), `PathService.inMemory` (hermetic tests), or `PathService.overlay(lower)` (copy-on-write staging with explicit commit).
 
-When you need real disk I/O against the host filesystem, use `Service.host` or `Service.host(root)` to confine all paths under a root. When you need hermetic unit tests with no disk side effects, use `Service.inMemory`. When you need to stage writes and commit or discard them as a unit, wrap a lower service with `Service.overlay(lower)`.
+When you need real disk I/O against the host filesystem, use `PathService.host` or `PathService.host(root)` to confine all paths under a root. When you need hermetic unit tests with no disk side effects, use `PathService.inMemory`. When you need to stage writes and commit or discard them as a unit, wrap a lower service with `PathService.overlay(lower)`.
 
-`Service.overlay(lower)` is Scope-managed: when the enclosing Scope closes, staged upper state is reset automatically (rollback without an explicit `rollback` call).
+`PathService.overlay(lower)` is Scope-managed: when the enclosing Scope closes, staged upper state is reset automatically (rollback without an explicit `rollback` call).
 
 Overlay combinators for transactional writes:
 
@@ -72,7 +72,7 @@ Besides `commit` (validate then replay) and `commitWith`, overlays expose `commi
 import kyo.*
 
 val committed: String < (Sync & Abort[FileException] & Abort[CommitConflict]) =
-    Path.Service.inMemory.flatMap { lower =>
+    PathService.inMemory.flatMap { lower =>
         Path.runWith(lower) {
             Path.virtual {
                 for
@@ -94,7 +94,7 @@ When `overlay.commit` fails with `CommitConflict`, catch the failure row with `A
 import kyo.*
 
 val attempt: Result[CommitConflict, Unit] < (Sync & Abort[FileException]) =
-    Path.Service.inMemory.flatMap { lower =>
+    PathService.inMemory.flatMap { lower =>
         val p = Path("data") / "shared.txt"
         Path.runWith(lower) {
             Path.virtual(p.write("staged")).flatMap { case (_, overlay) =>
@@ -110,7 +110,7 @@ On `Result.Failure(CommitConflict(conflicts))`, retry with a per-path resolution
 import kyo.*
 
 val resolved: Unit < (Sync & Abort[FileException]) =
-    Path.Service.inMemory.flatMap { lower =>
+    PathService.inMemory.flatMap { lower =>
         val p = Path("data") / "shared.txt"
         Path.runWith(lower) {
             Path.virtual(p.write("staged")).flatMap { case (_, overlay) =>

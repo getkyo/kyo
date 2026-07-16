@@ -14,10 +14,10 @@ import java.nio.charset.StandardCharsets
 class OverlayServiceCommitTest extends kyo.test.Test[Any]:
 
     private def withOverlay[A, S](
-        program: (Path.Service.Overlay[Sync], Path.Service[Sync]) => A < (Sync & Abort[FileException] & S)
+        program: (CommitHandle[Sync], PathService[Sync]) => A < (Sync & Abort[FileException] & S)
     ): A < (Sync & Scope & Abort[FileException] & S) =
-        Path.Service.inMemory.map { lower =>
-            Path.Service.overlay(lower).map { ov =>
+        PathService.inMemory.map { lower =>
+            PathService.overlay(lower).map { ov =>
                 program(ov, lower)
             }
         }

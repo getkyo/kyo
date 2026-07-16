@@ -56,7 +56,7 @@ import kyo.kernel.ArrowEffect
   * @see
   *   [[Path.run]], [[Path.runReadOnly]], [[Path.runWith]], [[Path.runReadOnlyWith]] for the runners
   * @see
-  *   [[Path.Service]] for the pluggable backend the runners install
+  *   [[PathService]] for the pluggable backend the runners install
   */
 sealed trait PathRead extends ArrowEffect[[A] =>> Path.Op[A], Id]
 
@@ -177,163 +177,20 @@ object Path extends PathPlatformSpecific:
         case WriteString(handle: Path.WriteHandle, value: String, charset: Charset) extends Op[Unit]
     end Op
 
-    // --- Disposition ---
-
-    /** Write-durability contract a [[Service]] declares. The disposition governs when staged bytes
-      * become visible to other readers of the same backend:
-      *
-      *   - `AutoCommit`: each successful write is durable immediately per the backend's normal contract
-      *     ([[Service.host]], [[Service.inMemory]]).
-      *   - `CommitOnSuccess`: writes stage during the enclosing run and commit when the run completes
-      *     successfully. Reserved for backends that stage writes for the enclosing run; not used by
-      *     [[Service.host]], [[Service.inMemory]], or [[Service.overlay]].
-      *   - `ManualCommit`: writes stage until an explicit [[CommitHandle.commit]] call
-      *     ([[Service.overlay]] default).
-      *
-      * Adding a case is non-breaking; exhaustive match sites gain a compile error rather than silently
-      * defaulting.
-      */
-    enum Disposition derives CanEqual:
-        case AutoCommit
-        case CommitOnSuccess
-        case ManualCommit
-    end Disposition
-
-    // --- Service SPI ---
-
-    /** The backend every safe `Path` operation dispatches through. Effect-polymorphic in `S` (the
-      * backend's own effect, exposed on a runner residual, the Journal `Backend[S]` precedent);
-      * methods take no `(using Frame)` (a service captures its `Frame` at construction). The umbrella
-      * `Abort[FileException]` is the uniform error row. Implement this to provide a virtual filesystem
-      * (in-memory, overlay); [[Service.host]] is the default host-filesystem backend.
-      *
-      * @tparam S
-      *   the backend's own effect, propagated to the runner residual
-      * @see
-      *   [[Path.run]] and [[Path.runWith]] for the runners that install a service
-      */
-    trait Service[S]:
-        def disposition: Disposition
-
-        // inspection
-        def exists(path: Path): Boolean < (S & Abort[FileException])
-        def exists(path: Path, followLinks: Boolean): Boolean < (S & Abort[FileException])
-        def isDirectory(path: Path): Boolean < (S & Abort[FileException])
-        def isRegularFile(path: Path): Boolean < (S & Abort[FileException])
-        def isSymbolicLink(path: Path): Boolean < (S & Abort[FileException])
-        def realPath(path: Path): Path < (S & Abort[FileException])
-
-        // read
-        def read(path: Path): String < (S & Abort[FileException])
-        def read(path: Path, charset: Charset): String < (S & Abort[FileException])
-        def readBytes(path: Path): Span[Byte] < (S & Abort[FileException])
-        def readLines(path: Path): Chunk[String] < (S & Abort[FileException])
-        def readLines(path: Path, charset: Charset): Chunk[String] < (S & Abort[FileException])
-        def size(path: Path): Long < (S & Abort[FileException])
-        def stat(path: Path): Path.PathStat < (S & Abort[FileException])
-
-        // read handles (internal handle types; back the streaming reads and walk)
-        def openRead(path: Path): Path.ReadHandle < (S & Abort[FileException])
-        def openReadLines(path: Path, charset: Charset): Path.LineReadHandle < (S & Abort[FileException])
-        def openWalk(path: Path, maxDepth: Int, followLinks: Boolean): Path.WalkHandle < (S & Abort[FileException])
-
-        // write
-        def write(path: Path, value: String, createFolders: Boolean): Unit < (S & Abort[FileException])
-        def writeBytes(path: Path, value: Span[Byte], createFolders: Boolean): Unit < (S & Abort[FileException])
-        def writeLines(path: Path, value: Chunk[String], createFolders: Boolean): Unit < (S & Abort[FileException])
-        def append(path: Path, value: String, createFolders: Boolean): Unit < (S & Abort[FileException])
-        def appendBytes(path: Path, value: Span[Byte], createFolders: Boolean): Unit < (S & Abort[FileException])
-        def appendLines(path: Path, value: Chunk[String], createFolders: Boolean): Unit < (S & Abort[FileException])
-        def truncate(path: Path, size: Long): Unit < (S & Abort[FileException])
-        def setLastModified(path: Path, epochMs: Long): Unit < (S & Abort[FileException])
-
-        // write handle
-        def openWrite(path: Path, append: Boolean, createFolders: Boolean): Path.WriteHandle < (S & Abort[FileException])
-        def writeChunk(handle: Path.WriteHandle, chunk: Chunk[Byte]): Unit < (S & Abort[FileException])
-        def writeString(handle: Path.WriteHandle, value: String, charset: Charset): Unit < (S & Abort[FileException])
-
-        // directory / structure
-        def mkDir(path: Path): Unit < (S & Abort[FileException])
-        def mkFile(path: Path): Unit < (S & Abort[FileException])
-        def list(path: Path): Chunk[Path] < (S & Abort[FileException])
-        def list(path: Path, glob: String): Chunk[Path] < (S & Abort[FileException])
-        def move(
-            from: Path,
-            to: Path,
-            replaceExisting: Boolean,
-            atomicMove: Boolean,
-            createFolders: Boolean
-        ): Unit < (S & Abort[FileException])
-        def copy(
-            from: Path,
-            to: Path,
-            followLinks: Boolean,
-            replaceExisting: Boolean,
-            copyAttributes: Boolean,
-            createFolders: Boolean
-        ): Unit < (S & Abort[FileException])
-        def remove(path: Path): Boolean < (S & Abort[FileException])
-        def removeExisting(path: Path): Unit < (S & Abort[FileException])
-        def removeAll(path: Path): Unit < (S & Abort[FileException])
-
-        // scoped temp: vends a service-correct removal handle so cleanup runs through the creating service
-        def tempDir(prefix: String): Path.TempDirHandle < (S & Abort[FileException])
-    end Service
-
-    object Service:
-        /** Default host backend: delegates every op to [[Path.Unsafe]], translating the concrete
-          * `Result[File*Exception, A]` into `Abort[FileException]`, so it preserves current `Path`
-          * behavior exactly. Its disposition is `AutoCommit`.
-          */
-        def host(using Frame): Service[Sync] = HostService()
-
-        /** Root-confined host backend: resolves `root.realPath` at construction and rejects any op whose
-          * canonical path (following every symlink) escapes it; writes to missing entries validate the
-          * nearest existing parent. Prefix-only checking without realpath is a security defect.
-          */
-        def host(root: Path)(using Frame): Service[Sync] < (Sync & Abort[FileException]) =
-            HostService.rootConfined(root)
-
-        /** In-memory backend: an immutable node tree keyed by `Path.parts` behind one `AtomicRef`,
-          * advanced by an optimistic CAS loop. `isSymbolicLink` always returns `false`. Its disposition
-          * is `AutoCommit`.
-          */
-        def inMemory(using Frame): Service[Sync] < Sync = InMemoryService.init
-
-        /** Copy-on-write overlay over `lower`: reads fall through, writes stage in an upper layer, and
-          * an explicit commit replays the staged journal onto `lower`. Scope-managed; `ManualCommit`.
-          */
-        def overlay[S](lower: Service[S])(using Frame): Overlay[S] < (Sync & Scope) =
-            OverlayService.init(lower)
-
-        /** An overlay's public face: a [[CommitHandle]] whose disposition is `ManualCommit`.
-          *
-          * Returned by [[overlay]] and by [[Path.virtual]] for caller-controlled commit. Reads fall
-          * through to the lower service; writes stage in the upper layer until [[commit]],
-          * [[commitWith]], or [[commitOverwrite]] replays them. [[rollback]] discards staged writes
-          * without touching the lower service.
-          *
-          * IMPORTANT: [[commit]] and [[commitWith]] abort `CommitConflict` when a read-set stamp
-          * diverges from the live lower view; use [[commitWith]] with a [[Resolution]] function when
-          * the caller wants to resolve conflicts instead of failing.
-          */
-        trait Overlay[S] extends CommitHandle[S]
-    end Service
-
     // --- Runners ---
 
     /** Runs `program`, discharging both write and read capabilities against the default host service
-      * ([[Service.host]]). Every filesystem op inside `program` suspends under `PathWrite` or
+      * ([[PathService.host]]). Every filesystem op inside `program` suspends under `PathWrite` or
       * `PathRead` and is dispatched to the host backend; the residual folds the per-op
       * `Abort[File*Exception]` markers into the umbrella `Abort[FileException]`.
       *
       * Residual: `Sync & Abort[FileException] & S` (the caller's tail `S` rides through).
       *
       * @see
-      *   [[runWith]] to install a custom [[Service]] (in-memory, overlay, root-confined host)
+      *   [[runWith]] to install a custom [[PathService]] (in-memory, overlay, root-confined host)
       */
     def run[A, S](program: A < (PathWrite & S))(using Frame): A < (Sync & Abort[FileException] & S) =
-        runWith(Service.host)(program)
+        runWith(PathService.host)(program)
 
     /** Runs `program`, discharging the read capability only against the default host service. A write
       * op left in the program keeps `PathWrite` undischarged, so the ascribed read-only residual does
@@ -344,19 +201,20 @@ object Path extends PathPlatformSpecific:
       * at the call site rather than at runtime.
       *
       * @see
-      *   [[runReadOnlyWith]] to install a custom read-only [[Service]]
+      *   [[runReadOnlyWith]] to install a custom read-only [[PathService]]
       */
     def runReadOnly[A, S](program: A < (PathRead & S))(using Frame): A < (Sync & Abort[FileException] & S) =
-        runReadOnlyWith(Service.host)(program)
+        runReadOnlyWith(PathService.host)(program)
 
     /** Runs `program` against an explicit `service`, discharging write and read; the backend's own
       * effect `S` rides the residual (the Journal `Backend[S]` mapping).
       *
-      * Install [[Service.inMemory]] for hermetic tests, [[Service.overlay]] (wrapped in `Scope`) for
-      * copy-on-write staging, or [[Service.host]](root) for root-confined host I/O. The service's
-      * [[Disposition]] determines when writes become durable relative to the enclosing run.
+      * Install [[PathService.inMemory]] for hermetic tests, [[PathService.overlay]] (wrapped in `Scope`)
+      * for copy-on-write staging, or [[PathService.host]](root) for root-confined host I/O. The
+      * service's [[PathService.Disposition]] determines when writes become durable relative to the
+      * enclosing run.
       */
-    def runWith[S, A, S2](service: Service[S])(program: A < (PathWrite & S2))(using Frame): A < (S & Abort[FileException] & S2) =
+    def runWith[S, A, S2](service: PathService[S])(program: A < (PathWrite & S2))(using Frame): A < (S & Abort[FileException] & S2) =
         ArrowEffect.handle(Tag[PathWrite], program)(
             [C] => (op, cont) => dispatch(service, op).map(cont)
         )
@@ -367,7 +225,7 @@ object Path extends PathPlatformSpecific:
       * undischarged and fails to compile. The service's effect `S` and the caller's tail `S2` both
       * ride the residual unchanged.
       */
-    def runReadOnlyWith[S, A, S2](service: Service[S])(program: A < (PathRead & S2))(using Frame): A < (S & Abort[FileException] & S2) =
+    def runReadOnlyWith[S, A, S2](service: PathService[S])(program: A < (PathRead & S2))(using Frame): A < (S & Abort[FileException] & S2) =
         ArrowEffect.handle(Tag[PathRead], program)(
             [C] => (op, cont) => dispatch(service, op).map(cont)
         )
@@ -460,26 +318,25 @@ object Path extends PathPlatformSpecific:
     /** Runs `program` against a fresh overlay and returns the overlay alongside the result, so the
       * caller can inspect, commit, discard, or choose a conflict policy after the block.
       *
-      * The returned [[Service.Overlay]] is a [[CommitHandle]] with `ManualCommit` disposition.
-      * Call [[Service.Overlay.commit]], [[Service.Overlay.commitWith]], or
-      * [[Service.Overlay.rollback]] after inspecting staged state.
+      * The returned [[CommitHandle]] has `ManualCommit` disposition. Call [[CommitHandle.commit]],
+      * [[CommitHandle.commitWith]], or [[CommitHandle.rollback]] after inspecting staged state.
       *
       * IMPORTANT: `commit` and `rollback` on the returned overlay must run within an ambient
       * `PathWrite` scope (the same or an enclosing [[runWith]] call). Calling them after `PathWrite`
       * is discharged leaves path operations unresolved at runtime.
       */
-    def virtual[A, S](program: A < (PathWrite & S))(using Frame): (A, Service.Overlay[Sync]) < (PathWrite & S) =
+    def virtual[A, S](program: A < (PathWrite & S))(using Frame): (A, CommitHandle[Sync]) < (PathWrite & S) =
         ephemeralOverlay(
             program,
             (result, overlay) =>
-                // Unsafe: overlay is OverlayService[PathWrite]; cast to Overlay[Sync] because ambient
-                // services are Sync and commit/rollback effects are resolved by the outer PathWrite
-                // handler before Sync.run sees them
-                (result, overlay.asInstanceOf[Service.Overlay[Sync]])
+                // Unsafe: overlay is OverlayService[PathWrite]; cast to CommitHandle[Sync] because
+                // ambient services are Sync and commit/rollback effects are resolved by the outer
+                // PathWrite handler before Sync.run sees them
+                (result, overlay.asInstanceOf[CommitHandle[Sync]])
         )
     end virtual
 
-    private def dispatch[S, C](service: Service[S], op: Op[C])(using Frame): C < (S & Abort[FileException]) =
+    private def dispatch[S, C](service: PathService[S], op: Op[C])(using Frame): C < (S & Abort[FileException]) =
         op match
             case Op.Exists(p)                  => service.exists(p)
             case Op.ExistsFollow(p, f)         => service.exists(p, f)
@@ -536,7 +393,7 @@ object Path extends PathPlatformSpecific:
         )(handle => Sync.Unsafe.defer(handle.remove())) // Unsafe: service-vended recursive cleanup at Scope exit
             .map(_.path)
 
-    /** A handle to a service-created temporary directory. Vended by [[Service.tempDir]] so the scoped
+    /** A handle to a service-created temporary directory. Vended by [[PathService.tempDir]] so the scoped
       * [[Path.tempDir]] finalizer removes through the creating service. Internal.
       */
     abstract private[kyo] class TempDirHandle:
@@ -599,36 +456,6 @@ object Path extends PathPlatformSpecific:
         enum Kind derives CanEqual:
             case File, Directory, Absent
     end Stamp
-
-    /** A [[Service]] extension whose writes stage locally until an explicit commit validates them
-      * against the underlying live service. [[Service.overlay]] is the built-in manual-commit
-      * factory; its [[Service.disposition]] is `Disposition.ManualCommit`.
-      *
-      * Three commit strategies are available:
-      *   - [[commit]]: validates the read-set against the live lower; aborts `CommitConflict` if
-      *     any stamp has diverged, leaving the lower untouched.
-      *   - [[commitOverwrite]]: replays unconditionally (last-writer-wins) with no conflict check.
-      *   - [[commitWith]]: validates, then calls a caller-supplied `resolve` function for each
-      *     conflict to obtain a [[Resolution]] before replaying the resolved entries.
-      *
-      * [[rollback]] discards all staged writes without touching the lower service. Calling any
-      * write method after a commit or rollback is undefined behavior on the current implementation.
-      */
-    trait CommitHandle[S] extends Service[S]:
-        /** Validates the read-set against the live lower service; replays if every stamp matches, else
-          * aborts `CommitConflict` and leaves the lower service untouched.
-          */
-        def commit(using Frame): Unit < (S & Abort[FileException] & Abort[CommitConflict])
-
-        /** Replays unconditionally (last-writer-wins); no `CommitConflict` in the row. */
-        def commitOverwrite(using Frame): Unit < (S & Abort[FileException])
-
-        /** Validates, calls `resolve` per conflict, replays the resolved journal. */
-        def commitWith[S2](resolve: Conflict => Resolution < S2)(using Frame): Unit < (S & Abort[FileException] & S2)
-
-        /** Discards staged writes; no error surface. */
-        def rollback(using Frame): Unit < S
-    end CommitHandle
 
     // --- Safe extension methods ---
 

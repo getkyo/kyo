@@ -13,7 +13,7 @@ class PathTransactionTest extends kyo.test.Test[Any]:
     // transaction commits on success, discards on abort, surfaces CommitConflict
 
     "transaction commits writes to lower on success" in {
-        Path.Service.inMemory.map { lower =>
+        PathService.inMemory.map { lower =>
             val p = Path("tx-commit.txt")
             Abort.run[CommitConflict](
                 Path.runWith(lower)(
@@ -29,7 +29,7 @@ class PathTransactionTest extends kyo.test.Test[Any]:
     }
 
     "transaction discards staged writes when program aborts" in {
-        Path.Service.inMemory.map { lower =>
+        PathService.inMemory.map { lower =>
             val p = Path("tx-abort.txt")
             Abort.run[String](
                 Abort.run[CommitConflict](
@@ -46,7 +46,7 @@ class PathTransactionTest extends kyo.test.Test[Any]:
     }
 
     "transaction surfaces CommitConflict when lower diverges after read" in {
-        Path.Service.inMemory.map { lower =>
+        PathService.inMemory.map { lower =>
             val p = Path("tx-conflict.txt")
             Path.runWith(lower)(p.write("original")).andThen {
                 Abort.run[CommitConflict](
@@ -77,7 +77,7 @@ class PathTransactionTest extends kyo.test.Test[Any]:
     // sandbox discards writes and never surfaces CommitConflict
 
     "sandbox discards staged writes on program success" in {
-        Path.Service.inMemory.map { lower =>
+        PathService.inMemory.map { lower =>
             val p = Path("sandbox-discard.txt")
             Path.runWith(lower)(
                 Path.sandbox(p.write("staged"))
@@ -109,7 +109,7 @@ class PathTransactionTest extends kyo.test.Test[Any]:
     // virtual returns the overlay for caller-controlled commit or discard
 
     "virtual commits writes to lower when caller commits the returned overlay" in {
-        Path.Service.inMemory.map { lower =>
+        PathService.inMemory.map { lower =>
             val p = Path("virtual-commit.txt")
             Abort.run[CommitConflict](
                 Path.runWith(lower)(
@@ -124,7 +124,7 @@ class PathTransactionTest extends kyo.test.Test[Any]:
     }
 
     "virtual discards writes when caller drops the overlay without committing" in {
-        Path.Service.inMemory.map { lower =>
+        PathService.inMemory.map { lower =>
             val p = Path("virtual-drop.txt")
             Path.runWith(lower)(
                 Path.virtual(p.write("hello")).map { case ((), _) => () }
@@ -137,7 +137,7 @@ class PathTransactionTest extends kyo.test.Test[Any]:
     // nested transactions compose as overlays
 
     "nested transactions stage inner writes in outer overlay; lower updated only after outer commit" in {
-        Path.Service.inMemory.map { lower =>
+        PathService.inMemory.map { lower =>
             val p1 = Path("nest-outer.txt")
             val p2 = Path("nest-inner.txt")
             Abort.run[CommitConflict](
@@ -165,7 +165,7 @@ class PathTransactionTest extends kyo.test.Test[Any]:
     // commit-scope boundary: overlay returned by virtual must be used inside a PathWrite scope
 
     "virtual commit outside ambient path scope leaves PathWrite unresolved" in {
-        Path.Service.inMemory.map { lower =>
+        PathService.inMemory.map { lower =>
             val p = Path("virtual-scope-boundary.txt")
             // PathWrite is discharged by runWith here; overlay escapes with no handler in scope
             Path.runWith(lower)(Path.virtual(p.write("staged"))).map { case ((), overlay) =>
@@ -183,7 +183,7 @@ class PathTransactionTest extends kyo.test.Test[Any]:
     // nesting composition: sandbox inside transaction and transaction inside sandbox
 
     "sandbox inside transaction discards sandboxed writes while transaction commits its own writes" in {
-        Path.Service.inMemory.map { lower =>
+        PathService.inMemory.map { lower =>
             val pOuter     = Path("sit-outer.txt")
             val pSandboxed = Path("sit-sandboxed.txt")
             Abort.run[CommitConflict](
@@ -207,7 +207,7 @@ class PathTransactionTest extends kyo.test.Test[Any]:
     }
 
     "transaction inside sandbox stages writes that sandbox discards; lower unchanged after rollback" in {
-        Path.Service.inMemory.map { lower =>
+        PathService.inMemory.map { lower =>
             val p = Path("tis-inner.txt")
             // sandbox is outermost: inner transaction commits into sandbox overlay,
             // then sandbox rolls back; lower never receives the writes

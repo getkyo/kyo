@@ -31,18 +31,21 @@ private[kyo] object OverlayService:
 
     /** The overlay's mutable state: the upper map of staged entries, the append-only journal of
       * staged write operations (consumed by commit), and the read-set of lower observations
-      * (stamps recorded the first time a lower path is read through the overlay).
+      * (the entry recorded the first time a lower path is read through the overlay).
       */
     final case class OverlayState(
         upper: Map[Chunk[String], Upper],
         journal: Chunk[WriteOp],
-        readSet: Map[Chunk[String], Path.Stamp]
+        // The read-set records the full observed base entry, not a stat-only stamp, so
+        // Conflict.ancestor (Maybe[Path.Entry]) is available at commit without re-reading the lower
+        // path. The Absent-observation case is carried as an Absent value in the map.
+        readSet: Map[Chunk[String], Maybe[Path.Entry]]
     )
 
     object OverlayState:
         val empty: OverlayState = OverlayState(Map.empty, Chunk.empty, Map.empty)
 
-    def init[S](lower: Path.Service[S])(using Frame): Path.Service.Overlay[S] < (Sync & Scope) =
+    def init[S](lower: PathService[S])(using Frame): CommitHandle[S] < (Sync & Scope) =
         Scope.acquireRelease(AtomicRef.init(OverlayState.empty)) { ref =>
             // Unsafe: resets staged state on scope exit (auto-rollback); no Sync dispatch needed.
             Sync.Unsafe.defer { discard(ref.unsafe.updateAndGet(_ => OverlayState.empty)) }
@@ -354,25 +357,25 @@ end WriteOpLog
 
 /** Copy-on-write overlay service. Reads check the upper layer first; writes stage in the upper
   * layer and append to the journal without touching lower. The journal is replayed onto lower on
-  * commit. The read-set records a Path.Stamp for each lower path on its first observation; commit
-  * validates these stamps against the live lower before replaying.
+  * commit. The read-set records the full observed Path.Entry for each lower path on its first
+  * observation; commit validates these entries against the live lower before replaying.
   *
   * The four structural components are: lower (the constructor field), upper (Map in OverlayState),
-  * journal (Chunk[WriteOp] in OverlayState), and readSet (Map[Chunk[String], Path.Stamp] in
+  * journal (Chunk[WriteOp] in OverlayState), and readSet (Map[Chunk[String], Maybe[Path.Entry]] in
   * OverlayState). All state changes go through the CAS modify loop so concurrent access is safe.
   *
   * Scope-managed: the enclosing Scope bounds its lifetime; on scope exit the staged state is
   * reset (auto-rollback). disposition is ManualCommit.
   */
 final private[kyo] class OverlayService[S](
-    lower: Path.Service[S],
+    lower: PathService[S],
     state: AtomicRef[OverlayService.OverlayState],
     commitSeq: AtomicLong
 )(using Frame)
-    extends Path.Service.Overlay[S]:
+    extends CommitHandle[S]:
     import OverlayService.*
 
-    val disposition: Path.Disposition = Path.Disposition.ManualCommit
+    val disposition: PathService.Disposition = PathService.Disposition.ManualCommit
 
     // Startup seed: mixes nanosecond time with identity hash to be distinct across restarts
     // and across concurrently-alive instances. Not cryptographic; collision probability is
@@ -434,30 +437,33 @@ final private[kyo] class OverlayService[S](
             }
         }: Unit < Sync).asInstanceOf[Unit < (S & Abort[FileException])]
 
-    // Record a lower observation in the read-set for a file. Idempotent: existing stamps are kept.
-    private def stampFile(parts: Chunk[String], stat: Path.PathStat): Unit < (S & Abort[FileException]) =
+    // Record a lower observation in the read-set for a file: the full observed entry (bytes + stat),
+    // not a stat-only stamp, so Conflict.ancestor is available at commit without re-reading the lower
+    // path. Idempotent: an existing read-set entry is kept.
+    private def stampFile(parts: Chunk[String], stat: Path.PathStat, bytes: Span[Byte]): Unit < (S & Abort[FileException]) =
         modifyPure { s =>
             if s.readSet.contains(parts) then s
             else
-                val stamp = Path.Stamp(Path.Stamp.Kind.File, Present(stat.sizeBytes.bytes), Present(stat.lastModifiedMs), Absent)
-                s.copy(readSet = s.readSet.updated(parts, stamp))
+                val entry = Path.Entry.File(bytes, stat)
+                s.copy(readSet = s.readSet.updated(parts, Present(entry)))
         }
 
     private def stampDir(parts: Chunk[String], stat: Path.PathStat): Unit < (S & Abort[FileException]) =
         modifyPure { s =>
             if s.readSet.contains(parts) then s
             else
-                val stamp = Path.Stamp(Path.Stamp.Kind.Directory, Absent, Present(stat.lastModifiedMs), Absent)
-                s.copy(readSet = s.readSet.updated(parts, stamp))
+                val entry = Path.Entry.Directory(stat)
+                s.copy(readSet = s.readSet.updated(parts, Present(entry)))
         }
 
     private def stampAbsent(parts: Chunk[String]): Unit < (S & Abort[FileException]) =
         modifyPure { s =>
             if s.readSet.contains(parts) then s
-            else s.copy(readSet = s.readSet.updated(parts, Path.Stamp(Path.Stamp.Kind.Absent, Absent, Absent, Absent)))
+            else s.copy(readSet = s.readSet.updated(parts, Absent))
         }
 
-    // Stamp a lower observation using stat + isRegularFile to determine the kind.
+    // Stamp a lower observation using stat + isRegularFile to determine the kind. A regular file
+    // requires a bytes read to build the recorded Path.Entry.File.
     private def stampLower(parts: Chunk[String]): Unit < (S & Abort[FileException]) =
         val path = pathFrom(parts)
         lower.exists(path).map { found =>
@@ -465,7 +471,8 @@ final private[kyo] class OverlayService[S](
             else
                 lower.stat(path).map { stat =>
                     lower.isRegularFile(path).map { isFile =>
-                        if isFile then stampFile(parts, stat) else stampDir(parts, stat)
+                        if isFile then lower.readBytes(path).map(bytes => stampFile(parts, stat, bytes))
+                        else stampDir(parts, stat)
                     }
                 }
         }
@@ -505,7 +512,8 @@ final private[kyo] class OverlayService[S](
                             else
                                 lower.stat(path).map { stat =>
                                     lower.isRegularFile(path).map { isFile =>
-                                        (if isFile then stampFile(path.parts, stat) else stampDir(path.parts, stat)).andThen(true)
+                                        (if isFile then lower.readBytes(path).map(bytes => stampFile(path.parts, stat, bytes))
+                                         else stampDir(path.parts, stat)).andThen(true)
                                     }
                                 }
                         }
@@ -525,7 +533,8 @@ final private[kyo] class OverlayService[S](
                     else
                         lower.isDirectory(path).map { isDir =>
                             lower.stat(path).map { stat =>
-                                (if isDir then stampDir(path.parts, stat) else stampFile(path.parts, stat)).andThen(isDir)
+                                (if isDir then stampDir(path.parts, stat)
+                                 else lower.readBytes(path).map(bytes => stampFile(path.parts, stat, bytes))).andThen(isDir)
                             }
                         }
         }
@@ -542,7 +551,8 @@ final private[kyo] class OverlayService[S](
                     else
                         lower.isRegularFile(path).map { isFile =>
                             lower.stat(path).map { stat =>
-                                (if isFile then stampFile(path.parts, stat) else stampDir(path.parts, stat)).andThen(isFile)
+                                (if isFile then lower.readBytes(path).map(bytes => stampFile(path.parts, stat, bytes))
+                                 else stampDir(path.parts, stat)).andThen(isFile)
                             }
                         }
         }
@@ -569,7 +579,7 @@ final private[kyo] class OverlayService[S](
                     else
                         lower.readBytes(path).map { bytes =>
                             lower.stat(path).map { stat =>
-                                stampFile(path.parts, stat).andThen(bytes)
+                                stampFile(path.parts, stat, bytes).andThen(bytes)
                             }
                         }
         }
@@ -594,7 +604,8 @@ final private[kyo] class OverlayService[S](
                     else
                         lower.stat(path).map { ps =>
                             lower.isRegularFile(path).map { isFile =>
-                                (if isFile then stampFile(path.parts, ps) else stampDir(path.parts, ps)).andThen(ps)
+                                (if isFile then lower.readBytes(path).map(bytes => stampFile(path.parts, ps, bytes))
+                                 else stampDir(path.parts, ps)).andThen(ps)
                             }
                         }
         }
@@ -723,7 +734,7 @@ final private[kyo] class OverlayService[S](
                             if !found then stampAbsent(path.parts).andThen(Span.empty[Byte])
                             else
                                 lower.readBytes(path).map { existing =>
-                                    lower.stat(path).map { stat => stampFile(path.parts, stat).andThen(existing) }
+                                    lower.stat(path).map { stat => stampFile(path.parts, stat, existing).andThen(existing) }
                                 }
                         readLower.map { existing =>
                             val merged = Span.fromUnsafe(existing.toArrayUnsafe ++ value.toArrayUnsafe)
@@ -759,7 +770,7 @@ final private[kyo] class OverlayService[S](
                     else
                         lower.readBytes(path).map { bytes =>
                             lower.stat(path).map { lStat =>
-                                stampFile(path.parts, lStat).andThen {
+                                stampFile(path.parts, lStat, bytes).andThen {
                                     val kept = Span.fromUnsafe(bytes.toArrayUnsafe.take(size.toInt))
                                     val stat = Path.PathStat(0L, kept.size.toLong)
                                     modifyPure { cur =>
@@ -806,9 +817,11 @@ final private[kyo] class OverlayService[S](
                     else
                         lower.stat(path).map { stat =>
                             lower.isRegularFile(path).map { isFile =>
-                                (if isFile then stampFile(path.parts, stat) else stampDir(path.parts, stat)).andThen {
-                                    if isFile then
-                                        lower.readBytes(path).map { bytes =>
+                                if isFile then
+                                    // The bytes read precedes stampFile so the read-set entry and the staged
+                                    // upper entry share the same observed bytes (no double read).
+                                    lower.readBytes(path).map { bytes =>
+                                        stampFile(path.parts, stat, bytes).andThen {
                                             val ns = stat.copy(lastModifiedMs = epochMs)
                                             modifyPure { cur =>
                                                 cur.copy(
@@ -817,7 +830,9 @@ final private[kyo] class OverlayService[S](
                                                 )
                                             }
                                         }
-                                    else
+                                    }
+                                else
+                                    stampDir(path.parts, stat).andThen {
                                         val ns = stat.copy(lastModifiedMs = epochMs)
                                         modifyPure { cur =>
                                             cur.copy(
@@ -825,7 +840,7 @@ final private[kyo] class OverlayService[S](
                                                 journal = cur.journal.appended(WriteOp.WriteDirectory(path.parts, opaque = false))
                                             )
                                         }
-                                }
+                                    }
                             }
                         }
         }
@@ -852,7 +867,8 @@ final private[kyo] class OverlayService[S](
                         else
                             lower.stat(path).map { stat =>
                                 lower.isDirectory(path).map { isDir =>
-                                    (if isDir then stampDir(path.parts, stat) else stampFile(path.parts, stat)).andThen {
+                                    (if isDir then stampDir(path.parts, stat)
+                                     else lower.readBytes(path).map(bytes => stampFile(path.parts, stat, bytes))).andThen {
                                         // An existing lower dir (or file) gets OpaqueDir, hiding its children.
                                         val st = if isDir then stat else Path.PathStat(0L, 0L)
                                         modifyPure { cur =>
@@ -952,7 +968,7 @@ final private[kyo] class OverlayService[S](
                                     if isFile then
                                         lower.readBytes(path).map { bytes =>
                                             lower.stat(path).map { stat =>
-                                                stampFile(path.parts, stat).andThen {
+                                                stampFile(path.parts, stat, bytes).andThen {
                                                     Path.Entry.File(bytes, stat): Path.Entry
                                                 }
                                             }
@@ -1019,7 +1035,7 @@ final private[kyo] class OverlayService[S](
                         else
                             lower.readBytes(path).map { bytes =>
                                 lower.stat(path).map { stat =>
-                                    stampFile(path.parts, stat).andThen(mkWriteHandle(path, bytes))
+                                    stampFile(path.parts, stat, bytes).andThen(mkWriteHandle(path, bytes))
                                 }
                             }
                     }
@@ -1085,33 +1101,29 @@ final private[kyo] class OverlayService[S](
         // phantom Abort row, leaving Unit < S as declared.
         Abort.run[FileException](modifyPure(_ => OverlayState.empty)).map(_ => ())
 
-    // Validate the read-set: for each stamped path, re-stat lower and compare.
+    // Validate the read-set: for each recorded ancestor entry, re-read lower and compare.
     private def validate(s: OverlayState): Chunk[Conflict] < (S & Abort[FileException]) =
         s.readSet.toIndexedSeq.foldLeft[Chunk[Conflict] < (S & Abort[FileException])](Chunk.empty) {
-            case (accKyo, (parts, stamp)) =>
+            case (accKyo, (parts, ancestor)) =>
                 accKyo.map { acc =>
                     val path = pathFrom(parts)
                     lower.exists(path).map { found =>
                         if !found then
-                            if stamp.entryType == Path.Stamp.Kind.Absent then acc
+                            if ancestor.isEmpty then acc
                             else
                                 val conflict =
-                                    Conflict(path, Present(stamp), s.upper.get(parts).fold[Maybe[Path.Entry]](Absent)(upperToEntry), Absent)
+                                    Conflict(path, ancestor, s.upper.get(parts).fold[Maybe[Path.Entry]](Absent)(upperToEntry), Absent)
                                 acc.appended(conflict)
                         else
                             lower.stat(path).map { liveStat =>
                                 lower.isRegularFile(path).map { isFile =>
-                                    val liveStamp =
-                                        if isFile then
-                                            Path.Stamp(
-                                                Path.Stamp.Kind.File,
-                                                Present(liveStat.sizeBytes.bytes),
-                                                Present(liveStat.lastModifiedMs),
-                                                Absent
-                                            )
-                                        else Path.Stamp(Path.Stamp.Kind.Directory, Absent, Present(liveStat.lastModifiedMs), Absent)
-                                    if stamp.entryType == liveStamp.entryType && stamp.lastModifiedMs == liveStamp.lastModifiedMs && stamp.size == liveStamp.size
-                                    then acc
+                                    val matches = ancestor match
+                                        case Present(Path.Entry.File(_, aStat)) =>
+                                            isFile && aStat.lastModifiedMs == liveStat.lastModifiedMs && aStat.sizeBytes == liveStat.sizeBytes
+                                        case Present(Path.Entry.Directory(aStat)) =>
+                                            !isFile && aStat.lastModifiedMs == liveStat.lastModifiedMs
+                                        case Absent => false
+                                    if matches then acc
                                     else
                                         // theirs: fresh bytes for file divergence; stat only for directory divergence.
                                         val oursEntry = s.upper.get(parts).fold[Maybe[Path.Entry]](Absent)(upperToEntry)
@@ -1122,7 +1134,7 @@ final private[kyo] class OverlayService[S](
                                                 }
                                             else Present[Path.Entry](Path.Entry.Directory(liveStat))
                                         liveEntryKyo.map { liveEntry =>
-                                            val conflict = Conflict(path, Present(stamp), oursEntry, liveEntry)
+                                            val conflict = Conflict(path, ancestor, oursEntry, liveEntry)
                                             acc.appended(conflict)
                                         }
                                     end if
@@ -1507,8 +1519,8 @@ end OverlayService
 
 // Forwards every path op back under PathRead or PathWrite so an overlay wrapping this
 // service is transparent to whatever PathWrite handler is installed in the outer scope.
-final private[kyo] class ForwardingLowerService(using Frame) extends Path.Service[PathWrite]:
-    val disposition: Path.Disposition = Path.Disposition.AutoCommit
+final private[kyo] class ForwardingLowerService(using Frame) extends PathService[PathWrite]:
+    val disposition: PathService.Disposition = PathService.Disposition.AutoCommit
     def exists(path: Path): Boolean < (PathWrite & Abort[FileException]) =
         ArrowEffect.suspend(Tag[PathRead], Path.Op.Exists(path))
     def exists(path: Path, followLinks: Boolean): Boolean < (PathWrite & Abort[FileException]) =

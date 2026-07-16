@@ -28,7 +28,7 @@ class PathConfinementJvmTest extends kyo.test.Test[Any]:
                             // Build the path that resolves THROUGH the symlink.
                             val throughLink = root / "escape-link" / "sentinel.txt"
                             Abort.run[FileException](
-                                Path.Service.host(root).map { confined =>
+                                PathService.host(root).map { confined =>
                                     Path.runWith(confined)(throughLink.read)
                                 }
                             ).map { result =>

@@ -54,10 +54,10 @@ class OverlayServiceRecoveryTest extends kyo.test.Test[Any]:
 
     /** Creates an in-memory overlay and exposes the underlying OverlayService for hook access. */
     private def withInMemoryTestOverlay[A](
-        program: (OverlayService[Sync], Path.Service[Sync]) => A < (Sync & Scope & Abort[FileException])
+        program: (OverlayService[Sync], PathService[Sync]) => A < (Sync & Scope & Abort[FileException])
     ): A < (Sync & Scope & Abort[FileException]) =
-        Path.Service.inMemory.map { lower =>
-            Path.Service.overlay(lower).map { ov =>
+        PathService.inMemory.map { lower =>
+            PathService.overlay(lower).map { ov =>
                 program(ov.asInstanceOf[OverlayService[Sync]], lower)
             }
         }
@@ -66,16 +66,16 @@ class OverlayServiceRecoveryTest extends kyo.test.Test[Any]:
       * the enclosing Scope exits. Passes (overlay, lower, root) to `program`.
       */
     private def withHostTestOverlay[A](
-        program: (OverlayService[Sync], Path.Service[Sync], Path) => A < (Sync & Scope & Abort[FileException])
+        program: (OverlayService[Sync], PathService[Sync], Path) => A < (Sync & Scope & Abort[FileException])
     ): A < (Sync & Scope & Abort[FileException]) =
-        val defaultHost = Path.Service.host
+        val defaultHost = PathService.host
         Scope.acquireRelease(defaultHost.tempDir("kyo-recovery-test")) { handle =>
             // Unsafe: removes OS temp dir on scope exit
             Sync.Unsafe.defer { handle.remove() }
         }.map { handle =>
             val root = handle.path
-            Path.Service.host(root).map { lower =>
-                Path.Service.overlay(lower).map { ov =>
+            PathService.host(root).map { lower =>
+                PathService.overlay(lower).map { ov =>
                     program(ov.asInstanceOf[OverlayService[Sync]], lower, root)
                 }
             }
@@ -89,7 +89,7 @@ class OverlayServiceRecoveryTest extends kyo.test.Test[Any]:
       */
     private def primeJournal(
         ov: OverlayService[Sync],
-        lower: Path.Service[Sync],
+        lower: PathService[Sync],
         a: Path,
         d: Path,
         old: Path
@@ -107,7 +107,7 @@ class OverlayServiceRecoveryTest extends kyo.test.Test[Any]:
       * a.txt exists with "file-content", d exists as a directory, old.txt is absent.
       */
     private def assertFullyApplied(
-        lower: Path.Service[Sync],
+        lower: PathService[Sync],
         a: Path,
         d: Path,
         old: Path
@@ -132,7 +132,7 @@ class OverlayServiceRecoveryTest extends kyo.test.Test[Any]:
       * a.txt absent, d absent, old.txt present (the seed).
       */
     private def assertLowerUnchanged(
-        lower: Path.Service[Sync],
+        lower: PathService[Sync],
         a: Path,
         d: Path,
         old: Path
@@ -525,7 +525,7 @@ class OverlayServiceRecoveryTest extends kyo.test.Test[Any]:
                 lower.writeBytes(stagingDir / ".kyo-staging", Span.from(Array.empty[Byte]), createFolders = false).andThen {
                     lower.writeBytes(stagingDir / "intent.kyo", tornBytes, createFolders = false).andThen {
                         // Create a fresh overlay on the same lower for the disk-scan restart.
-                        Path.Service.overlay(lower).map { freshOv =>
+                        PathService.overlay(lower).map { freshOv =>
                             val overlay = freshOv.asInstanceOf[OverlayService[Sync]]
                             // recoverFromDisk finds kyo-commit-torn, reads the torn log, discards.
                             overlay.recoverFromDisk(root).andThen {
@@ -569,7 +569,7 @@ class OverlayServiceRecoveryTest extends kyo.test.Test[Any]:
                             // Write the valid intent log (WriteOpLog.encode returns Span[Byte] directly).
                             lower.writeBytes(stagingDir / "intent.kyo", WriteOpLog.encode(journal), createFolders = false).andThen {
                                 // Fresh overlay over the same lower; no in-memory stagingDirHandle.
-                                Path.Service.overlay(lower).map { freshOv =>
+                                PathService.overlay(lower).map { freshOv =>
                                     val overlay = freshOv.asInstanceOf[OverlayService[Sync]]
                                     overlay.recoverFromDisk(root).andThen {
                                         // All three ops must be reflected in lower.
@@ -596,7 +596,7 @@ class OverlayServiceRecoveryTest extends kyo.test.Test[Any]:
     "recoverFromDisk on empty root completes cleanly with no changes to lower" in {
         withHostTestOverlay { (_, lower, root) =>
             // root is empty (no files seeded, no staging dirs).
-            Path.Service.overlay(lower).map { freshOv =>
+            PathService.overlay(lower).map { freshOv =>
                 val overlay = freshOv.asInstanceOf[OverlayService[Sync]]
                 overlay.recoverFromDisk(root).andThen {
                     // lower has no entries; root still empty.
@@ -642,7 +642,7 @@ class OverlayServiceRecoveryTest extends kyo.test.Test[Any]:
 
                     writeLog(staging1, journal1, Span.from("content1".getBytes(StandardCharsets.UTF_8))).andThen {
                         writeLog(staging2, journal2, Span.from("content2".getBytes(StandardCharsets.UTF_8))).andThen {
-                            Path.Service.overlay(lower).map { freshOv =>
+                            PathService.overlay(lower).map { freshOv =>
                                 val overlay = freshOv.asInstanceOf[OverlayService[Sync]]
                                 // recoverFromDisk processes both staging dirs via foldLeft.
                                 overlay.recoverFromDisk(root).andThen {
@@ -683,7 +683,7 @@ class OverlayServiceRecoveryTest extends kyo.test.Test[Any]:
                     Span.from("user-data".getBytes(StandardCharsets.UTF_8)),
                     createFolders = false
                 ).andThen {
-                    Path.Service.overlay(lower).map { freshOv =>
+                    PathService.overlay(lower).map { freshOv =>
                         val overlay = freshOv.asInstanceOf[OverlayService[Sync]]
                         overlay.recoverFromDisk(root).andThen {
                             // Both the user dir and its file must survive intact.
@@ -704,7 +704,7 @@ class OverlayServiceRecoveryTest extends kyo.test.Test[Any]:
             val stagingDir = root / "kyo-commit-orphan-sentinel"
             lower.mkDir(stagingDir).andThen {
                 lower.writeBytes(stagingDir / ".kyo-staging", Span.from(Array.empty[Byte]), createFolders = false).andThen {
-                    Path.Service.overlay(lower).map { freshOv =>
+                    PathService.overlay(lower).map { freshOv =>
                         val overlay = freshOv.asInstanceOf[OverlayService[Sync]]
                         overlay.recoverFromDisk(root).andThen {
                             lower.exists(stagingDir).map { still =>
