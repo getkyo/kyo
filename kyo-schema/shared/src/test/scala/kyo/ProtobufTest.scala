@@ -1754,6 +1754,18 @@ class ProtobufTest extends kyo.test.Test[Any]:
             assert(decoded.d.isEmpty)
         }
 
+        "an empty String-key Dict field round-trips" in {
+            val encoded = Protobuf.encode(MTStringDict(Dict.empty))
+            assert(encoded.size == 0)
+            assert(Protobuf.decode[MTStringDict](encoded).getOrThrow.d.isEmpty)
+        }
+
+        "an empty non-String-key OrderedMap field round-trips" in {
+            val encoded = Protobuf.encode(MTOrderedMapLevels(OrderedMap.empty))
+            assert(encoded.size == 0)
+            assert(Protobuf.decode[MTOrderedMapLevels](encoded).getOrThrow.byLevel.isEmpty)
+        }
+
         "an empty OrderedMap field between two scalar fields round-trips, and the scalars survive" in {
             val holder  = MTOrderedMapRecord("alice", OrderedMap.empty, 7)
             val decoded = Protobuf.decode[MTOrderedMapRecord](Protobuf.encode(holder)).getOrThrow

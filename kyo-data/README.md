@@ -305,7 +305,7 @@ val total: Int                 = byCount.foldLeft(0)((acc, _, v) => acc + v)
 
 ### Building incrementally
 
-When constructing a large `Chunk` or `Dict` element by element, use the dedicated builders. Both expose `add`, `result`, `clear`, and `size`. `ChunkBuilder` reuses a thread-local buffer pool to amortize allocation across calls.
+When constructing a large `Chunk`, `Dict`, or `OrderedMap` element by element, use the dedicated builders. They expose `add`, `result`, `clear`, and `size`. Each reuses a thread-local buffer pool to amortize allocation across calls.
 
 ```scala
 import kyo.*
@@ -318,6 +318,13 @@ val db = DictBuilder.init[String, Int]
 db.add("a", 1)
 db.add("b", 2)
 val dict: Dict[String, Int] = db.result()
+
+val ob = OrderedMapBuilder.init[String, Int]
+ob.add("second", 2)
+ob.add("first", 1)
+// Adding a key already present keeps its first position and takes the last value.
+ob.add("second", 9)
+val ordered: OrderedMap[String, Int] = ob.result() // "second" -> 9, then "first" -> 1
 ```
 
 ## Time and scheduling

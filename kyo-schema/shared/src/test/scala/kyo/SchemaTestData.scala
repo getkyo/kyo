@@ -132,3 +132,6 @@ case class MTOrderedMapLevels(byLevel: OrderedMap[Int, String]) derives CanEqual
 // Carries the map between two scalar fields, so a decode that falls back to the absent default for
 // the map still has to read the fields around it.
 case class MTOrderedMapRecord(name: String, settings: OrderedMap[String, Int], count: Int) derives CanEqual, Schema
+
+// String-key Dict holder: resolves stringDictSchema, the object wire form.
+case class MTStringDict(d: Dict[String, Int]) derives CanEqual, Schema
