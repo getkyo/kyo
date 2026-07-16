@@ -20,10 +20,6 @@ import kyo.*
   */
 final private[kyo] class MachineSampler(handles: MachineHandles):
 
-    // Unsafe: the sampler owns its retained read handles and reused buffers as single-owner fields on one
-    // detached fiber, reading and rewinding them off the effect context at each tick.
-    import AllowUnsafe.embrace.danger
-
     private val opened = collection.mutable.ArrayBuffer.empty[MachineSampler.FileSlot]
 
     // Guards the disk read against overlapping itself. A statvfs/statfs/GetDiskFreeSpaceEx against a dead
@@ -32,7 +28,11 @@ final private[kyo] class MachineSampler(handles: MachineHandles):
     // cleared only when that read GENUINELY returns, so while a stuck read is outstanding the disk fiber
     // skips its next cycle rather than launching a second read against the same stuck mount. A dead mount is
     // therefore read exactly once for the process lifetime, bounding leaked blocked workers to one.
-    private val diskInFlight = AtomicBoolean.Unsafe.init(false)
+    private val diskInFlight =
+        // Unsafe: single-owner guard flag, set and cleared only from the sampler's disk fiber.
+        import AllowUnsafe.embrace.danger
+        AtomicBoolean.Unsafe.init(false)
+    end diskInFlight
 
     /** True while a prior disk read is still outstanding (parked in a blocking syscall a timeout could not
       * interrupt). The disk fiber reads this to skip a cycle rather than overlap a stuck read.

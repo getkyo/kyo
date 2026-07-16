@@ -25,9 +25,6 @@ import kyo.*
   */
 final private[kyo] class MachineHandles private (root: Stat, coreCount: Long):
 
-    // Unsafe: the cells are single-owner sampler state, written from the one sampler fiber and read by the
-    // registry flusher through the Stat handles they hold.
-    import AllowUnsafe.embrace.danger
     import MachineHandles.*
 
     /** The per-second cpu-time boundaries, derived from the host core count at init: a fixed 8-core ceiling
@@ -83,6 +80,8 @@ final private[kyo] class MachineHandles private (root: Stat, coreCount: Long):
         diskStores.getOrElseUpdate(store, new DiskStore(diskScope.scope(store), byteBoundaries))
 
     // The core count is available on every OS, so its gauge is seeded and registered at init.
+    // Unsafe: single-owner cell state on the sampler fiber.
+    import AllowUnsafe.embrace.danger
     cpuCores.set(coreCount)
 
 end MachineHandles
@@ -96,9 +95,11 @@ private[kyo] object MachineHandles:
       * Counter exists.
       */
     final private[machine] class RateCell(scope: Stat, name: String, description: String, boundaries: Array[Double]):
-        // Unsafe: single-owner cell state on the sampler fiber.
-        import AllowUnsafe.embrace.danger
-        private val prior                    = AtomicLong.Unsafe.init(Path.ReadHandle.AbsentLong)
+        private val prior =
+            // Unsafe: single-owner cell state on the sampler fiber.
+            import AllowUnsafe.embrace.danger
+            AtomicLong.Unsafe.init(Path.ReadHandle.AbsentLong)
+        end prior
         private var handle: Maybe[Histogram] = Absent
 
         def observe(cur: Long)(using AllowUnsafe): Unit =
@@ -140,9 +141,11 @@ private[kyo] object MachineHandles:
       * its own per-tick delta, baselining on the first tick, and records into no Histogram.
       */
     final private[machine] class CounterCell(scope: Stat, name: String, description: String):
-        // Unsafe: single-owner cell state on the sampler fiber.
-        import AllowUnsafe.embrace.danger
-        private val prior                  = AtomicLong.Unsafe.init(Path.ReadHandle.AbsentLong)
+        private val prior =
+            // Unsafe: single-owner cell state on the sampler fiber.
+            import AllowUnsafe.embrace.danger
+            AtomicLong.Unsafe.init(Path.ReadHandle.AbsentLong)
+        end prior
         private var handle: Maybe[Counter] = Absent
 
         def observe(cur: Long)(using AllowUnsafe): Unit =
@@ -170,9 +173,11 @@ private[kyo] object MachineHandles:
       * CounterGauge would map a decrease to a wraparound.
       */
     final private[machine] class LongGaugeCell(scope: Stat, name: String, description: String):
-        // Unsafe: single-owner holder; the collect-time poll body reads it with no capability in scope.
-        import AllowUnsafe.embrace.danger
-        private val holder               = AtomicLong.Unsafe.init(0L)
+        private val holder =
+            // Unsafe: single-owner holder; the collect-time poll body reads it with no capability in scope.
+            import AllowUnsafe.embrace.danger
+            AtomicLong.Unsafe.init(0L)
+        end holder
         private var handle: Maybe[Gauge] = Absent
 
         def set(v: Long)(using AllowUnsafe): Unit =
@@ -189,9 +194,11 @@ private[kyo] object MachineHandles:
       * never legitimately NaN, so the sentinel is collision-free.
       */
     final private[machine] class DoubleGaugeCell(scope: Stat, name: String, description: String):
-        // Unsafe: single-owner holder; the collect-time poll body reads it with no capability in scope.
-        import AllowUnsafe.embrace.danger
-        private val holder               = AtomicLong.Unsafe.init(java.lang.Double.doubleToRawLongBits(0.0))
+        private val holder =
+            // Unsafe: single-owner holder; the collect-time poll body reads it with no capability in scope.
+            import AllowUnsafe.embrace.danger
+            AtomicLong.Unsafe.init(java.lang.Double.doubleToRawLongBits(0.0))
+        end holder
         private var handle: Maybe[Gauge] = Absent
 
         def set(v: Double)(using AllowUnsafe): Unit =

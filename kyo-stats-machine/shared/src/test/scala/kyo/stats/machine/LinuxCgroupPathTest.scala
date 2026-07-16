@@ -3,7 +3,7 @@ package kyo.stats.machine
 import java.nio.charset.StandardCharsets
 import kyo.*
 
-class LinuxCgroupDecodeTest extends kyo.test.Test[Any]:
+class LinuxCgroupPathTest extends kyo.test.Test[Any]:
 
     import AllowUnsafe.embrace.danger
 
@@ -131,4 +131,4 @@ class LinuxCgroupDecodeTest extends kyo.test.Test[Any]:
         }
     }
 
-end LinuxCgroupDecodeTest
+end LinuxCgroupPathTest

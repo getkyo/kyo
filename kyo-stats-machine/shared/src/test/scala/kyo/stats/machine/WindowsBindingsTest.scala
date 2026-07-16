@@ -143,15 +143,17 @@ class WindowsBindingsTest extends kyo.test.Test[Any]:
                 System.live.unsafe.operatingSystem() != System.OS.Windows,
                 "kernel32 loads on a real Windows host; this leaf asserts the off-Windows degrade"
             )
-            for
-                handles <- MachineHandles.init
-                sampler        = new MachineSampler(handles)
-                machine        = new MachineWindows(handles, sampler)
-                cpuCountBefore = histogramSummary("machine", "cpu", "total.rate").count
-                _              = machine.read()
-                _              = machine.readDisks()
-            yield assert(histogramSummary("machine", "cpu", "total.rate").count == cpuCountBefore)
-            end for
+            // A uniquely-scoped MachineHandles, not the shared "machine" root: this leaf asserts EXACT
+            // non-advancement of the cpu.total.rate count, which the shared root cannot support (a
+            // concurrently-running sibling suite's own genuine observation into the shared counter would
+            // fail this leaf despite the degrade path under test writing nothing).
+            val handles        = MachineHandles.initForTest(Stat.initScope("wbtest-offwindows-degrade"), 8L)
+            val sampler        = new MachineSampler(handles)
+            val machine        = new MachineWindows(handles, sampler)
+            val cpuCountBefore = histogramSummary("wbtest-offwindows-degrade", "cpu", "total.rate").count
+            machine.read()
+            machine.readDisks()
+            assert(histogramSummary("wbtest-offwindows-degrade", "cpu", "total.rate").count == cpuCountBefore)
         }
 
         "GetLogicalDrives-backed disk enumeration populates a fixed drive on a real Windows host (held)".onlyJvm in {

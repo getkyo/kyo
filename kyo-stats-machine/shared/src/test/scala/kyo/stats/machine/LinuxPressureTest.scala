@@ -7,7 +7,7 @@ import kyo.stats.internal.Summary
 import kyo.stats.internal.UnsafeGauge
 import kyo.stats.internal.UnsafeHistogram
 
-class LinuxPressureDecodeTest extends kyo.test.Test[Any]:
+class LinuxPressureTest extends kyo.test.Test[Any]:
 
     override def config: kyo.test.RunConfig = super.config.sequential
 
@@ -106,4 +106,4 @@ class LinuxPressureDecodeTest extends kyo.test.Test[Any]:
         }
     }
 
-end LinuxPressureDecodeTest
+end LinuxPressureTest

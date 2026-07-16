@@ -82,10 +82,10 @@ The sampler starts with zero explicit user call, mirroring
    `MachineSampler.run` under its own `Scope`, which drives two fibers: the
    fast family ticks on a drift-corrected 1 Hz schedule
    (`Clock.repeatAtInterval(Schedule.anchored(1.second))(readFast(machine))`,
-   `MachineSampler.scala:159`), and disk reads run on their own
+   `MachineSampler.scala:155`), and disk reads run on their own
    1-second-interval fiber the fast fiber never awaits inline
    (`Clock.repeatAtInterval(diskInterval)(readDisksBounded(sampler, machine))`,
-   `MachineSampler.scala:157`).
+   `MachineSampler.scala:153`).
 4. Opt-out: `KYO_MACHINE_DISABLED=true` (env) or `kyo.machine.disabled=true`
    (system property), read once via an injectable `System.Unsafe` so tests can
    stage a reader without mutating real process env
@@ -165,21 +165,21 @@ is the single detached owner fiber for the whole tick loop. Its contract:
 
 - **Zero-allocation steady-state reads.** The sampler owns one
   `Path.ReadHandle` per proc file, opened once at construction and retained
-  in a `FileSlot` (`MachineSampler.scala:57-62,199-206`); each tick's
+  in a `FileSlot` (`MachineSampler.scala:57-62,197-202`); each tick's
   `readInto` rewinds the handle (`fs.handle.position(0L)`) and refills the
   SAME reused buffer before handing the borrowed bytes to the retained decode
   callback (`MachineSampler.scala:68-77`). On JVM/Native this rides the
   kyo-core `NioReadHandle`'s retained `ByteBuffer` (see "kyo-core touches"
   below), so a steady-state read allocates no per-read payload. `fill`
-  (`MachineSampler.scala:214-234`) reuses a fixed scratch array across
+  (`MachineSampler.scala:210-230`) reuses a fixed scratch array across
   `readChunk` calls and only grows the output buffer once, the first time a
   file exceeds it; the borrowed `Span[Byte]` handed to the caller's callback
   must never escape that callback.
 - **`Scope`-teardown lifecycle.** `MachineSampler.run`/`runWith` build the
   sampler and its handles UNDER one `Scope`, register the buffer-closing
   finalizer FIRST (`Scope.ensure { machine.close(); sampler.closeHandles() }`,
-  `MachineSampler.scala:153-156`), then register the disk and fast fibers for
-  interrupt (`MachineSampler.scala:157-161`). `Scope` finalizers run LIFO, so
+  `MachineSampler.scala:149-152`), then register the disk and fast fibers for
+  interrupt (`MachineSampler.scala:153-157`). `Scope` finalizers run LIFO, so
   on teardown both fibers are interrupted FIRST and the handle-closing
   finalizer runs LAST, so no tick or disk read ever touches a closed handle.
   Awaiting the fast fiber's `get` (it never returns) keeps the `Scope` open
@@ -260,15 +260,17 @@ shared `MEMORYSTATUSEX` buffer's `dwLength` field before the one-per-tick
 `GlobalMemoryStatusEx` call, so both the memory and swap rows read the same
 filled buffer from a single syscall (`WindowsBindings.scala:88-91`).
 
-Every `AllowUnsafe.embrace.danger` import carries a `// Unsafe:` comment
-naming the specific bridge it opens: the sampler's retained read handles and
-reused buffers, single-owner fields on the detached tick fiber
-(`MachineSampler.scala:25`); the module-init SPI activation boundary and the
-opt-out read (`MachineStatFactory.scala:27,37`); and every metric cell that
-owns its own unsafely-constructed field state, `RateCell`, `CounterCell`,
-`LongGaugeCell`, and `DoubleGaugeCell`, each of which builds an
+Every `AllowUnsafe.embrace.danger` import is scoped to the single field
+initializer that needs it, never the whole class body, and carries a
+`// Unsafe:` comment naming the specific bridge it opens: the disk fiber's
+in-flight guard flag, a single-owner `AtomicBoolean` (`MachineSampler.scala:33`);
+the module-init SPI activation boundary and the opt-out read
+(`MachineStatFactory.scala:27,37`); `LinuxDisk`'s retained `/proc/mounts` read
+handle, opened once at construction (`LinuxDisk.scala:28`); and every metric
+cell that owns its own unsafely-constructed field state, `RateCell`,
+`CounterCell`, `LongGaugeCell`, and `DoubleGaugeCell`, each of which builds an
 `AtomicLong.Unsafe.init` holder at construction
-(`MachineHandles.scala:30,100,144,174,193`); `LevelCell` carries no import of
+(`MachineHandles.scala:84,100,146,178,199`); `LevelCell` carries no import of
 its own, since it holds only a plain `var` and observes through the
 capability its caller already supplies. `MachineSampler`'s companion object
 carries no `embrace.danger` import of its own: its two unsafe-tier helpers,
@@ -320,7 +322,7 @@ An unavailable metric is `Absent`, NEVER a fake zero and NEVER a throw
   set: `LinuxDisk.statvfsInto`, `MacosDisk.statfsInto`, and
   `WindowsDisk.diskFreeInto` each write NOTHING for the one failing mount
   (a non-zero return code or a caught `NonFatal` exception both fall through
-  to no cell write, `LinuxDisk.scala:208-218`) and the enumeration loop
+  to no cell write, `LinuxDisk.scala:210-220`) and the enumeration loop
   continues to the next store; an all-failing or all-filtered mount set
   yields no disk metrics at all, never a throw.
 - **An OS with no dedicated `Machine` impl** (`Machine.forOs`'s wildcard
@@ -371,7 +373,7 @@ above do.
   `LinuxDiskTest.scala`), so the assertion exercises the actual production
   catch/scale/decode logic.
 - **1:1 test files.** Every source file has a matching `*Test.scala` (e.g.
-  `LinuxCgroup.scala` -> `LinuxCgroupDecodeTest.scala`/tests folded into the
+  `LinuxCgroupPath.scala` -> `LinuxCgroupPathTest.scala`/tests folded into the
   matching aspect file where a source has multiple decode concerns).
 - **Real-host FFI leaves are `.onlyJvm` plus `assume(OS)`.** A leaf that
   touches the actual host shim or kernel32 (not a stub) is gated `.onlyJvm`
@@ -379,7 +381,7 @@ above do.
   host) and additionally `assume`s the matching
   `System.live.unsafe.operatingSystem()`, so the assertion is skipped rather
   than failed on a non-matching host (`MacosBindingsTest.scala:60-64,76-79,96-99`,
-  `WindowsBindingsTest.scala:157-161`). These leaves assert HOST-INVARIANT
+  `WindowsBindingsTest.scala:159-163`). These leaves assert HOST-INVARIANT
   properties (a positive cumulative cpu-time sum, at least one drive with a
   positive total), never a specific numeric value that would vary by runner.
   `WindowsBindingsTest` additionally gates the INVERSE case, a
@@ -408,7 +410,7 @@ above do.
   `machine-stats-macos` CI jobs (`.github/workflows/ci.yml`) each run
   `sbt "kyo-stats-machineJVM/test"` on a real Windows or macOS host, so these
   leaves execute in CI rather than being skipped everywhere but a manual run
-  (`WindowsBindingsTest.scala:157-158`; `MacosBindingsTest.scala:60-61,76-77,96-97`).
+  (`WindowsBindingsTest.scala:159-160`; `MacosBindingsTest.scala:60-61,76-77,96-97`).
 - **The module opts out of its own auto-start during its own tests.** Every
   platform's test config disables the sampler so the once-per-second tick
   does not race the suites' destructive counter-drain assertions against
@@ -419,7 +421,7 @@ above do.
   (`build.sbt:1152`). A test that needs an actually-running sampler starts
   and stops it explicitly and locally (`MachineStatFactoryTest`,
   sequential-suite `stopForTest`/`resetForTest` seams,
-  `MachineStatFactoryTest.scala:10,59-71`).
+  `MachineStatFactoryTest.scala:10,36-47`).
 
 ## kyo-core and kyo-stats-registry touches
 
@@ -439,7 +441,7 @@ This module depends on two additive `kyo-core` touches and one
    field.
 2. **The `Stat` metric-handle API** (`initScope`, `initCounter`,
    `initHistogram`, `initGauge`) that `MachineHandles` builds every retained
-   handle on top of (`MachineHandles.scala:38-88,247`). No cell uses
+   handle on top of (`MachineHandles.scala:35-87,252`). No cell uses
    `initCounterGauge`: `cpu.cores` and every other fixed-total or
    pre-averaged value is a plain `Gauge`, not a `CounterGauge`.
 3. **`kyo.stats.internal.TraceExporter.getIsolated`**
@@ -450,7 +452,7 @@ This module depends on two additive `kyo-core` touches and one
    discovery for every other module (including this one). `Stat.scannedExporter`
    is the sole production caller; the module's own test suite also calls it
    directly to prove `MachineStatFactory` is reachable through that exact
-   mechanism (`MachineStatFactoryTest.scala:143-158`).
+   mechanism (`MachineStatFactoryTest.scala:94-109`).
 
 ## Pre-submission checklist (kyo-stats-machine-specific)
 

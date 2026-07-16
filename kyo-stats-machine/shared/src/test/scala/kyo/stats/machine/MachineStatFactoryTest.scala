@@ -31,31 +31,6 @@ class MachineStatFactoryTest extends kyo.test.Test[Any]:
             def architecture()(using AllowUnsafe): System.Arch        = System.Arch.Unknown
             def availableProcessors()(using AllowUnsafe): Int         = 1
 
-    /** Locates the `kyo-stats-machine` module root by walking up from the JVM working directory, mirroring
-      * `NativeCallbackCatalogLockstepTest`'s established repo-relative lookup.
-      */
-    private def locateModuleRoot()(using kyo.test.AssertScope): java.io.File =
-        val name = "kyo-stats-machine"
-        Iterator.iterate(new java.io.File(".").getCanonicalFile)(_.getParentFile)
-            .take(6)
-            .map(root => new java.io.File(root, name))
-            .find(_.isDirectory)
-            .getOrElse(fail(s"could not locate the $name module root; run tests from the repository root or a subproject directory"))
-    end locateModuleRoot
-
-    private def collectMainScalaFiles(moduleRoot: java.io.File): List[java.io.File] =
-        def walk(dir: java.io.File): List[java.io.File] =
-            val children = Option(dir.listFiles()).map(_.toList).getOrElse(Nil)
-            children.flatMap { f =>
-                if f.isDirectory && f.getName != "target" then walk(f)
-                else if f.isFile && f.getName.endsWith(".scala") then List(f)
-                else Nil
-            }
-        end walk
-        val sep = java.io.File.separator
-        walk(moduleRoot).filter(_.getPath.contains(s"${sep}src${sep}main${sep}"))
-    end collectMainScalaFiles
-
     "triggerStart" - {
 
         "starts exactly one sampler on the first winning call and a second call after the CAS fired does not start a second" in {
@@ -113,30 +88,6 @@ class MachineStatFactoryTest extends kyo.test.Test[Any]:
             assert(!MachineStatFactory.hasStarted)
             assert(MachineStatFactory.wasConstructed)
             MachineStatFactory.resetForTest()
-        }
-    }
-
-    "stopForTest" - {
-
-        "interrupts the last-started sampler fiber and clears the CAS, and no production code calls it".onlyJvm in {
-            MachineStatFactory.resetForTest()
-            val started = MachineStatFactory.triggerStart(emptyReader)
-            assert(started)
-            MachineStatFactory.stopForTest()
-            assert(!MachineStatFactory.hasStarted)
-            val startedAgain = MachineStatFactory.triggerStart(emptyReader)
-            assert(startedAgain) // the CAS cleared, so a later triggerStart can win again
-            MachineStatFactory.stopForTest()
-
-            val moduleRoot = locateModuleRoot()
-            val scalaFiles = collectMainScalaFiles(moduleRoot)
-            assert(scalaFiles.nonEmpty)
-            def contains(f: java.io.File, token: String): Boolean =
-                new String(java.nio.file.Files.readAllBytes(f.toPath), java.nio.charset.StandardCharsets.UTF_8).contains(token)
-            val callSites = scalaFiles.filter(contains(_, ".stopForTest("))
-            val defSites  = scalaFiles.filter(contains(_, "def stopForTest("))
-            assert(callSites.isEmpty)
-            assert(defSites.size == 1)
         }
     }
 

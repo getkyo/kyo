@@ -21,11 +21,13 @@ import kyo.ffi.*
   * are best-effort by nature: a novel remote filesystem type nobody has listed can still be probed, which
   * is why the disk read runs on its own fiber, off the tick loop, guarded so a stuck mount is read once.
   */
-final private[machine] class LinuxDisk(h: MachineHandles, s: MachineSampler, mountsPath: Path = Path("/proc/mounts"))(
-    using AllowUnsafe
-):
+final private[machine] class LinuxDisk(h: MachineHandles, s: MachineSampler, mountsPath: Path = Path("/proc/mounts")):
 
-    private val mountsSlot = s.openSlot(mountsPath)
+    private val mountsSlot =
+        // Unsafe: single-owner retained read handle, opened once at construction.
+        import AllowUnsafe.embrace.danger
+        s.openSlot(mountsPath)
+    end mountsSlot
 
     private var fingerprint: Array[Byte]       = LinuxDisk.NoFingerprint
     private var stores: Chunk[LinuxDisk.Store] = Chunk.empty
