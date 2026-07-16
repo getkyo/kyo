@@ -183,7 +183,7 @@ jobs:
         shell: bash
         run: |
           apt-get update
-          apt-get install -y --no-install-recommends git curl ca-certificates
+          apt-get install -y --no-install-recommends git curl ca-certificates build-essential
       - uses: actions/checkout@v7.0.0
         with:
           ref: ${{ inputs.ref || github.ref }}
