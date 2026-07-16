@@ -4,9 +4,11 @@ import scala.util.control.NonFatal
 
 class OrderedMapTest extends kyo.test.Test[Any]:
 
+    def largeMapInsertOrder: Seq[Int] = Seq(3, 1, 4, 0, 9, 2, 6, 5, 8, 7)
+
     def largeMap: OrderedMap[Int, Int] =
         val b = OrderedMapBuilder.init[Int, Int]
-        (0 to 9).foreach(i => b.add(i, i * 10))
+        largeMapInsertOrder.foreach(i => b.add(i, i * 10))
         b.result()
     end largeMap
 
@@ -21,9 +23,9 @@ class OrderedMapTest extends kyo.test.Test[Any]:
 
     "apply" - {
         "constructs entries in insertion order" in {
-            val m = OrderedMap("a" -> 1, "b" -> 2, "c" -> 3)
+            val m = OrderedMap("zeta" -> 1, "alpha" -> 2, "mike" -> 3)
             assert(m.size == 3)
-            assert(m.toChunk.map(_._1) == Chunk("a", "b", "c"))
+            assert(m.toChunk.map(_._1) == Chunk("zeta", "alpha", "mike"))
         }
         "duplicate key keeps first position and last value" in {
             val m = OrderedMap("a" -> 1, "b" -> 2, "a" -> 3)
@@ -40,9 +42,9 @@ class OrderedMapTest extends kyo.test.Test[Any]:
 
     "from" - {
         "preserves source ListMap iteration order" in {
-            val src = scala.collection.immutable.ListMap("x" -> 1, "y" -> 2, "z" -> 3)
+            val src = scala.collection.immutable.ListMap("bravo" -> 1, "yankee" -> 2, "delta" -> 3)
             val m   = OrderedMap.from(src)
-            assert(m.toChunk.map(_._1) == Chunk("x", "y", "z"))
+            assert(m.toChunk.map(_._1) == Chunk("bravo", "yankee", "delta"))
         }
     }
 
@@ -69,18 +71,21 @@ class OrderedMapTest extends kyo.test.Test[Any]:
             assert(r.toChunk == Chunk(("a", 1), ("b", 2), ("c", 3)))
         }
         "keeps position 0 on the large (TreeSeqMap) path" in {
-            val large  = largeMap
-            val result = large.update(0, 999)
+            val large    = largeMap
+            val firstKey = largeMapInsertOrder.head
             assert(large.size > 8)
-            assert(result.toChunk.head._1 == 0)
-            assert(result(0) == 999)
+            assert(large.toChunk.head._1 == firstKey)
+            val result = large.update(firstKey, 999)
+            assert(result.toChunk.head._1 == firstKey)
+            assert(result(firstKey) == 999)
         }
         "promotion across the threshold preserves insertion order" in {
-            var m = OrderedMap.empty[Int, Int]
-            (0 to 7).foreach(i => m = m.update(i, i))
+            var m           = OrderedMap.empty[Int, Int]
+            val insertOrder = Seq(5, 2, 7, 0, 6, 1, 4, 3)
+            insertOrder.foreach(i => m = m.update(i, i))
             val r = m.update(8, 8)
             assert(r.size == 9)
-            assert(r.toChunk.map(_._1) == Chunk(0, 1, 2, 3, 4, 5, 6, 7, 8))
+            assert(r.toChunk.map(_._1) == Chunk.from(insertOrder :+ 8))
         }
     }
 
@@ -98,7 +103,7 @@ class OrderedMapTest extends kyo.test.Test[Any]:
         }
         "large-path remove preserves insertion order of survivors" in {
             val r = largeMap.remove(5)
-            assert(r.toChunk.map(_._1) == Chunk(0, 1, 2, 3, 4, 6, 7, 8, 9))
+            assert(r.toChunk.map(_._1) == Chunk.from(largeMapInsertOrder.filterNot(_ == 5)))
         }
     }
 
@@ -165,9 +170,9 @@ class OrderedMapTest extends kyo.test.Test[Any]:
     "keys, values, toChunk" - {
         "are insertion-ordered on the large path" in {
             val m = largeMap
-            assert(m.keys.toArray.toList == (0 to 9).toList)
-            assert(m.values.toArray.toList == (0 to 9).map(_ * 10).toList)
-            assert(m.toChunk.map(_._1) == Chunk.from(0 to 9))
+            assert(m.keys.toArray.toList == largeMapInsertOrder.toList)
+            assert(m.values.toArray.toList == largeMapInsertOrder.map(_ * 10).toList)
+            assert(m.toChunk.map(_._1) == Chunk.from(largeMapInsertOrder))
         }
     }
 
