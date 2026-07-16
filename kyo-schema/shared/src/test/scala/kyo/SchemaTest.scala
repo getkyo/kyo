@@ -2627,6 +2627,20 @@ class SchemaTest extends kyo.test.Test[Any]:
         assert(back.byId.is(value.byId), s"round-trip failed: $back (encoded: $out)")
     }
 
+    // Boundary pinned by getkyo/kyo#1748: binding the array-form given for a String key (instead of
+    // the object-form default) omits on encode but fails to decode, because the injected empty value
+    // is chosen from the declared key type and the array-form reader expects the other shape. It
+    // fails loud, never silently. When #1748 is fixed this flips to a round-trip assertion.
+    "empty String-key Dict bound to the array-form given fails to decode under omitEmptyCollections" in {
+        given arrayForm: Schema[Dict[String, Int]] = Schema.dictSchema[String, Int]
+        val schema                                 = Schema.derived[MTStringDictRecord].omitEmptyCollections
+        val value                                  = MTStringDictRecord("alice", Dict.empty[String, Int], 7)
+        val out                                    = schema.encodeString[Json](value)
+        assert(out == """{"name":"alice","count":7}""", s"empty field must still be omitted on encode: $out")
+        val decoded = schema.decodeString[Json](out)
+        assert(decoded.isFailure, s"decode must fail loud on the array-form String-key binding, got: $decoded")
+    }
+
     "non-empty OrderedMap field is NOT omitted under omitEmptyCollections and keeps insertion order" in {
         val schema = Schema[MTOrderedMapRecord].omitEmptyCollections
         val value  = MTOrderedMapRecord("alice", OrderedMap("z" -> 1, "a" -> 2), 7)

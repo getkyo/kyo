@@ -1058,10 +1058,19 @@ private[kyo] object SchemaSerializer:
       * pattern-match (unlike `Map`, a real generic class `zeroToStructureValue` matches directly), so
       * the empty value is derived from the field's DECLARED structure instead of from an instance.
       *
-      * A String-keyed given (`stringDictSchema`, `stringOrderedMapSchema`) writes `mapStart`/`mapEnd`,
-      * which `StructureValueWriter` materializes as an empty `Record`; any other key given
-      * (`dictSchema`, `orderedMapSchema`) writes `arrayStart`/`arrayEnd`, an empty `Sequence`. The key
-      * type's shape, not the map type's name, is what decides the wire form.
+      * A String key selects the `Record` (object) form, any other key the `Sequence` (array) form.
+      * This matches the default given resolution: the object-form given (`stringDictSchema`,
+      * `stringOrderedMapSchema`) is the more specific one for a String key and wins by default, and the
+      * array-form given (`dictSchema`, `orderedMapSchema`) is the only one for every other key. It is
+      * derived from the declared key structure because the declared structure is all that is reachable
+      * here; the wire form is a property of the bound given, and the field's own writer is not exposed
+      * on this path.
+      *
+      * Known boundary: a caller that explicitly binds the array-form given for a String key (rather
+      * than the object-form default) declares a structure byte-identical to the object-form given's,
+      * so this returns the object empty value while the bound reader expects the array form, and the
+      * decode fails with a typed `TypeMismatchException`. It fails loud, never silently, and only under
+      * that explicit non-default binding. Tracked in getkyo/kyo#1748.
       *
       * Returns `None` when `schema.structure` is not a `Product`, or carries no field named
       * `fieldName`; this should not happen for a schema whose `sourceFields` supplied `fieldName` in

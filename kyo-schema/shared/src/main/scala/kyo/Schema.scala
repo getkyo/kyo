@@ -683,6 +683,12 @@ abstract class Schema[A] @publicInBinary private[kyo] (
     /** Schema-wide policy: omit empty collection/map fields on encode (emit no key, not `[]`/`{}`),
       * and decode-default a missing collection/map field to the typed empty value. Per-field
       * `omit(_.x).whenEmpty` overrides this for a specific field.
+      *
+      * One binding is not yet supported: an empty `Dict`/`OrderedMap` field whose schema is the
+      * explicitly-bound array-form given (`dictSchema`/`orderedMapSchema`) for a `String` key, rather
+      * than the object-form default. Under this policy it omits on encode but fails to decode with a
+      * typed `TypeMismatchException`. The default given for a `String` key is unaffected. Tracked in
+      * getkyo/kyo#1748.
       */
     def omitEmptyCollections: Schema[A] { type Focused = Schema.this.Focused } =
         Schema.copyWith(this)(omitEmptyCollectionsAll = true)
