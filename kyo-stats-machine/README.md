@@ -1,6 +1,6 @@
 # kyo-stats-machine
 
-kyo-stats-machine has no Scala call site. There is no `Machine.start`, no handle to hold, no scope to thread. The first useful thing about this module is a build.sbt line: add it to any JVM, JS, or Native module that already runs kyo-core, and a detached fiber wakes once a second to read host CPU time, memory, swap, per-mount disk space, load average, and, on Linux, cgroup and PSI pressure, observing every reading directly into `kyo.Stat` counters and histograms under the `machine.` scope.
+kyo-stats-machine has no Scala call site. There is no `Machine.start`, no handle to hold, no scope to thread. The first useful thing about this module is a build.sbt line: add it to any JVM, JS, or Native module that already runs kyo-core, and a detached fiber wakes once a second to read host CPU time, memory, swap, per-mount disk space, load average, and, on Linux, cgroup and PSI pressure, observing every reading directly into `kyo.Stat` counters, histograms, and gauges under the `machine.` scope.
 
 That makes this module a monitoring contract, not an API. Three things describe it completely: what turns it on (classpath presence), what turns it off (one opt-out lever), and what it emits (a fixed metric taxonomy you query through whatever stats backend your application already wires, such as [kyo-stats-otlp](../kyo-stats-otlp/README.md)). What varies by OS and platform is a metric quietly missing from the exported set, never a fake zero and never a thrown error.
 
@@ -15,7 +15,7 @@ That line is the entire integration. There is no import to add and no method to 
 
 > **Note:** the sampler is a one-shot, process-lifetime singleton. Once it starts, it runs for the life of the process; there is no stop call, and adding the dependency a second time or touching `Stat` again does not start a second sampler.
 
-The sampler ticks once a second (`Loop.forever(Async.sleep(1.second)...)`) for as long as the process runs. That is the module's own cadence and it is not configurable. It is also unrelated to how often your metrics backend ships those readings off the process: an exporter like kyo-stats-otlp scrapes the `kyo.Stat` registry on its own schedule (`OTEL_METRIC_EXPORT_INTERVAL`, 60 seconds by default), so a 1-second sampling resolution can still be exported once a minute. If you want finer-grained visibility into the emitted histograms, lower the exporter's interval; kyo-stats-machine's tick period is fixed.
+The sampler ticks once a second on a drift-corrected schedule (`Clock.repeatAtInterval(Schedule.anchored(1.second))`, anchored so a slow tick does not push the next one late) for as long as the process runs. That is the module's own cadence and it is not configurable. It is also unrelated to how often your metrics backend ships those readings off the process: an exporter like kyo-stats-otlp scrapes the `kyo.Stat` registry on its own schedule (`OTEL_METRIC_EXPORT_INTERVAL`, 60 seconds by default), so a 1-second sampling resolution can still be exported once a minute. If you want finer-grained visibility into the emitted histograms, lower the exporter's interval; kyo-stats-machine's tick period is fixed.
 
 > **Note:** kyo-stats-machine is a producer only. Adding it with no exporter on the classpath records every metric into the in-process registry, but nothing ships anywhere observable. Pair it with an exporter module such as kyo-stats-otlp, or the effect of adding this dependency is invisible.
 
@@ -62,70 +62,72 @@ There is no Scala value to read. You consume `machine.*` the same way you consum
 
 Every metric in the taxonomy is one of three `kyo.Stat` types:
 
-- **Counter**: monotonic and cumulative. Advances by a per-tick delta; a query against it gives the running total since the sampler started.
-- **Histogram**: a bucketed distribution of per-tick observations. Some histograms observe a point-in-time reading each tick (memory, disk, load); others observe a per-second delta (CPU usage, cgroup throttling, PSI stall time).
-- **Gauge**: a point-in-time value with no delta, read raw on each poll. Used only for the handful of cgroup config values that can rise or fall at runtime.
+- **Gauge**: a point-in-time value read raw on each poll, with no delta. This is the largest group: fixed totals (core count, physical memory total, per-mount capacity), pre-averaged values (load average, PSI `avg10/60/300` percentages), and the cgroup config values that can rise or fall at runtime.
+- **Histogram**: a bucketed distribution of per-tick observations. Some histograms observe a point-in-time level each tick (available/free memory and swap, per-mount free space); others observe a per-second delta (CPU usage, cgroup throttling, PSI stall time). A `.rate` histogram's running sum is its own cumulative total (see below), so a rate series needs no separate counter.
+- **Counter**: monotonic and cumulative. Exactly one metric is a Counter: `machine.cgroup.cpu.periods`, the scheduling-period count that has no per-second `.rate` companion. Every other cumulative signal is carried inside a `.rate` histogram's sum.
 
-> **Note:** every cumulative time or count Counter (a leaf named `.total`) is paired with a per-second-delta Histogram (a sibling leaf named `.rate`) under the same base path, never as parent and child. `machine.cpu.total.total` is the Counter; `machine.cpu.total.rate` is its paired Histogram. If you query only the `.total` Counter, you get the cumulative window average and silently miss any within-window spike; this is exactly the case for cgroup CPU throttling and PSI stall time, where a brief but severe stall can vanish into an averaged total. Expect both to exist for every cumulative family: `.rate` is not an alternate unit of `.total`, it is the distribution `.total` alone cannot show you.
+### Series-shape changes
 
-> **Caution:** the three cgroup config-value metrics (`machine.cgroup.memory.limit`, `machine.cgroup.cpu.quota`, `machine.cgroup.cpu.period`) are plain Gauges, not the monotonic CounterGauge you might expect from their neighbors. A config value can rise or fall at runtime (a Kubernetes in-place resize lowering a memory limit, for instance), and a delta-based exporter reading a CounterGauge maps a decrease to a rolling-counter wraparound. The Gauge exports the raw value with no delta, which is the only correct reading for a value that is not monotonic. `machine.cpu.cores` stays a CounterGauge, because a process's core count is fixed for its lifetime and never decreases.
+If you consumed an earlier build of this module, two shape changes are user-visible in the exported series set. Neither drops a signal; both make the taxonomy honest.
+
+> **Note:** the per-mode cumulative `.total` Counter series are gone. Earlier builds emitted a separate `machine.cpu.<mode>.total` Counter beside each `machine.cpu.<mode>.rate` Histogram, and the same doubling for cgroup CPU throttling and every PSI stall total. Those `.total` Counters are removed. The cumulative they carried now rides the paired `.rate` Histogram's own running sum, exported as the histogram's `sum` under CUMULATIVE aggregation temporality (kyo-stats-otlp re-sends it every cycle, so the lifetime total is never lost). Query the `.rate` histogram's sum where you previously read the `.total` Counter; the distribution the Counter alone could not show you is in the same series' buckets.
+
+> **Note:** `machine.cpu.steal.rate` is new, Linux only. It is the per-second hypervisor-steal time a cloud or virtualized host needs to distinguish "my CPU is busy" from "my CPU was taken by a noisy neighbor." macOS and Windows have no steal-time concept, so the series is never registered there (see the coverage table).
 
 ## The machine.* metric taxonomy
 
-Every path below lives under the `machine` scope root. `total` and `free`/`available` are always bytes; time is always stored in nanoseconds regardless of the OS's native unit, so per-source scaling (jiffies, microseconds) happens once, in the sampler, not in every reader.
+Every path below lives under the `machine` scope root. `total`, `free`, and `available` are always bytes; time is always stored in nanoseconds regardless of the OS's native unit, so per-source scaling (jiffies, microseconds, FILETIME 100ns units) happens once, in the sampler, not in every reader. Every cell registers its underlying `kyo.Stat` handle lazily, on its first present observation: a metric the host never produces never registers a handle and is simply absent from the exported set (never a fabricated zero).
 
 ### CPU
 
-Cumulative cpu-time Counters, each paired with a per-second-usage Histogram, plus the fixed core count:
+Per-second CPU-usage histograms, plus the fixed core count. The histogram buckets are derived at init from the host's actual core count, so a many-core host does not funnel every observation into one overflow bucket.
 
 | Path | Type | Unit | Notes |
 | --- | --- | --- | --- |
-| `machine.cpu.total.total` | Counter | ns (cumulative) | paired with `.rate` |
-| `machine.cpu.total.rate` | Histogram | ns/s | per-tick delta |
-| `machine.cpu.user.total` | Counter | ns (cumulative) | per-mode where cheap to read |
-| `machine.cpu.user.rate` | Histogram | ns/s | paired with `.total` |
-| `machine.cpu.system.total` | Counter | ns (cumulative) | per-mode where cheap to read |
-| `machine.cpu.system.rate` | Histogram | ns/s | paired with `.total` |
-| `machine.cpu.idle.total` | Counter | ns (cumulative) | per-mode where cheap to read |
-| `machine.cpu.idle.rate` | Histogram | ns/s | paired with `.total` |
-| `machine.cpu.iowait.total` | Counter | ns (cumulative) | Linux only |
-| `machine.cpu.iowait.rate` | Histogram | ns/s | Linux only, paired with `.total` |
-| `machine.cpu.cores` | CounterGauge | count | fixed for process lifetime, every OS |
+| `machine.cpu.total.rate` | Histogram | ns/s | sum carries cumulative ns |
+| `machine.cpu.user.rate` | Histogram | ns/s | sum carries cumulative ns |
+| `machine.cpu.system.rate` | Histogram | ns/s | sum carries cumulative ns; on Windows, kernel-minus-idle |
+| `machine.cpu.idle.rate` | Histogram | ns/s | sum carries cumulative ns |
+| `machine.cpu.iowait.rate` | Histogram | ns/s | Linux only; sum carries cumulative ns |
+| `machine.cpu.steal.rate` | Histogram | ns/s | Linux only; hypervisor-steal signal; sum carries cumulative ns |
+| `machine.cpu.cores` | Gauge | count | fixed for process lifetime, every OS |
 
 ### Memory and swap
 
-Point-in-time readings observed into Histograms:
+Physical totals are Gauges (fixed for the process lifetime); the varying levels are observed into Histograms:
 
 | Path | Type | Unit | Notes |
 | --- | --- | --- | --- |
-| `machine.memory.total` | Histogram | bytes | |
-| `machine.memory.available` | Histogram | bytes | Linux `MemAvailable`; Absent where the OS does not expose it |
-| `machine.memory.free` | Histogram | bytes | |
-| `machine.swap.total` | Histogram | bytes | |
-| `machine.swap.free` | Histogram | bytes | |
+| `machine.memory.total` | Gauge | bytes | physical memory total |
+| `machine.memory.available` | Histogram | bytes | Linux `MemAvailable`, macOS free+inactive, Windows `ullAvailPhys` |
+| `machine.memory.free` | Histogram | bytes | Linux, macOS; absent on Windows (no distinct free-vs-available concept) |
+| `machine.swap.total` | Gauge | bytes | Windows reports the commit limit here, the closest honest mapping |
+| `machine.swap.free` | Histogram | bytes | Windows reports the available commit here |
 
 ### Disk
 
-Per-mount, so the `<store>` segment is a dynamic scope, not a fixed name: two metrics fan out to every physical mount the sampler discovers at init.
+Per-mount, so the `<store>` segment is a dynamic scope, not a fixed name: two metrics fan out to every physical mount the sampler discovers. This pair is the only part of the taxonomy that is not a fixed count of leaves.
 
 | Path | Type | Unit | Notes |
 | --- | --- | --- | --- |
-| `machine.disk.<store>.total` | Histogram | bytes | one pair per physical mount |
-| `machine.disk.<store>.free` | Histogram | bytes | one pair per physical mount |
+| `machine.disk.<store>.total` | Gauge | bytes | capacity, one per physical mount |
+| `machine.disk.<store>.free` | Histogram | bytes | free space, one per physical mount |
 
-`<store>` is a sanitized mount identity, and the mount set (physical filesystems only, network and virtual mounts filtered out) is fixed once at sampler init, not re-scanned per tick.
+`<store>` is a sanitized mount identity (kernel octal escapes in the mount path are decoded first). The mount set is physical filesystems only (network and virtual mounts are filtered out) and is rebuilt only when the mount table changes, not re-scanned per tick. The disk read runs on its own fiber the tick loop never awaits inline, so a slow or dead mount (a hung NFS export, for instance) never delays the fast CPU/memory/load reads of the same or any later tick.
 
 ### Load average
 
+Pre-averaged values, so each is a plain Gauge (a load average can rise or fall, and it is not a distribution to bucket):
+
 | Path | Type | Unit | Notes |
 | --- | --- | --- | --- |
-| `machine.load.one` | Histogram | load units | Linux, macOS; Absent on Windows |
-| `machine.load.five` | Histogram | load units | Linux, macOS; Absent on Windows |
-| `machine.load.fifteen` | Histogram | load units | Linux, macOS; Absent on Windows |
+| `machine.load.one` | Gauge | load units | Linux, macOS; absent on Windows |
+| `machine.load.five` | Gauge | load units | Linux, macOS; absent on Windows |
+| `machine.load.fifteen` | Gauge | load units | Linux, macOS; absent on Windows |
 
 ### cgroup
 
-Linux only, read at the process's resolved cgroup path, transparently across v1 and v2. Memory is a usage Histogram plus a limit Gauge; CPU carries the quota/period config as Gauges and throttling as a dual Counter/Histogram pair:
+Linux only, read at the process's resolved cgroup path (resolved once at init from `/proc/self/mountinfo` and `/proc/self/cgroup`, transparently across v1 and v2). Memory is a usage Histogram plus a limit Gauge; CPU carries the quota/period config as Gauges, the period count as the one Counter, and throttling as per-second Histograms:
 
 | Path | Type | Unit | Notes |
 | --- | --- | --- | --- |
@@ -133,25 +135,22 @@ Linux only, read at the process's resolved cgroup path, transparently across v1 
 | `machine.cgroup.memory.limit` | Gauge | bytes (config) | Absent when unset or unlimited |
 | `machine.cgroup.cpu.quota` | Gauge | ns (config) | Absent when unset |
 | `machine.cgroup.cpu.period` | Gauge | ns (config) | |
-| `machine.cgroup.cpu.periods` | Counter | count (cumulative) | scheduling periods observed |
-| `machine.cgroup.cpu.throttled.periods.total` | Counter | count (cumulative) | paired with `.rate` |
-| `machine.cgroup.cpu.throttled.periods.rate` | Histogram | periods/s | per-tick delta |
-| `machine.cgroup.cpu.throttled.total` | Counter | ns (cumulative) | paired with `.rate` |
-| `machine.cgroup.cpu.throttled.rate` | Histogram | ns/s | per-tick delta |
+| `machine.cgroup.cpu.periods` | Counter | count (cumulative) | scheduling periods observed; the one unpaired Counter |
+| `machine.cgroup.cpu.throttled.periods.rate` | Histogram | periods/s | sum carries cumulative throttled-period count |
+| `machine.cgroup.cpu.throttled.rate` | Histogram | ns/s | sum carries cumulative throttled ns |
 
-> **Note:** `machine.cgroup.memory.limit`, `machine.cgroup.cpu.quota`, and `machine.cgroup.cpu.period` do not even create their Gauge handle until the first present reading is observed. An unset config value never emits a fabricated zero; it is simply absent from the exported set until (or unless) it becomes readable.
+> **Note:** `machine.cgroup.memory.limit`, `machine.cgroup.cpu.quota`, and `machine.cgroup.cpu.period` are plain Gauges, not the monotonic CounterGauge you might expect from their neighbors. A config value can rise or fall at runtime (a Kubernetes in-place resize lowering a memory limit, for instance), and a delta-based exporter reading a CounterGauge would map a decrease to a rolling-counter wraparound. The Gauge exports the raw value with no delta, which is the only correct reading for a value that is not monotonic. Each is seeded with its first real value before its handle registers, so its first poll is never a transient zero; an unset config value never registers a handle at all.
 
 ### System pressure (PSI)
 
-Linux only, read from `/proc/pressure/{cpu,memory,io}`. Each `(resource, type)` pair carries three EWMA gauges plus a dual cumulative-stall Counter/Histogram pair:
+Linux only, read from `/proc/pressure/{cpu,memory,io}`. Each `(resource, type)` pair carries three pre-averaged EWMA gauges plus a per-second stall-rate histogram:
 
 | Path pattern | Type | Unit | Notes |
 | --- | --- | --- | --- |
-| `machine.pressure.<res>.<type>.avg10` | Histogram | percent 0-100 | 10-second EWMA |
-| `machine.pressure.<res>.<type>.avg60` | Histogram | percent 0-100 | 60-second EWMA |
-| `machine.pressure.<res>.<type>.avg300` | Histogram | percent 0-100 | 300-second EWMA |
-| `machine.pressure.<res>.<type>.total` | Counter | ns (cumulative stall) | paired with `.rate` |
-| `machine.pressure.<res>.<type>.rate` | Histogram | ns/s | per-tick stall-time delta |
+| `machine.pressure.<res>.<type>.avg10` | Gauge | percent 0-100 | 10-second EWMA |
+| `machine.pressure.<res>.<type>.avg60` | Gauge | percent 0-100 | 60-second EWMA |
+| `machine.pressure.<res>.<type>.avg300` | Gauge | percent 0-100 | 300-second EWMA |
+| `machine.pressure.<res>.<type>.rate` | Histogram | ns/s | per-tick stall-time delta; sum carries cumulative stall ns |
 
 `<res>` ranges over `cpu`, `memory`, `io`; `<type>` ranges over `some`, `full`. Five pairs are emitted: `cpu.some`, `memory.some`, `memory.full`, `io.some`, `io.full`. `cpu.full` is parsed but never emitted, since the kernel pins it at zero on kernels 5.13 and later and it carries no information.
 
@@ -161,11 +160,10 @@ Linux cgroup v2 only, read from the resolved cgroup's own `{cpu,memory,io}.press
 
 | Path pattern | Type | Unit | Notes |
 | --- | --- | --- | --- |
-| `machine.cgroup.pressure.<res>.<type>.avg10` | Histogram | percent 0-100 | |
-| `machine.cgroup.pressure.<res>.<type>.avg60` | Histogram | percent 0-100 | |
-| `machine.cgroup.pressure.<res>.<type>.avg300` | Histogram | percent 0-100 | |
-| `machine.cgroup.pressure.<res>.<type>.total` | Counter | ns (cumulative stall) | paired with `.rate` |
-| `machine.cgroup.pressure.<res>.<type>.rate` | Histogram | ns/s | per-tick stall-time delta |
+| `machine.cgroup.pressure.<res>.<type>.avg10` | Gauge | percent 0-100 | |
+| `machine.cgroup.pressure.<res>.<type>.avg60` | Gauge | percent 0-100 | |
+| `machine.cgroup.pressure.<res>.<type>.avg300` | Gauge | percent 0-100 | |
+| `machine.cgroup.pressure.<res>.<type>.rate` | Histogram | ns/s | per-tick stall-time delta; sum carries cumulative stall ns |
 
 Same five `(res, type)` pairs as system pressure, same `cpu.full` exclusion. Absent on cgroup v1 hosts and off Linux entirely.
 
@@ -179,12 +177,26 @@ Two independent axes decide what you see: the operating system decides which met
 
 | Family | Linux | macOS | Windows |
 | --- | --- | --- | --- |
-| CPU | full, including `iowait` | full, no `iowait` | full, no `iowait` |
-| Memory / swap | full | full | full |
-| Disk | full | full | full |
+| CPU total/user/system/idle rate | yes | yes | yes |
+| CPU `iowait.rate` | yes | Absent | Absent |
+| CPU `steal.rate` | yes | Absent | Absent |
+| CPU `cores` | yes | yes | yes |
+| Memory total/available | yes | yes | yes |
+| Memory `free` | yes | yes | Absent |
+| Swap total/free | yes | yes | yes (commit limit) |
+| Disk (per mount) | yes | yes | yes |
 | Load average | yes | yes | Absent |
-| cgroup | yes | Absent | Absent |
-| PSI (system + cgroup) | yes | Absent | Absent |
+| cgroup (memory/cpu) | yes | Absent | Absent |
+| System PSI | yes | Absent | Absent |
+| cgroup PSI | yes (cgroup v2) | Absent | Absent |
+
+The structural absences are deliberate, and each is the absence of a real host concept, not a gap in coverage:
+
+- **Load average is Absent on Windows.** Windows exposes no load-average equivalent, so the three `machine.load.*` gauges never register there.
+- **cgroup and PSI are Linux only.** They are kernel features with no macOS or Windows counterpart, so every `machine.cgroup.*` and `machine.pressure.*` series is absent off Linux, and cgroup PSI additionally requires cgroup v2.
+- **`cpu.steal.rate` and `cpu.iowait.rate` are Linux only.** macOS `host_cpu_load_info` has no iowait bucket and neither macOS nor Windows exposes hypervisor steal time, so both series are written and registered only on Linux.
+- **`memory.free` is Absent on Windows.** Windows exposes only total and available physical memory (`GlobalMemoryStatusEx`), with no distinct free-versus-available figure; reporting the available number again under a `free` label would be a real number under the wrong meaning, so the cell is never written there.
+- **`cpu.full` pressure is never emitted, on any host.** The kernel parses a `full` line for the CPU resource but pins it at zero, so no `machine.pressure.cpu.full.*` or `machine.cgroup.pressure.cpu.full.*` series is ever created. Memory and io emit both `some` and `full`; cpu emits `some` only.
 
 ### By compile target
 

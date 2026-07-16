@@ -23,14 +23,14 @@ There is exactly ONE `Machine` implementation per operating system
 (`MachineLinux`, `MachineMacos`, `MachineWindows`), and every one of them lives
 in `shared/src/main/scala`, selected once at sampler init from
 `System.operatingSystem` (`Machine.forOs`,
-`shared/src/main/scala/kyo/stats/machine/Machine.scala:32-37`). This works
+`shared/src/main/scala/kyo/stats/machine/Machine.scala:43-48`). This works
 because every implementation composes only cross-platform kyo primitives:
 files are read via `kyo.Path` (never a platform-specific file API), and
 genuine syscalls go through a per-OS **kyo-ffi** binding
 (`LinuxBindings`/`MacosBindings`/`WindowsBindings`), never bundled ad hoc per
 platform. The `Machine` trait's own doc states this precisely: "Every
 implementation compiles on every platform because it composes only
-cross-platform kyo primitives" (`Machine.scala:9-11`).
+cross-platform kyo primitives" (`Machine.scala:15-16`).
 
 The ONLY per-platform Scala leaves in the whole module are the two files the
 auto-registration mechanism genuinely requires:
@@ -74,18 +74,22 @@ The sampler starts with zero explicit user call, mirroring
    (`js/src/main/scala/kyo/stats/machine/MachineRegistration.scala:13-19`).
 2. Construction reads the opt-out once and, unless suppressed, starts exactly
    one sampler via a CAS-gated `AtomicBoolean`
-   (`MachineStatFactory.started`, `shared/src/main/scala/kyo/stats/machine/MachineStatFactory.scala:39,72-84`).
+   (`MachineStatFactory.started`, `shared/src/main/scala/kyo/stats/machine/MachineStatFactory.scala:39,82-94`).
    The factory contributes no `TraceExporter` (`traceExporter()` always
    returns `None`, `MachineStatFactory.scala:30`): the SPI seam is used purely
    as an on-classpath start trigger, not for tracing.
 3. The started sampler is a detached fiber (`Fiber.initUnscoped`) running
-   `MachineSampler.run` under its own `Scope`, ticking once per second
-   (`Async.sleep(1.seconds).andThen(tick(sampler))` inside `Loop.forever`,
-   `MachineSampler.scala:74-83`).
+   `MachineSampler.run` under its own `Scope`, which drives two fibers: the
+   fast family ticks on a drift-corrected 1 Hz schedule
+   (`Clock.repeatAtInterval(Schedule.anchored(1.second))(readFast(machine))`,
+   `MachineSampler.scala:159`), and disk reads run on their own
+   1-second-interval fiber the fast fiber never awaits inline
+   (`Clock.repeatAtInterval(diskInterval)(readDisksBounded(sampler, machine))`,
+   `MachineSampler.scala:157`).
 4. Opt-out: `KYO_MACHINE_DISABLED=true` (env) or `kyo.machine.disabled=true`
    (system property), read once via an injectable `System.Unsafe` so tests can
    stage a reader without mutating real process env
-   (`MachineStatFactory.scala:52-64`). Unset or unparseable enables (graceful
+   (`MachineStatFactory.scala:52-74`). Unset or unparseable enables (graceful
    default, never a failure).
 5. **Native caveat**: Scala Native's `ServiceLoader` discovers providers only
    from a build-time allowlist. A downstream Native build that wants the
@@ -101,46 +105,58 @@ Every metric lives under the `machine.*` `Stat` scope, created once in
 `MachineHandles` under `Stat.scope("machine")`
 (`shared/src/main/scala/kyo/stats/machine/MachineHandles.scala`).
 
-**The dual rule.** Every cumulative cpu-time quantity is a `Counter` (raw
-nanoseconds, monotonic) PAIRED with a per-second-delta `Histogram` observed
-with the exact same per-tick scaled delta: `cpu.<mode>.total` beside
-`cpu.<mode>.rate` (`MachineHandles.scala:22-31`), and the same pairing for
-cgroup cpu-throttling (`cgCpuThrPeriods`/`cgCpuThrPeriodsHi`,
-`cgCpuThrTime`/`cgCpuThrTimeHi`, `MachineHandles.scala:52-55`) and both PSI
-families' stall totals (`PsiHandles.One`, `shared/src/main/scala/kyo/stats/machine/PsiHandles.scala:33-59`).
-The delta computation lives once, in `MachineHandles.advance`/`step`
-(`MachineHandles.scala:129-171`): first tick advances by 0 (no absolute-value
-spike), a negative raw delta clamps to 0 (a kernel counter reset), and an
-Absent read leaves both the `Counter` and the prior-state baseline unchanged.
-`cgroup.cpu.periods` is the one deliberately UNPAIRED counter (the taxonomy
-declares no dual for it, `advanceCounter`, `MachineHandles.scala:144-155`).
+**The rate rule (the cumulative rides the histogram sum).** A per-second flow
+(cpu-time per mode, cgroup cpu-throttling, PSI stall time) is a single `.rate`
+`Histogram` observed with the per-tick scaled delta; there is no separate
+cumulative `.total` `Counter` beside it. The histogram's own non-draining
+running sum (`Summary.sum`, an `AtomicLong` over raw double bits) carries the
+cumulative total, re-sent every export under CUMULATIVE temporality, so the
+lifetime total survives without a second series. The delta computation lives
+once in the `RateCell`: the first tick advances by 0 (no absolute-value spike),
+a negative raw delta clamps to 0 (a kernel counter reset), and an Absent read
+leaves the prior-state baseline unchanged. `cgroup.cpu.periods` is the one
+metric modeled as a plain `Counter`: it is the single cumulative signal with no
+per-second `.rate` companion.
 
-**Point-in-time values are `Histogram`s**, not `Counter`s: memory,
-swap, load, disk free/total, and PSI `avgNN` percentages are observed
-directly with no delta (`MachineHandles.scala:33-45,229-237`).
+**Point-in-time levels are `Histogram`s, fixed totals and pre-averaged values
+are `Gauge`s.** A genuinely varying, adequately-sampled level (available/free
+memory and swap, cgroup memory usage, per-mount free space) is a `Histogram`
+observed directly with no delta. A fixed total (`cpu.cores`, `memory.total`,
+`swap.total`, per-mount `disk.<store>.total`) and a pre-averaged value (`load.*`,
+PSI `avgNN` percentages) is a plain `Gauge`, never a `Histogram`: a value that
+is already an average or a constant total is not a distribution to bucket, and a
+value that can fall is not a monotonic counter.
 
 **Config values are `Gauge`s, never `Counter`s.** `cgroup.memory.limit`,
-`cgroup.cpu.quota`, and `cgroup.cpu.period` are point-in-time config values
-that can rise OR fall at runtime (a cgroup limit lowered live); a
-`CounterGauge`'s delta model would map a decrease to a wraparound, so each is
-a plain `Gauge` (raw value, no delta) instead. Each is created LAZILY, on the
-first `Present` observation only: an unset limit registers no handle and
-exports nothing, and the handle is seeded with that first value so its first
-poll is never a transient 0 (`MachineHandles.ConfigGauge`,
-`MachineHandles.scala:57-64,199-223`).
+`cgroup.cpu.quota`, and `cgroup.cpu.period` are point-in-time config values that
+can rise OR fall at runtime (a cgroup limit lowered live); a `CounterGauge`'s
+delta model would map a decrease to a wraparound, so each is a plain `Gauge`
+(raw value, no delta) instead.
+
+**Every cell registers lazily, on its first `Present` observation only.** Not
+just config gauges: every metric cell in the module (`RateCell`, `LevelCell`,
+`LongGaugeCell`, `DoubleGaugeCell`, `CounterCell`) constructs its `kyo.Stat`
+handle on its first present value, seeding a gauge's holder before it registers
+so the first poll is never a transient 0. A metric the host never produces
+never observes a present value, so it never registers a handle and is absent
+from the export (never a fabricated zero). This is also why every cell must be
+a retained `val` field for the sampler lifetime: the registry keys entries by
+`WeakReference`, so a handle constructed locally per tick, or a cell dropped
+from `val` to `def`, would compile cleanly while silently resetting the metric.
 
 cgroup v1/v2 detection and PSI are Linux-only: v2 unified is chosen iff
-`/sys/fs/cgroup/cgroup.controllers` exists (`LinuxCgroup.isV2`,
-`shared/src/main/scala/kyo/stats/machine/LinuxCgroup.scala:23`), else v1
+`/sys/fs/cgroup/cgroup.controllers` exists (`LinuxCgroup.v2`,
+`shared/src/main/scala/kyo/stats/machine/LinuxCgroup.scala:26`), else v1
 legacy; the resolved process cgroup path is read from `/proc/self/cgroup`,
-not the hierarchy root (`LinuxCgroup.resolvedV2Dir`/`resolveV1`,
-`LinuxCgroup.scala:26-36`), because v2 resource-control files exist only on
+not the hierarchy root (`LinuxCgroup.resolveV2Dir`/`resolveV1Dirs`,
+`LinuxCgroup.scala:92-108`), because v2 resource-control files exist only on
 non-root cgroups. System PSI (`/proc/pressure/*`) and cgroup v2 PSI (the
-resolved dir's `*.pressure`) are recorded into two SEPARATE families
-(`LinuxPressure.readSystem`/`readCgroup`,
-`shared/src/main/scala/kyo/stats/machine/LinuxPressure.scala:11-18`) so a
+resolved dir's `*.pressure`) are recorded into two SEPARATE families through
+distinct retained decode callbacks, one set writing `h.systemPressure` and
+the other `h.cgroupPressure`, both invoked from the one `LinuxPressure.read`
+(`shared/src/main/scala/kyo/stats/machine/LinuxPressure.scala:26-40`), so a
 consumer can distinguish system-wide pressure from this cgroup's pressure and
-neither `.total` Counter double-advances from one read.
+neither `.rate` Histogram's running sum double-advances from one read.
 
 ## The sampler contract
 
@@ -148,34 +164,44 @@ neither `.total` Counter double-advances from one read.
 is the single detached owner fiber for the whole tick loop. Its contract:
 
 - **Zero-allocation steady-state reads.** The sampler owns one
-  `Path.ReadHandle` per proc file, opened once and retained in a
-  `FileSlot` (`MachineSampler.scala:115,124-129`); each tick calls
-  `handle.position(0L)` to rewind and reads into the SAME reused byte buffer
-  (`readScoped`, `MachineSampler.scala:45-57`). On JVM/Native this rides the
+  `Path.ReadHandle` per proc file, opened once at construction and retained
+  in a `FileSlot` (`MachineSampler.scala:57-62,199-206`); each tick's
+  `readInto` rewinds the handle (`fs.handle.position(0L)`) and refills the
+  SAME reused buffer before handing the borrowed bytes to the retained decode
+  callback (`MachineSampler.scala:68-77`). On JVM/Native this rides the
   kyo-core `NioReadHandle`'s retained `ByteBuffer` (see "kyo-core touches"
   below), so a steady-state read allocates no per-read payload. `fill`
-  (`MachineSampler.scala:138-158`) reuses a fixed scratch array across
+  (`MachineSampler.scala:214-234`) reuses a fixed scratch array across
   `readChunk` calls and only grows the output buffer once, the first time a
   file exceeds it; the borrowed `Span[Byte]` handed to the caller's callback
   must never escape that callback.
-- **`Scope`-teardown lifecycle.** `MachineSampler.run` builds the sampler
-  and its handles UNDER one `Scope`, then drives the tick loop with
-  `Scope.ensure` registering `closeHandles()` as the finalizer
-  (`MachineSampler.scala:74-83`). An interrupt of this effect stops the loop
-  FIRST; the `Scope` finalizer then closes every retained handle, so no tick
-  ever reads a closed handle. The loop itself keeps its own `Scope` open, so
-  no separate keep-alive construct is needed.
-- **The blockable disk read is isolated and bounded.** Every other read is a
-  fast in-kernel/proc read; disk enumeration is the one genuinely-blockable
-  syscall family (`statvfs`/`statfs`/`GetDiskFreeSpaceExW` against a possibly
-  hung or dead mount). `MachineSampler.tick` reads it on the SAME fiber as
-  everything else but wraps the call in `Async.timeout(diskReadTimeout)`
-  (5 seconds, `MachineSampler.scala:90,104-107`): on expiry the tick records
-  no disk data for that tick and the loop proceeds rather than parking. This
-  is why `Machine.read` always returns `disks = Chunk.empty` and disk is read
-  through the separate `readDisks` method
-  (`Machine.scala:14-24`): so the bounded, potentially-timed-out path is
-  structurally distinct from the fast synchronous path.
+- **`Scope`-teardown lifecycle.** `MachineSampler.run`/`runWith` build the
+  sampler and its handles UNDER one `Scope`, register the buffer-closing
+  finalizer FIRST (`Scope.ensure { machine.close(); sampler.closeHandles() }`,
+  `MachineSampler.scala:153-156`), then register the disk and fast fibers for
+  interrupt (`MachineSampler.scala:157-161`). `Scope` finalizers run LIFO, so
+  on teardown both fibers are interrupted FIRST and the handle-closing
+  finalizer runs LAST, so no tick or disk read ever touches a closed handle.
+  Awaiting the fast fiber's `get` (it never returns) keeps the `Scope` open
+  for the process lifetime.
+- **The blockable disk read runs on its own fiber, off the tick loop.** Every
+  other read is a fast in-kernel/proc read; disk enumeration is the one
+  genuinely-blockable syscall family (`statvfs`/`statfs`/`GetDiskFreeSpaceExA`
+  against a possibly hung or dead mount), and a blocking disk syscall against a
+  dead mount has no suspension point a timeout can interrupt. So the tick fiber
+  never awaits the disk read inline. The fast in-kernel/proc reads run on the
+  tick fiber at the fixed 1 Hz cadence; the disk read runs on a separate
+  detached fiber that enumerates mounts, bounds each per-mount read with
+  `Async.timeout`, and never launches a new read for a mount whose prior read is
+  still in flight (single-in-flight-per-mount, so a permanently dead mount leaks
+  at most one blocked worker for the process lifetime, not one per tick). A hung
+  mount stalls only disk data; it never delays the fast reads of the same or any
+  later tick. Both readers write decoded primitives straight into retained
+  cells and return `Unit`: `Machine.read` writes the fast families,
+  `Machine.readDisks` writes each mount's total/free, neither returns a reading
+  value. Both fibers are registered with the sampler `Scope` for interrupt
+  BEFORE the finalizer closes buffers, so no tick or disk read ever touches a
+  closed handle.
 
 ## The FFI conventions
 
@@ -197,40 +223,59 @@ impl catches to `Absent`.
   fields into flat primitive out-params the binding can read with raw
   `Buffer.get` calls. The whole shim is `#ifdef __APPLE__`-guarded: the
   `#else` branch provides same-signature stubs returning failure codes
-  (`machine_macos.c:110-124`), so the file compiles and every symbol resolves
+  (`machine_macos.c:128-140`), so the file compiles and every symbol resolves
   on a non-macOS build host (the Linux-only CI compiles this on the BUILD
   HOST for JVM/JS; Scala Native compiles it into the binary on every OS). The
   module's `build.sbt` registers it via `nativeBundled` plus an explicit
   `FfiLibrary` entry naming the C source
-  (`build.sbt:1131-1140`), since `library = "machine_macos"` is not a system
+  (`build.sbt:1123-1125`), since `library = "machine_macos"` is not a system
   library id.
 - **`WindowsBindings`** (`shared/src/main/scala/kyo/stats/machine/WindowsBindings.scala`):
   `Ffi.Config(library = "kernel32", headers = Chunk("windows.h"), symbols = Map(...))`.
   Bound directly against `kernel32`, no bundled C. The `symbols` map pins
   each Scala method to its EXACT Win32 export name (the derived snake-case
-  name would not resolve, and `GetDiskFreeSpaceEx` is a macro, not an export,
-  so the `W` form is named explicitly). `headers = Chunk("windows.h")` gates
-  Native `@extern` emission, so a non-Windows Native build emits runtime
-  stubs instead of a `@link("kernel32")` that would fail to link.
+  name would not resolve). The disk entry points bind the ANSI (`A`) forms,
+  `GetDriveTypeA` and `GetDiskFreeSpaceExA` (`GetDiskFreeSpaceEx` is a macro,
+  not an export, so an `A`/`W` form must be named explicitly), because kyo-ffi
+  marshals a Scala `String` uniformly as narrow/UTF-8 on every target and this
+  binding only ever passes pure-ASCII drive-root strings (`"C:\\"`): ANSI is
+  then byte-identical to what kyo-ffi produces, while a `W` (wide/UTF-16) entry
+  point fed a narrow buffer is an ABI mismatch that returns empty disk data.
+  `headers = Chunk("windows.h")` gates Native `@extern` emission, so a
+  non-Windows Native build emits runtime stubs instead of a `@link("kernel32")`
+  that would fail to link.
 
 Every binding uses raw `Buffer.get`/`Buffer.alloc` accessors for its
 out-params, never `StructLayout`: each syscall's wanted fields are
 hand-projected into a flat `Buffer[Long]`/`Buffer[Double]` scratch area (see
 `MacosBindings.hostCpuLoad`'s doc, `MacosBindings.scala:14`, and every
-`Machine` impl's `readCpu`/`readMemory`/etc.). Every `Buffer.alloc` call is
-matched with a `Buffer.close()` on EVERY exit path, success or failure
-(`try ... finally out.close()` throughout `MachineMacos.scala` and
-`MachineWindows.scala`; `WindowsBindings.withMemoryStatus`,
-`WindowsBindings.scala:82-100`, closes on both the false-return path and a
-thrown-before-success path).
+`Machine` impl's `readCpu`/`readMemory`/etc.). Every out-buffer is RETAINED:
+allocated exactly once, at reader construction (`MachineMacos.scala:21-24`,
+`MachineWindows.scala:20-23`), never per read, since `Buffer.alloc` opens a
+fresh memory arena per call. Each reader's `close()` method closes every
+retained buffer, invoked exactly once by the sampler's `Scope` finalizer at
+teardown, never per-tick (`MachineMacos.scala:42-48`,
+`MachineWindows.scala:49-54`). `WindowsBindings.fillMemoryStatus` presets the
+shared `MEMORYSTATUSEX` buffer's `dwLength` field before the one-per-tick
+`GlobalMemoryStatusEx` call, so both the memory and swap rows read the same
+filled buffer from a single syscall (`WindowsBindings.scala:88-91`).
 
 Every `AllowUnsafe.embrace.danger` import carries a `// Unsafe:` comment
-naming the specific bridge it opens: the sampler's retained handles and
-buffer (`MachineSampler.scala:19-20`), the module-init SPI activation
-boundary (`MachineStatFactory.scala:25-26,35-36`), the per-OS reader's
-syscall/file bridge (`MachineLinux.scala:16-17`, `MachineMacos.scala:13-14`,
-`MachineWindows.scala:13-14`), and the `ConfigGauge`'s off-effect-context
-construction (`MachineHandles.scala:217-219`).
+naming the specific bridge it opens: the sampler's retained read handles and
+reused buffers, single-owner fields on the detached tick fiber
+(`MachineSampler.scala:25`); the sampler's own construction site, the same
+class-level bridge the OS reader and its FFI binding trait ride, since
+`Machine.forOs` is built under this capability and every per-OS reader method
+(`MachineLinux`, `MachineMacos`, `MachineWindows`, and each `LinuxBindings`/
+`MacosBindings`/`WindowsBindings` call) takes `AllowUnsafe` as a propagated
+parameter rather than importing its own (`MachineSampler.scala:111`); the
+module-init SPI activation boundary and the opt-out read
+(`MachineStatFactory.scala:27,37`); and every metric cell that owns its own
+unsafely-constructed field state, `RateCell`, `CounterCell`, `LongGaugeCell`,
+and `DoubleGaugeCell`, each of which builds an `AtomicLong.Unsafe.init`
+holder at construction (`MachineHandles.scala:30,100,144,174,193`);
+`LevelCell` carries no import of its own, since it holds only a plain `var`
+and observes through the capability its caller already supplies.
 
 ## Graceful degradation
 
@@ -239,37 +284,47 @@ observes availability straight into (or skips) retained `kyo.Stat` handles.
 An unavailable metric is `Absent`, NEVER a fake zero and NEVER a throw
 (`Machine.scala:5-11`). This holds at every layer:
 
-- **Per-field decode totality.** Every parser in `LinuxDecoders`,
-  `LinuxCgroupDecode`, `LinuxCgroupPath`, and `LinuxPressureDecode` routes a
-  malformed, truncated, non-numeric, or wrong-order field to `Absent` for
-  that field alone, never a `NumberFormatException` or a non-exhaustive
-  match. The v1 memory-limit "unlimited" sentinel (`>= 1L << 62`) routes to
-  `Absent` rather than being recorded as a ~9.2e18-byte limit
-  (`LinuxCgroup.applyV1LimitSentinel`, `LinuxCgroup.scala:74-75`); cpu PSI's
-  `full` line is parsed but never emitted, since it is present-but-pinned-zero
-  and a constant zero is not a signal (`Machine.scala:84`,
-  `LinuxPressureDecode`); `nr_bursts`/`burst_usec`/`burst_time` cgroup fields
-  are read but ignored, never decoded as throttling
-  (`LinuxCgroupDecode.statField` only reads the named `key`).
+- **Per-field decode totality.** Every field read in `LinuxDecoders`,
+  `LinuxCgroup`, `LinuxCgroupPath`, and `LinuxPressure` goes through one of
+  `LinuxScan`'s byte-span field primitives (`keyedLong`, `taggedLong`,
+  `taggedDouble`, `longField`, `doubleField`): each scans the retained buffer
+  directly for its key or column and returns the primitive sentinel
+  (`Path.ReadHandle.AbsentLong`, or `Double.NaN` for a fixed-point value) when
+  the key is missing, the line is truncated, or the value is non-numeric, with
+  no `String`, no `split`, and no exhaustive match to maintain
+  (`LinuxScan.scala:36-70`). The v1 memory-limit "unlimited" sentinel
+  (`>= 1L << 62`) routes to `Absent` rather than being recorded as a
+  ~9.2e18-byte limit, through the package-private pure routing function
+  `LinuxCgroup.limit` (`private[machine] def limit(v: Long): Long`), which the
+  cgroup decode test exercises directly rather than re-implementing the
+  comparison; cpu PSI's `full` line is never scanned at all, since the cpu
+  `PsiDecode` is constructed with no full-line cells (`Absent`), so no
+  `cpu.full` series is ever registered (`LinuxPressure.scala:26,57-64`); a
+  cgroup `cpu.stat` field this module has no cell for (a kernel that also
+  reports `nr_bursts`/`burst_usec`/`burst_time`, for instance) is simply never
+  scanned for, since `decodeCpuStat` only looks up the four keys it has cells
+  for (`LinuxCgroup.scala:62-67,116-119`).
 - **Per-OS binding-load failure degrades that whole OS's syscall-backed
   families uniformly**, never a partial throw: `MachineMacos.bindings` and
   `MachineWindows.bindings` catch a load failure (e.g. browser-JS with no
-  koffi) to `Absent`, and every read method pattern-matches on that
-  `Maybe` to return `Machine.Reading.empty`
-  (`MachineMacos.scala:17-30,37-40`; `MachineWindows.scala:17-38,49-51`).
-  Windows additionally catches a LAZY first-symbol-lookup failure
-  (`LinkageError`, e.g. `ExceptionInInitializerError` wrapping a missing
-  Win32 export) at the same degrade boundary
-  (`MachineWindows.scala:20-37`), since a library that resolves at
+  koffi) to `Absent` (`MachineMacos.scala:53-55`; `MachineWindows.scala:57-59`),
+  and every read method pattern-matches on that `Maybe` to write NOTHING at
+  all rather than returning a reading value (`MachineMacos.scala:28-40`;
+  `MachineWindows.scala:27-47`). Windows additionally catches a LAZY
+  first-symbol-lookup failure (`LinkageError`, e.g. `ExceptionInInitializerError`
+  wrapping a missing Win32 export) at the same degrade boundary
+  (`MachineWindows.scala:34-38,44-46`), since a library that resolves at
   `Ffi.load` time can still fail its first real call.
 - **A per-store disk failure skips only that store**, not the whole disk
-  set (`LinuxDisk.stat`, `MacosDisk.stat`, `WindowsDisk.stat` each return an
-  Absent/Absent reading for the one failing mount and continue the
-  enumeration); an all-failing or all-filtered mount set yields an empty
-  Chunk, never a throw.
+  set: `LinuxDisk.statvfsInto`, `MacosDisk.statfsInto`, and
+  `WindowsDisk.diskFreeInto` each write NOTHING for the one failing mount
+  (a non-zero return code or a caught `NonFatal` exception both fall through
+  to no cell write, `LinuxDisk.scala:208-218`) and the enumeration loop
+  continues to the next store; an all-failing or all-filtered mount set
+  yields no disk metrics at all, never a throw.
 - **An OS with no dedicated `Machine` impl** (`Machine.forOs`'s wildcard
-  case) degrades to `NullMachine`, which returns `Reading.empty`
-  unconditionally (`Machine.scala:36,106-108`), never a throw at sampler
+  case) degrades to `NullMachine`, whose `read`/`readDisks`/`close` each write
+  nothing unconditionally (`Machine.scala:47-54`), never a throw at sampler
   init.
 
 ## Unit scaling
@@ -279,20 +334,21 @@ each source's scale applied on read BEFORE the delta:
 
 - `/proc/stat` jiffies -> ns: `1e9 / sysconf(_SC_CLK_TCK)`
   (`MachineLinux.jiffiesToNanos`/`jiffiesFromBinding`,
-  `MachineLinux.scala:51-62,68-72`), falling back to the 100 Hz Linux default
+  `MachineLinux.scala:52-55,73-77`), falling back to the 100 Hz Linux default
   (`defaultJiffiesToNanos = 10000000L`) when `sysconf` is unavailable or
   returns non-positive.
-- cgroup v2 `throttled_usec`/`cpu.max` fields and PSI `total=` are
-  MICROSECONDS: scale x1000 (`LinuxCgroupDecode.v2Quota`/`v2Period`,
-  `LinuxCgroupDecode.scala:19-28`; `LinuxPressureDecode.parse`,
-  `LinuxPressureDecode.scala:22`).
-- cgroup v1 `throttled_time` is ALREADY nanoseconds: x1
-  (`LinuxCgroup.readV1`, `LinuxCgroup.scala:63`).
-- cgroup v1 `cfs_quota_us`/`cfs_period_us` are MICROSECONDS: scale x1000
-  (`LinuxCgroup.readV1Quota`, `LinuxCgroup.scala:92-93`; `readV1`,
-  `LinuxCgroup.scala:60`).
+- cgroup v2 `cpu.max` (quota and period, decoded together off one line) and
+  the v2 branch of `cpu.stat`'s `throttled_usec` are MICROSECONDS: scale
+  x1000 (`LinuxCgroup.decodeCpuMax`, `LinuxCgroup.scala:56-59`; the
+  `throttledScale` selection, `LinuxCgroup.scala:52-53,62-67`). PSI `total=`
+  is also MICROSECONDS: scale x1000 (`LinuxPressure.observeLine`,
+  `LinuxPressure.scala:78`).
+- cgroup v1 `cpu.stat`'s `throttled_time` is ALREADY nanoseconds: x1 (the v1
+  branch of `throttledScale`, `LinuxCgroup.scala:52-53`).
+- cgroup v1 `cfs_quota_us`/`cfs_period_us` are MICROSECONDS: scale x1000 (the
+  v1 branch of `LinuxCgroup.read`, `LinuxCgroup.scala:73-75`).
 - Windows `FILETIME` is 100ns units: scale x100
-  (`MachineWindows.readCpu`, `MachineWindows.scala:61-64`).
+  (`MachineWindows.readCpu`, `MachineWindows.scala:61,64-66`).
 
 Mixing up a v1-ns and a v2-us source without applying its own scale is a
 1000x error; any new cumulative-time source added to this module states its
@@ -304,44 +360,65 @@ above do.
 - **Decoders are tested via PRODUCTION code paths, driven by injectable
   StubBindings with concrete values**, not by re-implementing the decode
   logic in the test. `MachineWindowsTest.StubBindings` is the canonical shape
-  (`shared/src/test/scala/kyo/stats/machine/MachineWindowsTest.scala:19-37`):
+  (`shared/src/test/scala/kyo/stats/machine/MachineWindowsTest.scala:20-38`):
   a per-OS binding subclass whose every method is a settable function field,
   defaulting to a failure code so an un-stubbed call surfaces as an obvious
   `Absent` rather than a silent success. Tests then call the REAL
-  `MachineWindows.readCpu`/`readMemory`/etc. (or `MachineLinux`'s
-  package-private `statvfsWith`/`jiffiesFromBinding` bridges,
-  `LinuxBindingsTest.scala:46-50`) against the stub, so the assertion
-  exercises the actual production catch/scale/decode logic.
+  `MachineWindows.readCpu`/`readMemoryAndSwap`/etc. against the stub (or, for
+  the shared byte-span primitives, `MachineLinux.jiffiesFromBinding`,
+  `LinuxBindingsTest.scala:10-42`, and `LinuxDisk.statvfsInto`,
+  `LinuxDiskTest.scala`), so the assertion exercises the actual production
+  catch/scale/decode logic.
 - **1:1 test files.** Every source file has a matching `*Test.scala` (e.g.
   `LinuxCgroup.scala` -> `LinuxCgroupDecodeTest.scala`/tests folded into the
   matching aspect file where a source has multiple decode concerns).
 - **Real-host FFI leaves are `.onlyJvm` plus `assume(OS)`.** A leaf that
-  touches the actual host libc/shim/kernel32 (not a stub) is gated
-  `.onlyJvm` (the platform-specific struct layout only needs proving once,
-  on the JVM host) and additionally `assume`s the matching
+  touches the actual host shim or kernel32 (not a stub) is gated `.onlyJvm`
+  (the platform-specific struct layout only needs proving once, on the JVM
+  host) and additionally `assume`s the matching
   `System.live.unsafe.operatingSystem()`, so the assertion is skipped rather
-  than failed on a non-matching CI host
-  (`LinuxBindingsTest.scala:19-23`, `MacosBindingsTest.scala:19-23`,
-  `WindowsBindingsTest.scala:18-21`). These leaves assert HOST-INVARIANT
-  properties (a positive `sysconf` Hz, a coherent statvfs total/free
-  relation), never a specific numeric value that would vary by runner.
-- **The Windows behavioral test is HELD on Linux CI.** `WindowsBindingsTest`'s
-  "real host load" leaf is written and gated exactly like the Linux/macOS
-  equivalents but this repository's CI is Linux-only, so it is validated on
-  a Windows host outside CI, not exercised in the standard run
-  (`WindowsBindingsTest.scala:12-17`; `MachineWindows.scala:9`, "The
-  behavioral read is validated on a Windows host, not this Linux-only CI").
+  than failed on a non-matching host (`MacosBindingsTest.scala:60-64,76-79,96-99`,
+  `WindowsBindingsTest.scala:157-161`). These leaves assert HOST-INVARIANT
+  properties (a positive cumulative cpu-time sum, at least one drive with a
+  positive total), never a specific numeric value that would vary by runner.
+  `WindowsBindingsTest` additionally gates the INVERSE case, a
+  `.onlyJvm`/`assume`-gated leaf that only runs where Windows is ABSENT, to
+  prove the off-Windows degrade path (`WindowsBindingsTest.scala:141-145`).
+  Linux has no equivalent `Ffi.load[LinuxBindings]`-against-the-real-libc
+  leaf: the standard CI host already IS Linux, so every stub-driven
+  `MachineLinux`/`LinuxBindings` assertion already runs against the real
+  kernel underneath the production `Machine.forOs` path on every CI run,
+  without needing a separate `assume`-gated leaf. `LinuxDisk` takes its
+  mounts source as a constructor parameter (`mountsPath: Path`, defaulting
+  to `Path("/proc/mounts")`, production behavior unchanged) precisely so a
+  test can drive the REAL `LinuxDisk.read` end to end against a staged file
+  instead of only unit-testing `statvfsInto` in isolation:
+  `MachineSamplerJvmTest`'s disk-probe leaf stages a temp mounts file,
+  proves the steady read allocates exactly 0 bytes per op, then rewrites the
+  file and asserts the mount-change fingerprint mismatch genuinely rebuilds
+  the retained store set (`MachineSamplerJvmTest.scala`, the Linux
+  steady-state disk read leaf). That closes the direct-production-path gap;
+  the real-syscall gap (an actual `statvfs(2)` call against the real libc,
+  the counterpart to the macOS/Windows `Ffi.load` leaves below) remains open.
+- **The Windows and macOS real-host leaves run on their own CI job.**
+  `WindowsBindingsTest`'s and `MacosBindingsTest`'s real-host leaves, gated
+  `.onlyJvm` plus an `assume` on the matching `System.OS` as above, now run
+  for real: the `machine-stats-windows` and
+  `machine-stats-macos` CI jobs (`.github/workflows/ci.yml`) each run
+  `sbt "kyo-stats-machineJVM/test"` on a real Windows or macOS host, so these
+  leaves execute in CI rather than being skipped everywhere but a manual run
+  (`WindowsBindingsTest.scala:157-158`; `MacosBindingsTest.scala:60-61,76-77,96-97`).
 - **The module opts out of its own auto-start during its own tests.** Every
   platform's test config disables the sampler so the once-per-second tick
   does not race the suites' destructive counter-drain assertions against
   the shared process-global `machine.*` handles: JVM sets
-  `-Dkyo.machine.disabled=true` (`build.sbt:1149`), Native sets
-  `KYO_MACHINE_DISABLED=true` as an env var (`build.sbt:1154`), and JS sets
+  `-Dkyo.machine.disabled=true` (`build.sbt:1136`), Native sets
+  `KYO_MACHINE_DISABLED=true` as an env var (`build.sbt:1141`), and JS sets
   the same env var through the Node test environment config
-  (`build.sbt:1162-1166`). A test that needs an actually-running sampler
-  starts and stops it explicitly and locally
-  (`MachineStatFactoryTest`, sequential-suite `stopForTest`/`resetForTest`
-  seams, `MachineStatFactoryTest.scala:10,41-47`).
+  (`build.sbt:1152`). A test that needs an actually-running sampler starts
+  and stops it explicitly and locally (`MachineStatFactoryTest`,
+  sequential-suite `stopForTest`/`resetForTest` seams,
+  `MachineStatFactoryTest.scala:10,59-71`).
 
 ## kyo-core and kyo-stats-registry touches
 
@@ -360,8 +437,10 @@ This module depends on two additive `kyo-core` touches and one
    initializer and must never observe a later, not-yet-initialized `Stat`
    field.
 2. **The `Stat` metric-handle API** (`initScope`, `initCounter`,
-   `initHistogram`, `initGauge`, `initCounterGauge`) that `MachineHandles`
-   builds every retained handle on top of (`MachineHandles.scala:21-88,256-261`).
+   `initHistogram`, `initGauge`) that `MachineHandles` builds every retained
+   handle on top of (`MachineHandles.scala:38-88,247`). No cell uses
+   `initCounterGauge`: `cpu.cores` and every other fixed-total or
+   pre-averaged value is a plain `Gauge`, not a `CounterGauge`.
 3. **`kyo.stats.internal.TraceExporter.getIsolated`**
    (`kyo-stats-registry/shared/src/main/scala/kyo/stats/internal/TraceExporter.scala:40-58`),
    the per-factory-ISOLATED service-loader discovery variant: a factory
@@ -370,17 +449,19 @@ This module depends on two additive `kyo-core` touches and one
    discovery for every other module (including this one). `Stat.scannedExporter`
    is the sole production caller; the module's own test suite also calls it
    directly to prove `MachineStatFactory` is reachable through that exact
-   mechanism (`MachineStatFactoryTest.scala:122-126`).
+   mechanism (`MachineStatFactoryTest.scala:143-158`).
 
 ## Pre-submission checklist (kyo-stats-machine-specific)
 
 - [ ] Any new metric family lives in `shared/src/main`, selected only by
       `Machine.forOs`; no new `jvm/`/`js/`/`native/` leaf outside the two
       sanctioned exceptions (JS registration, JVM allocation test).
-- [ ] Every new cumulative-time quantity gets a paired `Counter` +
-      per-second-delta `Histogram` (the dual rule); a point-in-time value is
-      a `Histogram`; a config value that can rise or fall is a lazily-created
-      `Gauge`, never a `Counter`/`CounterGauge`.
+- [ ] Every new cumulative-time quantity is a single `.rate` `Histogram`
+      whose own running sum carries the cumulative total (the rate rule), not
+      a separate `.total` `Counter`; a genuinely varying level is a
+      `Histogram`; a fixed total or pre-averaged value is a `Gauge`; a config
+      value that can rise or fall is a lazily-created `Gauge`, never a
+      `Counter`/`CounterGauge`.
 - [ ] Every new decoder field routes a malformed/missing value to `Absent`,
       never a throw; a new source's native unit and its scale-to-ns factor
       are stated explicitly.

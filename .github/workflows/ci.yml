@@ -114,6 +114,92 @@ jobs:
       mode: ${{ needs.prep.outputs.mode }}
       ref: ${{ inputs.ref }}
 
+  # Run the kyo-stats-machine suite on every OS the module claims to support. The standard
+  # arch matrix (build.yml) only ever runs Linux; a fully green Linux pipeline proves nothing about
+  # Windows or macOS host reads (the Windows disk-binding bug survived exactly such a pipeline). These
+  # three jobs run the module suite directly on a real Windows host, a real macOS host, and a nested
+  # cgroup-v2 container. Skipped on the mode=custom eval escape hatch, same as build.
+  machine-stats-windows:
+    needs: prep
+    if: ${{ needs.prep.outputs.mode != 'custom' }}
+    runs-on: windows-latest
+    timeout-minutes: 60
+    env:
+      JAVA_OPTS: '-Xmx4G -Xss10M -XX:MaxMetaspaceSize=512M -XX:ReservedCodeCacheSize=128M -Dfile.encoding=UTF-8'
+      JVM_OPTS:  '-Xmx4G -Xss10M -XX:MaxMetaspaceSize=512M -XX:ReservedCodeCacheSize=128M -Dfile.encoding=UTF-8'
+    steps:
+      - uses: actions/checkout@v7.0.0
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+          fetch-depth: 0
+      - uses: ./.github/actions/setup
+        with:
+          os: windows-x64
+          target: JVM
+      - name: test kyo-stats-machine (Windows host)
+        shell: bash
+        run: sbt "kyo-stats-machineJVM/test"
+
+  machine-stats-macos:
+    needs: prep
+    if: ${{ needs.prep.outputs.mode != 'custom' }}
+    runs-on: macos-latest
+    timeout-minutes: 60
+    env:
+      JAVA_OPTS: '-Xmx4G -Xss10M -XX:MaxMetaspaceSize=512M -XX:ReservedCodeCacheSize=128M -Dfile.encoding=UTF-8'
+      JVM_OPTS:  '-Xmx4G -Xss10M -XX:MaxMetaspaceSize=512M -XX:ReservedCodeCacheSize=128M -Dfile.encoding=UTF-8'
+    steps:
+      - uses: actions/checkout@v7.0.0
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+          fetch-depth: 0
+      - uses: ./.github/actions/setup
+        with:
+          os: macos-arm64
+          target: JVM
+      - name: test kyo-stats-machine (macOS host)
+        shell: bash
+        run: sbt "kyo-stats-machineJVM/test"
+
+  # Runs inside a privileged container with a private cgroup namespace so /proc/self/mountinfo and
+  # /proc/self/cgroup present a nested cgroup-v2 layout mounted away from the host root, exercising
+  # LinuxCgroup's mountinfo-based root resolution. The setup composite is not
+  # reused here: its rootless-podman / loginctl steps do not run in a bare container, so JDK + sbt are
+  # provisioned directly. The ubuntu-latest HOST cgroup-v2 path is already covered by the build job's
+  # kyo-stats-machineJVM/test run.
+  machine-stats-linux-cgroup:
+    needs: prep
+    if: ${{ needs.prep.outputs.mode != 'custom' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    container:
+      image: ubuntu:24.04
+      options: --privileged --cgroupns=private
+    env:
+      JAVA_OPTS: '-Xmx4G -Xss10M -XX:MaxMetaspaceSize=512M -XX:ReservedCodeCacheSize=128M -Dfile.encoding=UTF-8'
+      JVM_OPTS:  '-Xmx4G -Xss10M -XX:MaxMetaspaceSize=512M -XX:ReservedCodeCacheSize=128M -Dfile.encoding=UTF-8'
+    steps:
+      - name: Install base tools
+        shell: bash
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends git curl ca-certificates
+      - uses: actions/checkout@v7.0.0
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+          fetch-depth: 0
+      - uses: coursier/setup-action@v3.0.0
+        with:
+          jvm: corretto:25
+          apps: sbt
+      - name: Verify cgroup v2 and test kyo-stats-machine (nested cgroup container)
+        shell: bash
+        run: |
+          # Confirm the job really sees a cgroup-v2 hierarchy before trusting the run.
+          mount | grep -E 'cgroup2|cgroup' || true
+          cat /proc/self/cgroup || true
+          sbt "kyo-stats-machineJVM/test"
+
   custom:
     needs: prep
     if: ${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'custom' }}

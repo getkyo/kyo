@@ -29,9 +29,12 @@ safe-tier wrapper because the operation IS the boundary.
 
 Each `AllowUnsafe.embrace.danger` import carries an `// Unsafe:` comment stating
 the specific bridge it opens (the raw read/write, the arena allocation, the mmap).
-The hot path (`Buffer.get`/`set`, the `StructLayout` field accessors) is gated by
-cheap pre-checks (`checkOpen`, `checkIndex`) BEFORE the unsafe access; the comment
-is zero-cost and the generated instruction stream is unchanged.
+The hot path (`Buffer.get`/`set`, the non-generic `getLong`/`setLong`,
+`getInt`/`setInt`, `getShort`/`setShort`, `getDouble`/`setDouble`,
+`getFloat`/`setFloat`, and `getByte`/`setByte` accessor pairs, the `StructLayout`
+field accessors) is gated by cheap pre-checks (`checkOpen`, `checkIndex`) BEFORE
+the unsafe access; the comment is zero-cost and the generated instruction stream
+is unchanged.
 
 Typed-failure bridging happens at the user's call site, not inside the module: a
 binding call that may fail is wrapped in `Abort.catching[FfiLoadError]` (or the

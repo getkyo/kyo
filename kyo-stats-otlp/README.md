@@ -226,7 +226,7 @@ Gauges export as `OTLPGauge` containing a single `NumberDataPoint` with the curr
 
 ### Zero-activity intervals
 
-Counters and counter-gauges with `delta == 0` since the last export are skipped entirely, so downstream dashboards see gaps, not zeros, for idle periods. A histogram is skipped only while its `count` is still 0: once it has been observed, every later export re-sends its cumulative data point, since that is what a cumulative series requires. An export cycle with no traffic and no observed histogram produces an empty payload, not zero-valued data points.
+Counters and counter-gauges with `delta == 0` since the last export are skipped entirely, so downstream dashboards see gaps, not zeros, for idle periods. A histogram is skipped only while its `count` is still 0: once it has been observed, every later export re-sends its cumulative data point, since that is what a cumulative series requires. A gauge is exported only once it has been registered, and a metric source registers a gauge on its first present observation, so a gauge for a value the host never produces registers no handle and is absent from the export entirely; this registration-absence is the gauge-side counterpart to the counter `delta == 0` and histogram `count == 0` skips, an idle or host-absent gauge yielding no data point rather than a fabricated zero. An export cycle with no traffic and no observed histogram produces an empty payload, not zero-valued data points.
 
 Weak-reference cleanup for collected metric instances runs inline during the export iteration. A second pass over the same Scala Native map would deadlock, so cleanup and read share one traversal.
 

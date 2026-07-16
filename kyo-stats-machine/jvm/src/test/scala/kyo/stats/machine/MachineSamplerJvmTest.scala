@@ -4,6 +4,7 @@ import kyo.*
 import kyo.ffi.*
 import kyo.stats.internal.StatsRegistry
 import kyo.stats.internal.Summary
+import kyo.stats.internal.UnsafeGauge
 import kyo.stats.internal.UnsafeHistogram
 import kyo.test.AllocationCounter
 import kyo.test.AllocationProbe
@@ -29,6 +30,9 @@ class MachineSamplerJvmTest extends kyo.test.Test[Any]:
 
     private def histogramSummary(path: String*): Summary =
         StatsRegistry.internal.histograms.get(path.toList.reverse, "", new UnsafeHistogram(Array(0d))).summary()
+
+    private def gaugePath(path: String*): Double =
+        StatsRegistry.internal.gauges.get(path.toList.reverse, "", new UnsafeGauge(() => -1d)).collect()
 
     /** A stub `MacosBindings` whose every method is overridable per test, defaulting to failure codes so an
       * un-stubbed call surfaces as an obvious Absent rather than a silent success. A local copy of the same
@@ -183,6 +187,38 @@ class MachineSamplerJvmTest extends kyo.test.Test[Any]:
                 0
             end statfs
         AllocationProbe.assertBoundedPerOp(warmupIters, measuredIters, 0.0)(disk.read(stub))
+    }
+
+    "the Linux steady-state disk read on an unchanged mount table allocates exactly 0 bytes per op, and a mount-table change rebuilds the retained store set".onlyJvm in {
+        val stub = new LinuxBindings:
+            def statvfs(path: String, out: Buffer[Long])(using AllowUnsafe): Int =
+                out.setLong(1, 4096L)
+                out.setLong(2, 1000000L)
+                out.setLong(4, 250000L)
+                0
+            end statvfs
+            def sysconf(name: Int)(using AllowUnsafe): Long = 100L
+        for
+            dir <- Path.tempDir("kyo-stats-machine-allocprobe-disk-linux")
+            mountsFile = dir / "mounts"
+            _ <- mountsFile.write("/dev/sda1 / ext4 rw 0 0\n")
+            handles = MachineHandles.initForTest(Stat.initScope("mstest-alloc-disk-linux"), 8L)
+            sampler = new MachineSampler(handles)
+            disk    = new LinuxDisk(handles, sampler, mountsFile)
+            _       = AllocationProbe.assertBoundedPerOp(warmupIters, measuredIters, 0.0)(disk.read(Present(stub)))
+            // Revert-and-fail proof: a degenerate measured op that never drove the real production read
+            // would leave the "root" store's cells unregistered, so gaugePath's -1d sentinel would fail this
+            // assertion rather than pass silently.
+            _ = assert(gaugePath("mstest-alloc-disk-linux", "disk", "root", "total") == 4096000000.0)
+            // Exercises the mount-change rebuild branch the steady read above never touches: a byte-differing
+            // mounts file fails decodeMounts's fingerprint check, forcing a real re-parse that registers a
+            // retained Store (and its cells) for the newly-added mount.
+            _ <- mountsFile.write("/dev/sda1 / ext4 rw 0 0\n/dev/sdb1 /data ext4 rw 0 0\n")
+            _ = disk.read(Present(stub))
+            _ = assert(gaugePath("mstest-alloc-disk-linux", "disk", "data", "total") == 4096000000.0)
+            _ <- dir.removeAll
+        yield ()
+        end for
     }
 
     "the probe op is the reader's REAL decode+observe, not a degenerate callback, and an unsupported counter fails loud".onlyJvm in {
