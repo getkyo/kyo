@@ -36,6 +36,13 @@ class OrderedMapTest extends kyo.test.Test[Any]:
             }
             assert(m.get("missing").isEmpty)
         }
+        "returns present entries and throws for a missing key on the large path" in {
+            assert(largeMap(3) == 30)
+            assert(largeMap(7) == 70)
+            interceptThrown[NoSuchElementException] {
+                largeMap(100)
+            }
+        }
     }
 
     "from" - {
@@ -43,6 +50,18 @@ class OrderedMapTest extends kyo.test.Test[Any]:
             val src = scala.collection.immutable.ListMap("bravo" -> 1, "yankee" -> 2, "delta" -> 3)
             val m   = OrderedMap.from(src)
             assert(m.toChunk.map(_._1) == Chunk("bravo", "yankee", "delta"))
+        }
+    }
+
+    "get" - {
+        "returns Present for an existing key and Absent for a missing key" in {
+            val m = OrderedMap("zeta" -> 1, "alpha" -> 2, "mike" -> 3)
+            assert(m.get("zeta") == Maybe(1))
+            assert(m.get("missing").isEmpty)
+        }
+        "returns Present for an existing key and Absent for a missing key on the large path" in {
+            assert(largeMap.get(9) == Maybe(90))
+            assert(largeMap.get(100).isEmpty)
         }
     }
 
@@ -54,19 +73,37 @@ class OrderedMapTest extends kyo.test.Test[Any]:
             assert(m.contains("a"))
             assert(!m.contains("z"))
         }
+        "returns present value, default value, and membership on the large path" in {
+            assert(largeMap.getOrElse(9, -1) == 90)
+            assert(largeMap.getOrElse(100, -1) == -1)
+            assert(largeMap.contains(6))
+            assert(!largeMap.contains(100))
+        }
+    }
+
+    "isEmpty and nonEmpty" - {
+        "are false and true, respectively, for a non-empty small map" in {
+            val m = OrderedMap("zeta" -> 1)
+            assert(!m.isEmpty)
+            assert(m.nonEmpty)
+        }
+        "are false and true, respectively, on the large path" in {
+            assert(!largeMap.isEmpty)
+            assert(largeMap.nonEmpty)
+        }
     }
 
     "update" - {
         "keeps an existing key at its position on the small path" in {
-            val m = OrderedMap("a" -> 1, "b" -> 2, "c" -> 3)
-            val r = m.update("a", 10)
-            assert(r.toChunk.map(_._1) == Chunk("a", "b", "c"))
-            assert(r("a") == 10)
+            val m = OrderedMap("zeta" -> 1, "alpha" -> 2, "mike" -> 3, "bravo" -> 4, "yankee" -> 5)
+            val r = m.update("alpha", 20)
+            assert(r.toChunk.map(_._1) == Chunk("zeta", "alpha", "mike", "bravo", "yankee"))
+            assert(r("alpha") == 20)
         }
         "appends a new key at the end on the small path" in {
-            val m = OrderedMap("a" -> 1, "b" -> 2)
-            val r = m.update("c", 3)
-            assert(r.toChunk == Chunk(("a", 1), ("b", 2), ("c", 3)))
+            val m = OrderedMap("zeta" -> 1, "alpha" -> 2, "mike" -> 3, "bravo" -> 4)
+            val r = m.update("yankee", 5)
+            assert(r.toChunk == Chunk(("zeta", 1), ("alpha", 2), ("mike", 3), ("bravo", 4), ("yankee", 5)))
         }
         "keeps position 0 on the large (TreeSeqMap) path" in {
             val large    = largeMap
@@ -123,15 +160,47 @@ class OrderedMapTest extends kyo.test.Test[Any]:
             assert(m.concat(e).toChunk == Chunk(("a", 1)))
             assert(e.concat(m).toChunk == Chunk(("a", 1)))
         }
+        "is position-stable with last-wins value on the large path" in {
+            val extra = OrderedMap(9 -> 999, 11 -> 110, 10 -> 100)
+            val r     = largeMap.concat(extra)
+            assert(r.toChunk.map(_._1) == Chunk.from(largeMapInsertOrder ++ Seq(11, 10)))
+            assert(r(9) == 999)
+        }
     }
 
     "foreach and foldLeft" - {
         "traverse in insertion order" in {
-            val m    = OrderedMap("a" -> 1, "b" -> 2, "c" -> 3)
+            val m    = OrderedMap("zeta" -> 1, "alpha" -> 2, "mike" -> 3, "bravo" -> 4, "yankee" -> 5)
             val keys = scala.collection.mutable.ArrayBuffer.empty[String]
             m.foreach((k, _) => discard(keys += k))
-            assert(keys.toList == List("a", "b", "c"))
-            assert(m.foldLeft(0)((acc, _, v) => acc + v) == 6)
+            assert(keys.toList == List("zeta", "alpha", "mike", "bravo", "yankee"))
+            assert(m.foldLeft(0)((acc, _, v) => acc + v) == 15)
+        }
+        "traverse in insertion order on the large path" in {
+            val keys = scala.collection.mutable.ArrayBuffer.empty[Int]
+            largeMap.foreach((k, _) => discard(keys += k))
+            assert(keys.toList == largeMapInsertOrder.toList)
+            assert(largeMap.foldLeft(0)((acc, _, v) => acc + v) == largeMapInsertOrder.map(_ * 10).sum)
+        }
+    }
+
+    "foreachKey and foreachValue" - {
+        "iterate in insertion order" in {
+            val m    = OrderedMap("zeta" -> 1, "alpha" -> 2, "mike" -> 3, "bravo" -> 4, "yankee" -> 5)
+            val keys = scala.collection.mutable.ArrayBuffer.empty[String]
+            m.foreachKey(k => discard(keys += k))
+            assert(keys.toList == List("zeta", "alpha", "mike", "bravo", "yankee"))
+            val values = scala.collection.mutable.ArrayBuffer.empty[Int]
+            m.foreachValue(v => discard(values += v))
+            assert(values.toList == List(1, 2, 3, 4, 5))
+        }
+        "iterate in insertion order on the large path" in {
+            val keys = scala.collection.mutable.ArrayBuffer.empty[Int]
+            largeMap.foreachKey(k => discard(keys += k))
+            assert(keys.toList == largeMapInsertOrder.toList)
+            val values = scala.collection.mutable.ArrayBuffer.empty[Int]
+            largeMap.foreachValue(v => discard(values += v))
+            assert(values.toList == largeMapInsertOrder.map(_ * 10).toList)
         }
     }
 
@@ -143,25 +212,76 @@ class OrderedMapTest extends kyo.test.Test[Any]:
             assert(m.count((_, v) => v > 1) == 2)
             assert(m.find((_, v) => v == 2) == Maybe(("b", 2)))
         }
+        "evaluate over entries on the large path" in {
+            assert(largeMap.forall((_, v) => v >= 0))
+            assert(!largeMap.forall((k, _) => k < 5))
+            assert(largeMap.exists((_, v) => v == 90))
+            assert(!largeMap.exists((_, v) => v == 999))
+            assert(largeMap.count((_, v) => v >= 50) == 5)
+            assert(largeMap.find((_, v) => v == 90) == Maybe((9, 90)))
+        }
     }
 
     "map and flatMap" - {
         "preserve source order" in {
-            val m      = OrderedMap("a" -> 1, "b" -> 2)
+            val m      = OrderedMap("zeta" -> 1, "alpha" -> 2, "mike" -> 3, "bravo" -> 4, "yankee" -> 5)
             val mapped = m.map((k, v) => (k, v * 10))
-            assert(mapped.toChunk == Chunk(("a", 10), ("b", 20)))
-            val flat = m.flatMap((k, v) => OrderedMap(k -> v, (k + "!") -> v))
-            assert(flat.toChunk.map(_._1) == Chunk("a", "a!", "b", "b!"))
+            assert(mapped.toChunk == Chunk(("zeta", 10), ("alpha", 20), ("mike", 30), ("bravo", 40), ("yankee", 50)))
+            val m2   = OrderedMap("zeta" -> 1, "alpha" -> 2, "mike" -> 3, "bravo" -> 4)
+            val flat = m2.flatMap((k, v) => OrderedMap(k -> v, (k + "!") -> v))
+            assert(flat.toChunk.map(_._1) == Chunk("zeta", "zeta!", "alpha", "alpha!", "mike", "mike!", "bravo", "bravo!"))
+        }
+        "preserve source order on the large path" in {
+            val mapped = largeMap.map((k, v) => (k, v + 1))
+            assert(mapped.toChunk.map(_._1) == Chunk.from(largeMapInsertOrder))
+            assert(mapped.toChunk.map(_._2) == Chunk.from(largeMapInsertOrder.map(_ * 10 + 1)))
+            val flat = largeMap.flatMap((k, v) => OrderedMap(k -> (v + 1)))
+            assert(flat.toChunk.map(_._1) == Chunk.from(largeMapInsertOrder))
+            assert(flat.toChunk.map(_._2) == Chunk.from(largeMapInsertOrder.map(_ * 10 + 1)))
         }
     }
 
     "filter, filterNot, collect, mapValues" - {
         "preserve order" in {
-            val m = OrderedMap("a" -> 1, "b" -> 2, "c" -> 3)
-            assert(m.filter((_, v) => v > 1).toChunk == Chunk(("b", 2), ("c", 3)))
-            assert(m.filterNot((_, v) => v > 1).toChunk == Chunk(("a", 1)))
-            assert(m.collect { case (k, v) if v > 1 => (k, v) }.toChunk == Chunk(("b", 2), ("c", 3)))
-            assert(m.mapValues(_ * 2).toChunk == Chunk(("a", 2), ("b", 4), ("c", 6)))
+            val m = OrderedMap(
+                "zeta"    -> 1,
+                "alpha"   -> 2,
+                "mike"    -> 3,
+                "bravo"   -> 4,
+                "yankee"  -> 5,
+                "delta"   -> 6,
+                "hotel"   -> 7,
+                "foxtrot" -> 8
+            )
+            assert(m.filter((_, v) => v > 3).toChunk == Chunk(("bravo", 4), ("yankee", 5), ("delta", 6), ("hotel", 7), ("foxtrot", 8)))
+            assert(m.filterNot((_, v) => v > 5).toChunk == Chunk(("zeta", 1), ("alpha", 2), ("mike", 3), ("bravo", 4), ("yankee", 5)))
+            assert(
+                m.collect { case (k, v) if v > 2 => (k, v * 2) }.toChunk ==
+                    Chunk(("mike", 6), ("bravo", 8), ("yankee", 10), ("delta", 12), ("hotel", 14), ("foxtrot", 16))
+            )
+            assert(
+                m.mapValues(_ * 100).toChunk ==
+                    Chunk(
+                        ("zeta", 100),
+                        ("alpha", 200),
+                        ("mike", 300),
+                        ("bravo", 400),
+                        ("yankee", 500),
+                        ("delta", 600),
+                        ("hotel", 700),
+                        ("foxtrot", 800)
+                    )
+            )
+        }
+        "preserve order on the large path, including demotion below the threshold" in {
+            val kept    = largeMapInsertOrder.filter(_ % 2 == 0)    // 4,0,2,6,8 -> 5 entries, demotes
+            val keptNot = largeMapInsertOrder.filterNot(_ % 2 == 0) // 3,1,9,5,7 -> 5 entries, demotes
+            assert(largeMap.filter((k, _) => k % 2 == 0).toChunk.map(_._1) == Chunk.from(kept))
+            assert(largeMap.filterNot((k, _) => k % 2 == 0).toChunk.map(_._1) == Chunk.from(keptNot))
+            assert(
+                largeMap.collect { case (k, v) if k % 2 == 0 => (k, v + 1) }.toChunk.map(_._1) == Chunk.from(kept)
+            )
+            assert(largeMap.mapValues(_ + 1).toChunk.map(_._2) == Chunk.from(largeMapInsertOrder.map(_ * 10 + 1)))
         }
     }
 
@@ -179,6 +299,11 @@ class OrderedMapTest extends kyo.test.Test[Any]:
             val m = OrderedMap("a" -> 1, "b" -> 2)
             assert(m.toMap == Map("a" -> 1, "b" -> 2))
         }
+        "carries entry values on the large path" in {
+            val m = largeMap.toMap
+            assert(m.size == 10)
+            assert(m == largeMapInsertOrder.map(k => (k, k * 10)).toMap)
+        }
     }
 
     "is" - {
@@ -188,14 +313,28 @@ class OrderedMapTest extends kyo.test.Test[Any]:
             assert(m1.is(m2))
             assert(!m1.is(OrderedMap.empty[String, Int]))
         }
+        "is structural and order-independent on the large path" in {
+            val b = OrderedMapBuilder.init[Int, Int]
+            largeMapInsertOrder.reverse.foreach(k => discard(b.add(k, k * 10)))
+            val differentlyOrdered = b.result()
+            assert(largeMap.is(differentlyOrdered))
+            assert(!largeMap.is(differentlyOrdered.update(3, 999)))
+            assert(!largeMap.is(differentlyOrdered.remove(3)))
+        }
     }
 
     "mkString" - {
         "variants render in insertion order" in {
-            val m = OrderedMap("a" -> 1, "b" -> 2)
-            assert(m.mkString == "a -> 1b -> 2")
-            assert(m.mkString(", ") == "a -> 1, b -> 2")
-            assert(m.mkString("[", ",", "]") == "[a -> 1,b -> 2]")
+            val m = OrderedMap("zeta" -> 1, "alpha" -> 2, "mike" -> 3, "bravo" -> 4, "yankee" -> 5)
+            assert(m.mkString == "zeta -> 1alpha -> 2mike -> 3bravo -> 4yankee -> 5")
+            assert(m.mkString(", ") == "zeta -> 1, alpha -> 2, mike -> 3, bravo -> 4, yankee -> 5")
+            assert(m.mkString("[", ",", "]") == "[zeta -> 1,alpha -> 2,mike -> 3,bravo -> 4,yankee -> 5]")
+        }
+        "renders in insertion order on the large path" in {
+            assert(
+                largeMap.mkString(", ") ==
+                    "3 -> 30, 1 -> 10, 4 -> 40, 0 -> 0, 9 -> 90, 2 -> 20, 6 -> 60, 5 -> 50, 8 -> 80, 7 -> 70"
+            )
         }
     }
 
