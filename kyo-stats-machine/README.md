@@ -209,3 +209,13 @@ The structural absences are deliberate, and each is the absence of a real host c
 | Wasm | held; not yet cross-compiled for this module |
 
 > **Note:** every row above where a family or platform is unsupported means the metric is simply absent from the exported set, structurally, not just by documentation. An OS with no PSI support never creates the PSI handles at all; a browser-JS build never attempts the koffi-backed reads. You will never see a fake zero standing in for "not available here." A metric's total absence from what your backend receives is the signal that the current host or platform does not support it.
+
+## Demos
+
+A runnable demo lives in [`shared/src/test/scala/demo`](shared/src/test/scala/demo). `MachineStatsDemoApp` is the auto-load story end to end: it touches only `kyo.Stat`, lets the classpath-present module start the sampler, waits a few ticks, then prints the `machine.*` families it read off this host and validates them.
+
+```bash
+sbt 'kyo-stats-machineJVM/Test/runMain demo.MachineStatsDemoApp'
+```
+
+The `Test/runMain` scope runs with auto-start on and prints `validation: OK`: the module's own `test` tasks opt out of the sampler, and `build.sbt` sheds that opt-out only for `run` and `runMain`. Prepend `KYO_MACHINE_DISABLED=true` to watch the lever suppress the sampler: the demo then reports `validation FAILED` and exits non-zero by design. CI runs this same command on Linux, macOS, and Windows hosts to prove auto-start on each.

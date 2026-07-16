@@ -931,8 +931,6 @@ lazy val `kyo-ffi-bench` =
             foreignRelease,
             publish / skip := true,
             Compile / javaOptions ++= Seq("--enable-native-access=ALL-UNNAMED"),
-            Test / javaOptions ++= Seq("--enable-native-access=ALL-UNNAMED"),
-            run / javaOptions ++= Seq("--enable-native-access=ALL-UNNAMED"),
             run / fork := true
         )
 
@@ -2360,7 +2358,7 @@ lazy val `kyo-test-runner` =
         )
         .jvmSettings(
             mimaCheck(false),
-            mainClass                             := Some("kyo.test.runner.Cli"),
+            Compile / mainClass                   := Some("kyo.test.runner.Cli"),
             libraryDependencies += "org.scala-sbt" % "test-interface" % "1.0" % Provided,
             Compile / unmanagedClasspath ++=
                 (LocalProject("kyo-preludeJVM") / Compile / fullClasspath).value,
