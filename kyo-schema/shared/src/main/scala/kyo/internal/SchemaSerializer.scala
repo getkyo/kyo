@@ -724,9 +724,13 @@ private[kyo] object SchemaSerializer:
                         case Some(fieldDefault) =>
                             Some(SyntheticField(field.name, () => materializeDefault(fieldDefault)))
                         case None if omitDefaultedNames.contains(field.name) =>
-                            val zero = zeroForField(field)
-                            if zero == null then None
-                            else Some(SyntheticField(field.name, () => zeroToStructureValue(zero)))
+                            if isOrderedMapOrDictTag(field) then
+                                emptyMappingWireValue(schema, field.name)
+                                    .map(v => SyntheticField(field.name, () => v))
+                            else
+                                val zero = zeroForField(field)
+                                if zero == null then None
+                                else Some(SyntheticField(field.name, () => zeroToStructureValue(zero)))
                         case None =>
                             None
                     end match
@@ -988,13 +992,31 @@ private[kyo] object SchemaSerializer:
         show.startsWith("scala.collection.Set[")
     end isSetTag
 
-    /** True iff `field`'s declared type is a sequence-like collection, a set, or a map: the exact
-      * set for which [[zeroForField]] seeds a typed empty value. The encode-time omit gate consults
-      * this so an empty product (which also materializes as an empty `Record`) is never mistaken for
-      * an empty collection.
+    /** True iff `field`'s declared type is `OrderedMap[K, V]` or `Dict[K, V]`. Both are opaque
+      * types over an erased union (`Span[K | V] | TreeSeqMap[K, V]` / `Span[K | V] | HashMap[K, V]`),
+      * so their `Tag.show` is the SAME opaque-bound string for every key/value instantiation (unlike
+      * `Map`, whose show carries the element types): neither a `<:<` check nor a `scala.collection.*`
+      * show-prefix check can discriminate them. A show-prefix check against the opaque type's own
+      * qualified name is the only reliable discriminator, the same idiom `isMapTag` uses for its own
+      * variance gap.
+      */
+    private def isOrderedMapOrDictTag(field: Field[?, ?]): Boolean =
+        val show = field.tag.show
+        show.startsWith("(kyo.OrderedMap$package$.OrderedMap ") ||
+        show.startsWith("(kyo.Dict$package$.Dict ")
+    end isOrderedMapOrDictTag
+
+    /** True iff `field`'s declared type is a sequence-like collection, a set, or a map (including
+      * the opaque `OrderedMap`/`Dict` map types): the exact set the encode-time omit gate and the
+      * decode-time synthetic-injection gate both consult, so an empty product (which also
+      * materializes as an empty `Record`) is never mistaken for an empty collection. `OrderedMap`
+      * and `Dict` fields synthesize their decode-time zero value from the schema's declared
+      * structure (see [[emptyMappingWireValue]]) rather than from [[zeroForField]], since their
+      * opaque erasure gives `zeroForField` no runtime shape to introspect.
       */
     private def isCollectionOrMapTag(field: Field[?, ?]): Boolean =
         isMapTag(field) ||
+            isOrderedMapOrDictTag(field) ||
             isSetTag(field) ||
             field.tag <:< Tag[List[Any]] ||
             field.tag <:< Tag[Vector[Any]] ||
@@ -1028,6 +1050,40 @@ private[kyo] object SchemaSerializer:
         end zeroFromTag
         field.default.fold(zeroFromTag)(_.asInstanceOf[AnyRef])
     end zeroForField
+
+    /** Returns the empty wire-shape `Structure.Value` for `fieldName`'s declared field type, when
+      * that field is an `OrderedMap`/`Dict` (a `Structure.Type.Mapping`). Used in place of
+      * [[zeroForField]] + [[zeroToStructureValue]] for these two types: both are opaque types whose
+      * empty value erases to a bare `Span`-backed array with no reliable runtime shape to
+      * pattern-match (unlike `Map`, a real generic class `zeroToStructureValue` matches directly), so
+      * the empty value is derived from the field's DECLARED structure instead of from an instance.
+      *
+      * A String-keyed given (`stringDictSchema`, `stringOrderedMapSchema`) writes `mapStart`/`mapEnd`,
+      * which `StructureValueWriter` materializes as an empty `Record`; any other key given
+      * (`dictSchema`, `orderedMapSchema`) writes `arrayStart`/`arrayEnd`, an empty `Sequence`. The key
+      * type's shape, not the map type's name, is what decides the wire form.
+      *
+      * Returns `None` when `schema.structure` is not a `Product`, or carries no field named
+      * `fieldName`; this should not happen for a schema whose `sourceFields` supplied `fieldName` in
+      * the first place, but the empty result keeps the caller total rather than throwing.
+      */
+    private def emptyMappingWireValue[A](schema: Schema[A], fieldName: String): Option[Structure.Value] =
+        schema.structure match
+            case p: Structure.Type.Product =>
+                p.fields.find(_.name == fieldName).map { f =>
+                    unwrapOptionalShape(f.fieldType) match
+                        case Structure.Type.Mapping(_, _, keyType, _) =>
+                            unwrapOptionalShape(keyType) match
+                                case Structure.Type.Primitive(Structure.PrimitiveKind.String, _) =>
+                                    Structure.Value.Record(Chunk.empty)
+                                case _ =>
+                                    Structure.Value.Sequence(Chunk.empty)
+                        case _ =>
+                            Structure.Value.Sequence(Chunk.empty)
+                }
+            case _ =>
+                None
+    end emptyMappingWireValue
 
     /** Discriminator-aware deserialization path.
       *

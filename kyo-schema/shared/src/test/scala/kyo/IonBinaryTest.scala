@@ -229,4 +229,39 @@ class IonBinaryTest extends kyo.test.Test[Any]:
 
     }
 
+    // omitEmptyCollections on OrderedMap/Dict fields: an empty field must be dropped from the
+    // wire (fewer bytes than the same value encoded without the omit policy) and round-trip back
+    // to the empty value, matching Map/Chunk/List/Vector/Set/Seq behavior.
+    "omitEmptyCollections on OrderedMap/Dict fields" - {
+
+        "empty OrderedMap[String, V] field is omitted from the wire and round-trips" in {
+            val plain    = Schema[MTOrderedMapRecord]
+            val omit     = Schema[MTOrderedMapRecord].omitEmptyCollections
+            val value    = MTOrderedMapRecord("alice", OrderedMap.empty[String, Int], 7)
+            val withOmit = omit.encode[IonBinary](value)
+            assert(
+                withOmit.size < plain.encode[IonBinary](value).size,
+                "empty String-key OrderedMap must be dropped from the wire under omitEmptyCollections"
+            )
+            val decoded = omit.decode[IonBinary](withOmit).getOrThrow
+            assert(decoded.name == value.name && decoded.count == value.count)
+            assert(decoded.settings.is(value.settings))
+        }
+
+        "empty Dict[Int, V] field (non-String key) is omitted from the wire and round-trips" in {
+            val plain    = Schema[MTIntStringDictRecord]
+            val omit     = Schema[MTIntStringDictRecord].omitEmptyCollections
+            val value    = MTIntStringDictRecord("alice", Dict.empty[Int, String], 7)
+            val withOmit = omit.encode[IonBinary](value)
+            assert(
+                withOmit.size < plain.encode[IonBinary](value).size,
+                "empty non-String-key Dict must be dropped from the wire under omitEmptyCollections"
+            )
+            val decoded = omit.decode[IonBinary](withOmit).getOrThrow
+            assert(decoded.name == value.name && decoded.count == value.count)
+            assert(decoded.byId.is(value.byId))
+        }
+
+    }
+
 end IonBinaryTest
