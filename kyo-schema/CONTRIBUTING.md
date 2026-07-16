@@ -596,11 +596,29 @@ given maybeSchema[A](using inner: Schema[A], frame: Frame): Schema[Maybe[A]] = .
 
 ### Add a key-value container
 
-Write/read with `writer.mapStart(size)` / `reader.mapStart()` and emit `writer.field(k, idx)` per entry; the structure is `Structure.Type.Mapping(name, Tag[Any], keyStructure, valueStructure)`. The `Map[String, V]` case uses the inline String-primitive node for the key [kyo-schema/shared/src/main/scala/kyo/Schema.scala:1661-1693]:
+Write/read with `writer.mapStart(size)` / `reader.mapStart()` and emit `writer.field(k, idx)` per entry; the structure is `Structure.Type.Mapping(name, Tag[Any], keyStructure, valueStructure)`. The `Map[String, V]` case uses the inline String-primitive node for the key [kyo-schema/shared/src/main/scala/kyo/Schema.scala:2786-2821]:
 
 ```
-given stringMapSchema[V](using valueSchema: Schema[V], frame: Frame): Schema[Map[String, V]] = ...
+given stringMapSchema[V](using valueSchema0: => Schema[V]): Schema[Map[String, V]] = ...
 ```
+
+The value Schema is a by-name `using` parameter forced into a `lazy val` in the body; that is what keeps a recursive container type from diverging at given-resolution [kyo-schema/shared/src/main/scala/kyo/Schema.scala:2787-2788].
+
+Each container gets two givens, not one: a String-keyed given that encodes as an object, and a general given for every other key type that encodes each entry as a two-field record. The String-keyed one is the more specific given and wins for `Map[String, V]`, while `Map[Int, V]` and friends fall to the general one [kyo-schema/shared/src/main/scala/kyo/Schema.scala:2826-2832].
+
+**A map-like given must declare `absentDefaultValue`.** proto3 writes nothing for an empty map field, so a decode that sees no bytes must still produce an empty container rather than failing on a missing field. All six map givens declare it, and a new one that omits it will decode an absent field as an error instead of as empty [kyo-schema/shared/src/main/scala/kyo/Schema.scala:2813, kyo-schema/shared/src/main/scala/kyo/Schema.scala:2871, kyo-schema/shared/src/main/scala/kyo/Schema.scala:3054, kyo-schema/shared/src/main/scala/kyo/Schema.scala:3111, kyo-schema/shared/src/main/scala/kyo/Schema.scala:3157, kyo-schema/shared/src/main/scala/kyo/Schema.scala:3222]:
+
+```
+absentDefaultValue = Maybe(Map.empty[String, V]),
+```
+
+`Dict` follows the same pair [kyo-schema/shared/src/main/scala/kyo/Schema.scala:3028, kyo-schema/shared/src/main/scala/kyo/Schema.scala:3073].
+
+#### Order-preserving containers
+
+`OrderedMap[K, V]` has the same two givens [kyo-schema/shared/src/main/scala/kyo/Schema.scala:3131, kyo-schema/shared/src/main/scala/kyo/Schema.scala:3184], with one difference that matters when adding a container whose iteration order is part of its contract: the read loop must rebuild the container in wire order rather than collect into an unordered builder. `stringOrderedMapSchema` folds `map.update(k, v)` over the entries as they arrive, so the decoded order is the encoded order [kyo-schema/shared/src/main/scala/kyo/Schema.scala:3145-3153].
+
+The order guarantee has a boundary a contributor should not overstate. It holds between a kyo-schema encode and a kyo-schema decode. The generated `.proto` declares a `map<K, V>` field and proto3 does not mandate entry order for map fields, so a foreign Protobuf implementation may reorder entries [kyo-schema/shared/src/main/scala/kyo/Schema.scala:3122-3130].
 
 ### Add a newtype / opaque-type Schema
 
