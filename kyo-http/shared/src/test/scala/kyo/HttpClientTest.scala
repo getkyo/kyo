@@ -527,6 +527,36 @@ class HttpClientTest extends BaseHttpTest:
                 }
             }
         }
+
+        "a buffered response larger than maxResponseLength fails HttpPayloadTooLargeException (CWE-400)" in {
+            // A server returns a 256 KiB body; the client caps buffered responses at 64 KiB. The client must reject the
+            // over-cap response (here via the Content-Length pre-check) rather than buffer it without limit. Exercises the
+            // full production path: HttpClientConfig.maxResponseLength threaded through sendWithConfig -> readBufferedBody.
+            val largeBody = "x" * (256 * 1024)
+            val route     = HttpRoute.getRaw("big").response(_.bodyText)
+            val ep        = route.handler(_ => HttpResponse.ok(largeBody))
+            withServer(ep) { url =>
+                HttpClient.withConfig(_.maxResponseLength(64 * 1024)) {
+                    Abort.run[HttpException](HttpClient.getText(s"$url/big")).map {
+                        case Result.Failure(_: HttpPayloadTooLargeException) => succeed
+                        case other =>
+                            fail(s"expected HttpPayloadTooLargeException for a 256 KiB response under a 64 KiB cap, got $other")
+                    }
+                }
+            }
+        }
+
+        "a buffered response within maxResponseLength still succeeds" in {
+            // The cap must not break legitimate responses below it: a 32 KiB body under a 64 KiB cap round-trips.
+            val body  = "y" * (32 * 1024)
+            val route = HttpRoute.getRaw("ok").response(_.bodyText)
+            val ep    = route.handler(_ => HttpResponse.ok(body))
+            withServer(ep) { url =>
+                HttpClient.withConfig(_.maxResponseLength(64 * 1024)) {
+                    HttpClient.getText(s"$url/ok").map(b => assert(b.length == 32 * 1024))
+                }
+            }
+        }
     }
 
     "streaming" - {

@@ -28,44 +28,56 @@ private[kyo] object ChunkedBodyDecoder:
     def readBufferedUnsafe(
         inbound: Channel.Unsafe[Span[Byte]],
         initialBytes: Span[Byte],
+        maxBytes: Int,
         state: DecoderState = new DecoderState
     )(
-        onResult: Result[Closed, Span[Byte]] => Unit
+        onResult: Result[Closed, Span[Byte]] => Unit,
+        onTooLarge: Int => Unit
     )(using AllowUnsafe, Frame): Unit =
         val accumulator = new GrowableByteBuffer
         if !initialBytes.isEmpty then
             state.feedBytes(initialBytes)
-        bufferedLoopUnsafe(inbound, accumulator, state, onResult)
+        bufferedLoopUnsafe(inbound, accumulator, state, maxBytes, onResult, onTooLarge)
     end readBufferedUnsafe
 
-    /** Main unsafe buffered decode loop. Processes buffer, accumulates data, reads more via callbacks. */
+    /** Main unsafe buffered decode loop. Processes buffer, accumulates data, reads more via callbacks. Caps the accumulated body at
+      * `maxBytes`: a server streaming an unbounded chunked body would otherwise grow `accumulator` without limit (CWE-400). The cap is
+      * checked at the top of each drain iteration; since per-chunk size is already overflow-bounded ([[parseChunkSizeLine]]) and the
+      * realistic attack is many chunks, the accumulated total cannot grow past `maxBytes` plus at most one in-flight chunk before
+      * `onTooLarge` fires.
+      */
     private def bufferedLoopUnsafe(
         inbound: Channel.Unsafe[Span[Byte]],
         accumulator: GrowableByteBuffer,
         state: DecoderState,
-        onResult: Result[Closed, Span[Byte]] => Unit
+        maxBytes: Int,
+        onResult: Result[Closed, Span[Byte]] => Unit,
+        onTooLarge: Int => Unit
     )(using AllowUnsafe, Frame): Unit =
-        state.drain(accumulator) match
-            case DrainResult.Done =>
-                onResult(Result.succeed(Span.fromUnsafe(accumulator.toByteArray)))
-            case DrainResult.NeedMore =>
-                // Cross opaque boundary: Fiber.Unsafe[Span[Byte], Abort[Closed]] is IOPromise[Any, Span[Byte] < Abort[Closed]]
-                // at runtime, but Channel delivers plain Span[Byte] values, not effectful computations.
-                // Casting to IOPromise[Closed, Span[Byte]] lets onComplete see Result[Closed, Span[Byte]] directly.
-                inbound.takeFiber()
-                    .asInstanceOf[kyo.scheduler.IOPromise[Closed, Span[Byte]]].onComplete { result =>
-                        result match
-                            case Result.Success(span) =>
-                                state.feedBytes(span)
-                                bufferedLoopUnsafe(inbound, accumulator, state, onResult)
-                            case Result.Failure(closed) =>
-                                onResult(Result.fail(closed))
-                            case Result.Panic(t) =>
-                                onResult(Result.panic(t))
-                    }
-            case DrainResult.ChunkReady =>
-                // In buffered mode, data is already in accumulator. Continue draining.
-                bufferedLoopUnsafe(inbound, accumulator, state, onResult)
+        if accumulator.size > maxBytes then onTooLarge(accumulator.size)
+        else
+            state.drain(accumulator) match
+                case DrainResult.Done =>
+                    onResult(Result.succeed(Span.fromUnsafe(accumulator.toByteArray)))
+                case DrainResult.NeedMore =>
+                    // Cross opaque boundary: Fiber.Unsafe[Span[Byte], Abort[Closed]] is IOPromise[Any, Span[Byte] < Abort[Closed]]
+                    // at runtime, but Channel delivers plain Span[Byte] values, not effectful computations.
+                    // Casting to IOPromise[Closed, Span[Byte]] lets onComplete see Result[Closed, Span[Byte]] directly.
+                    inbound.takeFiber()
+                        .asInstanceOf[kyo.scheduler.IOPromise[Closed, Span[Byte]]].onComplete { result =>
+                            result match
+                                case Result.Success(span) =>
+                                    state.feedBytes(span)
+                                    bufferedLoopUnsafe(inbound, accumulator, state, maxBytes, onResult, onTooLarge)
+                                case Result.Failure(closed) =>
+                                    onResult(Result.fail(closed))
+                                case Result.Panic(t) =>
+                                    onResult(Result.panic(t))
+                        }
+                case DrainResult.ChunkReady =>
+                    // In buffered mode, data is already in accumulator. Continue draining.
+                    bufferedLoopUnsafe(inbound, accumulator, state, maxBytes, onResult, onTooLarge)
+        end if
     end bufferedLoopUnsafe
 
     /** Buffered mode: accumulates all decoded chunks into one Span[Byte]. */
