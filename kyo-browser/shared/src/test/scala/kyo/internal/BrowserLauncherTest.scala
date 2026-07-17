@@ -133,6 +133,7 @@ class BrowserLauncherTest extends BaseBrowserTest:
             "--disable-gpu",
             "--disable-extensions",
             "--no-first-run",
+            "--no-startup-window",
             "--disable-background-networking",
             "--disable-default-apps",
             "--disable-sync",

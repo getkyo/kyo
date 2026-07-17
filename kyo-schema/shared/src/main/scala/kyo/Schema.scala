@@ -999,7 +999,7 @@ abstract class Schema[A] @publicInBinary private[kyo] (
 
     /** Returns the stable field ID for a given field name.
       *
-      * Field IDs are computed using XXH32 of the field name, producing stable 21-bit positive integers. These IDs are used by binary
+      * Field IDs are computed by applying XXH32 to the field name's JLS string hash, producing stable 21-bit positive integers. These IDs are used by binary
       * formats like Protocol Buffers and MessagePack for schema evolution compatibility.
       *
       * The ID remains stable across:
