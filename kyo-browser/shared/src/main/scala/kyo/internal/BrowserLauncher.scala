@@ -140,6 +140,11 @@ private[kyo] object BrowserLauncher:
             "--disable-gpu",
             "--disable-extensions",
             "--no-first-run",
+            // Suppress Chrome's default startup window. `attachAndSetupTab` opens the automation target in
+            // its own isolated browser context, so the default-context startup window would linger unused
+            // for the whole session (an extra renderer, and a visible idle window in headed mode). The
+            // remote-debugging server keeps Chrome alive with no window open, so nothing else is needed.
+            "--no-startup-window",
             "--disable-background-networking",
             // Disable Chromium's headless-mode timer/wakeup throttling so setInterval/setTimeout
             // cadences in test pages and instrumentation are not clamped.

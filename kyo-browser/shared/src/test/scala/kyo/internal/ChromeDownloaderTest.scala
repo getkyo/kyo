@@ -287,6 +287,40 @@ class ChromeDownloaderTest extends BaseBrowserTest:
         }
     }
 
+    // ---- downloadZip streams past the buffered maxResponseLength cap ----
+
+    // Reproduce-first for the kyo-browser Chrome-download wipeout: downloadZip used HttpClient.getBinary, which reads the
+    // whole response into memory bounded by HttpClientConfig.maxResponseLength (100 MiB) and rejects the full-Chrome zip
+    // (~200 MiB) with HttpPayloadTooLargeException, surfaced as BrowserSetupFailedException. A tiny 64 KiB cap makes a
+    // 256 KiB body reproduce that rejection deterministically without a 100 MiB fixture. The fix streams via getStreamBytes
+    // (no buffered cap) and sinks each chunk to disk, so the download succeeds and the full body lands on the file even
+    // though it far exceeds the cap.
+    "downloadZip streams a body larger than maxResponseLength to disk instead of rejecting it" in {
+        val bodySize = 256 * 1024
+        val body     = Span.fromUnsafe(new Array[Byte](bodySize))
+        val bodyStream: Stream[Span[Byte], Async] = Stream[Span[Byte], Async] {
+            Emit.valueWith(Chunk(body))(())
+        }
+        val handler = HttpRoute.getRaw("/chrome.zip").response(_.bodyStream).handler { _ =>
+            HttpResponse.ok.addField("body", bodyStream).addHeader("Content-Type", "application/octet-stream")
+        }
+        Scope.run {
+            for
+                server <- HttpServer.init(0, "127.0.0.1")(handler)
+                dest   <- Path.tempScoped("kyo-cd-stream-", ".zip")
+                url = s"http://${server.host}:${server.port}/chrome.zip"
+                // Force the buffered ceiling below the body size: getBinary would reject, the streamed path must not.
+                result <- HttpClient.withConfig(_.maxResponseLength(64 * 1024)) {
+                    Abort.run[BrowserSetupException](ChromeDownloader.downloadZip(url, dest, 1.minute))
+                }
+                size <- dest.size
+            yield
+                assert(result.isSuccess, s"streamed download should succeed past the 64 KiB buffered cap, got: $result")
+                assert(size == bodySize.toLong, s"expected the full $bodySize-byte body on disk, got $size")
+            end for
+        }
+    }
+
     // ---- extractZip corrupt-zip failure ----
 
     "extractZip on a garbage-bytes archive raises BrowserSetupFailedException" in {
