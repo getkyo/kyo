@@ -3,8 +3,8 @@ package kyo.internal.bson
 import java.io.ByteArrayOutputStream
 import java.nio.charset.StandardCharsets
 import kyo.Codec
-import kyo.OrderedMap
-import kyo.OrderedMapBuilder
+import kyo.OrderedDict
+import kyo.OrderedDictBuilder
 import kyo.SchemaNotSerializableException
 import kyo.Span
 import kyo.discard
@@ -21,9 +21,9 @@ final class BsonWriter(config: kyo.Bson.Config) extends Codec.Writer:
     override def codecName: String = "Bson"
 
     final private class WriteFrame(val kind: FrameKind):
-        val fields: OrderedMapBuilder[String, BsonValue] = OrderedMapBuilder.init[String, BsonValue]
-        val values: mutable.ArrayBuffer[BsonValue]       = mutable.ArrayBuffer.empty
-        var pendingField: Option[String]                 = None
+        val fields: OrderedDictBuilder[String, BsonValue] = OrderedDictBuilder.init[String, BsonValue]
+        val values: mutable.ArrayBuffer[BsonValue]        = mutable.ArrayBuffer.empty
+        var pendingField: Option[String]                  = None
     end WriteFrame
 
     private var stack: List[WriteFrame] = Nil
@@ -101,7 +101,7 @@ final class BsonWriter(config: kyo.Bson.Config) extends Codec.Writer:
     end instant
 
     def duration(value: java.time.Duration): Unit =
-        pushValue(DocumentValue(OrderedMap(
+        pushValue(DocumentValue(OrderedDict(
             "seconds" -> Int64Value(value.getSeconds),
             "nanos"   -> Int32Value(value.getNano)
         )))
@@ -157,7 +157,7 @@ final class BsonWriter(config: kyo.Bson.Config) extends Codec.Writer:
                 invalid("BSON writer container stack is inconsistent")
     end popFrame
 
-    private def writeDocument(fields: OrderedMap[String, BsonValue]): Array[Byte] =
+    private def writeDocument(fields: OrderedDict[String, BsonValue]): Array[Byte] =
         val body = new ByteArrayOutputStream(128)
         fields.foreach { (name, value) =>
             writeElement(body, name, value)
@@ -202,7 +202,7 @@ final class BsonWriter(config: kyo.Bson.Config) extends Codec.Writer:
                 val bytes = writeDocument(fields)
                 out.write(bytes, 0, bytes.length)
             case ArrayValue(values) =>
-                val builder = OrderedMapBuilder.init[String, BsonValue]
+                val builder = OrderedDictBuilder.init[String, BsonValue]
                 values.zipWithIndex.foreach { (value, index) => discard(builder.add(index.toString, value)) }
                 val bytes = writeDocument(builder.result())
                 out.write(bytes, 0, bytes.length)

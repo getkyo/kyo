@@ -601,28 +601,28 @@ class IonTest extends kyo.test.Test[Any]:
 
     }
 
-    // OrderedMap Schema given: insertion-order round-trip.
-    "OrderedMap Schema given" - {
+    // OrderedDict Schema given: insertion-order round-trip.
+    "OrderedDict Schema given" - {
 
-        "OrderedMap[String, V] field preserves insertion order across encode/decode" in {
+        "OrderedDict[String, V] field preserves insertion order across encode/decode" in {
             val holder =
-                MTOrderedMapConfig(OrderedMap("zeta" -> 30, "alpha" -> 3, "mike" -> 8080, "bravo" -> 5, "yankee" -> 100, "delta" -> 42))
+                MTOrderedDictConfig(OrderedDict("zeta" -> 30, "alpha" -> 3, "mike" -> 8080, "bravo" -> 5, "yankee" -> 100, "delta" -> 42))
             val encoded = Ion.encode(holder)
-            val decoded = Ion.decode[MTOrderedMapConfig](encoded).getOrThrow
+            val decoded = Ion.decode[MTOrderedDictConfig](encoded).getOrThrow
             assert(decoded.settings.toChunk.map(_._1) == Chunk("zeta", "alpha", "mike", "bravo", "yankee", "delta"))
         }
 
     }
 
-    // omitEmptyCollections on OrderedMap/Dict fields: an empty field must be dropped from the
+    // omitEmptyCollections on OrderedDict/Dict fields: an empty field must be dropped from the
     // wire and round-trip back to the empty value, matching Map/Chunk/List/Vector/Set/Seq behavior.
-    "omitEmptyCollections on OrderedMap/Dict fields" - {
+    "omitEmptyCollections on OrderedDict/Dict fields" - {
 
-        "empty OrderedMap[String, V] field is omitted from the wire and round-trips" in {
-            val omit    = Schema[MTOrderedMapRecord].omitEmptyCollections
-            val value   = MTOrderedMapRecord("alice", OrderedMap.empty[String, Int], 7)
+        "empty OrderedDict[String, V] field is omitted from the wire and round-trips" in {
+            val omit    = Schema[MTOrderedDictRecord].omitEmptyCollections
+            val value   = MTOrderedDictRecord("alice", OrderedDict.empty[String, Int], 7)
             val encoded = omit.encodeString[Ion](value)
-            assert(encoded == """{name:"alice",count:7}""", s"empty String-key OrderedMap must be dropped from the wire: $encoded")
+            assert(encoded == """{name:"alice",count:7}""", s"empty String-key OrderedDict must be dropped from the wire: $encoded")
             val decoded = omit.decodeString[Ion](encoded).getOrThrow
             assert(decoded.name == value.name && decoded.count == value.count)
             assert(decoded.settings.is(value.settings))

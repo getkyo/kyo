@@ -1,18 +1,18 @@
 package kyo
 
-class OrderedMapTest extends kyo.test.Test[Any]:
+class OrderedDictTest extends kyo.test.Test[Any]:
 
     def largeMapInsertOrder: Seq[Int] = Seq(3, 1, 4, 0, 9, 2, 6, 5, 8, 7)
 
-    def largeMap: OrderedMap[Int, Int] =
-        val b = OrderedMapBuilder.init[Int, Int]
+    def largeMap: OrderedDict[Int, Int] =
+        val b = OrderedDictBuilder.init[Int, Int]
         largeMapInsertOrder.foreach(i => b.add(i, i * 10))
         b.result()
     end largeMap
 
     "empty" - {
         "creates an empty map" in {
-            val m = OrderedMap.empty[String, Int]
+            val m = OrderedDict.empty[String, Int]
             assert(m.size == 0)
             assert(m.isEmpty)
             assert(!m.nonEmpty)
@@ -21,16 +21,16 @@ class OrderedMapTest extends kyo.test.Test[Any]:
 
     "apply" - {
         "constructs entries in insertion order" in {
-            val m = OrderedMap("zeta" -> 1, "alpha" -> 2, "mike" -> 3)
+            val m = OrderedDict("zeta" -> 1, "alpha" -> 2, "mike" -> 3)
             assert(m.size == 3)
             assert(m.toChunk.map(_._1) == Chunk("zeta", "alpha", "mike"))
         }
         "duplicate key keeps first position and last value" in {
-            val m = OrderedMap("a" -> 1, "b" -> 2, "a" -> 3)
+            val m = OrderedDict("a" -> 1, "b" -> 2, "a" -> 3)
             assert(m.toChunk == Chunk(("a", 3), ("b", 2)))
         }
         "strict-missing throws and get-absent returns Absent" in {
-            val m = OrderedMap.empty[String, Int]
+            val m = OrderedDict.empty[String, Int]
             interceptThrown[NoSuchElementException] {
                 m("missing")
             }
@@ -48,14 +48,14 @@ class OrderedMapTest extends kyo.test.Test[Any]:
     "from" - {
         "preserves source ListMap iteration order" in {
             val src = scala.collection.immutable.ListMap("bravo" -> 1, "yankee" -> 2, "delta" -> 3)
-            val m   = OrderedMap.from(src)
+            val m   = OrderedDict.from(src)
             assert(m.toChunk.map(_._1) == Chunk("bravo", "yankee", "delta"))
         }
     }
 
     "get" - {
         "returns Present for an existing key and Absent for a missing key" in {
-            val m = OrderedMap("zeta" -> 1, "alpha" -> 2, "mike" -> 3)
+            val m = OrderedDict("zeta" -> 1, "alpha" -> 2, "mike" -> 3)
             assert(m.get("zeta") == Maybe(1))
             assert(m.get("missing").isEmpty)
         }
@@ -67,7 +67,7 @@ class OrderedMapTest extends kyo.test.Test[Any]:
 
     "getOrElse and contains" - {
         "returns present value, default value, and membership" in {
-            val m = OrderedMap("a" -> 1)
+            val m = OrderedDict("a" -> 1)
             assert(m.getOrElse("a", 0) == 1)
             assert(m.getOrElse("z", 9) == 9)
             assert(m.contains("a"))
@@ -83,7 +83,7 @@ class OrderedMapTest extends kyo.test.Test[Any]:
 
     "isEmpty and nonEmpty" - {
         "are false and true, respectively, for a non-empty small map" in {
-            val m = OrderedMap("zeta" -> 1)
+            val m = OrderedDict("zeta" -> 1)
             assert(!m.isEmpty)
             assert(m.nonEmpty)
         }
@@ -95,13 +95,13 @@ class OrderedMapTest extends kyo.test.Test[Any]:
 
     "update" - {
         "keeps an existing key at its position on the small path" in {
-            val m = OrderedMap("zeta" -> 1, "alpha" -> 2, "mike" -> 3, "bravo" -> 4, "yankee" -> 5)
+            val m = OrderedDict("zeta" -> 1, "alpha" -> 2, "mike" -> 3, "bravo" -> 4, "yankee" -> 5)
             val r = m.update("alpha", 20)
             assert(r.toChunk.map(_._1) == Chunk("zeta", "alpha", "mike", "bravo", "yankee"))
             assert(r("alpha") == 20)
         }
         "appends a new key at the end on the small path" in {
-            val m = OrderedMap("zeta" -> 1, "alpha" -> 2, "mike" -> 3, "bravo" -> 4)
+            val m = OrderedDict("zeta" -> 1, "alpha" -> 2, "mike" -> 3, "bravo" -> 4)
             val r = m.update("yankee", 5)
             assert(r.toChunk == Chunk(("zeta", 1), ("alpha", 2), ("mike", 3), ("bravo", 4), ("yankee", 5)))
         }
@@ -115,7 +115,7 @@ class OrderedMapTest extends kyo.test.Test[Any]:
             assert(result(firstKey) == 999)
         }
         "promotion across the threshold preserves insertion order" in {
-            var m           = OrderedMap.empty[Int, Int]
+            var m           = OrderedDict.empty[Int, Int]
             val insertOrder = Seq(5, 2, 7, 0, 6, 1, 4, 3)
             insertOrder.foreach(i => m = m.update(i, i))
             val r = m.update(8, 8)
@@ -126,13 +126,13 @@ class OrderedMapTest extends kyo.test.Test[Any]:
 
     "remove" - {
         "preserves survivor order and re-add appends afresh" in {
-            val m = OrderedMap("a" -> 1, "b" -> 2, "c" -> 3)
+            val m = OrderedDict("a" -> 1, "b" -> 2, "c" -> 3)
             val r = m.remove("a").update("a", 99)
             assert(r.toChunk.map(_._1) == Chunk("b", "c", "a"))
             assert(r("a") == 99)
         }
         "of an absent key returns self unchanged" in {
-            val m = OrderedMap("a" -> 1)
+            val m = OrderedDict("a" -> 1)
             val r = m.remove("z")
             assert(r.toChunk == Chunk(("a", 1)))
         }
@@ -144,24 +144,24 @@ class OrderedMapTest extends kyo.test.Test[Any]:
 
     "concat" - {
         "is position-stable with last-wins value" in {
-            val base  = OrderedMap("a" -> 1, "b" -> 2)
-            val extra = OrderedMap("c" -> 3, "a" -> 9)
+            val base  = OrderedDict("a" -> 1, "b" -> 2)
+            val extra = OrderedDict("c" -> 3, "a" -> 9)
             assert(base.concat(extra).toChunk == Chunk(("a", 9), ("b", 2), ("c", 3)))
         }
         "++ delegates to concat identically" in {
-            val base  = OrderedMap("a" -> 1, "b" -> 2)
-            val extra = OrderedMap("c" -> 3, "a" -> 9)
+            val base  = OrderedDict("a" -> 1, "b" -> 2)
+            val extra = OrderedDict("c" -> 3, "a" -> 9)
             assert((base ++ extra).toChunk == base.concat(extra).toChunk)
             assert((base ++ extra).toChunk == Chunk(("a", 9), ("b", 2), ("c", 3)))
         }
         "with an empty operand short-circuits to the non-empty side" in {
-            val m = OrderedMap("a" -> 1)
-            val e = OrderedMap.empty[String, Int]
+            val m = OrderedDict("a" -> 1)
+            val e = OrderedDict.empty[String, Int]
             assert(m.concat(e).toChunk == Chunk(("a", 1)))
             assert(e.concat(m).toChunk == Chunk(("a", 1)))
         }
         "is position-stable with last-wins value on the large path" in {
-            val extra = OrderedMap(9 -> 999, 11 -> 110, 10 -> 100)
+            val extra = OrderedDict(9 -> 999, 11 -> 110, 10 -> 100)
             val r     = largeMap.concat(extra)
             assert(r.toChunk.map(_._1) == Chunk.from(largeMapInsertOrder ++ Seq(11, 10)))
             assert(r(9) == 999)
@@ -170,7 +170,7 @@ class OrderedMapTest extends kyo.test.Test[Any]:
 
     "foreach and foldLeft" - {
         "traverse in insertion order" in {
-            val m    = OrderedMap("zeta" -> 1, "alpha" -> 2, "mike" -> 3, "bravo" -> 4, "yankee" -> 5)
+            val m    = OrderedDict("zeta" -> 1, "alpha" -> 2, "mike" -> 3, "bravo" -> 4, "yankee" -> 5)
             val keys = scala.collection.mutable.ArrayBuffer.empty[String]
             m.foreach((k, _) => discard(keys += k))
             assert(keys.toList == List("zeta", "alpha", "mike", "bravo", "yankee"))
@@ -186,7 +186,7 @@ class OrderedMapTest extends kyo.test.Test[Any]:
 
     "foreachKey and foreachValue" - {
         "iterate in insertion order" in {
-            val m    = OrderedMap("zeta" -> 1, "alpha" -> 2, "mike" -> 3, "bravo" -> 4, "yankee" -> 5)
+            val m    = OrderedDict("zeta" -> 1, "alpha" -> 2, "mike" -> 3, "bravo" -> 4, "yankee" -> 5)
             val keys = scala.collection.mutable.ArrayBuffer.empty[String]
             m.foreachKey(k => discard(keys += k))
             assert(keys.toList == List("zeta", "alpha", "mike", "bravo", "yankee"))
@@ -206,7 +206,7 @@ class OrderedMapTest extends kyo.test.Test[Any]:
 
     "forall, exists, count, find" - {
         "evaluate over entries" in {
-            val m = OrderedMap("a" -> 1, "b" -> 2, "c" -> 3)
+            val m = OrderedDict("a" -> 1, "b" -> 2, "c" -> 3)
             assert(m.forall((_, v) => v > 0))
             assert(m.exists((_, v) => v == 2))
             assert(m.count((_, v) => v > 1) == 2)
@@ -224,18 +224,18 @@ class OrderedMapTest extends kyo.test.Test[Any]:
 
     "map and flatMap" - {
         "preserve source order" in {
-            val m      = OrderedMap("zeta" -> 1, "alpha" -> 2, "mike" -> 3, "bravo" -> 4, "yankee" -> 5)
+            val m      = OrderedDict("zeta" -> 1, "alpha" -> 2, "mike" -> 3, "bravo" -> 4, "yankee" -> 5)
             val mapped = m.map((k, v) => (k, v * 10))
             assert(mapped.toChunk == Chunk(("zeta", 10), ("alpha", 20), ("mike", 30), ("bravo", 40), ("yankee", 50)))
-            val m2   = OrderedMap("zeta" -> 1, "alpha" -> 2, "mike" -> 3, "bravo" -> 4)
-            val flat = m2.flatMap((k, v) => OrderedMap(k -> v, (k + "!") -> v))
+            val m2   = OrderedDict("zeta" -> 1, "alpha" -> 2, "mike" -> 3, "bravo" -> 4)
+            val flat = m2.flatMap((k, v) => OrderedDict(k -> v, (k + "!") -> v))
             assert(flat.toChunk.map(_._1) == Chunk("zeta", "zeta!", "alpha", "alpha!", "mike", "mike!", "bravo", "bravo!"))
         }
         "preserve source order on the large path" in {
             val mapped = largeMap.map((k, v) => (k, v + 1))
             assert(mapped.toChunk.map(_._1) == Chunk.from(largeMapInsertOrder))
             assert(mapped.toChunk.map(_._2) == Chunk.from(largeMapInsertOrder.map(_ * 10 + 1)))
-            val flat = largeMap.flatMap((k, v) => OrderedMap(k -> (v + 1)))
+            val flat = largeMap.flatMap((k, v) => OrderedDict(k -> (v + 1)))
             assert(flat.toChunk.map(_._1) == Chunk.from(largeMapInsertOrder))
             assert(flat.toChunk.map(_._2) == Chunk.from(largeMapInsertOrder.map(_ * 10 + 1)))
         }
@@ -243,7 +243,7 @@ class OrderedMapTest extends kyo.test.Test[Any]:
 
     "filter, filterNot, collect, mapValues" - {
         "preserve order" in {
-            val m = OrderedMap(
+            val m = OrderedDict(
                 "zeta"    -> 1,
                 "alpha"   -> 2,
                 "mike"    -> 3,
@@ -296,7 +296,7 @@ class OrderedMapTest extends kyo.test.Test[Any]:
 
     "toMap" - {
         "carries entry values" in {
-            val m = OrderedMap("a" -> 1, "b" -> 2)
+            val m = OrderedDict("a" -> 1, "b" -> 2)
             assert(m.toMap == Map("a" -> 1, "b" -> 2))
         }
         "carries entry values on the large path" in {
@@ -308,13 +308,13 @@ class OrderedMapTest extends kyo.test.Test[Any]:
 
     "is" - {
         "is structural and order-independent" in {
-            val m1 = OrderedMap("x" -> 1, "y" -> 2)
-            val m2 = OrderedMap("y" -> 2, "x" -> 1)
+            val m1 = OrderedDict("x" -> 1, "y" -> 2)
+            val m2 = OrderedDict("y" -> 2, "x" -> 1)
             assert(m1.is(m2))
-            assert(!m1.is(OrderedMap.empty[String, Int]))
+            assert(!m1.is(OrderedDict.empty[String, Int]))
         }
         "is structural and order-independent on the large path" in {
-            val b = OrderedMapBuilder.init[Int, Int]
+            val b = OrderedDictBuilder.init[Int, Int]
             largeMapInsertOrder.reverse.foreach(k => discard(b.add(k, k * 10)))
             val differentlyOrdered = b.result()
             assert(largeMap.is(differentlyOrdered))
@@ -325,7 +325,7 @@ class OrderedMapTest extends kyo.test.Test[Any]:
 
     "mkString" - {
         "variants render in insertion order" in {
-            val m = OrderedMap("zeta" -> 1, "alpha" -> 2, "mike" -> 3, "bravo" -> 4, "yankee" -> 5)
+            val m = OrderedDict("zeta" -> 1, "alpha" -> 2, "mike" -> 3, "bravo" -> 4, "yankee" -> 5)
             assert(m.mkString == "zeta -> 1alpha -> 2mike -> 3bravo -> 4yankee -> 5")
             assert(m.mkString(", ") == "zeta -> 1, alpha -> 2, mike -> 3, bravo -> 4, yankee -> 5")
             assert(m.mkString("[", ",", "]") == "[zeta -> 1,alpha -> 2,mike -> 3,bravo -> 4,yankee -> 5]")
@@ -339,7 +339,7 @@ class OrderedMapTest extends kyo.test.Test[Any]:
     }
 
     "Flag.Reader" - {
-        val reader = summon[Flag.Reader[OrderedMap[String, Int]]]
+        val reader = summon[Flag.Reader[OrderedDict[String, Int]]]
 
         "decodes a valid key=value list in order" in {
             val result = reader("a=1,b=2")
@@ -367,4 +367,4 @@ class OrderedMapTest extends kyo.test.Test[Any]:
         }
     }
 
-end OrderedMapTest
+end OrderedDictTest

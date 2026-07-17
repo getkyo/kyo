@@ -1728,21 +1728,21 @@ class ProtobufTest extends kyo.test.Test[Any]:
 
     }
 
-    // OrderedMap Schema givens: both order round-trips are scoped in-process (no
+    // OrderedDict Schema givens: both order round-trips are scoped in-process (no
     // cross-implementation interop claim). kyo's own Protobuf writer emits one MapEntry per
     // entry in call order and its reader walks pos forward through consecutive
     // length-delimited submessages, so the round-trip preserves order; proto3 disclaims
     // map-entry order for foreign implementations, so no cross-implementation guarantee is
     // asserted.
-    "OrderedMap Schema givens" - {
+    "OrderedDict Schema givens" - {
 
         // proto3 writes nothing for an empty map field, so decode sees no field at all and falls back
-        // to the schema's absent default. Map, Dict and OrderedMap must agree here.
-        "an empty OrderedMap field round-trips" in {
-            val holder  = MTOrderedMapConfig(OrderedMap.empty)
+        // to the schema's absent default. Map, Dict and OrderedDict must agree here.
+        "an empty OrderedDict field round-trips" in {
+            val holder  = MTOrderedDictConfig(OrderedDict.empty)
             val encoded = Protobuf.encode(holder)
             assert(encoded.size == 0)
-            val decoded = Protobuf.decode[MTOrderedMapConfig](encoded).getOrThrow
+            val decoded = Protobuf.decode[MTOrderedDictConfig](encoded).getOrThrow
             assert(decoded.settings.isEmpty)
         }
 
@@ -1760,44 +1760,44 @@ class ProtobufTest extends kyo.test.Test[Any]:
             assert(Protobuf.decode[MTStringDict](encoded).getOrThrow.d.isEmpty)
         }
 
-        "an empty non-String-key OrderedMap field round-trips" in {
-            val encoded = Protobuf.encode(MTOrderedMapLevels(OrderedMap.empty))
+        "an empty non-String-key OrderedDict field round-trips" in {
+            val encoded = Protobuf.encode(MTOrderedDictLevels(OrderedDict.empty))
             assert(encoded.size == 0)
-            assert(Protobuf.decode[MTOrderedMapLevels](encoded).getOrThrow.byLevel.isEmpty)
+            assert(Protobuf.decode[MTOrderedDictLevels](encoded).getOrThrow.byLevel.isEmpty)
         }
 
-        "an empty OrderedMap field between two scalar fields round-trips, and the scalars survive" in {
-            val holder  = MTOrderedMapRecord("alice", OrderedMap.empty, 7)
-            val decoded = Protobuf.decode[MTOrderedMapRecord](Protobuf.encode(holder)).getOrThrow
+        "an empty OrderedDict field between two scalar fields round-trips, and the scalars survive" in {
+            val holder  = MTOrderedDictRecord("alice", OrderedDict.empty, 7)
+            val decoded = Protobuf.decode[MTOrderedDictRecord](Protobuf.encode(holder)).getOrThrow
             assert(decoded.name == "alice")
             assert(decoded.count == 7)
             assert(decoded.settings.isEmpty)
         }
 
-        "a populated OrderedMap field between two scalar fields keeps its order and the scalars" in {
+        "a populated OrderedDict field between two scalar fields keeps its order and the scalars" in {
             val holder =
-                MTOrderedMapRecord(
+                MTOrderedDictRecord(
                     "alice",
-                    OrderedMap("zeta" -> 1, "alpha" -> 2, "mike" -> 3, "bravo" -> 4, "yankee" -> 5, "delta" -> 6),
+                    OrderedDict("zeta" -> 1, "alpha" -> 2, "mike" -> 3, "bravo" -> 4, "yankee" -> 5, "delta" -> 6),
                     7
                 )
-            val decoded = Protobuf.decode[MTOrderedMapRecord](Protobuf.encode(holder)).getOrThrow
+            val decoded = Protobuf.decode[MTOrderedDictRecord](Protobuf.encode(holder)).getOrThrow
             assert(decoded.name == "alice")
             assert(decoded.count == 7)
             assert(decoded.settings.toChunk.map(_._1) == Chunk("zeta", "alpha", "mike", "bravo", "yankee", "delta"))
         }
 
-        "OrderedMap[String, V] field preserves insertion order across encode/decode (resolves stringOrderedMapSchema)" in {
+        "OrderedDict[String, V] field preserves insertion order across encode/decode (resolves stringOrderedDictSchema)" in {
             val holder =
-                MTOrderedMapConfig(OrderedMap("zeta" -> 30, "alpha" -> 3, "mike" -> 8080, "bravo" -> 5, "yankee" -> 100, "delta" -> 42))
-            val decoded = Protobuf.decode[MTOrderedMapConfig](Protobuf.encode(holder)).getOrThrow
+                MTOrderedDictConfig(OrderedDict("zeta" -> 30, "alpha" -> 3, "mike" -> 8080, "bravo" -> 5, "yankee" -> 100, "delta" -> 42))
+            val decoded = Protobuf.decode[MTOrderedDictConfig](Protobuf.encode(holder)).getOrThrow
             assert(decoded.settings.toChunk.map(_._1) == Chunk("zeta", "alpha", "mike", "bravo", "yankee", "delta"))
         }
 
-        "OrderedMap[Int, String] field preserves insertion order across encode/decode (resolves orderedMapSchema, not stringOrderedMapSchema)" in {
+        "OrderedDict[Int, String] field preserves insertion order across encode/decode (resolves orderedDictSchema, not stringOrderedDictSchema)" in {
             val holder =
-                MTOrderedMapLevels(OrderedMap(30 -> "gold", 10 -> "bronze", 20 -> "silver", 50 -> "copper", 40 -> "tin", 60 -> "iron"))
-            val decoded = Protobuf.decode[MTOrderedMapLevels](Protobuf.encode(holder)).getOrThrow
+                MTOrderedDictLevels(OrderedDict(30 -> "gold", 10 -> "bronze", 20 -> "silver", 50 -> "copper", 40 -> "tin", 60 -> "iron"))
+            val decoded = Protobuf.decode[MTOrderedDictLevels](Protobuf.encode(holder)).getOrThrow
             assert(decoded.byLevel.toChunk.map(_._1) == Chunk(30, 10, 20, 50, 40, 60))
         }
 

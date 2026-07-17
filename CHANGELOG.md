@@ -6,9 +6,9 @@ All breaking API changes to this project will be documented in this file.
 
 ### Added
 
-- [kyo-data] `OrderedMap[K, V]`: an immutable map that iterates in insertion order
-- [kyo-data] `OrderedMapBuilder[K, V]`: build an `OrderedMap` from repeated adds
-- [kyo-schema] `Schema.stringOrderedMapSchema` and `Schema.orderedMapSchema`: derive a `Schema` for a case class with an `OrderedMap` field
+- [kyo-data] `OrderedDict[K, V]`: an immutable map that iterates in insertion order
+- [kyo-data] `OrderedDictBuilder[K, V]`: build an `OrderedDict` from repeated adds
+- [kyo-schema] `Schema.stringOrderedDictSchema` and `Schema.orderedDictSchema`: derive a `Schema` for a case class with an `OrderedDict` field
 - [kyo-core] `Fiber.use`: use a forked fiber within a function and clean it up
 - [kyo-core] `Fiber.initUnscoped`: fork a fiber without guaranteeing cleanup (formerly `Fiber.init`)
 - [kyo-combinators] `.forkUsing`: apply `Fiber.use`

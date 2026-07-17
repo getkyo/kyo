@@ -471,13 +471,13 @@ class SchemaCompositionTest extends kyo.test.Test[Any]:
 
     }
 
-    "OrderedMap Schema given ergonomics" - {
+    "OrderedDict Schema given ergonomics" - {
 
-        "a case class deriving Schema with an OrderedMap field resolves the correct given with zero explicit ceremony" in {
+        "a case class deriving Schema with an OrderedDict field resolves the correct given with zero explicit ceremony" in {
             val holder =
-                MTOrderedMapConfig(OrderedMap("zeta" -> 30, "alpha" -> 3, "mike" -> 8080, "bravo" -> 5, "yankee" -> 100, "delta" -> 42))
+                MTOrderedDictConfig(OrderedDict("zeta" -> 30, "alpha" -> 3, "mike" -> 8080, "bravo" -> 5, "yankee" -> 100, "delta" -> 42))
             val encoded = Json.encode(holder)
-            val decoded = Json.decode[MTOrderedMapConfig](encoded).getOrThrow
+            val decoded = Json.decode[MTOrderedDictConfig](encoded).getOrThrow
             assert(decoded.settings.toChunk.map(_._1) == Chunk("zeta", "alpha", "mike", "bravo", "yankee", "delta"))
         }
 

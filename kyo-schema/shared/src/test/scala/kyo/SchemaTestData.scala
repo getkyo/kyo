@@ -123,22 +123,22 @@ case class MTPoint(x: Int, y: Int) derives CanEqual
 case class MTIntStringDict(d: Dict[Int, String]) derives CanEqual, Schema
 case class MTIntChunkDict(d: Dict[Int, Chunk[String]]) derives CanEqual, Schema
 
-// OrderedMap Schema given round-trip fixtures, shared by every codec suite's insertion-order
-// leaf: MTOrderedMapConfig resolves stringOrderedMapSchema (String key, object wire form) and
-// MTOrderedMapLevels resolves orderedMapSchema (non-String key, array-of-{key,value} wire form).
-case class MTOrderedMapConfig(settings: OrderedMap[String, Int]) derives CanEqual, Schema
-case class MTOrderedMapLevels(byLevel: OrderedMap[Int, String]) derives CanEqual, Schema
+// OrderedDict Schema given round-trip fixtures, shared by every codec suite's insertion-order
+// leaf: MTOrderedDictConfig resolves stringOrderedDictSchema (String key, object wire form) and
+// MTOrderedDictLevels resolves orderedDictSchema (non-String key, array-of-{key,value} wire form).
+case class MTOrderedDictConfig(settings: OrderedDict[String, Int]) derives CanEqual, Schema
+case class MTOrderedDictLevels(byLevel: OrderedDict[Int, String]) derives CanEqual, Schema
 
 // Carries the map between two scalar fields, so a decode that falls back to the absent default for
 // the map still has to read the fields around it.
-case class MTOrderedMapRecord(name: String, settings: OrderedMap[String, Int], count: Int) derives CanEqual, Schema
+case class MTOrderedDictRecord(name: String, settings: OrderedDict[String, Int], count: Int) derives CanEqual, Schema
 
 // String-key Dict holder: resolves stringDictSchema, the object wire form.
 case class MTStringDict(d: Dict[String, Int]) derives CanEqual, Schema
 
-// omitEmptyCollections / .omit(_.f).whenEmpty coverage for OrderedMap and Dict fields, both key
+// omitEmptyCollections / .omit(_.f).whenEmpty coverage for OrderedDict and Dict fields, both key
 // shapes. Each record carries the map field between two scalars (name, count), the same shape as
-// MTOrderedMapRecord, so a decode that omits the map field still has to read the fields around it.
-case class MTOrderedMapLevelsRecord(name: String, byLevel: OrderedMap[Int, String], count: Int) derives CanEqual, Schema
+// MTOrderedDictRecord, so a decode that omits the map field still has to read the fields around it.
+case class MTOrderedDictLevelsRecord(name: String, byLevel: OrderedDict[Int, String], count: Int) derives CanEqual, Schema
 case class MTStringDictRecord(name: String, tags: Dict[String, Int], count: Int) derives CanEqual, Schema
 case class MTIntStringDictRecord(name: String, byId: Dict[Int, String], count: Int) derives CanEqual, Schema

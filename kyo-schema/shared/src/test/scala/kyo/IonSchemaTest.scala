@@ -210,14 +210,14 @@ class IonSchemaTest extends kyo.test.Test[Any]:
         }
 
         // IonSchema is not a Codec (no newWriter/newReader), so this asserts the Mapping
-        // node's shape only; no value round-trip exists for OrderedMap to preserve order
+        // node's shape only; no value round-trip exists for OrderedDict to preserve order
         // through here.
-        "describes an OrderedMap-typed field via the Mapping node (shape only)" in {
+        "describes an OrderedDict-typed field via the Mapping node (shape only)" in {
             val expected =
                 """$ion_schema_2_0
                   |
                   |type::{
-                  |  name: MTOrderedMapConfig,
+                  |  name: MTOrderedDictConfig,
                   |  type: struct,
                   |  fields: closed::{
                   |    settings: { type: struct, field_names: string, element: int, occurs: required },
@@ -225,7 +225,7 @@ class IonSchemaTest extends kyo.test.Test[Any]:
                   |}
                   |""".stripMargin
 
-            assert(Ion.ionSchemaString[MTOrderedMapConfig]() == expected)
+            assert(Ion.ionSchemaString[MTOrderedDictConfig]() == expected)
         }
 
         "emits sealed traits as ISL one_of alternatives for discriminator wrappers" in {

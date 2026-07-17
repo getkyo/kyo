@@ -96,7 +96,7 @@ Note: Validation runs at class-load time. A parse or validation failure throws a
 
 Built-in `Flag.Reader` instances cover `Int`, `Long`, `Double`, `Boolean`, `String`, and `Seq[A]` (comma-separated; the element type must be scalar). For any other type, supply your own `Flag.Reader`. There is no Schema-derived or multi-field reader in this module.
 
-> **Note:** When `kyo-data` is on the classpath, a flag value type can also be a kyo-data type. `Duration`, `Chunk`, `Span`, `Dict`, `OrderedMap`, `Instant`, and a multi-field `Record` all have ready-made `Flag.Reader` instances shipped by kyo-data, so they parse from a system property or environment variable with no extra wiring. See [Reading values from configuration](../kyo-data/README.md#reading-values-from-configuration) in the kyo-data README for the accepted string formats and the compile-time-derived `Record` reader.
+> **Note:** When `kyo-data` is on the classpath, a flag value type can also be a kyo-data type. `Duration`, `Chunk`, `Span`, `Dict`, `OrderedDict`, `Instant`, and a multi-field `Record` all have ready-made `Flag.Reader` instances shipped by kyo-data, so they parse from a system property or environment variable with no extra wiring. See [Reading values from configuration](../kyo-data/README.md#reading-values-from-configuration) in the kyo-data README for the accepted string formats and the compile-time-derived `Record` reader.
 
 | Type | Example |
 |------|---------|

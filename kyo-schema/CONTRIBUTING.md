@@ -616,7 +616,7 @@ absentDefaultValue = Maybe(Map.empty[String, V]),
 
 #### Order-preserving containers
 
-`OrderedMap[K, V]` has the same two givens [kyo-schema/shared/src/main/scala/kyo/Schema.scala:3131, kyo-schema/shared/src/main/scala/kyo/Schema.scala:3184], with one difference that matters when adding a container whose iteration order is part of its contract: the read loop must rebuild the container in wire order rather than collect into an unordered builder. `stringOrderedMapSchema` folds `map.update(k, v)` over the entries as they arrive, so the decoded order is the encoded order [kyo-schema/shared/src/main/scala/kyo/Schema.scala:3145-3153].
+`OrderedDict[K, V]` has the same two givens [kyo-schema/shared/src/main/scala/kyo/Schema.scala:3131, kyo-schema/shared/src/main/scala/kyo/Schema.scala:3184], with one difference that matters when adding a container whose iteration order is part of its contract: the read loop must rebuild the container in wire order rather than collect into an unordered builder. `stringOrderedDictSchema` folds `map.update(k, v)` over the entries as they arrive, so the decoded order is the encoded order [kyo-schema/shared/src/main/scala/kyo/Schema.scala:3145-3153].
 
 The order guarantee has a boundary a contributor should not overstate. It holds between a kyo-schema encode and a kyo-schema decode. The generated `.proto` declares a `map<K, V>` field and proto3 does not mandate entry order for map fields, so a foreign Protobuf implementation may reorder entries [kyo-schema/shared/src/main/scala/kyo/Schema.scala:3122-3130].
 

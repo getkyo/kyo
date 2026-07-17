@@ -1495,11 +1495,11 @@ class SchemaStructureTest extends kyo.test.Test[Any]:
                 case other => fail(s"Expected Mapping but got $other")
             end match
         }
-        "stringOrderedMapSchema produces Mapping structure with name OrderedMap and Primitive(String) key" in {
-            val schema = summon[Schema[OrderedMap[String, Boolean]]]
+        "stringOrderedDictSchema produces Mapping structure with name OrderedDict and Primitive(String) key" in {
+            val schema = summon[Schema[OrderedDict[String, Boolean]]]
             schema.structure match
                 case m: Structure.Type.Mapping =>
-                    assert(m.name == "OrderedMap")
+                    assert(m.name == "OrderedDict")
                     m.keyType match
                         case Structure.Type.Primitive(Structure.PrimitiveKind.String, _) => succeed
                         case other => fail(s"Expected Primitive(String) but got $other")
@@ -1507,21 +1507,21 @@ class SchemaStructureTest extends kyo.test.Test[Any]:
                 case other => fail(s"Expected Mapping but got $other")
             end match
         }
-        "orderedMapSchema produces Mapping structure with name OrderedMap" in {
-            val schema = summon[Schema[OrderedMap[Int, String]]]
+        "orderedDictSchema produces Mapping structure with name OrderedDict" in {
+            val schema = summon[Schema[OrderedDict[Int, String]]]
             schema.structure match
                 case m: Structure.Type.Mapping =>
-                    assert(m.name == "OrderedMap")
+                    assert(m.name == "OrderedDict")
                     assert(m.keyType eq summon[Schema[Int]].structure)
                     assert(m.valueType eq summon[Schema[String]].structure)
                 case other => fail(s"Expected Mapping but got $other")
             end match
         }
-        "stringOrderedMapSchema and orderedMapSchema with String key use different givens" in {
-            // stringOrderedMapSchema: keyType is Primitive(String)
-            // orderedMapSchema: keyType is Schema[String].structure (also Primitive(String) but distinct path)
-            val stringOrderedMapS = summon[Schema[OrderedMap[String, Int]]]
-            stringOrderedMapS.structure match
+        "stringOrderedDictSchema and orderedDictSchema with String key use different givens" in {
+            // stringOrderedDictSchema: keyType is Primitive(String)
+            // orderedDictSchema: keyType is Schema[String].structure (also Primitive(String) but distinct path)
+            val stringOrderedDictS = summon[Schema[OrderedDict[String, Int]]]
+            stringOrderedDictS.structure match
                 case m: Structure.Type.Mapping =>
                     m.keyType match
                         case Structure.Type.Primitive(Structure.PrimitiveKind.String, _) => succeed
@@ -1529,8 +1529,8 @@ class SchemaStructureTest extends kyo.test.Test[Any]:
                     end match
                 case other => fail(s"Expected Mapping but got $other")
             end match
-            val orderedMapS = summon[Schema[OrderedMap[Int, Int]]]
-            orderedMapS.structure match
+            val orderedDictS = summon[Schema[OrderedDict[Int, Int]]]
+            orderedDictS.structure match
                 case m: Structure.Type.Mapping => assert(m.keyType eq summon[Schema[Int]].structure)
                 case other                     => fail(s"Expected Mapping but got $other")
             end match

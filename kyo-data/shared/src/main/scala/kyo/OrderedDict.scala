@@ -4,7 +4,7 @@ import scala.annotation.tailrec
 import scala.collection.immutable.TreeSeqMap
 import scala.reflect.ClassTag
 
-/** An immutable map that preserves the insertion order of its keys at every size. OrderedMap uses a dual representation optimized for both
+/** An immutable map that preserves the insertion order of its keys at every size. OrderedDict uses a dual representation optimized for both
   * small and large collections:
   *
   *   - For up to 8 entries, keys and values are stored in a flat [[Span]] with linear-scan lookup, avoiding hashing overhead and providing
@@ -23,9 +23,9 @@ import scala.reflect.ClassTag
   * #### Creation
   *
   * ```scala
-  * val empty = OrderedMap.empty[String, Int]
-  * val doc   = OrderedMap("a" -> 1, "b" -> 2, "c" -> 3)
-  * val fromMap = OrderedMap.from(Map("x" -> 10))
+  * val empty = OrderedDict.empty[String, Int]
+  * val doc   = OrderedDict("a" -> 1, "b" -> 2, "c" -> 3)
+  * val fromMap = OrderedDict.from(Map("x" -> 10))
   * ```
   *
   * #### Access
@@ -38,12 +38,12 @@ import scala.reflect.ClassTag
   *
   * #### Modification
   *
-  * All modifications return a new OrderedMap, leaving the original unchanged:
+  * All modifications return a new OrderedDict, leaving the original unchanged:
   *
   * ```scala
-  * doc.update("a", 10)  // OrderedMap("a" -> 10, "b" -> 2, "c" -> 3)
-  * doc.remove("b")      // OrderedMap("a" -> 1, "c" -> 3)
-  * doc ++ OrderedMap("d" -> 4)
+  * doc.update("a", 10)  // OrderedDict("a" -> 10, "b" -> 2, "c" -> 3)
+  * doc.remove("b")      // OrderedDict("a" -> 1, "c" -> 3)
+  * doc ++ OrderedDict("d" -> 4)
   * ```
   *
   * #### Iteration and Transformation
@@ -55,74 +55,74 @@ import scala.reflect.ClassTag
   * doc.foldLeft(0)((acc, k, v) => acc + v)
   * ```
   *
-  * Because OrderedMap is an opaque type, it does not provide a `CanEqual` instance. Use the `is` method for structural equality comparison;
+  * Because OrderedDict is an opaque type, it does not provide a `CanEqual` instance. Use the `is` method for structural equality comparison;
   * equality is order-independent.
   *
-  * OrderedMap uses an unboxed representation through Scala 3's opaque types, so wrapping and unwrapping incurs no runtime overhead.
+  * OrderedDict uses an unboxed representation through Scala 3's opaque types, so wrapping and unwrapping incurs no runtime overhead.
   *
   * @tparam K
   *   the type of keys
   * @tparam V
   *   the type of values
   * @see
-  *   [[OrderedMapBuilder]] for incremental construction
+  *   [[OrderedDictBuilder]] for incremental construction
   */
-opaque type OrderedMap[K, V] = Span[K | V] | TreeSeqMap[K, V]
+opaque type OrderedDict[K, V] = Span[K | V] | TreeSeqMap[K, V]
 
-object OrderedMap:
+object OrderedDict:
 
     private[kyo] val threshold = 8
     private val sentinel       = new AnyRef
 
-    /** Returns an empty OrderedMap. */
-    def empty[K, V]: OrderedMap[K, V] = Span.empty[Any].asInstanceOf[Span[K | V]]
+    /** Returns an empty OrderedDict. */
+    def empty[K, V]: OrderedDict[K, V] = Span.empty[Any].asInstanceOf[Span[K | V]]
 
-    /** Creates an OrderedMap from the given key-value pairs in insertion order. Duplicate keys resolve to the last value while keeping the
+    /** Creates an OrderedDict from the given key-value pairs in insertion order. Duplicate keys resolve to the last value while keeping the
       * first occurrence's position.
       *
       * @param entries
       *   the key-value pairs
       * @return
-      *   a new OrderedMap containing the entries
+      *   a new OrderedDict containing the entries
       */
-    def apply[K, V](entries: (K, V)*): OrderedMap[K, V] =
+    def apply[K, V](entries: (K, V)*): OrderedDict[K, V] =
         if entries.isEmpty then empty
         else
-            val b = OrderedMapBuilder.init[K, V]
+            val b = OrderedDictBuilder.init[K, V]
             entries.foreach((k, v) => discard(b.add(k, v)))
             b.result()
 
-    /** Creates an OrderedMap from an existing Map, preserving the source map's iteration order.
+    /** Creates an OrderedDict from an existing Map, preserving the source map's iteration order.
       *
       * @param map
       *   the source map
       * @return
-      *   a new OrderedMap containing the map's entries
+      *   a new OrderedDict containing the map's entries
       */
-    def from[K, V](map: Map[K, V]): OrderedMap[K, V] =
+    def from[K, V](map: Map[K, V]): OrderedDict[K, V] =
         if map.isEmpty then empty
         else
-            val b = OrderedMapBuilder.initTransform[K, V, K, V]((b, k, v) => discard(b.add(k, v)))
+            val b = OrderedDictBuilder.initTransform[K, V, K, V]((b, k, v) => discard(b.add(k, v)))
             map.foreachEntry(b)
             b.result()
 
-    extension [K, V](self: OrderedMap[K, V])
+    extension [K, V](self: OrderedDict[K, V])
 
-        /** Returns the number of entries in this OrderedMap. */
+        /** Returns the number of entries in this OrderedDict. */
         def size: Int =
             reduce(
                 span => Span.size(span) / 2,
                 map => map.size
             )
 
-        /** Returns true if this OrderedMap contains no entries. */
+        /** Returns true if this OrderedDict contains no entries. */
         def isEmpty: Boolean =
             reduce(
                 span => Span.isEmpty(span),
                 map => map.isEmpty
             )
 
-        /** Returns true if this OrderedMap contains at least one entry. */
+        /** Returns true if this OrderedDict contains at least one entry. */
         def nonEmpty: Boolean =
             reduce(
                 span => Span.nonEmpty(span),
@@ -188,14 +188,14 @@ object OrderedMap:
                 case Present(v) => v
                 case _          => default
 
-        /** Returns true if this OrderedMap contains the given key. */
+        /** Returns true if this OrderedDict contains the given key. */
         def contains(key: K): Boolean =
             get(key).nonEmpty
 
-        /** Returns a new OrderedMap with the given key-value pair added or updated. A new key appends at the end; an existing key has its
+        /** Returns a new OrderedDict with the given key-value pair added or updated. A new key appends at the end; an existing key has its
           * value replaced in place, keeping its position.
           */
-        def update(key: K, value: V): OrderedMap[K, V] =
+        def update(key: K, value: V): OrderedDict[K, V] =
             reduce(
                 span =>
                     val n   = Span.size(span) / 2
@@ -214,7 +214,7 @@ object OrderedMap:
                         arr(n + idx) = value
                         Span.fromUnsafe(arr)
                     else
-                        val b = OrderedMapBuilder.init[K, V]
+                        val b = OrderedDictBuilder.init[K, V]
                         @tailrec def loop(i: Int): Unit =
                             if i < n then
                                 discard(b.add(Span.apply(span)(i).asInstanceOf[K], Span.apply(span)(n + i).asInstanceOf[V]))
@@ -227,10 +227,10 @@ object OrderedMap:
                 map => map.updated(key, value)
             )
 
-        /** Returns a new OrderedMap with the given key removed, preserving the relative order of the remaining keys. If the key is not
-          * present, returns this OrderedMap unchanged.
+        /** Returns a new OrderedDict with the given key removed, preserving the relative order of the remaining keys. If the key is not
+          * present, returns this OrderedDict unchanged.
           */
-        def remove(key: K): OrderedMap[K, V] =
+        def remove(key: K): OrderedDict[K, V] =
             reduce(
                 span =>
                     val n   = Span.size(span) / 2
@@ -243,7 +243,7 @@ object OrderedMap:
                             else indexOf(i + 1)
                     val idx = indexOf(0)
                     if idx < 0 then self
-                    else if n == 1 then OrderedMap.empty
+                    else if n == 1 then OrderedDict.empty
                     else
                         val arr = new Array[Any]((n - 1) * 2).asInstanceOf[Array[K | V]]
                         System.arraycopy(src, 0, arr, 0, idx)
@@ -256,21 +256,21 @@ object OrderedMap:
                 map => map.removed(key)
             )
 
-        /** Returns a new OrderedMap containing all entries from both this OrderedMap and `other`. Keys present in both keep this map's
+        /** Returns a new OrderedDict containing all entries from both this OrderedDict and `other`. Keys present in both keep this map's
           * position and take `other`'s value; keys only in `other` append at the end in `other`'s order.
           */
-        def concat(other: OrderedMap[K, V]): OrderedMap[K, V] =
+        def concat(other: OrderedDict[K, V]): OrderedDict[K, V] =
             if other.isEmpty then self
             else if isEmpty then other
             else
-                val b = OrderedMapBuilder.init[K, V]
+                val b = OrderedDictBuilder.init[K, V]
                 foreach((k, v) => discard(b.add(k, v)))
                 other.foreach((k, v) => discard(b.add(k, v)))
                 b.result()
         end concat
 
         /** Alias for `concat`. */
-        infix def ++(other: OrderedMap[K, V]): OrderedMap[K, V] = concat(other)
+        infix def ++(other: OrderedDict[K, V]): OrderedDict[K, V] = concat(other)
 
         /** Applies the given function to each key-value pair in insertion order. */
         def foreach(fn: (K, V) => Unit): Unit =
@@ -417,11 +417,11 @@ object OrderedMap:
                     acc
             )
 
-        /** Transforms each entry by applying the given function, returning a new OrderedMap with the resulting key-value pairs in source
+        /** Transforms each entry by applying the given function, returning a new OrderedDict with the resulting key-value pairs in source
           * insertion order.
           */
-        inline def map[K2, V2](inline fn: (K, V) => (K2, V2)): OrderedMap[K2, V2] =
-            val b = OrderedMapBuilder.init[K2, V2]
+        inline def map[K2, V2](inline fn: (K, V) => (K2, V2)): OrderedDict[K2, V2] =
+            val b = OrderedDictBuilder.init[K2, V2]
             foreach { (k, v) =>
                 val (k2, v2) = fn(k, v)
                 discard(b.add(k2, v2))
@@ -429,9 +429,9 @@ object OrderedMap:
             b.result()
         end map
 
-        /** Transforms each entry into an OrderedMap and merges the results in source insertion order. */
-        inline def flatMap[K2, V2](inline fn: (K, V) => OrderedMap[K2, V2]): OrderedMap[K2, V2] =
-            val b = OrderedMapBuilder.init[K2, V2]
+        /** Transforms each entry into an OrderedDict and merges the results in source insertion order. */
+        inline def flatMap[K2, V2](inline fn: (K, V) => OrderedDict[K2, V2]): OrderedDict[K2, V2] =
+            val b = OrderedDictBuilder.init[K2, V2]
             foreach { (k, v) =>
                 fn(k, v).foreach { (k2, v2) =>
                     discard(b.add(k2, v2))
@@ -440,8 +440,8 @@ object OrderedMap:
             b.result()
         end flatMap
 
-        /** Returns a new OrderedMap containing only entries that satisfy the predicate, preserving their relative order. */
-        inline def filter(inline fn: (K, V) => Boolean): OrderedMap[K, V] =
+        /** Returns a new OrderedDict containing only entries that satisfy the predicate, preserving their relative order. */
+        inline def filter(inline fn: (K, V) => Boolean): OrderedDict[K, V] =
             reduce(
                 span =>
                     val n   = Span.size(span) / 2
@@ -460,7 +460,7 @@ object OrderedMap:
                     trimFiltered(self, arr, n, j)
                 ,
                 map =>
-                    val b = OrderedMapBuilder.initTransform[K, V, K, V] { (b, k, v) =>
+                    val b = OrderedDictBuilder.initTransform[K, V, K, V] { (b, k, v) =>
                         if fn(k, v) then discard(b.add(k, v))
                     }
                     map.foreachEntry(b)
@@ -468,14 +468,14 @@ object OrderedMap:
             )
         end filter
 
-        /** Returns a new OrderedMap containing only entries that do not satisfy the predicate. */
-        inline def filterNot(inline fn: (K, V) => Boolean): OrderedMap[K, V] =
+        /** Returns a new OrderedDict containing only entries that do not satisfy the predicate. */
+        inline def filterNot(inline fn: (K, V) => Boolean): OrderedDict[K, V] =
             filter((k, v) => !fn(k, v))
 
-        /** Applies the partial function to each entry and collects the results into a new OrderedMap in source insertion order. */
-        def collect[K2, V2](pf: PartialFunction[(K, V), (K2, V2)]): OrderedMap[K2, V2] =
-            val b        = OrderedMapBuilder.init[K2, V2]
-            val fallback = OrderedMap.sentinel
+        /** Applies the partial function to each entry and collects the results into a new OrderedDict in source insertion order. */
+        def collect[K2, V2](pf: PartialFunction[(K, V), (K2, V2)]): OrderedDict[K2, V2] =
+            val b        = OrderedDictBuilder.init[K2, V2]
+            val fallback = OrderedDict.sentinel
             foreach { (k, v) =>
                 val r = pf.applyOrElse((k, v), _ => fallback)
                 if r.asInstanceOf[AnyRef] ne fallback then
@@ -485,8 +485,8 @@ object OrderedMap:
             b.result()
         end collect
 
-        /** Returns a new OrderedMap with the same keys and values transformed by the given function. */
-        inline def mapValues[V2](inline fn: V => V2): OrderedMap[K, V2] =
+        /** Returns a new OrderedDict with the same keys and values transformed by the given function. */
+        inline def mapValues[V2](inline fn: V => V2): OrderedDict[K, V2] =
             reduce(
                 span =>
                     val n   = Span.size(span) / 2
@@ -497,10 +497,10 @@ object OrderedMap:
                     while i < n do
                         arr(n + i) = fn(Span.apply(span)(n + i).asInstanceOf[V])
                         i += 1
-                    Span.fromUnsafe(arr.asInstanceOf[Array[K | V2]]).asInstanceOf[OrderedMap[K, V2]]
+                    Span.fromUnsafe(arr.asInstanceOf[Array[K | V2]]).asInstanceOf[OrderedDict[K, V2]]
                 ,
                 map =>
-                    val b = OrderedMapBuilder.initTransform[K, V, K, V2] { (b, k, v) =>
+                    val b = OrderedDictBuilder.initTransform[K, V, K, V2] { (b, k, v) =>
                         discard(b.add(k, fn(v)))
                     }
                     map.foreachEntry(b)
@@ -574,7 +574,7 @@ object OrderedMap:
                     b.result()
             )
 
-        /** Converts this OrderedMap to an immutable `Map`. The stdlib `Map` type does not carry order in its interface; use `toChunk`,
+        /** Converts this OrderedDict to an immutable `Map`. The stdlib `Map` type does not carry order in its interface; use `toChunk`,
           * `keys`, or `foreach` when order matters.
           */
         def toMap: Map[K, V] =
@@ -589,10 +589,10 @@ object OrderedMap:
                 map => map
             )
 
-        /** Tests structural equality with another OrderedMap. This is the primary way to compare OrderedMaps, since OrderedMap does not
+        /** Tests structural equality with another OrderedDict. This is the primary way to compare OrderedDicts, since OrderedDict does not
           * provide a `CanEqual` instance due to its opaque type representation. Equality is order-independent.
           */
-        def is(other: OrderedMap[K, V])(using CanEqual[K, K], CanEqual[V, V]): Boolean =
+        def is(other: OrderedDict[K, V])(using CanEqual[K, K], CanEqual[V, V]): Boolean =
             size == other.size && forall { (k, v) =>
                 other.get(k) match
                     case Present(v2) => v.equals(v2)
@@ -627,13 +627,13 @@ object OrderedMap:
 
     end extension
 
-    private[kyo] def fromArrayUnsafe[K, V](arr: Array[K | V]): OrderedMap[K, V] =
+    private[kyo] def fromArrayUnsafe[K, V](arr: Array[K | V]): OrderedDict[K, V] =
         Span.fromUnsafe(arr)
 
-    private[kyo] def fromTreeSeqMap[K, V](map: TreeSeqMap[K, V]): OrderedMap[K, V] =
+    private[kyo] def fromTreeSeqMap[K, V](map: TreeSeqMap[K, V]): OrderedDict[K, V] =
         map
 
-    private def trimFiltered[K, V](original: OrderedMap[K, V], arr: Array[K | V], n: Int, j: Int): OrderedMap[K, V] =
+    private def trimFiltered[K, V](original: OrderedDict[K, V], arr: Array[K | V], n: Int, j: Int): OrderedDict[K, V] =
         if j == n then original
         else if j == 0 then empty
         else
@@ -642,20 +642,20 @@ object OrderedMap:
             System.arraycopy(arr, n, trimmed, j, j)
             Span.fromUnsafe(trimmed)
 
-    /** Parses comma-separated key=value pairs into an OrderedMap in the order they appear. */
-    given [K, V](using rk: Flag.Reader.Scalar[K], rv: Flag.Reader.Scalar[V]): Flag.Reader[OrderedMap[K, V]] with
-        def apply(s: String): Either[Throwable, OrderedMap[K, V]] =
-            if s.trim.isEmpty then Right(OrderedMap.empty[K, V])
+    /** Parses comma-separated key=value pairs into an OrderedDict in the order they appear. */
+    given [K, V](using rk: Flag.Reader.Scalar[K], rv: Flag.Reader.Scalar[V]): Flag.Reader[OrderedDict[K, V]] with
+        def apply(s: String): Either[Throwable, OrderedDict[K, V]] =
+            if s.trim.isEmpty then Right(OrderedDict.empty[K, V])
             else
                 val entries          = s.split(",")
-                val builder          = OrderedMapBuilder.init[K, V]
+                val builder          = OrderedDictBuilder.init[K, V]
                 var error: Throwable = null
                 var i                = 0
                 while i < entries.length && (error eq null) do
                     val trimmed = entries(i).trim
                     val eqIdx   = trimmed.indexOf('=')
                     if eqIdx < 0 then
-                        error = new IllegalArgumentException(s"Invalid OrderedMap entry (missing '='): $trimmed")
+                        error = new IllegalArgumentException(s"Invalid OrderedDict entry (missing '='): $trimmed")
                     else
                         rk(trimmed.substring(0, eqIdx).trim) match
                             case Left(e) => error = e
@@ -670,7 +670,7 @@ object OrderedMap:
                 else Right(builder.result())
         end apply
 
-        def typeName: String = s"OrderedMap[${rk.typeName}, ${rv.typeName}]"
+        def typeName: String = s"OrderedDict[${rk.typeName}, ${rv.typeName}]"
     end given
 
-end OrderedMap
+end OrderedDict

@@ -4,7 +4,7 @@ import java.nio.charset.CodingErrorAction
 import java.nio.charset.StandardCharsets
 import kyo.Chunk
 import kyo.Codec
-import kyo.OrderedMapBuilder
+import kyo.OrderedDictBuilder
 import kyo.ParseException
 import kyo.RangeException
 import kyo.Span
@@ -437,7 +437,7 @@ object BsonReader:
                 pos += 1
                 ArrayValue(values.result())
             else
-                val fields = OrderedMapBuilder.init[String, BsonValue]
+                val fields = OrderedDictBuilder.init[String, BsonValue]
                 var count  = 0
                 while pos < end - 1 do
                     val tag  = readByte(input.size)

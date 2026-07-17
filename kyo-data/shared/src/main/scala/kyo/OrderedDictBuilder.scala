@@ -6,18 +6,18 @@ import scala.annotation.nowarn
 import scala.annotation.tailrec
 import scala.collection.immutable.TreeSeqMap
 
-/** A mutable builder for constructing [[OrderedMap]] instances incrementally. Entries are accumulated via `add` and the final OrderedMap is
+/** A mutable builder for constructing [[OrderedDict]] instances incrementally. Entries are accumulated via `add` and the final OrderedDict is
   * produced by calling `result`. Insertion order is preserved: a new key appends at the end, and an already-added key has its value
   * replaced in place, keeping its first-add position. Duplicate keys resolve to the last added value.
   *
-  * OrderedMapBuilder uses a thread-local buffer pool to reduce allocation pressure. After calling `result`, the builder resets and its
+  * OrderedDictBuilder uses a thread-local buffer pool to reduce allocation pressure. After calling `result`, the builder resets and its
   * internal buffer is returned to the pool for reuse. Distinct builders acquire distinct buffers, so nested or interleaved builders (for
   * example one per open document while encoding) do not alias.
   *
   * {{{
-  * val b = OrderedMapBuilder.init[String, Int]
+  * val b = OrderedDictBuilder.init[String, Int]
   * b.add("a", 1).add("b", 2)
-  * val map = b.result() // OrderedMap("a" -> 1, "b" -> 2)
+  * val map = b.result() // OrderedDict("a" -> 1, "b" -> 2)
   * }}}
   *
   * @tparam K
@@ -25,16 +25,16 @@ import scala.collection.immutable.TreeSeqMap
   * @tparam V
   *   the type of values
   * @see
-  *   [[OrderedMap]] for the immutable insertion-ordered map type
+  *   [[OrderedDict]] for the immutable insertion-ordered map type
   */
-sealed class OrderedMapBuilder[K, V] extends Serializable:
+sealed class OrderedDictBuilder[K, V] extends Serializable:
     private var buffer = Maybe.empty[ArrayList[Any]]
 
     /** Adds a key-value pair to this builder. Returns `this` for chaining. */
     final def add(key: K, value: V): this.type =
         buffer match
             case Absent =>
-                val buf = OrderedMapBuilder.acquireBuffer()
+                val buf = OrderedDictBuilder.acquireBuffer()
                 buf.add(key)
                 buf.add(value)
                 buffer = Present(buf)
@@ -51,27 +51,27 @@ sealed class OrderedMapBuilder[K, V] extends Serializable:
     /** Removes all accumulated entries from this builder. */
     final def clear(): Unit = buffer.foreach(_.clear())
 
-    /** Builds and returns the resulting [[OrderedMap]] in insertion order, then resets this builder. The internal buffer is returned to the
+    /** Builds and returns the resulting [[OrderedDict]] in insertion order, then resets this builder. The internal buffer is returned to the
       * thread-local pool.
       */
-    final def result(): OrderedMap[K, V] =
-        val map = buffer.fold(OrderedMap.empty[K, V]) { buf =>
+    final def result(): OrderedDict[K, V] =
+        val map = buffer.fold(OrderedDict.empty[K, V]) { buf =>
             val n = buf.size / 2
-            if n == 0 then OrderedMap.empty[K, V]
-            else if n <= OrderedMap.threshold then
-                OrderedMapBuilder.buildSmall(buf, n)
+            if n == 0 then OrderedDict.empty[K, V]
+            else if n <= OrderedDict.threshold then
+                OrderedDictBuilder.buildSmall(buf, n)
             else
-                OrderedMapBuilder.buildLarge(buf, n)
+                OrderedDictBuilder.buildLarge(buf, n)
             end if
         }
-        buffer.foreach(OrderedMapBuilder.releaseBuffer)
+        buffer.foreach(OrderedDictBuilder.releaseBuffer)
         buffer = Absent
         map
     end result
 
-end OrderedMapBuilder
+end OrderedDictBuilder
 
-object OrderedMapBuilder:
+object OrderedDictBuilder:
 
     private val bufferCache =
         new ThreadLocal[ArrayDeque[ArrayList[?]]]:
@@ -84,21 +84,21 @@ object OrderedMapBuilder:
         buffer.clear()
         discard(bufferCache.get().add(buffer))
 
-    /** Creates a new empty OrderedMapBuilder. */
-    def init[K, V]: OrderedMapBuilder[K, V] = new OrderedMapBuilder[K, V]
+    /** Creates a new empty OrderedDictBuilder. */
+    def init[K, V]: OrderedDictBuilder[K, V] = new OrderedDictBuilder[K, V]
 
-    /** Creates an OrderedMapBuilder that also implements `(K, V) => Unit`, allowing it to be passed directly to `foreachEntry`-style
+    /** Creates an OrderedDictBuilder that also implements `(K, V) => Unit`, allowing it to be passed directly to `foreachEntry`-style
       * methods. The inline transform function receives the builder, key, and value, and is responsible for calling `add`.
       */
     @nowarn("msg=anonymous")
-    inline def initTransform[K, V, K2, V2](inline f: (OrderedMapBuilder[K2, V2], K, V) => Unit)
-        : ((K, V) => Unit) & OrderedMapBuilder[K2, V2] =
-        new OrderedMapBuilder[K2, V2] with Function2[K, V, Unit]:
+    inline def initTransform[K, V, K2, V2](inline f: (OrderedDictBuilder[K2, V2], K, V) => Unit)
+        : ((K, V) => Unit) & OrderedDictBuilder[K2, V2] =
+        new OrderedDictBuilder[K2, V2] with Function2[K, V, Unit]:
             def apply(k: K, v: V): Unit = f(this, k, v)
 
     // Build keys-first array with insertion-order dedup via linear scan (n <= 8): a duplicate key keeps its first position and takes the
     // last value.
-    private def buildSmall[K, V](entries: ArrayList[Any], n: Int): OrderedMap[K, V] =
+    private def buildSmall[K, V](entries: ArrayList[Any], n: Int): OrderedDict[K, V] =
         val arr = new Array[Any](n * 2).asInstanceOf[Array[K | V]]
 
         @tailrec def findDup(arr: Array[K | V], kr: AnyRef, key: Any, j: Int, idx: Int): Int =
@@ -125,23 +125,23 @@ object OrderedMapBuilder:
                 end if
 
         val j = loop(0, 0)
-        if j == n then OrderedMap.fromArrayUnsafe(arr)
+        if j == n then OrderedDict.fromArrayUnsafe(arr)
         else
             val compact = new Array[Any](j * 2).asInstanceOf[Array[K | V]]
             System.arraycopy(arr, 0, compact, 0, j)
             System.arraycopy(arr, n, compact, j, j)
-            OrderedMap.fromArrayUnsafe(compact)
+            OrderedDict.fromArrayUnsafe(compact)
         end if
     end buildSmall
 
-    private def buildLarge[K, V](entries: ArrayList[Any], n: Int): OrderedMap[K, V] =
+    private def buildLarge[K, V](entries: ArrayList[Any], n: Int): OrderedDict[K, V] =
         @tailrec def loop(i: Int, map: TreeSeqMap[K, V]): TreeSeqMap[K, V] =
             if i >= n then map
             else loop(i + 1, map.updated(entries.get(i * 2).asInstanceOf[K], entries.get(i * 2 + 1).asInstanceOf[V]))
 
         val map  = loop(0, TreeSeqMap.empty[K, V])
         val size = map.size
-        if size <= OrderedMap.threshold then
+        if size <= OrderedDict.threshold then
             val arr = new Array[Any](size * 2).asInstanceOf[Array[K | V]]
             var j   = 0
             map.foreachEntry { (k, v) =>
@@ -149,10 +149,10 @@ object OrderedMapBuilder:
                 arr(size + j) = v
                 j += 1
             }
-            OrderedMap.fromArrayUnsafe(arr)
+            OrderedDict.fromArrayUnsafe(arr)
         else
-            OrderedMap.fromTreeSeqMap(map)
+            OrderedDict.fromTreeSeqMap(map)
         end if
     end buildLarge
 
-end OrderedMapBuilder
+end OrderedDictBuilder

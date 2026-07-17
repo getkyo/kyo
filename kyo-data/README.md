@@ -268,25 +268,25 @@ val merged: Dict[Int, User]  = byId ++ Dict(3 -> bob)
 
 > **Note:** `Dict` is opaque and provides no `CanEqual` instance. Use `dict.is(other)` for structural equality, not `==`.
 
-`Dict`'s hash-backed representation leaves iteration order unspecified. When the order of the keys is part of what you are modelling, `OrderedMap[K, V]` iterates in insertion order at every size. It adapts its representation the same way `Dict` does: a flat `Span` for 8 or fewer entries, and a `TreeSeqMap` ordered by insertion beyond that.
+`Dict`'s hash-backed representation leaves iteration order unspecified. When the order of the keys is part of what you are modelling, `OrderedDict[K, V]` iterates in insertion order at every size. It adapts its representation the same way `Dict` does: a flat `Span` for 8 or fewer entries, and a `TreeSeqMap` ordered by insertion beyond that.
 
 ```scala
 import kyo.*
 
-val stages: OrderedMap[String, Int] = OrderedMap("draft" -> 1, "review" -> 2, "published" -> 3)
+val stages: OrderedDict[String, Int] = OrderedDict("draft" -> 1, "review" -> 2, "published" -> 3)
 
 val order: Chunk[String] = stages.toChunk.map(_._1) // "draft", "review", "published"
 
 // Updating an existing key replaces the value and keeps the key where it was.
-val restaged: OrderedMap[String, Int] = stages.update("draft", 9)
+val restaged: OrderedDict[String, Int] = stages.update("draft", 9)
 
 // A new key appends at the end, and re-adding a removed key appends it afresh.
-val appended: OrderedMap[String, Int] = stages.remove("draft").update("draft", 1)
+val appended: OrderedDict[String, Int] = stages.remove("draft").update("draft", 1)
 ```
 
-A `case class` with an `OrderedMap` field derives a `Schema` in `kyo-schema`, and the order survives an encode and decode round-trip.
+A `case class` with an `OrderedDict` field derives a `Schema` in `kyo-schema`, and the order survives an encode and decode round-trip.
 
-> **Note:** like `Dict`, `OrderedMap` is opaque and provides no `CanEqual` instance. Use `map.is(other)` for structural equality, not `==`.
+> **Note:** like `Dict`, `OrderedDict` is opaque and provides no `CanEqual` instance. Use `map.is(other)` for structural equality, not `==`.
 
 > **Note:** `Dict` switches representations at 8 entries. Lookup semantics are stable across the switch; performance characteristics differ.
 
@@ -305,7 +305,7 @@ val total: Int                 = byCount.foldLeft(0)((acc, _, v) => acc + v)
 
 ### Building incrementally
 
-When constructing a large `Chunk`, `Dict`, or `OrderedMap` element by element, use the dedicated builders. They expose `add`, `result`, `clear`, and `size`. Each reuses a thread-local buffer pool to amortize allocation across calls.
+When constructing a large `Chunk`, `Dict`, or `OrderedDict` element by element, use the dedicated builders. They expose `add`, `result`, `clear`, and `size`. Each reuses a thread-local buffer pool to amortize allocation across calls.
 
 ```scala
 import kyo.*
@@ -319,12 +319,12 @@ db.add("a", 1)
 db.add("b", 2)
 val dict: Dict[String, Int] = db.result()
 
-val ob = OrderedMapBuilder.init[String, Int]
+val ob = OrderedDictBuilder.init[String, Int]
 ob.add("second", 2)
 ob.add("first", 1)
 // Adding a key already present keeps its first position and takes the last value.
 ob.add("second", 9)
-val ordered: OrderedMap[String, Int] = ob.result() // "second" -> 9, then "first" -> 1
+val ordered: OrderedDict[String, Int] = ob.result() // "second" -> 9, then "first" -> 1
 ```
 
 ## Time and scheduling
@@ -725,7 +725,7 @@ When `kyo-config` is on the classpath, kyo-data types can be used directly as `F
 | `Chunk[A]` | comma-separated | `"a,b,c"` |
 | `Span[A]` | comma-separated | `"1,2,3"` |
 | `Dict[K,V]` | key=value pairs, comma-separated | `"host=localhost,port=8080"` |
-| `OrderedMap[K,V]` | key=value pairs, comma-separated, order preserved | `"host=localhost,port=8080"` |
+| `OrderedDict[K,V]` | key=value pairs, comma-separated, order preserved | `"host=localhost,port=8080"` |
 | `Instant` | ISO-8601 | `"2024-01-15T10:30:00Z"` |
 | `Record[F]` | key=value pairs, validated against field schema | `"host=localhost,port=8080"` |
 

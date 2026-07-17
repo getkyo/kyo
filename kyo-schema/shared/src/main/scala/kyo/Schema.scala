@@ -684,8 +684,8 @@ abstract class Schema[A] @publicInBinary private[kyo] (
       * and decode-default a missing collection/map field to the typed empty value. Per-field
       * `omit(_.x).whenEmpty` overrides this for a specific field.
       *
-      * One binding is not yet supported: an empty `Dict`/`OrderedMap` field whose schema is the
-      * explicitly-bound array-form given (`dictSchema`/`orderedMapSchema`) for a `String` key, rather
+      * One binding is not yet supported: an empty `Dict`/`OrderedDict` field whose schema is the
+      * explicitly-bound array-form given (`dictSchema`/`orderedDictSchema`) for a `String` key, rather
       * than the object-form default. Under this policy it omits on encode but fails to decode with a
       * typed `TypeMismatchException`. The default given for a `String` key is unaffected. Tracked in
       * getkyo/kyo#1748.
@@ -3125,7 +3125,7 @@ object Schema:
         )
     end dictSchema
 
-    /** Schema for OrderedMap[String, V] - serializes as a JSON object.
+    /** Schema for OrderedDict[String, V] - serializes as a JSON object.
       *
       * Note: the map's insertion order survives an encode/decode round-trip. Encoding walks the map
       * in insertion order and decoding rebuilds it by inserting entries in wire order, so wire order
@@ -3134,9 +3134,9 @@ object Schema:
       * not mandate entry order for map fields, so a foreign Protobuf implementation may
       * reorder entries.
       */
-    given stringOrderedMapSchema[V](using vSchema0: => Schema[V]): Schema[OrderedMap[String, V]] =
+    given stringOrderedDictSchema[V](using vSchema0: => Schema[V]): Schema[OrderedDict[String, V]] =
         lazy val vSchema = vSchema0
-        Schema.init[OrderedMap[String, V]](
+        Schema.init[OrderedDict[String, V]](
             writeFn = (value, writer) =>
                 writer.mapStart(value.size)
                 discard(value.foldLeft(0) { (idx, k, v) =>
@@ -3149,31 +3149,31 @@ object Schema:
             readFn = reader =>
                 discard(reader.mapStart())
                 @tailrec
-                def loop(map: OrderedMap[String, V], count: Int): OrderedMap[String, V] =
+                def loop(map: OrderedDict[String, V], count: Int): OrderedDict[String, V] =
                     if reader.hasNextEntry() then
                         reader.checkCollectionSize(count)
                         val k = reader.field()
                         val v = vSchema.serializeRead(reader)
                         loop(map.update(k, v), count + 1)
                     else map
-                val map = loop(OrderedMap.empty[String, V], 1)
+                val map = loop(OrderedDict.empty[String, V], 1)
                 reader.mapEnd()
                 map
             ,
-            absentDefaultValue = Maybe(OrderedMap.empty[String, V]),
+            absentDefaultValue = Maybe(OrderedDict.empty[String, V]),
             // Non-inline givens have no implicit Tag[V] in scope; fall back to Tag[Any].
             structure = Structure.Type.Mapping(
-                "OrderedMap",
+                "OrderedDict",
                 Tag[Any],
                 Structure.Type.Primitive(Structure.PrimitiveKind.String, Tag[String].asInstanceOf[Tag[Any]]),
                 vSchema.structure
             )
         )
-    end stringOrderedMapSchema
+    end stringOrderedDictSchema
 
-    /** Schema for OrderedMap[K, V] with non-String keys.
+    /** Schema for OrderedDict[K, V] with non-String keys.
       *
-      * `stringOrderedMapSchema` is the more specific given for `OrderedMap[String, V]` (object
+      * `stringOrderedDictSchema` is the more specific given for `OrderedDict[String, V]` (object
       * encoding); this general given covers every other key type. Each entry is written as a
       * two-field record (`key`, `value`), the same form `mapSchema` and `dictSchema` use: the
       * Protobuf codec renders this as a standard proto3 `MapEntry` message, and self-describing
@@ -3187,10 +3187,10 @@ object Schema:
       * generated `.proto` declares a `map<K, V>` field, and proto3 does not mandate entry order for
       * map fields, so a foreign Protobuf implementation may reorder entries.
       */
-    given orderedMapSchema[K, V](using kSchema0: => Schema[K], vSchema0: => Schema[V]): Schema[OrderedMap[K, V]] =
+    given orderedDictSchema[K, V](using kSchema0: => Schema[K], vSchema0: => Schema[V]): Schema[OrderedDict[K, V]] =
         lazy val kSchema = kSchema0
         lazy val vSchema = vSchema0
-        Schema.init[OrderedMap[K, V]](
+        Schema.init[OrderedDict[K, V]](
             writeFn = (value, writer) =>
                 writer.arrayStart(value.size)
                 value.foreach { (k, v) =>
@@ -3206,7 +3206,7 @@ object Schema:
             readFn = reader =>
                 discard(reader.arrayStart())
                 @tailrec
-                def loop(map: OrderedMap[K, V], count: Int): OrderedMap[K, V] =
+                def loop(map: OrderedDict[K, V], count: Int): OrderedDict[K, V] =
                     if reader.hasNextElement() then
                         reader.checkCollectionSize(count)
                         discard(reader.objectStart())
@@ -3221,20 +3221,20 @@ object Schema:
                         reader.objectEnd()
                         loop(map.update(k, v), count + 1)
                     else map
-                val map = loop(OrderedMap.empty[K, V], 1)
+                val map = loop(OrderedDict.empty[K, V], 1)
                 reader.arrayEnd()
                 map
             ,
-            absentDefaultValue = Maybe(OrderedMap.empty[K, V]),
+            absentDefaultValue = Maybe(OrderedDict.empty[K, V]),
             // Non-inline givens have no implicit Tag[K] + Tag[V] in scope; fall back to Tag[Any].
             structure = Structure.Type.Mapping(
-                "OrderedMap",
+                "OrderedDict",
                 Tag[Any],
                 kSchema.structure,
                 vSchema.structure
             )
         )
-    end orderedMapSchema
+    end orderedDictSchema
 
     // --- Internal helpers ---
 

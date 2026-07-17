@@ -8,11 +8,11 @@ case class BCFProbe(v: Int) derives Schema
 
 case class BsonListOfLists(values: List[List[Int]]) derives CanEqual, Schema
 
-// Four-field probe with a fixed declaration order, used to pin the OrderedMap-backed
+// Four-field probe with a fixed declaration order, used to pin the OrderedDict-backed
 // document store's field-order round-trip.
 case class BsonOrderedDoc(_id: Int, name: String, version: Int, tags: List[String]) derives CanEqual, Schema
 
-// Twelve-field probe with a fixed non-alphabetical declaration order. OrderedMap switches
+// Twelve-field probe with a fixed non-alphabetical declaration order. OrderedDict switches
 // from its flat small representation to a TreeSeqMap-backed large representation above 8
 // entries, so this fixture pins field-order preservation past that switch.
 case class BsonWideDoc(
@@ -398,7 +398,7 @@ class BsonConformanceTest extends kyo.test.Test[Any]:
         }
     }
 
-    "OrderedMap document store" - {
+    "OrderedDict document store" - {
 
         "well-formed multi-field document round-trips field order and re-encodes byte-identically" in {
             val value   = BsonOrderedDoc(1, "kyo", 2, List("a", "b"))

@@ -724,7 +724,7 @@ private[kyo] object SchemaSerializer:
                         case Some(fieldDefault) =>
                             Some(SyntheticField(field.name, () => materializeDefault(fieldDefault)))
                         case None if omitDefaultedNames.contains(field.name) =>
-                            if isOrderedMapOrDictTag(field) then
+                            if isOrderedDictOrDictTag(field) then
                                 emptyMappingWireValue(schema, field.name)
                                     .map(v => SyntheticField(field.name, () => v))
                             else
@@ -992,7 +992,7 @@ private[kyo] object SchemaSerializer:
         show.startsWith("scala.collection.Set[")
     end isSetTag
 
-    /** True iff `field`'s declared type is `OrderedMap[K, V]` or `Dict[K, V]`. Both are opaque
+    /** True iff `field`'s declared type is `OrderedDict[K, V]` or `Dict[K, V]`. Both are opaque
       * types over an erased union (`Span[K | V] | TreeSeqMap[K, V]` / `Span[K | V] | HashMap[K, V]`),
       * so their `Tag.show` is the SAME opaque-bound string for every key/value instantiation (unlike
       * `Map`, whose show carries the element types): neither a `<:<` check nor a `scala.collection.*`
@@ -1000,23 +1000,23 @@ private[kyo] object SchemaSerializer:
       * qualified name is the only reliable discriminator, the same idiom `isMapTag` uses for its own
       * variance gap.
       */
-    private def isOrderedMapOrDictTag(field: Field[?, ?]): Boolean =
+    private def isOrderedDictOrDictTag(field: Field[?, ?]): Boolean =
         val show = field.tag.show
-        show.startsWith("(kyo.OrderedMap$package$.OrderedMap ") ||
+        show.startsWith("(kyo.OrderedDict$package$.OrderedDict ") ||
         show.startsWith("(kyo.Dict$package$.Dict ")
-    end isOrderedMapOrDictTag
+    end isOrderedDictOrDictTag
 
     /** True iff `field`'s declared type is a sequence-like collection, a set, or a map (including
-      * the opaque `OrderedMap`/`Dict` map types): the exact set the encode-time omit gate and the
+      * the opaque `OrderedDict`/`Dict` map types): the exact set the encode-time omit gate and the
       * decode-time synthetic-injection gate both consult, so an empty product (which also
-      * materializes as an empty `Record`) is never mistaken for an empty collection. `OrderedMap`
+      * materializes as an empty `Record`) is never mistaken for an empty collection. `OrderedDict`
       * and `Dict` fields synthesize their decode-time zero value from the schema's declared
       * structure (see [[emptyMappingWireValue]]) rather than from [[zeroForField]], since their
       * opaque erasure gives `zeroForField` no runtime shape to introspect.
       */
     private def isCollectionOrMapTag(field: Field[?, ?]): Boolean =
         isMapTag(field) ||
-            isOrderedMapOrDictTag(field) ||
+            isOrderedDictOrDictTag(field) ||
             isSetTag(field) ||
             field.tag <:< Tag[List[Any]] ||
             field.tag <:< Tag[Vector[Any]] ||
@@ -1052,7 +1052,7 @@ private[kyo] object SchemaSerializer:
     end zeroForField
 
     /** Returns the empty wire-shape `Structure.Value` for `fieldName`'s declared field type, when
-      * that field is an `OrderedMap`/`Dict` (a `Structure.Type.Mapping`). Used in place of
+      * that field is an `OrderedDict`/`Dict` (a `Structure.Type.Mapping`). Used in place of
       * [[zeroForField]] + [[zeroToStructureValue]] for these two types: both are opaque types whose
       * empty value erases to a bare `Span`-backed array with no reliable runtime shape to
       * pattern-match (unlike `Map`, a real generic class `zeroToStructureValue` matches directly), so
@@ -1060,8 +1060,8 @@ private[kyo] object SchemaSerializer:
       *
       * A String key selects the `Record` (object) form, any other key the `Sequence` (array) form.
       * This matches the default given resolution: the object-form given (`stringDictSchema`,
-      * `stringOrderedMapSchema`) is the more specific one for a String key and wins by default, and the
-      * array-form given (`dictSchema`, `orderedMapSchema`) is the only one for every other key. It is
+      * `stringOrderedDictSchema`) is the more specific one for a String key and wins by default, and the
+      * array-form given (`dictSchema`, `orderedDictSchema`) is the only one for every other key. It is
       * derived from the declared key structure because the declared structure is all that is reachable
       * here; the wire form is a property of the bound given, and the field's own writer is not exposed
       * on this path.
