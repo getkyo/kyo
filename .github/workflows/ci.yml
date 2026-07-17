@@ -114,46 +114,12 @@ jobs:
       mode: ${{ needs.prep.outputs.mode }}
       ref: ${{ inputs.ref }}
 
-  # Run the kyo-stats-machine suite on every OS the module claims to support. The standard
-  # arch matrix (build.yml) only ever runs Linux; a fully green Linux pipeline proves nothing about
-  # Windows or macOS host reads (the Windows disk-binding bug survived exactly such a pipeline). These
-  # three jobs run the module suite directly on a real Windows host, a real macOS host, and a nested
-  # cgroup-v2 container. Skipped on the mode=custom eval escape hatch, same as build.
-  machine-stats-windows:
-    needs: prep
-    if: ${{ needs.prep.outputs.mode != 'custom' }}
-    runs-on: windows-latest
-    timeout-minutes: 60
-    env:
-      # Coursier's parallel downloads race NIO file locks on the Windows cache
-      # (OverlappingFileLockException during resolution); serialize them on this job.
-      COURSIER_PARALLEL_DOWNLOADS: '1'
-      JAVA_OPTS: '-Xmx4G -Xss10M -XX:MaxMetaspaceSize=512M -XX:ReservedCodeCacheSize=128M -Dfile.encoding=UTF-8 -Dcoursier.parallel-download-count=1'
-      JVM_OPTS:  '-Xmx4G -Xss10M -XX:MaxMetaspaceSize=512M -XX:ReservedCodeCacheSize=128M -Dfile.encoding=UTF-8 -Dcoursier.parallel-download-count=1'
-    steps:
-      - uses: actions/checkout@v7.0.0
-        with:
-          ref: ${{ inputs.ref || github.ref }}
-          fetch-depth: 0
-      - uses: ./.github/actions/setup
-        with:
-          os: windows-x64
-          target: JVM
-      # Coursier resolution on a cold Windows cache intermittently dies on
-      # OverlappingFileLockException; every download an attempt completes is kept,
-      # so retrying converges, and the first green job seeds the cache for good.
-      - name: Warm the dependency cache (Windows)
-        uses: nick-fields/retry@v4
-        with:
-          max_attempts: 3
-          timeout_minutes: 25
-          retry_wait_seconds: 30
-          shell: bash
-          command: sbt "kyo-stats-machineJVM/Test/compile"
-      - name: test kyo-stats-machine (Windows host)
-        shell: bash
-        run: sbt "kyo-stats-machineJVM/test"
-
+  # Run the kyo-stats-machine suite beyond the standard arch matrix (build.yml), which only ever
+  # runs Linux; a fully green Linux pipeline proves nothing about macOS host reads (the Windows
+  # disk-binding bug survived exactly such a pipeline). These two jobs run the module suite directly
+  # on a real macOS host and in a nested cgroup-v2 container. Windows support is verified against a
+  # real windows-latest host on demand via workflow_dispatch of a branch that adds the job back;
+  # the permanent job was removed deliberately. Skipped on the mode=custom eval escape hatch.
   machine-stats-macos:
     needs: prep
     if: ${{ needs.prep.outputs.mode != 'custom' }}
