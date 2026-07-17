@@ -513,13 +513,10 @@ object OrderedDict:
             reduce(
                 span =>
                     val n   = Span.size(span) / 2
-                    val arr = new Array[K](n)
-                    @tailrec def loop(i: Int): Unit =
-                        if i < n then
-                            arr(i) = Span.apply(span)(i).asInstanceOf[K]
-                            loop(i + 1)
-                    loop(0)
-                    Span.fromUnsafe(arr)
+                    val src = Span.toArrayUnsafe(span)
+                    val arr = new Array[Any](n)
+                    System.arraycopy(src, 0, arr, 0, n)
+                    Span.fromUnsafe(arr.asInstanceOf[Array[K]])
                 ,
                 map =>
                     val arr = new Array[K](map.size)
@@ -535,13 +532,10 @@ object OrderedDict:
             reduce(
                 span =>
                     val n   = Span.size(span) / 2
-                    val arr = new Array[V](n)
-                    @tailrec def loop(i: Int): Unit =
-                        if i < n then
-                            arr(i) = Span.apply(span)(n + i).asInstanceOf[V]
-                            loop(i + 1)
-                    loop(0)
-                    Span.fromUnsafe(arr)
+                    val src = Span.toArrayUnsafe(span)
+                    val arr = new Array[Any](n)
+                    System.arraycopy(src, n, arr, 0, n)
+                    Span.fromUnsafe(arr.asInstanceOf[Array[V]])
                 ,
                 map =>
                     val arr = new Array[V](map.size)
