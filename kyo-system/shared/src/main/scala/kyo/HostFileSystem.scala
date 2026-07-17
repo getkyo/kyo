@@ -141,6 +141,42 @@ private[kyo] object HostFileSystem:
                     // Unsafe: recursive host delete of the created temp dir at Scope exit
                     def remove()(using AllowUnsafe): Unit = discard(dir.unsafe.removeAll())
             }
+        def openChannel(path: Path, mode: FileSystem.ChannelMode): Path.Channel[Sync] < (Sync & Scope & Abort[FileException]) =
+            Scope.acquireRelease(
+                // Unsafe: bridges Path.Unsafe.openChannel into the safe tier
+                Sync.Unsafe.defer(Abort.get(path.unsafe.openChannel(mode)))
+            )(raw => Sync.Unsafe.defer(raw.close())).map { raw => // Unsafe: closes the vended raw channel at Scope exit
+                new Path.Channel[Sync]:
+                    def readAt(pos: Long, len: Int)(using Frame): Span[Byte] < (Sync & Abort[FileException]) =
+                        // Unsafe: bridges the vended raw channel's positioned read into the safe tier
+                        Sync.Unsafe.defer(Abort.get(raw.readAt(pos, len))).map(Span.from)
+                    def writeAt(pos: Long, bytes: Span[Byte])(using Frame): Unit < (Sync & Abort[FileException]) =
+                        // The underlying FileChannel is opened without WRITE in Read mode, so it
+                        // would surface an untyped NonWritableChannelException; gate explicitly
+                        // to a typed Abort[FileException] instead.
+                        mode match
+                            case FileSystem.ChannelMode.Read => Abort.fail(FileAccessDeniedException(path))
+                            case _                           =>
+                                // Unsafe: bridges the vended raw channel's positioned write into the safe tier
+                                Sync.Unsafe.defer(Abort.get(raw.writeAt(pos, bytes.toArray)))
+                    def sync()(using Frame): Unit < (Sync & Abort[FileException]) =
+                        // Unsafe: bridges the vended raw channel's sync into the safe tier
+                        Sync.Unsafe.defer(Abort.get(raw.sync()))
+                    def truncate(size: Long)(using Frame): Unit < (Sync & Abort[FileException]) =
+                        // Same explicit gate as writeAt: a Read-mode FileChannel would otherwise
+                        // surface an untyped NonWritableChannelException.
+                        mode match
+                            case FileSystem.ChannelMode.Read => Abort.fail(FileAccessDeniedException(path))
+                            case _                           =>
+                                // Unsafe: bridges the vended raw channel's truncate into the safe tier
+                                Sync.Unsafe.defer(Abort.get(raw.truncate(size)))
+                    def size()(using Frame): Long < (Sync & Abort[FileException]) =
+                        // Unsafe: bridges the vended raw channel's size into the safe tier
+                        Sync.Unsafe.defer(Abort.get(raw.size()))
+            }
+        def syncDir(path: Path): Unit < (Sync & Abort[FileException]) =
+            // Unsafe: bridges Path.Unsafe.syncDir into the safe tier
+            Sync.Unsafe.defer(path.unsafe.syncDir())
     end HostFileSystem
 
     final class RootConfinedHostFileSystem(rootReal: Path)(using Frame) extends FileSystem[Sync]:
@@ -248,5 +284,9 @@ private[kyo] object HostFileSystem:
                     def remove()(using AllowUnsafe): Unit = discard(dir.unsafe.removeAll())
             }
         end tempDir
+        def openChannel(path: Path, mode: FileSystem.ChannelMode): Path.Channel[Sync] < (Sync & Scope & Abort[FileException]) =
+            confined(path).andThen(host.openChannel(path, mode))
+        def syncDir(path: Path): Unit < (Sync & Abort[FileException]) =
+            confined(path).andThen(host.syncDir(path))
     end RootConfinedHostFileSystem
 end HostFileSystem

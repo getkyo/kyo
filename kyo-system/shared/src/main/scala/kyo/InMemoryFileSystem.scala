@@ -253,6 +253,47 @@ final private[kyo] class InMemoryFileSystem(state: AtomicRef[InMemoryFileSystem.
             }
         }
 
+    // --- Positioned channel (mode gates writeAt/truncate at the call site) ---
+
+    def openChannel(path: Path, mode: FileSystem.ChannelMode): Path.Channel[Sync] < (Sync & Scope & Abort[FileException]) =
+        val ensureTarget: Unit < (Sync & Abort[FileException]) =
+            mode match
+                case FileSystem.ChannelMode.ReadWriteCreate =>
+                    exists(path).map(found => if found then () else mkFile(path))
+                case FileSystem.ChannelMode.Read | FileSystem.ChannelMode.ReadWrite =>
+                    exists(path).map(found => if found then () else Abort.fail(FileNotFoundException(path)))
+        Scope.acquireRelease(ensureTarget)(_ => ()).andThen(mkChannel(path, mode))
+    end openChannel
+
+    private def mkChannel(path: Path, mode: FileSystem.ChannelMode): Path.Channel[Sync] =
+        new Path.Channel[Sync]:
+            def readAt(pos: Long, len: Int)(using Frame): Span[Byte] < (Sync & Abort[FileException]) =
+                readBytes(path).map(_.drop(pos.toInt).take(len))
+            def writeAt(pos: Long, bytes: Span[Byte])(using Frame): Unit < (Sync & Abort[FileException]) =
+                mode match
+                    case FileSystem.ChannelMode.Read => Abort.fail(FileAccessDeniedException(path))
+                    case _ =>
+                        now.map(t =>
+                            modify { s =>
+                                val existing = lookup(s.root, path.parts).flatMap(_.file).map(_.bytes).getOrElse(Span.empty[Byte])
+                                val p        = pos.toInt
+                                // Span.fill zero-fills the gap when writeAt lands past the current length.
+                                val padded =
+                                    if p <= existing.size then existing else existing ++ Span.fill[Byte](p - existing.size)(0.toByte)
+                                val tail    = padded.drop(p + bytes.size)
+                                val spliced = padded.take(p) ++ bytes ++ tail
+                                Result.succeed((s.copy(root = upsert(s.root, path.parts, Node.file(spliced, t), t)), ()))
+                            }
+                        )
+            def sync()(using Frame): Unit < (Sync & Abort[FileException]) = ()
+            def truncate(size: Long)(using Frame): Unit < (Sync & Abort[FileException]) =
+                mode match
+                    case FileSystem.ChannelMode.Read => Abort.fail(FileAccessDeniedException(path))
+                    case _                           => InMemoryFileSystem.this.truncate(path, size)
+            def size()(using Frame): Long < (Sync & Abort[FileException]) = InMemoryFileSystem.this.size(path)
+
+    def syncDir(path: Path): Unit < (Sync & Abort[FileException]) = ()
+
     // Unsafe: synchronous CAS write used by the in-memory write handle's finish(); the safe writeBytes
     // equivalent, without suspension, so it can run from the handle's AllowUnsafe finish().
     private[kyo] def commitBytesUnsafe(path: Path, bytes: Span[Byte])(using AllowUnsafe): Unit =

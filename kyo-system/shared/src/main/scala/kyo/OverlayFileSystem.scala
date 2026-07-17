@@ -1,5 +1,6 @@
 package kyo
 
+import java.io.IOException
 import java.nio.charset.Charset
 import java.nio.charset.StandardCharsets
 import kyo.kernel.ArrowEffect
@@ -1102,6 +1103,48 @@ final private[kyo] class OverlayFileSystem[S](
         }
     end tempDir
 
+    // --- Positioned channel (reads fall through to lower; writes stage in the upper
+    // layer, replayed on commit like every other staged write) ---
+
+    def openChannel(path: Path, mode: FileSystem.ChannelMode): Path.Channel[S] < (S & Scope & Abort[FileException]) =
+        val ensureTarget: Unit < (S & Abort[FileException]) =
+            mode match
+                case FileSystem.ChannelMode.ReadWriteCreate =>
+                    exists(path).map(found => if found then () else writeBytes(path, Span.empty[Byte], createFolders = true))
+                case FileSystem.ChannelMode.Read | FileSystem.ChannelMode.ReadWrite =>
+                    exists(path).map(found => if found then () else Abort.fail(FileNotFoundException(path)))
+        // Scope.acquireRelease always folds in Sync; the cast is safe because S = Sync at the
+        // only instantiation site (OverlayFileSystem.init), the same precedent as modifyPure.
+        Scope.acquireRelease(ensureTarget)(_ => ())
+            .asInstanceOf[Unit < (S & Scope & Abort[FileException])]
+            .andThen(mkChannel(path, mode))
+    end openChannel
+
+    private def mkChannel(path: Path, mode: FileSystem.ChannelMode): Path.Channel[S] =
+        new Path.Channel[S]:
+            def readAt(pos: Long, len: Int)(using Frame): Span[Byte] < (S & Abort[FileException]) =
+                readBytes(path).map(_.drop(pos.toInt).take(len))
+            def writeAt(pos: Long, bytes: Span[Byte])(using Frame): Unit < (S & Abort[FileException]) =
+                mode match
+                    case FileSystem.ChannelMode.Read => Abort.fail(FileAccessDeniedException(path))
+                    case _ =>
+                        Abort.recover[FileNotFoundException](_ => Span.empty[Byte])(readBytes(path)).map { existing =>
+                            val p = pos.toInt
+                            // Span.fill zero-fills the gap when writeAt lands past the current length.
+                            val padded  = if p <= existing.size then existing else existing ++ Span.fill[Byte](p - existing.size)(0.toByte)
+                            val tail    = padded.drop(p + bytes.size)
+                            val spliced = padded.take(p) ++ bytes ++ tail
+                            writeBytes(path, spliced, createFolders = true)
+                        }
+            def sync()(using Frame): Unit < (S & Abort[FileException]) = ()
+            def truncate(size: Long)(using Frame): Unit < (S & Abort[FileException]) =
+                mode match
+                    case FileSystem.ChannelMode.Read => Abort.fail(FileAccessDeniedException(path))
+                    case _                           => OverlayFileSystem.this.truncate(path, size)
+            def size()(using Frame): Long < (S & Abort[FileException]) = OverlayFileSystem.this.size(path)
+
+    def syncDir(path: Path): Unit < (S & Abort[FileException]) = ()
+
     // --- Commit / rollback ---
 
     def rollback(using Frame): Unit < S =
@@ -1616,4 +1659,24 @@ final private[kyo] class ForwardingLowerFileSystem(using Frame) extends FileSyst
         ArrowEffect.suspend(Tag[PathWrite], Path.Op.WriteChunk(handle, chunk))
     def writeString(handle: Path.WriteHandle, value: String, charset: Charset): Unit < (PathWrite & Abort[FileException]) =
         ArrowEffect.suspend(Tag[PathWrite], Path.Op.WriteString(handle, value, charset))
+    // openChannel/syncDir have no Path.Op case to forward through: this ephemeral
+    // forwarding service backs Path.virtual/sandbox/transaction only, and OverlayFileSystem's
+    // own openChannel (above) never calls lower.openChannel, routing every channel read and
+    // write through the already-Op-forwardable readBytes/writeBytes/truncate/size instead.
+    // Both members are therefore unreachable in practice; each fails loud rather than
+    // silently misbehaving if some future refactor reaches them.
+    def openChannel(path: Path, mode: FileSystem.ChannelMode): Path.Channel[PathWrite] < (PathWrite & Scope & Abort[FileException]) =
+        Abort.fail(FileIOException(
+            path,
+            new IOException(
+                "openChannel is unavailable through Path.virtual/sandbox/transaction's ephemeral forwarding service; hold a FileSystem[S] value directly"
+            )
+        ))
+    def syncDir(path: Path): Unit < (PathWrite & Abort[FileException]) =
+        Abort.fail(FileIOException(
+            path,
+            new IOException(
+                "syncDir is unavailable through Path.virtual/sandbox/transaction's ephemeral forwarding service; hold a FileSystem[S] value directly"
+            )
+        ))
 end ForwardingLowerFileSystem

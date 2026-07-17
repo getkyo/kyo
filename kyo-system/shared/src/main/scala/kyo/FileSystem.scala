@@ -82,6 +82,11 @@ trait FileSystem[S]:
 
     // scoped temp: vends a service-correct removal handle so cleanup runs through the creating service
     def tempDir(prefix: String): Path.TempDirHandle < (S & Abort[FileException])
+
+    // channel tier: service-level members only, reached by a caller holding this
+    // value directly; never a Path.Op ArrowEffect case, never suspended through Path.run.
+    def openChannel(path: Path, mode: FileSystem.ChannelMode): Path.Channel[S] < (S & Scope & Abort[FileException])
+    def syncDir(path: Path): Unit < (S & Abort[FileException])
 end FileSystem
 
 object FileSystem:
@@ -96,6 +101,18 @@ object FileSystem:
         case OnSuccess
         case Manual
     end CommitStrategy
+
+    /** Capability gate for [[FileSystem.openChannel]], chosen at open time. `Read`
+      * vends a channel whose `writeAt`/`truncate` calls fail with `Abort[FileException]` at
+      * the call site. `ReadWrite` and `ReadWriteCreate` vend a fully read/write channel,
+      * differing only in whether `openChannel` itself fails or creates the target file when
+      * it is absent.
+      */
+    enum ChannelMode derives CanEqual:
+        case Read
+        case ReadWrite
+        case ReadWriteCreate
+    end ChannelMode
 
     /** Default host backend: delegates every op to [[Path.Unsafe]], translating the concrete
       * `Result[File*Exception, A]` into `Abort[FileException]`, so it preserves current

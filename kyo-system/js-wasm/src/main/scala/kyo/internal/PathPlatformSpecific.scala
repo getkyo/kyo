@@ -38,6 +38,7 @@ private[kyo] object NodeFs extends js.Object:
     def closeSync(fd: Int): Unit                                                                = js.native
     def fsyncSync(fd: Int): Unit                                                                = js.native
     def fstatSync(fd: Int): NodeStats                                                           = js.native
+    def ftruncateSync(fd: Int, len: Double): Unit                                               = js.native
     def symlinkSync(target: String, path: String): Unit                                         = js.native
     def mkdtempSync(prefix: String): String                                                     = js.native
     def writeFileSync(path: String, data: String): Unit                                         = js.native
@@ -432,6 +433,24 @@ final private[kyo] class NodePathUnsafe(raw: String) extends Path.Unsafe:
             new NodeWriteHandle(fd, safe)
         }
 
+    // --- Positioned channel ---
+
+    // "r+"/"r" honor an explicit position argument on readSync/writeSync; "a"/"a+" ignore it and
+    // always append, so ReadWriteCreate ensures the file exists first (empty write if absent) and
+    // then always opens with "r+", never "a+".
+    def openChannel(mode: FileSystem.ChannelMode)(using AllowUnsafe, Frame): Result[FileException, Path.RawChannel] =
+        catchFs {
+            mode match
+                case FileSystem.ChannelMode.Read =>
+                    new NodeRawChannel(NodeFs.openSync(pathStr, "r"), safe)
+                case FileSystem.ChannelMode.ReadWrite =>
+                    new NodeRawChannel(NodeFs.openSync(pathStr, "r+"), safe)
+                case FileSystem.ChannelMode.ReadWriteCreate =>
+                    ensureParent()
+                    if !NodeFs.existsSync(pathStr) then NodeFs.writeFileSync(pathStr, new Uint8Array(0))
+                    new NodeRawChannel(NodeFs.openSync(pathStr, "r+"), safe)
+        }
+
     // --- Private helpers ---
 
     /** Splits content by newlines, dropping a single trailing empty element if the content ends with '\n'. This matches the behaviour of
@@ -598,6 +617,68 @@ final private[kyo] class NodeWriteHandle(fd: Int, path: Path) extends Path.Write
     end close
 
 end NodeWriteHandle
+
+// --- NodeRawChannel ---
+
+/** Concrete positioned raw channel backed by a Node.js file descriptor, using `readSync`/
+  * `writeSync`'s explicit `position` argument so no call moves the fd's own read/write cursor.
+  */
+final private[kyo] class NodeRawChannel(fd: Int, path: Path) extends Path.RawChannel:
+
+    def readAt(pos: Long, len: Int)(using AllowUnsafe, Frame): Result[FileException, Array[Byte]] =
+        try
+            val uint8 = new Uint8Array(len)
+            var total = 0
+            var eof   = false
+            while total < len && !eof do
+                val n = NodeFs.readSync(fd, uint8, total, len - total, (pos + total).toDouble)
+                if n == 0 then eof = true else total += n
+            val out = new Array[Byte](total)
+            var i   = 0
+            while i < total do
+                out(i) = uint8(i).toByte
+                i += 1
+            Result.succeed(out)
+        catch
+            case e: js.JavaScriptException => Result.fail(NodeError.translateFs(path, e))
+            case e: Throwable              => Result.panic(e)
+
+    def writeAt(pos: Long, bytes: Array[Byte])(using AllowUnsafe, Frame): Result[FileException, Unit] =
+        try
+            val uint8   = bytesToUint8Array(bytes)
+            var written = 0
+            while written < bytes.length do
+                written += NodeFs.writeSync(fd, uint8, written, bytes.length - written, (pos + written).toDouble)
+            Result.unit
+        catch
+            case e: js.JavaScriptException => Result.fail(NodeError.translateFs(path, e))
+            case e: Throwable              => Result.panic(e)
+
+    def sync()(using AllowUnsafe, Frame): Result[FileException, Unit] =
+        try
+            NodeFs.fsyncSync(fd)
+            Result.unit
+        catch
+            case e: js.JavaScriptException => Result.fail(NodeError.translateFs(path, e))
+            case e: Throwable              => Result.panic(e)
+
+    def truncate(size: Long)(using AllowUnsafe, Frame): Result[FileException, Unit] =
+        try
+            NodeFs.ftruncateSync(fd, size.toDouble)
+            Result.unit
+        catch
+            case e: js.JavaScriptException => Result.fail(NodeError.translateFs(path, e))
+            case e: Throwable              => Result.panic(e)
+
+    def size()(using AllowUnsafe, Frame): Result[FileException, Long] =
+        try Result.succeed(NodeFs.fstatSync(fd).size.toLong)
+        catch
+            case e: js.JavaScriptException => Result.fail(NodeError.translateFs(path, e))
+            case e: Throwable              => Result.panic(e)
+
+    def close()(using AllowUnsafe): Unit = NodeFs.closeSync(fd)
+
+end NodeRawChannel
 
 // --- Byte / Uint8Array conversion helpers ---
 

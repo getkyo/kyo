@@ -291,6 +291,19 @@ final private[kyo] class NioPathUnsafe(val jpath: java.nio.file.Path) extends Pa
             new NioWriteHandle(FileChannel.open(jpath, opts*), safe)
         }
 
+    // --- Positioned channel ---
+
+    def openChannel(mode: FileSystem.ChannelMode)(using AllowUnsafe, Frame): Result[FileException, Path.RawChannel] =
+        catchFs {
+            val opts: Array[StandardOpenOption] = mode match
+                case FileSystem.ChannelMode.Read      => Array(StandardOpenOption.READ)
+                case FileSystem.ChannelMode.ReadWrite => Array(StandardOpenOption.READ, StandardOpenOption.WRITE)
+                case FileSystem.ChannelMode.ReadWriteCreate =>
+                    ensureParent(jpath)
+                    Array(StandardOpenOption.READ, StandardOpenOption.WRITE, StandardOpenOption.CREATE)
+            new NioRawChannel(FileChannel.open(jpath, opts*), safe)
+        }
+
     // --- Helpers ---
 
     private def ensureParent(p: java.nio.file.Path): Unit =
@@ -418,6 +431,64 @@ final private[kyo] class NioWriteHandle(channel: FileChannel, path: Path) extend
     end close
 
 end NioWriteHandle
+
+/** Concrete positioned raw channel backed by a `java.nio.channels.FileChannel`, using the
+  * positioned `read(ByteBuffer, long)`/`write(ByteBuffer, long)` overloads so no call moves
+  * the channel's own file-position cursor.
+  */
+final private[kyo] class NioRawChannel(channel: FileChannel, path: Path) extends Path.RawChannel:
+
+    def readAt(pos: Long, len: Int)(using AllowUnsafe, Frame): Result[FileException, Array[Byte]] =
+        try
+            val buf   = java.nio.ByteBuffer.allocate(len)
+            var total = 0
+            var eof   = false
+            while total < len && !eof do
+                val n = channel.read(buf, pos + total)
+                if n < 0 then eof = true else total += n
+            val out = new Array[Byte](total)
+            buf.flip()
+            buf.get(out)
+            Result.succeed(out)
+        catch
+            case e: IOException => Result.fail(FileIOException(path, e))
+            case e: Throwable   => Result.panic(e)
+
+    def writeAt(pos: Long, bytes: Array[Byte])(using AllowUnsafe, Frame): Result[FileException, Unit] =
+        try
+            val buf     = java.nio.ByteBuffer.wrap(bytes)
+            var written = 0
+            while buf.hasRemaining do written += channel.write(buf, pos + written)
+            Result.unit
+        catch
+            case e: IOException => Result.fail(FileIOException(path, e))
+            case e: Throwable   => Result.panic(e)
+
+    def sync()(using AllowUnsafe, Frame): Result[FileException, Unit] =
+        try
+            channel.force(true)
+            Result.unit
+        catch
+            case e: IOException => Result.fail(FileIOException(path, e))
+            case e: Throwable   => Result.panic(e)
+
+    def truncate(size: Long)(using AllowUnsafe, Frame): Result[FileException, Unit] =
+        try
+            discard(channel.truncate(size))
+            Result.unit
+        catch
+            case e: IOException => Result.fail(FileIOException(path, e))
+            case e: Throwable   => Result.panic(e)
+
+    def size()(using AllowUnsafe, Frame): Result[FileException, Long] =
+        try Result.succeed(channel.size())
+        catch
+            case e: IOException => Result.fail(FileIOException(path, e))
+            case e: Throwable   => Result.panic(e)
+
+    def close()(using AllowUnsafe): Unit = channel.close()
+
+end NioRawChannel
 
 /** Concrete read handle backed by a `java.nio.channels.FileChannel`. */
 final private[kyo] class NioReadHandle(channel: FileChannel) extends Path.ReadHandle:

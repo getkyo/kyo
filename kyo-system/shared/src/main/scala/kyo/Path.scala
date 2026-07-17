@@ -457,6 +457,48 @@ object Path extends PathPlatformSpecific:
             case File, Directory, Absent
     end Stamp
 
+    /** A positioned, durable, random-access handle into an open file, vended by
+      * [[FileSystem.openChannel]]. Scope-managed: there is no explicit `close()`; the
+      * `Scope` active at the [[FileSystem.openChannel]] call site closes the channel
+      * automatically when it exits.
+      *
+      * Every method is positioned (an absolute byte offset, no implicit cursor, no ordering
+      * dependency between calls) and carries `(using Frame)` per call, matching the
+      * [[FileSystem.CommitHandle]] vended-handle precedent rather than the Frame-less
+      * [[FileSystem]] trait-method convention.
+      *
+      * Distinguished from [[kyo.Channel]] (a concurrent queue, an unrelated type in a
+      * different namespace) and from the internal [[Path.ReadHandle]]/[[Path.WriteHandle]]
+      * (the sequential cursors backing the streaming `Path` surface): `Path.Channel` mirrors
+      * `kyo.internal.StoreSeam.Handle[S]` (kyo-eventlog) method for method, minus `close`
+      * (subsumed by `Scope`).
+      *
+      * @tparam S the backend's own effect, propagated from [[FileSystem.openChannel]]
+      */
+    trait Channel[S]:
+        /** Reads up to `len` bytes at absolute offset `pos`. Tolerates short reads: the
+          * returned `Span`'s length is less than `len` when `pos + len` exceeds the file's
+          * current size.
+          */
+        def readAt(pos: Long, len: Int)(using Frame): Span[Byte] < (S & Abort[FileException])
+
+        /** Writes `bytes` at absolute offset `pos`. A gap between the channel's current length
+          * and `pos` is zero-filled.
+          */
+        def writeAt(pos: Long, bytes: Span[Byte])(using Frame): Unit < (S & Abort[FileException])
+
+        /** Durably persists every prior `writeAt` call on this channel before returning. */
+        def sync()(using Frame): Unit < (S & Abort[FileException])
+
+        /** Truncates the channel's target to `size`, discarding trailing bytes when `size` is
+          * smaller than the current length.
+          */
+        def truncate(size: Long)(using Frame): Unit < (S & Abort[FileException])
+
+        /** Returns the channel's own current view of length. */
+        def size()(using Frame): Long < (S & Abort[FileException])
+    end Channel
+
     // --- Safe extension methods ---
 
     extension (self: Path)
@@ -1092,6 +1134,13 @@ object Path extends PathPlatformSpecific:
         /** Opens a write handle for streaming byte or string output. The caller must close the handle via `Scope.acquireRelease`. */
         def openWrite(append: Boolean, createFolders: Boolean)(using AllowUnsafe, Frame): Result[FileWriteException, Path.WriteHandle]
 
+        // --- Positioned channel (abstract -- platform provides the concrete channel) ---
+
+        /** Opens a positioned, random-access raw channel per `mode`. Platform
+          * implementations provide the concrete channel.
+          */
+        def openChannel(mode: FileSystem.ChannelMode)(using AllowUnsafe, Frame): Result[FileException, Path.RawChannel]
+
         /** Lifts this `Unsafe` value back into the safe `Path` opaque type. */
         def safe: Path = this
 
@@ -1176,5 +1225,33 @@ object Path extends PathPlatformSpecific:
         /** Closes the walker, releasing all OS resources. */
         def close()(using AllowUnsafe): Unit
     end WalkHandle
+
+    // --- Raw channel -- platform-provided positioned I/O backing Path.Channel ---
+
+    /** A raw positioned-I/O channel returned by `Path.Unsafe.openChannel`. Platform
+      * implementations provide the concrete class; `FileSystem` backends wrap it as the
+      * public [[Path.Channel]].
+      */
+    abstract private[kyo] class RawChannel:
+        /** Reads up to `len` bytes at absolute offset `pos`. Returns fewer bytes than `len`
+          * on a short read.
+          */
+        def readAt(pos: Long, len: Int)(using AllowUnsafe, Frame): Result[FileException, Array[Byte]]
+
+        /** Writes `bytes` at absolute offset `pos`. */
+        def writeAt(pos: Long, bytes: Array[Byte])(using AllowUnsafe, Frame): Result[FileException, Unit]
+
+        /** Durably persists every prior `writeAt` call on this channel. */
+        def sync()(using AllowUnsafe, Frame): Result[FileException, Unit]
+
+        /** Truncates the channel's target to `size`. */
+        def truncate(size: Long)(using AllowUnsafe, Frame): Result[FileException, Unit]
+
+        /** Returns the channel's current view of length. */
+        def size()(using AllowUnsafe, Frame): Result[FileException, Long]
+
+        /** Closes the channel, releasing all OS resources. */
+        def close()(using AllowUnsafe): Unit
+    end RawChannel
 
 end Path
