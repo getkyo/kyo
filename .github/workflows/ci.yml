@@ -117,9 +117,9 @@ jobs:
   # Run the kyo-stats-machine suite beyond the standard arch matrix (build.yml), which only ever
   # runs Linux; a fully green Linux pipeline proves nothing about macOS host reads (the Windows
   # disk-binding bug survived exactly such a pipeline). These two jobs run the module suite directly
-  # on a real macOS host and in a nested cgroup-v2 container. Windows support is verified against a
-  # real windows-latest host on demand via workflow_dispatch of a branch that adds the job back;
-  # the permanent job was removed deliberately. Skipped on the mode=custom eval escape hatch.
+  # on a real macOS host and in a nested cgroup-v2 container. There is deliberately no permanent
+  # Windows job; verify Windows on demand via workflow_dispatch of a branch that adds one.
+  # Skipped on the mode=custom eval escape hatch, same as build.
   machine-stats-macos:
     needs: prep
     if: ${{ needs.prep.outputs.mode != 'custom' }}

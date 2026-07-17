@@ -4,8 +4,8 @@ import kyo.*
 
 /** JS/Wasm run the whole-disk read inline: they are single-threaded and have no OS thread to off-load a
   * synchronous FFI read to, and the parked-scheduler-worker hazard that motivates the JVM/Native dedicated
-  * thread (see the sibling implementation under `jvm-native/`) does not arise on the JS event loop. This keeps
-  * the pre-existing behavior behind the same `run`/`close` seam the shared sampler calls.
+  * thread (see the sibling implementation under `jvm-native/`) does not arise on the JS event loop. It runs
+  * the read inline behind the same `run`/`close` seam the shared sampler calls.
   */
 final private[machine] class DiskExecutor:
 

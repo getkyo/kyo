@@ -9,8 +9,8 @@ import scala.util.control.NonFatal
   *
   * A `statvfs`/`statfs`/`GetDiskFreeSpaceEx` against a dead mount blocks the thread that runs it with no
   * suspension point. Running that read on THIS dedicated thread rather than on a scheduler worker means a
-  * hung mount can never occupy a worker the sampler's fast fiber (or its teardown) needs, so the sampler no
-  * longer depends on the scheduler's blocking compensation to keep making progress. `MachineSampler`'s
+  * hung mount can never occupy a worker the sampler's fast fiber (or its teardown) needs, so the sampler
+  * does not depend on the scheduler's blocking compensation to keep making progress. `MachineSampler`'s
   * single-in-flight guard admits at most one read at a time, so this executor never queues concurrent reads,
   * and a genuinely hung mount leaks exactly this one thread for the process lifetime (or until `close`).
   *
