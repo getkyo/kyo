@@ -161,13 +161,92 @@ class GrowableByteBufferTest extends Test:
             succeed
         }
 
-        // Test 11: Write non-ASCII char (é = 233). Stores low byte; no crash.
-        "write non-ASCII char stores low byte" in {
+        // Test 11: Write non-ASCII char (é = 233). Raises IllegalArgumentException instead of storing the low byte; nothing is written.
+        "write non-ASCII char raises instead of storing the low byte" in {
             val buf = new GrowableByteBuffer()
-            // 'é' is char 233 (U+00E9); char.toByte stores the low byte (233.toByte = -23)
-            buf.writeAscii("é")
-            assert(buf.size == 1)
-            assert(buf.array(0) == 233.toByte)
+            // 'é' is char 233 (U+00E9); the guard rejects it rather than truncating to its low byte (233.toByte = -23)
+            val thrown =
+                try
+                    buf.writeAscii("é")
+                    None
+                catch case t: IllegalArgumentException => Some(t)
+            assert(thrown.isDefined, "a non-ASCII char must raise IllegalArgumentException rather than storing its low byte")
+            assert(buf.size == 0, "a rejected write must leave nothing written")
+            succeed
+        }
+
+        // Test 11b: writeAscii rejects a non-ASCII char at a non-zero index, naming its char code and index. A guard that checks only the
+        // first char would accept this string and write a corrupted octet; a message hardcoding index 0 would not report the loop's actual i.
+        "write non-ASCII char at a non-zero index names the char code and index" in {
+            val buf = new GrowableByteBuffer()
+            // "café": 'é' (U+00E9, char code 233) sits at index 3; the leading "caf" is plain ASCII.
+            val thrown =
+                try
+                    buf.writeAscii("café")
+                    None
+                catch case t: IllegalArgumentException => Some(t)
+            assert(thrown.isDefined, "a non-ASCII char at a non-zero index must raise IllegalArgumentException")
+            val message = thrown.get.getMessage
+            assert(message.contains("233"), s"message must name the offending char code, got: $message")
+            assert(message.contains("3"), s"message must name the offending index, got: $message")
+            // The accept path stays intact: an all-ASCII string still writes byte-exact.
+            val ok = new GrowableByteBuffer()
+            ok.writeAscii("GET /path HTTP/1.1")
+            assert(ok.size == 18)
+            assert(new String(ok.toByteArray, java.nio.charset.StandardCharsets.US_ASCII) == "GET /path HTTP/1.1")
+            succeed
+        }
+
+        // Test 11c: a rejected writeAscii leaves nothing written, with the offending char at a NON-ZERO index and content already in the
+        // buffer. A guard that tests each char inside the write loop writes the chars before the offender and advances the position, so it
+        // leaves "GET " plus a partial "caf" (size 7) behind; only a guard that tests the whole string up front leaves size at 4. Tests 11
+        // and 11b cannot catch that: 11's offending char is at index 0 (nothing precedes it) and 11b asserts only the message.
+        "a rejected write leaves nothing written when the offending char is at a non-zero index" in {
+            val buf = new GrowableByteBuffer()
+            buf.writeAscii("GET ")
+            assert(buf.size == 4)
+            val thrown =
+                try
+                    buf.writeAscii("café") // 'é' (U+00E9) at index 3, preceded by three writable ASCII chars
+                    None
+                catch case t: IllegalArgumentException => Some(t)
+            assert(thrown.isDefined, "a non-ASCII char at a non-zero index must raise IllegalArgumentException")
+            assert(buf.size == 4, s"a rejected write must leave nothing written, expected size 4 got ${buf.size}")
+            assert(
+                new String(buf.toByteArray, java.nio.charset.StandardCharsets.US_ASCII) == "GET ",
+                "a rejected write must leave the previously written bytes exactly as they were"
+            )
+            // The buffer stays usable: the next accepted write continues from the unchanged position.
+            buf.writeAscii("/path")
+            assert(new String(buf.toByteArray, java.nio.charset.StandardCharsets.US_ASCII) == "GET /path")
+            succeed
+        }
+
+        // Test 11d: isAscii agrees with writeAscii on every boundary. Catches (a) a predicate that tests only the first char (the "café"
+        // and "GET /path HTTP/1.1" cases would both come back true), (b) an off-by-one at the 0x7F boundary (`c < 0x7f` would reject
+        // DEL, which writeAscii accepts), and (c) a predicate that disagrees with writeAscii, which would let a caller pre-check a string
+        // as writable and still get a rejection.
+        "isAscii agrees with writeAscii on the ASCII boundary" in {
+            assert(GrowableByteBuffer.isAscii(""), "the empty string has no non-ASCII char")
+            assert(GrowableByteBuffer.isAscii("GET /path HTTP/1.1"))
+            assert(GrowableByteBuffer.isAscii(0x7f.toChar.toString), "0x7F (DEL) is the top of the ASCII range and is writable")
+            assert(!GrowableByteBuffer.isAscii(0x80.toChar.toString), "0x80 is the first char above the ASCII range")
+            assert(!GrowableByteBuffer.isAscii("é"), "a non-ASCII char at index 0 must be reported")
+            assert(!GrowableByteBuffer.isAscii("café"), "a non-ASCII char at a non-zero index must be reported")
+            // The agreement itself: every string isAscii accepts writes, and every string it rejects is rejected by writeAscii.
+            val cases = Seq("", "GET /path HTTP/1.1", 0x7f.toChar.toString, 0x80.toChar.toString, "é", "café")
+            cases.foreach { s =>
+                val buf = new GrowableByteBuffer()
+                val wrote =
+                    try
+                        buf.writeAscii(s)
+                        true
+                    catch case _: IllegalArgumentException => false
+                assert(
+                    wrote == GrowableByteBuffer.isAscii(s),
+                    s"isAscii and writeAscii disagree on ${s.map(_.toInt).mkString("[", ",", "]")}"
+                )
+            }
             succeed
         }
 
@@ -355,6 +434,34 @@ class GrowableByteBufferTest extends Test:
             // Prior data must be intact after the grow-copy.
             assert(buf.array(0) == 1.toByte && buf.array(3) == 4.toByte, "prior data must survive a legitimate growth")
             assert(buf.size == 4, "ensureCapacityFor must not change the position")
+            succeed
+        }
+
+        // Test 22: growth across three doublings (512 -> 1024 -> 2048 -> 4096) stays byte-exact. Each fill region carries a distinct byte
+        // value, so a grow-copy that drops or misaligns the tail on the second or third doubling shows up as a wrong spot-check rather than
+        // being masked by a repeated value. Existing test 17 only forces two doublings; this pins the third.
+        "growth across three doublings stays byte-exact" in {
+            val buf   = new GrowableByteBuffer()
+            val fillA = new Array[Byte](512)
+            val fillB = new Array[Byte](512)
+            val fillC = new Array[Byte](1024)
+            val fillD = new Array[Byte](2048)
+            java.util.Arrays.fill(fillA, 1.toByte)
+            java.util.Arrays.fill(fillB, 2.toByte)
+            java.util.Arrays.fill(fillC, 3.toByte)
+            java.util.Arrays.fill(fillD, 4.toByte)
+            buf.writeBytes(fillA, 0, fillA.length) // fills the initial 512 capacity exactly, no growth yet
+            buf.writeBytes(fillB, 0, fillB.length) // forces the first doubling: 512 -> 1024
+            buf.writeBytes(fillC, 0, fillC.length) // forces the second doubling: 1024 -> 2048
+            buf.writeBytes(fillD, 0, fillD.length) // forces the third doubling: 2048 -> 4096
+            val total = fillA.length + fillB.length + fillC.length + fillD.length
+            assert(buf.size == total, s"size must equal the total written, expected $total got ${buf.size}")
+            assert(buf.array.length >= total, "the array must be grown to at least cover the total written")
+            val arr = buf.array
+            assert(arr(0) == 1.toByte && arr(511) == 1.toByte, "region A must survive intact")
+            assert(arr(512) == 2.toByte && arr(1023) == 2.toByte, "region B must survive the first doubling")
+            assert(arr(1024) == 3.toByte && arr(2047) == 3.toByte, "region C must survive the second doubling")
+            assert(arr(2048) == 4.toByte && arr(4095) == 4.toByte, "region D must survive the third doubling")
             succeed
         }
     }

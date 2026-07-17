@@ -169,6 +169,51 @@ class TransportStartTlsTest extends Test:
         }
     }(rejectSkip)
 
+    "a second upgradeToTls on an upgrading connection fails typed and close() still settles the first upgrade" - eachBackendTlsExcept {
+        (transport, _, clientTls) =>
+            val cli = clientTls.copy(sniHostname = Present("localhost"))
+            // A plaintext server that consumes the signal, replies ready, then holds the connection open without ever starting TLS: the
+            // client's first upgrade parks awaiting a ServerHello that never comes, so the second call and the close() below land against
+            // a genuinely in-flight upgrade. The trailing take loop consumes (and ignores) whatever the abandoned handshake already sent,
+            // keeping the socket open so nothing but close() can settle the first upgrade.
+            transport.listen("127.0.0.1", 0, 128) { serverConn =>
+                discard(Sync.Unsafe.evalOrThrow {
+                    Fiber.initUnscoped {
+                        Abort.run[Closed] {
+                            serverConn.inbound.safe.take.flatMap { _ =>
+                                serverConn.outbound.safe.put(upgradeReady).andThen {
+                                    Loop.foreach(serverConn.inbound.safe.take.andThen(Loop.continue))
+                                }
+                            }
+                        }.unit
+                    }
+                })
+            }.safe.get.map { listener =>
+                for
+                    conn <- transport.connect("127.0.0.1", listener.port).safe.get
+                    _    <- conn.outbound.safe.put(upgradeRequest)
+                    _    <- conn.inbound.safe.take
+                    first = transport.upgradeToTls(conn, cli, 16).safe
+                    second <-
+                        Abort.run[NetException | Closed | Timeout](Async.timeout(5.seconds)(transport.upgradeToTls(conn, cli, 16).safe.get))
+                    _ = conn.close()
+                    firstOutcome <- Abort.run[NetException | Closed | Timeout](Async.timeout(10.seconds)(first.get))
+                yield
+                    listener.close()
+                    assert(
+                        second.failure.exists(_.isInstanceOf[NetAlreadyDetachedException]),
+                        s"a second upgradeToTls on an upgrading connection must fail NetAlreadyDetachedException, got $second"
+                    )
+                    // The second call must not have disarmed the first upgrade's close route: close() settles the still-parked first
+                    // upgrade with the typed close leaf and releases what it holds. A Timeout here means the first upgrade was stranded.
+                    assert(
+                        firstOutcome.failure.exists(_.isInstanceOf[NetConnectionClosedException]),
+                        s"close() must settle the first, still-parked upgrade with NetConnectionClosedException, got $firstOutcome"
+                    )
+                end for
+            }
+    }(rejectSkip)
+
     "after a STARTTLS upgrade the original plaintext connection is closed and a multi-record payload round-trips" - eachBackendTls {
         (transport, serverTls, clientTls) =>
             val cli     = clientTls.copy(sniHostname = Present("localhost"))

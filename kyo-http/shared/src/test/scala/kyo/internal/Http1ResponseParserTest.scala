@@ -415,6 +415,46 @@ class Http1ResponseParserTest extends kyo.BaseHttpTest:
             assert(resp.contentLength == 0, "Content-Length: 0 should be 0, not -1")
             assert(body.size == 0)
         }
+
+        // Test 26
+        // Response headers are stored as the raw octets they were parsed from and are re-emitted verbatim, so a
+        // value a peer smuggles past this parser reaches the wire again unchanged when a proxy echoes it. A bare
+        // LF is the vector RFC 9112 section 2.2 names: a downstream MAY read it as a line terminator.
+        "rejects a bare LF inside a header value" in {
+            val (resp, _) = parseResponse("HTTP/1.1 200 OK\r\nContent-Length: 0\r\nX-Foo: bar\nX-Evil: 1\r\n\r\n")
+            assert(resp == null, "a bare LF in a response field value must be rejected")
+        }
+
+        // Test 27
+        // Bare CR is the same vector by the other byte (CVE-2022-35256 in Node.js).
+        "rejects a bare CR inside a header value" in {
+            val (resp, _) = parseResponse("HTTP/1.1 200 OK\r\nContent-Length: 0\r\nX-Foo: bar\rX-Evil: 1\r\n\r\n")
+            assert(resp == null, "a bare CR in a response field value must be rejected")
+        }
+
+        // Test 28
+        // RFC 9110 section 5.5 names NUL alongside CR and LF in its recipient MUST.
+        "rejects a NUL inside a header value" in {
+            val (resp, _) = parseResponse("HTTP/1.1 200 OK\r\nContent-Length: 0\r\nX-Foo: ba\u0000r\r\n\r\n")
+            assert(resp == null, "a NUL in a response field value must be rejected")
+        }
+
+        // Test 29
+        // A field name is a token (RFC 9110 section 5.6.2); "X Foo" re-emitted verbatim reads as the name "X"
+        // with the value "Foo: bar" to a recipient that splits on the first colon.
+        "rejects a header name that is not a token" in {
+            val (resp, _) = parseResponse("HTTP/1.1 200 OK\r\nContent-Length: 0\r\nX Foo: bar\r\n\r\n")
+            assert(resp == null, "a response field name containing SP is not a token and must be rejected")
+        }
+
+        // Test 30
+        // The over-strictness guard: an ordinary response must still parse once the checks above are in place.
+        "accepts a header name using the full tchar set" in {
+            val name      = "!#$%&'*+-.^_`|~0Az"
+            val (resp, _) = parseResponse(s"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n$name: ok\r\n\r\n")
+            assert(resp != null, s"'$name' is a valid token and must parse")
+            assert(resp.headers.get(name) == Present("ok"))
+        }
     }
 
 end Http1ResponseParserTest

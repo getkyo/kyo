@@ -148,10 +148,11 @@ private[net] object PosixConstants:
     val S_IFIFO: Int = 0x1000
     val S_IFCHR: Int = 0x2000
 
-    // TODO hmm generous sounds like unsafe
-    /** Generous upper bound on `sizeof(struct stat)` across the supported OS/arch matrix (Linux x86_64/aarch64 are 128-144 bytes, macOS is
-      * 144 bytes). [[PosixStructs.Stat]] reads only `st_mode` at the OS-specific offset, so over-allocating the buffer is safe: `fstat` fills
-      * the leading prefix and the trailing slack is ignored.
+    /** Upper bound on `sizeof(struct stat)` for the layouts this module supports: 128-144 bytes on Linux x86_64/aarch64, 144 on macOS/BSD.
+      * `PosixStat` decodes only `st_mode`, at offset 24 (Linux x86_64), 16 (Linux aarch64), or 4 (macOS/BSD), so 256 covers the whole
+      * struct on every listed layout and the decoded field with room to spare: `fstat` fills the leading prefix and the trailing slack is
+      * ignored. The bound is derived from the published layouts; `PosixStructsAbiTest` checks it against a real `fstat` on the host running
+      * the suite.
       */
     val statSize: Int = 256
 

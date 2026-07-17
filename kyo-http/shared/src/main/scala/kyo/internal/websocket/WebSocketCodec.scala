@@ -117,7 +117,10 @@ private[kyo] object WebSocketCodec:
                             case Present(offered) =>
                                 val clientProtocols = offered.split(',').map(_.trim)
                                 val serverSet       = config.subprotocols.toSet
-                                clientProtocols.find(serverSet.contains) match
+                                // The selected value is echoed onto a header line of this handshake, so it goes through the same rule every
+                                // other kyo-http response header follows: a subprotocol is a token (RFC 6455 section 4.1 defines it as one),
+                                // and a name that is not would let a recipient read this line as two.
+                                clientProtocols.find(p => serverSet.contains(p) && HttpHeaders.isToken(p)) match
                                     case Some(selected) =>
                                         discard(response.append("Sec-WebSocket-Protocol: ").append(selected).append("\r\n"))
                                     case None => ()
@@ -130,6 +133,31 @@ private[kyo] object WebSocketCodec:
 
     /** Client: send upgrade request, validate 101 response, pass remaining stream after headers to f. */
     def requestUpgradeWith[A, S](
+        conn: TransportStream,
+        host: String,
+        path: String,
+        headers: HttpHeaders,
+        config: HttpWebSocket.Config
+    )(
+        f: Stream[Span[Byte], Async] => A < S
+    )(using Frame): A < (S & Async & Abort[HttpException]) =
+        unsendableField(path, host, headers) match
+            case Present(ex) => Abort.fail(ex)
+            case Absent      => writeUpgradeRequestWith(conn, host, path, headers, config)(f)
+
+    /** Names the first element of an upgrade handshake that cannot go on the wire, or `Absent` when all of them can.
+      *
+      * The handshake is its own header serializer: it appends the caller's headers to a request line and encodes the whole thing as UTF-8,
+      * so a CR or an LF in any of them ends a line early and injects a header the caller never set. The rules are the ones every kyo-http
+      * serializer follows: a name is a token, and no field or request-line element carries a control character. A non-ASCII header value is
+      * legal obs-text (RFC 9110 section 5.5) and is sent as UTF-8, which is what this handshake already did for every value.
+      */
+    private def unsendableField(path: String, host: String, headers: HttpHeaders)(using Frame): Maybe[HttpException] =
+        if !HttpHeaders.isControlFree(path) then Present(HttpInvalidFieldException("the request path"))
+        else if !HttpHeaders.isControlFree(host) then Present(HttpInvalidFieldException("the Host header"))
+        else headers.invalidField.map(HttpInvalidFieldException(_))
+
+    private def writeUpgradeRequestWith[A, S](
         conn: TransportStream,
         host: String,
         path: String,
@@ -187,7 +215,7 @@ private[kyo] object WebSocketCodec:
                 }
             }
         }
-    end requestUpgradeWith
+    end writeUpgradeRequestWith
 
     // ── Pure functions (unit testable) ──────────────────────────
 

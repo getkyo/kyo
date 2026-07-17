@@ -579,4 +579,202 @@ class HttpClientBackendTest extends kyo.BaseHttpTest:
         }
     }
 
+    // ---------------------------------------------------------------------------
+    // Non-ASCII request fields
+    //
+    // The request line and the header block go on the wire as ASCII (RFC 9110), and a peer can put a char above 0x7F into
+    // both: a redirect Location supplies the next request's host and path, and a peer header value re-added to a request
+    // lands in the request headers. Each leaf below asserts a TYPED failure; a serializer precondition breach would arrive
+    // as Result.Panic and fail the match, which is exactly the state these leaves exist to catch.
+    // ---------------------------------------------------------------------------
+
+    /** Runs a raw TCP peer that answers every accepted connection with `response` verbatim, and yields its bound port.
+      *
+      * A kyo server cannot produce these responses: its own serializer rejects a non-ASCII header value, so a peer writing
+      * canned bytes is the only way to drive the client with what a foreign server can legally send.
+      */
+    private def withRawPeer[A](response: String)(
+        test: Int => A < (Async & Abort[Any] & Scope)
+    )(using Frame): A < (Async & Abort[Any] & Scope) =
+        val bytes = response.getBytes(StandardCharsets.UTF_8)
+        Sync.Unsafe.defer {
+            kyo.net.NetPlatform.transport.listen("localhost", 0, 16) { conn =>
+                // The response is queued on accept rather than after reading the request: HTTP/1.1 lets a server answer as
+                // soon as it likes, and the client buffers the bytes until its parser runs. This keeps the peer free of
+                // any read/write ordering that could stall the test.
+                discard(conn.outbound.offer(Span.fromUnsafe(bytes)))
+            }
+        }.map { fiber =>
+            fiber.safe.use { listener =>
+                Scope.ensure(Sync.Unsafe.defer(listener.close())).andThen(test(listener.port))
+            }
+        }
+    end withRawPeer
+
+    private val nonAsciiRoute = HttpRoute.getRaw("start").response(_.bodyText)
+
+    // Catches a client that follows a redirect to a host it cannot encode: without the check it spends a name resolution
+    // on "münchen.de" and, on a resolver that answers for it, writes the raw non-ASCII host into the Host header. The
+    // failure must be typed and must name the host, not arrive as a Panic or as a misleading DNS error.
+    "a peer redirect to a non-ASCII host fails with a typed error" in {
+        val response = "HTTP/1.1 302 Found\r\nLocation: http://münchen.de/\r\nContent-Length: 0\r\n\r\n"
+        Scope.run {
+            withRawPeer(response) { port =>
+                HttpClient.withConfig(HttpClientConfig(timeout = Duration.Infinity)) {
+                    HttpClient.use { hc =>
+                        val request = HttpRequest.getRaw(HttpUrl(Present("http"), "localhost", port, "/start", Absent))
+                        Abort.run[HttpException](hc.sendWith(nonAsciiRoute, request)(identity)).map {
+                            case Result.Failure(ex: HttpNonAsciiException) =>
+                                assert(ex.field == "the redirect host", s"the failure must name the redirect host, got: ${ex.field}")
+                            case other =>
+                                fail(s"Expected HttpNonAsciiException for a non-ASCII redirect host, got $other")
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Catches the same defect on the path, which is the leg that needs no name resolution at all: a peer answering
+    // "Location: /café" makes the client send "GET /café HTTP/1.1" to the host it is already connected to. Without the
+    // check the serializer rejects the path mid-request and the caller sees a Panic.
+    "a peer redirect to a non-ASCII path fails with a typed error" in {
+        val response = "HTTP/1.1 302 Found\r\nLocation: /café\r\nContent-Length: 0\r\n\r\n"
+        Scope.run {
+            withRawPeer(response) { port =>
+                HttpClient.withConfig(HttpClientConfig(timeout = Duration.Infinity)) {
+                    HttpClient.use { hc =>
+                        val request = HttpRequest.getRaw(HttpUrl(Present("http"), "localhost", port, "/start", Absent))
+                        Abort.run[HttpException](hc.sendWith(nonAsciiRoute, request)(identity)).map {
+                            case Result.Failure(ex: HttpNonAsciiException) =>
+                                assert(ex.field == "the redirect path", s"the failure must name the redirect path, got: ${ex.field}")
+                            case other =>
+                                fail(s"Expected HttpNonAsciiException for a non-ASCII redirect path, got $other")
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Catches an unguarded header block: a proxy that re-adds a peer's header value onto an outgoing request converts the
+    // packed headers to chunk-backed ones, and the decoded value then reaches the writer. A CRLF there ends the header
+    // line early and "X-Admin: true" becomes a header the caller never set, which is request smuggling. The typed failure
+    // must name the header and must not carry the value, which can hold a credential.
+    "a CRLF-bearing request header value fails with a typed error naming the header" in {
+        val route = HttpRoute.getRaw("echo").response(_.bodyText)
+        val ep    = route.handler(_ => HttpResponse.ok("ok"))
+        Scope.run {
+            withServer(ep) { url =>
+                val request = HttpRequest.getRaw(HttpUrl.fromUri("/echo")).copy(
+                    headers = HttpHeaders.empty.add("X-Trace", "bar\r\nX-Admin: true")
+                )
+                Abort.run[HttpException](directSend(url, route, request)).map {
+                    case Result.Failure(ex: HttpInvalidFieldException) =>
+                        assert(ex.field == "the value of header 'X-Trace'", s"the failure must name the header, got: ${ex.field}")
+                        assert(!ex.getMessage.contains("X-Admin"), "the failure must not carry the header value")
+                    case other =>
+                        fail(s"Expected HttpInvalidFieldException for a CRLF-bearing header value, got $other")
+                }
+            }
+        }
+    }
+
+    // A bare LF is the same vector by the other byte: it is not a line terminator to this client, but RFC 9112 section 2.2
+    // lets the server treat it as one.
+    "a bare-LF request header value fails with a typed error" in {
+        val route = HttpRoute.getRaw("echo").response(_.bodyText)
+        val ep    = route.handler(_ => HttpResponse.ok("ok"))
+        Scope.run {
+            withServer(ep) { url =>
+                val request = HttpRequest.getRaw(HttpUrl.fromUri("/echo")).copy(
+                    headers = HttpHeaders.empty.add("X-Trace", "bar\nX-Admin: true")
+                )
+                Abort.run[HttpException](directSend(url, route, request)).map {
+                    case Result.Failure(ex: HttpInvalidFieldException) =>
+                        assert(ex.field == "the value of header 'X-Trace'", s"the failure must name the header, got: ${ex.field}")
+                    case other =>
+                        fail(s"Expected HttpInvalidFieldException for a bare-LF header value, got $other")
+                }
+            }
+        }
+    }
+
+    // A field name is a token (RFC 9110 section 5.6.2). "X Trace: v" reads to a recipient as the name "X" carrying the
+    // value "Trace: v", so an unchecked name is its own injection vector. The failure must not quote the name back: it is
+    // the untrusted part here, and the description is logged.
+    "a request header name that is not a token fails with a typed error" in {
+        val route = HttpRoute.getRaw("echo").response(_.bodyText)
+        val ep    = route.handler(_ => HttpResponse.ok("ok"))
+        Scope.run {
+            withServer(ep) { url =>
+                val request = HttpRequest.getRaw(HttpUrl.fromUri("/echo")).copy(
+                    headers = HttpHeaders.empty.add("X Trace", "value")
+                )
+                Abort.run[HttpException](directSend(url, route, request)).map {
+                    case Result.Failure(ex: HttpInvalidFieldException) =>
+                        assert(ex.field == "the name of the header at index 0", s"the failure must name the position, got: ${ex.field}")
+                    case other =>
+                        fail(s"Expected HttpInvalidFieldException for a non-token header name, got $other")
+                }
+            }
+        }
+    }
+
+    // The over-strictness guard, and the reason the fix is not "reject non-ASCII". A field value may carry obs-text
+    // (%x80-FF) per RFC 9110 section 5.5, so this request is legal HTTP and must be sent, not rejected. Rejecting it would
+    // turn a peer header a proxy echoes into a peer-triggered failure on traffic the RFC permits.
+    "a non-ASCII request header value is sent as UTF-8 octets" in {
+        val route = HttpRoute.getRaw("echo").response(_.bodyText)
+        val ep    = route.handler(req => HttpResponse.ok(req.headers.get("X-Trace").getOrElse("(absent)")))
+        Scope.run {
+            withServer(ep) { url =>
+                val request = HttpRequest.getRaw(HttpUrl.fromUri("/echo")).copy(
+                    headers = HttpHeaders.empty.add("X-Trace", "café")
+                )
+                directSend(url, route, request).map { resp =>
+                    assert(resp.status == HttpStatus.OK)
+                    // The server echoes back the value it parsed, so an equal round trip proves the octets on the wire
+                    // were the UTF-8 encoding and not a per-char narrowing (which would deliver "cafÃ©" or worse).
+                    assert(resp.fields.body == "café", s"the peer must receive the value intact, got: ${resp.fields.body}")
+                }
+            }
+        }
+    }
+
+    // Catches a guard that only inspects headers and lets the request line through: the path reaches the same writer.
+    "a non-ASCII request path fails with a typed error" in {
+        val route = HttpRoute.getRaw("echo").response(_.bodyText)
+        val ep    = route.handler(_ => HttpResponse.ok("ok"))
+        Scope.run {
+            withServer(ep) { url =>
+                val request = HttpRequest.getRaw(HttpUrl.fromUri("/café"))
+                Abort.run[HttpException](directSend(url, route, request)).map {
+                    case Result.Failure(ex: HttpNonAsciiException) =>
+                        assert(ex.field == "the request path", s"the failure must name the request path, got: ${ex.field}")
+                    case other =>
+                        fail(s"Expected HttpNonAsciiException for a non-ASCII request path, got $other")
+                }
+            }
+        }
+    }
+
+    // Catches an over-strict guard that rejects the ordinary traffic it sits on: a percent-encoded path and plain ASCII
+    // headers are exactly what a correct client sends for the same content, and they must still round-trip.
+    "an encoded path and ASCII headers still send" in {
+        val route = HttpRoute.getRaw("caf%C3%A9").response(_.bodyText)
+        val ep    = route.handler(_ => HttpResponse.ok("encoded"))
+        Scope.run {
+            withServer(ep) { url =>
+                val request = HttpRequest.getRaw(HttpUrl.fromUri("/caf%C3%A9")).copy(
+                    headers = HttpHeaders.empty.add("X-Trace", "plain-ascii")
+                )
+                directSend(url, route, request).map { resp =>
+                    assert(resp.status == HttpStatus.OK)
+                    assert(resp.fields.body == "encoded")
+                }
+            }
+        }
+    }
+
 end HttpClientBackendTest

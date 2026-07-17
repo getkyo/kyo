@@ -8,8 +8,8 @@ import kyo.net.internal.transport.ReadOutcome
 
 /** Reproduce-first regression for the io_uring stale `shutdown(SHUT_RD)` on a recycled fd: [[IoUringDriver.registerDeferredClose]] used to
   * issue the deferred shutdown UNCONDITIONALLY whenever an in-flight recv raced a close, with no check that `handle` still owned the fd
-  * number. A concurrently finishing transport-path closer (e.g. a failed STARTTLS upgrade's `PosixTransport.releaseFailedUpgrade`) can
-  * already have won [[PosixHandle.claimFdClose]] and closed the fd directly while this handle's recv SQE is still kernel-owned (`close(fd)`
+  * number. A concurrently finishing transport-path closer (`closeUnwiredHandle`'s connect-phase arm, or any closer that wins the claim and
+  * closes immediately) can already have won [[PosixHandle.claimFdClose]] and closed the fd directly while this handle's recv SQE is still kernel-owned (`close(fd)`
   * alone does not complete an in-flight io_uring recv: the kernel holds its own file reference). The fd NUMBER is immediately free for reuse
   * (fd-table release is independent of the underlying file's refcount), so the kernel routinely hands it straight back to a fresh, unrelated
   * connection. The stale, unguarded shutdown then landed on that VICTIM's fd, injecting a spurious EOF into a socket this handle never owned.
@@ -53,8 +53,8 @@ class IoUringDriverDeferredCloseClaimTest extends Test:
                         val readPromise = Promise.Unsafe.init[ReadOutcome, Abort[Closed]]()
                         driver.awaitRead(handle, readPromise)
                         assertEventually(Sync.defer(driver.hasInFlightRead(handle))).map { _ =>
-                            // Simulate releaseFailedUpgrade's cleanup exactly: win claimFdClose and close the fd directly (bypassing the
-                            // driver), leaving the recv SQE kernel-owned. The fd number is immediately free for reuse.
+                            // Simulate an immediate-close transport-path closer: win claimFdClose and close the fd directly (bypassing
+                            // the driver), leaving the recv SQE kernel-owned. The fd number is immediately free for reuse.
                             assert(handle.claimFdClose(), "test setup: nothing else has claimed the fd yet")
                             spy.close(accepted).safe.get.map { _ =>
                                 PosixTestSockets.loopbackPair(spy).map { case (client2, accepted2) =>

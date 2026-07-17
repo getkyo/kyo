@@ -362,6 +362,69 @@ class WebSocketCodecTest extends kyo.BaseHttpTest:
                 assert(result.isFailure)
             }
         }
+
+        // The handshake is a third header serializer, and it appends caller headers to the request with no check at all.
+        // A CRLF in a value ends the header line early, so "X-Admin: true" goes out as a header the caller never set.
+        // Nothing may be written: the check has to precede the write, not follow it.
+        "fails on a CRLF-bearing header value without writing the handshake" in {
+            val conn    = new MockConn(Array.empty[Byte])
+            val headers = HttpHeaders.empty.add("X-Trace", "bar\r\nX-Admin: true")
+            Abort.run[HttpException] {
+                WebSocketCodec.requestUpgradeWith(conn, "localhost", "/ws", headers, HttpWebSocket.Config()) { _ => () }
+            }.map {
+                case Result.Failure(ex: HttpInvalidFieldException) =>
+                    assert(ex.field == "the value of header 'X-Trace'", s"the failure must name the header, got: ${ex.field}")
+                    assert(conn.written.isEmpty, s"nothing may reach the wire, got: ${conn.writtenString}")
+                case other =>
+                    fail(s"Expected HttpInvalidFieldException for a CRLF-bearing header value, got $other")
+            }
+        }
+
+        // A field name is a token (RFC 9110 section 5.6.2), and the handshake writes names as given.
+        "fails on a header name that is not a token" in {
+            val conn    = new MockConn(Array.empty[Byte])
+            val headers = HttpHeaders.empty.add("X Trace", "value")
+            Abort.run[HttpException] {
+                WebSocketCodec.requestUpgradeWith(conn, "localhost", "/ws", headers, HttpWebSocket.Config()) { _ => () }
+            }.map {
+                case Result.Failure(ex: HttpInvalidFieldException) =>
+                    assert(ex.field == "the name of the header at index 0", s"the failure must name the position, got: ${ex.field}")
+                    assert(conn.written.isEmpty, s"nothing may reach the wire, got: ${conn.writtenString}")
+                case other =>
+                    fail(s"Expected HttpInvalidFieldException for a non-token header name, got $other")
+            }
+        }
+
+        // A CRLF in the path splits the request line itself, which is the same vector one layer up.
+        "fails on a CRLF-bearing path without writing the handshake" in {
+            val conn = new MockConn(Array.empty[Byte])
+            Abort.run[HttpException] {
+                WebSocketCodec.requestUpgradeWith(conn, "localhost", "/ws\r\nX-Admin: true", HttpHeaders.empty, HttpWebSocket.Config()) {
+                    _ => ()
+                }
+            }.map {
+                case Result.Failure(ex: HttpInvalidFieldException) =>
+                    assert(ex.field == "the request path", s"the failure must name the path, got: ${ex.field}")
+                    assert(conn.written.isEmpty, s"nothing may reach the wire, got: ${conn.writtenString}")
+                case other =>
+                    fail(s"Expected HttpInvalidFieldException for a CRLF-bearing path, got $other")
+            }
+        }
+
+        // The over-strictness guard: the handshake already encodes the whole request as UTF-8, and obs-text values are
+        // legal (RFC 9110 section 5.5), so a non-ASCII value must still go out rather than fail the upgrade.
+        "writes a non-ASCII header value as UTF-8 octets" in {
+            val conn    = new MockConn(Array.empty[Byte])
+            val headers = HttpHeaders.empty.add("X-Trace", "café")
+            Abort.run[HttpException] {
+                WebSocketCodec.requestUpgradeWith(conn, "localhost", "/ws", headers, HttpWebSocket.Config()) { _ => () }
+            }.map { _ =>
+                // The read side fails (the mock serves no response); the write side is what this asserts.
+                assert(conn.writtenString.contains("X-Trace: café\r\n"), s"Got: ${conn.writtenString}")
+                val expected = "X-Trace: caf".getBytes(StandardCharsets.US_ASCII).toSeq ++ Seq[Byte](0xc3.toByte, 0xa9.toByte)
+                assert(conn.written.toSeq.containsSlice(expected), "the value must reach the wire as UTF-8 octets")
+            }
+        }
     }
 
     // ── Ping/Pong handling ────────────────────────────────────

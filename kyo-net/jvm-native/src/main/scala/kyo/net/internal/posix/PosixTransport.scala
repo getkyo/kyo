@@ -623,6 +623,21 @@ final private[net] class PosixTransport private[posix] (
                         promise.completeDiscard(Result.fail(NetConnectionClosedException("handshake")))
                     }
                 )
+                // `promise` is this handshake's fd-and-engine owner, mirroring the STARTTLS upgrade's `out.onComplete` hook: driveHandshake's
+                // three outcomes below discharge the obligation themselves (they win `handshakeDisarm` and unregister), so this hook bites
+                // for exactly the settlement they do NOT cover: the caller's fiber interrupting the connect it was awaiting (a timeout, a
+                // losing race arm, an enclosing abort). That interrupt leaves the handshake parked on a read a silently stalling peer never
+                // completes, holding the fd and engine with no deadline armed (none exists on the connect path) and no sweep coming on the
+                // process-shared transport: a permanent leak. Discharging the registered obligation runs the identical release a transport
+                // close() would.
+                //
+                // Installed AFTER registerHandshake so the obligation exists to discharge, and BEFORE driveHandshake so a promise already
+                // settled by this point fires the hook immediately: `reaped` is then set and driveHandshake's steps skip rather than
+                // touching a freed engine.
+                promise.onComplete {
+                    case Result.Success(_) => ()
+                    case _                 => dischargePendingHandshake(handshakeToken)
+                }
                 driveHandshake(
                     handle,
                     engine,
@@ -1419,6 +1434,12 @@ final private[net] class PosixTransport private[posix] (
     )(using AllowUnsafe, Frame): Fiber.Unsafe[Connection, Abort[NetException]] =
         conn match
             case posixConn: InternalConnection[PosixHandle] @unchecked if posixConn.handle.isInstanceOf[PosixHandle] =>
+                // One upgrade per connection: win the one-shot claim BEFORE arming any shared upgrade state (the abandon thunk below, the
+                // handle's upgrade-window flags). A second upgradeToTls call on the same connection would otherwise overwrite the in-flight
+                // upgrade's `upgradeAbandon` with a thunk over its own about-to-fail promise, permanently disarming close()'s only route to
+                // the first upgrade's fd, and re-arm the handle flags on a window it does not own.
+                if !posixConn.claimUpgrade() then
+                    return Fiber.Unsafe.fromResult(Result.fail(NetAlreadyDetachedException()))
                 val out    = new IOPromise[NetException, Connection]
                 val handle = posixConn.handle
                 // `out` owns the detached fd for the whole upgrade (see the `out.onComplete` owner below), so route a close() of the plaintext
@@ -1441,26 +1462,30 @@ final private[net] class PosixTransport private[posix] (
                     true // durable across the whole window (upgradeActive clears mid-handshake); io_uring read-routing reads it
                 posixConn.detachForUpgrade() match
                     case Absent =>
-                        handle.upgradeActive = false // already detached: no upgrade runs, undo the pre-detach arm
+                        // The claim above was won, so no other upgrade can be in flight: losing the detach CAS here means the connection
+                        // reached a terminal state first (a close raced or preceded this call). Undo this call's own pre-detach arm; the
+                        // close path owns the fd.
+                        handle.upgradeActive = false
                         handle.upgrading = false
                         out.completeDiscard(Result.fail(NetAlreadyDetachedException()))
                     case Present(staged) =>
                         // Committed to the upgrade: mark it durably (see PosixHandle.isUpgraded) before any handshakeOwned recv can be armed, so
                         // the io_uring reap can recognize one that outlives onFinished's flag-clear even after upgradeActive/upgrading go false.
                         handle.isUpgraded = true
-                        // buildEngine fails closed (throws Closed) when a verifying STARTTLS client has no reference identity (no sniHostname),
-                        // so a build failure must release the detached-but-open fd and fail the upgrade promise rather than escaping. No engine
-                        // exists yet on this path, so only the fd is released (releaseFailedUpgrade also frees the engine, which is absent here).
-                        // The real close(fd) is deferred to freeResources (via fdCloseSink) instead of running here directly, so a carrier still
-                        // mid-syscall on this fd under a live guard hold is never exposed to a fd number the kernel has already recycled.
+                        // buildEngine fails closed (throws a NetTlsException) when a verifying STARTTLS client has no reference identity
+                        // (no sniHostname), so a build failure must release the detached-but-open fd and fail the upgrade promise rather
+                        // than escaping. No engine exists yet on this path, so only the fd is released (releaseFailedUpgrade also frees
+                        // the engine, which is absent here). The release routes through closeUnwiredHandle, never a bare PosixHandle.close:
+                        // driver.closeHandle runs first, so on io_uring the read-buffer free is deferred until every kernel-owned SQE for
+                        // this handle reaps. The stale plaintext recv the upgrade window leaves in flight is kernel-owned by construction
+                        // here, with the buffer's address already captured; an inline free would return that off-heap memory to the
+                        // process-wide allocator while the kernel can still complete the recv into it. The real close(fd) is deferred to
+                        // freeResources via the fdCloseSink credit closeUnwiredHandle installs.
                         val engine =
                             try buildEngine(tls, upgradeHost(tls, isServer), isServer)
                             catch
                                 case e: NetTlsException =>
-                                    if handle.claimFdClose() then
-                                        discard(sockets.shutdown(handle.writeFd, PosixConstants.SHUT_RDWR))
-                                        handle.fdCloseSink = Present(() => closeRawFd(handle.writeFd))
-                                    PosixHandle.close(handle)
+                                    closeUnwiredHandle(handle, handle.driver, connectPhase = false)
                                     out.completeDiscard(Result.fail(e))
                                     // Fiber.Unsafe[A, S] is an opaque alias over IOPromiseBase[Any, A < (Async & S)] (kyo.Fiber.scala),
                                     // structurally different from this plainly-constructed, invariant IOPromise[NetException, Connection],
@@ -1620,7 +1645,13 @@ final private[net] class PosixTransport private[posix] (
                                     // new ReadPump's first recv arm QUEUES behind a still-in-flight orphan (PosixHandle.queuedRecv) rather than racing
                                     // it for the same staging buffer, and fires the moment that orphan's CQE reaps -- non-blocking, no fiber parked.
                                     if upgraded.start() then
-                                        out.completeDiscard(Result.succeed(upgraded: Connection))
+                                        // Checked complete, mirroring completeConnect: a caller interrupt or the plaintext connection's
+                                        // close() can settle `out` after onFinished won `handshakeDisarm` above (the discharge hook then
+                                        // loses the gate and releases nothing) and before this success delivery. Discarding the lost
+                                        // completion would leave this fully started connection live but unreferenced on the never-swept
+                                        // process-shared transport while the caller believes the fd was released; close the orphan.
+                                        if !out.complete(Result.succeed(upgraded: Connection)) then
+                                            upgraded.close()
                                     else
                                         // The upgraded connection raced to a terminal/Upgrading state before start (a close won); it must not be
                                         // handed out as open.
@@ -1660,23 +1691,27 @@ final private[net] class PosixTransport private[posix] (
       * attached to `handle.tls` (onFinished never ran). So on the failure / panic path BOTH the fd and the engine leak unless released here.
       *
       * The new engine is known only to this upgrade (it is never attached to `handle.tls` on the failure path), so this is the sole place it can
-      * be freed. It is routed through `handle.driver.submitEngineOp` rather than run inline: this runs on a promise-completion carrier (the
-      * `driver.cancel` waiter's `onComplete`), which can race an in-flight feed thunk for this SAME engine still queued on the driver's engine
-      * FIFO (the handshake's own next step, submitted before this failure/panic was observed); the FIFO serializes the free behind it instead of
+      * be freed. It is routed through `handle.driver.submitEngineOp` rather than run inline: this can run on a promise-completion carrier (an
+      * abandoned upgrade's discharge), which can race an in-flight feed thunk for this SAME engine still queued on the driver's engine FIFO
+      * (the handshake's own next step, submitted before this failure/panic was observed); the FIFO serializes the free behind it instead of
       * the two carriers touching the native `ssl` at once. A concurrent `closeHandle` cannot free it (it finds `handle.tls` Absent), so there is
-      * no double-free either way. The fd, by contrast, CAN also be closed by a racing `closeHandle`, so the close goes through
-      * `handle.claimFdClose()`: whoever wins the one-shot claim shuts it down and installs the deferred real close (`fdCloseSink`), the other
-      * skips it, so the fd is closed exactly once. `PosixHandle.close` then releases the reused read buffer (idempotent via the handle guard).
+      * no double-free either way.
+      *
+      * The fd and the handle's buffers release through [[closeUnwiredHandle]], exactly like a failed connect-side handshake and never via a
+      * bare `PosixHandle.close`: `driver.closeHandle` runs FIRST, so on io_uring the read-buffer free is deferred until every kernel-owned SQE
+      * for this handle reaps. A failed upgrade routinely leaves such a SQE in flight (the stale plaintext pump recv the upgrade window cannot
+      * cancel, or the handshake's own producer recv), and its SQE has already captured the buffer's address: an inline free would return that
+      * off-heap memory (the read buffer, and the flush/send mirrors freeResources releases with it) to the process-wide allocator while the
+      * kernel can still complete the old op into it, corrupting whatever connection reuses the memory. The real close(fd) is deferred to
+      * freeResources via the fdCloseSink credit, installed after winning `handle.claimFdClose()` so the fd is closed exactly once across
+      * every racing closer.
       */
     private def releaseFailedUpgrade(handle: PosixHandle, engine: TlsEngine)(using AllowUnsafe, Frame): Unit =
         // Re-upgrade hygiene: a claim this failed attempt left on lastPlaintextRead (won or not) must not alias a future upgrade attempt on
         // the same handle (a re-upgrade after a failed one reuses the fd and can reach feedCoalescedHandshake/the salvage again).
         handle.lastPlaintextRead.set(Absent)
         handle.driver.submitEngineOp(() => engine.free())
-        if handle.claimFdClose() then
-            discard(sockets.shutdown(handle.writeFd, PosixConstants.SHUT_RDWR))
-            handle.fdCloseSink = Present(() => closeRawFd(handle.writeFd))
-        PosixHandle.close(handle)
+        closeUnwiredHandle(handle, handle.driver, connectPhase = false)
     end releaseFailedUpgrade
 
     /** The reference identity (and SNI host) for a STARTTLS upgrade engine. The `PosixHandle` is fd-only and no longer carries the original

@@ -33,11 +33,15 @@ class Http1StreamContextTest extends kyo.BaseHttpTest:
         (ctx, inbound, outbound)
     end makeCtx
 
+    /** Helper: read one span from outbound as raw bytes. */
+    private def pollBytes(outbound: Channel.Unsafe[Span[Byte]])(using kyo.test.AssertScope): Array[Byte] =
+        outbound.poll() match
+            case Result.Success(Present(span)) => span.toArray
+            case other                         => fail(s"Expected data in outbound, got: $other")
+
     /** Helper: read one span from outbound as a String. */
     private def pollString(outbound: Channel.Unsafe[Span[Byte]])(using kyo.test.AssertScope): String =
-        outbound.poll() match
-            case Result.Success(Present(span)) => new String(span.toArray, StandardCharsets.US_ASCII)
-            case other                         => fail(s"Expected data in outbound, got: $other")
+        new String(pollBytes(outbound), StandardCharsets.US_ASCII)
 
     "Http1StreamContext" - {
 
@@ -269,6 +273,73 @@ class Http1StreamContextTest extends kyo.BaseHttpTest:
             val result = Http1StreamContext.formatChunkSize(0)
             val str    = new String(result, StandardCharsets.US_ASCII)
             assert(str == "0\r\n", s"Got: '$str'")
+        }
+
+        // 20. A CRLF in a response header value must not become a second header line.
+        // This is the response-splitting vector: a handler echoing a peer-supplied trace id reaches this
+        // exact call. A serializer that writes the value verbatim puts "X-Admin: true" on the wire as a
+        // header the handler never set, and a recipient reads it as one.
+        "respond does not split the response when a header value carries CRLF" in {
+            val (ctx, _, outbound) = makeCtx()
+            val headers            = HttpHeaders.empty.add("X-Trace", "bar\r\nX-Admin: true")
+            discard(ctx.respond(HttpStatus.OK, headers))
+            val result = pollString(outbound)
+            assert(
+                !result.contains("X-Admin"),
+                s"the CRLF-bearing value was written verbatim and injected a header line: $result"
+            )
+            assert(
+                result.startsWith("HTTP/1.1 500 Internal Server Error\r\n"),
+                s"an unwritable field must fail the response closed, got: $result"
+            )
+            assert(result.contains("Content-Length: 0\r\n"), s"the 500 must declare an empty body, got: $result")
+        }
+
+        // 21. The substituted 500 declares Content-Length: 0, so the handler's body must not follow it:
+        // writeBody would append bytes past the declared length and finish() would append the chunked
+        // last-chunk marker, either of which desynchronizes the connection for the next request.
+        "the 500 substitution discards the handler's body so the framing stays intact" in {
+            val (ctx, _, outbound) = makeCtx()
+            val writer             = ctx.respond(HttpStatus.OK, HttpHeaders.empty.add("X-Trace", "bar\r\nX-Admin: true"))
+            discard(pollBytes(outbound)) // the substituted 500 head
+            writer.writeBody(Span.fromUnsafe("handler body".getBytes(StandardCharsets.US_ASCII)))
+            writer.writeChunk(Span.fromUnsafe("chunk".getBytes(StandardCharsets.US_ASCII)))
+            writer.finish()
+            outbound.poll() match
+                case Result.Success(Absent) => succeed("nothing followed the 500 head")
+                case Result.Success(Present(span)) =>
+                    fail(s"the discarded response wrote '${new String(span.toArray, StandardCharsets.US_ASCII)}' after the 500 head")
+                case other => fail(s"Expected an empty outbound, got: $other")
+            end match
+        }
+
+        // 22. The over-strictness guard, and the reason the fix is not "reject non-ASCII". A field value may
+        // carry obs-text (%x80-FF) per RFC 9110 section 5.5, so "café" is legal HTTP and must reach the wire.
+        // A rejection here would hand a peer a remote lever to 500 every response a handler echoes.
+        "respond writes a non-ASCII header value as UTF-8 octets" in {
+            val (ctx, _, outbound) = makeCtx()
+            discard(ctx.respond(HttpStatus.OK, HttpHeaders.empty.add("X-Trace", "café")))
+            val bytes = pollBytes(outbound)
+            val text  = new String(bytes, StandardCharsets.UTF_8)
+            assert(text.startsWith("HTTP/1.1 200 OK\r\n"), s"a legal obs-text value must not fail the response: $text")
+            assert(text.contains("X-Trace: café\r\n"), s"Got: $text")
+            // Spelled out at the octet level: 'é' is the two-byte sequence C3 A9. A writer that narrowed each
+            // char to its low byte would put the single byte E9 here and corrupt the value.
+            val expected = "X-Trace: caf".getBytes(StandardCharsets.US_ASCII).toSeq ++ Seq[Byte](0xc3.toByte, 0xa9.toByte)
+            assert(bytes.toSeq.containsSlice(expected), "the value must reach the wire as UTF-8 octets, not a narrowed byte")
+        }
+
+        // 23. A field name is a token (RFC 9110 section 5.6.2), and a space is not a tchar: "X Trace: v"
+        // reads as a name "X" with a value "Trace: v" to a recipient that splits on the first colon.
+        "respond fails closed when a header name is not a token" in {
+            val (ctx, _, outbound) = makeCtx()
+            discard(ctx.respond(HttpStatus.OK, HttpHeaders.empty.add("X Trace", "value")))
+            val result = pollString(outbound)
+            assert(!result.contains("X Trace"), s"a non-token name must not reach the wire: $result")
+            assert(
+                result.startsWith("HTTP/1.1 500 Internal Server Error\r\n"),
+                s"a non-token name must fail the response closed, got: $result"
+            )
         }
     }
 

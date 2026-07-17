@@ -17,6 +17,7 @@ import kyo.*
 import kyo.net.Connection as NetConnection
 import kyo.net.Listener as NetListener
 import kyo.net.NetAddress
+import kyo.net.NetAlreadyDetachedException
 import kyo.net.NetBindException
 import kyo.net.NetConnectException
 import kyo.net.NetConnectionClosedException
@@ -1239,53 +1240,67 @@ final private[kyo] class NioTransport private (
         val host = tls.sniHostname.getOrElse("")
         try
             val handle = nioConn.handle
-            // Central failure-close for the upgrade: detachForUpgrade gives up the plaintext connection's ownership of the channel WITHOUT closing
-            // it, and on a STARTTLS handshake failure startTlsHandshake (existingHandle present) does not close it either, so the channel would leak
-            // (e.g. a verifying client with no reference identity rejecting the upgrade). On success completeConnect wraps the channel in a new
-            // tracked Connection that owns it, so the success arm skips the close.
-            promise.onComplete {
-                case Result.Success(_) =>
-                    // The handshake's FINISHED branch already cleared the handoff flags before completeConnect; ensure they are clear.
-                    handle.upgrading = false
-                    handle.handshakeReading = false
-                case _ =>
-                    // Failure / interrupt: close the handoff window so a torn-down handle never lingers mid-upgrade, then release the fd.
-                    handle.upgrading = false
-                    handle.handshakeReading = false
-                    closeQuietly(handle.channel)
-            }
-            // `promise` owns the detached channel for the whole upgrade (the onComplete failure arm above is what releases it), so route a close()
-            // of the plaintext connection to it: settling `promise` runs the same release a handshake failure takes, and once the upgrade has
-            // succeeded the promise is complete and this is inherently a no-op, leaving the upgraded connection's channel untouched. Armed BEFORE
-            // the detach, so no close() can observe the connection Upgrading without an owner to hand itself to. Without it a close() (a scope
-            // teardown, a transport-level sweep) cannot reach a detached channel at all: Connection.closeFn never takes an Upgrading fd.
-            nioConn.upgradeAbandon = Present(() => promise.interruptDiscard(Result.Failure(NetConnectionClosedException("close"))))
-            // Mark the handle upgrading BEFORE detach so the selector carrier recognizes the window: while set, a plaintext read the pump pulls off
-            // the socket is STASHED into the handle's salvage (NioIoDriver.dispatchReadPlain / onInboundClosedDuringRead) rather than completing the
-            // pump's promise (which would drop the peer's first TLS flight) or re-arming (which would steal the handshake's read). Mirrors
-            // PosixHandle.upgradeActive being set before detach. Cleared at handshake completion / failure.
-            handle.upgrading = true
-            // Step 1: detach the handle, closing inbound/outbound channels and cancelling selector
-            // registration, but does NOT close the underlying SocketChannel.
-            // Capture any bytes the ReadPump already pulled off the socket and staged in the inbound
-            // channel but that were never consumed. During a STARTTLS upgrade these are the peer's
-            // first TLS handshake flight (ClientHello/ServerHello ciphertext): they are already OFF
-            // the socket, so the SSLEngine (which reads from the SocketChannel) will never see them.
-            // They MUST be replayed into the handshake's network-input buffer, otherwise the handshake
-            // blocks forever waiting for data that was consumed and discarded. Whether the pump raced
-            // ahead and buffered this flight is timing-dependent on fast loopback, so preRead is often
-            // empty (no-op) and sometimes non-empty (corrective).
-            val preRead: Maybe[Chunk[Span[Byte]]] = nioConn.detachForUpgrade()
-            // Step 2: re-register the same channel (still open) with the driver for TLS handshake I/O.
-            if !driver.registerChannel(handle) then
-                promise.completeDiscard(Result.fail(NetTlsHandshakeException(host, -1, "")))
+            // One upgrade per connection: win the one-shot claim BEFORE arming any shared upgrade state (the owner hook, the abandon thunk,
+            // the handle's upgrading flag). A second upgradeToTls call on the same connection would otherwise overwrite the in-flight
+            // upgrade's `upgradeAbandon` with a thunk over its own about-to-fail promise (permanently disarming close()'s only route to the
+            // first upgrade's channel) and, via the unguarded detach fallthrough, drive a second handshake over a channel the first upgrade
+            // still owns.
+            if !nioConn.claimUpgrade() then promise.completeDiscard(Result.fail(NetAlreadyDetachedException()))
             else
-                // Step 3: drive TLS handshake on the same SocketChannel.
-                // The TLS role follows the connection's TCP origin: an accepted connection (isServerOrigin) upgrades as the TLS server, a
-                // connected one as the client (e.g. a Postgres client doing an SSLRequest upgrade). The origin is authoritative: a config
-                // heuristic ("has a cert+key therefore server") would misclassify a mutual-TLS client that presents its own client certificate.
-                val isServer = nioConn.isServerOrigin
-                startTlsHandshake(handle.channel, host, -1, tls, isServer = isServer, promise, Present(handle), preRead)
+                // Central failure-close for the upgrade: detachForUpgrade gives up the plaintext connection's ownership of the channel WITHOUT
+                // closing it, and on a STARTTLS handshake failure startTlsHandshake (existingHandle present) does not close it either, so the
+                // channel would leak (e.g. a verifying client with no reference identity rejecting the upgrade). On success completeConnect wraps
+                // the channel in a new tracked Connection that owns it, so the success arm skips the close.
+                promise.onComplete {
+                    case Result.Success(_) =>
+                        // The handshake's FINISHED branch already cleared the handoff flags before completeConnect; ensure they are clear.
+                        handle.upgrading = false
+                        handle.handshakeReading = false
+                    case _ =>
+                        // Failure / interrupt: close the handoff window so a torn-down handle never lingers mid-upgrade, then release the fd.
+                        handle.upgrading = false
+                        handle.handshakeReading = false
+                        closeQuietly(handle.channel)
+                }
+                // `promise` owns the detached channel for the whole upgrade (the onComplete failure arm above is what releases it), so route a
+                // close() of the plaintext connection to it: settling `promise` runs the same release a handshake failure takes, and once the
+                // upgrade has succeeded the promise is complete and this is inherently a no-op, leaving the upgraded connection's channel
+                // untouched. Armed BEFORE the detach, so no close() can observe the connection Upgrading without an owner to hand itself to.
+                // Without it a close() (a scope teardown, a transport-level sweep) cannot reach a detached channel at all: Connection.closeFn
+                // never takes an Upgrading fd.
+                nioConn.upgradeAbandon = Present(() => promise.interruptDiscard(Result.Failure(NetConnectionClosedException("close"))))
+                // Mark the handle upgrading BEFORE detach so the selector carrier recognizes the window: while set, a plaintext read the pump
+                // pulls off the socket is STASHED into the handle's salvage (NioIoDriver.dispatchReadPlain / onInboundClosedDuringRead) rather
+                // than completing the pump's promise (which would drop the peer's first TLS flight) or re-arming (which would steal the
+                // handshake's read). Mirrors PosixHandle.upgradeActive being set before detach. Cleared at handshake completion / failure.
+                handle.upgrading = true
+                // Step 1: detach the handle, closing inbound/outbound channels and cancelling selector
+                // registration, but does NOT close the underlying SocketChannel.
+                // Capture any bytes the ReadPump already pulled off the socket and staged in the inbound
+                // channel but that were never consumed. During a STARTTLS upgrade these are the peer's
+                // first TLS handshake flight (ClientHello/ServerHello ciphertext): they are already OFF
+                // the socket, so the SSLEngine (which reads from the SocketChannel) will never see them.
+                // They MUST be replayed into the handshake's network-input buffer, otherwise the handshake
+                // blocks forever waiting for data that was consumed and discarded. Whether the pump raced
+                // ahead and buffered this flight is timing-dependent on fast loopback, so preRead is often
+                // empty (no-op) and sometimes non-empty (corrective).
+                val preRead: Maybe[Chunk[Span[Byte]]] = nioConn.detachForUpgrade()
+                if preRead.isEmpty then
+                    // The claim was won but the connection reached a terminal state before the detach (a close raced or preceded this call):
+                    // nothing was detached and the close path owns the channel, so fail typed. The failure settlement runs the owner arm
+                    // above, whose closeQuietly is idempotent against the close that won.
+                    promise.completeDiscard(Result.fail(NetAlreadyDetachedException()))
+                // Step 2: re-register the same channel (still open) with the driver for TLS handshake I/O.
+                else if !driver.registerChannel(handle) then
+                    promise.completeDiscard(Result.fail(NetTlsHandshakeException(host, -1, "")))
+                else
+                    // Step 3: drive TLS handshake on the same SocketChannel.
+                    // The TLS role follows the connection's TCP origin: an accepted connection (isServerOrigin) upgrades as the TLS server, a
+                    // connected one as the client (e.g. a Postgres client doing an SSLRequest upgrade). The origin is authoritative: a config
+                    // heuristic ("has a cert+key therefore server") would misclassify a mutual-TLS client that presents its own client certificate.
+                    val isServer = nioConn.isServerOrigin
+                    startTlsHandshake(handle.channel, host, -1, tls, isServer = isServer, promise, Present(handle), preRead)
+                end if
             end if
         catch
             case e: Exception =>

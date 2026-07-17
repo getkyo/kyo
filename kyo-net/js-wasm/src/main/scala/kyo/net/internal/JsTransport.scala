@@ -4,6 +4,7 @@ import kyo.*
 import kyo.net.Connection as NetConnection
 import kyo.net.Listener as NetListener
 import kyo.net.NetAddress
+import kyo.net.NetAlreadyDetachedException
 import kyo.net.NetBindException
 import kyo.net.NetConnectException
 import kyo.net.NetConnectionClosedException
@@ -712,6 +713,17 @@ final private[kyo] class JsTransport private (
         val handle = jsConn.handle
         val socket = handle.socket // existing net.Socket
 
+        // One upgrade per connection: win the one-shot claim BEFORE arming any shared upgrade state (the owner hook and abandon thunk
+        // below, the listener rewiring). A second upgradeToTls call on the same connection would otherwise overwrite the in-flight
+        // upgrade's `upgradeAbandon` with a thunk over its own about-to-fail promise (permanently disarming close()'s only route to the
+        // first upgrade's socket) and, via the unguarded detach fallthrough, strip the listeners and re-wrap a socket the first upgrade
+        // still owns. The loser must touch nothing, so it returns its own failed fiber without ever installing the destroy hook.
+        if !jsConn.claimUpgrade() then
+            // Same erased-boundary uniformity cast as the guards above (the value conforms by variance alone).
+            return Fiber.Unsafe.fromResult(Result.fail(NetAlreadyDetachedException()))
+                .asInstanceOf[Fiber.Unsafe[NetConnection, Abort[NetException]]]
+        end if
+
         // `promise` owns the detached socket for the whole upgrade. detachForUpgrade gives up the plaintext connection's ownership WITHOUT
         // destroying the socket (the upgrade reuses it), and the TLSSocket below only takes ownership on a successful handshake, so every
         // non-success settlement must release it here or the socket is held forever: Node keeps the fd open, the peer never sees a FIN, and the
@@ -738,6 +750,13 @@ final private[kyo] class JsTransport private (
         // Detach closes channels and pauses+cancels the socket without destroying it.
         // Any bytes the ReadPump had already staged but caller had not consumed are returned.
         val preRead = jsConn.detachForUpgrade()
+        if preRead.isEmpty then
+            // The claim was won but the connection reached a terminal state before the detach (a close raced or preceded this call):
+            // nothing was detached and the close path owns the socket. Fail typed; the owner hook above releases through its
+            // destroyed-guarded destroy, a no-op for a socket the close already destroyed.
+            promise.completeDiscard(Result.fail(NetAlreadyDetachedException()))
+            return promise.asInstanceOf[Fiber.Unsafe[NetConnection, Abort[NetException]]]
+        end if
 
         // Pre-read bytes: if the peer sent data before detachForUpgrade drained the inbound channel,
         // push them back into the socket so the TLS engine sees them as the first bytes.
@@ -854,7 +873,12 @@ final private[kyo] class JsTransport private (
                 // tls-server-end-point) can read the peer-cert SHA-256.
                 installCertHashFn(newConn, tlsSocket)
                 if newConn.start() then
-                    promise.completeDiscard(Result.succeed(newConn))
+                    // Checked complete, mirroring the NIO completeConnect: the abandon path can settle `promise` (and destroy the raw
+                    // socket) while this handshake-completion event was already queued on the Node event loop. Discarding the lost
+                    // completion would leave this freshly built connection's pumps parked forever on a socket nobody references; close
+                    // the orphan instead. The caller sees the settlement it already observed.
+                    if !promise.complete(Result.succeed(newConn)) then
+                        newConn.close()
                 else
                     // The upgraded connection raced to a terminal/Upgrading state before start (a close won); it must not be handed out as open.
                     promise.completeDiscard(Result.fail(NetConnectionClosedException("start")))

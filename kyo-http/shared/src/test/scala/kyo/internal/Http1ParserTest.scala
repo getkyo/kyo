@@ -385,6 +385,44 @@ class Http1ParserTest extends kyo.BaseHttpTest:
 
             assert(closedCalled, "onClosed should have been called when channel is closed")
         }
+
+        // A bare LF is not a line terminator here, but RFC 9112 section 2.2 lets a recipient treat it as one.
+        // Accepting it stores "bar\nX-Evil: 1" as one value, which a proxy re-emits verbatim and a downstream
+        // may read as two headers. RFC 9110 section 5.5 makes rejection a recipient MUST.
+        "rejects a bare LF inside a header value" in {
+            val req = parseRequest("GET / HTTP/1.1\r\nHost: localhost\r\nX-Foo: bar\nX-Evil: 1\r\n\r\n")
+            assert(req == null, "a bare LF in a field value must be rejected, not stored as part of the value")
+        }
+
+        // The same byte in a name reaches the same place.
+        "rejects a bare LF inside a header name" in {
+            val req = parseRequest("GET / HTTP/1.1\r\nHost: localhost\r\nX-Fo\no: bar\r\n\r\n")
+            assert(req == null, "a bare LF in a field name must be rejected")
+        }
+
+        // A field name is a token (RFC 9110 section 5.6.2) and SP is not a tchar. The colon check only looks at
+        // the byte before the colon, so "X Foo" passes it and re-emits verbatim through the packed write path.
+        "rejects a header name that is not a token" in {
+            val req = parseRequest("GET / HTTP/1.1\r\nHost: localhost\r\nX Foo: bar\r\n\r\n")
+            assert(req == null, "a field name containing SP is not a token and must be rejected")
+        }
+
+        // Catches a token check that only tests the first byte, or that allows the RFC 9110 separators.
+        "rejects a header name containing a separator" in {
+            val req = parseRequest("GET / HTTP/1.1\r\nHost: localhost\r\nX-Fo@o: bar\r\n\r\n")
+            assert(req == null, "'@' is not a tchar and must be rejected in a field name")
+        }
+
+        // The over-strictness guard for the token check: every tchar RFC 9110 section 5.6.2 lists must still
+        // parse, or the check would reject ordinary headers such as Content-Type or a vendor's X-Foo_Bar.
+        "accepts a header name using the full tchar set" in {
+            val name = "!#$%&'*+-.^_`|~0Az"
+            val req  = parseRequest(s"GET / HTTP/1.1\r\nHost: localhost\r\n$name: ok\r\n\r\n")
+            assert(req != null, s"'$name' is a valid token and must parse")
+            assert(req.headerCount == 2)
+            assert(req.headerName(1) == name)
+            assert(req.headerValue(1) == "ok")
+        }
     }
 
     "Http1StreamContext" - {

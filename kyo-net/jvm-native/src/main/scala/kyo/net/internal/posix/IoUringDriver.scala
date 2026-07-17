@@ -1078,7 +1078,8 @@ final private[net] class IoUringDriver private[posix] (
         else
             // Hold the handle's guard open for the whole deferred window, BEFORE attempting the fd claim below: `closeAfterDrain` is this
             // driver's own private bookkeeping, invisible to PosixHandle's guard, so without this hold a concurrent, unrelated
-            // PosixHandle.close caller (e.g. a racing STARTTLS-upgrade-failure releaseFailedUpgrade, win or lose the fd claim itself) would
+            // PosixHandle.close caller (any release path that reaches it while this driver still owes a deferred close, win or lose the
+            // fd claim itself) would
             // see zero active holders and run freeResources immediately -- before closeNow below ever installs the real fdCloseSink credit --
             // permanently stranding it (the credit sits unconsumed, the real close(fd) never runs, a CLOSE_WAIT leak). Acquiring before the
             // claim (rather than after) closes the gap for every interleaving of the two independent one-shot claims, not just the common
@@ -1091,12 +1092,13 @@ final private[net] class IoUringDriver private[posix] (
                 // FIN. Sockets only (readFd == writeFd); stdio (0/1) is process-owned and left untouched. Same mechanic the handshake-deadline
                 // reap uses.
                 //
-                // Gated on winning claimFdClose: a racing transport-path closer (e.g. a failed STARTTLS upgrade's releaseFailedUpgrade) can already
-                // have claimed and closed this fd directly while this handle's recv SQE was still kernel-owned. Losing the claim proves exactly
-                // that -- the fd number this handle remembers may already be closed and recycled to an unrelated connection, so shutting it down
-                // here would inject a spurious EOF into whatever the kernel handed the number back to. Winning proves the fd is still ours to
-                // shut down. markDeferredFdClose records the win so closeNow, which cannot re-win claimFdClose (already spent here), still runs
-                // the real close(fd) once this handle's in-flight count drains.
+                // Gated on winning claimFdClose: a racing transport-path closer can already have claimed this fd. A claim winner that closes
+                // immediately (closeUnwiredHandle's connect-phase arm) may already have closed and recycled the fd number, so shutting it
+                // down here would inject a spurious EOF into whatever the kernel handed the number back to; a claim winner that defers (the
+                // failed-handshake and failed-upgrade releases install an fdCloseSink credit instead) has already shut the fd down itself.
+                // Losing the claim proves another closer owns the fd's disposition either way, so the shutdown is safely skipped. Winning
+                // proves the fd is still ours to shut down. markDeferredFdClose records the win so closeNow, which cannot re-win
+                // claimFdClose (already spent here), still runs the real close(fd) once this handle's in-flight count drains.
                 val claimedHere = handle.readFd == handle.writeFd && handle.claimFdClose()
                 if claimedHere then
                     handle.markDeferredFdClose()
@@ -1672,9 +1674,13 @@ final private[net] class IoUringDriver private[posix] (
                             // so a recv/accept/connect/send parked on SQ-full re-arms now rather than stranding until some other CQE arrives.
                             reArmStalled()
                         end if
-                    case Present(Result.Failure(_)) =>
+                    case Present(Result.Failure(e)) =>
+                        // Loud, like the fatal-rc arm above: a silent exit here tears down every connection on the ring with zero
+                        // evidence, making a dead ring indistinguishable from "nothing happened" in post-hoc log analysis.
+                        Log.live.unsafe.error(s"$label reap wait failed: $e; tearing the ring down")
                         running = false
-                    case Present(Result.Panic(_)) =>
+                    case Present(Result.Panic(e)) =>
+                        Log.live.unsafe.error(s"$label reap wait panicked; tearing the ring down", e)
                         running = false
                     case Absent => ()
                 end match
@@ -1695,7 +1701,10 @@ final private[net] class IoUringDriver private[posix] (
                             reArmStalled()
                             if !closedFlag.get() then discard(Fiber.Unsafe.init { reapLoop() })
                         end if
-                    case _ => ()
+                    case other =>
+                        // Loud, mirroring the inline path's failure/panic arms: this ends the loop with no re-entry, so a silent arm here
+                        // would be an evidence-free ring death.
+                        Log.live.unsafe.error(s"$label reap wait failed: $other; tearing the ring down")
                 }
             end if
         end while

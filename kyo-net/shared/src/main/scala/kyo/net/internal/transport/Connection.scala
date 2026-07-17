@@ -36,7 +36,8 @@ final private[kyo] class Connection[Handle] private (
     private val writePump: WritePump[Handle],
     private val state: AtomicRef.Unsafe[ConnectionState],
     private val closeFn: TeardownCause => Unit,
-    private val closingPromise: Promise.Unsafe[Unit, Any]
+    private val closingPromise: Promise.Unsafe[Unit, Any],
+    private val upgradeClaimed: AtomicBoolean.Unsafe
 ) extends kyo.net.Connection
     with kyo.net.Connection.UpgradableConnection: // TODO is this the only impl of Connection? if yes, why do we have a seaprate UpgradableConnection?
 
@@ -65,11 +66,21 @@ final private[kyo] class Connection[Handle] private (
       *
       * Armed before the detach so a `close()` that observes `Upgrading` always finds it installed (the volatile write happens-before the state
       * CAS the detach wins, and only the CAS winner publishes `Upgrading`). Follows the same arm-before-detach discipline as the posix handle's
-      * `upgradeActive` window flag, and like it assumes at most one upgrade is ever in flight for a given connection.
+      * `upgradeActive` window flag; [[claimUpgrade]] is what makes the at-most-one-upgrade assumption both arms rely on actually hold.
       */
     // Set post-construction by the owning transport (a different package), so private[kyo] cross-package visibility is required;
     // @volatile because the write and the closing caller's read happen on different carriers.
     @volatile private[kyo] var upgradeAbandon: Maybe[() => Unit] = Absent
+
+    /** Win the right to run this connection's single STARTTLS upgrade. The arm-before-detach discipline ([[upgradeAbandon]], the posix
+      * handle's upgrade-window flags) mutates shared state BEFORE [[detachForUpgrade]]'s CAS decides a winner, so a second `upgradeToTls`
+      * call must be turned away before it can touch any of that state: an unconditional second arm would overwrite the in-flight upgrade's
+      * abandon thunk with one over the loser's already-settled promise, permanently disarming `close()`'s only route to the first upgrade's
+      * fd, and would re-arm handle state on a window it does not own. One-shot: the first caller wins and proceeds to the arm and the
+      * detach; every later caller gets `false` and must fail typed (`NetAlreadyDetachedException`) without writing anything.
+      */
+    private[kyo] def claimUpgrade()(using AllowUnsafe): Boolean =
+        upgradeClaimed.compareAndSet(false, true)
 
     /** Whether this connection was accepted by a listener (server origin) rather than initiated by `connect` (client origin). A STARTTLS
       * upgrade through the public `Transport.upgradeToTls` runs in the TLS role that matches the TCP origin: an accepted connection upgrades as
@@ -346,7 +357,18 @@ private[kyo] object Connection:
         val readPump  = new ReadPump(handle, driver, inbound, closeFn)
         val writePump = new WritePump(handle, driver, outbound, closeFn, AtomicRef.Unsafe.init[WriteState](WriteState.Idle))
 
-        self = new Connection(handle, driver, inbound, outbound, readPump, writePump, state, closeFn, closingPromise)
+        self = new Connection(
+            handle,
+            driver,
+            inbound,
+            outbound,
+            readPump,
+            writePump,
+            state,
+            closeFn,
+            closingPromise,
+            AtomicBoolean.Unsafe.init(false)
+        )
         self
     end init
 

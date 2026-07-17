@@ -107,19 +107,21 @@ final private[kyo] class HttpClientBackend private (
     )(using AllowUnsafe, Frame): Fiber.Unsafe[HttpResponse[Out], Abort[HttpException]] =
         val resultPromise = Promise.Unsafe.init[HttpResponse[Out], Abort[HttpException]]()
         try
-            encodeAndSendDirectWith(conn, route, request) { responsePromise =>
-                // IOPromise.onComplete gives Result[Nothing, ParsedResponse] directly - no `< S` wrapper
-                responsePromise.onComplete { parseResult =>
-                    parseResult match
-                        case Result.Success(parsed) =>
-                            readBufferedBody(conn, parsed, request.method, resultPromise, route, request, maxResponseLength)
-                        case Result.Failure(e) =>
-                            resultPromise.completeDiscard(Result.fail(HttpConnectionClosedException()))
-                        case Result.Panic(t) =>
-                            resultPromise.completeDiscard(Result.panic(t))
-                    end match
-                }
-            }
+            encodeAndSendDirectWith(conn, route, request)(
+                onInvalid = ex => resultPromise.completeDiscard(Result.fail(ex)),
+                f = responsePromise =>
+                    // IOPromise.onComplete gives Result[Nothing, ParsedResponse] directly - no `< S` wrapper
+                    responsePromise.onComplete { parseResult =>
+                        parseResult match
+                            case Result.Success(parsed) =>
+                                readBufferedBody(conn, parsed, request.method, resultPromise, route, request, maxResponseLength)
+                            case Result.Failure(e) =>
+                                resultPromise.completeDiscard(Result.fail(HttpConnectionClosedException()))
+                            case Result.Panic(t) =>
+                                resultPromise.completeDiscard(Result.panic(t))
+                        end match
+                    }
+            )
         catch
             case t: Throwable =>
                 resultPromise.completeDiscard(Result.panic(t))
@@ -135,50 +137,52 @@ final private[kyo] class HttpClientBackend private (
     )(using AllowUnsafe, Frame): Fiber.Unsafe[HttpResponse[Out], Abort[HttpException]] =
         val resultPromise = Promise.Unsafe.init[HttpResponse[Out], Abort[HttpException]]()
         try
-            encodeAndSendDirectWith(conn, route, request) { responsePromise =>
-                // IOPromise.onComplete gives Result[Nothing, ParsedResponse] directly
-                responsePromise.onComplete { parseResult =>
-                    parseResult match
-                        case Result.Success(parsed) =>
-                            try
-                                // For error responses on streaming routes, fall back to buffered reading.
-                                // Daemons return small JSON error bodies even for stream-typed endpoints
-                                // (e.g. podman's `/images/create` returns a JSON error on auth failure
-                                // rather than progress events). Streaming the response would trap that
-                                // body inside an unconsumed Stream that callers never drain, throwing
-                                // away the only diagnostic. Going through the buffered path lets
-                                // RouteUtil.decodeBufferedResponse populate HttpStatusException.body.
-                                if parsed.statusCode >= 400 then
-                                    readBufferedBody(conn, parsed, request.method, resultPromise, route, request, maxResponseLength)
-                                else
-                                    val lastBodySpan = conn.http1.lastBodySpan
-                                    val bodyStream   = buildBodyStream(conn, parsed, lastBodySpan)
-                                    RouteUtil.decodeStreamingResponse(
-                                        route,
-                                        HttpStatus(parsed.statusCode),
-                                        parsed.headers,
-                                        bodyStream,
-                                        route.method.name,
-                                        request.url
-                                    ) match
-                                        case Result.Success(response) =>
-                                            resultPromise.completeDiscard(Result.succeed(response))
-                                        case Result.Failure(e: HttpException) =>
-                                            resultPromise.completeDiscard(Result.fail(e))
-                                        case Result.Panic(t) =>
-                                            resultPromise.completeDiscard(Result.panic(t))
-                                    end match
-                                end if
-                            catch
-                                case t: Throwable =>
-                                    resultPromise.completeDiscard(Result.panic(t))
-                            end try
-                        case Result.Failure(e) =>
-                            resultPromise.completeDiscard(Result.fail(HttpConnectionClosedException()))
-                        case Result.Panic(t) =>
-                            resultPromise.completeDiscard(Result.panic(t))
-                }
-            }
+            encodeAndSendDirectWith(conn, route, request)(
+                onInvalid = ex => resultPromise.completeDiscard(Result.fail(ex)),
+                f = responsePromise =>
+                    // IOPromise.onComplete gives Result[Nothing, ParsedResponse] directly
+                    responsePromise.onComplete { parseResult =>
+                        parseResult match
+                            case Result.Success(parsed) =>
+                                try
+                                    // For error responses on streaming routes, fall back to buffered reading.
+                                    // Daemons return small JSON error bodies even for stream-typed endpoints
+                                    // (e.g. podman's `/images/create` returns a JSON error on auth failure
+                                    // rather than progress events). Streaming the response would trap that
+                                    // body inside an unconsumed Stream that callers never drain, throwing
+                                    // away the only diagnostic. Going through the buffered path lets
+                                    // RouteUtil.decodeBufferedResponse populate HttpStatusException.body.
+                                    if parsed.statusCode >= 400 then
+                                        readBufferedBody(conn, parsed, request.method, resultPromise, route, request, maxResponseLength)
+                                    else
+                                        val lastBodySpan = conn.http1.lastBodySpan
+                                        val bodyStream   = buildBodyStream(conn, parsed, lastBodySpan)
+                                        RouteUtil.decodeStreamingResponse(
+                                            route,
+                                            HttpStatus(parsed.statusCode),
+                                            parsed.headers,
+                                            bodyStream,
+                                            route.method.name,
+                                            request.url
+                                        ) match
+                                            case Result.Success(response) =>
+                                                resultPromise.completeDiscard(Result.succeed(response))
+                                            case Result.Failure(e: HttpException) =>
+                                                resultPromise.completeDiscard(Result.fail(e))
+                                            case Result.Panic(t) =>
+                                                resultPromise.completeDiscard(Result.panic(t))
+                                        end match
+                                    end if
+                                catch
+                                    case t: Throwable =>
+                                        resultPromise.completeDiscard(Result.panic(t))
+                                end try
+                            case Result.Failure(e) =>
+                                resultPromise.completeDiscard(Result.fail(HttpConnectionClosedException()))
+                            case Result.Panic(t) =>
+                                resultPromise.completeDiscard(Result.panic(t))
+                    }
+            )
         catch
             case t: Throwable =>
                 resultPromise.completeDiscard(Result.panic(t))
@@ -253,14 +257,40 @@ final private[kyo] class HttpClientBackend private (
 
     // -- Request encoding --
 
+    /** The failure for the first request-line element or header field the serializer must refuse, or `Absent` when it can write them all.
+      *
+      * Testing here, before the first byte reaches the connection buffer, is what turns a serializer precondition breach deep in an unsafe
+      * write into a typed failure the caller can match on. Two rules meet at this one point:
+      *
+      *   - A control character has no place in the path, the Host value or a header field. A CR or an LF there ends the request line or the
+      *     header line early, so the server reads one line as two and sees a request the caller never made (request smuggling, RFC 9112
+      *     section 11.2). The path is peer-reachable through a redirect `Location`, and a header value through any proxy that echoes one.
+      *   - The request line is ASCII, since kyo-http percent-encodes no path and punycodes no host. A header *value* has no such limit: it
+      *     may carry obs-text (RFC 9110 section 5.5) and goes out as its UTF-8 octets.
+      */
+    private def unsendableField(path: String, hostHeader: String, headers: HttpHeaders)(using Frame): Maybe[HttpException] =
+        if !HttpHeaders.isControlFree(path) then Present(HttpInvalidFieldException("the request path"))
+        else if !GrowableByteBuffer.isAscii(path) then Present(HttpNonAsciiException("the request path"))
+        else if !HttpHeaders.isControlFree(hostHeader) then Present(HttpInvalidFieldException("the Host header"))
+        else if !GrowableByteBuffer.isAscii(hostHeader) then Present(HttpNonAsciiException("the Host header"))
+        else headers.invalidField.map(HttpInvalidFieldException(_))
+
+    /** Names the part of a redirect target that cannot be sent, or `Absent` when the target is sendable. */
+    private def nonAsciiRedirect(url: HttpUrl): Maybe[String] =
+        if !GrowableByteBuffer.isAscii(url.host) then Present("the redirect host")
+        else if !GrowableByteBuffer.isAscii(url.path) then Present("the redirect path")
+        else Absent
+
     /** Encode a request and send it over the Http1ClientConnection. Passes the underlying IOPromise (not Fiber.Unsafe) to `f` for a direct
-      * onComplete without `< S` wrapper.
+      * onComplete without `< S` wrapper. A request carrying a field the serializer must refuse goes to `onInvalid` instead, so the caller
+      * surfaces a typed failure rather than putting a smuggled line on the wire or breaching a serializer precondition.
       */
     private inline def encodeAndSendDirectWith[In, Out, A](
         conn: HttpConnection,
         route: HttpRoute[In, Out, ?],
         request: HttpRequest[In]
     )(
+        inline onInvalid: HttpException => A,
         inline f: IOPromise[Nothing, ParsedResponse] => A
     )(using AllowUnsafe, Frame): A =
         // Determine the effective host header value for this request.
@@ -277,23 +307,56 @@ final private[kyo] class HttpClientBackend private (
                 conn.hostHeaderValue
         RouteUtil.encodeRequest(route, request)(
             onEmpty = (path, headers) =>
-                val promise =
-                    conn.http1.sendDirect(request.method, path, headers, Span.empty[Byte], hostHeader, contentLength = 0, chunked = false)
-                f(promise)
+                unsendableField(path, hostHeader, headers) match
+                    case Present(ex) => onInvalid(ex)
+                    case Absent =>
+                        val promise =
+                            conn.http1.sendDirect(
+                                request.method,
+                                path,
+                                headers,
+                                Span.empty[Byte],
+                                hostHeader,
+                                contentLength = 0,
+                                chunked = false
+                            )
+                        f(promise)
             ,
             onBuffered = (path, headers, body) =>
-                val promise =
-                    conn.http1.sendDirect(request.method, path, headers, body, hostHeader, contentLength = body.size.toInt, chunked = false)
-                f(promise)
+                unsendableField(path, hostHeader, headers) match
+                    case Present(ex) => onInvalid(ex)
+                    case Absent =>
+                        val promise =
+                            conn.http1.sendDirect(
+                                request.method,
+                                path,
+                                headers,
+                                body,
+                                hostHeader,
+                                contentLength = body.size.toInt,
+                                chunked = false
+                            )
+                        f(promise)
             ,
             onStreaming = (path, headers, bodyStream) =>
-                // For streaming request bodies, first send headers with empty body,
-                // then stream the body chunks in chunked encoding
-                val promise =
-                    conn.http1.sendDirect(request.method, path, headers, Span.empty[Byte], hostHeader, contentLength = -1, chunked = true)
-                // Launch streaming body writer as a background fiber
-                streamRequestBody(conn, bodyStream)
-                f(promise)
+                unsendableField(path, hostHeader, headers) match
+                    case Present(ex) => onInvalid(ex)
+                    case Absent      =>
+                        // For streaming request bodies, first send headers with empty body,
+                        // then stream the body chunks in chunked encoding
+                        val promise =
+                            conn.http1.sendDirect(
+                                request.method,
+                                path,
+                                headers,
+                                Span.empty[Byte],
+                                hostHeader,
+                                contentLength = -1,
+                                chunked = true
+                            )
+                        // Launch streaming body writer as a background fiber
+                        streamRequestBody(conn, bodyStream)
+                        f(promise)
         )
     end encodeAndSendDirectWith
 
@@ -961,11 +1024,19 @@ final private[kyo] class HttpClientBackend private (
                                         val resolved =
                                             if newUrl.host.nonEmpty then newUrl
                                             else newUrl.copy(scheme = req.url.scheme, host = req.url.host, port = req.url.port)
-                                        // RFC 9110 section 15.4.4: 303 See Other requires changing method to GET
-                                        val nextReq =
-                                            if res.status == HttpStatus.SeeOther then req.copy(url = resolved, method = HttpMethod.GET)
-                                            else req.copy(url = resolved)
-                                        loop(nextReq, count + 1, chain.append(location))
+                                        // The Location value is peer-controlled and its host and path both reach the ASCII request
+                                        // serializer. Rejecting an unencodable target here, before the redirect is followed, keeps the
+                                        // failure typed and spends no name resolution or connection on a target that cannot be sent.
+                                        nonAsciiRedirect(resolved) match
+                                            case Present(field) => Abort.fail(HttpNonAsciiException(field))
+                                            case Absent         =>
+                                                // RFC 9110 section 15.4.4: 303 See Other requires changing method to GET
+                                                val nextReq =
+                                                    if res.status == HttpStatus.SeeOther then
+                                                        req.copy(url = resolved, method = HttpMethod.GET)
+                                                    else req.copy(url = resolved)
+                                                loop(nextReq, count + 1, chain.append(location))
+                                        end match
                                     case Result.Failure(err) =>
                                         Abort.fail(err)
                             case Absent => f(res)

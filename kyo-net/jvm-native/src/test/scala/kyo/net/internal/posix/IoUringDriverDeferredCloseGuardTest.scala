@@ -9,8 +9,8 @@ import kyo.net.internal.transport.ReadOutcome
 /** Reproduce-first regression for a `CLOSE_WAIT` leak in the deferred fd-close guard: [[IoUringDriver.registerDeferredClose]]'s deferred branch (an
   * in-flight recv races a close) used to register the handle in its private `closeAfterDrain` map WITHOUT holding [[PosixHandle]]'s guard
   * open for that window. `closeAfterDrain` is invisible to the guard, so a concurrent, unrelated `PosixHandle.close` caller that loses the
-  * `claimFdClose` race below (e.g. a failed STARTTLS upgrade's `PosixTransport.releaseFailedUpgrade`, which calls `PosixHandle.close`
-  * UNCONDITIONALLY regardless of the claim outcome) would see zero active holders and run `freeResources` immediately -- before
+  * `claimFdClose` race below (any release path that reaches `PosixHandle.close` unconditionally, regardless of the claim outcome, while
+  * the driver still owes the deferred close) would see zero active holders and run `freeResources` immediately -- before
   * `closeNow` ever installs the real `close(fd)` credit (`fdCloseSink`). `freeResources` runs at most once per handle, so once it has run
   * with no credit installed, `closeNow`'s LATER `PosixHandle.close` call (once the recv's CQE finally reaps) is a no-op: the just-installed
   * credit sits unconsumed forever and the real `close(fd)` syscall never runs, leaving the socket in `CLOSE_WAIT` past process exit.
@@ -68,8 +68,8 @@ class IoUringDriverDeferredCloseGuardTest extends Test:
                             val racerClaimedFd = new java.util.concurrent.atomic.AtomicBoolean(true)
                             val racerDone      = Promise.Unsafe.init[Unit, Abort[Closed]]()
                             driver.submitEngineOp { () =>
-                                // Simulate releaseFailedUpgrade's exact pattern: it lost the fd claim (registerDeferredClose already won
-                                // it above) but calls PosixHandle.close UNCONDITIONALLY regardless of that outcome.
+                                // Simulate a transport-path racer that loses the fd claim (registerDeferredClose already won it above)
+                                // but calls PosixHandle.close unconditionally regardless of that outcome.
                                 racerClaimedFd.set(handle.claimFdClose())
                                 PosixHandle.close(handle)
                                 racerDone.completeDiscard(Result.succeed(()))

@@ -504,17 +504,35 @@ class IoUringDriverTest extends Test:
                     // regardless of recvInFlight. See IoUringDriverReapTransientErrnoTest for the deterministic reproduction and the fix.
                     awaitCondition(5.seconds)(acceptedH.recvInFlight).map { armed =>
                         assert(armed, "recv's submitRecv never ran (a hang, not the close-ordering hazard under test)")
-                        // closeHandle while the recv SQE is in flight: it must NOT free the read buffer yet (the kernel still owns it).
-                        drv.closeHandle(acceptedH)
-                        assert(!acceptedH.readBuffer.isClosed, "read buffer must stay open while the recv SQE is in flight")
-                        Abort.run[Closed](promise.safe.get).map { result =>
-                            assert(result.isFailure, "cancel must fail the pending read promise immediately")
-                            // Close the peer so the in-flight recv CQE arrives (res=0). Reaping it drains the handle and runs the deferred close,
-                            // freeing the read buffer. The driver runs the deferred close (decrementInFlight -> closeNow) BEFORE cqe_seen, so the
-                            // reap latch is the deterministic "CQE reaped, deferred close ran" signal.
-                            PosixTestSockets.closePeerForEof(sock, client)
-                            reaped.safe.get.map { _ =>
-                                assert(acceptedH.readBuffer.isClosed, "deferred PosixHandle.close must run once the handle's CQE is reaped")
+                        // closeHandle while the recv SQE is in flight: it must NOT free the read buffer while the kernel still owns it.
+                        // closeHandle only ENQUEUES the close onto the engine FIFO, and registerDeferredClose itself forces the pending
+                        // recv to EOF via shutdown(SHUT_RD) (the deferral never waits on the peer), so a direct assert after closeHandle
+                        // returns races the reap carrier and can observe the post-discharge state (the forced EOF reaps and the deferred
+                        // close runs in between). Probe the deferred window from inside the FIFO instead: the close op runs first, the
+                        // probe op runs immediately after it in the same drainEngineOps pass, strictly before that turn's drainReady can
+                        // reap the forced-EOF CQE, so the probe deterministically observes the registered-but-undischarged window.
+                        val probed = Promise.Unsafe.init[Boolean, Abort[Closed]]()
+                        drv.submitEngineOp { () =>
+                            drv.closeHandle(acceptedH)
+                            drv.submitEngineOp { () =>
+                                probed.completeDiscard(Result.succeed(acceptedH.readBuffer.isClosed))
+                            }
+                        }
+                        probed.safe.get.map { closedDuringWindow =>
+                            assert(!closedDuringWindow, "read buffer must stay open while the recv SQE is in flight")
+                            Abort.run[Closed](promise.safe.get).map { result =>
+                                assert(result.isFailure, "cancel must fail the pending read promise immediately")
+                                // The deferral's own shutdown(SHUT_RD) already forces the in-flight recv CQE (res=0); closing the peer is
+                                // redundant for the reap but keeps the peer fd released. Reaping drains the handle and runs the deferred
+                                // close, freeing the read buffer. The driver runs the deferred close (decrementInFlight -> closeNow)
+                                // BEFORE cqe_seen, so the reap latch is the deterministic "CQE reaped, deferred close ran" signal.
+                                PosixTestSockets.closePeerForEof(sock, client)
+                                reaped.safe.get.map { _ =>
+                                    assert(
+                                        acceptedH.readBuffer.isClosed,
+                                        "deferred PosixHandle.close must run once the handle's CQE is reaped"
+                                    )
+                                }
                             }
                         }
                     }

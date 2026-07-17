@@ -369,6 +369,59 @@ class PosixTransportShutdownReclaimTest extends Test:
         }
     }
 
+    "PosixTransport connect-side TLS handshake abandoned by its caller" - {
+        "an interrupted TLS connect discharges the handshake obligation: the engine is freed and the fd closed exactly once" in {
+            PosixTestSockets.assumePoller()
+            val spy       = RecordingSocketBindings(Ffi.load[SocketBindings])
+            val real      = PollerBackend.default()
+            val pollerFd  = real.create()
+            val backend   = RecordingPollerBackend(real)
+            val driver    = TestDrivers.forBackend(backend, pollerFd, spy)
+            val transport = TestTransports.forTesting(kyo.net.TransportConfig.default, driver, spy, backendIsEpoll = false)
+            discard(driver.start())
+            // A RAW listening socket entirely outside the transport (the connect-side idiom above): the kernel's backlog completes the
+            // TCP connect, the client's want-read handshake sends nothing and parks awaiting bytes this peer never sends, and no deadline
+            // exists on the connect path, so the promise-settlement discharge is the ONLY route that can ever release the fd and engine.
+            // An interrupted caller (a timeout, a losing race arm, an enclosing abort) settles the connect promise exactly like the
+            // upgrade path's abandoned caller does.
+            val rawServer = sock.socket(PosixConstants.AF_INET, PosixConstants.SOCK_STREAM, 0).value
+            val (sa, sl)  = SockAddr.encodeInet4(PosixConstants.AF_INET, "127.0.0.1", 0).getOrElse(fail("encode failed"))
+            Sync.ensure(Sync.defer { sa.close(); discard(sock.close(rawServer)) }) {
+                assert(sock.bind(rawServer, sa, sl).value == 0)
+                assert(sock.listen(rawServer, 4).value == 0)
+                val out = Buffer.alloc[Byte](SockAddr.inet4Size)
+                val ol  = Buffer.alloc[Int](1)
+                ol.set(0, SockAddr.inet4Size)
+                val port =
+                    try
+                        assert(sock.getsockname(rawServer, out, ol).value == 0)
+                        ((out.get(2) & 0xff) << 8) | (out.get(3) & 0xff)
+                    finally
+                        out.close()
+                        ol.close()
+                val engine = new ParkedWantReadEngine
+                transport.testEngineFactory = Present { (_, _, _) => engine }
+                for
+                    fiber <-
+                        Fiber.init(Abort.run[NetException](transport.connect("127.0.0.1", port, NetTlsConfig(trustAll = true)).safe.get))
+                    _    <- assertEventually(Sync.defer(engine.stepCount.get() >= 1))
+                    done <- fiber.interrupt
+                    _ = assert(done, "fiber.interrupt returned false: the parked connect handshake fiber was not interrupted")
+                    // The settlement discharge must release everything the abandoned handshake held: the engine freed and the fd closed,
+                    // each exactly once. A stranded handshake leaves the engine unfreed and the fd open forever (nothing else can reach
+                    // them: no Connection was ever wired, no deadline is armed, and the process-shared transport is never closed).
+                    _ <- assertEventually(Sync.defer(engine.freed.get()))
+                    _ <- assertEventually(Sync.defer(spy.closeCounts.size() >= 1))
+                yield
+                    import scala.jdk.CollectionConverters.*
+                    val counts = spy.closeCounts.asScala.toMap
+                    assert(counts.size == 1, s"exactly the abandoned connect's fd must be closed, got $counts")
+                    assert(counts.values.forall(_ == 1), s"the fd must be closed exactly once, got $counts")
+                end for
+            }
+        }
+    }
+
     "PosixTransport accept-side handshake completes the instant close() sweeps it, under an Infinity handshake deadline" - {
         "the already-freed engine is never wired into handle.tls (armHandshakeDeadline's Infinity-branch disarm must still be one-shot)" in {
             PosixTestSockets.assumePoller()
