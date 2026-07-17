@@ -5,13 +5,13 @@ import java.util.concurrent.atomic.AtomicInteger
 import kyo.*
 import kyo.ffi.Buffer
 import kyo.ffi.Ffi
+import kyo.net.Connection
 import kyo.net.NetConnectionClosedException
 import kyo.net.NetException
 import kyo.net.NetTlsConfig
-import kyo.net.NetTlsException
+import kyo.net.NetTlsProviderUnavailableException
 import kyo.net.Test
 import kyo.net.internal.tls.TlsEngine
-import kyo.net.internal.tls.TlsTestCert
 
 /** A scripted [[TlsEngine]] fake that parks the handshake on its first read: `handshakeStep` always returns `0` (want-read) and
   * `drainCiphertext` never produces bytes, so `driveHandshake` goes straight to its read path and parks against a peer that sends nothing.
@@ -132,40 +132,42 @@ class PosixTransportUpgradeReleaseTest extends Test:
                         // The ReadPump's first recv is now armed (or arming); wait for the SQE to be genuinely kernel-owned.
                         awaitCondition(5.seconds)(handle.recvInFlight).map { armed =>
                             assert(armed, "the pump's recv SQE never became kernel-owned (a hang, not the release hazard under test)")
-                            // Pin the reap carrier so nothing can reap between the upgrade's failure and the observation below: the
-                            // release path forces the pending recv to EOF via shutdown, so an unpinned observation would race that
-                            // reap and could only ever see the post-discharge state.
-                            val gate  = new java.util.concurrent.CountDownLatch(1)
-                            val pinIn = Promise.Unsafe.init[Unit, Abort[Closed]]()
-                            driver.submitEngineOp { () =>
-                                pinIn.completeDiscard(Result.succeed(()))
-                                gate.await()
-                            }
                             val reapLatch = recording.awaitReap()
-                            pinIn.safe.get.flatMap { _ =>
-                                // A verifying client with no reference identity: buildEngine fails closed (RFC 9525 6.1), landing in
-                                // upgradeRole's engine-build catch while the pump's recv is still kernel-owned.
-                                val verifyingNoSni =
-                                    NetTlsConfig(trustAll = false, caCertPath = Present(TlsTestCert.certPath), sniHostname = Absent)
-                                Abort.run[NetException](transport.upgradeToTls(plaintext, verifyingNoSni, 16).safe.get).map { outcome =>
+                            // Run the buildEngine-failure upgrade ON THE REAP CARRIER via an engine op, so its release orders on the same
+                            // FIFO as the observation without ever parking a thread. The release path (closeUnwiredHandle's synchronous
+                            // shutdown forces the still-kernel-owned pump recv to EOF, then driver.closeHandle enqueues the deferred close)
+                            // runs on this carrier, and the reap loop can only reap that forced EOF in a LATER drainReady pass, never during
+                            // this drainEngineOps pass. A probe op enqueued right after the release therefore runs strictly after it (buffer
+                            // not yet freed, recv still kernel-owned) and strictly before the reap, mirroring the mid-handshake leaf below.
+                            val upgradeFiber =
+                                new java.util.concurrent.atomic.AtomicReference[Fiber.Unsafe[Connection, Abort[NetException]]]()
+                            val probed = Promise.Unsafe.init[(Boolean, Boolean), Abort[Closed]]()
+                            // A pinned-but-unavailable TLS provider makes buildEngine throw NetTlsProviderUnavailableException in the shared
+                            // TlsProvider.selectFor, before any provider builds an engine, so the throw is deterministic on every platform. (A
+                            // verifying no-SNI client is not a reliable buildEngine throw: the BoringSSL and OpenSSL providers bind an
+                            // unmatchable identity and reject at handshake instead, and only the JDK floor throws at build time.)
+                            val unavailableProvider = NetTlsConfig(tlsProvider = Present("nonexistent-tls-provider"))
+                            driver.submitEngineOp { () =>
+                                upgradeFiber.set(transport.upgradeToTls(plaintext, unavailableProvider, 16))
+                                driver.submitEngineOp { () =>
+                                    probed.completeDiscard(Result.succeed((handle.readBuffer.isClosed, reapLatch.done())))
+                                }
+                            }
+                            probed.safe.get.flatMap { case (closedDuringWindow, reapedDuringWindow) =>
+                                assert(
+                                    !reapedDuringWindow,
+                                    "the pump's recv CQE must not have reaped while the release's deferred close was still in flight"
+                                )
+                                assert(
+                                    !closedDuringWindow,
+                                    "read buffer must stay open while the recv SQE is in flight (a bare close here frees kernel-owned memory)"
+                                )
+                                Abort.run[NetException](upgradeFiber.get().safe.get).map { outcome =>
                                     outcome match
-                                        case Result.Failure(_: NetTlsException) => ()
+                                        case Result.Failure(_: NetTlsProviderUnavailableException) => ()
                                         case other =>
-                                            fail(s"a verifying no-SNI upgrade must fail closed with a NetTlsException, got $other")
+                                            fail(s"an unavailable-provider upgrade must fail closed with a NetTlsException, got $other")
                                     end match
-                                    // Snapshot with the reap carrier pinned, then release BEFORE asserting so a failed assertion never
-                                    // leaves the carrier parked.
-                                    val closedDuringWindow = handle.readBuffer.isClosed
-                                    val reapedDuringWindow = reapLatch.done()
-                                    gate.countDown()
-                                    assert(
-                                        !reapedDuringWindow,
-                                        "the pump's recv CQE must not have reaped while the reap carrier was pinned"
-                                    )
-                                    assert(
-                                        !closedDuringWindow,
-                                        "read buffer must stay open while the recv SQE is in flight (a bare close here frees kernel-owned memory)"
-                                    )
                                     // The release's own shutdown already forced the recv to EOF; once its CQE reaps, the deferred close
                                     // must run and free the buffer, exactly once, after the reap.
                                     reapLatch.safe.get.map { _ =>
@@ -277,30 +279,39 @@ class PosixTransportUpgradeReleaseTest extends Test:
                                     one.close()
                                     two.close()
                                     assert(drained, "the pump must park on the full channel with no recv in flight")
-                                    // Deterministic window pin: the release's shutdown syscall sits between its fd claim and whatever it
-                                    // does next, and IoUringDriver.closeHandle replaces handle.engineFreeSink synchronously on the
-                                    // caller's carrier before it enqueues anything. So at shutdown time, a replaced engineFreeSink
-                                    // proves the driver close was already requested and the credit's consumer is enabled and racing;
-                                    // the hook then holds the releasing carrier until that consumer's single freeResources run has
-                                    // provably executed (the read buffer it closes is observable), landing any later credit install
-                                    // strictly after the only read of it. With the credit installed before the driver close, the sink
-                                    // is untouched at shutdown time and the hook is a pass-through.
-                                    val sinkBefore = handle.engineFreeSink
+                                    // Order observation (no carrier is ever held): the release's shutdown(SHUT_RDWR) sits immediately before
+                                    // it installs the fdCloseSink credit, and IoUringDriver.closeHandle replaces handle.engineFreeSink
+                                    // synchronously when the driver close is requested. A client shutdown seen with engineFreeSink already
+                                    // replaced therefore proves the driver close (which enables the credit's single freeResources consumer)
+                                    // was requested before the credit was installed, so that consumer can read the sink Absent and the credit
+                                    // strands forever, leaking the fd. With the credit installed before the driver close, engineFreeSink is
+                                    // still untouched at shutdown time and the flag stays clear. Pure observation, so the reproducer never parks
+                                    // a carrier: the flag is deterministically set on the pre-fix ordering regardless of how the reap carrier races.
+                                    val sinkBefore          = handle.engineFreeSink
+                                    val creditInstalledLate = new JAtomicBoolean(false)
                                     spy.onShutdown = fd =>
-                                        if fd == client && (handle.engineFreeSink ne sinkBefore) then
-                                            val deadline = java.lang.System.nanoTime() + 10.seconds.toNanos
-                                            while !handle.readBuffer.isClosed && java.lang.System.nanoTime() < deadline do ()
-                                    // A verifying client with no reference identity: buildEngine fails closed, landing in upgradeRole's
-                                    // engine-build catch on THIS carrier, with zero in-flight SQEs for the handle.
-                                    val verifyingNoSni =
-                                        NetTlsConfig(trustAll = false, caCertPath = Present(TlsTestCert.certPath), sniHostname = Absent)
-                                    Abort.run[NetException](transport.upgradeToTls(plaintext, verifyingNoSni, 16).safe.get).map {
+                                        if fd == client && (handle.engineFreeSink ne sinkBefore) then creditInstalledLate.set(true)
+                                    // A pinned-but-unavailable TLS provider makes buildEngine throw NetTlsProviderUnavailableException in
+                                    // the shared TlsProvider.selectFor, landing in upgradeRole's engine-build catch on THIS carrier, with zero
+                                    // in-flight SQEs for the handle. (A verifying no-SNI client is not a reliable buildEngine throw: the
+                                    // BoringSSL and OpenSSL providers bind an unmatchable identity and reject at handshake instead.)
+                                    val unavailableProvider = NetTlsConfig(tlsProvider = Present("nonexistent-tls-provider"))
+                                    Abort.run[NetException](transport.upgradeToTls(plaintext, unavailableProvider, 16).safe.get).map {
                                         outcome =>
                                             outcome match
-                                                case Result.Failure(_: NetTlsException) => ()
+                                                case Result.Failure(_: NetTlsProviderUnavailableException) => ()
                                                 case other =>
-                                                    fail(s"a verifying no-SNI upgrade must fail closed with a NetTlsException, got $other")
+                                                    fail(
+                                                        s"an unavailable-provider upgrade must fail closed with a NetTlsException, got $other"
+                                                    )
                                             end match
+                                            // The credit install must precede the driver close (else the single consumer strands it); observed
+                                            // above with no carrier held, so a pre-fix ordering fails here deterministically, not via a leaked fd.
+                                            assert(
+                                                !creditInstalledLate.get(),
+                                                "the fd-close credit must be installed before the driver close is requested (else its single " +
+                                                    "consumer reads the sink Absent and the credit strands, leaking the fd)"
+                                            )
                                             awaitCondition(5.seconds)(spy.closeCounts.getOrDefault(client, 0) >= 1).map { credited =>
                                                 assert(
                                                     credited,

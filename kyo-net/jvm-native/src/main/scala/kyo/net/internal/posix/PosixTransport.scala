@@ -594,7 +594,8 @@ final private[net] class PosixTransport private[posix] (
         tls match
             case Absent               => completeConnect(handle, driver, promise)
             case Present((cfg, host)) =>
-                // buildEngine fails closed (throws Closed) when a verifying client has no reference identity (an empty connect host), so a
+                // buildEngine can throw a NetTlsException (an unavailable pinned provider, an unreadable PEM, or an SSL context/engine init
+                // failure; and on the JDK floor provider, a verifying client with no reference identity, i.e. an empty connect host), so a
                 // build failure must fail the connect promise and close the fd rather than escaping into the driver carrier.
                 val engine =
                     try buildEngine(cfg, host, isServer = false)
@@ -1488,8 +1489,9 @@ final private[net] class PosixTransport private[posix] (
                         // Committed to the upgrade: mark it durably (see PosixHandle.isUpgraded) before any handshakeOwned recv can be armed, so
                         // the io_uring reap can recognize one that outlives onFinished's flag-clear even after upgradeActive/upgrading go false.
                         handle.isUpgraded = true
-                        // buildEngine fails closed (throws a NetTlsException) when a verifying STARTTLS client has no reference identity
-                        // (no sniHostname), so a build failure must release the detached-but-open fd and fail the upgrade promise rather
+                        // buildEngine can throw a NetTlsException here (an unavailable pinned provider, an unreadable PEM, or an SSL
+                        // context/engine init failure; and on the JDK floor provider, a verifying STARTTLS client with no reference identity,
+                        // i.e. no sniHostname), so a build failure must release the detached-but-open fd and fail the upgrade promise rather
                         // than escaping. No engine exists yet on this path, so only the fd is released (releaseFailedUpgrade also frees
                         // the engine, which is absent here). The release routes through closeUnwiredHandle, never a bare PosixHandle.close:
                         // driver.closeHandle runs first, so on io_uring the read-buffer free is deferred until every kernel-owned SQE for
@@ -1733,10 +1735,12 @@ final private[net] class PosixTransport private[posix] (
     /** The reference identity (and SNI host) for a STARTTLS upgrade engine. The `PosixHandle` is fd-only and no longer carries the original
       * connect host, so the client role draws it from `tls.sniHostname` (the only host the caller can supply at upgrade time). The provider
       * then decides what to do with it: a `trustAll` or `hostnameVerification = false` client does not check it, but a verifying client with
-      * an empty identity FAILS CLOSED at `buildEngine` time rather than handshaking with no name bound (RFC 9525 §6.1). A verifying STARTTLS
-      * client must therefore set `sniHostname`; this is the intended behavior change that surfaces a previously-masked insecure config
-      * (STARTTLS-without-SNI verifying clients now fail at the upgrade instead of silently accepting any chain-valid cert). The server role
-      * takes accept state with no SNI, so its host is always empty and never fails closed.
+      * an empty identity FAILS CLOSED rather than handshaking with no name bound (RFC 9525 §6.1). The mechanism is provider-specific: the JDK
+      * floor provider rejects at `buildEngine` time (throwing `NetTlsConfigException`), while the BoringSSL and OpenSSL providers bind an
+      * unmatchable reference identity so the handshake rejects every peer. Either way a verifying STARTTLS client with no `sniHostname` never
+      * silently accepts a cert, so a verifying client should set `sniHostname`; this is the intended behavior change that surfaces a
+      * previously-masked insecure config (STARTTLS-without-SNI verifying clients now fail the upgrade instead of silently accepting any
+      * chain-valid cert). The server role takes accept state with no SNI, so its host is always empty and never binds an identity.
       */
     private def upgradeHost(tls: NetTlsConfig, isServer: Boolean): String =
         if isServer then "" else tls.sniHostname.getOrElse("")
