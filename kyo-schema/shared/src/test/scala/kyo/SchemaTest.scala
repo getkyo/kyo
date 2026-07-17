@@ -2569,6 +2569,121 @@ class SchemaTest extends kyo.test.Test[Any]:
         assert(back == Result.succeed(value), s"round-trip failed: $back (encoded: $out)")
     }
 
+    // =========================================================================
+    // omitEmptyCollections / .omit(_.f).whenEmpty: OrderedDict and Dict fields.
+    // Both are opaque types whose Tag erases identically regardless of key/value
+    // type, unlike Map, so the omit gate and the decode-side synthetic zero must
+    // discriminate them by their declared structure instead of by Tag.
+    // Covers both wire shapes: a String key (object wire form) and a non-String
+    // key (array-of-{key,value} wire form).
+    // =========================================================================
+
+    // OrderedDict and Dict provide no CanEqual instance for `==` (their opaque, dual-representation
+    // shape has no meaningful universal equals; see OrderedDict.is / Dict.is), so a round-trip is
+    // asserted field-by-field: the scalars via `==`, the map field via `.is`, the established
+    // idiom for comparing these two types (matching OrderedDictTest.scala / DictTest.scala).
+
+    "empty OrderedDict[String, V] field is omitted under omitEmptyCollections and round-trips" in {
+        val schema = Schema[MTOrderedDictRecord].omitEmptyCollections
+        val value  = MTOrderedDictRecord("alice", OrderedDict.empty[String, Int], 7)
+        val out    = schema.encodeString[Json](value)
+        assert(out == """{"name":"alice","count":7}""", s"empty String-key OrderedDict must be omitted: $out")
+        assert(!out.contains("Ljava.lang.Object"), s"must never encode the backing array's identity hash: $out")
+        val back = schema.decodeString[Json](out).getOrThrow
+        assert(back.name == value.name && back.count == value.count, s"round-trip failed: $back (encoded: $out)")
+        assert(back.settings.is(value.settings), s"round-trip failed: $back (encoded: $out)")
+    }
+
+    "empty OrderedDict[Int, V] field (non-String key) is omitted under omitEmptyCollections and round-trips" in {
+        val schema = Schema[MTOrderedDictLevelsRecord].omitEmptyCollections
+        val value  = MTOrderedDictLevelsRecord("alice", OrderedDict.empty[Int, String], 7)
+        val out    = schema.encodeString[Json](value)
+        assert(out == """{"name":"alice","count":7}""", s"empty non-String-key OrderedDict must be omitted: $out")
+        assert(!out.contains("Ljava.lang.Object"), s"must never encode the backing array's identity hash: $out")
+        val back = schema.decodeString[Json](out).getOrThrow
+        assert(back.name == value.name && back.count == value.count, s"round-trip failed: $back (encoded: $out)")
+        assert(back.byLevel.is(value.byLevel), s"round-trip failed: $back (encoded: $out)")
+    }
+
+    "empty Dict[String, V] field is omitted under omitEmptyCollections and round-trips" in {
+        val schema = Schema[MTStringDictRecord].omitEmptyCollections
+        val value  = MTStringDictRecord("alice", Dict.empty[String, Int], 7)
+        val out    = schema.encodeString[Json](value)
+        assert(out == """{"name":"alice","count":7}""", s"empty String-key Dict must be omitted: $out")
+        assert(!out.contains("Ljava.lang.Object"), s"must never encode the backing array's identity hash: $out")
+        val back = schema.decodeString[Json](out).getOrThrow
+        assert(back.name == value.name && back.count == value.count, s"round-trip failed: $back (encoded: $out)")
+        assert(back.tags.is(value.tags), s"round-trip failed: $back (encoded: $out)")
+    }
+
+    "empty Dict[Int, V] field (non-String key) is omitted under omitEmptyCollections and round-trips" in {
+        val schema = Schema[MTIntStringDictRecord].omitEmptyCollections
+        val value  = MTIntStringDictRecord("alice", Dict.empty[Int, String], 7)
+        val out    = schema.encodeString[Json](value)
+        assert(out == """{"name":"alice","count":7}""", s"empty non-String-key Dict must be omitted: $out")
+        assert(!out.contains("Ljava.lang.Object"), s"must never encode the backing array's identity hash: $out")
+        val back = schema.decodeString[Json](out).getOrThrow
+        assert(back.name == value.name && back.count == value.count, s"round-trip failed: $back (encoded: $out)")
+        assert(back.byId.is(value.byId), s"round-trip failed: $back (encoded: $out)")
+    }
+
+    // Boundary pinned by getkyo/kyo#1748: binding the array-form given for a String key (instead of
+    // the object-form default) omits on encode but fails to decode, because the injected empty value
+    // is chosen from the declared key type and the array-form reader expects the other shape. It
+    // fails loud, never silently. When #1748 is fixed this flips to a round-trip assertion.
+    "empty String-key Dict bound to the array-form given fails to decode under omitEmptyCollections" in {
+        given arrayForm: Schema[Dict[String, Int]] = Schema.dictSchema[String, Int]
+        val schema                                 = Schema.derived[MTStringDictRecord].omitEmptyCollections
+        val value                                  = MTStringDictRecord("alice", Dict.empty[String, Int], 7)
+        val out                                    = schema.encodeString[Json](value)
+        assert(out == """{"name":"alice","count":7}""", s"empty field must still be omitted on encode: $out")
+        val decoded = schema.decodeString[Json](out)
+        assert(decoded.isFailure, s"decode must fail loud on the array-form String-key binding, got: $decoded")
+    }
+
+    "non-empty OrderedDict field is NOT omitted under omitEmptyCollections and keeps insertion order" in {
+        val schema = Schema[MTOrderedDictRecord].omitEmptyCollections
+        val value  = MTOrderedDictRecord("alice", OrderedDict("z" -> 1, "a" -> 2), 7)
+        val out    = schema.encodeString[Json](value)
+        assert(
+            out == """{"name":"alice","settings":{"z":1,"a":2},"count":7}""",
+            s"non-empty OrderedDict must be retained in insertion order: $out"
+        )
+        val back = schema.decodeString[Json](out).getOrThrow
+        assert(back.name == value.name && back.count == value.count, s"round-trip failed: $back (encoded: $out)")
+        assert(back.settings.toChunk == value.settings.toChunk, s"round-trip failed: $back (encoded: $out)")
+    }
+
+    "non-empty Dict field is NOT omitted under omitEmptyCollections" in {
+        val schema = Schema[MTStringDictRecord].omitEmptyCollections
+        val value  = MTStringDictRecord("alice", Dict("x" -> 1), 7)
+        val out    = schema.encodeString[Json](value)
+        assert(out == """{"name":"alice","tags":{"x":1},"count":7}""", s"non-empty Dict must be retained: $out")
+        val back = schema.decodeString[Json](out).getOrThrow
+        assert(back.name == value.name && back.count == value.count, s"round-trip failed: $back (encoded: $out)")
+        assert(back.tags.is(value.tags), s"round-trip failed: $back (encoded: $out)")
+    }
+
+    "per-field .omit(_.f).whenEmpty omits an empty OrderedDict[String, V] field and round-trips" in {
+        val schema = Schema[MTOrderedDictRecord].omit(_.settings).whenEmpty
+        val value  = MTOrderedDictRecord("alice", OrderedDict.empty[String, Int], 7)
+        val out    = schema.encodeString[Json](value)
+        assert(out == """{"name":"alice","count":7}""", s"per-field WhenEmpty must omit an empty OrderedDict: $out")
+        val back = schema.decodeString[Json](out).getOrThrow
+        assert(back.name == value.name && back.count == value.count, s"round-trip failed: $back (encoded: $out)")
+        assert(back.settings.is(value.settings), s"round-trip failed: $back (encoded: $out)")
+    }
+
+    "per-field .omit(_.f).whenEmpty omits an empty Dict[Int, V] field (non-String key) and round-trips" in {
+        val schema = Schema[MTIntStringDictRecord].omit(_.byId).whenEmpty
+        val value  = MTIntStringDictRecord("alice", Dict.empty[Int, String], 7)
+        val out    = schema.encodeString[Json](value)
+        assert(out == """{"name":"alice","count":7}""", s"per-field WhenEmpty must omit an empty non-String-key Dict: $out")
+        val back = schema.decodeString[Json](out).getOrThrow
+        assert(back.name == value.name && back.count == value.count, s"round-trip failed: $back (encoded: $out)")
+        assert(back.byId.is(value.byId), s"round-trip failed: $back (encoded: $out)")
+    }
+
     "omitNone schema-wide: absent Maybe field is omitted on encode and decodes back to Maybe.empty" in {
         // Cart has: items: Chunk[String], note: Maybe[String]
         val schema = Schema[Cart].omitNone

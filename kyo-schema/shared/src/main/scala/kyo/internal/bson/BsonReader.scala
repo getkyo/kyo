@@ -2,13 +2,16 @@ package kyo.internal.bson
 
 import java.nio.charset.CodingErrorAction
 import java.nio.charset.StandardCharsets
+import kyo.Chunk
 import kyo.Codec
+import kyo.OrderedDictBuilder
 import kyo.ParseException
 import kyo.RangeException
 import kyo.Span
 import kyo.Structure
 import kyo.TruncatedInputException
 import kyo.TypeMismatchException
+import kyo.discard
 
 final class BsonReader private (
     root: BsonValue,
@@ -23,7 +26,7 @@ final class BsonReader private (
 
     final private class ReadFrame(
         val kind: FrameKind,
-        val fields: Vector[(String, BsonValue)],
+        val fields: Chunk[(String, BsonValue)],
         val values: Vector[BsonValue],
         var index: Int
     )
@@ -41,7 +44,7 @@ final class BsonReader private (
             case DocumentValue(fields) =>
                 checkDepth()
                 checkCollectionSize(fields.size)
-                stack = ReadFrame(KindDocument, fields, Vector.empty, 0) :: stack
+                stack = ReadFrame(KindDocument, fields.toChunk, Vector.empty, 0) :: stack
                 current = None
                 fields.size
             case other =>
@@ -63,7 +66,7 @@ final class BsonReader private (
             case ArrayValue(values) =>
                 checkDepth()
                 checkCollectionSize(values.size)
-                stack = ReadFrame(KindArray, Vector.empty, values, 0) :: stack
+                stack = ReadFrame(KindArray, Chunk.empty, values, 0) :: stack
                 current = None
                 values.size
             case other =>
@@ -335,7 +338,7 @@ final class BsonReader private (
             case DocumentValue(fields) =>
                 checkDepth()
                 checkCollectionSize(fields.size)
-                val result = Structure.Value.Record(kyo.Chunk.from(fields.map((name, value) => name -> toStructure(value))))
+                val result = Structure.Value.Record(fields.toChunk.map((name, value) => name -> toStructure(value)))
                 decrementDepth()
                 result
             case ArrayValue(values) =>
@@ -434,7 +437,7 @@ object BsonReader:
                 pos += 1
                 ArrayValue(values.result())
             else
-                val fields = Vector.newBuilder[(String, BsonValue)]
+                val fields = OrderedDictBuilder.init[String, BsonValue]
                 var count  = 0
                 while pos < end - 1 do
                     val tag  = readByte(input.size)
@@ -442,7 +445,7 @@ object BsonReader:
                     count += 1
                     if count > config.maxCollectionSize then
                         throw kyo.LimitExceededException("Collection size", count, config.maxCollectionSize)(using frame)
-                    fields += name -> parseElement(tag, depth + 1, end - 1)
+                    discard(fields.add(name, parseElement(tag, depth + 1, end - 1)))
                 end while
                 pos += 1
                 DocumentValue(fields.result())
