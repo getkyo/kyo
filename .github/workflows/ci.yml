@@ -139,6 +139,17 @@ jobs:
         with:
           os: windows-x64
           target: JVM
+      # Coursier resolution on a cold Windows cache intermittently dies on
+      # OverlappingFileLockException; every download an attempt completes is kept,
+      # so retrying converges, and the first green job seeds the cache for good.
+      - name: Warm the dependency cache (Windows)
+        uses: nick-fields/retry@v4
+        with:
+          max_attempts: 3
+          timeout_minutes: 25
+          retry_wait_seconds: 30
+          shell: bash
+          command: sbt "kyo-stats-machineJVM/Test/compile"
       - name: test kyo-stats-machine (Windows host)
         shell: bash
         run: sbt "kyo-stats-machineJVM/test"
