@@ -35,9 +35,12 @@ final private[kyo] class ReadPump[Handle](
     // Promise.Unsafe[A, S] is an opaque alias over IOPromise[Any, A < S] (kyo.Fiber.scala): a
     // structurally different type from the invariant IOPromise[Closed, ReadOutcome] this class
     // extends, even though both erase to the same runtime object. The alias is transparent only
-    // inside kyo.Fiber.Promise's own defining scope, not here, so there is no accessor that recovers
-    // the Promise.Unsafe view of `this` from outside that scope; the cast is the only way to obtain
-    // it, and it is safe since both sides describe the same object.
+    // inside kyo.Fiber.Promise's own defining scope, not here, so the only accessor that recovers a
+    // Promise.Unsafe from an IOPromise, Fiber.Promise.Unsafe.fromIOPromise, does not apply: it
+    // requires the promise's value type to already be `A < S`, and kyo.scheduler.IOPromise is
+    // invariant in that parameter, so IOPromise[Closed, ReadOutcome] does not conform. The cast is
+    // the only remaining way to obtain the view, and it is safe since both sides describe the same
+    // object.
     private val self: Promise.Unsafe[ReadOutcome, Abort[Closed]] =
         this.asInstanceOf[Promise.Unsafe[ReadOutcome, Abort[Closed]]]
 

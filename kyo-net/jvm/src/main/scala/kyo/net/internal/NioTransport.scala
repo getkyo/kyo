@@ -109,9 +109,12 @@ final private[kyo] class NioTransport private (
             // Exactly one stdio per process (no double-ownership of fd 0/1).
             Fiber.Unsafe.fromResult(Result.fail(NetStdioAlreadyOpenException()))
         else
-            // Fiber.Unsafe.init[E, A] resolves its phantom effect row from Reducible[Abort[E]]; with E left to inference here it resolves to
-            // Fiber.Unsafe[NetConnection, Any], not the Abort[NetException] row this method's signature declares. Both views describe the
-            // same completed IOTask object, so re-tagging the row to match the declared return type is safe.
+            // Chaining the cast detaches this call from the method's expected type, so Fiber.Unsafe.init[E, A] resolves its phantom effect row
+            // standalone: with E left to inference it resolves to Fiber.Unsafe[NetConnection, Any]. That view already conforms to the declared
+            // Fiber.Unsafe[NetConnection, Abort[NetException]] by contravariance of S (Abort[NetException] <: Any), so nothing here crosses
+            // the opaque-alias boundary: the value is already a Fiber.Unsafe and the cast is not required to obtain one. It is kept for
+            // uniformity with the module's other Fiber.Unsafe boundary casts, which recover the opaque alias from a plain IOPromise and do
+            // need it.
             Fiber.Unsafe.init(NioStdioConnection.open(channelCapacity, readBufferSize))
                 .asInstanceOf[Fiber.Unsafe[NetConnection, Abort[NetException]]]
 

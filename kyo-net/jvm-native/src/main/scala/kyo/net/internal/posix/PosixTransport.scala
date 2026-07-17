@@ -215,9 +215,12 @@ final private[net] class PosixTransport private[posix] (
                 end if
                 conn
             }
-                // Fiber.Unsafe.init[E, A] resolves its phantom effect row from Reducible[Abort[E]]; with E left to inference here it resolves to
-                // Fiber.Unsafe[Connection, Any], not the Abort[NetException] row this method's signature declares. Both views describe the same
-                // completed IOTask object, so re-tagging the row to match the declared return type is safe.
+                // Chaining the cast detaches this call from the method's expected type, so Fiber.Unsafe.init[E, A] resolves its phantom effect
+                // row standalone: with E left to inference it resolves to Fiber.Unsafe[Connection, Any]. That view already conforms to the
+                // declared Fiber.Unsafe[Connection, Abort[NetException]] by contravariance of S (Abort[NetException] <: Any), so nothing here
+                // crosses the opaque-alias boundary: the value is already a Fiber.Unsafe and the cast is not required to obtain one. It is
+                // kept for uniformity with the module's other Fiber.Unsafe boundary casts, which recover the opaque alias from a plain
+                // IOPromise and do need it.
                 .asInstanceOf[Fiber.Unsafe[Connection, Abort[NetException]]]
 
     /** The driver that should back a stdio handle whose read end is `fd`: the real `ioDriver` when the fd is pollable, else the

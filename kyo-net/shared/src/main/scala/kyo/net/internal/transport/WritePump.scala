@@ -56,12 +56,9 @@ final private[kyo] class WritePump[Handle](
         requestNextTake()
 
     /** Take callback: a span arrived (or the channel closed). Idle -> Flushing CAS, then write. */
-    private def onTake(result: Result[Closed, Span[Byte] < Any])(using AllowUnsafe, Frame): Unit =
+    private def onTake(result: Result[Closed, Span[Byte]])(using AllowUnsafe, Frame): Unit =
         result match
-            case Result.Success(pendingBytes) =>
-                // pending: Span[Byte] < Any; .eval extracts the concrete span, mirroring PosixTransport's identical step. The promise is
-                // completed only by the channel taker's own plain value, never a suspended computation, so eval always returns immediately.
-                val bytes = pendingBytes.eval
+            case Result.Success(bytes) =>
                 // No per-take log on the steady write path: the abstract Log.Unsafe materializes a Function0 per call even when the
                 // level gates the string. The success-path ReadPump has no per-op log either.
                 // Create the Flushing instance once and pass the SAME reference to doWrite for the CAS.
@@ -78,12 +75,9 @@ final private[kyo] class WritePump[Handle](
     end onTake
 
     /** Writable callback: the socket became writable, or the await failed. Resume the parked tail. */
-    private def onWritable(result: Result[Closed, Unit < Any])(using AllowUnsafe, Frame): Unit =
+    private def onWritable(result: Result[Closed, Unit])(using AllowUnsafe, Frame): Unit =
         result match
-            case Result.Success(pendingUnit) =>
-                // pending: Unit < Any; .eval extracts the concrete unit, mirroring onTake's identical step. The promise is completed only
-                // by the driver's own plain value, never a suspended computation, so eval always returns immediately.
-                pendingUnit.eval
+            case Result.Success(_) =>
                 // Resume the tail recorded in AwaitingWritable/Backpressured. The CAS to Flushing is
                 // the single winner: a stale writable that fired after the state already advanced
                 // loses it and no-ops (the structural no-op-on-stale, not an unasserted assumption).
@@ -125,7 +119,10 @@ final private[kyo] class WritePump[Handle](
                     p.onComplete { r =>
                         import AllowUnsafe.embrace.danger
                         given Frame = Frame.internal
-                        onWritable(r)
+                        // The completion's payload is pending (Unit < Any); eval extracts the concrete value, mirroring PosixTransport's
+                        // identical step. The promise is completed only by the driver's own plain value, never a suspended computation, so
+                        // eval always returns immediately. Failure and Panic pass through map untouched.
+                        onWritable(r.map(_.eval))
                     }
                     driver.awaitWritable(handle, p)
                 else
@@ -145,7 +142,10 @@ final private[kyo] class WritePump[Handle](
                     p.onComplete { r =>
                         import AllowUnsafe.embrace.danger
                         given Frame = Frame.internal
-                        onWritable(r)
+                        // The completion's payload is pending (Unit < Any); eval extracts the concrete value, mirroring PosixTransport's
+                        // identical step. The promise is completed only by the driver's own plain value, never a suspended computation, so
+                        // eval always returns immediately. Failure and Panic pass through map untouched.
+                        onWritable(r.map(_.eval))
                     }
                     driver.awaitWritable(handle, p)
                 else
@@ -164,7 +164,10 @@ final private[kyo] class WritePump[Handle](
         p.onComplete { r =>
             import AllowUnsafe.embrace.danger
             given Frame = Frame.internal
-            onTake(r)
+            // The completion's payload is pending (Span[Byte] < Any); eval extracts the concrete span, mirroring PosixTransport's identical
+            // step. The promise is completed only by the channel taker's own plain value, never a suspended computation, so eval always
+            // returns immediately. Failure and Panic pass through map untouched.
+            onTake(r.map(_.eval))
         }
         channel.reuseTake(p)
     end requestNextTake

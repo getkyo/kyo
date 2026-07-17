@@ -665,10 +665,13 @@ final private[kyo] class JsTransport private (
         // right only evaluates once `conn` is confirmed a Connection; safe by construction. NetConnection has no public accessor for the
         // wrapped `handle`, so this internal narrowing is how the module reads it before the JsHandle check.
         if !conn.isInstanceOf[Connection[?]] || !conn.asInstanceOf[Connection[?]].handle.isInstanceOf[JsHandle] then
-            // Fiber.Unsafe.fromResult[E, A, S] resolves its phantom effect row from Reducible[Abort[E]]; E here infers from the narrower
-            // NetNotUpgradableException the Result carries, giving Fiber.Unsafe[Nothing, Abort[NetNotUpgradableException]], not the
-            // Abort[NetException] row this method's signature declares. Both views describe the same completed promise, so widening the row
-            // to match the declared return type is safe.
+            // Chaining the cast detaches this call from the method's expected type, so Fiber.Unsafe.fromResult[E, A, S] resolves its phantom
+            // effect row standalone: E infers from the narrower NetNotUpgradableException the Result carries, giving
+            // Fiber.Unsafe[Nothing, Abort[NetNotUpgradableException]]. That view already conforms to the declared
+            // Fiber.Unsafe[NetConnection, Abort[NetException]] by variance alone (Fiber.Unsafe is covariant in A and contravariant in S, and
+            // Abort is contravariant in E), so nothing here crosses the opaque-alias boundary: the value is already a Fiber.Unsafe and the
+            // cast is not required to obtain one. It is kept for uniformity with the module's other Fiber.Unsafe boundary casts, which
+            // recover the opaque alias from a plain IOPromise and do need it.
             return Fiber.Unsafe.fromResult(Result.fail(NetNotUpgradableException()))
                 .asInstanceOf[Fiber.Unsafe[NetConnection, Abort[NetException]]]
         end if
@@ -683,10 +686,13 @@ final private[kyo] class JsTransport private (
             !conn.asInstanceOf[Connection[JsHandle]].isServerOrigin && !tls.trustAll && tls.hostnameVerification &&
                 tls.sniHostname.getOrElse("").isEmpty
         if clientUpgradeNoIdentity then
-            // Fiber.Unsafe.fromResult[E, A, S] resolves its phantom effect row from Reducible[Abort[E]]; E here infers from the narrower
-            // NetTlsHandshakeException the Result carries, giving Fiber.Unsafe[Nothing, Abort[NetTlsHandshakeException]], not the
-            // Abort[NetException] row this method's signature declares. Both views describe the same completed promise, so widening the row
-            // to match the declared return type is safe.
+            // Chaining the cast detaches this call from the method's expected type, so Fiber.Unsafe.fromResult[E, A, S] resolves its phantom
+            // effect row standalone: E infers from the narrower NetTlsHandshakeException the Result carries, giving
+            // Fiber.Unsafe[Nothing, Abort[NetTlsHandshakeException]]. That view already conforms to the declared
+            // Fiber.Unsafe[NetConnection, Abort[NetException]] by variance alone (Fiber.Unsafe is covariant in A and contravariant in S, and
+            // Abort is contravariant in E), so nothing here crosses the opaque-alias boundary: the value is already a Fiber.Unsafe and the
+            // cast is not required to obtain one. It is kept for uniformity with the module's other Fiber.Unsafe boundary casts, which
+            // recover the opaque alias from a plain IOPromise and do need it.
             return Fiber.Unsafe.fromResult(Result.fail(NetTlsHandshakeException(
                 upgradeHost,
                 -1,
