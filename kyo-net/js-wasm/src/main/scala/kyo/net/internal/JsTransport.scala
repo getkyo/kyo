@@ -350,6 +350,10 @@ final private[kyo] class JsTransport private (
             }: js.Function1[js.Dynamic, Unit]
         ))
 
+        // Fiber.Unsafe[A, S] is an opaque alias over IOPromiseBase[Any, A < (Async & S)] (kyo.Fiber.scala), structurally different from this
+        // plainly-constructed, invariant IOPromise[NetException, Connection[JsHandle]], even though both erase to the same runtime object;
+        // the alias is transparent only inside kyo.Fiber's own defining scope, so exposing this promise as the locked Transport.connect
+        // return needs this erased-boundary cast. Safe: the promise completes only with the NetException/Connection values above.
         promise.asInstanceOf[Fiber.Unsafe[NetConnection, Abort[NetException]]]
     end connectSocket
 
@@ -366,10 +370,13 @@ final private[kyo] class JsTransport private (
             else
                 val cryptoModule = js.Dynamic.global.require("crypto")
                 val digestBuffer = cryptoModule.createHash("sha256").update(cert.raw).digest()
-                val typed        = digestBuffer.asInstanceOf[js.typedarray.Uint8Array]
-                val len          = typed.length
-                val out          = new Array[Byte](len)
-                var i            = 0
+                // Node's Hash.digest() returns a Buffer, and Buffer extends Uint8Array in the Node runtime; js.Dynamic erases that to an
+                // untyped JS value with no static Scala.js type, so recovering the typed Uint8Array view needs this narrowing cast. Safe per
+                // Node's documented Buffer/Uint8Array relationship; it cannot dissolve without a typed facade for Node's crypto Hash object.
+                val typed = digestBuffer.asInstanceOf[js.typedarray.Uint8Array]
+                val len   = typed.length
+                val out   = new Array[Byte](len)
+                var i     = 0
                 while i < len do
                     out(i) = typed(i).toByte
                     i += 1
@@ -437,7 +444,10 @@ final private[kyo] class JsTransport private (
             backlog,
             { () =>
 
-                val addr       = server.address()
+                val addr = server.address()
+                // Node's net.Server#address() returns {port, family, address} for a bound TCP server per the documented Node API; js.Dynamic
+                // erases that shape to untyped JS values, so recovering the typed Int/String fields needs these narrowing casts. Safe per
+                // Node's documented return shape; they cannot dissolve without a typed facade for Node's net address object.
                 val actualPort = addr.port.asInstanceOf[Int]
                 val actualHost = addr.address.asInstanceOf[String]
                 listener.setAddress(actualPort, actualHost)
@@ -445,6 +455,10 @@ final private[kyo] class JsTransport private (
             }: js.Function0[Unit]
         ))
 
+        // Fiber.Unsafe[A, S] is an opaque alias over IOPromiseBase[Any, A < (Async & S)] (kyo.Fiber.scala), structurally different from this
+        // plainly-constructed, invariant IOPromise[NetException, NetListener], even though both erase to the same runtime object; the alias
+        // is transparent only inside kyo.Fiber's own defining scope, so exposing this promise as the locked Transport.listen return needs
+        // this erased-boundary cast. Safe: the promise completes only with the NetException/NetListener values above.
         promise.asInstanceOf[Fiber.Unsafe[NetListener, Abort[NetException]]]
     end listenServer
 
@@ -486,6 +500,11 @@ final private[kyo] class JsTransport private (
             }: js.Function1[js.Dynamic, Unit]
         ))
 
+        // Fiber.Unsafe[A, S] is an opaque alias over IOPromiseBase[Any, A < (Async & S)] (kyo.Fiber.scala), structurally different from this
+        // plainly-constructed, invariant IOPromise[NetException, Connection[JsHandle]], even though both erase to the same runtime object;
+        // the alias is transparent only inside kyo.Fiber's own defining scope, so exposing this promise as the locked
+        // Transport.connectUnix return needs this erased-boundary cast. Safe: the promise completes only with the NetException/Connection
+        // values above.
         promise.asInstanceOf[Fiber.Unsafe[NetConnection, Abort[NetException]]]
     end connectUnix
 
@@ -620,6 +639,10 @@ final private[kyo] class JsTransport private (
             }: js.Function0[Unit]
         ))
 
+        // Fiber.Unsafe[A, S] is an opaque alias over IOPromiseBase[Any, A < (Async & S)] (kyo.Fiber.scala), structurally different from this
+        // plainly-constructed, invariant IOPromise[NetException, NetListener], even though both erase to the same runtime object; the alias
+        // is transparent only inside kyo.Fiber's own defining scope, so exposing this promise as the locked Transport.listen (Unix) return
+        // needs this erased-boundary cast. Safe: the promise completes only with the NetException/NetListener values above.
         promise.asInstanceOf[Fiber.Unsafe[NetListener, Abort[NetException]]]
     end listenUnix
 
@@ -638,7 +661,14 @@ final private[kyo] class JsTransport private (
             return Fiber.Unsafe.fromResult(Result.fail(NetTlsHandshakeException(upgradeHost, -1, rejectNonNodeProvider(tls))))
         // A non-upgradable connection (e.g. the in-memory connection, a plain kyo.net.Connection with no JsHandle) must abort, matching the posix
         // transport, rather than throwing a ClassCastException on the downcast below.
+        // Guarded narrowing: the left `!conn.isInstanceOf[Connection[?]]` short-circuits the `||`, so `asInstanceOf[Connection[?]]` on the
+        // right only evaluates once `conn` is confirmed a Connection; safe by construction. NetConnection has no public accessor for the
+        // wrapped `handle`, so this internal narrowing is how the module reads it before the JsHandle check.
         if !conn.isInstanceOf[Connection[?]] || !conn.asInstanceOf[Connection[?]].handle.isInstanceOf[JsHandle] then
+            // Fiber.Unsafe.fromResult[E, A, S] resolves its phantom effect row from Reducible[Abort[E]]; E here infers from the narrower
+            // NetNotUpgradableException the Result carries, giving Fiber.Unsafe[Nothing, Abort[NetNotUpgradableException]], not the
+            // Abort[NetException] row this method's signature declares. Both views describe the same completed promise, so widening the row
+            // to match the declared return type is safe.
             return Fiber.Unsafe.fromResult(Result.fail(NetNotUpgradableException()))
                 .asInstanceOf[Fiber.Unsafe[NetConnection, Abort[NetException]]]
         end if
@@ -647,10 +677,16 @@ final private[kyo] class JsTransport private (
         // a chain-valid certificate with no bound name is never an acceptable silent outcome (RFC 9525 6.1; CWE-295). Without this the client
         // branch defaulted the servername to "localhost" and silently verified against it. Server-side upgrades present a certificate and do not
         // verify peer identity, so this guard is client-side only.
+        // Safe: the guard above already confirmed conn.isInstanceOf[Connection[?]] && ....handle.isInstanceOf[JsHandle] before this point
+        // (the guard's return is the only path past it), so this narrowing to Connection[JsHandle] cannot fail.
         val clientUpgradeNoIdentity =
             !conn.asInstanceOf[Connection[JsHandle]].isServerOrigin && !tls.trustAll && tls.hostnameVerification &&
                 tls.sniHostname.getOrElse("").isEmpty
         if clientUpgradeNoIdentity then
+            // Fiber.Unsafe.fromResult[E, A, S] resolves its phantom effect row from Reducible[Abort[E]]; E here infers from the narrower
+            // NetTlsHandshakeException the Result carries, giving Fiber.Unsafe[Nothing, Abort[NetTlsHandshakeException]], not the
+            // Abort[NetException] row this method's signature declares. Both views describe the same completed promise, so widening the row
+            // to match the declared return type is safe.
             return Fiber.Unsafe.fromResult(Result.fail(NetTlsHandshakeException(
                 upgradeHost,
                 -1,
@@ -664,6 +700,8 @@ final private[kyo] class JsTransport private (
         // the protocol guarantees this: SSLRequest is sent, one-byte response is read, then upgrade is
         // called. The plaintext socket is paused at this point (no "data" events pending). JS is
         // single-threaded so no concurrent read can arrive between the response delivery and this call.
+        // Safe: the guard above already confirmed conn.isInstanceOf[Connection[?]] && ....handle.isInstanceOf[JsHandle] before this point
+        // (the guard's return is the only path past it), so this narrowing to Connection[JsHandle] cannot fail.
         val jsConn = conn.asInstanceOf[Connection[JsHandle]]
         val handle = jsConn.handle
         val socket = handle.socket // existing net.Socket
@@ -680,6 +718,9 @@ final private[kyo] class JsTransport private (
                 // connection the caller was just handed.
                 ()
             case _ =>
+                // Node's net.Socket#destroyed is a documented boolean property; js.Dynamic erases that to an untyped JS value, so recovering
+                // the typed Boolean needs this narrowing cast. Safe per Node's documented property type; it cannot dissolve without a typed
+                // facade for Node's net.Socket.
                 if !socket.destroyed.asInstanceOf[Boolean] then discard(socket.destroy())
         }
         // Route a close() of the plaintext connection to that owner: settling `promise` runs the same release a handshake failure takes, and once
@@ -822,6 +863,11 @@ final private[kyo] class JsTransport private (
             }: js.Function1[js.Dynamic, Unit]
         ))
 
+        // Fiber.Unsafe[A, S] is an opaque alias over IOPromiseBase[Any, A < (Async & S)] (kyo.Fiber.scala), structurally different from this
+        // plainly-constructed, invariant IOPromise[NetException, Connection[JsHandle]], even though both erase to the same runtime object;
+        // the alias is transparent only inside kyo.Fiber's own defining scope, so exposing this promise as the locked
+        // Transport.upgradeToTls return needs this erased-boundary cast. Safe: the promise completes only with the NetException/Connection
+        // values above.
         promise.asInstanceOf[Fiber.Unsafe[NetConnection, Abort[NetException]]]
     end upgradeToTls
 

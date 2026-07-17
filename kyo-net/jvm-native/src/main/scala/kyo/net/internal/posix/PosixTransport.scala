@@ -214,7 +214,11 @@ final private[net] class PosixTransport private[posix] (
                     throw new IllegalStateException("stdio connection start lost its CAS immediately after construction")
                 end if
                 conn
-            }.asInstanceOf[Fiber.Unsafe[Connection, Abort[NetException]]]
+            }
+                // Fiber.Unsafe.init[E, A] resolves its phantom effect row from Reducible[Abort[E]]; with E left to inference here it resolves to
+                // Fiber.Unsafe[Connection, Any], not the Abort[NetException] row this method's signature declares. Both views describe the same
+                // completed IOTask object, so re-tagging the row to match the declared return type is safe.
+                .asInstanceOf[Fiber.Unsafe[Connection, Abort[NetException]]]
 
     /** The driver that should back a stdio handle whose read end is `fd`: the real `ioDriver` when the fd is pollable, else the
       * [[BlockingReaderDriver]] fallback (the one fallback cell: epoll + regular file).
@@ -274,6 +278,10 @@ final private[net] class PosixTransport private[posix] (
             case Result.Panic(e) =>
                 promise.completeDiscard(Result.panic(e))
         }
+        // Fiber.Unsafe[A, S] is an opaque alias over IOPromiseBase[Any, A < (Async & S)] (kyo.Fiber.scala), structurally different from this
+        // plainly-constructed, invariant IOPromise[NetException, NetConnection], even though both erase to the same runtime object; the
+        // alias is transparent only inside kyo.Fiber's own defining scope, so exposing this promise as the locked Transport.connect return
+        // needs this erased-boundary cast. Safe: the promise completes only with the NetConnection/NetException values above.
         promise.asInstanceOf[Fiber.Unsafe[NetConnection, Abort[NetException]]]
     end connectResolving
 
@@ -291,6 +299,10 @@ final private[net] class PosixTransport private[posix] (
             tls = Absent,
             promise = promise
         )
+        // Fiber.Unsafe[A, S] is an opaque alias over IOPromiseBase[Any, A < (Async & S)] (kyo.Fiber.scala), structurally different from this
+        // plainly-constructed, invariant IOPromise[NetException, NetConnection], even though both erase to the same runtime object; the
+        // alias is transparent only inside kyo.Fiber's own defining scope, so exposing this promise as the locked Transport.connectUnix
+        // return needs this erased-boundary cast. Safe: the promise completes only with the NetConnection/NetException values above.
         promise.asInstanceOf[Fiber.Unsafe[NetConnection, Abort[NetException]]]
     end connectUnix
 
@@ -523,6 +535,11 @@ final private[net] class PosixTransport private[posix] (
                     promise.completeDiscard(Result.panic(e))
             end match
         }
+        // Promise.Unsafe[A, S] is an opaque alias over IOPromise[Any, A < S] (kyo.Fiber.scala), structurally different from this
+        // plainly-constructed IOPromise[Closed, Unit], even though both erase to the same runtime object; the alias is transparent only
+        // inside kyo.Fiber.Promise's own defining scope, so IoDriver.awaitConnect's fixed Promise.Unsafe-typed parameter needs this
+        // erased-boundary cast to accept it. Safe: the promise is completed only with the plain Closed/Unit values above, never a
+        // suspended computation.
         driver.awaitConnect(handle, writablePromise.asInstanceOf[Promise.Unsafe[Unit, Abort[Closed]]])
         // If the connect promise is completed before the writable arm resolves (an external interrupt: e.g. an Async.timeout connectTimeout
         // interrupts the awaiting fiber, which interrupts this promise), the arm is still parked with the socket in SYN_SENT. Forward the
@@ -769,6 +786,10 @@ final private[net] class PosixTransport private[posix] (
             case Result.Panic(e) =>
                 promise.completeDiscard(Result.panic(e))
         }
+        // Fiber.Unsafe[A, S] is an opaque alias over IOPromiseBase[Any, A < (Async & S)] (kyo.Fiber.scala), structurally different from this
+        // plainly-constructed, invariant IOPromise[NetException, NetListener], even though both erase to the same runtime object; the alias
+        // is transparent only inside kyo.Fiber's own defining scope, so exposing this promise as the locked Transport.listen return needs
+        // this erased-boundary cast. Safe: the promise completes only with the NetListener/NetException values above.
         promise.asInstanceOf[Fiber.Unsafe[NetListener, Abort[NetException]]]
     end listenResolving
 
@@ -790,6 +811,10 @@ final private[net] class PosixTransport private[posix] (
             tls = Absent,
             promise = promise
         )
+        // Fiber.Unsafe[A, S] is an opaque alias over IOPromiseBase[Any, A < (Async & S)] (kyo.Fiber.scala), structurally different from this
+        // plainly-constructed, invariant IOPromise[NetException, NetListener], even though both erase to the same runtime object; the alias
+        // is transparent only inside kyo.Fiber's own defining scope, so exposing this promise as the locked Transport.listen (Unix) return
+        // needs this erased-boundary cast. Safe: the promise completes only with the NetListener/NetException values above.
         promise.asInstanceOf[Fiber.Unsafe[NetListener, Abort[NetException]]]
     end listenUnix
 
@@ -914,6 +939,11 @@ final private[net] class PosixTransport private[posix] (
                         Log.live.unsafe.error("PosixTransport accept loop panic", e)
                         discard(acceptLoopsActive.decrementAndGet())
                 }
+                // Promise.Unsafe[A, S] is an opaque alias over IOPromise[Any, A < S] (kyo.Fiber.scala), structurally different from this
+                // plainly-constructed IOPromise[Closed, Int], even though both erase to the same runtime object; the alias is transparent
+                // only inside kyo.Fiber.Promise's own defining scope, so IoDriver.awaitAccept's fixed Promise.Unsafe-typed parameter needs
+                // this erased-boundary cast to accept it. Safe: the promise is completed only with the plain Closed/Int values above, never
+                // a suspended computation.
                 driver.awaitAccept(handle, acceptPromise.asInstanceOf[Promise.Unsafe[Int, Abort[Closed]]])
         end scheduleNextAccept
 
@@ -1429,6 +1459,11 @@ final private[net] class PosixTransport private[posix] (
                                         handle.fdCloseSink = Present(() => closeRawFd(handle.writeFd))
                                     PosixHandle.close(handle)
                                     out.completeDiscard(Result.fail(e))
+                                    // Fiber.Unsafe[A, S] is an opaque alias over IOPromiseBase[Any, A < (Async & S)] (kyo.Fiber.scala),
+                                    // structurally different from this plainly-constructed, invariant IOPromise[NetException, Connection],
+                                    // even though both erase to the same runtime object; the alias is transparent only inside kyo.Fiber's
+                                    // own defining scope, so returning this promise as the locked Transport.upgradeToTls result needs this
+                                    // erased-boundary cast. Safe: the promise is completed only with the NetException/Connection values above.
                                     return out.asInstanceOf[Fiber.Unsafe[Connection, Abort[NetException]]]
                         // Feed every staged ciphertext byte into the engine before the first post-upgrade read.
                         feedStaged(engine, staged)
@@ -1605,6 +1640,11 @@ final private[net] class PosixTransport private[posix] (
                             isReaped = () => reaped.get()
                         )
                 end match
+                // Fiber.Unsafe[A, S] is an opaque alias over IOPromiseBase[Any, A < (Async & S)] (kyo.Fiber.scala), structurally different
+                // from this plainly-constructed, invariant IOPromise[NetException, Connection], even though both erase to the same runtime
+                // object; the alias is transparent only inside kyo.Fiber's own defining scope, so returning this promise as the locked
+                // Transport.upgradeToTls result needs this erased-boundary cast. Safe: the promise is completed only with the
+                // NetException/Connection values above.
                 out.asInstanceOf[Fiber.Unsafe[Connection, Abort[NetException]]]
             case _ =>
                 // Not an upgradable Posix connection (e.g. Connection.inMemory): abort loudly.
@@ -1879,6 +1919,11 @@ final private[net] class PosixTransport private[posix] (
             case Result.Failure(closed) => onFailed(closed)
             case Result.Panic(e)        => onPanic(e)
         }
+        // Promise.Unsafe[A, S] is an opaque alias over IOPromise[Any, A < S] (kyo.Fiber.scala), structurally different from this
+        // plainly-constructed IOPromise[Closed, Unit], even though both erase to the same runtime object; the alias is transparent only
+        // inside kyo.Fiber.Promise's own defining scope, so IoDriver.awaitWritable's fixed Promise.Unsafe-typed parameter needs this
+        // erased-boundary cast to accept it. Safe: the promise is completed only with the plain Closed/Unit values above, never a
+        // suspended computation.
         handle.driver.awaitWritable(handle, writablePromise.asInstanceOf[Promise.Unsafe[Unit, Abort[Closed]]])
     end awaitWritable
 
@@ -1993,6 +2038,11 @@ final private[net] class PosixTransport private[posix] (
                 case Result.Panic(e) =>
                     onPanic(e)
             }
+            // Promise.Unsafe[A, S] is an opaque alias over IOPromise[Any, A < S] (kyo.Fiber.scala), structurally different from this
+            // plainly-constructed IOPromise[NetException, Span[Byte]], even though both erase to the same runtime object; the alias is
+            // transparent only inside kyo.Fiber.Promise's own defining scope, so storing this promise in the Waiter's fixed
+            // Promise.Unsafe-typed field needs this erased-boundary cast. Safe: the promise is completed only with the plain
+            // NetException/Span[Byte] values above, never a suspended computation.
             UpgradeHandoff.Waiter(p.asInstanceOf[Promise.Unsafe[Span[Byte], Abort[NetException]]], summon[Frame])
         end waiter
 
@@ -2147,6 +2197,11 @@ final private[net] class PosixTransport private[posix] (
         // awaitReadHandshake (not awaitRead): on io_uring this tags the recv handshakeOwned so the reap exempts the handshake's own ciphertext read
         // from the upgrade-window stale-recv handoff routing (a non-handshake recv reaping while `upgrading` is set is the stray pump recv); the
         // pollers route it identically to awaitRead.
+        // Promise.Unsafe[A, S] is an opaque alias over IOPromise[Any, A < S] (kyo.Fiber.scala), structurally different from this
+        // plainly-constructed IOPromise[Closed, ReadOutcome], even though both erase to the same runtime object; the alias is transparent
+        // only inside kyo.Fiber.Promise's own defining scope, so IoDriver.awaitReadHandshake's fixed Promise.Unsafe-typed parameter needs
+        // this erased-boundary cast to accept it. Safe: the promise is completed only with the plain Closed/ReadOutcome values above,
+        // never a suspended computation.
         handle.driver.awaitReadHandshake(handle, readPromise.asInstanceOf[Promise.Unsafe[ReadOutcome, Abort[Closed]]])
     end awaitReadCiphertext
 

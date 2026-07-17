@@ -30,8 +30,14 @@ final private[kyo] class ReadPump[Handle](
     driver: IoDriver[Handle],
     channel: Channel.Unsafe[Span[Byte]],
     closeFn: TeardownCause => Unit
-) extends IOPromise[Closed, Span[Byte]]:
+) extends IOPromise[Closed, ReadOutcome]:
 
+    // Promise.Unsafe[A, S] is an opaque alias over IOPromise[Any, A < S] (kyo.Fiber.scala): a
+    // structurally different type from the invariant IOPromise[Closed, ReadOutcome] this class
+    // extends, even though both erase to the same runtime object. The alias is transparent only
+    // inside kyo.Fiber.Promise's own defining scope, not here, so there is no accessor that recovers
+    // the Promise.Unsafe view of `this` from outside that scope; the cast is the only way to obtain
+    // it, and it is safe since both sides describe the same object.
     private val self: Promise.Unsafe[ReadOutcome, Abort[Closed]] =
         this.asInstanceOf[Promise.Unsafe[ReadOutcome, Abort[Closed]]]
 
@@ -43,12 +49,10 @@ final private[kyo] class ReadPump[Handle](
     /** Callback when the driver completes the promise with a typed [[ReadOutcome]]. */
     override protected def onComplete(): Unit =
         // Unsafe: IOPromise.onComplete is the scheduler callback boundary; it runs synchronously off the promise and has no AllowUnsafe in scope.
-        // The outer IOPromise type is Span[Byte] (the channel element), but the driver completes with ReadOutcome. The cast makes poll() return
-        // the actual runtime type; it is erased-safe since IOPromise type params are not reified.
+        // This callback provides AllowUnsafe/Frame for the offerToChannel/requestNextRead calls below.
         import AllowUnsafe.embrace.danger
         given Frame = Frame.internal
-        // TODO the cast seems unnecessary?
-        this.asInstanceOf[kyo.scheduler.IOPromise[Closed, ReadOutcome]].poll() match
+        this.poll() match
             case Present(Result.Success(outcome)) =>
                 outcome match
                     case ReadOutcome.Bytes(span)   => offerToChannel(span)

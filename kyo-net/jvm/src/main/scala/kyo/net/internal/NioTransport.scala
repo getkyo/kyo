@@ -109,6 +109,9 @@ final private[kyo] class NioTransport private (
             // Exactly one stdio per process (no double-ownership of fd 0/1).
             Fiber.Unsafe.fromResult(Result.fail(NetStdioAlreadyOpenException()))
         else
+            // Fiber.Unsafe.init[E, A] resolves its phantom effect row from Reducible[Abort[E]]; with E left to inference here it resolves to
+            // Fiber.Unsafe[NetConnection, Any], not the Abort[NetException] row this method's signature declares. Both views describe the
+            // same completed IOTask object, so re-tagging the row to match the declared return type is safe.
             Fiber.Unsafe.init(NioStdioConnection.open(channelCapacity, readBufferSize))
                 .asInstanceOf[Fiber.Unsafe[NetConnection, Abort[NetException]]]
 
@@ -163,6 +166,10 @@ final private[kyo] class NioTransport private (
                 promise.completeDiscard(Result.fail(connectFail(host, port, e)))
         end try
 
+        // Fiber.Unsafe[A, S] is an opaque alias over IOPromiseBase[Any, A < (Async & S)] (kyo.Fiber.scala), structurally different from this
+        // plainly-constructed, invariant IOPromise[NetException, Connection[NioHandle]], even though both erase to the same runtime object;
+        // the alias is transparent only inside kyo.Fiber's own defining scope, so exposing this promise as the locked Transport.connect
+        // return needs this erased-boundary cast. Safe: the promise completes only with the NetException/Connection values above.
         promise.asInstanceOf[Fiber.Unsafe[NetConnection, Abort[NetException]]]
     end connect
 
@@ -209,6 +216,11 @@ final private[kyo] class NioTransport private (
                             channel.close()
                             promise.completeDiscard(Result.panic(e))
                 }
+                // Promise.Unsafe[A, S] is an opaque alias over IOPromise[Any, A < S] (kyo.Fiber.scala), structurally different from this
+                // plainly-constructed IOPromise[Closed, Unit], even though both erase to the same runtime object; the alias is transparent
+                // only inside kyo.Fiber.Promise's own defining scope, so IoDriver.awaitConnect's fixed Promise.Unsafe-typed parameter needs
+                // this erased-boundary cast to accept it. Safe: the promise is completed only with the plain Closed/Unit values above,
+                // never a suspended computation.
                 driver.awaitConnect(handle, connectPromise.asInstanceOf[Promise.Unsafe[Unit, Abort[Closed]]])
             end if
         end if
@@ -288,6 +300,10 @@ final private[kyo] class NioTransport private (
                 promise.completeDiscard(Result.fail(NetBindException(host, port, e)))
         end try
 
+        // Fiber.Unsafe[A, S] is an opaque alias over IOPromiseBase[Any, A < (Async & S)] (kyo.Fiber.scala), structurally different from this
+        // plainly-constructed, invariant IOPromise[NetException, NetListener], even though both erase to the same runtime object; the alias
+        // is transparent only inside kyo.Fiber's own defining scope, so exposing this promise as the locked Transport.listen return needs
+        // this erased-boundary cast. Safe: the promise completes only with the NetException/NetListener values above.
         promise.asInstanceOf[Fiber.Unsafe[NetListener, Abort[NetException]]]
     end listen
 
@@ -315,6 +331,11 @@ final private[kyo] class NioTransport private (
                         case Result.Panic(e) =>
                             Log.live.unsafe.error(panicLabel, e)
                 }
+                // Promise.Unsafe[A, S] is an opaque alias over IOPromise[Any, A < S] (kyo.Fiber.scala), structurally different from this
+                // plainly-constructed IOPromise[Closed, Unit], even though both erase to the same runtime object; the alias is transparent
+                // only inside kyo.Fiber.Promise's own defining scope, so NioIoDriver's ServerSocketChannel overload of awaitAccept, whose
+                // promise parameter is Promise.Unsafe[Unit, Abort[Closed]], needs this erased-boundary cast to accept it. Safe: the
+                // promise is completed only with the plain Closed/Unit values above, never a suspended computation.
                 driver.awaitAccept(serverChannel, acceptPromise.asInstanceOf[Promise.Unsafe[Unit, Abort[Closed]]])
             end if
         end scheduleNextAccept
@@ -417,6 +438,10 @@ final private[kyo] class NioTransport private (
                 promise.completeDiscard(Result.fail(NetConnectException(host, port, e)))
         end try
 
+        // Fiber.Unsafe[A, S] is an opaque alias over IOPromiseBase[Any, A < (Async & S)] (kyo.Fiber.scala), structurally different from this
+        // plainly-constructed, invariant IOPromise[NetException, Connection[NioHandle]], even though both erase to the same runtime object;
+        // the alias is transparent only inside kyo.Fiber's own defining scope, so exposing this promise as the locked Transport.connect
+        // (TLS) return needs this erased-boundary cast. Safe: the promise completes only with the NetException/Connection values above.
         promise.asInstanceOf[Fiber.Unsafe[NetConnection, Abort[NetException]]]
     end connect
 
@@ -462,6 +487,11 @@ final private[kyo] class NioTransport private (
                             channel.close()
                             promise.completeDiscard(Result.panic(e))
                 }
+                // Promise.Unsafe[A, S] is an opaque alias over IOPromise[Any, A < S] (kyo.Fiber.scala), structurally different from this
+                // plainly-constructed IOPromise[Closed, Unit], even though both erase to the same runtime object; the alias is transparent
+                // only inside kyo.Fiber.Promise's own defining scope, so IoDriver.awaitConnect's fixed Promise.Unsafe-typed parameter needs
+                // this erased-boundary cast to accept it. Safe: the promise is completed only with the plain Closed/Unit values above,
+                // never a suspended computation.
                 driver.awaitConnect(handle, connectPromise.asInstanceOf[Promise.Unsafe[Unit, Abort[Closed]]])
             end if
         end if
@@ -752,6 +782,11 @@ final private[kyo] class NioTransport private (
                         case Result.Failure(_)     => failClosed()
                         case Result.Panic(t)       => connectPromise.completeDiscard(Result.panic(t))
                     }
+                    // Promise.Unsafe[A, S] is an opaque alias over IOPromise[Any, A < S] (kyo.Fiber.scala), structurally different from this
+                    // plainly-constructed IOPromise[Closed, Span[Byte]], even though both erase to the same runtime object; the alias is
+                    // transparent only inside kyo.Fiber.Promise's own defining scope, so storing this promise in the Waiter's fixed
+                    // Promise.Unsafe-typed field needs this erased-boundary cast. Safe: the promise is completed only with the plain
+                    // Closed/Span[Byte] values above, never a suspended computation.
                     val waiter = UpgradeHandoff.Waiter(waiterPromise.asInstanceOf[Promise.Unsafe[Span[Byte], Abort[Closed]]], summon[Frame])
                     handle.upgradeHandoff.get() match
                         case staged: UpgradeHandoff.Carryover =>
@@ -787,6 +822,11 @@ final private[kyo] class NioTransport private (
                             case Result.Panic(t) =>
                                 connectPromise.completeDiscard(Result.panic(t))
                     }
+                    // Promise.Unsafe[A, S] is an opaque alias over IOPromise[Any, A < S] (kyo.Fiber.scala), structurally different from this
+                    // plainly-constructed IOPromise[Closed, ReadOutcome], even though both erase to the same runtime object; the alias is
+                    // transparent only inside kyo.Fiber.Promise's own defining scope, so IoDriver.awaitRead's fixed Promise.Unsafe-typed
+                    // parameter needs this erased-boundary cast to accept it. Safe: the promise is completed only with the plain
+                    // Closed/ReadOutcome values above, never a suspended computation.
                     driver.awaitRead(handle, readPromise.asInstanceOf[Promise.Unsafe[ReadOutcome, Abort[Closed]]])
                 end if
             end if
@@ -882,6 +922,11 @@ final private[kyo] class NioTransport private (
                 case Result.Panic(t) =>
                     connectPromise.completeDiscard(Result.panic(t))
         }
+        // Promise.Unsafe[A, S] is an opaque alias over IOPromise[Any, A < S] (kyo.Fiber.scala), structurally different from this
+        // plainly-constructed IOPromise[Closed, Unit], even though both erase to the same runtime object; the alias is transparent only
+        // inside kyo.Fiber.Promise's own defining scope, so IoDriver.awaitWritable's fixed Promise.Unsafe-typed parameter needs this
+        // erased-boundary cast to accept it. Safe: the promise is completed only with the plain Closed/Unit values above, never a
+        // suspended computation.
         driver.awaitWritable(handle, writablePromise.asInstanceOf[Promise.Unsafe[Unit, Abort[Closed]]])
     end flushHandshakeWrite
 
@@ -920,6 +965,10 @@ final private[kyo] class NioTransport private (
                 promise.completeDiscard(Result.fail(NetBindException(host, port, e)))
         end try
 
+        // Fiber.Unsafe[A, S] is an opaque alias over IOPromiseBase[Any, A < (Async & S)] (kyo.Fiber.scala), structurally different from this
+        // plainly-constructed, invariant IOPromise[NetException, NetListener], even though both erase to the same runtime object; the alias
+        // is transparent only inside kyo.Fiber's own defining scope, so exposing this promise as the locked Transport.listen (TLS) return
+        // needs this erased-boundary cast. Safe: the promise completes only with the NetException/NetListener values above.
         promise.asInstanceOf[Fiber.Unsafe[NetListener, Abort[NetException]]]
     end listen
 
@@ -1089,6 +1138,11 @@ final private[kyo] class NioTransport private (
                 promise.completeDiscard(Result.fail(NetUnixConnectException(path, e)))
         end try
 
+        // Fiber.Unsafe[A, S] is an opaque alias over IOPromiseBase[Any, A < (Async & S)] (kyo.Fiber.scala), structurally different from this
+        // plainly-constructed, invariant IOPromise[NetException, Connection[NioHandle]], even though both erase to the same runtime object;
+        // the alias is transparent only inside kyo.Fiber's own defining scope, so exposing this promise as the locked
+        // Transport.connectUnix return needs this erased-boundary cast. Safe: the promise completes only with the NetException/Connection
+        // values above.
         promise.asInstanceOf[Fiber.Unsafe[NetConnection, Abort[NetException]]]
     end connectUnix
 
@@ -1118,6 +1172,10 @@ final private[kyo] class NioTransport private (
                 promise.completeDiscard(Result.fail(NetBindException(path, -1, e)))
         end try
 
+        // Fiber.Unsafe[A, S] is an opaque alias over IOPromiseBase[Any, A < (Async & S)] (kyo.Fiber.scala), structurally different from this
+        // plainly-constructed, invariant IOPromise[NetException, NetListener], even though both erase to the same runtime object; the alias
+        // is transparent only inside kyo.Fiber's own defining scope, so exposing this promise as the locked Transport.listen (Unix) return
+        // needs this erased-boundary cast. Safe: the promise completes only with the NetException/NetListener values above.
         promise.asInstanceOf[Fiber.Unsafe[NetListener, Abort[NetException]]]
     end listenUnix
 
@@ -1230,6 +1288,11 @@ final private[kyo] class NioTransport private (
             case e: Exception =>
                 promise.completeDiscard(Result.fail(NetTlsHandshakeException(host, -1, e)))
         end try
+        // Fiber.Unsafe[A, S] is an opaque alias over IOPromiseBase[Any, A < (Async & S)] (kyo.Fiber.scala), structurally different from this
+        // plainly-constructed, invariant IOPromise[NetException, Connection[NioHandle]], even though both erase to the same runtime object;
+        // the alias is transparent only inside kyo.Fiber's own defining scope, so exposing this promise as the locked
+        // Transport.upgradeToTls return needs this erased-boundary cast. Safe: the promise completes only with the NetException/Connection
+        // values above.
         promise.asInstanceOf[Fiber.Unsafe[NetConnection, Abort[NetException]]]
     end upgradeToTlsNio
 
