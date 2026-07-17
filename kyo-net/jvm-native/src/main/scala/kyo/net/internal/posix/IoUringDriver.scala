@@ -212,7 +212,7 @@ final private[net] class IoUringDriver private[posix] (
     // That count can never reach 0 for an op the kernel never completes and nothing else cancels (an IORING_OP_CONNECT against an
     // unresponsive peer): teardownRing's post-exit sweep force-discharges any entry still here once the ring itself has exited, since by
     // then the kernel has released its hold on every buffer/SQE regardless of what inFlight still reads.
-    private val inFlight        = new ConcurrentHashMap[Long, Long]()
+    private[posix] val inFlight = new ConcurrentHashMap[Long, Long]()
     private val closeAfterDrain = new ConcurrentHashMap[Long, PosixHandle]()
     // Every handle whose close has been REQUESTED (closeHandle entered) but not yet completed (closeNow run). At ring teardown any still-pending
     // requested close is force-completed so its fd is reclaimed: a connection close is async (engine FIFO / closeAfterDrain), and the last in-flight
@@ -1136,48 +1136,6 @@ final private[net] class IoUringDriver private[posix] (
         closeNow(handle)
         discard(handle.endDeferredClose())
     end dischargeDeferredClose
-
-    /** Test-only quiescence barrier: completes once `handle` has no in-flight ops (SQEs submitted but not yet reaped) and no TLS or raw
-      * send SQE outstanding. This is the missing quiescence point behind #29: a completion driver's write is two-phase (the wire effect
-      * happens on the kernel's own schedule; the local accounting update, e.g. [[onTlsSendComplete]] resetting `pendingCipherSent`, runs
-      * only when that op's CQE is reaped on a LATER reap cycle), so an invariant phrased "after all sends are reaped" has no way to
-      * establish "after" without an explicit barrier. `IoUringTlsWriteOrderingTest` asserts its at-rest invariant behind this instead of
-      * racing the reap carrier.
-      *
-      * Implementation: submit an engine op that samples `inFlight`/`sendInFlight`/`rawSendInFlight` (the engine FIFO is this driver's
-      * single owner of that state, so the sample itself cannot race the accounting it reads); if not yet quiescent, wait a real settle
-      * tick (`Async.sleep`) and resubmit. The wait is genuine wall-clock time, not a resubmission from inside the engine op itself:
-      * `drainEngineOps` drains its queue to empty in one tail-recursive pass, so an op that re-offers itself synchronously would be
-      * drained again in that SAME pass, before `reapLoop` ever reaches its own `flushSubmits` / `submit_and_wait` / `drainReady` turn --
-      * starving the very reap that has to run for the pending CQE this barrier is waiting on to ever complete. Bounded by `maxAttempts`
-      * so a genuine driver bug (the handle never quiesces) fails loudly instead of hanging the caller forever.
-      */
-    private[posix] def awaitQuiesced(handle: PosixHandle, maxAttempts: Int = 2000)(using
-        AllowUnsafe,
-        Frame
-    ): Unit < (Abort[Closed] & Async) =
-        Loop(maxAttempts) { remaining =>
-            Sync.Unsafe.defer {
-                val p = Promise.Unsafe.init[Boolean, Abort[Closed]]()
-                submitEngineOp { () =>
-                    val quiescent =
-                        Maybe(inFlight.get(handle.id.packed)).getOrElse(0L) <= 0L &&
-                            !handle.sendInFlight && !handle.rawSendInFlight
-                    p.completeDiscard(Result.succeed(quiescent))
-                }
-                p.safe.get
-            }.map { quiescent =>
-                if quiescent then Loop.done(())
-                else if remaining <= 0 then
-                    Abort.fail(Closed(
-                        label,
-                        summon[Frame],
-                        s"awaitQuiesced: handle ${handle.id} did not quiesce within the attempt budget"
-                    ))
-                else Async.sleep(2.millis).andThen(Loop.continue(remaining - 1))
-            }
-        }
-    end awaitQuiesced
 
     /** Emit this side's TLS close_notify and submit it as a TLS send SQE (best-effort, one-directional). FIFO-worker-only (called from the
       * closeHandle engine op under the write guard). Runs one [[TlsEngine.shutdownStep]] to emit this side's close_notify, drains the produced

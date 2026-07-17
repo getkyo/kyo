@@ -1009,7 +1009,8 @@ class NioIoDriverTest extends Test:
 
             // Reproduce the rebuild window: close the current selector (driver still live, closedFlag false), then re-register the channel as a
             // caller carrier would mid-rebuild. With the fix this DEFERS (true + enqueue); pre-fix it returned false (connect dropped).
-            driver.closeSelectorForTest()
+            try driver.selector.close()
+            catch case _: java.io.IOException => ()
             val deferred = driver.registerChannel(handle)
             assert(deferred, "registerChannel must defer (not fail) when the selector is closed mid-rebuild on a live driver")
             assert(driver.pendingRegistrationCount == 1)
@@ -1017,7 +1018,8 @@ class NioIoDriverTest extends Test:
             // Restore the selector (the rebuild swap) and drain (the poll carrier's per-cycle drainPendingRegistrations): the deferred channel is
             // re-registered on the live selector with OP_CONNECT reconstructed from pendingConnects, NOT interest 0, and the drain force-dispatches
             // a connect probe so an already-completed connect is delivered rather than stranding.
-            driver.restoreSelectorForTest()
+            driver.selector = Selector.open()
+            driver.drainPendingRegistrations()
             assert(driver.pendingRegistrationCount == 0)
             assert(
                 pc.done(),

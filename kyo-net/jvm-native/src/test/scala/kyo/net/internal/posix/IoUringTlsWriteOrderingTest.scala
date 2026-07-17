@@ -8,6 +8,7 @@ import kyo.net.internal.tls.TlsEngineLoopback
 import kyo.net.internal.tls.TlsRealEngines
 import kyo.net.internal.transport.ReadOutcome
 import kyo.net.internal.transport.WriteResult
+import kyo.test.AssertScope
 
 /** Write CONSERVATION across back-to-back TLS writes on a single [[IoUringDriver]] handle, over a REAL io_uring ring and a REAL BoringSSL
   * engine.
@@ -78,13 +79,56 @@ class IoUringTlsWriteOrderingTest extends Test:
         }
     end collectPlaintext
 
+    /** Test-tree quiescence barrier for `handle`: completes once the handle is at rest (no submitted-but-unreaped op, and no TLS or raw send
+      * SQE outstanding). The conservation assertions read settled accounting behind this: the driver's write is two-phase (the wire effect
+      * happens on the kernel's own schedule; the local accounting, e.g. onTlsSendComplete resetting pendingCipherSent, runs only when that
+      * send's CQE is reaped on a LATER reap cycle), so without an explicit barrier the assertions would race the reap carrier (#29).
+      *
+      * It samples inFlight/sendInFlight/rawSendInFlight through submitEngineOp (the engine FIFO is the single owner of that state, so the
+      * sample cannot race the accounting it reads), and between samples parks on the recording spy's next-CQE-reap latch instead of a timer:
+      * the only event that can change the answer is a send CQE reaping, so the next reap is exactly the settle signal (no sleep). The reap
+      * latch is registered BEFORE each sample: a sample runs on the reap carrier, so any op it still sees in flight can only reap on a later
+      * reap-carrier turn, which completes the already-registered latch; registering after the sample could miss a reap that fired in the gap.
+      * Async.timeout is only the deadlock ceiling, so a handle that never quiesces fails the test loudly rather than hanging, and never
+      * surfaces as a main-source Closed.
+      */
+    private def awaitQuiesced(drv: IoUringDriver, recording: RecordingIoUringBindings, handle: PosixHandle)(using
+        Frame,
+        AssertScope
+    ): Unit < (Abort[Closed] & Async) =
+        val settle =
+            Loop.foreach {
+                Sync.Unsafe.defer {
+                    val reaped = recording.awaitReap()
+                    val p      = Promise.Unsafe.init[Boolean, Abort[Closed]]()
+                    drv.submitEngineOp { () =>
+                        val quiescent =
+                            Maybe(drv.inFlight.get(handle.id.packed)).getOrElse(0L) <= 0L &&
+                                !handle.sendInFlight && !handle.rawSendInFlight
+                        p.completeDiscard(Result.succeed(quiescent))
+                    }
+                    p.safe.get.map { quiescent =>
+                        if quiescent then Loop.done
+                        else reaped.safe.get.andThen(Loop.continue)
+                    }
+                }
+            }
+        Abort.run[Timeout | Closed](Async.timeout(30.seconds)(settle)).map {
+            case Result.Success(_) => ()
+            case Result.Failure(_: Timeout) =>
+                fail(s"awaitQuiesced: handle ${handle.id} did not reach quiescence within the 30s deadlock ceiling")
+            case other =>
+                fail(s"awaitQuiesced: awaiting quiescence for handle ${handle.id} failed unexpectedly: $other")
+        }
+    end awaitQuiesced
+
     "IoUringDriver TLS write conservation across back-to-back writes (real ring, real engine)" - {
 
         "two back-to-back writeTls deliver each write's plaintext on the wire exactly once, in order, with no duplication" in {
             PosixTestSockets.assumeUring()
             TlsRealEngines.withEngines { (clientEngine, serverEngine) =>
                 assert(TlsEngineLoopback.handshake(clientEngine, serverEngine), "handshake must complete before the writes")
-                withRecordingDriver { (drv, _) =>
+                withRecordingDriver { (drv, recording) =>
                     PosixTestSockets.loopbackPair().map { case (driverFd, peerFd) =>
                         val handle     = PosixHandle.socket(driverFd, PosixHandle.DefaultReadBufferSize, Absent)
                         val peerHandle = PosixHandle.socket(peerFd, PosixHandle.DefaultReadBufferSize, Absent)
@@ -103,7 +147,7 @@ class IoUringTlsWriteOrderingTest extends Test:
                             // collectPlaintext returning proves the WIRE effect (the peer decrypted every byte); it proves nothing about
                             // this driver's own ACCOUNTING of that send, which resets on a later reap cycle (onTlsSendComplete). Barrier
                             // first so the invariant below reads settled state instead of racing the reap carrier (#29).
-                            drv.awaitQuiesced(handle).map { _ =>
+                            awaitQuiesced(drv, recording, handle).map { _ =>
                                 handle.tls = Absent
                                 drv.closeHandle(handle)
                                 drv.closeHandle(peerHandle)
@@ -126,7 +170,7 @@ class IoUringTlsWriteOrderingTest extends Test:
             PosixTestSockets.assumeUring()
             TlsRealEngines.withEngines { (clientEngine, serverEngine) =>
                 assert(TlsEngineLoopback.handshake(clientEngine, serverEngine), "handshake must complete before the writes")
-                withRecordingDriver { (drv, _) =>
+                withRecordingDriver { (drv, recording) =>
                     // Shrunk SO_SNDBUF on the driver side forces the first ciphertext send to partial-send genuinely; the driver re-flushes the
                     // unsent remainder when the send CQE reaps. Larger payloads ensure the ciphertext exceeds the small send buffer.
                     PosixTestSockets.smallBufferedPair(sndBuf = 2048, rcvBuf = 2048).map { case (driverFd, peerFd) =>
@@ -145,7 +189,7 @@ class IoUringTlsWriteOrderingTest extends Test:
 
                         collectPlaintext(drv, peerHandle, clientEngine, expected.length).map { got =>
                             // Barrier first: see the conservation leaf's comment above (#29).
-                            drv.awaitQuiesced(handle).map { _ =>
+                            awaitQuiesced(drv, recording, handle).map { _ =>
                                 handle.tls = Absent
                                 drv.closeHandle(handle)
                                 drv.closeHandle(peerHandle)
@@ -168,7 +212,7 @@ class IoUringTlsWriteOrderingTest extends Test:
             PosixTestSockets.assumeUring()
             TlsRealEngines.withEngines { (clientEngine, serverEngine) =>
                 assert(TlsEngineLoopback.handshake(clientEngine, serverEngine), "handshake must complete before the writes")
-                withRecordingDriver { (drv, _) =>
+                withRecordingDriver { (drv, recording) =>
                     PosixTestSockets.loopbackPair().map { case (driverFd, peerFd) =>
                         val handle     = PosixHandle.socket(driverFd, PosixHandle.DefaultReadBufferSize, Absent)
                         val peerHandle = PosixHandle.socket(peerFd, PosixHandle.DefaultReadBufferSize, Absent)
@@ -187,7 +231,7 @@ class IoUringTlsWriteOrderingTest extends Test:
                         }
                         collectPlaintext(drv, peerHandle, clientEngine, expected.length).map { got =>
                             // Barrier first: see the conservation leaf's comment above (#29).
-                            drv.awaitQuiesced(handle).map { _ =>
+                            awaitQuiesced(drv, recording, handle).map { _ =>
                                 handle.tls = Absent
                                 drv.closeHandle(handle)
                                 drv.closeHandle(peerHandle)

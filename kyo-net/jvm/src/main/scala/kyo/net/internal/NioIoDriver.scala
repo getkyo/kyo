@@ -29,7 +29,7 @@ import scala.jdk.CollectionConverters.*
   * from the last handshake record or a coalesced TCP segment). Without this, the selector may never fire again because the kernel buffer is
   * empty even though decrypted bytes are available.
   */
-final private[kyo] class NioIoDriver private (@volatile private var selector: Selector)
+final private[kyo] class NioIoDriver private (@volatile private[net] var selector: Selector)
     extends IoDriver[NioHandle]:
 
     // Unsafe: created at driver construction with no ambient AllowUnsafe; the danger bridge builds it here and every get/compareAndSet runs
@@ -884,7 +884,7 @@ final private[kyo] class NioIoDriver private (@volatile private var selector: Se
       * channel / selector is dropped (the upgrade or driver is gone; the caller already observed success, and the downstream `awaitX` fails the
       * parked promise with `Closed`). Called only from the poll carrier (single-carrier-confined consumer).
       */
-    private def drainPendingRegistrations()(using AllowUnsafe): Unit =
+    private[net] def drainPendingRegistrations()(using AllowUnsafe): Unit =
         // The poll carrier is the only consumer, so peek-then-poll is a safe atomic dequeue here: a handle is removed from the queue ONLY after
         // its register() has created the SelectionKey (or it is being dropped). This ordering closes the race with a concurrent registerInterest on
         // a caller carrier: once a channel is absent from the queue, its key already exists, so registerInterest never sees the (no-key AND
@@ -1036,24 +1036,6 @@ final private[kyo] class NioIoDriver private (@volatile private var selector: Se
     private[net] def interestOpsFor(channel: java.nio.channels.SelectableChannel)(using AllowUnsafe): Int =
         val key = channel.keyFor(selector)
         if (key ne null) && key.isValid then key.interestOps() else -1
-
-    /** Test seam: reproduce the rebuild-window race deterministically. Closes the current selector (mirroring rebuildSelector's `selector.close()`)
-      * WITHOUT setting `closedFlag` and WITHOUT swapping in a new one, so a subsequent caller-carrier `registerChannel` / `registerInterest` sees a
-      * closed selector on a still-live driver (the exact instant a connect-burst rebuild closes the old selector before the caller's register runs).
-      * `restoreSelectorForTest` then installs a fresh open selector and drains the deferred registrations on it, standing in for the rebuild's swap +
-      * the poll carrier's drainPendingRegistrations, so the test can assert the deferred registration reconstructed its interest. Test-only.
-      */
-    private[net] def closeSelectorForTest()(using AllowUnsafe): Unit =
-        try selector.close()
-        catch case _: IOException => ()
-
-    /** Test seam companion to [[closeSelectorForTest]]: install a fresh open selector (the rebuild swap) and run drainPendingRegistrations on it
-      * (the poll carrier's per-cycle drain), so a registration deferred while the selector was closed is now registered on the live selector with
-      * its interest reconstructed from the pending-op maps. Returns nothing; the test inspects via interestOpsFor / the completed read/connect.
-      */
-    private[net] def restoreSelectorForTest()(using AllowUnsafe): Unit =
-        selector = Selector.open()
-        drainPendingRegistrations()
 
     /** Rebuild the selector by snapshotting registered channels, opening a fresh selector, closing the old one,
       * and re-registering every channel with its in-flight interest reconstructed from the pending-op maps.
