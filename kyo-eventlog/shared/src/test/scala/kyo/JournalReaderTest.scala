@@ -8,13 +8,32 @@ class JournalReaderTest extends kyo.test.Test[Any]:
     import BinarySegmentCodec.TerminatorSize
     import BinarySegmentCodec.segmentName
 
-    private val binaryCodec = new BinarySegmentCodec(EventMetadataCodec.default)
+    private val binaryCodec = new BinarySegmentCodec(EventLogCodecs.MetadataCodec(IonBinary()))
 
     private def valid[A](r: Result[JournalInvalidIdentifierError, A]): A =
         r.getOrElse(throw new AssertionError("valid identifier"))
-    private val sid = valid(StreamId("reader-1"))
+    private val sid       = valid(StreamId("reader-1"))
+    private val journalId = JournalId.validate("fj-reader")(using Frame.internal).getOrElse(throw new AssertionError("valid journal id"))
     private def env(n: Int): EventEnvelope =
         EventEnvelope(valid(EventId(s"e-$n")), valid(EventType("T")), Span.from(s"p$n".getBytes("UTF-8")), EventMetadata.empty)
+
+    // Unsafe: eagerly resolves the pure (no real Sync/IO) codec + configuration construction to a
+    // plain value at class-init time; both factories can only fail on a genuine construction-time
+    // misconfiguration, never on this fixed, valid, journalId/codecs pairing.
+    private def evalPure[E, A](v: A < Abort[E])(using Frame, ConcreteTag[E]): A =
+        Abort.run[E](v).eval match
+            case Result.Success(a)   => a
+            case Result.Failure(err) => throw new AssertionError(s"unexpected construction failure: $err")
+            case panic: Result.Panic => throw panic.exception
+
+    private val identityCodecs: EventLog.Codecs[Span[Byte]] =
+        evalPure(EventLogCodecs.bytes())(using Frame.internal)
+
+    private val binaryConfiguration: FileJournal.Configuration[Span[Byte], FileJournal.Binary] =
+        evalPure(FileJournal.Binary.configuration(journalId, identityCodecs))(using Frame.internal)
+
+    private val jsonlConfiguration: FileJournal.Configuration[Span[Byte], FileJournal.Jsonl] =
+        evalPure(FileJournal.Jsonl.configuration(journalId, identityCodecs))(using Frame.internal)
 
     private val e0End: Int = HeaderSize + binaryCodec.recordSize(env(0)).toInt + TerminatorSize
 
@@ -25,11 +44,11 @@ class JournalReaderTest extends kyo.test.Test[Any]:
             case panic: Result.Panic => throw panic.exception
         }
 
-    private def appendClosed(dir: Path, batches: Seq[Chunk[EventEnvelope]], config: FileJournal.Config)(using
+    private def appendClosed(dir: Path, batches: Seq[Chunk[EventEnvelope]], configuration: FileJournal.Configuration[Span[Byte], ?])(using
         Frame
     ): Unit < Async =
         Scope.run {
-            Abort.run[JournalStorageError](Journal.Backend.file(dir, config)).map {
+            Abort.run[JournalStorageError](Journal.Backend.file(dir, configuration)).map {
                 case Result.Success(backend) =>
                     Kyo.foreach(batches.toList) { batch =>
                         Abort.run[JournalError](backend.append(sid, ExpectedOffset.Any, batch)).map {
@@ -73,9 +92,11 @@ class JournalReaderTest extends kyo.test.Test[Any]:
                 case Result.Failure(e) => throw e
         }
 
-    private def readWithSyncReader(dir: Path, config: FileJournal.Config)(using Frame): Chunk[RecordedEvent] < Async =
+    private def readWithSyncReader(dir: Path, configuration: FileJournal.Configuration[Span[Byte], ?])(using
+        Frame
+    ): Chunk[RecordedEvent] < Async =
         Scope.run {
-            Abort.run[JournalStorageError](Journal.Reader.file(dir, config)).map {
+            Abort.run[JournalStorageError](Journal.Reader.file(dir, configuration)).map {
                 case Result.Success(reader) =>
                     Abort.run[JournalError](reader.read(sid, StreamOffset.first, Int.MaxValue)).map {
                         case Result.Success(evs) => evs
@@ -87,79 +108,53 @@ class JournalReaderTest extends kyo.test.Test[Any]:
             }
         }
 
-    private def readWithAsyncReader(dir: Path, config: FileJournal.Config)(using Frame): Chunk[RecordedEvent] < Async =
+    private def readResultSync(dir: Path, configuration: FileJournal.Configuration[Span[Byte], ?])(using
+        Frame
+    ): Result[JournalError, Chunk[RecordedEvent]] < Async =
         Scope.run {
-            Abort.run[JournalStorageError](Journal.Reader.fileAsync(dir, config)).map {
-                case Result.Success(reader) =>
-                    Abort.run[JournalError](reader.read(sid, StreamOffset.first, Int.MaxValue)).map {
-                        case Result.Success(evs) => evs
-                        case Result.Failure(err) => throw new AssertionError(s"unexpected read failure: $err")
-                        case panic: Result.Panic => throw panic.exception
-                    }
-                case Result.Failure(err) => throw err
-                case panic: Result.Panic => throw panic.exception
-            }
-        }
-
-    private def readResultSync(dir: Path, config: FileJournal.Config)(using Frame): Result[JournalError, Chunk[RecordedEvent]] < Async =
-        Scope.run {
-            Abort.run[JournalStorageError](Journal.Reader.file(dir, config)).map {
+            Abort.run[JournalStorageError](Journal.Reader.file(dir, configuration)).map {
                 case Result.Success(reader) => Abort.run[JournalError](reader.read(sid, StreamOffset.first, Int.MaxValue))
                 case Result.Failure(err)    => throw err
                 case panic: Result.Panic    => throw panic.exception
             }
         }
-
-    private def readResultAsync(dir: Path, config: FileJournal.Config)(using Frame): Result[JournalError, Chunk[RecordedEvent]] < Async =
-        Scope.run {
-            Abort.run[JournalStorageError](Journal.Reader.fileAsync(dir, config)).map {
-                case Result.Success(reader) => Abort.run[JournalError](reader.read(sid, StreamOffset.first, Int.MaxValue))
-                case Result.Failure(err)    => throw err
-                case panic: Result.Panic    => throw panic.exception
-            }
-        }
-
-    private val binaryConfig = FileJournal.Config.default
-    private val jsonlConfig  = FileJournal.Config(format = FileJournal.SegmentFormat.Jsonl)
 
     "torn tail invisibility" - {
         def tornTailCase(
             label: String,
-            config: FileJournal.Config,
+            configuration: FileJournal.Configuration[Span[Byte], ?],
             segPath: Path => Path,
-            read: (Path, FileJournal.Config) => Chunk[RecordedEvent] < Async,
             cutLength: (Array[Byte]) => Int
         ): Unit =
             s"$label stops at the committed frontier when the active tail is torn" in {
                 for
                     dir  <- freshDir
-                    _    <- appendClosed(dir, Seq(Chunk(env(0)), Chunk(env(1))), config)
+                    _    <- appendClosed(dir, Seq(Chunk(env(0)), Chunk(env(1))), configuration)
                     full <- readSegmentBytes(segPath(dir))
                     _    <- writePrefix(segPath(dir), full, cutLength(full))
-                    evs  <- read(dir, config)
+                    evs  <- readWithSyncReader(dir, configuration)
                 yield assert(evs.map(_.offset.value) == List(0L))
             }
         end tornTailCase
 
-        tornTailCase("sync binary reader", binaryConfig, binarySegmentPath, readWithSyncReader, _ => e0End)
-        tornTailCase("async binary reader", binaryConfig, binarySegmentPath, readWithAsyncReader, _ => e0End)
-        tornTailCase("sync jsonl reader", jsonlConfig, jsonlSegmentPath, readWithSyncReader, _.length - 1)
-        tornTailCase("async jsonl reader", jsonlConfig, jsonlSegmentPath, readWithAsyncReader, _.length - 1)
+        // Reader.fileAsync is not part of the locked surface (design/02-public-api.yaml locks only
+        // Journal.Reader.file); no async-reader torn-tail cases exist on the public surface.
+        tornTailCase("sync binary reader", binaryConfiguration, binarySegmentPath, _ => e0End)
+        tornTailCase("sync jsonl reader", jsonlConfiguration, jsonlSegmentPath, _.length - 1)
     }
 
     "mid-file corruption" - {
         def corruptCase(
             label: String,
-            config: FileJournal.Config,
-            segPath: Path => Path,
-            read: (Path, FileJournal.Config) => Result[JournalError, Chunk[RecordedEvent]] < Async
+            configuration: FileJournal.Configuration[Span[Byte], ?],
+            segPath: Path => Path
         ): Unit =
             s"$label fails with JournalCorruptedError on a CRC flip before the frontier" in {
                 for
                     dir <- freshDir
-                    _   <- appendClosed(dir, Seq(Chunk(env(0), env(1), env(2))), config)
+                    _   <- appendClosed(dir, Seq(Chunk(env(0), env(1), env(2))), configuration)
                     _   <- flipByte(segPath(dir), (HeaderSize + 8 + 2).toLong)
-                    res <- read(dir, config)
+                    res <- readResultSync(dir, configuration)
                 yield
                     val isCorrupt = res match
                         case Result.Failure(_: JournalCorruptedError) => true
@@ -168,10 +163,10 @@ class JournalReaderTest extends kyo.test.Test[Any]:
             }
         end corruptCase
 
-        corruptCase("sync binary reader", binaryConfig, binarySegmentPath, readResultSync)
-        corruptCase("async binary reader", binaryConfig, binarySegmentPath, readResultAsync)
-        corruptCase("sync jsonl reader", jsonlConfig, jsonlSegmentPath, readResultSync)
-        corruptCase("async jsonl reader", jsonlConfig, jsonlSegmentPath, readResultAsync)
+        // Reader.fileAsync is not part of the locked surface; no async-reader corruption cases
+        // exist on the public surface.
+        corruptCase("sync binary reader", binaryConfiguration, binarySegmentPath)
+        corruptCase("sync jsonl reader", jsonlConfiguration, jsonlSegmentPath)
     }
 
 end JournalReaderTest

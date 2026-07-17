@@ -13,7 +13,7 @@ import kyo.internal.StoreSeam
 class JsonlSegmentCodecTest extends kyo.test.Test[Any]:
 
     private val Utf8  = StandardCharsets.UTF_8
-    private val codec = new JsonlSegmentCodec(EventPayloadCodec.bytes, EventMetadataCodec.default)
+    private val codec = new JsonlSegmentCodec(EventLogCodecs.ValueCodec.BytesValue, EventLogCodecs.MetadataCodec(IonBinary()))
 
     private def valid[A](r: Result[JournalInvalidIdentifierError, A]): A =
         r.getOrElse(throw new AssertionError(s"valid identifier: $r"))
@@ -270,7 +270,7 @@ class JsonlSegmentCodecTest extends kyo.test.Test[Any]:
     "payload transcoding" - {
         "bytes codec encodeForJsonl returns a JSON string literal (including surrounding quotes)" in {
             val raw    = "hello".getBytes(Utf8)
-            val result = EventPayloadCodec.bytes.encodeForJsonl(Span.from(raw))
+            val result = codec.encodeValueForJsonl(Span.from(raw))
             result match
                 case Result.Success(s) =>
                     assert(s.startsWith("\""))
@@ -284,13 +284,13 @@ class JsonlSegmentCodecTest extends kyo.test.Test[Any]:
         }
         "bytes codec decodeFromJsonl inverts encodeForJsonl" in {
             val raw = Span.from(Array[Byte](0, 1, 2, 127, -1))
-            val encoded = EventPayloadCodec.bytes.encodeForJsonl(raw) match
+            val encoded = codec.encodeValueForJsonl(raw) match
                 case Result.Success(s) => s
                 case other             => throw new AssertionError(s"encode failed: $other")
             // Build a minimal JSON reader positioned at the string value.
             val jsonBytes = encoded.getBytes(Utf8)
             val reader    = new Json().newReader(Span.from(jsonBytes))(using Frame.internal)
-            EventPayloadCodec.bytes.decodeFromJsonl(reader) match
+            codec.decodeValueFromJsonl(reader) match
                 case Result.Success(decoded) => assert(java.util.Arrays.equals(decoded.toArray, raw.toArray))
                 case other                   => assert(false, s"expected Success, got $other")
         }

@@ -81,7 +81,7 @@ class EventLogCodecTest extends kyo.test.Test[Any]:
                 case other             => fail(s"expected the default IonBinary pairing to succeed, got: $other")
     }
 
-    "the schema factory is the only public Codecs[A] constructor and no event definition surface exists yet" in {
+    "the schema factory is the only public Codecs[A] constructor, and EventDefinition carries no codec slot" in {
         // EventLogCodecs.Codecs's primary constructor is private[kyo];
         // external.EventLogCodecsAccessibilityFixture lives in a package with no relation to kyo, so
         // its attempted direct construction genuinely fails to type-check (this leaf verifies
@@ -91,6 +91,9 @@ class EventLogCodecTest extends kyo.test.Test[Any]:
         assert(errors.nonEmpty)
         assert(errors.exists(_.toLowerCase.contains("private")))
 
+        // Positive guard: EventDefinition[A, E] carries exactly eventType/stream/eventId/metadata
+        // and no codec-typed member, so reading a `.codec` member off a constructed value fails
+        // to type-check.
         val eventDefinitionErrors = external.EventLogCodecsAccessibilityFixture.eventDefinitionErrorMessages
         assert(eventDefinitionErrors.nonEmpty)
         assert(eventDefinitionErrors.exists(_.contains("EventDefinition")))

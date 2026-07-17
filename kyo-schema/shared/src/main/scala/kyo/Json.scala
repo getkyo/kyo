@@ -4,6 +4,8 @@ final class Json extends Codec:
     def newWriter(): Codec.Writer = kyo.internal.JsonWriter()
     def newReader(input: Span[Byte])(using Frame): Codec.Reader =
         kyo.internal.JsonReader(input)
+
+    override def mediaType: String = "application/json"
 end Json
 
 /** Primary entry point for JSON serialization and schema generation.

@@ -1,102 +1,134 @@
 package kyo
 
-/** Durability and rotation knobs for a file-backed [[Journal.Backend]].
-  *
-  * A `Config` is passed to [[Journal.Backend.file]]. The defaults ([[Config.default]]) are the
-  * production settings: every acknowledged append is flushed to stable storage, and segments rotate
-  * at 64 MiB. Override `fsync` only in tests; see the field note.
-  *
-  * Recovery runs lazily on the first touch of a stream, and a `read` or `streamInfo` can be that
-  * first touch. When it is, recovery truncates a torn active-segment tail left by a prior crash and
-  * logs a WARN, so a nominally read-only operation can perform a one-time on-disk write. The
-  * truncation only ever removes an unacknowledged trailing batch; committed events are never lost.
-  *
-  * @param fsync
-  *   durability policy for acknowledged appends. Defaults to [[Fsync.Always]]. [[Fsync.Disabled]]
-  *   trades durability for throughput and is TEST-ONLY: the crash-survival guarantee does not hold
-  *   when [[Fsync.Disabled]] is set.
-  * @param segmentSize
-  *   soft rotation threshold. Defaults to 64 MiB. The threshold is checked before an append, not
-  *   after: a new segment starts on the next append once the active segment has reached this size.
-  *   The active segment can therefore grow past the threshold, and a record larger than the
-  *   threshold is written whole into the current active segment rather than a dedicated one.
-  * @param format
-  *   segment encoding fixed at root creation by the `FORMAT` marker. Defaults to
-  *   [[SegmentFormat.Binary]]. See [[SegmentFormat]] for the available encodings. The format cannot
-  *   be changed after the first open of a root directory; a mismatch with an existing root fails
-  *   the open with a typed [[kyo.JournalStorageError]].
-  * @param metadataCodec
-  *   binary metadata encoding for segment records. Defaults to [[EventMetadataCodec.default]]
-  *   (Ion Binary). Pass [[EventMetadataCodec.msgPack]] to preserve the legacy MsgPack wire format.
-  * @see
-  *   [[Journal.Backend.file]] for the constructor that consumes this config
+/** Public model for file-backed journals: the two built-in profiles (Binary and JSONL)
+  * sharing one internal segmented-append engine. `Profile` is sealed to exactly these
+  * two; a genuinely custom backend implements the already-public [[Journal.Backend]]
+  * tier directly, not a composable profile assembly.
   */
 object FileJournal:
 
-    /** Durability policy for acknowledged appends.
-      *
-      * Each case encodes one flush discipline applied after a batch write. The enum form is the
-      * extension point for future fine-grained modes such as batched flushing or interval-based
-      * flushing: adding a new case is a non-breaking change, and exhaustive match sites gain a
-      * compile error when new cases arrive rather than silently defaulting.
-      *
-      * The production default is [[Always]]. [[Disabled]] is reserved for test scenarios that need
-      * throughput without crash-survival guarantees. Any code path that is expected to survive a
-      * power loss must use [[Always]].
-      *
-      * @see
-      *   [[Config]] for the config type that carries this policy
-      */
+    /** Durability policy for acknowledged appends. */
     enum Fsync derives CanEqual:
-        /** Flush every acknowledged append to stable storage before returning. Production default. */
         case Always
-
-        /** No flush; trades durability for throughput. TEST-ONLY: the crash-survival guarantee does
-          * not hold.
-          */
         case Disabled
     end Fsync
 
-    /** On-disk encoding for segments in a file journal root, fixed at creation by the FORMAT marker.
-      *
-      * The format is chosen when a journal root is first opened and recorded in a `FORMAT` file at the
-      * root. All subsequent opens of the same root must request the same format; a mismatch fails with
-      * a [[kyo.JournalStorageError]]. The format cannot be changed after creation without destroying
-      * and recreating the root.
-      *
-      * Two formats are available:
-      *
-      *   - [[Binary]]: the default binary encoding. Segments use the `KJN1` header, length-prefixed
-      *     record frames with CRC32 verification, and `KJNC` batch-commit terminators. Files carry a
-      *     `.seg` extension.
-      *   - [[Jsonl]]: one JSON object per line per event, one commit line per batch, no binary file
-      *     header. Human-readable and compatible with standard JSONL tools. Files carry a `.jsonl`
-      *     extension. The payload encoding depends on the `payloadCodec` supplied to
-      *     [[Journal.Backend.file]]: a schema-derived codec embeds a typed JSON value; the bytes
-      *     identity codec base64-encodes the raw bytes.
-      *
-      * @see
-      *   [[Config]] for the config type that carries this format
-      * @see
-      *   [[Journal.Backend.file]] for the entry point that selects the codec
+    /** Engine options after codec and layout selectors migrate elsewhere. No format,
+      * no codec slot.
       */
-    enum SegmentFormat derives CanEqual:
-        /** Default binary encoding; byte-identical to the original `.seg` format. */
-        case Binary
-
-        /** One JSON object per line; `.jsonl` segments. */
-        case Jsonl
-    end SegmentFormat
-
-    final case class Config(
+    final case class Options(
         fsync: Fsync = Fsync.Always,
-        segmentSize: FileSize = 64L.mib,
-        format: SegmentFormat = SegmentFormat.Binary,
-        metadataCodec: EventMetadataCodec = EventMetadataCodec.default
+        segmentSize: FileSize = 64L.mib
+    ) derives CanEqual
+    object Options:
+        val default: Options = Options()
+
+    /** Phantom compile-time profile identity. No value of type `Profile` is ever
+      * constructed, stored, or matched on; every profile-specific runtime behavior lives
+      * in the internal engine's `SegmentCodec` dispatch (keyed on the derived
+      * `profileName`) plus the `Configuration#profileName` / `metadataMediaType` /
+      * `payloadMediaType` fields derived once at construction. Stays sealed, closed to
+      * exactly `Binary` and `Jsonl`: there is no custom-family extension point. A caller
+      * needing a genuinely different backend implements [[Journal.Backend]] directly.
+      */
+    sealed trait Profile
+
+    /** Closed built-in profile marker: intrinsic binary framing, Ion Binary default value
+      * and metadata encoding, `.seg` files, CRC validation, commit terminators. No value
+      * of this type is ever constructed.
+      */
+    sealed trait Binary extends Profile
+
+    /** Closed built-in profile marker: JSON value storage for schema-backed payloads,
+      * base64 JSON strings for byte payloads, LF-delimited `.jsonl` lines. No value of
+      * this type is ever constructed.
+      */
+    sealed trait Jsonl extends Profile
+
+    /** Stable name/label for a profile, keyed on the phantom type `P`. `Binary` and
+      * `Jsonl` supply the built-in names below; `Profile` is closed, so these are the
+      * only two instances that will ever exist. Resolved once, at [[Configuration]]
+      * construction, into `Configuration#profileName`.
+      */
+    trait ProfileName[P <: Profile]:
+        def name: String
+
+    object ProfileName:
+        given ProfileName[Binary] with
+            def name: String = "binary"
+        given ProfileName[Jsonl] with
+            def name: String = "jsonl"
+    end ProfileName
+
+    /** Coherence carrier for typed file backend construction: one [[EventLog.Codecs]],
+      * one [[Options]]. `P` is a phantom compile-time profile identity carrying no
+      * runtime value. `profileName`, `metadataMediaType`, and `payloadMediaType` are
+      * derived once at construction by [[Binary.configuration]] / [[Jsonl.configuration]]
+      * and are never independently settable.
+      */
+    final case class Configuration[A, P <: Profile] private[kyo] (
+        journalId: JournalId,
+        codecs: EventLog.Codecs[A],
+        options: Options,
+        profileName: String,
+        metadataMediaType: String,
+        payloadMediaType: String
     ) derives CanEqual
 
-    object Config:
-        val default: Config = Config()
-    end Config
+    /** Typed file-backed SWMR reader. */
+    trait Reader[A, P <: Profile, S] extends Journal.Reader[S]
 
+    /** Typed file backend while preserving the raw backend lane. */
+    trait Backend[A, P <: Profile, S] extends Journal.Backend[S] with Reader[A, P, S]
+
+    object Binary:
+        /** Built-in binary configuration over the shared segmented-append engine.
+          * Requires `ProfileName[Binary]` (satisfied by the built-in given above) rather
+          * than constructing a `Binary` value; resolves `profileName`,
+          * `metadataMediaType`, and `payloadMediaType` at construction.
+          */
+        def configuration[A](
+            journalId: JournalId,
+            codecs: EventLog.Codecs[A],
+            options: Options = Options.default
+        )(using ProfileName[Binary], Frame): Configuration[A, Binary] < Abort[ConfigurationError] =
+            // Resolves ProfileName[Binary].name into profileName and the codecs' value/
+            // metadata Codec.mediaType into payloadMediaType/metadataMediaType (D-023),
+            // and validates root marker/layout coherence against the shared engine.
+            Abort.get(FileJournal.binaryConfiguration(journalId, codecs, options))
+    end Binary
+
+    object Jsonl:
+        /** Built-in JSONL configuration; `.jsonl` segments, no file header, codec-driven
+          * payload. Requires `ProfileName[Jsonl]` (satisfied by the built-in given
+          * above); resolves `profileName`, `metadataMediaType`, and `payloadMediaType`
+          * at construction.
+          */
+        def configuration[A](
+            journalId: JournalId,
+            codecs: EventLog.Codecs[A],
+            options: Options = Options.default
+        )(using ProfileName[Jsonl], Frame): Configuration[A, Jsonl] < Abort[ConfigurationError] =
+            Abort.get(FileJournal.jsonlConfiguration(journalId, codecs, options))
+    end Jsonl
+
+    /** Configuration validation failure (root marker, layout version, media-type
+      * derivation).
+      */
+    final case class ConfigurationError(reason: String)(using Frame) extends KyoException
+
+    // binaryConfiguration / jsonlConfiguration are private[kyo] extension methods on
+    // FileJournal.type (kyo-eventlog/shared/src/main/scala/kyo/
+    // FileJournalConfigurationSupport.scala) that adapt the shipped FileJournalCore into
+    // the Configuration model. Each summons the caller's ProfileName[P] and stores its
+    // .name into profileName; derives metadataMediaType from
+    // codecs.metadata.codec.mediaType; derives payloadMediaType per the profile's
+    // payload rule (D-023): codecs.value's binary Codec's mediaType for Binary (a fixed
+    // "application/octet-stream" for a BytesValue payload), codecs.value's json Codec's
+    // mediaType for Jsonl's SchemaValue payload (a fixed "application/json" for a
+    // BytesValue payload). There is no segmentedConfiguration / custom-family
+    // construction path: FileJournal.SegmentedFamily, SegmentedComponents, and
+    // Components[P] are removed entirely as dead apparatus (verified dead: twelve
+    // behaviorless marker traits, no-op built-in witnesses, the engine never read
+    // configuration.components).
 end FileJournal

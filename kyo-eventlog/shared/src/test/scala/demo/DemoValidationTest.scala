@@ -10,7 +10,7 @@ import kyo.*
 class DemoValidationTest extends kyo.test.Test[Any]:
 
     "FleetLedgerDemo: flow drives Journal.Backend.file and validate returns Absent" in {
-        Abort.run[FileException | JournalError](FleetLedgerDemo.flow).map {
+        Abort.run[FileException | JournalError | EventLog.PreparationFailure](FleetLedgerDemo.flow).map {
             case Result.Success(snapshot) =>
                 val verdict = FleetLedgerDemo.validate(snapshot)
                 assert(verdict == Absent, s"demo validate must return Absent; got: $verdict")

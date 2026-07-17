@@ -8,13 +8,38 @@ class FileJournalCrashTest extends kyo.test.Test[Any]:
     import BinarySegmentCodec.TerminatorSize
     import BinarySegmentCodec.segmentName
 
-    private val binaryCodec = new BinarySegmentCodec(EventMetadataCodec.default)
+    private val binaryCodec = new BinarySegmentCodec(EventLogCodecs.MetadataCodec(IonBinary()))
 
     private def valid[A](r: Result[JournalInvalidIdentifierError, A]): A =
         r.getOrElse(throw new AssertionError("valid identifier"))
-    private val sid = valid(StreamId("crash-1"))
+    private val sid       = valid(StreamId("crash-1"))
+    private val journalId = JournalId.validate("fj-crash")(using Frame.internal).getOrElse(throw new AssertionError("valid journal id"))
     private def env(n: Int): EventEnvelope =
         EventEnvelope(valid(EventId(s"e-$n")), valid(EventType("T")), Span.from(s"p$n".getBytes("UTF-8")), EventMetadata.empty)
+
+    private def defaultConfiguration(using Frame): FileJournal.Configuration[Span[Byte], FileJournal.Binary] < Async =
+        Abort.run[EventCodecConfigurationError](EventLogCodecs.bytes()).map {
+            case Result.Success(codecs) =>
+                Abort.run[FileJournal.ConfigurationError](FileJournal.Binary.configuration(journalId, codecs)).map {
+                    case Result.Success(configuration) => configuration
+                    case Result.Failure(err)           => throw err
+                    case panic: Result.Panic           => throw panic.exception
+                }
+            case Result.Failure(err) => throw err
+            case panic: Result.Panic => throw panic.exception
+        }
+
+    private def jsonlConfiguration(using Frame): FileJournal.Configuration[Span[Byte], FileJournal.Jsonl] < Async =
+        Abort.run[EventCodecConfigurationError](EventLogCodecs.bytes()).map {
+            case Result.Success(codecs) =>
+                Abort.run[FileJournal.ConfigurationError](FileJournal.Jsonl.configuration(journalId, codecs)).map {
+                    case Result.Success(configuration) => configuration
+                    case Result.Failure(err)           => throw err
+                    case panic: Result.Panic           => throw panic.exception
+                }
+            case Result.Failure(err) => throw err
+            case panic: Result.Panic => throw panic.exception
+        }
 
     // Byte after the committed terminator of a single-event batch [e0]: the exhaustive sweep cuts from here
     // (e0 already durable) to EOF, so every cut drops only the torn trailing e1 batch.
@@ -35,29 +60,33 @@ class FileJournalCrashTest extends kyo.test.Test[Any]:
     // Append each batch through Backend.file in a fresh scope, then close it so the LOCK releases before any
     // reopen (no process kill, no sleep: the "crash" is a byte mutation between two scoped backends).
     private def appendClosed(dir: Path, batches: Seq[Chunk[EventEnvelope]])(using Frame): Unit < Async =
-        Scope.run {
-            Abort.run[JournalStorageError](Journal.Backend.file(dir)).map {
-                case Result.Success(backend) =>
-                    Kyo.foreach(batches.toList) { batch =>
-                        Abort.run[JournalError](backend.append(sid, ExpectedOffset.Any, batch)).map {
-                            case Result.Success(_)   => ()
-                            case Result.Failure(err) => throw new AssertionError(s"append failed: $err")
-                            case panic: Result.Panic => throw panic.exception
-                        }
-                    }.map(_ => ())
-                case Result.Failure(err) => throw err
-                case panic: Result.Panic => throw panic.exception
+        defaultConfiguration.map { configuration =>
+            Scope.run {
+                Abort.run[JournalStorageError](Journal.Backend.file(dir, configuration)).map {
+                    case Result.Success(backend) =>
+                        Kyo.foreach(batches.toList) { batch =>
+                            Abort.run[JournalError](backend.append(sid, ExpectedOffset.Any, batch)).map {
+                                case Result.Success(_)   => ()
+                                case Result.Failure(err) => throw new AssertionError(s"append failed: $err")
+                                case panic: Result.Panic => throw panic.exception
+                            }
+                        }.map(_ => ())
+                    case Result.Failure(err) => throw err
+                    case panic: Result.Panic => throw panic.exception
+                }
             }
         }
 
     // Reopen `dir` and read the whole stream (recovery runs on first touch). Returns the read Result so a
     // corruption case can assert the failure; open only acquires the LOCK, so an open failure is panicked on.
     private def readResult(dir: Path)(using Frame): Result[JournalError, Chunk[RecordedEvent]] < Async =
-        Scope.run {
-            Abort.run[JournalStorageError](Journal.Backend.file(dir)).map {
-                case Result.Success(backend) => Abort.run[JournalError](backend.read(sid, StreamOffset.first, Int.MaxValue))
-                case Result.Failure(err)     => throw err
-                case panic: Result.Panic     => throw panic.exception
+        defaultConfiguration.map { configuration =>
+            Scope.run {
+                Abort.run[JournalStorageError](Journal.Backend.file(dir, configuration)).map {
+                    case Result.Success(backend) => Abort.run[JournalError](backend.read(sid, StreamOffset.first, Int.MaxValue))
+                    case Result.Failure(err)     => throw err
+                    case panic: Result.Panic     => throw panic.exception
+                }
             }
         }
 
@@ -299,10 +328,10 @@ class FileJournalCrashTest extends kyo.test.Test[Any]:
                 def warn(m: => String, t: => Throwable)(using Frame, AllowUnsafe)  = rec("warn", m)
                 def error(m: => String)(using Frame, AllowUnsafe)                  = rec("error", m)
                 def error(m: => String, t: => Throwable)(using Frame, AllowUnsafe) = rec("error", m)
-            val jsonlConfig  = FileJournal.Config(format = FileJournal.SegmentFormat.Jsonl)
             val jsonlSegName = "00000000000000000000.jsonl"
             for
-                dir <- freshDir
+                dir         <- freshDir
+                jsonlConfig <- jsonlConfiguration
                 // Write [e0] and [e1] through a JSONL backend, close scope so lock releases.
                 _ <- Scope.run {
                     Abort.run[JournalStorageError](Journal.Backend.file(dir, jsonlConfig)).map {

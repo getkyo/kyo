@@ -38,6 +38,13 @@ class FileJournalNodeLockTest extends kyo.test.Test[Any]:
             case panic: Result.Panic => throw panic.exception
         }
 
+    private def binaryConfiguration(using Frame) =
+        for
+            codecs        <- EventLogCodecs.bytes()
+            journalId     <- JournalId("fj-nodelock")
+            configuration <- FileJournal.Binary.configuration(journalId, codecs)
+        yield configuration
+
     // Plants a LOCK file in `dir` with arbitrary content (used by failure-matrix cases).
     private def writeLock(dir: Path, content: String)(using Frame): Unit < Sync =
         Sync.Unsafe.defer {
@@ -252,9 +259,10 @@ class FileJournalNodeLockTest extends kyo.test.Test[Any]:
             val segPath = (dir: Path) =>
                 dir / "streams" / BinarySegmentCodec.encodeStreamId(streamId) / BinarySegmentCodec.segmentName(0L)
             for
-                dir <- freshDir
+                dir           <- freshDir
+                configuration <- binaryConfiguration
                 _ <- Scope.run {
-                    Abort.run[JournalStorageError](Journal.Backend.file(dir)).map {
+                    Abort.run[JournalStorageError](Journal.Backend.file(dir, configuration)).map {
                         case Result.Success(backend) =>
                             Abort.run[JournalError](
                                 backend.append(streamId, ExpectedOffset.NoStream, events)

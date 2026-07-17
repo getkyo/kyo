@@ -18,8 +18,8 @@ import kyo.*
   * Run: `sbt 'kyo-eventlogJVM/testOnly demo.DemoValidationTest'`
   * Run: `sbt 'kyo-eventlogJVM/Test/runMain demo.FleetLedgerDemo'`
   *
-  * Demonstrates: Path.run, Path.tempDir, Journal.Backend.file, Journal.run, EventLog.apply,
-  * EventLog.append, EventLog.read, EventLog.streamInfo, ExpectedOffset, StreamOffset.
+  * Demonstrates: Path.run, Path.tempDir, Journal.Backend.file, Journal.run, EventLog.init,
+  * EventLog.append, EventLog.read, Journal.streamInfo, ExpectedOffset, StreamOffset.
   */
 object FleetLedgerDemo extends KyoApp:
 
@@ -36,11 +36,35 @@ object FleetLedgerDemo extends KyoApp:
         streamPresentAfterReopen: Boolean
     ) derives CanEqual
 
-    private val streamId = StreamId("fleet-main").getOrElse(throw new IllegalStateException("invalid stream id"))
+    // Unsafe: eagerly resolves the pure (no real Sync/IO) identity/codec/configuration
+    // construction to a plain value at object-init time; every factory below can only fail on a
+    // genuine construction-time misconfiguration, never on this fixed, valid setup.
+    private def evalPure[E, A](v: A < Abort[E])(using Frame, ConcreteTag[E]): A =
+        Abort.run[E](v).eval match
+            case Result.Success(a)   => a
+            case Result.Failure(err) => throw new IllegalStateException(s"unexpected construction failure: $err")
+            case panic: Result.Panic => throw panic.exception
 
-    private val jsonlConfig = FileJournal.Config(format = FileJournal.SegmentFormat.Jsonl)
+    private val journalId = evalPure(JournalId("fleet-main"))
+    private val streamId  = StreamId(journalId.value).getOrElse(throw new IllegalStateException("invalid stream id"))
 
-    def flow(using Frame): LedgerSnapshot < (Async & Abort[FileException | JournalError]) =
+    private val vehicleAddedStream: EventLog.StreamSelector[FleetEvent.VehicleAdded] =
+        new EventLog.StreamSelector[FleetEvent.VehicleAdded] {}
+    private val vehicleRetiredStream: EventLog.StreamSelector[FleetEvent.VehicleRetired] =
+        new EventLog.StreamSelector[FleetEvent.VehicleRetired] {}
+
+    private given EventLog.EventDefinition[FleetEvent, FleetEvent.VehicleAdded] =
+        EventLog.EventDefinition.schema[FleetEvent, FleetEvent.VehicleAdded](vehicleAddedStream)
+    private given EventLog.EventDefinition[FleetEvent, FleetEvent.VehicleRetired] =
+        EventLog.EventDefinition.schema[FleetEvent, FleetEvent.VehicleRetired](vehicleRetiredStream)
+
+    private val fleetCodecs: EventLog.Codecs[FleetEvent] =
+        evalPure(EventLogCodecs.schema[FleetEvent]())
+
+    private val jsonlConfiguration: FileJournal.Configuration[FleetEvent, FileJournal.Jsonl] =
+        evalPure(FileJournal.Jsonl.configuration(journalId, fleetCodecs))
+
+    def flow(using Frame): LedgerSnapshot < (Async & Abort[FileException | JournalError | EventLog.PreparationFailure]) =
         Scope.run {
             Path.run {
                 for
@@ -58,23 +82,18 @@ object FleetLedgerDemo extends KyoApp:
         }
     end flow
 
-    private def writeAndCount(dir: Path)(using Frame): Int < (Async & Abort[FileException | JournalError]) =
+    private def writeAndCount(dir: Path)(using Frame): Int < (Async & Abort[FileException | JournalError | EventLog.PreparationFailure]) =
         Scope.run {
             for
-                backend <- Journal.Backend.file(dir, jsonlConfig)
+                log     <- EventLog.init(fleetCodecs, journalId)
+                backend <- Journal.Backend.file(dir, jsonlConfiguration)
                 count <- Journal.run(backend) {
                     for
-                        log <- EventLog[FleetEvent]
                         _ <- log.append(
-                            streamId,
-                            ExpectedOffset.NoStream,
-                            Chunk(FleetEvent.VehicleAdded("V001", "Toyota"))
+                            FleetEvent.VehicleAdded("V001", "Toyota"),
+                            EventLog.AppendDirective.expected(ExpectedOffset.NoStream)
                         )
-                        _ <- log.append(
-                            streamId,
-                            ExpectedOffset.Any,
-                            Chunk(FleetEvent.VehicleRetired("V001"))
-                        )
+                        _      <- log.append(FleetEvent.VehicleRetired("V001"))
                         events <- log.read(streamId, StreamOffset.first, maxCount = 10)
                     yield events.size
                 }
@@ -83,15 +102,13 @@ object FleetLedgerDemo extends KyoApp:
 
     private def rereadAfterReopen(dir: Path)(using
         Frame
-    ): Chunk[EventLog.Typed[FleetEvent]] < (Async & Abort[FileException | JournalError]) =
+    ): Chunk[EventLog.Record[FleetEvent]] < (Async & Abort[FileException | JournalError]) =
         Scope.run {
             for
-                backend <- Journal.Backend.file(dir, jsonlConfig)
+                log     <- EventLog.init(fleetCodecs, journalId)
+                backend <- Journal.Backend.file(dir, jsonlConfiguration)
                 events <- Journal.run(backend) {
-                    for
-                        log   <- EventLog[FleetEvent]
-                        chunk <- log.read(streamId, StreamOffset.first, maxCount = 10)
-                    yield chunk
+                    log.read(streamId, StreamOffset.first, maxCount = 10)
                 }
             yield events
         }
@@ -99,12 +116,9 @@ object FleetLedgerDemo extends KyoApp:
     private def streamInfoAfterReopen(dir: Path)(using Frame): Boolean < (Async & Abort[FileException | JournalError]) =
         Scope.run {
             for
-                backend <- Journal.Backend.file(dir, jsonlConfig)
+                backend <- Journal.Backend.file(dir, jsonlConfiguration)
                 present <- Journal.run(backend) {
-                    for
-                        log  <- EventLog[FleetEvent]
-                        info <- log.streamInfo(streamId)
-                    yield info.exists
+                    Journal.streamInfo(streamId).map(_.exists)
                 }
             yield present
         }
@@ -124,7 +138,7 @@ object FleetLedgerDemo extends KyoApp:
 
     run {
         for
-            snapshot <- Abort.run[FileException | JournalError](flow)
+            snapshot <- Abort.run[FileException | JournalError | EventLog.PreparationFailure](flow)
             verdict = snapshot match
                 case Result.Success(value) => validate(value)
                 case Result.Failure(err)   => Present(s"flow aborted: $err")

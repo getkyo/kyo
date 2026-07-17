@@ -13,8 +13,20 @@ class FileJournalBinaryBackendTest
             case Result.Failure(err) => throw err
             case panic: Result.Panic => throw panic.exception
         }.map { dir =>
+            val journalId = JournalId.validate("fj-binary-backend")(using Frame.internal)
+                .getOrElse(throw new AssertionError("valid journal id"))
+            val codecs = Abort.run[EventCodecConfigurationError](EventLogCodecs.bytes()).eval match
+                case Result.Success(c)   => c
+                case Result.Failure(err) => throw err
+                case panic: Result.Panic => throw panic.exception
+            val configuration = Abort.run[FileJournal.ConfigurationError](
+                FileJournal.Binary.configuration(journalId, codecs)
+            ).eval match
+                case Result.Success(c)   => c
+                case Result.Failure(err) => throw err
+                case panic: Result.Panic => throw panic.exception
             Abort.run[JournalStorageError](
-                Journal.Backend.file(dir, FileJournal.Config(format = FileJournal.SegmentFormat.Binary))
+                Journal.Backend.file(dir, configuration)
             ).map {
                 case Result.Success(backend) => backend
                 case Result.Failure(err)     => throw err
@@ -24,7 +36,7 @@ class FileJournalBinaryBackendTest
     )
 
 /** Runs the backend contract suite against the file backend in JSONL encoding. Exercises the
-  * full format path end-to-end: FORMAT marker creation, JSONL frameBatch, per-record decode,
+  * full format path end-to-end: MANIFEST marker creation, JSONL frameBatch, per-record decode,
   * and recovery.
   */
 class FileJournalJsonlBackendTest
@@ -34,8 +46,20 @@ class FileJournalJsonlBackendTest
             case Result.Failure(err) => throw err
             case panic: Result.Panic => throw panic.exception
         }.map { dir =>
+            val journalId = JournalId.validate("fj-jsonl-backend")(using Frame.internal)
+                .getOrElse(throw new AssertionError("valid journal id"))
+            val codecs = Abort.run[EventCodecConfigurationError](EventLogCodecs.bytes()).eval match
+                case Result.Success(c)   => c
+                case Result.Failure(err) => throw err
+                case panic: Result.Panic => throw panic.exception
+            val configuration = Abort.run[FileJournal.ConfigurationError](
+                FileJournal.Jsonl.configuration(journalId, codecs)
+            ).eval match
+                case Result.Success(c)   => c
+                case Result.Failure(err) => throw err
+                case panic: Result.Panic => throw panic.exception
             Abort.run[JournalStorageError](
-                Journal.Backend.file(dir, FileJournal.Config(format = FileJournal.SegmentFormat.Jsonl))
+                Journal.Backend.file(dir, configuration)
             ).map {
                 case Result.Success(backend) => backend
                 case Result.Failure(err)     => throw err

@@ -14,9 +14,16 @@ class FileJournalSwmrTest extends kyo.test.Test[Any]:
 
     private def valid[A](r: Result[JournalInvalidIdentifierError, A]): A =
         r.getOrElse(throw new AssertionError("valid identifier"))
-    private val sid = valid(StreamId("swmr-1"))
+    private val sid       = valid(StreamId("swmr-1"))
+    private val journalId = JournalId.validate("fj-swmr")(using Frame.internal).getOrElse(throw new AssertionError("valid journal id"))
     private def env(n: Int): EventEnvelope =
         EventEnvelope(valid(EventId(s"e-$n")), valid(EventType("T")), Span.from(s"payload-$n".getBytes("UTF-8")), EventMetadata.empty)
+
+    private def binaryConfiguration(options: FileJournal.Options)(using Frame) =
+        for
+            codecs        <- EventLogCodecs.bytes()
+            configuration <- FileJournal.Binary.configuration(journalId, codecs, options)
+        yield configuration
 
     private def freshDir(prefix: String)(using Frame): Path < (Sync & Scope) =
         Abort.run[FileException](Path.run(Path.tempDir(prefix))).map {
@@ -68,6 +75,7 @@ class FileJournalSwmrTest extends kyo.test.Test[Any]:
             val batch1 = Chunk(env(1))
             for
                 dir           <- freshDir("fj-swmr-live")
+                configuration <- binaryConfiguration(FileJournal.Options(fsync = FileJournal.Fsync.Always))
                 holdNextWrite <- Sync.Unsafe.defer(AtomicRef.Unsafe.init(false))
                 gate          <- Channel.initUnscoped[Unit](1)
                 writerReady   <- Channel.initUnscoped[Unit](1)
@@ -76,7 +84,7 @@ class FileJournalSwmrTest extends kyo.test.Test[Any]:
                 (seam, claim, flushFor) <- Sync.Unsafe.defer {
                     val coordinator = GroupCommitCoordinator.init
                     (
-                        gatedAsyncStore(platformAsyncStore, gate, holdNextWrite, TerminatorSize),
+                        gatedAsyncStore(platformAsyncStore(), gate, holdNextWrite, TerminatorSize),
                         ClaimSeam.async(),
                         (fsync: FileJournal.Fsync) => FlushStrategy.groupCommit(fsync, coordinator)
                     )
@@ -85,9 +93,8 @@ class FileJournalSwmrTest extends kyo.test.Test[Any]:
                     Scope.run {
                         FileJournalCore.open(
                             dir,
-                            FileJournal.Config(fsync = FileJournal.Fsync.Always),
+                            configuration,
                             seam,
-                            EventPayloadCodec.bytes,
                             claim,
                             flushFor
                         ).map { backend =>
@@ -105,7 +112,7 @@ class FileJournalSwmrTest extends kyo.test.Test[Any]:
                 _ <- batch1Go.put(())
                 _ <- Fiber.initUnscoped(
                     Scope.run {
-                        Abort.run[JournalStorageError](Journal.Reader.file(dir)).map {
+                        Abort.run[JournalStorageError](Journal.Reader.file(dir, configuration)).map {
                             case Result.Success(reader) =>
                                 Abort.run[JournalError](reader.read(sid, StreamOffset.first, Int.MaxValue)).map {
                                     case Result.Success(evs) => readerDone.put(evs)
@@ -121,7 +128,7 @@ class FileJournalSwmrTest extends kyo.test.Test[Any]:
                 _   <- gate.put(())
                 _   <- writerFiber.get
                 after <- Scope.run {
-                    Abort.run[JournalStorageError](Journal.Reader.file(dir)).map {
+                    Abort.run[JournalStorageError](Journal.Reader.file(dir, configuration)).map {
                         case Result.Success(reader) =>
                             Abort.run[JournalError](reader.read(sid, StreamOffset.first, Int.MaxValue)).map {
                                 case Result.Success(evs) => evs
@@ -141,11 +148,11 @@ class FileJournalSwmrTest extends kyo.test.Test[Any]:
 
     "rotation follow" - {
         "a reader following repeated reads sees every committed record across a rotation boundary" in {
-            val config = FileJournal.Config(fsync = FileJournal.Fsync.Always, segmentSize = 256L.bytes)
             for
-                dir <- freshDir("fj-swmr-rot")
+                dir           <- freshDir("fj-swmr-rot")
+                configuration <- binaryConfiguration(FileJournal.Options(fsync = FileJournal.Fsync.Always, segmentSize = 256L.bytes))
                 _ <- Scope.run {
-                    Abort.run[JournalStorageError](Journal.Backend.file(dir, config)).map {
+                    Abort.run[JournalStorageError](Journal.Backend.file(dir, configuration)).map {
                         case Result.Success(backend) =>
                             Kyo.foreach(0 until 20)(n =>
                                 Abort.run[JournalError](backend.append(sid, ExpectedOffset.Any, Chunk(env(n)))).map {
@@ -160,7 +167,7 @@ class FileJournalSwmrTest extends kyo.test.Test[Any]:
                 }
                 collected <- Loop.indexed(Chunk.empty[RecordedEvent], StreamOffset.first) { (_, acc, from) =>
                     Scope.run {
-                        Abort.run[JournalStorageError](Journal.Reader.file(dir, config)).map {
+                        Abort.run[JournalStorageError](Journal.Reader.file(dir, configuration)).map {
                             case Result.Success(reader) =>
                                 Abort.run[JournalError](reader.read(sid, from, 100)).map {
                                     case Result.Success(chunk) =>

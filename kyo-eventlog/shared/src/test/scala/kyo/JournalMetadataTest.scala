@@ -1,5 +1,7 @@
 package kyo
 
+import kyo.internal.FileJournalCore
+
 class JournalMetadataTest extends kyo.test.Test[Any]:
 
     "MetadataKey" - {
@@ -47,13 +49,16 @@ class JournalMetadataTest extends kyo.test.Test[Any]:
         }
     }
 
-    "EventMetadataCodec" - {
+    "FileJournalCore metadata version-byte framing" - {
+        val ionBinaryCodec = EventLogCodecs.MetadataCodec(IonBinary())
+        val msgPackCodec   = EventLogCodecs.MetadataCodec(MsgPack())
+
         "ionBinary round-trips MapEntries with Integer keys (array-of-pairs path)" in {
             val key   = MetadataKey("entries").getOrElse(throw new AssertionError("valid key"))
             val sv    = Structure.Value.MapEntries(Chunk(Structure.Value.Integer(1L) -> Structure.Value.Str("v")))
             val md    = EventMetadata(Map(key -> MetadataValue(sv)))
-            val bytes = EventMetadataCodec.ionBinary.encode(md)
-            EventMetadataCodec.ionBinary.decode(bytes)(using Frame.internal) match
+            val bytes = FileJournalCore.encodeMetadata(ionBinaryCodec, md)
+            FileJournalCore.decodeMetadata(ionBinaryCodec, bytes)(using Frame.internal) match
                 case Result.Success(decoded) => assert(decoded.values(key).value == sv)
                 case other                   => fail(s"ionBinary Integer-key MapEntries failed: $other")
         }
@@ -61,43 +66,39 @@ class JournalMetadataTest extends kyo.test.Test[Any]:
             val key   = MetadataKey("entries").getOrElse(throw new AssertionError("valid key"))
             val sv    = Structure.Value.MapEntries(Chunk(Structure.Value.Integer(1L) -> Structure.Value.Str("v")))
             val md    = EventMetadata(Map(key -> MetadataValue(sv)))
-            val bytes = EventMetadataCodec.msgPack.encode(md)
-            EventMetadataCodec.msgPack.decode(bytes)(using Frame.internal) match
+            val bytes = FileJournalCore.encodeMetadata(msgPackCodec, md)
+            FileJournalCore.decodeMetadata(msgPackCodec, bytes)(using Frame.internal) match
                 case Result.Success(decoded) => assert(decoded.values(key).value == sv)
                 case other                   => fail(s"msgPack Integer-key MapEntries failed: $other")
         }
         "ionBinary round-trips all ten constructors in one EventMetadata map" in {
-            assert(roundTripCombinedMetadata(EventMetadataCodec.ionBinary, EventMetadataCodec.MetadataVersionIonBinary))
+            assert(roundTripCombinedMetadata(ionBinaryCodec, FileJournalCore.MetadataVersionCurrent))
         }
         "msgPack round-trips all ten constructors in one EventMetadata map" in {
-            assert(roundTripCombinedMetadata(EventMetadataCodec.msgPack, EventMetadataCodec.MetadataVersionMsgPack))
+            assert(roundTripCombinedMetadata(msgPackCodec, FileJournalCore.MetadataVersionMsgPack))
         }
         "ionBinary encodes version 0x02 and round-trips all ten constructors" in {
-            assert(roundTripViaMetadataCodec(EventMetadataCodec.ionBinary, EventMetadataCodec.MetadataVersionIonBinary))
+            assert(roundTripViaMetadataCodec(ionBinaryCodec, FileJournalCore.MetadataVersionCurrent))
         }
         "ionBinary decode accepts legacy 0x01 MsgPack bodies" in {
             val key    = MetadataKey("k").getOrElse(throw new AssertionError("valid key"))
             val md     = EventMetadata(Map(key -> MetadataValue(Structure.Value.Str("legacy"))))
-            val legacy = EventMetadataCodec.msgPack.encode(md)
-            assert(legacy(0) == EventMetadataCodec.MetadataVersionMsgPack)
-            EventMetadataCodec.ionBinary.decode(legacy)(using Frame.internal) match
+            val legacy = FileJournalCore.encodeMetadata(msgPackCodec, md)
+            assert(legacy(0) == FileJournalCore.MetadataVersionMsgPack)
+            FileJournalCore.decodeMetadata(ionBinaryCodec, legacy)(using Frame.internal) match
                 case Result.Success(decoded) =>
                     assert(decoded.values(key).value == Structure.Value.Str("legacy"))
                 case other => fail(s"legacy MsgPack read failed: $other")
             end match
         }
         "msgPack encodes version 0x01 only" in {
-            val bytes = EventMetadataCodec.msgPack.encode(EventMetadata.empty)
-            assert(bytes(0) == EventMetadataCodec.MetadataVersionMsgPack)
+            val bytes = FileJournalCore.encodeMetadata(msgPackCodec, EventMetadata.empty)
+            assert(bytes(0) == FileJournalCore.MetadataVersionMsgPack)
         }
-        "msgPack rejects non-0x01 version bytes" in {
-            val ionBytes = EventMetadataCodec.ionBinary.encode(EventMetadata.empty)
-            val result   = EventMetadataCodec.msgPack.decode(ionBytes)(using Frame.internal)
-            assert(result.isFailure)
-        }
-        "default is ionBinary" in {
-            assert(EventMetadataCodec.default eq EventMetadataCodec.ionBinary)
-        }
+        // "msgPack rejects non-0x01 version bytes" has no equivalent: FileJournalCore.decodeMetadata
+        // dispatches on the leading version BYTE, not on the caller's chosen wrapped codec, so a
+        // 0x02-framed body always decodes through whatever codec THIS call was given (there is no
+        // "wrong codec for this version" case left to reject).
     }
 
     private def combinedMetadataMap: Map[MetadataKey, MetadataValue] =
@@ -129,25 +130,25 @@ class JournalMetadataTest extends kyo.test.Test[Any]:
         )
     end combinedMetadataMap
 
-    private def roundTripCombinedMetadata(codec: EventMetadataCodec, expectedVersion: Byte): Boolean =
+    private def roundTripCombinedMetadata(codec: EventLogCodecs.MetadataCodec, expectedVersion: Byte): Boolean =
         val md    = EventMetadata(combinedMetadataMap)
-        val bytes = codec.encode(md)
+        val bytes = FileJournalCore.encodeMetadata(codec, md)
         if bytes(0) != expectedVersion then false
         else
-            codec.decode(bytes)(using Frame.internal) match
+            FileJournalCore.decodeMetadata(codec, bytes)(using Frame.internal) match
                 case Result.Success(decoded) => decoded == md
                 case _                       => false
         end if
     end roundTripCombinedMetadata
 
-    private def roundTripViaMetadataCodec(codec: EventMetadataCodec, expectedVersion: Byte): Boolean =
+    private def roundTripViaMetadataCodec(codec: EventLogCodecs.MetadataCodec, expectedVersion: Byte): Boolean =
         allStructureValues.zipWithIndex.forall { (sv, idx) =>
             val key   = MetadataKey(s"field.$idx").getOrElse(throw new AssertionError("valid key"))
             val md    = EventMetadata(Map(key -> MetadataValue(sv)))
-            val bytes = codec.encode(md)
+            val bytes = FileJournalCore.encodeMetadata(codec, md)
             if bytes(0) != expectedVersion then false
             else
-                codec.decode(bytes)(using Frame.internal) match
+                FileJournalCore.decodeMetadata(codec, bytes)(using Frame.internal) match
                     case Result.Success(decoded) => decoded.values(key).value == sv
                     case _                       => false
             end if

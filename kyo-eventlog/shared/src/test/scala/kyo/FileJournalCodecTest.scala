@@ -15,9 +15,11 @@ class FileJournalCodecTest extends kyo.test.Test[Any]:
         }
     }
 
+    private val engineMetadataCodec = EventLogCodecs.MetadataCodec(IonBinary())
+
     "record frame" - {
         "frames a record with a body-length prefix and a body-covering CRC" in {
-            val md      = EventMetadataCodec.default.encode(EventMetadata.empty)
+            val md      = kyo.internal.FileJournalCore.encodeMetadata(engineMetadataCodec, EventMetadata.empty)
             val payload = "hello".getBytes("UTF-8")
             val frame   = encodeRecord(7L, "evt-1", "UserRegistered", md, payload)
             val buf     = ByteBuffer.wrap(frame)
@@ -29,7 +31,13 @@ class FileJournalCodecTest extends kyo.test.Test[Any]:
             assert((actual.value & 0xffffffffL).toInt == crc)
         }
         "crc covers the body but not the length or crc fields" in {
-            val frame = encodeRecord(1L, "e", "t", EventMetadataCodec.default.encode(EventMetadata.empty), Array[Byte](9))
+            val frame = encodeRecord(
+                1L,
+                "e",
+                "t",
+                kyo.internal.FileJournalCore.encodeMetadata(engineMetadataCodec, EventMetadata.empty),
+                Array[Byte](9)
+            )
             // flipping a body byte must break the CRC; flipping the length field must not (it is not covered)
             val body       = frame.clone(); body(10) = (body(10) ^ 0xff).toByte // a byte inside the body
             val bb         = ByteBuffer.wrap(body); val len = bb.getInt(); val crc = bb.getInt()
@@ -49,14 +57,12 @@ class FileJournalCodecTest extends kyo.test.Test[Any]:
         }
     }
 
-    "Config.default" - {
-        "carries fsync=Always, segmentSize=64 MiB, and format=Binary" in {
+    "Options.default" - {
+        "carries fsync=Always and segmentSize=64 MiB (format and metadataCodec moved off Options)" in {
             assert(
-                FileJournal.Config.default == FileJournal.Config(
+                FileJournal.Options.default == FileJournal.Options(
                     fsync = FileJournal.Fsync.Always,
-                    segmentSize = 64L.mib,
-                    format = FileJournal.SegmentFormat.Binary,
-                    metadataCodec = EventMetadataCodec.default
+                    segmentSize = 64L.mib
                 )
             )
         }

@@ -11,6 +11,13 @@ import scala.scalajs.js as sjs
   */
 class FileJournalNodeRuntimeTest extends kyo.test.Test[Any]:
 
+    private def binaryConfiguration(using Frame) =
+        for
+            codecs        <- EventLogCodecs.bytes()
+            journalId     <- JournalId("fj-node-runtime")
+            configuration <- FileJournal.Binary.configuration(journalId, codecs)
+        yield configuration
+
     "isNodeRuntime" - {
 
         "returns true under NodeJSEnv (normal test runner)" in {
@@ -51,29 +58,31 @@ class FileJournalNodeRuntimeTest extends kyo.test.Test[Any]:
 
     "Backend.file on non-Node runtime" - {
 
-        // Construct the file effect while isNodeRuntime is false (process shadowed);
-        // the check is eager so the returned kyo value is already an Abort.fail.
-        // Restore process before running it so subsequent IO (Scope.run) works normally.
+        // The requireNode guard now lives in the platformSyncStore seam provider (steering.md
+        // Phase-03 seam-resolution decision), so it fires at first store operation (StoreSeam.open
+        // / acquireLock) during Scope.run's execution, not at the Journal.Backend.file call site.
+        // process stays shadowed across construction AND execution (sequenced via Sync.defer so it
+        // runs in program order around Scope.run), then is restored afterward either way.
         "produces JournalStorageError mentioning Node.js when isNodeRuntime is false" in {
-            val savedProcess = sjs.Dynamic.global.process
-            sjs.Dynamic.global.updateDynamic("process")(sjs.undefined)
-            // Journal.Backend.file evaluates isNodeRuntime eagerly at call time.
-            val effect =
-                try Journal.Backend.file(Path("any-path-will-not-be-used"))
-                finally sjs.Dynamic.global.updateDynamic("process")(savedProcess)
-            // Run the effect; it is already an Abort.fail so no real I/O occurs.
-            Scope.run {
-                Abort.run[JournalStorageError](effect)
-            }.map { result =>
-                result match
-                    case Result.Failure(e: JournalStorageError) =>
-                        assert(
-                            e.detail.contains("Node.js"),
-                            s"expected 'Node.js' in error detail but got: ${e.detail}"
-                        )
-                    case other =>
-                        fail(s"expected Failure(JournalStorageError) but got $other")
-            }
+            for
+                configuration <- binaryConfiguration
+                savedProcess <- Sync.defer {
+                    val saved = sjs.Dynamic.global.process
+                    sjs.Dynamic.global.updateDynamic("process")(sjs.undefined)
+                    saved
+                }
+                result <- Scope.run {
+                    Abort.run[JournalStorageError](Journal.Backend.file(Path("any-path-will-not-be-used"), configuration))
+                }
+                _ <- Sync.defer(sjs.Dynamic.global.updateDynamic("process")(savedProcess))
+            yield result match
+                case Result.Failure(e: JournalStorageError) =>
+                    assert(
+                        e.detail.contains("Node.js"),
+                        s"expected 'Node.js' in error detail but got: ${e.detail}"
+                    )
+                case other =>
+                    fail(s"expected Failure(JournalStorageError) but got $other")
         }
 
     }

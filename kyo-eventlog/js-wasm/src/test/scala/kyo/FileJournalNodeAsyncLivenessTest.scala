@@ -21,6 +21,13 @@ class FileJournalNodeAsyncLivenessTest extends kyo.test.Test[Any]:
             case panic: Result.Panic => throw panic.exception
         }
 
+    private def binaryConfiguration(using Frame) =
+        for
+            codecs        <- EventLogCodecs.bytes()
+            journalId     <- JournalId("fj-node-async-liveness")
+            configuration <- FileJournal.Binary.configuration(journalId, codecs)
+        yield configuration
+
     private def envelope(id: String, payload: Array[Byte]): EventEnvelope =
         EventEnvelope(
             id = valid(EventId(id)),
@@ -34,9 +41,10 @@ class FileJournalNodeAsyncLivenessTest extends kyo.test.Test[Any]:
             val largePayload = new Array[Byte](32 * 1024 * 1024)
             val quickPayload = Array[Byte](1, 2, 3)
             for
-                dir   <- freshDir
-                order <- Channel.initUnscoped[String](2)
-                backend <- Abort.run[JournalStorageError](Journal.Backend.fileAsync(dir)).map {
+                dir           <- freshDir
+                order         <- Channel.initUnscoped[String](2)
+                configuration <- binaryConfiguration
+                backend <- Abort.run[JournalStorageError](Journal.Backend.fileAsync(dir, configuration)).map {
                     case Result.Success(b)   => b
                     case Result.Failure(err) => throw err
                     case panic: Result.Panic => throw panic.exception

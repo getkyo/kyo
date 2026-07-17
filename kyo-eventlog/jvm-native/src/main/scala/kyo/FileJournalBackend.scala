@@ -4,10 +4,6 @@ import java.nio.ByteBuffer
 import java.nio.channels.FileChannel
 import java.nio.channels.OverlappingFileLockException
 import java.nio.file.StandardOpenOption
-import kyo.internal.ClaimSeam
-import kyo.internal.FileJournalCore
-import kyo.internal.FlushStrategy
-import kyo.internal.GroupCommitCoordinator
 import kyo.internal.SegmentStore
 import kyo.internal.StoreSeam
 
@@ -125,9 +121,15 @@ final private class FileChannelStore extends SegmentStore:
 
 end FileChannelStore
 
-private[kyo] def platformSyncStore: StoreSeam[Sync] = StoreSeam.sync(new FileChannelStore)
+/** The JVM/Native platform synchronous [[StoreSeam]], resolved by `FileJournalCore.openSync` /
+  * `FileJournalCore.openReader` (package `kyo.internal`) so the shared `Journal.Backend.file` /
+  * `Journal.Reader.file` in `Journal.scala` compile identically on every platform while each
+  * resolves its own concrete store.
+  */
+private[kyo] def platformSyncStore(isReadOnly: Boolean = false): StoreSeam[Sync] = StoreSeam.sync(new FileChannelStore, isReadOnly)
 
-private[kyo] def platformAsyncStore: StoreSeam[Async] = offloadStore(new FileChannelStore)
+/** The JVM/Native platform asynchronous [[StoreSeam]], resolved by `FileJournalCore.openAsync`. */
+private[kyo] def platformAsyncStore(isReadOnly: Boolean = false): StoreSeam[Async] = offloadStore(new FileChannelStore, isReadOnly)
 
 /** Wraps a [[SegmentStore]] as a `StoreSeam[Async]` for the Async backend: every call defers
   * through [[Sync.Unsafe.defer]] (the identical blocking `FileChannel` call the Sync backend
@@ -173,104 +175,3 @@ private def offloadHandle(h: SegmentStore.Handle): StoreSeam.Handle[Async] = new
         // Unsafe: bridges raw handle close into Async via Sync defer.
         Async.defer(Sync.Unsafe.defer(h.close()))
 end offloadHandle
-
-/** Opens (or creates) a file-backed journal rooted at `dir`. Available on JVM and Native only.
-  *
-  * @see
-  *   [[FileJournal.Config]] for the durability and rotation knobs
-  * @see
-  *   [[EventPayloadCodec]] for payload encoding strategies
-  */
-extension (backend: Journal.Backend.type)
-    def file(
-        dir: Path,
-        config: FileJournal.Config = FileJournal.Config.default,
-        payloadCodec: EventPayloadCodec = EventPayloadCodec.bytes
-    )(using
-        Frame
-    )
-        : Journal.Backend[Sync] < (Sync & Scope & Abort[JournalStorageError]) =
-        FileJournalCore.open(dir, config, StoreSeam.sync(new FileChannelStore), payloadCodec, ClaimSeam.sync, FlushStrategy.inline)
-
-    /** Opens (or creates) an Async-flavored file-backed journal rooted at `dir`. Same on-disk
-      * format and durability semantics as [[file]]; the store calls run through the kyo scheduler's
-      * blocking-offload path instead of blocking the calling effect directly, and concurrent
-      * appenders to the same stream coalesce their durability flushes into one `fsync` per round.
-      *
-      * @see
-      *   [[FileJournal.Config]] for the durability and rotation knobs
-      * @see
-      *   [[EventPayloadCodec]] for payload encoding strategies
-      */
-    def fileAsync(
-        dir: Path,
-        config: FileJournal.Config = FileJournal.Config.default,
-        payloadCodec: EventPayloadCodec = EventPayloadCodec.bytes
-    )(using
-        Frame
-    )
-        : Journal.Backend[Async] < (Sync & Scope & Abort[JournalStorageError]) =
-        // Unsafe: bootstraps in-process claim permits and group-commit coordinator maps.
-        Sync.Unsafe.defer {
-            val coordinator = GroupCommitCoordinator.init
-            (ClaimSeam.async(), (fsync: FileJournal.Fsync) => FlushStrategy.groupCommit(fsync, coordinator))
-        }.flatMap { (claim, flushFor) =>
-            FileJournalCore.open(
-                dir,
-                config,
-                offloadStore(new FileChannelStore),
-                payloadCodec,
-                claim,
-                flushFor
-            )
-        }
-    end fileAsync
-end extension
-
-/** Sync read-only open: skips the writer lock, reads to the last valid terminator / commit line.
-  *
-  * Single-writer, multiple-reader (SWMR): concurrent writers must use [[Journal.Backend.file]] or
-  * [[Journal.Backend.fileAsync]]; readers opened through this extension never acquire the root lock and
-  * observe only data committed before the open. A recovery pass may truncate a torn tail in the active
-  * segment on first touch, so a nominally read-only call can perform one-time disk repair.
-  *
-  * Overloads accept [[FileJournal.Config]] and [[EventPayloadCodec]]; defaults match
-  * [[Journal.Backend.file]].
-  */
-extension (r: Journal.Reader.type)
-    def file(dir: Path)(using Frame): Journal.Reader[Sync] < (Sync & Scope & Abort[JournalStorageError]) =
-        file(dir, FileJournal.Config.default, EventPayloadCodec.bytes)
-
-    def file(dir: Path, config: FileJournal.Config)(using Frame): Journal.Reader[Sync] < (Sync & Scope & Abort[JournalStorageError]) =
-        file(dir, config, EventPayloadCodec.bytes)
-
-    def file(
-        dir: Path,
-        config: FileJournal.Config,
-        payloadCodec: EventPayloadCodec
-    )(using
-        Frame
-    )
-        : Journal.Reader[Sync] < (Sync & Scope & Abort[JournalStorageError]) =
-        FileJournalCore.openReader(dir, config, StoreSeam.sync(new FileChannelStore, isReadOnly = true), payloadCodec)
-
-    /** Async read-only open. Store operations run through the platform async path (blocking offload on
-      * JVM/Native, `node:fs/promises` on Node.js). Same SWMR semantics as [[file]].
-      */
-    def fileAsync(dir: Path)(using Frame): Journal.Reader[Async] < (Sync & Scope & Abort[JournalStorageError]) =
-        fileAsync(dir, FileJournal.Config.default, EventPayloadCodec.bytes)
-
-    def fileAsync(dir: Path, config: FileJournal.Config)(using Frame): Journal.Reader[Async] < (Sync & Scope & Abort[JournalStorageError]) =
-        fileAsync(dir, config, EventPayloadCodec.bytes)
-
-    def fileAsync(
-        dir: Path,
-        config: FileJournal.Config,
-        payloadCodec: EventPayloadCodec
-    )(using
-        Frame
-    )
-        : Journal.Reader[Async] < (Sync & Scope & Abort[JournalStorageError]) =
-        FileJournalCore.openReader(dir, config, offloadStore(new FileChannelStore, isReadOnly = true), payloadCodec)
-    end fileAsync
-end extension

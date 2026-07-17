@@ -26,9 +26,9 @@ case class VehicleState(
 
 // Folds a typed event sequence into the current fleet map. Pure: the same events always
 // produce the same state regardless of how many times this function is called.
-def replayFleet(events: Chunk[EventLog.Typed[RentalEvent]]): Map[String, VehicleState] =
-    events.foldLeft(Map.empty[String, VehicleState]) { (fleet, typed) =>
-        typed.payload match
+def replayFleet(events: Chunk[EventLog.Record[RentalEvent]]): Map[String, VehicleState] =
+    events.foldLeft(Map.empty[String, VehicleState]) { (fleet, record) =>
+        record.payload match
             case RentalEvent.VehicleAdded(id, make, model) =>
                 fleet + (id -> VehicleState(id, make, model, available = true))
             case RentalEvent.ReservationMade(vehicleId, _, _, _) =>
@@ -41,41 +41,49 @@ def replayFleet(events: Chunk[EventLog.Typed[RentalEvent]]): Map[String, Vehicle
 
 object CarRental extends KyoApp:
 
+    // Every RentalEvent member routes to the fleet's single stream (each member gets its own
+    // StreamSelector instance; a real service with per-vehicle streams would vary this per member).
+    private given EventLog.EventDefinition[RentalEvent, RentalEvent.VehicleAdded] =
+        EventLog.EventDefinition.schema[RentalEvent, RentalEvent.VehicleAdded](new EventLog.StreamSelector[RentalEvent.VehicleAdded] {})
+    private given EventLog.EventDefinition[RentalEvent, RentalEvent.ReservationMade] =
+        EventLog.EventDefinition.schema[
+            RentalEvent,
+            RentalEvent.ReservationMade
+        ](new EventLog.StreamSelector[RentalEvent.ReservationMade] {})
+    private given EventLog.EventDefinition[RentalEvent, RentalEvent.VehiclePickedUp] =
+        EventLog.EventDefinition.schema[
+            RentalEvent,
+            RentalEvent.VehiclePickedUp
+        ](new EventLog.StreamSelector[RentalEvent.VehiclePickedUp] {})
+    private given EventLog.EventDefinition[RentalEvent, RentalEvent.VehicleReturned] =
+        EventLog.EventDefinition.schema[
+            RentalEvent,
+            RentalEvent.VehicleReturned
+        ](new EventLog.StreamSelector[RentalEvent.VehicleReturned] {})
+
     run {
         Scope.run {
             Path.run {
                 for
-                    dir     <- Path.tempDir("car-rental")
-                    fleetId <- Abort.get(StreamId("fleet"))
-                    backend <- Journal.Backend.file(dir)
+                    dir           <- Path.tempDir("car-rental")
+                    fleetId       <- JournalId("fleet")
+                    codecs        <- EventLogCodecs.schema[RentalEvent]()
+                    configuration <- FileJournal.Binary.configuration(fleetId, codecs)
+                    log           <- EventLog.init(codecs, fleetId)
+                    backend       <- Journal.Backend.file(dir, configuration)
+                    streamId      <- Abort.get(StreamId(fleetId.value))
                     _ <- Journal.run(backend) {
                         for
-                            log <- EventLog[RentalEvent]
                             _ <- log.append(
-                                fleetId,
-                                ExpectedOffset.NoStream,
-                                Chunk(
-                                    RentalEvent.VehicleAdded("V001", "Toyota", "Camry"),
-                                    RentalEvent.VehicleAdded("V002", "Honda", "Civic"),
-                                    RentalEvent.VehicleAdded("V003", "Ford", "Explorer")
-                                )
+                                RentalEvent.VehicleAdded("V001", "Toyota", "Camry"),
+                                EventLog.AppendDirective.expected(ExpectedOffset.NoStream)
                             )
-                            _ <- log.append(
-                                fleetId,
-                                ExpectedOffset.Any,
-                                Chunk(
-                                    RentalEvent.ReservationMade("V001", "C100", "2026-08-01", "2026-08-05"),
-                                    RentalEvent.VehiclePickedUp("V001", "R001")
-                                )
-                            )
-                            _ <- log.append(
-                                fleetId,
-                                ExpectedOffset.Any,
-                                Chunk(
-                                    RentalEvent.VehicleReturned("V001", "R001", "good")
-                                )
-                            )
-                            events <- log.read(fleetId, StreamOffset.first, maxCount = 100)
+                            _      <- log.append(RentalEvent.VehicleAdded("V002", "Honda", "Civic"))
+                            _      <- log.append(RentalEvent.VehicleAdded("V003", "Ford", "Explorer"))
+                            _      <- log.append(RentalEvent.ReservationMade("V001", "C100", "2026-08-01", "2026-08-05"))
+                            _      <- log.append(RentalEvent.VehiclePickedUp("V001", "R001"))
+                            _      <- log.append(RentalEvent.VehicleReturned("V001", "R001", "good"))
+                            events <- log.read(streamId, StreamOffset.first, maxCount = 100)
                             fleet = replayFleet(events)
                             _ <- Console.printLine("=== Car Rental Fleet ===")
                             _ <- Kyo.foreachDiscard(fleet.values.toList.sortBy(_.vehicleId)) { v =>

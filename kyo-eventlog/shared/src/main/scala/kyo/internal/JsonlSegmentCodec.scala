@@ -4,10 +4,10 @@ import java.nio.charset.StandardCharsets
 import kyo.*
 
 /** JSONL segment codec: one JSON object per line per event, followed by one commit line per batch.
-  * Files carry no binary header; the FORMAT marker at the root distinguishes them from binary
+  * Files carry no binary header; the MANIFEST marker at the root distinguishes them from binary
   * segments. All multi-byte integer fields use decimal encoding; byte payloads are base64-encoded
-  * when the [[EventPayloadCodec]] is the identity codec, or embedded as JSON values when it is
-  * schema-derived.
+  * when the [[kyo.EventLogCodecs.ValueCodec]] is the identity descriptor, or embedded as JSON
+  * values when it is schema-derived.
   *
   * Line formats (both end with a `\n`):
   *
@@ -22,17 +22,61 @@ import kyo.*
   * without the newline. CRC32 operates on the UTF-8 bytes of the covered body.
   *
   * The `metadata` field is encoded as a JSON object on write. On read the JSON object is
-  * converted to binary metadata bytes via the configured [[EventMetadataCodec]] so that
-  * [[DecodedRecord.metadata]] is always in the selected binary shadow form regardless of the
+  * converted to binary metadata bytes via the configured [[kyo.EventLogCodecs.MetadataCodec]] so
+  * that [[DecodedRecord.metadata]] is always in the selected binary shadow form regardless of the
   * segment encoding, and [[FileJournalCore.rebuild]] requires no format-specific branching.
   */
 final private[kyo] class JsonlSegmentCodec(
-    payloadCodec: EventPayloadCodec,
-    metadataCodec: EventMetadataCodec
+    valueCodec: EventLogCodecs.ValueCodec[?],
+    metadataCodec: EventLogCodecs.MetadataCodec
 ) extends SegmentCodec:
 
     private val Utf8         = StandardCharsets.UTF_8
     private val CrcSuffixLen = 20 // ,"crc":"0xhhhhhhhh"}
+
+    // --- value transcode -------------------------------------------------------------------------
+
+    // Transcodes the stored binary form (the same bytes EventLogCodecs.encodeValue produces) to a
+    // JSON-embeddable value string for the JSONL segment format: a schema-derived value codec
+    // decodes through `binary` and re-encodes through `json`; the identity byte codec base64-encodes
+    // and wraps in a JSON string literal.
+    private[kyo] def encodeValueForJsonl(bytes: Span[Byte])(using Frame): Result[DecodeException, String] =
+        def viaSchema[X](schema: Schema[X], binary: Codec, json: Codec): Result[DecodeException, String] =
+            Result.catching[DecodeException] {
+                val value = schema.readFrom(binary.newReader(bytes))
+                val w     = json.newWriter()
+                schema.writeTo(value, w)
+                new String(w.result().toArray, Utf8)
+            }
+        valueCodec match
+            case EventLogCodecs.ValueCodec.SchemaValue(schema, binary, json) => viaSchema(schema, binary, json)
+            case _: EventLogCodecs.ValueCodec.BytesValue.type =>
+                Result.succeed("\"" + java.util.Base64.getEncoder.encodeToString(bytes.toArray) + "\"")
+        end match
+    end encodeValueForJsonl
+
+    // Reads a payload value from `reader` (positioned at the payload field) and returns the stored
+    // binary form: a schema-derived value codec reads through the JSON reader and re-encodes
+    // through `binary`; the identity byte codec base64-decodes a JSON string value.
+    private[kyo] def decodeValueFromJsonl(reader: Codec.Reader)(using Frame): Result[DecodeException, Span[Byte]] =
+        def viaSchema[X](schema: Schema[X], binary: Codec): Result[DecodeException, Span[Byte]] =
+            Result.catching[DecodeException] {
+                val value = schema.readFrom(reader)
+                val w     = binary.newWriter()
+                schema.writeTo(value, w)
+                w.result()
+            }
+        valueCodec match
+            case EventLogCodecs.ValueCodec.SchemaValue(schema, binary, _) => viaSchema(schema, binary)
+            case _: EventLogCodecs.ValueCodec.BytesValue.type =>
+                try Result.succeed(Span.from(java.util.Base64.getDecoder.decode(reader.string())))
+                catch
+                    case _: IllegalArgumentException =>
+                        Result.fail(TypeMismatchException(Seq.empty, "base64-encoded string value", "<invalid>")(
+                            using Frame.internal
+                        ))
+        end match
+    end decodeValueFromJsonl
 
     def segmentExtension: String             = ".jsonl"
     def header: Array[Byte]                  = Array.emptyByteArray
@@ -153,7 +197,7 @@ final private[kyo] class JsonlSegmentCodec(
                                     case "eventType" => eventType = reader.string()
                                     case "metadata"  => metadata = readMetadataJson(reader)
                                     case "payload" =>
-                                        payloadCodec.decodeFromJsonl(reader)(using Frame.internal) match
+                                        decodeValueFromJsonl(reader)(using Frame.internal) match
                                             case Result.Success(s)  => payload = s
                                             case Result.Failure(ex) => throw ex
                                     case _ => reader.skip()
@@ -198,7 +242,7 @@ final private[kyo] class JsonlSegmentCodec(
     // the caller (frameBatch) is invoked from writeBatch which catches Exception.
     private def encodeEventLine(offset: Long, e: EventEnvelope): Array[Byte] =
         val metaJson = encodeMetadataJson(e.metadata)
-        val payloadJson = payloadCodec.encodeForJsonl(e.payload)(using Frame.internal) match
+        val payloadJson = encodeValueForJsonl(e.payload)(using Frame.internal) match
             case Result.Success(s)  => s
             case Result.Failure(ex) => throw ex
         val bodyStr = s"""{"offset":$offset,"eventId":"${escapeJson(e.id.value)}","eventType":"${escapeJson(
@@ -307,7 +351,7 @@ final private[kyo] class JsonlSegmentCodec(
     end encodeMetadataJson
 
     // Reads a JSON metadata object from `reader` (cursor positioned at the object value) and
-    // returns binary metadata bytes via the configured [[EventMetadataCodec]]. Invalid keys are
+    // returns binary metadata bytes via the configured EventLogCodecs.MetadataCodec. Invalid keys are
     // silently dropped (they are not expected from correctly-encoded JSONL; if they appear, partial
     // metadata is preferable to a read failure).
     private def readMetadataJson(reader: Codec.Reader): Array[Byte] =
@@ -321,7 +365,7 @@ final private[kyo] class JsonlSegmentCodec(
                 case Result.Failure(_)  => () // skip invalid key
         end while
         reader.objectEnd()
-        metadataCodec.encode(EventMetadata(pairs.result().toMap))
+        FileJournalCore.encodeMetadata(metadataCodec, EventMetadata(pairs.result().toMap))
     end readMetadataJson
 
     // Minimal JSON string escaping. All 7-bit ASCII special chars that need escaping are handled;

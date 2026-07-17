@@ -31,6 +31,12 @@ abstract class Codec:
       * uses, rather than only the codec's own companion-object encode method.
       */
     private[kyo] def validate(structure: Structure.Type)(using Frame): Unit = ()
+
+    /** The IANA media type identifying this codec's wire format (e.g. `"application/json"`).
+      * The default is the generic binary media type; a codec with a registered media type
+      * overrides this with that type.
+      */
+    def mediaType: String = "application/octet-stream"
 end Codec
 
 object Codec:
