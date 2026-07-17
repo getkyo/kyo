@@ -657,6 +657,20 @@ class HttpClientBackendTest extends kyo.BaseHttpTest:
         }
     }
 
+    // The nonAsciiRedirect guard checks isAscii but not isControlFree, which is sound only because HttpUrl never
+    // percent-decodes the path: a peer's "Location: /x%0d%0a..." reaches the request serializer still percent-encoded, so
+    // no raw CR or LF splits the request line. This pins that invariant; a future HttpUrl that decoded the path would
+    // reopen redirect splitting and fail here.
+    "a redirect Location with percent-encoded CRLF stays percent-encoded in the request target" in {
+        HttpUrl.parse("http://localhost:8080/next%0d%0aX-Injected:%201") match
+            case Result.Success(u) =>
+                val target = u.pathWithQuery
+                assert(target.contains("%0d%0a"), s"the percent-encoding must be preserved, got: $target")
+                assert(!target.exists(c => c == '\r' || c == '\n'), s"no raw CR/LF may reach the request target, got: $target")
+            case other =>
+                fail(s"Expected a parsed URL, got $other")
+    }
+
     // Catches an unguarded header block: a proxy that re-adds a peer's header value onto an outgoing request converts the
     // packed headers to chunk-backed ones, and the decoded value then reaches the writer. A CRLF there ends the header
     // line early and "X-Admin: true" becomes a header the caller never set, which is request smuggling. The typed failure

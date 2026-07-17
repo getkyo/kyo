@@ -687,25 +687,36 @@ final private[kyo] class HttpClientBackend private (
         val ssl      = url.ssl
         val (eh, ep) = hostPort(url)
 
-        val connectFiber = Sync.Unsafe.defer {
-            (url.unixSocket, ssl) match
-                case (Present(path), _) => transport.connectUnix(path)
-                case (_, true)          => NetConfigTranslation.connectTls(transport, host, port, defaultTlsConfig)
-                case _                  => transport.connect(host, port)
-        }
-        val connect: kyo.net.Connection < (Async & Abort[kyo.net.NetException]) = connectFiber.map(_.safe.get)
-        val timed: kyo.net.Connection < (Async & Abort[kyo.net.NetException | Timeout]) =
-            if connectTimeout == Duration.Infinity then connect
-            else Async.timeout(connectTimeout)(connect)
-        Abort.runWith[kyo.net.NetException | Timeout](timed) {
-            case Result.Success(connection) =>
-                setupRawConnection(connection, url, method, body, headers)
-            case Result.Failure(_: Timeout) =>
-                Abort.fail(HttpConnectTimeoutException(eh, ep, connectTimeout))
-            case Result.Failure(netEx: kyo.net.NetException) =>
-                Abort.fail(transportConnectFailure(netEx, eh, ep))
-            case Result.Panic(t) => throw t
-        }
+        val isDefaultPort   = if ssl then port == 443 else port == 80
+        val hostHeaderValue = if isDefaultPort || host.isEmpty then host else s"$host:$port"
+
+        // The raw path serializes the caller's request line and header block through sendDirect verbatim, so a control
+        // character in the path, the derived Host or any header value would inject a request line or a header the caller
+        // never set (request smuggling, RFC 9112 section 11.2). Validate before opening a socket, the same gate every other
+        // client send passes (unsendableField, as in encodeAndSendDirectWith).
+        unsendableField(url.pathWithQuery, hostHeaderValue, headers) match
+            case Present(ex) => Abort.fail(ex)
+            case Absent =>
+                val connectFiber = Sync.Unsafe.defer {
+                    (url.unixSocket, ssl) match
+                        case (Present(path), _) => transport.connectUnix(path)
+                        case (_, true)          => NetConfigTranslation.connectTls(transport, host, port, defaultTlsConfig)
+                        case _                  => transport.connect(host, port)
+                }
+                val connect: kyo.net.Connection < (Async & Abort[kyo.net.NetException]) = connectFiber.map(_.safe.get)
+                val timed: kyo.net.Connection < (Async & Abort[kyo.net.NetException | Timeout]) =
+                    if connectTimeout == Duration.Infinity then connect
+                    else Async.timeout(connectTimeout)(connect)
+                Abort.runWith[kyo.net.NetException | Timeout](timed) {
+                    case Result.Success(connection) =>
+                        setupRawConnection(connection, url, method, body, headers, hostHeaderValue)
+                    case Result.Failure(_: Timeout) =>
+                        Abort.fail(HttpConnectTimeoutException(eh, ep, connectTimeout))
+                    case Result.Failure(netEx: kyo.net.NetException) =>
+                        Abort.fail(transportConnectFailure(netEx, eh, ep))
+                    case Result.Panic(t) => throw t
+                }
+        end match
     end connectRaw
 
     /** Set up a raw connection after transport connect succeeds.
@@ -718,7 +729,8 @@ final private[kyo] class HttpClientBackend private (
         url: HttpUrl,
         method: HttpMethod,
         body: Span[Byte],
-        headers: HttpHeaders
+        headers: HttpHeaders,
+        hostHeaderValue: String
     )(using Frame): HttpRawConnection < (Async & Abort[HttpException] & Scope) =
         // Create Http1ClientConnection and send the request in an unsafe block.
         // Capture http1 in a var so we can access lastBodySpan after the response.
@@ -729,10 +741,8 @@ final private[kyo] class HttpClientBackend private (
                 connection.outbound,
                 transportConfig.maxHeaderSize
             )
-            // Compute host header
-            val isDefaultPort   = if url.ssl then url.port == 443 else url.port == 80
-            val hostHeaderValue = if isDefaultPort || url.host.isEmpty then url.host else s"${url.host}:${url.port}"
-            // Send the HTTP request
+            // Send the HTTP request. connectRaw validated the path, the derived Host and the header block before the
+            // socket opened, so sendDirect writes only fields that cannot re-frame the request.
             val responsePromise = http1.sendDirect(
                 method,
                 url.pathWithQuery,

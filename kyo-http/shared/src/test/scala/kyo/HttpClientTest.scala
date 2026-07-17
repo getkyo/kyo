@@ -3753,6 +3753,49 @@ class HttpClientTest extends BaseHttpTest:
     }
 
     "connectRaw" - {
+        // connectRaw serializes the caller's path and header block straight through sendDirect, the one client send that
+        // did not pass the header guard. A CRLF in a header value ends the header line early, so "X-Injected: 1" becomes a
+        // header the caller never set (request smuggling). The check must precede the connect: nothing may reach the wire.
+        "a CRLF-bearing header value fails with a typed error and sends nothing" - {
+            val route = HttpRoute.postRaw("raw-inject").request(_.bodyBinary).response(_.bodyText)
+            val ep    = route.handler(_ => HttpResponse.ok.addField("body", "ok"))
+            runServer(ep) { url =>
+                HttpClient.withConfig(noTimeout) {
+                    Abort.run[HttpException](
+                        HttpClient.connectRaw(
+                            s"${url.scheme.getOrElse("http")}://${url.host}:${url.port}/raw-inject",
+                            headers = Seq("X-Trace" -> "bar\r\nX-Injected: 1")
+                        )
+                    ).map {
+                        case Result.Failure(e: HttpInvalidFieldException) =>
+                            // The structured field names the header but not its value, which can hold a credential and is logged.
+                            assert(e.field == "the value of header 'X-Trace'", s"the failure must name the header, got: ${e.field}")
+                            assert(!e.field.contains("X-Injected"), "the failure must not carry the header value")
+                        case other =>
+                            fail(s"Expected HttpInvalidFieldException for a CRLF-bearing header value, got $other")
+                    }
+                }
+            }
+        }
+
+        // A CRLF in the path splits the request line itself, the same vector on the request target.
+        "a CRLF-bearing path fails with a typed error and sends nothing" - {
+            val route = HttpRoute.postRaw("raw-inject-path").request(_.bodyBinary).response(_.bodyText)
+            val ep    = route.handler(_ => HttpResponse.ok.addField("body", "ok"))
+            runServer(ep) { url =>
+                HttpClient.withConfig(noTimeout) {
+                    Abort.run[HttpException](
+                        HttpClient.connectRaw(url.copy(path = "/raw-inject-path\r\nX-Injected: 1"))
+                    ).map {
+                        case Result.Failure(e: HttpInvalidFieldException) =>
+                            assert(e.field == "the request path", s"the failure must name the request path, got: ${e.field}")
+                        case other =>
+                            fail(s"Expected HttpInvalidFieldException for a CRLF-bearing path, got $other")
+                    }
+                }
+            }
+        }
+
         "fails on non-2xx status" - {
             val route = HttpRoute.postRaw("raw-fail").request(_.bodyBinary).response(_.bodyText)
             val ep = route.handler { _ =>

@@ -143,7 +143,10 @@ private[kyo] object WebSocketCodec:
     )(using Frame): A < (S & Async & Abort[HttpException]) =
         unsendableField(path, host, headers) match
             case Present(ex) => Abort.fail(ex)
-            case Absent      => writeUpgradeRequestWith(conn, host, path, headers, config)(f)
+            case Absent =>
+                unsendableSubprotocol(config, headers) match
+                    case Present(ex) => Abort.fail(ex)
+                    case Absent      => writeUpgradeRequestWith(conn, host, path, headers, config)(f)
 
     /** Names the first element of an upgrade handshake that cannot go on the wire, or `Absent` when all of them can.
       *
@@ -156,6 +159,21 @@ private[kyo] object WebSocketCodec:
         if !HttpHeaders.isControlFree(path) then Present(HttpInvalidFieldException("the request path"))
         else if !HttpHeaders.isControlFree(host) then Present(HttpInvalidFieldException("the Host header"))
         else headers.invalidField.map(HttpInvalidFieldException(_))
+
+    /** The failure for a configured subprotocol the client cannot advertise, or `Absent` when it advertises none or all are sendable.
+      *
+      * A subprotocol is a token (RFC 6455 section 4.1). The client writes `config.subprotocols` onto the Sec-WebSocket-Protocol request
+      * line, so a value that is not a token would let a recipient read that line as two, the same injection the server side already refuses
+      * when it echoes a selected subprotocol (`HttpHeaders.isToken`, `acceptUpgrade`). The client advertises its configured list only when the
+      * caller did not supply its own Sec-WebSocket-Protocol header, so that is the only case checked, to avoid rejecting a value that never
+      * reaches the wire. The failure names the field, not the value, which is untrusted and logged.
+      */
+    private def unsendableSubprotocol(config: HttpWebSocket.Config, headers: HttpHeaders)(using Frame): Maybe[HttpException] =
+        val advertisesConfigured = config.subprotocols.nonEmpty && headers.get("Sec-WebSocket-Protocol").isEmpty
+        if advertisesConfigured && !config.subprotocols.forall(p => HttpHeaders.isToken(p)) then
+            Present(HttpInvalidFieldException("a Sec-WebSocket-Protocol subprotocol"))
+        else Absent
+    end unsendableSubprotocol
 
     private def writeUpgradeRequestWith[A, S](
         conn: TransportStream,

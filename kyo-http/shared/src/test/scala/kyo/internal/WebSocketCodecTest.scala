@@ -425,6 +425,23 @@ class WebSocketCodecTest extends kyo.BaseHttpTest:
                 assert(conn.written.toSeq.containsSlice(expected), "the value must reach the wire as UTF-8 octets")
             }
         }
+
+        // A subprotocol is a token (RFC 6455 section 4.1). The client advertises config.subprotocols on the
+        // Sec-WebSocket-Protocol request line, so a CRLF in one splits that line early and injects a header the caller
+        // never set, the same vector the server already refuses when it echoes a selected subprotocol (isToken,
+        // acceptUpgrade). The check must precede the write: nothing may reach the wire.
+        "fails on a non-token configured subprotocol without writing the handshake" in {
+            val conn   = new MockConn(Array.empty[Byte])
+            val config = HttpWebSocket.Config(subprotocols = Seq("chat\r\nX-Injected: 1"))
+            Abort.run[HttpException] {
+                WebSocketCodec.requestUpgradeWith(conn, "localhost", "/ws", HttpHeaders.empty, config) { _ => () }
+            }.map {
+                case Result.Failure(ex: HttpInvalidFieldException) =>
+                    assert(conn.written.isEmpty, s"nothing may reach the wire, got: ${conn.writtenString}")
+                case other =>
+                    fail(s"Expected HttpInvalidFieldException for a non-token subprotocol, got $other")
+            }
+        }
     }
 
     // ── Ping/Pong handling ────────────────────────────────────
