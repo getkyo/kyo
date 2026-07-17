@@ -791,4 +791,61 @@ class HttpClientBackendTest extends kyo.BaseHttpTest:
         }
     }
 
+    // ---------------------------------------------------------------------------
+    // connectRaw releases the transport connection on a non-2xx status
+    //
+    // setupRawConnection opens the transport connection, then registers the Scope release that closes it. When the
+    // release was registered only after the response status check, a non-2xx (or non-101) status failed the effect
+    // before the release entered scope, so the connection was never closed: a peer-reachable outcome (any 4xx/5xx to a
+    // CONNECT/upgrade) leaked the connection. A raw byte connection has no client-side handle after connectRaw fails,
+    // so the leak is observed from the peer: a client that closes on the failure makes the server see the FIN, and its
+    // connection begins closing (onClosing fires). A leaked client connection stays open, so onClosing never fires and
+    // the bounded await below expires with Timeout, the regression symptom.
+    // ---------------------------------------------------------------------------
+    "connectRaw releases the transport connection on a non-2xx status" in {
+        val responseBytes =
+            "HTTP/1.1 500 Internal Server Error\r\nContent-Length: 12\r\n\r\nserver error".getBytes(StandardCharsets.UTF_8)
+        val accepted = Promise.Unsafe.init[kyo.net.Connection, Any]()
+        Scope.run {
+            Sync.Unsafe.defer {
+                kyo.net.NetPlatform.transport.listen("localhost", 0, 16) { conn =>
+                    accepted.completeDiscard(Result.succeed(conn))
+                    discard(conn.outbound.offer(Span.fromUnsafe(responseBytes)))
+                }
+            }.map { fiber =>
+                fiber.safe.use { listener =>
+                    Scope.ensure(Sync.Unsafe.defer(listener.close())).andThen {
+                        val url = HttpUrl.parse(s"http://localhost:${listener.port}/raw-leak").getOrThrow
+                        // Run connectRaw in a nested Scope so its finalizer fires before the peer observation.
+                        Scope.run {
+                            Abort.run[HttpException](
+                                client.connectRaw(url, HttpMethod.GET, Span.empty[Byte], HttpHeaders.empty, 30.seconds)
+                            ).map {
+                                case Result.Failure(e: HttpStatusException) =>
+                                    assert(e.status == HttpStatus.InternalServerError)
+                                case other =>
+                                    fail(s"Expected HttpStatusException(500), got $other")
+                            }
+                        }.andThen {
+                            // The accept already fired during connectRaw, so this resolves without blocking.
+                            accepted.safe.get.map { serverConn =>
+                                Abort.run[Timeout](Async.timeout(5.seconds)(serverConn.onClosing.safe.get)).map {
+                                    case Result.Success(_) =>
+                                        succeed("connectRaw closed the raw connection on a non-2xx status")
+                                    case Result.Failure(_: Timeout) =>
+                                        fail(
+                                            "connectRaw leaked the raw connection on a non-2xx status: the peer never " +
+                                                "observed it closing after the enclosing Scope exited"
+                                        )
+                                    case other =>
+                                        fail(s"Unexpected outcome observing the peer close: $other")
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
 end HttpClientBackendTest

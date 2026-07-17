@@ -735,7 +735,17 @@ final private[kyo] class HttpClientBackend private (
         // Create Http1ClientConnection and send the request in an unsafe block.
         // Capture http1 in a var so we can access lastBodySpan after the response.
         var http1: Http1ClientConnection = null
-        Sync.Unsafe.defer {
+        // Register the connection release before the request is sent, so any early failure closes the connection when
+        // the enclosing Scope exits: a send failure, or a non-2xx or non-101 status that fails before the successful
+        // handoff. On the success path this same finalizer closes the connection on Scope exit, and close() is
+        // idempotent, so the raw connection wrapper adds no second close.
+        val release =
+            Scope.ensure {
+                Sync.Unsafe.defer {
+                    connection.close()
+                }
+            }
+        val setup = Sync.Unsafe.defer {
             http1 = Http1ClientConnection.init(
                 connection.inbound,
                 connection.outbound,
@@ -788,13 +798,8 @@ final private[kyo] class HttpClientBackend private (
                     )
                 }
             end if
-        }.map { rawConn =>
-            Scope.ensure {
-                Sync.Unsafe.defer {
-                    connection.close()
-                }
-            }.andThen(rawConn)
         }
+        release.andThen(setup)
     end setupRawConnection
 
     /** Run a HttpWebSocket session: upgrade, then read/write/user fibers.
