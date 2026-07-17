@@ -75,7 +75,7 @@ def receive(conn: Connection): Maybe[Chunk[Span[Byte]]] < (Async & Abort[Closed]
         conn.status match
             case Connection.Status.CleanClose => Present(bytes) // close_notify seen: the stream is complete
             case Connection.Status.Truncated  => Absent         // bare FIN, no close_notify: drop as a possible truncation
-            case _                                 => Present(bytes) // non-TLS or still-active: no truncation distinction
+            case _                            => Present(bytes) // non-TLS or still-active: no truncation distinction
     }
 ```
 
