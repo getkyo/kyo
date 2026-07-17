@@ -13,7 +13,7 @@ class FileJournalAsyncClaimTest extends kyo.test.Test[Any]:
 
     private def valid[A](r: Result[JournalInvalidIdentifierError, A]): A =
         r.getOrElse(throw new AssertionError("valid identifier"))
-    private val streamId = valid(StreamId("claim-stream"))
+    private val streamId = valid(Event.StreamId("claim-stream"))
 
     "parked claim" - {
         "a second acquire resumes only after the first's release, observing the first's published write and the next consecutive offset" in {

@@ -14,10 +14,10 @@ class FileJournalSwmrTest extends kyo.test.Test[Any]:
 
     private def valid[A](r: Result[JournalInvalidIdentifierError, A]): A =
         r.getOrElse(throw new AssertionError("valid identifier"))
-    private val sid       = valid(StreamId("swmr-1"))
+    private val sid       = valid(Event.StreamId("swmr-1"))
     private val journalId = JournalId.validate("fj-swmr")(using Frame.internal).getOrElse(throw new AssertionError("valid journal id"))
-    private def env(n: Int): EventEnvelope =
-        EventEnvelope(valid(EventId(s"e-$n")), valid(EventType("T")), Span.from(s"payload-$n".getBytes("UTF-8")), EventMetadata.empty)
+    private def env(n: Int): Event.Pending =
+        Event.Pending(valid(Event.Id(s"e-$n")), valid(Event.Type("T")), Span.from(s"payload-$n".getBytes("UTF-8")), Event.Metadata.empty)
 
     private def binaryConfiguration(options: FileJournal.Options)(using Frame) =
         for
@@ -80,7 +80,7 @@ class FileJournalSwmrTest extends kyo.test.Test[Any]:
                 gate          <- Channel.initUnscoped[Unit](1)
                 writerReady   <- Channel.initUnscoped[Unit](1)
                 batch1Go      <- Channel.initUnscoped[Unit](1)
-                readerDone    <- Channel.initUnscoped[Chunk[RecordedEvent]](1)
+                readerDone    <- Channel.initUnscoped[Chunk[Event.Committed]](1)
                 (seam, claim, flushFor) <- Sync.Unsafe.defer {
                     val coordinator = GroupCommitCoordinator.init
                     (
@@ -114,7 +114,7 @@ class FileJournalSwmrTest extends kyo.test.Test[Any]:
                     Scope.run {
                         Abort.run[JournalStorageError](Journal.Reader.file(dir, configuration)).map {
                             case Result.Success(reader) =>
-                                Abort.run[JournalError](reader.read(sid, StreamOffset.first, Int.MaxValue)).map {
+                                Abort.run[JournalError](reader.read(sid, Event.StreamOffset.first, Int.MaxValue)).map {
                                     case Result.Success(evs) => readerDone.put(evs)
                                     case Result.Failure(err) => throw new AssertionError(s"reader failed: $err")
                                     case panic: Result.Panic => throw panic.exception
@@ -130,7 +130,7 @@ class FileJournalSwmrTest extends kyo.test.Test[Any]:
                 after <- Scope.run {
                     Abort.run[JournalStorageError](Journal.Reader.file(dir, configuration)).map {
                         case Result.Success(reader) =>
-                            Abort.run[JournalError](reader.read(sid, StreamOffset.first, Int.MaxValue)).map {
+                            Abort.run[JournalError](reader.read(sid, Event.StreamOffset.first, Int.MaxValue)).map {
                                 case Result.Success(evs) => evs
                                 case Result.Failure(err) => throw new AssertionError(s"reader failed: $err")
                                 case panic: Result.Panic => throw panic.exception
@@ -165,16 +165,16 @@ class FileJournalSwmrTest extends kyo.test.Test[Any]:
                         case panic: Result.Panic => throw panic.exception
                     }
                 }
-                collected <- Loop.indexed(Chunk.empty[RecordedEvent], StreamOffset.first) { (_, acc, from) =>
+                collected <- Loop.indexed(Chunk.empty[Event.Committed], Event.StreamOffset.first) { (_, acc, from) =>
                     Scope.run {
                         Abort.run[JournalStorageError](Journal.Reader.file(dir, configuration)).map {
                             case Result.Success(reader) =>
                                 Abort.run[JournalError](reader.read(sid, from, 100)).map {
                                     case Result.Success(chunk) =>
                                         if chunk.isEmpty then
-                                            Loop.done[Chunk[RecordedEvent], StreamOffset, Chunk[RecordedEvent]](acc)
+                                            Loop.done[Chunk[Event.Committed], Event.StreamOffset, Chunk[Event.Committed]](acc)
                                         else
-                                            val next = valid(StreamOffset(chunk.last.offset.value + 1L))
+                                            val next = valid(Event.StreamOffset(chunk.last.offset.value + 1L))
                                             Loop.continue(acc ++ chunk, next)
                                     case Result.Failure(err) => throw new AssertionError(s"read failed: $err")
                                     case panic: Result.Panic => throw panic.exception

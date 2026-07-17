@@ -19,7 +19,7 @@ import kyo.*
   * Run: `sbt 'kyo-eventlogJVM/Test/runMain demo.FleetLedgerDemo'`
   *
   * Demonstrates: Path.run, Path.tempDir, Journal.Backend.file, Journal.run, EventLog.init,
-  * EventLog.append, EventLog.read, Journal.streamInfo, ExpectedOffset, StreamOffset.
+  * EventLog.append, EventLog.read, Journal.streamInfo, ExpectedOffset, Event.StreamOffset.
   */
 object FleetLedgerDemo extends KyoApp:
 
@@ -46,19 +46,19 @@ object FleetLedgerDemo extends KyoApp:
             case panic: Result.Panic => throw panic.exception
 
     private val journalId = evalPure(JournalId("fleet-main"))
-    private val streamId  = StreamId(journalId.value).getOrElse(throw new IllegalStateException("invalid stream id"))
+    private val streamId  = Event.StreamId(journalId.value).getOrElse(throw new IllegalStateException("invalid stream id"))
 
     // Both members route to the same fixed stream (journalId's own route-segment value), so a
     // single read after reopen sees the whole fleet history in append order.
-    private val vehicleAddedStream: EventLog.StreamSelector[FleetEvent.VehicleAdded] =
-        EventLog.StreamSelector.constant(streamId)
-    private val vehicleRetiredStream: EventLog.StreamSelector[FleetEvent.VehicleRetired] =
-        EventLog.StreamSelector.constant(streamId)
+    private val vehicleAddedStream: Event.StreamSelector[FleetEvent.VehicleAdded] =
+        Event.StreamSelector.constant(streamId)
+    private val vehicleRetiredStream: Event.StreamSelector[FleetEvent.VehicleRetired] =
+        Event.StreamSelector.constant(streamId)
 
-    private given EventLog.EventDefinition[FleetEvent, FleetEvent.VehicleAdded] =
-        EventLog.EventDefinition.schema[FleetEvent, FleetEvent.VehicleAdded](vehicleAddedStream)
-    private given EventLog.EventDefinition[FleetEvent, FleetEvent.VehicleRetired] =
-        EventLog.EventDefinition.schema[FleetEvent, FleetEvent.VehicleRetired](vehicleRetiredStream)
+    private given Event.Definition[FleetEvent, FleetEvent.VehicleAdded] =
+        Event.Definition.schema[FleetEvent, FleetEvent.VehicleAdded](vehicleAddedStream)
+    private given Event.Definition[FleetEvent, FleetEvent.VehicleRetired] =
+        Event.Definition.schema[FleetEvent, FleetEvent.VehicleRetired](vehicleRetiredStream)
 
     private val fleetCodecs: EventLog.Codecs[FleetEvent] =
         evalPure(EventLogCodecs.schema[FleetEvent]())
@@ -96,7 +96,7 @@ object FleetLedgerDemo extends KyoApp:
                             EventLog.AppendDirective.expected(ExpectedOffset.NoStream)
                         )
                         _      <- log.append(FleetEvent.VehicleRetired("V001"))
-                        events <- log.read(streamId, StreamOffset.first, maxCount = 10)
+                        events <- log.read(streamId, Event.StreamOffset.first, maxCount = 10)
                     yield events.size
                 }
             yield count
@@ -104,13 +104,13 @@ object FleetLedgerDemo extends KyoApp:
 
     private def rereadAfterReopen(dir: Path)(using
         Frame
-    ): Chunk[EventLog.Record[FleetEvent]] < (Async & Abort[FileException | JournalError]) =
+    ): Chunk[Event.Record[FleetEvent]] < (Async & Abort[FileException | JournalError]) =
         Scope.run {
             for
                 log     <- EventLog.init(fleetCodecs, journalId)
                 backend <- Journal.Backend.file(dir, jsonlConfiguration)
                 events <- Journal.run(backend) {
-                    log.read(streamId, StreamOffset.first, maxCount = 10)
+                    log.read(streamId, Event.StreamOffset.first, maxCount = 10)
                 }
             yield events
         }

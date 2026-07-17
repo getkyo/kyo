@@ -38,7 +38,7 @@ object EventLogCodecs:
     end ValueCodec
 
     /** Metadata codec descriptor: a thin wrapper over the kyo-schema `Codec` that frames an
-      * [[EventMetadata]] map. Data-only; the metadata byte framing is applied by the file
+      * [[kyo.Event.Metadata]] map. Data-only; the metadata byte framing is applied by the file
       * segment codec over this `codec`.
       */
     final case class MetadataCodec(codec: Codec) derives CanEqual
@@ -68,7 +68,7 @@ object EventLogCodecs:
 
     /** Identity codecs for raw `Span[Byte]` payloads: the value is stored verbatim
       * ([[ValueCodec.BytesValue]] is the identity descriptor, so encode and decode are
-      * passthrough), and `metadata` frames the [[EventMetadata]] map, defaulting to Ion
+      * passthrough), and `metadata` frames the [[kyo.Event.Metadata]] map, defaulting to Ion
       * Binary. No schema is derived and there is no value-codec compatibility to validate;
       * the `Abort[EventCodecConfigurationError]` row matches [[schema]] so both factories
       * share one construction surface.
@@ -136,7 +136,7 @@ private[kyo] object EventCodecCompat:
                     ))
 
     /** Validates `binary` and `json` against `Schema[A]`'s top-level structure. `metadata` frames
-      * [[EventMetadata]], whose structure is always `Product`-shaped, so it is unconditionally
+      * [[kyo.Event.Metadata]], whose structure is always `Product`-shaped, so it is unconditionally
       * compatible with every codec and needs no capability check.
       */
     private[kyo] def validate[A](binary: Codec, json: Codec, metadata: Codec)(using

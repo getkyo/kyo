@@ -1,7 +1,7 @@
 package kyo
 
 /** Private wiring for [[EventLog]]'s prepare/append/reader internals, and the concrete
-  * [[EventLog.StreamSelector]]/[[EventLog.EventIdPolicy]] witnesses built by their named
+  * [[Event.StreamSelector]]/[[Event.IdPolicy]] witnesses built by their named
   * constructors. Kept in a separate file (rather than inside `EventLog.scala`) because
   * `EventLog.scala` is a materialized, byte-locked source: extension methods on
   * `EventLog.type` are the mechanism that lets this file add `private[kyo]` members
@@ -14,30 +14,30 @@ private[kyo] object EventLogSupport:
     // construction site); initialized once outside any effect.
     private val eventIdSeq: AtomicLong.Unsafe = AtomicLong.Unsafe.init(0L)(using AllowUnsafe.embrace.danger)
 
-    private[kyo] def freshEventId()(using Frame): EventId < Sync =
+    private[kyo] def freshEventId()(using Frame): Event.Id < Sync =
         Sync.defer {
             // Unsafe: increments the shared monotonic counter; the increment itself cannot fail.
             val n = eventIdSeq.incrementAndGet()(using AllowUnsafe.embrace.danger)
-            EventId(n.toString)(using Frame.internal) match
+            Event.Id(n.toString)(using Frame.internal) match
                 case Result.Success(id) => id
                 case Result.Failure(_)  => throw new IllegalStateException(s"generated event id was empty for counter value $n")
         }
 
     /** Resolves `name`/`components`'s length-prefixed canonical stream id: the stream name
       * first, then one or more non-empty key components, each length-prefixed so punctuation
-      * and multibyte text stay collision-safe. Backs both [[EventLog.StreamSelector.by]] and
-      * [[EventLog.StreamSelector.canonical]].
+      * and multibyte text stay collision-safe. Backs both [[Event.StreamSelector.by]] and
+      * [[Event.StreamSelector.canonical]].
       */
-    private[kyo] def resolveKeyedStream(name: EventLog.StreamName, components: Chunk[String])(using
+    private[kyo] def resolveKeyedStream(name: Event.StreamName, components: Chunk[String])(using
         Frame
-    ): Result[EventLog.PreparationFailure, StreamId] =
+    ): Result[EventLog.PreparationFailure, Event.StreamId] =
         if components.isEmpty then
             Result.fail(EventLog.PreparationFailure(s"stream key for '${name.value}' has no components"))
         else if components.exists(_.isEmpty) then
             Result.fail(EventLog.PreparationFailure(s"stream key for '${name.value}' has an empty component"))
         else
             val canonical = (name.value +: components).map(c => s"${c.length}:$c").mkString("/")
-            StreamId(canonical).mapFailure(e =>
+            Event.StreamId(canonical).mapFailure(e =>
                 EventLog.PreparationFailure(s"cannot derive a stream id from '$canonical': ${e.getMessage()}")
             )
 
@@ -83,19 +83,19 @@ extension (self: EventLog.type)
     /** Encodes `event` through `codecs.value`, resolves this command's final metadata (member-
       * produced `ev.metadata.values(event)`, right-biased-merged with `directive.metadataOverride`
       * when present), then resolves `streamId` and `eventId`: each is taken directly from the
-      * directive's override when present (the EventDefinition's StreamSelector/EventIdPolicy is
+      * directive's override when present (the Definition's StreamSelector/IdPolicy is
       * NOT consulted at all for an overridden facet), or else resolved via
       * `ev.stream.resolve(event)` / `ev.eventId.next(event, streamId, ev.eventType, metadata)`.
-      * Assembles the [[EventEnvelope]] `prepare` wraps in a `Command` alongside the resolved
+      * Assembles the [[Event.Pending]] `prepare` wraps in a `Command` alongside the resolved
       * `streamId`. Aborts `PreparationFailure` on stream, id, or codec resolution failure. No
       * Journal effect: prepare is pure staging.
       */
     private[kyo] def prepareEnvelope[A, E <: A](
         codecs: EventLog.Codecs[A],
-        ev: EventLog.EventDefinition[A, E],
+        ev: Event.Definition[A, E],
         event: E,
         directive: EventLog.AppendDirective
-    )(using Frame): Result[EventLog.PreparationFailure, (StreamId, EventEnvelope)] =
+    )(using Frame): Result[EventLog.PreparationFailure, (Event.StreamId, Event.Pending)] =
         // Unsafe: EventLogCodecs.encodeValue's Sync suspension is a synchronous computation
         // with no real suspension point; evaluated inline so prepareEnvelope stays a plain
         // Result, matching the frozen EventLog.scala call site's
@@ -107,17 +107,17 @@ extension (self: EventLog.type)
         val bytes          = Sync.Unsafe.evalOrThrow(EventLogCodecs.encodeValue(codecs.value, event))
         val memberMetadata = ev.metadata.values(event)
         val metadata = directive.metadataOverride match
-            case Present(over) => EventMetadata(memberMetadata.values ++ over.values)
+            case Present(over) => Event.Metadata(memberMetadata.values ++ over.values)
             case Absent        => memberMetadata
-        val streamIdResult: Result[EventLog.PreparationFailure, StreamId] = directive.streamIdOverride match
+        val streamIdResult: Result[EventLog.PreparationFailure, Event.StreamId] = directive.streamIdOverride match
             case Present(streamId) => Result.succeed(streamId)
             case Absent            => Abort.run[EventLog.PreparationFailure](ev.stream.resolve(event)).eval
         streamIdResult.flatMap { streamId =>
-            val eventIdResult: Result[EventLog.PreparationFailure, EventId] = directive.eventIdOverride match
+            val eventIdResult: Result[EventLog.PreparationFailure, Event.Id] = directive.eventIdOverride match
                 case Present(eventId) => Result.succeed(eventId)
                 case Absent =>
                     Abort.run[EventLog.PreparationFailure](ev.eventId.next(event, streamId, ev.eventType, metadata)).eval
-            eventIdResult.map(eventId => (streamId, EventEnvelope(eventId, ev.eventType, bytes, metadata)))
+            eventIdResult.map(eventId => (streamId, Event.Pending(eventId, ev.eventType, bytes, metadata)))
         }
     end prepareEnvelope
 
@@ -162,9 +162,9 @@ extension (self: EventLog.type)
         val valueCodec = core.boundValueCodec
         val journalId  = core.journalId
         new EventLog.Reader[A, S]:
-            def read(streamId: StreamId, from: StreamOffset, maxCount: Int)(using
+            def read(streamId: Event.StreamId, from: Event.StreamOffset, maxCount: Int)(using
                 Frame
-            ): Chunk[EventLog.Record[A]] < (S & Abort[JournalReadFailure]) =
+            ): Chunk[Event.Record[A]] < (S & Abort[JournalReadFailure]) =
                 // EventLogCodecs.decodeValue is itself effectful (A < Abort[JournalReadFailure])
                 // and already folds undecodable payload bytes into JournalCorruptedError on that
                 // row, so this composes it directly with map, mirroring EventLog.read's own
@@ -173,26 +173,27 @@ extension (self: EventLog.type)
                     Kyo.foreach(records) { rec =>
                         EventLogCodecs.decodeValue(valueCodec, rec.payload).map { a =>
                             val ref = JournalEntryRef(journalId, rec.streamId, rec.offset)
-                            EventLog.Record(ref, rec.eventId, rec.eventType, rec.metadata, a)
+                            Event.Record(ref, rec.id, rec.eventType, rec.metadata, a)
                         }
                     }
                 }
-            def streamInfo(streamId: StreamId)(using Frame): StreamInfo < (S & Abort[JournalStreamInfoFailure]) =
+            def streamInfo(streamId: Event.StreamId)(using Frame): StreamInfo < (S & Abort[JournalStreamInfoFailure]) =
                 fileReader.streamInfo(streamId)
         end new
     end mkReader
 
-    /** Derives an [[EventType]] from `Schema[E]`'s top-level structure name. The name is
+    /** Derives an [[Event.Type]] from `Schema[E]`'s top-level structure name. The name is
       * guaranteed non-empty by construction (a derived `Schema` always carries a non-empty
       * structural name), so a validation failure here is a defect, not a reachable user input.
       */
-    private[kyo] def deriveEventType[E](using schema: Schema[E], frame: Frame): EventType =
-        EventType(schema.structure.name) match
+    private[kyo] def deriveEventType[E](using schema: Schema[E], frame: Frame): Event.Type =
+        Event.Type(schema.structure.name) match
             case Result.Success(et) => et
             case Result.Failure(_) =>
                 throw new IllegalStateException(s"schema-derived event type name was empty for ${schema.structure.name}")
 end extension
 
-// The five StreamSelector/EventIdPolicy witness classes live in EventLog.scala, not here:
-// StreamSelector and EventIdPolicy are sealed, and Scala requires every direct subtype of a
-// sealed trait to be defined in the same source file as the trait itself.
+// The five StreamSelector/IdPolicy witness classes live in JournalEvent.scala, not here:
+// StreamSelector and IdPolicy are sealed and nested under object Event, and Scala requires
+// every direct subtype of a sealed trait, and every member of an object, to be defined in the
+// same source file as the trait/object itself.

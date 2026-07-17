@@ -12,10 +12,10 @@ class FileJournalCrashTest extends kyo.test.Test[Any]:
 
     private def valid[A](r: Result[JournalInvalidIdentifierError, A]): A =
         r.getOrElse(throw new AssertionError("valid identifier"))
-    private val sid       = valid(StreamId("crash-1"))
+    private val sid       = valid(Event.StreamId("crash-1"))
     private val journalId = JournalId.validate("fj-crash")(using Frame.internal).getOrElse(throw new AssertionError("valid journal id"))
-    private def env(n: Int): EventEnvelope =
-        EventEnvelope(valid(EventId(s"e-$n")), valid(EventType("T")), Span.from(s"p$n".getBytes("UTF-8")), EventMetadata.empty)
+    private def env(n: Int): Event.Pending =
+        Event.Pending(valid(Event.Id(s"e-$n")), valid(Event.Type("T")), Span.from(s"p$n".getBytes("UTF-8")), Event.Metadata.empty)
 
     private def defaultConfiguration(using Frame): FileJournal.Configuration[Span[Byte]] < Async =
         Abort.run[EventCodecConfigurationError](EventLogCodecs.bytes()).map {
@@ -59,7 +59,7 @@ class FileJournalCrashTest extends kyo.test.Test[Any]:
 
     // Append each batch through Backend.file in a fresh scope, then close it so the LOCK releases before any
     // reopen (no process kill, no sleep: the "crash" is a byte mutation between two scoped backends).
-    private def appendClosed(dir: Path, batches: Seq[Chunk[EventEnvelope]])(using Frame): Unit < Async =
+    private def appendClosed(dir: Path, batches: Seq[Chunk[Event.Pending]])(using Frame): Unit < Async =
         defaultConfiguration.map { configuration =>
             Scope.run {
                 Abort.run[JournalStorageError](Journal.Backend.file(dir, configuration)).map {
@@ -79,18 +79,18 @@ class FileJournalCrashTest extends kyo.test.Test[Any]:
 
     // Reopen `dir` and read the whole stream (recovery runs on first touch). Returns the read Result so a
     // corruption case can assert the failure; open only acquires the LOCK, so an open failure is panicked on.
-    private def readResult(dir: Path)(using Frame): Result[JournalError, Chunk[RecordedEvent]] < Async =
+    private def readResult(dir: Path)(using Frame): Result[JournalError, Chunk[Event.Committed]] < Async =
         defaultConfiguration.map { configuration =>
             Scope.run {
                 Abort.run[JournalStorageError](Journal.Backend.file(dir, configuration)).map {
-                    case Result.Success(backend) => Abort.run[JournalError](backend.read(sid, StreamOffset.first, Int.MaxValue))
+                    case Result.Success(backend) => Abort.run[JournalError](backend.read(sid, Event.StreamOffset.first, Int.MaxValue))
                     case Result.Failure(err)     => throw err
                     case panic: Result.Panic     => throw panic.exception
                 }
             }
         }
 
-    private def readEvents(dir: Path)(using Frame): Chunk[RecordedEvent] < Async =
+    private def readEvents(dir: Path)(using Frame): Chunk[Event.Committed] < Async =
         readResult(dir).map {
             case Result.Success(evs) => evs
             case Result.Failure(err) => throw new AssertionError(s"unexpected read failure: $err")
@@ -365,7 +365,7 @@ class FileJournalCrashTest extends kyo.test.Test[Any]:
                     Scope.run {
                         Abort.run[JournalStorageError](Journal.Backend.file(dir, jsonlConfig)).map {
                             case Result.Success(backend) =>
-                                Abort.run[JournalError](backend.read(sid, StreamOffset.first, Int.MaxValue))
+                                Abort.run[JournalError](backend.read(sid, Event.StreamOffset.first, Int.MaxValue))
                             case Result.Failure(err) => throw err
                             case panic: Result.Panic => throw panic.exception
                         }

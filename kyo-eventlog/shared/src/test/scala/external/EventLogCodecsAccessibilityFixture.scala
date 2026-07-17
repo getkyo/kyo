@@ -18,17 +18,17 @@ object EventLogCodecsAccessibilityFixture:
             """
         ).map(_.message)
 
-    /** Positive "no codec slot" guard: [[kyo.EventLog.EventDefinition]] carries exactly
+    /** Positive "no codec slot" guard: [[kyo.Event.Definition]] carries exactly
       * `eventType`/`stream`/`eventId`/`metadata` and no codec-typed member, so a snippet reading a
       * `.codec` (or `.valueCodec`/`.metadataCodec`) member off a constructed value fails to
-      * type-check. This replaces a prior negative fixture that asserted `EventDefinition` did not
-      * exist at all; it now exists (this phase), so that absence check would type-check cleanly and
-      * silently pass.
+      * type-check. An absence check (asserting `Event.Definition` does not exist at all) would
+      * type-check cleanly and silently pass now that the type exists, so this fixture asserts the
+      * stronger, always-meaningful property instead.
       */
     def eventDefinitionErrorMessages: List[String] =
         scala.compiletime.testing.typeCheckErrors(
             """
-            val defn: kyo.EventLog.EventDefinition[String, String] = ???
+            val defn: kyo.Event.Definition[String, String] = ???
             defn.codec
             """
         ).map(_.message)

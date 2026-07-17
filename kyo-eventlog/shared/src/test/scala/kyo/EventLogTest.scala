@@ -25,15 +25,15 @@ class EventLogTest extends kyo.test.Test[Any]:
     private def valid[A](r: Result[JournalInvalidIdentifierError, A]): A =
         r.getOrElse(throw new AssertionError("expected valid identifier"))
 
-    private val streamId  = valid(StreamId("log-stream-1"))
-    private val eventId   = valid(EventId("event-a"))
-    private val eventType = valid(EventType("LogRecord"))
+    private val streamId  = valid(Event.StreamId("log-stream-1"))
+    private val eventId   = valid(Event.Id("event-a"))
+    private val eventType = valid(Event.Type("LogRecord"))
 
     private def freshJournalId(suffix: String)(using Frame): JournalId =
         JournalId.validate(s"log-test-$suffix").getOrElse(throw new AssertionError("valid journal id"))
 
-    private def validStreamName(value: String): EventLog.StreamName =
-        Abort.run[EventLog.PreparationFailure](EventLog.StreamName(value)).eval match
+    private def validStreamName(value: String): Event.StreamName =
+        Abort.run[EventLog.PreparationFailure](Event.StreamName(value)).eval match
             case Result.Success(name) => name
             case other                => throw new AssertionError(s"expected a valid stream name, got: $other")
 
@@ -41,41 +41,45 @@ class EventLogTest extends kyo.test.Test[Any]:
     // same-stream runs can be asserted by call count rather than only by final stream state.
     private def countingBackend(inner: Journal.Backend[Sync], counter: AtomicInt)(using Frame): Journal.Backend[Sync] =
         new Journal.Backend[Sync]:
-            def append(streamId: StreamId, expected: ExpectedOffset, events: Chunk[EventEnvelope])
+            def append(streamId: Event.StreamId, expected: ExpectedOffset, events: Chunk[Event.Pending])
                 : AppendResult < (Sync & Abort[JournalAppendFailure]) =
                 counter.incrementAndGet.andThen(inner.append(streamId, expected, events))
-            def read(streamId: StreamId, from: StreamOffset, maxCount: Int): Chunk[RecordedEvent] < (Sync & Abort[JournalReadFailure]) =
+            def read(
+                streamId: Event.StreamId,
+                from: Event.StreamOffset,
+                maxCount: Int
+            ): Chunk[Event.Committed] < (Sync & Abort[JournalReadFailure]) =
                 inner.read(streamId, from, maxCount)
-            def streamInfo(streamId: StreamId): StreamInfo < (Sync & Abort[JournalStreamInfoFailure]) =
+            def streamInfo(streamId: Event.StreamId): StreamInfo < (Sync & Abort[JournalStreamInfoFailure]) =
                 inner.streamInfo(streamId)
 
-    private val testStreamId: StreamId         = valid(StreamId("log-test-stream"))
-    private val questStartedStreamId: StreamId = valid(StreamId("quest-started-stream"))
-    private val partyJoinedStreamId: StreamId  = valid(StreamId("party-joined-stream"))
-    private val colorEventStreamId: StreamId   = valid(StreamId("color-event-stream"))
-    private val shapeEventStreamId: StreamId   = valid(StreamId("shape-event-stream"))
+    private val testStreamId: Event.StreamId         = valid(Event.StreamId("log-test-stream"))
+    private val questStartedStreamId: Event.StreamId = valid(Event.StreamId("quest-started-stream"))
+    private val partyJoinedStreamId: Event.StreamId  = valid(Event.StreamId("party-joined-stream"))
+    private val colorEventStreamId: Event.StreamId   = valid(Event.StreamId("color-event-stream"))
+    private val shapeEventStreamId: Event.StreamId   = valid(Event.StreamId("shape-event-stream"))
 
-    private val testStream: EventLog.StreamSelector[LogTestEvent] = EventLog.StreamSelector.constant(testStreamId)
+    private val testStream: Event.StreamSelector[LogTestEvent] = Event.StreamSelector.constant(testStreamId)
 
-    private given EventLog.EventDefinition[LogTestEvent, LogTestEvent] =
-        EventLog.EventDefinition.schema[LogTestEvent, LogTestEvent](testStream)
+    private given Event.Definition[LogTestEvent, LogTestEvent] =
+        Event.Definition.schema[LogTestEvent, LogTestEvent](testStream)
 
     // QuestStarted and PartyJoined route to two distinct streams so a heterogeneous batch exercises
     // real per-member routing instead of one shared stream.
-    private given EventLog.EventDefinition[QuestEvent, QuestStarted] =
-        EventLog.EventDefinition.schema[QuestEvent, QuestStarted](EventLog.StreamSelector.constant(questStartedStreamId))
-    private given EventLog.EventDefinition[QuestEvent, PartyJoined] =
-        EventLog.EventDefinition.schema[QuestEvent, PartyJoined](EventLog.StreamSelector.constant(partyJoinedStreamId))
+    private given Event.Definition[QuestEvent, QuestStarted] =
+        Event.Definition.schema[QuestEvent, QuestStarted](Event.StreamSelector.constant(questStartedStreamId))
+    private given Event.Definition[QuestEvent, PartyJoined] =
+        Event.Definition.schema[QuestEvent, PartyJoined](Event.StreamSelector.constant(partyJoinedStreamId))
 
-    private given EventLog.EventDefinition[ColorEvent, ColorEvent.Red] =
-        EventLog.EventDefinition.schema[ColorEvent, ColorEvent.Red](EventLog.StreamSelector.constant(colorEventStreamId))
-    private given EventLog.EventDefinition[ColorEvent, ColorEvent.Green] =
-        EventLog.EventDefinition.schema[ColorEvent, ColorEvent.Green](EventLog.StreamSelector.constant(colorEventStreamId))
+    private given Event.Definition[ColorEvent, ColorEvent.Red] =
+        Event.Definition.schema[ColorEvent, ColorEvent.Red](Event.StreamSelector.constant(colorEventStreamId))
+    private given Event.Definition[ColorEvent, ColorEvent.Green] =
+        Event.Definition.schema[ColorEvent, ColorEvent.Green](Event.StreamSelector.constant(colorEventStreamId))
 
-    private given EventLog.EventDefinition[ShapeEvent, ShapeEvent.Circle] =
-        EventLog.EventDefinition.schema[ShapeEvent, ShapeEvent.Circle](EventLog.StreamSelector.constant(shapeEventStreamId))
-    private given EventLog.EventDefinition[ShapeEvent, ShapeEvent.Square] =
-        EventLog.EventDefinition.schema[ShapeEvent, ShapeEvent.Square](EventLog.StreamSelector.constant(shapeEventStreamId))
+    private given Event.Definition[ShapeEvent, ShapeEvent.Circle] =
+        Event.Definition.schema[ShapeEvent, ShapeEvent.Circle](Event.StreamSelector.constant(shapeEventStreamId))
+    private given Event.Definition[ShapeEvent, ShapeEvent.Square] =
+        Event.Definition.schema[ShapeEvent, ShapeEvent.Square](Event.StreamSelector.constant(shapeEventStreamId))
 
     "EventLog operations expose Journal capability and per-op Abort rows" in {
         for
@@ -85,8 +89,8 @@ class EventLogTest extends kyo.test.Test[Any]:
             // Compile-time row checks: each operation carries its own effect row.
             _: (AppendResult < (Journal & Sync & Abort[EventLog.PreparationFailure] & Abort[JournalAppendFailure])) =
                 log.append(LogTestEvent("x", 1))
-            _: (Chunk[EventLog.Record[LogTestEvent]] < (Journal & Abort[JournalReadFailure])) =
-                log.read(streamId, StreamOffset.first, 10)
+            _: (Chunk[Event.Record[LogTestEvent]] < (Journal & Abort[JournalReadFailure])) =
+                log.read(streamId, Event.StreamOffset.first, 10)
             result <- Abort.run[JournalStreamInfoFailure](Journal.run(backend)(Journal.streamInfo(streamId)))
         yield assert(result == Result.succeed(StreamInfo.Absent), s"expected Absent for a new stream, got $result")
     }
@@ -97,7 +101,7 @@ class EventLogTest extends kyo.test.Test[Any]:
             log     <- EventLog.init(codecs, freshJournalId("empty"))
             backend <- Journal.Backend.inMemory
             result <- Abort.run[JournalReadFailure] {
-                Journal.run(backend)(log.read(streamId, StreamOffset.first, 10))
+                Journal.run(backend)(log.read(streamId, Event.StreamOffset.first, 10))
             }
         yield result match
             case Result.Success(chunk) => assert(chunk.isEmpty)
@@ -117,7 +121,7 @@ class EventLogTest extends kyo.test.Test[Any]:
                 Journal.run(backend) {
                     for
                         _      <- log.append(event)
-                        events <- log.read(sid, StreamOffset.first, 10)
+                        events <- log.read(sid, Event.StreamOffset.first, 10)
                     yield events
                 }
             }
@@ -127,7 +131,7 @@ class EventLogTest extends kyo.test.Test[Any]:
                 assert(events(0).payload == event)
                 assert(events(0).eventType.value == schemaName)
                 assert(events(0).eventId.value.nonEmpty)
-                assert(events(0).ref == JournalEntryRef(journalId, sid, StreamOffset.first))
+                assert(events(0).ref == JournalEntryRef(journalId, sid, Event.StreamOffset.first))
             case other => fail(s"expected success, got: $other")
         end for
     }
@@ -146,7 +150,7 @@ class EventLogTest extends kyo.test.Test[Any]:
                     for
                         _      <- log.append(e1)
                         _      <- log.append(e2)
-                        events <- log.read(sid, StreamOffset.first, 10)
+                        events <- log.read(sid, Event.StreamOffset.first, 10)
                     yield events
                 }
             }
@@ -178,7 +182,7 @@ class EventLogTest extends kyo.test.Test[Any]:
                     for
                         r1     <- log.append(e1)
                         _      <- log.append(e2, EventLog.AppendDirective.expected(ExpectedOffset.Exact(r1.lastOffset)))
-                        events <- log.read(sid, StreamOffset.first, 10)
+                        events <- log.read(sid, Event.StreamOffset.first, 10)
                     yield events
                 }
             }
@@ -198,7 +202,7 @@ class EventLogTest extends kyo.test.Test[Any]:
         // EventLog.read and asserts the failure folds into JournalCorruptedError, never a
         // codec-specific error type.
         val journalId = freshJournalId("corrupt")
-        val sid       = valid(StreamId(journalId.value))
+        val sid       = valid(Event.StreamId(journalId.value))
         val garbage   = Span.from(Array[Byte](0xff.toByte, 0x00.toByte, 0x01.toByte, 0x02.toByte))
         for
             codecs  <- EventLogCodecs.schema[LogTestEvent]()
@@ -210,9 +214,9 @@ class EventLogTest extends kyo.test.Test[Any]:
                         _ <- Journal.append(
                             sid,
                             ExpectedOffset.NoStream,
-                            Chunk(EventEnvelope(eventId, eventType, garbage, EventMetadata.empty))
+                            Chunk(Event.Pending(eventId, eventType, garbage, Event.Metadata.empty))
                         )
-                        events <- log.read(sid, StreamOffset.first, 10)
+                        events <- log.read(sid, Event.StreamOffset.first, 10)
                     yield events
                 }
             }
@@ -224,12 +228,12 @@ class EventLogTest extends kyo.test.Test[Any]:
         end for
     }
 
-    "EventLog.Record carries all fields from the recorded event plus the decoded payload" in {
-        val meta      = EventMetadata.empty
+    "Event.Record carries all fields from the recorded event plus the decoded payload" in {
+        val meta      = Event.Metadata.empty
         val event     = LogTestEvent("startup", 0)
         val journalId = freshJournalId("record-fields")
-        val ref       = JournalEntryRef(journalId, streamId, StreamOffset.first)
-        val record = EventLog.Record(
+        val ref       = JournalEntryRef(journalId, streamId, Event.StreamOffset.first)
+        val record = Event.Record(
             ref = ref,
             eventId = eventId,
             eventType = eventType,
@@ -285,13 +289,13 @@ class EventLogTest extends kyo.test.Test[Any]:
                 Journal.run(backend) {
                     for
                         r      <- log.append(QuestStarted("q1"))
-                        events <- log.read(sid, StreamOffset.first, 10)
+                        events <- log.read(sid, Event.StreamOffset.first, 10)
                     yield (r, events)
                 }
             }
         yield result match
             case Result.Success((r, events)) =>
-                assert(r.firstOffset == StreamOffset.first)
+                assert(r.firstOffset == Event.StreamOffset.first)
                 assert(events.size == 1)
                 assert(events(0).payload match
                     case q: QuestStarted => q == QuestStarted("q1")
@@ -313,7 +317,7 @@ class EventLogTest extends kyo.test.Test[Any]:
                     for
                         _      <- log.append(ColorEvent.Red(1): ColorEvent.Red)
                         _      <- log.append(ColorEvent.Green(2): ColorEvent.Green)
-                        events <- log.read(sid, StreamOffset.first, 10)
+                        events <- log.read(sid, Event.StreamOffset.first, 10)
                     yield events
                 }
             }
@@ -338,7 +342,7 @@ class EventLogTest extends kyo.test.Test[Any]:
                     for
                         _      <- log.append(ShapeEvent.Circle(3))
                         _      <- log.append(ShapeEvent.Square(4))
-                        events <- log.read(sid, StreamOffset.first, 10)
+                        events <- log.read(sid, Event.StreamOffset.first, 10)
                     yield events
                 }
             }
@@ -405,7 +409,7 @@ class EventLogTest extends kyo.test.Test[Any]:
 
     "AppendDirective.expected sets the canonical expected offset and withExpected is absent" in {
         val journalId = freshJournalId("directive")
-        val sid       = valid(StreamId(journalId.value))
+        val sid       = valid(Event.StreamId(journalId.value))
         for
             codecs  <- EventLogCodecs.schema[LogTestEvent]()
             log     <- EventLog.init(codecs, journalId)
@@ -484,7 +488,7 @@ class EventLogTest extends kyo.test.Test[Any]:
                 for
                     fileReader <- Journal.Reader.file(dir, configuration)
                     logReader  <- EventLog.reader(fileReader)
-                    records    <- logReader.read(sid, StreamOffset.first, 10)
+                    records    <- logReader.read(sid, Event.StreamOffset.first, 10)
                 yield records
             }
         yield
@@ -494,17 +498,17 @@ class EventLogTest extends kyo.test.Test[Any]:
         end for
     }
 
-    "EventLog.EventDefinition carries no codec slot (positive guard, now that EventPayloadCodec/EventMetadataCodec are deleted)" in {
+    "Event.Definition carries no codec slot (positive guard, now that EventPayloadCodec/EventMetadataCodec are deleted)" in {
         val errors = external.EventLogCodecsAccessibilityFixture.eventDefinitionErrorMessages
         assert(errors.nonEmpty)
-        assert(errors.exists(_.contains("EventDefinition")))
+        assert(errors.exists(_.contains("Definition")))
     }
 
-    // --- real StreamSelector / EventIdPolicy / Metadata resolution --------------------------------
+    // --- real StreamSelector / Event.IdPolicy / Metadata resolution --------------------------------
 
-    "StreamSelector.constant resolves to the fixed StreamId regardless of event content" in {
-        val fixed    = valid(StreamId("constant-target"))
-        val selector = EventLog.StreamSelector.constant[LogTestEvent](fixed)
+    "StreamSelector.constant resolves to the fixed Event.StreamId regardless of event content" in {
+        val fixed    = valid(Event.StreamId("constant-target"))
+        val selector = Event.StreamSelector.constant[LogTestEvent](fixed)
         for
             r1 <- Abort.run[EventLog.PreparationFailure](selector.resolve(LogTestEvent("a", 1)))
             r2 <- Abort.run[EventLog.PreparationFailure](selector.resolve(LogTestEvent("b", 2)))
@@ -516,29 +520,29 @@ class EventLogTest extends kyo.test.Test[Any]:
 
     "StreamSelector.by resolves name+components into the length-prefixed canonical form" in {
         for
-            name <- EventLog.StreamName("quest")
+            name <- Event.StreamName("quest")
             resolved <- Abort.run[EventLog.PreparationFailure](
-                EventLog.StreamSelector.by[QuestStarted](name)(e => Chunk(e.id)).resolve(QuestStarted("q-1"))
+                Event.StreamSelector.by[QuestStarted](name)(e => Chunk(e.id)).resolve(QuestStarted("q-1"))
             )
             emptyKeyResult <- Abort.run[EventLog.PreparationFailure](
-                EventLog.StreamSelector.by[QuestStarted](name)(_ => Chunk.empty).resolve(QuestStarted("q-1"))
+                Event.StreamSelector.by[QuestStarted](name)(_ => Chunk.empty).resolve(QuestStarted("q-1"))
             )
         yield
-            assert(resolved == Result.succeed(valid(StreamId("5:quest/3:q-1"))))
+            assert(resolved == Result.succeed(valid(Event.StreamId("5:quest/3:q-1"))))
             assert(emptyKeyResult match
                 case Result.Failure(_: EventLog.PreparationFailure) => true
                 case _                                              => false)
     }
 
     "StreamSelector.canonical resolves name+StreamKey into the same canonical form as by" in {
-        val key = EventLog.StreamKey[QuestStarted](e => Chunk(e.id))
+        val key = Event.StreamKey[QuestStarted](e => Chunk(e.id))
         for
-            name <- EventLog.StreamName("quest")
+            name <- Event.StreamName("quest")
             byResolved <- Abort.run[EventLog.PreparationFailure](
-                EventLog.StreamSelector.by[QuestStarted](name)(e => Chunk(e.id)).resolve(QuestStarted("q-1"))
+                Event.StreamSelector.by[QuestStarted](name)(e => Chunk(e.id)).resolve(QuestStarted("q-1"))
             )
             canonicalResolved <- Abort.run[EventLog.PreparationFailure](
-                EventLog.StreamSelector.canonical(name, key).resolve(QuestStarted("q-1"))
+                Event.StreamSelector.canonical(name, key).resolve(QuestStarted("q-1"))
             )
         yield assert(byResolved == canonicalResolved)
         end for
@@ -584,35 +588,36 @@ class EventLogTest extends kyo.test.Test[Any]:
         end for
     }
 
-    "EventIdPolicy.generated produces distinct monotonic tokens across successive next calls" in {
-        val policy = EventLog.EventIdPolicy.generated[LogTestEvent]
+    "Event.IdPolicy.generated produces distinct monotonic tokens across successive next calls" in {
+        val policy = Event.IdPolicy.generated[LogTestEvent]
         val event  = LogTestEvent("gen", 1)
         for
-            id1 <- Abort.run[EventLog.PreparationFailure](policy.next(event, testStreamId, eventType, EventMetadata.empty))
-            id2 <- Abort.run[EventLog.PreparationFailure](policy.next(event, testStreamId, eventType, EventMetadata.empty))
+            id1 <- Abort.run[EventLog.PreparationFailure](policy.next(event, testStreamId, eventType, Event.Metadata.empty))
+            id2 <- Abort.run[EventLog.PreparationFailure](policy.next(event, testStreamId, eventType, Event.Metadata.empty))
         yield assert(id1 != id2, s"expected two successive generated ids to differ, got $id1 and $id2")
         end for
     }
 
-    "EventIdPolicy.deterministic produces the same id for equal inputs and repeats for equal f output" in {
+    "Event.IdPolicy.deterministic produces the same id for equal inputs and repeats for equal f output" in {
         val event = LogTestEvent("det", 1)
         for
-            policy <- EventLog.EventIdPolicy.deterministic[LogTestEvent]((e, _, _, _) => s"det-${e.toString}")
-            id1    <- Abort.run[EventLog.PreparationFailure](policy.next(event, testStreamId, eventType, EventMetadata.empty))
-            id2    <- Abort.run[EventLog.PreparationFailure](policy.next(event, testStreamId, eventType, EventMetadata.empty))
+            policy <- Event.IdPolicy.deterministic[LogTestEvent]((e, _, _, _) => s"det-${e.toString}")
+            id1    <- Abort.run[EventLog.PreparationFailure](policy.next(event, testStreamId, eventType, Event.Metadata.empty))
+            id2    <- Abort.run[EventLog.PreparationFailure](policy.next(event, testStreamId, eventType, Event.Metadata.empty))
         yield assert(id1 == id2, s"expected two calls with identical inputs to produce equal ids, got $id1 and $id2")
         end for
     }
 
-    "EventIdPolicy.callerSupplied propagates a valid id and aborts PreparationFailure on an empty one" in {
+    "Event.IdPolicy.callerSupplied propagates a valid id and aborts PreparationFailure on an empty one" in {
         val event = LogTestEvent("caller", 1)
         for
-            validPolicy   <- EventLog.EventIdPolicy.callerSupplied[LogTestEvent](_ => "caller-id-1")
-            validResult   <- Abort.run[EventLog.PreparationFailure](validPolicy.next(event, testStreamId, eventType, EventMetadata.empty))
-            invalidPolicy <- EventLog.EventIdPolicy.callerSupplied[LogTestEvent](_ => "")
-            invalidResult <- Abort.run[EventLog.PreparationFailure](invalidPolicy.next(event, testStreamId, eventType, EventMetadata.empty))
+            validPolicy   <- Event.IdPolicy.callerSupplied[LogTestEvent](_ => "caller-id-1")
+            validResult   <- Abort.run[EventLog.PreparationFailure](validPolicy.next(event, testStreamId, eventType, Event.Metadata.empty))
+            invalidPolicy <- Event.IdPolicy.callerSupplied[LogTestEvent](_ => "")
+            invalidResult <-
+                Abort.run[EventLog.PreparationFailure](invalidPolicy.next(event, testStreamId, eventType, Event.Metadata.empty))
         yield
-            assert(validResult == Result.succeed(valid(EventId("caller-id-1"))))
+            assert(validResult == Result.succeed(valid(Event.Id("caller-id-1"))))
             assert(invalidResult match
                 case Result.Failure(_: EventLog.PreparationFailure) => true
                 case _                                              => false)
@@ -622,18 +627,18 @@ class EventLogTest extends kyo.test.Test[Any]:
     "QuestParty union exercises real per-member routing and a non-generated id policy end to end" in {
         val journalId = freshJournalId("quest-party-e2e")
         for
-            streamName  <- EventLog.StreamName("quest")
-            questPolicy <- EventLog.EventIdPolicy.deterministic[QuestStarted]((e, _, _, _) => e.id)
-            partyPolicy <- EventLog.EventIdPolicy.deterministic[PartyJoined]((e, _, _, _) => e.id)
+            streamName  <- Event.StreamName("quest")
+            questPolicy <- Event.IdPolicy.deterministic[QuestStarted]((e, _, _, _) => e.id)
+            partyPolicy <- Event.IdPolicy.deterministic[PartyJoined]((e, _, _, _) => e.id)
             result <-
-                given EventLog.EventDefinition[QuestEvent, QuestStarted] =
-                    EventLog.EventDefinition.schema[QuestEvent, QuestStarted](
-                        EventLog.StreamSelector.canonical(streamName, EventLog.StreamKey[QuestStarted](e => Chunk(e.id))),
+                given Event.Definition[QuestEvent, QuestStarted] =
+                    Event.Definition.schema[QuestEvent, QuestStarted](
+                        Event.StreamSelector.canonical(streamName, Event.StreamKey[QuestStarted](e => Chunk(e.id))),
                         questPolicy
                     )
-                given EventLog.EventDefinition[QuestEvent, PartyJoined] =
-                    EventLog.EventDefinition.schema[QuestEvent, PartyJoined](
-                        EventLog.StreamSelector.constant(partyJoinedStreamId),
+                given Event.Definition[QuestEvent, PartyJoined] =
+                    Event.Definition.schema[QuestEvent, PartyJoined](
+                        Event.StreamSelector.constant(partyJoinedStreamId),
                         partyPolicy
                     )
                 // QuestStarted's single field is a structural subset of PartyJoined's two fields,
@@ -649,8 +654,8 @@ class EventLogTest extends kyo.test.Test[Any]:
                             for
                                 r1          <- log.append(QuestStarted("q-1"))
                                 r2          <- log.append(PartyJoined("p-1", "alice"))
-                                questEvents <- log.read(r1.streamId, StreamOffset.first, 10)
-                                partyEvents <- log.read(r2.streamId, StreamOffset.first, 10)
+                                questEvents <- log.read(r1.streamId, Event.StreamOffset.first, 10)
+                                partyEvents <- log.read(r2.streamId, Event.StreamOffset.first, 10)
                             yield (r1, r2, questEvents, partyEvents)
                         }
                     }
@@ -661,8 +666,8 @@ class EventLogTest extends kyo.test.Test[Any]:
                 assert(r1.streamId != r2.streamId, "expected QuestStarted and PartyJoined to resolve to distinct streams")
                 assert(questEvents.size == 1)
                 assert(partyEvents.size == 1)
-                assert(questEvents(0).eventId == valid(EventId("q-1")))
-                assert(partyEvents(0).eventId == valid(EventId("p-1")))
+                assert(questEvents(0).eventId == valid(Event.Id("q-1")))
+                assert(partyEvents(0).eventId == valid(Event.Id("p-1")))
                 assert(questEvents(0).payload match
                     case q: QuestStarted => q == QuestStarted("q-1")
                     case _               => false)
@@ -673,11 +678,11 @@ class EventLogTest extends kyo.test.Test[Any]:
         end for
     }
 
-    "EventDefinition.metadata.values(event) is honored at prepare time (Metadata[E] real case class, not a stubbed marker)" in {
-        val sourceKey        = valid(MetadataKey("source"))
-        val expectedMetadata = EventMetadata(Map(sourceKey -> MetadataValue(Structure.Value.Str("test-harness"))))
-        given EventLog.EventDefinition[LogTestEvent, LogTestEvent] =
-            EventLog.EventDefinition.schema[LogTestEvent, LogTestEvent](
+    "Event.Definition.metadata.values(event) is honored at prepare time (Metadata[E] real case class, not a stubbed marker)" in {
+        val sourceKey        = valid(Event.Metadata.Key("source"))
+        val expectedMetadata = Event.Metadata(Map(sourceKey -> Event.Metadata.Value(Structure.Value.Str("test-harness"))))
+        given Event.Definition[LogTestEvent, LogTestEvent] =
+            Event.Definition.schema[LogTestEvent, LogTestEvent](
                 testStream,
                 metadata = EventLog.Metadata.from(_ => expectedMetadata)
             )
@@ -695,14 +700,14 @@ class EventLogTest extends kyo.test.Test[Any]:
     // --- typed attribute metadata, AppendDirective replacement overrides, per-command
     // expectedOffset validation ------------------------------------------------------------
 
-    "EventLog.Metadata.of builds Metadata[E] from const/from AttributeBindings, producing the expected EventMetadata for a concrete event" in {
+    "EventLog.Metadata.of builds Metadata[E] from const/from AttributeBindings, producing the expected Event.Metadata for a concrete event" in {
         val metadata = EventLog.Metadata.of[QuestStarted](
-            EventLog.Attributes.CorrelationId.const("req-42"),
-            EventLog.Attributes.SourceSystem.from(_.id)
+            Event.Attributes.CorrelationId.const("req-42"),
+            Event.Attributes.SourceSystem.from(_.id)
         )
         val result = metadata.values(QuestStarted("q-1"))
-        assert(result.get(EventLog.Attributes.CorrelationId) == Maybe("req-42"))
-        assert(result.get(EventLog.Attributes.SourceSystem) == Maybe("q-1"))
+        assert(result.get(Event.Attributes.CorrelationId) == Maybe("req-42"))
+        assert(result.get(Event.Attributes.SourceSystem) == Maybe("q-1"))
     }
 
     "AppendDirective.replaceStreamId replaces StreamSelector.resolve outright (probe selector asserts zero calls)" in {
@@ -711,14 +716,14 @@ class EventLogTest extends kyo.test.Test[Any]:
         // threaded through it (mirrors the eventIdSeq counter precedent in
         // EventLogSupport.scala).
         val probeCalls = AtomicInt.Unsafe.init(0)(using AllowUnsafe.embrace.danger)
-        val probeStream: EventLog.StreamSelector[LogTestEvent] =
-            EventLog.StreamSelector.by[LogTestEvent](validStreamName("probe-stream-a")) { _ =>
+        val probeStream: Event.StreamSelector[LogTestEvent] =
+            Event.StreamSelector.by[LogTestEvent](validStreamName("probe-stream-a")) { _ =>
                 discard(probeCalls.incrementAndGet()(using AllowUnsafe.embrace.danger))
                 Chunk("probed")
             }
-        val overrideStreamId = valid(StreamId("replace-stream-b"))
-        given EventLog.EventDefinition[LogTestEvent, LogTestEvent] =
-            EventLog.EventDefinition.schema[LogTestEvent, LogTestEvent](probeStream)
+        val overrideStreamId = valid(Event.StreamId("replace-stream-b"))
+        given Event.Definition[LogTestEvent, LogTestEvent] =
+            Event.Definition.schema[LogTestEvent, LogTestEvent](probeStream)
         val journalId = freshJournalId("replace-stream-id")
         for
             codecs <- EventLogCodecs.schema[LogTestEvent]()
@@ -735,20 +740,20 @@ class EventLogTest extends kyo.test.Test[Any]:
         end for
     }
 
-    "AppendDirective.replaceEventId replaces EventIdPolicy.next outright (probe policy asserts zero calls)" in {
-        // Unsafe: AtomicInt.Unsafe.init for a synchronous call counter; EventIdPolicy.callerSupplied's
+    "AppendDirective.replaceEventId replaces Event.IdPolicy.next outright (probe policy asserts zero calls)" in {
+        // Unsafe: AtomicInt.Unsafe.init for a synchronous call counter; Event.IdPolicy.callerSupplied's
         // f carries no effect row, so a Sync-based AtomicInt cannot be threaded through it.
         val probeCalls = AtomicInt.Unsafe.init(0)(using AllowUnsafe.embrace.danger)
-        val overrideId = valid(EventId("replace-event-id"))
+        val overrideId = valid(Event.Id("replace-event-id"))
         val journalId  = freshJournalId("replace-event-id")
         for
-            probePolicy <- EventLog.EventIdPolicy.callerSupplied[LogTestEvent] { _ =>
+            probePolicy <- Event.IdPolicy.callerSupplied[LogTestEvent] { _ =>
                 discard(probeCalls.incrementAndGet()(using AllowUnsafe.embrace.danger))
                 "probed-id"
             }
             cmd <-
-                given EventLog.EventDefinition[LogTestEvent, LogTestEvent] =
-                    EventLog.EventDefinition.schema[LogTestEvent, LogTestEvent](testStream, probePolicy)
+                given Event.Definition[LogTestEvent, LogTestEvent] =
+                    Event.Definition.schema[LogTestEvent, LogTestEvent](testStream, probePolicy)
                 for
                     codecs <- EventLogCodecs.schema[LogTestEvent]()
                     log    <- EventLog.init(codecs, journalId)
@@ -767,10 +772,10 @@ class EventLogTest extends kyo.test.Test[Any]:
     }
 
     "AppendDirective.withMetadata right-biased-merges over member-produced metadata" in {
-        given EventLog.EventDefinition[LogTestEvent, LogTestEvent] =
-            EventLog.EventDefinition.schema[LogTestEvent, LogTestEvent](
+        given Event.Definition[LogTestEvent, LogTestEvent] =
+            Event.Definition.schema[LogTestEvent, LogTestEvent](
                 testStream,
-                metadata = EventLog.Metadata.of(EventLog.Attributes.SourceSystem.const("member-system"))
+                metadata = EventLog.Metadata.of(Event.Attributes.SourceSystem.const("member-system"))
             )
         val journalId = freshJournalId("with-metadata-merge")
         for
@@ -780,7 +785,7 @@ class EventLogTest extends kyo.test.Test[Any]:
                 log.prepare(
                     LogTestEvent("additive", 1),
                     EventLog.AppendDirective.withMetadata(
-                        EventMetadata.of(EventLog.Attribute(EventLog.Attributes.CorrelationId, "req-99"))
+                        Event.Metadata.of(Event.Attribute(Event.Attributes.CorrelationId, "req-99"))
                     )
                 )
             )
@@ -788,20 +793,20 @@ class EventLogTest extends kyo.test.Test[Any]:
                 log.prepare(
                     LogTestEvent("colliding", 2),
                     EventLog.AppendDirective.withMetadata(
-                        EventMetadata.of(EventLog.Attribute(EventLog.Attributes.SourceSystem, "directive-system"))
+                        Event.Metadata.of(Event.Attribute(Event.Attributes.SourceSystem, "directive-system"))
                     )
                 )
             )
         yield
             additiveCmd match
                 case Result.Success(command) =>
-                    assert(command.envelope.metadata.get(EventLog.Attributes.SourceSystem) == Maybe("member-system"))
-                    assert(command.envelope.metadata.get(EventLog.Attributes.CorrelationId) == Maybe("req-99"))
+                    assert(command.envelope.metadata.get(Event.Attributes.SourceSystem) == Maybe("member-system"))
+                    assert(command.envelope.metadata.get(Event.Attributes.CorrelationId) == Maybe("req-99"))
                 case other => fail(s"expected successful prepare, got: $other")
             end match
             collidingCmd match
                 case Result.Success(command) =>
-                    assert(command.envelope.metadata.get(EventLog.Attributes.SourceSystem) == Maybe("directive-system"))
+                    assert(command.envelope.metadata.get(Event.Attributes.SourceSystem) == Maybe("directive-system"))
                 case other => fail(s"expected successful prepare, got: $other")
             end match
         end for
@@ -819,7 +824,7 @@ class EventLogTest extends kyo.test.Test[Any]:
                         c1 <- log.prepare(LogTestEvent("c1", 1))
                         c2 <- log.prepare(
                             LogTestEvent("c2", 2),
-                            EventLog.AppendDirective.expected(ExpectedOffset.Exact(StreamOffset.first))
+                            EventLog.AppendDirective.expected(ExpectedOffset.Exact(Event.StreamOffset.first))
                         )
                         r <- log.appendAll(c1, c2)
                     yield r
@@ -858,7 +863,7 @@ class EventLogTest extends kyo.test.Test[Any]:
 
     "a replaceStreamId directive mid-batch splits an otherwise-contiguous run into two Journal.append calls" in {
         val journalId = freshJournalId("replace-stream-id-split")
-        val streamB   = valid(StreamId("replace-split-stream-b"))
+        val streamB   = valid(Event.StreamId("replace-split-stream-b"))
         for
             codecs  <- EventLogCodecs.schema[LogTestEvent]()
             log     <- EventLog.init(codecs, journalId)
@@ -900,10 +905,10 @@ class EventLogTest extends kyo.test.Test[Any]:
         val journalId = freshJournalId("quest-party-typed-metadata")
         for
             result <-
-                given EventLog.EventDefinition[QuestEvent, QuestStarted] =
-                    EventLog.EventDefinition.schema[QuestEvent, QuestStarted](
-                        EventLog.StreamSelector.constant(questStartedStreamId),
-                        metadata = EventLog.Metadata.of(EventLog.Attributes.CorrelationId.const("req-1"))
+                given Event.Definition[QuestEvent, QuestStarted] =
+                    Event.Definition.schema[QuestEvent, QuestStarted](
+                        Event.StreamSelector.constant(questStartedStreamId),
+                        metadata = EventLog.Metadata.of(Event.Attributes.CorrelationId.const("req-1"))
                     )
                 given Schema[QuestEvent] = summon[Schema[QuestEvent]].adjacent("type", "content")
                 for
@@ -916,10 +921,10 @@ class EventLogTest extends kyo.test.Test[Any]:
                                 _ <- log.append(
                                     QuestStarted("q-typed-metadata"),
                                     EventLog.AppendDirective.withMetadata(
-                                        EventMetadata.of(EventLog.Attribute(EventLog.Attributes.SourceSystem, "directive-system"))
+                                        Event.Metadata.of(Event.Attribute(Event.Attributes.SourceSystem, "directive-system"))
                                     )
                                 )
-                                records <- log.read(questStartedStreamId, StreamOffset.first, 10)
+                                records <- log.read(questStartedStreamId, Event.StreamOffset.first, 10)
                             yield records
                         }
                     }
@@ -929,8 +934,8 @@ class EventLogTest extends kyo.test.Test[Any]:
             case Result.Success(records) =>
                 assert(records.size == 1)
                 val metadata = records(0).metadata
-                assert(metadata.get(EventLog.Attributes.CorrelationId) == Maybe("req-1"))
-                assert(metadata.get(EventLog.Attributes.SourceSystem) == Maybe("directive-system"))
+                assert(metadata.get(Event.Attributes.CorrelationId) == Maybe("req-1"))
+                assert(metadata.get(Event.Attributes.SourceSystem) == Maybe("directive-system"))
             case other => fail(s"expected success, got: $other")
         end for
     }

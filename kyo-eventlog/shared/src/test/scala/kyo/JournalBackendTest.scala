@@ -14,22 +14,22 @@ abstract class JournalBackendTest[S >: Async <: Sync](newBackend: => Journal.Bac
     private def valid[A](r: Result[JournalInvalidIdentifierError, A]): A =
         r.getOrElse(throw new AssertionError("expected valid identifier"))
 
-    private val streamId = valid(StreamId("users-1"))
-    private val otherId  = valid(StreamId("users-2"))
+    private val streamId = valid(Event.StreamId("users-1"))
+    private val otherId  = valid(Event.StreamId("users-2"))
 
-    private def envelope(n: Int): EventEnvelope =
-        EventEnvelope(
-            id = valid(EventId(s"event-$n")),
-            eventType = valid(EventType("UserRegistered")),
+    private def envelope(n: Int): Event.Pending =
+        Event.Pending(
+            id = valid(Event.Id(s"event-$n")),
+            eventType = valid(Event.Type("UserRegistered")),
             payload = Span.from(s"""{"n":$n}""".getBytes("UTF-8")),
-            metadata = EventMetadata.empty
+            metadata = Event.Metadata.empty
         )
 
-    private def offset(value: Long): StreamOffset =
-        StreamOffset(value).getOrElse(throw new AssertionError("valid offset"))
+    private def offset(value: Long): Event.StreamOffset =
+        Event.StreamOffset(value).getOrElse(throw new AssertionError("valid offset"))
 
-    private def version(n: Long): StreamVersion =
-        StreamVersion(n).getOrElse(throw new AssertionError("valid version"))
+    private def version(n: Long): Event.StreamVersion =
+        Event.StreamVersion(n).getOrElse(throw new AssertionError("valid version"))
 
     "append" - {
         "assigns consecutive zero-based offsets from the first event" in {
@@ -107,7 +107,7 @@ abstract class JournalBackendTest[S >: Async <: Sync](newBackend: => Journal.Bac
                 _       <- Abort.run[JournalError](backend.append(streamId, ExpectedOffset.NoStream, Chunk(envelope(0))))
                 _       <- Abort.run[JournalError](backend.append(streamId, ExpectedOffset.NoStream, Chunk(envelope(1), envelope(2))))
                 info    <- Abort.run[JournalError](backend.streamInfo(streamId))
-                events  <- Abort.run[JournalError](backend.read(streamId, StreamOffset.first, 10))
+                events  <- Abort.run[JournalError](backend.read(streamId, Event.StreamOffset.first, 10))
             yield
                 assert(info == Result.succeed(StreamInfo.Existing(version(1L), offset(0))))
                 assert(events.map(_.length) == Result.succeed(1))
@@ -118,19 +118,19 @@ abstract class JournalBackendTest[S >: Async <: Sync](newBackend: => Journal.Bac
         "a missing stream returns an empty chunk" in {
             for
                 backend <- newBackend
-                events  <- Abort.run[JournalError](backend.read(streamId, StreamOffset.first, 10))
-            yield assert(events == Result.succeed(Chunk.empty[RecordedEvent]))
+                events  <- Abort.run[JournalError](backend.read(streamId, Event.StreamOffset.first, 10))
+            yield assert(events == Result.succeed(Chunk.empty[Event.Committed]))
         }
 
         "a non-positive maxCount returns an empty chunk" in {
             for
                 backend <- newBackend
                 _       <- Abort.run[JournalError](backend.append(streamId, ExpectedOffset.NoStream, Chunk(envelope(0))))
-                zero    <- Abort.run[JournalError](backend.read(streamId, StreamOffset.first, 0))
-                neg     <- Abort.run[JournalError](backend.read(streamId, StreamOffset.first, -1))
+                zero    <- Abort.run[JournalError](backend.read(streamId, Event.StreamOffset.first, 0))
+                neg     <- Abort.run[JournalError](backend.read(streamId, Event.StreamOffset.first, -1))
             yield
-                assert(zero == Result.succeed(Chunk.empty[RecordedEvent]))
-                assert(neg == Result.succeed(Chunk.empty[RecordedEvent]))
+                assert(zero == Result.succeed(Chunk.empty[Event.Committed]))
+                assert(neg == Result.succeed(Chunk.empty[Event.Committed]))
         }
 
         "a from at or past the event count returns an empty chunk" in {
@@ -140,8 +140,8 @@ abstract class JournalBackendTest[S >: Async <: Sync](newBackend: => Journal.Bac
                 at      <- Abort.run[JournalError](backend.read(streamId, offset(2), 10))
                 past    <- Abort.run[JournalError](backend.read(streamId, offset(9), 10))
             yield
-                assert(at == Result.succeed(Chunk.empty[RecordedEvent]))
-                assert(past == Result.succeed(Chunk.empty[RecordedEvent]))
+                assert(at == Result.succeed(Chunk.empty[Event.Committed]))
+                assert(past == Result.succeed(Chunk.empty[Event.Committed]))
         }
 
         "returns events in offset order from the requested position, bounded by maxCount" in {
@@ -158,8 +158,8 @@ abstract class JournalBackendTest[S >: Async <: Sync](newBackend: => Journal.Bac
                     assert(events.length == 2)
                     assert(events(0).offset == offset(1))
                     assert(events(1).offset == offset(2))
-                    assert(events(0).eventId == valid(EventId("event-1")))
-                    assert(events(1).eventId == valid(EventId("event-2")))
+                    assert(events(0).id == valid(Event.Id("event-1")))
+                    assert(events(1).id == valid(Event.Id("event-2")))
                 case other =>
                     fail(s"expected success, got: $other")
         }
@@ -168,13 +168,13 @@ abstract class JournalBackendTest[S >: Async <: Sync](newBackend: => Journal.Bac
             for
                 backend <- newBackend
                 _       <- Abort.run[JournalError](backend.append(streamId, ExpectedOffset.NoStream, Chunk(envelope(0), envelope(1))))
-                events  <- Abort.run[JournalError](backend.read(streamId, StreamOffset.first, 10))
+                events  <- Abort.run[JournalError](backend.read(streamId, Event.StreamOffset.first, 10))
             yield events match
                 case Result.Success(events) =>
                     assert(events.length == 2)
                     assert(events(0).payload.is(envelope(0).payload))
                     assert(events(1).payload.is(envelope(1).payload))
-                    assert(events(0).metadata == EventMetadata.empty)
+                    assert(events(0).metadata == Event.Metadata.empty)
                 case other =>
                     fail(s"expected success, got: $other")
         }
@@ -183,8 +183,8 @@ abstract class JournalBackendTest[S >: Async <: Sync](newBackend: => Journal.Bac
             for
                 backend <- newBackend
                 _       <- Abort.run[JournalError](backend.append(streamId, ExpectedOffset.NoStream, Chunk(envelope(0))))
-                other   <- Abort.run[JournalError](backend.read(otherId, StreamOffset.first, 10))
-            yield assert(other == Result.succeed(Chunk.empty[RecordedEvent]))
+                other   <- Abort.run[JournalError](backend.read(otherId, Event.StreamOffset.first, 10))
+            yield assert(other == Result.succeed(Chunk.empty[Event.Committed]))
         }
     }
 
@@ -208,33 +208,38 @@ abstract class JournalBackendTest[S >: Async <: Sync](newBackend: => Journal.Bac
     "metadata fidelity" - {
         "preserves all ten Structure.Value constructors through append and read" in {
             val bigDecimalVal = BigDecimal("123456789012345678901234567890.0123456789")
-            val storedMeta = EventMetadata(Map(
-                valid(MetadataKey("str"))     -> MetadataValue(Structure.Value.Str("hello")),
-                valid(MetadataKey("int"))     -> MetadataValue(Structure.Value.Integer(42L)),
-                valid(MetadataKey("bool"))    -> MetadataValue(Structure.Value.Bool(true)),
-                valid(MetadataKey("decimal")) -> MetadataValue(Structure.Value.Decimal(3.14)),
-                valid(MetadataKey("bignum"))  -> MetadataValue(Structure.Value.BigNum(bigDecimalVal)),
-                valid(MetadataKey("null"))    -> MetadataValue(Structure.Value.Null),
-                valid(MetadataKey("seq")) -> MetadataValue(Structure.Value.Sequence(Chunk(
+            val storedMeta = Event.Metadata(Map(
+                valid(Event.Metadata.Key("str"))     -> Event.Metadata.Value(Structure.Value.Str("hello")),
+                valid(Event.Metadata.Key("int"))     -> Event.Metadata.Value(Structure.Value.Integer(42L)),
+                valid(Event.Metadata.Key("bool"))    -> Event.Metadata.Value(Structure.Value.Bool(true)),
+                valid(Event.Metadata.Key("decimal")) -> Event.Metadata.Value(Structure.Value.Decimal(3.14)),
+                valid(Event.Metadata.Key("bignum"))  -> Event.Metadata.Value(Structure.Value.BigNum(bigDecimalVal)),
+                valid(Event.Metadata.Key("null"))    -> Event.Metadata.Value(Structure.Value.Null),
+                valid(Event.Metadata.Key("seq")) -> Event.Metadata.Value(Structure.Value.Sequence(Chunk(
                     Structure.Value.Str("a"),
                     Structure.Value.Integer(1L)
                 ))),
-                valid(MetadataKey("record")) -> MetadataValue(Structure.Value.Record(Chunk("x" -> Structure.Value.Bool(false)))),
-                valid(MetadataKey("entries")) -> MetadataValue(
+                valid(
+                    Event.Metadata.Key("record")
+                ) -> Event.Metadata.Value(Structure.Value.Record(Chunk("x" -> Structure.Value.Bool(false)))),
+                valid(Event.Metadata.Key("entries")) -> Event.Metadata.Value(
                     Structure.Value.MapEntries(Chunk(Structure.Value.Integer(1L) -> Structure.Value.Str("v")))
                 ),
-                valid(MetadataKey("variant")) -> MetadataValue(Structure.Value.VariantCase("MyCase", Structure.Value.Str("payload")))
+                valid(Event.Metadata.Key("variant")) -> Event.Metadata.Value(Structure.Value.VariantCase(
+                    "MyCase",
+                    Structure.Value.Str("payload")
+                ))
             ))
-            val ev = EventEnvelope(
-                id = valid(EventId("meta-fidelity")),
-                eventType = valid(EventType("MetaTest")),
+            val ev = Event.Pending(
+                id = valid(Event.Id("meta-fidelity")),
+                eventType = valid(Event.Type("MetaTest")),
                 payload = Span.from(Array.emptyByteArray),
                 metadata = storedMeta
             )
             for
                 backend <- newBackend
                 _       <- Abort.run[JournalError](backend.append(streamId, ExpectedOffset.Any, Chunk(ev)))
-                events  <- Abort.run[JournalError](backend.read(streamId, StreamOffset.first, 1))
+                events  <- Abort.run[JournalError](backend.read(streamId, Event.StreamOffset.first, 1))
             yield events match
                 case Result.Success(es) =>
                     assert(es.length == 1)

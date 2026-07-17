@@ -26,7 +26,7 @@ case class VehicleState(
 
 // Folds a typed event sequence into the current fleet map. Pure: the same events always
 // produce the same state regardless of how many times this function is called.
-def replayFleet(events: Chunk[EventLog.Record[RentalEvent]]): Map[String, VehicleState] =
+def replayFleet(events: Chunk[Event.Record[RentalEvent]]): Map[String, VehicleState] =
     events.foldLeft(Map.empty[String, VehicleState]) { (fleet, record) =>
         record.payload match
             case RentalEvent.VehicleAdded(id, make, model) =>
@@ -44,33 +44,33 @@ object CarRental extends KyoApp:
     // The stream family every RentalEvent member routes through: each vehicle owns one
     // stream, keyed on its vehicle id, so replaying one vehicle's history never touches
     // another vehicle's events.
-    private val vehicleStreamName: EventLog.StreamName =
-        Abort.run[EventLog.PreparationFailure](EventLog.StreamName("vehicle")).eval.getOrThrow
+    private val vehicleStreamName: Event.StreamName =
+        Abort.run[EventLog.PreparationFailure](Event.StreamName("vehicle")).eval.getOrThrow
 
     // Resolves a vehicle id to its stream directly, independent of any concrete RentalEvent
     // member; reused on the read side to locate each vehicle's stream without constructing
     // a throwaway event just to run a selector.
-    private val vehicleIdSelector: EventLog.StreamSelector[String] =
-        EventLog.StreamSelector.by[String](vehicleStreamName)(id => Chunk(id))
+    private val vehicleIdSelector: Event.StreamSelector[String] =
+        Event.StreamSelector.by[String](vehicleStreamName)(id => Chunk(id))
 
     // Every RentalEvent member routes to its vehicle's own stream: each member gets its own
     // StreamSelector instance, keyed on the vehicle id, so the routing genuinely varies per
     // member rather than sharing one fixed stream.
-    private given EventLog.EventDefinition[RentalEvent, RentalEvent.VehicleAdded] =
-        EventLog.EventDefinition.schema[RentalEvent, RentalEvent.VehicleAdded](
-            EventLog.StreamSelector.by[RentalEvent.VehicleAdded](vehicleStreamName)(e => Chunk(e.vehicleId))
+    private given Event.Definition[RentalEvent, RentalEvent.VehicleAdded] =
+        Event.Definition.schema[RentalEvent, RentalEvent.VehicleAdded](
+            Event.StreamSelector.by[RentalEvent.VehicleAdded](vehicleStreamName)(e => Chunk(e.vehicleId))
         )
-    private given EventLog.EventDefinition[RentalEvent, RentalEvent.ReservationMade] =
-        EventLog.EventDefinition.schema[RentalEvent, RentalEvent.ReservationMade](
-            EventLog.StreamSelector.by[RentalEvent.ReservationMade](vehicleStreamName)(e => Chunk(e.vehicleId))
+    private given Event.Definition[RentalEvent, RentalEvent.ReservationMade] =
+        Event.Definition.schema[RentalEvent, RentalEvent.ReservationMade](
+            Event.StreamSelector.by[RentalEvent.ReservationMade](vehicleStreamName)(e => Chunk(e.vehicleId))
         )
-    private given EventLog.EventDefinition[RentalEvent, RentalEvent.VehiclePickedUp] =
-        EventLog.EventDefinition.schema[RentalEvent, RentalEvent.VehiclePickedUp](
-            EventLog.StreamSelector.by[RentalEvent.VehiclePickedUp](vehicleStreamName)(e => Chunk(e.vehicleId))
+    private given Event.Definition[RentalEvent, RentalEvent.VehiclePickedUp] =
+        Event.Definition.schema[RentalEvent, RentalEvent.VehiclePickedUp](
+            Event.StreamSelector.by[RentalEvent.VehiclePickedUp](vehicleStreamName)(e => Chunk(e.vehicleId))
         )
-    private given EventLog.EventDefinition[RentalEvent, RentalEvent.VehicleReturned] =
-        EventLog.EventDefinition.schema[RentalEvent, RentalEvent.VehicleReturned](
-            EventLog.StreamSelector.by[RentalEvent.VehicleReturned](vehicleStreamName)(e => Chunk(e.vehicleId))
+    private given Event.Definition[RentalEvent, RentalEvent.VehicleReturned] =
+        Event.Definition.schema[RentalEvent, RentalEvent.VehicleReturned](
+            Event.StreamSelector.by[RentalEvent.VehicleReturned](vehicleStreamName)(e => Chunk(e.vehicleId))
         )
 
     run {
@@ -97,7 +97,7 @@ object CarRental extends KyoApp:
                             readouts <- Kyo.foreach(Chunk("V001", "V002", "V003")) { vehicleId =>
                                 for
                                     streamId <- vehicleIdSelector.resolve(vehicleId)
-                                    records  <- log.read(streamId, StreamOffset.first, maxCount = 100)
+                                    records  <- log.read(streamId, Event.StreamOffset.first, maxCount = 100)
                                 yield records
                             }
                             fleet = replayFleet(readouts.flattenChunk)

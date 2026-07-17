@@ -28,12 +28,12 @@ class FileJournalNodeAsyncLivenessTest extends kyo.test.Test[Any]:
             configuration <- FileJournal.Binary.configuration(journalId, codecs)
         yield configuration
 
-    private def envelope(id: String, payload: Array[Byte]): EventEnvelope =
-        EventEnvelope(
-            id = valid(EventId(id)),
-            eventType = valid(EventType("LivenessProbe")),
+    private def envelope(id: String, payload: Array[Byte]): Event.Pending =
+        Event.Pending(
+            id = valid(Event.Id(id)),
+            eventType = valid(Event.Type("LivenessProbe")),
             payload = Span.from(payload),
-            metadata = EventMetadata.empty
+            metadata = Event.Metadata.empty
         )
 
     "Node async liveness" - {
@@ -51,14 +51,14 @@ class FileJournalNodeAsyncLivenessTest extends kyo.test.Test[Any]:
                 }
                 large <- Fiber.initUnscoped(
                     Abort.run[JournalError](backend.append(
-                        valid(StreamId("large-stream")),
+                        valid(Event.StreamId("large-stream")),
                         ExpectedOffset.NoStream,
                         Chunk(envelope("large-event", largePayload))
                     )).andThen(order.put("append-done"))
                 )
                 quick <- Fiber.initUnscoped(
                     Abort.run[JournalError](backend.append(
-                        valid(StreamId("quick-stream")),
+                        valid(Event.StreamId("quick-stream")),
                         ExpectedOffset.NoStream,
                         Chunk(envelope("quick-event", quickPayload))
                     )).andThen(order.put("quick-done"))

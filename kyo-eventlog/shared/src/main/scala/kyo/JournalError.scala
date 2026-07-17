@@ -34,16 +34,16 @@ case class JournalEmptyAppendError()(using Frame)
     with JournalAppendFailure derives CanEqual
 
 /** The expected offset did not match the live stream state; `actual` is the state observed at append time. */
-case class JournalConflictError(streamId: StreamId, expected: ExpectedOffset, actual: StreamInfo)(using Frame)
+case class JournalConflictError(streamId: Event.StreamId, expected: ExpectedOffset, actual: StreamInfo)(using Frame)
     extends JournalError(s"Append to stream '${streamId.value}' expected $expected but observed $actual.")
     with JournalAppendFailure derives CanEqual
 
-/** A StreamId, EventId, EventType, StreamOffset, StreamVersion, or MetadataKey value failed validation. */
+/** An Event.StreamId, Event.Id, Event.Type, Event.StreamOffset, Event.StreamVersion, or Event.Metadata.Key value failed validation. */
 case class JournalInvalidIdentifierError(kind: String, value: String)(using Frame)
     extends JournalError(s"Invalid $kind: '$value'.") derives CanEqual
 
 /** A durable backend detected unrecoverable corruption in stored events and refuses to repair it silently. */
-case class JournalCorruptedError(streamId: Maybe[StreamId], detail: String)(using Frame)
+case class JournalCorruptedError(streamId: Maybe[Event.StreamId], detail: String)(using Frame)
     extends JournalError(s"Corrupted journal data${streamId.map(s => s" for stream '${s.value}'").getOrElse("")}: $detail.")
     with JournalAppendFailure with JournalReadFailure with JournalStreamInfoFailure derives CanEqual
 

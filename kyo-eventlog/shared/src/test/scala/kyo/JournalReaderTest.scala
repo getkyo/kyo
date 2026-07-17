@@ -12,10 +12,10 @@ class JournalReaderTest extends kyo.test.Test[Any]:
 
     private def valid[A](r: Result[JournalInvalidIdentifierError, A]): A =
         r.getOrElse(throw new AssertionError("valid identifier"))
-    private val sid       = valid(StreamId("reader-1"))
+    private val sid       = valid(Event.StreamId("reader-1"))
     private val journalId = JournalId.validate("fj-reader")(using Frame.internal).getOrElse(throw new AssertionError("valid journal id"))
-    private def env(n: Int): EventEnvelope =
-        EventEnvelope(valid(EventId(s"e-$n")), valid(EventType("T")), Span.from(s"p$n".getBytes("UTF-8")), EventMetadata.empty)
+    private def env(n: Int): Event.Pending =
+        Event.Pending(valid(Event.Id(s"e-$n")), valid(Event.Type("T")), Span.from(s"p$n".getBytes("UTF-8")), Event.Metadata.empty)
 
     // Unsafe: eagerly resolves the pure (no real Sync/IO) codec + configuration construction to a
     // plain value at class-init time; both factories can only fail on a genuine construction-time
@@ -44,7 +44,7 @@ class JournalReaderTest extends kyo.test.Test[Any]:
             case panic: Result.Panic => throw panic.exception
         }
 
-    private def appendClosed(dir: Path, batches: Seq[Chunk[EventEnvelope]], configuration: FileJournal.Configuration[Span[Byte]])(using
+    private def appendClosed(dir: Path, batches: Seq[Chunk[Event.Pending]], configuration: FileJournal.Configuration[Span[Byte]])(using
         Frame
     ): Unit < Async =
         Scope.run {
@@ -94,11 +94,11 @@ class JournalReaderTest extends kyo.test.Test[Any]:
 
     private def readWithSyncReader(dir: Path, configuration: FileJournal.Configuration[Span[Byte]])(using
         Frame
-    ): Chunk[RecordedEvent] < Async =
+    ): Chunk[Event.Committed] < Async =
         Scope.run {
             Abort.run[JournalStorageError](Journal.Reader.file(dir, configuration)).map {
                 case Result.Success(reader) =>
-                    Abort.run[JournalError](reader.read(sid, StreamOffset.first, Int.MaxValue)).map {
+                    Abort.run[JournalError](reader.read(sid, Event.StreamOffset.first, Int.MaxValue)).map {
                         case Result.Success(evs) => evs
                         case Result.Failure(err) => throw new AssertionError(s"unexpected read failure: $err")
                         case panic: Result.Panic => throw panic.exception
@@ -110,10 +110,10 @@ class JournalReaderTest extends kyo.test.Test[Any]:
 
     private def readResultSync(dir: Path, configuration: FileJournal.Configuration[Span[Byte]])(using
         Frame
-    ): Result[JournalError, Chunk[RecordedEvent]] < Async =
+    ): Result[JournalError, Chunk[Event.Committed]] < Async =
         Scope.run {
             Abort.run[JournalStorageError](Journal.Reader.file(dir, configuration)).map {
-                case Result.Success(reader) => Abort.run[JournalError](reader.read(sid, StreamOffset.first, Int.MaxValue))
+                case Result.Success(reader) => Abort.run[JournalError](reader.read(sid, Event.StreamOffset.first, Int.MaxValue))
                 case Result.Failure(err)    => throw err
                 case panic: Result.Panic    => throw panic.exception
             }

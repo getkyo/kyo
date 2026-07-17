@@ -235,25 +235,25 @@ class FileJournalNodeLockTest extends kyo.test.Test[Any]:
 
         "writes the reference segment byte-identical to the binary codec hash" in {
             val refHash  = "a1f871e87a6265a58be510876984f1679db24271d6a2510643400ad6bf17216f"
-            val streamId = valid(StreamId("ref-stream"))
+            val streamId = valid(Event.StreamId("ref-stream"))
             val events = Chunk(
-                EventEnvelope(
-                    id = valid(EventId("e-1")),
-                    eventType = valid(EventType("RefType")),
+                Event.Pending(
+                    id = valid(Event.Id("e-1")),
+                    eventType = valid(Event.Type("RefType")),
                     payload = Span.from("ref-payload-1".getBytes("UTF-8")),
-                    metadata = EventMetadata.empty
+                    metadata = Event.Metadata.empty
                 ),
-                EventEnvelope(
-                    id = valid(EventId("e-2")),
-                    eventType = valid(EventType("RefType")),
+                Event.Pending(
+                    id = valid(Event.Id("e-2")),
+                    eventType = valid(Event.Type("RefType")),
                     payload = Span.from("ref-payload-2".getBytes("UTF-8")),
-                    metadata = EventMetadata.empty
+                    metadata = Event.Metadata.empty
                 ),
-                EventEnvelope(
-                    id = valid(EventId("e-3")),
-                    eventType = valid(EventType("RefType")),
+                Event.Pending(
+                    id = valid(Event.Id("e-3")),
+                    eventType = valid(Event.Type("RefType")),
                     payload = Span.from("ref-payload-3".getBytes("UTF-8")),
-                    metadata = EventMetadata.empty
+                    metadata = Event.Metadata.empty
                 )
             )
             val segPath = (dir: Path) =>

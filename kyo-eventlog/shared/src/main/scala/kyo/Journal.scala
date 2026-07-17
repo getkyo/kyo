@@ -4,7 +4,7 @@ import kyo.kernel.*
 
 /** Capability for durable, append-only, optimistically-versioned event streams.
   *
-  * A journal stores streams of immutable events. Each stream is a zero-indexed sequence: appends assign consecutive [[StreamOffset]]
+  * A journal stores streams of immutable events. Each stream is a zero-indexed sequence: appends assign consecutive [[Event.StreamOffset]]
   * values and are guarded by an [[ExpectedOffset]] check that is atomic with the write, giving optimistic concurrency without locks.
   * Reads return bounded slices in offset order, and [[Journal.streamInfo]] reports a stream's current state.
   *
@@ -34,10 +34,11 @@ object Journal:
       * operation's per-op failure trait, which the public op lifts back to `Abort` on its own row.
       */
     private[kyo] enum Op[A]:
-        case Append(streamId: StreamId, expected: ExpectedOffset, events: Chunk[EventEnvelope])
+        case Append(streamId: Event.StreamId, expected: ExpectedOffset, events: Chunk[Event.Pending])
             extends Op[Result[JournalAppendFailure, AppendResult]]
-        case Read(streamId: StreamId, from: StreamOffset, maxCount: Int) extends Op[Result[JournalReadFailure, Chunk[RecordedEvent]]]
-        case StreamInfo(streamId: StreamId)                              extends Op[Result[JournalStreamInfoFailure, kyo.StreamInfo]]
+        case Read(streamId: Event.StreamId, from: Event.StreamOffset, maxCount: Int)
+            extends Op[Result[JournalReadFailure, Chunk[Event.Committed]]]
+        case StreamInfo(streamId: Event.StreamId) extends Op[Result[JournalStreamInfoFailure, kyo.StreamInfo]]
     end Op
 
     /** Read-only view of a journal: read and stream inspection with no append. A read-only file open
@@ -56,13 +57,13 @@ object Journal:
     trait Reader[S]:
         /** Reads at most `maxCount` events from `from` in offset order. */
         def read(
-            streamId: StreamId,
-            from: StreamOffset,
+            streamId: Event.StreamId,
+            from: Event.StreamOffset,
             maxCount: Int
-        ): Chunk[RecordedEvent] < (S & Abort[JournalReadFailure])
+        ): Chunk[Event.Committed] < (S & Abort[JournalReadFailure])
 
         /** Reports the stream's current state. */
-        def streamInfo(streamId: StreamId): StreamInfo < (S & Abort[JournalStreamInfoFailure])
+        def streamInfo(streamId: Event.StreamId): StreamInfo < (S & Abort[JournalStreamInfoFailure])
     end Reader
 
     /** Storage contract behind the [[Journal]] capability.
@@ -84,9 +85,9 @@ object Journal:
     trait Backend[S] extends Reader[S]:
         /** Appends a batch of events to a stream after checking the expected offset. */
         def append(
-            streamId: StreamId,
+            streamId: Event.StreamId,
             expected: ExpectedOffset,
-            events: Chunk[EventEnvelope]
+            events: Chunk[Event.Pending]
         ): AppendResult < (S & Abort[JournalAppendFailure])
     end Backend
 
@@ -137,9 +138,9 @@ object Journal:
       * unchanged. A durable backend may additionally raise [[JournalCorruptedError]] or [[JournalStorageError]] (both [[JournalAppendFailure]]).
       */
     inline def append(
-        streamId: StreamId,
+        streamId: Event.StreamId,
         expected: ExpectedOffset,
-        events: Chunk[EventEnvelope]
+        events: Chunk[Event.Pending]
     )(using inline frame: Frame): AppendResult < (Journal & Abort[JournalAppendFailure]) =
         ArrowEffect.suspend(Tag[Journal], Op.Append(streamId, expected, events)).map(r => Abort.get(r))
 
@@ -148,16 +149,16 @@ object Journal:
       * [[JournalStorageError]] (both [[JournalReadFailure]]), which is why the row carries `Abort[JournalReadFailure]`.
       */
     inline def read(
-        streamId: StreamId,
-        from: StreamOffset,
+        streamId: Event.StreamId,
+        from: Event.StreamOffset,
         maxCount: Int
-    )(using inline frame: Frame): Chunk[RecordedEvent] < (Journal & Abort[JournalReadFailure]) =
+    )(using inline frame: Frame): Chunk[Event.Committed] < (Journal & Abort[JournalReadFailure]) =
         ArrowEffect.suspend(Tag[Journal], Op.Read(streamId, from, maxCount)).map(r => Abort.get(r))
 
     /** Reports the stream's current state: [[StreamInfo.Absent]] or [[StreamInfo.Existing]]. The in-memory backend never fails; a durable
       * backend may raise [[JournalCorruptedError]] or [[JournalStorageError]] (both [[JournalStreamInfoFailure]]), carried on the row.
       */
-    inline def streamInfo(streamId: StreamId)(using inline frame: Frame): StreamInfo < (Journal & Abort[JournalStreamInfoFailure]) =
+    inline def streamInfo(streamId: Event.StreamId)(using inline frame: Frame): StreamInfo < (Journal & Abort[JournalStreamInfoFailure]) =
         ArrowEffect.suspend(Tag[Journal], Op.StreamInfo(streamId)).map(r => Abort.get(r))
 
     /** Handles the [[Journal]] capability by installing a backend, discharging [[Journal]] and adding the backend's own effect `S`. The
@@ -200,22 +201,24 @@ object Journal:
     object Unsafe:
         /** Appends directly against `backend`, bypassing the ArrowEffect suspend and handler dispatch. */
         def append[S](backend: Backend[S])(
-            streamId: StreamId,
+            streamId: Event.StreamId,
             expected: ExpectedOffset,
-            events: Chunk[EventEnvelope]
+            events: Chunk[Event.Pending]
         )(using AllowUnsafe): AppendResult < (S & Abort[JournalAppendFailure]) =
             backend.append(streamId, expected, events)
 
         /** Reads directly against `backend`, bypassing the ArrowEffect suspend and handler dispatch. */
         def read[S](backend: Backend[S])(
-            streamId: StreamId,
-            from: StreamOffset,
+            streamId: Event.StreamId,
+            from: Event.StreamOffset,
             maxCount: Int
-        )(using AllowUnsafe): Chunk[RecordedEvent] < (S & Abort[JournalReadFailure]) =
+        )(using AllowUnsafe): Chunk[Event.Committed] < (S & Abort[JournalReadFailure]) =
             backend.read(streamId, from, maxCount)
 
         /** Reports stream state directly against `backend`, bypassing the ArrowEffect suspend and handler dispatch. */
-        def streamInfo[S](backend: Backend[S])(streamId: StreamId)(using AllowUnsafe): StreamInfo < (S & Abort[JournalStreamInfoFailure]) =
+        def streamInfo[S](backend: Backend[S])(streamId: Event.StreamId)(using
+            AllowUnsafe
+        ): StreamInfo < (S & Abort[JournalStreamInfoFailure]) =
             backend.streamInfo(streamId)
     end Unsafe
 end Journal

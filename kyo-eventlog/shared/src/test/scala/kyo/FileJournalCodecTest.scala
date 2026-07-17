@@ -19,7 +19,7 @@ class FileJournalCodecTest extends kyo.test.Test[Any]:
 
     "record frame" - {
         "frames a record with a body-length prefix and a body-covering CRC" in {
-            val md      = kyo.internal.FileJournalCore.encodeMetadata(engineMetadataCodec, EventMetadata.empty)
+            val md      = kyo.internal.FileJournalCore.encodeMetadata(engineMetadataCodec, Event.Metadata.empty)
             val payload = "hello".getBytes("UTF-8")
             val frame   = encodeRecord(7L, "evt-1", "UserRegistered", md, payload)
             val buf     = ByteBuffer.wrap(frame)
@@ -35,7 +35,7 @@ class FileJournalCodecTest extends kyo.test.Test[Any]:
                 1L,
                 "e",
                 "t",
-                kyo.internal.FileJournalCore.encodeMetadata(engineMetadataCodec, EventMetadata.empty),
+                kyo.internal.FileJournalCore.encodeMetadata(engineMetadataCodec, Event.Metadata.empty),
                 Array[Byte](9)
             )
             // flipping a body byte must break the CRC; flipping the length field must not (it is not covered)

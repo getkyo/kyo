@@ -80,14 +80,14 @@ final private[kyo] class JsonlSegmentFormat(
 
     def segmentExtension: String             = ".jsonl"
     def header: Array[Byte]                  = Array.emptyByteArray
-    def recordSize(env: EventEnvelope): Long = 0L // never called; extractPositions overrides
+    def recordSize(env: Event.Pending): Long = 0L // never called; extractPositions overrides
 
     // JSONL segments carry no binary file header.
     def validateHeader[S](h: StoreSeam.Handle[S])(using Frame): Maybe[String] < S = Absent
 
     // --- write ---------------------------------------------------------------------------------
 
-    def frameBatch(firstOffset: Long, events: Chunk[EventEnvelope]): Array[Byte] =
+    def frameBatch(firstOffset: Long, events: Chunk[Event.Pending]): Array[Byte] =
         val lines = new Array[Array[Byte]](events.length + 1)
         var total = 0
         var i     = 0
@@ -115,7 +115,7 @@ final private[kyo] class JsonlSegmentFormat(
     // The first `events.length` lines in batchBytes are event lines; the last is the commit line.
     override def extractPositions(
         firstOffset: Long,
-        events: Chunk[EventEnvelope],
+        events: Chunk[Event.Pending],
         batchBytes: Array[Byte],
         startPos: Long
     ): Array[Long] =
@@ -240,7 +240,7 @@ final private[kyo] class JsonlSegmentFormat(
 
     // Encodes one event as a JSONL line (with trailing '\n'). Throws on payload encode failure;
     // the caller (frameBatch) is invoked from writeBatch which catches Exception.
-    private def encodeEventLine(offset: Long, e: EventEnvelope): Array[Byte] =
+    private def encodeEventLine(offset: Long, e: Event.Pending): Array[Byte] =
         val metaJson = encodeMetadataJson(e.metadata)
         val payloadJson = encodeValueForJsonl(e.payload)(using Frame.internal) match
             case Result.Success(s)  => s
@@ -338,13 +338,13 @@ final private[kyo] class JsonlSegmentFormat(
         end if
     end verifyCrcLine
 
-    // Encodes EventMetadata as a JSON object string, e.g. `{"tag1":"v1","tag2":42}`.
-    private def encodeMetadataJson(md: EventMetadata): String =
+    // Encodes Event.Metadata as a JSON object string, e.g. `{"tag1":"v1","tag2":42}`.
+    private def encodeMetadataJson(md: Event.Metadata): String =
         val w = new Json().newWriter()
         w.mapStart(md.values.size)
         md.values.foreach { (k, v) =>
             w.field(k.value, 0)
-            MetadataValue.write(w, v)
+            Event.Metadata.Value.write(w, v)
         }
         w.mapEnd()
         new String(w.result().toArray, Utf8)
@@ -356,16 +356,16 @@ final private[kyo] class JsonlSegmentFormat(
     // metadata is preferable to a read failure).
     private def readMetadataJson(reader: Codec.Reader): Array[Byte] =
         discard(reader.objectStart())
-        val pairs = Chunk.newBuilder[(MetadataKey, MetadataValue)]
+        val pairs = Chunk.newBuilder[(Event.Metadata.Key, Event.Metadata.Value)]
         while reader.hasNextField() do
             val key = reader.field()
-            val v   = MetadataValue.read(reader)
-            MetadataKey(key)(using Frame.internal) match
+            val v   = Event.Metadata.Value.read(reader)
+            Event.Metadata.Key(key)(using Frame.internal) match
                 case Result.Success(mk) => pairs += (mk -> v)
                 case Result.Failure(_)  => () // skip invalid key
         end while
         reader.objectEnd()
-        FileJournalCore.encodeMetadata(metadataCodec, EventMetadata(pairs.result().toMap))
+        FileJournalCore.encodeMetadata(metadataCodec, Event.Metadata(pairs.result().toMap))
     end readMetadataJson
 
     // Minimal JSON string escaping. All 7-bit ASCII special chars that need escaping are handled;

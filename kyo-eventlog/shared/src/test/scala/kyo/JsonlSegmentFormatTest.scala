@@ -19,12 +19,12 @@ class JsonlSegmentFormatTest extends kyo.test.Test[Any]:
     private def valid[A](r: Result[JournalInvalidIdentifierError, A]): A =
         r.getOrElse(throw new AssertionError(s"valid identifier: $r"))
 
-    private def env(n: Int): EventEnvelope =
-        EventEnvelope(
-            valid(EventId(s"e-$n")),
-            valid(EventType("T")),
+    private def env(n: Int): Event.Pending =
+        Event.Pending(
+            valid(Event.Id(s"e-$n")),
+            valid(Event.Type("T")),
             Span.from(s"p$n".getBytes(Utf8)),
-            EventMetadata.empty
+            Event.Metadata.empty
         )
 
     // --- in-memory segment store handle -------------------------------------------------------
@@ -54,7 +54,7 @@ class JsonlSegmentFormatTest extends kyo.test.Test[Any]:
     // Writes a batch starting at `startPos`, returns the handle and the batch bytes.
     private def writeBatch(
         firstOffset: Long,
-        events: Chunk[EventEnvelope],
+        events: Chunk[Event.Pending],
         startPos: Long = 0L
     )(using Frame): (StoreSeam.Handle[Sync], Array[Byte]) < Sync =
         val bytes  = codec.frameBatch(firstOffset, events)
@@ -297,7 +297,7 @@ class JsonlSegmentFormatTest extends kyo.test.Test[Any]:
         }
         "JSONL frame round-trips arbitrary binary payloads end-to-end" in {
             val rawPayload = Span.from(Array[Byte](0, 1, 2, 127, -1))
-            val e          = EventEnvelope(valid(EventId("eid")), valid(EventType("T")), rawPayload, EventMetadata.empty)
+            val e          = Event.Pending(valid(Event.Id("eid")), valid(Event.Type("T")), rawPayload, Event.Metadata.empty)
             val bytes      = codec.frameBatch(0L, Chunk(e))
             val handle     = memHandle(bytes)
             val positions  = codec.extractPositions(0L, Chunk(e), bytes, 0L)

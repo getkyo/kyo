@@ -6,10 +6,10 @@ class FileJournalTest extends kyo.test.Test[Any]:
 
     private def valid[A](r: Result[JournalInvalidIdentifierError, A]): A =
         r.getOrElse(throw new AssertionError("valid identifier"))
-    private def env(n: Int, md: EventMetadata = EventMetadata.empty): EventEnvelope =
-        EventEnvelope(valid(EventId(s"e-$n")), valid(EventType("T")), Span.from(s"payload-$n".getBytes("UTF-8")), md)
+    private def env(n: Int, md: Event.Metadata = Event.Metadata.empty): Event.Pending =
+        Event.Pending(valid(Event.Id(s"e-$n")), valid(Event.Type("T")), Span.from(s"payload-$n".getBytes("UTF-8")), md)
 
-    private def off(value: Long): StreamOffset = valid(StreamOffset(value))
+    private def off(value: Long): Event.StreamOffset = valid(Event.StreamOffset(value))
 
     private def journalId(suffix: String)(using Frame): JournalId =
         JournalId.validate(s"fj-test-$suffix").getOrElse(throw new AssertionError("valid journal id"))
@@ -52,7 +52,7 @@ class FileJournalTest extends kyo.test.Test[Any]:
             case panic: Result.Panic => throw panic.exception
         }
 
-    private def appendAll(backend: Journal.Backend[Sync], streamId: StreamId, range: Range)(using
+    private def appendAll(backend: Journal.Backend[Sync], streamId: Event.StreamId, range: Range)(using
         Frame
     )
         : Unit < (Sync & Abort[JournalError]) =
@@ -82,8 +82,8 @@ class FileJournalTest extends kyo.test.Test[Any]:
             // Tiny segmentSize so 20 single-event batches force >= 1 rotation; read a slice that starts in
             // segment 0 and ends in a later segment and assert contiguity, ordering, and payloads.
             // Then append one oversized record (payload > segmentSize) and read it back.
-            val sid = valid(StreamId("s"))
-            val big = EventEnvelope(valid(EventId("big")), valid(EventType("T")), Span.from(new Array[Byte](512)), EventMetadata.empty)
+            val sid = valid(Event.StreamId("s"))
+            val big = Event.Pending(valid(Event.Id("big")), valid(Event.Type("T")), Span.from(new Array[Byte](512)), Event.Metadata.empty)
             for
                 dir    <- freshDir("fj-rot")
                 config <- binaryConfiguration("rot", FileJournal.Options(fsync = FileJournal.Fsync.Always, segmentSize = 256L.bytes))
@@ -106,16 +106,16 @@ class FileJournalTest extends kyo.test.Test[Any]:
         "maps a/b and a%2Fb to independent on-disk directories and contents" in {
             // "a/b" and "a%2Fb" must map to two distinct on-disk directory names and never collide; each
             // stream reads back only its own event.
-            val idSlash = valid(StreamId("a/b"))
-            val idPct   = valid(StreamId("a%2Fb"))
+            val idSlash = valid(Event.StreamId("a/b"))
+            val idPct   = valid(Event.StreamId("a%2Fb"))
             for
                 dir      <- freshDir("fj-sid")
                 config   <- binaryConfiguration("sid")
                 backend  <- discharge(Journal.Backend.file(dir, config))
                 _        <- discharge(backend.append(idSlash, ExpectedOffset.Any, Chunk(env(0))))
                 _        <- discharge(backend.append(idPct, ExpectedOffset.Any, Chunk(env(1))))
-                slashEvs <- discharge(backend.read(idSlash, StreamOffset.first, 10))
-                pctEvs   <- discharge(backend.read(idPct, StreamOffset.first, 10))
+                slashEvs <- discharge(backend.read(idSlash, Event.StreamOffset.first, 10))
+                pctEvs   <- discharge(backend.read(idPct, Event.StreamOffset.first, 10))
                 names    <- streamDirNames(dir)
             yield
                 assert(slashEvs.map(e => new String(e.payload.toArray, "UTF-8")) == List("payload-0"))
@@ -168,10 +168,10 @@ class FileJournalTest extends kyo.test.Test[Any]:
 
     // --- typed FileJournal.Configuration leaves (checkpoint 3 acceptance) -----------------------
 
-    private val fjEventStreamId: StreamId                       = valid(StreamId("fj-event-stream"))
-    private val fjEventStream: EventLog.StreamSelector[FjEvent] = EventLog.StreamSelector.constant(fjEventStreamId)
-    private given EventLog.EventDefinition[FjEvent, FjEvent] =
-        EventLog.EventDefinition.schema[FjEvent, FjEvent](fjEventStream)
+    private val fjEventStreamId: Event.StreamId              = valid(Event.StreamId("fj-event-stream"))
+    private val fjEventStream: Event.StreamSelector[FjEvent] = Event.StreamSelector.constant(fjEventStreamId)
+    private given Event.Definition[FjEvent, FjEvent] =
+        Event.Definition.schema[FjEvent, FjEvent](fjEventStream)
 
     "Binary.configuration" - {
         "opens a .seg backend and round-trips (INV-015)" in {
@@ -186,7 +186,7 @@ class FileJournalTest extends kyo.test.Test[Any]:
                 decoded <- dischargeLog(Journal.run(backend) {
                     for
                         _      <- log.append(event)
-                        events <- log.read(fjEventStreamId, StreamOffset.first, 10)
+                        events <- log.read(fjEventStreamId, Event.StreamOffset.first, 10)
                     yield events
                 })
                 segPresent <- Sync.Unsafe.defer {
@@ -330,12 +330,12 @@ class FileJournalTest extends kyo.test.Test[Any]:
         // InMemoryJournalBackendTest; this leaf asserts the same contract slice directly rather
         // than re-running the whole suite twice.
         "append/read/streamInfo/per-op-failure all pass against a hand-written backend" in {
-            val sid = valid(StreamId("direct-backend"))
+            val sid = valid(Event.StreamId("direct-backend"))
             for
                 backend    <- Journal.Backend.inMemory
                 appended   <- Abort.run[JournalAppendFailure](backend.append(sid, ExpectedOffset.NoStream, Chunk(env(0))))
                 conflicted <- Abort.run[JournalAppendFailure](backend.append(sid, ExpectedOffset.NoStream, Chunk(env(1))))
-                read       <- Abort.run[JournalReadFailure](backend.read(sid, StreamOffset.first, 10))
+                read       <- Abort.run[JournalReadFailure](backend.read(sid, Event.StreamOffset.first, 10))
                 info       <- Abort.run[JournalStreamInfoFailure](backend.streamInfo(sid))
             yield
                 assert(appended match

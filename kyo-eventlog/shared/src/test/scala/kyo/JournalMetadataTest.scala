@@ -4,78 +4,90 @@ import kyo.internal.FileJournalCore
 
 class JournalMetadataTest extends kyo.test.Test[Any]:
 
-    "MetadataKey" - {
+    "Event.Metadata.Key" - {
         "accepts a simple key" in {
-            assert(MetadataKey("session").map(_.value) == Result.succeed("session"))
+            assert(Event.Metadata.Key("session").map(_.value) == Result.succeed("session"))
         }
         "accepts a dotted path" in {
-            assert(MetadataKey("trace.correlation_id").map(_.value) == Result.succeed("trace.correlation_id"))
+            assert(Event.Metadata.Key("trace.correlation_id").map(_.value) == Result.succeed("trace.correlation_id"))
         }
         "splits segments on dots" in {
-            val key = MetadataKey("a.b.c").getOrElse(throw new AssertionError("valid key"))
+            val key = Event.Metadata.Key("a.b.c").getOrElse(throw new AssertionError("valid key"))
             assert(key.segments == Chunk("a", "b", "c"))
         }
         "rejects an empty key" in {
-            assert(MetadataKey("") == Result.fail(JournalInvalidIdentifierError("MetadataKey", "")))
+            assert(Event.Metadata.Key("") == Result.fail(JournalInvalidIdentifierError("MetadataKey", "")))
         }
         "rejects a leading dot" in {
-            assert(MetadataKey(".foo") == Result.fail(JournalInvalidIdentifierError("MetadataKey", ".foo")))
+            assert(Event.Metadata.Key(".foo") == Result.fail(JournalInvalidIdentifierError("MetadataKey", ".foo")))
         }
         "rejects a trailing dot" in {
-            assert(MetadataKey("foo.") == Result.fail(JournalInvalidIdentifierError("MetadataKey", "foo.")))
+            assert(Event.Metadata.Key("foo.") == Result.fail(JournalInvalidIdentifierError("MetadataKey", "foo.")))
         }
         "rejects an empty segment" in {
-            assert(MetadataKey("foo..bar") == Result.fail(JournalInvalidIdentifierError("MetadataKey", "foo..bar")))
+            assert(Event.Metadata.Key("foo..bar") == Result.fail(JournalInvalidIdentifierError("MetadataKey", "foo..bar")))
         }
     }
 
-    "EventMetadata" - {
+    "Event.Metadata" - {
         "empty has no entries" in {
-            assert(EventMetadata.empty.values.isEmpty)
+            assert(Event.Metadata.empty.values.isEmpty)
         }
         "carries structural values" in {
-            val key      = MetadataKey("event.number").getOrElse(throw new AssertionError("valid key"))
-            val metadata = EventMetadata(Map(key -> MetadataValue(Structure.Value.Integer(42L))))
+            val key      = Event.Metadata.Key("event.number").getOrElse(throw new AssertionError("valid key"))
+            val metadata = Event.Metadata(Map(key -> Event.Metadata.Value(Structure.Value.Integer(42L))))
             assert(metadata.values(key).value == Structure.Value.Integer(42L))
         }
     }
 
-    "EventMetadata typed facade (get/put/contains/of, EventLog.AttributeKey/Attribute)" - {
-        "EventMetadata.of/get typed round-trip for a String attribute; wire form unaffected" in {
-            val metadata = EventMetadata.of(EventLog.Attribute(EventLog.Attributes.CorrelationId, "req-42"))
-            assert(metadata.get(EventLog.Attributes.CorrelationId) == Maybe("req-42"))
-            assert(!metadata.contains(EventLog.Attributes.SourceSystem))
+    "Event.Metadata typed facade (get/put/contains/of, Event.AttributeKey/Attribute)" - {
+        "Event.Metadata.of/get typed round-trip for a String attribute; wire form unaffected" in {
+            val metadata = Event.Metadata.of(Event.Attribute(Event.Attributes.CorrelationId, "req-42"))
+            assert(metadata.get(Event.Attributes.CorrelationId) == Maybe("req-42"))
+            assert(!metadata.contains(Event.Attributes.SourceSystem))
             assert(metadata.values.size == 1)
         }
 
-        "EventMetadata.get on a present key with a mismatched schema throws TypeMismatchException, never a silent Absent" in {
-            val sharedKey = MetadataKey("num").getOrElse(throw new AssertionError("valid key"))
-            val intKey    = EventLog.AttributeKey[Int](sharedKey)
-            val stringKey = EventLog.AttributeKey[String](sharedKey)
-            val metadata  = EventMetadata.of(EventLog.Attribute(intKey, 42))
+        "Event.Metadata.get on a present key with a mismatched schema throws TypeMismatchException, never a silent Absent" in {
+            val sharedKey = Event.Metadata.Key("num").getOrElse(throw new AssertionError("valid key"))
+            val intKey    = Event.AttributeKey[Int](sharedKey)
+            val stringKey = Event.AttributeKey[String](sharedKey)
+            val metadata  = Event.Metadata.of(Event.Attribute(intKey, 42))
             val ex        = intercept[TypeMismatchException] { metadata.get(stringKey) }
             assert(ex.expected == "String")
         }
 
-        "EventMetadata.put overwrites an existing key's value; contains reflects presence" in {
-            val key       = EventLog.AttributeKey[String](MetadataKey("k").getOrElse(throw new AssertionError("valid key")))
-            val untouched = EventLog.AttributeKey[String](MetadataKey("other").getOrElse(throw new AssertionError("valid key")))
-            val metadata  = EventMetadata.empty.put(EventLog.Attribute(key, "v1")).put(EventLog.Attribute(key, "v2"))
+        "Event.Metadata.put overwrites an existing key's value; contains reflects presence" in {
+            val key       = Event.AttributeKey[String](Event.Metadata.Key("k").getOrElse(throw new AssertionError("valid key")))
+            val untouched = Event.AttributeKey[String](Event.Metadata.Key("other").getOrElse(throw new AssertionError("valid key")))
+            val metadata  = Event.Metadata.empty.put(Event.Attribute(key, "v1")).put(Event.Attribute(key, "v2"))
             assert(metadata.get(key) == Maybe("v2"))
             assert(metadata.contains(key))
             assert(!metadata.contains(untouched))
         }
 
-        "two distinct String-valued AttributeKeys coexist in one EventMetadata without collision (key-string indexing, not a type-map)" in {
-            val keyA     = EventLog.AttributeKey[String](MetadataKey("a").getOrElse(throw new AssertionError("valid key")))
-            val keyB     = EventLog.AttributeKey[String](MetadataKey("b").getOrElse(throw new AssertionError("valid key")))
-            val metadata = EventMetadata.of(EventLog.Attribute(keyA, "va"), EventLog.Attribute(keyB, "vb"))
+        "two distinct String-valued AttributeKeys coexist in one Event.Metadata without collision (key-string indexing, not a type-map)" in {
+            val keyA     = Event.AttributeKey[String](Event.Metadata.Key("a").getOrElse(throw new AssertionError("valid key")))
+            val keyB     = Event.AttributeKey[String](Event.Metadata.Key("b").getOrElse(throw new AssertionError("valid key")))
+            val metadata = Event.Metadata.of(Event.Attribute(keyA, "va"), Event.Attribute(keyB, "vb"))
             assert(metadata.get(keyA) == Maybe("va"))
             assert(metadata.get(keyB) == Maybe("vb"))
         }
     }
 
-    "MetadataValue.metadataValueSchema" - {
+    "JournalEntryRef" - {
+        "uri renders and parse round-trips the (journalId, streamId, offset) triple" in {
+            val journalId = JournalId.validate("fleet-main").getOrElse(throw new AssertionError("valid journal id"))
+            val streamId  = Event.StreamId("quest-party").getOrElse(throw new AssertionError("valid stream id"))
+            val offset    = Event.StreamOffset(7L).getOrElse(throw new AssertionError("valid offset"))
+            val ref       = JournalEntryRef(journalId, streamId, offset)
+
+            val parsed = Abort.run[JournalIdentityError](JournalEntryRef.parse(ref.uri)).eval
+            assert(parsed == Result.succeed(ref))
+        }
+    }
+
+    "Event.Metadata.Value.metadataValueSchema" - {
         "round-trips all ten Structure.Value constructors through MsgPack" in {
             assert(roundTripAllConstructors(MsgPack()))
         }
@@ -89,35 +101,35 @@ class JournalMetadataTest extends kyo.test.Test[Any]:
         val msgPackCodec   = EventLogCodecs.MetadataCodec(MsgPack())
 
         "ionBinary round-trips MapEntries with Integer keys (array-of-pairs path)" in {
-            val key   = MetadataKey("entries").getOrElse(throw new AssertionError("valid key"))
+            val key   = Event.Metadata.Key("entries").getOrElse(throw new AssertionError("valid key"))
             val sv    = Structure.Value.MapEntries(Chunk(Structure.Value.Integer(1L) -> Structure.Value.Str("v")))
-            val md    = EventMetadata(Map(key -> MetadataValue(sv)))
+            val md    = Event.Metadata(Map(key -> Event.Metadata.Value(sv)))
             val bytes = FileJournalCore.encodeMetadata(ionBinaryCodec, md)
             FileJournalCore.decodeMetadata(ionBinaryCodec, bytes)(using Frame.internal) match
                 case Result.Success(decoded) => assert(decoded.values(key).value == sv)
                 case other                   => fail(s"ionBinary Integer-key MapEntries failed: $other")
         }
         "msgPack round-trips MapEntries with Integer keys (array-of-pairs path)" in {
-            val key   = MetadataKey("entries").getOrElse(throw new AssertionError("valid key"))
+            val key   = Event.Metadata.Key("entries").getOrElse(throw new AssertionError("valid key"))
             val sv    = Structure.Value.MapEntries(Chunk(Structure.Value.Integer(1L) -> Structure.Value.Str("v")))
-            val md    = EventMetadata(Map(key -> MetadataValue(sv)))
+            val md    = Event.Metadata(Map(key -> Event.Metadata.Value(sv)))
             val bytes = FileJournalCore.encodeMetadata(msgPackCodec, md)
             FileJournalCore.decodeMetadata(msgPackCodec, bytes)(using Frame.internal) match
                 case Result.Success(decoded) => assert(decoded.values(key).value == sv)
                 case other                   => fail(s"msgPack Integer-key MapEntries failed: $other")
         }
-        "ionBinary round-trips all ten constructors in one EventMetadata map" in {
+        "ionBinary round-trips all ten constructors in one Event.Metadata map" in {
             assert(roundTripCombinedMetadata(ionBinaryCodec, FileJournalCore.MetadataVersionCurrent))
         }
-        "msgPack round-trips all ten constructors in one EventMetadata map" in {
+        "msgPack round-trips all ten constructors in one Event.Metadata map" in {
             assert(roundTripCombinedMetadata(msgPackCodec, FileJournalCore.MetadataVersionMsgPack))
         }
         "ionBinary encodes version 0x02 and round-trips all ten constructors" in {
             assert(roundTripViaMetadataCodec(ionBinaryCodec, FileJournalCore.MetadataVersionCurrent))
         }
         "ionBinary decode accepts legacy 0x01 MsgPack bodies" in {
-            val key    = MetadataKey("k").getOrElse(throw new AssertionError("valid key"))
-            val md     = EventMetadata(Map(key -> MetadataValue(Structure.Value.Str("legacy"))))
+            val key    = Event.Metadata.Key("k").getOrElse(throw new AssertionError("valid key"))
+            val md     = Event.Metadata(Map(key -> Event.Metadata.Value(Structure.Value.Str("legacy"))))
             val legacy = FileJournalCore.encodeMetadata(msgPackCodec, md)
             assert(legacy(0) == FileJournalCore.MetadataVersionMsgPack)
             FileJournalCore.decodeMetadata(ionBinaryCodec, legacy)(using Frame.internal) match
@@ -127,7 +139,7 @@ class JournalMetadataTest extends kyo.test.Test[Any]:
             end match
         }
         "msgPack encodes version 0x01 only" in {
-            val bytes = FileJournalCore.encodeMetadata(msgPackCodec, EventMetadata.empty)
+            val bytes = FileJournalCore.encodeMetadata(msgPackCodec, Event.Metadata.empty)
             assert(bytes(0) == FileJournalCore.MetadataVersionMsgPack)
         }
         // "msgPack rejects non-0x01 version bytes" has no equivalent: FileJournalCore.decodeMetadata
@@ -136,37 +148,37 @@ class JournalMetadataTest extends kyo.test.Test[Any]:
         // "wrong codec for this version" case left to reject).
     }
 
-    private def combinedMetadataMap: Map[MetadataKey, MetadataValue] =
+    private def combinedMetadataMap: Map[Event.Metadata.Key, Event.Metadata.Value] =
         val bigDecimalVal = BigDecimal("123456789012345678901234567890.0123456789")
         Map(
-            MetadataKey("str").getOrElse(throw new AssertionError("valid key")) ->
-                MetadataValue(Structure.Value.Str("hello")),
-            MetadataKey("int").getOrElse(throw new AssertionError("valid key")) ->
-                MetadataValue(Structure.Value.Integer(42L)),
-            MetadataKey("bool").getOrElse(throw new AssertionError("valid key")) ->
-                MetadataValue(Structure.Value.Bool(true)),
-            MetadataKey("decimal").getOrElse(throw new AssertionError("valid key")) ->
-                MetadataValue(Structure.Value.Decimal(3.14)),
-            MetadataKey("bignum").getOrElse(throw new AssertionError("valid key")) ->
-                MetadataValue(Structure.Value.BigNum(bigDecimalVal)),
-            MetadataKey("null").getOrElse(throw new AssertionError("valid key")) ->
-                MetadataValue(Structure.Value.Null),
-            MetadataKey("seq").getOrElse(throw new AssertionError("valid key")) ->
-                MetadataValue(Structure.Value.Sequence(Chunk(
+            Event.Metadata.Key("str").getOrElse(throw new AssertionError("valid key")) ->
+                Event.Metadata.Value(Structure.Value.Str("hello")),
+            Event.Metadata.Key("int").getOrElse(throw new AssertionError("valid key")) ->
+                Event.Metadata.Value(Structure.Value.Integer(42L)),
+            Event.Metadata.Key("bool").getOrElse(throw new AssertionError("valid key")) ->
+                Event.Metadata.Value(Structure.Value.Bool(true)),
+            Event.Metadata.Key("decimal").getOrElse(throw new AssertionError("valid key")) ->
+                Event.Metadata.Value(Structure.Value.Decimal(3.14)),
+            Event.Metadata.Key("bignum").getOrElse(throw new AssertionError("valid key")) ->
+                Event.Metadata.Value(Structure.Value.BigNum(bigDecimalVal)),
+            Event.Metadata.Key("null").getOrElse(throw new AssertionError("valid key")) ->
+                Event.Metadata.Value(Structure.Value.Null),
+            Event.Metadata.Key("seq").getOrElse(throw new AssertionError("valid key")) ->
+                Event.Metadata.Value(Structure.Value.Sequence(Chunk(
                     Structure.Value.Str("a"),
                     Structure.Value.Integer(1L)
                 ))),
-            MetadataKey("record").getOrElse(throw new AssertionError("valid key")) ->
-                MetadataValue(Structure.Value.Record(Chunk("x" -> Structure.Value.Bool(false)))),
-            MetadataKey("entries").getOrElse(throw new AssertionError("valid key")) ->
-                MetadataValue(Structure.Value.MapEntries(Chunk(Structure.Value.Integer(1L) -> Structure.Value.Str("v")))),
-            MetadataKey("variant").getOrElse(throw new AssertionError("valid key")) ->
-                MetadataValue(Structure.Value.VariantCase("MyCase", Structure.Value.Str("payload")))
+            Event.Metadata.Key("record").getOrElse(throw new AssertionError("valid key")) ->
+                Event.Metadata.Value(Structure.Value.Record(Chunk("x" -> Structure.Value.Bool(false)))),
+            Event.Metadata.Key("entries").getOrElse(throw new AssertionError("valid key")) ->
+                Event.Metadata.Value(Structure.Value.MapEntries(Chunk(Structure.Value.Integer(1L) -> Structure.Value.Str("v")))),
+            Event.Metadata.Key("variant").getOrElse(throw new AssertionError("valid key")) ->
+                Event.Metadata.Value(Structure.Value.VariantCase("MyCase", Structure.Value.Str("payload")))
         )
     end combinedMetadataMap
 
     private def roundTripCombinedMetadata(codec: EventLogCodecs.MetadataCodec, expectedVersion: Byte): Boolean =
-        val md    = EventMetadata(combinedMetadataMap)
+        val md    = Event.Metadata(combinedMetadataMap)
         val bytes = FileJournalCore.encodeMetadata(codec, md)
         if bytes(0) != expectedVersion then false
         else
@@ -178,8 +190,8 @@ class JournalMetadataTest extends kyo.test.Test[Any]:
 
     private def roundTripViaMetadataCodec(codec: EventLogCodecs.MetadataCodec, expectedVersion: Byte): Boolean =
         allStructureValues.zipWithIndex.forall { (sv, idx) =>
-            val key   = MetadataKey(s"field.$idx").getOrElse(throw new AssertionError("valid key"))
-            val md    = EventMetadata(Map(key -> MetadataValue(sv)))
+            val key   = Event.Metadata.Key(s"field.$idx").getOrElse(throw new AssertionError("valid key"))
+            val md    = Event.Metadata(Map(key -> Event.Metadata.Value(sv)))
             val bytes = FileJournalCore.encodeMetadata(codec, md)
             if bytes(0) != expectedVersion then false
             else
@@ -208,11 +220,11 @@ class JournalMetadataTest extends kyo.test.Test[Any]:
     private def roundTripAllConstructors(codec: Codec): Boolean =
         val values = allStructureValues
         val roundTripped = values.map { sv =>
-            val v = MetadataValue(sv)
+            val v = Event.Metadata.Value(sv)
             val w = codec.newWriter()
-            summon[Schema[MetadataValue]].writeTo(v, w)
+            summon[Schema[Event.Metadata.Value]].writeTo(v, w)
             val reader  = codec.newReader(w.result())
-            val decoded = summon[Schema[MetadataValue]].readFrom(reader)
+            val decoded = summon[Schema[Event.Metadata.Value]].readFrom(reader)
             decoded.value == sv
         }
         values.length == 10 && roundTripped.forall(identity)
