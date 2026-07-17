@@ -473,7 +473,7 @@ The hand-rolled reader uses the canonical `Codec.Reader` contract: `hasNextField
 
 ### Stable Protobuf field IDs
 
-`CodecMacro.fieldId(name)` is a 21-bit `XXH32` over field names used as the stable Protobuf field number, so adding / removing fields does not collide on the wire [kyo-schema/shared/src/main/scala/kyo/internal/CodecMacro.scala:6-19]:
+`CodecMacro.fieldId(name)` is a 21-bit hash of the field name used as the stable Protobuf field number, so adding / removing fields does not collide on the wire. Note that `XXHash.hash32(name)` for a `String` is XXH32 applied to the four little-endian bytes of the name's JLS `String.hashCode`, not XXH32 of the name's UTF-8 bytes; an external implementation must reproduce that exact derivation [kyo-schema/shared/src/main/scala/kyo/internal/CodecMacro.scala:6-19]:
 
 ```
 def fieldId(name: String): Int =

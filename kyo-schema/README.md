@@ -704,33 +704,33 @@ val proto = Protobuf.protoSchema[User]
 // syntax = "proto3";
 //
 // message Address {
-//   string city = 1771380;  // hash-derived field number; pin via Schema.fieldId for stable external interop
-//   string zip = 366489;  // hash-derived field number; pin via Schema.fieldId for stable external interop
+//   string city = 1521334;  // hash-derived field number; pin via Schema.fieldId for stable external interop
+//   string zip = 176885;  // hash-derived field number; pin via Schema.fieldId for stable external interop
 // }
 //
 // message User {
-//   sint32 id = 671968;  // hash-derived field number; pin via Schema.fieldId for stable external interop
-//   string name = 770848;  // hash-derived field number; pin via Schema.fieldId for stable external interop
-//   string email = 2042990;  // hash-derived field number; pin via Schema.fieldId for stable external interop
-//   string password = 814318;  // hash-derived field number; pin via Schema.fieldId for stable external interop
-//   Address address = 2084274;  // hash-derived field number; pin via Schema.fieldId for stable external interop
+//   sint32 id = 198960;  // hash-derived field number; pin via Schema.fieldId for stable external interop
+//   string name = 1684051;  // hash-derived field number; pin via Schema.fieldId for stable external interop
+//   string email = 1928090;  // hash-derived field number; pin via Schema.fieldId for stable external interop
+//   string password = 48118;  // hash-derived field number; pin via Schema.fieldId for stable external interop
+//   Address address = 209473;  // hash-derived field number; pin via Schema.fieldId for stable external interop
 // }
 ```
 
-The field numbers in the generated `.proto` match the wire field numbers the codec writes: each is the XXH32-derived value for that field name, the same number used at encode and decode. Hash-derived fields carry a provenance comment. Pinning a field with `fieldId` removes the provenance comment and writes the pinned number on the wire instead. A hash-derived number in proto3's reserved range (19000-19999) escalates the comment to a WARNING because external `protoc` rejects numbers in that band. The specific numbers in the examples above (1771380, 366489, and so on) are the hash-derived values for those field names and are shown for illustration; the actual values for your types are computed at compile time from field names via the same formula.
+The field numbers in the generated `.proto` match the wire field numbers the codec writes: each is derived from the field name (XXH32 applied to the name's JLS string hash), the same number used at encode and decode. Hash-derived fields carry a provenance comment. Pinning a field with `fieldId` removes the provenance comment and writes the pinned number on the wire instead. A hash-derived number in proto3's reserved range (19000-19999) escalates the comment to a WARNING because external `protoc` rejects numbers in that band. The specific numbers in the examples above (1521334, 176885, and so on) are the hash-derived values for those field names and are shown for illustration; the actual values for your types are computed at compile time from field names via the same formula.
 
 `Protobuf.fieldNumberAudit[A]` returns one `FieldNumberInfo` per message field, depth-first, reporting the wire field number, a `pinned` flag, and an `inReservedRange` flag without performing any encode or decode:
 
 ```scala
 val audit = Protobuf.fieldNumberAudit[User]
 // Chunk.Indexed(
-//   FieldNumberInfo(id,id,671968,false,false),       // numbers are hash-derived for these field names
-//   FieldNumberInfo(name,name,770848,false,false),
-//   FieldNumberInfo(email,email,2042990,false,false),
-//   FieldNumberInfo(password,password,814318,false,false),
-//   FieldNumberInfo(address,address,2084274,false,false),
-//   FieldNumberInfo(address.city,city,1771380,false,false),
-//   FieldNumberInfo(address.zip,zip,366489,false,false)
+//   FieldNumberInfo(id,id,198960,false,false),       // numbers are hash-derived for these field names
+//   FieldNumberInfo(name,name,1684051,false,false),
+//   FieldNumberInfo(email,email,1928090,false,false),
+//   FieldNumberInfo(password,password,48118,false,false),
+//   FieldNumberInfo(address,address,209473,false,false),
+//   FieldNumberInfo(address.city,city,1521334,false,false),
+//   FieldNumberInfo(address.zip,zip,176885,false,false)
 // )
 ```
 
