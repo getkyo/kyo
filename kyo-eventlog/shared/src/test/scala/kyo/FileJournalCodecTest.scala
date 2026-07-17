@@ -1,11 +1,11 @@
 package kyo
 
 import java.nio.ByteBuffer
-import kyo.internal.BinarySegmentCodec
+import kyo.internal.BinarySegmentFormat
 import kyo.internal.CRC32
 
 class FileJournalCodecTest extends kyo.test.Test[Any]:
-    import BinarySegmentCodec.*
+    import BinarySegmentFormat.*
 
     "segment header" - {
         "is KJN1 followed by version 0x01" in {

@@ -1,14 +1,14 @@
 package kyo
 
-import kyo.internal.BinarySegmentCodec
+import kyo.internal.BinarySegmentFormat
 
 class FileJournalCrashTest extends kyo.test.Test[Any]:
 
-    import BinarySegmentCodec.HeaderSize
-    import BinarySegmentCodec.TerminatorSize
-    import BinarySegmentCodec.segmentName
+    import BinarySegmentFormat.HeaderSize
+    import BinarySegmentFormat.TerminatorSize
+    import BinarySegmentFormat.segmentName
 
-    private val binaryCodec = new BinarySegmentCodec(EventLogCodecs.MetadataCodec(IonBinary()))
+    private val binaryCodec = new BinarySegmentFormat(EventLogCodecs.MetadataCodec(IonBinary()))
 
     private def valid[A](r: Result[JournalInvalidIdentifierError, A]): A =
         r.getOrElse(throw new AssertionError("valid identifier"))
@@ -17,7 +17,7 @@ class FileJournalCrashTest extends kyo.test.Test[Any]:
     private def env(n: Int): EventEnvelope =
         EventEnvelope(valid(EventId(s"e-$n")), valid(EventType("T")), Span.from(s"p$n".getBytes("UTF-8")), EventMetadata.empty)
 
-    private def defaultConfiguration(using Frame): FileJournal.Configuration[Span[Byte], FileJournal.Binary] < Async =
+    private def defaultConfiguration(using Frame): FileJournal.Configuration[Span[Byte]] < Async =
         Abort.run[EventCodecConfigurationError](EventLogCodecs.bytes()).map {
             case Result.Success(codecs) =>
                 Abort.run[FileJournal.ConfigurationError](FileJournal.Binary.configuration(journalId, codecs)).map {
@@ -29,7 +29,7 @@ class FileJournalCrashTest extends kyo.test.Test[Any]:
             case panic: Result.Panic => throw panic.exception
         }
 
-    private def jsonlConfiguration(using Frame): FileJournal.Configuration[Span[Byte], FileJournal.Jsonl] < Async =
+    private def jsonlConfiguration(using Frame): FileJournal.Configuration[Span[Byte]] < Async =
         Abort.run[EventCodecConfigurationError](EventLogCodecs.bytes()).map {
             case Result.Success(codecs) =>
                 Abort.run[FileJournal.ConfigurationError](FileJournal.Jsonl.configuration(journalId, codecs)).map {
@@ -289,13 +289,13 @@ class FileJournalCrashTest extends kyo.test.Test[Any]:
                     // Unsafe: raw byte-level segment rewrite to plant an unknown metadata version fixture.
                     Sync.Unsafe.defer {
                         val badMeta = Array[Byte](0x03.toByte) // unknown future version, no body
-                        val rec     = BinarySegmentCodec.encodeRecord(0L, "e-0", "T", badMeta, "p0".getBytes("UTF-8"))
-                        val term    = BinarySegmentCodec.encodeTerminator(1)
-                        val total   = BinarySegmentCodec.HeaderSize + rec.length + term.length
+                        val rec     = BinarySegmentFormat.encodeRecord(0L, "e-0", "T", badMeta, "p0".getBytes("UTF-8"))
+                        val term    = BinarySegmentFormat.encodeTerminator(1)
+                        val total   = BinarySegmentFormat.HeaderSize + rec.length + term.length
                         val seg     = new Array[Byte](total)
-                        java.lang.System.arraycopy(BinarySegmentCodec.SegmentHeader, 0, seg, 0, BinarySegmentCodec.HeaderSize)
-                        java.lang.System.arraycopy(rec, 0, seg, BinarySegmentCodec.HeaderSize, rec.length)
-                        java.lang.System.arraycopy(term, 0, seg, BinarySegmentCodec.HeaderSize + rec.length, term.length)
+                        java.lang.System.arraycopy(BinarySegmentFormat.SegmentHeader, 0, seg, 0, BinarySegmentFormat.HeaderSize)
+                        java.lang.System.arraycopy(rec, 0, seg, BinarySegmentFormat.HeaderSize, rec.length)
+                        java.lang.System.arraycopy(term, 0, seg, BinarySegmentFormat.HeaderSize + rec.length, term.length)
                         segmentPath(dir).unsafe.writeBytes(Span.from(seg)) match
                             case Result.Success(_) => ()
                             case Result.Failure(e) => throw e

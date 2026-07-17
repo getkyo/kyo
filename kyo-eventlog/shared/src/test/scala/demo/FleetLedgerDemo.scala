@@ -48,10 +48,12 @@ object FleetLedgerDemo extends KyoApp:
     private val journalId = evalPure(JournalId("fleet-main"))
     private val streamId  = StreamId(journalId.value).getOrElse(throw new IllegalStateException("invalid stream id"))
 
+    // Both members route to the same fixed stream (journalId's own route-segment value), so a
+    // single read after reopen sees the whole fleet history in append order.
     private val vehicleAddedStream: EventLog.StreamSelector[FleetEvent.VehicleAdded] =
-        new EventLog.StreamSelector[FleetEvent.VehicleAdded] {}
+        EventLog.StreamSelector.constant(streamId)
     private val vehicleRetiredStream: EventLog.StreamSelector[FleetEvent.VehicleRetired] =
-        new EventLog.StreamSelector[FleetEvent.VehicleRetired] {}
+        EventLog.StreamSelector.constant(streamId)
 
     private given EventLog.EventDefinition[FleetEvent, FleetEvent.VehicleAdded] =
         EventLog.EventDefinition.schema[FleetEvent, FleetEvent.VehicleAdded](vehicleAddedStream)
@@ -61,7 +63,7 @@ object FleetLedgerDemo extends KyoApp:
     private val fleetCodecs: EventLog.Codecs[FleetEvent] =
         evalPure(EventLogCodecs.schema[FleetEvent]())
 
-    private val jsonlConfiguration: FileJournal.Configuration[FleetEvent, FileJournal.Jsonl] =
+    private val jsonlConfiguration: FileJournal.Configuration[FleetEvent] =
         evalPure(FileJournal.Jsonl.configuration(journalId, fleetCodecs))
 
     def flow(using Frame): LedgerSnapshot < (Async & Abort[FileException | JournalError | EventLog.PreparationFailure]) =

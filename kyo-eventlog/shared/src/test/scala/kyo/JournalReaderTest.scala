@@ -1,14 +1,14 @@
 package kyo
 
-import kyo.internal.BinarySegmentCodec
+import kyo.internal.BinarySegmentFormat
 
 class JournalReaderTest extends kyo.test.Test[Any]:
 
-    import BinarySegmentCodec.HeaderSize
-    import BinarySegmentCodec.TerminatorSize
-    import BinarySegmentCodec.segmentName
+    import BinarySegmentFormat.HeaderSize
+    import BinarySegmentFormat.TerminatorSize
+    import BinarySegmentFormat.segmentName
 
-    private val binaryCodec = new BinarySegmentCodec(EventLogCodecs.MetadataCodec(IonBinary()))
+    private val binaryCodec = new BinarySegmentFormat(EventLogCodecs.MetadataCodec(IonBinary()))
 
     private def valid[A](r: Result[JournalInvalidIdentifierError, A]): A =
         r.getOrElse(throw new AssertionError("valid identifier"))
@@ -29,10 +29,10 @@ class JournalReaderTest extends kyo.test.Test[Any]:
     private val identityCodecs: EventLog.Codecs[Span[Byte]] =
         evalPure(EventLogCodecs.bytes())(using Frame.internal)
 
-    private val binaryConfiguration: FileJournal.Configuration[Span[Byte], FileJournal.Binary] =
+    private val binaryConfiguration: FileJournal.Configuration[Span[Byte]] =
         evalPure(FileJournal.Binary.configuration(journalId, identityCodecs))(using Frame.internal)
 
-    private val jsonlConfiguration: FileJournal.Configuration[Span[Byte], FileJournal.Jsonl] =
+    private val jsonlConfiguration: FileJournal.Configuration[Span[Byte]] =
         evalPure(FileJournal.Jsonl.configuration(journalId, identityCodecs))(using Frame.internal)
 
     private val e0End: Int = HeaderSize + binaryCodec.recordSize(env(0)).toInt + TerminatorSize
@@ -44,7 +44,7 @@ class JournalReaderTest extends kyo.test.Test[Any]:
             case panic: Result.Panic => throw panic.exception
         }
 
-    private def appendClosed(dir: Path, batches: Seq[Chunk[EventEnvelope]], configuration: FileJournal.Configuration[Span[Byte], ?])(using
+    private def appendClosed(dir: Path, batches: Seq[Chunk[EventEnvelope]], configuration: FileJournal.Configuration[Span[Byte]])(using
         Frame
     ): Unit < Async =
         Scope.run {
@@ -92,7 +92,7 @@ class JournalReaderTest extends kyo.test.Test[Any]:
                 case Result.Failure(e) => throw e
         }
 
-    private def readWithSyncReader(dir: Path, configuration: FileJournal.Configuration[Span[Byte], ?])(using
+    private def readWithSyncReader(dir: Path, configuration: FileJournal.Configuration[Span[Byte]])(using
         Frame
     ): Chunk[RecordedEvent] < Async =
         Scope.run {
@@ -108,7 +108,7 @@ class JournalReaderTest extends kyo.test.Test[Any]:
             }
         }
 
-    private def readResultSync(dir: Path, configuration: FileJournal.Configuration[Span[Byte], ?])(using
+    private def readResultSync(dir: Path, configuration: FileJournal.Configuration[Span[Byte]])(using
         Frame
     ): Result[JournalError, Chunk[RecordedEvent]] < Async =
         Scope.run {
@@ -122,7 +122,7 @@ class JournalReaderTest extends kyo.test.Test[Any]:
     "torn tail invisibility" - {
         def tornTailCase(
             label: String,
-            configuration: FileJournal.Configuration[Span[Byte], ?],
+            configuration: FileJournal.Configuration[Span[Byte]],
             segPath: Path => Path,
             cutLength: (Array[Byte]) => Int
         ): Unit =
@@ -146,7 +146,7 @@ class JournalReaderTest extends kyo.test.Test[Any]:
     "mid-file corruption" - {
         def corruptCase(
             label: String,
-            configuration: FileJournal.Configuration[Span[Byte], ?],
+            configuration: FileJournal.Configuration[Span[Byte]],
             segPath: Path => Path
         ): Unit =
             s"$label fails with JournalCorruptedError on a CRC flip before the frontier" in {

@@ -168,7 +168,8 @@ class FileJournalTest extends kyo.test.Test[Any]:
 
     // --- typed FileJournal.Configuration leaves (checkpoint 3 acceptance) -----------------------
 
-    private val fjEventStream: EventLog.StreamSelector[FjEvent] = new EventLog.StreamSelector[FjEvent] {}
+    private val fjEventStreamId: StreamId                       = valid(StreamId("fj-event-stream"))
+    private val fjEventStream: EventLog.StreamSelector[FjEvent] = EventLog.StreamSelector.constant(fjEventStreamId)
     private given EventLog.EventDefinition[FjEvent, FjEvent] =
         EventLog.EventDefinition.schema[FjEvent, FjEvent](fjEventStream)
 
@@ -182,15 +183,14 @@ class FileJournalTest extends kyo.test.Test[Any]:
                 configuration <- FileJournal.Binary.configuration(jid, codecs)
                 log           <- EventLog.init(codecs, jid)
                 backend       <- discharge(Journal.Backend.file(dir, configuration))
-                sid           <- Abort.get(StreamId(jid.value))
                 decoded <- dischargeLog(Journal.run(backend) {
                     for
                         _      <- log.append(event)
-                        events <- log.read(sid, StreamOffset.first, 10)
+                        events <- log.read(fjEventStreamId, StreamOffset.first, 10)
                     yield events
                 })
                 segPresent <- Sync.Unsafe.defer {
-                    (dir / "streams" / jid.value / "00000000000000000000.seg").unsafe.exists()
+                    (dir / "streams" / fjEventStreamId.value / "00000000000000000000.seg").unsafe.exists()
                 }
             yield
                 assert(segPresent, "expected a .seg segment file to exist after append")
@@ -210,10 +210,9 @@ class FileJournalTest extends kyo.test.Test[Any]:
                 configuration <- FileJournal.Jsonl.configuration(jid, codecs)
                 log           <- EventLog.init(codecs, jid)
                 backend       <- discharge(Journal.Backend.file(dir, configuration))
-                sid           <- Abort.get(StreamId(jid.value))
                 _             <- dischargeLog(Journal.run(backend)(log.append(event)))
                 line <- Sync.Unsafe.defer {
-                    val segPath = dir / "streams" / jid.value / "00000000000000000000.jsonl"
+                    val segPath = dir / "streams" / fjEventStreamId.value / "00000000000000000000.jsonl"
                     val bytes   = segPath.unsafe.readBytes().getOrElse(Span.empty[Byte])
                     new String(bytes.toArray, "UTF-8").linesIterator.next()
                 }
@@ -231,7 +230,7 @@ class FileJournalTest extends kyo.test.Test[Any]:
     }
 
     "profileName and MANIFEST" - {
-        "Binary.configuration resolves ProfileName[Binary] into profileName and the MANIFEST carries it (R-136)" in {
+        "Binary.configuration resolves the literal profileName and the MANIFEST carries it (R-136)" in {
             for
                 binaryJid    <- Sync.defer(journalId("profilename-binary"))
                 jsonlJid     <- Sync.defer(journalId("profilename-jsonl"))
@@ -253,10 +252,21 @@ class FileJournalTest extends kyo.test.Test[Any]:
             yield
                 assert(binaryConfig.profileName == "binary")
                 assert(jsonlConfig.profileName == "jsonl")
-                assert(summon[FileJournal.ProfileName[FileJournal.Binary]].name == "binary")
-                assert(summon[FileJournal.ProfileName[FileJournal.Jsonl]].name == "jsonl")
                 assert(binaryManifest.contains("format: binary"))
                 assert(jsonlManifest.contains("format: jsonl"))
+        }
+
+        "Binary.configuration and Jsonl.configuration resolve profileName directly with no ProfileName typeclass in scope" in {
+            for
+                binaryJid    <- Sync.defer(journalId("profilename-direct-binary"))
+                jsonlJid     <- Sync.defer(journalId("profilename-direct-jsonl"))
+                codecs       <- EventLogCodecs.schema[FjEvent]()
+                binaryConfig <- FileJournal.Binary.configuration(binaryJid, codecs)
+                jsonlConfig  <- FileJournal.Jsonl.configuration(jsonlJid, codecs)
+            yield
+                assert(binaryConfig.profileName == "binary")
+                assert(jsonlConfig.profileName == "jsonl")
+                assert(binaryConfig.profileName != jsonlConfig.profileName)
         }
     }
 
@@ -396,7 +406,7 @@ class FileJournalTest extends kyo.test.Test[Any]:
             // fields resolve cleanly, and a `profile`/`components` accessor does not.
             val presenceErrors = scala.compiletime.testing.typeCheckErrors(
                 """
-                val c: kyo.FileJournal.Configuration[Int, kyo.FileJournal.Binary] = ???
+                val c: kyo.FileJournal.Configuration[Int] = ???
                 val _: kyo.JournalId = c.journalId
                 val _: kyo.EventLog.Codecs[Int] = c.codecs
                 val _: kyo.FileJournal.Options = c.options
@@ -408,18 +418,81 @@ class FileJournalTest extends kyo.test.Test[Any]:
             assert(presenceErrors.isEmpty, s"expected all six Configuration fields to resolve cleanly, got: $presenceErrors")
             val absenceErrors = scala.compiletime.testing.typeCheckErrors(
                 """
-                val c: kyo.FileJournal.Configuration[Int, kyo.FileJournal.Binary] = ???
+                val c: kyo.FileJournal.Configuration[Int] = ???
                 c.profile
                 """
             ).map(_.message)
             assert(absenceErrors.nonEmpty, "Configuration must not carry a profile: P field")
             val componentsErrors = scala.compiletime.testing.typeCheckErrors(
                 """
-                val c: kyo.FileJournal.Configuration[Int, kyo.FileJournal.Binary] = ???
+                val c: kyo.FileJournal.Configuration[Int] = ???
                 c.components
                 """
             ).map(_.message)
             assert(componentsErrors.nonEmpty, "Configuration must not carry a components field")
+        }
+
+        "FileJournal.Configuration has no P (compile-shape): the two-parameter form no longer resolves" in {
+            val twoParamErrors = scala.compiletime.testing.typeCheckErrors(
+                """
+                val c: kyo.FileJournal.Configuration[Int, kyo.FileJournal.Binary] = ???
+                """
+            ).map(_.message)
+            assert(twoParamErrors.nonEmpty, "expected the two-parameter Configuration form to fail to type-check")
+            val oneParamErrors = scala.compiletime.testing.typeCheckErrors(
+                """
+                val c: kyo.FileJournal.Configuration[Int] = ???
+                """
+            ).map(_.message)
+            assert(oneParamErrors.isEmpty, s"expected the one-parameter Configuration form to type-check cleanly, got: $oneParamErrors")
+        }
+
+        "renames complete: no SegmentCodec/BoundCodecs symbol remains in internal/" in {
+            val absentErrors = scala.compiletime.testing.typeCheckErrors(
+                """
+                val a: kyo.internal.SegmentCodec = ???
+                val b: kyo.internal.BinarySegmentCodec = ???
+                val c: kyo.internal.BoundCodecs[Int] = ???
+                """
+            ).map(_.message)
+            assert(absentErrors.nonEmpty)
+            assert(absentErrors.exists(_.contains("SegmentCodec")))
+            assert(absentErrors.exists(_.contains("BoundCodecs")))
+            val presentErrors = scala.compiletime.testing.typeCheckErrors(
+                """
+                val a: kyo.internal.SegmentFormat = ???
+                val b: kyo.internal.BinarySegmentFormat = ???
+                val c: kyo.internal.BoundValueAccess[Int] = ???
+                """
+            ).map(_.message)
+            assert(
+                presentErrors.isEmpty,
+                s"expected SegmentFormat/BinarySegmentFormat/BoundValueAccess to resolve cleanly, got: $presentErrors"
+            )
+        }
+
+        "FileJournal.Profile, Binary/Jsonl (as sealed traits), and ProfileName are absent (compile-negative)" in {
+            val errors = scala.compiletime.testing.typeCheckErrors(
+                """
+                val a: kyo.FileJournal.Profile = ???
+                val b: kyo.FileJournal.ProfileName[kyo.FileJournal.Binary] = ???
+                val c = new kyo.FileJournal.Binary {}
+                """
+            ).map(_.message)
+            assert(errors.nonEmpty)
+            assert(errors.exists(_.contains("Profile")))
+            assert(errors.exists(_.contains("ProfileName")))
+            val stillResolveErrors = scala.compiletime.testing.typeCheckErrors(
+                """
+                given kyo.Frame = kyo.Frame.internal
+                val a = kyo.FileJournal.Binary.configuration(???, ???)
+                val b = kyo.FileJournal.Jsonl.configuration(???, ???)
+                """
+            ).map(_.message)
+            assert(
+                stillResolveErrors.isEmpty,
+                s"expected Binary/Jsonl.configuration to resolve with no ProfileName typeclass in scope, got: $stillResolveErrors"
+            )
         }
     }
 

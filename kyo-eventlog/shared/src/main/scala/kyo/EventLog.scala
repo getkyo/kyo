@@ -17,9 +17,12 @@ final class EventLog[A] private (
 ):
 
     /** A prepared, log-bound event ready to append or batch. Path-dependent on THIS log so a
-      * command prepared against `log1` cannot be appended through `log2`.
+      * command prepared against `log1` cannot be appended through `log2`. Carries the
+      * per-command `streamId` resolved by `EventDefinition.stream.resolve` at `prepare` time,
+      * so `appendAll` groups by it without re-resolving.
       */
     final class Command private[EventLog] (
+        private[kyo] val streamId: StreamId,
         private[kyo] val envelope: EventEnvelope,
         private[kyo] val directive: EventLog.AppendDirective
     )
@@ -41,11 +44,15 @@ final class EventLog[A] private (
         frame: Frame
     ): Command < (Sync & Abort[EventLog.PreparationFailure]) =
         // Encodes via EventLogCodecs.encodeValue(codecs.value, event) (codecs.value is the
-        // data-only descriptor; the interpreter performs the transform), resolves stream via
-        // ev.stream, id via ev.eventId, metadata via ev.metadata; assembles EventEnvelope and
-        // wraps it in a Command. Aborts PreparationFailure on stream/id/metadata resolution
+        // data-only descriptor; the interpreter performs the transform), resolves the real
+        // per-member stream via ev.stream.resolve(event), the real event id via
+        // ev.eventId.next(event, streamId, ev.eventType, metadata), and real metadata via
+        // ev.metadata.values(event); assembles EventEnvelope and wraps it, with the
+        // resolved streamId, in a Command. Aborts PreparationFailure on stream/id resolution
         // failure. No Journal effect: prepare is pure staging.
-        Abort.get(EventLog.prepareEnvelope(codecs, ev, event, directive)).map(new Command(_, directive))
+        Abort.get(EventLog.prepareEnvelope(codecs, ev, event, directive)).map((streamId, envelope) =>
+            new Command(streamId, envelope, directive)
+        )
 
     /** Appends a nonempty batch atomically. Varargs are nonempty by construction (first is
       * required); `Chunk` batching shares the same validator.
@@ -54,10 +61,11 @@ final class EventLog[A] private (
         Frame
     ): Chunk[AppendResult] < (Journal & Sync & Abort[EventLog.PreparationFailure] & Abort[JournalAppendFailure]) =
         val commands = first +: Chunk.from(rest)
-        // Groups by expected-offset directive, validates one-log membership (compile-time
-        // via path-dependent Command), and issues Journal.append per stream group. Shared
-        // with any Chunk overload through the single private validateBatch.
-        EventLog.appendValidated(journalId, commands)
+        // Groups commands into contiguous runs by resolved streamId (first-occurrence order
+        // preserved across the whole batch) and issues one Journal.append per run,
+        // never a single journalId-derived stream for the whole batch. Shared with any Chunk
+        // overload through the single private validateBatch.
+        EventLog.appendValidated(commands)
     end appendAll
 
     /** Backend-free typed read-only lane. Produces an [[EventLog.Reader]] that reads committed
@@ -116,8 +124,10 @@ object EventLog:
         def streamInfo(streamId: StreamId)(using Frame): StreamInfo < (S & Abort[JournalStreamInfoFailure])
     end Reader
 
-    /** Builds a typed reader over a FileJournal SWMR reader. */
-    def reader[A, P <: FileJournal.Profile, S](reader: FileJournal.Reader[A, P, S])(using Frame): Reader[A, S] < Sync =
+    /** Builds a typed reader over a FileJournal SWMR reader. Carries no P type parameter:
+      * FileJournal.Reader[A, S] carries no profile identity.
+      */
+    def reader[A, S](reader: FileJournal.Reader[A, S])(using Frame): Reader[A, S] < Sync =
         // Adapts the file reader's committed-frontier read into the typed Reader,
         // decoding through the reader's bound codecs; no writer lock, no mutation.
         Sync.defer(EventLog.mkReader(reader))
@@ -153,15 +163,94 @@ object EventLog:
             EventDefinition(EventLog.deriveEventType[E], stream, eventId, metadata)
     end EventDefinition
 
-    /** Stream selection, id policy, and metadata evidence types. */
-    trait StreamSelector[E]
-    trait EventIdPolicy[E]
+    /** A validated, human-legible stream family name: the first component of every
+      * `by`/`canonical`-derived stream id.
+      */
+    opaque type StreamName = String
+    object StreamName:
+        def apply(value: String)(using Frame): StreamName < Abort[EventLog.PreparationFailure] =
+            if value.isEmpty then Abort.fail(EventLog.PreparationFailure("stream name must not be empty"))
+            else value: StreamName
+
+        extension (self: StreamName)
+            /** The underlying stream-name string. */
+            def value: String = self
+    end StreamName
+
+    /** Derives one or more non-empty key components from a concrete event, combined with a
+      * [[StreamName]] by [[StreamSelector.canonical]] into a collision-safe stream id.
+      */
+    final case class StreamKey[E] private (components: E => Chunk[String]) derives CanEqual
+    object StreamKey:
+        // The primary constructor is private so the case class's own synthesized apply (which
+        // would otherwise be public and identical in arity save for this using clause) is private
+        // too, leaving this apply as the sole public constructor path. Constructs via `new` (not
+        // a bare StreamKey(components) call) so this method does not recurse into itself: both
+        // the private synthesized apply and this apply remain visible from inside the companion.
+        def apply[E](components: E => Chunk[String])(using Frame): StreamKey[E] = new StreamKey(components)
+    end StreamKey
+
+    /** Resolves the target stream for one concrete event. A real behavioral contract:
+      * every concrete event routes to its resolved stream, never a stubbed marker.
+      */
+    sealed trait StreamSelector[E] derives CanEqual:
+        def resolve(event: E)(using Frame): StreamId < Abort[EventLog.PreparationFailure]
+
+    object StreamSelector:
+        /** Every event routes to the same fixed stream, regardless of its content. */
+        def constant[E](streamId: StreamId): StreamSelector[E] =
+            ConstantStreamSelector(streamId)
+
+        /** Every event routes to `name`/`f(event)`'s length-prefixed canonical stream id. */
+        def by[E](name: StreamName)(f: E => Chunk[String]): StreamSelector[E] =
+            KeyedStreamSelector(name, f)
+
+        /** Every event routes to `name`/`key.components(event)`'s length-prefixed canonical
+          * stream id.
+          */
+        def canonical[E](name: StreamName, key: StreamKey[E]): StreamSelector[E] =
+            KeyedStreamSelector(name, key.components)
+    end StreamSelector
+
+    /** Resolves the event id for one concrete event, given its resolved stream, type, and
+      * metadata. A real behavioral contract. `generated` reads the shared monotonic
+      * counter through the same internal Unsafe bridging pattern `prepareEnvelope` already
+      * uses, so the row carries no `Sync`; `deterministic`/`callerSupplied` are pure over
+      * their declared inputs.
+      */
+    sealed trait EventIdPolicy[E] derives CanEqual:
+        def next(event: E, streamId: StreamId, eventType: EventType, metadata: EventMetadata)(using
+            Frame
+        )
+            : EventId < Abort[EventLog.PreparationFailure]
+    end EventIdPolicy
+
     object EventIdPolicy:
-        def generated[E]: EventIdPolicy[E] = // monotonic opaque-token policy
+        /** Every event gets a fresh monotonic token from the shared in-process counter. */
+        def generated[E]: EventIdPolicy[E] =
             GeneratedEventIdPolicy.asInstanceOf[EventIdPolicy[E]]
-    trait Metadata[E]
+
+        /** Every event's id is `f(event, streamId, eventType, metadata)`, validated as an
+          * [[EventId]]. Repeats for equal inputs and equal `f` output.
+          */
+        def deterministic[E](f: (E, StreamId, EventType, EventMetadata) => String)(using
+            Frame
+        ): EventIdPolicy[E] < Abort[EventLog.PreparationFailure] =
+            DeterministicEventIdPolicy(f)
+
+        /** Every event's id is `f(event)`, validated as an [[EventId]]. */
+        def callerSupplied[E](f: E => String)(using Frame): EventIdPolicy[E] < Abort[EventLog.PreparationFailure] =
+            CallerSuppliedEventIdPolicy(f)
+    end EventIdPolicy
+
+    /** Produces metadata for a concrete event. A real data carrier (not a marker): the values
+      * function is invoked at `prepare` time via `ev.metadata.values(event)`.
+      */
+    final case class Metadata[E](values: E => EventMetadata) derives CanEqual
     object Metadata:
-        def empty[E]: Metadata[E] = EmptyMetadata.asInstanceOf[Metadata[E]]
+        def empty[E]: Metadata[E]                       = Metadata(_ => EventMetadata.empty)
+        def from[E](f: E => EventMetadata): Metadata[E] = Metadata(f)
+    end Metadata
 
     /** Expected-offset directive. `expected(expected)` is the single canonical spelling;
       * `withExpected` is removed.
@@ -174,8 +263,68 @@ object EventLog:
     /** Typed preparation failure, distinct from Journal op failures. */
     final case class PreparationFailure(reason: String)(using Frame) extends KyoException
 
-    // prepareEnvelope, appendValidated, mkReader, deriveEventType, GeneratedEventIdPolicy,
-    // and EmptyMetadata are private[kyo] over the Journal/EventEnvelope surface.
-    // appendValidated holds the one batch validator shared by varargs and any Chunk
-    // overload.
+    // prepareEnvelope, appendValidated, mkReader, and deriveEventType are private[kyo] over the
+    // Journal/EventEnvelope surface, defined in EventLogSupport.scala. appendValidated holds the
+    // one batch validator shared by varargs and any Chunk overload. The StreamSelector/
+    // EventIdPolicy witness classes (ConstantStreamSelector, KeyedStreamSelector,
+    // GeneratedEventIdPolicy, DeterministicEventIdPolicy, CallerSuppliedEventIdPolicy) are
+    // defined below, in this file rather than EventLogSupport.scala, because StreamSelector and
+    // EventIdPolicy are sealed: every direct subtype of a sealed trait must live in the same
+    // source file as the trait.
 end EventLog
+
+/** Every event routes to the same fixed stream, regardless of its content. Built by
+  * [[EventLog.StreamSelector.constant]].
+  */
+final private[kyo] case class ConstantStreamSelector[E](streamId: StreamId) extends EventLog.StreamSelector[E]:
+    def resolve(event: E)(using Frame): StreamId < Abort[EventLog.PreparationFailure] = streamId
+
+/** Every event routes to `name`/`components(event)`'s length-prefixed canonical stream id.
+  * Built by [[EventLog.StreamSelector.by]] and [[EventLog.StreamSelector.canonical]].
+  */
+final private[kyo] case class KeyedStreamSelector[E](name: EventLog.StreamName, components: E => Chunk[String])
+    extends EventLog.StreamSelector[E]:
+    def resolve(event: E)(using Frame): StreamId < Abort[EventLog.PreparationFailure] =
+        Abort.get(EventLogSupport.resolveKeyedStream(name, components(event)))
+end KeyedStreamSelector
+
+/** Every event gets a fresh monotonic token from the shared in-process counter, ignoring its
+  * resolved stream, type, and metadata. Built by [[EventLog.EventIdPolicy.generated]].
+  */
+private[kyo] object GeneratedEventIdPolicy extends EventLog.EventIdPolicy[Any]:
+    def next(event: Any, streamId: StreamId, eventType: EventType, metadata: EventMetadata)(using
+        Frame
+    ): EventId < Abort[EventLog.PreparationFailure] =
+        // Unsafe: the counter increment is a synchronous computation with no real suspension
+        // point; evaluated inline so this row carries no Sync, matching
+        // deterministic/callerSupplied's pure rows.
+        given AllowUnsafe = AllowUnsafe.embrace.danger
+        Sync.Unsafe.evalOrThrow[EventId](EventLogSupport.freshEventId())
+    end next
+end GeneratedEventIdPolicy
+
+/** Every event's id is `f(event, streamId, eventType, metadata)`, validated as an [[EventId]].
+  * Repeats for equal inputs and equal `f` output. Built by
+  * [[EventLog.EventIdPolicy.deterministic]].
+  */
+final private[kyo] case class DeterministicEventIdPolicy[E](f: (E, StreamId, EventType, EventMetadata) => String)
+    extends EventLog.EventIdPolicy[E]:
+    def next(event: E, streamId: StreamId, eventType: EventType, metadata: EventMetadata)(using
+        Frame
+    ): EventId < Abort[EventLog.PreparationFailure] =
+        Abort.get(EventId(f(event, streamId, eventType, metadata)).mapFailure(e =>
+            EventLog.PreparationFailure(s"deterministic event id policy produced an invalid id: ${e.getMessage()}")
+        ))
+end DeterministicEventIdPolicy
+
+/** Every event's id is `f(event)`, validated as an [[EventId]]. Built by
+  * [[EventLog.EventIdPolicy.callerSupplied]].
+  */
+final private[kyo] case class CallerSuppliedEventIdPolicy[E](f: E => String) extends EventLog.EventIdPolicy[E]:
+    def next(event: E, streamId: StreamId, eventType: EventType, metadata: EventMetadata)(using
+        Frame
+    ): EventId < Abort[EventLog.PreparationFailure] =
+        Abort.get(EventId(f(event)).mapFailure(e =>
+            EventLog.PreparationFailure(s"caller-supplied event id is invalid: ${e.getMessage()}")
+        ))
+end CallerSuppliedEventIdPolicy

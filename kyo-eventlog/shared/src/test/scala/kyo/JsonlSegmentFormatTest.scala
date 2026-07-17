@@ -1,19 +1,20 @@
 package kyo
 
 import java.nio.charset.StandardCharsets
-import kyo.internal.BinarySegmentCodec
-import kyo.internal.JsonlSegmentCodec
+import kyo.internal.BinarySegmentFormat
+import kyo.internal.JsonlSegmentFormat
 import kyo.internal.ScanResult
+import kyo.internal.SegmentFormat
 import kyo.internal.StoreSeam
 
-/** Unit tests for [[JsonlSegmentCodec]] driven against an in-memory [[StoreSeam.Handle]] so they
+/** Unit tests for [[JsonlSegmentFormat]] driven against an in-memory [[StoreSeam.Handle]] so they
   * run cross-platform without any file system. Covers: JSONL line format, CRC integrity, scan
   * tail recovery, payload transcoding, and torn-line edge cases.
   */
-class JsonlSegmentCodecTest extends kyo.test.Test[Any]:
+class JsonlSegmentFormatTest extends kyo.test.Test[Any]:
 
     private val Utf8  = StandardCharsets.UTF_8
-    private val codec = new JsonlSegmentCodec(EventLogCodecs.ValueCodec.BytesValue, EventLogCodecs.MetadataCodec(IonBinary()))
+    private val codec = new JsonlSegmentFormat(EventLogCodecs.ValueCodec.BytesValue, EventLogCodecs.MetadataCodec(IonBinary()))
 
     private def valid[A](r: Result[JournalInvalidIdentifierError, A]): A =
         r.getOrElse(throw new AssertionError(s"valid identifier: $r"))
@@ -373,4 +374,25 @@ class JsonlSegmentCodecTest extends kyo.test.Test[Any]:
         }
     }
 
-end JsonlSegmentCodecTest
+    // --- compile-shape: extends the renamed engine trait, matching BinarySegmentFormat's parity ---
+
+    "type hierarchy" - {
+        "JsonlSegmentFormat is constructible and extends the renamed SegmentFormat trait" in {
+            val instance: SegmentFormat = codec
+            assert(instance.segmentExtension == ".jsonl")
+            val parityErrors = scala.compiletime.testing.typeCheckErrors(
+                """
+                val a: kyo.internal.SegmentFormat =
+                    new kyo.internal.JsonlSegmentFormat(kyo.EventLogCodecs.ValueCodec.BytesValue, kyo.EventLogCodecs.MetadataCodec(kyo.IonBinary()))
+                val b: kyo.internal.SegmentFormat =
+                    new kyo.internal.BinarySegmentFormat(kyo.EventLogCodecs.MetadataCodec(kyo.IonBinary()))
+                """
+            ).map(_.message)
+            assert(
+                parityErrors.isEmpty,
+                s"expected both JsonlSegmentFormat and BinarySegmentFormat to type-check as SegmentFormat, got: $parityErrors"
+            )
+        }
+    }
+
+end JsonlSegmentFormatTest

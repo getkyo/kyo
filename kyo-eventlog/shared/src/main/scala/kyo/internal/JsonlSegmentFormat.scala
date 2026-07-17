@@ -26,10 +26,10 @@ import kyo.*
   * that [[DecodedRecord.metadata]] is always in the selected binary shadow form regardless of the
   * segment encoding, and [[FileJournalCore.rebuild]] requires no format-specific branching.
   */
-final private[kyo] class JsonlSegmentCodec(
+final private[kyo] class JsonlSegmentFormat(
     valueCodec: EventLogCodecs.ValueCodec[?],
     metadataCodec: EventLogCodecs.MetadataCodec
-) extends SegmentCodec:
+) extends SegmentFormat:
 
     private val Utf8         = StandardCharsets.UTF_8
     private val CrcSuffixLen = 20 // ,"crc":"0xhhhhhhhh"}
@@ -388,4 +388,4 @@ final private[kyo] class JsonlSegmentCodec(
         sb.toString
     end escapeJson
 
-end JsonlSegmentCodec
+end JsonlSegmentFormat

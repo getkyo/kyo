@@ -1,6 +1,6 @@
 package kyo
 
-import kyo.internal.BinarySegmentCodec
+import kyo.internal.BinarySegmentFormat
 import kyo.internal.NodeFileLock
 import kyo.internal.NodeSegmentStore
 import kyo.internal.bytesToUint8Array
@@ -257,7 +257,7 @@ class FileJournalNodeLockTest extends kyo.test.Test[Any]:
                 )
             )
             val segPath = (dir: Path) =>
-                dir / "streams" / BinarySegmentCodec.encodeStreamId(streamId) / BinarySegmentCodec.segmentName(0L)
+                dir / "streams" / BinarySegmentFormat.encodeStreamId(streamId) / BinarySegmentFormat.segmentName(0L)
             for
                 dir           <- freshDir
                 configuration <- binaryConfiguration

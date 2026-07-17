@@ -1,6 +1,6 @@
 package kyo
 
-import kyo.internal.BinarySegmentCodec
+import kyo.internal.BinarySegmentFormat
 import kyo.internal.ClaimSeam
 import kyo.internal.FileJournalCore
 import kyo.internal.FlushStrategy
@@ -10,7 +10,7 @@ import kyo.internal.StoreSeam
 
 class FileJournalSwmrTest extends kyo.test.Test[Any]:
 
-    import BinarySegmentCodec.TerminatorSize
+    import BinarySegmentFormat.TerminatorSize
 
     private def valid[A](r: Result[JournalInvalidIdentifierError, A]): A =
         r.getOrElse(throw new AssertionError("valid identifier"))

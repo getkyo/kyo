@@ -94,9 +94,9 @@ object Journal:
         /** Opens a typed read-only SWMR file reader over the committed frontier of `dir`.
           * No writer lock, no mutation, no reader-side tail repair.
           */
-        def file[A, P <: FileJournal.Profile](dir: Path, configuration: FileJournal.Configuration[A, P])(using
+        def file[A](dir: Path, configuration: FileJournal.Configuration[A])(using
             Frame
-        ): FileJournal.Reader[A, P, Sync] < (Sync & Scope & Abort[JournalStorageError]) =
+        ): FileJournal.Reader[A, Sync] < (Sync & Scope & Abort[JournalStorageError]) =
             // Adapts the shipped FileJournalCore SWMR reader to the typed FileJournal.Reader,
             // binding the Configuration's codecs, over the live reader factory. Scope-managed
             // open; JournalStorageError on a bad layout.
@@ -108,25 +108,25 @@ object Journal:
         def inMemory(using Frame): Backend[Sync] < Sync =
             kyo.internal.InMemoryJournal.init
 
-        /** Opens a typed Sync file-backed journal over `dir` using `configuration` (Binary,
-          * JSONL, or a custom segmented family). Scope-managed; group-commit + atomic-move +
-          * kill-at-every-step recovery are preserved from the shipped engine.
+        /** Opens a typed Sync file-backed journal over `dir` using `configuration` (Binary or
+          * JSONL). Scope-managed; group-commit + atomic-move + kill-at-every-step recovery are
+          * preserved from the shipped engine.
           */
-        def file[A, P <: FileJournal.Profile](dir: Path, configuration: FileJournal.Configuration[A, P])(using
+        def file[A](dir: Path, configuration: FileJournal.Configuration[A])(using
             Frame
-        ): FileJournal.Backend[A, P, Sync] < (Sync & Scope & Abort[JournalStorageError]) =
+        ): FileJournal.Backend[A, Sync] < (Sync & Scope & Abort[JournalStorageError]) =
             // openSync is a private[kyo] adapter on FileJournalCore, a sibling to openReader,
-            // that binds `configuration` (codecs + profile) onto the core Sync engine.
+            // that binds `configuration` (codecs) onto the core Sync engine.
             kyo.internal.FileJournalCore.openSync(dir, configuration)
 
         /** Opens a typed Async file-backed journal; shares semantics with [[file]] but drives IO
           * off the event loop (Node), never blocking it.
           */
-        def fileAsync[A, P <: FileJournal.Profile](dir: Path, configuration: FileJournal.Configuration[A, P])(using
+        def fileAsync[A](dir: Path, configuration: FileJournal.Configuration[A])(using
             Frame
-        ): FileJournal.Backend[A, P, Async] < (Sync & Scope & Abort[JournalStorageError]) =
+        ): FileJournal.Backend[A, Async] < (Sync & Scope & Abort[JournalStorageError]) =
             // openAsync is a private[kyo] adapter on FileJournalCore, a sibling to openSync and
-            // openReader, that binds `configuration` (codecs + profile) onto the core Async engine.
+            // openReader, that binds `configuration` (codecs) onto the core Async engine.
             kyo.internal.FileJournalCore.openAsync(dir, configuration)
     end Backend
 

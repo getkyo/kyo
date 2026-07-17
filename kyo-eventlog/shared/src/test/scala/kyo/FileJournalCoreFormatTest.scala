@@ -29,7 +29,7 @@ class FileJournalCoreFormatTest extends kyo.test.Test[Any]:
         yield configuration
 
     // Opens the backend with the given configuration, returns the JournalStorageError if the open fails.
-    private def openWith(dir: Path, configuration: FileJournal.Configuration[Span[Byte], ?])(using
+    private def openWith(dir: Path, configuration: FileJournal.Configuration[Span[Byte]])(using
         Frame
     ): Result[JournalStorageError, Unit] < Async =
         Scope.run {

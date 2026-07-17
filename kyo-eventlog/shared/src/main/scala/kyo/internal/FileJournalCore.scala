@@ -5,18 +5,18 @@ import java.nio.charset.StandardCharsets
 import kyo.*
 import scala.annotation.tailrec
 
-// --- SegmentCodec trait -----------------------------------------------------------------------
+// --- SegmentFormat trait -----------------------------------------------------------------------
 
 /** Format-dispatch seam for segment encoding. Implementations encode and decode event records
   * to and from segment files; the orchestration layer ([[FileJournalCore]]) is format-agnostic.
   * Every operation that reads from a handle is polymorphic in the handle's effect `S`, so the
   * same codec instance drives both the synchronous and the asynchronous backend.
   *
-  * Two implementations exist: [[BinarySegmentCodec]] (the original `KJN1` binary format, wired to
-  * [[kyo.EventLogCodecs.MetadataCodec]]) and [[kyo.internal.JsonlSegmentCodec]] (the
+  * Two implementations exist: [[BinarySegmentFormat]] (the original `KJN1` binary format, wired to
+  * [[kyo.EventLogCodecs.MetadataCodec]]) and [[kyo.internal.JsonlSegmentFormat]] (the
   * one-JSON-object-per-line JSONL format). Both are `private[kyo]`; neither appears in public surface.
   */
-private[kyo] trait SegmentCodec:
+private[kyo] trait SegmentFormat:
 
     // --- identity ---
 
@@ -107,17 +107,17 @@ private[kyo] trait SegmentCodec:
         val name = path.parts.last
         name.substring(0, name.length - segmentExtension.length).toLong
 
-end SegmentCodec
+end SegmentFormat
 
 // --- Binary segment codec (the original KJN1 format) -----------------------------------------
 
 /** Stateless binary codec helpers: header, record frame (with CRC), batch-commit terminator, and
-  * the injective streamId percent-encoding. The [[BinarySegmentCodec]] class wires these helpers
+  * the injective streamId percent-encoding. The [[BinarySegmentFormat]] class wires these helpers
   * to a configurable [[kyo.EventLogCodecs.MetadataCodec]] for segment encoding.
   *
   * Uses the shared pure [[CRC32]] on every platform; `java.util.zip.CRC32` is not referenced here.
   */
-private[kyo] object BinarySegmentCodec:
+private[kyo] object BinarySegmentFormat:
 
     val Magic: Array[Byte]         = Array[Byte]('K', 'J', 'N', '1') // 0x4B 0x4A 0x4E 0x31
     val Version: Byte              = 0x01
@@ -202,30 +202,30 @@ private[kyo] object BinarySegmentCodec:
     private[kyo] def getLpStr(buf: ByteBuffer): String = new String(getLpBytes(buf), Utf8)
     private[kyo] def intBytes(v: Int): Array[Byte]     = ByteBuffer.allocate(4).putInt(v).array()
 
-end BinarySegmentCodec
+end BinarySegmentFormat
 
 /** Binary segment codec wired to a configurable [[kyo.EventLogCodecs.MetadataCodec]]. */
-final private[kyo] class BinarySegmentCodec(metadataCodec: EventLogCodecs.MetadataCodec) extends SegmentCodec:
+final private[kyo] class BinarySegmentFormat(metadataCodec: EventLogCodecs.MetadataCodec) extends SegmentFormat:
 
     def segmentExtension: String = ".seg"
-    def header: Array[Byte]      = BinarySegmentCodec.SegmentHeader
+    def header: Array[Byte]      = BinarySegmentFormat.SegmentHeader
 
     // Returns Present(detail) if the 5-byte header is missing/malformed/unknown-version, else Absent.
     def validateHeader[S](handle: StoreSeam.Handle[S])(using Frame): Maybe[String] < S =
-        handle.readAt(0L, BinarySegmentCodec.HeaderSize).map { arr =>
-            if arr.length < BinarySegmentCodec.HeaderSize then Present(s"segment header truncated (${arr.length} bytes)")
+        handle.readAt(0L, BinarySegmentFormat.HeaderSize).map { arr =>
+            if arr.length < BinarySegmentFormat.HeaderSize then Present(s"segment header truncated (${arr.length} bytes)")
             else
                 val m = java.util.Arrays.copyOfRange(arr, 0, 4)
                 val v = arr(4)
-                if !java.util.Arrays.equals(m, BinarySegmentCodec.Magic) then Present("segment magic is not KJN1")
-                else if v != BinarySegmentCodec.Version then Present(s"unknown segment format version 0x${(v & 0xff).toHexString}")
+                if !java.util.Arrays.equals(m, BinarySegmentFormat.Magic) then Present("segment magic is not KJN1")
+                else if v != BinarySegmentFormat.Version then Present(s"unknown segment format version 0x${(v & 0xff).toHexString}")
                 else Absent
         }
     end validateHeader
 
     def recordSize(env: EventEnvelope): Long =
-        val idB = env.id.value.getBytes(BinarySegmentCodec.Utf8)
-        val tpB = env.eventType.value.getBytes(BinarySegmentCodec.Utf8)
+        val idB = env.id.value.getBytes(BinarySegmentFormat.Utf8)
+        val tpB = env.eventType.value.getBytes(BinarySegmentFormat.Utf8)
         val md  = FileJournalCore.encodeMetadata(metadataCodec, env.metadata)
         val pl  = env.payload.toArray
         8L + 8 + (4 + idB.length) + (4 + tpB.length) + (4 + md.length) + (4 + pl.length)
@@ -252,10 +252,10 @@ final private[kyo] class BinarySegmentCodec(metadataCodec: EventLogCodecs.Metada
                                 else
                                     val body     = ByteBuffer.wrap(bodyArr)
                                     val offset   = body.getLong()
-                                    val eventId  = BinarySegmentCodec.getLpStr(body)
-                                    val eventTp  = BinarySegmentCodec.getLpStr(body)
-                                    val metadata = BinarySegmentCodec.getLpBytes(body)
-                                    val payload  = BinarySegmentCodec.getLpBytes(body)
+                                    val eventId  = BinarySegmentFormat.getLpStr(body)
+                                    val eventTp  = BinarySegmentFormat.getLpStr(body)
+                                    val metadata = BinarySegmentFormat.getLpBytes(body)
+                                    val payload  = BinarySegmentFormat.getLpBytes(body)
                                     Result.succeed(DecodedRecord(offset, eventId, eventTp, metadata, payload, bodyLen))
                                 end if
                         }
@@ -266,22 +266,22 @@ final private[kyo] class BinarySegmentCodec(metadataCodec: EventLogCodecs.Metada
 
     // Returns Present(recordCount) if a valid terminator sits at pos, else Absent (torn/absent).
     def readTerminator[S](handle: StoreSeam.Handle[S], pos: Long)(using Frame): Maybe[Int] < S =
-        handle.readAt(pos, BinarySegmentCodec.TerminatorSize).map { arr =>
-            if arr.length < BinarySegmentCodec.TerminatorSize then Absent
+        handle.readAt(pos, BinarySegmentFormat.TerminatorSize).map { arr =>
+            if arr.length < BinarySegmentFormat.TerminatorSize then Absent
             else
                 val buf    = ByteBuffer.wrap(arr)
                 val m      = new Array[Byte](4); buf.get(m)
                 val count  = buf.getInt()
                 val crcExp = buf.getInt()
-                val crc    = new CRC32(); crc.update(BinarySegmentCodec.CommitMagic); crc.update(BinarySegmentCodec.intBytes(count))
-                if java.util.Arrays.equals(m, BinarySegmentCodec.CommitMagic) && (crc.value & 0xffffffffL).toInt == crcExp then
+                val crc    = new CRC32(); crc.update(BinarySegmentFormat.CommitMagic); crc.update(BinarySegmentFormat.intBytes(count))
+                if java.util.Arrays.equals(m, BinarySegmentFormat.CommitMagic) && (crc.value & 0xffffffffL).toInt == crcExp then
                     Present(count)
                 else Absent
         }
     end readTerminator
 
     def scan[S](handle: StoreSeam.Handle[S], size: Long, isActive: Boolean)(using Frame): ScanResult < S =
-        Loop(BinarySegmentCodec.HeaderSize.toLong, BinarySegmentCodec.HeaderSize.toLong, Chunk.empty[Long], Chunk.empty[Long]) {
+        Loop(BinarySegmentFormat.HeaderSize.toLong, BinarySegmentFormat.HeaderSize.toLong, Chunk.empty[Long], Chunk.empty[Long]) {
             (pos, committedEnd, pending, committed) =>
                 if pos >= size then
                     if pending.isEmpty then Loop.done(ScanResult.Ok(committed, committedEnd, Absent))
@@ -291,7 +291,7 @@ final private[kyo] class BinarySegmentCodec(metadataCodec: EventLogCodecs.Metada
                     readTerminator(handle, pos).map {
                         case Present(count) if count == pending.length =>
                             val newCommitted = committed ++ pending
-                            val newPos       = pos + BinarySegmentCodec.TerminatorSize.toLong
+                            val newPos       = pos + BinarySegmentFormat.TerminatorSize.toLong
                             Loop.continue(newPos, newPos, Chunk.empty[Long], newCommitted)
                         case _ =>
                             decodeRecordAt(handle, pos).map {
@@ -312,9 +312,9 @@ final private[kyo] class BinarySegmentCodec(metadataCodec: EventLogCodecs.Metada
 
     def hasCommitAfter[S](handle: StoreSeam.Handle[S], from: Long, size: Long)(using Frame): Boolean < S =
         val window  = 1 << 16
-        val overlap = BinarySegmentCodec.TerminatorSize.toLong - 1L
+        val overlap = BinarySegmentFormat.TerminatorSize.toLong - 1L
         Loop(from) { winPos =>
-            if winPos > size - BinarySegmentCodec.TerminatorSize.toLong then Loop.done(false)
+            if winPos > size - BinarySegmentFormat.TerminatorSize.toLong then Loop.done(false)
             else
                 val len = math.min(window.toLong, size - winPos).toInt
                 handle.readAt(winPos, len).map { arr =>
@@ -325,9 +325,9 @@ final private[kyo] class BinarySegmentCodec(metadataCodec: EventLogCodecs.Metada
     end hasCommitAfter
 
     @tailrec private def scanWindowForTerminator(arr: Array[Byte], i: Int = 0): Boolean =
-        val last = arr.length - BinarySegmentCodec.TerminatorSize
+        val last = arr.length - BinarySegmentFormat.TerminatorSize
         if i > last then false
-        else if BinarySegmentCodec.terminatorAt(arr, i) then true
+        else if BinarySegmentFormat.terminatorAt(arr, i) then true
         else scanWindowForTerminator(arr, i + 1)
     end scanWindowForTerminator
 
@@ -338,10 +338,10 @@ final private[kyo] class BinarySegmentCodec(metadataCodec: EventLogCodecs.Metada
         while i < events.length do
             val e  = events(i)
             val md = FileJournalCore.encodeMetadata(metadataCodec, e.metadata)
-            val r  = BinarySegmentCodec.encodeRecord(firstOffset + i, e.id.value, e.eventType.value, md, e.payload.toArray)
+            val r  = BinarySegmentFormat.encodeRecord(firstOffset + i, e.id.value, e.eventType.value, md, e.payload.toArray)
             recs(i) = r; total += r.length; i += 1
         end while
-        val term   = BinarySegmentCodec.encodeTerminator(events.length)
+        val term   = BinarySegmentFormat.encodeTerminator(events.length)
         val result = new Array[Byte](total + term.length)
         var pos    = 0
         i = 0
@@ -354,7 +354,7 @@ final private[kyo] class BinarySegmentCodec(metadataCodec: EventLogCodecs.Metada
         result
     end frameBatch
 
-end BinarySegmentCodec
+end BinarySegmentFormat
 
 // --- Data types -------------------------------------------------------------------------------
 
@@ -671,15 +671,15 @@ end FlushStrategy
 // --- Shared orchestration class ---------------------------------------------------------------
 
 /** Recovers a [[FileJournalCore]] instance's bound value codec and journalId without depending on
-  * its `P`/`S` type parameters, so a caller holding only a phantom `FileJournal.Reader[A, P, S]`
+  * its `S` type parameter, so a caller holding only a phantom `FileJournal.Reader[A, S]`
   * (e.g. [[kyo.EventLogSupport.mkReader]]) can downcast to this narrower interface instead of the
-  * full `FileJournalCore[A, P, S]` type, which would require re-proving `S`'s bound at the cast
+  * full `FileJournalCore[A, S]` type, which would require re-proving `S`'s bound at the cast
   * site.
   */
-private[kyo] trait BoundCodecs[A]:
+private[kyo] trait BoundValueAccess[A]:
     private[kyo] def boundValueCodec: EventLogCodecs.ValueCodec[A]
     private[kyo] def journalId: JournalId
-end BoundCodecs
+end BoundValueAccess
 
 /** The durable backend core, generalized over the store's effect `S`. Never returned by name:
   * callers see `Journal.Backend[S]`. Recovery, the offset check, framing, and rotation math are
@@ -693,17 +693,17 @@ end BoundCodecs
   * All platform I/O is delegated to the injected [[StoreSeam]]; no `FileChannel`, `toJava`, or
   * platform-specific types appear here. The [[CRC32]] used for every checksum is the shared pure
   * implementation, making segment bytes identical across JVM, Native, JS, and Wasm by construction.
-  * The segment encoding is delegated to the injected [[SegmentCodec]], which is selected by the
+  * The segment encoding is delegated to the injected [[SegmentFormat]], which is selected by the
   * MANIFEST marker at open time.
   */
-final private[kyo] class FileJournalCore[A, P <: FileJournal.Profile, S >: (Async & Abort[Throwable]) <: Sync](
+final private[kyo] class FileJournalCore[A, S >: (Async & Abort[Throwable]) <: Sync](
     rootKey: String,
     streamsDir: Path,
     options: FileJournal.Options,
     metadataCodec: EventLogCodecs.MetadataCodec,
     seam: StoreSeam[S],
     lock: SegmentStore.Lock,
-    codec: SegmentCodec,
+    codec: SegmentFormat,
     valueCodec: EventLogCodecs.ValueCodec[?],
     claimSeam: ClaimSeam[S],
     flushStrategy: FlushStrategy[S],
@@ -711,7 +711,7 @@ final private[kyo] class FileJournalCore[A, P <: FileJournal.Profile, S >: (Asyn
     streams: AtomicRef.Unsafe[Map[StreamId, AtomicRef.Unsafe[StreamState]]],
     private[kyo] val journalId: JournalId,
     readerMode: Boolean = false
-)(using frame: Frame) extends FileJournal.Backend[A, P, S] with BoundCodecs[A]:
+)(using frame: Frame) extends FileJournal.Backend[A, S] with BoundValueAccess[A]:
 
     import FileJournal.*
 
@@ -722,7 +722,7 @@ final private[kyo] class FileJournalCore[A, P <: FileJournal.Profile, S >: (Asyn
 
     /** The bound value codec for this reader/backend's domain type `A`, recovered for
       * [[kyo.EventLogSupport.mkReader]]'s typed decode wiring. Stored as `ValueCodec[?]` on the
-      * class because the class's own SegmentCodec plumbing never needs it statically typed; this
+      * class because the class's own SegmentFormat plumbing never needs it statically typed; this
       * accessor recovers the static type via the class's own `A`, sound because every
       * construction site threads `configuration.codecs.value: ValueCodec[A]` for the same `A`
       * this class is parameterized on.
@@ -1181,8 +1181,8 @@ final private[kyo] class FileJournalCore[A, P <: FileJournal.Profile, S >: (Asyn
             for
                 eid <- EventId(dec.eventId)
                 etp <- EventType(dec.eventType)
-                // decodeMetadata uses the configured metadata codec; both BinarySegmentCodec.decodeRecordAt and
-                // JsonlSegmentCodec.decodeRecordAt store metadata in the selected binary shadow form in DecodedRecord.
+                // decodeMetadata uses the configured metadata codec; both BinarySegmentFormat.decodeRecordAt and
+                // JsonlSegmentFormat.decodeRecordAt store metadata in the selected binary shadow form in DecodedRecord.
                 md <- FileJournalCore.decodeMetadata(metadataCodec, dec.metadata)
             yield RecordedEvent(
                 streamId = streamId,
@@ -1218,7 +1218,7 @@ final private[kyo] class FileJournalCore[A, P <: FileJournal.Profile, S >: (Asyn
         end match
     end registerHandle
 
-    private def streamDir(streamId: StreamId): Path = streamsDir / BinarySegmentCodec.encodeStreamId(streamId)
+    private def streamDir(streamId: StreamId): Path = streamsDir / BinarySegmentFormat.encodeStreamId(streamId)
 
     private def segmentFor(s: StreamState, off: Long): SegmentEntry =
         // Binary search the segment whose [base, base+len) contains off (segments offset-sorted).
@@ -1309,10 +1309,11 @@ private[kyo] object FileJournalCore:
         val snap = heldRoots.get()
         if !heldRoots.compareAndSet(snap, snap - key) then unregisterRoot(key)
 
-    // Internal discriminator selecting which shipped SegmentCodec a Configuration's profile maps
+    // Internal discriminator selecting which shipped SegmentFormat a Configuration's profile maps
     // to; never part of the public surface. The shipped engine honors exactly these two built-in
-    // profiles; Profile is closed to Binary and Jsonl (D-019), so this string switch is total over
-    // every value FileJournal.Configuration#profileName can ever carry.
+    // families, selected by the literal profileName string ("binary" or "jsonl") a Configuration
+    // carries, so this string switch is total over every value FileJournal.Configuration#profileName
+    // can ever carry.
     private[kyo] enum SegmentFamilyKind derives CanEqual:
         case Binary
         case Jsonl
@@ -1324,7 +1325,7 @@ private[kyo] object FileJournalCore:
             case "jsonl"  => Result.succeed(SegmentFamilyKind.Jsonl)
             case other =>
                 Result.fail(JournalStorageError(
-                    s"custom families beyond Binary and Jsonl have no shipped SegmentCodec; implement Journal.Backend[S] directly (profileName '$other')",
+                    s"custom families beyond Binary and Jsonl have no shipped SegmentFormat; implement Journal.Backend[S] directly (profileName '$other')",
                     Absent
                 ))
 
@@ -1332,24 +1333,24 @@ private[kyo] object FileJournalCore:
         kind: SegmentFamilyKind,
         metadataCodec: EventLogCodecs.MetadataCodec,
         valueCodec: EventLogCodecs.ValueCodec[?]
-    ): SegmentCodec =
+    ): SegmentFormat =
         kind match
-            case SegmentFamilyKind.Binary => new BinarySegmentCodec(metadataCodec)
-            case SegmentFamilyKind.Jsonl  => new JsonlSegmentCodec(valueCodec, metadataCodec)
+            case SegmentFamilyKind.Binary => new BinarySegmentFormat(metadataCodec)
+            case SegmentFamilyKind.Jsonl  => new JsonlSegmentFormat(valueCodec, metadataCodec)
 
     /** Opens (or creates) a file-backed journal rooted at `dir`, acquiring the single-owner lock
       * via the supplied [[StoreSeam]]. Internal; the public entry points are [[openSync]] and
       * [[openAsync]], which resolve the platform seam themselves.
       */
-    private[kyo] def open[A, P <: FileJournal.Profile, S >: (Async & Abort[Throwable]) <: Sync](
+    private[kyo] def open[A, S >: (Async & Abort[Throwable]) <: Sync](
         dir: Path,
-        configuration: FileJournal.Configuration[A, P],
+        configuration: FileJournal.Configuration[A],
         seam: StoreSeam[S],
         claimSeam: ClaimSeam[S],
         flushStrategyFor: FileJournal.Fsync => FlushStrategy[S]
     )(using
         frame: Frame
-    ): FileJournal.Backend[A, P, S] < (Sync & Scope & Abort[JournalStorageError]) =
+    ): FileJournal.Backend[A, S] < (Sync & Scope & Abort[JournalStorageError]) =
         Scope.acquireRelease(
             // Unsafe: creates the root, streams/ via Path.Unsafe and acquires the platform lock via
             // the injected StoreSeam; raw platform I/O is the only path to locking.
@@ -1364,20 +1365,20 @@ private[kyo] object FileJournalCore:
       * platform's synchronous [[StoreSeam]] itself (`kyo.platformSyncStore`, package `kyo`, one
       * `given`-free `def` per platform tree).
       */
-    private[kyo] def openSync[A, P <: FileJournal.Profile](
+    private[kyo] def openSync[A](
         dir: Path,
-        configuration: FileJournal.Configuration[A, P]
-    )(using frame: Frame): FileJournal.Backend[A, P, Sync] < (Sync & Scope & Abort[JournalStorageError]) =
+        configuration: FileJournal.Configuration[A]
+    )(using frame: Frame): FileJournal.Backend[A, Sync] < (Sync & Scope & Abort[JournalStorageError]) =
         open(dir, configuration, kyo.platformSyncStore(), ClaimSeam.sync, FlushStrategy.inline)
 
     /** Opens a typed Async file-backed journal over `dir`, bootstrapping the async claim seam and
       * group-commit coordinator and resolving the platform's asynchronous [[StoreSeam]] itself
       * (`kyo.platformAsyncStore`).
       */
-    private[kyo] def openAsync[A, P <: FileJournal.Profile](
+    private[kyo] def openAsync[A](
         dir: Path,
-        configuration: FileJournal.Configuration[A, P]
-    )(using frame: Frame): FileJournal.Backend[A, P, Async] < (Sync & Scope & Abort[JournalStorageError]) =
+        configuration: FileJournal.Configuration[A]
+    )(using frame: Frame): FileJournal.Backend[A, Async] < (Sync & Scope & Abort[JournalStorageError]) =
         // Unsafe: bootstraps in-process claim permits and group-commit coordinator maps.
         Sync.Unsafe.defer {
             val coordinator = GroupCommitCoordinator.init
@@ -1389,10 +1390,10 @@ private[kyo] object FileJournalCore:
     /** Opens an existing journal root for read-only access, skipping the writer lock and in-process
       * root registration. Resolves the platform's read-only synchronous [[StoreSeam]] itself.
       */
-    private[kyo] def openReader[A, P <: FileJournal.Profile](
+    private[kyo] def openReader[A](
         dir: Path,
-        configuration: FileJournal.Configuration[A, P]
-    )(using frame: Frame): FileJournal.Reader[A, P, Sync] < (Sync & Scope & Abort[JournalStorageError]) =
+        configuration: FileJournal.Configuration[A]
+    )(using frame: Frame): FileJournal.Reader[A, Sync] < (Sync & Scope & Abort[JournalStorageError]) =
         Scope.acquireRelease(
             // Unsafe: validates the root via Path.Unsafe and constructs the read-only core without
             // acquiring the platform writer lock.
@@ -1402,14 +1403,14 @@ private[kyo] object FileJournalCore:
             Sync.Unsafe.defer(reader.release())
         )
 
-    private def acquireReader[A, P <: FileJournal.Profile, S >: (Async & Abort[Throwable]) <: Sync](
+    private def acquireReader[A, S >: (Async & Abort[Throwable]) <: Sync](
         dir: Path,
-        configuration: FileJournal.Configuration[A, P],
+        configuration: FileJournal.Configuration[A],
         seam: StoreSeam[S]
     )(using
         frame: Frame,
         allow: AllowUnsafe
-    ): Result[JournalStorageError, FileJournalCore[A, P, S]] < Sync =
+    ): Result[JournalStorageError, FileJournalCore[A, S]] < Sync =
         val rootKey = dir.unsafe.show
         if !dir.unsafe.exists() then
             Result.fail(JournalStorageError(s"Journal root '${dir.unsafe.show}' does not exist", Absent))
@@ -1429,7 +1430,7 @@ private[kyo] object FileJournalCore:
                     val codec = codecFor(validatedKind, configuration.codecs.metadata, configuration.codecs.value)
                     val noOpLock = new SegmentStore.Lock:
                         def release()(using AllowUnsafe): Unit = ()
-                    new FileJournalCore[A, P, S](
+                    new FileJournalCore[A, S](
                         rootKey,
                         streamsDir,
                         configuration.options,
@@ -1450,16 +1451,16 @@ private[kyo] object FileJournalCore:
         end if
     end acquireReader
 
-    private def acquire[A, P <: FileJournal.Profile, S >: (Async & Abort[Throwable]) <: Sync](
+    private def acquire[A, S >: (Async & Abort[Throwable]) <: Sync](
         dir: Path,
-        configuration: FileJournal.Configuration[A, P],
+        configuration: FileJournal.Configuration[A],
         seam: StoreSeam[S],
         claimSeam: ClaimSeam[S],
         flushStrategyFor: FileJournal.Fsync => FlushStrategy[S]
     )(using
         frame: Frame,
         allow: AllowUnsafe
-    ): Result[JournalStorageError, FileJournalCore[A, P, S]] < Sync =
+    ): Result[JournalStorageError, FileJournalCore[A, S]] < Sync =
         // Use show as the canonical in-process key. Callers are expected to pass absolute paths
         // (Path.tempDir returns absolute; production usage is absolute); relative paths with the
         // same last component but different cwd would collide, which matches the platform-lock's
@@ -1505,7 +1506,7 @@ private[kyo] object FileJournalCore:
                                 case Result.Success(validatedKind) =>
                                     val codec = codecFor(validatedKind, configuration.codecs.metadata, configuration.codecs.value)
                                     Result.succeed(
-                                        new FileJournalCore[A, P, S](
+                                        new FileJournalCore[A, S](
                                             rootKey,
                                             streamsDir,
                                             configuration.options,
@@ -1528,7 +1529,7 @@ private[kyo] object FileJournalCore:
 
     // Reads or writes the MANIFEST marker file in `dir`: a structured record of the profile
     // family, layout version, and the payload/metadata media types resolved at Configuration
-    // construction time (D-024). Must be called AFTER the process-level lock is held to prevent
+    // construction time. Must be called AFTER the process-level lock is held to prevent
     // TOCTOU races between concurrent opens of the same root.
     //
     // Rules:
@@ -1539,7 +1540,7 @@ private[kyo] object FileJournalCore:
     //     crash-partial journal that never completed its first-open MANIFEST write; both infer
     //     Binary from segment presence. If requestedFormat != Binary: fail loud. If
     //     requestedFormat == Binary: proceed without writing MANIFEST (future opens infer Binary
-    //     again; media types fall back to Binary's built-in defaults per D-024).
+    //     again; media types fall back to Binary's built-in defaults).
     //   - MANIFEST file with matching format: proceed.
     //   - MANIFEST file with mismatched format: fail with typed JournalStorageError.
     //   - MANIFEST file with unknown format value: fail with typed JournalStorageError.
@@ -1619,7 +1620,7 @@ private[kyo] object FileJournalCore:
             if idx < 0 then Array.empty[(String, String)]
             else Array((line.substring(0, idx).trim, line.substring(idx + 2).trim))
         }.toMap
-        // payload-media-type / metadata-media-type are descriptive (D-024): read here for future
+        // payload-media-type / metadata-media-type are descriptive: read here for future
         // consumers but never fail an open on their absence or mismatch, unlike format/version.
         pairs.get("format") match
             case None =>

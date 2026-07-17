@@ -7,12 +7,11 @@ package kyo
   * callable unqualified (`FileJournal.binaryConfiguration(...)`, etc.) from that locked
   * file without editing it.
   *
-  * `P` is a phantom compile-time profile identity (D-019): no value of type `P` is ever
-  * constructed or read here. Each factory resolves the caller's `ProfileName[P]` into
-  * `Configuration#profileName` (D-021) and derives `Configuration#metadataMediaType` /
-  * `payloadMediaType` from the supplied codecs' `Codec.mediaType` (D-023). There is no
-  * `segmentedConfiguration` / custom-family construction path: `Profile` is closed to
-  * exactly `Binary` and `Jsonl`.
+  * Each factory resolves its own literal `profileName` directly: with no `P` type
+  * parameter, each factory already knows which profile it builds. It also derives
+  * `Configuration#metadataMediaType` / `payloadMediaType` from the supplied codecs'
+  * `Codec.mediaType`. There is no `segmentedConfiguration` / custom-family
+  * construction path: only the two built-in profiles, binary and jsonl, exist.
   */
 extension (self: FileJournal.type)
 
@@ -23,19 +22,16 @@ extension (self: FileJournal.type)
         journalId: JournalId,
         codecs: EventLog.Codecs[A],
         options: FileJournal.Options
-    )(using
-        profileName: FileJournal.ProfileName[FileJournal.Binary],
-        frame: Frame
-    ): Result[FileJournal.ConfigurationError, FileJournal.Configuration[A, FileJournal.Binary]] =
+    )(using frame: Frame): Result[FileJournal.ConfigurationError, FileJournal.Configuration[A]] =
         val payloadMediaType = codecs.value match
             case EventLogCodecs.ValueCodec.SchemaValue(_, binary, _) => binary.mediaType
             case _: EventLogCodecs.ValueCodec.BytesValue.type        => "application/octet-stream"
         Result.succeed(
-            FileJournal.Configuration[A, FileJournal.Binary](
+            FileJournal.Configuration[A](
                 journalId = journalId,
                 codecs = codecs,
                 options = options,
-                profileName = profileName.name,
+                profileName = "binary",
                 metadataMediaType = codecs.metadata.codec.mediaType,
                 payloadMediaType = payloadMediaType
             )
@@ -50,19 +46,16 @@ extension (self: FileJournal.type)
         journalId: JournalId,
         codecs: EventLog.Codecs[A],
         options: FileJournal.Options
-    )(using
-        profileName: FileJournal.ProfileName[FileJournal.Jsonl],
-        frame: Frame
-    ): Result[FileJournal.ConfigurationError, FileJournal.Configuration[A, FileJournal.Jsonl]] =
+    )(using frame: Frame): Result[FileJournal.ConfigurationError, FileJournal.Configuration[A]] =
         val payloadMediaType = codecs.value match
             case EventLogCodecs.ValueCodec.SchemaValue(_, _, json) => json.mediaType
             case _: EventLogCodecs.ValueCodec.BytesValue.type      => "application/json"
         Result.succeed(
-            FileJournal.Configuration[A, FileJournal.Jsonl](
+            FileJournal.Configuration[A](
                 journalId = journalId,
                 codecs = codecs,
                 options = options,
-                profileName = profileName.name,
+                profileName = "jsonl",
                 metadataMediaType = codecs.metadata.codec.mediaType,
                 payloadMediaType = payloadMediaType
             )
