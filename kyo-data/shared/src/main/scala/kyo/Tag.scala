@@ -166,6 +166,9 @@ object Tag:
           * Since the set of statically derived tags is bounded and fixed at compile time, hash code collisions between different types are
           * extremely unlikely. This method checks for these common cases before falling back to the more expensive full type-based checking
           * if any of the tags are dynamic.
+          *
+          * This method runs on the kernel's per-operation dispatch path, so it relies on the memoized `String.hashCode` and must not
+          * recompute a content hash per call. Content-stable cross-process hashing is `hash`'s job, not this method's.
           */
         private def fastPathEqual[B](that: Tag[B]): Boolean =
             (self eq that) || {
@@ -173,7 +176,7 @@ object Tag:
                     case self: String =>
                         that match
                             case that: String =>
-                                XXHash.hash32(self) == XXHash.hash32(that)
+                                self.hashCode == that.hashCode
                             case _ =>
                                 false
                     case _ =>
@@ -375,7 +378,9 @@ object Tag:
           *   true if a is a subtype of b, false otherwise
           */
         def checkTypes[A, B](a: Tag[A], b: Tag[B], mode: Mode): Boolean =
-            var hash = (a.hash.toLong << 32) | (b.hash & 0xffffffffL)
+            // Cache key from memoized hashCodes: this is a per-call in-process key, so it must not
+            // recompute a content hash (the memoization constraint on fastPathEqual applies here too).
+            var hash = (a.hashCode.toLong << 32) | (b.hashCode & 0xffffffffL)
             hash += mode.factor
             hash ^= (hash >>> 30)
             hash *= 0xbf58476d1ce4e5b9L

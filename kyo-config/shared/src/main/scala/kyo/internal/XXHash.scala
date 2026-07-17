@@ -5,6 +5,10 @@ package kyo.internal
   * This is a Scala port of the official Java XXH32 and XXH64 implementations from xxHash 0.8.x. The port keeps the same constants, round
   * functions, tail processing, and avalanche steps, while replacing platform-specific memory access with explicit little-endian array reads.
   *
+  * The `String` overload is not a UTF-8 content hash: it applies XXH32 to the memoized JLS `String.hashCode` so that hashing a reused
+  * string is constant-time and allocation-free (see `hash32(String)`). To hash a composite key (for example a case class), prefer
+  * `hashInt(key.hashCode)` over rendering the key to a string.
+  *
   * Return values preserve the exact xxHash bit pattern in signed Scala `Int` and `Long` values. Callers that need unsigned formatting should
   * format the returned bits explicitly.
   */
@@ -67,48 +71,15 @@ private[kyo] object XXHash {
         avalanche32(processTail32(h, bytes, i, end))
     }
 
-    /** Hashes a string as UTF-8 bytes with XXH32 and seed `0`.
+    /** Hashes a string as XXH32 of the four little-endian bytes of its `hashCode`.
+      *
+      * This deliberately builds on the JLS-specified, platform-stable `String.hashCode` rather than streaming the string's UTF-8 content:
+      * the JVM memoizes `String.hashCode` per instance, so hashing a reused string is constant-time and allocation-free. This method may
+      * sit on hot paths, so that property is load-bearing; do not replace it with a per-call content hash. The XXH32 finalizer restores
+      * avalanche quality over the weakly-mixed JLS hash, while collision pairs remain exactly those of `String.hashCode`.
       */
     def hash32(input: String): Int =
-        hash32(input, 0)
-
-    /** Hashes a string as UTF-8 bytes with XXH32 and the supplied seed.
-      *
-      * The implementation streams UTF-8 bytes into the XXH32 state instead of first allocating a byte array. Valid surrogate pairs are encoded
-      * as their Unicode code point. Unpaired surrogates are encoded as `?`, matching Java's default UTF-8 replacement behavior.
-      */
-    def hash32(input: String, seed: Int): Int = {
-        val state = new Utf8State32(seed)
-        var i     = 0
-        while (i < input.length) {
-            val c = input.charAt(i)
-            if (c < 0x80) {
-                state.add(c)
-            } else if (c < 0x800) {
-                state.add(0xc0 | (c >>> 6))
-                state.add(0x80 | (c & 0x3f))
-            } else if (Character.isHighSurrogate(c)) {
-                if (i + 1 < input.length && Character.isLowSurrogate(input.charAt(i + 1))) {
-                    val codePoint = Character.toCodePoint(c, input.charAt(i + 1))
-                    state.add(0xf0 | (codePoint >>> 18))
-                    state.add(0x80 | ((codePoint >>> 12) & 0x3f))
-                    state.add(0x80 | ((codePoint >>> 6) & 0x3f))
-                    state.add(0x80 | (codePoint & 0x3f))
-                    i += 1
-                } else {
-                    state.add(0x3f)
-                }
-            } else if (Character.isLowSurrogate(c)) {
-                state.add(0x3f)
-            } else {
-                state.add(0xe0 | (c >>> 12))
-                state.add(0x80 | ((c >>> 6) & 0x3f))
-                state.add(0x80 | (c & 0x3f))
-            }
-            i += 1
-        }
-        state.digest()
-    }
+        hashInt(input.hashCode)
 
     /** Hashes an integer as its four little-endian bytes with XXH32 and seed `0`.
       */
@@ -165,73 +136,6 @@ private[kyo] object XXHash {
         }
         h += length.toLong
         avalanche64(processTail64(h, bytes, i, end))
-    }
-
-    final private class Utf8State32(seed: Int) {
-
-        private var total     = 0
-        private var buffered  = 0
-        private var processed = false
-        private var m0        = 0
-        private var m1        = 0
-        private var m2        = 0
-        private var m3        = 0
-        private var v1        = seed + Prime32_1 + Prime32_2
-        private var v2        = seed + Prime32_2
-        private var v3        = seed
-        private var v4        = seed - Prime32_1
-
-        def add(byte: Int): Unit = {
-            val b     = byte & 0xff
-            val shift = (buffered & 3) << 3
-            (buffered >> 2) match {
-                case 0 => m0 |= b << shift
-                case 1 => m1 |= b << shift
-                case 2 => m2 |= b << shift
-                case _ => m3 |= b << shift
-            }
-            buffered += 1
-            total += 1
-            if (buffered == 16) {
-                v1 = round32(v1, m0)
-                v2 = round32(v2, m1)
-                v3 = round32(v3, m2)
-                v4 = round32(v4, m3)
-                m0 = 0
-                m1 = 0
-                m2 = 0
-                m3 = 0
-                buffered = 0
-                processed = true
-            }
-        }
-
-        def digest(): Int = {
-            var h =
-                if (processed) rotateLeft(v1, 1) + rotateLeft(v2, 7) + rotateLeft(v3, 12) + rotateLeft(v4, 18)
-                else seed + Prime32_5
-            h += total
-            h = processWord(h, m0, buffered, 0)
-            h = processWord(h, m1, buffered, 4)
-            h = processWord(h, m2, buffered, 8)
-            h = processWord(h, m3, buffered, 12)
-            avalanche32(h)
-        }
-
-        private def processWord(hash: Int, word: Int, size: Int, base: Int): Int = {
-            var h         = hash
-            val available = size - base
-            if (available >= 4) {
-                h = rotateLeft(h + word * Prime32_3, 17) * Prime32_4
-            } else if (available > 0) {
-                var i = 0
-                while (i < available) {
-                    h = rotateLeft(h + ((word >>> (i << 3)) & 0xff) * Prime32_5, 11) * Prime32_1
-                    i += 1
-                }
-            }
-            h
-        }
     }
 
     private def processTail32(hash: Int, bytes: Array[Byte], offset: Int, end: Int): Int = {

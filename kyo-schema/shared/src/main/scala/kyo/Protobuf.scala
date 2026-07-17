@@ -15,7 +15,8 @@ end Protobuf
 /** Entry point for Protocol Buffers binary serialization and schema generation.
   *
   * All methods are inline and require a `Schema[A]` instance in scope. Encoding produces proto3 wire-format bytes. Field numbers are
-  * derived from stable XXH32 hashes of field names, enabling schema evolution without breaking existing encoded data.
+  * derived from stable hashes of field names (XXH32 applied to the name's JLS string hash), enabling schema evolution without breaking
+  * existing encoded data.
   *
   * @see
   *   [[kyo.Schema]] for the type-driven serialization model

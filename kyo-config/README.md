@@ -343,7 +343,7 @@ Increasing the percentage adds entities without removing existing ones. A typica
 | 4 | `true@75%;false` | 75% of users (buckets 0-74) |
 | 5 | `true` | 100% of users (terminal) |
 
-Bucketing is deterministic per key (via XXH32), so a user who was included at 5% stays included at 25%. The bucket range grows from the same starting point, making progressive rollouts additive.
+Bucketing is deterministic per key (via a stable string hash), so a user who was included at 5% stays included at 25%. The bucket range grows from the same starting point, making progressive rollouts additive.
 
 However, **decreasing** a percentage can remove entities: going from 75% back to 50% drops buckets 50-74, removing 25% of previously included users.
 
