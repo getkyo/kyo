@@ -125,8 +125,11 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 60
     env:
-      JAVA_OPTS: '-Xmx4G -Xss10M -XX:MaxMetaspaceSize=512M -XX:ReservedCodeCacheSize=128M -Dfile.encoding=UTF-8'
-      JVM_OPTS:  '-Xmx4G -Xss10M -XX:MaxMetaspaceSize=512M -XX:ReservedCodeCacheSize=128M -Dfile.encoding=UTF-8'
+      # Coursier's parallel downloads race NIO file locks on the Windows cache
+      # (OverlappingFileLockException during resolution); serialize them on this job.
+      COURSIER_PARALLEL_DOWNLOADS: '1'
+      JAVA_OPTS: '-Xmx4G -Xss10M -XX:MaxMetaspaceSize=512M -XX:ReservedCodeCacheSize=128M -Dfile.encoding=UTF-8 -Dcoursier.parallel-download-count=1'
+      JVM_OPTS:  '-Xmx4G -Xss10M -XX:MaxMetaspaceSize=512M -XX:ReservedCodeCacheSize=128M -Dfile.encoding=UTF-8 -Dcoursier.parallel-download-count=1'
     steps:
       - uses: actions/checkout@v7.0.0
         with:
