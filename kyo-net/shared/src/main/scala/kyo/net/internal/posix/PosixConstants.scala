@@ -1,32 +1,21 @@
 package kyo.net.internal.posix
 
-import kyo.internal.SystemPlatformSpecific
-
-/** POSIX numeric constants needed by the socket / poller bindings, resolved per operating system at runtime.
+/** POSIX numeric constants needed by the socket / poller bindings, dispatched on the operating system reported by `kyo.internal.Platform`.
   *
   * The values genuinely differ across OSes: `AF_INET6` is 30 on macOS/BSD versus 10 on Linux; `O_NONBLOCK` and the `SO_NOSIGPIPE` /
   * `MSG_NOSIGNAL` SIGPIPE-suppression mechanisms differ; the `S_IF*` file-type bits and the epoll control ops are Linux-only. A single JVM
-  * artifact runs on both Linux and macOS, and a single Scala Native source set compiles for both, so these are dispatched on the running OS
-  * rather than baked in as per-platform literals. The constants themselves are stable kernel ABI values, so the literal table is the source of
-  * truth (kyo-ffi has no header-constant extraction surface, and adding one for a fixed handful of stable values is not warranted).
+  * artifact runs on both Linux and macOS, so the JVM predicates read `os.name` at class-init; Scala Native resolves them at link time against
+  * the compilation target, which is the ABI the binary is built for and therefore the one these constants must match. The constants themselves
+  * are stable kernel ABI values, so the literal table is the source of truth (kyo-ffi has no header-constant extraction surface, and adding one
+  * for a fixed handful of stable values is not warranted).
   */
 private[net] object PosixConstants:
 
-    // Resolved via SystemPlatformSpecific.osName() (the same accessor kyo.System.operatingSystem uses), not
-    // java.lang.System.getProperty: on Scala.js the JVM property is empty, so osName() falls back to Node's
-    // process.platform and returns the real OS name on every backend (JVM/Native via os.name, JS via process.platform).
-    // This mirrors the osArch() pattern in PosixStructs.scala / EpollEvent.
-    private val osName: String =
-        import kyo.AllowUnsafe.embrace.danger
-        // TODO this should be in kyo.internal.Platform
-        SystemPlatformSpecific.osName().toLowerCase
-    end osName
-
     /** True on macOS/BSD, where `AF_INET6` is 30 and SIGPIPE is suppressed via `SO_NOSIGPIPE` rather than `MSG_NOSIGNAL`. */
-    val isMacOrBsd: Boolean = osName.contains("mac") || osName.contains("bsd") || osName.contains("darwin")
+    val isMacOrBsd: Boolean = kyo.internal.Platform.isMacOrBsd
 
     /** True on Linux, where epoll, `MSG_NOSIGNAL`, and `AF_INET6 == 10` apply. */
-    val isLinux: Boolean = osName.contains("linux")
+    val isLinux: Boolean = kyo.internal.Platform.isLinux
 
     // --- address families (sa_family_t, host byte order) ---
     val AF_INET: Int  = 2

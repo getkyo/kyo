@@ -20,9 +20,21 @@ object Platform:
     def exit(code: Int): Unit = java.lang.System.exit(code)
 
     // OS detection
-    val isWindows: Boolean = java.lang.System.getProperty("os.name", "").toLowerCase.contains("windows")
-    val isMac: Boolean     = java.lang.System.getProperty("os.name", "").toLowerCase.contains("mac")
-    val isLinux: Boolean   = java.lang.System.getProperty("os.name", "").toLowerCase.contains("linux")
+    private val osName: String = java.lang.System.getProperty("os.name", "").toLowerCase
+
+    /** Classifies an already-lowercased `os.name` as macOS. Darwin is the macOS kernel name, so it classifies as mac rather than as a BSD,
+      * matching the JS and Native definitions.
+      */
+    private[kyo] def isMacName(name: String): Boolean = name.contains("mac") || name.contains("darwin")
+
+    /** Classifies an already-lowercased `os.name` as a BSD. The BSD JDK ports report "FreeBSD", "OpenBSD", and "NetBSD". */
+    private[kyo] def isBsdName(name: String): Boolean = name.contains("bsd")
+
+    val isWindows: Boolean  = osName.contains("windows")
+    val isMac: Boolean      = isMacName(osName)
+    val isLinux: Boolean    = osName.contains("linux")
+    val isBsd: Boolean      = isBsdName(osName)
+    val isMacOrBsd: Boolean = isMac || isBsd
 
     val fileSeparator: String = java.io.File.separator
     val pathSeparator: String = java.io.File.pathSeparator
