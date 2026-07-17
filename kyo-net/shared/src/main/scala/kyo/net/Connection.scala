@@ -64,17 +64,17 @@ abstract class Connection:
       * truncation (the TCP connection ended without a close_notify, the truncation-attack condition the close_notify exchange exists to make
       * detectable). The default delivery of a record-boundary EOF is NOT rejected (a large population of real HTTP/1.1 servers close without a
       * close_notify), but the missing close_notify is made OBSERVABLE here so a length-aware caller can treat an unexpected drop as a
-      * truncation. While the connection is still active this is [[CloseReason.Active]].
+      * truncation. While the connection is still active this is [[Status.Active]].
       *
       * A non-TLS connection, which has no close_notify exchange, and a platform without TLS introspection support never report a truncation
-      * distinction and return [[CloseReason.Active]]; a TLS connection reports the observed close reason.
+      * distinction and return [[Status.Active]]; a TLS connection reports the observed close reason.
       */
-    def closeReason: Connection.CloseReason
+    def status: Connection.Status
 end Connection
 
 object Connection:
 
-    /** Why the connection's inbound stream is ending or has ended (see [[Connection.closeReason]]).
+    /** Why the connection's inbound stream is ending or has ended (see [[Connection.status]]).
       *
       * For a TLS connection this carries the security-relevant distinction RFC 8446 6.1 / RFC 5246 7.2.1 define: an orderly close terminated by
       * the peer's authenticated close_notify ([[CleanClose]]) versus a connection that ended without one ([[Truncated]]), which is the
@@ -82,8 +82,7 @@ object Connection:
       * incomplete message as a truncation while still accepting a [[Truncated]] end after a complete length-framed message, the interop-safe
       * posture established stacks use (Go's `io.EOF` vs `io.ErrUnexpectedEOF`, OpenSSL's `ZERO_RETURN` vs `unexpected eof while reading`).
       */
-    // TODO isn't the actually Status?
-    enum CloseReason derives CanEqual:
+    enum Status derives CanEqual:
         /** The connection is still open: no close has been observed yet. */
         case Active
 
@@ -100,7 +99,7 @@ object Connection:
           * so a length-aware caller can treat a drop mid-message as a truncation.
           */
         case Truncated
-    end CloseReason
+    end Status
 
     /** Internal marker trait for connections that support post-connect TLS upgrade. */
     private[net] trait UpgradableConnection extends Connection:

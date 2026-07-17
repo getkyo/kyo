@@ -12,14 +12,14 @@ import kyo.net.internal.transport.ReadOutcome
   * to force a kernel-owned in-flight recv SQE to complete, because io_uring holds its own reference to the file and closing the fd alone
   * does not complete it. That self-induced `res == 0` completion reaps through the SAME branch a genuine unprompted peer half-close (a
   * bare TCP FIN, no close_notify) uses, with no guard distinguishing "I closed myself" from "the peer actually sent EOF": it
-  * unconditionally stamps `handle.halfClose = HalfCloseState.PeerEof`. [[PosixTransport.installCloseReason]] checks `PeerEof` ahead of
+  * unconditionally stamps `handle.halfClose = HalfCloseState.PeerEof`. [[PosixTransport.installStatus]] checks `PeerEof` ahead of
   * the `LocalClose` fallback, so a connection the LOCAL side closed (no peer FIN ever happened) incorrectly reports `Truncated`.
   *
   * This is a TIMING RACE through the public `Connection` API: `HalfCloseStateTest`'s "local-close" leaf failed only intermittently
   * (surfaced on one io_uring/boringssl podman run, not on three isolated io_uring/jdk runs of the identical shared test), because
   * `Connection.close()` synchronously CASes the connection state but only ENQUEUES the driver-side teardown (`closeHandle` ->
   * `submitEngineOp`), so the public-API race depends on whether the async cancel+SHUT_RD+CQE-reap settles before or after the
-  * `closeReason` read. This test removes that timing dependence by driving the exact mechanism directly at the driver level (no
+  * `status` read. This test removes that timing dependence by driving the exact mechanism directly at the driver level (no
   * `Connection`/`Transport` involved) and waiting on a REAL completion signal -- `handle.isClosing()`, set only at the very end of
   * `closeNow` (`PosixHandle.close` -> `requestClose`) -- instead of guessing at a deadline. `closeNow` is reached via
   * `decrementInFlight`'s inline call, which runs immediately AFTER the buggy/fixed `res == 0` branch for this same CQE, so observing

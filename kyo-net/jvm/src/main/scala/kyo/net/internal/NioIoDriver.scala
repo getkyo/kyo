@@ -1286,7 +1286,7 @@ final private[kyo] class NioIoDriver private (@volatile private[net] var selecto
                         if n < 0 then
                             // Peer ended the TCP stream. If a close_notify was already consumed (peerCleanClose set by tryUnwrapBuffered) this FIN
                             // follows an orderly close; otherwise it is a bare FIN with no close_notify, the truncation-attack condition (RFC 8446
-                            // 6.1). Record peerEof for the bare-FIN case so closeReason reports Truncated; do not overwrite an already-observed clean
+                            // 6.1). Record peerEof for the bare-FIN case so status reports Truncated; do not overwrite an already-observed clean
                             // close. Mirrors the engine path's recv == 0 -> peerEof handling (PollerIoDriver / IoUringDriver).
                             if !tls.peerCleanClose then tls.peerEof = true
                             if handle.readArm.compareAndSet(cell, Absent) then
@@ -1328,7 +1328,7 @@ final private[kyo] class NioIoDriver private (@volatile private[net] var selecto
             catch
                 case _: IOException =>
                     // A read IOException (e.g. a TCP RST) ends the inbound stream abruptly with no close_notify: a truncation, not an orderly close.
-                    // Record peerEof unless a close_notify was already consumed, so closeReason reports Truncated rather than Active.
+                    // Record peerEof unless a close_notify was already consumed, so status reports Truncated rather than Active.
                     if !tls.peerCleanClose then tls.peerEof = true
                     if handle.readArm.compareAndSet(cell, Absent) then
                         complete = () => promise.completeDiscard(Result.succeed(ReadOutcome.PeerFin))
@@ -1423,7 +1423,7 @@ final private[kyo] class NioIoDriver private (@volatile private[net] var selecto
                     unwrapLoop()
                 else if status eq SSLEngineResult.Status.CLOSED then
                     // The unwrap that consumed the peer's close_notify record reports CLOSED and makes the inbound side done (RFC 8446 6.1
-                    // orderly close). Record it so the connection's closeReason reports CleanClose rather than Truncated: this is the orderly
+                    // orderly close). Record it so the connection's status reports CleanClose rather than Truncated: this is the orderly
                     // counterpart to a bare TCP FIN. Mirrors JdkSslEngine.readPlain's Status.CLOSED / isInboundDone -> -3 clean-close return,
                     // converging the inline NIO path with the engine-driver path. The loop stops here: a close_notify is the last record on the
                     // inbound stream, so there is nothing further to drain.

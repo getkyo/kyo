@@ -329,7 +329,7 @@ final private[kyo] class JsTransport private (
                 // For TLS handshakes (secureConnect), install certHashFn so SCRAM-PLUS channel
                 // binding can compute tls-server-end-point (RFC 5929) from the peer cert.
                 if connectEvent == "secureConnect" then installCertHashFn(connection, socket)
-                // closeReasonFn is deliberately NOT wired here: the connection keeps the default Connection.CloseReason.Active. The posix and NIO
+                // statusFn is deliberately NOT wired here: the connection keeps the default Connection.Status.Active. The posix and NIO
                 // transports report CleanClose vs Truncated (RFC 8446 6.1) by observing the peer's close_notify alert at the TLS record layer,
                 // which they drive directly (BoringSSL/OpenSSL/SSLEngine). JS delegates TLS termination to Node, whose tls.TLSSocket abstracts the
                 // record layer away: empirically (Node v23) a clean close (close_notify then FIN) and a truncation (bare FIN, no close_notify)

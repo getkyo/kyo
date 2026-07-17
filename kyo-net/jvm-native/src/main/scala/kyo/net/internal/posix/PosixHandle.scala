@@ -146,8 +146,8 @@ final private[net] class PosixHandle private (
       */
     @volatile var postUpgradeReadWindow: Boolean = false
 
-    // The half-close state, written by the loop carrier only and read by closeReason. @volatile
-    // carries the loop-carrier write to the closeReason reader; closeReason is a total function of
+    // The half-close state, written by the loop carrier only and read by status. @volatile
+    // carries the loop-carrier write to the status reader; status is a total function of
     // this one state, so the close reason is derived from a single consistent value.
     @volatile var halfClose: HalfCloseState = HalfCloseState.Open
 

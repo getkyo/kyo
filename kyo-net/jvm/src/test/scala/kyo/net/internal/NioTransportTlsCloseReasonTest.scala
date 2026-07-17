@@ -24,10 +24,10 @@ import kyo.net.internal.transport.*
   * path that carries this finding. Constructing `NioTransport` directly forces the inline NIO path under test.
   *
   * Finding #3 follow-up (RFC 8446 6.1 truncation distinction): the engine-driver path (`PosixHandle.peerCleanClose` / `peerEof`, surfaced by
-  * `PosixTransport.installCloseReason`) reports `CloseReason.CleanClose` when the peer sent an authenticated close_notify before the FIN and
-  * `CloseReason.Truncated` when the TCP connection ended with a bare FIN and no close_notify. The inline NIO transport drives a JDK
+  * `PosixTransport.installStatus`) reports `Status.CleanClose` when the peer sent an authenticated close_notify before the FIN and
+  * `Status.Truncated` when the TCP connection ended with a bare FIN and no close_notify. The inline NIO transport drives a JDK
   * `SSLEngine` through its own `NioTlsState` (not `TlsEngineIo`), so before this fix it never set those signals and a NIO TLS connection always
-  * reported `CloseReason.Active` even after a bare-FIN truncation: a length-aware caller could not detect a truncation attack. These leaves
+  * reported `Status.Active` even after a bare-FIN truncation: a length-aware caller could not detect a truncation attack. These leaves
   * assert the inline NIO connection converges on the same close-reason semantics as the engine path.
   *
   * Determinism: the peer is a real loopback NIO TLS server driven by its own `Selector` event loop (the same non-blocking primitive the
@@ -75,12 +75,12 @@ class NioTransportTlsCloseReasonTest extends Test:
     "inline NIO TLS client reports CleanClose when the peer sends close_notify before the FIN" in {
         given Frame   = Frame.internal
         val transport = mkTransport()
-        runCloseReasonScenario(transport, ServerClose.CleanCloseNotify).map { reason =>
+        runStatusScenario(transport, ServerClose.CleanCloseNotify).map { reason =>
             transport.close()
             assert(
-                reason == NetConnection.CloseReason.CleanClose,
+                reason == NetConnection.Status.CleanClose,
                 "SECURITY: inline NIO TLS connection did not report an orderly close after the peer sent a close_notify before the FIN " +
-                    s"(RFC 8446 6.1); expected CloseReason.CleanClose, got $reason. Before the fix the NIO path reports Active because the " +
+                    s"(RFC 8446 6.1); expected Status.CleanClose, got $reason. Before the fix the NIO path reports Active because the " +
                     "close_notify signal is unwired."
             )
             succeed
@@ -92,12 +92,12 @@ class NioTransportTlsCloseReasonTest extends Test:
     "inline NIO TLS client reports Truncated when the peer ends with a bare FIN and no close_notify" in {
         given Frame   = Frame.internal
         val transport = mkTransport()
-        runCloseReasonScenario(transport, ServerClose.BareFin).map { reason =>
+        runStatusScenario(transport, ServerClose.BareFin).map { reason =>
             transport.close()
             assert(
-                reason == NetConnection.CloseReason.Truncated,
+                reason == NetConnection.Status.Truncated,
                 "SECURITY: inline NIO TLS connection did not report a truncation after the peer's bare FIN with no close_notify " +
-                    s"(RFC 8446 6.1); expected CloseReason.Truncated, got $reason. Before the fix the NIO path reports Active, so a " +
+                    s"(RFC 8446 6.1); expected Status.Truncated, got $reason. Before the fix the NIO path reports Active, so a " +
                     "length-aware caller cannot detect a truncation attack."
             )
             succeed
@@ -105,15 +105,15 @@ class NioTransportTlsCloseReasonTest extends Test:
     }
 
     /** Run one end-to-end scenario: start a controlled raw-JSSE NIO TLS server peer, connect the kyo-net NIO TLS client to it, drain the
-      * client's inbound stream until it ends, then read and return the client's `closeReason`.
+      * client's inbound stream until it ends, then read and return the client's `status`.
       *
       * The server's `serverReady` channel carries the bound port from its own Selector carrier to the test carrier; the client connects only
       * after that. Draining `client.inbound` to completion is the latch for "the inbound stream ended" (the ReadPump completes the channel on
-      * EOF), so the `closeReason` read happens strictly after the close was observed, with no sleep.
+      * EOF), so the `status` read happens strictly after the close was observed, with no sleep.
       */
-    private def runCloseReasonScenario(transport: NioTransport, closeMode: ServerClose)(using
+    private def runStatusScenario(transport: NioTransport, closeMode: ServerClose)(using
         Frame
-    ): NetConnection.CloseReason < (Scope & Async & Abort[kyo.net.NetException | Closed]) =
+    ): NetConnection.Status < (Scope & Async & Abort[kyo.net.NetException | Closed]) =
         for
             serverReady <- Channel.init[Int](1)
             _ = startRawJsseServer(serverReady, closeMode)
@@ -121,14 +121,14 @@ class NioTransportTlsCloseReasonTest extends Test:
             client <- transport.connect("127.0.0.1", port, clientTls).safe.get
             _      <- drainUntilEnd(client)
         yield
-            val reason = client.closeReason
+            val reason = client.status
             client.close()
             reason
         end for
-    end runCloseReasonScenario
+    end runStatusScenario
 
     /** Take from `conn.inbound` until the channel completes (the ReadPump's EOF teardown closes it). The `Closed` that the final `take` raises
-      * is the end-of-stream signal, caught here so the scenario continues to read `closeReason`. No data is expected on this stream (the server
+      * is the end-of-stream signal, caught here so the scenario continues to read `status`. No data is expected on this stream (the server
       * sends no application bytes, only a close), so the first take normally already ends it.
       */
     private def drainUntilEnd(conn: NetConnection)(using Frame): Unit < (Async & Abort[Closed]) =

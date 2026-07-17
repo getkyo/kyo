@@ -1941,7 +1941,7 @@ final private[net] class PollerIoDriver private[posix] (
             }
         else if n == 0 then
             // Peer close via a bare TCP FIN (no close_notify reached the engine, else the clean-close branch above delivered CleanClose first):
-            // record the truncation condition so closeReason reports Truncated, then deliver PeerFin immediately without engine involvement.
+            // record the truncation condition so status reports Truncated, then deliver PeerFin immediately without engine involvement.
             handle.readMightHaveMore = false
             handle.halfClose = HalfCloseState.PeerEof
             finishDispatch(fd, handle, promise, Result.succeed(ReadOutcome.PeerFin))

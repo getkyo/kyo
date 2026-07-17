@@ -4,16 +4,16 @@ import kyo.*
 import kyo.net.Connection
 import kyo.net.Test
 
-/** Invariant tests for the single-field [[HalfCloseState]] state machine via [[Connection.closeReason]].
+/** Invariant tests for the single-field [[HalfCloseState]] state machine via [[Connection.status]].
   *
   * All three tests drive a real TLS session through [[eachBackendTls]], so every registered backend x TLS-implementation cell is covered.
-  * JS never wires `closeReasonFn` on its connections, so every JS leaf asserts [[Connection.CloseReason.Active]] (XPLAT-5).
+  * JS never wires `statusFn` on its connections, so every JS leaf asserts [[Connection.Status.Active]] (XPLAT-5).
   *
   * The three scenarios are:
-  *   - `clean-close`: server calls `close()` (sends TLS close_notify); client drains inbound; expects [[Connection.CloseReason.CleanClose]].
-  *   - `local-close`: client calls `close()` before any server-initiated close; expects [[Connection.CloseReason.LocalClose]].
+  *   - `clean-close`: server calls `close()` (sends TLS close_notify); client drains inbound; expects [[Connection.Status.CleanClose]].
+  *   - `local-close`: client calls `close()` before any server-initiated close; expects [[Connection.Status.LocalClose]].
   *   - `single-writer-no-torn-read`: a latch ensures the reader is already draining when the server fires its close_notify; the result
-  *     must be [[Connection.CloseReason.CleanClose]], never [[Connection.CloseReason.Truncated]]. This tests that the single-field
+  *     must be [[Connection.Status.CleanClose]], never [[Connection.Status.Truncated]]. This tests that the single-field
   *     transition (Open -> PeerCleanClose, a single volatile write) cannot produce a torn intermediate state.
   *
   * Truncated (bare TCP FIN without close_notify) is NOT testable through the public [[Connection]] API: both `conn.close()` and
@@ -25,16 +25,16 @@ class HalfCloseStateTest extends Test:
     import AllowUnsafe.embrace.danger
 
     /** Drain `conn.inbound` to completion. The [[Closed]] raised by the final `take` is caught and discarded. The caller reads
-      * [[Connection.closeReason]] after this returns.
+      * [[Connection.status]] after this returns.
       */
     private def drainInbound(conn: Connection)(using Frame): Unit < (Async & Abort[Closed]) =
         Abort.run[Closed](Loop.foreach(conn.inbound.safe.take.map(_ => Loop.continue))).map(_ => ())
 
-    /** Expected [[Connection.CloseReason]] on this platform for a given scenario reason. JS never wires `closeReasonFn`, so every JS leaf
-      * sees [[Connection.CloseReason.Active]] (XPLAT-5). On JVM and Native the engine path wires the fn and reports the true reason.
+    /** Expected [[Connection.Status]] on this platform for a given scenario reason. JS never wires `statusFn`, so every JS leaf
+      * sees [[Connection.Status.Active]] (XPLAT-5). On JVM and Native the engine path wires the fn and reports the true reason.
       */
-    private def expected(reason: Connection.CloseReason): Connection.CloseReason =
-        if kyo.internal.Platform.isJS then Connection.CloseReason.Active else reason
+    private def expected(reason: Connection.Status): Connection.Status =
+        if kyo.internal.Platform.isJS then Connection.Status.Active else reason
 
     "clean-close: server close_notify gives CleanClose on inbound drain" - eachBackendTls {
         (transport, serverTls, clientTls) =>
@@ -52,12 +52,12 @@ class HalfCloseStateTest extends Test:
                 _ = serverConn.close() // sends TLS close_notify then TCP FIN
                 _ <- drainInbound(client) // suspends until inbound closes after close_notify
             yield
-                val reason = client.closeReason
+                val reason = client.status
                 client.close()
                 listener.close()
                 assert(
-                    reason == expected(Connection.CloseReason.CleanClose),
-                    s"expected ${expected(Connection.CloseReason.CleanClose)} after server TLS close_notify; got $reason"
+                    reason == expected(Connection.Status.CleanClose),
+                    s"expected ${expected(Connection.Status.CleanClose)} after server TLS close_notify; got $reason"
                 )
                 succeed
             end for
@@ -78,22 +78,22 @@ class HalfCloseStateTest extends Test:
                 serverConn <- serverConnCh.take
                 _ = client.close() // local close before any server-initiated close
             yield
-                val reason = client.closeReason
+                val reason = client.status
                 serverConn.close()
                 listener.close()
                 assert(
-                    reason == expected(Connection.CloseReason.LocalClose),
-                    s"expected ${expected(Connection.CloseReason.LocalClose)} after client local close; got $reason"
+                    reason == expected(Connection.Status.LocalClose),
+                    s"expected ${expected(Connection.Status.LocalClose)} after client local close; got $reason"
                 )
                 succeed
             end for
     }
 
-    "single-writer-no-torn-read: closeReason after server close_notify is CleanClose, never Truncated" - eachBackendTls {
+    "single-writer-no-torn-read: status after server close_notify is CleanClose, never Truncated" - eachBackendTls {
         (transport, serverTls, clientTls) =>
             // Given: a reader fiber is draining client.inbound (suspended on take) before the server closes.
             // When: server calls close() (writes halfClose = PeerCleanClose via a single volatile write).
-            // Then: client.closeReason is CleanClose (never Truncated), proving the single-field state
+            // Then: client.status is CleanClose (never Truncated), proving the single-field state
             //       machine cannot produce a torn intermediate value. A Channel latch ensures the reader is
             //       established (suspended on inbound take) before the server fires its close_notify.
             for
@@ -120,12 +120,12 @@ class HalfCloseStateTest extends Test:
                 _ = serverConn.close() // single volatile write: halfClose = PeerCleanClose
                 _ <- readerFiber.get
             yield
-                val reason = client.closeReason
+                val reason = client.status
                 client.close()
                 listener.close()
                 assert(
-                    reason == expected(Connection.CloseReason.CleanClose),
-                    s"closeReason after server TLS close_notify must be ${expected(Connection.CloseReason.CleanClose)}; got $reason. " +
+                    reason == expected(Connection.Status.CleanClose),
+                    s"status after server TLS close_notify must be ${expected(Connection.Status.CleanClose)}; got $reason. " +
                         s"Truncated would indicate a torn read of the half-close state."
                 )
                 succeed

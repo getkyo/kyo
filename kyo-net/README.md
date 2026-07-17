@@ -61,7 +61,7 @@ def echo(conn: Connection): Maybe[Span[Byte]] < (Async & Abort[Closed]) =
 
 `close()` releases the connection; `isOpen` reports whether it is still live. The caller closes every connection it opens.
 
-When the peer closes, `inbound` completes. At that point `closeReason` reports how the stream ended. For a TLS connection this separates an orderly close, where the peer sent its authenticated `close_notify` before the TCP FIN (`CloseReason.CleanClose`), from a `CloseReason.Truncated` end, where the connection dropped with a bare FIN and no `close_notify`.
+When the peer closes, `inbound` completes. At that point `status` reports how the stream ended. For a TLS connection this separates an orderly close, where the peer sent its authenticated `close_notify` before the TCP FIN (`Status.CleanClose`), from a `Status.Truncated` end, where the connection dropped with a bare FIN and no `close_notify`.
 
 > **Caution:** A `Truncated` close is the truncation-attack condition (RFC 8446 6.1). kyo-net does not reject it, because a large population of real HTTP/1.1 servers close this way after a complete length-framed message, but a length-aware caller that has not yet reached its expected message boundary must treat a `Truncated` end as a truncation, not a normal EOF.
 
@@ -72,9 +72,9 @@ import kyo.net.*
 
 def receive(conn: Connection): Maybe[Chunk[Span[Byte]]] < (Async & Abort[Closed]) =
     conn.inbound.safe.drain.map { bytes =>
-        conn.closeReason match
-            case Connection.CloseReason.CleanClose => Present(bytes) // close_notify seen: the stream is complete
-            case Connection.CloseReason.Truncated  => Absent         // bare FIN, no close_notify: drop as a possible truncation
+        conn.status match
+            case Connection.Status.CleanClose => Present(bytes) // close_notify seen: the stream is complete
+            case Connection.Status.Truncated  => Absent         // bare FIN, no close_notify: drop as a possible truncation
             case _                                 => Present(bytes) // non-TLS or still-active: no truncation distinction
     }
 ```

@@ -36,16 +36,16 @@ final private[kyo] class NioTlsState(
 
     /** Whether the peer's TLS close_notify alert was consumed on this connection's read side (the JDK `SSLEngine` reported `Status.CLOSED` /
       * `isInboundDone` after unwrapping the peer's close_notify record, RFC 8446 6.1). Set on the NIO Selector carrier when the TLS read path
-      * observes the orderly close; read by the connection's `closeReason` accessor to tell an orderly close (close_notify received) from a bare
+      * observes the orderly close; read by the connection's `status` accessor to tell an orderly close (close_notify received) from a bare
       * TCP FIN with no close_notify (the truncation-attack condition). Once set it stays set: a clean close is terminal for the inbound side.
-      * `@volatile` carries the Selector carrier's write to the caller's carrier that reads it via `closeReason`. Mirrors
+      * `@volatile` carries the Selector carrier's write to the caller's carrier that reads it via `status`. Mirrors
       * [[kyo.net.internal.posix.PosixHandle.peerCleanClose]] on the engine path so both transports converge on the same close-reason semantics.
       */
     @volatile var peerCleanClose: Boolean = false
 
     /** Whether a bare TCP FIN (a `channel.read == -1` end-of-stream, or an `IOException` on read) was observed on this connection's read side
       * WITHOUT a preceding TLS close_notify. Set on the NIO Selector carrier when the TLS read path delivers a peer-initiated EOF that did not
-      * come from a consumed close_notify (the [[peerCleanClose]] path). Read by the connection's `closeReason` accessor: a peer EOF with
+      * come from a consumed close_notify (the [[peerCleanClose]] path). Read by the connection's `status` accessor: a peer EOF with
       * `peerCleanClose` unset is a truncation (RFC 8446 6.1), while a local `close()` with neither flag set is an ordinary local close.
       * `@volatile` carries the Selector carrier's write to the reader. Mirrors [[kyo.net.internal.posix.PosixHandle.peerEof]] on the engine path.
       */

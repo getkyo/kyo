@@ -163,7 +163,7 @@ private[posix] trait TlsEngineIo:
       * surfaced rather than collapsed into want-read (`0`).
       *
       * Clean-close handling (RFC 8446 6.1): a `readPlain == -3` (the peer's close_notify was consumed) advances [[PosixHandle.halfClose]] to
-      * `PeerCleanClose` so the connection's `closeReason` can tell an orderly close from a bare-FIN truncation. The `-3` is observable in any
+      * `PeerCleanClose` so the connection's `status` can tell an orderly close from a bare-FIN truncation. The `-3` is observable in any
       * read position (the close_notify can arrive alone or coalesced behind the last data record); whichever call sees it advances the state
       * and stops the drain, after the already-decoded good prefix is delivered (the close_notify is the last thing on the stream).
       *

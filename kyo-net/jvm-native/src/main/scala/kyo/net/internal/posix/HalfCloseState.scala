@@ -3,7 +3,7 @@ package kyo.net.internal.posix
 /** The named half-close state of a posix connection's read side, written by the loop carrier only.
   *
   * The half-close is one immutable state, written by the loop carrier alone. The public
-  * `Connection.CloseReason` is a total function of this state, so the close reason is derived from one
+  * `Connection.Status` is a total function of this state, so the close reason is derived from one
   * consistent value rather than a torn read of independent flags.
   *
   *   - [[Open]]: no half-close observed.

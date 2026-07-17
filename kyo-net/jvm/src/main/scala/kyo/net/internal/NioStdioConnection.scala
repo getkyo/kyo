@@ -95,7 +95,7 @@ private[kyo] object NioStdioConnection:
             private[net] def start()(using AllowUnsafe, Frame): Boolean                = true   // pumps already started at open
             // Plaintext, driverless connection: no peer certificate to hash and no close_notify exchange to observe.
             def serverCertificateHash: Maybe[Span[Byte]] = Absent
-            def closeReason: NetConnection.CloseReason   = NetConnection.CloseReason.Active
+            def status: NetConnection.Status             = NetConnection.Status.Active
         end new
     end open
 

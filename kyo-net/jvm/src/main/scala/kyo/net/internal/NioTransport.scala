@@ -250,9 +250,9 @@ final private[kyo] class NioTransport private (
         // Wire in the TLS close-reason function so a TLS connection reports the RFC 8446 6.1 / RFC 5246 7.2.1 close distinction. Only a TLS
         // handle has the close_notify-vs-bare-FIN signal (a plaintext handle has no close_notify exchange and keeps the default Active), so it is
         // installed only when handle.tls is Present at wiring time (after driveHandshake set it). This converges the inline NIO path with the
-        // engine driver path (PosixTransport.installCloseReason), which installs the same accessor over PosixHandle.peerCleanClose / peerEof.
+        // engine driver path (PosixTransport.installStatus), which installs the same accessor over PosixHandle.peerCleanClose / peerEof.
         handle.tls.foreach { tlsState =>
-            connection.closeReasonFn = Present(() => NioTransport.closeReasonFor(connection, tlsState))
+            connection.statusFn = Present(() => NioTransport.statusFor(connection, tlsState))
         }
         // Deliver any application plaintext the handshake decrypted during a STARTTLS upgrade (peer data coalesced with its final flight) BEFORE
         // the pumps start, so it precedes anything the ReadPump reads next. A no-op for a fresh handshake (nothing captured).
@@ -1481,17 +1481,17 @@ private[kyo] object NioTransport:
       * Reads the `NioTlsState` flags the NIO Selector carrier set on the read path: `peerCleanClose` (the peer's authenticated close_notify was
       * consumed, an orderly close) and `peerEof` (a bare TCP FIN with no close_notify, the truncation-attack condition). While the connection is
       * still open it reports Active; once it has closed with neither peer signal set, it was a local close. Touches no engine, only the `@volatile`
-      * flags, so it is safe to call on the caller's carrier after close. Mirrors `PosixTransport.installCloseReason` so the inline NIO path and the
+      * flags, so it is safe to call on the caller's carrier after close. Mirrors `PosixTransport.installStatus` so the inline NIO path and the
       * engine driver path report identical close-reason semantics for the same close sequence.
       */
-    private[kyo] def closeReasonFor(connection: Connection[NioHandle], tlsState: NioTlsState)(using
+    private[kyo] def statusFor(connection: Connection[NioHandle], tlsState: NioTlsState)(using
         AllowUnsafe
-    ): NetConnection.CloseReason =
-        if tlsState.peerCleanClose then NetConnection.CloseReason.CleanClose
-        else if tlsState.peerEof then NetConnection.CloseReason.Truncated
-        else if connection.isOpen then NetConnection.CloseReason.Active
-        else NetConnection.CloseReason.LocalClose
-    end closeReasonFor
+    ): NetConnection.Status =
+        if tlsState.peerCleanClose then NetConnection.Status.CleanClose
+        else if tlsState.peerEof then NetConnection.Status.Truncated
+        else if connection.isOpen then NetConnection.Status.Active
+        else NetConnection.Status.LocalClose
+    end statusFor
 
     /** Trust manager that accepts any certificate chain and auth type without validation.
       *

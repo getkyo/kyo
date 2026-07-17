@@ -109,17 +109,17 @@ final private[kyo] class Connection[Handle] private (
 
     /** Set after construction by the transport for a TLS connection. Reads the handle's observed close signals (the peer's close_notify on the
       * read side vs a bare TCP FIN) to report the security-relevant close reason. Left Absent for a plaintext connection, which has no
-      * close_notify exchange and reports the default [[kyo.net.Connection.CloseReason.Active]].
+      * close_notify exchange and reports the default [[kyo.net.Connection.Status.Active]].
       */
-    @volatile private[kyo] var closeReasonFn: Maybe[() => kyo.net.Connection.CloseReason] = Absent
+    @volatile private[kyo] var statusFn: Maybe[() => kyo.net.Connection.Status] = Absent
 
     /** How the inbound stream ended (RFC 8446 6.1 / RFC 5246 7.2.1). For a TLS connection this delegates to the transport-installed
-      * [[closeReasonFn]], which distinguishes an orderly close (the peer's authenticated close_notify was received) from a truncation (a bare
-      * TCP FIN with no close_notify) and from a local close. For a plaintext connection (no `closeReasonFn`) it reports
-      * [[kyo.net.Connection.CloseReason.Active]].
+      * [[statusFn]], which distinguishes an orderly close (the peer's authenticated close_notify was received) from a truncation (a bare
+      * TCP FIN with no close_notify) and from a local close. For a plaintext connection (no `statusFn`) it reports
+      * [[kyo.net.Connection.Status.Active]].
       */
-    override def closeReason: kyo.net.Connection.CloseReason =
-        closeReasonFn.map(fn => fn()).getOrElse(kyo.net.Connection.CloseReason.Active)
+    override def status: kyo.net.Connection.Status =
+        statusFn.map(fn => fn()).getOrElse(kyo.net.Connection.Status.Active)
 
     /** Set inside `closeFn`'s win-the-close branch, once, to the [[TeardownCause]] that drove this connection's teardown (a pump's observed
       * end, or an explicit close). `Absent` until the connection has actually started closing.
@@ -401,8 +401,8 @@ private[kyo] object Connection:
             def detachForUpgrade()(using AllowUnsafe, Frame): Maybe[Chunk[Span[Byte]]] = Absent // not upgradable: no driver or socket
             private[net] def start()(using AllowUnsafe, Frame): Boolean                = true   // no pumps; immediately usable
             // Plaintext, driverless connection: no peer certificate to hash and no close_notify exchange to observe.
-            def serverCertificateHash: Maybe[Span[Byte]]    = Absent
-            def closeReason: kyo.net.Connection.CloseReason = kyo.net.Connection.CloseReason.Active
+            def serverCertificateHash: Maybe[Span[Byte]] = Absent
+            def status: kyo.net.Connection.Status        = kyo.net.Connection.Status.Active
         end new
     end inMemory
 

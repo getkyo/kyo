@@ -747,23 +747,23 @@ final private[net] class PosixTransport private[posix] (
     private def installCertHash(connection: InternalConnection[PosixHandle], handle: PosixHandle)(using AllowUnsafe): Unit =
         val cached = handle.tls.flatMap(_.certSha256())
         connection.certHashFn = Present(() => if connection.isOpen then cached else Absent)
-        installCloseReason(connection, handle)
+        installStatus(connection, handle)
     end installCertHash
 
-    /** Install `connection.closeReasonFn` so a TLS connection reports the RFC 8446 6.1 / RFC 5246 7.2.1 close distinction. It reads the handle's
+    /** Install `connection.statusFn` so a TLS connection reports the RFC 8446 6.1 / RFC 5246 7.2.1 close distinction. It reads the handle's
       * observed read-side close signal (the `halfClose` state on the handle). While the connection is open with no half-close, it reports
       * Active; once closed with the state still Open, it was a local close. The function touches no engine, only the handle's `@volatile`
       * `halfClose` field, so it is safe to call on the caller's carrier after close.
       */
-    private def installCloseReason(connection: InternalConnection[PosixHandle], handle: PosixHandle)(using AllowUnsafe): Unit =
-        connection.closeReasonFn = Present(() =>
+    private def installStatus(connection: InternalConnection[PosixHandle], handle: PosixHandle)(using AllowUnsafe): Unit =
+        connection.statusFn = Present(() =>
             handle.halfClose match
-                case HalfCloseState.PeerCleanClose => NetConnection.CloseReason.CleanClose
-                case HalfCloseState.PeerEof        => NetConnection.CloseReason.Truncated
-                case _ if connection.isOpen        => NetConnection.CloseReason.Active
-                case _                             => NetConnection.CloseReason.LocalClose
+                case HalfCloseState.PeerCleanClose => NetConnection.Status.CleanClose
+                case HalfCloseState.PeerEof        => NetConnection.Status.Truncated
+                case _ if connection.isOpen        => NetConnection.Status.Active
+                case _                             => NetConnection.Status.LocalClose
         )
-    end installCloseReason
+    end installStatus
 
     // ---------------------------------------------------------------------------------------------------------------------------------------
     // TCP / UDS server listen + accept
