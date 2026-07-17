@@ -1361,10 +1361,20 @@ final private[net] class PosixTransport private[posix] (
                 discard(sockets.shutdown(handle.writeFd, PosixConstants.SHUT_RDWR))
                 closeRawFd(handle.writeFd)
         else
+            // Hold the handle's guard across the claim + shutdown + credit install AND driver.closeHandle, mirroring
+            // IoUringDriver.registerDeferredClose. On the poller, driver.closeHandle's own shutdown wakes the poll carrier into a reentrant
+            // releaseFailedUpgrade that reaches PosixHandle.close; without the hold that concurrent close can drive the handle's HandleGuard
+            // terminal in the window between winning the claim and installing the credit, running freeResources while fdCloseSink is still Absent
+            // so the real close(fd) never runs (a stranded credit, a CLOSE_WAIT leak). The hold keeps a read holder active across the window, so
+            // freeResources is deferred to endDeferredClose (or the last concurrent holder's release), which reads the installed credit. The
+            // beginDeferredClose false branch (a close already raced) falls through unprotected: a set close bit is always preceded by a spent
+            // claimFdClose, so the claim below is a no-op that installs nothing to strand.
+            val held = handle.beginDeferredClose()
             if handle.claimFdClose() then
                 discard(sockets.shutdown(handle.writeFd, PosixConstants.SHUT_RDWR))
                 handle.fdCloseSink = Present(() => closeRawFd(handle.writeFd))
             driver.closeHandle(handle)
+            if held then discard(handle.endDeferredClose())
         end if
     end closeUnwiredHandle
 

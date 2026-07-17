@@ -1130,6 +1130,27 @@ final private[net] class PollerIoDriver private[posix] (
             handle.fdCloseSink = Present(() => discard(takeNow(sockets.close(handle.readFd))))
     end claimAndDeferFdClose
 
+    /** Run the plaintext (non-close_notify) fd close under a deferred-close guard hold, mirroring [[IoUringDriver.registerDeferredClose]]. The
+      * hold is taken BEFORE the claim and released only after `PosixHandle.close`, so it spans [[claimAndDeferFdClose]]'s `shutdown` +
+      * `fdCloseSink` install and the `requestClose`. Without it a concurrent carrier can drive the handle's `HandleGuard` terminal in the window
+      * between the claim win and the credit install: a STARTTLS re-handshake close on this driver does `shutdown(SHUT_RDWR)`, whose EOF wakes the
+      * poll carrier into a reentrant `releaseFailedUpgrade` that reaches `PosixHandle.close`, running `freeResources` while `fdCloseSink` is still
+      * Absent so the real `close(fd)` never runs (a stranded credit, a `CLOSE_WAIT` fd leak). The hold keeps a read holder active across that
+      * window, so `freeResources` is deferred to this call's own [[PosixHandle.endDeferredClose]] (or the last concurrent holder's release),
+      * which reads the now-installed credit and closes the fd exactly once.
+      *
+      * The `beginDeferredClose` false branch (another closer already requested the close, so the guard is already closing/terminal) falls
+      * through to the same body unprotected, matching the io_uring path's fall-through: the credit is moot, because on this driver every
+      * close-bit set is preceded by a spent `claimFdClose` (every `requestClose` caller runs a `claimAndDeferFdClose` first), so the claim here
+      * is a no-op that installs nothing to strand.
+      */
+    private def deferredPlaintextClose(handle: PosixHandle)(using AllowUnsafe, Frame): Unit =
+        val held = handle.beginDeferredClose()
+        claimAndDeferFdClose(handle)
+        PosixHandle.close(handle)
+        if held then discard(handle.endDeferredClose())
+    end deferredPlaintextClose
+
     /** Discharge one TLS handle's deferred close obligation: best-effort close_notify (RFC 8446 6.1 / RFC 5246 7.2.1), claim-guarded fd close,
       * and PosixHandle.close (which frees the engine + buffers). Single-discharger: `pendingCloses.remove(handle)` IS the claim, gating the
       * WHOLE body, not just the fd close. At most three carriers ever call this for the same handle (the normal queued engine op, the
@@ -1154,10 +1175,10 @@ final private[net] class PollerIoDriver private[posix] (
                     end try
             }
             // Shut the fd down (not close it) right after the (attempted) alert flush, so the FIN follows the close_notify on the wire when
-            // both run; see claimAndDeferFdClose for why the real close is deferred instead of run here.
-            claimAndDeferFdClose(handle)
-            // Request the resource free here, after shutdownTls and the fd shutdown, so the CloseBit is set only after the alert is sent.
-            PosixHandle.close(handle)
+            // both run; see claimAndDeferFdClose for why the real close is deferred instead of run here. Both the fd shutdown/credit install and
+            // the resource-free request run under the deferred-close guard hold so no concurrent carrier can terminalize the guard between the
+            // claim win and the credit install (see deferredPlaintextClose). The CloseBit is still set only after the alert is sent.
+            deferredPlaintextClose(handle)
         end if
     end dischargeClose
 
@@ -1204,9 +1225,10 @@ final private[net] class PollerIoDriver private[posix] (
                 // mid-syscall on it (see claimAndDeferFdClose). The claimFdClose CAS makes this one-shot: a STARTTLS upgrade failure racing
                 // this closeHandle targets the SAME fd, so without the claim the fd could be shut down/closed twice (and a recycled fd
                 // belonging to another connection wrongly touched). Synchronous, on the calling carrier: never deferred via the engine FIFO,
-                // so it needs no pendingCloses registration (nothing here can be stranded by a driver terminal exit).
-                claimAndDeferFdClose(handle)
-                PosixHandle.close(handle)
+                // so it needs no pendingCloses registration (nothing here can be stranded by a driver terminal exit). The claim/shutdown/credit
+                // install and the requestClose run under a deferred-close guard hold so the shutdown's EOF cannot wake a reentrant closer that
+                // terminalizes the guard before the credit lands (see deferredPlaintextClose).
+                deferredPlaintextClose(handle)
         end match
     end closeHandle
 

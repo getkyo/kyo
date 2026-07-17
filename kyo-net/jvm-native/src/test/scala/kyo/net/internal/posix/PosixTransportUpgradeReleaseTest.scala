@@ -202,14 +202,20 @@ class PosixTransportUpgradeReleaseTest extends Test:
                             awaitCondition(5.seconds)(engine.stepCount.get() >= 1).map { stepped =>
                                 assert(stepped, "the upgrade handshake never reached its first step")
                                 val reapLatch = recording.awaitReap()
-                                // Abandon the upgrade through the production route: close() of the plaintext connection routes to the
-                                // upgrade's owner promise, whose discharge runs releaseFailedUpgrade on the engine FIFO. The discharge op
-                                // is enqueued synchronously by the close below, so a probe op enqueued right after it observes the state
-                                // strictly after the release ran and strictly before that drain pass's reap of the shutdown-forced EOF.
-                                plaintext.close()
-                                val probed = Promise.Unsafe.init[(Boolean, Boolean), Abort[Closed]]()
+                                val probed    = Promise.Unsafe.init[(Boolean, Boolean), Abort[Closed]]()
+                                // Abandon the upgrade through the production route, ON THE REAP CARRIER via an engine op, mirroring the
+                                // buildEngine-failure leaf above: close() of the plaintext connection routes to the upgrade's owner promise,
+                                // whose discharge runs releaseFailedUpgrade (its closeUnwiredHandle shutdown forces the still-kernel-owned stale
+                                // recv to EOF, then driver.closeHandle enqueues the deferred close) on THIS carrier. A probe op enqueued from
+                                // inside the same op sits behind that discharge in the same drainEngineOps pass, so it observes the state strictly
+                                // after the release ran and strictly before that pass's later drainReady reap of the shutdown-forced EOF. Running
+                                // close() from inside the engine op (rather than on the test carrier, then enqueuing the probe after) removes the
+                                // gap between the two enqueues that a parallel preemption could let the reap carrier drain and reap across.
                                 driver.submitEngineOp { () =>
-                                    probed.completeDiscard(Result.succeed((handle.readBuffer.isClosed, reapLatch.done())))
+                                    plaintext.close()
+                                    driver.submitEngineOp { () =>
+                                        probed.completeDiscard(Result.succeed((handle.readBuffer.isClosed, reapLatch.done())))
+                                    }
                                 }
                                 probed.safe.get.flatMap { case (closedDuringWindow, reapedDuringWindow) =>
                                     assert(!reapedDuringWindow, "the stale recv CQE must not have reaped before the probe ran")
