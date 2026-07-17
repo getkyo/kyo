@@ -1324,9 +1324,9 @@ final private[net] class PosixTransport private[posix] (
       * consistent: it deregisters the handle's fds (removing the activeFds / pendingReads / pendingWritables entries and, on epoll, the
       * `epollDesired` mask) so a recycled fd number starts from a clean slate and a fresh arm re-publishes the owner-id cookie, and it frees
       * the handle's `readBuffer` via `PosixHandle.close` (the bare close path leaked it on the connect-failure paths). The fd close is
-      * backend-coordinated through the shared `claimFdClose`: the poller's `closeHandle` already closed it (this skips), io_uring's defers it
-      * (this `shutdown` runs it). Any unattached handshake engine is freed by the caller AFTER this (it is not on `handle.tls`, so
-      * `PosixHandle.close` does not free it).
+      * backend-coordinated through the shared `claimFdClose`: whichever of this method and the driver's own close path wins the one-shot claim
+      * owns the fd's disposition, and on the handshake path the winner's `fdCloseSink` credit is consumed by the single `freeResources` run.
+      * Any unattached handshake engine is freed by the caller AFTER this (it is not on `handle.tls`, so `PosixHandle.close` does not free it).
       *
       * `connectPhase` distinguishes the two callers: a plain TCP connect that has not yet completed (`driveReadinessConnect` /
       * `awaitConnectThen`, before any handshake starts) vs a client TLS handshake failing over an ALREADY-established connect
@@ -1338,16 +1338,32 @@ final private[net] class PosixTransport private[posix] (
       * `IORING_OP_CONNECT` (`cancel()` only fails the local promise), so against an unresponsive peer the deferred credit could wait past
       * this process's lifetime for `PosixHandle.freeResources` to ever run -- closing the raw fd immediately here, the same as every other
       * fd close before the deferred-credit path existed, is correct rather than merely expedient.
+      *
+      * Ordering is per phase and load-bearing. The connect-phase arm closes the raw fd itself, so `driver.closeHandle` runs FIRST: the
+      * deregistration must precede the close or a recycled fd number could collide with the driver's stale bookkeeping. The handshake arm
+      * instead installs the deferred `fdCloseSink` credit, and `driver.closeHandle` is what enables that credit's single consumer (on
+      * io_uring it enqueues the close op whose `closeNow` -> `PosixHandle.close` -> `freeResources` reads the sink exactly once, possibly
+      * concurrently with a caller on another carrier; on the poller `closeHandle` runs the same consumer inline), so the claim, the
+      * shutdown, and the credit install ALL run before it: installing the credit after enabling the consumer would let the one
+      * `freeResources` run read the sink before the install lands (the handle can already have zero in-flight SQEs, so the close op takes
+      * the immediate `closeNow` branch), permanently stranding the credit and leaking the fd. The shutdown itself cannot wake the consumer
+      * early: a reaped EOF alone only decrements the in-flight count, and `freeResources` runs only via a `PosixHandle.close`, which nothing
+      * reaches for this handle before the `driver.closeHandle` call.
       */
     private def closeUnwiredHandle(handle: PosixHandle, driver: IoDriver[PosixHandle], connectPhase: Boolean)(using
         AllowUnsafe,
         Frame
     ): Unit =
-        driver.closeHandle(handle)
-        if handle.claimFdClose() then
-            discard(sockets.shutdown(handle.writeFd, PosixConstants.SHUT_RDWR))
-            if connectPhase then closeRawFd(handle.writeFd)
-            else handle.fdCloseSink = Present(() => closeRawFd(handle.writeFd))
+        if connectPhase then
+            driver.closeHandle(handle)
+            if handle.claimFdClose() then
+                discard(sockets.shutdown(handle.writeFd, PosixConstants.SHUT_RDWR))
+                closeRawFd(handle.writeFd)
+        else
+            if handle.claimFdClose() then
+                discard(sockets.shutdown(handle.writeFd, PosixConstants.SHUT_RDWR))
+                handle.fdCloseSink = Present(() => closeRawFd(handle.writeFd))
+            driver.closeHandle(handle)
         end if
     end closeUnwiredHandle
 

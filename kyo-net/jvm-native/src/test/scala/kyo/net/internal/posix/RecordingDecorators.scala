@@ -77,6 +77,11 @@ final class RecordingSocketBindings(real: SocketBindings) extends SocketBindings
     // null means no hook set; CAS to null before firing so it fires exactly once.
     @volatile var onRecvNow: Int => Unit = null
 
+    // One-shot hook fired from inside shutdown BEFORE delegating to real, for release-ordering races (a shutdown sits between a release
+    // path's fd claim and whatever it does next, so a hook here can hold the releasing carrier inside that exact window).
+    // null means no hook set; CAS to null before firing so it fires exactly once.
+    @volatile var onShutdown: Int => Unit = null
+
     // Per-fd latch that completes the first time close(fd) is actually called, mirroring RecordingPollerBackend's
     // registeredRead/deregisteredFd pattern. A close-during-io race test uses this to await the deferred real close(fd) running (which
     // happens asynchronously on whatever carrier releases the last guard holder), rather than polling closeCounts.
@@ -129,6 +134,13 @@ final class RecordingSocketBindings(real: SocketBindings) extends SocketBindings
         // Record before delegating, mirroring close()'s ordering.
         shutdownCalls.add((fd, how))
         discard(callOrder.add(s"shutdown($fd)"))
+        // Fire the onShutdown hook before delegating, one-shot via the same read-then-null pattern as onRecvNow above.
+        val hook = onShutdown
+        if hook != null then
+            if onShutdown.eq(hook) then
+                onShutdown = null
+                hook(fd)
+        end if
         real.shutdown(fd, how)
     end shutdown
 

@@ -98,6 +98,14 @@ class PosixTransportUpgradeReleaseTest extends Test:
     private def withRecordingTransport[A](
         body: (PosixTransport, IoUringDriver, RecordingIoUringBindings) => A < (Abort[Closed] & Async)
     )(using Frame): A < (Abort[Closed] & Async) =
+        withRecordingTransport(transportConfig, Ffi.load[SocketBindings])(body)
+
+    /** As above, over a caller-supplied transport config and socket bindings (a recording decorator, so a leaf can observe or hook the
+      * transport's own shutdown/close syscalls).
+      */
+    private def withRecordingTransport[A](config: kyo.net.TransportConfig, transportSockets: SocketBindings)(
+        body: (PosixTransport, IoUringDriver, RecordingIoUringBindings) => A < (Abort[Closed] & Async)
+    )(using Frame): A < (Abort[Closed] & Async) =
         val realUring = Ffi.load[IoUringBindings]
         val realRing  = Buffer.alloc[Byte](realUring.kyo_uring_sizeof().toInt)
         val rc        = realUring.io_uring_queue_init(256, realRing, 0)
@@ -107,7 +115,7 @@ class PosixTransportUpgradeReleaseTest extends Test:
         val recording = RecordingIoUringBindings(realUring, realRing)
         val driver    = TestDrivers.forBindings(recording, realRing)
         discard(driver.start())
-        val transport = TestTransports.forTesting(transportConfig, driver, Ffi.load[SocketBindings], backendIsEpoll = false)
+        val transport = TestTransports.forTesting(config, driver, transportSockets, backendIsEpoll = false)
         Sync.ensure(Sync.defer(driver.close()))(body(transport, driver, recording))
     end withRecordingTransport
 
@@ -223,6 +231,87 @@ class PosixTransportUpgradeReleaseTest extends Test:
                                             )
                                             assert(engine.freed.get(), "the abandoned upgrade's engine must be freed")
                                         }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }.map(_ => succeed)
+        }
+    }
+
+    "a failed upgrade whose pump recv has already reaped (io_uring)" - {
+
+        "buildEngine failure: the fd-close credit must be installed before the driver close can consume it" in {
+            PosixTestSockets.assumeUring()
+            // channelCapacity = 1 lets two peer sends fill the inbound channel and park the ReadPump on its put with NO recv re-armed:
+            // the handle then has zero in-flight SQEs while the connection is still Established. In that state the release's driver
+            // close takes registerDeferredClose's immediate closeNow branch, whose freeResources is the single, at-most-once consumer
+            // of the fdCloseSink credit. If the release enables that consumer before installing the credit, the one consuming run reads
+            // the sink Absent, the credit installed afterwards strands forever, and the fd is never closed: a permanent descriptor leak.
+            val cfg = transportConfig.copy(channelCapacity = 1)
+            val spy = RecordingSocketBindings(Ffi.load[SocketBindings])
+            withRecordingTransport(cfg, spy) { (transport, driver, recording) =>
+                PosixTestSockets.loopbackPair().map { case (client, accepted) =>
+                    Sync.ensure(Sync.defer(discard(sock.close(accepted)))) {
+                        val handle    = PosixHandle.socket(client, PosixHandle.DefaultReadBufferSize, Absent)
+                        val plaintext = transport.openWith(handle, driver)
+                        assert(plaintext.start(), "the plaintext connection must start")
+                        awaitCondition(5.seconds)(handle.recvInFlight).map { armed =>
+                            assert(armed, "the pump's first recv never became kernel-owned")
+                            // First byte: recv 1 delivers it, the offer fills the capacity-1 channel, and the pump re-arms exactly once.
+                            val c0  = recording.cqeSeenCount.get()
+                            val one = Buffer.fromArray[Byte](Array[Byte](1))
+                            assert(sock.sendNow(accepted, one, 1L, 0).value == 1L, "peer send 1 must succeed")
+                            awaitCondition(5.seconds)(recording.cqeSeenCount.get() > c0 && handle.recvInFlight).map { rearmed =>
+                                assert(rearmed, "the pump must deliver the first byte and re-arm its recv")
+                                // Second byte: recv 2 delivers it, the pump's put parks on the full channel, and no recv is re-armed.
+                                // Once recv 2's CQE has reaped with nothing in flight, the state is stable: the parked put can never
+                                // succeed (capacity 1, held by the first chunk, no consumer), so no re-arm can ever follow.
+                                val two = Buffer.fromArray[Byte](Array[Byte](2))
+                                assert(sock.sendNow(accepted, two, 1L, 0).value == 1L, "peer send 2 must succeed")
+                                awaitCondition(5.seconds)(
+                                    recording.cqeSeenCount.get() > c0 + 1 && !driver.hasInFlightRead(handle) && !handle.recvInFlight
+                                ).map { drained =>
+                                    one.close()
+                                    two.close()
+                                    assert(drained, "the pump must park on the full channel with no recv in flight")
+                                    // Deterministic window pin: the release's shutdown syscall sits between its fd claim and whatever it
+                                    // does next, and IoUringDriver.closeHandle replaces handle.engineFreeSink synchronously on the
+                                    // caller's carrier before it enqueues anything. So at shutdown time, a replaced engineFreeSink
+                                    // proves the driver close was already requested and the credit's consumer is enabled and racing;
+                                    // the hook then holds the releasing carrier until that consumer's single freeResources run has
+                                    // provably executed (the read buffer it closes is observable), landing any later credit install
+                                    // strictly after the only read of it. With the credit installed before the driver close, the sink
+                                    // is untouched at shutdown time and the hook is a pass-through.
+                                    val sinkBefore = handle.engineFreeSink
+                                    spy.onShutdown = fd =>
+                                        if fd == client && (handle.engineFreeSink ne sinkBefore) then
+                                            val deadline = java.lang.System.nanoTime() + 10.seconds.toNanos
+                                            while !handle.readBuffer.isClosed && java.lang.System.nanoTime() < deadline do ()
+                                    // A verifying client with no reference identity: buildEngine fails closed, landing in upgradeRole's
+                                    // engine-build catch on THIS carrier, with zero in-flight SQEs for the handle.
+                                    val verifyingNoSni =
+                                        NetTlsConfig(trustAll = false, caCertPath = Present(TlsTestCert.certPath), sniHostname = Absent)
+                                    Abort.run[NetException](transport.upgradeToTls(plaintext, verifyingNoSni, 16).safe.get).map {
+                                        outcome =>
+                                            outcome match
+                                                case Result.Failure(_: NetTlsException) => ()
+                                                case other =>
+                                                    fail(s"a verifying no-SNI upgrade must fail closed with a NetTlsException, got $other")
+                                            end match
+                                            awaitCondition(5.seconds)(spy.closeCounts.getOrDefault(client, 0) >= 1).map { credited =>
+                                                assert(
+                                                    credited,
+                                                    "the release stranded its fd-close credit: the deferred close(fd) never ran (a permanent fd leak)"
+                                                )
+                                                assert(
+                                                    spy.closeCounts.getOrDefault(client, 0) == 1,
+                                                    s"the abandoned fd must be closed exactly once, counts=${spy.closeCounts}"
+                                                )
+                                                assert(handle.readBuffer.isClosed, "the release must have freed the handle's resources")
+                                            }
                                     }
                                 }
                             }
