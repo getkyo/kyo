@@ -102,6 +102,141 @@ class BufferTest extends Test:
         }
     }
 
+    "Buffer primitive accessors" - {
+        // The non-generic getLong/setLong/getInt/setInt/getShort/setShort/getFloat/setFloat/getDouble/
+        // setDouble/getByte/setByte pairs bypass the boxing generic get/set dispatch. Each pair gets its own
+        // round-trip, out-of-range, and closed-buffer block, mirroring this file's own per-type convention
+        // above rather than assuming uniformity across types.
+
+        "getLong/setLong round-trip on Buffer[Long]" in {
+            val b = Buffer.alloc[Long](2)
+            try
+                b.setLong(0, Long.MaxValue)
+                b.setLong(1, 1234567890123L)
+                assert(b.getLong(0) == Long.MaxValue)
+                assert(b.getLong(1) == 1234567890123L)
+            finally b.close()
+            end try
+        }
+        "getLong out of range throws" in {
+            val b = Buffer.alloc[Long](1)
+            try assert(intercept[IndexOutOfBoundsException](b.getLong(1)) != null)
+            finally b.close()
+            end try
+        }
+        "getLong on a closed buffer throws" in {
+            val b = Buffer.alloc[Long](1); b.close()
+            assert(intercept[IllegalStateException](b.getLong(0)) != null)
+        }
+
+        "getInt/setInt round-trip on Buffer[Int]" in {
+            val b = Buffer.alloc[Int](2)
+            try
+                b.setInt(0, 1234567)
+                b.setInt(1, -1)
+                assert(b.getInt(0) == 1234567)
+                assert(b.getInt(1) == -1)
+            finally b.close()
+            end try
+        }
+        "getInt out of range throws" in {
+            val b = Buffer.alloc[Int](1)
+            try assert(intercept[IndexOutOfBoundsException](b.getInt(1)) != null)
+            finally b.close()
+            end try
+        }
+        "getInt on a closed buffer throws" in {
+            val b = Buffer.alloc[Int](1); b.close()
+            assert(intercept[IllegalStateException](b.getInt(0)) != null)
+        }
+
+        "getShort/setShort round-trip on Buffer[Short]" in {
+            val b = Buffer.alloc[Short](3)
+            try
+                b.setShort(0, 1.toShort)
+                b.setShort(1, (-1).toShort)
+                b.setShort(2, Short.MaxValue)
+                assert(b.getShort(0) == (1: Short))
+                assert(b.getShort(1) == (-1: Short))
+                assert(b.getShort(2) == Short.MaxValue)
+            finally b.close()
+            end try
+        }
+        "getShort out of range throws" in {
+            val b = Buffer.alloc[Short](1)
+            try assert(intercept[IndexOutOfBoundsException](b.getShort(1)) != null)
+            finally b.close()
+            end try
+        }
+        "getShort on a closed buffer throws" in {
+            val b = Buffer.alloc[Short](1); b.close()
+            assert(intercept[IllegalStateException](b.getShort(0)) != null)
+        }
+
+        "getFloat/setFloat round-trip on Buffer[Float]" in {
+            val b = Buffer.alloc[Float](2)
+            try
+                b.setFloat(0, 3.14f)
+                b.setFloat(1, -2.71f)
+                assert(b.getFloat(0) == 3.14f)
+                assert(b.getFloat(1) == -2.71f)
+            finally b.close()
+            end try
+        }
+        "getFloat out of range throws" in {
+            val b = Buffer.alloc[Float](1)
+            try assert(intercept[IndexOutOfBoundsException](b.getFloat(1)) != null)
+            finally b.close()
+            end try
+        }
+        "getFloat on a closed buffer throws" in {
+            val b = Buffer.alloc[Float](1); b.close()
+            assert(intercept[IllegalStateException](b.getFloat(0)) != null)
+        }
+
+        "getDouble/setDouble round-trip on Buffer[Double]" in {
+            val b = Buffer.alloc[Double](2)
+            try
+                b.setDouble(0, 1.0e100)
+                b.setDouble(1, -0.0)
+                assert(b.getDouble(0) == 1.0e100)
+                assert(b.getDouble(1) == -0.0)
+            finally b.close()
+            end try
+        }
+        "getDouble out of range throws" in {
+            val b = Buffer.alloc[Double](1)
+            try assert(intercept[IndexOutOfBoundsException](b.getDouble(1)) != null)
+            finally b.close()
+            end try
+        }
+        "getDouble on a closed buffer throws" in {
+            val b = Buffer.alloc[Double](1); b.close()
+            assert(intercept[IllegalStateException](b.getDouble(0)) != null)
+        }
+
+        "getByte/setByte round-trip on Buffer[Byte]" in {
+            val b = Buffer.alloc[Byte](2)
+            try
+                b.setByte(0, 42)
+                b.setByte(1, -1)
+                assert(b.getByte(0) == (42: Byte))
+                assert(b.getByte(1) == (-1: Byte))
+            finally b.close()
+            end try
+        }
+        "getByte out of range throws" in {
+            val b = Buffer.alloc[Byte](1)
+            try assert(intercept[IndexOutOfBoundsException](b.getByte(1)) != null)
+            finally b.close()
+            end try
+        }
+        "getByte on a closed buffer throws" in {
+            val b = Buffer.alloc[Byte](1); b.close()
+            assert(intercept[IllegalStateException](b.getByte(0)) != null)
+        }
+    }
+
     "Buffer.use" - {
         "closes on normal exit" in {
             val captured = Buffer.use[Int, Buffer[Int]](10) { b =>

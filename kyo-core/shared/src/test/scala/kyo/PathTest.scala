@@ -355,6 +355,37 @@ class PathTest extends kyo.test.Test[Any]:
         end for
     }
 
+    "readLong reads from the start without disturbing an interleaved readChunk cursor" in {
+        import AllowUnsafe.embrace.danger
+        // A leading decimal token so readLong parses a real value, then known bytes so the interleaved
+        // readChunk cursor can be checked byte-for-byte.
+        val content = "12345 abcdefghij"
+        for
+            dir <- Path.tempDir("kyo-path-readlong-cursor")
+            file = dir / "readlong-cursor.txt"
+            _ <- file.write(content)
+        yield
+            val handle   = file.unsafe.openRead().getOrThrow
+            val expected = content.getBytes(StandardCharsets.US_ASCII)
+            try
+                val first   = new Array[Byte](5)
+                val firstN  = handle.readChunk(first).bytesRead
+                val parsed  = handle.readLong()
+                val second  = new Array[Byte](5)
+                val secondN = handle.readChunk(second).bytesRead
+                assert(firstN == 5)
+                assert(first.toList == expected.slice(0, 5).toList)
+                assert(parsed == 12345L)
+                // readLong rewinds to the start internally; the readChunk cursor must still resume at byte 5,
+                // so this chunk is bytes [5, 10). A cursor left at end-of-content instead would read the wrong
+                // window or hit EOF here.
+                assert(secondN == 5)
+                assert(second.toList == expected.slice(5, 10).toList)
+            finally handle.close()
+            end try
+        end for
+    }
+
     "readLines returns one element per line without trailing newlines" in {
         for
             dir <- Path.tempDir("kyo-path-read-test")
@@ -2328,6 +2359,150 @@ class PathTest extends kyo.test.Test[Any]:
                             fail("removeAll should fail when files cannot be deleted, but it succeeded silently")
                     end for
         yield ()
+    }
+
+    // =========================================================================
+    // Retained read handle (NioReadHandle retained ByteBuffer): aliasing safety
+    // and position(0) re-read through a single handle.
+    //
+    // The retained-handle read path reuses one ByteBuffer wrapping the caller's
+    // reused Array[Byte] across calls, so a second readChunk overwrites the same
+    // backing array in place. A caller that copies a primitive out of the borrowed
+    // bytes before the next read is unaffected; a caller that retains the borrowed
+    // Span would see it mutate. These leaves assert the copy-out discipline and
+    // that position(0) rewinds and re-reads identical bytes through the same handle.
+    // =========================================================================
+
+    "the borrowed byte view does not escape the read callback (aliasing safety)" in {
+        import AllowUnsafe.embrace.danger
+        for
+            dir <- Path.tempDir("kyo-readhandle-alias")
+            fileA = dir / "a.txt"
+            fileB = dir / "b.txt"
+            _ <- fileA.write("aaaa")
+            _ <- fileB.write("bbbb")
+        yield
+            val buffer = new Array[Byte](4)
+
+            def readOnce(p: Path)(callback: (Span[Byte], Int) => Long): Long =
+                val handle = p.unsafe.openRead().getOrThrow
+                try
+                    val result = handle.readChunk(buffer)
+                    callback(Span.fromUnsafe(buffer), result.bytesRead)
+                finally handle.close()
+                end try
+            end readOnce
+
+            // The callback copies out a primitive checksum, never retaining the Span.
+            def checksum(span: Span[Byte], len: Int): Long =
+                (0 until len).foldLeft(0L)((sum, i) => sum * 31 + span(i))
+
+            val firstChecksum = readOnce(fileA)(checksum)
+            // A second read into the SAME buffer overwrites the backing array in place.
+            val secondChecksum = readOnce(fileB)(checksum)
+
+            // The copied-out primitive from the first read is unchanged by the second read
+            // overwriting the shared buffer; the two files have distinct content so the
+            // checksums differ, proving the second read really overwrote the array.
+            assert(firstChecksum != secondChecksum)
+            assert(firstChecksum == ("aaaa".getBytes(StandardCharsets.UTF_8).foldLeft(0L)((s, b) => s * 31 + b)))
+        end for
+    }
+
+    "position(0) re-reads the file from offset 0 through one retained handle" in {
+        import AllowUnsafe.embrace.danger
+        for
+            dir <- Path.tempDir("kyo-readhandle-reread")
+            file    = dir / "content.txt"
+            content = "hello-retained-handle"
+            _ <- file.write(content)
+        yield
+            val handle = file.unsafe.openRead().getOrThrow
+            try
+                val buffer = new Array[Byte](64)
+
+                def readAll(): String =
+                    @scala.annotation.tailrec
+                    def loop(acc: String): String =
+                        val result = handle.readChunk(buffer)
+                        if result.isEof then acc
+                        else loop(acc + new String(buffer, 0, result.bytesRead, StandardCharsets.UTF_8))
+                    end loop
+                    loop("")
+                end readAll
+
+                val first = readAll()
+                assert(first == content)
+                // position(0) rewinds; the cache key is the backing array identity, not the
+                // channel position, so the retained ByteBuffer stays valid for the re-read.
+                handle.position(0L)
+                val second = readAll()
+                assert(second == content)
+                assert(first == second)
+            finally handle.close()
+            end try
+        end for
+    }
+
+    // =========================================================================
+    // ReadHandle.readLong: parse-in-place of the first ASCII-decimal Long
+    // =========================================================================
+
+    "readLong parses the first ASCII-decimal Long out of a numeric file" in {
+        import AllowUnsafe.embrace.danger
+        for
+            dir <- Path.tempDir("kyo-readlong-happy")
+            file = dir / "value"
+            _ <- file.write("123456\n")
+        yield
+            val handle = file.unsafe.openRead().getOrThrow
+            try assert(handle.readLong() == 123456L)
+            finally handle.close()
+            end try
+        end for
+    }
+
+    "readLong returns AbsentLong for empty, non-numeric and leading-sign content" in {
+        import AllowUnsafe.embrace.danger
+        for
+            dir <- Path.tempDir("kyo-readlong-total")
+            empty      = dir / "empty"
+            nonNumeric = dir / "non-numeric"
+            negative   = dir / "negative"
+            _ <- empty.write("")
+            _ <- nonNumeric.write("not-a-number")
+            // The parser accepts no sign, so a negative value is unparseable. That is what keeps
+            // the negative sentinel collision-free: no parse can ever produce a negative Long.
+            _ <- negative.write("-5")
+        yield
+            def readLongOf(p: Path): Long =
+                val handle = p.unsafe.openRead().getOrThrow
+                try handle.readLong()
+                finally handle.close()
+                end try
+            end readLongOf
+
+            assert(readLongOf(empty) == Path.ReadHandle.AbsentLong)
+            assert(readLongOf(nonNumeric) == Path.ReadHandle.AbsentLong)
+            assert(readLongOf(negative) == Path.ReadHandle.AbsentLong)
+            assert(Path.ReadHandle.AbsentLong == Long.MinValue)
+        end for
+    }
+
+    "readLong returns AbsentLong on overflow rather than a wrapped negative Long" in {
+        import AllowUnsafe.embrace.danger
+        for
+            dir <- Path.tempDir("kyo-readlong-overflow")
+            file = dir / "overflow"
+            _ <- file.write("99999999999999999999999")
+        yield
+            val handle = file.unsafe.openRead().getOrThrow
+            try
+                val value = handle.readLong()
+                assert(value == Path.ReadHandle.AbsentLong)
+            finally handle.close()
+            end try
+        end for
     }
 
 end PathTest

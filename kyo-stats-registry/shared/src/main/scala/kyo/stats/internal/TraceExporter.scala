@@ -3,6 +3,7 @@ package kyo.stats.internal
 import java.time.Instant
 import kyo.AllowUnsafe
 import kyo.stats.Attributes
+import scala.util.control.NonFatal
 
 /** Creates and manages trace spans for distributed tracing.
   *
@@ -26,12 +27,42 @@ object TraceExporter {
         import scala.jdk.CollectionConverters.*
         val factories = java.util.ServiceLoader.load(classOf[ExporterFactory]).iterator().asScala.toList
         val exporters = factories.flatMap(_.traceExporter())
+        compose(exporters)
+    }
+
+    /** Service-loader discovery with per-factory isolation: a factory whose construction or
+      * `traceExporter()` call throws is skipped and its exporters are omitted, so one failing provider
+      * cannot take down discovery for the rest. The lazy service-loader iterator constructs each provider
+      * on `next()`, so the guard wraps both the construction and the `traceExporter()` call for each entry.
+      * Used where discovery runs at a boundary that turns a throw into an unrecoverable failure (a class
+      * initializer), so a bad third-party provider degrades to skipped instead of bricking every later use.
+      */
+    def getIsolated(implicit _au: AllowUnsafe): TraceExporter = {
+        val it = java.util.ServiceLoader.load(classOf[ExporterFactory]).iterator()
+        // hasNext and next() both run provider code lazily and can throw; a hasNext throw ends discovery,
+        // a next()/traceExporter() throw skips that one provider. Recursion accumulates the survivors.
+        @scala.annotation.tailrec
+        def loop(acc: List[TraceExporter]): List[TraceExporter] = {
+            val hasNext =
+                try it.hasNext
+                catch { case ex: Throwable if NonFatal(ex) => false }
+            if (!hasNext) acc.reverse
+            else {
+                val next =
+                    try it.next().traceExporter().toList
+                    catch { case ex: Throwable if NonFatal(ex) => Nil }
+                loop(next reverse_::: acc)
+            }
+        }
+        compose(loop(Nil))
+    }
+
+    private def compose(exporters: List[TraceExporter]): TraceExporter =
         exporters match {
             case Nil      => noop
             case h :: Nil => h
             case l        => all(l)
         }
-    }
 
     val noop: TraceExporter =
         new TraceExporter {

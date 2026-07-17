@@ -270,6 +270,7 @@ lazy val kyoJVM: Project = project
         `kyo-stats-registry`.jvm,
         `kyo-config`.jvm,
         `kyo-stats-otlp`.jvm,
+        `kyo-stats-machine`.jvm,
         `kyo-logging-jpl`.jvm,
         `kyo-logging-slf4j`.jvm,
         `kyo-reactive-streams`.jvm,
@@ -338,6 +339,7 @@ lazy val kyoJS = project
         `kyo-config`.js,
         `kyo-reactive-streams`.js,
         `kyo-stats-otlp`.js,
+        `kyo-stats-machine`.js,
         `kyo-zio-test`.js,
         `kyo-zio`.js,
         `kyo-cats`.js,
@@ -410,6 +412,7 @@ lazy val kyoNative = project
         `kyo-zio-test`.native,
         `kyo-stm`.native,
         `kyo-stats-otlp`.native,
+        `kyo-stats-machine`.native,
         `kyo-browser`.native,
         `kyo-slack`.native,
         `kyo-ui`.native,
@@ -442,6 +445,7 @@ lazy val kyoWasm = project
         `kyo-schema`.wasm,
         `kyo-scheduler`.wasm,
         `kyo-core`.wasm,
+        `kyo-ffi`.wasm,
         `kyo-direct`.wasm,
         `kyo-stm`.wasm,
         `kyo-combinators`.wasm,
@@ -455,6 +459,7 @@ lazy val kyoWasm = project
         `kyo-compat-zio`.wasm,
         `kyo-http`.wasm,
         `kyo-stats-otlp`.wasm,
+        `kyo-stats-machine`.wasm,
         `kyo-flow`.wasm,
         `kyo-ai`.wasm,
         `kyo-jsonrpc`.wasm,
@@ -700,7 +705,7 @@ lazy val `kyo-offheap` =
         )
 
 lazy val `kyo-ffi` =
-    crossProject(JSPlatform, JVMPlatform, NativePlatform)
+    crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
         .crossType(CrossType.Full)
         .in(file("kyo-ffi"))
         .dependsOn(`kyo-core`)
@@ -722,7 +727,16 @@ lazy val `kyo-ffi` =
                 CallbackShapesGen.generate((Compile / sourceManaged).value)
             }.taskValue
         )
-        .jsSettings(`js-settings`)
+        .jsSettings(
+            `js-settings`,
+            // koffi and the node:fs mmap facade are @JSImport modules, so the JS backend needs a module kind
+            // (the default NoModule cannot link an @JSImport). Use ESModule to match the wasm backend: under a
+            // CommonJS module Node keeps `require` module-scoped, which the browser-gate reads (and its
+            // BrowserDetectionTest simulation) cannot observe, whereas ESModule has no `require` and the gate
+            // behaves identically to the wasm axis.
+            scalaJSLinkerConfig ~= { _.withModuleKind(ModuleKind.ESModule) }
+        )
+        .wasmSettings(`wasm-settings`)
 
 // Declared at top level so the key resolves in the crossProject's native sub-project scope.
 lazy val buildKyoItBundled =
@@ -794,59 +808,38 @@ lazy val `kyo-ffi-it` =
             `js-settings`,
             // koffi is loaded via CommonJS `require` at runtime, so align the linker.
             scalaJSLinkerConfig ~= { _.withModuleKind(ModuleKind.CommonJSModule) },
-            // Point the JS runtime at the plugin-compiled library via KYO_FFI_<LIBID>_PATH.
+            // Point the JS runtime at the plugin-compiled library via KYO_FFI_<LIBID>_PATH. The os/arch/ext
+            // tags mirror the plugin's own CCompiler output name so the path matches the file ffiCompile
+            // wrote, including the linux-musl split and the empty (no `lib`) prefix on Windows.
             Test / jsEnv := {
-                val targetDir = target.value
-                val ffiOut    = targetDir / "ffi"
-                val os        = sys.props.getOrElse("os.name", "").toLowerCase
-                val ext =
-                    if (os.contains("mac")) "dylib"
-                    else if (os.contains("win")) "dll"
-                    else "so"
-                val arch =
-                    sys.props.getOrElse("os.arch", "") match {
-                        case "x86_64" | "amd64"  => "x86_64"
-                        case "aarch64" | "arm64" => "aarch64"
-                        case other               => other
-                    }
-                val osDetect =
-                    if (os.contains("mac")) "darwin"
-                    else if (os.contains("win")) "windows"
-                    else if (os.contains("linux")) "linux"
-                    else os
-                val bundled = ffiOut / s"libkyo_it_bundled-$osDetect-$arch.$ext"
+                val ffiOut = target.value / "ffi"
+                val osName = sys.props.getOrElse("os.name", "").toLowerCase
+                val osTag =
+                    if (osName.contains("mac")) "darwin"
+                    else if (osName.contains("win")) "windows"
+                    else if (osName.contains("linux"))
+                        if (
+                            new java.io.File("/lib/ld-musl-x86_64.so.1").exists()
+                            || new java.io.File("/lib/ld-musl-aarch64.so.1").exists()
+                        ) "linux-musl"
+                        else "linux"
+                    else osName
+                val ext    = if (osTag == "darwin") "dylib" else if (osTag == "windows") "dll" else "so"
+                val prefix = if (osTag == "windows") "" else "lib"
+                val arch = sys.props.getOrElse("os.arch", "") match {
+                    case "x86_64" | "amd64"  => "x86_64"
+                    case "aarch64" | "arm64" => "aarch64"
+                    case other               => other
+                }
+                val bundled = ffiOut / s"${prefix}kyo_it_bundled-$osTag-$arch.$ext"
                 new NodeJSEnv(
                     NodeJSEnv.Config()
                         .withArgs(List("--max_old_space_size=5120"))
                         .withEnv(Map("KYO_FFI_KYO_IT_BUNDLED_PATH" -> bundled.getAbsolutePath))
                 )
             },
-            // Bootstrap koffi into Node's resolver before tests run. Hooked on Test / compile (not
-            // Test / test) so test, testOnly, and testQuick all trigger it, and it re-runs after a
-            // clean wipes node_modules. Idempotent on the marker file.
-            Test / compile := (Test / compile).dependsOn(Def.task {
-                val log        = streams.value.log
-                val targetBase = target.value
-                val nodeMods   = targetBase / "node_modules"
-                val marker     = nodeMods / "koffi" / "package.json"
-                // Must match `kyo.ffi.internal.FfiErrors.KoffiSupportedRange`.
-                val koffiRange = "^2.7"
-                val pjContent =
-                    s"""{"name":"kyo-ffi-it-js-test","private":true,"dependencies":{"koffi":"$koffiRange"}}"""
-                val pj = targetBase / "package.json"
-                if (!pj.exists() || IO.read(pj) != pjContent) {
-                    IO.createDirectory(targetBase)
-                    IO.write(pj, pjContent)
-                }
-                if (!marker.exists()) {
-                    log.info(s"[kyo-ffi-it JS] installing koffi@$koffiRange into $targetBase ...")
-                    val rc = scala.sys.process.Process(
-                        Seq("npm", "install", "--no-audit", "--no-fund", "--silent"),
-                        targetBase
-                    ).!
-                    if (rc != 0) sys.error(s"npm install koffi failed (exit $rc)")
-                }
-            }).value
+            // koffi bootstrap (idempotent npm install, hooked on Test / compile) via the kyo-ffi plugin.
+            ffiKoffiJsBootstrap("kyo-ffi-it-js-test")
         )
 
 lazy val `kyo-ffi-codegen` =
@@ -952,8 +945,6 @@ lazy val `kyo-ffi-bench` =
             foreignRelease,
             publish / skip := true,
             Compile / javaOptions ++= Seq("--enable-native-access=ALL-UNNAMED"),
-            Test / javaOptions ++= Seq("--enable-native-access=ALL-UNNAMED"),
-            run / javaOptions ++= Seq("--enable-native-access=ALL-UNNAMED"),
             run / fork := true
         )
 
@@ -1112,8 +1103,157 @@ lazy val `kyo-config` =
         )
         .jvmSettings(mimaCheck(false))
         .nativeSettings(`native-settings`)
-        .jsSettings(`js-settings`)
-        .wasmSettings(`wasm-settings`)
+        .jsSettings(
+            `js-settings`,
+            // Rollout reads KYO_ROLLOUT_PATH once, when its object initializes, which can happen before any
+            // test body runs. RolloutEnvTest asserts a StaticFlag rollout expression resolves against the
+            // topology path Node reports, so the variable has to be in the test process environment from the
+            // start rather than written by a test.
+            Test / jsEnv := new NodeJSEnv(
+                NodeJSEnv.Config()
+                    .withArgs(List("--max_old_space_size=5120"))
+                    .withEnv(Map("KYO_ROLLOUT_PATH" -> "prod/us-east-1"))
+            )
+        )
+        .wasmSettings(
+            `wasm-settings`,
+            // Rollout reads KYO_ROLLOUT_PATH once, when its object initializes (see the .jsSettings note
+            // above); RolloutEnvTest runs on wasm too (the js-wasm shared test root), so the same variable
+            // must be in the wasm test process environment from the start. The wasm backend forces ESModule
+            // and needs --experimental-wasm-exnref to load the WasmGC module, so this Test / jsEnv override
+            // (which fully replaces wasm-settings' jsEnv) re-adds that flag alongside the env var.
+            Test / jsEnv := new NodeJSEnv(
+                NodeJSEnv.Config()
+                    .withArgs(List("--max_old_space_size=5120", "--experimental-wasm-exnref"))
+                    .withEnv(Map("KYO_ROLLOUT_PATH" -> "prod/us-east-1"))
+            )
+        )
+
+lazy val `kyo-stats-machine` =
+    crossProject(JVMPlatform, JSPlatform, NativePlatform, WasmPlatform)
+        .crossType(CrossType.Full)
+        .in(file("kyo-stats-machine"))
+        .enablePlugins(KyoFfiPlugin)
+        .dependsOn(`kyo-ffi`)
+        .withKyoTest
+        .settings(
+            `kyo-settings`,
+            ffiCodegenClasspath := (LocalProject("kyo-ffi-codegen") / Compile / fullClasspath).value.map(_.data),
+            // MacosBindings declares library = "machine_macos", which is not a system library id
+            // (ffiSystemLibraries), so it needs an explicit FfiLibrary entry naming its bundled C
+            // source; LinuxBindings' library = "c" resolves through the system allowlist and needs
+            // no entry here.
+            ffiLibraries := Seq(
+                FfiLibrary(
+                    id = "machine_macos",
+                    cSources = Seq((baseDirectory.value / ".." / "shared" / "src" / "main" / "c" / "machine_macos.c").getAbsoluteFile)
+                )
+            )
+        )
+        .jvmSettings(
+            mimaCheck(false),
+            Test / javaOptions += "--enable-native-access=ALL-UNNAMED",
+            // The module auto-starts a background host sampler on first Stat touch. Disable it for the
+            // module's OWN test runs so the once-per-second sampler does not race the suites' destructive
+            // counter-drain assertions on the shared process-global machine.* handles; a test that needs a
+            // sampler starts and stops its own explicitly (MachineStatFactoryTest, MachineHandlesTest).
+            Test / javaOptions += "-Dkyo.machine.disabled=true"
+        )
+        .nativeSettings(
+            `native-settings`,
+            // Disable the auto-started sampler for the module's own Native test runs (see the JVM note).
+            Test / envVars += "KYO_MACHINE_DISABLED" -> "true"
+        )
+        .jsSettings(
+            `js-settings`,
+            // koffi is loaded via CommonJS `require` at runtime, so align the linker.
+            scalaJSLinkerConfig ~= { _.withModuleKind(ModuleKind.CommonJSModule) },
+            // Disable the auto-started sampler for the module's own JS test runs (see the JVM note); the
+            // opt-out is read via System.Unsafe.env, which resolves process.env on Node. Also point the
+            // runtime at the plugin-compiled machine_macos shim through KYO_FFI_MACHINE_MACOS_PATH: the
+            // generated MacosBindings impl resolves the library through NativeLoader.jsResolve, whose first
+            // step is this env var. Without it the shim (produced by ffiCompile under <axis>/target/ffi) is
+            // unresolvable at Node runtime (@kyo/ffi-native is not installed), so koffi's load throws off
+            // macOS instead of the reader degrading. The os/arch/ext tags mirror the plugin's own
+            // CCompiler output name so the path matches the file it wrote, including the linux-musl split.
+            Test / jsEnv := {
+                val ffiOut = target.value / "ffi"
+                val osName = sys.props.getOrElse("os.name", "").toLowerCase
+                val osTag =
+                    if (osName.contains("mac")) "darwin"
+                    else if (osName.contains("win")) "windows"
+                    else if (osName.contains("linux"))
+                        if (
+                            new java.io.File("/lib/ld-musl-x86_64.so.1").exists()
+                            || new java.io.File("/lib/ld-musl-aarch64.so.1").exists()
+                        ) "linux-musl"
+                        else "linux"
+                    else osName
+                val ext    = if (osTag == "darwin") "dylib" else if (osTag == "windows") "dll" else "so"
+                val prefix = if (osTag == "windows") "" else "lib"
+                val arch = sys.props.getOrElse("os.arch", "") match {
+                    case "x86_64" | "amd64"  => "x86_64"
+                    case "aarch64" | "arm64" => "aarch64"
+                    case other               => other
+                }
+                val shim = ffiOut / s"${prefix}machine_macos-$osTag-$arch.$ext"
+                new NodeJSEnv(
+                    NodeJSEnv.Config()
+                        .withArgs(List("--max_old_space_size=5120"))
+                        .withEnv(Map(
+                            "KYO_MACHINE_DISABLED"       -> "true",
+                            "KYO_FFI_MACHINE_MACOS_PATH" -> shim.getAbsolutePath
+                        ))
+                )
+            },
+            // koffi bootstrap (idempotent npm install, hooked on Test / compile) via the kyo-ffi plugin.
+            // The CommonJS linker setting above stays in this .jsSettings block: the plugin is a Scala 2.12
+            // sbt plugin with no sbt-scalajs dependency, so it cannot carry a scalaJSLinkerConfig setting.
+            ffiKoffiJsBootstrap("kyo-stats-machine-js-test")
+        )
+        .wasmSettings(
+            `wasm-settings`,
+            // Disable the auto-started sampler for the module's own wasm test runs (see the JVM note); the
+            // opt-out is read via System.Unsafe.env, which resolves process.env on Node, and point the
+            // runtime at the plugin-compiled machine_macos shim (see the .jsSettings note). The wasm backend
+            // forces ESModule, so the CommonJSModule linker line from .jsSettings is intentionally not
+            // repeated here; the Test / jsEnv override fully replaces wasm-settings' jsEnv, so it re-adds
+            // --experimental-wasm-exnref (the flag Node needs to load the WasmGC module).
+            Test / jsEnv := {
+                val ffiOut = target.value / "ffi"
+                val osName = sys.props.getOrElse("os.name", "").toLowerCase
+                val osTag =
+                    if (osName.contains("mac")) "darwin"
+                    else if (osName.contains("win")) "windows"
+                    else if (osName.contains("linux"))
+                        if (
+                            new java.io.File("/lib/ld-musl-x86_64.so.1").exists()
+                            || new java.io.File("/lib/ld-musl-aarch64.so.1").exists()
+                        ) "linux-musl"
+                        else "linux"
+                    else osName
+                val ext    = if (osTag == "darwin") "dylib" else if (osTag == "windows") "dll" else "so"
+                val prefix = if (osTag == "windows") "" else "lib"
+                val arch = sys.props.getOrElse("os.arch", "") match {
+                    case "x86_64" | "amd64"  => "x86_64"
+                    case "aarch64" | "arm64" => "aarch64"
+                    case other               => other
+                }
+                val shim = ffiOut / s"${prefix}machine_macos-$osTag-$arch.$ext"
+                new NodeJSEnv(
+                    NodeJSEnv.Config()
+                        .withArgs(List(
+                            "--max_old_space_size=5120",
+                            "--experimental-wasm-exnref"
+                        ))
+                        .withEnv(Map(
+                            "KYO_MACHINE_DISABLED"       -> "true",
+                            "KYO_FFI_MACHINE_MACOS_PATH" -> shim.getAbsolutePath
+                        ))
+                )
+            },
+            ffiKoffiJsBootstrap("kyo-stats-machine-wasm-test")
+        )
 
 lazy val `kyo-stats-otlp` =
     crossProject(JVMPlatform, JSPlatform, NativePlatform, WasmPlatform)
@@ -2309,7 +2449,7 @@ lazy val `kyo-test-runner` =
         )
         .jvmSettings(
             mimaCheck(false),
-            mainClass                             := Some("kyo.test.runner.Cli"),
+            Compile / mainClass                   := Some("kyo.test.runner.Cli"),
             libraryDependencies += "org.scala-sbt" % "test-interface" % "1.0" % Provided,
             Compile / unmanagedClasspath ++=
                 (LocalProject("kyo-preludeJVM") / Compile / fullClasspath).value,
