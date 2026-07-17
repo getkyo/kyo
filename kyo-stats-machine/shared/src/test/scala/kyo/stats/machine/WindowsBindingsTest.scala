@@ -118,21 +118,23 @@ class WindowsBindingsTest extends kyo.test.Test[Any]:
     "WindowsDisk.read bitmask change" - {
 
         "a changed GetLogicalDrives bitmask rebuilds the retained store set so a newly-mounted drive is read" in {
-            val stub = new StubBindings
+            // A uniquely-scoped MachineHandles, not the shared "machine" root: this leaf asserts ABSOLUTE
+            // absence of D:'s gauge before the bitmask picks it up, which the shared root cannot support (the
+            // real-host leaf below registers the runner's own real drives, D: included on a windows-latest
+            // runner, into the shared "machine" scope).
+            val handles = MachineHandles.initForTest(Stat.initScope("wbtest-bitmask-newdrive"), 8L)
+            val stub    = new StubBindings
             stub.getDriveTypeFn = _ => WindowsBindings.DriveFixed
             stub.diskFreeSpaceFn = (_, _, t, f) =>
                 t.set(0, 900L); f.set(0, 400L); 1
-            for handles <- MachineHandles.init
-            yield
-                val disk = new WindowsDisk(handles)
-                stub.getLogicalDrivesFn = () => 1 << 2 // C: only
-                disk.read(stub)
-                assert(!gaugeRegistered("machine", "disk", "D:\\", "total"))
-                stub.getLogicalDrivesFn = () => (1 << 2) | (1 << 3) // C: and D:
-                disk.read(stub)
-                assert(gaugePath("machine", "disk", "D:\\", "total") == 900.0)
-                disk.close()
-            end for
+            val disk = new WindowsDisk(handles)
+            stub.getLogicalDrivesFn = () => 1 << 2 // C: only
+            disk.read(stub)
+            assert(!gaugeRegistered("wbtest-bitmask-newdrive", "disk", "D:\\", "total"))
+            stub.getLogicalDrivesFn = () => (1 << 2) | (1 << 3) // C: and D:
+            disk.read(stub)
+            assert(gaugePath("wbtest-bitmask-newdrive", "disk", "D:\\", "total") == 900.0)
+            disk.close()
         }
     }
 

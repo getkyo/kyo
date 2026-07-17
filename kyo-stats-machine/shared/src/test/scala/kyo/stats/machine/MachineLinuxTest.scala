@@ -110,10 +110,16 @@ class MachineLinuxTest extends kyo.test.Test[Any]:
 
         "decodes quota and period from a single read" in {
             var callCount = 0
+            // cgCpuQuota/cgCpuPeriod are LongGaugeCells: StatsRegistry keeps only the first-ever-registered
+            // cell for a path canonical for the process lifetime, so polling this fixture's own values back
+            // out of the shared "machine" scope would be racing LinuxCgroupPathTest's real-host leaf, which
+            // reads the SAME machine.cgroup.cpu.quota/cpu.period paths off a genuine live cgroup v2 hierarchy
+            // (present on a real Linux CI runner). A uniquely-scoped MachineHandles keeps this fixture's
+            // write and poll contained to a path no real reader ever touches.
             for
-                handles <- MachineHandles.init
-                dir     <- Path.tempDir("kyo-stats-machine-linux-cpumax")
-                file = dir / "cpu.max"
+                dir <- Path.tempDir("kyo-stats-machine-linux-cpumax")
+                handles = MachineHandles.initForTest(Stat.initScope("mlinuxtest-cpumax-decode"), 8L)
+                file    = dir / "cpu.max"
                 _ <- file.write("50000 100000\n")
                 sampler = new MachineSampler(handles)
                 slot    = sampler.openSlot(file)
@@ -128,8 +134,8 @@ class MachineLinuxTest extends kyo.test.Test[Any]:
                         handles.cgCpuPeriod.set(LinuxScan.longField(b, n, 0, 1, 1000L))
                     end apply
                 ok     = sampler.readInto(slot, decode)
-                quota  = gaugePath("machine", "cgroup", "cpu.quota")
-                period = gaugePath("machine", "cgroup", "cpu.period")
+                quota  = gaugePath("mlinuxtest-cpumax-decode", "cgroup", "cpu.quota")
+                period = gaugePath("mlinuxtest-cpumax-decode", "cgroup", "cpu.period")
                 _ <- dir.removeAll
             yield
                 assert(ok)
