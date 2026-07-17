@@ -304,4 +304,35 @@ class MachineMacosTest extends kyo.test.Test[Any]:
         }
     }
 
+    "shim-load failure" - {
+
+        "a native-library load failure degrades every family to Absent through the production read, no throw" in {
+            // The generated MacosBindings impl loads the native library lazily on the first binding call, so
+            // a shim-load failure surfaces from read()'s first decode, not from Ffi.load. This drives that
+            // failure through MachineMacos' load probe and asserts bindings contains it: read() and
+            // readDisks() register nothing and do not throw. Unlike the off-macOS leaf above (assume-cancelled
+            // on macOS), this runs on every host: the failing probe throws before any real native load, so the
+            // outcome does not depend on whether the shim resolves or on the process-global load order the
+            // real koffi/dlopen path is subject to. It encodes the README's degrade promise directly.
+            val failing = new MachineMacos.LoadProbe:
+                def apply(bindings: MacosBindings, scratch: Buffer[Long])(using AllowUnsafe): Unit =
+                    throw new FfiLoadError.LibraryNotFound("machine_macos", Chunk("test: shim unresolvable"), null)
+            // A uniquely-scoped MachineHandles, never touched by any other leaf or suite, so every path under
+            // it starts genuinely unregistered and the absolute "nothing registered" check is meaningful.
+            val handles = MachineHandles.initForTest(Stat.initScope("mmactest-shim-load-fail"), 8L)
+            val sampler = new MachineSampler(handles)
+            val machine = new MachineMacos(handles, sampler, failing)
+            try
+                machine.read()      // no throw despite the load failure
+                machine.readDisks() // no throw
+                assert(!histogramRegistered("mmactest-shim-load-fail", "cpu", "total.rate"))
+                assert(!gaugeRegistered("mmactest-shim-load-fail", "memory", "total"))
+                assert(!gaugeRegistered("mmactest-shim-load-fail", "swap", "total"))
+                assert(!gaugeRegistered("mmactest-shim-load-fail", "load", "one"))
+                assert(!gaugeRegistered("mmactest-shim-load-fail", "disk", "root", "total"))
+            finally machine.close()
+            end try
+        }
+    }
+
 end MachineMacosTest

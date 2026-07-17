@@ -16,7 +16,11 @@ import kyo.ffi.*
   * allocates nothing. cgroup and PSI are Linux-only and are never written here, and macOS has no iowait or
   * steal concept, so those cells are never written either and their series are never registered.
   */
-final private[machine] class MachineMacos(h: MachineHandles, s: MachineSampler)(using AllowUnsafe) extends Machine:
+final private[machine] class MachineMacos(
+    h: MachineHandles,
+    s: MachineSampler,
+    loadProbe: MachineMacos.LoadProbe = MachineMacos.RealLoad
+)(using AllowUnsafe) extends Machine:
 
     private val cpuOut  = Buffer.alloc[Long](4)
     private val memOut  = Buffer.alloc[Long](3)
@@ -47,11 +51,19 @@ final private[machine] class MachineMacos(h: MachineHandles, s: MachineSampler)(
         disk.close()
     end close
 
-    /** The binding, loaded once; a load failure (a host with no koffi, for instance) degrades every
-      * reading to absent.
+    /** The binding, loaded once; a load failure (a host with no koffi, an unresolvable shim) degrades
+      * every reading to absent.
+      *
+      * The generated impl loads the native library lazily, on the first binding call, not at
+      * `Ffi.load`, so a shim-load failure would otherwise be thrown from the tick path's first read and
+      * escape this `try`. `loadProbe` forces that first call here, inside the guarded region, so the
+      * failure lands in the `catch` and yields Absent.
       */
     private lazy val bindings: Maybe[MacosBindings] =
-        try Present(Ffi.load[MacosBindings])
+        try
+            val b = Ffi.load[MacosBindings]
+            loadProbe(b, cpuOut)
+            Present(b)
         catch case ex: Throwable if scala.util.control.NonFatal(ex) => Absent
 
     private[machine] def readCpu(b: MacosBindings)(using AllowUnsafe): Unit =
@@ -89,5 +101,24 @@ final private[machine] class MachineMacos(h: MachineHandles, s: MachineSampler)(
             h.loadFifteen.set(loadOut.getDouble(2))
         end if
     end readLoad
+
+end MachineMacos
+
+private[machine] object MachineMacos:
+
+    /** Forces the generated `MacosBindings` impl's lazy native-library load. `MachineMacos.bindings`
+      * invokes it inside its guarded region so a shim-load failure degrades to Absent instead of
+      * throwing from the first tick read.
+      */
+    trait LoadProbe:
+        def apply(bindings: MacosBindings, scratch: Buffer[Long])(using AllowUnsafe): Unit
+
+    /** The production probe: one real `host_cpu_load` read triggers the impl's lazy load. `scratch` is
+      * the reader's own cpu out-buffer, overwritten by its first real read.
+      */
+    object RealLoad extends LoadProbe:
+        def apply(bindings: MacosBindings, scratch: Buffer[Long])(using AllowUnsafe): Unit =
+            discard(bindings.hostCpuLoad(scratch))
+    end RealLoad
 
 end MachineMacos

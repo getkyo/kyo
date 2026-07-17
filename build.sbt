@@ -808,27 +808,30 @@ lazy val `kyo-ffi-it` =
             `js-settings`,
             // koffi is loaded via CommonJS `require` at runtime, so align the linker.
             scalaJSLinkerConfig ~= { _.withModuleKind(ModuleKind.CommonJSModule) },
-            // Point the JS runtime at the plugin-compiled library via KYO_FFI_<LIBID>_PATH.
+            // Point the JS runtime at the plugin-compiled library via KYO_FFI_<LIBID>_PATH. The os/arch/ext
+            // tags mirror the plugin's own CCompiler output name so the path matches the file ffiCompile
+            // wrote, including the linux-musl split and the empty (no `lib`) prefix on Windows.
             Test / jsEnv := {
-                val targetDir = target.value
-                val ffiOut    = targetDir / "ffi"
-                val os        = sys.props.getOrElse("os.name", "").toLowerCase
-                val ext =
-                    if (os.contains("mac")) "dylib"
-                    else if (os.contains("win")) "dll"
-                    else "so"
-                val arch =
-                    sys.props.getOrElse("os.arch", "") match {
-                        case "x86_64" | "amd64"  => "x86_64"
-                        case "aarch64" | "arm64" => "aarch64"
-                        case other               => other
-                    }
-                val osDetect =
-                    if (os.contains("mac")) "darwin"
-                    else if (os.contains("win")) "windows"
-                    else if (os.contains("linux")) "linux"
-                    else os
-                val bundled = ffiOut / s"libkyo_it_bundled-$osDetect-$arch.$ext"
+                val ffiOut = target.value / "ffi"
+                val osName = sys.props.getOrElse("os.name", "").toLowerCase
+                val osTag =
+                    if (osName.contains("mac")) "darwin"
+                    else if (osName.contains("win")) "windows"
+                    else if (osName.contains("linux"))
+                        if (
+                            new java.io.File("/lib/ld-musl-x86_64.so.1").exists()
+                            || new java.io.File("/lib/ld-musl-aarch64.so.1").exists()
+                        ) "linux-musl"
+                        else "linux"
+                    else osName
+                val ext    = if (osTag == "darwin") "dylib" else if (osTag == "windows") "dll" else "so"
+                val prefix = if (osTag == "windows") "" else "lib"
+                val arch = sys.props.getOrElse("os.arch", "") match {
+                    case "x86_64" | "amd64"  => "x86_64"
+                    case "aarch64" | "arm64" => "aarch64"
+                    case other               => other
+                }
+                val bundled = ffiOut / s"${prefix}kyo_it_bundled-$osTag-$arch.$ext"
                 new NodeJSEnv(
                     NodeJSEnv.Config()
                         .withArgs(List("--max_old_space_size=5120"))
@@ -1154,12 +1157,43 @@ lazy val `kyo-stats-machine` =
             // koffi is loaded via CommonJS `require` at runtime, so align the linker.
             scalaJSLinkerConfig ~= { _.withModuleKind(ModuleKind.CommonJSModule) },
             // Disable the auto-started sampler for the module's own JS test runs (see the JVM note); the
-            // opt-out is read via System.Unsafe.env, which resolves process.env on Node.
-            Test / jsEnv := new NodeJSEnv(
-                NodeJSEnv.Config()
-                    .withArgs(List("--max_old_space_size=5120"))
-                    .withEnv(Map("KYO_MACHINE_DISABLED" -> "true"))
-            ),
+            // opt-out is read via System.Unsafe.env, which resolves process.env on Node. Also point the
+            // runtime at the plugin-compiled machine_macos shim through KYO_FFI_MACHINE_MACOS_PATH: the
+            // generated MacosBindings impl resolves the library through NativeLoader.jsResolve, whose first
+            // step is this env var. Without it the shim (produced by ffiCompile under <axis>/target/ffi) is
+            // unresolvable at Node runtime (@kyo/ffi-native is not installed), so koffi's load throws off
+            // macOS instead of the reader degrading. The os/arch/ext tags mirror the plugin's own
+            // CCompiler output name so the path matches the file it wrote, including the linux-musl split.
+            Test / jsEnv := {
+                val ffiOut = target.value / "ffi"
+                val osName = sys.props.getOrElse("os.name", "").toLowerCase
+                val osTag =
+                    if (osName.contains("mac")) "darwin"
+                    else if (osName.contains("win")) "windows"
+                    else if (osName.contains("linux"))
+                        if (
+                            new java.io.File("/lib/ld-musl-x86_64.so.1").exists()
+                            || new java.io.File("/lib/ld-musl-aarch64.so.1").exists()
+                        ) "linux-musl"
+                        else "linux"
+                    else osName
+                val ext    = if (osTag == "darwin") "dylib" else if (osTag == "windows") "dll" else "so"
+                val prefix = if (osTag == "windows") "" else "lib"
+                val arch = sys.props.getOrElse("os.arch", "") match {
+                    case "x86_64" | "amd64"  => "x86_64"
+                    case "aarch64" | "arm64" => "aarch64"
+                    case other               => other
+                }
+                val shim = ffiOut / s"${prefix}machine_macos-$osTag-$arch.$ext"
+                new NodeJSEnv(
+                    NodeJSEnv.Config()
+                        .withArgs(List("--max_old_space_size=5120"))
+                        .withEnv(Map(
+                            "KYO_MACHINE_DISABLED"       -> "true",
+                            "KYO_FFI_MACHINE_MACOS_PATH" -> shim.getAbsolutePath
+                        ))
+                )
+            },
             // koffi bootstrap (idempotent npm install, hooked on Test / compile) via the kyo-ffi plugin.
             // The CommonJS linker setting above stays in this .jsSettings block: the plugin is a Scala 2.12
             // sbt plugin with no sbt-scalajs dependency, so it cannot carry a scalaJSLinkerConfig setting.
@@ -1168,18 +1202,44 @@ lazy val `kyo-stats-machine` =
         .wasmSettings(
             `wasm-settings`,
             // Disable the auto-started sampler for the module's own wasm test runs (see the JVM note); the
-            // opt-out is read via System.Unsafe.env, which resolves process.env on Node. The wasm backend
+            // opt-out is read via System.Unsafe.env, which resolves process.env on Node, and point the
+            // runtime at the plugin-compiled machine_macos shim (see the .jsSettings note). The wasm backend
             // forces ESModule, so the CommonJSModule linker line from .jsSettings is intentionally not
             // repeated here; the Test / jsEnv override fully replaces wasm-settings' jsEnv, so it re-adds
             // --experimental-wasm-exnref (the flag Node needs to load the WasmGC module).
-            Test / jsEnv := new NodeJSEnv(
-                NodeJSEnv.Config()
-                    .withArgs(List(
-                        "--max_old_space_size=5120",
-                        "--experimental-wasm-exnref"
-                    ))
-                    .withEnv(Map("KYO_MACHINE_DISABLED" -> "true"))
-            ),
+            Test / jsEnv := {
+                val ffiOut = target.value / "ffi"
+                val osName = sys.props.getOrElse("os.name", "").toLowerCase
+                val osTag =
+                    if (osName.contains("mac")) "darwin"
+                    else if (osName.contains("win")) "windows"
+                    else if (osName.contains("linux"))
+                        if (
+                            new java.io.File("/lib/ld-musl-x86_64.so.1").exists()
+                            || new java.io.File("/lib/ld-musl-aarch64.so.1").exists()
+                        ) "linux-musl"
+                        else "linux"
+                    else osName
+                val ext    = if (osTag == "darwin") "dylib" else if (osTag == "windows") "dll" else "so"
+                val prefix = if (osTag == "windows") "" else "lib"
+                val arch = sys.props.getOrElse("os.arch", "") match {
+                    case "x86_64" | "amd64"  => "x86_64"
+                    case "aarch64" | "arm64" => "aarch64"
+                    case other               => other
+                }
+                val shim = ffiOut / s"${prefix}machine_macos-$osTag-$arch.$ext"
+                new NodeJSEnv(
+                    NodeJSEnv.Config()
+                        .withArgs(List(
+                            "--max_old_space_size=5120",
+                            "--experimental-wasm-exnref"
+                        ))
+                        .withEnv(Map(
+                            "KYO_MACHINE_DISABLED"       -> "true",
+                            "KYO_FFI_MACHINE_MACOS_PATH" -> shim.getAbsolutePath
+                        ))
+                )
+            },
             ffiKoffiJsBootstrap("kyo-stats-machine-wasm-test")
         )
 
