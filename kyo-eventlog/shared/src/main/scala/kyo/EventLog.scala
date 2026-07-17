@@ -250,26 +250,102 @@ object EventLog:
     object Metadata:
         def empty[E]: Metadata[E]                       = Metadata(_ => EventMetadata.empty)
         def from[E](f: E => EventMetadata): Metadata[E] = Metadata(f)
+
+        /** Builds Metadata[E] from AttributeBinding[E] values (AttributeKey#from/const/option),
+          * folding each event's produced attributes into one EventMetadata at prepare time. The
+          * closure captures the Frame supplied at this call site: Metadata[E]'s own `values`
+          * field carries no per-call Frame parameter.
+          */
+        def of[E](attrs: EventLog.AttributeBinding[E]*)(using frame: Frame): Metadata[E] =
+            Metadata(event =>
+                attrs.foldLeft(EventMetadata.empty) { (acc, binding) =>
+                    binding(event) match
+                        case Present(attr) => acc.put(attr)(using frame)
+                        case Absent        => acc
+                }
+            )
     end Metadata
 
-    /** Expected-offset directive. `expected(expected)` is the single canonical spelling;
-      * `withExpected` is removed.
+    /** Typed, Schema[A]-checked facade over EventMetadata's unchanged wire form. Names a stable
+      * wire key; the key's Schema[A] encodes/decodes its attribute's value through the same
+      * StructureValueWriter/StructureValueReader bridge EventMetadata.get/put use. A
+      * heterogeneous type-map keyed by erased Scala type is rejected: it has no stable,
+      * cross-platform, cross-version wire identity, and two attributes of the same type would
+      * collide; keying on this explicit validated MetadataKey string is the wire-safe
+      * alternative.
       */
-    final case class AppendDirective private (expectedOffset: Maybe[ExpectedOffset])
+    final case class AttributeKey[A](key: MetadataKey)(using val schema: Schema[A])
+
+    /** One produced key-value pair for an event, consumed by EventMetadata.of/put. */
+    final case class Attribute[A](key: AttributeKey[A], value: A)
+
+    /** A per-member attribute-producer function: given the event, yield one Attribute or skip. */
+    type AttributeBinding[E] = E => Maybe[Attribute[?]]
+
+    extension [A](key: AttributeKey[A])
+        /** Derives the attribute's value from the event. */
+        def from[E](f: E => A): AttributeBinding[E] = event => Present(Attribute(key, f(event)))
+
+        /** Produces a fixed attribute value regardless of the event. */
+        def const[E](value: A): AttributeBinding[E] = _ => Present(Attribute(key, value))
+
+        /** Produces the attribute only when `f` yields a present value. */
+        def option[E](f: E => Maybe[A]): AttributeBinding[E] = event => f(event).map(v => Attribute(key, v))
+    end extension
+
+    /** Starter named-attribute vocabulary; users define their own AttributeKey vals alongside
+      * these in their own vocabulary objects.
+      */
+    object Attributes:
+        val CorrelationId: AttributeKey[String] =
+            AttributeKey(MetadataKey("trace.correlation_id")(using Frame.internal).getOrThrow)
+        val SourceSystem: AttributeKey[String] =
+            AttributeKey(MetadataKey("source.system")(using Frame.internal).getOrThrow)
+    end Attributes
+
+    /** Directive carrying independent, composable-by-construction override facets. `expected`
+      * is the single canonical expected-offset spelling (`withExpected` is removed).
+      * `replaceStreamId`/`replaceEventId` replace the EventDefinition's StreamSelector/
+      * EventIdPolicy outright for that command: the strategy is not consulted at all when the
+      * facet is overridden. `withMetadata` right-biased-merges over member-produced metadata:
+      * member keys survive except where the directive's keys collide, where the directive's
+      * value wins. Each factory sets exactly one facet starting from `default`; combining
+      * facets in a single directive is not supported through these factories.
+      */
+    sealed trait AppendDirective derives CanEqual:
+        private[kyo] def expectedOffset: Maybe[ExpectedOffset]
+        private[kyo] def streamIdOverride: Maybe[StreamId]
+        private[kyo] def eventIdOverride: Maybe[EventId]
+        private[kyo] def metadataOverride: Maybe[EventMetadata]
+    end AppendDirective
+
     object AppendDirective:
-        val default: AppendDirective                            = AppendDirective(Absent)
-        def expected(expected: ExpectedOffset): AppendDirective = AppendDirective(Present(expected))
+        final private[kyo] case class Impl(
+            expectedOffset: Maybe[ExpectedOffset],
+            streamIdOverride: Maybe[StreamId],
+            eventIdOverride: Maybe[EventId],
+            metadataOverride: Maybe[EventMetadata]
+        ) extends AppendDirective
+
+        val default: AppendDirective                               = Impl(Absent, Absent, Absent, Absent)
+        def expected(expected: ExpectedOffset): AppendDirective    = Impl(Present(expected), Absent, Absent, Absent)
+        def replaceStreamId(streamId: StreamId): AppendDirective   = Impl(Absent, Present(streamId), Absent, Absent)
+        def replaceEventId(eventId: EventId): AppendDirective      = Impl(Absent, Absent, Present(eventId), Absent)
+        def withMetadata(metadata: EventMetadata): AppendDirective = Impl(Absent, Absent, Absent, Present(metadata))
+    end AppendDirective
 
     /** Typed preparation failure, distinct from Journal op failures. */
     final case class PreparationFailure(reason: String)(using Frame) extends KyoException
 
     // prepareEnvelope, appendValidated, mkReader, and deriveEventType are private[kyo] over the
     // Journal/EventEnvelope surface, defined in EventLogSupport.scala. appendValidated holds the
-    // one batch validator shared by varargs and any Chunk overload. The StreamSelector/
-    // EventIdPolicy witness classes (ConstantStreamSelector, KeyedStreamSelector,
-    // GeneratedEventIdPolicy, DeterministicEventIdPolicy, CallerSuppliedEventIdPolicy) are
-    // defined below, in this file rather than EventLogSupport.scala, because StreamSelector and
-    // EventIdPolicy are sealed: every direct subtype of a sealed trait must live in the same
+    // one batch validator shared by varargs and any Chunk overload, and resolves each contiguous
+    // run's directive-supplied expectedOffset (only the run's head command may carry a
+    // non-absent one). The StreamSelector/EventIdPolicy/AppendDirective witness classes
+    // (ConstantStreamSelector, KeyedStreamSelector, GeneratedEventIdPolicy,
+    // DeterministicEventIdPolicy, CallerSuppliedEventIdPolicy, AppendDirective.Impl) are defined
+    // in this file rather than EventLogSupport.scala, because StreamSelector, EventIdPolicy, and
+    // AppendDirective are sealed: every direct subtype of a sealed trait must live in the same
     // source file as the trait.
 end EventLog
 

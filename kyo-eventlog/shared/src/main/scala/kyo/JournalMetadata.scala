@@ -6,16 +6,50 @@ package kyo
   * concerns (correlation identifiers, tracing, tags) that consumers may need without decoding the payload. Values are
   * [[kyo.MetadataValue]] wrappers around [[kyo.Structure.Value]] trees with constructor-exact serialization fidelity.
   *
+  * `get`/`put`/`contains` are a typed facade added over this unchanged wire form: each [[kyo.EventLog.AttributeKey]] names a stable
+  * [[kyo.MetadataKey]] and carries the `Schema[A]` that encodes/decodes its attribute's value through the same
+  * [[kyo.internal.StructureValueWriter]]/[[kyo.internal.StructureValueReader]] bridge the identity `Schema[MetadataValue]` uses. The
+  * `values` field and wire shape are unaffected; only the read/write surface is typed.
+  *
   * @see
   *   [[kyo.EventEnvelope]] and [[kyo.RecordedEvent]] which carry this metadata
   * @see
   *   [[kyo.MetadataKey]] for the key validation rules
+  * @see
+  *   [[kyo.EventLog.AttributeKey]] and [[kyo.EventLog.Attribute]] for the typed accessor keys
   */
-final case class EventMetadata(values: Map[MetadataKey, MetadataValue]) derives CanEqual
+final case class EventMetadata(values: Map[MetadataKey, MetadataValue]) derives CanEqual:
+    /** Typed read: decodes the stored [[MetadataValue]] at `key.key` through `key.schema`. `Absent` only when the key is genuinely not
+      * present; a present key whose stored shape does not match `key.schema` throws `TypeMismatchException` (matching
+      * [[MetadataValue.read]]'s own precedent), never a silent `Absent`.
+      */
+    def get[A](key: EventLog.AttributeKey[A])(using Frame): Maybe[A] =
+        values.get(key.key) match
+            case None     => Maybe.empty
+            case Some(mv) => Maybe(key.schema.serializeRead(new kyo.internal.StructureValueReader(mv.value)))
+
+    /** Typed write: encodes `attr.value` through `attr.key.schema` and stores it at `attr.key.key`, overwriting any existing entry
+      * under that key.
+      */
+    def put[A](attr: EventLog.Attribute[A])(using Frame): EventMetadata =
+        val writer = new kyo.internal.StructureValueWriter()
+        attr.key.schema.serializeWrite(attr.value, writer)
+        EventMetadata(values + (attr.key.key -> MetadataValue(writer.getResult)))
+    end put
+
+    /** Whether `key` has a stored entry, independent of decodability. */
+    def contains(key: EventLog.AttributeKey[?]): Boolean = values.contains(key.key)
+end EventMetadata
 
 object EventMetadata:
     /** Metadata with no entries. */
     val empty: EventMetadata = EventMetadata(Map.empty)
+
+    /** Folds each attribute into a fresh map via [[EventMetadata.put]]; a later attribute in the varargs list wins over an earlier one
+      * targeting the same key.
+      */
+    def of(attrs: EventLog.Attribute[?]*)(using Frame): EventMetadata =
+        attrs.foldLeft(EventMetadata.empty)((acc, attr) => acc.put(attr))
 end EventMetadata
 
 /** A metadata value that preserves constructor identity through serialization.

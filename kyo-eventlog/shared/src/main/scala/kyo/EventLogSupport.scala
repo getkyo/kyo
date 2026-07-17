@@ -52,16 +52,43 @@ private[kyo] object EventLogSupport:
                 case Present(run) if run.head.streamId == cmd.streamId => acc.dropRight(1) :+ (run :+ cmd)
                 case _                                                 => acc :+ Chunk(cmd)
         }
+
+    /** Validates one contiguous run's directive-supplied `expectedOffset`: `Journal.append`
+      * accepts exactly one `expected` value per call, checked before any event in that call is
+      * appended, so only the run's HEAD command may carry a non-absent `expectedOffset`. A
+      * non-head command's non-absent `expectedOffset` aborts `PreparationFailure` naming its
+      * index within the run, rather than being silently dropped or silently checked against the
+      * wrong offset.
+      */
+    private[kyo] def resolveRunExpectedOffset[A](run: Chunk[EventLog[A]#Command])(using
+        Frame
+    ): Result[EventLog.PreparationFailure, ExpectedOffset] =
+        findNonHeadExpectedOffset(run, 1) match
+            case Present(index) =>
+                Result.fail(EventLog.PreparationFailure(
+                    s"command at index $index in a contiguous run carries a non-absent expectedOffset; only the run's head command may set expectedOffset"
+                ))
+            case Absent =>
+                Result.succeed(run.head.directive.expectedOffset.getOrElse(ExpectedOffset.Any))
+
+    @scala.annotation.tailrec
+    private def findNonHeadExpectedOffset[A](run: Chunk[EventLog[A]#Command], index: Int): Maybe[Int] =
+        if index >= run.length then Absent
+        else if run(index).directive.expectedOffset.isDefined then Present(index)
+        else findNonHeadExpectedOffset(run, index + 1)
 end EventLogSupport
 
 extension (self: EventLog.type)
 
-    /** Encodes `event` through `codecs.value`, resolves the command's real per-member stream
-      * via `ev.stream.resolve(event)`, its real event id via
-      * `ev.eventId.next(event, streamId, ev.eventType, metadata)`, and its metadata via
-      * `ev.metadata.values(event)`; assembles the [[EventEnvelope]] `prepare` wraps in a
-      * `Command` alongside the resolved `streamId`. Aborts `PreparationFailure` on
-      * stream, id, or codec resolution failure. No Journal effect: prepare is pure staging.
+    /** Encodes `event` through `codecs.value`, resolves this command's final metadata (member-
+      * produced `ev.metadata.values(event)`, right-biased-merged with `directive.metadataOverride`
+      * when present), then resolves `streamId` and `eventId`: each is taken directly from the
+      * directive's override when present (the EventDefinition's StreamSelector/EventIdPolicy is
+      * NOT consulted at all for an overridden facet), or else resolved via
+      * `ev.stream.resolve(event)` / `ev.eventId.next(event, streamId, ev.eventType, metadata)`.
+      * Assembles the [[EventEnvelope]] `prepare` wraps in a `Command` alongside the resolved
+      * `streamId`. Aborts `PreparationFailure` on stream, id, or codec resolution failure. No
+      * Journal effect: prepare is pure staging.
       */
     private[kyo] def prepareEnvelope[A, E <: A](
         codecs: EventLog.Codecs[A],
@@ -76,33 +103,44 @@ extension (self: EventLog.type)
         // never an effectful one). ev.stream.resolve and ev.eventId.next carry only
         // Abort[PreparationFailure] in their row (no Sync), so they evaluate directly
         // through Abort.run(...).eval rather than the Sync.Unsafe bridge.
-        given AllowUnsafe = AllowUnsafe.embrace.danger
-        val bytes         = Sync.Unsafe.evalOrThrow(EventLogCodecs.encodeValue(codecs.value, event))
-        val metadata      = ev.metadata.values(event)
-        Abort.run[EventLog.PreparationFailure](ev.stream.resolve(event)).eval.flatMap { streamId =>
-            Abort.run[EventLog.PreparationFailure](ev.eventId.next(event, streamId, ev.eventType, metadata)).eval.map {
-                eventId =>
-                    (streamId, EventEnvelope(eventId, ev.eventType, bytes, metadata))
-            }
+        given AllowUnsafe  = AllowUnsafe.embrace.danger
+        val bytes          = Sync.Unsafe.evalOrThrow(EventLogCodecs.encodeValue(codecs.value, event))
+        val memberMetadata = ev.metadata.values(event)
+        val metadata = directive.metadataOverride match
+            case Present(over) => EventMetadata(memberMetadata.values ++ over.values)
+            case Absent        => memberMetadata
+        val streamIdResult: Result[EventLog.PreparationFailure, StreamId] = directive.streamIdOverride match
+            case Present(streamId) => Result.succeed(streamId)
+            case Absent            => Abort.run[EventLog.PreparationFailure](ev.stream.resolve(event)).eval
+        streamIdResult.flatMap { streamId =>
+            val eventIdResult: Result[EventLog.PreparationFailure, EventId] = directive.eventIdOverride match
+                case Present(eventId) => Result.succeed(eventId)
+                case Absent =>
+                    Abort.run[EventLog.PreparationFailure](ev.eventId.next(event, streamId, ev.eventType, metadata)).eval
+            eventIdResult.map(eventId => (streamId, EventEnvelope(eventId, ev.eventType, bytes, metadata)))
         }
     end prepareEnvelope
 
     /** Groups the batch into contiguous runs by resolved `streamId` (first-occurrence order
-      * preserved across the whole batch) and issues one [[Journal.append]] per run; the
-      * returned `Chunk[AppendResult]` mirrors every run's single result back across that run's
-      * original command positions, so the outer shape always has one entry per input command,
-      * in original order, regardless of grouping. Path-dependent `Command`
-      * (`EventLog[A]#Command`) is accepted structurally: every concrete command is `this.Command`
-      * for the single log `appendAll` was called on, which is always a subtype of the unbound
-      * projection.
+      * preserved across the whole batch; a `replaceStreamId` override already baked into
+      * `Command.streamId` at `prepare` time correctly starts a new run) and issues one
+      * [[Journal.append]] per run, after validating that run's directive-supplied
+      * `expectedOffset` (only the run's head command may carry a non-absent one,
+      * [[EventLogSupport.resolveRunExpectedOffset]]). The returned `Chunk[AppendResult]` mirrors
+      * every run's single result back across that run's original command positions, so the
+      * outer shape always has one entry per input command, in original order, regardless of
+      * grouping. Path-dependent `Command` (`EventLog[A]#Command`) is accepted structurally:
+      * every concrete command is `this.Command` for the single log `appendAll` was called on,
+      * which is always a subtype of the unbound projection.
       */
     private[kyo] def appendValidated[A](commands: Chunk[EventLog[A]#Command])(using
         Frame
     ): Chunk[AppendResult] < (Journal & Sync & Abort[EventLog.PreparationFailure] & Abort[JournalAppendFailure]) =
         val runs = EventLogSupport.groupContiguousByStream(commands)
         Kyo.foreach(runs) { run =>
-            val expected = run.head.directive.expectedOffset.getOrElse(ExpectedOffset.Any)
-            Journal.append(run.head.streamId, expected, run.map(_.envelope)).map(result => Chunk.fill(run.length)(result))
+            Abort.get(EventLogSupport.resolveRunExpectedOffset(run)).map { expected =>
+                Journal.append(run.head.streamId, expected, run.map(_.envelope)).map(result => Chunk.fill(run.length)(result))
+            }
         }.map(_.flattenChunk)
     end appendValidated
 

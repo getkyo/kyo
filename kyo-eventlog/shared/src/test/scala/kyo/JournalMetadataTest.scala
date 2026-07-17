@@ -40,6 +40,41 @@ class JournalMetadataTest extends kyo.test.Test[Any]:
         }
     }
 
+    "EventMetadata typed facade (get/put/contains/of, EventLog.AttributeKey/Attribute)" - {
+        "EventMetadata.of/get typed round-trip for a String attribute; wire form unaffected" in {
+            val metadata = EventMetadata.of(EventLog.Attribute(EventLog.Attributes.CorrelationId, "req-42"))
+            assert(metadata.get(EventLog.Attributes.CorrelationId) == Maybe("req-42"))
+            assert(!metadata.contains(EventLog.Attributes.SourceSystem))
+            assert(metadata.values.size == 1)
+        }
+
+        "EventMetadata.get on a present key with a mismatched schema throws TypeMismatchException, never a silent Absent" in {
+            val sharedKey = MetadataKey("num").getOrElse(throw new AssertionError("valid key"))
+            val intKey    = EventLog.AttributeKey[Int](sharedKey)
+            val stringKey = EventLog.AttributeKey[String](sharedKey)
+            val metadata  = EventMetadata.of(EventLog.Attribute(intKey, 42))
+            val ex        = intercept[TypeMismatchException] { metadata.get(stringKey) }
+            assert(ex.expected == "String")
+        }
+
+        "EventMetadata.put overwrites an existing key's value; contains reflects presence" in {
+            val key       = EventLog.AttributeKey[String](MetadataKey("k").getOrElse(throw new AssertionError("valid key")))
+            val untouched = EventLog.AttributeKey[String](MetadataKey("other").getOrElse(throw new AssertionError("valid key")))
+            val metadata  = EventMetadata.empty.put(EventLog.Attribute(key, "v1")).put(EventLog.Attribute(key, "v2"))
+            assert(metadata.get(key) == Maybe("v2"))
+            assert(metadata.contains(key))
+            assert(!metadata.contains(untouched))
+        }
+
+        "two distinct String-valued AttributeKeys coexist in one EventMetadata without collision (key-string indexing, not a type-map)" in {
+            val keyA     = EventLog.AttributeKey[String](MetadataKey("a").getOrElse(throw new AssertionError("valid key")))
+            val keyB     = EventLog.AttributeKey[String](MetadataKey("b").getOrElse(throw new AssertionError("valid key")))
+            val metadata = EventMetadata.of(EventLog.Attribute(keyA, "va"), EventLog.Attribute(keyB, "vb"))
+            assert(metadata.get(keyA) == Maybe("va"))
+            assert(metadata.get(keyB) == Maybe("vb"))
+        }
+    }
+
     "MetadataValue.metadataValueSchema" - {
         "round-trips all ten Structure.Value constructors through MsgPack" in {
             assert(roundTripAllConstructors(MsgPack()))

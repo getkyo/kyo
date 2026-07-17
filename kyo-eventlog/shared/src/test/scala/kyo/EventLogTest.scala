@@ -32,6 +32,11 @@ class EventLogTest extends kyo.test.Test[Any]:
     private def freshJournalId(suffix: String)(using Frame): JournalId =
         JournalId.validate(s"log-test-$suffix").getOrElse(throw new AssertionError("valid journal id"))
 
+    private def validStreamName(value: String): EventLog.StreamName =
+        Abort.run[EventLog.PreparationFailure](EventLog.StreamName(value)).eval match
+            case Result.Success(name) => name
+            case other                => throw new AssertionError(s"expected a valid stream name, got: $other")
+
     // Wraps a backend, counting every append call, so a batch's grouping into contiguous
     // same-stream runs can be asserted by call count rather than only by final stream state.
     private def countingBackend(inner: Journal.Backend[Sync], counter: AtomicInt)(using Frame): Journal.Backend[Sync] =
@@ -668,7 +673,7 @@ class EventLogTest extends kyo.test.Test[Any]:
         end for
     }
 
-    "EventDefinition.metadata.values(event) is honored at prepare time (Metadata[E] real case class, not the phase-03 EmptyMetadata marker)" in {
+    "EventDefinition.metadata.values(event) is honored at prepare time (Metadata[E] real case class, not a stubbed marker)" in {
         val sourceKey        = valid(MetadataKey("source"))
         val expectedMetadata = EventMetadata(Map(sourceKey -> MetadataValue(Structure.Value.Str("test-harness"))))
         given EventLog.EventDefinition[LogTestEvent, LogTestEvent] =
@@ -684,6 +689,249 @@ class EventLogTest extends kyo.test.Test[Any]:
         yield cmd match
             case Result.Success(command) => assert(command.envelope.metadata == expectedMetadata)
             case other                   => fail(s"expected successful prepare, got: $other")
+        end for
+    }
+
+    // --- typed attribute metadata, AppendDirective replacement overrides, per-command
+    // expectedOffset validation ------------------------------------------------------------
+
+    "EventLog.Metadata.of builds Metadata[E] from const/from AttributeBindings, producing the expected EventMetadata for a concrete event" in {
+        val metadata = EventLog.Metadata.of[QuestStarted](
+            EventLog.Attributes.CorrelationId.const("req-42"),
+            EventLog.Attributes.SourceSystem.from(_.id)
+        )
+        val result = metadata.values(QuestStarted("q-1"))
+        assert(result.get(EventLog.Attributes.CorrelationId) == Maybe("req-42"))
+        assert(result.get(EventLog.Attributes.SourceSystem) == Maybe("q-1"))
+    }
+
+    "AppendDirective.replaceStreamId replaces StreamSelector.resolve outright (probe selector asserts zero calls)" in {
+        // Unsafe: AtomicInt.Unsafe.init for a synchronous call counter; StreamSelector.by's
+        // components function carries no effect row, so a Sync-based AtomicInt cannot be
+        // threaded through it (mirrors the eventIdSeq counter precedent in
+        // EventLogSupport.scala).
+        val probeCalls = AtomicInt.Unsafe.init(0)(using AllowUnsafe.embrace.danger)
+        val probeStream: EventLog.StreamSelector[LogTestEvent] =
+            EventLog.StreamSelector.by[LogTestEvent](validStreamName("probe-stream-a")) { _ =>
+                discard(probeCalls.incrementAndGet()(using AllowUnsafe.embrace.danger))
+                Chunk("probed")
+            }
+        val overrideStreamId = valid(StreamId("replace-stream-b"))
+        given EventLog.EventDefinition[LogTestEvent, LogTestEvent] =
+            EventLog.EventDefinition.schema[LogTestEvent, LogTestEvent](probeStream)
+        val journalId = freshJournalId("replace-stream-id")
+        for
+            codecs <- EventLogCodecs.schema[LogTestEvent]()
+            log    <- EventLog.init(codecs, journalId)
+            cmd <- Abort.run[EventLog.PreparationFailure](
+                log.prepare(LogTestEvent("probe-test", 1), EventLog.AppendDirective.replaceStreamId(overrideStreamId))
+            )
+        yield cmd match
+            case Result.Success(command) =>
+                assert(command.streamId == overrideStreamId)
+                val calls = probeCalls.get()(using AllowUnsafe.embrace.danger)
+                assert(calls == 0, s"expected the probe selector to never be consulted, got $calls calls")
+            case other => fail(s"expected successful prepare, got: $other")
+        end for
+    }
+
+    "AppendDirective.replaceEventId replaces EventIdPolicy.next outright (probe policy asserts zero calls)" in {
+        // Unsafe: AtomicInt.Unsafe.init for a synchronous call counter; EventIdPolicy.callerSupplied's
+        // f carries no effect row, so a Sync-based AtomicInt cannot be threaded through it.
+        val probeCalls = AtomicInt.Unsafe.init(0)(using AllowUnsafe.embrace.danger)
+        val overrideId = valid(EventId("replace-event-id"))
+        val journalId  = freshJournalId("replace-event-id")
+        for
+            probePolicy <- EventLog.EventIdPolicy.callerSupplied[LogTestEvent] { _ =>
+                discard(probeCalls.incrementAndGet()(using AllowUnsafe.embrace.danger))
+                "probed-id"
+            }
+            cmd <-
+                given EventLog.EventDefinition[LogTestEvent, LogTestEvent] =
+                    EventLog.EventDefinition.schema[LogTestEvent, LogTestEvent](testStream, probePolicy)
+                for
+                    codecs <- EventLogCodecs.schema[LogTestEvent]()
+                    log    <- EventLog.init(codecs, journalId)
+                    result <- Abort.run[EventLog.PreparationFailure](
+                        log.prepare(LogTestEvent("probe-test", 1), EventLog.AppendDirective.replaceEventId(overrideId))
+                    )
+                yield result
+                end for
+        yield cmd match
+            case Result.Success(command) =>
+                assert(command.envelope.id == overrideId)
+                val calls = probeCalls.get()(using AllowUnsafe.embrace.danger)
+                assert(calls == 0, s"expected the probe policy to never be consulted, got $calls calls")
+            case other => fail(s"expected successful prepare, got: $other")
+        end for
+    }
+
+    "AppendDirective.withMetadata right-biased-merges over member-produced metadata" in {
+        given EventLog.EventDefinition[LogTestEvent, LogTestEvent] =
+            EventLog.EventDefinition.schema[LogTestEvent, LogTestEvent](
+                testStream,
+                metadata = EventLog.Metadata.of(EventLog.Attributes.SourceSystem.const("member-system"))
+            )
+        val journalId = freshJournalId("with-metadata-merge")
+        for
+            codecs <- EventLogCodecs.schema[LogTestEvent]()
+            log    <- EventLog.init(codecs, journalId)
+            additiveCmd <- Abort.run[EventLog.PreparationFailure](
+                log.prepare(
+                    LogTestEvent("additive", 1),
+                    EventLog.AppendDirective.withMetadata(
+                        EventMetadata.of(EventLog.Attribute(EventLog.Attributes.CorrelationId, "req-99"))
+                    )
+                )
+            )
+            collidingCmd <- Abort.run[EventLog.PreparationFailure](
+                log.prepare(
+                    LogTestEvent("colliding", 2),
+                    EventLog.AppendDirective.withMetadata(
+                        EventMetadata.of(EventLog.Attribute(EventLog.Attributes.SourceSystem, "directive-system"))
+                    )
+                )
+            )
+        yield
+            additiveCmd match
+                case Result.Success(command) =>
+                    assert(command.envelope.metadata.get(EventLog.Attributes.SourceSystem) == Maybe("member-system"))
+                    assert(command.envelope.metadata.get(EventLog.Attributes.CorrelationId) == Maybe("req-99"))
+                case other => fail(s"expected successful prepare, got: $other")
+            end match
+            collidingCmd match
+                case Result.Success(command) =>
+                    assert(command.envelope.metadata.get(EventLog.Attributes.SourceSystem) == Maybe("directive-system"))
+                case other => fail(s"expected successful prepare, got: $other")
+            end match
+        end for
+    }
+
+    "appendValidated aborts PreparationFailure when a non-head command in a contiguous run carries a non-absent expectedOffset" in {
+        val journalId = freshJournalId("non-head-expected")
+        for
+            codecs  <- EventLogCodecs.schema[LogTestEvent]()
+            log     <- EventLog.init(codecs, journalId)
+            backend <- Journal.Backend.inMemory
+            result <- Abort.run[JournalError | EventLog.PreparationFailure] {
+                Journal.run(backend) {
+                    for
+                        c1 <- log.prepare(LogTestEvent("c1", 1))
+                        c2 <- log.prepare(
+                            LogTestEvent("c2", 2),
+                            EventLog.AppendDirective.expected(ExpectedOffset.Exact(StreamOffset.first))
+                        )
+                        r <- log.appendAll(c1, c2)
+                    yield r
+                }
+            }
+        yield
+            val isPreparationFailure = result match
+                case Result.Failure(_: EventLog.PreparationFailure) => true
+                case _                                              => false
+            assert(isPreparationFailure, s"expected PreparationFailure for a non-head expectedOffset, got: $result")
+        end for
+    }
+
+    "appendValidated succeeds and checks OCC against the head's expectedOffset when only the head command carries one" in {
+        val journalId = freshJournalId("head-expected-only")
+        for
+            codecs  <- EventLogCodecs.schema[LogTestEvent]()
+            log     <- EventLog.init(codecs, journalId)
+            backend <- Journal.Backend.inMemory
+            result <- Abort.run[JournalError | EventLog.PreparationFailure] {
+                Journal.run(backend) {
+                    for
+                        c1   <- log.prepare(LogTestEvent("c1", 1), EventLog.AppendDirective.expected(ExpectedOffset.NoStream))
+                        c2   <- log.prepare(LogTestEvent("c2", 2))
+                        _    <- log.appendAll(c1, c2)
+                        info <- Journal.streamInfo(testStreamId)
+                    yield info
+                }
+            }
+        yield result match
+            case Result.Success(StreamInfo.Existing(_, lastOffset)) =>
+                assert(lastOffset.value == 1L, s"expected last offset 1 for two committed events, got ${lastOffset.value}")
+            case other => fail(s"expected success with an existing stream, got: $other")
+        end for
+    }
+
+    "a replaceStreamId directive mid-batch splits an otherwise-contiguous run into two Journal.append calls" in {
+        val journalId = freshJournalId("replace-stream-id-split")
+        val streamB   = valid(StreamId("replace-split-stream-b"))
+        for
+            codecs  <- EventLogCodecs.schema[LogTestEvent]()
+            log     <- EventLog.init(codecs, journalId)
+            counter <- AtomicInt.init
+            inner   <- Journal.Backend.inMemory
+            backend = countingBackend(inner, counter)
+            result <- Abort.run[JournalError | EventLog.PreparationFailure] {
+                Journal.run(backend) {
+                    for
+                        c1      <- log.prepare(LogTestEvent("c1", 1))
+                        c2      <- log.prepare(LogTestEvent("c2", 2), EventLog.AppendDirective.replaceStreamId(streamB))
+                        c3      <- log.prepare(LogTestEvent("c3", 3))
+                        results <- log.appendAll(c1, c2, c3)
+                        infoA   <- Journal.streamInfo(testStreamId)
+                        infoB   <- Journal.streamInfo(streamB)
+                    yield (results, infoA, infoB)
+                }
+            }
+            calls <- counter.get
+        yield result match
+            case Result.Success((results, infoA, infoB)) =>
+                assert(calls == 3, s"expected three Journal.append calls (one per contiguous run), got $calls")
+                assert(results.size == 3)
+                infoA match
+                    case StreamInfo.Existing(_, last) =>
+                        assert(last.value == 1L, s"expected streamA's last offset to be 1, got ${last.value}")
+                    case other => fail(s"expected streamA to exist with two committed events, got $other")
+                end match
+                infoB match
+                    case StreamInfo.Existing(_, last) =>
+                        assert(last.value == 0L, s"expected streamB's last offset to be 0, got ${last.value}")
+                    case other => fail(s"expected streamB to exist with one committed event, got $other")
+                end match
+            case other => fail(s"expected success, got: $other")
+        end for
+    }
+
+    "QuestParty command combines a typed Metadata.of attribute with an AppendDirective.withMetadata override, both observed on the persisted record" in {
+        val journalId = freshJournalId("quest-party-typed-metadata")
+        for
+            result <-
+                given EventLog.EventDefinition[QuestEvent, QuestStarted] =
+                    EventLog.EventDefinition.schema[QuestEvent, QuestStarted](
+                        EventLog.StreamSelector.constant(questStartedStreamId),
+                        metadata = EventLog.Metadata.of(EventLog.Attributes.CorrelationId.const("req-1"))
+                    )
+                given Schema[QuestEvent] = summon[Schema[QuestEvent]].adjacent("type", "content")
+                for
+                    codecs  <- EventLogCodecs.schema[QuestEvent]()
+                    log     <- EventLog.init(codecs, journalId)
+                    backend <- Journal.Backend.inMemory
+                    appended <- Abort.run[JournalError | EventLog.PreparationFailure] {
+                        Journal.run(backend) {
+                            for
+                                _ <- log.append(
+                                    QuestStarted("q-typed-metadata"),
+                                    EventLog.AppendDirective.withMetadata(
+                                        EventMetadata.of(EventLog.Attribute(EventLog.Attributes.SourceSystem, "directive-system"))
+                                    )
+                                )
+                                records <- log.read(questStartedStreamId, StreamOffset.first, 10)
+                            yield records
+                        }
+                    }
+                yield appended
+                end for
+        yield result match
+            case Result.Success(records) =>
+                assert(records.size == 1)
+                val metadata = records(0).metadata
+                assert(metadata.get(EventLog.Attributes.CorrelationId) == Maybe("req-1"))
+                assert(metadata.get(EventLog.Attributes.SourceSystem) == Maybe("directive-system"))
+            case other => fail(s"expected success, got: $other")
         end for
     }
 
