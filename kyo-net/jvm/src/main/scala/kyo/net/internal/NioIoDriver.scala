@@ -596,6 +596,12 @@ final private[kyo] class NioIoDriver private (@volatile private var selector: Se
             case _: CancelledKeyException => ()
         end try
         NioHandle.close(handle)
+        // Wake the selector so the cancelled key is deregistered, and on JDK 11+ the channel's fd actually kill()ed, on the next select()
+        // pass. channel.close defers both to a selection operation, and the loop parks in an indefinite select() with no timeout, so on an
+        // otherwise-idle driver (the last connection closing, or a peer-FIN teardown with nothing else pending) this close would otherwise
+        // leave the fd stranded in CLOSE_WAIT until an unrelated event happened to wake the loop. Coalesced via wakeupPending, matching the
+        // transport and listener closes that wake the selector for the identical deferred-kill() reason.
+        wakeup()
     end closeHandle
 
     /** Remove a pending accept entry for a server channel and fail its promise with Closed. */

@@ -46,6 +46,16 @@ class NioIoDriverTest extends Test:
         end try
     end withDriverAndHandle
 
+    /** Poll `cond` on the fiber scheduler (never a thread block) until it holds or `bound` elapses; returns whether it held. */
+    private def awaitCondition(bound: Duration)(cond: => Boolean)(using Frame): Boolean < Async =
+        val deadline = java.lang.System.nanoTime() + bound.toNanos
+        Loop(()) { _ =>
+            if cond then Loop.done(true)
+            else if java.lang.System.nanoTime() >= deadline then Loop.done(false)
+            else Async.sleep(2.millis).andThen(Loop.continue(()))
+        }
+    end awaitCondition
+
     // -----------------------------------------------------------------------
     // Construction / lifecycle
     // -----------------------------------------------------------------------
@@ -324,6 +334,42 @@ class NioIoDriverTest extends Test:
             driver.closeHandle(handle)
             assert(!handle.channel.isOpen)
             succeed
+        }
+    }
+
+    "closeHandle wakes the selector so a cancelled key is deregistered on an idle loop (no CLOSE_WAIT fd leak)" in {
+        given Frame = Frame.internal
+        // Reproduce-first for the nio CLOSE_WAIT leak. closeHandle cancels the channel's SelectionKey and closes the channel, but the JDK
+        // defers both the key's deregistration and (JDK 11+) the fd's actual kill() to the selector's next select() pass. The select loop
+        // parks in an indefinite select() with no timeout, so on an otherwise-idle driver (the last connection closing, or the ReadPump's
+        // peer-FIN teardown with nothing else pending, NioIoDriver's ReadPump.onComplete -> closeHandle path) a closeHandle that does not
+        // wake the selector leaves the fd stranded in CLOSE_WAIT until some unrelated event happens to wake the loop. Asserted here on darwin
+        // without the Linux /proc leak probe via the channel's registration state: the same select() pass that deregisters the cancelled key
+        // is the one that kill()s the fd, so channel.isRegistered() going false is a faithful proxy for "the deferred close actually ran".
+        // Pre-fix (no wakeup) the idle selector never runs that pass and the channel stays registered; the fix's wakeup() forces one.
+        val driver = NioIoDriver.init()
+        discard(driver.start())
+        val (client, sv) = openLoopbackPair()
+        val handle       = NioHandle.init(client, 4096)
+        Sync.ensure(Sync.defer {
+            sv.close()
+            driver.close()
+        }) {
+            assert(driver.registerChannel(handle), "the channel must register with the selector")
+            // Gate until the selector has consumed the registration wakeup (wakeupPending cleared by a select() return) and re-parked idle
+            // with the channel registered, so the close below is the ONLY thing that can drive the deregistration pass.
+            awaitCondition(5.seconds)(!driver.wakeupPending.get() && client.isRegistered()).map { parked =>
+                assert(parked, "the selector never parked idle with the channel registered")
+                driver.closeHandle(handle)
+                // The fix wakes the selector, so the cancelled key is deregistered within a poll cycle. Without it the idle selector never
+                // runs the pass and this times out for the right reason: the cancelled key, and its fd, leak in CLOSE_WAIT.
+                awaitCondition(10.seconds)(!client.isRegistered()).map { deregistered =>
+                    assert(
+                        deregistered,
+                        "closeHandle left the channel registered on an idle selector: the cancelled key and its fd leak (CLOSE_WAIT) until an unrelated wakeup"
+                    )
+                }
+            }
         }
     }
 
