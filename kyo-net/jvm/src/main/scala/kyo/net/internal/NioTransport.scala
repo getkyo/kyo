@@ -1193,6 +1193,12 @@ final private[kyo] class NioTransport private (
                     handle.handshakeReading = false
                     closeQuietly(handle.channel)
             }
+            // `promise` owns the detached channel for the whole upgrade (the onComplete failure arm above is what releases it), so route a close()
+            // of the plaintext connection to it: settling `promise` runs the same release a handshake failure takes, and once the upgrade has
+            // succeeded the promise is complete and this is inherently a no-op, leaving the upgraded connection's channel untouched. Armed BEFORE
+            // the detach, so no close() can observe the connection Upgrading without an owner to hand itself to. Without it a close() (a scope
+            // teardown, a transport-level sweep) cannot reach a detached channel at all: Connection.closeFn never takes an Upgrading fd.
+            nioConn.upgradeAbandon = Present(() => promise.interruptDiscard(Result.Failure(NetConnectionClosedException("close"))))
             // Mark the handle upgrading BEFORE detach so the selector carrier recognizes the window: while set, a plaintext read the pump pulls off
             // the socket is STASHED into the handle's salvage (NioIoDriver.dispatchReadPlain / onInboundClosedDuringRead) rather than completing the
             // pump's promise (which would drop the peer's first TLS flight) or re-arming (which would steal the handshake's read). Mirrors

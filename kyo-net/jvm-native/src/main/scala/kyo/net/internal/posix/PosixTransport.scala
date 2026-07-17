@@ -166,6 +166,20 @@ final private[net] class PosixTransport private[posix] (
     private[posix] def unregisterHandshake(token: Long)(using AllowUnsafe): Unit =
         discard(pendingHandshakes.remove(token))
 
+    /** Discharge ONE registered handshake teardown obligation by token, removing its entry as it runs. The single-entry form of
+      * [[sweepPendingHandshakes]], running the identical exactly-once thunk, so a discharge racing the handshake's real outcome is a safe no-op
+      * for whichever loses.
+      *
+      * Used for a handshake whose own outcome promise settled without ANY of its three outcomes having run: the caller interrupted the upgrade it
+      * was awaiting, or the plaintext connection it detached was closed underneath it. Both leave the handshake parked forever on a read nothing
+      * will complete, holding a detached fd; and unlike a stalled handshake on an owned transport, no later `close()` will sweep it, because the
+      * process-shared transport is never closed. A no-op once the entry is gone (the outcome already unregistered it).
+      */
+    private def dischargePendingHandshake(token: Long)(using AllowUnsafe): Unit =
+        val discharge = pendingHandshakes.remove(token)
+        if discharge ne null then discharge()
+    end dischargePendingHandshake
+
     /** Discharge every still-registered handshake teardown, removing each entry as it runs. Called by `close()` before `pool.close()`, so a
       * handshake stalled forever (its peer stopped mid-flight, no deadline armed) is reclaimed instead of leaking its fd/engine past shutdown;
       * a handshake that is concurrently finishing loses the race for its own thunk's `disarm()` call and this is then a safe no-op for it.
@@ -1374,6 +1388,11 @@ final private[net] class PosixTransport private[posix] (
             case posixConn: InternalConnection[PosixHandle] @unchecked if posixConn.handle.isInstanceOf[PosixHandle] =>
                 val out    = new IOPromise[NetException, Connection]
                 val handle = posixConn.handle
+                // `out` owns the detached fd for the whole upgrade (see the `out.onComplete` owner below), so route a close() of the plaintext
+                // connection to it: settling `out` drives the same release a handshake failure takes. Armed BEFORE the detach, so no close() can
+                // observe the connection Upgrading without an owner to hand itself to. A typed leaf, not an Interrupted panic: the upgrade did not
+                // fail on its own terms, its connection was closed underneath it.
+                posixConn.upgradeAbandon = Present(() => out.interruptDiscard(Result.Failure(NetConnectionClosedException("close"))))
                 // Arm the upgrade window BEFORE detach closes the inbound channel, on EVERY backend. Two distinct uses keyed on the same flag:
                 //   - io_uring: the plaintext ReadPump left a recv SQE kernel-owned (io_uring cannot cancel it) that will consume the peer's first
                 //     post-signal flight; its CQE reaps on the reap carrier. If that CQE reaps in the window between detach's inbound.close() and the
@@ -1454,6 +1473,23 @@ final private[net] class PosixTransport private[posix] (
                                 out.completeDiscard(Result.fail(NetConnectionClosedException("handshake")))
                             }
                         )
+                        // `out` is this upgrade's fd-and-engine owner. driveHandshake's three outcomes below each discharge the obligation
+                        // themselves (they win `handshakeDisarm` and unregister), so this hook bites for exactly the settlements they do NOT
+                        // cover: the caller's fiber interrupting the upgrade it was awaiting (Async.useResult links the awaiting task to `out`,
+                        // so a timeout, a losing race arm, or an enclosing abort settles it), and the plaintext connection's close() routing
+                        // through the `upgradeAbandon` thunk armed above. Both leave the handshake parked on a read nothing will ever complete,
+                        // holding a detached fd that no other closer can reach: the connection's own closeFn cannot take an Upgrading fd, and
+                        // sweepPendingHandshakes only runs from a transport close() the process-shared transport never makes. So the fd would stay
+                        // open forever and, once the peer FINs, sit in CLOSE_WAIT with no shutdown. Discharging the registered obligation runs the
+                        // identical release the shutdown sweep would.
+                        //
+                        // Installed AFTER registerHandshake so the obligation exists to discharge, and BEFORE driveHandshake so an `out` already
+                        // settled by this point (an interrupt landing during the engine build above) fires the hook immediately: `reaped` is then
+                        // set and driveHandshake's steps skip rather than touching a freed engine.
+                        out.onComplete {
+                            case Result.Success(_) => ()
+                            case _                 => dischargePendingHandshake(handshakeToken)
+                        }
                         // driveUpgradeRead's parked waiter fails with the transport's own typed leaf (a close raced the in-flight read): surface
                         // it directly rather than re-wrapping a transport failure as a handshake one. Any other cause is a genuine handshake
                         // failure (protocol error, engine throw), wrapped as NetTlsHandshakeException as before.

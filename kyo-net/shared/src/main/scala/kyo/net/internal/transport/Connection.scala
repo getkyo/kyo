@@ -51,6 +51,26 @@ final private[kyo] class Connection[Handle] private (
     @volatile private[kyo] var upgradeFn: Maybe[(NetTlsConfig, Frame) => Fiber.Unsafe[kyo.net.Connection, Abort[kyo.net.NetException]]] =
         Absent
 
+    /** How to abandon the in-flight STARTTLS upgrade that owns this connection's fd. Installed by every transport that upgrades in place (the
+      * posix transport on JVM/Native, the NIO transport on the JVM floor, the JS transport on Node) immediately BEFORE it calls
+      * [[detachForUpgrade]], and read ONLY by [[close]], and only while the state is `Upgrading`. Left `Absent` on a connection that never
+      * detaches.
+      *
+      * A detached connection's fd is deliberately kept open for the upgrade to reuse, so [[close]] cannot close it directly: the upgrade is
+      * mid-handshake on that same fd, and closing it underneath would break a handshake that is about to succeed. The thunk instead hands the
+      * close to the upgrade's own owner (its outcome promise), which releases the fd, and the TLS engine where the transport owns one, on
+      * exactly the path a handshake failure already takes. When the upgrade has ALREADY settled, that promise is complete and the thunk is
+      * inherently a no-op, so a close arriving after a successful upgrade leaves the fd the upgraded connection now owns untouched: the promise,
+      * not this connection's state, is what discriminates a still-in-flight upgrade from a finished one.
+      *
+      * Armed before the detach so a `close()` that observes `Upgrading` always finds it installed (the volatile write happens-before the state
+      * CAS the detach wins, and only the CAS winner publishes `Upgrading`). Follows the same arm-before-detach discipline as the posix handle's
+      * `upgradeActive` window flag, and like it assumes at most one upgrade is ever in flight for a given connection.
+      */
+    // Set post-construction by the owning transport (a different package), so private[kyo] cross-package visibility is required;
+    // @volatile because the write and the closing caller's read happen on different carriers.
+    @volatile private[kyo] var upgradeAbandon: Maybe[() => Unit] = Absent
+
     /** Whether this connection was accepted by a listener (server origin) rather than initiated by `connect` (client origin). A STARTTLS
       * upgrade through the public `Transport.upgradeToTls` runs in the TLS role that matches the TCP origin: an accepted connection upgrades as
       * the TLS server, a connected one as the TLS client. The TCP and TLS roles always coincide for an in-place STARTTLS upgrade, so the origin
@@ -117,15 +137,37 @@ final private[kyo] class Connection[Handle] private (
             case ConnectionState.Created | ConnectionState.Established                        => true
             case ConnectionState.Upgrading | ConnectionState.Closing | ConnectionState.Closed => false
 
-    /** Close the connection. Closes channels and handle. Idempotent. */
-    def close()(using AllowUnsafe, Frame): Unit = closeFn(TeardownCause.ChannelClosed)
+    /** Close the connection. Closes channels and handle. Idempotent.
+      *
+      * While the connection is `Upgrading` the close is routed to the in-flight upgrade instead (see [[upgradeAbandon]]): the fd belongs to that
+      * upgrade, so `closeFn` deliberately cannot take it, and the upgrade's own owner is the only place that knows how to release everything it
+      * holds (the fd, and the TLS engine where the transport owns one).
+      */
+    def close()(using AllowUnsafe, Frame): Unit =
+        closeFn(TeardownCause.ChannelClosed)
+        // The Upgrading arm lives HERE and not in closeFn, and the distinction is load-bearing: closeFn is also what the plaintext pumps re-enter
+        // as `detachForUpgrade` tears them down (it closes their channels, so each pump's teardown calls closeFn with the very same
+        // TeardownCause.ChannelClosed this method passes), so abandoning the upgrade from closeFn would kill every upgrade at its first step. The
+        // pumps only ever call closeFn, never close(), so reaching this line means the connection's OWNER asked to close, which for a detached
+        // connection means abandoning the upgrade it was detached for.
+        //
+        // Without this routing an abandoned upgrade's fd is reachable by NO closer: closeFn cannot take an Upgrading fd (by design), the pumps
+        // that would otherwise observe the peer's FIN were torn down by the detach, and the transport's own shutdown sweep never runs on the
+        // process-shared transport (a process-lifetime singleton that is never closed). The fd then sits open forever, and once the peer FINs it
+        // sits in CLOSE_WAIT: FIN received, none ever sent.
+        if state.get() == ConnectionState.Upgrading then
+            upgradeAbandon.foreach(abandon => abandon())
+    end close
 
-    /** Force this connection's handle closed even while `Upgrading`, where ordinary [[close]] is a no-op by design (the fd is owned by the
-      * in-flight TLS upgrade, which is responsible for its own success/failure cleanup -- see [[ConnectionState.Upgrading]]). Used ONLY by the
-      * owning transport's shutdown sweep: at shutdown nothing will ever complete a still-in-flight upgrade, so deferring to it (ordinary
-      * close()'s behavior) strands the fd until the upgrade's OWN cleanup happens to run on the driver's carrier, which is asynchronous and not
-      * bounded by the time the transport's close() call returns (observed as an intermittent CLOSE_WAIT leak under kyo-test's leak check: the
-      * upgrade's failure path does eventually free the fd, just not before a fast-completing test's leak check inspects the fd table).
+    /** Force this connection's handle closed SYNCHRONOUSLY even while `Upgrading`, where the fd is owned by the in-flight TLS upgrade rather than
+      * by this connection (see [[ConnectionState.Upgrading]]). Used ONLY by the owning transport's shutdown sweep.
+      *
+      * Ordinary [[close]] already abandons a still-in-flight upgrade (via [[upgradeAbandon]]), so at shutdown the fd is not stranded. But that
+      * release runs on the driver's engine FIFO: it is asynchronous, not bounded by the time the transport's `close()` call returns, and the
+      * shutdown is about to close the very pool whose carrier would run it. This force-close is what makes the release synchronous for that one
+      * caller, so the fd is reclaimed while the driver is still alive (the alternative was observed as an intermittent CLOSE_WAIT leak under
+      * kyo-test's leak check: the upgrade's failure path does eventually free the fd, just not before a fast-completing test's leak check
+      * inspects the fd table).
       *
       * `driver.cancel(handle)` synchronously fails any promise the upgrade has parked (its own handshake read, most commonly), which drives the
       * SAME onFailed/onPanic -> engine-free-and-fd-close path an ordinary handshake failure takes, just synchronously instead of racing a
