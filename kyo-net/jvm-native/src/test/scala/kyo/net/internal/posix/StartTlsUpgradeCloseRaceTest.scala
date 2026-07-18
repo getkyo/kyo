@@ -32,7 +32,7 @@ import kyo.net.internal.TlsTestCert
   * [[kyo.net.NetTlsHandshakeException]] and never a message-text match: `upgradeRole`'s failure channel is `Abort[NetException]`, disjoint
   * from `Closed`, so the close-mid-handshake case must surface as a typed leaf rather than an embedded `Closed` cause.
   *
-  * The upgrade-handshake read no longer races the concurrent close. The detached plaintext `ReadPump` can re-arm a read on the fd the upgrade keeps
+  * The upgrade-handshake read does not race the concurrent close. The detached plaintext `ReadPump` can re-arm a read on the fd the upgrade keeps
   * open (`detachForUpgrade` is a live withdrawal, `fdClosing=false`), but the poll carrier rejects that stray re-arm while the handle is upgrading and
   * the handshake has not yet taken read ownership (`upgradeActive && !handshakeReading`, [[PollerIoDriver]]), so the upgrade's own read is the only one
   * armed for the fd. This is the poller dual of the io_uring `PosixHandle.upgradeHandoff` slot. Runs on both epoll (Linux) and kqueue (macOS/BSD).

@@ -6,13 +6,13 @@ import kyo.ffi.Ffi
 import kyo.net.Test
 import kyo.net.internal.transport.ReadOutcome
 
-/** Reproduce-first confirmation of the single-recv-ordering fix (P10, cell-8): [[IoUringDriver.submitRecv]] must never let two recvs be
-  * simultaneously kernel-owned for the SAME handle. Before the fix, arming a second recv while the first was still in flight submitted a
-  * second SQE that targeted the identical staging buffer with zero synchronization -- the shared-buffer aliasing hazard the orphaned-producer
+/** Reproduce-first confirmation of single-recv ordering: [[IoUringDriver.submitRecv]] must never let two recvs be
+  * simultaneously kernel-owned for the SAME handle. Arming a second recv while the first is still in flight would submit a
+  * second SQE that targets the identical staging buffer with zero synchronization -- the shared-buffer aliasing hazard the orphaned-producer
   * trigger ([[IoUringOrphanHandshakeRecvRoutingTest]]) exploits: the post-upgrade `ReadPump`'s first recv racing an orphaned handshake-window
   * recv still kernel-owned for the same handle.
   *
-  * The fix serializes recv submission per handle instead of blocking the caller: [[PosixHandle.isUpgraded]] handles gate `submitRecv` on
+  * Recv submission is serialized per handle instead of blocking the caller: [[PosixHandle.isUpgraded]] handles gate `submitRecv` on
   * [[IoUringDriver.hasInFlightRead]] and QUEUE a second request ([[PosixHandle.queuedRecv]]) rather than submit a second SQE; [[IoUringDriver.
   * complete]] fires the queued request (`drainQueuedRecv`) the moment the in-flight recv's CQE is fully processed. Non-blocking by
   * construction: `onFinished` (`PosixTransport.upgradeRole`) never waits on this -- an earlier blocking-wait variant was tried and reverted

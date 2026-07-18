@@ -9,10 +9,10 @@ import scala.scalajs.js as sjs
   *
   * `awaitWritable` registers one-shot `drain`/`close`/`error` listeners and completes the caller's promise when one fires. The `drain` event is
   * the success signal (the socket is writable again); `close`/`error` mean the socket went away before it became writable, so the awaiting write
-  * must fail with a typed Closed. The old single `complete()` succeeded on ALL three, so a write parked on writability over a dying socket
-  * reported Done and then wrote into a destroyed socket. The fix splits the success path (`drain`) from the failure path (`close`/`error`),
-  * matching every other driver. This drives the events on a Node EventEmitter mock socket (the emitted event is the latch; no sleep) and
-  * asserts the promise outcome. The failure leaves FAIL before the fix (all three handlers succeeded).
+  * must fail with a typed Closed. A single `complete()` on ALL three would make a write parked on writability over a dying socket
+  * report Done and then write into a destroyed socket. Splitting the success path (`drain`) from the failure path (`close`/`error`)
+  * matches every other driver. This drives the events on a Node EventEmitter mock socket (the emitted event is the latch; no sleep) and
+  * asserts the promise outcome. The failure leaves would report Done if a single handler completed the promise on all three events.
   */
 class JsIoDriverAwaitWritableFailureTest extends Test:
 

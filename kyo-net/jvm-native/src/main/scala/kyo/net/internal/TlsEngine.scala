@@ -13,8 +13,8 @@ import kyo.ffi.Buffer
   *
   * Because every method operates on in-memory buffers rather than sockets, each is a plain unsafe-tier operation under `(using AllowUnsafe)`,
   * never a `@blocking` / `Fiber.Unsafe` call: there is no syscall to suspend on. The implementations ([[NativeSslEngine]] over the bundled
-  * BoringSSL or the system-OpenSSL fallback on JVM and Native, [[JdkSslEngine]] the JVM SSLEngine fallback) collapse the previously
-  * hand-rolled per-platform TLS-state paths into this one abstraction so the drivers stay TLS-provider-blind.
+  * BoringSSL or the system-OpenSSL fallback on JVM and Native, [[JdkSslEngine]] the JVM SSLEngine fallback) collapse the
+  * per-platform TLS-state paths into this one abstraction so the drivers stay TLS-provider-blind.
   *
   * Return-code convention for [[handshakeStep]]: `1` handshake complete, `0` want-read (feed more ciphertext), `-1` want-write (drain
   * produced ciphertext), `-2` fatal error. [[feedCiphertext]] returns bytes accepted (`-1` on error); [[drainCiphertext]] returns bytes
@@ -25,7 +25,7 @@ import kyo.ffi.Buffer
   * Closure (RFC 8446 6.1 / RFC 5246 7.2.1): [[shutdownStep]] emits this side's close_notify alert (the produced record lands on the drain
   * side for the driver to flush before closing the fd), and the [[readPlain]] `-3` clean-close code is distinct from the `0` want-read code
   * so the caller can tell an orderly close (the peer's authenticated close_notify was consumed) from a bare TCP FIN with no close_notify (the
-  * truncation-attack condition). The two were previously collapsed into `0`, which made a truncation indistinguishable from a clean end.
+  * truncation-attack condition). Keeping `-3` distinct from the `0` want-read code is what makes a truncation distinguishable from a clean end.
   */
 private[net] trait TlsEngine:
 

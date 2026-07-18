@@ -8,8 +8,8 @@ import kyo.net.Test
 /** Reproduce-first test for the masked-drain-error defect in the shared TLS state machine.
   *
   * `drain_ciphertext` guards `BIO_ctrl_pending == 0` and returns `0` (nothing to send) before reading the write BIO, so a `BIO_read` that
-  * fails AFTER pending reported non-zero is a genuine BIO error, not emptiness. The original body masked it (`return n < 0 ? 0 : n`), which
-  * told the driver "nothing pending" on a broken write BIO instead of surfacing the failure. The fix returns `-1` so the driver's drain loop
+  * fails AFTER pending reported non-zero is a genuine BIO error, not emptiness. Masking it (`return n < 0 ? 0 : n`) would tell the driver
+  * "nothing pending" on a broken write BIO instead of surfacing the failure. `drain_ciphertext` returns `-1` so the driver's drain loop
   * raises a TLS error rather than silently dropping outbound ciphertext.
   *
   * This leaf drives the write BIO into exactly that state (via the test-only `kyo_bssl_test_break_write_bio` seam: pending reports non-zero,

@@ -106,7 +106,7 @@ class IoUringMultishotTest extends Test:
 
         "fusedEnterNoCompletionLost: B round-trips through the fused submit-and-wait deliver the correct bytes" in {
             PosixTestSockets.assumeUring()
-            // The fused kyo_uring_submit_and_wait_timeout replaces the prior separate flushSubmits + kyo_uring_wait_cqe_timeout.
+            // The fused kyo_uring_submit_and_wait_timeout does the submit and the wait in one enter, rather than a separate flushSubmits + kyo_uring_wait_cqe_timeout.
             // B echo round-trips must all deliver the correct bytes, proving the fused enter loses no CQE.
             val B = 8
             withRealDriver { driver =>

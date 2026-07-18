@@ -113,8 +113,8 @@ class JsTransportTlsTest extends Test:
     "client minVersion is enforced against a TLS1.2-pinned server (rejects the silent downgrade)" in {
         val transport = NetPlatform.transport
         // Client demands TLS1.3 only; the real Node server can speak only TLS1.2. With minVersion mapped onto Node's tls options there is no
-        // common version, so the handshake must be rejected. Before the fix the client minVersion was dropped, Node negotiated TLS1.2, and the
-        // connection silently succeeded (CWE-326).
+        // common version, so the handshake must be rejected. If the client minVersion were dropped, Node would negotiate TLS1.2, and the
+        // connection would silently succeed (CWE-326).
         val clientTls13 = NetTlsConfig(
             trustAll = true,
             sniHostname = Present("localhost"),
@@ -154,7 +154,7 @@ class JsTransportTlsTest extends Test:
     "server maxVersion is enforced against a TLS1.3-demanding client" in {
         val transport = NetPlatform.transport
         // kyo TLS server capped at TLS1.2; a real Node client demanding a TLS1.3 floor must be rejected once maxVersion is mapped onto the
-        // server's tls options. Before the fix the server maxVersion was dropped, so the server allowed TLS1.3 and the client succeeded.
+        // server's tls options. If the server maxVersion were dropped, the server would allow TLS1.3 and the client would succeed.
         val serverTls12 = NetTlsConfig(
             certChainPath = Present(localhostCertPath),
             privateKeyPath = Present(localhostKeyPath),
@@ -181,8 +181,8 @@ class JsTransportTlsTest extends Test:
     "verifying client with an empty host fails closed before connecting" in {
         val transport = NetPlatform.transport
         // Verifying client (hostnameVerification = true, trustAll = false) with an empty host has no reference identity to check the server
-        // certificate against. It must fail closed, matching SslEngineProvider/BoringSslProvider/SystemOpenSslProvider. Before the fix the
-        // empty host was passed to Node as the servername and identity fell back to Node's default checkServerIdentity (RFC 9525 6.1 gap).
+        // certificate against. It must fail closed, matching SslEngineProvider/BoringSslProvider/SystemOpenSslProvider. Passing the
+        // empty host to Node as the servername would let identity fall back to Node's default checkServerIdentity (RFC 9525 6.1 gap).
         val serverTls = NetTlsConfig(
             certChainPath = Present(localhostCertPath),
             privateKeyPath = Present(localhostKeyPath)
@@ -265,8 +265,8 @@ class JsTransportTlsTest extends Test:
     "a stalled server TLS handshake is reaped after the deadline (socket destroyed)" in {
         // A JsTransport with a finite handshakeTimeout. A raw TCP client completes the accept but never sends a ClientHello, so Node's
         // "secureConnection" never fires and the accepted socket would linger forever. The deadline timer destroys it; the client's "close" is
-        // the deterministic latch (no sleep waits for the timeout). Before the fix there was no deadline, so the socket lingered and "close"
-        // never fired, hanging the test (the symptom of the unreaped stall).
+        // the deterministic latch (no sleep waits for the timeout). Without a deadline the socket would linger and "close"
+        // would never fire, hanging the test (the symptom of the unreaped stall).
         import AllowUnsafe.embrace.danger
         val transport =
             JsTransport.init(poolSize = 1, channelCapacity = 4, connectTimeout = Duration.Infinity, handshakeTimeout = 150.millis)

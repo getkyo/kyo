@@ -70,7 +70,7 @@ class WriteStateTest extends Test:
         }
 
         // Given: a WritePump that has advanced past Flushing(spanA, 0) to Idle
-        // When: a stale writable completion for spanA fires (the old reused-promise hazard)
+        // When: a stale writable completion for spanA fires (the reused-promise hazard)
         // Then: its CAS from a stale Flushing reference fails (state is Idle), so it no-ops; the
         //       no-op-on-stale property is exercised, not assumed
         "stale-flush-loses-the-cas" in {

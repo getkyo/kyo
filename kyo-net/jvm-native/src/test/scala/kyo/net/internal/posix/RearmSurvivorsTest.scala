@@ -8,16 +8,15 @@ import kyo.net.internal.transport.ReadOutcome
 
 /** ET-behavior witness: confirms that under edge-triggered (ET) registration the driver never submits a rearm call.
   *
-  * The old one-shot (EPOLLONESHOT / EV_ONESHOT) model required a "survivor re-arm" after each event: when a fd had both read and write interest
-  * and only one direction fired, the surviving direction had to be explicitly re-registered (rearmSurvivors). Under ET (EPOLLET / EV_CLEAR) the
+  * A one-shot (EPOLLONESHOT / EV_ONESHOT) model would require a "survivor re-arm" after each event: when a fd has both read and write interest
+  * and only one direction fires, the surviving direction has to be explicitly re-registered. Under ET (EPOLLET / EV_CLEAR) the
   * fd stays armed in the kernel for both directions; no rearm is needed or correct.
   *
   * These witnesses use a real driver backed by a RecordingPollerBackend to confirm that no "rearm(" entry appears in the call log after a single
   * read-only or write-only event, and that both directions remain reachable without a re-register.
   *
-  * Previous test leaves (rearmSurvivors / EpollPollerBackend.rearm) are removed because those tests verified the one-shot survivor re-arm
-  * path that no longer exists. Removing them avoids false green on the absent rearm path. The ET behavior they covered (no lost wakeup after
-  * a partial fire) is now asserted here.
+  * The driver exposes no survivor re-arm under ET; there is nothing to re-register after a partial fire. These witnesses assert that the ET
+  * behavior (no lost wakeup after a partial fire) holds without one.
   *
   * Gate: PosixTestSockets.assumePoller() for the driver-level leaves.
   */

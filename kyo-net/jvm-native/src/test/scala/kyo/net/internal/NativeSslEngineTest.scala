@@ -8,11 +8,11 @@ import kyo.net.Test
 /** [[NativeSslEngine]]'s freed-gate contract: once [[TlsEngine.free]] has run, every other op refuses the native call and reports a named
   * [[Diagnostics]] violation instead of dereferencing the already-released `ssl` pointer.
   *
-  * This is the regression guard for a native use-after-free class root-caused via two `hs_err` crash dumps (a test-construction bug freed a
-  * driver-attached engine while the driver's own queued teardown still owed it an `SSL_shutdown`; see `PollerIoDriverTlsHalfCloseEtTest`'s
-  * `awaitCondition` fix and `TlsRealEngines.withEngines`'s ownership-rule doc for the actual hazard this closes off). Before this gate, that
-  * class of bug was silent 1-in-N native corruption (an unmapped-page SIGSEGV or a wild write into a live allocation, surfacing later at an
-  * unrelated leaf); after it, ANY post-free call is an attributed, in-process failure naming the exact op, with no native call at all.
+  * This is the regression guard for a native use-after-free class (a test-construction bug that frees a
+  * driver-attached engine while the driver's own queued teardown still owes it an `SSL_shutdown`; see `PollerIoDriverTlsHalfCloseEtTest`'s
+  * `awaitCondition` guard and `TlsRealEngines.withEngines`'s ownership-rule doc for the hazard this closes off). Without this gate, that
+  * class of bug is silent 1-in-N native corruption (an unmapped-page SIGSEGV or a wild write into a live allocation, surfacing later at an
+  * unrelated leaf); with it, ANY post-free call is an attributed, in-process failure naming the exact op, with no native call at all.
   */
 class NativeSslEngineTest extends Test:
 

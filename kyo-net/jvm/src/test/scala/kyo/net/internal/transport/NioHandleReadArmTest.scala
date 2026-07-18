@@ -139,7 +139,7 @@ class NioHandleReadArmTest extends Test:
             // Fail-before simulation: demonstrate that a plain slot (no CAS protection) orphans the
             // handshake's promise when the pump re-arms AFTER the handshake installs its promise.
             "fail-before-simulation: plain-slot stale-pump-overwrites-handshake-promise" in {
-                // Simulate the old @volatile var slot with a plain var (the historical bug substrate).
+                // Simulate a plain var slot with no CAS protection (the bug substrate).
                 var slot: Promise.Unsafe[ReadOutcome, Abort[Closed]] | Null = null
 
                 val pumpPromise = Promise.Unsafe.init[ReadOutcome, Abort[Closed]]()

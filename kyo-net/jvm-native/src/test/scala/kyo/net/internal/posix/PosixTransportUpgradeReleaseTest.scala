@@ -299,7 +299,7 @@ class PosixTransportUpgradeReleaseTest extends Test:
                                     // was requested before the credit was installed, so that consumer can read the sink Absent and the credit
                                     // strands forever, leaking the fd. With the credit installed before the driver close, engineFreeSink is
                                     // still untouched at shutdown time and the flag stays clear. Pure observation, so the reproducer never parks
-                                    // a carrier: the flag is deterministically set on the pre-fix ordering regardless of how the reap carrier races.
+                                    // a carrier: the flag is deterministically set if the credit is installed late, regardless of how the reap carrier races.
                                     val sinkBefore          = handle.engineFreeSink
                                     val creditInstalledLate = new JAtomicBoolean(false)
                                     spy.onShutdown = fd =>
@@ -319,7 +319,7 @@ class PosixTransportUpgradeReleaseTest extends Test:
                                                     )
                                             end match
                                             // The credit install must precede the driver close (else the single consumer strands it); observed
-                                            // above with no carrier held, so a pre-fix ordering fails here deterministically, not via a leaked fd.
+                                            // above with no carrier held, so a credit-late ordering fails here deterministically, not via a leaked fd.
                                             assert(
                                                 !creditInstalledLate.get(),
                                                 "the fd-close credit must be installed before the driver close is requested (else its single " +

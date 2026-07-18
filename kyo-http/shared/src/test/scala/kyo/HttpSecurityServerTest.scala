@@ -136,7 +136,7 @@ class HttpSecurityServerTest extends BaseHttpTest:
                 // Raw plaintext client: completes the TCP accept but never sends a ClientHello, so the server-side TLS
                 // handshake parks. The bug this guards (handshakeTimeout silently ignored under the shared default transport)
                 // would leave the connection pinned and the bounded await below would expire (Timeout, the regression
-                // symptom); the fix reaps the accepted fd at the deadline, which the client observes as its inbound
+                // symptom); the deadline reaps the accepted fd, which the client observes as its inbound
                 // terminating (Closed, or an empty EOF span).
                 Sync.Unsafe.defer {
                     val transport = kyo.net.NetPlatform.transport

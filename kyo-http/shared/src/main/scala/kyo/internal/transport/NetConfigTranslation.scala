@@ -11,7 +11,7 @@ import kyo.net.TransportConfig
   * Both translators are pure total functions. They are the only place a `kyo.net.*` config/address type appears in kyo-http; the
   * `kyo.net.NetTlsConfig` / `kyo.net.NetAddress` types never escape into a `kyo.Http*` public signature. `toNetTlsConfig` copies the 8
   * fields shared with `HttpTlsConfig` by name and leaves the 2 kyo-net-only fields (`caCertPath`, `hostnameVerification`) at their
-  * defaults, reproducing the prior implicit connect behavior exactly (kyo-http never set them). `toHttpAddress` maps the structurally
+  * defaults, since `HttpTlsConfig` has no field for them. `toHttpAddress` maps the structurally
   * identical address enum case-for-case so `HttpServer.address` keeps returning `HttpAddress`.
   */
 private[kyo] object NetConfigTranslation:
@@ -27,8 +27,7 @@ private[kyo] object NetConfigTranslation:
             minVersion = toNetVersion(tls.minVersion),
             maxVersion = toNetVersion(tls.maxVersion)
             // caCertPath and hostnameVerification take their NetTlsConfig defaults
-            // (Absent / true): kyo-http never set them, so the defaults reproduce
-            // the prior connect behavior exactly.
+            // (Absent / true): HttpTlsConfig has no field for them.
         )
 
     def toHttpAddress(addr: NetAddress): HttpAddress =

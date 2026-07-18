@@ -6,18 +6,18 @@ import kyo.ffi.Ffi
 import kyo.net.Test
 import kyo.net.internal.transport.ReadOutcome
 
-/** Reproduce-first regression for a `CLOSE_WAIT` leak in the deferred fd-close guard: [[IoUringDriver.registerDeferredClose]]'s deferred branch (an
-  * in-flight recv races a close) used to register the handle in its private `closeAfterDrain` map WITHOUT holding [[PosixHandle]]'s guard
-  * open for that window. `closeAfterDrain` is invisible to the guard, so a concurrent, unrelated `PosixHandle.close` caller that loses the
+/** Reproduce-first regression for a `CLOSE_WAIT` leak in the deferred fd-close guard: in [[IoUringDriver.registerDeferredClose]]'s deferred branch (an
+  * in-flight recv races a close), registering the handle in its private `closeAfterDrain` map WITHOUT holding [[PosixHandle]]'s guard
+  * open for that window leaves it invisible to the guard, so a concurrent, unrelated `PosixHandle.close` caller that loses the
   * `claimFdClose` race below (any release path that reaches `PosixHandle.close` unconditionally, regardless of the claim outcome, while
   * the driver still owes the deferred close) would see zero active holders and run `freeResources` immediately -- before
   * `closeNow` ever installs the real `close(fd)` credit (`fdCloseSink`). `freeResources` runs at most once per handle, so once it has run
   * with no credit installed, `closeNow`'s LATER `PosixHandle.close` call (once the recv's CQE finally reaps) is a no-op: the just-installed
   * credit sits unconsumed forever and the real `close(fd)` syscall never runs, leaving the socket in `CLOSE_WAIT` past process exit.
   *
-  * The fix: `registerDeferredClose` now holds a guard slot ([[PosixHandle.beginDeferredClose]]) for the entire deferred window, acquired
+  * `registerDeferredClose` holds a guard slot ([[PosixHandle.beginDeferredClose]]) for the entire deferred window, acquired
   * BEFORE attempting `claimFdClose`, released only once `closeNow` has installed the credit ([[IoUringDriver.dischargeDeferredClose]]). A
-  * concurrent `PosixHandle.close` caller now sees an active holder and correctly defers instead of freeing prematurely, regardless of which
+  * concurrent `PosixHandle.close` caller sees an active holder and correctly defers instead of freeing prematurely, regardless of which
   * side wins the (independent) `claimFdClose` race.
   *
   * Anti-flakiness: awaits `driver.hasInFlightRead(handle)` becoming true (the recv is genuinely kernel-owned) before closing, then drives
@@ -27,7 +27,7 @@ import kyo.net.internal.transport.ReadOutcome
   * CQE-driven `closeNow` (triggered by the `shutdown(SHUT_RD)` above, which resolves near-instantly on a loopback pair) ample time to win
   * that race first, so the racer's close would land on an already-closed handle instead of the live one and the bug would not reproduce.
   * Routing the racer through the engine queue instead pins the interleaving deterministically: it runs strictly after
-  * `registerDeferredClose` has completed (installed its guard hold under the fix, or not, under the bug) and strictly before the recv's
+  * `registerDeferredClose` has completed (with or without its guard hold) and strictly before the recv's
   * CQE can be reaped. The final assertion awaits `RecordingSocketBindings.closed`, a per-fd latch that only ever completes once the real
   * `close(fd)` syscall actually runs, rather than polling.
   */
@@ -62,7 +62,7 @@ class IoUringDriverDeferredCloseGuardTest extends Test:
                             // Drive the racer through the SAME engine queue as closeHandle's own submission: drainEngineOps runs the
                             // whole batch (closeHandle's op, then this one) to completion before the reap carrier ever waits for or
                             // processes a CQE, so this op is guaranteed to observe registerDeferredClose's completed state (won
-                            // claimFdClose, taken the deferred-close guard hold under the fix) and to run strictly before the recv's CQE
+                            // claimFdClose, taken the deferred-close guard hold) and to run strictly before the recv's CQE
                             // can reap -- the exact "racer lands while the close is still deferred" interleaving the bug requires,
                             // pinned deterministically instead of left to a fiber-wakeup-vs-kernel-reap race.
                             val racerClaimedFd = new java.util.concurrent.atomic.AtomicBoolean(true)

@@ -316,9 +316,8 @@ final private[net] class PosixTransport private[posix] (
       * buffer, and length, or `Absent` when `host` is neither a valid IPv4 nor IPv6 literal (i.e. it needs name resolution).
       *
       * The well-known loopback host NAMES (`localhost`, `ip6-localhost`, `ip6-loopback`) are normalized to their loopback literal first via
-      * [[SockAddr.resolveLoopbackName]]: they have a fixed RFC answer no resolver varies, so encoding them without DNS matches what the old
-      * NIO `InetSocketAddress` produced and is what the kyo-http client (which passes a hostname, commonly `localhost`, straight through)
-      * needs. Any OTHER non-numeric hostname returns `Absent` here so [[resolveAndEncode]] sends it through the [[HostResolver]] (offloaded
+      * [[SockAddr.resolveLoopbackName]]: they have a fixed RFC answer no resolver varies, so encoding them without DNS is what the kyo-http
+      * client (which passes a hostname, commonly `localhost`, straight through) needs. Any OTHER non-numeric hostname returns `Absent` here so [[resolveAndEncode]] sends it through the [[HostResolver]] (offloaded
       * blocking system resolution); keeping the numeric and loopback cases on this synchronous fast path means they never touch the resolver.
       */
     private def encodeInetFast(host: String, port: Int)(using AllowUnsafe): Maybe[(Int, Buffer[Byte], Int)] =
@@ -1041,9 +1040,9 @@ final private[net] class PosixTransport private[posix] (
                     val reaped = AtomicBoolean.Unsafe.init(false)
                     // Teardown reused by both the handshake failure / panic paths and the handshake-deadline expiry. The deadline path is the #243
                     // use-after-free: when handshakeTimeout reaps a handshake parked in awaitReadCiphertext, an io_uring recv SQE is in flight into
-                    // handle.readBuffer. The old teardown freed that buffer (PosixHandle.close) and the engine while the recv SQE was still kernel-
-                    // owned, so the kernel wrote recv data into freed memory and a late recv-Success enqueued a feed on a freed engine. The fix routes
-                    // the buffer + engine teardown through the driver's UAF-safe ioDriver.closeHandle:
+                    // handle.readBuffer. Freeing that buffer (PosixHandle.close) and the engine while the recv SQE is still kernel-owned would let
+                    // the kernel write recv data into freed memory and a late recv-Success enqueue a feed on a freed engine. Routing
+                    // the buffer + engine teardown through the driver's UAF-safe ioDriver.closeHandle avoids that:
                     //   - ioDriver.closeHandle -> cancel(handle) fails the parked read promise (so awaitReadCiphertext's Success feed cannot run
                     //     post-reap) and DEFERS PosixHandle.close (the readBuffer free) on io_uring until the in-flight recv CQE reaps, so the kernel
                     //     never writes into freed memory. On the poller closeHandle frees inline (already safe: the poller never hands the kernel the
@@ -1738,7 +1737,7 @@ final private[net] class PosixTransport private[posix] (
         closeUnwiredHandle(handle, handle.driver, connectPhase = false)
     end releaseFailedUpgrade
 
-    /** The reference identity (and SNI host) for a STARTTLS upgrade engine. The `PosixHandle` is fd-only and no longer carries the original
+    /** The reference identity (and SNI host) for a STARTTLS upgrade engine. The `PosixHandle` is fd-only and does not carry the original
       * connect host, so the client role draws it from `tls.sniHostname` (the only host the caller can supply at upgrade time). The provider
       * then decides what to do with it: a `trustAll` or `hostnameVerification = false` client does not check it, but a verifying client with
       * an empty identity FAILS CLOSED rather than handshaking with no name bound (RFC 9525 §6.1). The mechanism is provider-specific: the JDK
@@ -2069,8 +2068,8 @@ final private[net] class PosixTransport private[posix] (
         // On io_uring the plaintext ReadPump leaves stale recv(s) kernel-owned across the detach; clear upgradeActive only once the LAST has been
         // consumed (no recv remains in flight for this handle), so EVERY stale recv routes through upgradeHandoff in order. The detach-vs-rearm race
         // can leave MORE THAN ONE stale recv (the kernel-owned one whose promise the detach cancelled PLUS a fresh one the pump re-armed before the
-        // upgrade flag was observed, see IoUringDriver.awaitRead's note): clearing after just the first (the old "exactly one stale recv" assumption)
-        // let the second reap at upgradeActive=false and deliver its handshake bytes to the detached ReadPump promise via complete()'s plaintext
+        // upgrade flag was observed, see IoUringDriver.awaitRead's note): clearing after just the first (an "exactly one stale recv" assumption)
+        // would let the second reap at upgradeActive=false and deliver its handshake bytes to the detached ReadPump promise via complete()'s plaintext
         // branch, dropping a chunk of the flight and failing the handshake with an EngineError under repeated/concurrent upgrades. The hasInFlightRead
         // scan is authoritative on the reap carrier (where this runs), serialized with every recv registration and reap. A poller's poll carrier is the
         // standing producer for EVERY handshake read, so upgradeActive must stay set across the whole upgrade (cleared at completion in driveHandshake's

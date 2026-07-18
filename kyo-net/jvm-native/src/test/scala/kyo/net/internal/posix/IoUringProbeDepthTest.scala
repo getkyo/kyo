@@ -7,13 +7,13 @@ import kyo.ffi.Ffi
 import kyo.net.Test
 import kyo.net.TransportConfig
 
-/** The io_uring availability probe is invoked at the production queue depth `max(256, ioPoolSize * 64)`, not the old hardcoded 256.
+/** The io_uring availability probe is invoked at the production queue depth `max(256, ioPoolSize * 64)`, not a fixed 256.
   *
-  * `IoUringBackend.isAvailable` now computes `depth = max(256, TransportConfig.default.ioPoolSize * 64)` and passes it to
+  * `IoUringBackend.isAvailable` computes `depth = max(256, TransportConfig.default.ioPoolSize * 64)` and passes it to
   * `kyo_uring_probe_available(depth)`, so the probe exercises the same ring size the driver actually builds. The deterministic local unit
   * asserted here is the depth-threading: a capturing `IoUringBindings` records the depth argument, and invoking the probe through it with the
-  * backend's formula records exactly that value. Before the fix the probe took no depth at all (the signature was
-  * `kyo_uring_probe_available()`), so the production depth could never reach the queue init.
+  * backend's formula records exactly that value. A probe that took no depth (signature
+  * `kyo_uring_probe_available()`) could never thread the production depth to the queue init.
   */
 class IoUringProbeDepthTest extends Test:
 
@@ -85,10 +85,10 @@ class IoUringProbeDepthTest extends Test:
         assert(bindings.lastDepth.get() == depth, s"probe received ${bindings.lastDepth.get()}, expected the production depth $depth")
     }
 
-    "the production depth exceeds the old hardcoded 256 whenever ioPoolSize*64 does" in {
-        // The fix matters precisely when the production depth is larger than the old constant; assert the formula crosses 256 for a config that
+    "the production depth exceeds a fixed 256 whenever ioPoolSize*64 does" in {
+        // The computed depth matters precisely when it is larger than a fixed 256; assert the formula crosses 256 for a config that
         // warrants it (a host with >= 4 io pool slots yields 4*64 = 256+, and the default sizes ioPoolSize to processors/2). A capturing probe
-        // records that larger value, which the old hardcoded-256 probe could never have used.
+        // records that larger value, which a fixed-256 probe could never use.
         val cfg   = TransportConfig.default.copy(ioPoolSize = 8)
         val depth = math.max(256, cfg.ioPoolSize * 64)
         assert(depth == 512, s"expected ioPoolSize=8 to yield depth 512, got $depth")

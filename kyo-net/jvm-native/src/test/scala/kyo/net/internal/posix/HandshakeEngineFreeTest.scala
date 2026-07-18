@@ -19,7 +19,7 @@ import kyo.net.internal.transport.IoDriver
   *
   * The failure paths build a handshake engine and, on failure, free it, close the raw fd, and tear down the handle (`completeOrTls`,
   * `handleAccepted`, `upgradeToTls`/`freeUpgradeResources`). The STARTTLS upgrade additionally detaches the plaintext connection, keeping the fd
-  * open, so its failure path must close that detached fd explicitly: before the fix it leaked one fd per failed upgrade.
+  * open, so its failure path must close that detached fd explicitly, or it would leak one fd per failed upgrade.
   *
   * The guard observes accumulation, not a per-call internal counter: it drives many real failing (or succeeding) handshakes and asserts the
   * process's open-fd count returns to baseline. The fd count is read process-specifically by probing the lowest free descriptor (`socket()` then
@@ -65,11 +65,11 @@ class HandshakeEngineFreeTest extends Test:
       * connect-side client socket has `peer == port`). This counts only THIS test's sockets, never a foreign fd, because no other connection in the
       * process shares this listener's port.
       *
-      * The earlier version of this check probed the process-wide lowest-free descriptor (allocate a socket, read its number, close it). That number
+      * A process-wide lowest-free-descriptor probe (allocate a socket, read its number, close it) would be unreliable here: that number
       * equals the count of ALL open low descriptors in the process, which is only a valid leak proxy in a single-threaded process. The module runs
       * its suites at `parallelism 4`, so three other suites open and close their own
-      * descriptors throughout this soak; the process-wide probe then rose by THEIR fds, not a leak here, and the assertion flaked (a captured run
-      * showed the probe climb from 118 to 138 while this test's own socket count held at 1, the listener, with all 19 of the rise foreign). Counting
+      * descriptors throughout this soak; the process-wide probe would then rise by THEIR fds, not a leak here, and the assertion would flake (the
+      * probe can climb by ~20 while this test's own socket count holds at 1, the listener, with the entire rise foreign). Counting
       * only the port-attributed sockets makes the check immune to that cross-suite contamination while still climbing under a genuine per-iteration
       * leak (a leaked connect or accept fd keeps `port` at one of its ends).
       */
@@ -217,8 +217,8 @@ class HandshakeEngineFreeTest extends Test:
                             })
                     }.andThen {
                         // Drive k failing upgrades; each iteration asserts the upgrade fails AND that its exact detached plaintext fd is released
-                        // (fstat < 0) before the next iteration begins. This repeats the single-upgrade closure check above k times, so the pre-fix
-                        // bug (one detached fd leaked per failed upgrade) is caught on the first leaking iteration. Verifying each fd in the brief
+                        // (fstat < 0) before the next iteration begins. This repeats the single-upgrade closure check above k times, so a per-upgrade
+                        // fd leak (one detached fd leaked per failed upgrade) is caught on the first leaking iteration. Verifying each fd in the brief
                         // window right after its own teardown, rather than every created fd once at the end, is immune to descriptor-number
                         // recycling: a closed number the kernel later hands to another live socket under `parallelism 4` cannot masquerade as this
                         // fd, because each fd is checked before any later iteration (or sibling suite) can reuse its number.

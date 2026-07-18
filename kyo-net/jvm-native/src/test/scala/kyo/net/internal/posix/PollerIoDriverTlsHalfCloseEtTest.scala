@@ -15,13 +15,13 @@ import kyo.scheduler.IOPromise
   * ciphertext and then immediately half-closes (TCP FIN), the kernel delivers one event carrying BOTH `EPOLLIN` and `EPOLLRDHUP`. The plain
   * read path (`dispatchReadPlain`) persists this as `halfClose = PeerHalfClosePending` and sets
   * `readMightHaveMore = filled || (halfClose == PeerHalfClosePending)` so the consumer-paced drain forces another recv after plaintext delivery.
-  * The TLS path omitted both steps:
-  *   - `halfClose` was never advanced to `PeerHalfClosePending`, so the drain did not force a re-dispatch after plaintext delivery.
-  *   - The EAGAIN branch never checked for `PeerHalfClosePending`, so a connection where the initial recv returned EAGAIN (ciphertext not yet
-  *     visible at the moment of the call) with `eofPending=true` would re-arm and wait for an EPOLLRDHUP edge that ET will not re-fire.
+  * The TLS path must perform both steps, or it strands:
+  *   - if `halfClose` is not advanced to `PeerHalfClosePending`, the drain does not force a re-dispatch after plaintext delivery.
+  *   - if the EAGAIN branch does not check for `PeerHalfClosePending`, a connection where the initial recv returned EAGAIN (ciphertext not yet
+  *     visible at the moment of the call) with `eofPending=true` re-arms and waits for an EPOLLRDHUP edge that ET will not re-fire.
   *
-  * The fix mirrors `dispatchReadPlain`:
-  *   - `dispatchReadTls` now accepts and propagates `eofPending`.
+  * `dispatchReadTls` mirrors `dispatchReadPlain`:
+  *   - `dispatchReadTls` accepts and propagates `eofPending`.
   *   - In the `n > 0` branch: `halfClose` is advanced to `PeerHalfClosePending`; `readMightHaveMore` includes the `PeerHalfClosePending` check.
   *   - In the EAGAIN branch: `halfClose` is advanced to `PeerHalfClosePending`; the engine FIFO op delivers `Span.empty` when
   *     `halfClose == PeerHalfClosePending` and no engine-buffered plaintext remains.
@@ -103,8 +103,8 @@ class PollerIoDriverTlsHalfCloseEtTest extends Test:
           *   1. Decrypt the ciphertext and deliver the plaintext to the consumer.
           *   2. On the consumer's next awaitRead (re-arm), force another recv via readMightHaveMore (set when halfClose == PeerHalfClosePending).
           *   3. The second recv returns 0 (FIN), which surfaces as Span.empty (Success, not Closed).
-          * Pre-fix: readMightHaveMore was false after delivering plaintext (halfClose never advanced to PeerHalfClosePending), so the consumer
-          * re-armed and parked forever waiting for a second EPOLLRDHUP edge that ET will not re-fire.
+          * Without the advance: readMightHaveMore would be false after delivering plaintext (halfClose not advanced to PeerHalfClosePending), so the consumer
+          * would re-arm and park forever waiting for a second EPOLLRDHUP edge that ET will not re-fire.
           */
         "TLS plaintext delivered in full and Span.empty surfaces on ET half-close with buffered ciphertext (8c)" in {
             if kyo.internal.Platform.isJS then Sync.defer(succeed)
@@ -136,7 +136,7 @@ class PollerIoDriverTlsHalfCloseEtTest extends Test:
                             acceptedH.tls = Present(serverEngine)
                             // Send the ciphertext on the raw socket, then half-close for writing. Both the ciphertext and the TCP FIN
                             // arrive in the accepted side's kernel recv buffer before the reader below starts. On epoll, this guarantees
-                            // EPOLLIN + EPOLLRDHUP will be co-reported in one poll event (the half-close path the fix targets).
+                            // EPOLLIN + EPOLLRDHUP will be co-reported in one poll event (the half-close path this guards).
                             val cipherBuf = Buffer.fromArray[Byte](cipher)
                             val sendR =
                                 try sock.sendNow(client, cipherBuf, cipher.length.toLong, PosixConstants.MSG_NOSIGNAL)
@@ -187,8 +187,8 @@ class PollerIoDriverTlsHalfCloseEtTest extends Test:
         }
 
         /** EAGAIN variant: the reader is started BEFORE the data arrives, so the first recv returns EAGAIN with eofPending=true.
-          * This exercises the EAGAIN branch of dispatchReadTls. Pre-fix: `halfClose` was never advanced to `PeerHalfClosePending` in the
-          * EAGAIN branch, so the handle re-armed and waited for an EPOLLRDHUP edge that ET will not re-fire after the data was delivered.
+          * This exercises the EAGAIN branch of dispatchReadTls. Without the advance: `halfClose` is not advanced to `PeerHalfClosePending` in the
+          * EAGAIN branch, so the handle would re-arm and wait for an EPOLLRDHUP edge that ET will not re-fire after the data was delivered.
           *
           * Timing: the reader registers awaitRead first; then the sender sends ciphertext + half-close. On the first edge the recv may
           * succeed (n > 0) or EAGAIN depending on race; on the second edge (if a first EAGAIN was returned) the recv delivers the data.
@@ -196,7 +196,7 @@ class PollerIoDriverTlsHalfCloseEtTest extends Test:
           *   - If first recv delivers data (n > 0 with eofPending): covered by the first leaf above.
           *   - If first recv returns EAGAIN (eofPending set, no data yet): the EAGAIN branch must advance halfClose to PeerHalfClosePending
           *     and deliver EOF after subsequent edges bring the data + FIN; otherwise the strand parks forever on a missing re-edge.
-          * The test accepts either outcome (the fix makes both paths correct); only a Closed failure or a timeout is a regression.
+          * The test accepts either outcome (both paths are correct); only a Closed failure or a timeout is a regression.
           */
         "TLS Span.empty surfaces on ET half-close when initial recv returns EAGAIN (8c)" in {
             if kyo.internal.Platform.isJS then Sync.defer(succeed)

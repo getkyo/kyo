@@ -188,9 +188,9 @@ class WritePumpTest extends Test:
         // registered and tears the handle down via closeHandle (the production teardown path: Connection.teardownHandle runs cancel + closeHandle).
         // closeHandle BOTH fails the pending writable promise with Closed (driving WritablePromise.onComplete's Failure arm into onWritableError ->
         // teardown) AND closes the fd, so the teardown is deterministic even when the poll loop delivers a writable Success that races the failure:
-        // a raced Success makes the pump retry the remaining write, which then fails on the closed fd and tears down. A bare driver.cancel (the prior
-        // version) was NOT deterministic once writable delivery worked: the poll loop can complete the writable Success before the cancel fails it,
-        // leaving the pump to re-arm awaitWritable with no further cancel. That version only passed because writable delivery was previously broken.
+        // a raced Success makes the pump retry the remaining write, which then fails on the closed fd and tears down. A bare driver.cancel would NOT
+        // be deterministic once writable delivery works: the poll loop can complete the writable Success before the cancel fails it,
+        // leaving the pump to re-arm awaitWritable with no further cancel.
         // closedLatch latches the teardown.
         "a writable-wait failure tears down the pump (handle closed while awaiting writable)" in {
             assumePoller()

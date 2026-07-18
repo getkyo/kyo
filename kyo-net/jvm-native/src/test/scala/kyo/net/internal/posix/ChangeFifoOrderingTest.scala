@@ -96,7 +96,7 @@ class ChangeFifoOrderingTest extends Test:
                         val pollerFd     = real.create()
                         val backend      = RecordingPollerBackend(real)
                         // The FIRST registerRead pins the change worker until the test releases the gate. onRegisterRead runs at the start of
-                        // registerRead, before counting / recording / delegating, exactly where the old fake's onRegisterRead callback ran.
+                        // registerRead, before counting / recording / delegating.
                         backend.onRegisterRead = fd =>
                             if fd == firstFd && started.compareAndSet(false, true) then
                                 firstEntered.completeDiscard(Result.succeed(()))

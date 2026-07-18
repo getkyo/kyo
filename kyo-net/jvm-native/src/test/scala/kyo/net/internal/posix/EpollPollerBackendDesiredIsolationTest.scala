@@ -6,13 +6,13 @@ import kyo.net.Test
 /** Verifies that two epoll drivers keep INDEPENDENT desired-interest state.
   *
   * The epoll arm tracks each fd's currently-armed direction union in [[PollScratch.epollDesired]], a PER-DRIVER map, so registering interest on
-  * one driver's fd never shows up in another driver's desired state. Before the fix the desired map was a process singleton on the
-  * `EpollPollerBackend` object, so an arm on one driver leaked into every driver's view, breaking the single-owner interest invariant across a
+  * one driver's fd never shows up in another driver's desired state. A process-singleton desired map on the
+  * `EpollPollerBackend` object would let an arm on one driver leak into every driver's view, breaking the single-owner interest invariant across a
   * multi-driver pool.
   *
   * Two epoll drivers are modeled by two `PollScratch` instances and two real epoll fds. Interest is armed on the FIRST driver's fd via its
   * scratch; the test asserts the FIRST scratch records the interest and the SECOND scratch's desired map stays empty. Pure interest-state
-  * assertion on the per-driver map, no timing. FAILs before the fix (the singleton shows the interest on both). Linux-only (epoll); cancels
+  * assertion on the per-driver map, no timing. A shared singleton would show the interest on both. Linux-only (epoll); cancels
   * elsewhere, where the real-epoll leg runs in CI.
   */
 class EpollPollerBackendDesiredIsolationTest extends Test:

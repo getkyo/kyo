@@ -16,9 +16,9 @@ import kyo.net.Test
   * notice), so `createEngine` MUST reject. The JDK floor already converges to this posture: `NioTransport.loadCaCertTrustManagers` opens the
   * configured CA with a plain `FileInputStream` and lets the resulting exception propagate out of `createSslContext` rather than swallowing it.
   *
-  * The distinction the fix draws is between "path never configured" (`Absent`, keep the system-trust default, the non-verifying / no-CA cases)
+  * The distinction drawn is between "path never configured" (`Absent`, keep the system-trust default, the non-verifying / no-CA cases)
   * and "path configured but unreadable / unparseable" (fail closed). The `Absent` boundary is pinned by a positive control: a verifying client
-  * with NO `caCertPath` still builds an engine (the system-trust default is preserved, untouched by the fix).
+  * with NO `caCertPath` still builds an engine (the system-trust default is preserved).
   *
   * Each leaf cancels where the relevant provider is not staged, so a host without the bundle is not a failure; CI validates the real
   * provider. Anti-flakiness: `createEngine` is synchronous and in-memory (no socket, no sleep); the unreadable path is a fresh, never-created
@@ -79,10 +79,10 @@ class BoringSslProviderConfiguredPemTest extends Test:
         )
     end assertServerMaterialFailsClosed
 
-    // The bug (CWE-295 silent weakening): a verifying client whose configured caCertPath is unreadable falls back to the system trust store
-    // because readPem swallows the read error to Absent and applyConfig treats Absent as "no CA configured, use system trust". Before the fix
-    // createEngine SUCCEEDS (the pin is silently dropped); the CORRECT behavior is to reject (the JDK loadCaCertTrustManagers posture). This
-    // assertion FAILS today: no Closed is thrown.
+    // The bug (CWE-295 silent weakening) this guards: a verifying client whose configured caCertPath is unreadable must not fall back to the
+    // system trust store. If readPem swallowed the read error to Absent and applyConfig treated Absent as "no CA configured, use system trust",
+    // createEngine would SUCCEED (the pin silently dropped); the CORRECT behavior is to reject (the JDK loadCaCertTrustManagers posture), so this
+    // asserts a Closed is thrown.
     "BoringSSL: a verifying client with an unreadable configured caCertPath fails closed instead of falling back to system trust" in {
         if !TlsRealEngines.boringSslAvailable() then cancel("BoringSSL not staged for this host")
         Sync.defer(assertCaFailsClosed(boringSsl))
@@ -106,8 +106,8 @@ class BoringSslProviderConfiguredPemTest extends Test:
     }
 
     // Boundary control: a NOT-configured path (caCertPath Absent) must keep the system-trust default. A verifying client with no caCertPath
-    // still builds an engine; the fix must not turn "no CA configured" into a rejection. This passes before and after the fix, pinning that the
-    // fix distinguishes Absent (keep default) from configured-but-unreadable (fail closed).
+    // still builds an engine; "no CA configured" must not become a rejection. This holds regardless, pinning that Absent (keep default) is
+    // distinguished from configured-but-unreadable (fail closed).
     "BoringSSL: a verifying client with no configured caCertPath still builds an engine (system-trust default preserved)" in {
         if !TlsRealEngines.boringSslAvailable() then cancel("BoringSSL not staged for this host")
         Sync.defer {
@@ -128,9 +128,9 @@ class BoringSslProviderConfiguredPemTest extends Test:
         }
     }
 
-    // The fix: a verifying client with no configured caCertPath must actually LOAD the platform trust store, not leave an EMPTY X509 store. Before
-    // the fix, applyConfig's Absent branch loaded no CAs while verify mode stayed 2 (SSL_VERIFY_PEER), so every public-internet handshake failed
-    // with EngineError (the kyo-browser Chrome-download wipeout: the "system-trust default" the two tests above assert was empty in the native
+    // A verifying client with no configured caCertPath must actually LOAD the platform trust store, not leave an EMPTY X509 store. If
+    // applyConfig's Absent branch loaded no CAs while verify mode stayed 2 (SSL_VERIFY_PEER), every public-internet handshake would fail
+    // with EngineError (the "system-trust default" the two tests above assert would be empty in the native
     // path). This exercises the shim's ctxLoadSystemCa directly: on a host with a real platform CA bundle it must load at least one trust source
     // (SSL_CTX_load_verify_locations parses the bundle only when it exists), so the client validates public chains. Gated on a bundle file being
     // present (Linux CI has /etc/ssl/certs/ca-certificates.crt); a host with none cannot exercise system trust and cancels.

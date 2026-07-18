@@ -6,7 +6,7 @@ import kyo.Fiber
 import kyo.ffi.Buffer
 import kyo.ffi.Ffi
 
-/** POSIX socket syscalls bound through kyo-ffi. Replaces the socket section of the retired hand-rolled native socket layer.
+/** POSIX socket syscalls bound through kyo-ffi.
   *
   * Every method is part of the unsafe FFI tier and takes a trailing `(using AllowUnsafe)` clause: each native call is a side effect tracked by
   * the caller.

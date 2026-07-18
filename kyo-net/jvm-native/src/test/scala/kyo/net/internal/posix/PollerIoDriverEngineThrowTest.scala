@@ -6,15 +6,15 @@ import kyo.net.Test
 /** Reproduction + regression guard (Netty #7337 class) on [[PollerIoDriver]].
   *
   * Every TLS engine op for every connection on a driver routes through one per-driver engine FIFO drained by the poll-loop carrier (`submitEngineOp`
-  * enqueues; `drainEngineOps`, called each cycle from `drainFifos` on the poll loop, runs each op to completion before the next). Before the fix
-  * `drainEngineOps` ran `op()` with NO try/catch: a throw from any engine op (a TLS shim call, a buffer copy, an OOM, a user continuation fired by
-  * `promise.completeDiscard`) escaped the tail-recursive loop, so the rest of the cycle's queued ops were abandoned: EVERY subsequent engine op for
-  * EVERY connection on that driver was enqueued and not drained that cycle, a multi-connection silent hang plus unbounded `engineQueue` growth.
+  * enqueues; `drainEngineOps`, called each cycle from `drainFifos` on the poll loop, runs each op to completion before the next). Running
+  * `op()` with NO try/catch would let a throw from any engine op (a TLS shim call, a buffer copy, an OOM, a user continuation fired by
+  * `promise.completeDiscard`) escape the tail-recursive loop, abandoning the rest of the cycle's queued ops: EVERY subsequent engine op for
+  * EVERY connection on that driver would be enqueued and not drained that cycle, a multi-connection silent hang plus unbounded `engineQueue` growth.
   *
   * This leaf reproduces it directly: an engine op for "connection A" throws, then a normal engine op for "connection B" is submitted on the SAME
   * driver, and the leaf asserts B's op still runs (the drain survived A's throw and kept draining). The engine ops are plain FIFO thunks (no TLS
   * engine needed): the drain-death bug is in the FIFO drain loop, not in any engine, so a thunk that throws exercises the exact gap with no TLS
-  * setup. Before the fix this FAILS for the right reason: A's throw escapes the drain loop and B never runs (the leaf times out at the deadlock
+  * setup. Without the try/catch this FAILS for the right reason: A's throw escapes the drain loop and B never runs (the leaf times out at the deadlock
   * ceiling).
   *
   * Runs on every poller host (epoll on Linux, kqueue on macOS/BSD); the engine FIFO drains only on the poll-loop carrier, so the poll loop is
@@ -58,7 +58,7 @@ class PollerIoDriverEngineThrowTest extends Test:
                     aThrew.completeDiscard(Result.succeed(()))
                     throw new RuntimeException("engine op A failed (injected for the repro)")
 
-                // Connection B's engine op: a normal op that completes its promise. With the fix it runs after A's throw; without it, it never does.
+                // Connection B's engine op: a normal op that completes its promise. It runs after A's throw; without the try/catch it never would.
                 val opB: () => Unit = () => bRan.completeDiscard(Result.succeed(()))
 
                 driver.submitEngineOp(opA)

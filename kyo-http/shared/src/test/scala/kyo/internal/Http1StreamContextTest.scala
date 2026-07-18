@@ -313,7 +313,7 @@ class Http1StreamContextTest extends kyo.BaseHttpTest:
             end match
         }
 
-        // 22. The over-strictness guard, and the reason the fix is not "reject non-ASCII". A field value may
+        // 22. The over-strictness guard, and the reason not to "reject non-ASCII". A field value may
         // carry obs-text (%x80-FF) per RFC 9110 section 5.5, so "café" is legal HTTP and must reach the wire.
         // A rejection here would hand a peer a remote lever to 500 every response a handler echoes.
         "respond writes a non-ASCII header value as UTF-8 octets" in {

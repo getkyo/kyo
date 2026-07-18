@@ -25,7 +25,7 @@ final private[kyo] class IoDriverPool[Handle] private (
       */
     def next()(using AllowUnsafe): IoDriver[Handle] =
         // Mask the sign bit BEFORE the modulo: once the AtomicLong counter wraps past Long.MaxValue it goes negative, and `Math.abs` cannot
-        // recover (`Math.abs(Long.MinValue)` is still Long.MinValue, an overflow), so the old `Math.abs(idx)` could index out of bounds or skew
+        // recover (`Math.abs(Long.MinValue)` is still Long.MinValue, an overflow), so a plain `Math.abs(idx)` would index out of bounds or skew
         // the rotation at the wrap. Clearing the top bit yields a non-negative value, so the modulo gives a clean 0..N-1 rotation across the wrap.
         val idx = ((counter.getAndIncrement() & Long.MaxValue) % drivers.length).toInt
         drivers(idx)

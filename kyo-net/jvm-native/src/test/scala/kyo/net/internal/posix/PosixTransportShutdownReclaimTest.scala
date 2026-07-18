@@ -462,7 +462,7 @@ class PosixTransportShutdownReclaimTest extends Test:
             val driver   = TestDrivers.forBackend(backend, pollerFd, spy)
             // handshakeTimeout = Infinity exercises armHandshakeDeadline's no-timer branch, whose returned `disarm` is what this leaf targets:
             // registerHandshake hands this SAME disarm to BOTH the handshake's own onFinished and close()'s sweepPendingHandshakes, and a
-            // constant-true gate (the pre-fix shape) lets both proceed instead of exactly one.
+            // constant-true gate would let both proceed instead of exactly one.
             val config = kyo.net.TransportConfig.default.copy(handshakeTimeout = Duration.Infinity)
             // The engine references this transport (its onTrigger runs transport.close()), so it is built after the transport and published
             // into a slot the injected factory reads at accept time; the slot lives entirely in the test tree.

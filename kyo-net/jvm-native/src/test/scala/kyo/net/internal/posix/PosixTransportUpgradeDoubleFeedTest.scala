@@ -45,8 +45,8 @@ end RecordingFeedEngine
   * backpressure, and `detachForUpgrade`'s `inbound.close()` fails that parked put). `PosixTransport.upgradeRole`'s `feedCoalescedHandshake`
   * feeds the flight from `PosixHandle.lastPlaintextRead` unconditionally, and the driver's `onInboundClosedDuringRead` salvage stages the
   * SAME array into `upgradeHandoff` for `driveUpgradeRead` to feed again -- both paths alias one slot with no mutual guard, so the engine
-  * received a duplicate handshake record and failed the handshake with an `EngineError` (observed intermittently in `TransportStartTlsTest`'s
-  * "repeated STARTTLS upgrades" leaf under full-suite load, on both backends). The fix makes `lastPlaintextRead` a one-shot CAS claim: whichever
+  * received a duplicate handshake record and failed the handshake with an `EngineError` (the shape that would fail `TransportStartTlsTest`'s
+  * "repeated STARTTLS upgrades" leaf under full-suite load, on both backends). `lastPlaintextRead` is a one-shot CAS claim: whichever
   * side wins delivers the flight, the loser skips.
   *
   * The scenario drives a REAL loopback pair with a scripted [[RecordingFeedEngine]] (injected through [[TestTransports.forTesting]]'s

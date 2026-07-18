@@ -152,7 +152,7 @@ class IoUringOrphanFeedOrderNoDuplicationTest extends Test:
                                 ).value == chunk1Cipher.length.toLong)
 
                                 // The orphan's feed must land in `order` exactly once, via inboundSink (never via secondPromise, never
-                                // duplicated): confirms the fix drains the orphan's real bytes -- feeding them to the SAME (handshaked) engine
+                                // duplicated): confirms the driver drains the orphan's real bytes -- feeding them to the SAME (handshaked) engine
                                 // every other recv on this handle shares -- rather than losing them in a dead upgradeHandoff slot.
                                 awaitCondition(5.seconds)(!order.isEmpty).map { orphanDelivered =>
                                     assert(orphanDelivered, "orphan's chunk1 never reached inboundSink (lost, not fed)")

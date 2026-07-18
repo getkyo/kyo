@@ -6,22 +6,22 @@ import kyo.net.Test
 /** Regression coverage for the `IoDriverPool.close()` fiber-interrupt race that strands a driver's deferred fd close, leaving the socket
   * in `CLOSE_WAIT`.
   *
-  * `IoDriverPool.close()` used to signal `driver.close()` on every driver and then unconditionally interrupt every driver's event-loop
-  * fiber. For the posix io_uring and poller drivers `close()` only SIGNALS the loop (wakes it, sets a closed flag); the actual deferred
+  * `IoDriverPool.close()` signals `driver.close()` on every driver; unconditionally interrupting every driver's event-loop fiber afterward
+  * would strand a driver's deferred fd close. For the posix io_uring and poller drivers `close()` only SIGNALS the loop (wakes it, sets a closed flag); the actual deferred
   * teardown -- discharging a handle whose real `close(fd)` was waiting on the loop's own carrier to observe an in-flight op draining --
   * runs LATER, as the loop's own graceful post-signal continuation. Kyo's fiber interruption is cooperative, honored at the next
   * suspension point (`Fiber.Unsafe.init`'s own contract), so an interrupt landing while that continuation is parked (exactly where it
   * sits immediately after the signal, before its own next scheduler turn) aborts it before it ever runs -- permanently stranding
   * whatever deferred-close bookkeeping that continuation owed. `IoUringDriver`'s `registerDeferredClose`/`closeAfterDrain` sweep (the last
   * chance to force-discharge a handle whose real close is waiting on an in-flight recv to drain) lives in exactly this kind of post-signal
-  * continuation, on the reap loop's own carrier, and never got the chance to run once the pool's interrupt won the race: the CLOSE_WAIT
+  * continuation, on the reap loop's own carrier; if the pool's interrupt wins the race, it never runs: the CLOSE_WAIT
   * leak this test reproduces.
   *
   * `DeferredTeardownDriver` reproduces the shape without any real I/O: its `close()` only completes a signal promise; its `start()`
   * fiber parks on that signal and, once it settles (success or failure, mirroring a real driver's `Abort.run`-style close handling),
-  * runs a "deferred teardown" step and completes `teardownDone`. FAILS before the fix (the pool's interrupt, issued immediately after
-  * `close()` returns, aborts the fiber before its continuation reaches `teardownDone`, so the bounded await below times out) and PASSES
-  * after it (the continuation is never raced, so `teardownDone` completes promptly).
+  * runs a "deferred teardown" step and completes `teardownDone`. If the pool's interrupt (issued immediately after `close()` returns) aborted
+  * the fiber before its continuation reaches `teardownDone`, the bounded await below would time out; the test asserts instead that the
+  * continuation is never raced, so `teardownDone` completes promptly.
   */
 class IoDriverPoolCloseInterruptRaceTest extends Test:
 

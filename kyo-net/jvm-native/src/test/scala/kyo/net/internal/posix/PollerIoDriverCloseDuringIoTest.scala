@@ -8,14 +8,14 @@ import kyo.net.Test
 import kyo.net.internal.transport.ReadOutcome
 import kyo.net.internal.transport.WriteResult
 
-/** Deterministic regression coverage for the fd-close ordering fix: the winner of `claimFdClose` must never close the fd directly while another
-  * carrier can still be mid-syscall on it under a live [[PosixHandle.beginWrite]] / [[PosixHandle.beginDispatch]] hold. Before the fix,
-  * `PollerIoDriver.closeHandle`'s plaintext branch called `sockets.close(fd)` synchronously on the claiming carrier the instant it won the
+/** Deterministic regression coverage for the fd-close ordering guarantee: the winner of `claimFdClose` must never close the fd directly while another
+  * carrier can still be mid-syscall on it under a live [[PosixHandle.beginWrite]] / [[PosixHandle.beginDispatch]] hold.
+  * If `PollerIoDriver.closeHandle`'s plaintext branch closed `sockets.close(fd)` synchronously on the claiming carrier the instant it won the
   * claim, regardless of whether a pump write (`writeRaw`, guarded by `beginWrite`) or a poll-carrier read dispatch (`dispatchRead`, guarded
-  * by `beginDispatch`) was still inside its send/recv syscall on that same fd. Under load the kernel can recycle a closed fd number to a
+  * by `beginDispatch`) was still inside its send/recv syscall on that same fd, then under load the kernel could recycle a closed fd number to a
   * concurrently-connecting leaf before that in-flight syscall completes, corrupting an unrelated connection (a late send injects stale bytes
-  * into it, or a late recv steals its bytes). The fix makes the claim winner shut the fd down immediately (safe: winning the claim proves it
-  * is still owned) and defer the real `close(fd)` to [[PosixHandle.freeResources]] via `fdCloseSink`, the same exactly-once, zero-holders
+  * into it, or a late recv steals its bytes). The claim winner instead shuts the fd down immediately (safe: winning the claim proves it
+  * is still owned) and defers the real `close(fd)` to [[PosixHandle.freeResources]] via `fdCloseSink`, the same exactly-once, zero-holders
   * point that already frees the engine and buffers, so the fd number inherits that same guarantee.
   *
   * Both leaves force the exact interleaving through `RecordingSocketBindings`' `onSend` / `onRecvNow` hooks, which fire synchronously,

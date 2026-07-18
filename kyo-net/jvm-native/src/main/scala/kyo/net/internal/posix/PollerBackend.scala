@@ -77,7 +77,7 @@ private[net] trait PollerBackend:
     def registerWake(pollerFd: Int, scratch: PollScratch)(using AllowUnsafe, Frame): Boolean
 
     /** Trigger the poll-loop wakeup: make a parked [[poll]] on `pollerFd` return now so the driver drains its change/engine FIFOs. Thread-safe and
-      * callable from any carrier (it is the cross-carrier wake), and triggered UNCONDITIONALLY per submission (wake coalescing was retired): epoll
+      * callable from any carrier (it is the cross-carrier wake), and triggered UNCONDITIONALLY per submission (never coalesced, since a coalesced wake could be skipped against a stale flag and strand a submission's only delivery): epoll
       * writes the eventfd counter (an atomic syscall, no shared buffer); kqueue submits the `NOTE_TRIGGER` changelist that `registerWake`
       * pre-encoded once into `scratch.wakeArmBuf`, read-only, so concurrent wakes share one immutable buffer and allocate nothing per wake. A no-op
       * if the wake mechanism is gone after close (`scratch.wakeFd` < 0 on epoll, `scratch.wakeArmBuf` null on kqueue); the wake guard frees that

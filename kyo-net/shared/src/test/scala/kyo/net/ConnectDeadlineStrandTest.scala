@@ -85,9 +85,9 @@ class ConnectDeadlineStrandTest extends Test:
                 val failures       = outcomes.flatMap(_.toList)
                 val connectExc     = failures.count(_ == "NetConnectException")
                 val connectTimeout = failures.count(_ == "NetConnectTimeoutException")
-                // Per-mode assertions so each fix is attributable: Fix A (deferred-register on ClosedSelectorException) drives NetConnectException
+                // Per-mode assertions so each arm is attributable: the deferred-register on ClosedSelectorException drives NetConnectException
                 // to 0; the deferred-connect-after-rebuild force-dispatch drives NetConnectTimeoutException to 0. A non-zero in either means that
-                // arm of the fix is incomplete.
+                // arm is incomplete.
                 assert(
                     connectExc == 0,
                     s"$connectExc of $concurrency concurrent connects failed with NetConnectException (registerChannel/rebuild race)"

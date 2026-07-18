@@ -17,7 +17,7 @@ import kyo.net.internal.transport.WriteResult
   * A real mid-syscall signal is not deterministically injectable, so the interruption is reproduced at the bindings seam:
   * [[RecordingSocketBindings.injectRecvEintrOnce]] / [[RecordingSocketBindings.injectSendEintrOnce]] make the next recv/send return
   * `(-1, EINTR)` exactly once, then clear themselves. The real socket still holds its data, so the driver's retry then delivers the bytes /
-  * completes the send for real. Before the fix these leaves FAIL for the right reason: the injected `EINTR` fails the read/write `Closed`.
+  * completes the send for real. Without the retry these leaves would FAIL for the right reason: the injected `EINTR` fails the read/write `Closed`.
   *
   * Gate: `PosixTestSockets.assumePoller()` (real loopback pair, real epoll/kqueue). JVM+Native, where the poller runs.
   *

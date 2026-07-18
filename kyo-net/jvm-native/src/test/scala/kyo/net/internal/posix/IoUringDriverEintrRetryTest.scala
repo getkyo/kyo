@@ -12,15 +12,15 @@ import kyo.net.internal.transport.WriteResult
   *
   * io_uring surfaces a signal-interrupted recv/send as a completion CQE whose `res` is `-EINTR`: a non-blocking recv/send interrupted by a
   * signal before any byte is transferred. POSIX says to retry such a call (no data moved, the socket is unchanged), exactly as
-  * [[PollerIoDriver]] now retries `EINTR` in place on the readiness arm (commit 5498ada6b) and as the accept path retries it. Before the fix the
-  * io_uring read CQE failed the read promise `Closed` on any `res < 0` ("read errno=-res") and the send CQE completions treated any negative
-  * `res` as a hard error and discarded the pending tail, with no `-EINTR` special-casing, so a single interrupted completion dropped a healthy
-  * connection (read) or silently lost the outbound bytes (send), the same gap the poller had.
+  * [[PollerIoDriver]] retries `EINTR` in place on the readiness arm and as the accept path retries it. Without `-EINTR` special-casing, the
+  * io_uring read CQE would fail the read promise `Closed` on any `res < 0` ("read errno=-res") and the send CQE completions would treat any
+  * negative `res` as a hard error and discard the pending tail, so a single interrupted completion would drop a healthy
+  * connection (read) or silently lose the outbound bytes (send), the same gap the poller had.
   *
   * A real mid-syscall signal is not deterministically injectable, so the interruption is reproduced at the bindings seam: an
   * [[EintrInjectingUring]] subclass of [[RecordingIoUringBindings]] forces exactly ONE reaped CQE's `res` to `-EINTR` (every other ring op
   * delegates to the real ring and the kernel completes it). The real socket still holds its data, so the driver's retry then delivers the
-  * received bytes / re-sends the unsent ciphertext for real. Before the fix these leaves FAIL for the right reason: the injected `-EINTR` fails
+  * received bytes / re-sends the unsent ciphertext for real. Without the retry these leaves would FAIL for the right reason: the injected `-EINTR` fails
   * the read `Closed` (read leaf) and discards the unsent tail so the peer never receives the bytes (send leaf).
   *
   * Gate: [[PosixTestSockets.assumeUring]] (a real io_uring ring at production depth). On a cgroup-capped host the leaf cancels cleanly
@@ -186,9 +186,9 @@ class IoUringDriverEintrRetryTest extends Test:
                     val payload = Array.tabulate[Byte](16)(i => (i + 1).toByte)
                     val reaped  = recording.awaitReap()
                     // Arm BEFORE the write: the prep-time injection must see the arm so the armed send is prepped with length 0 (it transfers
-                    // nothing, like a real signal-interrupted send) and its CQE is forced to -EINTR. With the fix, onRawSendComplete re-flushes
-                    // the (entirely unsent) tail and the peer receives the payload exactly once; without it the negative res discards the tail
-                    // and the bytes are lost. Nothing else is in flight on this fresh driver, so the armed one-shot can only hit this send.
+                    // nothing, like a real signal-interrupted send) and its CQE is forced to -EINTR. onRawSendComplete re-flushes
+                    // the (entirely unsent) tail and the peer receives the payload exactly once; without the retry the negative res would discard the tail
+                    // and the bytes would be lost. Nothing else is in flight on this fresh driver, so the armed one-shot can only hit this send.
                     recording.armEintr()
                     val w = drv.write(clientH, Span.fromUnsafe(payload), 0)
                     assert(w == WriteResult.Done, s"write result=$w")

@@ -83,7 +83,7 @@ object TlsEngineLoopback:
       *
       * Loops `readPlain` until it yields no more bytes (0 or negative), so a ciphertext stream spanning multiple TLS records decrypts fully.
       * Used by the write-path conservation tests to decrypt the bytes the driver sent to the peer socket and compare them to the input
-      * plaintext, the real-engine equivalent of the old passthrough/XOR direct-byte comparison.
+      * plaintext.
       */
     def decrypt(engine: TlsEngine, ciphertext: Array[Byte])(using AllowUnsafe): Array[Byte] =
         feed(engine, ciphertext)

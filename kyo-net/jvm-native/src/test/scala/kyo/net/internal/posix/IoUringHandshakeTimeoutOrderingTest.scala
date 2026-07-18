@@ -14,8 +14,8 @@ import kyo.net.internal.TlsProviderPlatform
   *
   * #243 at the resource level is an ORDERING violation: when a finite `handshakeTimeout` reaps a server TLS handshake that is parked in
   * `awaitReadCiphertext` with an in-flight io_uring recv SQE pointed at the handle's `readBuffer`, the teardown must NOT free that `readBuffer`
-  * while the recv SQE is still kernel-owned (in-flight count > 0). The buggy teardown freed it directly (`PosixHandle.close`) while the recv was
-  * in flight; the fix routes the free through `ioDriver.closeHandle`, which on io_uring DEFERS the free until the in-flight recv CQE reaps and
+  * while the recv SQE is still kernel-owned (in-flight count > 0). Freeing it directly (`PosixHandle.close`) while the recv is
+  * in flight would violate that ordering; the free routes through `ioDriver.closeHandle`, which on io_uring DEFERS the free until the in-flight recv CQE reaps and
   * forces that recv to complete with `shutdown(SHUT_RDWR)`.
   *
   * This test asserts that ordering directly, no Valgrind / ASan required. It drives the real `PosixTransport.handleAccepted` teardown path on a

@@ -346,7 +346,7 @@ class NioIoDriverTest extends Test:
         // wake the selector leaves the fd stranded in CLOSE_WAIT until some unrelated event happens to wake the loop. Asserted here on darwin
         // without the Linux /proc leak probe via the channel's registration state: the same select() pass that deregisters the cancelled key
         // is the one that kill()s the fd, so channel.isRegistered() going false is a faithful proxy for "the deferred close actually ran".
-        // Pre-fix (no wakeup) the idle selector never runs that pass and the channel stays registered; the fix's wakeup() forces one.
+        // Without the wakeup the idle selector never runs that pass and the channel stays registered; closeHandle's wakeup() forces one.
         val driver = NioIoDriver.init()
         discard(driver.start())
         val (client, sv) = openLoopbackPair()
@@ -361,7 +361,7 @@ class NioIoDriverTest extends Test:
             awaitCondition(5.seconds)(!driver.wakeupPending.get() && client.isRegistered()).map { parked =>
                 assert(parked, "the selector never parked idle with the channel registered")
                 driver.closeHandle(handle)
-                // The fix wakes the selector, so the cancelled key is deregistered within a poll cycle. Without it the idle selector never
+                // closeHandle wakes the selector, so the cancelled key is deregistered within a poll cycle. Without the wake the idle selector never
                 // runs the pass and this times out for the right reason: the cancelled key, and its fd, leak in CLOSE_WAIT.
                 awaitCondition(10.seconds)(!client.isRegistered()).map { deregistered =>
                     assert(
@@ -892,7 +892,7 @@ class NioIoDriverTest extends Test:
     "registerChannelDeferredOnCancelledKey" in {
         // Reproduce-first for the STARTTLS upgrade re-registration race. detachForUpgrade cancels the channel's SelectionKey; the
         // cancelled key lingers in the selector's cancelled-key set until the poll carrier flushes it during select(). An immediate
-        // registerChannel on the same channel therefore throws CancelledKeyException. The fix routes that re-registration through the poll
+        // registerChannel on the same channel therefore throws CancelledKeyException. registerChannel routes that re-registration through the poll
         // carrier (enqueue + wakeup + return success) instead of parking the calling carrier in a parkNanos retry loop.
         //
         // Deterministic trigger: register a channel, cancel its key (mirrors detachForUpgrade's driver.cancel), then re-register before any
@@ -945,16 +945,16 @@ class NioIoDriverTest extends Test:
     }
 
     "awaitConnectIssuesUnconditionalWakeupEvenWhenCoalescingPending" in {
-        // Deterministic, LOAD-INDEPENDENT guard for the connect-arm lost-wakeup (CONN-B, the forceReadArmWakeup-class gap). The bug: the connect
-        // arm used a GUARDED wakeup (registerInterest's wakeupPending CAS); under a burst, wakeupPending is already true (an in-flight wakeup), so a
-        // guarded wakeup COALESCES away and the freshly-armed OP_CONNECT is never observed if select() re-blocks before seeing it -> a 30s connect
-        // strand. The fix arms OP_CONNECT via armConnectInterest, which issues an UNCONDITIONAL selector.wakeup() so the arm ALWAYS forces a poll
+        // Deterministic, LOAD-INDEPENDENT guard for the connect-arm lost-wakeup (CONN-B, the forceReadArmWakeup-class gap). The bug: a GUARDED
+        // wakeup (registerInterest's wakeupPending CAS) coalesces away under a burst, where wakeupPending is already true (an in-flight wakeup), so
+        // the freshly-armed OP_CONNECT is never observed if select() re-blocks before seeing it -> a 30s connect
+        // strand. The driver arms OP_CONNECT via armConnectInterest, which issues an UNCONDITIONAL selector.wakeup() so the arm ALWAYS forces a poll
         // cycle. This test reproduces the exact coalescing condition (wakeupPending pre-set true) and asserts the arm STILL issues a wakeup -- a pure
         // invariant check with NO real-time deadline, so it validates Fix B regardless of host load (a load-30 integration TIMEOUT cannot
         // distinguish a residual gap from poll-carrier CPU starvation; this can).
         //
-        // FAILS BEFORE THE FIX: the guarded registerInterest wakeup coalesces (wakeupPending already true) so no wakeup is issued -> connectWakeups
-        // stays 0. PASSES AFTER: armConnectInterest's unconditional wakeup fires -> connectWakeups == before + 1.
+        // A guarded registerInterest wakeup would coalesce (wakeupPending already true) so no wakeup is issued -> connectWakeups
+        // stays 0; armConnectInterest's unconditional wakeup fires instead -> connectWakeups == before + 1.
         given Frame = Frame.internal
         val driver  = NioIoDriver.init()
         val ch      = SocketChannel.open()
@@ -962,8 +962,8 @@ class NioIoDriverTest extends Test:
         val handle = NioHandle.init(ch, 4096)
         try
             driver.registerChannel(handle)
-            // Pre-set the coalescing condition: an in-flight wakeup is pending, so any GUARDED wakeup (the pre-fix connect arm) would coalesce away.
-            // The fix's unconditional wakeup must fire regardless.
+            // Pre-set the coalescing condition: an in-flight wakeup is pending, so any GUARDED wakeup would coalesce away.
+            // The unconditional wakeup must fire regardless.
             discard(driver.wakeupPending.compareAndSet(false, true))
             val before = driver.connectWakeups.get()
             val pc     = new IOPromise[Closed, Unit]
@@ -985,17 +985,17 @@ class NioIoDriverTest extends Test:
     "registerChannelDeferredOnClosedSelectorDuringRebuild" in {
         // Reproduce-first for the concurrent-connect-burst connect failure: a caller-carrier registerChannel races the poll carrier's
         // rebuildSelector, which closes the old selector (NioIoDriver selector.close() then selector = newSelector). Under a connect burst the
-        // selector spins and rebuilds; a registerChannel reading the closed old selector throws ClosedSelectorException. The pre-fix driver
-        // returned false on that, so NioTransport.awaitConnect failed the connect with an empty-cause NetConnectException. The fix routes that
+        // selector spins and rebuilds; a registerChannel reading the closed old selector throws ClosedSelectorException. Returning false on that
+        // would make NioTransport.awaitConnect fail the connect with an empty-cause NetConnectException. The driver routes that
         // close (while the driver is still live, closedFlag false) through the same deferred path the CancelledKeyException race uses: enqueue +
         // wakeup + return success, and drainPendingRegistrations re-registers on the live selector with interest reconstructed from the pending-op
         // maps. The loopback connect is ALREADY complete here (openLoopbackPair calls finishConnect), so this also exercises the
         // deferred-connect-after-rebuild edge: a connect that completed during the deferral window must still complete, which needs the drain-time
         // dispatchConnect force-dispatch (the selector does not re-surface OP_CONNECT for an interest registered after the channel became ready).
         //
-        // Three assertions, two fail-before points: registerChannel DEFERS (true; pre-fix the defer was false -> connect dropped), OP_CONNECT is
-        // reconstructed on the restored selector (not interest 0), and the connect promise actually COMPLETES after the drain (pre-fix the force-
-        // dispatch was absent -> OP_CONNECT armed but never dispatched -> the promise hangs = the deferred-connect-after-rebuild TIMEOUT).
+        // Three assertions: registerChannel DEFERS (true; a non-deferring path would return false -> connect dropped), OP_CONNECT is
+        // reconstructed on the restored selector (not interest 0), and the connect promise actually COMPLETES after the drain (without the drain-time
+        // force-dispatch, OP_CONNECT would be armed but never dispatched -> the promise hangs = the deferred-connect-after-rebuild TIMEOUT).
         given Frame      = Frame.internal
         val driver       = NioIoDriver.init()
         val (client, sv) = openLoopbackPair()
@@ -1008,7 +1008,7 @@ class NioIoDriverTest extends Test:
             assert((driver.interestOpsFor(client) & SelectionKey.OP_CONNECT) != 0)
 
             // Reproduce the rebuild window: close the current selector (driver still live, closedFlag false), then re-register the channel as a
-            // caller carrier would mid-rebuild. With the fix this DEFERS (true + enqueue); pre-fix it returned false (connect dropped).
+            // caller carrier would mid-rebuild. This DEFERS (true + enqueue); a non-deferring path would return false (connect dropped).
             try driver.selector.close()
             catch case _: java.io.IOException => ()
             val deferred = driver.registerChannel(handle)

@@ -5,14 +5,14 @@ import kyo.net.Test
 
 /** Reproduce-before-fix guard for the Native `kyo_net_resolve` C shim's family handling (cross-platform DNS consistency with JVM).
   *
-  * Before the fix the shim forced `hints.ai_family = family_hint` into `getaddrinfo`. With the plain-hostname hint (`AF_INET`, the family
-  * `encodeInet` requests for any host without a ':') the resolver was RESTRICTED to A records, so a host that has only an AAAA record (a
-  * v6-only host) failed to resolve on Native even though JVM's `InetAddress.getByName` resolves it (JVM ignores the hint and returns the
-  * resolver's first answer). The fix asks `getaddrinfo` with `AF_UNSPEC` and applies `family_hint` only as a preference among the results,
+  * Forcing `hints.ai_family = family_hint` into `getaddrinfo` RESTRICTS the resolver to that family. With the plain-hostname hint (`AF_INET`, the family
+  * `encodeInet` requests for any host without a ':') it would be RESTRICTED to A records, so a host that has only an AAAA record (a
+  * v6-only host) would fail to resolve on Native even though JVM's `InetAddress.getByName` resolves it (JVM ignores the hint and returns the
+  * resolver's first answer). The shim instead asks `getaddrinfo` with `AF_UNSPEC` and applies `family_hint` only as a preference among the results,
   * matching JVM.
   *
-  * The v6-only case is exercised network-free with the IPv6 loopback LITERAL `::1` resolved under the `AF_INET` hint: before the fix
-  * `getaddrinfo("::1", ai_family = AF_INET)` rejects the v6 literal (a non-zero `EAI_*`), the exact symptom a v6-only host hit; after the fix
+  * The v6-only case is exercised network-free with the IPv6 loopback LITERAL `::1` resolved under the `AF_INET` hint: a forced
+  * `getaddrinfo("::1", ai_family = AF_INET)` rejects the v6 literal (a non-zero `EAI_*`), the exact symptom a v6-only host hits;
   * `AF_UNSPEC` accepts it and returns the v6 address. The symmetric `127.0.0.1` literal under the `AF_INET6` hint exercises the fallback (the
   * preferred family is absent, so the only available family is taken). Both use numeric literals so they are fully deterministic and depend on
   * no `/etc/hosts` entries or network. (Literals reach the resolver only here in the test; production encodes them on the synchronous fast path
@@ -30,7 +30,7 @@ class NativeResolverTest extends Test:
         addr.length == 4 && (addr(0) & 0xff) == 127
 
     "Native kyo_net_resolve shim" - {
-        "resolves the IPv6 loopback literal under an AF_INET hint (v6-only host parity with JVM, was rejected before the fix)" in {
+        "resolves the IPv6 loopback literal under an AF_INET hint (v6-only host parity with JVM; a forced AF_INET would reject it)" in {
             import AllowUnsafe.embrace.danger
             // The v4 hint must NOT restrict resolution: ::1 has no A form, so a forced AF_INET would fail. AF_UNSPEC + preference resolves it.
             SystemResolver.resolveRaw("::1", PosixConstants.AF_INET).safe.get.map {

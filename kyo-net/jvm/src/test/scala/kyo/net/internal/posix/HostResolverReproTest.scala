@@ -3,12 +3,12 @@ package kyo.net.internal.posix
 import kyo.*
 import kyo.net.Test
 
-/** Reproduce-before-fix guard for the offloaded hostname DNS resolution fix.
+/** Reproduce-first guard for offloaded hostname DNS resolution.
   *
-  * Before the fix, `PosixTransport.encodeInet` resolved only numeric IPv4/IPv6 literals and the
+  * Without the offloaded resolver, `PosixTransport.encodeInet` resolves only numeric IPv4/IPv6 literals and the
   * well-known loopback NAMES. Any OTHER non-numeric hostname (including "localhost" routed through the
-  * FULL system resolver rather than the loopback shortcut) had no resolution path, so a connect to it
-  * failed `Closed("unresolvable address")` even though the host is perfectly resolvable via /etc/hosts.
+  * FULL system resolver rather than the loopback shortcut) has no resolution path, so a connect to it
+  * fails `Closed("unresolvable address")` even though the host is perfectly resolvable via /etc/hosts.
   *
   * This test drives the shared resolution seam (`HostResolver`) directly so it does not depend on any
   * external network: it resolves "localhost" through the actual system resolver (which every POSIX host

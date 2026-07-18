@@ -167,7 +167,7 @@ final private[net] class IoUringDriver private[posix] (
 
     // Bound on consecutive `-EINTR` retries for one logical read or send. POSIX recv(2)/send(2): a non-blocking call interrupted by a signal
     // before any byte is transferred completes with `-EINTR` and MUST be retried (no data was moved, the socket is unchanged), exactly as
-    // PollerIoDriver retries EINTR in place (commit 5498ada6b) and as the accept path already retries it. The retry is bounded so a pathological
+    // PollerIoDriver retries EINTR in place, and as the accept path already retries it. The retry is bounded so a pathological
     // EINTR storm cannot spin the reap loop: past the bound the last `-EINTR` falls through to the existing hard-error branch (fail Closed for a
     // read, discard the tail for a send). 8 matches PollerIoDriver.maxTransientIoRetries and PosixTransport.maxTransientAcceptRetries.
     private val maxTransientIoRetries = 8
@@ -356,8 +356,8 @@ final private[net] class IoUringDriver private[posix] (
     def awaitWritable(handle: PosixHandle, promise: Promise.Unsafe[Unit, Abort[Closed]])(using AllowUnsafe, Frame): Unit =
         if handle.unsentTailBytes >= PosixHandle.WriteTailLowWater then
             // Tail-bound park (CWE-400): the pump suspended because the write tail reached the high-water mark, not because of a kernel send-buffer
-            // limit (io_uring's send is async and self-drains via the in-flight SQE's CQE re-flush). Completing the promise now (the old immediate
-            // signal) would busy-loop: the pump would retry, hit the high-water bound again, get Partial, and await again with no progress. Instead,
+            // limit (io_uring's send is async and self-drains via the in-flight SQE's CQE re-flush). Completing the promise now would busy-loop:
+            // the pump would retry, hit the high-water bound again, get Partial, and await again with no progress. Instead,
             // hold the promise on the handle; the CQE re-flush path (onTlsSendComplete / onRawSendComplete) completes it via releaseBackpressureWaiter
             // once the tail falls below the low-water mark. An in-flight send is guaranteed: the tail only reaches the high-water mark through a write
             // whose flush submitted a send SQE (or coalesced behind one), and that SQE's reap re-flushes and re-checks the waiter.
@@ -1762,7 +1762,7 @@ final private[net] class IoUringDriver private[posix] (
                             // the "Closed at collect" steady-state corruption with zero TLS decode-failure markers: intra-connection
                             // (same handle throughout; PosixHandle.recvStagingOwnerId's ownership check correctly stays quiet, since staging IS
                             // owned by this handle -- the bug is staleness, not a cross-connection owner mismatch), not a session leak.
-                            // Absent until their own onFinished, exactly as before this fix). Either way the bytes belong to the handshake. Route
+                            // Absent until their own onFinished). Either way the bytes belong to the handshake. Route
                             // them through the single upgradeHandoff slot (fulfil the parked waiter, or stage/append a Carryover when none is
                             // parked) instead of the settled/reused promise.
                             // upgradeActive is NOT cleared here: it must stay set until the handshake CARRIER actually consumes the bytes

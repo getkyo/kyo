@@ -6,8 +6,8 @@ import kyo.net.NetTlsConfigException
 import kyo.net.Test
 
 /** [[SslLibProvider]]'s shared config-failure typing, at the one seam [[BoringSslProviderConfiguredPemTest]] does not already cover: a
-  * malformed-PEM `createEngine` failure is [[NetTlsConfigException]], DISJOINT from `Closed`. A caller folding only `Abort[Closed]` (the
-  * pre-fix idiom this leaf replaces) must not silently catch the new typed leaf; it panics instead, proving the two failure families never
+  * malformed-PEM `createEngine` failure is [[NetTlsConfigException]], DISJOINT from `Closed`. A caller folding only `Abort[Closed]` must not
+  * silently catch this typed leaf; it panics instead, proving the two failure families never
   * alias.
   */
 class SslLibProviderTest extends Test:

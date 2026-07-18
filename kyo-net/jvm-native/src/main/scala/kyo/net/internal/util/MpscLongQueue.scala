@@ -17,8 +17,8 @@ import java.util.concurrent.atomic.AtomicReference
   * that later returns to the pool.
   *
   * Memory ordering: `getAndSet` on `tail` and the `next` `AtomicReference` writes/reads carry the JMM happens-before edges the producers and
-  * the consumer need; a value stored before [[offer]] is visible to the consumer that dequeues it (the same publication guarantee the previous
-  * `ConcurrentLinkedQueue.offer` gave the poller's `pendingReadPromise` store).
+  * the consumer need; a value stored before [[offer]] is visible to the consumer that dequeues it (the same publication guarantee a
+  * `ConcurrentLinkedQueue.offer` provides the poller's `pendingReadPromise` store).
   *
   * Single-consumer contract: [[poll]] and [[peekNonEmpty]] must be called from one thread/fiber at a time (the driver's single change
   * worker). [[offer]] is safe from any number of producers.

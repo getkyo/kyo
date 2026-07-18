@@ -13,15 +13,15 @@ import kyo.net.internal.transport.WriteResult
 /** Reproduction + regression guard for the TLS write-path backpressure stall in [[PollerIoDriver]].
   *
   * A TLS write routes through `submitEngineOp` and runs on the SINGLE per-driver engine FIFO worker (one op at a time for every connection
-  * on the driver). When the socket send buffer is full, the ciphertext send returns EAGAIN. The pre-fix code retried the SAME bytes in a
-  * bounded retry loop (up to 4096 iterations) inside that one worker, then gave up with `WriteResult.Error`. Two consequences this leaf pins:
+  * on the driver). When the socket send buffer is full, the ciphertext send returns EAGAIN. A spin that retries the SAME bytes in a
+  * bounded retry loop (up to 4096 iterations) inside that one worker, then gives up with `WriteResult.Error`, has two consequences this leaf pins:
   *
   *   - Property (a) no spurious teardown: a briefly-slow peer (a full kernel buffer that drains only when the test reads it) must NOT fail
   *     the connection. Every ciphertext byte the engine emits must eventually reach the peer once the peer drains, not be abandoned. The
-  *     pre-fix spin exhausts its retry budget and drops the un-sent tail, so the peer decrypts fewer bytes than were written.
+  *     such a spin would exhaust its retry budget and drop the un-sent tail, so the peer would decrypt fewer bytes than were written.
   *   - Property (b) no blast radius: while connection 1 is backpressured (buffer full, bytes pending), a SECOND connection on the SAME driver
-  *     whose small write fits its buffer must still complete. The pre-fix spin holds the one FIFO worker, so connection 2's engine op cannot
-  *     run until connection 1's spin ends, stalling connection 2 until the 15s framework timeout.
+  *     whose small write fits its buffer must still complete. Such a spin would hold the one FIFO worker, so connection 2's engine op could not
+  *     run until connection 1's spin ended, stalling connection 2 until the 15s framework timeout.
   *
   * Both run over REAL loopback socket pairs against the real poller (epoll on Linux, kqueue on macOS/BSD), with a tiny SO_RCVBUF on the peer
   * and SO_SNDBUF on the client, and a REAL BoringSSL engine post-handshake. A large plaintext write encrypts into a similarly large ciphertext
@@ -179,11 +179,11 @@ class PollerIoDriverWriteBackpressureTest extends Test:
                             handshakeDone <- handshakeOnDriver(driver, clientEngine, serverEngine).safe.get
                             _ = assert(handshakeDone, "the in-memory handshake must complete before the write")
                             // The write returns Done immediately (the pump never sees backpressure); the FIFO encrypts, appends the
-                            // ciphertext, flushes until EAGAIN, then arms writability. Pre-fix: the retry loop exhausts and abandons the un-sent tail.
+                            // ciphertext, flushes until EAGAIN, then arms writability. A retry loop would exhaust and abandon the un-sent tail.
                             w <- Sync.defer(driver.write(clientH, Span.fromUnsafe(plaintext), 0))
                             _ = assert(w == WriteResult.Done, s"TLS write should return Done, got $w")
-                            // Drain the peer and decrypt until the full plaintext is recovered. Pre-fix this never recovers the whole payload
-                            // (bytes were dropped) so the 14s bound trips; post-fix every byte arrives as the flush re-arms and re-submits.
+                            // Drain the peer and decrypt until the full plaintext is recovered. A dropping spin would never recover the whole payload
+                            // (bytes dropped) so the 14s bound trips; here every byte arrives as the flush re-arms and re-submits.
                             got <- drainAndDecrypt(driver, acceptedH, serverEngine, plaintext.length)
                         yield
                             // Free the engines on the FIFO worker (closeHandle routes the client free; the server free is submitted), then the fds.
@@ -232,15 +232,15 @@ class PollerIoDriverWriteBackpressureTest extends Test:
                                 h2 <- handshakeOnDriver(driver, clientEngine2, serverEngine2).safe.get
                                 _ = assert(h1 && h2, "both in-memory handshakes must complete before the writes")
                                 // Connection 1: backpressure it (256 KB into a 2 KB buffer). Returns Done; the FIFO appends + flushes to
-                                // EAGAIN + arms. Pre-fix: the FIFO worker is now stuck retrying connection 1's full buffer.
+                                // EAGAIN + arms. A retry loop would leave the FIFO worker stuck retrying connection 1's full buffer.
                                 w1 <- Sync.defer(driver.write(client1H, Span.fromUnsafe(bigPlain), 0))
                                 _ = assert(w1 == WriteResult.Done, s"connection 1 write should return Done, got $w1")
-                                // Connection 2: a small write that fits in one flush pass. Pre-fix the FIFO worker is held by connection 1's
-                                // retry loop, so this op cannot run and connection 2's bytes never go out, tripping the 14s bound.
+                                // Connection 2: a small write that fits in one flush pass. If the FIFO worker were held by connection 1's
+                                // retry loop, this op could not run and connection 2's bytes would never go out, tripping the 14s bound.
                                 w2 <- Sync.defer(driver.write(client2H, Span.fromUnsafe(smallPlain), 0))
                                 _ = assert(w2 == WriteResult.Done, s"connection 2 write should return Done, got $w2")
                                 // Assert connection 2 progressed (recovered its full small payload) WHILE connection 1 is still
-                                // backpressured (we have not drained peer 1 yet). Post-fix this completes promptly; pre-fix it stalls.
+                                // backpressured (we have not drained peer 1 yet). This completes promptly because connection 1's backpressure never holds the FIFO worker.
                                 got2 <- drainAndDecrypt(driver, accepted2H, serverEngine2, smallPlain.length)
                                 _ = assert(
                                     got2.sameElements(smallPlain),

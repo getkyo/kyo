@@ -3,8 +3,8 @@ package kyo.net
 import kyo.*
 
 /** Cross-backend listener-lifecycle guarantees for the public [[Transport]]/[[Listener]] surface, asserted once over `NetPlatform.transport`
-  * (posix on JVM/Native, Node on JS). These were previously asserted only per-backend (NIO `NioTransportTest`, posix `PosixTransportSurfaceTest`),
-  * never on JS, and the behavior must be identical everywhere.
+  * (posix on JVM/Native, Node on JS). The behavior must be identical for every backend, including JS, so these guarantees belong in the shared
+  * suite rather than in per-backend tests.
   */
 class TransportListenerTest extends Test:
 

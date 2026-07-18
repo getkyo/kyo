@@ -9,15 +9,15 @@ import kyo.net.internal.transport.ReadOutcome
 /** No driver operation ever uses a freed fd: the two inherited recycled-fd defects, each driven white-box over a real driver.
   *
   *   - io_uring: a recv parked in `stalledSubmits` on a full submission queue must be failed Closed when the handle closes, NOT
-  *     re-armed on the now-closed fd. At base `closeNow` cleared only `stalledRaw`, so the reap loop re-armed the parked recv on the closed fd
-  *     (an EBADF, or a recv on the fd's recycled successor). The fix drains `stalledSubmits` for the handle in `closeNow` before the fd close.
+  *     re-armed on the now-closed fd. If `closeNow` cleared only `stalledRaw`, the reap loop would re-arm the parked recv on the closed fd
+  *     (an EBADF, or a recv on the fd's recycled successor). `closeNow` drains `stalledSubmits` for the handle before the fd close.
   *   - poller: a stale `OpDeregister` whose fd was closed and recycled into a NEW handle must not evict the new handle's
-  *     registration. At base the deregister removed the fd's map entries and kernel filter unconditionally. The fix gates each removal on
+  *     registration. An unconditional deregister would remove the fd's map entries and kernel filter regardless of owner. Each removal is gated on
   *     `activeFds(fd) == id`, so a deregister carrying a different generation than the live owner is skipped.
   *   - poller, the register-side re-arm race: the `ReadPump` always re-arms, so a closed handle can issue a dangling `awaitRead` that races the
-  *     fd close and recycle. A registration whose fd was closed and recycled into a NEW handle must not (re-)claim it: at base `applyRegistration`
-  *     applied every registration unconditionally, so the dead handle's dangling re-arm overwrote the new owner's `activeFds`/`pendingReads` entry
-  *     and re-armed the kernel under the dead id, stranding the new connection's read. The fix gates the apply on `!handle.isClosing()`.
+  *     fd close and recycle. A registration whose fd was closed and recycled into a NEW handle must not (re-)claim it: an unconditional `applyRegistration`
+  *     would apply every registration regardless of state, so the dead handle's dangling re-arm would overwrite the new owner's `activeFds`/`pendingReads` entry
+  *     and re-arm the kernel under the dead id, stranding the new connection's read. The apply is gated on `!handle.isClosing()`.
   *
   * Pins that no driver operation ever uses a freed file descriptor, across the inherited recycled-fd paths: the io_uring stalled-submit close
   * path and both poller recycled-fd paths (the stale deregister and the register-side re-arm race).
@@ -81,7 +81,7 @@ class PollerIoDriverRecycledFdTest extends Test:
                         gate.countDown()
                         Abort.run[Closed](recvP.safe.get).map { result =>
                             // Settle a couple reap turns so a base re-arm (reArmStalledSubmits) would have submitted a recv on the closed fd by now.
-                            // Use engine-op barriers, not awaitReap: with the fix nothing is re-armed so no CQE reaps, and an awaitReap would hang.
+                            // Use engine-op barriers, not awaitReap: nothing is re-armed here so no CQE reaps, and an awaitReap would hang.
                             fifoBarrier(drv).safe.get.andThen(fifoBarrier(drv).safe.get).map { _ =>
                                 drv.closeHandle(fillerH)
                                 discard(sock.close(fillerClient))

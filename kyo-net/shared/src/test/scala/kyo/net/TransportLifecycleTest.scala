@@ -10,8 +10,7 @@ import kyo.*
   *   - a connection whose peer has closed reports `isOpen=false`, the health check a connection pool uses to discard a dead keep-alive
   *     connection instead of reusing it (read-after-close guard, Go #22158 / #59310 class).
   *
-  * The first two were previously asserted only on the posix backend (PosixTransportSurfaceTest); the contract is backend-agnostic, so it
-  * belongs in the shared suite where each platform's real transport runs it.
+  * The first two contracts are backend-agnostic, so they belong in the shared suite where each platform's real transport runs them.
   */
 class TransportLifecycleTest extends Test:
 

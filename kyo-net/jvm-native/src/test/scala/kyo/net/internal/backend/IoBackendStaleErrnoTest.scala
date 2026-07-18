@@ -23,8 +23,8 @@ import kyo.net.internal.posix.SocketBindings
   *
   * Determinism: a deliberately failing `socket(-1, -1, -1)` (EAFNOSUPPORT/EINVAL) dirties `errno` immediately before the synchronous
   * `entry.build`, which runs the driver init inline on this same thread. No syscall clears `errno` to 0 on success, so the dirtied `errno`
-  * survives every internal `queue_init` to the result read: the buggy io_uring init reads it and throws here; the fixed init reads the
-  * return value (0) and builds. The other backends build regardless. After the fix, every available backend builds and round-trips.
+  * survives every internal `queue_init` to the result read: a buggy io_uring init would read it and throw here; a correct init reads the
+  * return value (0) and builds. The other backends build regardless. Every available backend builds and round-trips.
   */
 class IoBackendStaleErrnoTest extends Test:
 

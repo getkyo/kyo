@@ -217,7 +217,7 @@ class PollerIoDriverTest extends Test:
             withDriver { driver =>
                 loopbackPair().map { case (client, accepted) =>
                     // Set the client write-end non-blocking via the C shim. The shim wraps fcntl variadically so O_NONBLOCK is not silently
-                    // dropped on arm64. Without the fix (old non-variadic binding), this call would appear to succeed but the socket would
+                    // dropped on arm64. Without the shim (a non-variadic binding), this call would appear to succeed but the socket would
                     // remain blocking, and the flood loop below would hang instead of returning EAGAIN.
                     val shim = Ffi.load[PosixShimBindings]
                     val rc   = shim.kyo_posix_set_nonblocking(client)
@@ -301,13 +301,13 @@ class PollerIoDriverTest extends Test:
         }
 
         // fd-recycling lost-wakeup regression (listener-close deregister in PosixListener.close): a listen fd's accept registration must be deregistered
-        // (cleared from pendingAccepts/activeFds) BEFORE the fd is closed. Without the fix, the stale pendingAccepts entry keyed by the
+        // (cleared from pendingAccepts/activeFds) BEFORE the fd is closed. Without the deregister, the stale pendingAccepts entry keyed by the
         // listen fd survives after close; when the OS recycles that fd number for a new client connection, drainReady routes the recycled
         // fd's read-ready event to dispatchAccept (stale) instead of dispatchRead (correct), so the connection's read promise never
         // completes (lost-wakeup hang).
         //
-        // Deterministic driver-level proof: register an accept interest on fd N, then cancel it (simulating the deregister the fix wires
-        // in PosixListener.close), then register a read interest on the SAME fd N (simulating fd recycling), make fd N readable, and
+        // Deterministic driver-level proof: register an accept interest on fd N, then cancel it (simulating the deregister PosixListener.close
+        // wires in), then register a read interest on the SAME fd N (simulating fd recycling), make fd N readable, and
         // assert the READ promise completes. Without the cancel (or if cancel did not clear pendingAccepts), drainReady would route the
         // event to the stale accept dispatch and the read promise would hang until the 15s timeout.
         "a recycled listen fd routes to read dispatch after the listener closed (fd-recycling regression)" in {
@@ -318,7 +318,7 @@ class PollerIoDriverTest extends Test:
                     val listenHandle  = PosixHandle.socket(accepted, PosixHandle.DefaultReadBufferSize, Absent)
                     val acceptPromise = Promise.Unsafe.init[Int, Abort[Closed]]()
                     driver.awaitAccept(listenHandle, acceptPromise)
-                    // Step 2: cancel the listen handle (the fix: PosixListener.close calls driver.cancel before closing the fd).
+                    // Step 2: cancel the listen handle (PosixListener.close calls driver.cancel before closing the fd).
                     // This clears pendingAccepts[accepted] and activeFds[accepted].
                     driver.cancel(listenHandle)
                     // The accept promise is now Closed (cancel failed it). That is expected.
@@ -334,7 +334,7 @@ class PollerIoDriverTest extends Test:
                     Sync.ensure(Sync.defer(wb.close())) {
                         sock.send(client, wb, 1L, PosixConstants.MSG_NOSIGNAL).safe.get
                     }.andThen {
-                        // Step 5: the read promise must complete with the byte. Without the fix (stale pendingAccepts entry present),
+                        // Step 5: the read promise must complete with the byte. Without the cancel (stale pendingAccepts entry present),
                         // drainReady would route to dispatchAccept and the read promise would never complete.
                         readPromise.safe.get.map { outcome =>
                             driver.closeHandle(readHandle)

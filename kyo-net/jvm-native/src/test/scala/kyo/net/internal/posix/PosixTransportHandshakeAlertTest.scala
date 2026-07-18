@@ -15,14 +15,14 @@ import kyo.net.internal.TlsTestCert
   *
   * driveHandshake runs handshakeStep then, on every outcome EXCEPT the fatal one, drains the engine's outbound ciphertext and sends it
   * (drainAllDirect): the done arm (`1`), the want-write arm (`-1`), and the want-read arm (`0`) all drain. The fatal arm (`-2`) called `onFailed`
-  * directly with no drain, so the queued alert was dropped and the peer only ever saw the fd close. The fix makes the `-2` arm drain + send the
+  * directly with no drain, so the queued alert would be dropped and the peer would only ever see the fd close. The `-2` arm drains + sends the
   * queued alert before failing.
   *
   * This drives the exact path with real components: a server pinned to TLS 1.3 only accepts a real connection from a client pinned to TLS 1.2 only.
   * The server's real BoringSSL/OpenSSL engine rejects the lower-version ClientHello, queues a `protocol_version` fatal alert, and returns the fatal
-  * outcome (`-2`). With the fix the server drains + sends that alert; the client's engine consumes it and the client `connect` fails with a TLS
-  * handshake failure ("TLS handshake with <host>:<port> failed", it received and processed the server's alert). Before the fix the server bare-closes
-  * the fd, so the client reads a bare EOF mid-handshake and the failure cause is "peer closed during read" (the dropped-alert symptom). The
+  * outcome (`-2`). The server drains + sends that alert; the client's engine consumes it and the client `connect` fails with a TLS
+  * handshake failure ("TLS handshake with <host>:<port> failed", it received and processed the server's alert). A bare-close server would instead
+  * make the client read a bare EOF mid-handshake, with the failure cause "peer closed during read" (the dropped-alert symptom). The
   * assertion distinguishes the two: a TLS handshake failure whose cause is NOT "peer closed during read".
   *
   * Gated on a real poller (epoll/kqueue) and a staged TLS provider. A positive control (matching versions complete + round-trip) pins that the
@@ -85,9 +85,9 @@ class PosixTransportHandshakeAlertTest extends Test:
                             val message = outcome match
                                 case Result.Failure(e) => e.getMessage
                                 case other             => fail(s"expected the version-mismatch handshake to fail, got $other")
-                            // The fix drains + sends the server's fatal alert before close; the client's engine consumes it and the connect fails with the
-                            // engine-level handshake failure (a NetTlsHandshakeException, "TLS handshake with <host>:<port> failed[: <cause>]"). Before
-                            // the fix the server bare-closes, so the client reads a bare EOF mid-handshake and the failure cause is "peer closed during
+                            // The server drains + sends its fatal alert before close; the client's engine consumes it and the connect fails with the
+                            // engine-level handshake failure (a NetTlsHandshakeException, "TLS handshake with <host>:<port> failed[: <cause>]"). A
+                            // bare-close server would instead make the client read a bare EOF mid-handshake, with the failure cause "peer closed during
                             // read": the dropped-alert symptom. So the failure must be a TLS-handshake failure that is NOT a bare-EOF close.
                             assert(
                                 message.contains("TLS handshake with"),

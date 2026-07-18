@@ -11,9 +11,9 @@ import kyo.net.internal.TlsTestCert
 /** Load regression for the per-connection TLS engine read-vs-write race (the `cipherIn>0 plainOut=0` deadlock).
   *
   * The bug: a TLS engine is stateful and not thread-safe, yet the posix driver touches one connection's engine from two independent fibers,
-  * the read pump (decrypt path: feedCiphertext / readPlain) and the write pump (encrypt path: writePlain / drainCiphertext). The corruption
-  * surfaced as the engine producing zero plaintext from a full valid ciphertext record, the connection deadlocking, and under load the whole
-  * driver freezing. The fix serializes each connection's engine ops so read, write, and handshake never run concurrently on the same engine,
+  * the read pump (decrypt path: feedCiphertext / readPlain) and the write pump (encrypt path: writePlain / drainCiphertext). Unserialized,
+  * the engine produces zero plaintext from a full valid ciphertext record, the connection deadlocks, and under load the whole
+  * driver freezes. The driver serializes each connection's engine ops so read, write, and handshake never run concurrently on the same engine,
   * while distinct connections stay independent.
   *
   * This drives a TLS echo server with many concurrent clients, each reusing one keep-alive connection for many request/response frames, with

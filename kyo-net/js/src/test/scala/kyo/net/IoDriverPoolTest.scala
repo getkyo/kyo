@@ -128,9 +128,9 @@ class IoDriverPoolTest extends Test:
 
     "next handles a negative counter via the sign mask: no ArrayIndexOutOfBoundsException" in {
         val spies: Array[IoDriver[JsHandle]] = mkSpies(3).asInstanceOf[Array[IoDriver[JsHandle]]]
-        // Start counter at -2 (a post-wrap negative value): the fix masks the sign bit before the modulo, so the index is
-        // ((-2 & Long.MaxValue) % 3) == ((Long.MaxValue - 1) % 3) == 0 -- a valid, in-bounds slot, no ArrayIndexOutOfBounds. (The old Math.abs
-        // path returned spies(2) here; the sign mask replaced it, which gives the clean masked-modulo rotation.)
+        // Start counter at -2 (a post-wrap negative value): the sign-bit mask before the modulo makes the index
+        // ((-2 & Long.MaxValue) % 3) == ((Long.MaxValue - 1) % 3) == 0 -- a valid, in-bounds slot, no ArrayIndexOutOfBounds. (A Math.abs
+        // path would return spies(2) here; the sign mask gives the clean masked-modulo rotation.)
         val pool = IoDriverPool.init(spies, -2L)
         val d    = pool.next()
         assert(d eq spies(0))

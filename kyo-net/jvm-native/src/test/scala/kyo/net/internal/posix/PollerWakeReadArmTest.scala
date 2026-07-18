@@ -8,12 +8,12 @@ import kyo.net.Test
   * STALE `wakePending` flag and never draining, stranding a re-armed read (or a cancel/deregister) that had no other event left to wake the
   * poll loop.
   *
-  * Background: [[PollerWakeEngineOpTest]] pins the identical gap on `submitEngineOp`, which was made to fire an UNCONDITIONAL wake after that
-  * investigation found `wakePending.compareAndSet(false, true)` can observe a STALE `true` -- one left over from an EARLIER wake whose
+  * Background: [[PollerWakeEngineOpTest]] pins the identical gap on `submitEngineOp`, which fires an UNCONDITIONAL wake for this reason: a
+  * `wakePending.compareAndSet(false, true)` guard can observe a STALE `true` -- one left over from an EARLIER wake whose
   * underlying OS-level signal the poll loop already consumed this cycle, not one still in flight -- and skip its own wake entirely.
-  * `submitChange` (the read-registration and cancel/deregister path: `awaitRead`, `cancel`, `closeHandle`) uses the exact same
-  * `changeQueue.offer(cmd); if wakePending.compareAndSet(false, true) then triggerWake()` pattern and was never updated when
-  * `submitEngineOp` was fixed, leaving the same stale-coalescing window open on the read side.
+  * `submitChange` (the read-registration and cancel/deregister path: `awaitRead`, `cancel`, `closeHandle`) would carry the identical
+  * stale-coalescing window on the read side if it gated its wake behind `wakePending` instead of firing
+  * unconditionally.
   *
   * The read side usually self-heals: a coalesced-away wake still leaves the command sitting in `changeQueue`, and the poll loop's
   * unconditional per-cycle `drainChanges()` picks it up on the very next cycle IF `backend.poll()` returns for some OTHER reason. The gap only

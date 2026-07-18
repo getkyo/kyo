@@ -22,7 +22,7 @@ import kyo.net.internal.transport.ReadOutcome
   * sleep) pins the reap carrier so a filler read, a target read, and the `hasInFlightRead` probe all drain in ONE pass before the wait submits
   * anything. The filler read consumes the one SQE and stays in flight (`pending`); the target read's `submitRecv` then sees `get_sqe` return Absent
   * and parks in `stalledSubmits`; the probe then reads `hasInFlightRead(targetH)` on the same reap carrier, after the park and before any re-arm.
-  * It must be true. Before the fix (`hasInFlightRead` scanned only `pending`) it was false: the regression this guards.
+  * It must be true. If `hasInFlightRead` scanned only `pending` it would be false: the regression this guards.
   *
   * Gated by [[PosixTestSockets.assumeUring]] (cancel off Linux / where the depth-1 ring cannot init). Anti-flakiness: the SQ-full condition is
   * structural (depth-1 ring, the reap carrier pinned while the ops enqueue), not timing-driven; the only wait is on the probe promise the reap

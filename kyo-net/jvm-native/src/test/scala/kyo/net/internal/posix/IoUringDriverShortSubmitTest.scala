@@ -9,8 +9,8 @@ import kyo.net.internal.transport.ReadOutcome
 /** Reproduction + regression guard (libuv #4598, CWE-252 mishandled return value) in [[IoUringDriver]].
   *
   * `io_uring_submit` returns the number of SQEs it consumed, or a negative errno (`-EBUSY` / `-EAGAIN` when the completion queue is full and
-  * cannot be flushed). Before the fix [[IoUringDriver.flushSubmits]] did `discard(io_uring_submit(ring))`: it threw the return away. On a short
-  * count (fewer SQEs submitted than prepared) or a negative errno the prepared-but-unsubmitted SQEs stay in the SQ ring while their `pending`
+  * cannot be flushed). Discarding the return of `io_uring_submit(ring)` in [[IoUringDriver.flushSubmits]] throws it away: on a short
+  * count (fewer SQEs submitted than prepared) or a negative errno the prepared-but-unsubmitted SQEs would stay in the SQ ring while their `pending`
   * entries persist forever, so the matching CQEs never arrive and the op hangs silently. `pendingSubmits` was already reset to 0 by the
   * `getAndSet`, so no later `flushSubmits` re-attempts the dropped SQEs: a per-connection silent hang, exactly libuv #4598's class.
   *
@@ -18,7 +18,7 @@ import kyo.net.internal.transport.ReadOutcome
   * is reproduced at the bindings seam: a [[ShortSubmitInjectingUring]] subclass of [[RecordingIoUringBindings]] forces exactly ONE
   * `io_uring_submit` call to report a short count without actually flushing the SQE (it returns a count below what was prepared and does NOT
   * delegate, so the prepared recv SQE sits unsubmitted), then every later submit delegates to the real ring. The real socket still holds the
-  * peer's bytes, so once the fix re-submits the stranded SQE the recv reaps and delivers them. Before the fix this leaf FAILS for the right
+  * peer's bytes, so once the stranded SQE is re-submitted the recv reaps and delivers them. Without the re-submit this leaf FAILS for the right
   * reason: the recv SQE is dropped, its `pending` entry never reaps, and the read hangs to the `Async.timeout` ceiling.
   *
   * Gate: [[PosixTestSockets.assumeUring]] (a real io_uring ring at production depth). On a non-Linux host or a cgroup-capped container the leaf
@@ -87,7 +87,7 @@ class IoUringDriverShortSubmitTest extends Test:
                     val payload   = Array.tabulate[Byte](16)(i => (i + 1).toByte)
                     // The peer sends the bytes first; they sit in accepted's recv buffer waiting for a read. Arm the one-shot short-submit
                     // override BEFORE awaitRead so the very first io_uring_submit that would flush this recv SQE reports a short count and does
-                    // not flush it; the fix detects the short count and re-submits the stranded SQE, which the kernel then completes with the data.
+                    // not flush it; flushSubmits detects the short count and re-submits the stranded SQE, which the kernel then completes with the data.
                     assert(sock.sendNow(client, Buffer.fromArray[Byte](payload), payload.length.toLong, 0).value == 16L)
                     recording.armShortSubmit()
                     val promise = Promise.Unsafe.init[ReadOutcome, Abort[Closed]]()

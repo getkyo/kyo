@@ -6,15 +6,15 @@ import kyo.ffi.Ffi
 import kyo.net.Test
 import kyo.net.internal.transport.ReadOutcome
 
-/** Reproduce-first regression for the io_uring stale `shutdown(SHUT_RD)` on a recycled fd: [[IoUringDriver.registerDeferredClose]] used to
-  * issue the deferred shutdown UNCONDITIONALLY whenever an in-flight recv raced a close, with no check that `handle` still owned the fd
-  * number. A concurrently finishing transport-path closer (`closeUnwiredHandle`'s connect-phase arm, or any closer that wins the claim and
+/** Reproduce-first regression for the io_uring stale `shutdown(SHUT_RD)` on a recycled fd: issuing [[IoUringDriver.registerDeferredClose]]'s deferred
+  * shutdown UNCONDITIONALLY whenever an in-flight recv races a close, with no check that `handle` still owns the fd
+  * number, races fd recycling. A concurrently finishing transport-path closer (`closeUnwiredHandle`'s connect-phase arm, or any closer that wins the claim and
   * closes immediately) can already have won [[PosixHandle.claimFdClose]] and closed the fd directly while this handle's recv SQE is still kernel-owned (`close(fd)`
   * alone does not complete an in-flight io_uring recv: the kernel holds its own file reference). The fd NUMBER is immediately free for reuse
   * (fd-table release is independent of the underlying file's refcount), so the kernel routinely hands it straight back to a fresh, unrelated
-  * connection. The stale, unguarded shutdown then landed on that VICTIM's fd, injecting a spurious EOF into a socket this handle never owned.
+  * connection. A stale, unguarded shutdown would then land on that VICTIM's fd, injecting a spurious EOF into a socket this handle never owned.
   *
-  * The fix: `registerDeferredClose` must win `claimFdClose` itself before issuing the shutdown (winning proves the fd is still owned and
+  * `registerDeferredClose` wins `claimFdClose` itself before issuing the shutdown (winning proves the fd is still owned and
   * un-recycled); losing it proves a racing closer already owns the fd, so the shutdown is skipped. [[PosixHandle.markDeferredFdClose]] /
   * [[PosixHandle.consumeDeferredFdClose]] then let the later `closeNow` still run the real `close(fd)` despite `claimFdClose` being spent by
   * the shutdown winner.

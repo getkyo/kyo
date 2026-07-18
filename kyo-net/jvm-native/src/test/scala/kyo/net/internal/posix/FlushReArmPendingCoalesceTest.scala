@@ -17,12 +17,12 @@ import kyo.net.internal.transport.WriteResult
   * Gate: `PosixTestSockets.assumePoller()` (real loopback pair for real EAGAIN) and `TlsRealEngines.assumeTlsReady()` (a real BoringSSL/OpenSSL
   * engine).
   *
-  * Coherence (the fix for the prior real-socket + fake-backend incoherence): the backend is a [[RecordingPollerBackend]] over the real
+  * Coherence (avoiding real-socket + fake-backend incoherence): the backend is a [[RecordingPollerBackend]] over the real
   * epoll/kqueue, the socket is a real `smallBufferedPair` whose PEER NEVER READS, and the engine is a real BoringSSL engine post-handshake. The
   * send buffer fills on the first write and never drains, so the real socket NEVER becomes writable: there is no real writable event, no race,
   * and the test is deterministic. The only registerWrite recorded is the single arm the first flush issues on EAGAIN; the second write coalesces.
   * The real engine encrypts each plaintext into ciphertext of roughly the same size, so a 600 KB write still overflows the shrunk buffer and
-  * EAGAINs exactly as the old passthrough engine did.
+  * EAGAINs.
   *
   * Anti-flakiness: a real handshake via `TlsEngineLoopback.handshake` driven ON the engine FIFO worker brings the engine to a state where
   * `writePlain` is valid (the session is created, handshaked, and written on one carrier, as the engine-FIFO single-owner contract requires); a

@@ -61,9 +61,9 @@ class TransportHandshakeTimeoutTest extends Test:
         // Regression guard for #243: a stalled server TLS handshake parks the server in awaitReadCiphertext with an in-flight io_uring recv SQE
         // pointed at handle.readBuffer. When the finite handshakeTimeout fires, the deadline teardown MUST route the readBuffer free + engine free
         // through the driver's UAF-safe ioDriver.closeHandle (deferred until the recv CQE reaps) and force the recv to complete (shutdown), rather
-        // than freeing the kernel-owned buffer and the engine directly. Before the fix this freed memory the kernel was still writing into (Invalid
+        // than freeing the kernel-owned buffer and the engine directly. Freeing them directly would free memory the kernel is still writing into (Invalid
         // write) and could feed a freed engine. The corruption is silent on most runs, so this loops the stall+reap cycle many times to make the
-        // in-flight-recv-vs-free race reliable: under Valgrind / ASan on real io_uring the pre-fix code reports the UAF here; post-fix it is clean.
+        // in-flight-recv-vs-free race reliable: under Valgrind / ASan on real io_uring an unsafe teardown reports the UAF here; the deferred teardown is clean.
         // The behavioral assertion (every stalled handshake is reaped) also holds on the poller backends, where the path is already UAF-safe, so the
         // SAME loop is the cross-backend reap proof. Reaps are observed through the public Connection surface with a generous Async.timeout bound,
         // never a sleep-as-synchronization.

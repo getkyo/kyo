@@ -56,7 +56,7 @@ class PollerIoDriverErrorEventTest extends Test:
             // error-only entry for the fd (the authorized injection): a bare EPOLLERR/EV_ERROR the driver routes to dispatchError, which reads
             // the real non-zero SO_ERROR and fails the pending op.
             //
-            // Real-vs-fake note: the old fake delivered an error-ONLY event so BOTH the read and the writable were failed by dispatchError. A
+            // Real-vs-fake note: an error-ONLY event would fail BOTH the read and the writable via dispatchError. A
             // real reset socket is genuinely read- AND write-ready, so the real kernel also reports the write bit and the writable is delivered
             // its real readiness (dispatchWritable completes it Success; the subsequent write would then fail). dispatchError gates the pending
             // read removal and the pending writable removal on the SAME `soError != 0` check, so failing the read here exercises the
@@ -123,7 +123,7 @@ class PollerIoDriverErrorEventTest extends Test:
 
         // Reproduction + regression guard for the kyo-http concurrent-connect failure: a closed connection's fd is recycled into a fresh connect
         // on the SAME shared driver, and a stale error-only event the kernel had queued for the dead connection is still in the poll batch when
-        // the recycled fd already has the new connect's writable pending. Before the fix dispatchError failed that writable on the bare error bit,
+        // the recycled fd already has the new connect's writable pending. An unguarded dispatchError would fail that writable on the bare error bit,
         // surfacing a connect that never failed as Closed ("PollerIoDriver ... is closed", wrapped as HttpConnectException). SO_ERROR is the
         // discriminator: a still-connecting / healthy recycled fd reads 0, so the event must be DROPPED and the connect's writable left to its
         // real readiness, NOT failed.

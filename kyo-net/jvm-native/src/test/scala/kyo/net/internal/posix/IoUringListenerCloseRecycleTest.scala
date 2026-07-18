@@ -17,9 +17,9 @@ import kyo.net.TransportConfig
   * [[PosixHandle.requestClose]] arm guard, the SQE flush, the shutdown + fd close) as one engine op BEHIND any queued arm.
   *
   * The leaf reproduces the window deterministically with the sanctioned reap-carrier pin (a latch the test releases, not a sleep): listener
-  * A's accept arm is enqueued behind the pin, A closes (pre-fix: fd freed immediately on this carrier), listener B is created (pre-fix:
-  * recycles A's fd number), and the pin releases. TWO clients then connect to B. The ghost is single-shot, so pre-fix it steals exactly one
-  * of the two connections for A's handler; post-fix both reach B's handler and A's handler sees nothing. This is io_uring-mechanism-specific
+  * A's accept arm is enqueued behind the pin, A closes (an unsequenced close frees the fd immediately on this carrier), listener B is created
+  * (recycling A's fd number), and the pin releases. TWO clients then connect to B. The ghost is single-shot, so an unsequenced teardown would
+  * steal exactly one of the two connections for A's handler; the sequenced teardown routes both to B's handler and A's handler sees nothing. This is io_uring-mechanism-specific
   * (the queued-arm-vs-fd-recycle window only exists on the completion driver with its engine FIFO); the cross-backend behavioral coverage of
   * listener lifecycle lives in the shared [[kyo.net.TransportListenerTest]].
   *
@@ -45,7 +45,7 @@ class IoUringListenerCloseRecycleTest extends Test:
                 gate.await()
             }
             pinIn.safe.get.map { _ =>
-                // Reap carrier pinned: listener A's accept arm and (post-fix) its teardown queue behind the pin in FIFO order. The Sync.ensure
+                // Reap carrier pinned: listener A's accept arm and its teardown queue behind the pin in FIFO order. The Sync.ensure
                 // releases the gate on ANY failure in this segment, so a failed listen can never leave the reap carrier parked (which would
                 // wedge every later test on this scheduler); the normal-path countDown below fires first and the extra release is a no-op.
                 val stolenByA = new java.util.concurrent.atomic.AtomicInteger(0)

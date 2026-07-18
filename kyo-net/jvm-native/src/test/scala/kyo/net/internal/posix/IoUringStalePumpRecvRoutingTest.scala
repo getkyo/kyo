@@ -7,21 +7,21 @@ import kyo.net.Test
 import kyo.net.internal.TlsRealEngines
 import kyo.net.internal.transport.ReadOutcome
 
-/** Reproduce-first confirmation of a SECOND fix for the P10 cell-8 steady-state "Closed at collect" corruption: a stale,
+/** Reproduce-first confirmation of a second guarantee for the steady-state "Closed at collect" corruption: a stale,
   * non-`handshakeOwned` recv armed by the PLAINTEXT ReadPump BEFORE `detachForUpgrade` runs (the ordinary pre-upgrade continuation, not the
   * handshake's own producer recv) can survive kernel-owned past `onFinished`'s FULL flag-clear, exactly like
   * [[IoUringOrphanHandshakeRecvRoutingTest]]'s `handshakeOwned=true` case.
   *
-  * FIRST fix (routing, already covered by the sibling test's original scope): the routing condition's 4th clause
+  * First guarantee (routing, covered by the sibling test's scope): the routing condition's 4th clause
   * (`!handshakeOwned && h.isUpgraded && !armedPostUpgrade`) correctly identifies this recv as stale instead of letting it fall through to
   * the ordinary TLS-feed branch, which would have read from `recvStagingFor` -- a buffer this recv's kernel write never touched (it targeted
   * `handle.readBuffer`, armed while `tls` was still Absent).
   *
-  * SECOND fix (this test's actual scope): once identified as stale, the OLD behavior staged the bytes as an `upgradeHandoff` Carryover --
+  * Second guarantee (this test's actual scope): once identified as stale, staging the bytes as an `upgradeHandoff` Carryover is
   * correct only while a live `driveUpgradeRead` consumer could still drain it. But this recv reaps AFTER `onFinished` has ALREADY run to
   * completion (`h.tls` is `Present`): the handshake-driving fiber that used to consume `upgradeHandoff` is DONE and will never check the
   * slot again, so staging a Carryover here would silently lose these bytes forever, leaving a permanent gap in the ciphertext stream (the
-  * actual "Closed at collect" mechanism: the engine desyncs on whatever chunk reaps next). The fix feeds these bytes to the engine directly
+  * actual "Closed at collect" mechanism: the engine desyncs on whatever chunk reaps next). The driver feeds these bytes to the engine directly
   * and delivers any resulting plaintext through `PosixHandle.inboundSink` instead.
   *
   * This test drives the exact reap-time state directly: arms a real, ordinary (non-handshakeOwned) recv on `acceptedH` while every upgrade
@@ -109,7 +109,7 @@ class IoUringStalePumpRecvRoutingTest extends Test:
 
                             // Not valid TLS ciphertext for a never-handshaked engine: the expected outcome is a fatal-record teardown (the
                             // same `closeHandle` path IoUringMutualTlsStressTest's real handshakes exercise on genuinely bad data), not
-                            // delivered plaintext. What this test actually pins is the ABSENCE of the old (buggy) behavior.
+                            // delivered plaintext. What this test actually pins is the ABSENCE of the buggy behavior.
                             awaitCondition(5.seconds)(acceptedH.isClosing()).map { closed =>
                                 assert(
                                     closed,

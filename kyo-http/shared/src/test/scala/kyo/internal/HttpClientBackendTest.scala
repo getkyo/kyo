@@ -735,7 +735,7 @@ class HttpClientBackendTest extends kyo.BaseHttpTest:
         }
     }
 
-    // The over-strictness guard, and the reason the fix is not "reject non-ASCII". A field value may carry obs-text
+    // The over-strictness guard, and the reason not to "reject non-ASCII". A field value may carry obs-text
     // (%x80-FF) per RFC 9110 section 5.5, so this request is legal HTTP and must be sent, not rejected. Rejecting it would
     // turn a peer header a proxy echoes into a peer-triggered failure on traffic the RFC permits.
     "a non-ASCII request header value is sent as UTF-8 octets" in {

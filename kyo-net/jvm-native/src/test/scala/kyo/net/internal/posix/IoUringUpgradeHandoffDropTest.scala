@@ -6,17 +6,17 @@ import kyo.ffi.Ffi
 import kyo.net.Test
 import kyo.net.TransportConfig
 
-/** Reproduce-first regression for a STARTTLS upgrade-handoff drop on io_uring: [[IoUringDriver]] inherited
-  * [[kyo.net.internal.transport.IoDriver]]'s no-op `onInboundClosedDuringRead` default, so a STARTTLS upgrade racing the plaintext
-  * [[kyo.net.internal.transport.ReadPump]]'s parked put silently dropped bytes already pulled off the socket instead of salvaging them into
-  * [[PosixHandle.upgradeHandoff]] -- the identical race already fixed on [[PollerIoDriver]] (see `PollerIoDriver.scala:645-664`), just missing
-  * the override on the io_uring arm.
+/** Reproduce-first regression for a STARTTLS upgrade-handoff drop on io_uring: without an `onInboundClosedDuringRead` override,
+  * [[IoUringDriver]] would fall back to [[kyo.net.internal.transport.IoDriver]]'s no-op default, so a STARTTLS upgrade racing the plaintext
+  * [[kyo.net.internal.transport.ReadPump]]'s parked put would silently drop bytes already pulled off the socket instead of salvaging them into
+  * [[PosixHandle.upgradeHandoff]] -- the same race [[PollerIoDriver]] handles (see `PollerIoDriver.scala:645-664`). The io_uring arm provides
+  * the matching override.
   *
   * The main scenario drives the race directly rather than through a real TLS handshake ([[StartTlsUpgradeCloseRaceTest]] exercises that):
   * with `channelCapacity=1` and nothing consuming `conn.inbound`, chunk A fills the channel; chunk B's delivery then parks the pump's
   * putFiber (`Channel.offer` returns false, `ReadPump.offerToChannel` falls to the putFiber branch). Setting `upgrading=true` and calling
   * `detachForUpgrade()` closes `inbound`, which both returns `[A]` (the already-buffered chunk) and fails B's parked put with `Closed`,
-  * invoking `driver.onInboundClosedDuringRead`. Before the fix this silently dropped B; after the fix B lands in `upgradeHandoff` as a
+  * invoking `driver.onInboundClosedDuringRead`. Without the override this would silently drop B; with it, B lands in `upgradeHandoff` as a
   * Carryover. The other two scenarios pin the hook's remaining contracts directly: fulfilling an already-parked handshake Waiter, and
   * discarding the bytes on an ordinary (non-upgrade) close.
   *

@@ -31,9 +31,9 @@ private[posix] trait TlsEngineIo:
       * Allocation notes: the per-handle [[PosixHandle.plaintextStaging]] buffer is reused across records (one off-heap alloc for the driver
       * lifetime, not per-record). The per-handle [[PosixHandle.encryptDrain]] buffer is reused across records (one off-heap alloc for the
       * driver lifetime, not per-record). The `appendChunk` callback receives `(drain, len)` directly (no intermediate heap array). The per-
-      * record suffix copy that advances the staging window is bounded by the TLS record size (typically 16 KB); this is one copy per record
-      * instead of two (the previous code did a copyOfRange + fromArray per record; the new code does an element-wise copy of the suffix into
-      * the reused staging buffer).
+      * record suffix copy that advances the staging window is bounded by the TLS record size (typically 16 KB); this is one copy per record (an
+      * element-wise copy of the suffix into the reused staging buffer) instead of the two copies (copyOfRange + fromArray) a fresh per-record
+      * array would need.
       */
     private[posix] def encryptPlaintext(
         handle: PosixHandle,
@@ -56,7 +56,7 @@ private[posix] trait TlsEngineIo:
         while offset < arr.length && ok do
             val remainingLen = arr.length - offset
             // Advance staging content to the current offset by re-copying the suffix element-wise.
-            // Bounded by <= record_size per call; the previous code did two copies per record (copyOfRange + fromArray).
+            // Bounded by <= record_size per call; a fresh per-record array would instead need two copies (copyOfRange + fromArray).
             if offset > 0 then
                 var ri = 0
                 while ri < remainingLen do

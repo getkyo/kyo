@@ -13,7 +13,7 @@ import kyo.net.internal.util.HandleId
 
 /** Unified raw-fd handle (the unification of the transport layer).
   *
-  * A single handle type backs every posix connection on every platform, replacing the retired native single-fd handle and standing alongside
+  * A single handle type backs every posix connection on every platform, standing alongside
   * the JVM `SocketChannel` Nio floor. It splits the file descriptor into a read end and a write end: sockets set `readFd == writeFd` (one fd carries both
   * directions), while stdio sets `(readFd = 0, writeFd = 1)`. Every read path keys on [[readFd]] and every write path on [[writeFd]], so the
   * driver machinery is identical for the socket and stdio cases.
@@ -105,7 +105,7 @@ final private[net] class PosixHandle private (
       * [[upgradeActive]] / [[upgrading]] (both transient, cleared together at handshake completion), this survives `onFinished` so the io_uring
       * reap can still recognize an upgrade-owned recv that reaps AFTER those flags clear. The specific hazard: `driveUpgradeRead`'s producer-recv
       * arm ([[IoDriver.armUpgradeProducerRead]]) can race `onFinished`'s flag-clear (the check-then-arm is a TOCTOU across the reap carrier's
-      * engine-FIFO ordering, see the fix-log), leaving a `handshakeOwned` recv genuinely kernel-owned and in flight once `upgradeActive`/`upgrading`
+      * engine-FIFO ordering), leaving a `handshakeOwned` recv genuinely kernel-owned and in flight once `upgradeActive`/`upgrading`
       * are already false and `tls` is already `Present`. Without this flag, that orphan's CQE falls through to the ordinary TLS-feed branch and
       * either interleaves its ciphertext with the post-upgrade `ReadPump`'s own (concurrent) recv -- both target the SAME cached staging buffer,
       * see [[IoUringDriver.recvStagingFor]] -- or silently drops the decoded plaintext onto the orphan's own throwaway producer promise, which

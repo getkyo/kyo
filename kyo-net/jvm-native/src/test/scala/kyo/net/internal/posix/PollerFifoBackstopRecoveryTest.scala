@@ -5,11 +5,11 @@ import kyo.ffi.Ffi
 import kyo.net.Test
 import kyo.net.internal.transport.ReadOutcome
 
-/** Deterministic guard for the poll-loop FIFO drain ([[PollerIoDriver.drainFifos]]), the recovery for the Native TLS lost-wakeup deadlock.
+/** Deterministic guard for the poll-loop FIFO drain ([[PollerIoDriver.drainFifos]]), the guard against the Native TLS lost-wakeup deadlock.
   *
-  * The per-driver change FIFO and engine FIFO used to be drained by a `Fiber.Unsafe.init` task spawned per submission burst. If a scheduler strand
-  * lost that one task, the FIFO sat undrained forever: the fd was never re-armed and the connection deadlocked (a lost wakeup, not a data race). The
-  * fix makes the always-running poll-loop carrier the single authoritative consumer of both FIFOs (mirroring how [[IoUringDriver]] drains its engine
+  * A `Fiber.Unsafe.init` drain task spawned per submission burst is losable: if a scheduler strand
+  * lost that one task, the FIFO would sit undrained forever, the fd never re-armed and the connection deadlocked (a lost wakeup, not a data race). The
+  * always-running poll-loop carrier is instead the single authoritative consumer of both FIFOs (mirroring how [[IoUringDriver]] drains its engine
   * FIFO on its reap loop): `submitChange` / `submitEngineOp` only enqueue, and the poll loop drains both via `drainFifos` once per cycle, so a
   * submitted command or engine op is always drained within one poll cycle and there is no ephemeral spawned task to lose.
   *
@@ -17,7 +17,7 @@ import kyo.net.internal.transport.ReadOutcome
   * `[STUCK]`/`[TIMEOUT]`s and never pins the recovery. These leaves pin it directly, mirroring how [[ChangeFifoOrderingTest]] and
   * [[EngineFifoSingleOwnerTest]] pin the FIFO single-owner contract directly rather than under load: build a driver over a real epoll/kqueue backend
   * through a [[RecordingPollerBackend]] spy whose poll loop is NEVER started, enqueue work via the public API, assert it is NOT drained (no poll loop,
-  * no spawned task: this is exactly the stranded state the old design could wedge in permanently), then run one poll cycle's drain via `drainFifos()`
+  * no spawned task: this is exactly the stranded state a per-burst spawn-loss could wedge in permanently), then run one poll cycle's drain via `drainFifos()`
   * and assert the work executed. Without the poll-loop drain the work would sit forever; one `drainFifos()` recovers it. No sleep.
   *
   * Gate: `PosixTestSockets.assumePoller()` (real loopback pair for a real fd, as in [[ChangeFifoOrderingTest]]).
@@ -38,7 +38,7 @@ class PollerFifoBackstopRecoveryTest extends Test:
                 val driver   = TestDrivers.forBackend(backend, pollerFd, spy)
 
                 // Arm a read through the public path: awaitRead -> submitChange enqueues an OpRegisterRead and returns. No poll loop is started and
-                // submitChange no longer spawns a drain task, so nothing drains the FIFO yet (the stranded state the old spawn-loss could wedge in).
+                // submitChange does not spawn a drain task, so nothing drains the FIFO yet (the stranded state a per-burst spawn-loss could wedge in).
                 val readPromise = Promise.Unsafe.init[ReadOutcome, Abort[Closed]]()
                 driver.awaitRead(PosixHandle.socket(targetFd, PosixHandle.DefaultReadBufferSize, Absent), readPromise)
 

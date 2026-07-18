@@ -4,14 +4,14 @@ import kyo.*
 import kyo.ffi.Ffi
 import kyo.net.Test
 
-/** Deterministic guard for the poll-loop wakeup ([[PollerBackend.wake]] / [[PollerIoDriver.submitChange]]), the fix for the connect
-  * write-readiness starvation that surfaced as a `NetConnectTimeoutException` in `TransportHandshakeTimeoutTest`.
+/** Deterministic guard for the poll-loop wakeup ([[PollerBackend.wake]] / [[PollerIoDriver.submitChange]]), guarding against the connect
+  * write-readiness starvation that surfaces as a `NetConnectTimeoutException` in `TransportHandshakeTimeoutTest`.
   *
-  * Background: after the FIFO drain was made poll-loop-authoritative (the data-plane lost-wakeup fix), the poll loop became the single drainer
+  * Background: with the FIFO drain poll-loop-authoritative, the poll loop is the single drainer
   * of the change FIFO, draining it once per cycle AFTER the bounded `epoll_wait` / `kevent` park. A change submitted while the loop is mid-park
-  * (a connect's write-interest arm via `armSocketWritable` -> `submitChange(OpRegisterWrite)`) was not registered with the kernel until the
-  * current park timed out (up to ~100ms, longer under load). A short connect deadline (`config.connectTimeout`) then fired before the register
-  * landed, failing the connect even though the OS connect completed in microseconds. The fix wakes the poll loop on `submitChange` (epoll
+  * (a connect's write-interest arm via `armSocketWritable` -> `submitChange(OpRegisterWrite)`) would not be registered with the kernel until the
+  * current park timed out (up to ~100ms, longer under load), and a short connect deadline (`config.connectTimeout`) could then fire before the register
+  * landed, failing the connect even though the OS connect completed in microseconds. `submitChange` wakes the poll loop (epoll
   * eventfd / kqueue EVFILT_USER), so a parked poll returns at once and the change is registered and its readiness delivered promptly.
   *
   * These leaves pin the wakeup directly (the higher-level `TransportHandshakeTimeoutTest` exercises it under real connect timing): build a driver

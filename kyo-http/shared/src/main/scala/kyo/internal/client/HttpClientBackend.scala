@@ -367,7 +367,7 @@ final private[kyo] class HttpClientBackend private (
         import kyo.scheduler.IOTask
         val computation: Unit < Async =
             // The whole write is wrapped in a single Abort.run[Closed]: the first Closed (connection torn
-            // down) aborts foreachChunk instead of being swallowed per-put, which used to let this loop keep
+            // down) aborts foreachChunk instead of being swallowed per-put, so the loop cannot keep
             // pulling an infinite body stream into a dead connection. A closed connection here is routine
             // (the request is being torn down), so the discard is correct and needs no logging.
             Abort.run[Closed] {

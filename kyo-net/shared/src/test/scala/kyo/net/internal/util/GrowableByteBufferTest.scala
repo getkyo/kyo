@@ -364,16 +364,16 @@ class GrowableByteBufferTest extends Test:
             succeed
         }
 
-        // The doubling-on-grow growth strategy can overflow Int to a negative array length (CWE-190). The pre-fix code doubled in Int arithmetic
-        // (`grow(newLen * 2)`): once the doubling target reaches 2^30 the next double is 2^31, which wraps to Int.MinValue and feeds a negative
+        // The doubling-on-grow growth strategy can overflow Int to a negative array length (CWE-190). Doubling in Int arithmetic
+        // (`grow(newLen * 2)`) would overflow: once the doubling target reaches 2^30 the next double is 2^31, which wraps to Int.MinValue and feeds a negative
         // length to `new Array[Byte](...)` (a NegativeArraySizeException), or, doubling again, to 0 (a non-terminating growth loop / silent
-        // under-allocation). The fix computes the required capacity and the doubling target in Long and caps both at MaxArrayLength. The guard's
+        // under-allocation). Computing the required capacity and the doubling target in Long and capping both at MaxArrayLength avoids that. The guard's
         // contract: any request STRICTLY ABOVE MaxArrayLength fails fast with a clear, bounded IllegalArgumentException and NEVER asks the runtime
         // for a negative or undersized array; the failure is in the length computation, BEFORE any large allocation, so these leaves cost nothing.
 
         // Test 19: a capacity request strictly above MaxArrayLength fails with a clear bounded error, not a NegativeArraySizeException, and without
         // allocating. Int.MaxValue == MaxArrayLength + 8 > MaxArrayLength, so `required > MaxArrayLength` trips the guard up front (no doubling loop,
-        // no allocation). The pre-fix Int doubling would instead wrap the length negative.
+        // no allocation). An Int doubling would instead wrap the length negative.
         "capacity request above the max array length fails bounded, never negative array length" in {
             val buf = new GrowableByteBuffer()
             val thrown =

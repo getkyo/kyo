@@ -10,13 +10,13 @@ import kyo.net.internal.transport.ReadOutcome
 /** A NIO handshake-deadline reap removes the driver's pendingReads entry for the reaped handle.
   *
   * The server TLS accept path arms a read on the accepted handle (creating the driver's `pendingReads[channel] -> handle` entry) while the
-  * handshake runs. When the handshake fails or its deadline fires, the connPromise teardown ran a bare `clientChannel.close()` and never reaped
-  * the handle through the driver, so the `pendingReads` entry (and its armed promise) stayed stranded: a slowloris handshake-stall leaks one
-  * driver map entry per connection. The fix routes that teardown through `driver.closeHandle(handle)` (the same seam PosixTransport.teardown
-  * uses), which removes the entry and fails the parked read.
+  * handshake runs. When the handshake fails or its deadline fires, a connPromise teardown that ran a bare `clientChannel.close()` would never reap
+  * the handle through the driver, so the `pendingReads` entry (and its armed promise) would stay stranded: a slowloris handshake-stall would leak one
+  * driver map entry per connection. Routing that teardown through `driver.closeHandle(handle)` (the same seam PosixTransport.teardown
+  * uses) removes the entry and fails the parked read.
   *
-  * This drives the driver seam the fix relies on deterministically (no timing): arm a read to create the entry, then show that the bare channel
-  * close the buggy path used leaves the entry stranded, while `driver.closeHandle` (what the deadline teardown now calls) removes it. The
+  * This drives that driver seam deterministically (no timing): arm a read to create the entry, then show that a bare channel
+  * close leaves the entry stranded, while `driver.closeHandle` (what the deadline teardown calls) removes it. The
   * `hasPendingRead` accessor is the empty-map leak witness. The cross-backend behavioral reap is covered by TransportHandshakeTimeoutTest; this
   * pins the NIO-specific internal cleanup the bare close skipped.
   */
@@ -39,7 +39,7 @@ class NioTransportHandshakeReapTest extends Test:
         (client, server)
     end openLoopbackPair
 
-    "a bare channel close leaves the pendingReads entry stranded, driver.closeHandle removes it (the fix)" in {
+    "a bare channel close leaves the pendingReads entry stranded, driver.closeHandle removes it" in {
         val driver       = NioIoDriver.init()
         val (client, sv) = openLoopbackPair()
         val handle       = NioHandle.init(client, 4096)
@@ -56,7 +56,7 @@ class NioTransportHandshakeReapTest extends Test:
             catch case _: java.io.IOException => ()
             assert(driver.hasPendingRead(handle), "a bare channel close must leave the pendingReads entry (the leak this reproduces)")
 
-            // The fix: routing through driver.closeHandle removes the entry and fails the parked read.
+            // Routing through driver.closeHandle removes the entry and fails the parked read.
             driver.closeHandle(handle)
             assert(!driver.hasPendingRead(handle), "driver.closeHandle must remove the pendingReads entry (the reap seam)")
             assert(readPromise.done(), "driver.closeHandle must complete the parked read promise")

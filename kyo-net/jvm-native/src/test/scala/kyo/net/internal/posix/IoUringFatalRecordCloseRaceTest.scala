@@ -9,8 +9,8 @@ import kyo.net.internal.TlsEngineLoopback
 import kyo.net.internal.TlsRealEngines
 import kyo.net.internal.transport.ReadOutcome
 
-/** Reproduce-first regression guard for the io_uring fatal-TLS-record teardown race (P10, the residual behind the io_uring/boringssl
-  * `IoUringMutualTlsStressTest` intermittent failure, cell-8's #10 in the flaky inventory).
+/** Reproduce-first regression guard for the io_uring fatal-TLS-record teardown race (the residual behind the io_uring/boringssl
+  * `IoUringMutualTlsStressTest` intermittent failure).
   *
   * The defect: [[TlsEngineIo.feedAndDecrypt]] (shared by [[PollerIoDriver]] and [[IoUringDriver]]) tears a connection down on a fatal TLS
   * record (`readPlain == -2`, RFC 5246 7.2.2) via an `onFatal` hook. For `PollerIoDriver` this hook is `() => handle.requestClose()`, which is
@@ -31,10 +31,10 @@ import kyo.net.internal.transport.ReadOutcome
   * synchronously inside the SAME engine op that ran the feed, communicated back to the test fiber via a promise (no polling, no timing window:
   * `onFatal`'s synchronous portion has either freed the resources or deferred it by the time `feedAndDecrypt` returns).
   *
-  * Fails-before / passes-after is demonstrated by the `onFatal` callback the test itself supplies: `requestClose()` (the shape a bare,
+  * The `onFatal` callback the test itself supplies distinguishes the two: `requestClose()` (the shape a bare,
   * guard-only teardown would take on io_uring) reproduces the bug (buffers freed immediately, out from under the still-in-flight recv);
-  * `closeHandle(handle)` (the actual production wiring at [[IoUringDriver]]'s real call site) is the fix. Both leaves exercise the identical
-  * shared `feedAndDecrypt` fatal-record path; only the `onFatal` hook differs, isolating exactly the mechanism the fix changes.
+  * `closeHandle(handle)` is the actual production wiring at [[IoUringDriver]]'s real call site. Both leaves exercise the identical
+  * shared `feedAndDecrypt` fatal-record path; only the `onFatal` hook differs, isolating exactly the teardown mechanism.
   *
   * Engine ownership (avoiding a SEPARATE double-free hazard in the test itself, not the production defect under test): the server engine is
   * built via [[TlsRealEngines.singleEngine]] (caller-owned, no auto-free), matching [[IoUringEngineFifoFreeOrderingTest]]'s precedent for a

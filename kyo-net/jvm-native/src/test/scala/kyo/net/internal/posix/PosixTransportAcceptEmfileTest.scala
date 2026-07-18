@@ -11,12 +11,12 @@ import kyo.net.Test
 /** Reproduce-first guard for the accept-loop spin on `EMFILE` (out of file descriptors).
   *
   * `accept(2)` documents that on a resource error (`EMFILE` / `ENFILE` / `ENOBUFS` / `ENOMEM`) the kernel does NOT dequeue the pending
-  * connection: the connection stays in the backlog and the listening socket stays read-ready. Before the fix, `PosixTransport.acceptAll`'s
-  * `drain` loop only treated `EAGAIN`/`EWOULDBLOCK` as "drained"; every other errno fell into an `else ()` arm that stopped the drain WITHOUT
-  * consuming the backlog entry, and `scheduleNextAccept` then re-armed read interest on the listen fd. Because the pending connection was still
-  * in the backlog, the poller re-fired the listen fd immediately, `acceptNow` returned `EMFILE` again, and the loop re-armed again: a tight CPU
-  * spin on the poll-loop carrier that stalled every other connection on the shared driver until a fd freed elsewhere. This is the exact livelock
-  * libuv (joyent/libuv #690, #315) and asyncio (Tulip #78) had to special-case. The fix classifies `EMFILE`/`ENFILE` as resource exhaustion and
+  * connection: the connection stays in the backlog and the listening socket stays read-ready. A `PosixTransport.acceptAll`
+  * `drain` loop that treated only `EAGAIN`/`EWOULDBLOCK` as "drained" would let every other errno fall into an `else ()` arm that stops the drain WITHOUT
+  * consuming the backlog entry, and `scheduleNextAccept` would then re-arm read interest on the listen fd. Because the pending connection is still
+  * in the backlog, the poller re-fires the listen fd immediately, `acceptNow` returns `EMFILE` again, and the loop re-arms again: a tight CPU
+  * spin on the poll-loop carrier that stalls every other connection on the shared driver until a fd frees elsewhere. This is the exact livelock
+  * libuv (joyent/libuv #690, #315) and asyncio (Tulip #78) had to special-case. `acceptAll` classifies `EMFILE`/`ENFILE` as resource exhaustion and
   * re-arms after a bounded backoff (`PosixTransport.acceptResourceBackoff`) instead of immediately, breaking the spin while keeping the accept
   * loop alive so accepting resumes once a fd frees; `ECONNABORTED`/`EINTR` are retried in place per the man page.
   *
@@ -29,7 +29,7 @@ import kyo.net.Test
   *
   * Completion + anti-flakiness: no `Thread.sleep`, no busy-spin. A bounded settle window (`Async.sleep(settleWindow)`, a fiber suspension that
   * yields the carrier) is the spin ceiling, not a timing assertion: with the spin the carrier issues hundreds of `acceptNow(EMFILE)` calls inside
-  * the window (far past `bound`); with the fix the backoff re-arm issues only ~`settleWindow / acceptResourceBackoff` calls (well under `bound`).
+  * the window (far past `bound`); with the backoff re-arm only ~`settleWindow / acceptResourceBackoff` calls issue (well under `bound`).
   * The window is sized so the two regimes are separated by more than an order of magnitude, and the assertion reads the count once the window
   * elapses. The spy stops injecting `EMFILE` past `spinThreshold` so a regressed (spinning) build still drains the backlog and tears down cleanly.
   */
@@ -53,7 +53,7 @@ class PosixTransportAcceptEmfileTest extends Test:
     private val spinThreshold = 200
 
     // Bounded settle window: the spin ceiling, not a timing assertion. With the spin the poll-loop carrier issues hundreds of acceptNow(EMFILE)
-    // calls inside this window (far past `bound`); with the fix the backoff re-arm (acceptResourceBackoff = 50ms) issues only ~5-6, well under
+    // calls inside this window (far past `bound`); with the backoff re-arm (acceptResourceBackoff = 50ms) only ~5-6 issue, well under
     // `bound`. The assertion reads the count once the window elapses, so the two regimes are separated by more than an order of magnitude.
     private val settleWindow = 250.millis
 
@@ -152,7 +152,7 @@ class PosixTransportAcceptEmfileTest extends Test:
                         count <= bound,
                         s"accept loop spun: $count acceptNow(EMFILE) calls for ONE pending connection in the settle window (bound $bound). " +
                             "EMFILE leaves the connection in the backlog so the listen fd stays read-ready; an immediate re-arm re-fires it at " +
-                            "once and the loop livelocks. The fix re-arms after a bounded backoff, so the count stays small."
+                            "once and the loop livelocks. A bounded-backoff re-arm keeps the count small."
                     )
                 end for
             }

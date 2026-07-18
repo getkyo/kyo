@@ -12,8 +12,8 @@ import kyo.*
   *
   * Like [[TransportMutualTlsTest]], the assertions are on the application round-trip, not on `connect`: under TLS 1.3 a rejected client's
   * `connect` can return before the server validates its certificate, so the security guard is whether the round-trip completes. The first leaf
-  * FAILs before the fix, where no backend reads `trustStorePath`, so a server with `caCertPath` Absent has no client-cert trust anchor and
-  * rejects even the trusted client.
+  * guards that every backend reads `trustStorePath`: a backend that ignored it would leave a server with `caCertPath` Absent no client-cert
+  * trust anchor, rejecting even the trusted client.
   */
 class TransportMutualTlsTrustAnchorTest extends Test:
 

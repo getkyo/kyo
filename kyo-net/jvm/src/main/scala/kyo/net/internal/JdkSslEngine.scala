@@ -11,9 +11,9 @@ import kyo.ffi.Buffer
   * This re-expresses the existing `NioTransport` SSLEngine wrap/unwrap logic (`NioTlsState` + `driveHandshake` + `writeTls` +
   * `tryUnwrapBuffered`) on the [[TlsEngine]] feed/drain surface. No new TLS logic is invented: each method maps 1:1 to an `SSLEngine.wrap` /
   * `SSLEngine.unwrap` call. The four JSSE buffers move inside the engine:
-  *   - `netIn` accumulates inbound ciphertext fed via [[feedCiphertext]] (the old `NioTlsState.netInBuf`);
-  *   - `netOut` collects outbound ciphertext that [[drainCiphertext]] copies to the driver (the old `netOutBuf`);
-  *   - `appIn` receives decrypted plaintext from `unwrap` (the old `appInBuf`), surfaced through [[readPlain]] / [[readBuffered]].
+  *   - `netIn` accumulates inbound ciphertext fed via [[feedCiphertext]] (`NioTlsState`'s `netInBuf`);
+  *   - `netOut` collects outbound ciphertext that [[drainCiphertext]] copies to the driver (`NioTlsState`'s `netOutBuf`);
+  *   - `appIn` receives decrypted plaintext from `unwrap` (`NioTlsState`'s `appInBuf`), surfaced through [[readPlain]] / [[readBuffered]].
   *
   * Buffers are kept in read mode (flipped, position at the next unread byte) between calls, so [[hasBufferedPlaintext]] is `appIn.hasRemaining`
   * and [[drainCiphertext]] reads straight from `netOut`. [[handshakeStep]] maps the SSLEngine handshake status to the engine return contract:
@@ -24,8 +24,8 @@ import kyo.ffi.Buffer
   * single dedicated worker carrier. This guarantees that no two callers (read pump, write pump, handshake) can call `engine.wrap` or
   * `engine.unwrap` concurrently, and that the `netIn` / `netOut` / `appIn` vars are never mutated by two carriers at the same time.
   * [[certSha256]] is read once at handshake completion on that same serialized path and cached by the transport (the leaf cert is fixed for
-  * the connection), and [[free]] is enqueued on the FIFO, so neither runs on the caller's carrier against a live engine. The per-instance
-  * lock that previously serialized these calls has been removed: the FIFO provides the equivalent guarantee without blocking a carrier.
+  * the connection), and [[free]] is enqueued on the FIFO, so neither runs on the caller's carrier against a live engine. The FIFO serializes
+  * these calls without a per-instance lock, so no carrier ever blocks on one.
   * Note: `NioTransport` uses `SSLEngine` directly (via `NioTlsState`), not via this class; its own engine access is on the NIO poll loop and
   * is governed by that transport, outside this engine's FIFO.
   */

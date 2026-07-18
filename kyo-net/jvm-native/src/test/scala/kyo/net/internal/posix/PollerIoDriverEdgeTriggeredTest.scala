@@ -8,7 +8,7 @@ import kyo.net.internal.transport.ReadOutcome
 
 /** Behavioral pins for edge-triggered (ET) registration in [[PollerIoDriver]].
   *
-  * Each leaf exercises one aspect of the ET model that differs from the old EPOLLONESHOT / EV_ONESHOT model:
+  * Each leaf exercises one aspect of the ET model that differs from a one-shot EPOLLONESHOT / EV_ONESHOT model:
   *
   *   - `residualDrainNoClose`: confirms that a burst larger than one read buffer, sent without any subsequent data or close, delivers ALL
   *     bytes across multiple awaitRead calls. This is the authoritative ET correctness pin: on epoll, a residual after the first recv is
@@ -17,7 +17,7 @@ import kyo.net.internal.transport.ReadOutcome
   *   - `drainsToEagain`: confirms that the fill-buffer re-dispatch also works when the burst is accompanied by a peer half-close (sends
   *     data then half-closes). The FIN is the guaranteed terminator; this leaf drives a burst that also requires the consumer-paced drain.
   *   - `syscallCountConstant`: confirms that N reads on an ET-armed fd produce exactly N `registerRead` calls (N from application awaitRead
-  *     calls, none from the abolished rearmSurvivors path). Under EPOLLONESHOT, N reads produced 2N calls (N application + N survivor re-arm).
+  *     calls, none from a survivor re-arm path). Under EPOLLONESHOT, N reads would produce 2N calls (N application + N survivor re-arm).
   *     A second loop of N2=10 reads (one byte each) verifies the arm count stays exactly N+N2 across the extended run (constant in R, not
   *     merely below 2R). Each read waits for `backend.registeredRead(fd)` after awaitRead and before sending the byte: for iteration 0 this
   *     synchronizes on the change worker executing epoll_ctl(ADD), ensuring the byte's arrival always triggers an edge; for iterations 1+ the
@@ -36,9 +36,9 @@ import kyo.net.internal.transport.ReadOutcome
   *     auto-removes filters on close), while a live-fd cancel would produce `fdClosing=false` (EV_DELETE executes to prevent stale events).
   *     Extends to a stale-event witness: a new socket reusing the old fd number receives no phantom readiness from the closed filter.
   *   - `droppedEdgeDuringBackpressurePause`: confirms that data arriving on an armed fd while no pending read is present is not stranded.
-  *     Under epoll EPOLLET, the empty->ready edge fires once into the `Absent` case of `dispatchRead` (no consumer parked), which pre-fix
-  *     silently dropped it. A subsequent consumer `awaitRead` re-registers with MOD-skip (unchanged mask) and parks forever. The fix records
-  *     the missed edge in `missedReads` and re-dispatches immediately when the consumer's `awaitRead` arrives. On kqueue this is not
+  *     Under epoll EPOLLET, the empty->ready edge fires once into the `Absent` case of `dispatchRead` (no consumer parked), which would be
+  *     silently dropped if unrecorded, and a subsequent consumer `awaitRead` (a MOD-skip re-register, unchanged mask) would park forever. The
+  *     driver records the missed edge in `missedReads` and re-dispatches immediately when the consumer's `awaitRead` arrives. On kqueue this is not
   *     observable: EV_ADD|EV_CLEAR re-evaluates buffered data on every `registerRead`. Gated on `assumePoller()`.
   *   - `wakeLatencyBounded`: confirms that a `awaitRead` submitted while the poll loop is parked wakes the loop (via `backend.wake`) and
   *     delivers the readiness promptly, not just after the 100ms timeout.
@@ -131,8 +131,8 @@ class PollerIoDriverEdgeTriggeredTest extends Test:
         // Authoritative ET correctness pin: the peer sends a burst that spans multiple recv buffers (3x readBufferSize here),
         // then NEVER writes again and NEVER closes. Under epoll ET the kernel signals the empty->ready transition exactly once.
         // Without consumer-paced drain, the first awaitRead delivers one buffer's worth, and the second awaitRead blocks forever
-        // waiting for an ET edge that never arrives (no new data, no close, so no new empty->ready transition). With the fix,
-        // a filled recv buffer causes the driver to re-dispatch the read immediately on the next awaitRead registration, so
+        // waiting for an ET edge that never arrives (no new data, no close, so no new empty->ready transition). A filled
+        // recv buffer causes the driver to re-dispatch the read immediately on the next awaitRead registration, so
         // the residual drains without waiting for a new kernel edge.
         // On kqueue, registerRead re-issues EV_ADD|EV_CLEAR which re-evaluates buffered data, so the bug is kqueue-invisible;
         // this leaf catches it on real epoll in the container.
@@ -488,16 +488,16 @@ class PollerIoDriverEdgeTriggeredTest extends Test:
         //
         // The scenario models ReadPump backpressure: the consumer parks on a channel put (no awaitRead in flight) while the
         // fd stays armed. Data arrives from the peer and fires the EPOLLIN edge. The driver's drainReady calls dispatchRead(fd)
-        // which hits pendingReads.remove(fd) -> Absent (no pending read). Pre-fix: the edge is silently dropped. The fd stays
-        // armed at the kernel but no new edge fires (EPOLLET: only empty->ready transitions fire). When the consumer resumes and
-        // calls awaitRead, the re-registration is a MOD-skip (the mask is unchanged since the fd is already in the epoll set),
-        // so no new edge reports the buffered data. The consumer's awaitRead parks forever.
+        // which hits pendingReads.remove(fd) -> Absent (no pending read). Without a missed-edge record the edge would be silently
+        // dropped: the fd stays armed at the kernel but no new edge fires (EPOLLET: only empty->ready transitions fire). When the consumer
+        // resumes and calls awaitRead, the re-registration is a MOD-skip (the mask is unchanged since the fd is already in the epoll set),
+        // so no new edge reports the buffered data, and the consumer's awaitRead would park forever.
         //
-        // The fix records the dropped edge in missedReads and checks it in dispatchCmd's OpRegisterRead branch, re-dispatching
+        // The driver records the dropped edge in missedReads and checks it in dispatchCmd's OpRegisterRead branch, re-dispatching
         // immediately so the consumer's first awaitRead after the pause delivers the stranded data.
         //
         // On kqueue this is not observable: EV_ADD|EV_CLEAR re-evaluates buffered data on every registerRead, so a consumer
-        // resuming with awaitRead gets the data even without the fix. The leaf catches it on real epoll in the container.
+        // resuming with awaitRead gets the data even without a missed-edge record. The leaf catches it on real epoll in the container.
         val readBufSize = PosixHandle.DefaultReadBufferSize
         // First payload: smaller than readBufferSize so n < readBufferSize and readMightHaveMore stays false after the first recv.
         // This is the critical condition: readMightHaveMore=false means the existing consumer-paced drain does NOT re-dispatch.
@@ -534,13 +534,13 @@ class PollerIoDriverEdgeTriggeredTest extends Test:
                             )
                             // The consumer is now in its backpressure pause: no awaitRead in flight.
                             // Send the second payload. Under epoll EPOLLET, the fd is still armed at the kernel.
-                            // The EPOLLIN edge fires during the next poll cycle (dispatchRead hits Absent -> drops pre-fix).
+                            // The EPOLLIN edge fires during the next poll cycle (dispatchRead hits Absent, which would drop the edge without the missedReads record).
                             // On kqueue, this also fires an edge, but registerRead re-evaluates it on re-registration anyway.
                             sendAll(clientFd, secondPayload).map { _ =>
                                 // Resume: call awaitRead to collect the second payload.
-                                // Pre-fix (epoll): MOD-skip on re-registration produces no new edge; awaitRead times out.
-                                // Post-fix (epoll): missedReads records the dropped edge; dispatchCmd re-dispatches immediately.
-                                // kqueue: EV_ADD|EV_CLEAR re-evaluates buffered data; passes without the fix.
+                                // Without the record (epoll): MOD-skip on re-registration produces no new edge; awaitRead times out.
+                                // With it (epoll): missedReads records the dropped edge; dispatchCmd re-dispatches immediately.
+                                // kqueue: EV_ADD|EV_CLEAR re-evaluates buffered data; passes without a missed-edge record.
                                 Abort.run[Closed](collectExactBytes(driver, handle, secondPayload.length)).map { result =>
                                     driver.close()
                                     PosixTestSockets.closePeerForEof(spy, clientFd)

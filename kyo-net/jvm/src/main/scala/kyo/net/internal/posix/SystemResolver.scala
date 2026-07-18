@@ -9,8 +9,8 @@ import kyo.net.NetDnsResolutionException
 
 /** JVM system resolver: resolves a hostname through `java.net.InetAddress`, offloaded as a blocking operation.
   *
-  * `InetAddress.getByName` is the canonical JVM resolver: it consults `/etc/hosts`, the platform resolver, and the JVM's own DNS cache, and it
-  * is what the retired NIO `InetSocketAddress` path used, so its answers match what kyo-net produced before the unified transport. The call
+  * `InetAddress.getByName` is the canonical JVM resolver: it consults `/etc/hosts`, the platform resolver, and the JVM's own DNS cache, so its
+  * answers match the standard `java.net` name resolution a JVM client sees elsewhere. The call
   * blocks (it can hit the network), so it runs inside `Sync.defer` on the calling fiber's carrier: the carrier parks in the DNS syscall and the
   * scheduler's `BlockingMonitor` (which samples per-thread CPU time) detects the parked carrier, stops routing new work to it, and drains its
   * queue to other workers. So the resolving fiber suspends and no carrier is permanently starved, exactly as the `@Ffi.blocking` syscalls

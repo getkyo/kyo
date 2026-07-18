@@ -12,9 +12,9 @@ import kyo.net.Test
   * coordination a wake that has read the wake fd but not yet written it can be preempted while closeWake closes that fd; the OS then recycles the
   * freed number into ANOTHER driver's freshly-opened socket, and the resumed `eventfd_write` writes the 8-byte counter (1) INTO that recycled
   * socket. The peer recv's a phantom `[1,0,0,0,0,0,0,0]` ahead of its real data, which is exactly what
-  * [[PollerIoDriverEdgeTriggeredTest]]'s `lazyFdDelete` leaf observed under full-suite par-4 load.
+  * [[PollerIoDriverEdgeTriggeredTest]]'s `lazyFdDelete` leaf guards against under full-suite par-4 load.
   *
-  * The fix gates closeWake behind an in-flight-wake guard so the eventfd is never closed while a wake holds it (its number cannot then be recycled
+  * closeWake is gated behind an in-flight-wake guard so the eventfd is never closed while a wake holds it (its number cannot then be recycled
   * out from under an `eventfd_write`). This leaf pins that invariant directly rather than under load: it forces the exact interleaving with a
   * [[RecordingPollerBackend]] whose `onWakeEnter` hook fires synchronously INSIDE an in-flight wake (the wake guard holder count is 1 at that
   * moment) and, from there, calls `driver.close()` to drive the poll loop into its terminal `closeWake`. A correct guard defers the close until the
@@ -50,10 +50,10 @@ class PollerWakeCloseRaceTest extends Test:
             //   1. driver.close() sets the closed flag, submits the teardown, and wakes the parked poll. close() runs on THIS (the wake) carrier and
             //      returns at once; the poll-loop carrier then exits and reaches freeScratch independently.
             //   2. Spin (bounded, test-only) until the poll-loop carrier has freed the scratch (eventsBuffer closed): that is the point past which the
-            //      wake fd has been handled. With the fix, freeScratch's closeWakeGuarded DEFERS the close because this wake still holds the guard, so
-            //      closeWake never runs while we are here (the held wake's release runs it afterward, with wakeInFlight back to 0). Without the fix,
-            //      freeScratch calls backend.closeWake directly BEFORE closing the buffer, so by the time the buffer is closed closeWake has already
-            //      run with wakeInFlight == 1 and the spy's closeWakeWhileWaking flag has tripped. Either way the buffer-closed condition is the
+            //      wake fd has been handled. The guarded path: freeScratch's closeWakeGuarded DEFERS the close because this wake still holds the guard, so
+            //      closeWake never runs while we are here (the held wake's release runs it afterward, with wakeInFlight back to 0). An unguarded path would
+            //      call backend.closeWake directly BEFORE closing the buffer, so by the time the buffer is closed closeWake would have already
+            //      run with wakeInFlight == 1 and the spy's closeWakeWhileWaking flag would have tripped. Either way the buffer-closed condition is the
             //      deterministic release point, and the assertion afterward distinguishes the two.
             // The spin is bounded by a generous cap so a regression that wedges surfaces as the cap rather than a hang; Thread.onSpinWait is a hint,
             // not a thread-block (no sleep, no park).

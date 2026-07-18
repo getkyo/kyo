@@ -154,9 +154,9 @@ class SocketBindingsTest extends Test:
             end for
         }
 
-        // fcntl O_NONBLOCK regression guard (arm64 ABI fix): kyo_posix_set_nonblocking uses a C shim that calls the variadic fcntl correctly.
-        // The old direct non-variadic binding of fcntl silently dropped O_NONBLOCK on arm64 because AAPCS64 routes variadic arguments
-        // through different registers than fixed arguments. The shim is the fix: the C compiler sees the variadic prototype and emits the
+        // fcntl O_NONBLOCK regression guard (arm64 ABI): kyo_posix_set_nonblocking uses a C shim that calls the variadic fcntl correctly.
+        // A direct non-variadic binding of fcntl would silently drop O_NONBLOCK on arm64 because AAPCS64 routes variadic arguments
+        // through different registers than fixed arguments. The shim avoids that: the C compiler sees the variadic prototype and emits the
         // correct call-site code on every architecture.
         "kyo_posix_set_nonblocking sets O_NONBLOCK; kyo_posix_get_flags reads it back" in {
             assumePosixSockets()
@@ -285,11 +285,11 @@ class SocketBindingsTest extends Test:
             }
         }
 
-        // MSG_DONTWAIT handshake-probe regression (commit 04484fd2c): recvNow with MSG_DONTWAIT must return -1/EAGAIN immediately on a
-        // BLOCKING fd with no data pending. Before the fix the probe used flags=0, which relies on O_NONBLOCK being set; a freshly
+        // MSG_DONTWAIT handshake-probe regression: recvNow with MSG_DONTWAIT must return -1/EAGAIN immediately on a
+        // BLOCKING fd with no data pending. A probe using flags=0 relies on O_NONBLOCK being set; a freshly
         // accepted fd is blocking by default on Linux (accept does not inherit O_NONBLOCK), so flags=0 would block the carrier for the
-        // full ~15s TLS handshake timeout whenever the peer's next flight was not yet buffered. The fix restores MSG_DONTWAIT so the
-        // probe is unconditionally non-blocking regardless of the fd's O_NONBLOCK state.
+        // full ~15s TLS handshake timeout whenever the peer's next flight was not yet buffered. MSG_DONTWAIT keeps the
+        // probe unconditionally non-blocking regardless of the fd's O_NONBLOCK state.
         //
         // This test leaves the accepted fd BLOCKING (no kyo_posix_set_nonblocking call) and calls recvNow with MSG_DONTWAIT and no data
         // pending, then asserts it returns -1 with EAGAIN/EWOULDBLOCK immediately. A regression to flags=0 would block here and the

@@ -7,26 +7,26 @@ import kyo.net.Test
 import kyo.net.internal.TlsRealEngines
 import kyo.net.internal.transport.ReadOutcome
 
-/** Reproduce-first confirmation of TWO fixes for the "orphaned handshakeOwned recv" routing bug (P10, cell-8): a STARTTLS handshake's own
+/** Reproduce-first confirmation of two guarantees for the "orphaned handshakeOwned recv" routing bug: a STARTTLS handshake's own
   * producer recv (armed via [[IoUringDriver.awaitReadHandshake]], tagged `handshakeOwned`) that is STILL kernel-owned and in flight when the
   * handshake reaches `onFinished` -- possible because `driveUpgradeRead`'s "no stale recv in flight" check races the reap carrier's own
   * engine-FIFO enqueue ordering (a TOCTOU: enqueued-for-registration is not yet registered) -- must never be fed straight
   * into the ordinary TLS-feed branch, even though by the time its CQE reaps, `upgradeActive`/`upgrading` have already cleared and `tls` is
-  * already `Present` (onFinished's flag-clear order, `PosixTransport.upgradeRole`). Before the FIRST fix, [[IoUringDriver.complete]]'s routing
-  * keyed purely on `upgradeActive`/`upgrading`, so this orphan fell through into the ordinary TLS-feed branch: it fed its ciphertext directly
+  * already `Present` (onFinished's flag-clear order, `PosixTransport.upgradeRole`). Routing that keyed purely on `upgradeActive`/`upgrading`
+  * would let this orphan fall through into the ordinary TLS-feed branch: it would feed its ciphertext directly
   * into the engine (racing/interleaving with whatever the post-upgrade ReadPump's own recv feeds concurrently -- exactly the bad_record_mac
-  * corruption shape) and completed its own throwaway producer promise with the result, which nothing observes (a silently dropped
+  * corruption shape) and complete its own throwaway producer promise with the result, which nothing observes (a silently dropped
   * application-data flight).
   *
-  * FIRST fix (routing): [[IoUringDriver.complete]]'s 3rd clause (`handshakeOwned && h.isUpgraded`) identifies this recv as an orphan instead of
+  * First guarantee (routing): [[IoUringDriver.complete]]'s 3rd clause (`handshakeOwned && h.isUpgraded`) identifies this recv as an orphan instead of
   * letting it fall through to the ordinary TLS-feed branch.
   *
-  * SECOND fix (this test's actual scope, matching [[IoUringStalePumpRecvRoutingTest]]'s non-`handshakeOwned` sibling case): once identified as
-  * an orphan, the OLD behavior staged the bytes as an `upgradeHandoff` Carryover -- correct only while a live `driveUpgradeRead` consumer could
+  * Second guarantee (this test's actual scope, matching [[IoUringStalePumpRecvRoutingTest]]'s non-`handshakeOwned` sibling case): once identified as
+  * an orphan, staging the bytes as an `upgradeHandoff` Carryover is correct only while a live `driveUpgradeRead` consumer could
   * still drain it. But this recv reaps AFTER `onFinished` has ALREADY run to completion (`h.tls` is `Present`): the handshake-driving fiber that
   * used to consume `upgradeHandoff` is DONE and will never check the slot again, so staging a Carryover here would silently lose these bytes
   * forever, leaving a permanent gap in the ciphertext stream (the actual "Closed at collect" mechanism: the engine desyncs on whatever chunk
-  * reaps next). The fix feeds these bytes to the engine directly and delivers any resulting plaintext through `PosixHandle.inboundSink` instead.
+  * reaps next). The driver feeds these bytes to the engine directly and delivers any resulting plaintext through `PosixHandle.inboundSink` instead.
   *
   * This test drives the EXACT reap-time state the orphan reaches, without needing to win the real TOCTOU race: it arms a real `handshakeOwned`
   * recv directly via [[IoUringDriver.awaitReadHandshake]] (mirroring `armUpgradeProducerRead`) while the handle is in the upgrade window
@@ -119,7 +119,7 @@ class IoUringOrphanHandshakeRecvRoutingTest extends Test:
 
                             // Not valid TLS ciphertext for a never-handshaked engine: the expected outcome is a fatal-record teardown (the
                             // same `closeHandle` path IoUringMutualTlsStressTest's real handshakes exercise on genuinely bad data), not
-                            // delivered plaintext. What this test actually pins is the ABSENCE of the old (buggy) behavior.
+                            // delivered plaintext. What this test actually pins is the ABSENCE of the buggy behavior.
                             awaitCondition(5.seconds)(acceptedH.isClosing()).map { closed =>
                                 assert(
                                     closed,

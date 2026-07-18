@@ -23,11 +23,11 @@ import kyo.net.internal.transport.*
   * `PosixTransport` over the Nio floor, so `NetPlatform.transport` would never exercise the inline `NioTransport` / `NioTlsState` read+close
   * path that carries this finding. Constructing `NioTransport` directly forces the inline NIO path under test.
   *
-  * Finding #3 follow-up (RFC 8446 6.1 truncation distinction): the engine-driver path (`PosixHandle.peerCleanClose` / `peerEof`, surfaced by
+  * RFC 8446 6.1 truncation distinction: the engine-driver path (`PosixHandle.peerCleanClose` / `peerEof`, surfaced by
   * `PosixTransport.installStatus`) reports `Status.CleanClose` when the peer sent an authenticated close_notify before the FIN and
   * `Status.Truncated` when the TCP connection ended with a bare FIN and no close_notify. The inline NIO transport drives a JDK
-  * `SSLEngine` through its own `NioTlsState` (not `TlsEngineIo`), so before this fix it never set those signals and a NIO TLS connection always
-  * reported `Status.Active` even after a bare-FIN truncation: a length-aware caller could not detect a truncation attack. These leaves
+  * `SSLEngine` through its own `NioTlsState` (not `TlsEngineIo`), so setting those signals is its own responsibility: without them a NIO TLS
+  * connection would always report `Status.Active` even after a bare-FIN truncation, and a length-aware caller could not detect a truncation attack. These leaves
   * assert the inline NIO connection converges on the same close-reason semantics as the engine path.
   *
   * Determinism: the peer is a real loopback NIO TLS server driven by its own `Selector` event loop (the same non-blocking primitive the
@@ -70,8 +70,8 @@ class NioTransportTlsCloseReasonTest extends Test:
             isServer = true
         )
 
-    // CleanClose: the peer sends an authenticated TLS close_notify before the FIN. The inline NIO client must report CleanClose. Before the fix
-    // it reports Active (the close_notify-vs-FIN signal is unwired on the NIO path), which this leaf catches.
+    // CleanClose: the peer sends an authenticated TLS close_notify before the FIN. The inline NIO client must report CleanClose. Without the wiring
+    // it would report Active (the close_notify-vs-FIN signal unwired on the NIO path), which this leaf catches.
     "inline NIO TLS client reports CleanClose when the peer sends close_notify before the FIN" in {
         given Frame   = Frame.internal
         val transport = mkTransport()
@@ -80,15 +80,15 @@ class NioTransportTlsCloseReasonTest extends Test:
             assert(
                 reason == NetConnection.Status.CleanClose,
                 "SECURITY: inline NIO TLS connection did not report an orderly close after the peer sent a close_notify before the FIN " +
-                    s"(RFC 8446 6.1); expected Status.CleanClose, got $reason. Before the fix the NIO path reports Active because the " +
-                    "close_notify signal is unwired."
+                    s"(RFC 8446 6.1); expected Status.CleanClose, got $reason. An unwired close_notify signal makes the NIO path report " +
+                    "Active."
             )
             succeed
         }
     }
 
     // Truncated: the peer ends the TCP connection with a bare FIN and NO close_notify. The inline NIO client must report Truncated (the
-    // truncation-attack condition, made observable). Before the fix it reports Active, so a length-aware caller cannot detect the truncation.
+    // truncation-attack condition, made observable). Without the wiring it would report Active, so a length-aware caller could not detect the truncation.
     "inline NIO TLS client reports Truncated when the peer ends with a bare FIN and no close_notify" in {
         given Frame   = Frame.internal
         val transport = mkTransport()
@@ -97,7 +97,7 @@ class NioTransportTlsCloseReasonTest extends Test:
             assert(
                 reason == NetConnection.Status.Truncated,
                 "SECURITY: inline NIO TLS connection did not report a truncation after the peer's bare FIN with no close_notify " +
-                    s"(RFC 8446 6.1); expected Status.Truncated, got $reason. Before the fix the NIO path reports Active, so a " +
+                    s"(RFC 8446 6.1); expected Status.Truncated, got $reason. An unwired NIO path reports Active, so a " +
                     "length-aware caller cannot detect a truncation attack."
             )
             succeed

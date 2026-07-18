@@ -104,12 +104,12 @@ private[net] object KqueuePollerBackend extends PollerBackend:
     def wake(pollerFd: Int, scratch: PollScratch)(using AllowUnsafe, Frame): Unit =
         // Fire the EVFILT_USER filter with NOTE_TRIGGER so a parked kevent returns. keventNow is the non-blocking register-only syscall.
         //
-        // Both submitChange and submitEngineOp trigger this UNCONDITIONALLY (wake coalescing was retired: a coalesced wake can be skipped
-        // against a stale wakePending and permanently strand a TLS write's only delivery attempt), so two carrier threads can wake at the same
-        // time. wake reads the per-driver wakeArmBuf that registerWake pre-encoded with the constant NOTE_TRIGGER changelist and passes it to
+        // Both submitChange and submitEngineOp trigger this UNCONDITIONALLY (the wake is never coalesced behind a wakePending flag: a coalesced
+        // wake can be skipped against a stale wakePending and permanently strand a TLS write's only delivery attempt), so two carrier threads can
+        // wake at the same time. wake reads the per-driver wakeArmBuf that registerWake pre-encoded with the constant NOTE_TRIGGER changelist and passes it to
         // kevent, which only reads the changelist; concurrent wakes therefore share one immutable buffer with nothing to race, and there is no
-        // per-wake allocation. This matters because the previous fresh-per-call armBuf/emptyEvents pair closed a shared Arena on every wake, and
-        // each Arena.ofShared close forces a JVM-wide thread handshake, so under submission-heavy load that per-wake close dominated the single
+        // per-wake allocation. This matters because a fresh-per-call armBuf/emptyEvents pair would close a shared Arena on every wake, and
+        // each Arena.ofShared close forces a JVM-wide thread handshake, so under submission-heavy load that per-wake close would dominate the single
         // poll-loop thread's time.
         //
         // wakeArmBuf's nullness is the "is the wake mechanism armed" guard: a driver whose poll loop never started (registerWake never ran, e.g.
@@ -133,8 +133,8 @@ private[net] object KqueuePollerBackend extends PollerBackend:
         // wake() encodes NOTE_TRIGGER into it on an arbitrary carrier. Free it HERE, as the wake guard's terminal action (closeWakeGuarded, or the
         // last releaseWake once the closing bit is set and every in-flight wake has released), so the buffer free is mutually exclusive with an
         // in-flight wake: a triggerWake that won acquireWake before the closing bit holds the guard, so this close is deferred behind its
-        // releaseWake. Null it so the subsequent PollScratch.close does not double-close. Closing it in PollScratch.close (the prior behavior) ran
-        // UNGUARDED and raced a concurrent wake into a use-after-close ("Buffer is closed" on JVM/Native managed, SIGSEGV on a raw Native pointer).
+        // releaseWake. Null it so the subsequent PollScratch.close does not double-close. Closing it in PollScratch.close instead would run
+        // UNGUARDED and race a concurrent wake into a use-after-close ("Buffer is closed" on JVM/Native managed, SIGSEGV on a raw Native pointer).
         if scratch.wakeArmBuf != null then
             scratch.wakeArmBuf.close()
             scratch.wakeArmBuf = null

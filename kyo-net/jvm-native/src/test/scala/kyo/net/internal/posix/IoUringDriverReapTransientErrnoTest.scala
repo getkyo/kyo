@@ -10,23 +10,23 @@ import kyo.net.internal.transport.ReadOutcome
   *
   * The fused submit+wait (`kyo_uring_submit_and_wait_timeout`) can return `-ENOMEM` when the kernel could not allocate memory for THIS call
   * right now, a momentary condition under combined memory pressure from many concurrently-running rings on one host (exactly a full-suite
-  * test run), alongside the already-recognized transient `-EINTR`/`-EAGAIN`/`-EBUSY`/`-ETIME`. Before the fix, `reapRcContinues` did not
-  * recognize `-ENOMEM`, so the reap loop classified it as a genuinely fatal ring rc and self-destructed the WHOLE ring
+  * test run), alongside the already-recognized transient `-EINTR`/`-EAGAIN`/`-EBUSY`/`-ETIME`. If `reapRcContinues` did not
+  * recognize `-ENOMEM`, the reap loop would classify it as a genuinely fatal ring rc and self-destruct the WHOLE ring
   * (`io_uring_queue_exit`), tearing down every connection it carried, including one with a genuinely in-flight, kernel-owned recv SQE that
   * would otherwise have completed normally moments later.
   *
   * This is the mechanism behind `IoUringDriverTest`'s "closeHandle defers..." leaf flaking under full-suite load (its own comment already
   * documents the symptom without naming the cause): once the ring exits, `closeHandle`'s `ringExited` fast path frees a handle's read buffer
-  * immediately, bypassing the in-flight defer discipline entirely. It is also the likely source of a companion `CLOSE_WAIT` leak observed in
-  * the same podman run: a connection that was simply OPEN (not yet closing) when the ring self-destructs has its fd abandoned, with no
+  * immediately, bypassing the in-flight defer discipline entirely. It is also the likely source of a companion `CLOSE_WAIT` leak:
+  * a connection that was simply OPEN (not yet closing) when the ring self-destructs has its fd abandoned, with no
   * owner left alive to ever close it once the peer eventually does.
   *
   * A real `-ENOMEM` from the kernel is not deterministically reachable from Scala, so it is reproduced at the bindings seam: a
   * [[ReapFatalRcInjectingUring]] subclass of [[RecordingIoUringBindings]] forces exactly ONE `kyo_uring_submit_and_wait_timeout` call to
   * report `-ENOMEM` instead of delegating to the real ring, AFTER a real recv SQE has already reached the kernel (so the SQE is genuinely
-  * in flight when the fake rc arrives); every other call, before and after, delegates to the real ring. Before the fix, this leaf's recv
-  * promise fails `Closed` ("driver closed") because `teardownRing` ran; after the fix, the loop treats `-ENOMEM` as a normal continuable
-  * turn, the next real wait reaps the SQE for real, and the recv delivers the peer's actual bytes.
+  * in flight when the fake rc arrives); every other call, before and after, delegates to the real ring. Without the `-ENOMEM` recognition,
+  * this leaf's recv promise would fail `Closed` ("driver closed") because `teardownRing` ran; with it, the loop treats `-ENOMEM` as a normal
+  * continuable turn, the next real wait reaps the SQE for real, and the recv delivers the peer's actual bytes.
   *
   * Anti-flakiness: the one-shot override is armed, then the SAME call that submits the recv SQE (`awaitRead`) wakes the currently-parked
   * reap loop, so the armed rc fires on the very next `kyo_uring_submit_and_wait_timeout` call made after the recv SQE reaches the kernel,
