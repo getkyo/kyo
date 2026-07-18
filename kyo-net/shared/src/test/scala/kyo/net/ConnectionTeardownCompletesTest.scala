@@ -12,7 +12,7 @@ import kyo.net.internal.transport.WriteResult
   *
   * The SpyDriver counts closeHandle; onClose sets a flag. Pins: LIVE-7.
   */
-class LIVE7Test extends Test:
+class ConnectionTeardownCompletesTest extends Test:
 
     import AllowUnsafe.embrace.danger
     given Frame = Frame.internal
@@ -47,4 +47,4 @@ class LIVE7Test extends Test:
         }
     }
 
-end LIVE7Test
+end ConnectionTeardownCompletesTest

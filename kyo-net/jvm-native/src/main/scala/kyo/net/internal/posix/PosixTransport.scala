@@ -1083,9 +1083,9 @@ final private[net] class PosixTransport private[posix] (
                     // `handshakeTokenRef` publishes the real token through a `java.util.concurrent.atomic.AtomicLong` (mirrors
                     // `pendingHandshakeSeq` above), not a plain `var`. The deadline's own timer fiber (armed below) reads this on a
                     // DIFFERENT carrier than the one that writes it a few lines later; a bare var gives no happens-before guarantee for
-                    // that cross-carrier read (a prior version of this comment claimed the timer "cannot fire before registerHandshake
-                    // returns below," which is not a guarantee the JMM gives a plain var write/read pair, only a usually-true wall-clock
-                    // ordering). The write below happens-before any subsequent read the timer's callback performs.
+                    // that cross-carrier read. The timer firing only after `registerHandshake` returns below is a usually-true wall-clock
+                    // ordering, not one the JMM gives a plain var write/read pair, so the token goes through the AtomicLong: the write
+                    // below happens-before any subsequent read the timer's callback performs.
                     val handshakeTokenRef = new java.util.concurrent.atomic.AtomicLong(0L)
                     val disarm = armHandshakeDeadline(
                         clientFd,

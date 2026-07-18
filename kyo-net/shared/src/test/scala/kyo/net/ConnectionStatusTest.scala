@@ -16,7 +16,7 @@ import kyo.*
   * All leaves run via [[eachBackendTls]]. JS never wires `statusFn`, so every JS leaf asserts [[Connection.Status.Active]]
   * (XPLAT-5).
   */
-class INV11Test extends Test:
+class ConnectionStatusTest extends Test:
 
     import AllowUnsafe.embrace.danger
 
@@ -106,4 +106,4 @@ class INV11Test extends Test:
             end for
     }
 
-end INV11Test
+end ConnectionStatusTest

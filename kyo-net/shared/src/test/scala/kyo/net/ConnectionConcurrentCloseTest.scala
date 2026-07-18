@@ -12,7 +12,7 @@ import kyo.net.internal.transport.WriteResult
   * reflects the named state: once the state has settled to Closing or Closed, isOpen returns false for all subsequent reads, regardless of
   * the carrier that reads it. The latch drives all carriers to start simultaneously; no sleep is used.
   */
-class CONC4Test extends Test:
+class ConnectionConcurrentCloseTest extends Test:
 
     import AllowUnsafe.embrace.danger
     given Frame = Frame.internal
@@ -95,4 +95,4 @@ class CONC4Test extends Test:
         end for
     }
 
-end CONC4Test
+end ConnectionConcurrentCloseTest

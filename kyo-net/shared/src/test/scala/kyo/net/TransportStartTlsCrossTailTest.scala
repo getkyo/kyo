@@ -15,7 +15,7 @@ import kyo.*
   * All leaves run via eachBackendTls. The scenario is distinct from TransportStartTlsConcurrentTest: the Latch maximizes upgrade overlap,
   * the payload is sent immediately post-upgrade (not after a round-trip), and the assertion targets the cross-tail invariant specifically.
   */
-class CONC5Test extends Test:
+class TransportStartTlsCrossTailTest extends Test:
 
     import AllowUnsafe.embrace.danger
 
@@ -96,4 +96,4 @@ class CONC5Test extends Test:
             end for
     }
 
-end CONC5Test
+end TransportStartTlsCrossTailTest

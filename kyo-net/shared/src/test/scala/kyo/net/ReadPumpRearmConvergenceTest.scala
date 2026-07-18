@@ -24,7 +24,7 @@ import kyo.net.internal.transport.WriteResult
   * All drivers are synchronous mock implementations (inline callbacks, no real I/O). No Thread.sleep; all handoffs are via
   * synchronous inline promise completion.
   */
-class LIVE2Test extends Test:
+class ReadPumpRearmConvergenceTest extends Test:
 
     import AllowUnsafe.embrace.danger
     given Frame = Frame.internal
@@ -128,4 +128,4 @@ class LIVE2Test extends Test:
         }
     }
 
-end LIVE2Test
+end ReadPumpRearmConvergenceTest

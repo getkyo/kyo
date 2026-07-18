@@ -707,7 +707,7 @@ private[net] object PosixHandle:
         // abandons an in-flight, not-yet-fully-sent write (a caller closing before a backpressured flush drains): CloseDuringBackpressuredFlushTest
         // pins exactly that as correct ("close while the flush is parked on writability: frees once, clears pending state"). A blanket
         // check here fired on every such legitimate abrupt close under the full suite (confirmed via CloseDuringBackpressuredFlushTest,
-        // CrossTailMockedTest, FlushReArmPendingCoalesceTest), so it would spam production logs on ordinary early disconnects, not just
+        // IoUringDriverCrossTailMockedTest, FlushReArmPendingCoalesceTest), so it would spam production logs on ordinary early disconnects, not just
         // genuine bugs. The sound version of this doctrine for the send tail lives at the reap-and-declare-drained point instead (see
         // onTlsSendComplete's fully-drained branch in IoUringDriver), where "should be exactly zero" is actually always true.
         h.pendingCipher = Absent

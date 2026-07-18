@@ -54,7 +54,7 @@ class WritePumpTest extends Test:
                     handle,
                     spy,
                     channel,
-                    (_: TeardownCause) => discard(channel.close()),
+                    () => discard(channel.close()),
                     AtomicRef.Unsafe.init[WriteState](WriteState.Idle),
                     logger
                 )
@@ -110,7 +110,7 @@ class WritePumpTest extends Test:
                     handle,
                     spy,
                     channel,
-                    (_: TeardownCause) => closed += "closed",
+                    () => closed += "closed",
                     AtomicRef.Unsafe.init[WriteState](WriteState.Idle)
                 )
 
@@ -154,7 +154,7 @@ class WritePumpTest extends Test:
                     handle,
                     spy,
                     channel,
-                    (_: TeardownCause) => closed += "closed",
+                    () => closed += "closed",
                     AtomicRef.Unsafe.init[WriteState](WriteState.Idle)
                 )
 
@@ -206,7 +206,7 @@ class WritePumpTest extends Test:
                     handle,
                     spy,
                     channel,
-                    (_: TeardownCause) =>
+                    () =>
                         closed += "closed"
                         closedLatch.completeDiscard(Result.succeed(()))
                     ,
@@ -251,7 +251,7 @@ class WritePumpTest extends Test:
                     handle,
                     spy,
                     channel,
-                    (_: TeardownCause) =>
+                    () =>
                         closed += "closed"
                         closedLatch.completeDiscard(Result.succeed(()))
                     ,
@@ -302,7 +302,7 @@ class WritePumpTest extends Test:
                     handle,
                     spy,
                     channel,
-                    (_: TeardownCause) => closed += "closed",
+                    () => closed += "closed",
                     AtomicRef.Unsafe.init[WriteState](WriteState.Idle)
                 )
 
@@ -335,7 +335,7 @@ class WritePumpTest extends Test:
                     handle,
                     spy,
                     channel,
-                    (_: TeardownCause) => closed += "closed",
+                    () => closed += "closed",
                     AtomicRef.Unsafe.init[WriteState](WriteState.Idle)
                 )
 
@@ -366,7 +366,7 @@ class WritePumpTest extends Test:
                     handle,
                     spy,
                     channel,
-                    (_: TeardownCause) => closed += "closed",
+                    () => closed += "closed",
                     AtomicRef.Unsafe.init[WriteState](WriteState.Idle)
                 )
 
@@ -415,7 +415,7 @@ class WritePumpTest extends Test:
                     handle,
                     spy,
                     channel,
-                    (_: TeardownCause) =>
+                    () =>
                         closed += "closed"
                         closedLatch.completeDiscard(Result.succeed(()))
                     ,
@@ -468,7 +468,7 @@ class WritePumpTest extends Test:
                     handle,
                     spy,
                     channel,
-                    (_: TeardownCause) => closed += "closed",
+                    () => closed += "closed",
                     AtomicRef.Unsafe.init[WriteState](WriteState.Idle)
                 )
 
@@ -528,7 +528,7 @@ class WritePumpTest extends Test:
                     handle,
                     spy,
                     channel,
-                    (_: TeardownCause) => closed += "closed",
+                    () => closed += "closed",
                     AtomicRef.Unsafe.init[WriteState](WriteState.Idle)
                 )
 
@@ -573,7 +573,7 @@ class WritePumpTest extends Test:
             PosixTestSockets.smallBufferedPair(2048, 2048).map { case (clientFd, peerFd) =>
                 val handle  = PosixHandle.socket(clientFd, PosixHandle.DefaultReadBufferSize, Absent)
                 val channel = Channel.Unsafe.init[Span[Byte]](16)
-                val pump = new WritePump(handle, spy, channel, (_: TeardownCause) => (), AtomicRef.Unsafe.init[WriteState](WriteState.Idle))
+                val pump    = new WritePump(handle, spy, channel, () => (), AtomicRef.Unsafe.init[WriteState](WriteState.Idle))
 
                 spy.onAwaitWritable = _ => discard(channel.closeAwaitEmpty())
 
@@ -617,7 +617,7 @@ class WritePumpTest extends Test:
                     handle,
                     spy,
                     channel,
-                    (_: TeardownCause) =>
+                    () =>
                         closed += "closed"
                         closedLatch.completeDiscard(Result.succeed(()))
                     ,

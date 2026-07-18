@@ -3,7 +3,6 @@ package kyo.net
 import kyo.*
 import kyo.net.internal.transport.IoDriver
 import kyo.net.internal.transport.ReadOutcome
-import kyo.net.internal.transport.TeardownCause
 import kyo.net.internal.transport.WritePump
 import kyo.net.internal.transport.WriteResult
 import kyo.net.internal.transport.WriteState
@@ -22,7 +21,7 @@ import kyo.net.internal.transport.WriteState
   * write, and the state transition all happen inside the completeDiscard call. Assertions run after completeDiscard returns, at
   * which point the retry is guaranteed to have landed.
   */
-class LIVE3Test extends Test:
+class WritePumpResumeTest extends Test:
 
     import AllowUnsafe.embrace.danger
     given Frame = Frame.internal
@@ -71,7 +70,7 @@ class LIVE3Test extends Test:
                 (),
                 driver,
                 channel,
-                (_: TeardownCause) =>
+                () =>
                     discard(channel.close())
                     doneLatch.completeDiscard(Result.succeed(()))
                 ,
@@ -151,7 +150,7 @@ class LIVE3Test extends Test:
             val driver  = new TailPartialFirstDriver
             val channel = Channel.Unsafe.init[Span[Byte]](4)
             val state   = AtomicRef.Unsafe.init[WriteState](WriteState.Idle)
-            val pump    = new WritePump((), driver, channel, (_: TeardownCause) => discard(channel.close()), state)
+            val pump    = new WritePump((), driver, channel, () => discard(channel.close()), state)
 
             val payload = Span.fromUnsafe(Array[Byte](10, 20, 30, 40))
             discard(channel.offer(payload))
@@ -188,4 +187,4 @@ class LIVE3Test extends Test:
         }
     }
 
-end LIVE3Test
+end WritePumpResumeTest

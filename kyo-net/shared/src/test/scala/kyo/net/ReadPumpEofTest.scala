@@ -19,7 +19,7 @@ import kyo.net.internal.transport.WriteResult
   * Concretely: the driver delivers WouldBlock on the first call, then PeerFin on the second. The pump's response chain is synchronous
   * (inline callbacks), so the full lifecycle completes within `conn.start()`. Assertions follow.
   */
-class INV10Test extends Test:
+class ReadPumpEofTest extends Test:
 
     import AllowUnsafe.embrace.danger
     given Frame = Frame.internal
@@ -99,4 +99,4 @@ class INV10Test extends Test:
         }
     }
 
-end INV10Test
+end ReadPumpEofTest

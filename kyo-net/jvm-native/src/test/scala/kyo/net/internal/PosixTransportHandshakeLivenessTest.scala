@@ -27,7 +27,7 @@ import kyo.net.internal.posix.PosixConstants
   * [[TlsRealEngines.realTlsLoopback]]). The stalled leaf uses [[Async.timeout]](5.seconds) as an upper bound so a missed reap fails rather
   * than hanging; 5s >> 150ms handshakeTimeout on any loopback host.
   */
-class LIVE5Test extends Test:
+class PosixTransportHandshakeLivenessTest extends Test:
 
     import AllowUnsafe.embrace.danger
 
@@ -94,4 +94,4 @@ class LIVE5Test extends Test:
         }
     }
 
-end LIVE5Test
+end PosixTransportHandshakeLivenessTest

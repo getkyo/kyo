@@ -1,7 +1,6 @@
 package kyo.net.internal.transport
 
 import kyo.*
-import kyo.net.NetConnectionClosedException
 import kyo.scheduler.IOPromise
 
 /** Pump that receives completed reads from the driver and forwards bytes to a channel.
@@ -29,7 +28,7 @@ final private[kyo] class ReadPump[Handle](
     handle: Handle,
     driver: IoDriver[Handle],
     channel: Channel.Unsafe[Span[Byte]],
-    closeFn: TeardownCause => Unit
+    closeFn: () => Unit
 ) extends IOPromise[Closed, ReadOutcome]:
 
     // Promise.Unsafe[A, S] is an opaque alias over IOPromise[Any, A < S] (kyo.Fiber.scala): a
@@ -60,18 +59,18 @@ final private[kyo] class ReadPump[Handle](
                 outcome match
                     case ReadOutcome.Bytes(span)   => offerToChannel(span)
                     case ReadOutcome.WouldBlock    => requestNextRead() // EAGAIN: re-arm, NOT EOF
-                    case ReadOutcome.PeerFin       => teardown(TeardownCause.PeerFin)
-                    case ReadOutcome.LocalShutdown => teardown(TeardownCause.LocalShutdown)
-                    case ReadOutcome.CleanClose    => teardown(TeardownCause.CleanClose)
+                    case ReadOutcome.PeerFin       => teardown()
+                    case ReadOutcome.LocalShutdown => teardown()
+                    case ReadOutcome.CleanClose    => teardown()
                     case ReadOutcome.Failed(cause) =>
-                        Log.live.unsafe.debug(s"ReadPump read failed on ${driver.handleLabel(handle)}")
-                        teardown(TeardownCause.Failed(NetConnectionClosedException("read", cause)))
+                        Log.live.unsafe.debug(s"ReadPump read failed on ${driver.handleLabel(handle)}: $cause")
+                        teardown()
                 end match
             case Present(Result.Failure(_)) =>
-                teardown(TeardownCause.ChannelClosed)
+                teardown()
             case Present(Result.Panic(t)) =>
                 Log.live.unsafe.error(s"ReadPump error on ${driver.handleLabel(handle)}", t)
-                teardown(TeardownCause.Failed(NetConnectionClosedException("read", t)))
+                teardown()
         end match
     end onComplete
 
@@ -93,7 +92,7 @@ final private[kyo] class ReadPump[Handle](
                     result match
                         case Result.Success(_)         => requestNextRead()
                         case Result.Failure(_: Closed) => driver.onInboundClosedDuringRead(handle, bytes)
-                        case Result.Panic(t)           => teardown(TeardownCause.Failed(NetConnectionClosedException("read", t)))
+                        case Result.Panic(_)           => teardown()
                     end match
                 }
             case Result.Failure(_: Closed) =>
@@ -101,7 +100,7 @@ final private[kyo] class ReadPump[Handle](
                 // this read may carry the peer's first TLS flight off the socket; the driver hook salvages those bytes for the handshake instead of
                 // losing them (default no-op for an ordinary close). See IoDriver.onInboundClosedDuringRead.
                 driver.onInboundClosedDuringRead(handle, bytes)
-                teardown(TeardownCause.ChannelClosed)
+                teardown()
         end match
     end offerToChannel
 
@@ -116,15 +115,14 @@ final private[kyo] class ReadPump[Handle](
         driver.awaitRead(handle, self)
     end requestNextRead
 
-    private def teardown(cause: TeardownCause)(using AllowUnsafe, Frame): Unit =
-        // Thread the cause to closeFn so the connection records it on its own close-cause state, never dropped.
+    private def teardown()(using AllowUnsafe, Frame): Unit =
         // Tear the connection down on EOF/error. closeFn marks the inbound channel closing-for-writes via closeAwaitEmpty (NOT close): a consumer
         // that has not drained the bytes the ReadPump staged ahead of EOF can still take them, then sees the channel FullyClosed once empty, so
         // those bytes are not dropped (the kyo-pod ContainerItTest execStream case: a stderr frame buffered alongside stdout). The handle teardown
         // is intentionally NOT gated on that drain: closeFn reclaims the socket fd as soon as the outbound side flushes, even when the consumer
         // abandons the inbound channel (a pooled connection with no reader). Gating it on the drain leaked the fd: an abandoned inbound channel
         // never empties, so the close never fired and the peer-FIN'd socket lingered in CLOSE_WAIT until process exit.
-        closeFn(cause)
+        closeFn()
     end teardown
 
 end ReadPump

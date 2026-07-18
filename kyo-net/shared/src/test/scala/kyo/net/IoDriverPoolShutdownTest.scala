@@ -17,7 +17,7 @@ import kyo.net.internal.transport.WriteResult
   * ever completed by an external interrupt. The test pins that every driver is closed exactly once and no loop fiber is ever interrupted by
   * the pool. Pins: LIVE-8.
   */
-class LIVE8Test extends Test:
+class IoDriverPoolShutdownTest extends Test:
 
     import AllowUnsafe.embrace.danger
     given Frame = Frame.internal
@@ -57,4 +57,4 @@ class LIVE8Test extends Test:
         }
     }
 
-end LIVE8Test
+end IoDriverPoolShutdownTest

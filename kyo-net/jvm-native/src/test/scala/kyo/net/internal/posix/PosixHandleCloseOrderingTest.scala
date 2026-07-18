@@ -20,7 +20,7 @@ import kyo.net.Test
   * The "no use-after-free" property is observed by the guard's Closed sentinel: once freeResources runs, the guard is set to Closed (-1),
   * and any subsequent beginDispatch returns false (cannot acquire) rather than starting a new dispatch against freed resources.
   */
-class INV5Test extends Test:
+class PosixHandleCloseOrderingTest extends Test:
 
     import AllowUnsafe.embrace.danger
 
@@ -119,4 +119,4 @@ class INV5Test extends Test:
         }
     }
 
-end INV5Test
+end PosixHandleCloseOrderingTest

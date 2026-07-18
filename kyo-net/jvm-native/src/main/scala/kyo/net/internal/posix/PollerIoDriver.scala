@@ -115,7 +115,7 @@ final private[net] class PollerIoDriver private[posix] (
     // instead of round-tripping through submitEngineOp): every carrier that can reach `engineFreeSink` while `terminal` is true but
     // [[teardownComplete]] is not yet true is provably the poll-loop carrier itself (the queued close op, or sweepPendingCloses' first
     // pass, both run on this same carrier during drainFifos()), so inline is always safe there regardless of how far the drain has
-    // progressed. NOT safe to treat as "self-close now" (a prior version of this doc claimed exactly that): reading `true` here means
+    // progressed. NOT safe to treat as "self-close now": reading `true` here means
     // only that the terminal exit has STARTED, not that it has FINISHED, so a self-close gated on this flag alone could run
     // concurrently with the terminal exit's own still-in-flight sweep of the SAME handle (both trying to drive `shutdownTls` on the
     // same TLS engine at once). closeHandle's self-close instead gates on [[teardownComplete]], which is set only at the END of the
@@ -200,7 +200,7 @@ final private[net] class PollerIoDriver private[posix] (
     // order, and consecutive register commands consume them head-first in that order, so neither is lost.
     private val regIntake = new ConcurrentLinkedQueue[Registration]()
 
-    // The deregister side queue, the deregister twin of regIntake (#362, R-065). The packed long deregister command carries only the fd, not the
+    // The deregister side queue, the deregister twin of regIntake. The packed long deregister command carries only the fd, not the
     // handle's HandleId (the 32-bit generation does not fit the spare command bits), but the apply must remove an fd's entries ONLY when the fd is
     // still owned by the deregistering handle: a deregister whose fd was closed and recycled into a new handle must not evict the new handle's
     // registration. deregisterFds offers the handle here, paired with each OpDeregister command (offer-then-submit on one carrier, so the poll
@@ -270,16 +270,16 @@ final private[net] class PollerIoDriver private[posix] (
     private val missedEof = new java.util.HashSet[Int]()
 
     // Opcode constants for the packed Long change command:
-    //   Bits 34-35: opcode (2 bits: 0=RegisterRead, 1=RegisterWrite, 3=Deregister; value 2 RETIRED from OpRearm, not reassigned)
+    //   Bits 34-35: opcode (2 bits: 0=RegisterRead, 1=RegisterWrite, 3=Deregister; value 2 is unused and not reassigned)
     //   Bit  36:    fdClosing (for Deregister opcode only; 0 for all other opcodes)
-    //   Bits 32-33: unused (formerly firedRead/firedWrite for the retired OpRearm opcode; zeroed for all current opcodes)
+    //   Bits 32-33: unused (zeroed for all current opcodes)
     //   Bits 31-0:  fd (32-bit signed int; OS fds fit in 31 bits on Linux; the full 32-bit range is preserved in the low 32 bits)
     // OpDeregister=3 occupies both bits 34 and 35 of the opcode field (3 = 0b11); bit 35 is part of the opcode, NOT a spare bit.
     // The fdClosing flag therefore uses bit 36, which is the first bit above the 2-bit opcode field and never set by any current opcode.
     private val OpRegisterRead: Long  = 0L
     private val OpRegisterWrite: Long = 1L
-    // OpRearm = 2L retired. Edge-triggered registration eliminates per-event re-arm; value 2 is intentionally left as a gap
-    // to avoid encoding collisions with any in-flight commands that may have been packed before the switch.
+    // No rearm opcode exists: edge-triggered registration needs no per-event re-arm, so opcode value 2 is intentionally left as a
+    // reserved gap and never reassigned.
     private val OpDeregister: Long = 3L
 
     // Bound on in-place EINTR retries for one recv/send call. POSIX recv(2)/send(2): a non-blocking call interrupted by a signal before any byte
@@ -471,7 +471,7 @@ final private[net] class PollerIoDriver private[posix] (
             // when the fd is already ready (a loopback connect's socket is writable at once, so epoll_wait/kevent returns at once). This, paired
             // with the submitChange wake that returns a park when work arrives DURING it, is what keeps the connect write-readiness from being
             // stranded until the next I/O event past a short connect deadline (the NetConnectTimeoutException regression).
-            // wakePending no longer gates either wake path (both submitChange and submitEngineOp are unconditional); this reset only keeps the
+            // wakePending does not gate either wake path (both submitChange and submitEngineOp are unconditional); this reset only keeps the
             // flag's per-cycle lifecycle consistent for the tests that pre-set it (see wakePending's own doc).
             diagPollCycles += 1L
             wakePending.set(false)
@@ -1091,7 +1091,7 @@ final private[net] class PollerIoDriver private[posix] (
         // rather than waiting up to one poll cycle (EC-1): every pending promise is held on the handle (pendingReadPromise / pendingAcceptPromise /
         // pendingWritablePromise / backpressurePromise), so failing them needs no map access. completeDiscard is idempotent, so if the poll fiber's
         // deregister removal also tried to fail them (it does not), there would be no double-completion hazard.
-        // Pair each OpDeregister with the handle on deregIntake so the apply can id-guard the removal (#362). The offer precedes the submitChange
+        // Pair each OpDeregister with the handle on deregIntake so the apply can id-guard the removal. The offer precedes the submitChange
         // on this one carrier, so the poll carrier sees the handle by the time it observes the command (the changeQueue offer publishes it).
         deregIntake.offer(handle)
         submitChange(packCmd(OpDeregister, handle.readFd, fdClosing))
@@ -1162,9 +1162,8 @@ final private[net] class PollerIoDriver private[posix] (
       * ever observes `true` from the removal: `ConcurrentHashMap`'s remove is atomic, so only the winner's body runs, and every other
       * caller's call is a safe no-op.
       *
-      * This eliminates the overlap a prior version of this method allowed: closeHandle's self-close used to skip the graceful close_notify
-      * specifically because it could run concurrently with the terminal sweep's own attempt on the SAME handle (two carriers both driving
-      * `shutdownTls` on one TLS engine at once). With single-discharge there is no such overlap to guard against: whichever carrier wins
+      * Single-discharge leaves no overlap between closeHandle's self-close and the terminal sweep's own attempt on the SAME
+      * handle (the hazard being two carriers both driving `shutdownTls` on one TLS engine at once): whichever carrier wins
       * the claim is PROVABLY the only one inside this body for this handle, so it can always attempt the close_notify. The three
       * potential callers are also never live at once in practice: the normal queued op only runs during (or before) `drainFifos()`, which
       * has unconditionally finished by the time [[teardownComplete]] is set, so by the time a self-close or a re-sweep can even run, the
@@ -1396,7 +1395,7 @@ final private[net] class PollerIoDriver private[posix] (
                 // event tagged with the OLD id (kqueue residual knote), or epoll_wait already drained the prior owner's event into this batch before the
                 // close+recycle (epoll auto-removes a closed fd, but an already-dequeued event survives). This branch never runs the normal
                 // read/eof/error/write dispatch for the stale event, which is what closes the connect-burst race: the prior owner's spurious EV_EOF /
-                // EV_ERROR / read edge can no longer surface a phantom close on the NEW owner's fresh connection, and it never reaches dispatchRead's
+                // EV_ERROR / read edge does not surface a phantom close on the NEW owner's fresh connection, and it never reaches dispatchRead's
                 // missed-edge tracking to contaminate it.
                 //
                 // It does fail the stale event's OWN orphaned pending op: when a pending read / accept / writable for this fd is still the very
@@ -2116,10 +2115,10 @@ final private[net] class PollerIoDriver private[posix] (
     end triggerWake
 
     /** Pack an opcode, fd, fdClosing flag, and accept discriminator into a single Long command for the change FIFO.
-      *   Bits 34-35: opcode (OpRegisterRead=0 / OpRegisterWrite=1 / OpDeregister=3; value 2 retired from OpRearm)
+      *   Bits 34-35: opcode (OpRegisterRead=0 / OpRegisterWrite=1 / OpDeregister=3; value 2 is unused and not reassigned)
       *   Bit  36:    fdClosing (for OpDeregister only: true when the fd is being closed; 0 for all other opcodes)
       *   Bit  37:    accept (for OpRegisterRead only: true when the registration came from awaitAccept, false from awaitRead; 0 otherwise)
-      *   Bits 32-33: unused (formerly firedRead/firedWrite for the retired OpRearm opcode; always 0 for current opcodes)
+      *   Bits 32-33: unused (always 0 for current opcodes)
       *   Bits 31-0:  fd as a signed 32-bit value (OS fds fit in 31 bits on Linux; the full 32-bit signed range is preserved)
       * OpDeregister=3 (binary 11) occupies both bits 34 and 35. The fdClosing flag uses bit 36 and the accept flag uses bit 37, both above
       * the 2-bit opcode field, so neither is ever set by any opcode value (0, 1, or 3 all fit in 2 bits). The accept bit lets the poll carrier
@@ -2162,8 +2161,8 @@ final private[net] class PollerIoDriver private[posix] (
         found
     end takeRegistration
 
-    /** Remove and return the first handle in `deregIntake` whose `readFd` or `writeFd` matches `fd` (the deregister twin of [[takeRegistration]],
-      * #362). Each [[deregisterFds]] offers the handle once per OpDeregister command, so a socket (readFd == writeFd) offers once and stdio (0/1)
+    /** Remove and return the first handle in `deregIntake` whose `readFd` or `writeFd` matches `fd` (the deregister twin of [[takeRegistration]]).
+      * Each [[deregisterFds]] offers the handle once per OpDeregister command, so a socket (readFd == writeFd) offers once and stdio (0/1)
       * twice; matching by fd consumes the right entry for each command. Returns `null` when none matches (a deregister whose intake entry was never
       * offered, which the offer-before-submit ordering prevents in practice). Poll-fiber-confined consumption; the iterator is weakly consistent.
       */
@@ -2197,7 +2196,7 @@ final private[net] class PollerIoDriver private[posix] (
                     // MOD-re-encode the kernel event under the dead handle's id, so the new connection's reads are evicted and never dispatch (a
                     // strand). Skip the registration entirely: fail the dangling promise Closed so its consumer tears down instead of hanging, then
                     // return IdNoCheck so the caller skips backend.registerRead and the missed-edge re-dispatch. This is the register-side dual of
-                    // dispatchRead's beginDispatch guard and the OpDeregister id-guard (#362); a live handle still registers normally below.
+                    // dispatchRead's beginDispatch guard and the OpDeregister id-guard; a live handle still registers normally below.
                     val closed = Closed(label, summon[Frame], s"register on closing handle fd=$fd")
                     kind match
                         case RegKind.Read =>
@@ -2314,18 +2313,18 @@ final private[net] class PollerIoDriver private[posix] (
                     Maybe(pendingWritables.remove(fd)).foreach(_.promise.completeDiscard(Result.fail(closed)))
             end if
         else
-            // OpDeregister (#362, R-065): remove this fd's entries from the poll-fiber-confined maps HERE, on the poll-loop carrier (single-writer),
+            // OpDeregister: remove this fd's entries from the poll-fiber-confined maps HERE, on the poll-loop carrier (single-writer),
             // but ONLY when activeFds still carries the DEREGISTERING handle's HandleId. The deregistering handle is taken from deregIntake (paired
             // with this command by deregisterFds). A stale deregister whose fd was closed and recycled into a new handle finds activeFds holding the
             // NEW handle's id, so the mismatch skips every removal and the kernel deregister, leaving the recycled fd's new registration intact (the
-            // #362 wrong-entry eviction). A live withdrawal (fdClosing == false) never closes the fd, so its id always matches. The pending promises
+            // wrong-entry eviction). A live withdrawal (fdClosing == false) never closes the fd, so its id always matches. The pending promises
             // were already failed synchronously by deregisterFds (held on the handle, not in the maps). Clearing missedReads/missedEof on a matched
             // deregister stops a recycled fd inheriting a stale entry; on a mismatch they belong to the new handle and are left.
             Maybe(takeDeregister(fd)) match
                 case Present(h) =>
                     // Proceed when the fd is still owned by THIS handle (id matches) OR is unowned (no activeFds entry: a cancel before any register,
                     // or an already-removed registration; the deregister is then idempotent and harmless). Skip ONLY when activeFds carries a
-                    // DIFFERENT, live HandleId: that is the #362 recycled-fd case, where the fd was closed and recycled into a new handle whose
+                    // DIFFERENT, live HandleId: that is the recycled-fd case, where the fd was closed and recycled into a new handle whose
                     // registration this stale deregister must not evict. -1L is the absent sentinel (no real id.packed is -1; same sentinel isStaleId uses).
                     val current = activeFds.getOrElse(fd, -1L)
                     if current == h.id.packed || current == -1L then
@@ -2378,8 +2377,8 @@ final private[net] class PollerIoDriver private[posix] (
             drainChanges()
     end drainChanges
 
-    // rearmRead and rearmSurvivors removed: edge-triggered registration (EPOLLET / EV_CLEAR) keeps the fd persistently armed;
-    // re-arming after a readiness event is neither necessary nor correct under ET. OpRearm (value 2) is retired; see opcode constant comment.
+    // No read re-arm path exists: edge-triggered registration (EPOLLET / EV_CLEAR) keeps the fd persistently armed, so
+    // re-arming after a readiness event is neither necessary nor correct under ET (opcode value 2 is a reserved gap; see the opcode constant comment).
 
     /** Submit a TLS engine op to the engine FIFO and return immediately. The poll-loop carrier runs the thunk in submission order on its next cycle
       * (see [[drainFifos]]), so no two engine ops for any connection on this driver overlap (one carrier is the engine-serialization invariant). A
@@ -2387,16 +2386,16 @@ final private[net] class PollerIoDriver private[posix] (
       * strand, leaving engine ops undrained forever (the Native TLS deadlock); the always-running poll loop cannot be stranded that way. The
       * recv/send syscalls that surround engine ops stay outside the FIFO.
       *
-      * After offering the op, triggers the poll-loop wakeup UNCONDITIONALLY, same as [[submitChange]]. Both used to gate the wake behind a CAS
-      * on a shared `wakePending` flag the poll loop reset only at the top of each cycle, before draining the FIFOs and before the blocking
-      * park: a submit whose CAS landed AFTER a prior wake was already consumed this cycle but BEFORE that reset observed a STALE `true` (a wake
-      * whose OS-level signal was already delivered and cleared, not one still in flight), skipped its own wake, and the carrier parked having
+      * After offering the op, triggers the poll-loop wakeup UNCONDITIONALLY, same as [[submitChange]]. Gating the wake behind a CAS
+      * on a shared `wakePending` flag (reset at the top of each cycle, before draining the FIFOs and before the blocking
+      * park) races: a submit whose CAS lands AFTER a prior wake was already consumed this cycle but BEFORE that reset observes a STALE `true` (a wake
+      * whose OS-level signal was already delivered and cleared, not one still in flight) skips its own wake, and the carrier parks having
       * never seen the newly-offered work. Unlike a read re-arm (which has a self-healing path: the coalesced-away command still sits in
       * `changeQueue` and the next cycle's unconditional `drainChanges()` usually recovers it if `backend.poll()` returns for some other reason),
       * a `writeTls` engine op is the write's only delivery attempt with no retry: a wake lost here strands the connection's write side
-      * permanently (the STARTTLS-upgrade-tail B' strand this method was first made unconditional for). `submitChange` shared the identical gap
-      * on the read/registration side and was later found to strand connection-reuse reads the same way when the self-healing path did not run
-      * in time (`PollerWakeReadArmTest`), so both are unconditional now and `wakePending` is retired. Mirrors [[IoUringDriver.submitEngineOp]],
+      * permanently (the STARTTLS-upgrade-tail B' strand this unconditional wake guards). `submitChange` carries the identical gap
+      * on the read/registration side and would strand connection-reuse reads the same way when the self-healing path does not run
+      * in time (`PollerWakeReadArmTest`), so both wake unconditionally and `wakePending` never gates them. Mirrors [[IoUringDriver.submitEngineOp]],
       * whose `wakeReapLoop()` is unconditional for the same reason. `triggerWake` -> `backend.wake` is safe to call concurrently from multiple
       * carriers: epoll's `wake` is a thread-safe atomic counter increment, and kqueue's `wake` encodes into a fresh per-call buffer (see
       * [[KqueuePollerBackend.wake]]) instead of a reused one, so concurrent wakes never touch the same memory and there is nothing to serialize.

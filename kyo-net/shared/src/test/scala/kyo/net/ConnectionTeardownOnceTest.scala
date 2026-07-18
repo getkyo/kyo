@@ -11,7 +11,7 @@ import kyo.net.internal.transport.WriteResult
   * The single CAS on Closing -> Closed is the structural guarantee: only the fiber that wins the CAS calls the teardown body; every other
   * concurrent close() call loses the CAS and is a no-op. No sleep; the latch drives the interleaving.
   */
-class INV13Test extends Test:
+class ConnectionTeardownOnceTest extends Test:
 
     import AllowUnsafe.embrace.danger
     given Frame = Frame.internal
@@ -65,4 +65,4 @@ class INV13Test extends Test:
         end for
     }
 
-end INV13Test
+end ConnectionTeardownOnceTest

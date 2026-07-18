@@ -36,7 +36,7 @@ import kyo.net.internal.posix.TestDrivers
   * TlsRealEngines.assumeTlsReady() (cancels when no TLS provider is staged). Anti-flakiness: all waits use FIFO-barrier promises
   * (submitEngineOp thunk submitted after the test op); no sleep. Async.timeout is only the deadlock ceiling.
   */
-class CrossTailSendOrderTest extends Test:
+class IoUringDriverCrossTailSendOrderTest extends Test:
 
     import AllowUnsafe.embrace.danger
 
@@ -52,7 +52,7 @@ class CrossTailSendOrderTest extends Test:
         val rc        = realUring.io_uring_queue_init(depth, realRing, 0)
         if rc != 0 then
             realRing.close()
-            throw Closed("CrossTailSendOrderTest", summon[Frame], s"io_uring_queue_init failed: rc=$rc")
+            throw Closed("IoUringDriverCrossTailSendOrderTest", summon[Frame], s"io_uring_queue_init failed: rc=$rc")
         val recording = RecordingIoUringBindings(realUring, realRing)
         val driver    = TestDrivers.forBindings(recording, realRing)
         discard(driver.start())
@@ -166,4 +166,4 @@ class CrossTailSendOrderTest extends Test:
         }
     }
 
-end CrossTailSendOrderTest
+end IoUringDriverCrossTailSendOrderTest

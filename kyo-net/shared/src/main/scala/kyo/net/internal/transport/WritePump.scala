@@ -1,7 +1,6 @@
 package kyo.net.internal.transport
 
 import kyo.*
-import kyo.net.NetConnectionClosedException
 
 /** Pump that drains an outbound channel and writes bytes to the socket via the driver.
   *
@@ -40,7 +39,7 @@ final private[kyo] class WritePump[Handle](
     handle: Handle,
     driver: IoDriver[Handle],
     channel: Channel.Unsafe[Span[Byte]],
-    closeFn: TeardownCause => Unit,
+    closeFn: () => Unit,
     private val state: AtomicRef.Unsafe[WriteState],
     private val log: Log.Unsafe = Log.live.unsafe
 ):
@@ -67,10 +66,10 @@ final private[kyo] class WritePump[Handle](
                     doWrite(flushing)
                 // else: state is TornDown (a concurrent close won); drop the span, teardown already ran.
             case Result.Failure(_: Closed) =>
-                teardown(TeardownCause.ChannelClosed)
+                teardown()
             case Result.Panic(t) =>
                 log.error(s"WritePump take panic on ${driver.handleLabel(handle)}", t)
-                teardown(TeardownCause.Failed(NetConnectionClosedException("send", t)))
+                teardown()
         end match
     end onTake
 
@@ -91,10 +90,10 @@ final private[kyo] class WritePump[Handle](
                         if state.compareAndSet(s, flushing) then doWrite(flushing)
                     case _ => () // Idle/Flushing/TornDown: a stale writable, drop it.
                 end match
-            case Result.Failure(closed) =>
-                teardown(TeardownCause.Failed(NetConnectionClosedException("send", closed)))
-            case Result.Panic(t) =>
-                teardown(TeardownCause.Failed(NetConnectionClosedException("send", t)))
+            case Result.Failure(_) =>
+                teardown()
+            case Result.Panic(_) =>
+                teardown()
         end match
     end onWritable
 
@@ -154,7 +153,7 @@ final private[kyo] class WritePump[Handle](
                 end if
             case WriteResult.Error =>
                 log.debug(s"WritePump write error on ${driver.handleLabel(handle)}")
-                teardown(TeardownCause.Failed(NetConnectionClosedException("send")))
+                teardown()
         end match
     end doWrite
 
@@ -172,11 +171,11 @@ final private[kyo] class WritePump[Handle](
         channel.reuseTake(p)
     end requestNextTake
 
-    private def teardown(cause: TeardownCause)(using AllowUnsafe, Frame): Unit =
+    private def teardown()(using AllowUnsafe, Frame): Unit =
         // Swing the state to TornDown so a racing take/writable completion loses its CAS and no-ops.
         state.set(WriteState.TornDown)
         discard(channel.close())
-        closeFn(cause)
+        closeFn()
     end teardown
 
 end WritePump

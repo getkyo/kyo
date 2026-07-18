@@ -62,8 +62,8 @@ final private[kyo] class IoDriverPool[Handle] private (
       * its selector directly, which aborts a blocked `select()`; the posix io_uring/poller drivers wake their loop and let it observe the
       * close signal on its own carrier). For io_uring and the poller that self-teardown is deferred to the loop's own carrier (their pending-op
       * bookkeeping is carrier-confined and cannot be swept from here), so an unconditional fiber interrupt issued right after signaling close
-      * could abort the loop before it reaches that deferred teardown, permanently stranding a handle whose close was mid-flight -- exactly
-      * the fd leak this method used to cause under full-suite load. Trust each driver's own close() contract instead of racing it.
+      * could abort the loop before it reaches that deferred teardown, permanently stranding a handle whose close was mid-flight: exactly
+      * the fd leak an unconditional interrupt would cause under full-suite load. Trust each driver's own close() contract instead of racing it.
       */
     def close()(using AllowUnsafe, Frame): Unit =
         if closedFlag.compareAndSet(false, true) then

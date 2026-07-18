@@ -13,7 +13,7 @@ import kyo.net.internal.transport.WriteResult
   * The SpyDriver records whether any `write` lands AFTER `closeHandle` (an ordering violation) and counts the writes; the closeHandle promise is
   * the deterministic settle point (no sleep). Pins: INV-12, R-036.
   */
-class INV12Test extends Test:
+class ConnectionOutboundFlushOnCloseTest extends Test:
 
     import AllowUnsafe.embrace.danger
     given Frame = Frame.internal
@@ -62,4 +62,4 @@ class INV12Test extends Test:
         end for
     }
 
-end INV12Test
+end ConnectionOutboundFlushOnCloseTest

@@ -33,7 +33,7 @@ end HandshakeState
   * driver surfaces to the connection's pending promise rather than a swallowed throw.
   *
   *   - [[EngineError]]: the engine returned `-2` (a fatal-error status, normal alert-record outcome).
-  *   - [[DeadlineReaped]]: the handshake deadline fired before completion (slowloris guard, R-028).
+  *   - [[DeadlineReaped]]: the handshake deadline fired before completion (slowloris guard).
   *   - [[EngineThrew]]: the engine threw an unexpected exception during a handshake step.
   */
 private[kyo] enum HandshakeFailure derives CanEqual:

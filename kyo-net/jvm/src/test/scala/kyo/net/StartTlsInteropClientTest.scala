@@ -15,7 +15,7 @@ import kyo.net.internal.posix.PosixTestSockets
   * independent connections, asserting the TLS handshake and echo succeed every time. Any bad_record_mac from a
   * byte-shifted TLS record (e.g. caused by the cross-tail send race) would surface here as a handshake failure.
   *
-  * The cross-tail mechanism is already covered by CrossTailSendOrderTest (deterministic) and the CONC5 io_uring arm;
+  * The cross-tail mechanism is already covered by IoUringDriverCrossTailSendOrderTest (deterministic) and the CONC5 io_uring arm;
   * this test provides a supplementary external-interop check: kyo-net's BoringSSL TLS client vs the system OpenSSL
   * on the server side.
   *

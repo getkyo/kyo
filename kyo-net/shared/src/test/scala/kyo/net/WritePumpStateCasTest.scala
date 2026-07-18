@@ -19,7 +19,7 @@ import kyo.net.internal.transport.WriteState
   * deterministic sequential approach is cross-platform (JVM, JS, Native) and gives the same correctness guarantee as a concurrent race,
   * because the correctness property is about the CAS semantics of the cell, not about scheduling.
   */
-class CONC3Test extends Test:
+class WritePumpStateCasTest extends Test:
 
     import AllowUnsafe.embrace.danger
     given Frame = Frame.internal
@@ -113,4 +113,4 @@ class CONC3Test extends Test:
         }
     }
 
-end CONC3Test
+end WritePumpStateCasTest

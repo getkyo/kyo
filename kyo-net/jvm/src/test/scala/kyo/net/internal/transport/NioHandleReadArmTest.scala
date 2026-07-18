@@ -30,7 +30,7 @@ import kyo.net.internal.ReadArmCell
   * explicitly NIO-specific. Neither leaf uses a real I/O selector or spawns threads; all
   * interleavings are deterministic and sequential.
   */
-class INV1Test extends Test:
+class NioHandleReadArmTest extends Test:
 
     import AllowUnsafe.embrace.danger
 
@@ -302,4 +302,4 @@ class INV1Test extends Test:
         }
     }
 
-end INV1Test
+end NioHandleReadArmTest

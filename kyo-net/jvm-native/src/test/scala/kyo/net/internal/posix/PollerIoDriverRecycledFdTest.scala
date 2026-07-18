@@ -22,7 +22,7 @@ import kyo.net.internal.transport.ReadOutcome
   * Pins that no driver operation ever uses a freed file descriptor, across the inherited recycled-fd paths: the io_uring stalled-submit close
   * path (#349) and both poller recycled-fd paths (the #362 deregister and its register-side twin).
   */
-class INV4Test extends Test:
+class PollerIoDriverRecycledFdTest extends Test:
 
     import AllowUnsafe.embrace.danger
 
@@ -49,7 +49,7 @@ class INV4Test extends Test:
         val rc        = realUring.io_uring_queue_init(depth, realRing, 0)
         if rc != 0 then
             realRing.close()
-            throw Closed("INV4Test", summon[Frame], s"queue_init failed: rc=$rc")
+            throw Closed("PollerIoDriverRecycledFdTest", summon[Frame], s"queue_init failed: rc=$rc")
         val recording = RecordingIoUringBindings(realUring, realRing)
         val driver    = TestDrivers.forBindings(recording, realRing)
         discard(driver.start())
@@ -200,4 +200,4 @@ class INV4Test extends Test:
         }
     }
 
-end INV4Test
+end PollerIoDriverRecycledFdTest

@@ -13,7 +13,7 @@ import kyo.net.internal.transport.WriteResult
   * detached connection arrives with state == Upgrading: neither CAS (Established -> Closing, Created -> Closing) wins, so teardownHandle is
   * never reached and closeHandle stays at 0.
   */
-class INV14Test extends Test:
+class ConnectionDetachForUpgradeTest extends Test:
 
     import AllowUnsafe.embrace.danger
     given Frame = Frame.internal
@@ -64,4 +64,4 @@ class INV14Test extends Test:
         }
     }
 
-end INV14Test
+end ConnectionDetachForUpgradeTest

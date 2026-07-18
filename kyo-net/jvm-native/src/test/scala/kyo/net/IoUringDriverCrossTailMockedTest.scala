@@ -15,7 +15,7 @@ import kyo.net.internal.posix.TestDrivers
 /** Deterministic mechanism test for the io_uring STARTTLS raw->TLS cross-tail send wire-order invariant
   * using stub bindings only, no real ring, no TLS provider, no platform gate.
   *
-  * Covers the same two mechanisms as CrossTailSendOrderTest:
+  * Covers the same two mechanisms as IoUringDriverCrossTailSendOrderTest:
   *   - DEFER: with rawSendInFlight set, a writeTls call must NOT submit a TLS send SQE.
   *   - KICK: when onRawSendComplete fires (via the real CQE processing path in the driver), it must
   *     submit the deferred TLS SQE.
@@ -25,7 +25,7 @@ import kyo.net.internal.posix.TestDrivers
   * test fiber via injectRawCqe, which writes the CQE key into the monitor state and notifies the
   * reap carrier. Assertions use FIFO-barrier promises and a send-barrier promise; no Thread.sleep.
   */
-class CrossTailMockedTest extends Test:
+class IoUringDriverCrossTailMockedTest extends Test:
 
     import AllowUnsafe.embrace.danger
 
@@ -362,4 +362,4 @@ class CrossTailMockedTest extends Test:
         }
     }
 
-end CrossTailMockedTest
+end IoUringDriverCrossTailMockedTest

@@ -35,7 +35,7 @@ final private[kyo] class Connection[Handle] private (
     private val readPump: ReadPump[Handle],
     private val writePump: WritePump[Handle],
     private val state: AtomicRef.Unsafe[Connection.State],
-    private val closeFn: TeardownCause => Unit,
+    private val closeFn: () => Unit,
     private val closingPromise: Promise.Unsafe[Unit, Any],
     private val upgradeClaimed: AtomicBoolean.Unsafe,
     private val canRelease: () => Boolean,
@@ -123,11 +123,6 @@ final private[kyo] class Connection[Handle] private (
     override def status: kyo.net.Connection.Status =
         statusFn.map(fn => fn()).getOrElse(kyo.net.Connection.Status.Active)
 
-    /** Set inside `closeFn`'s win-the-close branch, once, to the [[TeardownCause]] that drove this connection's teardown (a pump's observed
-      * end, or an explicit close). `Absent` until the connection has actually started closing.
-      */
-    @volatile private[kyo] var teardownCause: Maybe[TeardownCause] = Absent
-
     /** Start the connection. Begins pumping data between socket and channels. Returns true when the Created -> Established CAS won and the
       * pumps started; false when the connection had already raced to a terminal or Upgrading state (see [[kyo.net.Connection.start]]).
       */
@@ -153,12 +148,11 @@ final private[kyo] class Connection[Handle] private (
       * holds (the fd, and the TLS engine where the transport owns one).
       */
     def close()(using AllowUnsafe, Frame): Unit =
-        closeFn(TeardownCause.ChannelClosed)
+        closeFn()
         // The Upgrading arm lives HERE and not in closeFn, and the distinction is load-bearing: closeFn is also what the plaintext pumps re-enter
-        // as `detachForUpgrade` tears them down (it closes their channels, so each pump's teardown calls closeFn with the very same
-        // TeardownCause.ChannelClosed this method passes), so abandoning the upgrade from closeFn would kill every upgrade at its first step. The
-        // pumps only ever call closeFn, never close(), so reaching this line means the connection's OWNER asked to close, which for a detached
-        // connection means abandoning the upgrade it was detached for.
+        // as `detachForUpgrade` tears them down (it closes their channels, so each pump's teardown calls closeFn), so abandoning the upgrade from
+        // closeFn would kill every upgrade at its first step. The pumps only ever call closeFn, never close(), so reaching this line means the
+        // connection's OWNER asked to close, which for a detached connection means abandoning the upgrade it was detached for.
         //
         // Without this routing an abandoned upgrade's fd is reachable by NO closer: closeFn cannot take an Upgrading fd (by design), the pumps
         // that would otherwise observe the peer's FIN were torn down by the detach, and the transport's own shutdown sweep never runs on the
@@ -340,9 +334,9 @@ private[kyo] object Connection:
         val state    = AtomicRef.Unsafe.init[Connection.State](Connection.State.Created)
         // The teardown handoff as one named machine (the four per-backend exactly-once teardown dances unified): Live -> ReleaseRequested (the
         // close won) -> AwaitingInFlight (the WRITE-side drain finished) -> Released (the fd closed exactly once, resources freed exactly once).
-        // The single CAS into Released is the exactly-once gate (INV-13); it is reached only after the WritePump has finished with the outbound
+        // The single CAS into Released is the exactly-once gate; it is reached only after the WritePump has finished with the outbound
         // channel (the WRITE-side drain), so the fd is closed only once every queued span has actually been written, not merely taken off the
-        // channel. The inbound (read-side) drain NEVER gates this transition (INV-12 absence half): a pooled connection with no reader would
+        // channel. The inbound (read-side) drain NEVER gates this transition: a pooled connection with no reader would
         // otherwise leak the peer-FIN'd fd in CLOSE_WAIT.
         val teardown = AtomicRef.Unsafe.init[Connection.Teardown](Connection.Teardown.Live)
         // The AwaitingInFlight -> Released transition: gated on the per-backend canRelease predicate, performed by exactly one carrier (the CAS),
@@ -355,12 +349,12 @@ private[kyo] object Connection:
         // detachForUpgrade (state=Upgrading bars this branch), which is correct: the upgraded connection is a fresh init with its own signal.
         val closingPromise = Promise.Unsafe.init[Unit, Any]()
 
-        // Forward reference to the Connection instance closeFn records the teardown cause on. Set once, synchronously, right after the
+        // Forward reference to the Connection instance closeFn calls releaseHandle on. Set once, synchronously, right after the
         // instance is constructed below, before closeFn can ever run (closeFn only fires once a pump starts or close() is called, both of
         // which happen strictly after init returns the constructed connection to its caller).
         var self: Connection[Handle] = null.asInstanceOf[Connection[Handle]]
 
-        val closeFn: TeardownCause => Unit = (cause: TeardownCause) =>
+        val closeFn: () => Unit = () =>
             // Win the close by CASing a live state -> Closing. Created and Established both go to
             // Closing (a never-started connection closes too); Upgrading does NOT, since its fd is
             // owned by the TLS upgrade. A second close loses the CAS and falls to the re-entrant
@@ -368,8 +362,6 @@ private[kyo] object Connection:
             if state.compareAndSet(Connection.State.Established, Connection.State.Closing)
                 || state.compareAndSet(Connection.State.Created, Connection.State.Closing)
             then
-                // Record the teardown cause on this connection before winning the close.
-                self.teardownCause = Present(cause)
                 // Fire the connection's close signal at close-start, before the drains and the handle teardown below.
                 closingPromise.completeDiscard(Result.succeed(()))
                 // Live -> ReleaseRequested: the close won; parked waiters are being unblocked by the drains below.

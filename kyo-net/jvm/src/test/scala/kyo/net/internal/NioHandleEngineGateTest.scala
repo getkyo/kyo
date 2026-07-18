@@ -24,7 +24,7 @@ import kyo.net.internal.TlsTestCert
   *
   * The close leaf exercises the real NioHandle.close path on a TLS handle and verifies the gate is false after close.
   */
-class CONC1Test extends Test:
+class NioHandleEngineGateTest extends Test:
 
     import AllowUnsafe.embrace.danger
 
@@ -221,4 +221,4 @@ class CONC1Test extends Test:
         }
     }
 
-end CONC1Test
+end NioHandleEngineGateTest

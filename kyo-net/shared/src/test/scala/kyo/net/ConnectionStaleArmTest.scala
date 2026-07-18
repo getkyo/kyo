@@ -16,7 +16,7 @@ import kyo.net.internal.transport.WriteResult
   * These tests operate at the Connection + mock driver layer, requiring no real I/O or NioHandle. They are placed in shared/ because
   * Connection and the mock IoDriver[Unit] are cross-platform.
   */
-class INV3Test extends Test:
+class ConnectionStaleArmTest extends Test:
 
     import AllowUnsafe.embrace.danger
     given Frame = Frame.internal
@@ -135,4 +135,4 @@ class INV3Test extends Test:
         }
     }
 
-end INV3Test
+end ConnectionStaleArmTest

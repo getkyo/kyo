@@ -16,7 +16,7 @@ import kyo.net.internal.transport.WriteResult
   * synchronous start/offer/poll call chain. No sleep or latch is needed: after conn.start() the inbound already has data (the read
   * driver delivers it inline), and after conn.outbound.offer the write pump is already parked (the write driver parks inline).
   */
-class LIVE4Test extends Test:
+class ReadPumpBackpressureTest extends Test:
 
     import AllowUnsafe.embrace.danger
     given Frame = Frame.internal
@@ -145,4 +145,4 @@ class LIVE4Test extends Test:
         }
     }
 
-end LIVE4Test
+end ReadPumpBackpressureTest
