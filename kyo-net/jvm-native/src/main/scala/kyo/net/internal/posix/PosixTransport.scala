@@ -1074,7 +1074,7 @@ final private[net] class PosixTransport private[posix] (
                     // teardown / completion; the deadline reuses the same teardown a failed handshake runs. The deadline teardown is submitted
                     // on the engine FIFO worker (submitEngineOp) so it is serialized against any in-flight feedCiphertext from a read that completed
                     // just before the deadline, matching the engine-op single-owner discipline. handshakeTimeout = Infinity arms no timer
-                    // (preserving the original behavior). See [[armHandshakeDeadline]].
+                    // (no handshake deadline). See [[armHandshakeDeadline]].
                     // Register this in-flight handshake so a transport `close()` racing a stalled/slow accept handshake (no deadline armed,
                     // or one that has not yet fired) reclaims the fd/engine instead of leaking them past shutdown. Shares `disarm`'s exactly-once
                     // gate with the handshake outcome and the deadline below, so `close()`'s sweep can never double-discharge a handshake that is
@@ -1660,11 +1660,11 @@ final private[net] class PosixTransport private[posix] (
                                     handle.postUpgradeReadWindow = true
                                     // upgraded.start() arms the new ReadPump's first recv immediately: it does NOT wait for any handshake-window recv
                                     // still in flight for this handle (the orphaned-producer TOCTOU, see PosixHandle.isUpgraded) to drain first.
-                                    // Blocking here instead (parking a waiter and deferring start()) was tried and reverted: it can deadlock, since
+                                    // Blocking here instead (parking a waiter and deferring start()) would deadlock, since
                                     // BOTH peers of an upgrade can symmetrically be waiting on their own orphan to drain while that orphan's bytes are
                                     // exactly the OTHER peer's first post-upgrade write, which peer's own (symmetrically blocked) upgrade fiber never
-                                    // reaches (io_uring-only stress-tested: IoUringMutualTlsStressTest hung with a "stalled-at=upgrade" Timeout under
-                                    // the blocking variant). The ordering invariant instead lives entirely in IoUringDriver.awaitRead/submitRecv: the
+                                    // reaches (IoUringMutualTlsStressTest exercises this io_uring-only stress path). The ordering invariant instead
+                                    // lives entirely in IoUringDriver.awaitRead/submitRecv: the
                                     // new ReadPump's first recv arm QUEUES behind a still-in-flight orphan (PosixHandle.queuedRecv) rather than racing
                                     // it for the same staging buffer, and fires the moment that orphan's CQE reaps -- non-blocking, no fiber parked.
                                     if upgraded.start() then
@@ -2132,7 +2132,7 @@ final private[net] class PosixTransport private[posix] (
                 // io_uring, no bytes staged AND no stale recv kernel-owned for this fd: arm the handshake's OWN producer recv through the slot (single
                 // source). upgradeActive stays SET, so the reap routes that recv's CQE to the upgradeHandoff slot and fulfils this parked waiter, exactly
                 // as a stale recv would; the handshake never feeds a recv promise directly, so there is no second read source to orphan a staged Carryover
-                // (the dual-source upgrade strand the earlier clear-and-awaitReadCiphertext path created). Same shape as the poller branch above.
+                // (a second, direct read source would create a dual-source upgrade strand). Same shape as the poller branch above.
                 if handle.upgradeHandoff.compareAndSet(UpgradeHandoff.Idle, waiter) then
                     handle.driver.armUpgradeProducerRead(handle)
                 else

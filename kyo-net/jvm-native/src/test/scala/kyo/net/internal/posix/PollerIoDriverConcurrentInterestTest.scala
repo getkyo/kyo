@@ -13,10 +13,10 @@ import kyo.net.internal.transport.ReadOutcome
   * exactly this. The two interests must coexist: arming one direction must not drop the other.
   *
   * kqueue registers read and write as INDEPENDENT one-shot filters, so both coexist and both fire; this leaf passes there today. epoll carries
-  * ONE interest mask per fd, and `EPOLL_CTL_MOD` REPLACES it: arming the writable after a read overwrote the read interest with write interest,
-  * and `EPOLLONESHOT` then disabled the whole fd once the writable fired, so the parked read's readiness could never be delivered. The peer's
-  * bytes arrived but the read promise hung (a `kyo.Timeout`), which is the kyo-http TLS deadlock on the JDK-`SSLEngine` floor on Linux. The
-  * epoll arm now tracks per-fd interest and arms the UNION, and re-arms the non-fired survivor after `EPOLLONESHOT`, so the parked read survives.
+  * ONE interest mask per fd, and `EPOLL_CTL_MOD` REPLACES it: arming the writable after a read would overwrite the read interest with write
+  * interest, and `EPOLLONESHOT` would then disable the whole fd once the writable fired, so the parked read's readiness could never be
+  * delivered (the peer's bytes arrive but the read promise hangs with a `kyo.Timeout`: the kyo-http TLS deadlock on the JDK-`SSLEngine` floor
+  * on Linux). The epoll arm tracks per-fd interest and arms the UNION, and re-arms the non-fired survivor after `EPOLLONESHOT`, so the parked read survives.
   *
   * The leaf drives the REAL [[PollerIoDriver]] over a real loopback socket pair (epoll on Linux, kqueue on macOS/BSD): park a read with no data
   * (so it stays pending), park a writable on the same fd and await it (the freshly-connected socket is writable, so it completes; on an epoll

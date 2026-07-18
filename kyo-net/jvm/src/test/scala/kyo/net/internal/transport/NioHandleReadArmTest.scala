@@ -15,8 +15,8 @@ import kyo.net.internal.ReadArmCell
   *
   *   - Exactly one delivery per armed read. When two completers race on the same
   *     armed cell, the first CAS to Absent wins and the second finds the cell already cleared.
-  *   - NIO orphan interleaving: the stale pump re-arm scenario that historically hung STARTTLS
-  *     handshakes. The handshake installs its cell after the pump's; a stale dispatch holding the
+  *   - NIO orphan interleaving: the stale pump re-arm scenario that would hang STARTTLS
+  *     handshakes without the identity guard. The handshake installs its cell after the pump's; a stale dispatch holding the
   *     pump's old cell object reference fails its CAS (the current cell is the handshake's fresh
   *     object); the live dispatch holding the handshake's cell succeeds and delivers to its promise.
   *
@@ -117,8 +117,8 @@ class NioHandleReadArmTest extends Test:
 
         // Given: a NIO connection mid-STARTTLS. The plaintext pump has an armed read cell installed on
         //        the handle's readArm. The handshake then arms its own read, overwriting the pump's
-        //        cell with a new cell carrying the handshake's promise (this is the historical
-        //        interleaving that orphaned the handshake's promise).
+        //        cell with a new cell carrying the handshake's promise (this interleaving is what would
+        //        orphan the handshake's promise without the CAS guard).
         // When: a stale pump dispatch (holding the pump's OLD cell reference) tries to CAS-clear the
         //       cell.
         // Then: the stale pump's CAS FAILS because the cell now holds the handshake's reference.
@@ -126,19 +126,19 @@ class NioHandleReadArmTest extends Test:
         //       and delivers to the handshake's promise. The pump's promise is not delivered by the
         //       dispatch (it was cleared when the handshake overwrote the cell).
         //
-        // Fail-before evidence: if the slot were a plain @volatile var (no CAS protection), a stale
+        // Without CAS protection: if the slot were a plain @volatile var, a stale
         // pump re-arm that stores into the slot AFTER the handshake would leave the slot pointing at
         // pump's promise. Dispatch would then complete pump's promise and orphan the handshake's
-        // promise. This is demonstrated in the "fail-before-simulation" sub-test below.
+        // promise. The plain-slot simulation sub-test below demonstrates this hazard.
         //
-        // Pass-after: with the AtomicRef cell and reference-equality CAS, the stale pump dispatch's
+        // With the AtomicRef cell and reference-equality CAS, the stale pump dispatch's
         // compareAndSet fails because the stored reference is the handshake's cell, not the pump's.
         // The live dispatch holding the handshake's cell wins the CAS and delivers correctly.
         "nio-stale-pump-rearm-after-handshake-arm-orphan-repro" - {
 
-            // Fail-before simulation: demonstrate that a plain slot (no CAS protection) orphans the
+            // Plain-slot simulation: demonstrate that a plain slot (no CAS protection) orphans the
             // handshake's promise when the pump re-arms AFTER the handshake installs its promise.
-            "fail-before-simulation: plain-slot stale-pump-overwrites-handshake-promise" in {
+            "a plain slot with no CAS lets a stale pump re-arm orphan the handshake promise" in {
                 // Simulate a plain var slot with no CAS protection (the bug substrate).
                 var slot: Promise.Unsafe[ReadOutcome, Abort[Closed]] | Null = null
 
@@ -161,7 +161,7 @@ class NioHandleReadArmTest extends Test:
                 val hsResult = hsPromise.poll()
                 assert(
                     hsResult == Absent,
-                    s"fail-before: handshake promise must be orphaned (Absent) when pump overwrites slot, got $hsResult"
+                    s"with a plain slot the handshake promise is orphaned (Absent) when the pump overwrites the slot, got $hsResult"
                 )
                 // pumpPromise was completed by the stale dispatch.
                 val pumpPoll = pumpPromise.poll()
@@ -171,15 +171,15 @@ class NioHandleReadArmTest extends Test:
                                 case ReadOutcome.PeerFin => true
                                 case _                   => false
                         case _ => false,
-                    s"fail-before: pump promise must carry PeerFin, got $pumpPoll"
+                    s"with a plain slot the pump promise carries PeerFin, got $pumpPoll"
                 )
                 succeed
             }
 
-            // Pass-after: the AtomicRef cell with CAS-clear prevents the stale pump dispatch from
+            // The AtomicRef cell with CAS-clear prevents the stale pump dispatch from
             // completing the handshake's promise, because the stale dispatch holds the pump's old
             // ReadArmCell reference which no longer matches the current cell content.
-            "pass-after: handshake-cell-wins-cas-stale-pump-cell-loses" in {
+            "the handshake cell wins the CAS and the stale pump cell loses" in {
                 val (client, server) = openPair()
                 try
                     val handle = NioHandle.init(client, 4096)

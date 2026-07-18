@@ -22,7 +22,7 @@ package kyo
   *   - `handshakeTimeout`, deadline for a server-side accept TLS handshake to complete. A client that finishes the TCP accept but then
   *     stalls the TLS handshake (sends nothing, or a partial ClientHello, and never finishes) would otherwise pin the accepted connection
   *     indefinitely (a slowloris handshake-stall denial of service, CWE-400). When finite, the server reaps such a connection at the deadline.
-  *     Defaults to `Duration.Infinity` (off), preserving the original behavior; read/write/idle deadlines stay caller-composable via
+  *     Defaults to `Duration.Infinity` (off); read/write/idle deadlines stay caller-composable via
   *     `Async.timeout`. Applies to the server only (the client's connect deadline is `connectTimeout`; combined connect+TLS deadline is
   *     `HttpClientConfig.connectTimeout`).
   *

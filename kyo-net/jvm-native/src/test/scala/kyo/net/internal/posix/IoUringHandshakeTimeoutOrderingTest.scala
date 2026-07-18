@@ -125,7 +125,7 @@ class IoUringHandshakeTimeoutOrderingTest extends Test:
                                 // issuing no shutdown, would instead leave the recv CQE unable to reap so this latch would never complete.
                                 val reap = recording.awaitReap()
                                 // Let the finite handshakeTimeout fire and run the teardown, then wait for the recv CQE to reap. The bound is
-                                // generous; the deadline is short, so on the fixed code the reap arrives well within it.
+                                // generous; the deadline is short, so the reap arrives well within it.
                                 Abort.run[Timeout](Async.timeout(8.seconds)(reap.safe.get)).map { reapOutcome =>
                                     // Snapshot the buffer-close state at the moment the reap resolved (or the bound expired).
                                     val recvClosedAfter = recvBuf.isClosed

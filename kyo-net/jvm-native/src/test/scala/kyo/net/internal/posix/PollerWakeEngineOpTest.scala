@@ -4,7 +4,7 @@ import kyo.*
 import kyo.ffi.Ffi
 import kyo.net.Test
 
-/** Deterministic guard for the B' write-stall: a TLS write's [[PollerIoDriver.submitEngineOp]] coalescing its wakeup against a STALE
+/** Deterministic guard for the post-upgrade TLS-write wakeup stall: a TLS write's [[PollerIoDriver.submitEngineOp]] coalescing its wakeup against a STALE
   * `wakePending` flag and never draining.
   *
   * Background: [[PollerIoDriver.writeTls]] does not flush synchronously. It calls `submitEngineOp(thunk)` (the thunk is the actual

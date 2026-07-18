@@ -9,8 +9,7 @@ import kyo.net.internal.TlsEngineLoopback
 import kyo.net.internal.TlsRealEngines
 import kyo.net.internal.transport.ReadOutcome
 
-/** Reproduce-first regression guard for the io_uring fatal-TLS-record teardown race (the residual behind the io_uring/boringssl
-  * `IoUringMutualTlsStressTest` intermittent failure).
+/** Reproduce-first regression guard for the io_uring fatal-TLS-record teardown race.
   *
   * The defect: [[TlsEngineIo.feedAndDecrypt]] (shared by [[PollerIoDriver]] and [[IoUringDriver]]) tears a connection down on a fatal TLS
   * record (`readPlain == -2`, RFC 5246 7.2.2) via an `onFatal` hook. For `PollerIoDriver` this hook is `() => handle.requestClose()`, which is

@@ -95,7 +95,7 @@ class PollerIoDriverHalfCloseTest extends Test:
     end HalfCloseReader
 
     "PollerIoDriver orderly half-close" - {
-        "buffered bytes are delivered in full before EOF on a peer half-close, never as a Closed failure (8c)" in {
+        "buffered bytes are delivered in full before EOF on a peer half-close, never as a Closed failure" in {
             assumePoller()
             val driver = PollerIoDriver.init(kyo.net.TransportConfig.default)
             discard(driver.start())

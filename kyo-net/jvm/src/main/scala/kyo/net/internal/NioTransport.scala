@@ -853,10 +853,10 @@ final private[kyo] class NioTransport private (
                     connectPromise.completeDiscard(Result.fail(NetTlsHandshakeException(host, port, e)))
         else if hs eq SSLEngineResult.HandshakeStatus.NEED_TASK then
             // Run the SSLEngine's delegated tasks INLINE, then re-enter the handshake directly. The delegated tasks are synchronous Runnables
-            // (CPU-bound key-exchange crypto, not blocking I/O), so running them on the current carrier is correct and brief. The earlier design
-            // spawned a Fiber per NEED_TASK and resumed via onComplete; that made each handshake depend on that fiber being scheduled and its
-            // onComplete firing, and under high concurrency a handshake could stall indefinitely at NEED_TASK when that did not happen. Running
-            // inline removes the extra fiber and the scheduling dependency.
+            // (CPU-bound key-exchange crypto, not blocking I/O), so running them on the current carrier is correct and brief. Spawning a Fiber
+            // per NEED_TASK and resuming via onComplete would make each handshake depend on that fiber being scheduled and its onComplete
+            // firing, so under high concurrency a handshake could stall indefinitely at NEED_TASK; inline execution has no extra fiber and no
+            // scheduling dependency.
             try
                 var task = engine.getDelegatedTask
                 while task != null do
@@ -1076,7 +1076,7 @@ final private[kyo] class NioTransport private (
       * after the deadline already failed `connPromise` is a no-op. The deadline-failed `connPromise` runs the existing `onComplete` Failure arm
       * (closing the accepted channel), reaping the stalled handshake with the same teardown a failed handshake already uses. When the handshake
       * completes first, it disarms the timer by interrupting the timer fiber, so the timer never fires. `Duration.Infinity` (the default) arms no
-      * timer and preserves the original behavior exactly.
+      * timer (no handshake deadline).
       */
     private def armHandshakeDeadline(
         connPromise: IOPromise[NetException, Connection[NioHandle]],

@@ -252,7 +252,7 @@ final private[net] class IoUringDriver private[posix] (
             // of submitting a second SQE: both would target the SAME cached staging buffer (recvStagingFor) and race completion order (a
             // fatal TLS record, or the bad_record_mac corruption shape). `complete`'s `drainQueuedRecv` fires it the moment that in-flight
             // recv's CQE is fully processed, so the two are never simultaneously in flight -- non-blocking, no fiber parked, no deadlock risk
-            // (unlike deferring the caller's `onFinished`/`upgraded.start()` itself, which was tried and reverted: see PosixTransport's
+            // (unlike deferring the caller's `onFinished`/`upgraded.start()` itself, which can deadlock: see PosixTransport's
             // onFinished comment). Gated on `isUpgraded` (rare, durable, set only for STARTTLS-upgraded handles) so a normal connection's reads
             // never pay this extra `hasInFlightRead` scan: a well-behaved ReadPump/handshake never has two recvs in flight for one handle
             // outside this one upgrade-transition window in the first place.

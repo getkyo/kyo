@@ -31,7 +31,7 @@ class WritePumpDoubleFireTest extends Test:
         // Then: the now-stale writable completion reaches onWritable, loses the CAS (state is not
         //       AwaitingWritable), and no extra write is submitted; writeCalls stays at 1
         //
-        // Fail-before evidence: if onWritable had no CAS and always called doWrite, writeCalls would
+        // If onWritable had no CAS and always called doWrite, writeCalls would
         // reach 2 (the stale write) and the final assertion would fail. The CAS on the stored
         // AwaitingWritable reference is the single-winner guard; here the test advances state first so
         // the CAS expected-value no longer matches, proving the guard fires.
@@ -94,7 +94,7 @@ class WritePumpDoubleFireTest extends Test:
                 // teardown would do. This makes the captured writable promise STALE: its associated
                 // AwaitingWritable state is no longer current.
                 //
-                // Fail-before reasoning: if onWritable had no CAS and just called doWrite unconditionally,
+                // If onWritable had no CAS and just called doWrite unconditionally,
                 // firing the writable now would call driver.write a SECOND time (writeCalls == 2). The
                 // test's final assertion (writeCalls == 1) would fail, proving the CAS is load-bearing.
                 state.set(WriteState.TornDown)

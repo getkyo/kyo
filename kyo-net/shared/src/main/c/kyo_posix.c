@@ -7,7 +7,7 @@
  * arguments. A non-variadic binding passes the third argument in the wrong register,
  * so F_SETFL with O_NONBLOCK silently drops the flag and the socket stays blocking.
  *
- * The fix is this C shim: the C compiler knows fcntl is variadic (from <fcntl.h>) and
+ * This C shim solves it: the C compiler knows fcntl is variadic (from <fcntl.h>) and
  * emits the correct variadic call-site code on every architecture. The Scala binding
  * sees only a non-variadic single-argument function with no ABI ambiguity.
  *

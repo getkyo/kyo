@@ -16,8 +16,7 @@ import kyo.net.internal.transport.IoDriverPool
 /** Shared real-engine factories and availability probes for TLS tests on JVM and Native.
   *
   * Provides real BoringSSL and OpenSSL engine pairs over [[TlsTestCert]] so TLS tests can run real crypto without re-inlining the engine
-  * setup. Each method is lifted from TlsEngineTest.scala (withEngines, boringSslAvailable, openSslAvailable) or is new (assumeTlsReady,
-  * realTlsLoopback).
+  * setup.
   *
   * Anti-flakiness: engine pairs are allocated and freed in a try/finally block; no sleeping. realTlsLoopback latches on real connect/listen
   * Fiber.Unsafe completions.
@@ -129,7 +128,7 @@ object TlsRealEngines:
 
     /** Run `f` with a real TLS client+server Connection pair over a real loopback socket.
       *
-      * New helper: consolidates the PosixTransportTlsTest / PosixTransportHandshakeBehaviorTest setup. Creates a fresh PollerIoDriver and
+      * Creates a fresh PollerIoDriver and
       * PosixTransport, listens on an ephemeral port with the test cert, connects from the client side with trustAll, completes the TLS
       * handshake, then hands both connections to `f`. The transport and driver are closed when `f` returns.
       *

@@ -185,8 +185,8 @@ final private[net] class PollerIoDriver private[posix] (
 
     // Registration intake: many fibers enqueue a pending registration (awaitRead/armSocketWritable/awaitAccept) here; the poll-loop carrier consumes
     // it and applies the activeFds + pendingReads/pendingWritables/pendingAccepts puts on its own carrier, so the maps are written by ONE carrier.
-    // A ConcurrentLinkedQueue (single poll-fiber consumer) mirrors the engineQueue; the small Registration record per await replaces the
-    // prior per-await Integer key-box on the activeFds put. The handle reference cannot be packed into the unboxed long change command, so it travels
+    // A ConcurrentLinkedQueue (single poll-fiber consumer) mirrors the engineQueue; a small Registration record per await carries the handle
+    // reference for the activeFds put. The handle reference cannot be packed into the unboxed long change command, so it travels
     // through this side queue and is matched to its register command on the poll carrier.
     //
     // regIntake and changeQueue are two independent MPSC queues, and each producer offers its Registration and submits its packed command as two
@@ -2095,7 +2095,7 @@ final private[net] class PollerIoDriver private[posix] (
       * pool/concurrency stress leaves, e.g. `HttpClientTest` "concurrent contention with more fibers than pool slots" and "connection reuse with
       * varying data": under load `drainFifos()` does more work per cycle, widening the stale window and making a same-cycle cross-thread
       * `submitChange` from a different connection more likely to land in it). This is the same class of gap `submitEngineOp` guards on the write
-      * side (the B' post-upgrade write strand); `submitChange` carries it on the read/registration side, with a self-healing path (the next
+      * side (the post-upgrade write strand); `submitChange` carries it on the read/registration side, with a self-healing path (the next
       * cycle's unconditional `drainChanges()`) that usually, but not
       * always, recovers a skipped wake before the park closes it off. `PollerWakeReadArmTest` pins this directly. The offer happens-before the
       * wake, so the poll loop, once woken, always observes the just-offered command in its drain.
@@ -2395,7 +2395,7 @@ final private[net] class PollerIoDriver private[posix] (
       * never seen the newly-offered work. Unlike a read re-arm (which has a self-healing path: the coalesced-away command still sits in
       * `changeQueue` and the next cycle's unconditional `drainChanges()` usually recovers it if `backend.poll()` returns for some other reason),
       * a `writeTls` engine op is the write's only delivery attempt with no retry: a wake lost here strands the connection's write side
-      * permanently (the STARTTLS-upgrade-tail B' strand this unconditional wake guards). `submitChange` carries the identical gap
+      * permanently (the STARTTLS-upgrade-tail write strand this unconditional wake guards). `submitChange` carries the identical gap
       * on the read/registration side and would strand connection-reuse reads the same way when the self-healing path does not run
       * in time (`PollerWakeReadArmTest`), so both wake unconditionally and `wakePending` never gates them. Mirrors [[IoUringDriver.submitEngineOp]],
       * whose `wakeReapLoop()` is unconditional for the same reason. `triggerWake` -> `backend.wake` is safe to call concurrently from multiple

@@ -56,7 +56,7 @@ class PollerIoDriverRecycledFdTest extends Test:
         Sync.ensure(Sync.defer(driver.close()))(body(driver, recording))
     end withRecordingDriver
 
-    "no-op-uses-a-freed-fd-reproduces-349: a recv parked on SQ-full is failed Closed on close, never re-armed on the closed fd" in {
+    "a recv parked on SQ-full is failed Closed on close, never re-armed on the closed fd" in {
         PosixTestSockets.assumeUring()
         // Depth-1 ring, reap carrier pinned by a latch so the filler read (consumes the one SQE), the parked recv (get_sqe Absent -> stalledSubmits),
         // and the close all enqueue and drain in ONE pass before the wait submits anything. closeNow must drain stalledSubmits for the handle, so the
@@ -99,7 +99,7 @@ class PollerIoDriverRecycledFdTest extends Test:
         }.map(_ => succeed)
     }
 
-    "no-op-uses-a-freed-fd-reproduces-362: a stale deregister does not evict a recycled fd's new registration" in {
+    "a stale deregister does not evict a recycled fd's new registration" in {
         PosixTestSockets.assumePoller()
         // Two handles share one fd, the recycled-fd shape: `live` is the new owner (registered for reads), `stale` is the prior handle whose
         // generation differs. A deregister for `stale` (its fd was closed and recycled into `live`) must leave `live`'s registration and kernel

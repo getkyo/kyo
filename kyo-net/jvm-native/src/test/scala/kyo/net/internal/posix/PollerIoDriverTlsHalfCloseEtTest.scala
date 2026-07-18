@@ -106,7 +106,7 @@ class PollerIoDriverTlsHalfCloseEtTest extends Test:
           * Without the advance: readMightHaveMore would be false after delivering plaintext (halfClose not advanced to PeerHalfClosePending), so the consumer
           * would re-arm and park forever waiting for a second EPOLLRDHUP edge that ET will not re-fire.
           */
-        "TLS plaintext delivered in full and Span.empty surfaces on ET half-close with buffered ciphertext (8c)" in {
+        "TLS plaintext delivered in full and Span.empty surfaces on ET half-close with buffered ciphertext" in {
             if kyo.internal.Platform.isJS then Sync.defer(succeed)
             else
                 TlsRealEngines.assumeTlsReady()
@@ -198,7 +198,7 @@ class PollerIoDriverTlsHalfCloseEtTest extends Test:
           *     and deliver EOF after subsequent edges bring the data + FIN; otherwise the strand parks forever on a missing re-edge.
           * The test accepts either outcome (both paths are correct); only a Closed failure or a timeout is a regression.
           */
-        "TLS Span.empty surfaces on ET half-close when initial recv returns EAGAIN (8c)" in {
+        "TLS Span.empty surfaces on ET half-close when initial recv returns EAGAIN" in {
             if kyo.internal.Platform.isJS then Sync.defer(succeed)
             else
                 TlsRealEngines.assumeTlsReady()

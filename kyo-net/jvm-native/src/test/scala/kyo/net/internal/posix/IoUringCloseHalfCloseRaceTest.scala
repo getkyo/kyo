@@ -6,7 +6,7 @@ import kyo.ffi.Ffi
 import kyo.net.Test
 import kyo.net.internal.transport.ReadOutcome
 
-/** Reproduce-first regression guard for the io_uring local-close half-close-state race (a new root distinct from B').
+/** Reproduce-first regression guard for the io_uring local-close half-close-state race.
   *
   * The defect: [[IoUringDriver.closeHandle]] (via its private `registerDeferredClose`) deliberately issues `shutdown(readFd, SHUT_RD)`
   * to force a kernel-owned in-flight recv SQE to complete, because io_uring holds its own reference to the file and closing the fd alone
@@ -24,8 +24,8 @@ import kyo.net.internal.transport.ReadOutcome
   * `decrementInFlight`'s inline call, which runs immediately AFTER the `res == 0` branch for this same CQE, so observing
   * `isClosing() == true` proves that branch has already run.
   *
-  * Fails-before: `handle.halfClose` ends as `PeerEof` even though no peer FIN ever happened (only the local close's own self-induced
-  * SHUT_RD recv completion occurred), which would surface as `Truncated` instead of `LocalClose`. Passes-after: `handle.halfClose`
+  * Without the guard: `handle.halfClose` ends as `PeerEof` even though no peer FIN ever happened (only the local close's own self-induced
+  * SHUT_RD recv completion occurred), which would surface as `Truncated` instead of `LocalClose`. With the guard: `handle.halfClose`
   * stays `Open`.
   *
   * Also verifies the in-flight read promise is not stranded by guarding the stamp out: `cancel` (run synchronously inside

@@ -94,9 +94,9 @@ final private[kyo] class JsIoDriver private (
             end removeAll
 
             // The `drain` event is the success signal (the socket is writable again); `close`/`error` mean the socket went away before it became
-            // writable, so the awaiting write must fail with a typed Closed, never spuriously succeed. The old single `complete()` succeeded on all
-            // three, so a write parked on writability over a dying socket reported Done and then wrote into a destroyed socket. This matches every
-            // other driver, where a close/error on a pending op fails the promise with Closed.
+            // writable, so the awaiting write must fail with a typed Closed, never spuriously succeed. A single `complete()` shared by all three
+            // listeners would report Done for a write parked over a dying socket and then write into a destroyed socket, so success and failure
+            // have separate completions here. This matches every other driver, where a close/error on a pending op fails the promise with Closed.
             def completeSuccess(): Unit =
                 removeAll()
                 promise.completeDiscard(Result.succeed(()))

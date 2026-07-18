@@ -41,13 +41,12 @@ final private[net] class PosixHandle private (
     // The cross-direction ownership guard (independent read/write holder bits plus a close bit, the Go fdMutex model): the last holder while
     // closing runs the deferred release exactly once. A read and a write proceed full-duplex; two reads or two writes serialize.
     guard: HandleGuard,
-    // The single atomic handoff slot for the STARTTLS-on-io_uring stale-recv bytes (see UpgradeHandoff). Replaces the former pair of independent
-    // @volatile upgradeCarryover / upgradeReadWaiter slots: those let the reap carrier (IoUringDriver.complete) and the handshake carrier
-    // (PosixTransport.driveUpgradeRead) each read-then-act without mutual exclusion, so the reap could stage the carryover while the handshake
-    // (having read the old Absent) parked its waiter, stranding the bytes against a parked waiter that nothing fulfilled and hanging the upgrade.
-    // Both sides now CAS this one slot, so exactly one side wins each transition and the loser's single re-read sees the winner's value and
-    // completes the other half (no spin, no thread block: the waiter is fiber-parking). The close path (freeResources) swings it to Idle and fails
-    // any parked waiter Closed.
+    // The single atomic handoff slot for the STARTTLS-on-io_uring stale-recv bytes (see UpgradeHandoff). The reap carrier
+    // (IoUringDriver.complete) and the handshake carrier (PosixTransport.driveUpgradeRead) run without shared locking; both CAS this one slot,
+    // so exactly one side wins each transition and the loser's single re-read sees the winner's value and completes the other half (no spin, no
+    // thread block: the waiter is fiber-parking). Two independent slots with a read-then-act on each would let the reap stage the carryover
+    // while the handshake (having read Absent) parks its waiter, stranding the bytes against a waiter that nothing fulfils and hanging the
+    // upgrade. The close path (freeResources) swings it to Idle and fails any parked waiter Closed.
     val upgradeHandoff: AtomicRef.Unsafe[PosixHandle.UpgradeHandoff],
     // The most recent plaintext chunk the driver read off this fd, kept only so a STARTTLS upgrade can recover the peer's first handshake
     // flight when it arrived coalesced with the upgrade signal in a single `recv` and the application consumed (and discarded) the whole
@@ -597,9 +596,9 @@ private[net] object PosixHandle:
 
     /** The single atomic handoff state for the STARTTLS-on-io_uring stale-recv bytes (see [[PosixHandle.upgradeHandoff]]). The stale recv reaped on
       * the io_uring reap carrier ([[IoUringDriver.complete]]) and the handshake-driving carrier ([[PosixTransport.driveUpgradeRead]]) run on
-      * different carriers; this one state, swung by CAS, replaces the two separate `@volatile` slots whose independent check-then-act let the two
-      * sides interleave and strand the bytes (the handshake parked a waiter while the reap had already staged the carryover, so neither fulfilled
-      * the other and the upgrade hung). Exactly one transition wins each side's CAS, so the bytes always meet the waiter:
+      * different carriers; this one state, swung by CAS, gives them mutual exclusion. Two separate `@volatile` slots with an independent
+      * check-then-act on each would let the two sides interleave and strand the bytes (the handshake parks a waiter while the reap has already
+      * staged the carryover, so neither fulfils the other and the upgrade hangs). Exactly one transition wins each side's CAS, so the bytes always meet the waiter:
       *   - [[Idle]]: neither side has acted yet.
       *   - [[Carryover]]: the reap delivered the stale recv's bytes before the handshake parked; the handshake's next read consumes them.
       *   - [[Waiter]]: the handshake parked before the reap delivered; the reap fulfils this fiber-parking promise with the bytes.

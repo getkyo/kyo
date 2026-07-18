@@ -112,7 +112,7 @@ class WritePumpResumeTest extends Test:
         // Then: the pump CASes Backpressured -> Flushing, retries the remaining bytes with an
         //       advancing offset, and the final state is Idle
         //
-        // Fail-before evidence: if the TailPartial arm in doWrite were absent, awaitWritable would
+        // If the TailPartial arm in doWrite were absent, awaitWritable would
         // never be called and capturedPromise would remain null (first assert fails). If onWritable
         // did not handle Backpressured, completeDiscard would not drive a retry and writtenRegions
         // would stay at size 1 (second assert fails). Both asserts are load-bearing.

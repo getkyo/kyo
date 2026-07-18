@@ -33,7 +33,7 @@ object PosixTestSockets:
     /** Build a connected TCP loopback pair on 127.0.0.1; returns (clientFd, acceptedFd).
       *
       * Both ends are set non-blocking after connect/accept so drivers (PollerIoDriver, IoUringDriver) can call sendNow/recvNow without
-      * blocking the event loop. Lifted from PollerIoDriverTest.scala lines 38-75.
+      * blocking the event loop.
       *
       * Anti-flakiness: connect and accept use @Ffi.blocking fibers awaited with .safe.get; no sleep.
       */
@@ -76,8 +76,7 @@ object PosixTestSockets:
 
     /** Overload taking injected bindings; the variant that wraps supplied bindings, used with [[RecordingSocketBindings]].
       *
-      * Same as [[loopbackPair()]] but uses the supplied bindings so callers can attach a recording decorator. Lifted from
-      * StartTlsUpgradeCloseRaceTest.scala line 201.
+      * Same as [[loopbackPair()]] but uses the supplied bindings so callers can attach a recording decorator.
       */
     def loopbackPair(sockets: SocketBindings)(using Frame, AllowUnsafe): (Int, Int) < Async =
         val server = sockets.socket(PosixConstants.AF_INET, PosixConstants.SOCK_STREAM, 0).value
@@ -115,10 +114,7 @@ object PosixTestSockets:
         }
     end loopbackPair
 
-    /** Accept exactly one connection on the given already-bound and listening fd.
-      *
-      * Lifted from the pattern in SocketBindingsTest.scala line 92.
-      */
+    /** Accept exactly one connection on the given already-bound and listening fd. */
     def acceptOne(serverFd: Int)(using Frame, AllowUnsafe): Int < Async =
         val sockets = sock
         val noAddr  = Buffer.alloc[Byte](SockAddr.inet4Size)
@@ -193,8 +189,7 @@ object PosixTestSockets:
 
     /** Drain from `fd` via the driver's readiness until at least `want` bytes have arrived, returning the running total.
       *
-      * Lifted from PollerIoDriverWriteBackpressureTest.scala lines 142-173, widened from PollerIoDriver to IoDriver[PosixHandle] so it
-      * works with both PollerIoDriver and IoUringDriver.
+      * Accepts an IoDriver[PosixHandle], so it works with both PollerIoDriver and IoUringDriver.
       *
       * Anti-flakiness: each iteration parks an awaitRead (a real Promise.Unsafe latch completing on the real recv) and drains with recvNow
       * until EAGAIN. No sleep. The loop exits on the real condition total >= want.
@@ -281,8 +276,7 @@ object PosixTestSockets:
 
     /** Force an RST on `fd` by setting SO_LINGER {l_onoff=1, l_linger=0} then closing.
       *
-      * The peer's next recv sees ECONNRESET. Lifted from PollerIoDriverTest.scala lines 131-141, with the SO_LINGER constant consolidated
-      * here from the inline at line 138.
+      * The peer's next recv sees ECONNRESET.
       */
     def resetPeer(sockets: SocketBindings, fd: Int)(using AllowUnsafe): Unit =
         val linger = Buffer.alloc[Byte](8)
@@ -296,17 +290,14 @@ object PosixTestSockets:
         discard(sockets.close(fd))
     end resetPeer
 
-    /** Close `fd` cleanly, causing the peer's next recv to return 0 (EOF / empty Span).
-      *
-      * New helper; technique established in PollerIoDriverTest.scala lines 110-125.
-      */
+    /** Close `fd` cleanly, causing the peer's next recv to return 0 (EOF / empty Span). */
     def closePeerForEof(sockets: SocketBindings, fd: Int)(using AllowUnsafe): Unit =
         discard(sockets.close(fd))
     end closePeerForEof
 
     /** Half-close `fd` for writing via shutdown(SHUT_WR), signaling EOF to the peer without closing the connection.
       *
-      * New helper; uses SocketBindings.shutdown (line 61) with SHUT_WR = 1 (absent from PosixConstants which only has SHUT_RDWR = 2).
+      * Uses SocketBindings.shutdown with SHUT_WR = 1 (absent from PosixConstants which only has SHUT_RDWR = 2).
       */
     def halfClose(sockets: SocketBindings, fd: Int)(using AllowUnsafe): Unit =
         discard(sockets.shutdown(fd, SHUT_WR))
@@ -361,7 +352,7 @@ object PosixTestSockets:
 
     /** Cancel the test if neither epoll nor kqueue is available on this host.
       *
-      * Lifted from PollerIoDriverTest.scala lines 25-27. Returns cleanly where the platform has epoll (Linux) or kqueue (macOS/BSD).
+      * Returns cleanly where the platform has epoll (Linux) or kqueue (macOS/BSD).
       */
     def assumePoller()(using Frame): Unit < Any =
         if !(PosixConstants.isLinux || PosixConstants.isMacOrBsd) then
@@ -371,19 +362,13 @@ object PosixTestSockets:
         end if
     end assumePoller
 
-    /** Cancel the test if epoll is not available (not Linux).
-      *
-      * Lifted from EpollBindingsTest.scala line 22.
-      */
+    /** Cancel the test if epoll is not available (not Linux). */
     def assumeEpoll()(using Frame): Unit < Any =
         if !PosixConstants.isLinux then
             throw new kyo.test.TestCancelled("epoll is Linux-only")
     end assumeEpoll
 
-    /** Cancel the test if kqueue is not available (not macOS/BSD).
-      *
-      * Lifted from KqueueBindingsTest.scala line 26.
-      */
+    /** Cancel the test if kqueue is not available (not macOS/BSD). */
     def assumeKqueue()(using Frame): Unit < Any =
         if !PosixConstants.isMacOrBsd then
             throw new kyo.test.TestCancelled("kqueue is macOS/BSD-only")

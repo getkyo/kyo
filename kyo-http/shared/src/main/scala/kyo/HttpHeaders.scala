@@ -444,7 +444,7 @@ object HttpHeaders:
 
     /** Whether `s` is a `token`, the grammar a field name must satisfy: `token = 1*tchar` (RFC 9110 sections 5.1 and 5.6.2).
       *
-      * Strictly stronger than an ASCII test, which is why it replaces one: SP, colon and CR are all ASCII, and a name carrying any of them
+      * Strictly stronger than an ASCII test: SP, colon and CR are all ASCII, and a name carrying any of them
       * puts a line on the wire that a recipient reads differently than the sender meant it ("X Foo: bar" parses as the name "X" with the
       * value "Foo: bar"). An empty name is not a token either.
       */

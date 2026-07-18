@@ -54,7 +54,7 @@ end RecordingFeedEngine
   * production race is exercised end to end, with `channelCapacity = 1` forcing the second read (the flight) to park behind the first (the
   * signal, which fills the capacity-1 channel and is never consumed): `S` lands and fills the channel, `F` (a well-formed TLS handshake
   * record) is read off the socket next and parks the plaintext pump's put, so `upgradeToTls`'s `detachForUpgrade()` races that parked put
-  * exactly as the failing leaf does. No sleeps: every wait polls an observable driver/handle state.
+  * exactly as the production upgrade path does. No sleeps: every wait polls an observable driver/handle state.
   */
 class PosixTransportUpgradeDoubleFeedTest extends Test:
 

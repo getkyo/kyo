@@ -3,7 +3,7 @@ package kyo.net.internal.posix
 import kyo.*
 import kyo.net.Test
 
-/** Reproduce-before-fix guard for the Native `kyo_net_resolve` C shim's family handling (cross-platform DNS consistency with JVM).
+/** Reproduce-first guard for the Native `kyo_net_resolve` C shim's family handling (cross-platform DNS consistency with JVM).
   *
   * Forcing `hints.ai_family = family_hint` into `getaddrinfo` RESTRICTS the resolver to that family. With the plain-hostname hint (`AF_INET`, the family
   * `encodeInet` requests for any host without a ':') it would be RESTRICTED to A records, so a host that has only an AAAA record (a

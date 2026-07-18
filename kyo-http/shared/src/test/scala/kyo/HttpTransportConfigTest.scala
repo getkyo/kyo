@@ -171,9 +171,8 @@ class HttpTransportConfigTest extends BaseHttpTest:
     }
 
     "client maxHeaderSize is reachable via HttpClient.init and rejects an oversized response (CWE-400)" in {
-        // Before this was plumbed the client parser's header limit was hardcoded to the 64 KiB default, so a tighter limit was unsettable.
-        // A 512-byte limit against a ~2 KiB response header must now fail (a malicious/buggy server cannot force unbounded client header
-        // buffering). A regression (the limit ignored) would let the request succeed.
+        // The client parser's header limit is settable via HttpClient.init. A 512-byte limit against a ~2 KiB response header must fail
+        // (a malicious/buggy server cannot force unbounded client header buffering); if the limit were ignored the request would succeed.
         val bigHeaderValue = "x" * 2048
         val route          = HttpRoute.getText("big").response(_.bodyText)
         val ep             = route.handler(_ => HttpResponse.ok("ok").addHeader("X-Big", bigHeaderValue))

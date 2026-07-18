@@ -9,12 +9,11 @@ import kyo.net.internal.transport.ReadOutcome
 /** Regression guard for the error-only readiness event handling in [[PollerIoDriver]], covering both directions it must get right.
   *
   * epoll's `EPOLLERR` / `EPOLLHUP` and kqueue's `EV_ERROR` / `EV_EOF` are set independently of read/write interest, so a peer reset or a
-  * connect failure can produce a readiness event carrying ONLY the error bit (no read- or write-ready bit). One earlier bug DROPPED such an
-  * event entirely (the [[PollerEvent]] decode ignored the error bits), so a genuine error hung the pending read / write until a later op failed.
-  * The opposite over-correction then surfaced: failing the pending op on the BARE error bit, which a stale event for a recycled fd would
-  * wrongly apply to a fresh connect on the SAME shared driver (the kyo-http concurrent-connect regression). The driver now reads `SO_ERROR` to
-  * confirm a genuine pending error before failing: a real error (non-zero) fails the op, a healthy / still-connecting recycled fd (zero) drops
-  * the event.
+  * connect failure can produce a readiness event carrying ONLY the error bit (no read- or write-ready bit). Dropping such an event (a
+  * [[PollerEvent]] decode that ignored the error bits) would hang the pending read / write on a genuine error until a later op failed;
+  * failing the pending op on the BARE error bit would instead let a stale event for a recycled fd wrongly fail a fresh connect on the SAME
+  * shared driver (the kyo-http concurrent-connect hazard). The driver reads `SO_ERROR` to confirm a genuine pending error before failing: a
+  * real error (non-zero) fails the op, a healthy / still-connecting recycled fd (zero) drops the event.
   *
   * These leaves drive the interleave deterministically with a [[RecordingPollerBackend]] over the real epoll/kqueue that injects ONE synthetic
   * error-only entry for the target fd (the single authorized injection), so the bare-error dispatch path runs against the real `getsockopt` from

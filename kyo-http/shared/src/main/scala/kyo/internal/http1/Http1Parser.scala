@@ -322,7 +322,7 @@ final private[kyo] class Http1Parser(
                         val nameStart = lineStart
                         val nameLen   = colonIdx - lineStart
 
-                        // RFC 9110 section 5.1: a field name is a token. This subsumes the narrower checks it replaces:
+                        // RFC 9110 section 5.1: a field name is a token. This subsumes narrower per-character checks:
                         // SP and HTAB are not tchars, so it rejects whitespace before the colon (RFC 7230 section 3.2.4,
                         // CVE-2019-16276) wherever it sits rather than only immediately before it; NUL is not a tchar
                         // either; and an empty name is not a token, since token = 1*tchar.

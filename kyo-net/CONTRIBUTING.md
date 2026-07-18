@@ -228,7 +228,7 @@ A few behavioral contracts genuinely cannot be stated through `NetPlatform.trans
 
 ### Test naming
 
-New test files must follow Rule 8c: a test suite's name prefix matches a source file under `src/main/`, or is an aspect split of one (e.g. `PollerIoDriverWriteRaceTest` for `PollerIoDriver.scala`). A test class that matches no source is an orphan and is not permitted.
+New test files follow the source-prefix naming rule: a test suite's name prefix matches a source file under `src/main/`, or is an aspect split of one (e.g. `PollerIoDriverWriteRaceTest` for `PollerIoDriver.scala`). A test class that matches no source is an orphan and is not permitted.
 
 Some aspect tests are named for the behavior under test rather than a source prefix (for example `ChangeFifoOrderingTest`, `CloseDuringBackpressuredFlushTest`, `EngineFifoSingleOwnerTest`, `FlushReArmPendingCoalesceTest`, `HandshakeEngineFreeTest`, `IoUringEngineFifoFreeOrderingTest`, `IoUringTlsEncryptionTest`, `IoUringTlsWriteOrderingTest`, `RearmSurvivorsTest`, `StartTlsUpgradeCloseRaceTest`, `WriteBackpressureConservationTest`). These are legitimate aspect splits where the behavior name reads more clearly than a `SourceNameAspectTest` prefix; each still exercises an aspect of a real source unit, so none is an orphan.
 

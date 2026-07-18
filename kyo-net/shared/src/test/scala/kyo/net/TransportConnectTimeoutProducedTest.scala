@@ -7,8 +7,8 @@ import kyo.*
   * with `NetConnectTimeoutException(host, port, timeout)`, the typed leaf the kyo-http client maps to `HttpConnectTimeoutException`.
   *
   * This is the close-cause discrimination: the deadline arm is the only producer of the timeout leaf, so a deadline-fired close
-  * surfaces `NetConnectTimeoutException` while an OS-failure close (refused/unreachable) surfaces the generic `NetConnectException`. Before the
-  * producer existed the connect parked indefinitely (or surfaced the generic connect failure), so this FAILs-before / PASSes-after.
+  * surfaces `NetConnectTimeoutException` while an OS-failure close (refused/unreachable) surfaces the generic `NetConnectException`. Without the
+  * deadline producer a black-hole connect would park indefinitely (or surface the generic connect failure); this asserts the typed timeout leaf is produced.
   *
   * The deadline is the transport's own Clock-driven timer, NOT a caller-side `Async.timeout` (the distinct property [[TransportConnectDeadlineTest]]
   * asserts and leaves green). The finite `connectTimeout` is the deterministic latch (the black hole never answers, so the deadline always wins);

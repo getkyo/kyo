@@ -104,7 +104,7 @@ class NioTransportTest extends Test:
         Abort.run[NetException](transport.connect("127.0.0.1", 1).safe.get).map { result =>
             transport.close()
             // Either refused (Failure) or panicked; a success would be unusual but allowed
-            // faithful port of the kyo-http original; OS-nondeterministic connect-refused-vs-reuse outcome covers all Result cases
+            // OS-nondeterministic connect-refused-vs-reuse outcome covers all Result cases
             assert(result.isFailure || result.isPanic || result.isSuccess)
             succeed
         }
@@ -266,7 +266,7 @@ class NioTransportTest extends Test:
             Abort.run[NetException](transport.connect("127.0.0.1", port).safe.get).map { result =>
                 transport.close()
                 // Either connection refused (failure) or the port was taken; either way listener is closed
-                // faithful port of the kyo-http original; OS-nondeterministic listener-close outcome
+                // OS-nondeterministic listener-close outcome
                 assert(result.isFailure || result.isSuccess)
                 succeed
             }

@@ -4,7 +4,7 @@ import kyo.*
 import kyo.ffi.Ffi
 import kyo.net.Test
 
-/** Deterministic guard for the read-side counterpart of the B' write-stall: [[PollerIoDriver.submitChange]] coalescing its wakeup against a
+/** Deterministic guard for the read-side counterpart of the post-upgrade TLS-write wakeup stall: [[PollerIoDriver.submitChange]] coalescing its wakeup against a
   * STALE `wakePending` flag and never draining, stranding a re-armed read (or a cancel/deregister) that had no other event left to wake the
   * poll loop.
   *

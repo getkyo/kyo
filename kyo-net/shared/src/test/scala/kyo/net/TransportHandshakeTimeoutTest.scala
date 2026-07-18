@@ -5,8 +5,7 @@ import kyo.net.internal.TlsProviderPlatform
 
 /** Cross-backend server accept-handshake deadline (`TransportConfig.handshakeTimeout`, CWE-400 slowloris), via the PUBLIC
   * `NetPlatform.transport(config)` factory so the SAME test runs against every backend: posix (JVM default + Native), the NIO floor and the
-  * epoll driver (forced-backend CI legs), and Node (JS). It replaces the former per-backend handshake-timeout suites, which had to construct
-  * each transport directly only because there was no public way to set the deadline.
+  * epoll driver (forced-backend CI legs), and Node (JS).
   *
   * The deadline arms per accepted connection: a plaintext client completes the TCP accept but never sends a ClientHello, so the server
   * handshake parks; a finite `handshakeTimeout` reaps it (closing the accepted fd), which the client observes as its inbound terminating.

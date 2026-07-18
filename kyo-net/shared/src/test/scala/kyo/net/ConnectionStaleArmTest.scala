@@ -33,10 +33,10 @@ class ConnectionStaleArmTest extends Test:
         // the new cell. This mirrors the single-delivery-per-armed-read property at the Connection layer.
         "no-delivery-to-a-settled-promise" - {
 
-            // Fail-before: demonstrate that a plain shared slot (no CAS protection) lets a stale
+            // Plain-slot simulation: demonstrate that a plain shared slot (no CAS protection) lets a stale
             // delivery land on whichever promise currently occupies the slot, which may be the
             // new generation's promise if the stale arm fires after the new arm installed its cell.
-            "fail-before-simulation: stale-delivery-lands-on-new-promise-via-plain-slot" in {
+            "a plain shared slot lets a stale delivery land on the new generation's promise" in {
                 val stalePromise  = Promise.Unsafe.init[ReadOutcome, Abort[Closed]]()
                 val activePromise = Promise.Unsafe.init[ReadOutcome, Abort[Closed]]()
 
@@ -53,20 +53,20 @@ class ConnectionStaleArmTest extends Test:
                 val activeResult = activePromise.poll()
                 assert(
                     activeResult.isDefined,
-                    s"fail-before: stale delivery reaches the new promise via the plain slot (the bug to fix)"
+                    s"with a plain slot the stale delivery reaches the new promise"
                 )
                 // stalePromise was never completed by this delivery.
                 assert(
                     stalePromise.poll() == Absent,
-                    s"fail-before: stale promise not reached by the delivery that landed on the new slot"
+                    s"the stale promise is not reached by the delivery that landed on the new slot"
                 )
                 succeed
             }
 
-            // Pass-after: with distinct cell objects, a stale delivery completing the old cell does not
+            // With distinct cell objects, a stale delivery completing the old cell does not
             // affect the new cell. The two arms capture distinct ReadPump IOPromise objects, so a
             // completion on the stale one cannot reach the active one regardless of ordering.
-            "pass-after: stale-arm-completion-does-not-reach-new-arm-promise" in {
+            "a stale-arm completion does not reach the new-arm promise" in {
                 var staledPromise: Maybe[Promise.Unsafe[ReadOutcome, Abort[Closed]]] = Absent
                 var activePromise: Maybe[Promise.Unsafe[ReadOutcome, Abort[Closed]]] = Absent
                 var awaitReadCalls: Int                                              = 0
@@ -121,14 +121,14 @@ class ConnectionStaleArmTest extends Test:
                 val activeResult = ap.poll()
                 assert(
                     activeResult == Absent,
-                    s"pass-after: active (new generation) promise must not be reached by the stale delivery; got $activeResult"
+                    s"the active (new generation) promise must not be reached by the stale delivery; got $activeResult"
                 )
 
                 // Stale promise was completed.
                 val staleResult = sp.poll()
                 assert(
                     staleResult.isDefined,
-                    s"pass-after: stale promise must carry the delivery outcome; got $staleResult"
+                    s"the stale promise must carry the delivery outcome; got $staleResult"
                 )
                 succeed
             }

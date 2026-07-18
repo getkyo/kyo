@@ -15,9 +15,9 @@ import kyo.net.internal.transport.ReadOutcome
   * Recv submission is serialized per handle instead of blocking the caller: [[PosixHandle.isUpgraded]] handles gate `submitRecv` on
   * [[IoUringDriver.hasInFlightRead]] and QUEUE a second request ([[PosixHandle.queuedRecv]]) rather than submit a second SQE; [[IoUringDriver.
   * complete]] fires the queued request (`drainQueuedRecv`) the moment the in-flight recv's CQE is fully processed. Non-blocking by
-  * construction: `onFinished` (`PosixTransport.upgradeRole`) never waits on this -- an earlier blocking-wait variant was tried and reverted
-  * after it deadlocked `IoUringMutualTlsStressTest` (both peers of an upgrade can symmetrically wait on their own orphan to drain while that
-  * orphan's bytes are exactly the OTHER peer's first post-upgrade write, which that peer's own symmetrically-blocked upgrade never reaches).
+  * construction: `onFinished` (`PosixTransport.upgradeRole`) never waits on this: a blocking wait here would deadlock, because both peers
+  * of an upgrade can symmetrically wait on their own orphan to drain while that orphan's bytes are exactly the OTHER peer's first
+  * post-upgrade write, which that peer's own symmetrically-blocked upgrade never reaches.
   *
   * This test arms two real recvs back-to-back for one handle (marked [[PosixHandle.isUpgraded]], mirroring a post-upgrade connection) and
   * proves: (1) the second request is QUEUED, not a second live SQE (its promise stays pending, no aliasing is even possible); (2) once the

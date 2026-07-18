@@ -26,7 +26,7 @@ class PollerIoDriverStaleWritableTest extends Test:
     private def sock = Ffi.load[SocketBindings]
 
     "PollerIoDriver stale writable on a recycled fd" - {
-        "a writable event for a no-longer-current handle id is dropped, not delivered as Success (8c)" in {
+        "a writable event for a no-longer-current handle id is dropped, not delivered as Success" in {
             assumePoller()
             // Create the driver but do NOT start the poll loop yet: both registrations are submitted before start() so the first
             // drainChanges call processes them together, in the correct order, before any poll returns a writable event.

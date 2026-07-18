@@ -129,7 +129,7 @@ class PollerIoDriverTlsStagingAliasTest extends Test:
     end StandingReader
 
     "PollerIoDriver TLS recv staging is single-in-flight" - {
-        "N back-to-back ciphertext flights into a reused staging buffer decrypt to the correct plaintext, in order (8c)" in {
+        "N back-to-back ciphertext flights into a reused staging buffer decrypt to the correct plaintext, in order" in {
             if kyo.internal.Platform.isJS then Sync.defer(succeed)
             else
                 TlsRealEngines.assumeTlsReady()

@@ -754,7 +754,7 @@ final class RecordingTlsEngine(real: TlsEngine) extends TlsEngine:
     end order
 
     // Flip usedAfterFree if a method runs after free(). Called at the start of every delegating method, mirroring the SpyEngine.touch()
-    // pattern the converted race tests replace.
+    // pattern.
     private def touch(): Unit =
         if freeCount.get() > 0 then usedAfterFree.set(true)
 

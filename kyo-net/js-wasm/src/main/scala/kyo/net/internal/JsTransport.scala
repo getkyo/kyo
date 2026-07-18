@@ -184,7 +184,7 @@ final private[kyo] class JsTransport private (
         // and its buffers (a slowloris handshake-stall DoS, CWE-400). When handshakeTimeout is finite, arm a Clock-driven timer as each raw
         // socket arrives ("connection", which a TLS server emits on TCP accept before the handshake) and destroy the socket if the handshake has
         // not completed by the deadline; "secureConnection" (success) and "tlsClientError" (failed handshake) disarm it. handshakeTimeout =
-        // Infinity arms no timer (preserving the original behavior).
+        // Infinity arms no timer (no handshake deadline).
         armServerHandshakeDeadlines(server)
         // TLS servers emit "secureConnection" after handshake (not "connection" which fires on raw TCP)
         listenServer(server, host, port, backlog, tcpNoDelay = false, connectionEvent = "secureConnection", handler)

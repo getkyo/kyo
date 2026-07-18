@@ -12,12 +12,12 @@ import kyo.net.TransportConfig
 import kyo.net.internal.TlsRealEngines
 
 // Regression guard for the io_uring STARTTLS multi-record upgrade stall: a TOCTOU race in the upgrade-byte handoff between the handshake-driving
-// carrier (PosixTransport.driveUpgradeRead) and the io_uring reap carrier (IoUringDriver.complete). The two carriers used two independent volatile
-// slots (upgradeCarryover / upgradeReadWaiter), so the reap could stage the stale recv's bytes as a carryover while the handshake (having read the
-// old absent carryover) parked its waiter: the bytes were stranded against a parked waiter that nothing fulfilled and the upgrade hung forever. The
-// harness runs many concurrent io_uring STARTTLS upgrades with a multi-record payload so that interleaving happens on essentially every run; with
-// the single atomic handoff slot in place every upgrade completes its 32KB round-trip. Any stall is recorded and fails the test (it does not rely on
-// the suite watchdog), so the before state fails on the assertion and the after state is genuinely green.
+// carrier (PosixTransport.driveUpgradeRead) and the io_uring reap carrier (IoUringDriver.complete). Two independent slots with a read-then-act on
+// each would let the reap stage the stale recv's bytes as a carryover while the handshake (having read an absent carryover) parks its waiter, so
+// the bytes strand against a parked waiter that nothing fulfils and the upgrade hangs forever. The single atomic handoff slot gives the two
+// carriers mutual exclusion. The harness runs many concurrent io_uring STARTTLS upgrades with a multi-record payload so that interleaving happens
+// on essentially every run; with the single atomic handoff slot every upgrade completes its 32KB round-trip. Any stall is recorded and fails the
+// test (it does not rely on the suite watchdog).
 class IoUringMutualTlsStressTest extends Test:
 
     import AllowUnsafe.embrace.danger
@@ -39,7 +39,7 @@ class IoUringMutualTlsStressTest extends Test:
         TlsTestCertShared.writePems.map { case (certPath, keyPath) =>
             val serverTls = NetTlsConfig(certChainPath = Present(certPath), privateKeyPath = Present(keyPath))
             val clientTls = NetTlsConfig(trustAll = true, sniHostname = Present("localhost"))
-            val payload   = Array.fill[Byte](32768)(42) // spans multiple TLS records (max record ~16KB), as the failing leaf does
+            val payload   = Array.fill[Byte](32768)(42) // spans multiple TLS records (max record ~16KB)
 
             // Every non-success outcome of an upgrade is recorded here with the stage it stalled at. The race symptom is a Timeout at the "upgrade"
             // stage; a non-empty record at the end fails the test. The list never being touched on the happy path keeps the success run allocation-free.

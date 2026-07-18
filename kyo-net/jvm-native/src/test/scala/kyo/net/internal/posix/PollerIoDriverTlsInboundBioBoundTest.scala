@@ -136,7 +136,7 @@ class PollerIoDriverTlsInboundBioBoundTest extends Test:
     end StandingReader
 
     "PollerIoDriver TLS inbound BIO stays bounded under a coalesced-record burst" - {
-        "a large back-to-back ciphertext burst is fed in readBufferSize-bounded chunks, drained incrementally, single-in-flight (8c)" in {
+        "a large back-to-back ciphertext burst is fed in readBufferSize-bounded chunks, drained incrementally, single-in-flight" in {
             if kyo.internal.Platform.isJS then Sync.defer(succeed)
             else
                 TlsRealEngines.assumeTlsReady()
