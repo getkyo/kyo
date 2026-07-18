@@ -2,7 +2,7 @@ package kyo.internal
 
 import kyo.*
 
-/** Teardown / cascade proof for the fully-scoped ReactiveUI subscription (Phase 2).
+/** Teardown / cascade proof for the fully-scoped ReactiveUI subscription.
   *
   * The subscription forks every reactive region via `Fiber.init` rooted at the caller's `Scope`; each region opens a
   * per-value `Scope` (via `Signal.observe`) that owns its children. Closing the root `Scope` must cascade-interrupt
@@ -25,7 +25,7 @@ class ReactiveUITeardownTest extends kyo.test.Test[Any]:
     // A no-op exchange: the teardown/cascade proof does not depend on rendered output, only on subscription liveness.
     private val stubExchange: UIExchange =
         new UIExchange:
-            def onChange(path: Seq[String], ui: UI)(using Frame): Unit < Async = ()
+            def onChange(region: ReactiveUI.Region, value: Any)(using Frame): Unit < Async = ()
 
     "bound input re-renders the latest value across back-to-back changes (convergence)".ignore(
         "interrupt-driven Scope finalizer teardown can stall before the result is observed; known finalizer-execution-on-interrupt issue, comprehensive fix pending"
@@ -43,8 +43,11 @@ class ReactiveUITeardownTest extends kyo.test.Test[Any]:
             // Exchange that renders each emitted input region to HTML and records it (the real onChange wire behavior).
             recordingExchange =
                 new UIExchange:
-                    def onChange(path: Seq[String], ui: UI)(using Frame): Unit < Async =
-                        HtmlRenderer.render(ui, path).map(html => rendered.updateAndGet(_.append(html)).unit)
+                    def onChange(region: ReactiveUI.Region, value: Any)(using Frame): Unit < Async =
+                        // A DOM region carries the rendered UI as `value` and its path as `region.path`,
+                        // mirroring the server exchange's DomRegion arm; this proof drives only DOM (input)
+                        // regions, so reading `value` as a UI is exactly the live wire behavior.
+                        HtmlRenderer.render(value.asInstanceOf[UI], region.path).map(html => rendered.updateAndGet(_.append(html)).unit)
             tree = UI.input.id("i").value(ref)
             live <- AtomicInt.init(0)
             fiber <- Fiber.initUnscoped(Scope.run {

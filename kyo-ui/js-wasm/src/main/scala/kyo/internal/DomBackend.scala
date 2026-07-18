@@ -5,12 +5,18 @@ import org.scalajs.dom
 import org.scalajs.dom.document
 import scala.scalajs.js
 
-/** Scala.js UI backend. Mounts a UI into the browser DOM. */
-private[kyo] object DomBackend:
+/** Scala.js UI backend. Mounts a UI into the browser DOM. The implicit default `Backend` for the
+  * un-keyed UI tree (a DOM element has no `BackendNode.backend` key); registered at first mount.
+  */
+private[kyo] object DomBackend extends Backend:
+
+    def key: String = "dom"
 
     /** Mount a UI into the page body. */
     def mount(ui: UI)(using Frame): Unit < (Async & Scope) =
-        mountInto(ui, document.body)
+        // `document.body` is read inside the effect, not at the call site, so building the mount
+        // value stays pure (no DOM access until it runs, so it is safe to construct under Node/SSR).
+        Sync.defer(document.body).map(body => mountInto(ui, body))
 
     /** Mount a UI into a specific DOM element selected by CSS selector. */
     def mount(ui: UI, selector: String)(using Frame): Unit < (Async & Scope) =
@@ -20,6 +26,30 @@ private[kyo] object DomBackend:
             else mountInto(ui, target.asInstanceOf[dom.Element])
         }
     end mount
+
+    // The Backend SPI mount: the DOM backend mounts the whole tree into `host`. Returns a Live
+    // handle whose teardown is the ambient page Scope (mountInto forks under it). `path` is the
+    // mount root (Seq.empty for the page body); the DOM backend owns the un-keyed tree.
+    def mount(node: UI, host: dom.Element, path: Seq[String])(using Frame): Backend.Live < (Async & Scope) =
+        mountInto(node, host).andThen(DomBackend.live)
+
+    // The DOM backend is not on the reactive patch path: the server emits Replace for every DOM
+    // region (never SetProp), so no server op reaches this. It exists to satisfy the SPI; were it
+    // called it would re-render the subtree at `path` and replace it, ignoring `key` and treating
+    // `encoded` as rendered HTML (the same subtree-swap the DomRegion Replace path performs).
+    def patch(path: Seq[String], key: String, encoded: String)(using Frame): Unit < Async =
+        Sync.defer {
+            val p  = path.mkString(".")
+            val el = dom.document.querySelector(s"""[data-kyo-path="$p"]""")
+            if el != null && el.outerHTML != encoded then el.outerHTML = encoded
+        }
+
+    // DOM structural reactivity rides Replace, not ReplaceSubtree; this satisfies the SPI with the
+    // same subtree-swap semantics.
+    def replaceSubtree(path: Seq[String], encoded: String)(using Frame): Unit < Async =
+        patch(path, "", encoded)
+
+    private val live: Backend.Live = new Backend.Live {}
 
     /** Injects a rendered stylesheet CSS string into the live document.
       *
@@ -36,17 +66,33 @@ private[kyo] object DomBackend:
 
     private def mountInto(ui: UI, container: dom.Element)(using Frame): Unit < (Async & Scope) =
         for
+            // Pre-register the DOM backend so the generalized fireHostMounts below can dispatch through
+            // the registry. Idempotent (re-registering on a later mount just overwrites the same map
+            // entry); the page's single main fiber registers before any mount dispatch reads it
+            // (Backend.scala:47-48).
+            _    <- Sync.defer { Backend.register(DomBackend) }
             _    <- DomStyleSheet.injectBase()
             root <- ReactiveUI.normalize(ui, Seq.empty)
             html <- HtmlRenderer.render(ui, Seq.empty)
             _    <- Sync.defer(container.innerHTML = html)
             _    <- applyJsProps(container)
+            _    <- fireHostMounts(ui, Seq.empty)
             _    <- Sync.defer(beginAnimationsSync(container))
             exchange = LocalExchange(root)
             dispatch <- ReactiveUI.subscribe(root, exchange)
-            // Single-consumer drain owned by the ambient page Scope: every JS event effect is run by a
-            // Fiber.init consumer (interrupted on page teardown). The single consumer preserves event ordering
-            // and is scoped, so page teardown interrupt propagates to the drain via the ambient Scope.
+            events   <- forkEventDrain
+            _        <- setupEventDelegation(dispatch.handle, events)
+            _        <- Async.never
+        yield ()
+        end for
+    end mountInto
+
+    /** The single-consumer event drain owned by the ambient page Scope: every JS event effect is run by a
+      * `Fiber.init` consumer (interrupted on page teardown). The single consumer preserves event ordering and
+      * is scoped, so a page-teardown interrupt propagates to the drain via the ambient Scope.
+      */
+    private def forkEventDrain(using Frame): Channel[Unit < Async] < (Async & Scope) =
+        for
             events <- Channel.init[Unit < Async](256)
             // runPartial captures only the Closed failure (the channel closed on page teardown -> stop draining); a
             // Panic propagates rather than being silently swallowed as a clean drain end.
@@ -54,58 +100,190 @@ private[kyo] object DomBackend:
                 case Result.Success(eff) => eff.andThen(Loop.continue)
                 case Result.Failure(_)   => Loop.done
             }))
-            _ <- setupEventDelegation(dispatch.handle, events)
-            _ <- Async.never
+        yield events
+
+    /** Hydrates an ALREADY-SSR'd page: walks `ui` (rebuilt client-side via the SAME builder function
+      * the server called, so `data-kyo-path`/`data-kyo-backend` match the SSR markup by construction) and
+      * brings the browser's half of the page to life, WITHOUT touching `container.innerHTML`, unlike
+      * `mountInto`. Two things happen here, and nothing else:
+      *
+      *   1. Each `BackendNode`'s mount is dispatched through the registry onto its existing placeholder
+      *      element (a foreign backend's `<canvas>`, say), so a server-pushed `SetProp`/`ReplaceSubtree`
+      *      (routed by the inline WS listener through `window.__kyoBackends`) has a live mount to land on.
+      *
+      *   2. Every CLIENT-OWNED region (`Element.clientOwned`) is subscribed to the local exchange and its
+      *      events are delegated locally. These are the regions the server cannot drive because their state
+      *      exists only here: a `Three.Mount` holds a live WebGL renderer and canvas, so a frame counter
+      *      reading `mount.renders`, or a button calling `mount.readPixels`, can only run in the browser.
+      *      Without this the client tree would own nothing in the DOM and such a region would sit at its
+      *      SSR'd value forever while its handler resolved on the server against an `Absent` mount.
+      *
+      * Everything OUTSIDE a client-owned boundary stays the server's: its reactivity rides the inline WS
+      * listener `HtmlRenderer.clientJs` emits into the SSR'd HTML, and its events are posted to the session.
+      * The split is what keeps each region single-writer and each handler single-fire.
+      */
+    private[kyo] def hydrateBackendNodes(ui: UI)(using Frame): Unit < (Async & Scope) =
+        for
+            // Pre-register the DOM backend, mirroring mountInto's own idempotent registration
+            // (Backend.scala:47-48); a page that only embeds a foreign backend node still needs DomBackend
+            // registered before fireHostMounts dispatches through the registry.
+            _    <- Sync.defer { Backend.register(DomBackend) }
+            root <- ReactiveUI.normalize(ui, Seq.empty)
+            _    <- fireHostMounts(ui, Seq.empty)
+            exchange = LocalExchange(root)
+            // Ownership.Client subscribes ONLY the client-owned regions, so a page with no client-owned
+            // boundary subscribes nothing here and stays server-driven throughout.
+            dispatch <- ReactiveUI.subscribe(root, exchange, Ownership.Client)
+            events   <- forkEventDrain
+            _        <- setupEventDelegation(dispatch.handle, events, clientOwnedOnly = true)
         yield ()
         end for
-    end mountInto
+    end hydrateBackendNodes
 
-    /** Exchange that renders UI to HTML and applies directly to the DOM. */
+    /** Walk the original AST tracking `data-kyo-path` exactly as `HtmlRenderer.renderTo`
+      * assigns it (children indexed by position; `KeyedChild` keeps its parent path), and for
+      * each `BackendNode` resolve the live element by its path and dispatch its mount through the
+      * registry (`Backend.lookup(bn.backend)`), exactly once. A backend node inside a reactive
+      * (`Reactive`/`Foreach`) zone is NOT fired: it sits under a signal whose subtree a re-render
+      * may replace, so only one in a const subtree mounts.
+      *
+      * No skipped mount is silent. A backend node can fail to mount three ways, and each one leaves a page
+      * that renders but never comes alive, which reads exactly like a page with nothing to mount: it sits
+      * under a reactive region, no element carries its path, or nothing registered its backend. Each says
+      * so and names the node, because the author cannot see the difference otherwise.
+      */
+    private[kyo] def fireHostMounts(ui: UI, path: Seq[String], underReactive: Boolean = false)(using Frame): Unit < (Async & Scope) =
+        ui match
+            case bn: UI.Ast.BackendNode =>
+                // Every BackendNode always has real mount work, so it is always fired (unless it sits
+                // under a reactive region, handled below).
+                if underReactive then
+                    Log.warn(
+                        s"UI backend node '${bn.placeholder.tag}' (backend='${bn.backend}') carries a client mount but " +
+                            "sits inside a reactive region (UI.show/when/render/foreach); its mount is not fired because " +
+                            "a reactive boundary may replace the subtree. Place it in a non-reactive position so its mount runs."
+                    )
+                else
+                    Sync.defer(document.querySelector(s"""[data-kyo-path="${path.mkString(".")}"]""")).map {
+                        // No element carries this node's path. On a hydrate that means the tree the browser
+                        // rebuilt disagrees with the markup the server rendered, so this node's mount never
+                        // runs: a foreign backend's canvas stays dead, and every later server push for it
+                        // lands nowhere. A silent skip here looks exactly like a page that had nothing to
+                        // mount, which is why it must say so.
+                        case null =>
+                            Log.warn(
+                                s"UI backend node '${bn.placeholder.tag}' (backend='${bn.backend}') has no element at " +
+                                    s"data-kyo-path='${path.mkString(".")}', so its mount was not fired and it will never " +
+                                    "come alive. The tree built here must match the rendered markup for hydration to find it."
+                            )
+                        case element =>
+                            Backend.lookup(bn.backend) match
+                                case Present(backend) => backend.mount(bn, element.asInstanceOf[dom.Element], path).unit
+                                // The node names a backend nothing registered. Its element sits there inert,
+                                // so the same silence applies: name the backend that is missing.
+                                case Absent =>
+                                    Log.warn(
+                                        s"UI backend node '${bn.placeholder.tag}' at data-kyo-path='${path.mkString(".")}' names " +
+                                            s"backend='${bn.backend}', which no backend registered, so its mount was not fired. " +
+                                            "The module owning that backend must be loaded before the tree mounts."
+                                    )
+                    }
+                end if
+            case elem: UI.Ast.Element =>
+                Kyo.foreachDiscard(elem.children.toSeq.zipWithIndex) { (child, i) =>
+                    fireHostMounts(child, path :+ i.toString, underReactive)
+                }
+            case UI.Ast.Fragment(children) =>
+                Kyo.foreachDiscard(children.toSeq.zipWithIndex) { (child, i) =>
+                    val childPath = child match
+                        case kc: UI.Ast.KeyedChild[?] => path :+ kc.key
+                        case _                        => path :+ i.toString
+                    fireHostMounts(child, childPath, underReactive)
+                }
+            case UI.Ast.KeyedChild(_, child) =>
+                fireHostMounts(child, path, underReactive)
+            case r: UI.Ast.Reactive[?] =>
+                // Descend the region's CURRENT content only to surface a skipped host (never to fire one):
+                // a re-render may replace this subtree, so a host here cannot be safely mounted.
+                r.signal.current(using r.frame).map(cur => fireHostMounts(cur, path, underReactive = true))
+            case f: UI.Ast.Foreach[?, ?] @unchecked =>
+                // Reduce the keyed list to its current rendered content (as ReactiveUI.normalize does) and
+                // descend it to surface a skipped host; the items render under a signal, so none is fired.
+                val rendered: Signal[UI] =
+                    f.signal.map { items =>
+                        UI.Ast.Fragment[UI](Chunk.from(items.toSeq.zipWithIndex.map((item, i) => f.render(i, item)))): UI
+                    }
+                rendered.current(using f.frame).map(cur => fireHostMounts(cur, path, underReactive = true))
+            case _ =>
+                // Text and RawHtml carry no fireable host.
+                Kyo.unit
+    end fireHostMounts
+
+    /** The client-local reactive exchange: a `DomRegion` renders UI to HTML and applies it directly to
+      * the DOM. A backend node's own reactivity, its bound props AND its structure, is owned by that
+      * backend's reconciler, which observes the same signals locally, so `PropRegion` and
+      * `StructuralRegion` are deliberate no-ops here: routing them to the backend would make this a
+      * SECOND writer of live state the reconciler already patches. The server exchange
+      * (`UIServer.wsExchange`) is the one that routes prop/structural regions over the wire.
+      */
     private class LocalExchange(root: ReactiveUI) extends UIExchange:
         private def svgContextAt(path: Seq[String]): Boolean =
             ReactiveUI.findNode(root, path).map(_.svgContext).getOrElse(false)
 
-        def onChange(path: Seq[String], ui: UI)(using Frame): Unit < Async =
-            HtmlRenderer.render(ui, path).map { html =>
-                // Always wrap the rendered html in the reactive boundary element so the node carrying
-                // data-kyo-path=path survives subsequent replacements. A Fragment, Text, or RawHtml value
-                // renders without a path-carrying root, so an unwrapped replace would drop the marker and
-                // the next update could not locate the node. In SVG context the boundary is a <g> (a <span>
-                // is invalid inside <svg>); otherwise a <span> (CSS sets `display: contents` so it is layout-
-                // transparent).
-                val tag       = if svgContextAt(path) then "g" else "span"
-                val pathAttr  = path.mkString(".")
-                val finalHtml = s"""<$tag data-kyo-path="$pathAttr" data-kyo-reactive>$html</$tag>"""
-                Sync.defer {
-                    val el = document.querySelector(s"""[data-kyo-path="$pathAttr"]""")
-                    if el != null && el.outerHTML != finalHtml then
-                        // Capture focus and caret of the active element inside the replaced region,
-                        // keyed on data-kyo-path identity (mirrors HtmlRenderer.clientJs:576-583 on
-                        // the JS DOM API). Plain DOM inside the already-suspended Sync.defer; no new
-                        // AllowUnsafe crossing.
-                        val ae = document.activeElement
-                        val insideRegion = ae != null && (ae ne document.body) &&
-                            (ae.getAttribute("data-kyo-path") == pathAttr || el.contains(ae))
-                        // Use the active element's own data-kyo-path when it carries one (nested
-                        // reactive region), otherwise fall back to pathAttr so the region wrapper
-                        // itself is queried (common case: value-bound input inside the region has
-                        // no data-kyo-path of its own).
-                        val activePath =
-                            if insideRegion then
-                                if ae.hasAttribute("data-kyo-path") then ae.getAttribute("data-kyo-path")
-                                else pathAttr
-                            else null
-                        val (selStart, selEnd) = if insideRegion then readSelection(ae) else (Absent, Absent)
-                        el.outerHTML = finalHtml
-                        val updated = document.querySelector(s"""[data-kyo-path="$pathAttr"]""")
-                        if updated != null then
-                            applyJsPropsSync(updated)
-                            beginAnimationsSync(updated)
-                        if activePath != null then
-                            restoreFocus(activePath, selStart, selEnd)
-                    end if
-                }
-            }
+        def onChange(region: ReactiveUI.Region, value: Any)(using Frame): Unit < Async =
+            region match
+                case domRegion: ReactiveUI.Region.DomRegion =>
+                    val path = domRegion.path
+                    val ui   = value.asInstanceOf[UI]
+                    HtmlRenderer.render(ui, path).map { html =>
+                        // Always wrap the rendered html in the reactive boundary element so the node carrying
+                        // data-kyo-path=path survives subsequent replacements. A Fragment, Text, or RawHtml value
+                        // renders without a path-carrying root, so an unwrapped replace would drop the marker and
+                        // the next update could not locate the node. In SVG context the boundary is a <g> (a <span>
+                        // is invalid inside <svg>); otherwise a <span> (CSS sets `display: contents` so it is layout-
+                        // transparent).
+                        val tag       = if svgContextAt(path) then "g" else "span"
+                        val pathAttr  = path.mkString(".")
+                        val finalHtml = s"""<$tag data-kyo-path="$pathAttr" data-kyo-reactive>$html</$tag>"""
+                        Sync.defer {
+                            val el = document.querySelector(s"""[data-kyo-path="$pathAttr"]""")
+                            if el != null && el.outerHTML != finalHtml then
+                                // Capture focus and caret of the active element inside the replaced region,
+                                // keyed on data-kyo-path identity (mirrors HtmlRenderer.clientJs:576-583 on
+                                // the JS DOM API). Plain DOM inside the already-suspended Sync.defer; no new
+                                // AllowUnsafe crossing.
+                                val ae = document.activeElement
+                                val insideRegion = ae != null && (ae ne document.body) &&
+                                    (ae.getAttribute("data-kyo-path") == pathAttr || el.contains(ae))
+                                // Use the active element's own data-kyo-path when it carries one (nested
+                                // reactive region), otherwise fall back to pathAttr so the region wrapper
+                                // itself is queried (common case: value-bound input inside the region has
+                                // no data-kyo-path of its own).
+                                val activePath =
+                                    if insideRegion then
+                                        if ae.hasAttribute("data-kyo-path") then ae.getAttribute("data-kyo-path")
+                                        else pathAttr
+                                    else null
+                                val (selStart, selEnd) = if insideRegion then readSelection(ae) else (Absent, Absent)
+                                el.outerHTML = finalHtml
+                                val updated = document.querySelector(s"""[data-kyo-path="$pathAttr"]""")
+                                if updated != null then
+                                    applyJsPropsSync(updated)
+                                    beginAnimationsSync(updated)
+                                if activePath != null then
+                                    restoreFocus(activePath, selStart, selEnd)
+                            end if
+                        }
+                    }
+                case _: ReactiveUI.Region.PropRegion | _: ReactiveUI.Region.StructuralRegion =>
+                    // Deliberate no-op. In a client-local mount a backend node's bound props AND its
+                    // structure are driven LOCALLY by the backend's own reconciler (ThreeMount.forkBoundRef
+                    // for props, runReactiveRegion for structure), the SINGLE writer of that live state.
+                    // Routing a PropRegion/StructuralRegion emission to the backend here would make
+                    // LocalExchange a SECOND writer of the same live state, breaking dispose-once/keyed-
+                    // reuse. The client owns prop and structural reactivity here; the server exchange
+                    // routes these over the wire.
+                    Kyo.unit
     end LocalExchange
 
     private def readSelection(el: dom.Element): (Maybe[Int], Maybe[Int]) =
@@ -209,12 +387,26 @@ private[kyo] object DomBackend:
         end if
     end beginAnimationsSync
 
-    /** Set up capture-phase event delegation on document.body. */
-    private def setupEventDelegation(dispatch: (Seq[String], UIEvent) => Boolean < Async, events: Channel[Unit < Async])(using
+    /** Set up capture-phase event delegation on document.body.
+      *
+      * `clientOwnedOnly` is the hydrate case: the page's own inline WS client is already delegating every
+      * event to the server session, so this one takes exactly the events the browser owns (those inside a
+      * `data-kyo-client-owned` subtree) and leaves the rest alone. Handling all of them here would run BOTH this
+      * tree's handler and the session's copy for a single click.
+      */
+    private def setupEventDelegation(
+        dispatch: (Seq[String], UIEvent) => Boolean < Async,
+        events: Channel[Unit < Async],
+        clientOwnedOnly: Boolean = false
+    )(using
         Frame
     ): Unit < Sync = Sync.defer {
         val handler: scalajs.js.Function1[dom.Event, Unit] = (e: dom.Event) =>
-            findPathElement(e.target.asInstanceOf[dom.Element]).foreach { target =>
+            val raw = e.target.asInstanceOf[dom.Element]
+            // Resolving no target drops the event. Under clientOwnedOnly that is how every server-owned
+            // event is left to the session: only a target inside a client-owned subtree resolves here.
+            val owned = if clientOwnedOnly && !isClientOwned(raw) then Absent else findPathElement(raw)
+            owned.foreach { target =>
                 val path    = parsePath(target.getAttribute("data-kyo-path"))
                 val evAttr  = target.getAttribute("data-kyo-ev")
                 val evTypes = if evAttr != null then evAttr.split(",").toSet else Set.empty[String]
@@ -347,6 +539,18 @@ private[kyo] object DomBackend:
         )
     }
     end setupEventDelegation
+
+    /** True when `el` sits at or under an element the tree marked `clientOwned` (rendered as
+      * `data-kyo-client-owned`), i.e. inside a subtree this browser owns rather than the server session.
+      * Mirrors the inline WS client's own `co()` walk, so both halves agree on the boundary.
+      */
+    private def isClientOwned(el: dom.Element): Boolean =
+        if el == null || (el eq document.body) then false
+        else if el.hasAttribute("data-kyo-client-owned") then true
+        else
+            el.parentNode match
+                case p: dom.Element => isClientOwned(p)
+                case _              => false
 
     private def findPathElement(el: dom.Element): Maybe[dom.Element] =
         if el == null || (el eq document.body) then Absent

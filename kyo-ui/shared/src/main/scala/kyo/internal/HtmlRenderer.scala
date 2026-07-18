@@ -32,19 +32,35 @@ private[kyo] object HtmlRenderer:
         val tag = if svgContext then "g" else "span"
         s"""<$tag data-kyo-path="${path.mkString(".")}" data-kyo-reactive>$innerHtml</$tag>"""
 
-    /** Wrap body HTML in a full page with inline JS client. */
-    def renderPage(title: String, body: String, css: String, basePath: String): String =
+    /** Wrap body HTML in a full page with inline JS client. The optional `moduleScript` links a
+      * client island bundle (a `<script type="module" src="...">`) after the inline server-push
+      * client, so a server-push app can ship a Scala.js island the inline client routes
+      * SetProp/ReplaceSubtree to the owning backend. `Absent` emits no module script (the default
+      * server-push page).
+      */
+    def renderPage(
+        title: String,
+        body: String,
+        css: String,
+        basePath: String,
+        moduleScript: Maybe[String] = Absent,
+        importMap: Seq[(String, String)] = Seq.empty
+    ): String =
+        val islandScript = moduleScript match
+            case Present(src) => s"""\n<script type="module" src="${esc(src)}"></script>"""
+            case Absent       => ""
         s"""<!DOCTYPE html>
            |<html>
            |<head>
            |<meta charset="UTF-8">
-           |<title>${esc(title)}</title>
+           |<title>${esc(title)}</title>${importMapHead(importMap)}
            |<style>$baseCss$css</style>
            |</head>
            |<body>$body
-           |<script>${clientJs(jsStr(basePath))}</script>
+           |<script>${clientJs(jsStr(basePath))}</script>$islandScript
            |</body>
            |</html>""".stripMargin
+    end renderPage
 
     /** Wrap body HTML in a complete static HTML document with a configurable head (for SSG/SSR).
       *
@@ -68,7 +84,7 @@ private[kyo] object HtmlRenderer:
            |<head>
            |<meta charset="utf-8">
            |<meta name="viewport" content="width=device-width, initial-scale=1">
-           |<title>${esc(head.title)}</title>
+           |<title>${esc(head.title)}</title>${importMapHead(head.importMap)}
            |$metaTags$linkTags
            |<style>$baseCss${head.css}</style>
            |$ldBlock</head>
@@ -96,12 +112,61 @@ private[kyo] object HtmlRenderer:
     private def escScript(json: String): String =
         json.replace("<", "\\u003c").replace(">", "\\u003e")
 
+    // Render the page's import map as `<script type="importmap">{"imports": { ... }}</script>`, the
+    // bare-specifier resolution table a linked module script (PageHead.moduleScript) relies on. Returns
+    // the leading-newline element when entries are present, or "" when empty (no import map emitted, the
+    // default). Keys and values are JSON-string-escaped, then the whole body runs through escScript so a
+    // `</script>` substring in any specifier or url cannot close the element early (the data-island rule).
+    private def importMapHead(entries: Seq[(String, String)]): String =
+        if entries.isEmpty then ""
+        else
+            val imports = entries.map((spec, url) => s"${jsonStr(spec)}:${jsonStr(url)}").mkString(",")
+            val json    = s"""{"imports":{$imports}}"""
+            s"""\n<script type="importmap">${escScript(json)}</script>"""
+    end importMapHead
+
+    // Escape a string as a JSON double-quoted string literal (the import-map encoder's leaf): the JSON
+    // parse hazards are backslash and double-quote, plus the C0 control characters JSON forbids raw
+    // (`\n`/`\r`/`\t` get their short escapes, the rest the `\u00XX` form). `<`/`>` are left to escScript.
+    private def jsonStr(s: String): String =
+        val hex = "0123456789abcdef"
+        val sb  = new StringBuilder(s.length + 2)
+        sb.append('"')
+        s.foreach {
+            case '\\' => sb.append("\\\\")
+            case '"'  => sb.append("\\\"")
+            case '\n' => sb.append("\\n")
+            case '\r' => sb.append("\\r")
+            case '\t' => sb.append("\\t")
+            case c if c < ' ' =>
+                sb.append("\\u00")
+                sb.append(hex.charAt((c >> 4) & 0xf))
+                sb.append(hex.charAt(c & 0xf))
+            case c => sb.append(c)
+        }
+        sb.append('"')
+        sb.toString
+    end jsonStr
+
     // ---- Core rendering ----
 
     private def renderTo(sb: StringBuilder, ui: UI, path: Seq[String], svg: Boolean = false)(using Frame): Unit < Sync =
         ui match
             case dd: Dropdown =>
                 renderDropdown(sb, dd, path)
+            case bn: UI.Ast.BackendNode =>
+                // The central split: the path/reactive descent CONTINUES into this node (ReactiveUI) but
+                // the HTML descent STOPS here. Emit the placeholder tag + attrs + data-kyo-path +
+                // data-kyo-backend, then STOP: no child HTML. The SSR placeholder for a scene is
+                // <canvas data-kyo-path="1" data-kyo-backend="three"></canvas>.
+                val ph = bn.placeholder
+                w(sb, s"""<${ph.tag} data-kyo-path="${pathAttr(path)}" data-kyo-backend="${esc(bn.backend)}"""")
+                // id/class/style ride renderCommonAttrs (the same pure Attrs renderer the Element arm uses);
+                // a bare placeholder binds no element-specific attr (no Button/Input/checked/href), so
+                // renderElementAttrs is NOT called and the arm stays pure. No children: the HTML descent stops.
+                renderCommonAttrs(sb, ph.attrs)
+                w(sb, s"></${ph.tag}>")
+
             case elem: Element =>
                 val tag  = tagName(elem)
                 val void = elem.isInstanceOf[Void]
@@ -334,6 +399,11 @@ private[kyo] object HtmlRenderer:
         attrs.jsProps.toSeq.sortBy(_._1).foreach { case (name, value) =>
             w(sb, s""" data-kyo-prop-$name="${esc(value)}"""")
         }
+        // The client-owned boundary. The subtree's HTML is rendered exactly as any other (the page arrives
+        // complete), and this marker tells the two runtime halves who owns it: the inline WS client does not
+        // forward events from inside it, and the hydrating client subscribes its regions and delegates its
+        // events. Server-side, ReactiveUI stops its subscription walk here.
+        if attrs.clientOwned then w(sb, " data-kyo-client-owned")
     end renderCommonAttrs
 
     // ---- Element-specific attributes ----
@@ -714,14 +784,109 @@ private[kyo] object HtmlRenderer:
            |    var s=document.createElement("style");
            |    s.textContent=op.InjectCss.css;
            |    document.head.appendChild(s);
+           |  }else if(op.SetProp){
+           |    var p=op.SetProp.path;
+           |    // p's LAST segment is always op.SetProp.key itself (PropRegion's own path is the owning
+           |    // node's path with the key appended, ReactiveUI.normalize's BackendNode arm); the node's
+           |    // OWN path (what buildPathIndex/byPath key on) is p with that trailing segment dropped.
+           |    __kyoBackendOp(p,"prop|"+p.join(".")+"|"+op.SetProp.key,function(h){h.patch(p.slice(0,p.length-1),op.SetProp.key,op.SetProp.encoded);});
+           |  }else if(op.ReplaceSubtree){
+           |    var p=op.ReplaceSubtree.path;
+           |    __kyoBackendOp(p,"subtree|"+p.join("."),function(h){h.replaceSubtree(p,op.ReplaceSubtree.encoded);});
            |  }
            |};
+           |// The client-side backend-handle registry plus a bounded per-root startup buffer. A backend
+           |// island (ThreeBackend.mount) registers its {patch,replaceSubtree} handle under its placeholder's
+           |// data-kyo-path (the backend root) via __kyoBackendsRegister, which runs only after the island
+           |// module loads, hydrates, and mounts. The WS session can push a SetProp/ReplaceSubtree for a root
+           |// BEFORE that root registers (observe fires the current value at subscribe time, inside the window
+           |// between WS-open and island registration); such an op is buffered per root and flushed in arrival
+           |// order the moment the root registers.
+           |//
+           |// The buffer is keyed by op SLOT (one per bound prop, one per structural region), not by arrival:
+           |// a second op for the same slot REPLACES the first, since only the latest value of a prop or the
+           |// latest snapshot of a subtree means anything. So the bound is on how many DISTINCT props and
+           |// regions are pending, which no amount of pre-registration churn can grow, and the newest value of
+           |// every slot survives. Overflowing the bound needs a scene with more distinct pending slots than
+           |// the cap, and that drop is reported rather than silent.
+           |window.__kyoBackends=window.__kyoBackends||{};
+           |window.__kyoBackendsPending=window.__kyoBackendsPending||{};
+           |var __kyoBackendsPendingMax=256;
+           |window.__kyoBackendsRegister=window.__kyoBackendsRegister||function(root,handle){
+           |  window.__kyoBackends[root]=handle;
+           |  var buf=window.__kyoBackendsPending[root];
+           |  if(buf){
+           |    delete window.__kyoBackendsPending[root];
+           |    buf.order.forEach(function(id){buf.byId[id](handle);});
+           |  }
+           |};
+           |// Resolves the backend ROOT PATH owning `path`: shrink `path` one segment at a time (longest
+           |// prefix first) looking up the DOM element at each shrunk data-kyo-path, and return the first one
+           |// that itself carries data-kyo-backend. A DOM-ancestor walk from the exact `path` would find
+           |// nothing for a boundProp NESTED below a backend node's OWN root (e.g. a 3D scene's material.color
+           |// several AST levels under its <canvas>): the backend's HTML descent stops at its own placeholder
+           |// (HtmlRenderer's BackendNode arm), so no element ever carries a `path` deeper than the root.
+           |// Shrinking the PATH (not walking the DOM) reaches the root directly; it also covers the shallower
+           |// case (a DOM-rendered element inside a backend's own children) since an ancestor element's own
+           |// data-kyo-path is a prefix of its descendant's by construction.
+           |function backendRootPath(path){
+           |  for(var i=path.length;i>0;i--){
+           |    var el=document.querySelector('[data-kyo-path="'+path.slice(0,i).join(".")+'"]');
+           |    if(el&&el.hasAttribute&&el.hasAttribute("data-kyo-backend")){return el.getAttribute("data-kyo-path");}
+           |  }
+           |  return null;
+           |}
+           |// The op slots already reported as dropped, so an op that arrives every frame and cannot be routed
+           |// is reported once instead of sixty times a second.
+           |var __kyoBackendDropped={};
+           |function __kyoBackendDrop(id,reason){
+           |  if(__kyoBackendDropped[id])return;
+           |  __kyoBackendDropped[id]=true;
+           |  console.warn("kyo-ui dropped a backend op ("+id+"): "+reason);
+           |}
+           |// Routes a backend op addressed by `path` to the owning root's registered handle, applying it
+           |// immediately if the root is registered or buffering it by slot until it registers.
+           |//
+           |// A path with no backend root is a DEFECT, not a no-op: the scene keeps rendering its last good
+           |// state, so an op dropped here looks exactly like an op that was applied. It is the one drop the
+           |// backend's own reporting cannot see, because the op never reaches the backend at all, so it says
+           |// so here.
+           |function __kyoBackendOp(path,id,apply){
+           |  var root=backendRootPath(path);
+           |  if(root===null){
+           |    __kyoBackendDrop(id,"no element on this page carries data-kyo-backend at or above data-kyo-path='"+path.join(".")+"', so this op reaches no backend. The tree the browser built must match the rendered markup.");
+           |    return;
+           |  }
+           |  var h=window.__kyoBackends[root];
+           |  if(h){apply(h);return;}
+           |  var buf=window.__kyoBackendsPending[root]||(window.__kyoBackendsPending[root]={order:[],byId:{}});
+           |  if(!(id in buf.byId)){
+           |    if(buf.order.length>=__kyoBackendsPendingMax){
+           |      var evicted=buf.order.shift();
+           |      delete buf.byId[evicted];
+           |      __kyoBackendDrop(evicted,"more than "+__kyoBackendsPendingMax+" DISTINCT props and regions were pending before backend root '"+root+"' registered, so the oldest slot was evicted and its value never reached the scene.");
+           |    }
+           |    buf.order.push(id);
+           |  }
+           |  buf.byId[id]=apply;
+           |}
            |function fp(el){
            |  while(el&&el!==document.body){
            |    if(el.hasAttribute("data-kyo-path"))return el;
            |    el=el.parentElement;
            |  }
            |  return null;
+           |}
+           |// True when `el` sits inside a client-owned subtree (Element.clientOwned). The browser owns those
+           |// regions and handlers, so this inline client leaves them alone entirely: forwarding such an event
+           |// would run the SERVER's copy of the handler as well as the browser's, firing it twice.
+           |function co(el){
+           |  var n=el;
+           |  while(n&&n!==document.body){
+           |    if(n.hasAttribute&&n.hasAttribute("data-kyo-client-owned"))return true;
+           |    n=n.parentElement;
+           |  }
+           |  return false;
            |}
            |function he(el,t){
            |  // Walk up from `el` checking each ancestor for the event marker.
@@ -734,14 +899,20 @@ private[kyo] object HtmlRenderer:
            |  }
            |  return false;
            |}
-           |// Send each event over the single WebSocket. ws.send preserves send order on one socket, so the
-           |// explicit fetch-queue serialization is no longer needed. Events fired before the socket opens are
+           |// Send each event over the single WebSocket. ws.send preserves send order on one socket, so no
+           |// explicit fetch-queue serialization is needed. Events fired before the socket opens are
            |// buffered in __q and flushed on ws.onopen.
            |function post(b){
            |  var m=JSON.stringify(b);
            |  if(ws.readyState===1)ws.send(m);
            |  else __q.push(m);
            |}
+           |// The client->server backend-event seam: a foreign backend island (ThreeBackend) posts a
+           |// UIEvent.BackendEvent over the page's single WS through here; `encoded` is the backend's own
+           |// opaque Json payload (a raycast Pointer for three), decoded server-side by the owning BackendNode.
+           |// Sealed-enum Schema tags by case name, so the envelope is {BackendEvent:{path,encoded}} (matching
+           |// {Click:{...}} etc.).
+           |window.__kyoPostBackendEvent=function(path,encoded){post({BackendEvent:{path:path,encoded:encoded}});};
            |function pa(el){
            |  var p=el.getAttribute("data-kyo-path");
            |  return p===""?[]:p.split(".");
@@ -794,6 +965,10 @@ private[kyo] object HtmlRenderer:
            |function handle(e){
            |  var el=fp(e.target);
            |  if(!el)return;
+           |  // A client-owned subtree belongs to the hydrating browser: it dispatches this event against its
+           |  // OWN tree. Returning here (rather than merely skipping the post) also keeps this client's
+           |  // dropdown handling off the subtree, so the browser is its single event owner.
+           |  if(co(e.target))return;
            |  var p=pa(el),t=e.type;
            |  if(t==="click"){
            |    // Dropdown trigger click: open/close the option list.

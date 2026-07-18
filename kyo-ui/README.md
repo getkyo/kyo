@@ -10,7 +10,7 @@ kyo-ui describes web UIs as pure values that run unchanged in three places: a Sc
 
 **Updates are fine-grained.** No virtual DOM, no component re-execution. The `UI` value is built once; the framework registers a subscription at every point where a signal appears. When a signal emits, only the subtree bound to that signal re-renders, and only the DOM nodes inside that subtree get patched. Granularity is determined at the call site: `div(name: Signal[String])` updates one text node; `when(loggedIn)(bigSubtree)` rebuilds a whole subtree. You pick the boundary.
 
-Event handlers are typed `Any < Async` and can call anything in the kyo ecosystem. The element tree under `UI.Ast.*` is plain case classes; pattern-match on it for tests, transforms, or custom backends. Build a UI with `import kyo.UI.*` and factory functions like `div`, `button`, `input`; chain attribute and event setters; attach children via `.apply(...)`.
+Event handlers are typed `Any < Async` and can call anything in the kyo ecosystem. The element tree under `UI.Ast.*` is plain case classes; pattern-match on it for tests, transforms, or custom backends. Rendering backends (for example kyo-threejs 3D scenes) plug in through an internal Backend SPI and appear in a UI tree as backend nodes. Build a UI with `import kyo.UI.*` and factory functions like `div`, `button`, `input`; chain attribute and event setters; attach children via `.apply(...)`.
 
 <!-- doctest:setup
 ```scala
@@ -1195,6 +1195,10 @@ val ui: UI                          = div(button("+1").id("inc"))
 val mountTo: Unit < (Async & Scope) = runMount(ui, "#app")
 ```
 
+### `UI.runHydrate(ui)` (Scala.js)
+
+The client entry for a server-rendered page that embeds a rendering backend (for example a kyo-threejs 3D scene). Where `runMount` renders a fresh tree into the DOM, `runHydrate` attaches to the page `runHandlers` already served: it walks `ui`, binds each backend node to the live element the server placed in the DOM, and wires the client side of the reactive bridge, without re-rendering the surrounding HTML. Like `runMount` it is a JS-only extension on `UI.type` with an `Async & Scope` row, and its lifecycle is `Scope`-bound (closing the scope releases the backend mounts). The client island rebuilds the same `ui` value the server rendered and calls `runHydrate(ui)` to bring it to life.
+
 ### `UI.runHandlers(basePath)(ui)`
 
 Server-push deployment. Returns `Seq[HttpHandler[?, ?, ?]] < Sync`: two handlers in one sequence, a GET that serves the initial server-side-rendered page (pure SSR, no session, no fibers, no cookie), and a WebSocket route at `/_kyo/ws` that carries `HtmlOp.Replace` diffs out to the client and client events back in over the same connection. You wire them into `HttpServer.init` alongside your other routes.
@@ -1219,6 +1223,32 @@ val server: Unit < (Async & Scope) =
 ```
 
 The `ui` parameter is `UI < Async`, so you can build a UI inside a `for` comprehension that allocates state. Each connected client gets its own copy of the UI evaluation (a fresh `for` invocation).
+
+A 2-arg overload accepts a `UI.PageHead` so the served page can link a client Scala.js island bundle. The motivating case is a server-push app that embeds a 3D scene (kyo-threejs): the browser must load the island that mounts the backend node, and the page HEAD must carry that `<script type="module">`. Pass `head.moduleScript = Present("/island.js")` to link it. When the island is a plain `fastLinkJS`/`fullLinkJS` ESModule that imports bare npm modules (such as `three`), also pass `head.importMap` to map each bare specifier to a served module URL, so the page resolves them without a pre-bundling step:
+
+```scala
+import UI.*
+import kyo.*
+
+val withIsland: Unit < (Async & Scope) =
+    for
+        counter <- Signal.initRef(0)
+        page = div(
+            button("+1").id("inc").onClick(counter.getAndUpdate(_ + 1)),
+            counter.render(n => span(n.toString).id("count"))
+        )
+        head = UI.PageHead(
+            title = "My App",
+            moduleScript = Present("/island.js"),
+            // Resolves the island's bare ES module imports; empty when the island bundles its own deps.
+            importMap = Seq("three" -> "/three.module.js")
+        )
+        uiHandlers <- runHandlers("/app", head)(page)
+        _          <- HttpServer.init(uiHandlers*)
+    yield ()
+```
+
+The 1-arg `runHandlers(basePath)(ui)` delegates to this overload with `PageHead("kyo-ui")` (no `moduleScript`), so all existing call sites are unchanged.
 
 ### `UI.runRender(ui)`
 

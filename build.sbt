@@ -357,6 +357,7 @@ lazy val kyoJS = project
         `kyo-browser`.js,
         `kyo-slack`.js,
         `kyo-ui`.js,
+        `kyo-threejs`.js,
         `kyo-website`.js,
         `kyo-website-bundle`.js,
         `kyo-pod`.js,
@@ -465,6 +466,7 @@ lazy val kyoWasm = project
         `kyo-browser`.wasm,
         `kyo-slack`.wasm,
         `kyo-ui`.wasm,
+        `kyo-threejs`.wasm,
         `kyo-test-api`.wasm,
         `kyo-test-runner`.wasm,
         `kyo-test-prop`.wasm,
@@ -1819,6 +1821,36 @@ lazy val `kyo-slack` =
         )
         .wasmSettings(`wasm-settings`)
 
+// Browser-test fixtures ride a Compile-like `fixtures` configuration rather than a project of their own.
+// The link's only roots are the fixtures' `@JSExportTopLevel` exports, so DCE keeps just the runtime the
+// page needs and drops the test suites: the served bundle stays small, unlike one that shares the whole
+// test link. `run` works in a Compile-like configuration because it hosts no tests, so the plugin's
+// "only one of main/test module initializer" guard never fires.
+lazy val Fixtures = config("fixtures").extend(Compile)
+
+// Reusable by any crossProject JS member: sources come from `src/fixtures`, plus the module's shared
+// test-tree `fixture` scenes (resolved relative to the JS member's baseDirectory).
+def jsFixturesConfigure(p: Project): Project =
+    p.configs(Fixtures)
+        .settings(
+            inConfig(Fixtures)(
+                Defaults.configSettings ++
+                    org.scalajs.sbtplugin.ScalaJSPlugin.compileConfigSettings ++
+                    Seq(
+                        scalaJSLinkerConfig ~= { _.withModuleKind(ModuleKind.ESModule) },
+                        scalaJSUseMainModuleInitializer := false,
+                        // The scenes the fixtures/hydrate entries rebuild live in the module's test
+                        // fixture trees: the cross-platform ones in shared/, the GL ones (a live mount,
+                        // canvas readback) in the js-wasm/ partial-share dir. Both feed this js/wasm
+                        // fixtures link.
+                        unmanagedSourceDirectories ++= Seq(
+                            baseDirectory.value / ".." / "shared" / "src" / "test" / "scala" / "fixture",
+                            baseDirectory.value / ".." / "js-wasm" / "src" / "test" / "scala" / "fixture"
+                        )
+                    )
+            )
+        )
+
 lazy val `kyo-ui` =
     crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
         .crossType(CrossType.Full)
@@ -1865,14 +1897,250 @@ lazy val `kyo-ui` =
             // suites so each owns the shared Chrome WebSocket channel in turn.
             Test / parallelExecution := false
         )
+        .jsConfigure(jsFixturesConfigure)
         .jsSettings(
             `js-settings`,
             libraryDependencies += "org.scala-js" %%% "scalajs-dom" % "2.8.1",
-            scalaJSLinkerConfig ~= { _.withModuleKind(ModuleKind.CommonJSModule) }
+            scalaJSLinkerConfig ~= { _.withModuleKind(ModuleKind.CommonJSModule) },
+            // The hydrate browser suite serves the `fixtures` configuration's linked ESModule (see
+            // `uiFixturesConfigure`). Linking it is a PREREQUISITE of the test compile so the suite can
+            // never certify a stale bundle: a stale one does not fail loudly, it lets the suite pass on code
+            // that is not in the tree. `Test / compile` is the one task every entry point routes through
+            // (`test`, `testOnly`, `testQuick`), so hanging the link here reaches all of them.
+            Test / compile := (Test / compile).dependsOn(Fixtures / fastLinkJS).value
         )
         .wasmSettings(
             `wasm-settings`,
             libraryDependencies += "org.scala-js" %%% "scalajs-dom" % "2.8.1"
+            // No fixtures link here: the Wasm target has no test tree of its own, so it runs only the shared
+            // suites and loads no browser bundle. The hydrate suite is JS-only for that reason.
+        )
+
+val installThree = taskKey[Unit]("npm install three@0.184.0 next to the Scala.js test linker output dir")
+
+// Install three.js into the PARENT of the linker output dir, never the dir itself: the Scala.js linker
+// wipes that dir before each link, so a node_modules inside it fails the delete (DirectoryNotEmptyException).
+// Node walks up for resolution, so the parent copy serves both require("three") (JS) and import "three" (Wasm).
+def installThreeTask = Def.task {
+    val outDir    = (Test / fastLinkJS / scalaJSLinkerOutputDirectory).value
+    val installIn = outDir.getParentFile
+    val marker    = installIn / "node_modules" / "three" / "package.json"
+    if (!marker.exists()) {
+        IO.createDirectory(installIn)
+        val rc = scala.sys.process.Process(Seq("npm", "install", "three@0.184.0"), installIn).!
+        if (rc != 0) sys.error(s"npm install three failed with exit $rc in $installIn")
+    }
+}
+
+// The demos live in a Compile-like configuration on the JS row rather than in a project of their own.
+// `run` works here because the configuration hosts no tests, so the plugin's "only one of
+// scalaJSUseMainModuleInitializer / scalaJSUseTestModuleInitializer" guard never fires. Sources sit in
+// kyo-threejs/js/src/demos and compile against the library's own Compile products.
+lazy val Demos = config("demos").extend(Compile)
+
+lazy val `kyo-threejs` =
+    crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
+        .crossType(CrossType.Full)
+        .in(file("kyo-threejs"))
+        .dependsOn(`kyo-core`)
+        .dependsOn(`kyo-ui`, `kyo-browser`)
+        .withKyoTest
+        .jsConfigure(jsFixturesConfigure)
+        .jsConfigure(
+            _.configs(Demos)
+                .settings(
+                    inConfig(Demos)(
+                        Defaults.configSettings ++
+                            org.scalajs.sbtplugin.ScalaJSPlugin.compileConfigSettings ++
+                            Seq(
+                                scalaJSUseMainModuleInitializer := true,
+                                // The launchers and most scenes are cross-platform (they run on kyo-http +
+                                // kyo-ui + the Three AST, no js.Dynamic), so they live in shared/src/demos and
+                                // compile on every platform (the JVM/Native rows compile-check them, see their
+                                // `Demos / compile` note). js/src/demos holds only what genuinely needs the
+                                // browser: the `@JSExportTopLevel` mount/hydrate entries, plus the two scenes
+                                // that build through client-only FFI (GltfInspectorScene via `Three.loadGltf`,
+                                // PlayableSnakeScene via `UIWindow.onKeyDown`). Both trees feed this JS link.
+                                unmanagedSourceDirectories += baseDirectory.value / ".." / "shared" / "src" / "demos" / "scala",
+                                // The launcher (the config's main) lands in `main.js`; each demo's browser
+                                // entry is tagged `@JSExportTopLevel(name, "<demo>")` into its own module, so
+                                // a demo's page imports only its own module, never the launcher's node code.
+                                scalaJSLinkerConfig ~= { _.withModuleKind(ModuleKind.ESModule) },
+                                // Default demo; `set kyo-threejsJS/demos/mainClass := ...` selects another.
+                                mainClass := Some("democlient.ControlPanel"),
+                                // The launcher serves three.js to the browser, so install it next to the
+                                // demos link output the launcher reads from.
+                                installThree := {
+                                    val outDir    = (Demos / fastLinkJS / scalaJSLinkerOutputDirectory).value
+                                    val installIn = outDir.getParentFile
+                                    val marker    = installIn / "node_modules" / "three" / "package.json"
+                                    if (!marker.exists()) {
+                                        IO.createDirectory(installIn)
+                                        val rc = scala.sys.process.Process(Seq("npm", "install", "three@0.184.0"), installIn).!
+                                        if (rc != 0) sys.error(s"npm install three failed with exit $rc in $installIn")
+                                    }
+                                },
+                                // Every demo shares this one launcher output, and fastLinkJS's cross-session
+                                // cache can skip the relink when the selected mainClass was linked before,
+                                // leaving the previously built demo's launcher in place. Delete the launcher
+                                // output before each link so `demos/run` always serves the selected demo.
+                                fastLinkJS := (fastLinkJS)
+                                    .dependsOn(installThree)
+                                    .dependsOn(Def.task {
+                                        IO.delete((Demos / fastLinkJS / scalaJSLinkerOutputDirectory).value / "main.js")
+                                    })
+                                    .value
+                            )
+                    )
+                )
+        )
+        // The launchers and scenes in shared/src/demos are cross-platform (kyo-http + kyo-ui + the Three
+        // AST, no js.Dynamic). Give the JVM and Native rows the same `demos` configuration so that tree
+        // COMPILES on them too: `Demos / compile` (hung off Test / compile below) is the CI check that
+        // keeps the "compile on every platform" claim honest, so a demo cannot rot uncompiled off-JS.
+        .jvmConfigure(
+            _.configs(Demos)
+                .settings(
+                    inConfig(Demos)(
+                        Defaults.configSettings ++
+                            Seq(
+                                unmanagedSourceDirectories += baseDirectory.value / ".." / "shared" / "src" / "demos" / "scala",
+                                // A server launcher runs on the JVM out of the box: `kyo-threejsJVM/demos/run`
+                                // (default ControlPanel; `set kyo-threejsJVM/demos/mainClass := ...` selects
+                                // another). It serves the JS-linked demos bundle off disk, so link it first
+                                // (`kyo-threejsJS/demos/fastLinkJS`); a missing bundle surfaces as a typed
+                                // FileException, never a crash. The forked run uses the repo root as its
+                                // working directory so the launcher's kyo.Path reads resolve.
+                                mainClass          := Some("democlient.ControlPanel"),
+                                run / fork         := true,
+                                run / baseDirectory := (LocalRootProject / baseDirectory).value
+                            )
+                    )
+                )
+        )
+        .nativeConfigure(
+            _.configs(Demos)
+                .settings(
+                    inConfig(Demos)(
+                        Defaults.configSettings ++
+                            Seq(
+                                unmanagedSourceDirectories += baseDirectory.value / ".." / "shared" / "src" / "demos" / "scala"
+                            )
+                    )
+                )
+        )
+        .settings(
+            `kyo-settings`
+        )
+        .jvmSettings(
+            // The browser suites (WebGLSceneHarness + the *BrowserTest leaves) are cross-platform CODE:
+            // they drive real Chrome through kyo-browser (a CDP client that runs on every platform) and
+            // read the three.js install and the linked fixtures bundle off disk with kyo.Path, so they
+            // live in shared and run here too. Two build facts make that real on the JVM:
+            //   (1) the JS row's `installThree` + `Fixtures / fastLinkJS` produce the on-disk artifacts
+            //       the harness serves (three under js/target, the bundle at
+            //       js/target/scala-*/kyo-threejs-fixtures-fastopt/main.js). Hang both off Test / compile
+            //       so a JVM `testOnly` can never certify against a stale or missing bundle.
+            //   (2) the harness locates those under `kyo-threejs/js/target` RELATIVE TO THE REPO ROOT, so
+            //       the per-suite fork's workingDirectory is the build root, not the jvm subproject base.
+            Test / compile := (Test / compile).dependsOn(
+                LocalProject("kyo-threejsJS") / installThree,
+                LocalProject("kyo-threejsJS") / Fixtures / fastLinkJS,
+                // Compile-check (not link) the JVM demos config so a demo cannot rot uncompiled here: a
+                // configuration adds no project ref, so CI's per-project sweep never reaches it on its own.
+                Demos / compile
+            ).value,
+            // Per-suite JVM forking gives each browser suite its own JVM and SharedChrome;
+            // parallelExecution = false serializes the groups so the Chrome processes don't compete.
+            // Mirrors kyo-ui, except the working directory is the repo root (the harness's kyo.Path
+            // lookups are repo-root-relative, not subproject-relative).
+            Test / parallelExecution  := false,
+            Test / testForkedParallel := false,
+            Test / testGrouping := {
+                val javaOptionsValue = (Test / javaOptions).value.toVector
+                val envsVarsValue    = envVars.value
+                val rootDir          = (LocalRootProject / baseDirectory).value
+                (Test / definedTests).value map { test =>
+                    Tests.Group(
+                        name = test.name,
+                        tests = Seq(test),
+                        runPolicy = Tests.SubProcess(
+                            ForkOptions(
+                                javaHome = javaHome.value,
+                                outputStrategy = outputStrategy.value,
+                                bootJars = Vector.empty,
+                                workingDirectory = Some(rootDir),
+                                runJVMOptions = javaOptionsValue,
+                                connectInput = connectInput.value,
+                                envVars = envsVarsValue
+                            )
+                        )
+                    )
+                }
+            }
+        )
+        .jsSettings(
+            `js-settings`,
+            // The README's runnable examples use the client-only surface (Three.runMount / loadGltf /
+            // toImage / js.Dynamic), which exists only on js/wasm, and kyo-doctest's JVM fork cannot
+            // reach it either way. Opt into KyoDoctestPlugin's README compile-check on the client
+            // platforms: it emits the blocks as a generated test source the js/wasm compiler type-checks
+            // during Test/compile. On jvm/native the check is off (the client API is absent there).
+            doctestReadmeCompileCheck := true,
+            libraryDependencies += "org.scala-js" %%% "scalajs-dom" % "2.8.0",
+            scalaJSLinkerConfig ~= { _.withModuleKind(ModuleKind.CommonJSModule) },
+            installThree := installThreeTask.value,
+            // The browser suites read the linked `fixtures` configuration bundle (WebGLSceneHarness) and
+            // serve it to Chrome. Linking it is a PREREQUISITE of the test compile so the suite can never
+            // certify a STALE bundle (a stale one does not fail loudly, it passes on code the browser never
+            // loaded). `Test / compile` is the one task every entry point routes through (`test`, `testOnly`,
+            // `testQuick`), so the edge reaches all of them. `installThree` hangs here too, so a fresh tree's
+            // first `testOnly` has three.js.
+            Test / compile := (Test / compile).dependsOn(
+                installThree,
+                Fixtures / fastLinkJS,
+                // Compile-check (not link) the demos config so a demo cannot rot uncompiled: a configuration
+                // adds no project ref, so CI's per-project sweep never reaches it on its own.
+                Demos / compile
+            ).value
+        )
+        .wasmSettings(
+            `wasm-settings`,
+            // README compile-check on the client platform (see the js-settings note); the runnable
+            // examples use the js/wasm-only client surface.
+            doctestReadmeCompileCheck := true,
+            libraryDependencies += "org.scala-js" %%% "scalajs-dom" % "2.8.0",
+            installThree := installThreeTask.value,
+            // The shared browser suites run here too (they drive Chrome through kyo-browser, which has a
+            // real Wasm launcher). Like the JVM row they serve the JS-linked three.js and fixtures bundle
+            // off disk with kyo.Path, always from `kyo-threejs/js/target`, so they depend on the JS row's
+            // `installThree` + `Fixtures / fastLinkJS`. The Wasm-local `installThree` stays too: the
+            // js-wasm/src/test Node suites resolve `import "three"` from the Wasm target's own node_modules.
+            Test / compile := (Test / compile).dependsOn(
+                installThree,
+                LocalProject("kyo-threejsJS") / installThree,
+                LocalProject("kyo-threejsJS") / Fixtures / fastLinkJS
+            ).value
+        )
+        .nativeSettings(
+            `native-settings`,
+            // The Native test binary links kyo-http's `kyo_tls.c` (transitively, through kyo-browser),
+            // which needs OpenSSL to compile and link. Mirror kyo-browser's own native settings.
+            `openssl-native-settings`,
+            // The shared browser suites run here too (kyo-browser has a real Native launcher). They serve
+            // the JS-linked three.js and fixtures bundle off disk with kyo.Path from `kyo-threejs/js/target`,
+            // so they depend on the JS row's `installThree` + `Fixtures / fastLinkJS`. The Native test binary
+            // runs with the build root as its working directory, so those repo-root-relative paths resolve.
+            Test / compile := (Test / compile).dependsOn(
+                LocalProject("kyo-threejsJS") / installThree,
+                LocalProject("kyo-threejsJS") / Fixtures / fastLinkJS,
+                // Compile-check (not link) the Native demos config so a demo cannot rot uncompiled here
+                // either (see the JVM row's note).
+                Demos / compile
+            ).value,
+            // Chrome resource contention makes parallel suite execution flaky; serialize so each browser
+            // suite owns the shared Chrome channel in turn. Mirrors kyo-ui's native settings.
+            Test / parallelExecution := false
         )
 
 // The website: shared apps + page wrapper + content model + cross-platform kyo-parse Markdown

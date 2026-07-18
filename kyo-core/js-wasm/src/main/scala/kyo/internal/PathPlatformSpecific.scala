@@ -684,14 +684,16 @@ abstract private[kyo] class PathPlatformSpecific extends PathDirectories:
         NodeCrypto.randomBytes(16).applyDynamic("toString")("hex").asInstanceOf[String]
 
     private[kyo] def envOrEmpty(name: String): String =
-        val v = js.Dynamic.global.process.env.selectDynamic(name)
+        val v = NodeGlobal.env.selectDynamic(name)
         if js.isUndefined(v) || v == null then "" else v.asInstanceOf[String]
 
     private[kyo] def homePath: Path =
         make(Chunk(NodeOs.homedir()))
 
     private[kyo] def cwdPath: Path =
-        make(Chunk(js.Dynamic.global.process.applyDynamic("cwd")().asInstanceOf[String]))
+        NodeGlobal.process match
+            case Present(proc) => make(Chunk(proc.applyDynamic("cwd")().asInstanceOf[String]))
+            case Absent        => make(Chunk("."))
 
     private[kyo] def osPlatform: String =
         NodeOs.platform() match

@@ -35,7 +35,7 @@ abstract class UITest extends kyo.test.Test[Any]:
       * canceled (skipped) rather than red failures that each burn the retry budget and push the job past its timeout. Mirrors kyo-browser's
       * BrowserTest.cancelOnUnsupportedPlatform; every other failure propagates unchanged.
       */
-    private def cancelOnUnsupportedPlatform[A, S](
+    private[kyo] def cancelOnUnsupportedPlatform[A, S](
         f: A < (Async & Scope & Abort[BrowserSetupException] & S)
     )(using Frame): A < (Async & Scope & Abort[BrowserSetupException] & S) =
         Abort.recover[BrowserSetupException] { (ex: BrowserSetupException) =>

@@ -4,14 +4,46 @@ import kyo.*
 import kyo.Svg
 import kyo.UI.*
 
+// The region-kind discriminator: a sealed three-way kind (Dom / Prop / Structural) so a structural
+// region has a distinct outcome from a DOM subtree and a bound-prop region, each routed to its own wire
+// op by subscribeScoped.
+sealed private[kyo] trait RegionKind derives CanEqual
+private[kyo] object RegionKind:
+    case object Dom                                           extends RegionKind
+    final case class Prop(key: String, encode: Any => String) extends RegionKind
+    final case class Structural(encode: Any => String)        extends RegionKind
+end RegionKind
+
+/** Which side of a server-rendered page drives a region and runs the handlers under it. A page has one
+  * tree per side (the WS session builds its own, the hydrating browser builds its own), so a region that
+  * both sides subscribed would be written twice; naming an owner is what keeps each region single-writer.
+  */
+sealed private[kyo] trait Ownership derives CanEqual
+private[kyo] object Ownership:
+    /** The whole tree. A client-local mount and a headless session have no counterpart to share with. */
+    case object All extends Ownership
+
+    /** Everything OUTSIDE a client-owned boundary: what a WS session drives and pushes over the wire. */
+    case object Server extends Ownership
+
+    /** Everything INSIDE a client-owned boundary: what a hydrating browser drives, and only that. */
+    case object Client extends Ownership
+end Ownership
+
 /** Normalized reactive UI node. */
 private[kyo] case class ReactiveUI(
     path: Seq[String],
-    signal: Signal[UI],
+    signal: Signal[Any],
     isConst: Boolean,
     children: Seq[ReactiveUI],
     handle: (Seq[String], UIEvent) => Boolean < Async,
-    svgContext: Boolean = false
+    svgContext: Boolean = false,
+    // The region kind (Dom / a bound-prop on a BackendNode / a structural region on a BackendNode),
+    // the discriminator subscribeScoped reads to build the matching Region case for the exchange.
+    regionKind: RegionKind = RegionKind.Dom,
+    // True when this region sits at or under an element marked `clientOwned`: the browser drives it and
+    // the server does not. Inherited down the walk, so a whole marked subtree carries it.
+    clientOwned: Boolean = false
 )
 
 private[kyo] object ReactiveUI:
@@ -20,14 +52,16 @@ private[kyo] object ReactiveUI:
 
     def init(
         path: Seq[String],
-        signal: Signal[UI],
+        signal: Signal[Any],
         isConst: Boolean,
         children: Seq[ReactiveUI],
-        svgContext: Boolean = false
+        svgContext: Boolean = false,
+        regionKind: RegionKind = RegionKind.Dom,
+        clientOwned: Boolean = false
     )(
         handle: (Seq[String], UIEvent) => Boolean < Async
     ): ReactiveUI =
-        ReactiveUI(path, signal, isConst, children, handle, svgContext)
+        ReactiveUI(path, signal, isConst, children, handle, svgContext, regionKind, clientOwned)
 
     /** Locate the ReactiveUI node at `path` in the resolved tree. Used by the exchanges to look up the
       * recorded svgContext flag so an empty placeholder uses the correct (<g> vs <span>) tag.
@@ -39,18 +73,25 @@ private[kyo] object ReactiveUI:
                 if acc.nonEmpty then acc else findNode(child, path)
             }
 
-    def normalize(ui: UI, path: Seq[String], svg: Boolean = false): ReactiveUI < Sync =
+    def normalize(ui: UI, path: Seq[String], svg: Boolean = false, clientOwned: Boolean = false): ReactiveUI < Sync =
         given Frame = ui.frame
+        // ReactiveUI.signal is Signal[Any] (a DOM region's UI and a bound-prop region's raw value
+        // share the field); Signal's CanEqual bound is not auto-derived for Any under strict
+        // equality, so this widens the field's construction sites explicitly.
+        given CanEqual[Any, Any] = CanEqual.derived
         ui match
             case ui: Reactive[?] =>
                 for
                     current   <- ui.signal.current
-                    (kids, _) <- walkStatic(current, path, svg)
-                yield init(path, ui.signal, isConst = false, kids, svgContext = svg) {
+                    (kids, _) <- walkStatic(current, path, svg, clientOwned)
+                // rui.signal is Signal[Any] so a bound-prop region's raw value can share the field with a
+                // DOM region's UI; Signal is invariant, so the DOM region's Signal[UI] is upcast explicitly
+                // here rather than at the field.
+                yield init(path, ui.signal.map(x => x: Any), isConst = false, kids, svgContext = svg, clientOwned = clientOwned) {
                     (targetPath, event) =>
                         for
                             currentUI     <- ui.signal.current
-                            (_, freshHdl) <- walkStatic(currentUI, path, svg)
+                            (_, freshHdl) <- walkStatic(currentUI, path, svg, clientOwned)
                             result        <- freshHdl(targetPath, event)
                         yield result
                 }
@@ -60,23 +101,78 @@ private[kyo] object ReactiveUI:
                 val sig =
                     ui.signal.map { items =>
                         val arr = items.toSeq.zipWithIndex.map { (item, i) =>
-                            val key = if ui.key.nonEmpty then ui.key.get(item) else i.toString
+                            val key = ui.key.fold(i.toString)(_(item))
                             KeyedChild[UI](key, ui.render(i, item))
                         }
                         Fragment[UI](Chunk.from(arr)): UI
                     }
                 for
                     current   <- sig.current
-                    (kids, _) <- walkStatic(current, path, svg)
-                yield init(path, sig, isConst = false, kids, svgContext = svg) {
+                    (kids, _) <- walkStatic(current, path, svg, clientOwned)
+                yield init(path, sig.map(x => x: Any), isConst = false, kids, svgContext = svg, clientOwned = clientOwned) {
                     (targetPath, event) =>
                         for
                             currentUI     <- sig.current
-                            (_, freshHdl) <- walkStatic(currentUI, path, svg)
+                            (_, freshHdl) <- walkStatic(currentUI, path, svg, clientOwned)
                             result        <- freshHdl(targetPath, event)
                         yield result
                 }
                 end for
+
+            case bn: UI.Ast.BackendNode =>
+                // Assign this node's path, then descend backendChildren (index-addressed like DOM children,
+                // path :+ i), boundProps (each a per-key reactive region at path :+ key), and the structural
+                // region (at the node's OWN path), emitting NO HTML. Matched BEFORE the Element arm: a
+                // BackendNode is not an Element, so it must be routed here (descend backendChildren/
+                // boundProps) rather than falling through to the Element arm's HTML descent.
+                for
+                    childNodes <- Kyo.foreach(bn.backendChildren.toSeq.zipWithIndex) { (child, i) =>
+                        normalize(child, path :+ i.toString, svg = false, clientOwned = clientOwned)
+                    }
+                    // Each prop region's signal IS the bound prop's signal (the raw value the server
+                    // encodes); RegionKind.Prop marks it so the exchange emits SetProp, not Replace.
+                    propRegions = bn.boundProps.toSeq.map { bp =>
+                        init(
+                            path :+ bp.key,
+                            bp.signal,
+                            isConst = false,
+                            children = Seq.empty,
+                            regionKind = RegionKind.Prop(bp.key, bp.encode),
+                            clientOwned = clientOwned
+                        )((_, _) => true)
+                    }
+                    // The structural region (0 or 1 element), observed at the node's OWN path
+                    // (a same-path child, NOT index/key-addressed like backendChildren/boundProps: the wire
+                    // op addresses the node's own subtree). NON-const: its signal is the REAL structural
+                    // data signal (Signal[Chunk[A]] / Signal[A]), so observing it is correct and does not
+                    // trigger a re-walk runaway (only the carrier's own initConst below is
+                    // const; subscribeScoped walks children regardless of isConst).
+                    structRegions = bn.structuralRegion.toChunk.toSeq.map { sb =>
+                        init(
+                            path,
+                            sb.signal,
+                            isConst = false,
+                            children = Seq.empty,
+                            regionKind = RegionKind.Structural(sb.encode),
+                            clientOwned = clientOwned
+                        )((_, _) => true)
+                    }
+                // isConst = true unconditionally: this node's own signal is Signal.initConst (it never
+                // changes), and subscribeScoped still walks `children` regardless of isConst, so the
+                // propRegions/structRegions/childNodes are subscribed either way. Marking this node
+                // non-const when boundProps/structuralRegion is nonempty would make subscribeScoped
+                // `observe` a signal that never changes, running its Dom-kind renderValue once to
+                // redundantly re-walk this same node (walkStatic -> normalize, duplicating the children
+                // already normalized here) and then parking a fiber that can never make progress. Const
+                // avoids observing this node's own signal at all; only the propRegions'/structRegions'
+                // real (changing) signals are individually observed.
+                yield init(
+                    path,
+                    Signal.initConst(bn: Any),
+                    isConst = true,
+                    children = childNodes ++ propRegions ++ structRegions,
+                    clientOwned = clientOwned
+                )(backendHandle(bn, path))
 
             case ui: Element =>
                 // An element with a SignalRef-bound attribute (`.value(ref)` xor `.checked(ref)`; an element binds at most
@@ -90,8 +186,20 @@ private[kyo] object ReactiveUI:
                 // re-renders without the value-dedup ever suppressing a real edit. An element with no bound ref is const.
                 val (elementSignal, isConstNode) =
                     collectSignalRef(ui).fold((Signal.initConst(ui: UI), true))(ref => (ref.map(_ => ui: UI), false))
-                for (kids, hdl) <- walkStatic(ui, path, svg)
-                yield ReactiveUI(path, elementSignal, isConst = isConstNode, kids, hdl, svgContext = svg)
+                // The boundary itself: an element marked `clientOwned` gives the flag to its own region and,
+                // through walkStatic below, to everything under it.
+                val owned = clientOwned || ui.attrs.clientOwned
+                for (kids, hdl) <- walkStatic(ui, path, svg, owned)
+                yield ReactiveUI(
+                    path,
+                    elementSignal.map(x => x: Any),
+                    isConst = isConstNode,
+                    kids,
+                    hdl,
+                    svgContext = svg,
+                    clientOwned = owned
+                )
+                end for
 
             case ui =>
                 // Catch-all for static leaf nodes: Text, Fragment, KeyedChild.
@@ -99,9 +207,27 @@ private[kyo] object ReactiveUI:
                 // Reactive or Foreach (also handled above). If a new UI subtype is added, the
                 // exhaustiveness checker will NOT warn here; any new type that is interactive must
                 // be added as an explicit case above before this catch-all.
-                ReactiveUI(path, Signal.initConst(ui), isConst = true, Seq.empty, (_, _) => true, svgContext = svg)
+                ReactiveUI(
+                    path,
+                    Signal.initConst(ui: Any),
+                    isConst = true,
+                    Seq.empty,
+                    (_, _) => true,
+                    svgContext = svg,
+                    clientOwned = clientOwned
+                )
         end match
     end normalize
+
+    /** The BackendNode arm's node handle: routes an inbound path-addressed BackendEvent to the node's own
+      * dispatchBackendEvent SPI hook, relative to this node's path. Every other event is a no-op; the
+      * boundProps/structuralRegion child regions keep their own `((_, _) => true)` handles unchanged.
+      */
+    private def backendHandle(bn: UI.Ast.BackendNode, path: Seq[String])(using Frame): Handler =
+        (targetPath, event) =>
+            event match
+                case be: UIEvent.BackendEvent => bn.dispatchBackendEvent(targetPath.drop(path.size), be.encoded).andThen(true)
+                case _                        => true
 
     /** Returns the element's single SignalRef-bound attribute (its `.value` or `.checked`), if any, so the element can be made reactive over
       * it (its HTML re-renders when that signal changes). An element binds at most one such ref.
@@ -123,7 +249,9 @@ private[kyo] object ReactiveUI:
     private type Handler = (Seq[String], UIEvent) => Boolean < Async
 
     /** Walk a static UI tree. Collect reactive children, build handle. */
-    private def walkStatic(ui: UI, basePath: Seq[String], svg: Boolean = false)(using Frame): (Seq[ReactiveUI], Handler) < Sync =
+    private def walkStatic(ui: UI, basePath: Seq[String], svg: Boolean = false, clientOwned: Boolean = false)(using
+        Frame
+    ): (Seq[ReactiveUI], Handler) < Sync =
         ui match
             case elem: Element =>
                 // ForeignObject bridges back to HTML, so reset svg context to false. It MUST be matched
@@ -132,19 +260,24 @@ private[kyo] object ReactiveUI:
                     case _: Svg.ForeignObject => false
                     case _: Svg.SvgElement    => true
                     case _                    => svg
+                // Client ownership is inherited and sticky: once inside a marked element, every descendant
+                // region belongs to the browser.
+                val childClient = clientOwned || elem.attrs.clientOwned
                 for childWalks <- Kyo.foreach(elem.children.toSeq.zipWithIndex) { (child, i) =>
                         val childPath = basePath :+ i.toString
                         child match
-                            case _: Reactive[?] | _: Foreach[?, ?] =>
-                                for rui <- normalize(child, childPath, childSvg)
+                            case _: Reactive[?] | _: Foreach[?, ?] | _: UI.Ast.BackendNode =>
+                                // A BackendNode child is normalized (not descended as HTML) so its
+                                // backendChildren + boundProps become reactive regions (the central split).
+                                for rui <- normalize(child, childPath, childSvg, childClient)
                                 yield (Seq(rui), Seq.empty[(Int, Handler)])
                             case childElem: Element if collectSignalRef(childElem).nonEmpty =>
                                 // Element with SignalRef-bound attributes is reactive over those signals;
                                 // normalize it so subscribeNode wires updates.
-                                for rui <- normalize(childElem, childPath, childSvg)
+                                for rui <- normalize(childElem, childPath, childSvg, childClient)
                                 yield (Seq(rui), Seq.empty[(Int, Handler)])
                             case _ =>
-                                for (innerKids, innerHandle) <- walkStatic(child, childPath, childSvg)
+                                for (innerKids, innerHandle) <- walkStatic(child, childPath, childSvg, childClient)
                                 yield (innerKids, Seq((i, innerHandle)))
                         end match
                     }
@@ -164,7 +297,7 @@ private[kyo] object ReactiveUI:
                         val inner = child match
                             case kc: KeyedChild[?] => kc.child
                             case _                 => child
-                        walkStatic(inner, childPath, svg)
+                        walkStatic(inner, childPath, svg, clientOwned)
                     }
                 yield
                     val allKids    = childWalks.flatMap(_._1)
@@ -181,12 +314,13 @@ private[kyo] object ReactiveUI:
                         else true
                     (allKids, handle)
 
-            case _: Reactive[?] | _: Foreach[?, ?] =>
-                // When walkStatic is called with a Reactive or Foreach as the top-level node
-                // (not as a child of an Element), normalize it at basePath so subscribeNode
+            case _: Reactive[?] | _: Foreach[?, ?] | _: UI.Ast.BackendNode =>
+                // When walkStatic is called with a Reactive, Foreach, or BackendNode as the top-level
+                // node (not as a child of an Element), normalize it at basePath so subscribeNode
                 // sets up a subscription for it. This handles the case where an outer reactive's
-                // signal value is itself a Reactive or Foreach (e.g. outer.map { _ => inner.map(UI.span(_)) }).
-                for rui <- normalize(ui, basePath, svg)
+                // signal value is itself a Reactive or Foreach (e.g. outer.map { _ => inner.map(UI.span(_)) }),
+                // and the case where a bare backend node is the whole tree.
+                for rui <- normalize(ui, basePath, svg, clientOwned)
                 yield (Seq(rui), rui.handle)
 
             case _ =>
@@ -250,11 +384,11 @@ private[kyo] object ReactiveUI:
 
     /** Invoke a Maybe[Any < Async] handler, discarding the result. */
     private def invoke(handler: Maybe[Any < Async])(using Frame): Unit < Async =
-        if handler.isEmpty then () else handler.get.unit
+        handler.fold(Kyo.unit)(_.unit)
 
     /** Invoke a Maybe[A => Any < Async] handler with a value, discarding the result. */
     private def invokeWith[A](handler: Maybe[A => Any < Async], value: A)(using Frame): Unit < Async =
-        if handler.isEmpty then () else handler.get(value).unit
+        handler.fold(Kyo.unit)(h => h(value).unit)
 
     /** Dispatch an event safely, logging and recovering from handler errors without stopping the bubble chain. */
     private def safeDispatch(handle: (Seq[String], UIEvent) => Boolean < Async, path: Seq[String], event: UIEvent)(using
@@ -376,9 +510,11 @@ private[kyo] object ReactiveUI:
                             targetSatisfies(e.children(i), nodePath :+ seg, targetPath, predicate)
                         case _ => false
                     end match
-            // Text and RawHtml are leaf content with no kyo-addressable Element children, so no event
-            // target can resolve through them: neither can satisfy an Element predicate.
-            case _: Text | _: RawHtml => false
+            // Text, RawHtml, and a BackendNode are leaf content for this Element-predicate walk: none
+            // exposes kyo-addressable Element children here, so no Element event target resolves through
+            // them. A BackendNode's own 3D targets route via UIEvent.BackendEvent (backendHandle), not
+            // this walk.
+            case _: Text | _: RawHtml | _: BackendNode => false
 
     private def isTargetDisabled(elem: Element, myPath: Seq[String], targetPath: Seq[String])(using Frame): Boolean < Sync =
         targetSatisfies(elem, myPath, targetPath, isDisabled)
@@ -576,14 +712,56 @@ private[kyo] object ReactiveUI:
       */
     case class Subscription(handle: Handler, lastSignalChangeTime: AtomicRef[Instant])
 
-    /** Subscribe all reactive boundaries under the caller's Scope. Returns the dispatch handle + change
-      * time; lifecycle is owned by the enclosing Scope (closing it interrupts every region fiber).
+    /** The exchange-facing view of a reactive region, derived from a ReactiveUI node's path +
+      * regionKind. NOT a third AST node kind: the discriminated argument subscribeScoped passes to
+      * UIExchange.onChange. A DomRegion renders HTML (Replace); a PropRegion encodes a raw value
+      * (SetProp); a StructuralRegion encodes a Schema-serialized data snapshot (ReplaceSubtree).
       */
-    def subscribe(rui: ReactiveUI, exchange: UIExchange)(using Frame): Subscription < (Async & Scope) =
+    sealed private[kyo] trait Region derives CanEqual:
+        def path: Seq[String]
+    private[kyo] object Region:
+        final case class DomRegion(path: Seq[String])                                      extends Region
+        final case class PropRegion(path: Seq[String], key: String, encode: Any => String) extends Region
+        final case class StructuralRegion(path: Seq[String], encode: Any => String)        extends Region
+    end Region
+
+    /** Subscribe the reactive boundaries `ownership` names, under the caller's Scope. Returns the dispatch
+      * handle + change time; lifecycle is owned by the enclosing Scope (closing it interrupts every region
+      * fiber).
+      *
+      * `Ownership.All` takes the whole tree (a client-local mount, a headless session: nobody else is
+      * driving it). On a server-rendered page the two sides split it: the WS session takes `Server`
+      * (everything outside a client-owned boundary) and the hydrating browser takes `Client` (everything
+      * inside one), so each region has exactly one writer.
+      */
+    def subscribe(rui: ReactiveUI, exchange: UIExchange, ownership: Ownership = Ownership.All)(using
+        Frame
+    ): Subscription < (Async & Scope) =
         for
             signalChangeTime <- AtomicRef.init(Instant.Epoch)
-            _                <- subscribeScoped(rui, exchange, signalChangeTime)
+            _                <- subscribeScoped(rui, exchange, signalChangeTime, ownership)
         yield Subscription(rui.handle, signalChangeTime)
+
+    /** The paths of the client-owned boundaries in `ui`, so a server session can refuse to run a handler
+      * the browser owns (the inline WS client never posts such an event; this is the server's own check).
+      * Walks the static structure with the renderer's path scheme and stops at each boundary it finds: a
+      * boundary must sit in a non-reactive position, the same rule a backend node already follows.
+      */
+    private[kyo] def clientOwnedRoots(ui: UI, path: Seq[String] = Seq.empty): Seq[Seq[String]] =
+        ui match
+            case elem: Element if elem.attrs.clientOwned => Seq(path)
+            case elem: Element =>
+                elem.children.toSeq.zipWithIndex.flatMap { (child, i) => clientOwnedRoots(child, path :+ i.toString) }
+            case Fragment(children) =>
+                children.toSeq.zipWithIndex.flatMap { (child, i) =>
+                    val childPath = child match
+                        case kc: KeyedChild[?] => path :+ kc.key
+                        case _                 => path :+ i.toString
+                    clientOwnedRoots(child, childPath)
+                }
+            case KeyedChild(_, child) => clientOwnedRoots(child, path)
+            case _                    => Seq.empty
+    end clientOwnedRoots
 
     // Each reactive region forks a Fiber.init (scoped to the enclosing Scope) running observe. Each
     // value opens a fresh per-value Scope; the region renders, re-walks, and forks its children INTO that
@@ -592,22 +770,75 @@ private[kyo] object ReactiveUI:
     // interrupt-old bookkeeping (a ref of live child fibers, interrupted one level per change) is gone; the
     // per-value Scope does interrupt-old transitively (every descendant), fixing the climbing-waiters leak the
     // one-level interrupt left.
-    private def subscribeScoped(rui: ReactiveUI, exchange: UIExchange, signalChangeTime: AtomicRef[Instant])(using
+    private def subscribeScoped(
+        rui: ReactiveUI,
+        exchange: UIExchange,
+        signalChangeTime: AtomicRef[Instant],
+        ownership: Ownership = Ownership.All,
+        underReactive: Boolean = false
+    )(using
         Frame
     ): Unit < (Async & Scope) =
-        if rui.isConst then
-            Kyo.foreachDiscard(rui.children)(subscribeScoped(_, exchange, signalChangeTime))
+        // Who drives this region. A server session stops at a client-owned boundary (the browser drives
+        // everything under it); a hydrating browser drives only what is inside one, but still DESCENDS the
+        // rest, since a boundary can sit deeper in the tree.
+        val serverStopsHere = ownership == Ownership.Server && rui.clientOwned
+        val owns = ownership match
+            case Ownership.All    => true
+            case Ownership.Server => !rui.clientOwned
+            case Ownership.Client => rui.clientOwned
+        // A client-owned region inside a server-driven reactive region: the server's next value replaces the
+        // very subtree the browser is driving, taking the browser's markup with it. Warn rather than
+        // half-support it, mirroring the backend-node-under-a-reactive-region rule.
+        val warnNested = serverStopsHere && underReactive
+        if warnNested then
+            Log.warn(
+                s"UI region at path=${rui.path.mkString(".")} is marked clientOwned but sits inside a reactive region " +
+                    "(UI.show/when/render/foreach); a server re-render replaces that subtree, so the browser cannot keep " +
+                    "it. Place the client-owned boundary in a non-reactive position."
+            )
+        else if serverStopsHere then
+            Kyo.unit
+        else if rui.isConst || !owns then
+            // Not this side's region to drive, but its children still may be: descend in the enclosing scope.
+            Kyo.foreachDiscard(rui.children)(subscribeScoped(_, exchange, signalChangeTime, ownership, underReactive))
         else
             // Per-value setup, run inside each value's fresh Scope: render the region and fork its children into
             // that scope, so the next value (or an interrupt) tears them down by cascade.
-            def renderValue(current: UI): Unit < (Async & Scope) =
-                for
-                    now          <- Clock.now
-                    _            <- signalChangeTime.set(now)
-                    _            <- exchange.onChange(rui.path, current)
-                    (newKids, _) <- walkStatic(current, rui.path, rui.svgContext)
-                    _            <- Kyo.foreachDiscard(newKids)(subscribeScoped(_, exchange, signalChangeTime))
-                yield ()
+            def renderValue(current: Any): Unit < (Async & Scope) =
+                rui.regionKind match
+                    case RegionKind.Prop(key, encode) =>
+                        // A bound-prop region on a BackendNode: emit one SetProp; no subtree to walk.
+                        for
+                            now <- Clock.now
+                            _   <- signalChangeTime.set(now)
+                            _   <- exchange.onChange(Region.PropRegion(rui.path, key, encode), current)
+                        yield ()
+                    case RegionKind.Structural(encode) =>
+                        // A structural region on a BackendNode (a Reactive/Foreach's own
+                        // path); emit one ReplaceSubtree carrying the Schema-encoded data snapshot. No
+                        // subtree to walk (the client re-renders from the decoded snapshot, not from a
+                        // server-side HTML walk): the exact structural analog of the Prop branch above.
+                        for
+                            now <- Clock.now
+                            _   <- signalChangeTime.set(now)
+                            _   <- exchange.onChange(Region.StructuralRegion(rui.path, encode), current)
+                        yield ()
+                    case RegionKind.Dom =>
+                        // A DOM subtree region: value is a UI; render it and re-walk its children. The re-walk
+                        // carries this region's own ownership (a fresh value inside a client-owned region is
+                        // client-owned too) and marks its children as sitting inside a reactive region.
+                        val ui = current.asInstanceOf[UI]
+                        for
+                            now          <- Clock.now
+                            _            <- signalChangeTime.set(now)
+                            _            <- exchange.onChange(Region.DomRegion(rui.path), ui)
+                            (newKids, _) <- walkStatic(ui, rui.path, rui.svgContext, rui.clientOwned)
+                            _ <- Kyo.foreachDiscard(newKids)(
+                                subscribeScoped(_, exchange, signalChangeTime, ownership, underReactive = true)
+                            )
+                        yield ()
+                        end for
             // Every region observes with observe: each value owns a fresh per-value Scope (renderValue forks its
             // children into it), held open until the next change, then closed by cascade. SignalRef-bound element
             // regions (normalize maps the bound leaf to the constant `ui`) ride the SignalRef's exact register-before-

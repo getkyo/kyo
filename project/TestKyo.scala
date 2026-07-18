@@ -119,9 +119,11 @@ object TestKyo {
         isDryRun: Boolean = false,
         phase: String = "test"
     ): State = {
-        val extracted = Project.extract(state)
-        val structure = extracted.structure
-        val allRefs   = structure.allProjectRefs
+        val extracted   = Project.extract(state)
+        val structure   = extracted.structure
+        val allRefs     = structure.allProjectRefs
+        val jsNames     = projectNamesWithPlugin(structure, scalaJSPluginClass)
+        val nativeNames = projectNamesWithPlugin(structure, scalaNativePluginClass)
 
         val testable = allRefs.filter { ref =>
             val name        = ref.project
@@ -129,7 +131,7 @@ object TestKyo {
             val isAggregate = aggregateProjects.contains(name)
             val platformMatch = if (isAggregate) false
             else platform match {
-                case Some(p) => matchesPlatform(name, p)
+                case Some(p) => matchesPlatform(name, p, jsNames, nativeNames)
                 case None    => true
             }
             val matchesScala = versions.contains(scalaVersion)
@@ -176,11 +178,13 @@ object TestKyo {
             return runAll(state, platform, scalaVersion, isDryRun, phase)
         }
 
-        val extracted = Project.extract(state)
-        val structure = extracted.structure
-        val allRefs   = structure.allProjectRefs
-        val allNames  = allRefs.map(_.project).toSet
-        val bd        = extracted.get(buildDependencies)
+        val extracted   = Project.extract(state)
+        val structure   = extracted.structure
+        val allRefs     = structure.allProjectRefs
+        val allNames    = allRefs.map(_.project).toSet
+        val bd          = extracted.get(buildDependencies)
+        val jsNames     = projectNamesWithPlugin(structure, scalaJSPluginClass)
+        val nativeNames = projectNamesWithPlugin(structure, scalaNativePluginClass)
 
         // A build.sbt change maps to the projects whose settings changed; None means a changed
         // line could not be attributed to specific projects, so fall back to running all modules.
@@ -193,7 +197,7 @@ object TestKyo {
 
         val directlyChanged = (changedFiles.flatMap(fileToProjects(_, allNames)) ++ buildSbtProjects).toSet
         val filtered = platform match {
-            case Some(p) => directlyChanged.filter(matchesPlatform(_, p))
+            case Some(p) => directlyChanged.filter(matchesPlatform(_, p, jsNames, nativeNames))
             case None    => directlyChanged
         }
 
@@ -211,7 +215,7 @@ object TestKyo {
         }
 
         val toTest = (platform match {
-            case Some(p) => allAffected.filter(matchesPlatform(_, p))
+            case Some(p) => allAffected.filter(matchesPlatform(_, p, jsNames, nativeNames))
             case None    => allAffected
         }).filter { name =>
             allRefs.find(_.project == name).exists { ref =>
@@ -234,19 +238,39 @@ object TestKyo {
 
     // --- Helpers ---
 
-    /** Check if a project name matches the given platform. JS, Native, and Wasm projects are matched by their
-      * explicit suffix; JVM is the residual: cross-project JVM variants carry a `JVM` suffix, and the
-      * suffix-less plain projects (kyo-compat-plugin, kyo-doctest-plugin, and similar JVM-only definitions)
-      * carry no platform suffix and are JVM-only.
+    /** Names of the projects that enable `pluginClass`, resolved from the loaded build.
+      *
+      * A cross-project variant announces its platform in its name suffix, but a plain `project` enabling
+      * ScalaJSPlugin directly has no suffix to announce it. Classifying those by their enabled plugins is
+      * what keeps them out of the JVM residual below.
       */
-    private def matchesPlatform(name: String, platform: String): Boolean =
-        platform match {
-            case "JVM"    => !name.endsWith("JS") && !name.endsWith("Native") && !name.endsWith("Wasm")
-            case "JS"     => name.endsWith("JS")
-            case "Native" => name.endsWith("Native")
-            case "Wasm"   => name.endsWith("Wasm")
-            case _        => false
-        }
+    private def projectNamesWithPlugin(structure: sbt.internal.BuildStructure, pluginClass: String): Set[String] =
+        structure.allProjectRefs.flatMap { ref =>
+            Project.getProjectForReference(ref, structure).collect {
+                case p if p.autoPlugins.exists(_.getClass.getName.startsWith(pluginClass)) => ref.project
+            }
+        }.toSet
+
+    private val scalaJSPluginClass     = "org.scalajs.sbtplugin.ScalaJSPlugin"
+    private val scalaNativePluginClass = "scala.scalanative.sbtplugin.ScalaNativePlugin"
+
+    /** Check if a project matches the given platform.
+      *
+      * Cross-project variants are matched by their explicit suffix. A suffix-less project is matched by the
+      * plugins it enables, because JVM is the RESIDUAL: treating "no suffix" as JVM silently swept every
+      * plain Scala.js project (a demo bundle, a fixtures bundle) into the JVM pass, where sbt-scalajs links
+      * it and starts Node eagerly even with zero tests, so it failed on a missing npm package that the JVM
+      * pass never installs. Wasm is checked first because the Wasm backend enables ScalaJSPlugin too, so
+      * only the suffix separates the two.
+      */
+    private def matchesPlatform(name: String, platform: String, jsNames: Set[String], nativeNames: Set[String]): Boolean = {
+        val actual =
+            if (name.endsWith("Wasm")) "Wasm"
+            else if (name.endsWith("Native") || nativeNames.contains(name)) "Native"
+            else if (name.endsWith("JS") || jsNames.contains(name)) "JS"
+            else "JVM"
+        actual == platform
+    }
 
     /** Map a changed file path to affected sbt project names.
       *

@@ -819,6 +819,66 @@ class HtmlRendererTest extends UITest:
         assert(html.contains("""var base="/myapp";"""))
     }
 
+    // ---- BackendNode placeholder split (pure string inspection; no browser) ----
+    // FakeBackendNode is defined once, top-level, in ReactiveUITest.scala (same `kyo` test package).
+
+    "BackendNode renders an SSR placeholder and stops the HTML descent" in {
+        for html <- kyo.internal.HtmlRenderer.render(UI.div(FakeBackendNode("three")), Seq.empty)
+        yield assert(html.contains("<canvas data-kyo-path=\"0\" data-kyo-backend=\"three\"></canvas>"))
+        end for
+    }
+
+    // ---- renderPage import map (pure string inspection; no browser) ----
+
+    "renderPage: a non-empty importMap emits one importmap script before the module script" in {
+        val html = kyo.internal.HtmlRenderer.renderPage(
+            "T",
+            "",
+            "",
+            "/app",
+            moduleScript = Present("/main.js"),
+            importMap = Seq("three" -> "/three.module.js", "three/x" -> "/x.js")
+        )
+        // Both mappings render as a single JSON imports object in one importmap script.
+        assert(
+            html.contains(
+                """<script type="importmap">{"imports":{"three":"/three.module.js","three/x":"/x.js"}}</script>"""
+            )
+        )
+        // The import map must precede the linked module script: a module's bare specifiers resolve
+        // against an import map only if it was parsed first.
+        val mapIdx    = html.indexOf("""type="importmap"""")
+        val moduleIdx = html.indexOf("""type="module"""")
+        assert(mapIdx >= 0 && moduleIdx >= 0, "both the importmap and the module script must be present")
+        assert(mapIdx < moduleIdx, "the importmap script must come before the module script")
+    }
+
+    "renderPage: an empty importMap emits no importmap script" in {
+        val html = kyo.internal.HtmlRenderer.renderPage("T", "", "", "/app", moduleScript = Present("/main.js"))
+        assert(!html.contains("importmap"))
+    }
+
+    "renderPage: a closing script tag in an importMap url cannot close the importmap element early" in {
+        val html = kyo.internal.HtmlRenderer.renderPage(
+            "T",
+            "",
+            "",
+            "/app",
+            importMap = Seq("three" -> "/a</script>b.js")
+        )
+        // Extract the importmap element's body (up to the FIRST following </script>) and prove the
+        // embedded </script> was neutralized: the real close is the only one, and no raw < survives.
+        val openTag      = """<script type="importmap">"""
+        val open         = html.indexOf(openTag)
+        val contentStart = open + openTag.length
+        val close        = html.indexOf("</script>", contentStart)
+        assert(open >= 0 && close >= 0, "the importmap script and its close must be present")
+        val body = html.substring(contentStart, close)
+        assert(!body.contains("</script>"), "the embedded </script> must be neutralized inside the importmap body")
+        assert(!body.contains("<"), "every < in the importmap body must be escaped")
+        assert(body.contains("b.js"), "the url's safe characters must survive the escape")
+    }
+
     // ---- clientJs transport (pure string inspection; no browser) ----
 
     "clientJs transport" - {

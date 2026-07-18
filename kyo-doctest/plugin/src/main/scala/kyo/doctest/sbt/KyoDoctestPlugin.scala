@@ -101,6 +101,19 @@ object KyoDoctestPlugin extends AutoPlugin {
             "Extra jars appended to the doctest fork's classpath (default: empty)."
         )
 
+        /** Opt a module into a compile-check of its README `scala` blocks when kyo-doctest's JVM fork
+          * cannot reach it: a JS or Wasm only module with no JVM variant, whose README examples use
+          * platform-only APIs that do not exist on the JVM. When true, the plugin wires a
+          * `Test / sourceGenerators` that emits the blocks as `KyoDoctestReadmeTest.scala` under
+          * `Test / sourceManaged`, so `Test/compile` type-checks them with the module's own compiler.
+          * The aggregate `doctest` command runs such a module's `Test/compile` but not its JVM doctest
+          * fork (which crashes on non-JVM output). Default false; cross-platform modules are validated on
+          * their JVM variant and must leave this off.
+          */
+        val doctestReadmeCompileCheck: SettingKey[Boolean] = settingKey[Boolean](
+            "Compile-check README scala blocks via Test/sourceGenerators for a JS/Wasm-only module (default: false)."
+        )
+
         /** Run validation; exit 1 on any block failure. Writes the cache. */
         val doctest: TaskKey[Unit] = taskKey[Unit](
             "Validate all scala code blocks in doctestSources. Exits 1 on any failure."
@@ -219,6 +232,15 @@ object KyoDoctestPlugin extends AutoPlugin {
         // compilation) size themselves to that number. Keeps a fork's CPU
         // contribution bounded to ~2 cores regardless of the host's core count.
         doctestForkJavaOptions := Seq("-Xmx8G", "-Xss10M", "-XX:ActiveProcessorCount=2"),
+        doctestReadmeCompileCheck := false,
+        // A JS/Wasm-only module that opts in gets its README blocks compiled as a generated test source
+        // under its own compiler (the JVM fork below cannot reach non-JVM output). No-op otherwise.
+        Test / sourceGenerators += Def.task {
+            if (doctestReadmeCompileCheck.value) {
+                val out = (Test / sourceManaged).value / "KyoDoctestReadmeTest.scala"
+                Seq(ReadmeCompileCheck.generate(doctestSources.value, out))
+            } else Seq.empty[File]
+        }.taskValue,
         doctest := Def.task {
             val log         = streams.value.log
             val sources     = doctestSources.value

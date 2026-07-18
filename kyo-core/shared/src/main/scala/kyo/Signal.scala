@@ -372,6 +372,11 @@ object Signal:
       * This method creates a signal that always returns the same value. Unlike `Signal.Ref`, this signal cannot be modified after creation.
       * This is useful for cases where you need a signal interface but the value never changes.
       *
+      * `current`/`currentWith` and `streamCurrent` return the value immediately. Because the value never changes, `next`/`nextWith` never
+      * complete: they park until interrupted, honoring `next`'s contract to wait for a change. Change-waiting combinators over a constant
+      * signal (`streamChanges`, `combineLatest`, `switchMap`, `zip`'s change wait) therefore park on the constant's slot rather than firing
+      * a spurious repeat of the same value.
+      *
       * @param value
       *   The constant value for the signal
       * @return
@@ -387,13 +392,16 @@ object Signal:
     ): Signal[A] =
         initRaw(
             currentWith = [B, S] => f => f(value),
-            nextWith = [B, S] => f => f(value)
+            // A constant has no next value; parking honors `next`'s contract to complete only on a change,
+            // and stays interruptible so closing the observing scope tears the parked waiters down.
+            nextWith = [B, S] => (_: A => B < S) => Async.never[B]
         )
 
     /** Creates a new immutable signal with a constant value and applies a transformation function.
       *
       * This method creates a signal that always returns the same value and immediately applies a transformation function to it. Unlike
-      * `Signal.Ref`, this signal cannot be modified after creation.
+      * `Signal.Ref`, this signal cannot be modified after creation. As with [[initConst]], `current`/`currentWith` return the value
+      * immediately while `next`/`nextWith` park until interrupted, since a constant value never changes.
       *
       * @param value
       *   The constant value for the signal

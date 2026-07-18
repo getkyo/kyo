@@ -18,7 +18,7 @@ class TypedEventTest extends kyo.test.Test[Any]:
 
     /** Minimal UIExchange stub that discards onChange notifications. */
     private class NoopExchange extends UIExchange:
-        def onChange(path: Seq[String], ui: UI)(using Frame): Unit < Async = ()
+        def onChange(region: ReactiveUI.Region, value: Any)(using Frame): Unit < Async = ()
 
     /** Normalize a UI, subscribe it with a NoopExchange, and return the dispatch handle. The dispatch handle re-reads
       * the current signal state on each event, so it stays valid after the subscription's Scope closes; these tests

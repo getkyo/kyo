@@ -36,7 +36,7 @@ import scala.language.implicitConversions
   * @see
   *   [[kyo.UI.Ast]] for the case-class AST that every factory returns
   */
-sealed abstract class UI:
+sealed trait UI:
     private[kyo] def frame: Frame
 
 /** Companion of [[kyo.UI]]: factory constructors, the [[kyo.UI.Ast]] node types, and the runners.
@@ -246,7 +246,20 @@ object UI:
       * resets when the client disconnects.
       */
     def runHandlers(basePath: String)(ui: => UI < Async)(using Frame): Seq[HttpHandler[?, ?, ?]] < Sync =
-        UIServer.handlers(basePath)(ui)
+        runHandlers(basePath, PageHead("kyo-ui"))(ui)
+
+    /** Server-push with a configurable page head: like the 1-arg `runHandlers`, but the SSR page
+      * is built from `head` so a server-push app can declare a client island bundle through
+      * `head.moduleScript` (a `<script type="module" src="...">` linked into the page). A page that
+      * embeds a `UI.Ast.BackendNode` (a `Three.embed` canvas, say) links such an island: it hydrates
+      * each backend node's client mount onto the SSR'd placeholder so the backend has a live target,
+      * while the node's reactive props ride the page's own inline WebSocket listener. The 1-arg form
+      * delegates here with the default `PageHead("kyo-ui")`, so there is one implementation and no
+      * duplicated logic. The page GET stays pure SSR (no session, no fiber, no cookie); each WebSocket
+      * owns its own per-connection subscription tree.
+      */
+    def runHandlers(basePath: String, head: UI.PageHead)(ui: => UI < Async)(using Frame): Seq[HttpHandler[?, ?, ?]] < Sync =
+        UIServer.handlers(basePath, head)(ui)
 
     /** Read-only stream of the full rendered HTML. Emits whenever any signal changes. First emission is the initial render. Useful for
       * testing, SSR, export, or custom transports.
@@ -258,7 +271,9 @@ object UI:
                 Channel.use[Unit](256) { channel =>
                     val exchange =
                         new UIExchange:
-                            def onChange(path: Seq[String], changedUI: UI)(using Frame): Unit < Async =
+                            def onChange(region: ReactiveUI.Region, value: Any)(using Frame): Unit < Async =
+                                // A render-stream tick fires on ANY region change (DOM or prop); the body
+                                // re-renders the whole page, so it ignores region/value entirely.
                                 // runPartial drops only a Closed (the consumer stopped draining); a Panic propagates.
                                 Abort.runPartial[Closed](channel.put(())).unit
                     // Scope.run owns the root region Fiber.init: when the stream consumer stops draining,
@@ -317,6 +332,15 @@ object UI:
       * empty (the default) emits none. Both carry [[kyo.UI.DataIsland]] values built by
       * [[kyo.UI.dataIsland]]; the renderer escapes their JSON bodies so a `</script>`
       * substring cannot close the element early.
+      *
+      * `importMap` is an ordered list of `(specifier, url)` entries rendered as one
+      * `<script type="importmap">{"imports": {...}}</script>` in the head, before any
+      * `moduleScript`, so a linked bundle that imports bare ES module specifiers (for example
+      * `three`) resolves each to a served module URL. This is the no-bundler companion to
+      * `moduleScript`: link a plain `fastLinkJS`/`fullLinkJS` ESModule and map its bare npm
+      * imports here, instead of pre-bundling the dependency into the script. Empty (the default)
+      * emits no import map; the renderer escapes the JSON so a `</script>` substring in any
+      * specifier or url cannot close the element early.
       */
     final case class PageHead(
         title: String,
@@ -324,6 +348,7 @@ object UI:
         links: Seq[(String, String)] = Seq.empty,
         css: String = "",
         moduleScript: Maybe[String] = Absent,
+        importMap: Seq[(String, String)] = Seq.empty,
         jsonLd: Maybe[UI.DataIsland] = Absent,
         dataIslands: Seq[UI.DataIsland] = Seq.empty
     ) derives CanEqual
@@ -587,6 +612,39 @@ object UI:
             def id(v: String): Self      = withAttrs(attrs.copy(identifier = Present(v)))
             def hidden(v: Boolean): Self = withAttrs(attrs.copy(hidden = Present(v)))
 
+            /** Gives this element and its subtree to the BROWSER on a server-rendered page: the hydrating
+              * client subscribes its reactive regions and runs its event handlers, and the server session
+              * does neither.
+              *
+              * A server-rendered page normally owns everything: the WebSocket session holds the live tree,
+              * pushes every region change, and resolves every click. That is the right default, and it is
+              * the only way for state that lives on the server to reach the page. It cannot work for state
+              * that exists only in the browser: a `Three.Mount` holds a live WebGL renderer and canvas, so
+              * the server's copy of the tree can never see one, and a region reading it there would sit at
+              * its initial value forever while a handler reading it would resolve `Absent`.
+              *
+              * Marking the subtree client-owned moves both jobs to the browser, where that state exists. The
+              * server still renders the subtree's initial HTML (so the page arrives complete, with no
+              * placeholder and no layout shift) and then leaves it alone; `UI.runHydrate` picks it up. Exactly
+              * one side owns each region and each handler, so nothing is written twice and no handler runs
+              * twice.
+              *
+              * The boundary is ONE-WAY AND TOTAL: everything under a marked element belongs to the browser,
+              * and there is no way to hand an inner part of it back to the server. That is a real
+              * restriction, not an omission. A client-owned region re-renders its whole DOM subtree, which
+              * would wipe out any server-owned island nested inside it, and the server, which pushes only
+              * when a signal changes, would never restore it. Keep anything the server must drive OUTSIDE
+              * the boundary.
+              *
+              * The boundary must also sit in a non-reactive position, for the same reason a backend node
+              * must: a server-driven region above it would replace the very markup the browser is driving.
+              * A boundary that lands inside one is reported rather than half-supported.
+              *
+              * Reach for it when a region reads something only the browser can know (a live mount, the
+              * viewport, the pointer, the local clock) and leave everything else server-owned.
+              */
+            def clientOwned: Self = withAttrs(attrs.copy(clientOwned = true))
+
             /** Reactive `hidden`: re-renders when the signal emits. */
             def hidden(v: Signal[Boolean]): Reactive[Self] =
                 given Frame = frame
@@ -833,6 +891,63 @@ object UI:
           */
         trait SvgRootNode extends SvgInteractiveNode with Inline with HtmlContent
 
+        // ---- Backend cross-file bridge (a node a non-DOM backend renders) ----
+
+        /** Sanctioned non-sealed cross-file AST base for a node rendered by a foreign backend (a 3D
+          * canvas, a map, a chart engine). A node declared outside this file (e.g. kyo-threejs's
+          * `Three.Ast.Node`) is still a valid UI child by extending this trait. It carries HtmlContent
+          * (so a scene is a valid HTML child) but NOT Inline, so it is NOT an Element: mixing Inline
+          * (Inline extends Element) would re-impose Element.children: Chunk[UI] on Three.Ast.Node, whose
+          * children: Chunk[Three] cannot satisfy it (Three is not a UI), so the extends would not compile.
+          * The ReactiveUI/HtmlRenderer BackendNode arm matches a backend node first/explicitly, so it
+          * SSRs a placeholder, never renders HTML for its subtree, and the walk DESCENDS its
+          * backendChildren (assigning data-kyo-path) and boundProps.
+          *
+          * Every member is `private[kyo]`: the backend SPI the kyo-ui walk and the registered backends
+          * consume, never a user call. PUBLIC as a TYPE so a kyo-threejs `Three.Ast.Node` extends it.
+          * A backend node carries no chainable id setter here: a producer that wants one (to tag the
+          * SSR'd placeholder element) declares it on its own return type, as `Three.embed` does with
+          * `Three.Embedded.id`.
+          */
+        trait BackendNode extends UI, Ast.HtmlContent:
+            type Self <: BackendNode
+            private[kyo] def backend: String
+            private[kyo] def placeholder: BackendNode.Placeholder
+            private[kyo] def backendChildren: Chunk[UI]
+            private[kyo] def boundProps: Chunk[BackendNode.BoundProp]
+            // The structural reactive region owned by THIS node (a render/foreach/foreachKeyed
+            // whose signal produces the subtree as serializable DATA the client re-renders). DEFAULT Absent
+            // so every existing BackendNode subtype is unaffected; only Three.Ast.Reactive/Foreach override
+            // it. private[kyo] SPI.
+            private[kyo] def structuralRegion: Maybe[BackendNode.StructuralBinding] = Absent
+            // Given a path RELATIVE to this node + the backend's encoded event payload, resolve the
+            // addressed node's handler and run it. DEFAULT no-op, so every non-interactive backend node is
+            // unaffected; only Three.Ast.Node overrides it. Effectful (the resolution reads server-side
+            // signals), exactly as the Reactive/Foreach DOM handle re-reads signal.current.
+            private[kyo] def dispatchBackendEvent(relPath: Seq[String], encoded: String)(using Frame): Unit < Async = Kyo.unit
+        end BackendNode
+
+        object BackendNode:
+            /** The real SSR/DOM element a backend node emits (default `<canvas>`); only the scene root
+              * SSRs a tag, inner backend nodes never do. `attrs` carries id/class/style.
+              */
+            final private[kyo] case class Placeholder(tag: String, attrs: Ast.Attrs) derives CanEqual
+
+            /** One reactive prop bound at a backend node: a stable structural `key` (the navigate path,
+              * e.g. "material.color"), the type-erased bound `signal`, and an `encode` so the server
+              * serializes an emission with no knowledge of A. The Signal[Any] erasure is contained here,
+              * never a public asInstanceOf.
+              */
+            final private[kyo] case class BoundProp(key: String, signal: Signal[Any], encode: Any => String)
+
+            // The SERVER-side half of a structural region: the type-erased DATA signal the
+            // walk observes + the encoder that serializes an emission into the ReplaceSubtree payload. The
+            // client decode + re-render lives on the backend node (kyo-threejs), keyed by path, mirroring
+            // how the scalar path splits BoundProp (server) from extractBoundRefs (client). The Signal[Any]
+            // erasure is contained here, never a public asInstanceOf. private[kyo], NOT public surface.
+            final private[kyo] case class StructuralBinding(signal: Signal[Any], encode: Any => String)
+        end BackendNode
+
         // ---- Void trait (elements that cannot have children) ----
 
         /** Capability trait for void elements that cannot have children (`hr`, `br`, `input`, ...); fixes `children` to empty. */
@@ -926,7 +1041,12 @@ object UI:
             dataAttrs: Map[String, String] = Map.empty,
             jsProps: Map[String, String] = Map.empty,
             cssClasses: Chunk[String] = Chunk.empty,
-            role: Maybe[String] = Absent
+            role: Maybe[String] = Absent,
+            // Marks this element and everything under it as owned by the BROWSER on a server-rendered
+            // page: the server session neither subscribes its regions nor runs its handlers, and the
+            // hydrating client does both. A plain Boolean rather than a Maybe: the boundary is one-way,
+            // so there is no third state between "marked" and "not marked" for a Maybe to carry.
+            clientOwned: Boolean = false
         )
 
         // ---- Non-element AST cases ----

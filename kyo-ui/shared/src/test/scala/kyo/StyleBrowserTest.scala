@@ -189,15 +189,6 @@ class StyleBrowserTest extends UITest:
         }
     }
 
-    // PENDING: kyo-ui doesn't auto-advance focus when the focused element becomes hidden; the
-    // browser leaves document.activeElement on the now-hidden element until something else moves it.
-    /*
-    "toggle hidden on focused element focus auto advances" in {
-        // Requires UIControlSession to detect when the focused element becomes hidden
-        // and automatically advance focus to the next visible focusable element.
-    }
-     */
-
     "toggle hidden element appears disappears" in {
         val app: UI < Async =
             for hidden <- Signal.initRef(true)
