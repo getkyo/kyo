@@ -1,6 +1,5 @@
 package kyo
 
-import java.nio.charset.StandardCharsets
 import kyo.internal.XXHash
 import org.scalatest.freespec.AnyFreeSpec
 
@@ -33,13 +32,19 @@ class XXHashTest extends AnyFreeSpec {
             assert(sliced == XXHash.hash32(whole, 0, whole.length, Seed32))
         }
 
-        "hashes strings as UTF-8 bytes" in {
+        "hashes strings as XXH32 of the JLS string hash" in {
             val values = Seq("", "ascii", "caf\u00e9", "\u6f22\u5b57", "emoji \ud83d\ude80", "\ud800", "\udc00")
             values.foreach { value =>
-                val bytes = value.getBytes(StandardCharsets.UTF_8)
-                assert(XXHash.hash32(value) == XXHash.hash32(bytes))
-                assert(XXHash.hash32(value, Seed32) == XXHash.hash32(bytes, Seed32))
+                assert(XXHash.hash32(value) == XXHash.hashInt(value.hashCode))
             }
+        }
+
+        "string hashes are pinned cross-platform constants" in {
+            assert(XXHash.hash32("") == 148298089)
+            assert(XXHash.hash32("ascii") == 1274324121)
+            assert(XXHash.hash32("caf\u00e9") == 310371487)
+            assert(XXHash.hash32("\u6f22\u5b57") == -1761639557)
+            assert(XXHash.hash32("emoji \ud83d\ude80") == 687346460)
         }
     }
 

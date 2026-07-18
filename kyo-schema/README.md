@@ -704,33 +704,33 @@ val proto = Protobuf.protoSchema[User]
 // syntax = "proto3";
 //
 // message Address {
-//   string city = 1771380;  // hash-derived field number; pin via Schema.fieldId for stable external interop
-//   string zip = 366489;  // hash-derived field number; pin via Schema.fieldId for stable external interop
+//   string city = 1521334;  // hash-derived field number; pin via Schema.fieldId for stable external interop
+//   string zip = 176885;  // hash-derived field number; pin via Schema.fieldId for stable external interop
 // }
 //
 // message User {
-//   sint32 id = 671968;  // hash-derived field number; pin via Schema.fieldId for stable external interop
-//   string name = 770848;  // hash-derived field number; pin via Schema.fieldId for stable external interop
-//   string email = 2042990;  // hash-derived field number; pin via Schema.fieldId for stable external interop
-//   string password = 814318;  // hash-derived field number; pin via Schema.fieldId for stable external interop
-//   Address address = 2084274;  // hash-derived field number; pin via Schema.fieldId for stable external interop
+//   sint32 id = 198960;  // hash-derived field number; pin via Schema.fieldId for stable external interop
+//   string name = 1684051;  // hash-derived field number; pin via Schema.fieldId for stable external interop
+//   string email = 1928090;  // hash-derived field number; pin via Schema.fieldId for stable external interop
+//   string password = 48118;  // hash-derived field number; pin via Schema.fieldId for stable external interop
+//   Address address = 209473;  // hash-derived field number; pin via Schema.fieldId for stable external interop
 // }
 ```
 
-The field numbers in the generated `.proto` match the wire field numbers the codec writes: each is the XXH32-derived value for that field name, the same number used at encode and decode. Hash-derived fields carry a provenance comment. Pinning a field with `fieldId` removes the provenance comment and writes the pinned number on the wire instead. A hash-derived number in proto3's reserved range (19000-19999) escalates the comment to a WARNING because external `protoc` rejects numbers in that band. The specific numbers in the examples above (1771380, 366489, and so on) are the hash-derived values for those field names and are shown for illustration; the actual values for your types are computed at compile time from field names via the same formula.
+The field numbers in the generated `.proto` match the wire field numbers the codec writes: each is derived from the field name (XXH32 applied to the name's JLS string hash), the same number used at encode and decode. Hash-derived fields carry a provenance comment. Pinning a field with `fieldId` removes the provenance comment and writes the pinned number on the wire instead. A hash-derived number in proto3's reserved range (19000-19999) escalates the comment to a WARNING because external `protoc` rejects numbers in that band. The specific numbers in the examples above (1521334, 176885, and so on) are the hash-derived values for those field names and are shown for illustration; the actual values for your types are computed at compile time from field names via the same formula.
 
 `Protobuf.fieldNumberAudit[A]` returns one `FieldNumberInfo` per message field, depth-first, reporting the wire field number, a `pinned` flag, and an `inReservedRange` flag without performing any encode or decode:
 
 ```scala
 val audit = Protobuf.fieldNumberAudit[User]
 // Chunk.Indexed(
-//   FieldNumberInfo(id,id,671968,false,false),       // numbers are hash-derived for these field names
-//   FieldNumberInfo(name,name,770848,false,false),
-//   FieldNumberInfo(email,email,2042990,false,false),
-//   FieldNumberInfo(password,password,814318,false,false),
-//   FieldNumberInfo(address,address,2084274,false,false),
-//   FieldNumberInfo(address.city,city,1771380,false,false),
-//   FieldNumberInfo(address.zip,zip,366489,false,false)
+//   FieldNumberInfo(id,id,198960,false,false),       // numbers are hash-derived for these field names
+//   FieldNumberInfo(name,name,1684051,false,false),
+//   FieldNumberInfo(email,email,1928090,false,false),
+//   FieldNumberInfo(password,password,48118,false,false),
+//   FieldNumberInfo(address,address,209473,false,false),
+//   FieldNumberInfo(address.city,city,1521334,false,false),
+//   FieldNumberInfo(address.zip,zip,176885,false,false)
 // )
 ```
 
@@ -807,14 +807,18 @@ Schemas are provided for all common types out of the box:
 | Primitives | `String`, `Boolean`, `Int`, `Long`, `Float`, `Double`, `Short`, `Byte`, `Char`, `BigDecimal`, `BigInt`, `Unit` |
 | Time | `java.time.Instant`, `java.time.Duration`, `kyo.Instant`, `kyo.Duration`, `LocalDate`, `LocalTime`, `LocalDateTime` |
 | Identifiers | `UUID`, `Frame`, `Tag[A]` |
-| Collections | `List[A]`, `Vector[A]`, `Set[A]`, `Seq[A]`, `Chunk[A]`, `Span[A]`, `Map[String, V]`, `Dict[K, V]` |
+| Collections | `List[A]`, `Vector[A]`, `Set[A]`, `Seq[A]`, `Chunk[A]`, `Span[A]`, `Map[String, V]`, `Dict[K, V]`, `OrderedDict[K, V]` |
 | Optional | `Option[A]`, `Maybe[A]` |
 | Sums | `Either[A, B]`, `Result[E, A]` |
 | Tuples | `(A, B)`, `(A, B, C)`, `(A, B, C, D)`, `(A, B, C, D, E)` |
 
 Any case class or sealed trait composed of these types derives a `Schema` automatically. Nested case classes work without additional setup.
 
-`Map[String, V]` and `Dict[String, V]` both serialize as JSON objects, because JSON object keys must be strings. `Dict[K, V]` with a non-string key type serializes as an array of `[key, value]` pairs. `Span[Byte]` is specialized to serialize as a primitive byte sequence rather than an array of individual bytes.
+`OrderedDict[K, V]` serializes in the same shape as `Dict[K, V]` and additionally preserves insertion order across an encode/decode round-trip: encoding walks the map in insertion order, and decoding rebuilds it by inserting entries in wire order.
+
+`Map[String, V]` and `Dict[String, V]` both serialize as JSON objects, because JSON object keys must be strings. `Map[K, V]` and `Dict[K, V]` with a non-string key type serialize as an array of two-field `{key, value}` records, which the Protobuf codec renders as a standard proto3 `MapEntry`. `Span[Byte]` is specialized to serialize as a primitive byte sequence rather than an array of individual bytes.
+
+> **Note:** a map entry whose value is an empty collection can decode incorrectly on the Protobuf codec. proto3 has no representation for an empty `repeated` field, so the entry is written without its value and the decode reads whatever follows in its place, which either fails or yields a wrong value. Entries whose values are non-empty are unaffected, and the other codecs are unaffected. This is a shared codec defect in the `mapSchema`, `dictSchema`, and `orderedDictSchema` givens alike, not a property of any one map type. It is tracked in [getkyo/kyo#1747](https://github.com/getkyo/kyo/issues/1747) and will be fixed in a follow-up.
 
 ### Custom Types
 

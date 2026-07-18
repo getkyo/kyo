@@ -683,6 +683,12 @@ abstract class Schema[A] @publicInBinary private[kyo] (
     /** Schema-wide policy: omit empty collection/map fields on encode (emit no key, not `[]`/`{}`),
       * and decode-default a missing collection/map field to the typed empty value. Per-field
       * `omit(_.x).whenEmpty` overrides this for a specific field.
+      *
+      * One binding is not yet supported: an empty `Dict`/`OrderedDict` field whose schema is the
+      * explicitly-bound array-form given (`dictSchema`/`orderedDictSchema`) for a `String` key, rather
+      * than the object-form default. Under this policy it omits on encode but fails to decode with a
+      * typed `TypeMismatchException`. The default given for a `String` key is unaffected. Tracked in
+      * getkyo/kyo#1748.
       */
     def omitEmptyCollections: Schema[A] { type Focused = Schema.this.Focused } =
         Schema.copyWith(this)(omitEmptyCollectionsAll = true)
@@ -993,7 +999,7 @@ abstract class Schema[A] @publicInBinary private[kyo] (
 
     /** Returns the stable field ID for a given field name.
       *
-      * Field IDs are computed using XXH32 of the field name, producing stable 21-bit positive integers. These IDs are used by binary
+      * Field IDs are computed by applying XXH32 to the field name's JLS string hash, producing stable 21-bit positive integers. These IDs are used by binary
       * formats like Protocol Buffers and MessagePack for schema evolution compatibility.
       *
       * The ID remains stable across:
@@ -2824,8 +2830,8 @@ object Schema:
     /** Schema for Map[K, V] with non-String keys.
       *
       * `stringMapSchema` is the more specific given for `Map[String, V]` (object encoding); this
-      * general given covers every other key type so `Map[Int, V]` and friends derive and round-trip
-      * on all codecs. Each entry is written as a two-field record (`key`, `value`): the Protobuf
+      * general given covers every other key type, so `Map[Int, V]` and friends derive. Each entry
+      * is written as a two-field record (`key`, `value`): the Protobuf
       * codec renders this as a standard proto3 `MapEntry` message, and self-describing codecs render
       * an array of `{key, value}` objects (a non-String key cannot be an object field name).
       */
@@ -2856,10 +2862,10 @@ object Schema:
                         // hasNextField advances past the inter-field separator (a no-op for
                         // Protobuf, the comma for a self-describing codec) before each field read.
                         discard(reader.hasNextField())
-                        val _ = reader.field() // "key"
+                        discard(reader.field()) // "key"
                         val k = kSchema.serializeRead(reader)
                         discard(reader.hasNextField())
-                        val _ = reader.field() // "value"
+                        discard(reader.field()) // "value"
                         val v = vSchema.serializeRead(reader)
                         reader.objectEnd()
                         builder += (k -> v)
@@ -3051,6 +3057,7 @@ object Schema:
                 reader.mapEnd()
                 dict
             ,
+            absentDefaultValue = Maybe(Dict.empty[String, V]),
             // Non-inline givens have no implicit Tag[V] in scope; fall back to Tag[Any].
             structure = Structure.Type.Mapping(
                 "Dict",
@@ -3061,7 +3068,14 @@ object Schema:
         )
     end stringDictSchema
 
-    /** Schema for Dict[K, V] with non-String keys - serializes as array of [k, v] pairs. */
+    /** Schema for Dict[K, V] with non-String keys.
+      *
+      * `stringDictSchema` is the more specific given for `Dict[String, V]` (object encoding); this
+      * general given covers every other key type, so `Dict[Int, V]` and friends derive. Each entry
+      * is written as a two-field record (`key`, `value`): the Protobuf
+      * codec renders this as a standard proto3 `MapEntry` message, and self-describing codecs render
+      * an array of `{key, value}` objects (a non-String key cannot be an object field name).
+      */
     given dictSchema[K, V](using kSchema0: => Schema[K], vSchema0: => Schema[V]): Schema[Dict[K, V]] =
         lazy val kSchema = kSchema0
         lazy val vSchema = vSchema0
@@ -3069,10 +3083,12 @@ object Schema:
             writeFn = (value, writer) =>
                 writer.arrayStart(value.size)
                 value.foreach { (k, v) =>
-                    writer.arrayStart(2)
+                    writer.objectStart("", 2)
+                    writer.field("key", 1)
                     kSchema.serializeWrite(k, writer)
+                    writer.field("value", 2)
                     vSchema.serializeWrite(v, writer)
-                    writer.arrayEnd()
+                    writer.objectEnd()
                 }
                 writer.arrayEnd()
             ,
@@ -3082,16 +3098,23 @@ object Schema:
                 def loop(dict: Dict[K, V], count: Int): Dict[K, V] =
                     if reader.hasNextElement() then
                         reader.checkCollectionSize(count)
-                        discard(reader.arrayStart())
+                        discard(reader.objectStart())
+                        // hasNextField advances past the inter-field separator (a no-op for
+                        // Protobuf, the comma for a self-describing codec) before each field read.
+                        discard(reader.hasNextField())
+                        discard(reader.field()) // "key"
                         val k = kSchema.serializeRead(reader)
+                        discard(reader.hasNextField())
+                        discard(reader.field()) // "value"
                         val v = vSchema.serializeRead(reader)
-                        reader.arrayEnd()
+                        reader.objectEnd()
                         loop(dict.update(k, v), count + 1)
                     else dict
                 val dict = loop(Dict.empty[K, V], 1)
                 reader.arrayEnd()
                 dict
             ,
+            absentDefaultValue = Maybe(Dict.empty[K, V]),
             // Non-inline givens have no implicit Tag[K] + Tag[V] in scope; fall back to Tag[Any].
             structure = Structure.Type.Mapping(
                 "Dict",
@@ -3101,6 +3124,117 @@ object Schema:
             )
         )
     end dictSchema
+
+    /** Schema for OrderedDict[String, V] - serializes as a JSON object.
+      *
+      * Note: the map's insertion order survives an encode/decode round-trip. Encoding walks the map
+      * in insertion order and decoding rebuilds it by inserting entries in wire order, so wire order
+      * becomes insertion order. For the Protobuf codec this holds between a kyo-schema encode and a
+      * kyo-schema decode: the generated `.proto` declares a `map<K, V>` field, and proto3 does
+      * not mandate entry order for map fields, so a foreign Protobuf implementation may
+      * reorder entries.
+      */
+    given stringOrderedDictSchema[V](using vSchema0: => Schema[V]): Schema[OrderedDict[String, V]] =
+        lazy val vSchema = vSchema0
+        Schema.init[OrderedDict[String, V]](
+            writeFn = (value, writer) =>
+                writer.mapStart(value.size)
+                discard(value.foldLeft(0) { (idx, k, v) =>
+                    writer.field(k, idx)
+                    vSchema.serializeWrite(v, writer)
+                    idx + 1
+                })
+                writer.mapEnd()
+            ,
+            readFn = reader =>
+                discard(reader.mapStart())
+                @tailrec
+                def loop(map: OrderedDict[String, V], count: Int): OrderedDict[String, V] =
+                    if reader.hasNextEntry() then
+                        reader.checkCollectionSize(count)
+                        val k = reader.field()
+                        val v = vSchema.serializeRead(reader)
+                        loop(map.update(k, v), count + 1)
+                    else map
+                val map = loop(OrderedDict.empty[String, V], 1)
+                reader.mapEnd()
+                map
+            ,
+            absentDefaultValue = Maybe(OrderedDict.empty[String, V]),
+            // Non-inline givens have no implicit Tag[V] in scope; fall back to Tag[Any].
+            structure = Structure.Type.Mapping(
+                "OrderedDict",
+                Tag[Any],
+                Structure.Type.Primitive(Structure.PrimitiveKind.String, Tag[String].asInstanceOf[Tag[Any]]),
+                vSchema.structure
+            )
+        )
+    end stringOrderedDictSchema
+
+    /** Schema for OrderedDict[K, V] with non-String keys.
+      *
+      * `stringOrderedDictSchema` is the more specific given for `OrderedDict[String, V]` (object
+      * encoding); this general given covers every other key type. Each entry is written as a
+      * two-field record (`key`, `value`), the same form `mapSchema` and `dictSchema` use: the
+      * Protobuf codec renders this as a standard proto3 `MapEntry` message, and self-describing
+      * codecs render an array of `{key, value}` objects (a non-String key cannot be an object field
+      * name).
+      *
+      * Note: the map's insertion order survives an encode/decode round-trip. Encoding walks the map
+      * in insertion order and decoding rebuilds it by inserting entries in wire order, so wire order
+      * becomes insertion order. For the Protobuf codec this holds between a kyo-schema encode and
+      * a kyo-schema decode: for every key type reachable under the default `Conformance.Strict` the
+      * generated `.proto` declares a `map<K, V>` field, and proto3 does not mandate entry order for
+      * map fields, so a foreign Protobuf implementation may reorder entries.
+      */
+    given orderedDictSchema[K, V](using kSchema0: => Schema[K], vSchema0: => Schema[V]): Schema[OrderedDict[K, V]] =
+        lazy val kSchema = kSchema0
+        lazy val vSchema = vSchema0
+        Schema.init[OrderedDict[K, V]](
+            writeFn = (value, writer) =>
+                writer.arrayStart(value.size)
+                value.foreach { (k, v) =>
+                    writer.objectStart("", 2)
+                    writer.field("key", 1)
+                    kSchema.serializeWrite(k, writer)
+                    writer.field("value", 2)
+                    vSchema.serializeWrite(v, writer)
+                    writer.objectEnd()
+                }
+                writer.arrayEnd()
+            ,
+            readFn = reader =>
+                discard(reader.arrayStart())
+                @tailrec
+                def loop(map: OrderedDict[K, V], count: Int): OrderedDict[K, V] =
+                    if reader.hasNextElement() then
+                        reader.checkCollectionSize(count)
+                        discard(reader.objectStart())
+                        // hasNextField advances past the inter-field separator (a no-op for
+                        // Protobuf, the comma for a self-describing codec) before each field read.
+                        discard(reader.hasNextField())
+                        discard(reader.field()) // "key"
+                        val k = kSchema.serializeRead(reader)
+                        discard(reader.hasNextField())
+                        discard(reader.field()) // "value"
+                        val v = vSchema.serializeRead(reader)
+                        reader.objectEnd()
+                        loop(map.update(k, v), count + 1)
+                    else map
+                val map = loop(OrderedDict.empty[K, V], 1)
+                reader.arrayEnd()
+                map
+            ,
+            absentDefaultValue = Maybe(OrderedDict.empty[K, V]),
+            // Non-inline givens have no implicit Tag[K] + Tag[V] in scope; fall back to Tag[Any].
+            structure = Structure.Type.Mapping(
+                "OrderedDict",
+                Tag[Any],
+                kSchema.structure,
+                vSchema.structure
+            )
+        )
+    end orderedDictSchema
 
     // --- Internal helpers ---
 

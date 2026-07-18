@@ -66,8 +66,8 @@ class HttpSecurityTest extends kyo.BaseHttpTest:
         var completed                = false
         var failed                   = false
 
-        ChunkedBodyDecoder.readBufferedUnsafe(channel, initial) { result =>
-            result match
+        ChunkedBodyDecoder.readBufferedUnsafe(channel, initial, Int.MaxValue)(
+            {
                 case Result.Success(span) =>
                     resultBytes = span.toArray
                     completed = true
@@ -75,10 +75,32 @@ class HttpSecurityTest extends kyo.BaseHttpTest:
                     failed = true
                 case Result.Panic(_) =>
                     failed = true
-        }
+            },
+            _ => failed = true
+        )
 
         (resultBytes, completed)
     end decodeChunked
+
+    /** Decode a chunked body with a `maxBytes` cap. Returns (completed, tooLarge): tooLarge=true means the accumulated body exceeded
+      * `maxBytes` and the decode was rejected (CWE-400 guard) rather than completing.
+      */
+    private def decodeChunkedCapped(rawChunkedBody: String, maxBytes: Int): (Boolean, Boolean) =
+        val channel   = Channel.Unsafe.init[Span[Byte]](16)
+        val bytes     = rawChunkedBody.getBytes(StandardCharsets.ISO_8859_1)
+        val initial   = Span.fromUnsafe(bytes)
+        var completed = false
+        var tooLarge  = false
+        ChunkedBodyDecoder.readBufferedUnsafe(channel, initial, maxBytes)(
+            {
+                case Result.Success(_) => completed = true
+                case Result.Failure(_) => ()
+                case Result.Panic(_)   => ()
+            },
+            _ => tooLarge = true
+        )
+        (completed, tooLarge)
+    end decodeChunkedCapped
 
     // ====================================================================================
     // Group 1: Request Smuggling -- Multiple Content-Length (CVE-2019-20445, CVE-2026-23941)
@@ -701,6 +723,29 @@ class HttpSecurityTest extends kyo.BaseHttpTest:
                 )
             end if
             succeed("security check passed: parser correctly rejected or did not exhibit the vulnerability")
+        }
+    }
+
+    // ====================================================================================
+    // Group: Response body DoS -- unbounded buffered chunked accumulation (CWE-400)
+    // ====================================================================================
+
+    "Response body DoS: unbounded buffered chunked accumulation (CWE-400)" - {
+
+        "a chunked body within the cap decodes normally" in {
+            // 3 small chunks (4+5+3 = 12 decoded bytes), cap 1 MiB: completes, not rejected.
+            val body                  = "4\r\nWiki\r\n5\r\npedia\r\n3\r\n in\r\n0\r\n\r\n"
+            val (completed, tooLarge) = decodeChunkedCapped(body, 1024 * 1024)
+            assert(completed && !tooLarge, s"a small chunked body must decode under the cap; completed=$completed tooLarge=$tooLarge")
+        }
+
+        "a chunked body whose total exceeds the cap is rejected, not accumulated unboundedly" in {
+            // 64 chunks of 16 decoded bytes each = 1024 decoded bytes; cap 256 bytes. The decoder must reject via onTooLarge
+            // rather than grow the accumulator past the cap (a server streaming endless chunks would otherwise OOM the client).
+            val chunk                 = "10\r\n" + ("A" * 16) + "\r\n"
+            val body                  = (chunk * 64) + "0\r\n\r\n"
+            val (completed, tooLarge) = decodeChunkedCapped(body, 256)
+            assert(tooLarge && !completed, s"an over-cap chunked body must be rejected; completed=$completed tooLarge=$tooLarge")
         }
     }
 

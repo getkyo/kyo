@@ -70,24 +70,22 @@ jobs:
       # (java.lang.OutOfMemoryError) or overcommit the box (kernel OOM-kill, exit 143). max-parallel:4
       # still runs the four targets on separate runners, so this costs no wall-clock on the JVM pole.
       SBT_TASK_LIMIT: 1
-      # G1 is the JDK 24 default; pin it explicitly so the collector is fixed across JDK vendor/version.
-      # -Xmx12G is the driver ceiling for the JVM, JS, and Wasm targets, whose compile and link phases run
-      # in the driver heap. There is deliberately no -Xms floor: tests run in forked JVMs (sized via
-      # build.sbt Test/javaOptions), and SBT_TASK_LIMIT=1 keeps compile and test from overlapping, so a low
-      # floor lets G1 release the driver's compile heap back to the box during the test phase, leaving room
-      # for the forks.
-      # The Native target is capped lower (8G). Its optimizer runs in the driver heap, but the native
-      # compile and link phase forks the LLVM toolchain (clang/ld) that runs ALONGSIDE the still-large
-      # driver heap within the one sbt task, so SBT_TASK_LIMIT=1 cannot serialize the two. A 12G driver
-      # heap plus the forked toolchain overcommits the 16GB runner and the kernel OOM-kills the driver
-      # (exit 143). 8G leaves physical headroom for the forked LLVM toolchain while still fitting the
-      # in-heap optimizer.
-      JAVA_OPTS: "-Xmx${{ matrix.target == 'Native' && '8G' || '12G' }} -Xss10M -XX:+UseG1GC -XX:+UseCompactObjectHeaders -XX:MaxMetaspaceSize=2G -XX:ReservedCodeCacheSize=256M -Dfile.encoding=UTF-8"
-      JVM_OPTS:  "-Xmx${{ matrix.target == 'Native' && '8G' || '12G' }} -Xss10M -XX:+UseG1GC -XX:+UseCompactObjectHeaders -XX:MaxMetaspaceSize=2G -XX:ReservedCodeCacheSize=256M -Dfile.encoding=UTF-8"
+      # The sbt driver heap is governed by the checked-in .jvmopts (12G): the sbt runner appends
+      # .jvmopts after these env opts on the java command line, so an -Xmx set here would never
+      # take effect. The env therefore carries only the non-heap flags, which do reach the JVM
+      # because .jvmopts holds no conflicting duplicates for them.
+      JAVA_OPTS: "-Xss10M -XX:+UseG1GC -XX:+UseCompactObjectHeaders -XX:MaxMetaspaceSize=2G -XX:ReservedCodeCacheSize=256M -Dfile.encoding=UTF-8"
+      JVM_OPTS:  "-Xss10M -XX:+UseG1GC -XX:+UseCompactObjectHeaders -XX:MaxMetaspaceSize=2G -XX:ReservedCodeCacheSize=256M -Dfile.encoding=UTF-8"
       # Link kyo-schema's native test binary in its own sbt driver before the aggregate link: its
-      # whole-program optimize peaks ~7.7G RSS, which OOM-killed the 8G-capped aggregate driver once
-      # ~10 prior modules had filled metaspace. ci-test.sh honors this only for the Native target.
+      # whole-program optimize runs against a fresh heap instead of a driver that has accumulated
+      # ~10 prior modules of heap and metaspace. ci-test.sh honors this only for the Native target.
       NATIVE_HEAVY: "${{ matrix.target == 'Native' && 'kyo-schema' || '' }}"
+      # Cap the Native link drivers to 2 CPUs (-XX:ActiveProcessorCount). The scala-native
+      # toolchain sizes its optimizer pool and its concurrent clang forks from
+      # availableProcessors, and the fork fleet stacked on the driver heap is what overcommits
+      # the 16GB runner (kernel OOM, exit 143). ci-test.sh applies this to the nativeLink
+      # invocations only; compile and the test run keep all 4 CPUs.
+      NATIVE_LINK_CPUS: "${{ matrix.target == 'Native' && '2' || '' }}"
 
     steps:
       - uses: actions/checkout@v7.0.0

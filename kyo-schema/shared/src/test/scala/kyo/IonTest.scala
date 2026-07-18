@@ -577,6 +577,69 @@ class IonTest extends kyo.test.Test[Any]:
         }
     }
 
+    // Non-String-key Dict round-trips through the real codec. Each entry is a two-field
+    // {key, value} record.
+    "dictSchema non-String-key Dict" - {
+
+        "round-trips a non-String-key Dict" in {
+            val holder  = MTIntStringDict(Dict(1 -> "one", 2 -> "two", 3 -> "three"))
+            val encoded = Ion.encode(holder)
+            val decoded = Ion.decode[MTIntStringDict](encoded).getOrThrow
+            assert(decoded.d.get(1) == Maybe("one"))
+            assert(decoded.d.get(2) == Maybe("two"))
+            assert(decoded.d.get(3) == Maybe("three"))
+            assert(decoded.d.size == 3)
+        }
+
+        "round-trips a non-String-key Dict with non-empty collection values" in {
+            val holder  = MTIntChunkDict(Dict(1 -> Chunk("a", "b"), 2 -> Chunk("c")))
+            val encoded = Ion.encode(holder)
+            val decoded = Ion.decode[MTIntChunkDict](encoded).getOrThrow
+            assert(decoded.d.get(1) == Maybe(Chunk("a", "b")))
+            assert(decoded.d.get(2) == Maybe(Chunk("c")))
+        }
+
+    }
+
+    // OrderedDict Schema given: insertion-order round-trip.
+    "OrderedDict Schema given" - {
+
+        "OrderedDict[String, V] field preserves insertion order across encode/decode" in {
+            val holder =
+                MTOrderedDictConfig(OrderedDict("zeta" -> 30, "alpha" -> 3, "mike" -> 8080, "bravo" -> 5, "yankee" -> 100, "delta" -> 42))
+            val encoded = Ion.encode(holder)
+            val decoded = Ion.decode[MTOrderedDictConfig](encoded).getOrThrow
+            assert(decoded.settings.toChunk.map(_._1) == Chunk("zeta", "alpha", "mike", "bravo", "yankee", "delta"))
+        }
+
+    }
+
+    // omitEmptyCollections on OrderedDict/Dict fields: an empty field must be dropped from the
+    // wire and round-trip back to the empty value, matching Map/Chunk/List/Vector/Set/Seq behavior.
+    "omitEmptyCollections on OrderedDict/Dict fields" - {
+
+        "empty OrderedDict[String, V] field is omitted from the wire and round-trips" in {
+            val omit    = Schema[MTOrderedDictRecord].omitEmptyCollections
+            val value   = MTOrderedDictRecord("alice", OrderedDict.empty[String, Int], 7)
+            val encoded = omit.encodeString[Ion](value)
+            assert(encoded == """{name:"alice",count:7}""", s"empty String-key OrderedDict must be dropped from the wire: $encoded")
+            val decoded = omit.decodeString[Ion](encoded).getOrThrow
+            assert(decoded.name == value.name && decoded.count == value.count)
+            assert(decoded.settings.is(value.settings))
+        }
+
+        "empty Dict[Int, V] field (non-String key) is omitted from the wire and round-trips" in {
+            val omit    = Schema[MTIntStringDictRecord].omitEmptyCollections
+            val value   = MTIntStringDictRecord("alice", Dict.empty[Int, String], 7)
+            val encoded = omit.encodeString[Ion](value)
+            assert(encoded == """{name:"alice",count:7}""", s"empty non-String-key Dict must be dropped from the wire: $encoded")
+            val decoded = omit.decodeString[Ion](encoded).getOrThrow
+            assert(decoded.name == value.name && decoded.count == value.count)
+            assert(decoded.byId.is(value.byId))
+        }
+
+    }
+
 end IonTest
 
 object IonTest:
