@@ -10,19 +10,17 @@ import kyo.net.internal.TlsProviderPlatform
 import kyo.net.internal.TlsTestCert
 
 /** Connect-time TLS config-failure typing over the real [[PosixTransport]] backend (epoll/kqueue): the connect-path `buildEngine` catch
-  * propagates a [[NetTlsConfigException]] AS-IS, never re-wrapping it in a [[kyo.net.NetTlsHandshakeException]] carrying an untyped `Closed`
-  * the way the pre-fix catch used to.
+  * propagates a [[NetTlsConfigException]] AS-IS, never re-wrapping it in a [[kyo.net.NetTlsHandshakeException]] carrying an untyped `Closed`.
   *
   * The real engine-construction decision for an empty reference identity differs by registered provider:
   * [[kyo.net.internal.SslEngineProvider]] and the inline NIO path reject BEFORE the handshake starts, while the native
   * [[kyo.net.internal.SslLibProvider]] providers (BoringSSL, system OpenSSL) instead bind an unmatchable identity and let the real
   * handshake reject it (so on Native, no registered provider throws pre-flight at all). Rather than depending on which concrete provider a
   * host happens to have staged, the client side of this scenario is driven through [[PosixTransport.testEngineFactory]], so the catch-site
-  * behavior this phase changed is pinned deterministically on every platform; the server side still builds a real engine (any staged
+  * behavior under test is pinned deterministically on every platform; the server side still builds a real engine (any staged
   * provider), so the scenario stays a genuine loopback connect, not a fully synthetic one. The connect target is a real, resolvable address
   * (127.0.0.1): an empty host is deliberately NOT used here, since it exercises DNS resolution differently per platform (`getaddrinfo("")`
-  * fails on Native while the JVM resolver treats it as loopback) through a layer this phase does not touch, unrelated to the TLS catch site
-  * under test.
+  * fails on Native while the JVM resolver treats it as loopback), a layer unrelated to the TLS catch site under test.
   *
   * The accept side of `listen` carries the same invariant in the other direction: a `buildEngine` failure while accepting one connection
   * must close only that connection's fd and never crash or wedge the shared accept loop, since the loop keeps serving every later

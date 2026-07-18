@@ -599,7 +599,7 @@ class WritePumpTest extends Test:
 
         // Mirrors the writable-wait-failure test above (same setup: smallBufferedPair(2048,2048), a 1 MB payload guaranteeing EAGAIN, the
         // onAwaitWritable hook closing the handle the instant the writable wait registers), but pins the DROP-CORRECTNESS half of the lost-CAS
-        // contract this phase makes explicit: once teardown wins (state swings to TornDown), the pump must never resurrect and must never issue
+        // contract: once teardown wins (state swings to TornDown), the pump must never resurrect and must never issue
         // another write for the now-undeliverable captured tail. closedLatch latches the teardown; the two extra assertions (writeCalls stays
         // at 1, state reads TornDown) are the load-bearing ones a CAS-retry regression would break.
         "an error teardown racing a partial write drops the tail without resurrection" in {

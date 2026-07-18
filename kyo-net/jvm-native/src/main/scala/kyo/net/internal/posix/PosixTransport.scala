@@ -4,7 +4,6 @@ import kyo.*
 import kyo.ffi.Buffer
 import kyo.ffi.Ffi
 import kyo.net.Connection
-import kyo.net.Connection as NetConnection
 import kyo.net.Listener as NetListener
 import kyo.net.NetAddress
 import kyo.net.NetAlreadyDetachedException
@@ -245,14 +244,14 @@ final private[net] class PosixTransport private[posix] (
     // ---------------------------------------------------------------------------------------------------------------------------------------
 
     /** Connect a non-blocking TCP socket to `host:port` and complete with an open plaintext [[Connection]]. */
-    def connect(host: String, port: Int)(using AllowUnsafe, Frame): Fiber.Unsafe[NetConnection, Abort[NetException]] =
+    def connect(host: String, port: Int)(using AllowUnsafe, Frame): Fiber.Unsafe[Connection, Abort[NetException]] =
         connectResolving(host, port, nodelay = true, tls = Absent)
 
     /** Connect a non-blocking TCP socket to `host:port`, then drive a client TLS handshake before completing. */
     def connect(host: String, port: Int, tls: NetTlsConfig)(using
         AllowUnsafe,
         Frame
-    ): Fiber.Unsafe[NetConnection, Abort[NetException]] =
+    ): Fiber.Unsafe[Connection, Abort[NetException]] =
         connectResolving(host, port, nodelay = true, tls = Present((tls, host)))
 
     /** Resolve `host` (numeric / loopback inline, otherwise through the offloaded-blocking [[HostResolver]]) and then drive the connect.
@@ -268,9 +267,9 @@ final private[net] class PosixTransport private[posix] (
         port: Int,
         nodelay: Boolean,
         tls: Maybe[(NetTlsConfig, String)]
-    )(using AllowUnsafe, Frame): Fiber.Unsafe[NetConnection, Abort[NetException]] =
+    )(using AllowUnsafe, Frame): Fiber.Unsafe[Connection, Abort[NetException]] =
         val target  = s"$host:$port"
-        val promise = new IOPromise[NetException, NetConnection]
+        val promise = new IOPromise[NetException, Connection]
         resolveAndEncode(host, port).onComplete {
             case Result.Success(pending) =>
                 // pending: (Int, Buffer[Byte], Int) < Any; .eval extracts the concrete tuple, mirroring resolveAndEncode's own identical step.
@@ -281,17 +280,17 @@ final private[net] class PosixTransport private[posix] (
                 promise.completeDiscard(Result.panic(e))
         }
         // Fiber.Unsafe[A, S] is an opaque alias over IOPromiseBase[Any, A < (Async & S)] (kyo.Fiber.scala), structurally different from this
-        // plainly-constructed, invariant IOPromise[NetException, NetConnection], even though both erase to the same runtime object; the
+        // plainly-constructed, invariant IOPromise[NetException, Connection], even though both erase to the same runtime object; the
         // alias is transparent only inside kyo.Fiber's own defining scope, so exposing this promise as the locked Transport.connect return
-        // needs this erased-boundary cast. Safe: the promise completes only with the NetConnection/NetException values above.
-        promise.asInstanceOf[Fiber.Unsafe[NetConnection, Abort[NetException]]]
+        // needs this erased-boundary cast. Safe: the promise completes only with the Connection/NetException values above.
+        promise.asInstanceOf[Fiber.Unsafe[Connection, Abort[NetException]]]
     end connectResolving
 
     /** Connect a non-blocking Unix-domain socket to `path` and complete with an open plaintext [[Connection]] (no `TCP_NODELAY`). A Unix path
       * needs no name resolution, so the encoded `sockaddr` is built inline and handed straight to [[connectImpl]] with no resolver fiber.
       */
-    def connectUnix(path: String)(using AllowUnsafe, Frame): Fiber.Unsafe[NetConnection, Abort[NetException]] =
-        val promise = new IOPromise[NetException, NetConnection]
+    def connectUnix(path: String)(using AllowUnsafe, Frame): Fiber.Unsafe[Connection, Abort[NetException]] =
+        val promise = new IOPromise[NetException, Connection]
         connectImpl(
             SockAddr.encodeUnix(PosixConstants.AF_UNIX, path).map((b, l) => (PosixConstants.AF_UNIX, b, l)),
             nodelay = false,
@@ -302,10 +301,10 @@ final private[net] class PosixTransport private[posix] (
             promise = promise
         )
         // Fiber.Unsafe[A, S] is an opaque alias over IOPromiseBase[Any, A < (Async & S)] (kyo.Fiber.scala), structurally different from this
-        // plainly-constructed, invariant IOPromise[NetException, NetConnection], even though both erase to the same runtime object; the
+        // plainly-constructed, invariant IOPromise[NetException, Connection], even though both erase to the same runtime object; the
         // alias is transparent only inside kyo.Fiber's own defining scope, so exposing this promise as the locked Transport.connectUnix
-        // return needs this erased-boundary cast. Safe: the promise completes only with the NetConnection/NetException values above.
-        promise.asInstanceOf[Fiber.Unsafe[NetConnection, Abort[NetException]]]
+        // return needs this erased-boundary cast. Safe: the promise completes only with the Connection/NetException values above.
+        promise.asInstanceOf[Fiber.Unsafe[Connection, Abort[NetException]]]
     end connectUnix
 
     /** Encode an inet `sockaddr` for `host` WITHOUT any DNS resolution: IPv6 when `host` is a v6 literal, otherwise IPv4. Returns the family,
@@ -405,7 +404,7 @@ final private[net] class PosixTransport private[posix] (
         host: String,
         port: Int,
         tls: Maybe[(NetTlsConfig, String)],
-        promise: IOPromise[NetException, NetConnection]
+        promise: IOPromise[NetException, Connection]
     )(using AllowUnsafe, Frame): Unit =
         encoded match
             case Absent =>
@@ -450,7 +449,7 @@ final private[net] class PosixTransport private[posix] (
       * disarms the timer by interrupting the timer fiber, so the timer never fires.
       */
     private def armConnectDeadline(
-        promise: IOPromise[NetException, NetConnection],
+        promise: IOPromise[NetException, Connection],
         host: String,
         port: Int
     )(using AllowUnsafe, Frame): Unit =
@@ -480,7 +479,7 @@ final private[net] class PosixTransport private[posix] (
         host: String,
         port: Int,
         tls: Maybe[(NetTlsConfig, String)],
-        promise: IOPromise[NetException, NetConnection]
+        promise: IOPromise[NetException, Connection]
     )(using AllowUnsafe, Frame): Unit =
         takeNow(sockets.connect(handle.writeFd, addr, len)) match
             case Present(result) =>
@@ -513,7 +512,7 @@ final private[net] class PosixTransport private[posix] (
         host: String,
         port: Int,
         tls: Maybe[(NetTlsConfig, String)],
-        promise: IOPromise[NetException, NetConnection],
+        promise: IOPromise[NetException, Connection],
         checkSoError: Boolean
     )(using AllowUnsafe, Frame): Unit =
         val writablePromise = new IOPromise[Closed, Unit]
@@ -587,7 +586,7 @@ final private[net] class PosixTransport private[posix] (
         target: String,
         port: Int,
         tls: Maybe[(NetTlsConfig, String)],
-        promise: IOPromise[NetException, NetConnection]
+        promise: IOPromise[NetException, Connection]
     )(using AllowUnsafe, Frame): Unit =
         addr.close()
         tls match
@@ -680,7 +679,7 @@ final private[net] class PosixTransport private[posix] (
     private def completeConnect(
         handle: PosixHandle,
         driver: IoDriver[PosixHandle],
-        promise: IOPromise[NetException, NetConnection]
+        promise: IOPromise[NetException, Connection]
     )(using AllowUnsafe, Frame): Unit =
         val connection = openTracked(handle, driver)
         connection.upgradeFn = Present { (cfg, frame) =>
@@ -757,10 +756,10 @@ final private[net] class PosixTransport private[posix] (
     private def installStatus(connection: InternalConnection[PosixHandle], handle: PosixHandle)(using AllowUnsafe): Unit =
         connection.statusFn = Present(() =>
             handle.halfClose match
-                case HalfCloseState.PeerCleanClose => NetConnection.Status.CleanClose
-                case HalfCloseState.PeerEof        => NetConnection.Status.Truncated
-                case _ if connection.isOpen        => NetConnection.Status.Active
-                case _                             => NetConnection.Status.LocalClose
+                case HalfCloseState.PeerCleanClose => Connection.Status.CleanClose
+                case HalfCloseState.PeerEof        => Connection.Status.Truncated
+                case _ if connection.isOpen        => Connection.Status.Active
+                case _                             => Connection.Status.LocalClose
         )
     end installStatus
 
@@ -770,13 +769,13 @@ final private[net] class PosixTransport private[posix] (
 
     /** Listen for plaintext TCP connections on `host:port`, resolving the actual (possibly ephemeral) port. */
     def listen(host: String, port: Int, backlog: Int)(
-        handler: NetConnection => Unit
+        handler: Connection => Unit
     )(using AllowUnsafe, Frame): Fiber.Unsafe[NetListener, Abort[NetException]] =
         listenResolving(host, port, backlog, handler, tls = Absent)
 
     /** Listen for TLS TCP connections on `host:port`; each accepted connection drives a server handshake before reaching the handler. */
     def listen(host: String, port: Int, backlog: Int, tls: NetTlsConfig)(
-        handler: NetConnection => Unit
+        handler: Connection => Unit
     )(using AllowUnsafe, Frame): Fiber.Unsafe[NetListener, Abort[NetException]] =
         listenResolving(host, port, backlog, handler, tls = Present(tls))
 
@@ -791,7 +790,7 @@ final private[net] class PosixTransport private[posix] (
         host: String,
         port: Int,
         backlog: Int,
-        handler: NetConnection => Unit,
+        handler: Connection => Unit,
         tls: Maybe[NetTlsConfig]
     )(using AllowUnsafe, Frame): Fiber.Unsafe[NetListener, Abort[NetException]] =
         val promise = new IOPromise[NetException, NetListener]
@@ -815,7 +814,7 @@ final private[net] class PosixTransport private[posix] (
       * name resolution, so the encoded `sockaddr` is built inline and handed straight to [[listenImpl]] with no resolver fiber.
       */
     def listenUnix(path: String, backlog: Int)(
-        handler: NetConnection => Unit
+        handler: Connection => Unit
     )(using AllowUnsafe, Frame): Fiber.Unsafe[NetListener, Abort[NetException]] =
         val promise = new IOPromise[NetException, NetListener]
         listenImpl(
@@ -847,7 +846,7 @@ final private[net] class PosixTransport private[posix] (
         port: Int,
         unixPath: Maybe[String],
         backlog: Int,
-        handler: NetConnection => Unit,
+        handler: Connection => Unit,
         tls: Maybe[NetTlsConfig],
         promise: IOPromise[NetException, NetListener]
     )(using AllowUnsafe, Frame): Unit =
@@ -905,7 +904,7 @@ final private[net] class PosixTransport private[posix] (
       */
     private def startAcceptLoop(
         listener: PosixListener,
-        handler: NetConnection => Unit,
+        handler: Connection => Unit,
         tls: Maybe[NetTlsConfig]
     )(using AllowUnsafe, Frame): Unit =
         discard(acceptLoopsActive.incrementAndGet())
@@ -1019,7 +1018,7 @@ final private[net] class PosixTransport private[posix] (
       */
     private def handleAccepted(
         clientFd: Int,
-        handler: NetConnection => Unit,
+        handler: Connection => Unit,
         tls: Maybe[NetTlsConfig]
     )(using AllowUnsafe, Frame): Unit =
         if !prepareClientSocket(clientFd, nodelay = true) then closeRawFd(clientFd)
@@ -1176,7 +1175,7 @@ final private[net] class PosixTransport private[posix] (
     private def spawnHandler(
         connection: InternalConnection[PosixHandle],
         driver: IoDriver[PosixHandle],
-        handler: NetConnection => Unit
+        handler: Connection => Unit
     )(using AllowUnsafe, Frame): Unit =
         // Server-accepted connection: mark its origin so a STARTTLS upgrade through the public upgradeToTls runs in the TLS server role
         // (upgradeToTls reads isServerOrigin), and route its upgradeFn through the same public entry as the client so the role lives in one
@@ -1747,9 +1746,8 @@ final private[net] class PosixTransport private[posix] (
       * an empty identity FAILS CLOSED rather than handshaking with no name bound (RFC 9525 §6.1). The mechanism is provider-specific: the JDK
       * floor provider rejects at `buildEngine` time (throwing `NetTlsConfigException`), while the BoringSSL and OpenSSL providers bind an
       * unmatchable reference identity so the handshake rejects every peer. Either way a verifying STARTTLS client with no `sniHostname` never
-      * silently accepts a cert, so a verifying client should set `sniHostname`; this is the intended behavior change that surfaces a
-      * previously-masked insecure config (STARTTLS-without-SNI verifying clients now fail the upgrade instead of silently accepting any
-      * chain-valid cert). The server role takes accept state with no SNI, so its host is always empty and never binds an identity.
+      * silently accepts a cert, so a verifying client should set `sniHostname`. The server role takes accept state with no SNI, so its host is
+      * always empty and never binds an identity.
       */
     private def upgradeHost(tls: NetTlsConfig, isServer: Boolean): String =
         if isServer then "" else tls.sniHostname.getOrElse("")

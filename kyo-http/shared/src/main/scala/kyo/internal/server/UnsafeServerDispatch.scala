@@ -305,6 +305,10 @@ private[kyo] object UnsafeServerDispatch:
                     restartParser()
                 end if
             case _ =>
+                // Fiber.Unsafe[A, S] is an opaque alias over IOPromiseBase[Any, A < (Async & S)] (kyo.Fiber.scala); IOTask is an IOPromise
+                // subtype, structurally different from that alias even though both erase to the same runtime object. The alias is transparent
+                // only inside kyo.Fiber's own defining scope, so exposing the scheduled task as the Fiber.Unsafe[Unit, Any] the inflight slot
+                // holds needs this erased-boundary cast. Safe: the task runs serveRequest (a Unit computation) and settles only with its result.
                 val fiber = IOTask(serveRequest(router, endpoint, lookup, streamCtx, request, config), Trace.init, Context.empty)
                     .asInstanceOf[Fiber.Unsafe[Unit, Any]]
                 inflightHandler.set(Present(fiber))

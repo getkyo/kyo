@@ -265,6 +265,9 @@ private[kyo] object Connection:
       * single CAS one carrier wins: the loser re-reads the winner's state rather than acting on a stale
       * field, so a check-one-field-act-on-another race is unrepresentable.
       *
+      * Distinct from the public close-reason enum `kyo.net.Connection.Status`: this tracks the internal
+      * open/upgrading/closing progression, not the close reason surfaced to a caller.
+      *
       *   - [[Created]]: built, pumps not yet started.
       *   - [[Established]]: pumps running, normal I/O.
       *   - [[Upgrading]]: a STARTTLS detach won; the fd is kept open and NOT torn down (the connection is

@@ -53,7 +53,6 @@ abstract private[kyo] class IoDriver[Handle]:
       * the handshake's own recv to the engine. The default delegates to `awaitRead`: the pollers need no distinction (their reads are synchronous,
       * with no reaped-recv routing ambiguity), so only the io_uring driver overrides it.
       */
-    // Kept: only the io_uring driver overrides this (STARTTLS stray-recv routing); pollers use the awaitRead default. See the override in IoUringDriver.
     def awaitReadHandshake(handle: Handle, promise: Promise.Unsafe[ReadOutcome, Abort[Closed]])(using AllowUnsafe, Frame): Unit =
         awaitRead(handle, promise)
 

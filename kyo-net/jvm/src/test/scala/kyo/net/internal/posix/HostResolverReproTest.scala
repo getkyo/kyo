@@ -15,9 +15,9 @@ import kyo.net.Test
   * answers from /etc/hosts) and asserts a loopback address comes back. JVM-placed because it exercises
   * the JVM system resolver (`java.net.InetAddress`); the cache/seam logic is covered cross-platform.
   *
-  * `HostResolver.resolve` and `SystemResolver.resolveRaw` no longer share the same consumption shape: `resolve` is Abort-native
+  * `HostResolver.resolve` and `SystemResolver.resolveRaw` return different consumption shapes: `resolve` is Abort-native
   * (`Fiber.Unsafe[Resolved, Abort[NetDnsResolutionException]]`), so `.safe.get` yields the resolved value directly on success and aborts the
-  * test on failure; `SystemResolver.resolveRaw` still returns a `Fiber.Unsafe[Result[NetDnsResolutionException, Resolved], Any]` (its own,
+  * test on failure; `SystemResolver.resolveRaw` returns a `Fiber.Unsafe[Result[NetDnsResolutionException, Resolved], Any]` (its own,
   * non-Abort-native shape), so `.safe.get` yields the inner `Result` to pattern-match. Both are consumed via `.safe.get` at the test boundary
   * (`.safe.get` is the sanctioned consumption in test source).
   */

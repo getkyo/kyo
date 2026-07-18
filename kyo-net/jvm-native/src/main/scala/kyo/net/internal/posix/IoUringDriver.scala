@@ -1374,6 +1374,10 @@ final private[net] class IoUringDriver private[posix] (
             )
         thread.setDaemon(true)
         thread.start()
+        // Fiber.Unsafe[A, S] is an opaque alias over IOPromiseBase[Any, A < (Async & S)] (kyo.Fiber.scala), structurally different from this
+        // plainly-constructed Promise.Unsafe[Unit, Any], even though both erase to the same runtime object; the alias is transparent only
+        // inside kyo.Fiber's own defining scope, so exposing donePromise as the locked IoDriver.start return needs this erased-boundary cast.
+        // Safe: the promise completes only with the Unit-success/panic values the reap-loop thread sets above.
         donePromise.asInstanceOf[Fiber.Unsafe[Unit, Any]]
     end start
 

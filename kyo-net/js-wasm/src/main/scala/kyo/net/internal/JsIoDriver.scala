@@ -43,10 +43,17 @@ final private[kyo] class JsIoDriver private (
                     Log.live.unsafe.error(s"$label sentinel crashed", t)
         }
 
+        // Fiber.Unsafe[A, S] is an opaque alias over IOPromiseBase[Any, A < (Async & S)] (kyo.Fiber.scala), structurally different from this
+        // plainly-constructed IOPromise[Any, Unit], even though both erase to the same runtime object; the alias is transparent only inside
+        // kyo.Fiber's own defining scope, so exposing shutdownPromise as the locked IoDriver.start return needs this erased-boundary cast.
+        // Safe: the promise completes only when close() settles it with Unit above.
         shutdownPromise.asInstanceOf[Fiber.Unsafe[Unit, Any]]
     end start
 
     def awaitRead(handle: JsHandle, promise: Promise.Unsafe[ReadOutcome, Abort[Closed]])(using AllowUnsafe, Frame): Unit =
+        // Node's net.Socket#destroyed is a documented boolean property; js.Dynamic erases that to an untyped JS value, so recovering the typed
+        // Boolean needs this narrowing cast. Safe per Node's documented property type; it cannot dissolve without a typed facade for Node's
+        // net.Socket.
         if handle.socket.destroyed.asInstanceOf[Boolean] then
             promise.completeDiscard(Result.fail(Closed(label, summon[Frame], s"socket destroyed")))
         else
@@ -69,6 +76,9 @@ final private[kyo] class JsIoDriver private (
         promise.completeDiscard(Result.fail(Closed(label, summon[Frame], s"awaitAccept not supported on JsIoDriver")))
 
     def awaitWritable(handle: JsHandle, promise: Promise.Unsafe[Unit, Abort[Closed]])(using AllowUnsafe, Frame): Unit =
+        // Node's net.Socket#destroyed is a documented boolean property; js.Dynamic erases that to an untyped JS value, so recovering the typed
+        // Boolean needs this narrowing cast. Safe per Node's documented property type; it cannot dissolve without a typed facade for Node's
+        // net.Socket.
         if handle.socket.destroyed.asInstanceOf[Boolean] then
             promise.completeDiscard(Result.fail(Closed(label, summon[Frame], s"socket destroyed")))
         else
@@ -106,6 +116,9 @@ final private[kyo] class JsIoDriver private (
     end awaitWritable
 
     def write(handle: JsHandle, data: Span[Byte], offset: Int)(using AllowUnsafe): WriteResult =
+        // Two Node narrowing casts below: net.Socket#destroyed (a documented boolean property) and net.Socket#write (a documented boolean
+        // return, where false signals backpressure). js.Dynamic erases both to untyped JS values, so recovering the typed Boolean needs these
+        // narrowing casts. Safe per Node's documented types; they cannot dissolve without a typed facade for Node's net.Socket.
         if data.isEmpty || offset >= data.size then WriteResult.Done
         else if handle.socket.destroyed.asInstanceOf[Boolean] then WriteResult.Error
         else
@@ -131,6 +144,9 @@ final private[kyo] class JsIoDriver private (
     end cancel
 
     def closeHandle(handle: JsHandle)(using AllowUnsafe, Frame): Unit =
+        // Node's net.Socket#destroyed is a documented boolean property; js.Dynamic erases that to an untyped JS value, so recovering the typed
+        // Boolean needs this narrowing cast. Safe per Node's documented property type; it cannot dissolve without a typed facade for Node's
+        // net.Socket.
         if !handle.socket.destroyed.asInstanceOf[Boolean] then
             discard(handle.socket.destroy())
         end if
