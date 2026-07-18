@@ -67,7 +67,7 @@ class HandshakeEngineFreeTest extends Test:
       *
       * The earlier version of this check probed the process-wide lowest-free descriptor (allocate a socket, read its number, close it). That number
       * equals the count of ALL open low descriptors in the process, which is only a valid leak proxy in a single-threaded process. The module runs
-      * its suites at `parallelism 4` (and the campaign command raises async concurrency to 4 on top), so three other suites open and close their own
+      * its suites at `parallelism 4`, so three other suites open and close their own
       * descriptors throughout this soak; the process-wide probe then rose by THEIR fds, not a leak here, and the assertion flaked (a captured run
       * showed the probe climb from 118 to 138 while this test's own socket count held at 1, the listener, with all 19 of the rise foreign). Counting
       * only the port-attributed sockets makes the check immune to that cross-suite contamination while still climbing under a genuine per-iteration

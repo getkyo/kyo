@@ -46,132 +46,130 @@ class ConnectionLostEventLivenessTest extends Test:
     end StubDriver
 
     "no permanent stall on a lost event" - {
-        "no-permanent-stall-on-lost-event" - {
 
-            // Scenario 1: one suppressed arm (WouldBlock) before data arrives.
-            // The minimal lost-event case: the first arm returns empty, the second delivers.
-            // Assert: no stall, bytes delivered, connection remains open.
-            "one-suppressed-arm: recovers and delivers" in {
-                val data     = Array[Byte](1, 2, 3)
-                var armCount = 0
+        // Scenario 1: one suppressed arm (WouldBlock) before data arrives.
+        // The minimal lost-event case: the first arm returns empty, the second delivers.
+        // Assert: no stall, bytes delivered, connection remains open.
+        "one-suppressed-arm: recovers and delivers" in {
+            val data     = Array[Byte](1, 2, 3)
+            var armCount = 0
 
-                final class OneSuppressDriver extends StubDriver:
-                    override def awaitRead(handle: Unit, promise: Promise.Unsafe[ReadOutcome, Abort[Closed]])(using
-                        AllowUnsafe,
-                        Frame
-                    ): Unit =
-                        armCount += 1
-                        armCount match
-                            case 1 => promise.completeDiscard(Result.succeed(ReadOutcome.WouldBlock))
-                            case 2 => promise.completeDiscard(Result.succeed(ReadOutcome.Bytes(Span.fromUnsafe(data))))
-                            case _ => ()
-                        end match
-                    end awaitRead
-                end OneSuppressDriver
+            final class OneSuppressDriver extends StubDriver:
+                override def awaitRead(handle: Unit, promise: Promise.Unsafe[ReadOutcome, Abort[Closed]])(using
+                    AllowUnsafe,
+                    Frame
+                ): Unit =
+                    armCount += 1
+                    armCount match
+                        case 1 => promise.completeDiscard(Result.succeed(ReadOutcome.WouldBlock))
+                        case 2 => promise.completeDiscard(Result.succeed(ReadOutcome.Bytes(Span.fromUnsafe(data))))
+                        case _ => ()
+                    end match
+                end awaitRead
+            end OneSuppressDriver
 
-                val driver = new OneSuppressDriver
-                val conn   = Connection.init[Unit]((), driver, 8)
-                conn.start()
+            val driver = new OneSuppressDriver
+            val conn   = Connection.init[Unit]((), driver, 8)
+            conn.start()
 
-                assert(armCount >= 2, s"one-suppressed-arm: pump must re-arm at least twice; got $armCount")
-                val polled = conn.inbound.poll()
-                assert(
-                    polled match
-                        case Result.Success(Maybe.Present(span)) => span.toArray.toList == data.toList
-                        case _                                   => false,
-                    s"one-suppressed-arm: inbound must contain ${data.toList}, got $polled"
-                )
-                assert(conn.isOpen, "one-suppressed-arm: connection must remain open")
-                succeed
-            }
+            assert(armCount >= 2, s"one-suppressed-arm: pump must re-arm at least twice; got $armCount")
+            val polled = conn.inbound.poll()
+            assert(
+                polled match
+                    case Result.Success(Maybe.Present(span)) => span.toArray.toList == data.toList
+                    case _                                   => false,
+                s"one-suppressed-arm: inbound must contain ${data.toList}, got $polled"
+            )
+            assert(conn.isOpen, "one-suppressed-arm: connection must remain open")
+            succeed
+        }
 
-            // Scenario 2: two suppressed arms (WouldBlock x 2) before data arrives.
-            // A sequence of two lost events; the pump must re-arm after each one and converge.
-            "two-suppressed-arms: recovers after two empty returns" in {
-                val data     = Array[Byte](4, 5, 6)
-                var armCount = 0
+        // Scenario 2: two suppressed arms (WouldBlock x 2) before data arrives.
+        // A sequence of two lost events; the pump must re-arm after each one and converge.
+        "two-suppressed-arms: recovers after two empty returns" in {
+            val data     = Array[Byte](4, 5, 6)
+            var armCount = 0
 
-                final class TwoSuppressDriver extends StubDriver:
-                    override def awaitRead(handle: Unit, promise: Promise.Unsafe[ReadOutcome, Abort[Closed]])(using
-                        AllowUnsafe,
-                        Frame
-                    ): Unit =
-                        armCount += 1
-                        armCount match
-                            case 1 | 2 => promise.completeDiscard(Result.succeed(ReadOutcome.WouldBlock))
-                            case 3     => promise.completeDiscard(Result.succeed(ReadOutcome.Bytes(Span.fromUnsafe(data))))
-                            case _     => ()
-                        end match
-                    end awaitRead
-                end TwoSuppressDriver
+            final class TwoSuppressDriver extends StubDriver:
+                override def awaitRead(handle: Unit, promise: Promise.Unsafe[ReadOutcome, Abort[Closed]])(using
+                    AllowUnsafe,
+                    Frame
+                ): Unit =
+                    armCount += 1
+                    armCount match
+                        case 1 | 2 => promise.completeDiscard(Result.succeed(ReadOutcome.WouldBlock))
+                        case 3     => promise.completeDiscard(Result.succeed(ReadOutcome.Bytes(Span.fromUnsafe(data))))
+                        case _     => ()
+                    end match
+                end awaitRead
+            end TwoSuppressDriver
 
-                val driver = new TwoSuppressDriver
-                val conn   = Connection.init[Unit]((), driver, 8)
-                conn.start()
+            val driver = new TwoSuppressDriver
+            val conn   = Connection.init[Unit]((), driver, 8)
+            conn.start()
 
-                assert(armCount >= 3, s"two-suppressed-arms: pump must reach arm 3; got $armCount")
-                val polled = conn.inbound.poll()
-                assert(
-                    polled match
-                        case Result.Success(Maybe.Present(span)) => span.toArray.toList == data.toList
-                        case _                                   => false,
-                    s"two-suppressed-arms: inbound must contain ${data.toList}, got $polled"
-                )
-                assert(conn.isOpen, "two-suppressed-arms: connection must remain open")
-                succeed
-            }
+            assert(armCount >= 3, s"two-suppressed-arms: pump must reach arm 3; got $armCount")
+            val polled = conn.inbound.poll()
+            assert(
+                polled match
+                    case Result.Success(Maybe.Present(span)) => span.toArray.toList == data.toList
+                    case _                                   => false,
+                s"two-suppressed-arms: inbound must contain ${data.toList}, got $polled"
+            )
+            assert(conn.isOpen, "two-suppressed-arms: connection must remain open")
+            succeed
+        }
 
-            // Scenario 3: write path is independent of suppressed read arms.
-            // Even when the read pump is repeatedly suppressed (WouldBlock on reads), a queued write
-            // must still be delivered to the driver. This pins that the two pumps do not block each other:
-            // a stalled read never prevents a write from completing.
-            "write-independent-of-suppressed-read: write delivers despite two empty read arms" in {
-                val readData     = Array[Byte](7, 8, 9)
-                val writeData    = Array[Byte](10, 11, 12)
-                var readArmCount = 0
-                var writtenBytes = List.empty[Byte]
+        // Scenario 3: write path is independent of suppressed read arms.
+        // Even when the read pump is repeatedly suppressed (WouldBlock on reads), a queued write
+        // must still be delivered to the driver. This pins that the two pumps do not block each other:
+        // a stalled read never prevents a write from completing.
+        "write-independent-of-suppressed-read: write delivers despite two empty read arms" in {
+            val readData     = Array[Byte](7, 8, 9)
+            val writeData    = Array[Byte](10, 11, 12)
+            var readArmCount = 0
+            var writtenBytes = List.empty[Byte]
 
-                final class SuppressedReadWriteDriver extends StubDriver:
-                    override def awaitRead(handle: Unit, promise: Promise.Unsafe[ReadOutcome, Abort[Closed]])(using
-                        AllowUnsafe,
-                        Frame
-                    ): Unit =
-                        readArmCount += 1
-                        readArmCount match
-                            case 1 | 2 => promise.completeDiscard(Result.succeed(ReadOutcome.WouldBlock))
-                            case 3     => promise.completeDiscard(Result.succeed(ReadOutcome.Bytes(Span.fromUnsafe(readData))))
-                            case _     => ()
-                        end match
-                    end awaitRead
-                    override def write(handle: Unit, data: Span[Byte], offset: Int)(using AllowUnsafe): WriteResult =
-                        writtenBytes = data.slice(offset, data.size).toArray.toList
-                        WriteResult.Done
-                end SuppressedReadWriteDriver
+            final class SuppressedReadWriteDriver extends StubDriver:
+                override def awaitRead(handle: Unit, promise: Promise.Unsafe[ReadOutcome, Abort[Closed]])(using
+                    AllowUnsafe,
+                    Frame
+                ): Unit =
+                    readArmCount += 1
+                    readArmCount match
+                        case 1 | 2 => promise.completeDiscard(Result.succeed(ReadOutcome.WouldBlock))
+                        case 3     => promise.completeDiscard(Result.succeed(ReadOutcome.Bytes(Span.fromUnsafe(readData))))
+                        case _     => ()
+                    end match
+                end awaitRead
+                override def write(handle: Unit, data: Span[Byte], offset: Int)(using AllowUnsafe): WriteResult =
+                    writtenBytes = data.slice(offset, data.size).toArray.toList
+                    WriteResult.Done
+            end SuppressedReadWriteDriver
 
-                val driver = new SuppressedReadWriteDriver
-                val conn   = Connection.init[Unit]((), driver, 8)
+            val driver = new SuppressedReadWriteDriver
+            val conn   = Connection.init[Unit]((), driver, 8)
 
-                // Pre-queue a write so WritePump can drain it immediately on start.
-                discard(conn.outbound.offer(Span.fromUnsafe(writeData)))
+            // Pre-queue a write so WritePump can drain it immediately on start.
+            discard(conn.outbound.offer(Span.fromUnsafe(writeData)))
 
-                conn.start()
+            conn.start()
 
-                // Write must have landed regardless of the suppressed read arms.
-                assert(
-                    writtenBytes == writeData.toList,
-                    s"write-independent: driver.write must have seen ${writeData.toList} despite suppressed reads, got $writtenBytes"
-                )
-                // Read still delivers after recovery.
-                val polled = conn.inbound.poll()
-                assert(
-                    polled match
-                        case Result.Success(Maybe.Present(span)) => span.toArray.toList == readData.toList
-                        case _                                   => false,
-                    s"write-independent: inbound must contain ${readData.toList}, got $polled"
-                )
-                assert(conn.isOpen, "write-independent: connection must remain open after both paths converge")
-                succeed
-            }
+            // Write must have landed regardless of the suppressed read arms.
+            assert(
+                writtenBytes == writeData.toList,
+                s"write-independent: driver.write must have seen ${writeData.toList} despite suppressed reads, got $writtenBytes"
+            )
+            // Read still delivers after recovery.
+            val polled = conn.inbound.poll()
+            assert(
+                polled match
+                    case Result.Success(Maybe.Present(span)) => span.toArray.toList == readData.toList
+                    case _                                   => false,
+                s"write-independent: inbound must contain ${readData.toList}, got $polled"
+            )
+            assert(conn.isOpen, "write-independent: connection must remain open after both paths converge")
+            succeed
         }
     }
 

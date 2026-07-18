@@ -9,7 +9,7 @@ import kyo.net.internal.TlsRealEngines
 import kyo.net.internal.transport.ReadOutcome
 import kyo.scheduler.IOPromise
 
-/** Reproduce-first regression guard for the TLS read path ET half-close drain on epoll (STEP-FURTHER from Phase 2 re-audit, audit-r2.md).
+/** Reproduce-first regression guard for the TLS read path ET half-close drain on epoll.
   *
   * The defect: `dispatchReadTls` did not forward `eofPending` from `dispatchRead`. On an epoll ET-armed connection where the peer sends
   * ciphertext and then immediately half-closes (TCP FIN), the kernel delivers one event carrying BOTH `EPOLLIN` and `EPOLLRDHUP`. The plain
