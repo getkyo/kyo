@@ -19,9 +19,9 @@ import kyo.net.internal.transport.ReadOutcome
   * epoll arm now tracks per-fd interest and arms the UNION, and re-arms the non-fired survivor after `EPOLLONESHOT`, so the parked read survives.
   *
   * The leaf drives the REAL [[PollerIoDriver]] over a real loopback socket pair (epoll on Linux, kqueue on macOS/BSD): park a read with no data
-  * (so it stays pending), park a writable on the same fd and await it (the freshly-connected socket is writable, so it completes; on the unfixed
-  * epoll this is the arm that clobbered the read), THEN have the peer send bytes and assert the parked read delivers exactly those bytes. The
-  * read await is bounded so the unfixed epoll path fails fast with a timeout instead of hanging to the suite limit.
+  * (so it stays pending), park a writable on the same fd and await it (the freshly-connected socket is writable, so it completes; on an epoll
+  * where a later interest replaces an earlier one, this is the arm that clobbers the read), THEN have the peer send bytes and assert the parked
+  * read delivers exactly those bytes. The read await is bounded so a driver that lost the read fails fast with a timeout instead of hanging to the suite limit.
   */
 class PollerIoDriverConcurrentInterestTest extends Test:
 
@@ -99,17 +99,17 @@ class PollerIoDriverConcurrentInterestTest extends Test:
                     val readPromise = Promise.Unsafe.init[ReadOutcome, Abort[Closed]]()
                     driver.awaitRead(acceptedH, readPromise)
 
-                    // Park a WRITABLE on the SAME fd. The freshly-connected socket is writable, so this completes. On the unfixed epoll this is
-                    // the arm that REPLACED the read's EPOLLIN with EPOLLOUT (last-write-wins MOD); once it fired, EPOLLONESHOT disabled the
-                    // whole fd and the parked read's interest was gone.
+                    // Park a WRITABLE on the SAME fd. The freshly-connected socket is writable, so this completes. On a last-write-wins epoll this is
+                    // the arm that REPLACES the read's EPOLLIN with EPOLLOUT; once it fires, EPOLLONESHOT disables the
+                    // whole fd and the parked read's interest is gone.
                     val writePromise = Promise.Unsafe.init[Unit, Abort[Closed]]()
                     driver.awaitWritable(acceptedH, writePromise)
 
                     for
-                        // The writable must complete (the socket is writable). This is the point past which the unfixed epoll has lost the read.
+                        // The writable must complete (the socket is writable). This is the point past which a last-write-wins epoll would have lost the read.
                         writeOutcome <- Abort.run[Timeout | Closed](Async.timeout(5.seconds)(writePromise.safe.get))
-                        // Only now does the peer send: with the read interest clobbered + ONESHOT-disabled, the unfixed epoll never reports this
-                        // readiness. The fixed epoll re-armed the read survivor, so it fires and delivers the bytes.
+                        // Only now does the peer send: with the read interest clobbered + ONESHOT-disabled, a last-write-wins epoll would never report this
+                        // readiness. The driver re-arms the read survivor, so it fires and delivers the bytes.
                         _           <- sendAll(client, payload)
                         readOutcome <- Abort.run[Timeout | Closed](Async.timeout(5.seconds)(readPromise.safe.get))
                         _ = driver.closeHandle(acceptedH)

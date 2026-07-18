@@ -261,7 +261,7 @@ end PollFlags
 
 private[net] object PollerBackend:
 
-    /** Select the backend for the host OS: epoll on Linux, kqueue on macOS/BSD (the same choice the legacy `PollerBackend.default` made). */
+    /** Select the backend for the host OS: epoll on Linux, kqueue on macOS/BSD. */
     def default()(using AllowUnsafe): PollerBackend =
         if PosixConstants.isLinux then EpollPollerBackend
         else KqueuePollerBackend

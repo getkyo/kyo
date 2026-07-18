@@ -9,7 +9,7 @@ import kyo.net.internal.TlsRealEngines
 import kyo.net.internal.transport.ReadOutcome
 import kyo.scheduler.IOPromise
 
-/** Inbound-ciphertext BIO bound on the [[PollerIoDriver]] TLS read path (security finding #8, CWE-400 / TLS record amplification).
+/** Inbound-ciphertext BIO bound on the [[PollerIoDriver]] TLS read path (CWE-400 / TLS record amplification).
   *
   * The BoringSSL/OpenSSL read side is an in-memory `BIO_s_mem` that accepts every byte fed to it
   * (`kyo_bssl_feed_ciphertext` / `kyo_ossl_feed_ciphertext`: an unbounded BIO). On its own that is an amplification surface: a peer that
@@ -37,7 +37,7 @@ import kyo.scheduler.IOPromise
   *
   * If a future change let the driver feed a second recv before draining the prior feed (dropping the single-in-flight ordering, or feeding
   * larger-than-`readBufferSize` chunks), `maxInFlight` would exceed 1 or a feed len would exceed `readBufferSize`, and this test fails: it is
-  * the regression guard for the finding-#8 control.
+  * the regression guard for the inbound-ciphertext BIO bound.
   *
   * Built on the same real loopback + real epoll/kqueue + real BoringSSL infrastructure as [[PollerIoDriverTlsStagingAliasTest]]. JVM/Native
   * only (JS uses a different recv shape). Deterministic: every record is encrypted and queued before the reader runs, the sender parks on real
@@ -157,7 +157,7 @@ class PollerIoDriverTlsInboundBioBoundTest extends Test:
                             // N large distinct application records near the TLS max record size, so the ciphertext stream is ~256 KB: far larger
                             // than the accepted side's 8192-byte recv buffer (PosixHandle.DefaultReadBufferSize) and the kernel socket buffer.
                             // That forces MANY separate recvNow calls (and therefore many feedCiphertext feeds) into the one recvStaging buffer,
-                            // which is exactly the coalesced-burst load finding #8 is about. The distinct per-record/per-index pattern makes any
+                            // which is exactly the coalesced-burst load this bound is about. The distinct per-record/per-index pattern makes any
                             // corruption or reorder a concrete byte mismatch.
                             val recordSize = 16000
                             val records =

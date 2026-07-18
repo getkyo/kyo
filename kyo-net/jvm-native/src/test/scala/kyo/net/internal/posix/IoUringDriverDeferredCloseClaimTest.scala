@@ -63,7 +63,7 @@ class IoUringDriverDeferredCloseClaimTest extends Test:
                                     assume(
                                         recycledToClient || recycledToAccepted,
                                         s"fd $accepted was not recycled by the fresh pair ($client2, $accepted2); the lowest-free-fd " +
-                                            "assumption did not hold (likely unrelated concurrent fd churn in a full-suite run)"
+                                            "assumption did not hold (likely unrelated concurrent fd churn)"
                                     )
                                     val victimFd = if recycledToClient then client2 else accepted2
                                     val peerFd   = if recycledToClient then accepted2 else client2

@@ -76,7 +76,7 @@ class PollerWakeConnectTest extends Test:
                 discard(driver.start())
 
                 // Re-arm write-readiness on the same already-writable fd many times in sequence, each bounded by a generous guard. This mirrors the
-                // 30-rapid-connect cadence of the issue #243 leaf: every arm must be delivered promptly via the wake, not stranded behind a park.
+                // 30-rapid-connect cadence: every arm must be delivered promptly via the wake, not stranded behind a park.
                 // The handle id is bumped each iteration so a prior cycle's stale writable cannot satisfy the next (mirrors a fresh connect fd).
                 Loop(0) { i =>
                     if i >= 20 then Loop.done(i)

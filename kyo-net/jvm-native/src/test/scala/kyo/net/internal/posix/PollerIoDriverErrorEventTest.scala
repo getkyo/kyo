@@ -25,7 +25,7 @@ import kyo.net.internal.transport.ReadOutcome
   * value 104 (ECONNRESET is 54 on macOS, 104 on Linux) to remain cross-platform.
   *
   * Anti-flakiness: per-fd registration latches arm the injection only after both interests have executed on the change worker;
-  * `Async.timeout(5.seconds)` is the deadlock ceiling for leaf 1 (the unfixed driver would hang); leaf 2 uses a 2s timeout that expires as the
+  * `Async.timeout(5.seconds)` is the deadlock ceiling for leaf 1 (a driver that dropped the event would hang); leaf 2 uses a 2s timeout that expires as the
   * PASS signal.
   *
   * Uses a `RecordingPollerBackend(PollerBackend.default())` with the authorized synthetic error-only injection. SO_ERROR is read from the
@@ -66,7 +66,7 @@ class PollerIoDriverErrorEventTest extends Test:
             // can run dispatchError; there is no constructible interleaving that yields Closed).
             //
             // Anti-flakiness: registeredRead/registeredWrite latch on the real registrations executing on the change worker, then the injection
-            // is armed; Async.timeout(5.seconds) is only the deadlock ceiling (the unfixed driver dropped the event and hung).
+            // is armed; Async.timeout(5.seconds) is only the deadlock ceiling (a driver that dropped the event would hang).
             PosixTestSockets.loopbackPair().map { case (clientFd, acceptedFd) =>
                 val spy      = RecordingSocketBindings(Ffi.load[SocketBindings])
                 val real     = PollerBackend.default()
@@ -90,8 +90,8 @@ class PollerIoDriverErrorEventTest extends Test:
                     _ <- backend.registeredRead(acceptedFd).safe.get
                     _ <- backend.registeredWrite(acceptedFd).safe.get
                     _ = backend.syntheticErrorFd.set(acceptedFd)
-                    // The pending read must be failed Closed by the error dispatch (confirmed real SO_ERROR). Bounded so the unfixed driver
-                    // (which dropped the event and left the read pending forever) fails fast with a timeout rather than hanging.
+                    // The pending read must be failed Closed by the error dispatch (confirmed real SO_ERROR). Bounded so a driver
+                    // that dropped the event and left the read pending forever fails fast with a timeout rather than hanging.
                     readOutcome  <- Abort.run[Timeout | Closed](Async.timeout(5.seconds)(readPromise.safe.get))
                     writeOutcome <- Abort.run[Timeout | Closed](Async.timeout(5.seconds)(writePromise.safe.get))
                     _ <- Sync.defer {
@@ -137,7 +137,7 @@ class PollerIoDriverErrorEventTest extends Test:
             // the same `soError != 0` check, so exercising the drop via the pending read covers the writable drop the recycled-connect guard
             // protects (a real connected socket is genuinely writable, so a real writable event is not a stale event and cannot stand in here).
             //
-            // Anti-flakiness: the 2s Timeout expiring with the read still pending IS the PASS signal (the unfixed driver completed it Closed).
+            // Anti-flakiness: the 2s Timeout expiring with the read still pending IS the PASS signal (a driver that mishandled the stale event would complete it Closed).
             PosixTestSockets.loopbackPair().map { case (clientFd, acceptedFd) =>
                 val spy      = RecordingSocketBindings(Ffi.load[SocketBindings])
                 val real     = PollerBackend.default()
@@ -159,7 +159,7 @@ class PollerIoDriverErrorEventTest extends Test:
                     _ <- backend.registeredRead(acceptedFd).safe.get
                     _ = backend.syntheticErrorFd.set(acceptedFd)
                     // The stale error-only event must NOT complete the read. Give the poll loop ample time to fire and (correctly) drop it;
-                    // the bounded wait expiring with the read still pending is the PASS signal (the unfixed driver completed it Closed instead).
+                    // the bounded wait expiring with the read still pending is the PASS signal (a driver that mishandled the stale event would complete it Closed instead).
                     readOutcome <- Abort.run[Timeout | Closed](Async.timeout(2.seconds)(readPromise.safe.get))
                     _ <- Sync.defer {
                         driver.close()

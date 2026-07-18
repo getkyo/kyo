@@ -85,15 +85,14 @@ final private[net] class PollerIoDriver private[posix] (
     // Frees pollScratch exactly once. CASed by the poll loop's terminal exit (the loop ran) and by close()'s never-started path (the loop never
     // ran); the CAS guarantees no double-free and no use-after-free between the two single owners.
     freeScratchOnce: AtomicBoolean.Unsafe,
-    // Formerly a poll-loop wakeup coalescing flag: submitChange and submitEngineOp CASed it false->true and triggered backend.wake at most once
-    // between poll cycles (the poll loop CASed it back to false at the top of each cycle, before the next park), to dedup a burst of submits to
-    // one wake per cycle. Retired from that role: the poll loop clears it only at the TOP of each cycle, but drainFifos (which drains both FIFOs)
-    // runs BEFORE that reset, so a submit landing between a cycle's drainFifos consuming a prior wake and the next cycle's reset observed a
-    // STALE true and skipped its own wake -- a wake lost that way stranded submitEngineOp's write-only-delivery-attempt permanently (the B'
-    // post-upgrade write strand) and, on the same latent gap, submitChange's connection-reuse reads when the read side's usual self-healing
-    // (the next cycle's unconditional drainChanges) did not run in time. Both wakes are unconditional now (see submitChange / submitEngineOp).
-    // Kept ONLY so a deterministic test can pre-set the historical stale condition directly and confirm neither wake path reads it anymore
-    // (PollerWakeReadArmTest, PollerWakeEngineOpTest; mirrors NioIoDriver.wakeupPending). private[posix] for that test access.
+    // A flag neither wake path reads to gate its wake: submitChange and submitEngineOp always wake the poll loop unconditionally. Gating a wake behind
+    // a CAS on this shared flag would race, because the poll loop resets it at the TOP of each cycle: a submit whose CAS lands after a prior wake was
+    // already consumed this cycle but before that reset would observe a STALE true (a wake whose OS-level signal was already delivered and cleared, not
+    // one still in flight) and skip its own wake, and the carrier would park having never seen the newly-offered work. That lost wake would strand
+    // submitEngineOp's write-only-delivery-attempt permanently (the post-upgrade write strand) and, on the same gap, submitChange's connection-reuse
+    // reads when the read side's self-healing (the next cycle's unconditional drainChanges) does not run in time. wakePending is kept ONLY so a
+    // deterministic test can pre-set that stale condition directly and confirm neither wake path reads it (PollerWakeReadArmTest,
+    // PollerWakeEngineOpTest; mirrors NioIoDriver.wakeupPending). private[posix] for that test access.
     private[posix] val wakePending: AtomicBoolean.Unsafe,
     // True in every live driver: registerWake must succeed or start() throws before the loop is spawned (the poll parks indefinitely, making the
     // wakeup a liveness requirement). Set to true by start() after registerWake succeeds; never reset afterward.
@@ -107,7 +106,7 @@ final private[net] class PollerIoDriver private[posix] (
     // that fd and sets wakeFd = -1 on the poll-loop carrier's terminal exit (freeScratch). A wake on an arbitrary carrier that has read wakeFd (a
     // valid eventfd) but not yet written it can be preempted while closeWake closes that fd; the OS then recycles the freed number into ANOTHER
     // driver's freshly-opened socket, and the resumed eventfd_write writes the 8-byte counter (1) INTO that recycled socket. The peer then recv's
-    // the phantom 8-byte [1,0,0,0,0,0,0,0] ahead of its real data: the lazyFdDelete cross-fd stale-event failure under full-suite load. Gating the
+    // the phantom 8-byte [1,0,0,0,0,0,0,0] ahead of its real data: the lazyFdDelete cross-fd stale-event failure. Gating the
     // close behind the in-flight-wake count closes the window: the eventfd is never closed while a wake holds it, so its number cannot be recycled
     // out from under an eventfd_write.
     wakeGuard: AtomicInt.Unsafe,
@@ -1623,7 +1622,7 @@ final private[net] class PollerIoDriver private[posix] (
             // at re-arm time (no fresh transition) is never re-reported and the read strands (the post-window steady-state edge-miss). A real
             // EV_ADD re-level-checks the socket buffer (sb_cc) at registration and queues an event when bytes are present, recovering it.
             // Demand-driven and spin-safe: EV_ADD fires once if buffered then drains to EAGAIN; the next EV_ADD finds the socket empty and
-            // does not fire (no forced recvNow, so no Decision-44 EAGAIN spin). The epoll branch below is left byte-for-byte unchanged.
+            // does not fire (no forced recvNow, so no Decision-44 EAGAIN spin).
             regIntake.offer(Registration(handle, RegKind.Read))
             submitChange(packCmd(OpRegisterRead, handle.readFd))
         else if handle.postUpgradeReadWindow then

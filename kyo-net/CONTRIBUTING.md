@@ -226,13 +226,11 @@ A platform-specific test (`jvm-native`, `jvm`, `js`, `native`) is justified only
 
 A few behavioral contracts genuinely cannot be stated through `NetPlatform.transport` and are validated per-backend with a recorded motivation (each is a deliberate exception, not a silent fork): a setting fixed at transport CONSTRUCTION with no public config factory (the server `handshakeTimeout` deadline, which `NetPlatform.transport` always builds with the default config, so each backend constructs its own transport AND tunes the deadline/assertion to its timing; a single shared timing would either weaken the strong disarm proof or flake on the slow backend); a unit under test that needs a REAL driver instance while mocks are disallowed (`IoDriverPool`, whose pool logic is driver-agnostic but cannot be constructed without a platform driver, so it is tested per-platform over real drivers); a capability one backend cannot provide (the `Status` Clean/Truncated distinction, which Node's `tls.TLSSocket` abstracts away); and a per-DRIVER assertion the default-selected driver does not isolate (poller-driver TLS when io_uring is the default).
 
-### Pre-existing naming deviations
+### Test naming
 
-NOTE: the kyo-net test tree contains a number of test files whose names predate this codebase's FooTest-matches-a-source convention (Rule 8c). These are pre-existing and should not be mass-renamed as a drive-by:
+New test files must follow Rule 8c: a test suite's name prefix matches a source file under `src/main/`, or is an aspect split of one (e.g. `PollerIoDriverWriteRaceTest` for `PollerIoDriver.scala`). A test class that matches no source is an orphan and is not permitted.
 
-- Concept-named aspect tests (for example `ChangeFifoOrderingTest`, `CloseDuringBackpressuredFlushTest`, `EngineFifoSingleOwnerTest`, `FlushReArmPendingCoalesceTest`, `HandshakeEngineFreeTest`, `IoUringEngineFifoFreeOrderingTest`, `IoUringTlsEncryptionTest`, `IoUringTlsWriteOrderingTest`, `RearmSurvivorsTest`, `StartTlsUpgradeCloseRaceTest`, `WriteBackpressureConservationTest`, and others): named after the behavior under test rather than the source file. They are legitimate aspect splits but do not follow the `SourceNameAspectTest` pattern. A mass rename does not belong in an unrelated change; record them here so the deviation is acknowledged and not repeated in new code.
-
-New test files must follow Rule 8c: a test suite's name prefix must match a source file under `src/main/`, or be an aspect split of one (e.g. `PollerIoDriverWriteRaceTest` for `PollerIoDriver.scala`). New concept-named orphans are not permitted.
+Some aspect tests are named for the behavior under test rather than a source prefix (for example `ChangeFifoOrderingTest`, `CloseDuringBackpressuredFlushTest`, `EngineFifoSingleOwnerTest`, `FlushReArmPendingCoalesceTest`, `HandshakeEngineFreeTest`, `IoUringEngineFifoFreeOrderingTest`, `IoUringTlsEncryptionTest`, `IoUringTlsWriteOrderingTest`, `RearmSurvivorsTest`, `StartTlsUpgradeCloseRaceTest`, `WriteBackpressureConservationTest`). These are legitimate aspect splits where the behavior name reads more clearly than a `SourceNameAspectTest` prefix; each still exercises an aspect of a real source unit, so none is an orphan.
 
 ## Pre-submission checklist (kyo-net)
 

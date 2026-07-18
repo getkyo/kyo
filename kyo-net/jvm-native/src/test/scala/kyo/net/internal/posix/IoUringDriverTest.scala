@@ -52,7 +52,7 @@ class IoUringDriverTest extends Test:
         val realRing  = Buffer.alloc[Byte](realUring.kyo_uring_sizeof().toInt)
         val rc        = realUring.io_uring_queue_init(depth, realRing, 0)
         // io_uring_queue_init returns 0 on success / -errno on failure and does NOT set the global errno; read the return
-        // value, never the captured (possibly stale) errno (#258). In a container, queue_init legitimately succeeds while
+        // value, never the captured (possibly stale) errno. In a container, queue_init legitimately succeeds while
         // leaving errno=2 from its internal feature probing, so reading rc.errorCode here would spuriously fail every leaf.
         if rc != 0 then
             realRing.close()
@@ -128,12 +128,12 @@ class IoUringDriverTest extends Test:
             }
         }
 
-        "real: #177 closing the driver while a recv is parked in-flight tears down cleanly, never a use-after-free" in {
+        "real: closing the driver while a recv is parked in-flight tears down cleanly, never a use-after-free" in {
             PosixTestSockets.assumeUring()
-            // The #177 teardown-race twin of the leaf above, closing the whole DRIVER (not just the handle). A recv is parked in flight (no
+            // The teardown-race twin of the leaf above, closing the whole DRIVER (not just the handle). A recv is parked in flight (no
             // data), so the reap carrier sits inside kyo_uring_wait_cqe_timeout holding the ring/cqePtr segments; driver.close() then runs from
-            // THIS carrier while that wait is in flight. The buggy close() freed ring/cqePtr mid-wait ("Session is acquired by 1 clients" at
-            // cqePtr.close on JVM, SIGSEGV in kyo_uring_get_sqe on Native); the fixed single-owner teardown only signals closedFlag and lets the
+            // THIS carrier while that wait is in flight. Freeing ring/cqePtr mid-wait would crash here ("Session is acquired by 1 clients" at
+            // cqePtr.close on JVM, SIGSEGV in kyo_uring_get_sqe on Native); the single-owner teardown instead only signals closedFlag and lets the
             // reap carrier free on its own exit. A fresh driver per iteration, looped, so the close reliably lands during a wait.
             //
             // io_uring-only (validated platform exception): the race is structurally io_uring's (no other backend has a reap carrier holding
@@ -206,7 +206,7 @@ class IoUringDriverTest extends Test:
         // Probes io_uring_queue_init at depths 2, 32, and 256. Linux-only; NOT gated by assumeUring so it runs even on
         // cgroup-limited hosts where depth-256 init fails. The success/failure signal is the RETURN value (rc): 0 on
         // success, -errno on failure. Plain Int, not clamped: io_uring_queue_init does not set the global errno and can
-        // legitimately leave a stale non-zero errno after a successful init (#258). On native Linux (no cgroup cap) all
+        // legitimately leave a stale non-zero errno after a successful init. On native Linux (no cgroup cap) all
         // three depths return 0; on a restricted host depth-256 returns a negative -errno.
         "depth-{2,32,256} init measurement: asserting concrete per-depth return value" in {
             if !PosixConstants.isLinux then cancel("io_uring is Linux-only")
@@ -235,7 +235,7 @@ class IoUringDriverTest extends Test:
             succeed
         }
 
-        // The #258 stale-errno init bug (IoUringDriver.init must read the io_uring_queue_init RETURN value, not the captured errno) is
+        // The stale-errno init bug (IoUringDriver.init must read the io_uring_queue_init RETURN value, not the captured errno) is
         // reproduced cross-backend in IoBackendStaleErrnoTest, which dirties errno then builds each available backend's real transport (so
         // io_uring is exercised through the same IoUringDriver.init this file covers, alongside epoll/kqueue/nio for consistency).
 
@@ -336,7 +336,7 @@ class IoUringDriverTest extends Test:
             // sleep) so two reads drain in ONE drainEngineOps pass before the wait submits anything: on a depth-1 ring the first read consumes the
             // one SQE and the second's get_sqe returns Absent, parking it in stalledSubmits (its promise stays pending) rather than failing it. The
             // reap loop re-arms a parked op every turn once submit frees the slot, even when no unrelated CQE arrives. Proven end to end: the parked
-            // read delivers its peer's bytes; the unfixed behavior failed it Closed("SQ full") immediately, so a delivered payload is the proof.
+            // read delivers its peer's bytes; a driver that failed it Closed("SQ full") immediately would lose it, so a delivered payload is the proof.
             withRecordingDriver(1) { (drv, _) =>
                 PosixTestSockets.loopbackPair().map { case (clientA, acceptedA) =>
                     PosixTestSockets.loopbackPair().map { case (clientB, acceptedB) =>
@@ -497,8 +497,8 @@ class IoUringDriverTest extends Test:
                     // directly (the exact field closeHandle's deferral decision reads), not recording.submittedKeys: kyo_uring_sqe_set_data64
                     // (which keys submittedKeys) runs a few lines BEFORE `handle.recvInFlight = true` in submitRecv's successful branch, so
                     // submittedKeys.nonEmpty can be true while recvInFlight is still false -- a narrower but real race in which closeHandle
-                    // would free the buffer immediately in that window (it surfaces only under full-suite concurrency, not in isolation).
-                    // A SEPARATE full-suite-only flake of this same assertion has a different cause: reapRcContinues can under-classify a
+                    // would free the buffer immediately in that window (it surfaces only under concurrency, not in isolation).
+                    // A separate failure mode of this same assertion has a different cause: reapRcContinues can under-classify a
                     // transient `-ENOMEM` from kyo_uring_submit_and_wait_timeout (plausible under many concurrently-running rings) as a fatal
                     // ring rc, self-destructing the whole ring mid-test; closeHandle's ringExited fast path then frees the buffer immediately
                     // regardless of recvInFlight. See IoUringDriverReapTransientErrnoTest for the deterministic reproduction.

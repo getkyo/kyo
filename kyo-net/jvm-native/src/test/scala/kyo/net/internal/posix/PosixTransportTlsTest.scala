@@ -11,7 +11,7 @@ import kyo.net.internal.TlsProviderPlatform
 import kyo.net.internal.TlsTestCert
 
 /** Connect-time TLS round-trip over the unified [[PosixTransport]] (`connect(tls)` / `listen(tls)`) on a real loopback pair, driven by the same
-  * [[PosixTransport.driveHandshake]] loop the STARTTLS path uses (no legacy OpenSSL handshake code).
+  * [[PosixTransport.driveHandshake]] loop the STARTTLS path uses (no separate OpenSSL handshake code path).
   *
   * The server `listen(tls)`s with the embedded test cert; the client `connect(tls)`s with `trustAll`. Each side completes its handshake before
   * the connection reaches the handler / caller, then a known plaintext message round-trips encrypted end to end and is asserted byte-equal after
@@ -50,7 +50,7 @@ class PosixTransportTlsTest extends Test:
       * The driver's own poll-loop thread is a separate story: `driver.close()` only requests teardown (`submitEngineOp` + `triggerWake()`)
       * and returns immediately, without waiting for the poll-loop carrier to actually run it. Awaiting the driver's own exit fiber after
       * `close()` (rather than discarding it) makes the underlying thread provably gone before this computation completes, closing the window
-      * where, under kyo-test's full-suite concurrent leaf scheduling, a not-yet-fully-torn-down driver from an earlier leaf could still be
+      * where, under kyo-test's concurrent leaf scheduling, a not-yet-fully-torn-down driver from an earlier leaf could still be
       * alive when the next leaf's own transport starts.
       */
     private def withTransport[A](body: PosixTransport => A < (Async & Abort[NetException | Closed] & Scope))(using

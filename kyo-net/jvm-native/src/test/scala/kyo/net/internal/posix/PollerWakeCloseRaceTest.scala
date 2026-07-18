@@ -5,14 +5,14 @@ import kyo.ffi.Ffi
 import kyo.net.Test
 
 /** Deterministic reproduction + regression guard for the wake-fd close-vs-wake race in [[PollerIoDriver]] (the lazyFdDelete cross-fd stale-event
-  * failure under full-suite load).
+  * failure).
   *
   * [[PollerBackend.wake]] (epoll: `eventfd_write` on the wakeup eventfd) runs on ARBITRARY carriers (any `submitChange` from awaitRead / connect /
   * deregister), while [[PollerBackend.closeWake]] (epoll: `close()` of that eventfd) runs on the poll-loop carrier's terminal exit. With no
   * coordination a wake that has read the wake fd but not yet written it can be preempted while closeWake closes that fd; the OS then recycles the
   * freed number into ANOTHER driver's freshly-opened socket, and the resumed `eventfd_write` writes the 8-byte counter (1) INTO that recycled
   * socket. The peer recv's a phantom `[1,0,0,0,0,0,0,0]` ahead of its real data, which is exactly what
-  * [[PollerIoDriverEdgeTriggeredTest]]'s `lazyFdDelete` leaf guards against under full-suite par-4 load.
+  * [[PollerIoDriverEdgeTriggeredTest]]'s `lazyFdDelete` leaf guards against.
   *
   * closeWake is gated behind an in-flight-wake guard so the eventfd is never closed while a wake holds it (its number cannot then be recycled
   * out from under an `eventfd_write`). This leaf pins that invariant directly rather than under load: it forces the exact interleaving with a

@@ -141,7 +141,7 @@ class PosixTransportAcceptEmfileTest extends Test:
                             fd
                         }
                     // Let the accept loop run against the injected EMFILE for the settle window: the spin ceiling, not a timing assertion (a
-                    // spinning loop floods acceptNow far past `bound` inside it; the fixed loop's backoff re-arm issues only a handful). This is
+                    // spinning loop floods acceptNow far past `bound` inside it; the backoff re-arm issues only a handful). This is
                     // an Async suspension (the fiber yields its carrier), so no thread blocks while the poll loop drives the accept path.
                     _ <- Async.sleep(settleWindow)
                 yield

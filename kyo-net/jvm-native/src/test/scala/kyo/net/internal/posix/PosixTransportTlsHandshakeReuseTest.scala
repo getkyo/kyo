@@ -49,7 +49,7 @@ class PosixTransportTlsHandshakeReuseTest extends Test:
       * Awaits the driver's own poll-loop-exit fiber after `close()` (rather than discarding it) so the underlying thread and listener socket
       * are provably gone before this computation completes: `close()` itself only requests teardown (`submitEngineOp` + `triggerWake()`) and
       * returns immediately, without waiting for the poll-loop carrier to actually run it. Discarding the exit fiber left a window, under
-      * kyo-test's full-suite concurrent leaf scheduling, where a not-yet-fully-torn-down driver from an earlier leaf could still be alive
+      * kyo-test's concurrent leaf scheduling, where a not-yet-fully-torn-down driver from an earlier leaf could still be alive
       * when the next leaf's own transport starts.
       */
     private def withTransport[A](body: PosixTransport => A < (Async & Abort[NetException | Closed] & Scope))(using

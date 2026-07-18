@@ -96,7 +96,7 @@ class IoUringExclusiveUseSqFullTest extends Test:
                             // instructions later in that SAME synchronous call -- a gap invisible to any production caller (the reap carrier
                             // runs submitRecv to completion with no suspension point in between, and it is the only writer of both, so no other
                             // call can ever observe the intermediate state) but genuinely observable by THIS test's separate polling thread under
-                            // scheduler jitter (confirmed: this exact two-step check flaked under full-suite parallel load). Waiting on
+                            // scheduler jitter (this exact two-step check can flake under concurrent load). Waiting on
                             // `recvInFlight` directly -- the stronger, later-arriving signal -- removes the false assumption that the two writes
                             // are simultaneous.
                             awaitCondition(5.seconds)(targetH.recvInFlight).map { rearmed =>

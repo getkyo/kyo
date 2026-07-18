@@ -4,7 +4,7 @@ import kyo.*
 import kyo.net.NetTlsConfig
 import kyo.net.Test
 
-/** Regression test for finding #14 (reframed): a verifying client whose configured CA did NOT sign the server certificate MUST reject the
+/** Regression test for untrusted-chain rejection: a verifying client whose configured CA did NOT sign the server certificate MUST reject the
   * handshake. This pins the EXISTING correct behavior (verify mode 2 / `FAIL_IF_NO_PEER_CERT` causes the handshake to abort on a chain
   * validation error) so a future change that relaxes verify mode or wires a different trust store would fail this test loudly.
   *

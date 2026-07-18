@@ -44,8 +44,8 @@ import kyo.scheduler.IOPromise
   * Each accepted client fd is made non-blocking with `TCP_NODELAY`, wrapped in a [[Connection]], and handed to the handler in its own fiber.
   *
   * TLS reuses the existing handshake machinery: `connect(tls)` / `listen(tls)` build the engine via `TlsProviderPlatform.engine` and drive it
-  * over the same fd with [[driveHandshake]] (the very loop the STARTTLS path uses), then attach the engine to the handle. No legacy OpenSSL
-  * handshake code is involved.
+  * over the same fd with [[driveHandshake]] (the very loop the STARTTLS path uses), then attach the engine to the handle. There is no separate
+  * OpenSSL handshake code path.
   *
   * `stdio` opens a [[Connection]] over `PosixHandle.stdio()` (readFd = 0, writeFd = 1), guarded by a process-wide CAS so exactly one stdio
   * connection exists at a time (fd 0/1 are process-global and must not be double-owned). Before wiring the connection
@@ -603,7 +603,7 @@ final private[net] class PosixTransport private[posix] (
                 // guarantees exactly one of onFinished/onFailed/onPanic ever fires, so `handshakeDisarm` builds its own fresh gate (there is no
                 // pre-existing one to share, unlike the accept-side deadline). See [[pendingHandshakes]].
                 //
-                // `reaped` mirrors the accept-side #243 guard (see handleAccepted's `teardown`): the sweep below can free the engine while the
+                // `reaped` mirrors the accept-side reap guard (see handleAccepted's `teardown`): the sweep below can free the engine while the
                 // handshake machine is still actively chaining (a `close()` racing a mid-flight handshake wins `handshakeDisarm` and offers its
                 // free op into the engine FIFO; the machine's own next step thunk, already in flight, enqueues AFTER it). A FIFO honors
                 // submission order, so it cannot protect an op enqueued after the free: `reaped` is the guard `isReaped` reads inside
@@ -1038,7 +1038,7 @@ final private[net] class PosixTransport private[posix] (
                     // thunks via the isReaped guard; teardown and those thunks all run on the one per-driver engine FIFO worker, so the set is
                     // serialized against the reads (the AtomicBoolean is for safe publication across the timer / handshake carriers).
                     val reaped = AtomicBoolean.Unsafe.init(false)
-                    // Teardown reused by both the handshake failure / panic paths and the handshake-deadline expiry. The deadline path is the #243
+                    // Teardown reused by both the handshake failure / panic paths and the handshake-deadline expiry. The deadline path is the
                     // use-after-free: when handshakeTimeout reaps a handshake parked in awaitReadCiphertext, an io_uring recv SQE is in flight into
                     // handle.readBuffer. Freeing that buffer (PosixHandle.close) and the engine while the recv SQE is still kernel-owned would let
                     // the kernel write recv data into freed memory and a late recv-Success enqueue a feed on a freed engine. Routing
@@ -1544,7 +1544,7 @@ final private[net] class PosixTransport private[posix] (
                         // `driveHandshake` guarantees exactly one of onFinished/onFailed/onPanic ever fires, so `handshakeDisarm` builds its own
                         // fresh gate, same as the connect-side registration above. See [[pendingHandshakes]].
                         //
-                        // `reaped` mirrors the accept-side #243 guard and the connect-side registration above: the sweep below can free the
+                        // `reaped` mirrors the accept-side reap guard and the connect-side registration above: the sweep below can free the
                         // engine while the handshake machine is still actively chaining (a `close()` racing a mid-flight upgrade wins
                         // `handshakeDisarm` and offers its free op into the engine FIFO; the machine's own next step thunk, already in flight,
                         // enqueues AFTER it). A FIFO honors submission order, so it cannot protect an op enqueued after the free: `reaped` is
@@ -1832,7 +1832,7 @@ final private[net] class PosixTransport private[posix] (
       * completes without an extra read. All I/O suspension points (EAGAIN on write, EAGAIN on read) arm a driver promise and return;
       * the driver carrier fires the promise's `onComplete` continuation to resume the handshake.
       *
-      * `isReaped` is the reap guard for the server-accept handshake deadline (finding #243): when a finite `handshakeTimeout` reaps a
+      * `isReaped` is the reap guard for the server-accept handshake deadline: when a finite `handshakeTimeout` reaps a
       * stalled handshake it frees the handshake engine, so any engine-touching thunk that runs AFTER the reap (an in-flight recv CQE that
       * delivered just before the deadline and enqueued a feed) MUST skip rather than touch a freed engine. The guard is checked at the top of
       * every `submitEngineOp` thunk the handshake submits (`step`, and the feed thunks in `recvAndFeed` / `awaitReadCiphertext`); the reap and
@@ -2020,7 +2020,7 @@ final private[net] class PosixTransport private[posix] (
     end recvAndFeed
 
     /** Feed `arr` (ciphertext read off the socket) into the handshake engine on the engine FIFO, then continue the handshake. Shared by the
-      * recvNow path and the STARTTLS upgrade carry-over path. The `isReaped` guard skips the feed if a deadline reap freed the engine first (#243).
+      * recvNow path and the STARTTLS upgrade carry-over path. The `isReaped` guard skips the feed if a deadline reap freed the engine first.
       */
     private def feedCiphertextThenCont(
         handle: PosixHandle,
@@ -2173,7 +2173,7 @@ final private[net] class PosixTransport private[posix] (
                 // The continuation (cont) is called from inside the FIFO thunk after the feed; cont itself may re-enter step(),
                 // which submits a NEW submitEngineOp and returns (no reentrancy: the inner submit enqueues, this thunk returns first).
                 handle.driver.submitEngineOp { () =>
-                    // Reap guard (#243): a deadline reap that ran ahead of this thunk on the FIFO worker freed the engine; skip the feed.
+                    // Reap guard: a deadline reap that ran ahead of this thunk on the FIFO worker freed the engine; skip the feed.
                     if isReaped() then ()
                     else
                         try
@@ -2204,7 +2204,7 @@ final private[net] class PosixTransport private[posix] (
     /** Arm read interest on the driver; when the poller delivers ciphertext the `cont` callback fires from the driver carrier. The
       * feedCiphertext call goes through submitEngineOp so it is serialized against concurrent ops on the same engine.
       *
-      * This is the park point a stalled server handshake reaches (finding #243): the io_uring `awaitRead` submits an in-flight recv SQE
+      * This is the park point a stalled server handshake reaches: the io_uring `awaitRead` submits an in-flight recv SQE
       * into `handle.readBuffer`. If a finite `handshakeTimeout` reaps the handshake while this is parked, the reap routes through
       * `ioDriver.closeHandle` (which `cancel`s `readPromise`, so the Success branch below cannot fire post-reap, and defers the buffer/fd
       * free until the recv CQE drains). A recv CQE that delivered Success just before the reap may still have enqueued the feed thunk below;
@@ -2226,7 +2226,7 @@ final private[net] class PosixTransport private[posix] (
                         val arr = bytes.toArrayUnsafe
                         // feedCiphertext is an engine op: submit through the FIFO. The continuation runs inside the FIFO thunk.
                         handle.driver.submitEngineOp { () =>
-                            // Reap guard (#243): a deadline reap that ran ahead of this thunk on the FIFO worker freed the engine; skip the feed.
+                            // Reap guard: a deadline reap that ran ahead of this thunk on the FIFO worker freed the engine; skip the feed.
                             if isReaped() then ()
                             else
                                 try

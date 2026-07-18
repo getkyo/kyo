@@ -10,8 +10,8 @@ import kyo.*
   * bounded outstanding bytes. A correctness bug in the per-connection read/write multiplexing (a misrouted read between handles, a lost
   * re-arm, a dropped/duplicated/reordered byte, a deadlock) would corrupt an echo or hang. Determinism: every step gates on a channel/promise
   * completion, never a sleep; there is no real network (in-process loopback). Plaintext only: the TLS concurrent-echo guard stays per-backend
-  * (posix `PosixTransportTlsConcurrentEchoTest`, js `JsConcurrentEchoTest`) because the Native TLS-engine-under-contention path is the open
-  * task #232 and would make a shared TLS variant flaky on Native.
+  * (posix `PosixTransportTlsConcurrentEchoTest`, js `JsConcurrentEchoTest`) because the Native TLS-engine-under-contention path is not yet
+  * covered and would make a shared TLS variant flaky on Native.
   */
 class TransportConcurrentEchoTest extends Test:
 

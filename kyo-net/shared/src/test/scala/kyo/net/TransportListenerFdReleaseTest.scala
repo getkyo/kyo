@@ -7,7 +7,7 @@ import kyo.*
   * Closing a server while it is registered with the driver's poller for accept interest must release the listening socket even when the driver
   * is otherwise idle. On a backend whose poll wait is bounded (io_uring's reap timeout, the epoll/kqueue poller's 100ms wait) the deferred
   * teardown runs within that wait. On the NIO floor the selector waits with no timeout, so unless the listener close wakes it the deferred
-  * `kill()` (the real `nd.close(fd)`) never runs and the socket leaks in LISTEN indefinitely (flaky, last-server-biased: later connection
+  * `kill()` (the real `nd.close(fd)`) never runs and the socket leaks in LISTEN indefinitely (intermittent, last-server-biased: later connection
   * activity wakes the selector and masks it, the last server in an idle suite does not).
   *
   * Release is asserted through the public API, with no JVM-only fd counting, by re-binding the freed port: a fresh `listen` on the same port

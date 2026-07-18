@@ -28,7 +28,7 @@ import kyo.net.internal.transport.ReadOutcome
   * engine is freed exactly once after the guard releases.
   *
   * Anti-flakiness: the engine handshakes in-memory via `TlsEngineLoopback.handshake` before the race; `onFeedCiphertext` is a one-shot re-entrant
-  * latch fired while `beginDispatch` is held. `Async.timeout(5.seconds)` is the deadlock ceiling (the unfixed driver would hang), not the
+  * latch fired while `beginDispatch` is held. `Async.timeout(5.seconds)` is the deadlock ceiling (a driver that stranded the dispatch would hang), not the
   * synchronization primitive; `readPromise.safe.get` latches on the real dispatch completion; the pre-sent bytes guarantee `recvNow` returns
   * immediately, so the race fires on the first poll. Two `fifoBarrier`s after the dispatch settle the deferred free (a separate FIFO op). No sleep.
   *

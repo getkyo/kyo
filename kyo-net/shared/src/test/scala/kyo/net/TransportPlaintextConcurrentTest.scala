@@ -3,7 +3,7 @@ package kyo.net
 import kyo.*
 
 /** Probe: the same high-concurrency shape as TransportStartTlsConcurrentTest but PLAINTEXT (no TLS, no STARTTLS upgrade) -- many clients connect
-  * to one echo server on the SAME transport at once and round-trip a message. Answers whether the concurrency flake is TLS/upgrade-specific (this
+  * to one echo server on the SAME transport at once and round-trip a message. Answers whether the concurrency failure is TLS/upgrade-specific (this
   * passes) or a fundamental connection-lifecycle bug (this fails too). Runs over every registered backend via [[eachBackend]].
   */
 class TransportPlaintextConcurrentTest extends Test:

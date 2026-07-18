@@ -7,7 +7,7 @@ import kyo.net.Test
 import kyo.net.internal.transport.ReadOutcome
 import kyo.net.internal.transport.WriteResult
 
-/** Reproduction + regression guard for finding #13 (POSIX recv/send EINTR handling, CWE-252 mishandled return value) in [[PollerIoDriver]].
+/** Reproduction + regression guard for POSIX recv/send EINTR handling (CWE-252 mishandled return value) in [[PollerIoDriver]].
   *
   * On a non-blocking socket a recv or send can return -1 with errno `EINTR` when a signal is delivered before any byte is transferred. POSIX
   * says to retry the call: no data was lost, the socket is unchanged. The accept path already retries `EINTR` in place, bounded

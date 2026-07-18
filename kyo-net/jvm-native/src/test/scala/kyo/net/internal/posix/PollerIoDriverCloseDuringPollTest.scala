@@ -36,8 +36,8 @@ class PollerIoDriverCloseDuringPollTest extends Test:
             PosixTestSockets.assumePoller()
             // The poll loop enters the spy's poll() (owning the scratch), fires latch A, and parks on latch B (a test-controlled pending fiber)
             // instead of delegating to the real epoll_wait/kevent. With the scratch provably in use AND no real blocking syscall in flight,
-            // close() must NOT free it: the buffer must still be open right after close() returns. A buggy close() frees the scratch mid-cycle,
-            // closing the shared off-heap arena while the poll loop still has it, which is the ownership violation this guards against.
+            // close() must NOT free it: the buffer must still be open right after close() returns. A close() that freed the scratch mid-cycle
+            // would close the shared off-heap arena while the poll loop still has it, which is the ownership violation this guards against.
             //
             // Anti-flakiness: latch A (prePollLatch) and latch B (prePollHold) are real Promise.Unsafe values; the carrier parks on B
             // deterministically until the test completes it. No sleep, and no real epoll_wait that close() could race to wake.

@@ -18,8 +18,8 @@ import kyo.scheduler.IOPromise
   *
   * This leaf drives the REAL [[PollerIoDriver]] over a real loopback pair (epoll on Linux, kqueue on macOS/BSD). It mirrors the `ReadPump`
   * standing-read exactly with a reused [[IOPromise]] that, on every completion, re-arms the next read via `awaitRead`, and asserts that a burst
-  * of N back-to-back peer writes is delivered in full and in order. On the unfixed epoll path a re-arm lost to the `rearmSurvivors` clear
-  * strands one of the writes and the bounded await for the expected byte count times out.
+  * of N back-to-back peer writes is delivered in full and in order. An epoll path that lost a re-arm to the `rearmSurvivors` clear
+  * would strand one of the writes and time out the bounded await for the expected byte count.
   */
 class PollerIoDriverStandingReadTest extends Test:
 

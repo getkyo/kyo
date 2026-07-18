@@ -13,10 +13,10 @@ import scala.jdk.CollectionConverters.*
   * [[IoUringStalePumpRecvRoutingTest]]) is race-free against the review concern that its `h.tls.isDefined` discriminator ("onFinished ran, no
   * consumer will ever drain `upgradeHandoff` again") could drift out of sync with the actual retirement of `driveUpgradeRead`'s consumer: either
   * a live consumer still draining `upgradeHandoff` at the same moment the direct-feed ALSO fires (DUPLICATED bytes), or the consumer retiring
-  * before `tls` actually becomes `Present` (bytes LOST after all, the original bug).
+  * before `tls` actually becomes `Present` (bytes LOST after all).
   *
   * Why the discriminator is race-free by construction (not by luck): `PosixTransport`'s `onFinished` closure (`handle.upgradeActive = false`
-  * through `upgraded.start()`, including the `tls = Present(engine)` write AND the pre-existing "Post-FINISHED slot drain" that claims any
+  * through `upgraded.start()`, including the `tls = Present(engine)` write AND the "Post-FINISHED slot drain" that claims any
   * `upgradeHandoff` Carryover staged before this point) is ONE indivisible synchronous call with no `submitEngineOp` boundary inside it, and it
   * always runs on the single reap carrier that also processes every CQE for this handle. No other CQE can be routed "in the middle" of it: a
   * reaping recv either observes the ENTIRE pre-onFinished state (`tls` Absent, the slot-drain not yet run) or the ENTIRE post-onFinished state
@@ -25,7 +25,7 @@ import scala.jdk.CollectionConverters.*
   * chain: `WantRead` -> `recvAndFeed` -> `driveUpgradeRead` -> park -> the waiter's own fulfillment calls `step()` again), so if the step loop
   * ever reaches `Done` (leading to `onFinished`), any waiter it parked earlier has ALREADY been consumed -- there is no way for a live,
   * yet-unfulfilled `Waiter` to still be sitting in `upgradeHandoff` at the moment `onFinished` runs. Finally, the post-onFinished direct-feed
-  * path (this fix) and the pre-existing Post-FINISHED slot-drain operate on textually and temporally DISJOINT data: the slot-drain only ever
+  * path and the Post-FINISHED slot-drain operate on textually and temporally DISJOINT data: the slot-drain only ever
   * touches whatever Carryover was ALREADY staged in `upgradeHandoff` before `onFinished`'s closure started running; the direct-feed path only
   * ever fires for a CQE reaping in a STRICTLY LATER reap-loop turn, reading straight from the recv's own kernel-written buffer
   * (`handle.readBuffer` or `recvStagingFor`, via `armedForStaging`), never touching `upgradeHandoff` at all. Two disjoint data sources cannot

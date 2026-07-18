@@ -23,8 +23,8 @@ class TransportLifecycleTest extends Test:
             // Derive a no-listener port by binding an ephemeral port through the transport, capturing it, then closing the listener. Once closed the
             // port is unbound, so a connect to it must be refused (Closed). The catch: the suites run at `parallelism 4`, so between the close and the
             // connect another suite's `listen("127.0.0.1", 0, ...)` can have the kernel re-assign that just-freed ephemeral port to ITS listener, and
-            // then the connect lands on that foreign listener and SUCCEEDS, which flaked the single-shot form (a captured run connected to a reused
-            // port 40971). Retry on that reuse: a connect that unexpectedly succeeds means the port was rebound by another suite, so close that
+            // then the connect lands on that foreign listener and SUCCEEDS, which makes a single-shot form unreliable. Retry on that reuse: a connect
+            // that unexpectedly succeeds means the port was rebound by another suite, so close that
             // connection and try a fresh port. The retry never weakens the contract: it asserts that a connect to a genuinely-unbound port fails, and
             // a real bug (the product returning a live connection for an unbound port) would make every attempt "succeed" and exhaust the retries.
             def attempt(remaining: Int): Unit < (Async & Abort[NetException | Closed]) =

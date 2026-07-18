@@ -287,7 +287,7 @@ final private[net] class IoUringDriver private[posix] (
             // while executing: no OTHER call on that same carrier can ever observe the intermediate state. If a future change lets some other
             // carrier read `hasInFlightRead` or `recvInFlight` directly (not just via another `submitRecv` call), that read MUST NOT assume the
             // two become true together -- see IoUringDriverTest's "closeHandle defers..." leaf and IoUringExclusiveUseSqFullTest for the exact
-            // test-side race this gap can expose under scheduling pressure (flaky under full-suite load, never in isolation).
+            // test-side race this gap can expose under scheduling pressure (surfaces only under concurrency, never in isolation).
             register(key, PendingOp.Read(promise, handle, eintrRetries, handshakeOwned, armedPostUpgrade, armedForStaging))
             uring.kyo_uring_get_sqe(ring) match
                 case Present(sqe) =>
@@ -785,7 +785,7 @@ final private[net] class IoUringDriver private[posix] (
                         // Always-on at-rest invariant (the recvInFlight doctrine, PosixHandle.scala:211-224, applied to the send tail): a
                         // plain branch, not an elidable assert, so it stays live in production. Once the tail is declared fully drained,
                         // both fields must actually be at rest; a future edit that resets one but not the other would otherwise surface
-                        // only as a downstream, hard-to-attribute #29-class flake in some unrelated suite. Attributes both values here,
+                        // only as a downstream, hard-to-attribute flake in some unrelated suite. Attributes both values here,
                         // at the exact op, in every TLS-writing suite.
                         if buf.size != 0 || handle.pendingCipherSent != 0 then
                             Log.live.unsafe.error(
@@ -1072,7 +1072,7 @@ final private[net] class IoUringDriver private[posix] (
         // PosixHandle.close (freeResources) clears the raw pending tail; the close-after-drain handshake already ensured no raw send is in flight.
         // Drop the handle from the SQ-full re-flush set so a closed handle is never re-flushed.
         discard(stalledRaw.remove(handle))
-        // Drop any recv/accept/connect this handle parked on a full SQ (#349): a parked op left in stalledSubmits is re-armed by the next
+        // Drop any recv/accept/connect this handle parked on a full SQ: a parked op left in stalledSubmits is re-armed by the next
         // reArmStalledSubmits turn, which would submit an SQE on this now-closed fd (EBADF, or worse a recv on the fd's recycled successor). Fail
         // each parked op's promise Closed and release its pinned buffers before the fd close. closeNow runs on the reap carrier, the sole producer
         // and consumer of stalledSubmits, so iterating + removing here is race-free without a lock. Identity is by HandleId, so a stale op from an
@@ -2239,7 +2239,7 @@ final private[net] class IoUringDriver private[posix] (
     /** Whether a wait result is the benign "timed out, no CQE" signal (`-ETIME`), a normal empty turn rather than a failure. The
       * argument is the return value of the fused submit-and-wait enter (0 ready / -ETIME timeout / -errno error), not the captured errno:
       * like every liburing call it returns the result directly and does not reliably set the global errno, so a stale errno must never
-      * decide whether a ready CQE gets drained or the reap loop stops (#258). The `+ETIME` arm is defensive for any platform whose
+      * decide whether a ready CQE gets drained or the reap loop stops. The `+ETIME` arm is defensive for any platform whose
       * wrapper surfaces the timeout as a positive code.
       */
     private def isTimeout(waitResult: Int): Boolean =
@@ -2345,7 +2345,7 @@ private[net] object IoUringDriver:
         // successful init. That would silently drop io_uring to the epoll fallback and, worse, take the failure branch below that frees
         // the live ring Buffer without io_uring_queue_exit, leaving the kernel a ring over freed memory (heap corruption, SIGSEGV in a
         // later kyo_uring_get_sqe). On a genuine failure (rc < 0) the ring was not set up, so ring.close() alone is correct (liburing
-        // cleaned up internally; no queue_exit is owed). See #258.
+        // cleaned up internally; no queue_exit is owed).
         val rc = uring.io_uring_queue_init(depth, ring, flags)
         if rc != 0 then
             ring.close()

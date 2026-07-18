@@ -325,7 +325,7 @@ object PosixTestSockets:
     // RFC 5737 TEST-NET-1 (192.0.2.0/24) is reserved for documentation and is guaranteed non-routable on the public internet. A non-blocking
     // connect to it gets no SYN-ACK and no RST, so it stays in SYN-SENT for the whole connect timeout (far longer than any test leaf), giving a
     // genuinely never-writable connecting socket. Chosen over a backlog-saturated loopback listener (whose dropped SYN can still complete on a
-    // transient slot, re-introducing the flake) and over a closed loopback port (which RSTs immediately, firing a write-ready error event).
+    // transient slot, reintroducing intermittency) and over a closed loopback port (which RSTs immediately, firing a write-ready error event).
     private val BlackHoleHost = "192.0.2.1"
     private val BlackHolePort = 9
 
@@ -414,7 +414,7 @@ object PosixTestSockets:
                     val rc    = uring.io_uring_queue_init(depth, ring, 0)
                     // io_uring_queue_init returns 0 on success or -errno on failure and does NOT set the global errno
                     // (liburing returns the negated errno directly). Read the return value, not the captured errno: a
-                    // stale errno left by a prior syscall would spuriously report io_uring unavailable here (#258).
+                    // stale errno left by a prior syscall would spuriously report io_uring unavailable here.
                     if rc != 0 then
                         ring.close()
                         false

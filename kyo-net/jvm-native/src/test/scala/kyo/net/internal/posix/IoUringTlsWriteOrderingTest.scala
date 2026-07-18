@@ -82,7 +82,7 @@ class IoUringTlsWriteOrderingTest extends Test:
     /** Test-tree quiescence barrier for `handle`: completes once the handle is at rest (no submitted-but-unreaped op, and no TLS or raw send
       * SQE outstanding). The conservation assertions read settled accounting behind this: the driver's write is two-phase (the wire effect
       * happens on the kernel's own schedule; the local accounting, e.g. onTlsSendComplete resetting pendingCipherSent, runs only when that
-      * send's CQE is reaped on a LATER reap cycle), so without an explicit barrier the assertions would race the reap carrier (#29).
+      * send's CQE is reaped on a LATER reap cycle), so without an explicit barrier the assertions would race the reap carrier.
       *
       * It samples inFlight/sendInFlight/rawSendInFlight through submitEngineOp (the engine FIFO is the single owner of that state, so the
       * sample cannot race the accounting it reads), and between samples parks on the recording spy's next-CQE-reap latch instead of a timer:
@@ -146,7 +146,7 @@ class IoUringTlsWriteOrderingTest extends Test:
                         collectPlaintext(drv, peerHandle, clientEngine, expected.length).map { got =>
                             // collectPlaintext returning proves the WIRE effect (the peer decrypted every byte); it proves nothing about
                             // this driver's own ACCOUNTING of that send, which resets on a later reap cycle (onTlsSendComplete). Barrier
-                            // first so the invariant below reads settled state instead of racing the reap carrier (#29).
+                            // first so the invariant below reads settled state instead of racing the reap carrier.
                             awaitQuiesced(drv, recording, handle).map { _ =>
                                 handle.tls = Absent
                                 drv.closeHandle(handle)
@@ -188,7 +188,7 @@ class IoUringTlsWriteOrderingTest extends Test:
                         assert(w2 == WriteResult.Done, s"write 2 result=$w2")
 
                         collectPlaintext(drv, peerHandle, clientEngine, expected.length).map { got =>
-                            // Barrier first: see the conservation leaf's comment above (#29).
+                            // Barrier first: see the conservation leaf's comment above.
                             awaitQuiesced(drv, recording, handle).map { _ =>
                                 handle.tls = Absent
                                 drv.closeHandle(handle)
@@ -230,7 +230,7 @@ class IoUringTlsWriteOrderingTest extends Test:
                             assert(w == WriteResult.Done, s"write $i result=$w")
                         }
                         collectPlaintext(drv, peerHandle, clientEngine, expected.length).map { got =>
-                            // Barrier first: see the conservation leaf's comment above (#29).
+                            // Barrier first: see the conservation leaf's comment above.
                             awaitQuiesced(drv, recording, handle).map { _ =>
                                 handle.tls = Absent
                                 drv.closeHandle(handle)

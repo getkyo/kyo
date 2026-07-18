@@ -21,7 +21,7 @@ import kyo.net.internal.transport.ReadOutcome
   * `status` read. This test removes that timing dependence by driving the exact mechanism directly at the driver level (no
   * `Connection`/`Transport` involved) and waiting on a REAL completion signal -- `handle.isClosing()`, set only at the very end of
   * `closeNow` (`PosixHandle.close` -> `requestClose`) -- instead of guessing at a deadline. `closeNow` is reached via
-  * `decrementInFlight`'s inline call, which runs immediately AFTER the buggy/fixed `res == 0` branch for this same CQE, so observing
+  * `decrementInFlight`'s inline call, which runs immediately AFTER the `res == 0` branch for this same CQE, so observing
   * `isClosing() == true` proves that branch has already run.
   *
   * Fails-before: `handle.halfClose` ends as `PeerEof` even though no peer FIN ever happened (only the local close's own self-induced

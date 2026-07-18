@@ -51,7 +51,7 @@ class NioTransportHandshakeReapTest extends Test:
             driver.awaitRead(handle, readPromise)
             assert(driver.hasPendingRead(handle), "arming a read must register the pendingReads entry")
 
-            // The buggy teardown path: closing only the channel does NOT remove the driver's pendingReads entry.
+            // Closing only the channel does NOT remove the driver's pendingReads entry.
             try client.close()
             catch case _: java.io.IOException => ()
             assert(driver.hasPendingRead(handle), "a bare channel close must leave the pendingReads entry (the leak this reproduces)")

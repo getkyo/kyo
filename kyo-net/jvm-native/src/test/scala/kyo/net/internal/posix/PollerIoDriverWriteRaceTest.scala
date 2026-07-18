@@ -43,7 +43,7 @@ class PollerIoDriverWriteRaceTest extends Test:
       * which is up to THREE FIFO ops downstream of the write: the write op (writeTls) runs writePlain, which fires closeHandle (enqueuing the close
       * op); the close op runs requestClose -> freeResources, which routes engine.free through engineFreeSink as a third op. Each barrier settles one
       * op, so three in sequence guarantee the free has run regardless of whether the poll carrier had already drained the write op before the first
-      * barrier was enqueued (the scheduler-dependent window that made a two-barrier settle flake on Native's green threads). A deterministic,
+      * barrier was enqueued (the scheduler-dependent window in which a two-barrier settle could flake on Native's green threads). A deterministic,
       * sleep-free settle point.
       */
     private def fifoBarrier(driver: PollerIoDriver)(using AllowUnsafe): Promise.Unsafe[Unit, Any] =

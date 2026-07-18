@@ -6,7 +6,7 @@ import kyo.ffi.Ffi
 import kyo.net.Test
 import kyo.net.internal.transport.ReadOutcome
 
-/** Reproduction + regression guard for security finding #9 (io_uring C shim signed-length-to-unsigned cast, CWE-190 / CWE-195 / CWE-805) in
+/** Reproduction + regression guard for the io_uring C shim signed-length-to-unsigned cast (CWE-190 / CWE-195 / CWE-805) in
   * [[IoUringBindings]] / [[IoUringDriver]].
   *
   * The `kyo_uring_prep_read` / `prep_write` / `prep_recv` / `prep_send` shim functions take a SIGNED length on the Scala side (`int nbytes` /
@@ -81,7 +81,7 @@ class IoUringDriverNegativeLengthTest extends Test:
         end kyo_uring_prep_recv
     end RecvRejectingUring
 
-    "IoUringDriver negative length (finding #9, CWE-190/195/805)" - {
+    "IoUringDriver negative length (CWE-190/195/805)" - {
 
         "the C shim rejects a negative prep length and prepares a non-negative one" in {
             PosixTestSockets.assumeUring()

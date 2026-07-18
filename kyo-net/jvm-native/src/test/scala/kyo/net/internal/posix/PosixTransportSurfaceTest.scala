@@ -36,7 +36,7 @@ class PosixTransportSurfaceTest extends Test:
       * The driver's own poll-loop thread is a separate story from the listener fd closing synchronously above: `driver.close()` only requests
       * teardown (`submitEngineOp` + `triggerWake()`) and returns immediately, without waiting for the poll-loop carrier to actually run it.
       * Awaiting the driver's own exit fiber after `close()` (rather than discarding it) makes the underlying thread provably gone before this
-      * computation completes, closing the window where, under kyo-test's full-suite concurrent leaf scheduling, a not-yet-fully-torn-down
+      * computation completes, closing the window where, under kyo-test's concurrent leaf scheduling, a not-yet-fully-torn-down
       * driver from an earlier leaf could still be alive when the next leaf's own transport starts, letting a connection meant for the new
       * leaf's listener land on the stale one instead.
       */

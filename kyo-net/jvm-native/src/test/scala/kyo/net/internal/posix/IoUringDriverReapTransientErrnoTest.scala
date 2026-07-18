@@ -9,13 +9,13 @@ import kyo.net.internal.transport.ReadOutcome
 /** Reproduction + regression guard: [[IoUringDriver]]'s reap loop under-classified a transient `io_uring_enter` errno as a fatal ring fault.
   *
   * The fused submit+wait (`kyo_uring_submit_and_wait_timeout`) can return `-ENOMEM` when the kernel could not allocate memory for THIS call
-  * right now, a momentary condition under combined memory pressure from many concurrently-running rings on one host (exactly a full-suite
-  * test run), alongside the already-recognized transient `-EINTR`/`-EAGAIN`/`-EBUSY`/`-ETIME`. If `reapRcContinues` did not
+  * right now, a momentary condition under combined memory pressure from many concurrently-running rings on one host,
+  * alongside the already-recognized transient `-EINTR`/`-EAGAIN`/`-EBUSY`/`-ETIME`. If `reapRcContinues` did not
   * recognize `-ENOMEM`, the reap loop would classify it as a genuinely fatal ring rc and self-destruct the WHOLE ring
   * (`io_uring_queue_exit`), tearing down every connection it carried, including one with a genuinely in-flight, kernel-owned recv SQE that
   * would otherwise have completed normally moments later.
   *
-  * This is the mechanism behind `IoUringDriverTest`'s "closeHandle defers..." leaf flaking under full-suite load (its own comment already
+  * This is the mechanism behind `IoUringDriverTest`'s "closeHandle defers..." leaf flaking under concurrent load (its own comment already
   * documents the symptom without naming the cause): once the ring exits, `closeHandle`'s `ringExited` fast path frees a handle's read buffer
   * immediately, bypassing the in-flight defer discipline entirely. It is also the likely source of a companion `CLOSE_WAIT` leak:
   * a connection that was simply OPEN (not yet closing) when the ring self-destructs has its fd abandoned, with no
@@ -111,7 +111,7 @@ class IoUringDriverReapTransientErrnoTest extends Test:
                                 fail(
                                     s"the recv was failed Closed (\"$c\") instead of completing: a transient -ENOMEM tore the whole ring " +
                                         "down (reapRcContinues did not recognize it), exactly the mechanism behind the closeHandle-defers " +
-                                        "flake and its companion CLOSE_WAIT leak under full-suite load"
+                                        "flake and its companion CLOSE_WAIT leak under concurrent load"
                                 )
                             case other => fail(s"unexpected read outcome: $other")
                         end match

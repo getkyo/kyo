@@ -193,10 +193,10 @@ class HttpClientTest extends BaseHttpTest:
     "init" - {
 
         "closes the pool once the enclosing Scope exits" in {
-            // Regression for a Scope-release bug: `init`'s release used to read as `_.closeNow`, which inside HttpClient's own
-            // object resolves to HttpClientBackend's one-arg `closeNow(conn)` member instead of the zero-arg extension, so the
-            // release silently did nothing and the pool never closed. Captures the client out of its own nested Scope.run so the
-            // pool's closed state can be checked once that Scope has actually exited.
+            // Guards the `init` Scope-release resolution: written as `_.closeNow`, the release would resolve (inside HttpClient's own
+            // object) to HttpClientBackend's one-arg `closeNow(conn)` member instead of the zero-arg extension and silently do nothing,
+            // leaving the pool open. Captures the client out of its own nested Scope.run so the pool's closed state can be checked once
+            // that Scope has actually exited.
             val route                       = HttpRoute.getRaw("ping").response(_.bodyText)
             val ep                          = route.handler(_ => HttpResponse.ok("pong"))
             var captured: Maybe[HttpClient] = Absent

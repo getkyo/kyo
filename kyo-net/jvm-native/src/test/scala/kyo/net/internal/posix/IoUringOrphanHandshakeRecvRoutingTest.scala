@@ -119,7 +119,7 @@ class IoUringOrphanHandshakeRecvRoutingTest extends Test:
 
                             // Not valid TLS ciphertext for a never-handshaked engine: the expected outcome is a fatal-record teardown (the
                             // same `closeHandle` path IoUringMutualTlsStressTest's real handshakes exercise on genuinely bad data), not
-                            // delivered plaintext. What this test actually pins is the ABSENCE of the buggy behavior.
+                            // delivered plaintext. What this test actually pins is the ABSENCE of a mis-routed plaintext delivery.
                             awaitCondition(5.seconds)(acceptedH.isClosing()).map { closed =>
                                 assert(
                                     closed,
@@ -127,7 +127,7 @@ class IoUringOrphanHandshakeRecvRoutingTest extends Test:
                                 )
                                 // The core regression guard: the bytes must NEVER be staged as a Carryover. Once onFinished has fully run, that
                                 // slot has no consumer left, so staging it there would silently lose the bytes forever (the actual "Closed at
-                                // collect" mechanism this fix closes) instead of being fed to the engine (whatever the engine then does with them).
+                                // collect" loss mechanism) instead of being fed to the engine (whatever the engine then does with them).
                                 acceptedH.upgradeHandoff.get() match
                                     case _: PosixHandle.UpgradeHandoff.Carryover =>
                                         fail(s"orphan recv's bytes were staged as a Carryover (slot=${acceptedH.upgradeHandoff.get()}) " +

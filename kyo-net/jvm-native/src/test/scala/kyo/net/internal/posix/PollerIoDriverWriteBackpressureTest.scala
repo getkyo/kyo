@@ -27,7 +27,7 @@ import kyo.net.internal.transport.WriteResult
   * and SO_SNDBUF on the client, and a REAL BoringSSL engine post-handshake. A large plaintext write encrypts into a similarly large ciphertext
   * blob that is guaranteed to hit EAGAIN with bytes still pending. The peer is drained deterministically via the driver's own `awaitRead`
   * readiness plus a non-blocking `recvNow`, never a sleep, and the received ciphertext is decrypted with the server engine; the recovered
-  * plaintext must equal the written payload exactly (the real-engine conservation check). The fixed driver appends the pending ciphertext,
+  * plaintext must equal the written payload exactly (the real-engine conservation check). The driver appends the pending ciphertext,
   * flushes what it can, arms writability, and re-submits the flush when the socket drains, so every emitted byte arrives and the second
   * connection is never starved.
   *

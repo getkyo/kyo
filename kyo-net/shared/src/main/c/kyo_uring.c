@@ -55,8 +55,8 @@ struct io_uring_sqe* kyo_uring_get_sqe(struct io_uring* ring) {
  * instead of 0 (prepared). The Scala caller (IoUringDriver) maps a non-zero return
  * to an OBSERVABLE failure (fails the read/write promise) rather than letting it pass
  * silently: a bare drop here would leave the ring waiting on a CQE that never comes.
- * The non-negative path is byte-for-byte the prior behavior. Today's callers always
- * pass a positive length, so this only guards a future signedness bug.
+ * For a non-negative length the guard is a no-op (the cast proceeds unchanged); today's
+ * callers always pass a positive length, so this only guards against a future signedness bug.
  */
 
 int kyo_uring_prep_read(struct io_uring_sqe* sqe, int fd, void* buf, int nbytes, long offset) {

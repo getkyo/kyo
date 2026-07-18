@@ -7,7 +7,7 @@ import kyo.net.Test
 import kyo.net.internal.transport.ReadOutcome
 import kyo.net.internal.transport.WriteResult
 
-/** Reproduction + regression guard for the io_uring counterpart of finding #13/#222 (POSIX recv/send EINTR handling, CWE-252 mishandled
+/** Reproduction + regression guard for the io_uring counterpart of the POSIX recv/send EINTR handling issue (CWE-252 mishandled
   * return value) in [[IoUringDriver]].
   *
   * io_uring surfaces a signal-interrupted recv/send as a completion CQE whose `res` is `-EINTR`: a non-blocking recv/send interrupted by a

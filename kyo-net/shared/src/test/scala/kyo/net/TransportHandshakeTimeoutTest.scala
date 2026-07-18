@@ -3,7 +3,7 @@ package kyo.net
 import kyo.*
 import kyo.net.internal.TlsProviderPlatform
 
-/** Cross-backend server accept-handshake deadline (`TransportConfig.handshakeTimeout`, finding #7, CWE-400 slowloris), via the PUBLIC
+/** Cross-backend server accept-handshake deadline (`TransportConfig.handshakeTimeout`, CWE-400 slowloris), via the PUBLIC
   * `NetPlatform.transport(config)` factory so the SAME test runs against every backend: posix (JVM default + Native), the NIO floor and the
   * epoll driver (forced-backend CI legs), and Node (JS). It replaces the former per-backend handshake-timeout suites, which had to construct
   * each transport directly only because there was no public way to set the deadline.
@@ -55,10 +55,10 @@ class TransportHandshakeTimeoutTest extends Test:
         }
     }
 
-    "repeatedly reaping stalled server TLS handshakes does not corrupt memory (issue #243 io_uring UAF regression guard)" in {
+    "repeatedly reaping stalled server TLS handshakes does not corrupt memory (io_uring UAF regression guard)" in {
         assumeTls()
         given Frame = Frame.internal
-        // Regression guard for #243: a stalled server TLS handshake parks the server in awaitReadCiphertext with an in-flight io_uring recv SQE
+        // Regression guard: a stalled server TLS handshake parks the server in awaitReadCiphertext with an in-flight io_uring recv SQE
         // pointed at handle.readBuffer. When the finite handshakeTimeout fires, the deadline teardown MUST route the readBuffer free + engine free
         // through the driver's UAF-safe ioDriver.closeHandle (deferred until the recv CQE reaps) and force the recv to complete (shutdown), rather
         // than freeing the kernel-owned buffer and the engine directly. Freeing them directly would free memory the kernel is still writing into (Invalid

@@ -90,7 +90,7 @@ abstract private[kyo] class IoDriver[Handle]:
       * driver overrides this to KEEP the channel's `SelectionKey` (resetting interest to 0) instead of cancelling it. Cancelling marks the key for
       * removal at the next `select()`, and `channel.register` before that async flush throws `CancelledKeyException` and defers, opening a window
       * where a concurrent handshake read-arm finds the channel with no live key and spuriously fails the handshake (the STARTTLS-under-concurrency
-      * flake). Keeping the key removes that window entirely.
+      * failure). Keeping the key removes that window entirely.
       */
     def detachForUpgrade(handle: Handle)(using AllowUnsafe, Frame): Unit =
         cancel(handle)

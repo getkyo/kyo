@@ -6,7 +6,7 @@ import kyo.net.Test
 import kyo.net.TransportConfig
 import kyo.net.internal.posix.SocketBindings
 
-/** Cross-backend consistency guard for issue #258: every I/O backend must build a working transport even when a PRIOR syscall on the
+/** Cross-backend consistency guard for stale-errno init: every I/O backend must build a working transport even when a PRIOR syscall on the
   * calling thread has left a non-zero `errno`.
   *
   * A non-zero `errno` is the steady state of any real program: every non-blocking accept that returns `EAGAIN`, every `connect` that returns
@@ -32,7 +32,7 @@ class IoBackendStaleErrnoTest extends Test:
 
     private def sock = Ffi.load[SocketBindings]
 
-    "every available I/O backend builds a working transport after a prior syscall left errno non-zero (#258)" - {
+    "every available I/O backend builds a working transport after a prior syscall left errno non-zero" - {
         IoBackendPlatform.registered.foreach { entry =>
             s"backend=${entry.name}" in {
                 if !entry.isAvailable then cancel(s"backend ${entry.name} is not available on this host")
@@ -48,7 +48,7 @@ class IoBackendStaleErrnoTest extends Test:
                         catch
                             case c: Closed =>
                                 fail(
-                                    s"#258: building the ${entry.name} transport threw Closed on a stale errno (errorCode=${dirty.errorCode}) " +
+                                    s"building the ${entry.name} transport threw Closed on a stale errno (errorCode=${dirty.errorCode}) " +
                                         s"although the backend is available. Backend init must read the syscall RETURN value, not the captured " +
                                         s"errno: ${c.getMessage}"
                                 )

@@ -9,7 +9,7 @@ import kyo.internal.Diagnostics
   *
   * Promotes the per-driver [[Diagnostics]] snapshot kyo-net's drivers register (a loop-cycle counter plus a pending-work flag: a queued
   * command, an armed read/write/accept, an unreaped completion) from a dump a human reads on a hung leaf into an automatic classifier
-  * that runs on EVERY suite. The governing principle (the one the #25 investigation applied by hand): a loop whose cycle counter
+  * that runs on EVERY suite. The governing principle: a loop whose cycle counter
   * advances is making continuous progress, however long it then takes, and is never a finding; a loop whose pending work survives
   * unchanged while its cycle counter stays frozen has parked with nothing left to wake it, which is a lost wakeup. [[detect]] takes two
   * [[Diagnostics.probeAll]] samples a settle window apart and applies exactly that rule to each registered component.

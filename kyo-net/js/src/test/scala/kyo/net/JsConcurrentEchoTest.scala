@@ -143,7 +143,7 @@ class JsConcurrentEchoTest extends Test:
         // The plaintext concurrent-echo guarantee is backend-agnostic and now lives in the shared TransportConcurrentEchoTest (which runs on JS
         // too via NetPlatform.transport). This file keeps only the TLS variant: Node owns the TLS layer, so the JS TLS concurrent-echo path
         // exercises Node's own tls multiplexing over the single event loop, which the shared test cannot cover (the shared TLS-concurrent variant
-        // is held out because the Native TLS-engine-under-contention path is the open task #232).
+        // is held out because the Native TLS-engine-under-contention path is not yet covered).
         "many TLS connections each echo concurrently and every response matches its request" in {
             runEcho(tls = true).map(ok =>
                 assert(ok, "a TLS connection's echo did not match byte for byte under concurrency on the single event loop")

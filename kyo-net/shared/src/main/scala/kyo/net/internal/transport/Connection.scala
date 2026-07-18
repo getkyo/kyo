@@ -168,9 +168,9 @@ final private[kyo] class Connection[Handle] private (
       * Ordinary [[close]] already abandons a still-in-flight upgrade (via [[upgradeAbandon]]), so at shutdown the fd is not stranded. But that
       * release runs on the driver's engine FIFO: it is asynchronous, not bounded by the time the transport's `close()` call returns, and the
       * shutdown is about to close the very pool whose carrier would run it. This force-close is what makes the release synchronous for that one
-      * caller, so the fd is reclaimed while the driver is still alive (the alternative was observed as an intermittent CLOSE_WAIT leak under
-      * kyo-test's leak check: the upgrade's failure path does eventually free the fd, just not before a fast-completing test's leak check
-      * inspects the fd table).
+      * caller, so the fd is reclaimed while the driver is still alive (the alternative, letting the async failure path free the fd, races a
+      * fast-completing test's leak check, which can inspect the fd table before the free runs, so the descriptor lingers in CLOSE_WAIT: the
+      * upgrade's failure path does eventually free the fd, just not before that check).
       *
       * `driver.cancel(handle)` synchronously fails any promise the upgrade has parked (its own handshake read, most commonly), which drives the
       * SAME onFailed/onPanic -> engine-free-and-fd-close path an ordinary handshake failure takes, just synchronously instead of racing a
