@@ -4,13 +4,13 @@ import java.util.concurrent.atomic.AtomicInteger
 import kyo.*
 import kyo.ffi.Buffer
 import kyo.ffi.Ffi
+import kyo.net.internal.TlsEngine
 import kyo.net.internal.posix.IoUringBindings
 import kyo.net.internal.posix.IoUringDriver
 import kyo.net.internal.posix.IoUringSqe
 import kyo.net.internal.posix.PosixHandle
 import kyo.net.internal.posix.SocketBindings
 import kyo.net.internal.posix.TestDrivers
-import kyo.net.internal.tls.TlsEngine
 
 /** Deterministic mechanism test for the io_uring STARTTLS raw->TLS cross-tail send wire-order invariant
   * using stub bindings only, no real ring, no TLS provider, no platform gate.

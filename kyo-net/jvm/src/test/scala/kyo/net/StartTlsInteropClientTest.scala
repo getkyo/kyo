@@ -6,8 +6,8 @@ import java.net.ServerSocket
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.atomic.AtomicBoolean
 import kyo.*
+import kyo.net.internal.TlsRealEngines
 import kyo.net.internal.posix.PosixTestSockets
-import kyo.net.internal.tls.TlsRealEngines
 
 /** External TLS interoperability test: kyo-net io_uring client vs openssl s_server.
   *

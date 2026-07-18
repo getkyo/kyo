@@ -3,9 +3,9 @@ package kyo.net.internal.posix
 import kyo.*
 import kyo.ffi.Ffi
 import kyo.net.Test
-import kyo.net.internal.tls.TlsEngine
-import kyo.net.internal.tls.TlsEngineLoopback
-import kyo.net.internal.tls.TlsRealEngines
+import kyo.net.internal.TlsEngine
+import kyo.net.internal.TlsEngineLoopback
+import kyo.net.internal.TlsRealEngines
 import kyo.net.internal.transport.WriteResult
 
 /** Deterministic guard for the `flushReArmPending` double-arm coalescing in [[PollerIoDriver.armWritableForFlush]]: while a

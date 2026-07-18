@@ -13,7 +13,7 @@ import kyo.net.internal.posix.PosixConstants
 import kyo.net.internal.posix.PosixHandle
 import kyo.net.internal.posix.PosixTransport
 import kyo.net.internal.posix.SocketBindings
-import kyo.net.internal.transport.ConnectionState
+import kyo.net.internal.transport.Connection
 import kyo.net.internal.transport.IoDriver
 import kyo.net.internal.transport.IoDriverPool
 
@@ -121,16 +121,16 @@ final private[net] class PosixEntry(backend: PosixIoBackend) extends Entry:
         // own happens-before guarantee instead: every driver thread pool.start() spawns below is guaranteed to see it already
         // resolved, so no driver thread can ever again race another driver thread on its first-time initialization.
         discard(kyo.net.tls())
-        // Same reasoning for every kyo.net.internal.transport.ConnectionState enum case: each no-arg case is its own lazily-
+        // Same reasoning for every Connection.State enum case: each no-arg case is its own lazily-
         // initialized Scala Native module, and Connection.init (called for every accepted or connected socket, so on whichever
         // driver thread handles that socket) touches Created first, with the other cases reached from later, equally
         // concurrent state transitions. ThreadSanitizer confirmed the identical module-init race on Created once the
         // kyo.net.tls race above was closed; warming every case here closes the whole enum rather than one case at a time.
-        discard(ConnectionState.Created)
-        discard(ConnectionState.Established)
-        discard(ConnectionState.Upgrading)
-        discard(ConnectionState.Closing)
-        discard(ConnectionState.Closed)
+        discard(Connection.State.Created)
+        discard(Connection.State.Established)
+        discard(Connection.State.Upgrading)
+        discard(Connection.State.Closing)
+        discard(Connection.State.Closed)
         pool.start() // all-or-nothing: on any driver-start failure this closes the started subset and rethrows.
         PosixTransport.init(config, pool)
     end build

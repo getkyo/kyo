@@ -2,7 +2,7 @@ package kyo.net.internal.posix
 
 import kyo.*
 import kyo.net.Test
-import kyo.net.internal.tls.TlsEngine
+import kyo.net.internal.TlsEngine
 
 /** Unit tests for [[PosixHandle]], the unified raw-fd handle. Covers the readFd/writeFd split (sockets share one fd, stdio splits 0/1), the
   * monotonic id used as the recycled-fd stale-event guard, and the idempotent resource release in `close`.

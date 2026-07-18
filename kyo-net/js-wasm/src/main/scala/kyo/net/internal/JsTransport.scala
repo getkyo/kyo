@@ -929,7 +929,7 @@ end JsTransport
 final private class JsListener(
     private val server: js.Dynamic,
     private var _address: NetAddress
-) extends ListenerImpl:
+) extends NetListener:
     // JS is single-threaded, but closed flag uses atomic for consistency with other listeners
     // Unsafe: created at construction with no ambient AllowUnsafe; the danger bridge builds it here and its accesses run under the caller's
     // AllowUnsafe.

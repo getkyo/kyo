@@ -4,8 +4,8 @@ import kyo.*
 import kyo.ffi.Buffer
 import kyo.ffi.Ffi
 import kyo.net.Test
-import kyo.net.internal.tls.TlsEngineLoopback
-import kyo.net.internal.tls.TlsRealEngines
+import kyo.net.internal.TlsEngineLoopback
+import kyo.net.internal.TlsRealEngines
 import kyo.net.internal.transport.ReadOutcome
 import kyo.net.internal.transport.WriteResult
 import kyo.test.AssertScope
@@ -61,7 +61,7 @@ class IoUringTlsWriteOrderingTest extends Test:
       * bytes; feeding the collected ciphertext to the peer engine incrementally lets a TLS record that spans recv boundaries decrypt once it
       * is complete. The loop terminates on the conservation condition (decrypted length reached the total), never on a timer.
       */
-    private def collectPlaintext(drv: IoUringDriver, peerHandle: PosixHandle, peerEngine: kyo.net.internal.tls.TlsEngine, want: Int)(using
+    private def collectPlaintext(drv: IoUringDriver, peerHandle: PosixHandle, peerEngine: kyo.net.internal.TlsEngine, want: Int)(using
         Frame
     ): Array[Byte] < (Abort[Closed] & Async) =
         Loop(Array.emptyByteArray) { acc =>

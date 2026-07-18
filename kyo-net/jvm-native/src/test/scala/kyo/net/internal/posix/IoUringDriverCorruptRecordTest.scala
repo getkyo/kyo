@@ -4,8 +4,8 @@ import kyo.*
 import kyo.ffi.Buffer
 import kyo.ffi.Ffi
 import kyo.net.Test
-import kyo.net.internal.tls.TlsEngineLoopback
-import kyo.net.internal.tls.TlsRealEngines
+import kyo.net.internal.TlsEngineLoopback
+import kyo.net.internal.TlsRealEngines
 import kyo.net.internal.transport.ReadOutcome
 
 /** io_uring-path parity guard for the fatal-record abort + read-produced-ciphertext drain (committed in ab8d49ec1, mirroring the poller's

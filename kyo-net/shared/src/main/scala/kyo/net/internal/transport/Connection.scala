@@ -34,12 +34,14 @@ final private[kyo] class Connection[Handle] private (
     val outbound: Channel.Unsafe[Span[Byte]],
     private val readPump: ReadPump[Handle],
     private val writePump: WritePump[Handle],
-    private val state: AtomicRef.Unsafe[ConnectionState],
+    private val state: AtomicRef.Unsafe[Connection.State],
     private val closeFn: TeardownCause => Unit,
     private val closingPromise: Promise.Unsafe[Unit, Any],
-    private val upgradeClaimed: AtomicBoolean.Unsafe
-) extends kyo.net.Connection
-    with kyo.net.Connection.UpgradableConnection: // TODO is this the only impl of Connection? if yes, why do we have a seaprate UpgradableConnection?
+    private val upgradeClaimed: AtomicBoolean.Unsafe,
+    private val canRelease: () => Boolean,
+    private val teardown: AtomicRef.Unsafe[Connection.Teardown],
+    private val onClose: () => Unit
+) extends kyo.net.Connection:
 
     /** The connection's close signal (see [[kyo.net.Connection.onClosing]]). Completed once in `closeFn`'s win-the-close branch. */
     private[kyo] def onClosing: Fiber.Unsafe[Unit, Any] = closingPromise
@@ -134,7 +136,7 @@ final private[kyo] class Connection[Handle] private (
         // Created -> Established: pumps begin I/O. A connection detached or closed before start
         // (CAS lost) stays in its terminal/Upgrading state and the pumps are not started; the
         // false return tells the caller not to hand the connection out as open.
-        val won = state.compareAndSet(ConnectionState.Created, ConnectionState.Established)
+        val won = state.compareAndSet(Connection.State.Created, Connection.State.Established)
         if won then
             readPump.start()
             writePump.start()
@@ -142,11 +144,7 @@ final private[kyo] class Connection[Handle] private (
     end start
 
     /** Check if connection is still open. */
-    // TODO the logic should be in ConnectionState
-    def isOpen(using AllowUnsafe): Boolean =
-        state.get() match
-            case ConnectionState.Created | ConnectionState.Established                        => true
-            case ConnectionState.Upgrading | ConnectionState.Closing | ConnectionState.Closed => false
+    def isOpen(using AllowUnsafe): Boolean = state.get().isOpen
 
     /** Close the connection. Closes channels and handle. Idempotent.
       *
@@ -166,12 +164,12 @@ final private[kyo] class Connection[Handle] private (
         // that would otherwise observe the peer's FIN were torn down by the detach, and the transport's own shutdown sweep never runs on the
         // process-shared transport (a process-lifetime singleton that is never closed). The fd then sits open forever, and once the peer FINs it
         // sits in CLOSE_WAIT: FIN received, none ever sent.
-        if state.get() == ConnectionState.Upgrading then
+        if state.get() == Connection.State.Upgrading then
             upgradeAbandon.foreach(abandon => abandon())
     end close
 
     /** Force this connection's handle closed SYNCHRONOUSLY even while `Upgrading`, where the fd is owned by the in-flight TLS upgrade rather than
-      * by this connection (see [[ConnectionState.Upgrading]]). Used ONLY by the owning transport's shutdown sweep.
+      * by this connection (see [[Connection.State.Upgrading]]). Used ONLY by the owning transport's shutdown sweep.
       *
       * Ordinary [[close]] already abandons a still-in-flight upgrade (via [[upgradeAbandon]]), so at shutdown the fd is not stranded. But that
       * release runs on the driver's engine FIFO: it is asynchronous, not bounded by the time the transport's `close()` call returns, and the
@@ -189,7 +187,7 @@ final private[kyo] class Connection[Handle] private (
       * the upgrade's own failure path runs the engine.free() call, exactly once, since they are mutually exclusive on the SAME failure trigger.
       */
     private[net] def forceCloseIfUpgrading()(using AllowUnsafe, Frame): Unit =
-        if state.get() == ConnectionState.Upgrading then
+        if state.get() == Connection.State.Upgrading then
             driver.cancel(handle)
             driver.closeHandle(handle)
 
@@ -227,8 +225,8 @@ final private[kyo] class Connection[Handle] private (
         // bars teardown, so the socket can be handed to the TLS upgrade. A second detach, or a detach
         // after a close already won, loses the CAS and returns Absent (idempotent), so the fd is never
         // double-handed-off.
-        if state.compareAndSet(ConnectionState.Established, ConnectionState.Upgrading)
-            || state.compareAndSet(ConnectionState.Created, ConnectionState.Upgrading)
+        if state.compareAndSet(Connection.State.Established, Connection.State.Upgrading)
+            || state.compareAndSet(Connection.State.Created, Connection.State.Upgrading)
         then
             // Close inbound and capture any bytes the ReadPump already staged but nobody consumed.
             // These are raw network bytes (TLS ciphertext) that the handshake engine needs.
@@ -245,13 +243,82 @@ final private[kyo] class Connection[Handle] private (
         end if
     end detachForUpgrade
 
+    private def releaseHandle()(using AllowUnsafe, Frame): Unit =
+        if canRelease() && teardown.compareAndSet(Connection.Teardown.AwaitingInFlight, Connection.Teardown.Released) then
+            // Reflect the lifecycle terminal too, so isOpen reads Closed; the Released CAS above is the exactly-once gate, not this.
+            discard(state.compareAndSet(Connection.State.Closing, Connection.State.Closed))
+            driver.cancel(handle)
+            driver.closeHandle(handle)
+            // Notify the owning transport that this connection's handle is gone, so it drops the connection from its open-connection
+            // registry. A connection that is never torn down (its peer FIN never arrives, its handler never closes it) stays registered, so
+            // the transport's close() can close it explicitly instead of leaking its fd past the pool teardown.
+            onClose()
+
 end Connection
 
 private[kyo] object Connection:
 
+    /** The named lifecycle state of a connection, held in one atomic cell and advanced by single-CAS
+      * transitions (the kyo Queue/Gate lifecycle idiom).
+      *
+      * The lifecycle is one named state in one atomic cell. Naming the states makes each transition a
+      * single CAS one carrier wins: the loser re-reads the winner's state rather than acting on a stale
+      * field, so a check-one-field-act-on-another race is unrepresentable.
+      *
+      *   - [[Created]]: built, pumps not yet started.
+      *   - [[Established]]: pumps running, normal I/O.
+      *   - [[Upgrading]]: a STARTTLS detach won; the fd is kept open and NOT torn down (the connection is
+      *     closed to its own pumps yet its socket lives on for the TLS upgrade). The fd is owned by that
+      *     upgrade, so this state is terminal for the connection's OWN teardown path: `closeFn` never
+      *     takes an Upgrading fd, and a `close()` is routed to the upgrade's owner to abandon it instead
+      *     (see `Connection.upgradeAbandon`). It is NOT a state the connection ever leaves: a successful
+      *     upgrade builds a fresh connection over the same fd rather than moving this one on.
+      *   - [[Closing]]: a close was initiated; the outbound side is draining before teardown.
+      *   - [[Closed]]: terminal; the handle has been released exactly once.
+      */
+    private[kyo] enum State derives CanEqual:
+        case Created
+        case Established
+        case Upgrading
+        case Closing
+        case Closed
+
+        /** Whether a connection in this state is still open. */
+        def isOpen: Boolean = this match
+            case Created | Established        => true
+            case Upgrading | Closing | Closed => false
+    end State
+
+    /** The named teardown state of a connection, advanced by single-CAS transitions and gated by a
+      * per-backend "can I release now?" predicate.
+      *
+      * Unifies the four per-backend exactly-once teardown dances into one machine: the fd is closed
+      * exactly once and resources are freed exactly once, by whichever carrier observes the predicate
+      * true with the close requested. The predicate is injected per backend (io_uring in-flight count
+      * == 0; poller guard holders == 0; NIO key flushed; JS destroyed), the Go increfAndClose /
+      * decref-to-zero and Netty DelayedClose/canCloseNow shape.
+      *
+      * The `ReleaseRequested -> AwaitingInFlight` gate waits on the WRITE-side drain and the in-flight
+      * count ONLY, NEVER on the inbound (read-side) channel draining: the fd close is prompt, and the
+      * in-memory inbound channel is independent of the fd (a live consumer drains it separately). The
+      * release MUST NOT gate on the inbound channel draining: a pooled connection with no reader would
+      * then never release, leaking the peer-FIN'd fd in CLOSE_WAIT.
+      *
+      *   - [[Live]]: no close requested.
+      *   - [[ReleaseRequested]]: close requested; parked waiters being unblocked.
+      *   - [[AwaitingInFlight]]: write-side drained; awaiting the in-flight count to reach zero.
+      *   - [[Released]]: terminal; the fd is closed exactly once, resources freed exactly once.
+      */
+    private[kyo] enum Teardown derives CanEqual:
+        case Live
+        case ReleaseRequested
+        case AwaitingInFlight
+        case Released
+    end Teardown
+
     /** Create a connection. Does not start pumps; call `start()` after creation.
       *
-      * `canRelease` is the per-backend teardown predicate that gates the `TeardownState.AwaitingInFlight -> Released` transition (the io_uring
+      * `canRelease` is the per-backend teardown predicate that gates the `Connection.Teardown.AwaitingInFlight -> Released` transition (the io_uring
       * in-flight count == 0; the poller guard holders == 0; the NIO key flushed; the JS handle destroyed). It defaults to `() => true` because the
       * posix and JS drivers defer the actual fd close internally (the io_uring `pendingCloses` in-flight gate, the poller `HandleGuard` holder
       * gate): for those backends `driver.closeHandle` is called eagerly and the in-flight deferral is realized inside the driver, so the connection
@@ -267,28 +334,17 @@ private[kyo] object Connection:
     )(using AllowUnsafe, Frame): Connection[Handle] =
         val inbound  = Channel.Unsafe.init[Span[Byte]](channelCapacity)
         val outbound = Channel.Unsafe.init[Span[Byte]](channelCapacity)
-        val state    = AtomicRef.Unsafe.init[ConnectionState](ConnectionState.Created)
+        val state    = AtomicRef.Unsafe.init[Connection.State](Connection.State.Created)
         // The teardown handoff as one named machine (the four per-backend exactly-once teardown dances unified): Live -> ReleaseRequested (the
         // close won) -> AwaitingInFlight (the WRITE-side drain finished) -> Released (the fd closed exactly once, resources freed exactly once).
         // The single CAS into Released is the exactly-once gate (INV-13); it is reached only after the WritePump has finished with the outbound
         // channel (the WRITE-side drain), so the fd is closed only once every queued span has actually been written, not merely taken off the
         // channel. The inbound (read-side) drain NEVER gates this transition (INV-12 absence half): a pooled connection with no reader would
         // otherwise leak the peer-FIN'd fd in CLOSE_WAIT.
-        val teardown = AtomicRef.Unsafe.init[TeardownState](TeardownState.Live)
+        val teardown = AtomicRef.Unsafe.init[Connection.Teardown](Connection.Teardown.Live)
         // The AwaitingInFlight -> Released transition: gated on the per-backend canRelease predicate, performed by exactly one carrier (the CAS),
         // running cancel + closeHandle + onClose once. When canRelease is false the release is held; for the posix/JS backends canRelease is the
         // trivial () => true and the in-flight deferral happens inside driver.closeHandle.
-        // TODO it's odd to have these impls here, why can't they be in the Connection instance class?
-        def releaseHandle(): Unit =
-            if canRelease() && teardown.compareAndSet(TeardownState.AwaitingInFlight, TeardownState.Released) then
-                // Reflect the lifecycle terminal too, so isOpen reads Closed; the Released CAS above is the exactly-once gate, not this.
-                discard(state.compareAndSet(ConnectionState.Closing, ConnectionState.Closed))
-                driver.cancel(handle)
-                driver.closeHandle(handle)
-                // Notify the owning transport that this connection's handle is gone, so it drops the connection from its open-connection
-                // registry. A connection that is never torn down (its peer FIN never arrives, its handler never closes it) stays registered, so
-                // the transport's close() can close it explicitly instead of leaking its fd past the pool teardown.
-                onClose()
 
         // The connection's close signal (kyo.net.Connection.onClosing). Completed once when closeFn wins the close, at close-START (before the
         // channel drains and the handle teardown below), so an observer sees close-start not fd-release. completeDiscard is idempotent, so the
@@ -306,15 +362,15 @@ private[kyo] object Connection:
             // Closing (a never-started connection closes too); Upgrading does NOT, since its fd is
             // owned by the TLS upgrade. A second close loses the CAS and falls to the re-entrant
             // Closing branch below.
-            if state.compareAndSet(ConnectionState.Established, ConnectionState.Closing)
-                || state.compareAndSet(ConnectionState.Created, ConnectionState.Closing)
+            if state.compareAndSet(Connection.State.Established, Connection.State.Closing)
+                || state.compareAndSet(Connection.State.Created, Connection.State.Closing)
             then
                 // Record the teardown cause on this connection before winning the close.
                 self.teardownCause = Present(cause)
                 // Fire the connection's close signal at close-start, before the drains and the handle teardown below.
                 closingPromise.completeDiscard(Result.succeed(()))
                 // Live -> ReleaseRequested: the close won; parked waiters are being unblocked by the drains below.
-                discard(teardown.compareAndSet(TeardownState.Live, TeardownState.ReleaseRequested))
+                discard(teardown.compareAndSet(Connection.Teardown.Live, Connection.Teardown.ReleaseRequested))
                 // closeAwaitEmpty, not close: a consumer that has not yet drained the bytes the ReadPump staged before EOF can still take them
                 // (takes drain a closing channel until empty), so a close initiated on the read side does not discard buffered inbound bytes as
                 // close()'s dropped backlog would. The handle teardown below does not wait for that drain, so the fd is reclaimed even if the
@@ -337,10 +393,10 @@ private[kyo] object Connection:
                 // outbound has queued writes, the drain fiber is still pending, so the WritePump re-entry below flushes the tail first.
                 if outboundDrained.done() then
                     // ReleaseRequested -> AwaitingInFlight: the WRITE-side drain is done; attempt the gated release.
-                    discard(teardown.compareAndSet(TeardownState.ReleaseRequested, TeardownState.AwaitingInFlight))
-                    releaseHandle()
+                    discard(teardown.compareAndSet(Connection.Teardown.ReleaseRequested, Connection.Teardown.AwaitingInFlight))
+                    self.releaseHandle()
                 end if
-            else if state.get() == ConnectionState.Closing then
+            else if state.get() == Connection.State.Closing then
                 // Re-entrant close after closeFn itself initiated the close (the state is Closing).
                 // The WritePump reached this by taking Closed from the closing outbound channel after
                 // it had nothing left to write (the half-close flush completed), or by its
@@ -350,8 +406,8 @@ private[kyo] object Connection:
                 // the drain fiber, is what bounds close(): a half-close that can drain reaches it after
                 // the flush, and a full close whose outbound can never drain reaches it once the peer's
                 // RST or the Scope's driver.close fails the parked writable, so close() never waits forever.
-                discard(teardown.compareAndSet(TeardownState.ReleaseRequested, TeardownState.AwaitingInFlight))
-                releaseHandle()
+                discard(teardown.compareAndSet(Connection.Teardown.ReleaseRequested, Connection.Teardown.AwaitingInFlight))
+                self.releaseHandle()
             end if
 
         val readPump  = new ReadPump(handle, driver, inbound, closeFn)
@@ -367,7 +423,10 @@ private[kyo] object Connection:
             state,
             closeFn,
             closingPromise,
-            AtomicBoolean.Unsafe.init(false)
+            AtomicBoolean.Unsafe.init(false),
+            canRelease,
+            teardown,
+            onClose
         )
         self
     end init
@@ -376,8 +435,8 @@ private[kyo] object Connection:
       *
       * Unlike [[init]], which always wires a driver and two pumps, this connection has neither: reads come straight from `inbound` and writes
       * go straight to `outbound`, so it backs piping and testing with no syscalls. It is a direct [[kyo.net.Connection]] rather than the
-      * generic `Connection[Handle]` (which requires a driver), so there is no null driver. It is NOT an `UpgradableConnection`: STARTTLS on it
-      * aborts `Closed` via the public `upgradeToTls` path, and `detachForUpgrade` returns `Absent`.
+      * generic `Connection[Handle]` (which requires a driver), so there is no null driver. It does not support in-place STARTTLS: `upgradeToTls`
+      * aborts `Closed` via the public path, and `detachForUpgrade` returns `Absent`.
       */
     def inMemory(
         inbound: Channel.Unsafe[Span[Byte]],

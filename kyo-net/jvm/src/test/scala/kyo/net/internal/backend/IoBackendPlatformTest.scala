@@ -2,10 +2,10 @@ package kyo.net.internal.backend
 
 import kyo.*
 import kyo.net.Test
+import kyo.net.internal.BoringSslProvider
+import kyo.net.internal.SslEngineProvider
+import kyo.net.internal.TlsProviderPlatform
 import kyo.net.internal.posix.PosixConstants
-import kyo.net.internal.tls.BoringSslProvider
-import kyo.net.internal.tls.SslEngineProvider
-import kyo.net.internal.tls.TlsProviderPlatform
 
 /** JVM platform-registry probes. They confirm the real JVM `registered` lists and floor probes: the I/O registry now selects the
   * OS-appropriate posix backend (io_uring/epoll on Linux, kqueue on macOS/BSD) over the always-available NioIoDriver floor, while the TLS

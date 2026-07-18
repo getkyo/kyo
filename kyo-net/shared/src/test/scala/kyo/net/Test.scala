@@ -1,7 +1,7 @@
 package kyo.net
 
 import kyo.*
-import kyo.net.internal.tls.TlsProviderPlatform
+import kyo.net.internal.TlsProviderPlatform
 
 abstract class Test extends kyo.test.Test[Any]:
 

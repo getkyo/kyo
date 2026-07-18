@@ -9,7 +9,7 @@ import kyo.net.NetTlsConfig
 import kyo.net.Test
 import kyo.net.TlsTestCertShared
 import kyo.net.TransportConfig
-import kyo.net.internal.tls.TlsRealEngines
+import kyo.net.internal.TlsRealEngines
 
 // Regression guard for the io_uring STARTTLS multi-record upgrade stall: a TOCTOU race in the upgrade-byte handoff between the handshake-driving
 // carrier (PosixTransport.driveUpgradeRead) and the io_uring reap carrier (IoUringDriver.complete). The two carriers used two independent volatile

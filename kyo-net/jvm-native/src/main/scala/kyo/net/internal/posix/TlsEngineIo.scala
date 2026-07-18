@@ -2,7 +2,7 @@ package kyo.net.internal.posix
 
 import kyo.*
 import kyo.ffi.Buffer
-import kyo.net.internal.tls.TlsEngine
+import kyo.net.internal.TlsEngine
 import kyo.net.internal.util.GrowableByteBuffer
 import kyo.net.internal.util.writeFromBuffer
 

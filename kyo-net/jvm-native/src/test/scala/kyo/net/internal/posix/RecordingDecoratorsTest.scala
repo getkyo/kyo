@@ -4,8 +4,8 @@ import kyo.*
 import kyo.ffi.Buffer
 import kyo.ffi.Ffi
 import kyo.net.Test
-import kyo.net.internal.tls.TlsEngineLoopback
-import kyo.net.internal.tls.TlsRealEngines
+import kyo.net.internal.TlsEngineLoopback
+import kyo.net.internal.TlsRealEngines
 import kyo.net.internal.transport.ReadOutcome
 import kyo.net.internal.transport.WriteResult
 
@@ -77,12 +77,12 @@ class RecordingDecoratorsTest extends Test:
                     // Allocate engines directly so we control freeing; withEngines would double-free the server if the spy also frees it.
                     import AllowUnsafe.embrace.danger
                     val serverConfig = kyo.net.NetTlsConfig(
-                        certChainPath = kyo.Present(kyo.net.internal.tls.TlsTestCert.certPath),
-                        privateKeyPath = kyo.Present(kyo.net.internal.tls.TlsTestCert.keyPath)
+                        certChainPath = kyo.Present(kyo.net.internal.TlsTestCert.certPath),
+                        privateKeyPath = kyo.Present(kyo.net.internal.TlsTestCert.keyPath)
                     )
                     val clientConfig = kyo.net.NetTlsConfig(trustAll = true)
-                    val realClient   = kyo.net.internal.tls.BoringSslProvider.createEngine(clientConfig, "localhost", isServer = false)
-                    val realServer   = kyo.net.internal.tls.BoringSslProvider.createEngine(serverConfig, "localhost", isServer = true)
+                    val realClient   = kyo.net.internal.BoringSslProvider.createEngine(clientConfig, "localhost", isServer = false)
+                    val realServer   = kyo.net.internal.BoringSslProvider.createEngine(serverConfig, "localhost", isServer = true)
                     try
                         val spyServer = new RecordingTlsEngine(realServer)
                         val done      = TlsEngineLoopback.handshake(realClient, spyServer)
@@ -105,12 +105,12 @@ class RecordingDecoratorsTest extends Test:
                 Sync.defer {
                     import AllowUnsafe.embrace.danger
                     val serverConfig = kyo.net.NetTlsConfig(
-                        certChainPath = kyo.Present(kyo.net.internal.tls.TlsTestCert.certPath),
-                        privateKeyPath = kyo.Present(kyo.net.internal.tls.TlsTestCert.keyPath)
+                        certChainPath = kyo.Present(kyo.net.internal.TlsTestCert.certPath),
+                        privateKeyPath = kyo.Present(kyo.net.internal.TlsTestCert.keyPath)
                     )
                     val clientConfig = kyo.net.NetTlsConfig(trustAll = true)
-                    val realClient   = kyo.net.internal.tls.BoringSslProvider.createEngine(clientConfig, "localhost", isServer = false)
-                    val realServer   = kyo.net.internal.tls.BoringSslProvider.createEngine(serverConfig, "localhost", isServer = true)
+                    val realClient   = kyo.net.internal.BoringSslProvider.createEngine(clientConfig, "localhost", isServer = false)
+                    val realServer   = kyo.net.internal.BoringSslProvider.createEngine(serverConfig, "localhost", isServer = true)
                     try
                         val spyServer = new RecordingTlsEngine(realServer)
                         assert(TlsEngineLoopback.handshake(realClient, spyServer), "handshake did not complete")

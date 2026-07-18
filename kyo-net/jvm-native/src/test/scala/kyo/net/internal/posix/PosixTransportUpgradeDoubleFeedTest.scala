@@ -6,7 +6,7 @@ import kyo.ffi.Buffer
 import kyo.ffi.Ffi
 import kyo.net.NetTlsConfig
 import kyo.net.Test
-import kyo.net.internal.tls.TlsEngine
+import kyo.net.internal.TlsEngine
 
 /** A recording [[TlsEngine]] fake (never wraps or delegates to a real engine) that records every [[feedCiphertext]] payload and completes the
   * handshake (`handshakeStep` returns `1`) once fed twice, `0` (want-read) until then: this test's upgrade always has exactly two chunks to

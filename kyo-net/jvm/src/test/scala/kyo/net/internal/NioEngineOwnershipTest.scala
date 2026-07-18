@@ -7,7 +7,7 @@ import kyo.*
 import kyo.net.Connection
 import kyo.net.NetTlsConfig
 import kyo.net.Test
-import kyo.net.internal.tls.TlsTestCert
+import kyo.net.internal.TlsTestCert
 
 /** NIO per-connection engine ownership: behavioral tests confirming the gate works through real TLS I/O.
   *

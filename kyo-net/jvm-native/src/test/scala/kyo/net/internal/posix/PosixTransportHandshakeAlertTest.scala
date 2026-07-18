@@ -6,8 +6,8 @@ import kyo.net.NetException
 import kyo.net.NetTlsConfig
 import kyo.net.Test
 import kyo.net.TransportConfig
-import kyo.net.internal.tls.TlsRealEngines
-import kyo.net.internal.tls.TlsTestCert
+import kyo.net.internal.TlsRealEngines
+import kyo.net.internal.TlsTestCert
 
 /** Reproduction + regression guard (Netty #6611, RFC 5246 7.2 / RFC 8446 6.2): when a TLS handshake FAILS, the fatal
   * alert the engine queued (a `protocol_version` / `bad_certificate` / `handshake_failure` record) must be drained and SENT to the peer before the

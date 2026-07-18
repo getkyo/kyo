@@ -1512,7 +1512,7 @@ final private class NioListener(
     val host: String,
     private val driver: NioIoDriver,
     val address: NetAddress
-) extends ListenerImpl:
+) extends NetListener:
     // Unsafe: created at construction with no ambient AllowUnsafe; the danger bridge builds it here and its accesses run under the caller's
     // AllowUnsafe.
     private val closedFlag = AtomicBoolean.Unsafe.init(false)(using AllowUnsafe.embrace.danger)

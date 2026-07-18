@@ -5,8 +5,8 @@ import kyo.net.Connection
 import kyo.net.NetPlatform
 import kyo.net.NetTlsConfig
 import kyo.net.Test
-import kyo.net.internal.tls.TlsProviderPlatform
-import kyo.net.internal.tls.TlsTestCert
+import kyo.net.internal.TlsProviderPlatform
+import kyo.net.internal.TlsTestCert
 
 /** Load regression for the per-connection TLS engine read-vs-write race (the `cipherIn>0 plainOut=0` deadlock).
   *

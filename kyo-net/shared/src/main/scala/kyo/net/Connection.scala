@@ -101,9 +101,4 @@ object Connection:
         case Truncated
     end Status
 
-    /** Internal marker trait for connections that support post-connect TLS upgrade. */
-    private[net] trait UpgradableConnection extends Connection:
-        private[net] def doUpgradeToTls(tls: NetTlsConfig, frame: Frame)(using AllowUnsafe): Fiber.Unsafe[Connection, Abort[NetException]]
-    end UpgradableConnection
-
 end Connection

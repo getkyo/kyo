@@ -3,7 +3,7 @@ package kyo.net.internal.posix
 import kyo.*
 import kyo.ffi.Ffi
 import kyo.net.Test
-import kyo.net.internal.tls.TlsRealEngines
+import kyo.net.internal.TlsRealEngines
 
 /** Deterministic regression coverage for the poller driver's terminal-close path (the CLOSE_WAIT fix): a TLS `closeHandle`'s fd-close obligation
   * must be discharged exactly once no matter which of {the normal deferred engine op, the terminal sweep, the post-terminal self-close} ends up

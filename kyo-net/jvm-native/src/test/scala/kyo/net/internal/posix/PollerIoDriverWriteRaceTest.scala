@@ -3,9 +3,9 @@ package kyo.net.internal.posix
 import kyo.*
 import kyo.ffi.Ffi
 import kyo.net.Test
-import kyo.net.internal.tls.TlsEngine
-import kyo.net.internal.tls.TlsEngineLoopback
-import kyo.net.internal.tls.TlsRealEngines
+import kyo.net.internal.TlsEngine
+import kyo.net.internal.TlsEngineLoopback
+import kyo.net.internal.TlsRealEngines
 import kyo.net.internal.transport.WriteResult
 
 /** Deterministic reproduction + regression guard for the WRITE-path TLS use-after-free race in [[PollerIoDriver]], the symmetric twin of the

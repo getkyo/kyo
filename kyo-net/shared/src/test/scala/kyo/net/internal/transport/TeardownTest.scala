@@ -3,7 +3,7 @@ package kyo.net.internal.transport
 import kyo.*
 import kyo.net.Test
 
-/** Tests for the TeardownState machine fold: the connection teardown handoff is one named cell (Live -> ReleaseRequested -> AwaitingInFlight ->
+/** Tests for the Connection.Teardown machine fold: the connection teardown handoff is one named cell (Live -> ReleaseRequested -> AwaitingInFlight ->
   * Released), the exactly-once release is the single CAS into Released gated by the per-backend `canRelease` predicate, and the gate waits on the
   * WRITE-side drain only, never the inbound read-side drain.
   *

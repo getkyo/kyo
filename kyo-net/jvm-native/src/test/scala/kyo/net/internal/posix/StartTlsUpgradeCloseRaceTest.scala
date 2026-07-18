@@ -7,8 +7,8 @@ import kyo.net.NetConnectionClosedException
 import kyo.net.NetException
 import kyo.net.NetTlsConfig
 import kyo.net.Test
-import kyo.net.internal.tls.BoringSslBindings
-import kyo.net.internal.tls.TlsTestCert
+import kyo.net.internal.BoringSslBindings
+import kyo.net.internal.TlsTestCert
 
 /** Probes the STARTTLS upgrade racing a concurrent close: the upgrade detaches the plaintext connection (`detachForUpgrade`), builds a new
   * TLS engine, and re-handshakes over the SAME fd; a `closeHandle` fired while that re-handshake is in flight must not use-after-free, must

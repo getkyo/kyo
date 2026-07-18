@@ -6,8 +6,8 @@ import kyo.net.Connection
 import kyo.net.NetException
 import kyo.net.NetTlsConfig
 import kyo.net.Test
-import kyo.net.internal.tls.TlsProviderPlatform
-import kyo.net.internal.tls.TlsTestCert
+import kyo.net.internal.TlsProviderPlatform
+import kyo.net.internal.TlsTestCert
 
 // Lives in jvm-native/src/test: PosixTransport's TLS handshake path runs on JVM-posix and Native; JS uses the Node transport.
 

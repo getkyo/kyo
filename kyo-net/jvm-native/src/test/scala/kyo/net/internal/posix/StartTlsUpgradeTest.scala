@@ -8,8 +8,8 @@ import kyo.net.NetException
 import kyo.net.NetNotUpgradableException
 import kyo.net.NetTlsConfig
 import kyo.net.Test
-import kyo.net.internal.tls.BoringSslBindings
-import kyo.net.internal.tls.TlsTestCert
+import kyo.net.internal.BoringSslBindings
+import kyo.net.internal.TlsTestCert
 import kyo.net.internal.transport.Connection as InternalConnection
 
 /** STARTTLS upgrade tests over a real loopback socket pair: the staged ciphertext is fed before the first post-upgrade read so no

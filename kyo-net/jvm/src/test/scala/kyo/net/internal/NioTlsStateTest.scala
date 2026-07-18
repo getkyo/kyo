@@ -83,8 +83,8 @@ class NioTlsStateTest extends Test:
         val N = 16
 
         val serverConfig = kyo.net.NetTlsConfig(
-            certChainPath = Present(kyo.net.internal.tls.TlsTestCert.certPath),
-            privateKeyPath = Present(kyo.net.internal.tls.TlsTestCert.keyPath)
+            certChainPath = Present(kyo.net.internal.TlsTestCert.certPath),
+            privateKeyPath = Present(kyo.net.internal.TlsTestCert.keyPath)
         )
         val clientConfig = kyo.net.NetTlsConfig(trustAll = true, hostnameVerification = false)
 

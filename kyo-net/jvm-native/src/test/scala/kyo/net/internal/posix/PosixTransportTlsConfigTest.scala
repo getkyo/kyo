@@ -6,16 +6,16 @@ import kyo.net.NetException
 import kyo.net.NetTlsConfig
 import kyo.net.NetTlsConfigException
 import kyo.net.Test
-import kyo.net.internal.tls.TlsProviderPlatform
-import kyo.net.internal.tls.TlsTestCert
+import kyo.net.internal.TlsProviderPlatform
+import kyo.net.internal.TlsTestCert
 
 /** Connect-time TLS config-failure typing over the real [[PosixTransport]] backend (epoll/kqueue): the connect-path `buildEngine` catch
   * propagates a [[NetTlsConfigException]] AS-IS, never re-wrapping it in a [[kyo.net.NetTlsHandshakeException]] carrying an untyped `Closed`
   * the way the pre-fix catch used to.
   *
   * The real engine-construction decision for an empty reference identity differs by registered provider:
-  * [[kyo.net.internal.tls.SslEngineProvider]] and the inline NIO path reject BEFORE the handshake starts, while the native
-  * [[kyo.net.internal.tls.SslLibProvider]] providers (BoringSSL, system OpenSSL) instead bind an unmatchable identity and let the real
+  * [[kyo.net.internal.SslEngineProvider]] and the inline NIO path reject BEFORE the handshake starts, while the native
+  * [[kyo.net.internal.SslLibProvider]] providers (BoringSSL, system OpenSSL) instead bind an unmatchable identity and let the real
   * handshake reject it (so on Native, no registered provider throws pre-flight at all). Rather than depending on which concrete provider a
   * host happens to have staged, the client side of this scenario is driven through [[PosixTransport.testEngineFactory]], so the catch-site
   * behavior this phase changed is pinned deterministically on every platform; the server side still builds a real engine (any staged

@@ -7,8 +7,8 @@ import kyo.net.Connection
 import kyo.net.NetException
 import kyo.net.NetTlsConfig
 import kyo.net.Test
-import kyo.net.internal.tls.TlsProviderPlatform
-import kyo.net.internal.tls.TlsTestCert
+import kyo.net.internal.TlsProviderPlatform
+import kyo.net.internal.TlsTestCert
 
 /** Connect-time TLS round-trip over the unified [[PosixTransport]] (`connect(tls)` / `listen(tls)`) on a real loopback pair, driven by the same
   * [[PosixTransport.driveHandshake]] loop the STARTTLS path uses (no legacy OpenSSL handshake code).

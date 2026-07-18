@@ -7,7 +7,7 @@ import kyo.*
 import kyo.net.Connection
 import kyo.net.NetTlsConfig
 import kyo.net.Test
-import kyo.net.internal.tls.TlsTestCert
+import kyo.net.internal.TlsTestCert
 
 /** NIO engine-gate exclusion: concurrent read and write on the same TLS connection never corrupt data.
   *

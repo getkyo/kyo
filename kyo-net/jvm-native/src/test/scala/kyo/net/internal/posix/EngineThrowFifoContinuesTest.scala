@@ -5,7 +5,7 @@ import kyo.ffi.Buffer
 import kyo.ffi.Ffi
 import kyo.net.Test
 import kyo.net.TransportConfig
-import kyo.net.internal.tls.TlsEngine
+import kyo.net.internal.TlsEngine
 
 /** Engine-FIFO containment: a throwing engine op must not kill the drain loop.
   *

@@ -5,9 +5,9 @@ import kyo.*
 import kyo.ffi.Buffer
 import kyo.ffi.Ffi
 import kyo.net.Test
-import kyo.net.internal.tls.TlsEngine
-import kyo.net.internal.tls.TlsEngineLoopback
-import kyo.net.internal.tls.TlsRealEngines
+import kyo.net.internal.TlsEngine
+import kyo.net.internal.TlsEngineLoopback
+import kyo.net.internal.TlsRealEngines
 import kyo.net.internal.transport.WriteResult
 
 /** Close racing a BACKPRESSURED TLS flush in [[PollerIoDriver]]: a use-after-free / double-free / hang probe for the write-backpressure path.

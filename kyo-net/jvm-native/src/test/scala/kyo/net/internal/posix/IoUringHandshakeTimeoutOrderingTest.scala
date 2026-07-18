@@ -8,7 +8,7 @@ import kyo.net.NetTlsConfig
 import kyo.net.Test
 import kyo.net.TlsTestCertShared
 import kyo.net.TransportConfig
-import kyo.net.internal.tls.TlsProviderPlatform
+import kyo.net.internal.TlsProviderPlatform
 
 /** Deterministic, memory-tool-free reproduce-first for issue #243 (the io_uring handshake-timeout use-after-free).
   *

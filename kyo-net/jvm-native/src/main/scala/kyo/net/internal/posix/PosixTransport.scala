@@ -21,14 +21,13 @@ import kyo.net.NetTlsConfig
 import kyo.net.NetTlsException
 import kyo.net.NetTlsHandshakeException
 import kyo.net.NetUnixConnectException
-import kyo.net.internal.tls.HandshakeFailure
-import kyo.net.internal.tls.HandshakeState
-import kyo.net.internal.tls.TlsEngine
-import kyo.net.internal.tls.TlsProviderPlatform
+import kyo.net.internal.HandshakeFailure
+import kyo.net.internal.HandshakeState
+import kyo.net.internal.TlsEngine
+import kyo.net.internal.TlsProviderPlatform
 import kyo.net.internal.transport.Connection as InternalConnection
 import kyo.net.internal.transport.IoDriver
 import kyo.net.internal.transport.IoDriverPool
-import kyo.net.internal.transport.ListenerImpl
 import kyo.net.internal.transport.ReadOutcome
 import kyo.net.internal.transport.TransportImpl
 import kyo.net.internal.transport.WriteResult
@@ -2344,7 +2343,7 @@ final private[net] class PosixListener(
     private val registry: java.util.Set[PosixListener],
     // CAS-guarded close flag: close() flips it so a second close() is a no-op (idempotent listener teardown).
     closedFlag: AtomicBoolean.Unsafe
-) extends ListenerImpl:
+) extends NetListener:
 
     /** Tears down this listener's accept interest AND closes its fd, sequenced through the driver ([[kyo.net.internal.transport.IoDriver.closeListener]]).
       * Installed by the accept loop in `startAcceptLoop` (it holds the listen `handle` and `driver`); invoked by `close()`, which then must NOT

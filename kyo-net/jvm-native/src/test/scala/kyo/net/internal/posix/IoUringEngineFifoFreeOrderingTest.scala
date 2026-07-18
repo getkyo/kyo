@@ -5,9 +5,9 @@ import kyo.*
 import kyo.ffi.Buffer
 import kyo.ffi.Ffi
 import kyo.net.Test
-import kyo.net.internal.tls.TlsEngine
-import kyo.net.internal.tls.TlsEngineLoopback
-import kyo.net.internal.tls.TlsRealEngines
+import kyo.net.internal.TlsEngine
+import kyo.net.internal.TlsEngineLoopback
+import kyo.net.internal.TlsRealEngines
 
 /** Probes the [[IoUringDriver]] engine-FIFO single-owner machinery (`submitEngineOp` / `drainEngineOps` / `engineWorkerActive`) under
   * CONCURRENT mixed-kind engine ops plus the FIFO-routed engine free, over a REAL io_uring ring and a REAL post-handshake BoringSSL engine.

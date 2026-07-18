@@ -4,7 +4,7 @@ import kyo.*
 import kyo.ffi.Buffer
 import kyo.ffi.Ffi
 import kyo.net.Test
-import kyo.net.internal.tls.TlsRealEngines
+import kyo.net.internal.TlsRealEngines
 
 /** Deterministic regression coverage for the io_uring driver's post-teardown close path: once `teardownRing` has run (the ring is exited, the
   * reap carrier is gone), a `closeHandle` call for a handle registered after that point must discharge via `closeNow` directly, inline on the

@@ -4,7 +4,7 @@ import kyo.*
 import kyo.ffi.Buffer
 import kyo.ffi.Ffi
 import kyo.net.Test
-import kyo.net.internal.tls.TlsRealEngines
+import kyo.net.internal.TlsRealEngines
 import kyo.net.internal.transport.ReadOutcome
 
 /** Reproduce-first confirmation of a SECOND fix for the P10 cell-8 steady-state "Closed at collect" corruption: a stale,

@@ -11,7 +11,7 @@ import kyo.net.NetException
 import kyo.net.NetTlsConfig
 import kyo.net.NetTlsProviderUnavailableException
 import kyo.net.Test
-import kyo.net.internal.tls.TlsEngine
+import kyo.net.internal.TlsEngine
 
 /** A scripted [[TlsEngine]] fake that parks the handshake on its first read: `handshakeStep` always returns `0` (want-read) and
   * `drainCiphertext` never produces bytes, so `driveHandshake` goes straight to its read path and parks against a peer that sends nothing.

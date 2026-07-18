@@ -13,7 +13,7 @@ import kyo.*
 import kyo.net.Connection as NetConnection
 import kyo.net.NetTlsConfig
 import kyo.net.Test
-import kyo.net.internal.tls.TlsTestCert
+import kyo.net.internal.TlsTestCert
 import kyo.net.internal.transport.*
 
 /** Reproduce-first close-reason tests for the inline JVM NIO TLS path ([[NioTransport]] + [[NioTlsState]]).

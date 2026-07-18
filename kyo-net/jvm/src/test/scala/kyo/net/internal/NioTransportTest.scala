@@ -8,7 +8,7 @@ import kyo.*
 import kyo.net.NetException
 import kyo.net.NetTlsConfig
 import kyo.net.Test
-import kyo.net.internal.tls.TlsTestCert
+import kyo.net.internal.TlsTestCert
 import kyo.net.internal.transport.*
 
 class NioTransportTest extends Test:

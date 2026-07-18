@@ -6,8 +6,8 @@ import kyo.net.Test
 
 /** Tests the driverless in-memory Connection: a Connection backed only by two cross-wired channels, no driver and no syscalls.
   *
-  * It must round-trip bytes through the channels, close both idempotently with no driver call, and not implement the UpgradableConnection
-  * trait (so the doUpgradeToTls path returns a failure fiber).
+  * It must round-trip bytes through the channels, close both idempotently with no driver call, and, not being a `Connection[Handle]`, take
+  * the doUpgradeToTls path's failure fiber.
   */
 class InMemoryConnectionTest extends Test:
 
@@ -67,9 +67,9 @@ class InMemoryConnectionTest extends Test:
         "is not upgradable: doUpgradeToTls returns a Closed failure fiber" in {
             val (a, _) = Connection.inMemoryPair()
             val tls    = NetTlsConfig.default
-            // InMemory connection does not implement UpgradableConnection; doUpgradeToTls returns a failure fiber.
+            // InMemory connection is not a Connection[Handle]; doUpgradeToTls returns a failure fiber.
             val upgradeFiber = a match
-                case c: kyo.net.Connection.UpgradableConnection => c.doUpgradeToTls(tls, Frame.internal)
+                case c: kyo.net.internal.transport.Connection[?] => c.doUpgradeToTls(tls, Frame.internal)
                 case _ => Fiber.Unsafe.fromResult(Result.fail(Closed("InMemory", Frame.internal, "not upgradable")))
             Abort.run[Closed](upgradeFiber.safe.get).map { result =>
                 result match

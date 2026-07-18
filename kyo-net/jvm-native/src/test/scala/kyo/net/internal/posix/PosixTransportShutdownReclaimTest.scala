@@ -9,10 +9,10 @@ import kyo.ffi.Ffi
 import kyo.net.NetException
 import kyo.net.NetTlsConfig
 import kyo.net.Test
-import kyo.net.internal.tls.TlsEngine
-import kyo.net.internal.tls.TlsProviderPlatform
-import kyo.net.internal.tls.TlsRealEngines
-import kyo.net.internal.tls.TlsTestCert
+import kyo.net.internal.TlsEngine
+import kyo.net.internal.TlsProviderPlatform
+import kyo.net.internal.TlsRealEngines
+import kyo.net.internal.TlsTestCert
 import kyo.net.internal.transport.Connection as InternalConnection
 import kyo.net.internal.transport.ReadOutcome
 

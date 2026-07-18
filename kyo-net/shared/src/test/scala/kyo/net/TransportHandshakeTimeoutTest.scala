@@ -1,7 +1,7 @@
 package kyo.net
 
 import kyo.*
-import kyo.net.internal.tls.TlsProviderPlatform
+import kyo.net.internal.TlsProviderPlatform
 
 /** Cross-backend server accept-handshake deadline (`TransportConfig.handshakeTimeout`, finding #7, CWE-400 slowloris), via the PUBLIC
   * `NetPlatform.transport(config)` factory so the SAME test runs against every backend: posix (JVM default + Native), the NIO floor and the
