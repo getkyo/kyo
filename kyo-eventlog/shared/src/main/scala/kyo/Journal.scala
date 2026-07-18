@@ -120,6 +120,23 @@ object Journal:
             // that binds `configuration` (codecs) onto the core Sync engine.
             kyo.internal.FileJournalCore.openSync(dir, configuration)
 
+        /** Opens a typed Sync file-backed journal over `dir`, running the engine's physical store
+          * through `fs` instead of the host platform's fast-path [[kyo.internal.SegmentStore]]:
+          * `fs` may be [[kyo.FileSystem.host]] (the same host filesystem [[file]] always uses, via
+          * the general channel path instead of the fast path), [[kyo.FileSystem.inMemory]] (a
+          * deterministic, temp-dir-free journal), or a [[kyo.FileSystem.CommitHandle]] overlay (a
+          * journal whose writes stage until an explicit commit). Group-commit + atomic-move +
+          * kill-at-every-step recovery are the identical shared engine [[file]] uses; only the
+          * physical store the engine writes through differs.
+          */
+        def fileOver[A](fs: FileSystem[Sync], dir: Path, configuration: FileJournal.Configuration[A])(using
+            Frame
+        ): FileJournal.Backend[A, Sync] < (Sync & Scope & Abort[JournalStorageError]) =
+            // openOver is a private[kyo] adapter on FileJournalCore, a sibling to openSync, that
+            // binds `configuration` (codecs) onto the core Sync engine over `fs` instead of the
+            // platform SegmentStore.
+            kyo.internal.FileJournalCore.openOver(dir, configuration, fs)
+
         /** Opens a typed Async file-backed journal; shares semantics with [[file]] but drives IO
           * off the event loop (Node), never blocking it.
           */

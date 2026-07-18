@@ -924,31 +924,33 @@ final private[kyo] class FileJournalCore[A, S >: (Async & Abort[Throwable]) <: S
                 createSegment(streamId, nextOffset).map(fresh => (Chunk.empty, fresh))
     end rotateIfNeeded
 
-    // Directory operations (existence check, mkdir, listing) stay on the raw Path.unsafe API on
-    // every platform: they run only at segment-creation/rotation time (not per record) and are not
-    // part of the StoreSeam generalization.
+    // Directory operations (existence check, mkdir) route through the injected StoreSeam, so a
+    // fileOver(inMemory/overlay, ...) journal creates no host-disk directory: they still run only
+    // at segment-creation/rotation time (not per record).
     private def createSegment(streamId: Event.StreamId, baseOffset: Long)(using
         AllowUnsafe,
         Frame
     ): SegmentEntry < (S & Abort[JournalStorageError]) =
-        val dir     = streamDir(streamId)
-        val existed = dir.unsafe.exists()
-        discard(dir.unsafe.mkDir())
-        val segPath   = dir / codec.segmentName(baseOffset)
-        val headerLen = codec.header.length.toLong
-        // A newly created stream directory's entry is not durable until its parent (streams/) is
-        // fsync'd. Sync it before the segment beneath it is acknowledged, on the fsync path only
-        // and only when the directory did not already exist (a rotation reuses an existing, already-
-        // synced stream directory).
-        val syncStreamsDir: Unit < S = if options.fsync == Fsync.Always && !existed then seam.syncDir(streamsDir) else ()
-        syncStreamsDir.andThen(handleFor(segPath)).map { handle =>
-            val writeHeader: Unit < S = if headerLen > 0L then handle.writeAt(0L, codec.header) else ()
-            // seam.syncDir after creating the segment so its directory link survives a crash; the
-            // subsequent handle.sync() (or group-commit flush) covers the segment's data.
-            val syncSegmentDir: Unit < S = if options.fsync == Fsync.Always then seam.syncDir(dir) else ()
-            writeHeader.andThen(syncSegmentDir).andThen(
-                SegmentEntry(baseOffset, segPath, Chunk.empty[Long], headerLen, headerLen)
-            )
+        val dir = streamDir(streamId)
+        seam.exists(dir).map { existed =>
+            seam.mkDir(dir).andThen {
+                val segPath   = dir / codec.segmentName(baseOffset)
+                val headerLen = codec.header.length.toLong
+                // A newly created stream directory's entry is not durable until its parent (streams/) is
+                // fsync'd. Sync it before the segment beneath it is acknowledged, on the fsync path only
+                // and only when the directory did not already exist (a rotation reuses an existing, already-
+                // synced stream directory).
+                val syncStreamsDir: Unit < S = if options.fsync == Fsync.Always && !existed then seam.syncDir(streamsDir) else ()
+                syncStreamsDir.andThen(handleFor(segPath)).map { handle =>
+                    val writeHeader: Unit < S = if headerLen > 0L then handle.writeAt(0L, codec.header) else ()
+                    // seam.syncDir after creating the segment so its directory link survives a crash; the
+                    // subsequent handle.sync() (or group-commit flush) covers the segment's data.
+                    val syncSegmentDir: Unit < S = if options.fsync == Fsync.Always then seam.syncDir(dir) else ()
+                    writeHeader.andThen(syncSegmentDir).andThen(
+                        SegmentEntry(baseOffset, segPath, Chunk.empty[Long], headerLen, headerLen)
+                    )
+                }
+            }
         }
     end createSegment
 
@@ -1040,18 +1042,20 @@ final private[kyo] class FileJournalCore[A, S >: (Async & Abort[Throwable]) <: S
 
     private def recover(streamId: Event.StreamId, log: Log.Unsafe)(using AllowUnsafe, Frame): Result[IndexFailure, StreamState] < S =
         val dir = streamDir(streamId)
-        if !dir.unsafe.exists() then Result.succeed(StreamState.emptyIndexed)
-        else
-            dir.unsafe.list() match
-                // Extension-driven filtering: codec.segmentExtension selects which segment files
-                // belong to this root, so JSONL roots recover .jsonl files and Binary roots recover .seg files.
-                case Result.Success(paths) =>
-                    val segFiles = paths.filter(_.unsafe.show.endsWith(codec.segmentExtension)).sortBy(_.unsafe.show)
-                    if segFiles.isEmpty then Result.succeed(StreamState.emptyIndexed)
-                    else scanSegments(streamId, segFiles, log)
-                case Result.Failure(e) =>
-                    Result.fail(JournalStorageError(s"Cannot list segments for '${streamId.value}'", Present(e)))
-        end if
+        Abort.run[JournalStorageError](seam.exists(dir)).map:
+            case Result.Panic(e)       => throw e
+            case Result.Failure(e)     => Result.fail(e)
+            case Result.Success(false) => Result.succeed(StreamState.emptyIndexed)
+            case Result.Success(true) =>
+                Abort.run[JournalStorageError](seam.list(dir)).map:
+                    case Result.Panic(e)       => throw e
+                    case Result.Failure(e)     => Result.fail(e)
+                    case Result.Success(paths) =>
+                        // Extension-driven filtering: codec.segmentExtension selects which segment files
+                        // belong to this root, so JSONL roots recover .jsonl files and Binary roots recover .seg files.
+                        val segFiles = paths.filter(_.unsafe.show.endsWith(codec.segmentExtension)).sortBy(_.unsafe.show)
+                        if segFiles.isEmpty then Result.succeed(StreamState.emptyIndexed)
+                        else scanSegments(streamId, segFiles, log)
     end recover
 
     // Walks segments in base-offset order, validating header + records, grouping by batch
@@ -1371,6 +1375,18 @@ private[kyo] object FileJournalCore:
     )(using frame: Frame): FileJournal.Backend[A, Sync] < (Sync & Scope & Abort[JournalStorageError]) =
         open(dir, configuration, kyo.platformSyncStore(), ClaimSeam.sync, FlushStrategy.inline)
 
+    /** Opens a typed Sync file-backed journal over `dir`, running the engine's physical store
+      * through the supplied [[kyo.FileSystem]] instead of the platform's [[SegmentStore]]: `fs`
+      * may be [[kyo.FileSystem.host]], [[kyo.FileSystem.inMemory]], or an overlay, and the shared
+      * orchestration ([[FileJournalCore]] above) runs unchanged over any of them.
+      */
+    private[kyo] def openOver[A](
+        dir: Path,
+        configuration: FileJournal.Configuration[A],
+        fs: FileSystem[Sync]
+    )(using frame: Frame): FileJournal.Backend[A, Sync] < (Sync & Scope & Abort[JournalStorageError]) =
+        open(dir, configuration, FileSystemStoreSeam(fs), ClaimSeam.sync, FlushStrategy.inline)
+
     /** Opens a typed Async file-backed journal over `dir`, bootstrapping the async claim seam and
       * group-commit coordinator and resolving the platform's asynchronous [[StoreSeam]] itself
       * (`kyo.platformAsyncStore`).
@@ -1412,43 +1428,54 @@ private[kyo] object FileJournalCore:
         allow: AllowUnsafe
     ): Result[JournalStorageError, FileJournalCore[A, S]] < Sync =
         val rootKey = dir.unsafe.show
-        if !dir.unsafe.exists() then
-            Result.fail(JournalStorageError(s"Journal root '${dir.unsafe.show}' does not exist", Absent))
-        else if !dir.unsafe.isDirectory() then
-            Result.fail(JournalStorageError(s"Journal root '${dir.unsafe.show}' exists and is not a directory", Absent))
-        else
-            val streamsDir = dir / "streams"
-            familyKindOf(configuration.profileName).flatMap { requestedKind =>
-                validateFormatMarker(
-                    dir,
-                    requestedKind,
-                    configuration.profileName,
-                    configuration.payloadMediaType,
-                    configuration.metadataMediaType,
-                    writeIfMissing = false
-                ).map { validatedKind =>
-                    val codec = codecFor(validatedKind, configuration.codecs.metadata, configuration.codecs.value)
-                    val noOpLock = new SegmentStore.Lock:
-                        def release()(using AllowUnsafe): Unit = ()
-                    new FileJournalCore[A, S](
-                        rootKey,
-                        streamsDir,
-                        configuration.options,
-                        configuration.codecs.metadata,
-                        seam,
-                        noOpLock,
-                        codec,
-                        configuration.codecs.value,
-                        ClaimSeam.noop,
-                        FlushStrategy.noop,
-                        AtomicRef.Unsafe.init(Map.empty),
-                        AtomicRef.Unsafe.init(Map.empty),
-                        configuration.journalId,
-                        readerMode = true
-                    )
-                }
-            }
-        end if
+        Abort.run[JournalStorageError](seam.exists(dir)).map:
+            case Result.Panic(e)   => throw e
+            case Result.Failure(e) => Result.fail(e)
+            case Result.Success(false) =>
+                Result.fail(JournalStorageError(s"Journal root '${dir.unsafe.show}' does not exist", Absent))
+            case Result.Success(true) =>
+                Abort.run[JournalStorageError](seam.isDirectory(dir)).map:
+                    case Result.Panic(e)   => throw e
+                    case Result.Failure(e) => Result.fail(e)
+                    case Result.Success(false) =>
+                        Result.fail(JournalStorageError(s"Journal root '${dir.unsafe.show}' exists and is not a directory", Absent))
+                    case Result.Success(true) =>
+                        val streamsDir = dir / "streams"
+                        familyKindOf(configuration.profileName) match
+                            case Result.Failure(err) => Result.fail(err)
+                            case Result.Success(requestedKind) =>
+                                Abort.run[JournalStorageError](validateFormatMarker(
+                                    dir,
+                                    seam,
+                                    requestedKind,
+                                    configuration.profileName,
+                                    configuration.payloadMediaType,
+                                    configuration.metadataMediaType,
+                                    writeIfMissing = false
+                                )).map:
+                                    case Result.Panic(e)   => throw e
+                                    case Result.Failure(e) => Result.fail(e)
+                                    case Result.Success(validatedKind) =>
+                                        val codec = codecFor(validatedKind, configuration.codecs.metadata, configuration.codecs.value)
+                                        val noOpLock = new SegmentStore.Lock:
+                                            def release()(using AllowUnsafe): Unit = ()
+                                        Result.succeed(new FileJournalCore[A, S](
+                                            rootKey,
+                                            streamsDir,
+                                            configuration.options,
+                                            configuration.codecs.metadata,
+                                            seam,
+                                            noOpLock,
+                                            codec,
+                                            configuration.codecs.value,
+                                            ClaimSeam.noop,
+                                            FlushStrategy.noop,
+                                            AtomicRef.Unsafe.init(Map.empty),
+                                            AtomicRef.Unsafe.init(Map.empty),
+                                            configuration.journalId,
+                                            readerMode = true
+                                        ))
+                        end match
     end acquireReader
 
     private def acquire[A, S >: (Async & Abort[Throwable]) <: Sync](
@@ -1466,65 +1493,83 @@ private[kyo] object FileJournalCore:
         // same last component but different cwd would collide, which matches the platform-lock's
         // own cwd-relative limitation.
         val rootKey = dir.unsafe.show
-        if dir.unsafe.exists() && !dir.unsafe.isDirectory() then
-            Result.fail(JournalStorageError(s"Journal root '${dir.unsafe.show}' exists and is not a directory", Absent))
-        else if !registerRoot(rootKey) then
-            Result.fail(JournalStorageError(s"Journal root '${dir.unsafe.show}' is locked by this process", Absent))
-        else
-            discard(dir.unsafe.mkDir())
-            val streamsDir = dir / "streams"
-            discard(streamsDir.unsafe.mkDir())
-            Abort.run(seam.acquireLock(dir)).map {
-                case Result.Failure(err) =>
-                    unregisterRoot(rootKey)
-                    Result.fail(err)
-                case Result.Panic(e) =>
-                    unregisterRoot(rootKey)
-                    Result.fail(JournalStorageError(s"Failed to open journal root '${dir.unsafe.show}'", Present(e)))
-                case Result.Success(acquiredLock) =>
-                    familyKindOf(configuration.profileName) match
-                        case Result.Failure(err) =>
-                            // Unsafe: release the lock before propagating the family-kind error.
-                            discard(Result.catching[Throwable](acquiredLock.release()))
-                            unregisterRoot(rootKey)
-                            Result.fail(err)
-                        case Result.Success(requestedKind) =>
-                            // MANIFEST check/write runs after lock acquisition to prevent a TOCTOU
-                            // race where two processes both see a fresh root and both write MANIFEST.
-                            checkOrWriteFormatMarker(
-                                dir,
-                                requestedKind,
-                                configuration.profileName,
-                                configuration.payloadMediaType,
-                                configuration.metadataMediaType
-                            ) match
-                                case Result.Failure(err) =>
-                                    // Unsafe: release the lock before propagating the format error.
-                                    discard(Result.catching[Throwable](acquiredLock.release()))
-                                    unregisterRoot(rootKey)
-                                    Result.fail(err)
-                                case Result.Success(validatedKind) =>
-                                    val codec = codecFor(validatedKind, configuration.codecs.metadata, configuration.codecs.value)
-                                    Result.succeed(
-                                        new FileJournalCore[A, S](
-                                            rootKey,
-                                            streamsDir,
-                                            configuration.options,
-                                            configuration.codecs.metadata,
-                                            seam,
-                                            acquiredLock,
-                                            codec,
-                                            configuration.codecs.value,
-                                            claimSeam,
-                                            flushStrategyFor(configuration.options.fsync),
-                                            AtomicRef.Unsafe.init(Map.empty),
-                                            AtomicRef.Unsafe.init(Map.empty),
-                                            configuration.journalId
-                                        )
-                                    )
-                            end match
-            }
-        end if
+        Abort.run[JournalStorageError](seam.exists(dir)).map:
+            case Result.Panic(e)   => throw e
+            case Result.Failure(e) => Result.fail(e)
+            case Result.Success(existsFlag) =>
+                val notDirectoryCheck: Boolean < (Sync & Abort[JournalStorageError]) =
+                    if existsFlag then seam.isDirectory(dir).map(isDir => !isDir) else false
+                Abort.run[JournalStorageError](notDirectoryCheck).map:
+                    case Result.Panic(e)   => throw e
+                    case Result.Failure(e) => Result.fail(e)
+                    case Result.Success(true) =>
+                        Result.fail(JournalStorageError(s"Journal root '${dir.unsafe.show}' exists and is not a directory", Absent))
+                    case Result.Success(false) =>
+                        if !registerRoot(rootKey) then
+                            Result.fail(JournalStorageError(s"Journal root '${dir.unsafe.show}' is locked by this process", Absent))
+                        else
+                            val streamsDir = dir / "streams"
+                            seam.mkDir(dir).andThen(seam.mkDir(streamsDir)).andThen {
+                                Abort.run(seam.acquireLock(dir)).map {
+                                    case Result.Failure(err) =>
+                                        unregisterRoot(rootKey)
+                                        Result.fail(err)
+                                    case Result.Panic(e) =>
+                                        unregisterRoot(rootKey)
+                                        Result.fail(JournalStorageError(s"Failed to open journal root '${dir.unsafe.show}'", Present(e)))
+                                    case Result.Success(acquiredLock) =>
+                                        familyKindOf(configuration.profileName) match
+                                            case Result.Failure(err) =>
+                                                // Unsafe: release the lock before propagating the family-kind error.
+                                                discard(Result.catching[Throwable](acquiredLock.release()))
+                                                unregisterRoot(rootKey)
+                                                Result.fail(err)
+                                            case Result.Success(requestedKind) =>
+                                                // MANIFEST check/write runs after lock acquisition to prevent a TOCTOU
+                                                // race where two processes both see a fresh root and both write MANIFEST.
+                                                Abort.run[JournalStorageError](checkOrWriteFormatMarker(
+                                                    dir,
+                                                    seam,
+                                                    requestedKind,
+                                                    configuration.profileName,
+                                                    configuration.payloadMediaType,
+                                                    configuration.metadataMediaType
+                                                )).map:
+                                                    case Result.Panic(e) =>
+                                                        // Unsafe: release the lock before propagating the format error.
+                                                        discard(Result.catching[Throwable](acquiredLock.release()))
+                                                        unregisterRoot(rootKey)
+                                                        throw e
+                                                    case Result.Failure(err) =>
+                                                        // Unsafe: release the lock before propagating the format error.
+                                                        discard(Result.catching[Throwable](acquiredLock.release()))
+                                                        unregisterRoot(rootKey)
+                                                        Result.fail(err)
+                                                    case Result.Success(validatedKind) =>
+                                                        val codec = codecFor(
+                                                            validatedKind,
+                                                            configuration.codecs.metadata,
+                                                            configuration.codecs.value
+                                                        )
+                                                        Result.succeed(
+                                                            new FileJournalCore[A, S](
+                                                                rootKey,
+                                                                streamsDir,
+                                                                configuration.options,
+                                                                configuration.codecs.metadata,
+                                                                seam,
+                                                                acquiredLock,
+                                                                codec,
+                                                                configuration.codecs.value,
+                                                                claimSeam,
+                                                                flushStrategyFor(configuration.options.fsync),
+                                                                AtomicRef.Unsafe.init(Map.empty),
+                                                                AtomicRef.Unsafe.init(Map.empty),
+                                                                configuration.journalId
+                                                            )
+                                                        )
+                                }
+                            }
     end acquire
 
     // Reads or writes the MANIFEST marker file in `dir`: a structured record of the profile
@@ -1545,68 +1590,64 @@ private[kyo] object FileJournalCore:
     //   - MANIFEST file with mismatched format: fail with typed JournalStorageError.
     //   - MANIFEST file with unknown format value: fail with typed JournalStorageError.
     // Read-only MANIFEST validation: never writes the marker file.
-    private def validateFormatMarker(
+    private def validateFormatMarker[S](
         dir: Path,
+        seam: StoreSeam[S],
         requestedFormat: SegmentFamilyKind,
         profileName: String,
         payloadMediaType: String,
         metadataMediaType: String,
         writeIfMissing: Boolean
-    )(using frame: Frame, allow: AllowUnsafe): Result[JournalStorageError, SegmentFamilyKind] =
+    )(using frame: Frame): SegmentFamilyKind < (Sync & Abort[JournalStorageError]) =
         val formatFile = dir / "MANIFEST"
-        if formatFile.unsafe.exists() then
-            formatFile.unsafe.readBytes() match
-                case Result.Failure(e) =>
-                    Result.fail(JournalStorageError(s"Cannot read MANIFEST file in '${dir.unsafe.show}'", Present(e)))
-                case Result.Success(bytes) =>
-                    parseFormatMarker(dir, bytes, requestedFormat)
-        else
-            // No MANIFEST file. Check whether the streams/ directory has any entries, which would
-            // indicate a legacy or crash-partial binary root created before the MANIFEST marker
-            // was durably written.
-            val streamsDir = dir / "streams"
-            val hasStreams = streamsDir.unsafe.exists() && (streamsDir.unsafe.list() match
-                case Result.Success(paths) => paths.nonEmpty
-                case Result.Failure(_)     => false)
-            if hasStreams && requestedFormat != SegmentFamilyKind.Binary then
-                Result.fail(JournalStorageError(
-                    s"Journal root '${dir.unsafe.show}' has existing segments but no MANIFEST marker; " +
-                        "inferred Binary; Config requests Jsonl",
-                    Absent
-                ))
-            else if hasStreams then
-                // MANIFEST-absent, segments present: infer Binary (legacy or crash-partial root).
-                // Do not write MANIFEST; future opens will infer Binary from segment presence again.
-                Result.succeed(SegmentFamilyKind.Binary)
-            else if writeIfMissing then
-                val content =
-                    s"format: $profileName\nversion: 1\npayload-media-type: $payloadMediaType\nmetadata-media-type: $metadataMediaType\n"
-                formatFile.unsafe.writeBytes(Span.from(content.getBytes(Utf8))) match
-                    case Result.Failure(e) =>
-                        Result.fail(JournalStorageError(
-                            s"Cannot write MANIFEST file in '${dir.unsafe.show}'",
-                            Present(e)
-                        ))
-                    case Result.Success(_) =>
-                        Result.succeed(requestedFormat)
-                end match
-            else
-                Result.fail(JournalStorageError(
-                    s"Journal root '${dir.unsafe.show}' has no MANIFEST marker and no segments",
-                    Absent
-                ))
-            end if
-        end if
+        seam.readMarker(formatFile).map:
+            case Present(bytes) => Abort.get(parseFormatMarker(dir, bytes, requestedFormat))
+            case Absent         =>
+                // No MANIFEST file. Check whether the streams/ directory has any entries, which would
+                // indicate a legacy or crash-partial binary root created before the MANIFEST marker
+                // was durably written.
+                val streamsDir = dir / "streams"
+                seam.exists(streamsDir).map { streamsDirExists =>
+                    val hasStreams: Boolean < (Sync & Abort[JournalStorageError]) =
+                        if !streamsDirExists then false
+                        else
+                            Abort.run[JournalStorageError](seam.list(streamsDir)).map:
+                                case Result.Success(paths) => paths.nonEmpty
+                                case Result.Failure(_)     => false
+                                case Result.Panic(e)       => throw e
+                    hasStreams.map {
+                        case true if requestedFormat != SegmentFamilyKind.Binary =>
+                            Abort.fail(JournalStorageError(
+                                s"Journal root '${dir.unsafe.show}' has existing segments but no MANIFEST marker; " +
+                                    "inferred Binary; Config requests Jsonl",
+                                Absent
+                            ))
+                        case true =>
+                            // MANIFEST-absent, segments present: infer Binary (legacy or crash-partial root).
+                            // Do not write MANIFEST; future opens will infer Binary from segment presence again.
+                            SegmentFamilyKind.Binary
+                        case false if writeIfMissing =>
+                            val content =
+                                s"format: $profileName\nversion: 1\npayload-media-type: $payloadMediaType\nmetadata-media-type: $metadataMediaType\n"
+                            seam.writeMarker(formatFile, Span.from(content.getBytes(Utf8))).andThen(requestedFormat)
+                        case false =>
+                            Abort.fail(JournalStorageError(
+                                s"Journal root '${dir.unsafe.show}' has no MANIFEST marker and no segments",
+                                Absent
+                            ))
+                    }
+                }
     end validateFormatMarker
 
-    private def checkOrWriteFormatMarker(
+    private def checkOrWriteFormatMarker[S](
         dir: Path,
+        seam: StoreSeam[S],
         requestedFormat: SegmentFamilyKind,
         profileName: String,
         payloadMediaType: String,
         metadataMediaType: String
-    )(using frame: Frame, allow: AllowUnsafe): Result[JournalStorageError, SegmentFamilyKind] =
-        validateFormatMarker(dir, requestedFormat, profileName, payloadMediaType, metadataMediaType, writeIfMissing = true)
+    )(using frame: Frame): SegmentFamilyKind < (Sync & Abort[JournalStorageError]) =
+        validateFormatMarker(dir, seam, requestedFormat, profileName, payloadMediaType, metadataMediaType, writeIfMissing = true)
     end checkOrWriteFormatMarker
 
     private def parseFormatMarker(

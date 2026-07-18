@@ -94,6 +94,24 @@ trait FileSystem[S]:
       * `FileLockUnavailableException` immediately if the lock is held incompatibly, never waits.
       */
     def lock(path: Path, exclusive: Boolean): Path.FileLock < (S & Scope & Abort[FileException])
+
+    /** Acquires a channel WITHOUT a `Scope` wrap, pairing it with its own fork-free plain-`Sync`
+      * release thunk instead of a collective `Scope`-managed release. `private[kyo]`: an internal
+      * escape hatch for callers that need to release one vended resource independently of every
+      * other resource this `FileSystem` has vended, never a public capability.
+      */
+    private[kyo] def openChannelUnscoped(path: Path, mode: FileSystem.ChannelMode)(using
+        Frame
+    )
+        : (Path.Channel[S], () => Unit < S) < (S & Abort[FileException])
+
+    /** Acquires a lock WITHOUT a `Scope` wrap, pairing it with its own fork-free plain-`Sync`
+      * release thunk. See [[openChannelUnscoped]].
+      */
+    private[kyo] def lockUnscoped(path: Path, exclusive: Boolean)(using
+        Frame
+    )
+        : (Path.FileLock, () => Unit < S) < (S & Abort[FileException])
 end FileSystem
 
 object FileSystem:

@@ -141,49 +141,75 @@ private[kyo] object HostFileSystem:
                     // Unsafe: recursive host delete of the created temp dir at Scope exit
                     def remove()(using AllowUnsafe): Unit = discard(dir.unsafe.removeAll())
             }
+        private def channelFrom(path: Path, mode: FileSystem.ChannelMode, raw: Path.RawChannel): Path.Channel[Sync] =
+            new Path.Channel[Sync]:
+                def readAt(pos: Long, len: Int)(using Frame): Span[Byte] < (Sync & Abort[FileException]) =
+                    // Unsafe: bridges the vended raw channel's positioned read into the safe tier
+                    Sync.Unsafe.defer(Abort.get(raw.readAt(pos, len))).map(Span.from)
+                def writeAt(pos: Long, bytes: Span[Byte])(using Frame): Unit < (Sync & Abort[FileException]) =
+                    // The underlying FileChannel is opened without WRITE in Read mode, so it
+                    // would surface an untyped NonWritableChannelException; gate explicitly
+                    // to a typed Abort[FileException] instead.
+                    mode match
+                        case FileSystem.ChannelMode.Read => Abort.fail(FileAccessDeniedException(path))
+                        case _                           =>
+                            // Unsafe: bridges the vended raw channel's positioned write into the safe tier
+                            Sync.Unsafe.defer(Abort.get(raw.writeAt(pos, bytes.toArray)))
+                def sync()(using Frame): Unit < (Sync & Abort[FileException]) =
+                    // Unsafe: bridges the vended raw channel's sync into the safe tier
+                    Sync.Unsafe.defer(Abort.get(raw.sync()))
+                def truncate(size: Long)(using Frame): Unit < (Sync & Abort[FileException]) =
+                    // Same explicit gate as writeAt: a Read-mode FileChannel would otherwise
+                    // surface an untyped NonWritableChannelException.
+                    mode match
+                        case FileSystem.ChannelMode.Read => Abort.fail(FileAccessDeniedException(path))
+                        case _                           =>
+                            // Unsafe: bridges the vended raw channel's truncate into the safe tier
+                            Sync.Unsafe.defer(Abort.get(raw.truncate(size)))
+                def size()(using Frame): Long < (Sync & Abort[FileException]) =
+                    // Unsafe: bridges the vended raw channel's size into the safe tier
+                    Sync.Unsafe.defer(Abort.get(raw.size()))
+
         def openChannel(path: Path, mode: FileSystem.ChannelMode): Path.Channel[Sync] < (Sync & Scope & Abort[FileException]) =
             Scope.acquireRelease(
                 // Unsafe: bridges Path.Unsafe.openChannel into the safe tier
                 Sync.Unsafe.defer(Abort.get(path.unsafe.openChannel(mode)))
-            )(raw => Sync.Unsafe.defer(raw.close())).map { raw => // Unsafe: closes the vended raw channel at Scope exit
-                new Path.Channel[Sync]:
-                    def readAt(pos: Long, len: Int)(using Frame): Span[Byte] < (Sync & Abort[FileException]) =
-                        // Unsafe: bridges the vended raw channel's positioned read into the safe tier
-                        Sync.Unsafe.defer(Abort.get(raw.readAt(pos, len))).map(Span.from)
-                    def writeAt(pos: Long, bytes: Span[Byte])(using Frame): Unit < (Sync & Abort[FileException]) =
-                        // The underlying FileChannel is opened without WRITE in Read mode, so it
-                        // would surface an untyped NonWritableChannelException; gate explicitly
-                        // to a typed Abort[FileException] instead.
-                        mode match
-                            case FileSystem.ChannelMode.Read => Abort.fail(FileAccessDeniedException(path))
-                            case _                           =>
-                                // Unsafe: bridges the vended raw channel's positioned write into the safe tier
-                                Sync.Unsafe.defer(Abort.get(raw.writeAt(pos, bytes.toArray)))
-                    def sync()(using Frame): Unit < (Sync & Abort[FileException]) =
-                        // Unsafe: bridges the vended raw channel's sync into the safe tier
-                        Sync.Unsafe.defer(Abort.get(raw.sync()))
-                    def truncate(size: Long)(using Frame): Unit < (Sync & Abort[FileException]) =
-                        // Same explicit gate as writeAt: a Read-mode FileChannel would otherwise
-                        // surface an untyped NonWritableChannelException.
-                        mode match
-                            case FileSystem.ChannelMode.Read => Abort.fail(FileAccessDeniedException(path))
-                            case _                           =>
-                                // Unsafe: bridges the vended raw channel's truncate into the safe tier
-                                Sync.Unsafe.defer(Abort.get(raw.truncate(size)))
-                    def size()(using Frame): Long < (Sync & Abort[FileException]) =
-                        // Unsafe: bridges the vended raw channel's size into the safe tier
-                        Sync.Unsafe.defer(Abort.get(raw.size()))
+            )(raw => Sync.Unsafe.defer(raw.close())) // Unsafe: closes the vended raw channel at Scope exit
+                .map(raw => channelFrom(path, mode, raw))
+
+        private[kyo] def openChannelUnscoped(path: Path, mode: FileSystem.ChannelMode)(using
+            Frame
+        )
+            : (Path.Channel[Sync], () => Unit < Sync) < (Sync & Abort[FileException]) =
+            // Unsafe: bridges Path.Unsafe.openChannel into the safe tier with no Scope wrap; the
+            // caller owns the vended channel's release directly through the returned thunk.
+            Sync.Unsafe.defer(Abort.get(path.unsafe.openChannel(mode))).map { raw =>
+                (channelFrom(path, mode, raw), () => Sync.Unsafe.defer(raw.close()))
             }
+
         def syncDir(path: Path): Unit < (Sync & Abort[FileException]) =
             // Unsafe: bridges Path.Unsafe.syncDir into the safe tier
             Sync.Unsafe.defer(path.unsafe.syncDir())
+
+        private def lockFrom(raw: Path.RawLock): Path.FileLock =
+            new Path.FileLock:
+                def isExclusive: Boolean = raw.isExclusive
+
         def lock(path: Path, exclusive: Boolean): Path.FileLock < (Sync & Scope & Abort[FileException]) =
             Scope.acquireRelease(
                 // Unsafe: bridges Path.Unsafe.lock into the safe tier
                 Sync.Unsafe.defer(Abort.get(path.unsafe.lock(exclusive)))
-            )(raw => Sync.Unsafe.defer(raw.release())).map { raw => // Unsafe: releases the vended raw lock at Scope exit
-                new Path.FileLock:
-                    def isExclusive: Boolean = raw.isExclusive
+            )(raw => Sync.Unsafe.defer(raw.release())) // Unsafe: releases the vended raw lock at Scope exit
+                .map(raw => lockFrom(raw))
+
+        private[kyo] def lockUnscoped(path: Path, exclusive: Boolean)(using
+            Frame
+        )
+            : (Path.FileLock, () => Unit < Sync) < (Sync & Abort[FileException]) =
+            // Unsafe: bridges Path.Unsafe.lock into the safe tier with no Scope wrap; the caller
+            // owns the vended lock's release directly through the returned thunk.
+            Sync.Unsafe.defer(Abort.get(path.unsafe.lock(exclusive))).map { raw =>
+                (lockFrom(raw), () => Sync.Unsafe.defer(raw.release()))
             }
     end HostFileSystem
 
@@ -294,9 +320,19 @@ private[kyo] object HostFileSystem:
         end tempDir
         def openChannel(path: Path, mode: FileSystem.ChannelMode): Path.Channel[Sync] < (Sync & Scope & Abort[FileException]) =
             confined(path).andThen(host.openChannel(path, mode))
+        private[kyo] def openChannelUnscoped(path: Path, mode: FileSystem.ChannelMode)(using
+            Frame
+        )
+            : (Path.Channel[Sync], () => Unit < Sync) < (Sync & Abort[FileException]) =
+            confined(path).andThen(host.openChannelUnscoped(path, mode))
         def syncDir(path: Path): Unit < (Sync & Abort[FileException]) =
             confined(path).andThen(host.syncDir(path))
         def lock(path: Path, exclusive: Boolean): Path.FileLock < (Sync & Scope & Abort[FileException]) =
             confined(path).andThen(host.lock(path, exclusive))
+        private[kyo] def lockUnscoped(path: Path, exclusive: Boolean)(using
+            Frame
+        )
+            : (Path.FileLock, () => Unit < Sync) < (Sync & Abort[FileException]) =
+            confined(path).andThen(host.lockUnscoped(path, exclusive))
     end RootConfinedHostFileSystem
 end HostFileSystem

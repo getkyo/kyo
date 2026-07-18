@@ -58,13 +58,54 @@ end SegmentStore
   * byte-identically) or `Async` (a platform adapter that genuinely suspends). `acquireLock` is
   * always `< Sync`: the cross-process root lock is acquired exactly once at journal-open time
   * (never on the per-record hot path), so it never needs the blocking-offload treatment the
-  * per-handle operations get.
+  * per-handle operations get. The directory/MANIFEST bookkeeping tier below (`exists`/
+  * `isDirectory`/`mkDir`/`list`/`readMarker`/`writeMarker`) is always `< Sync` for the identical
+  * reason: every call happens at segment-creation, rotation, or journal-open time, never per record.
   */
 private[kyo] trait StoreSeam[S]:
     def readOnly: Boolean = false
     def open(path: Path)(using Frame): StoreSeam.Handle[S] < (S & Abort[JournalStorageError])
     def acquireLock(root: Path)(using Frame): SegmentStore.Lock < (Sync & Abort[JournalStorageError])
     def syncDir(dir: Path)(using Frame): Unit < S
+
+    // Directory/MANIFEST bookkeeping tier: always Sync. Concrete Path.unsafe defaults make every
+    // existing producer (StoreSeam.sync, offloadStore, NodeAsyncJournalStore, requireNodeSeam)
+    // inherit today's exact host-disk behavior unchanged; only FileSystemStoreSeam overrides these
+    // to route through its injected FileSystem, so a fileOver(inMemory/overlay, ...) journal's
+    // directory structure never touches the real host disk.
+    // Unsafe: each default bridges the host filesystem's synchronous Path.unsafe access into the
+    // Sync tier via Sync.Unsafe.defer, byte-identical to the pre-re-layer direct dir.unsafe calls.
+    def exists(path: Path)(using Frame): Boolean < (Sync & Abort[JournalStorageError]) =
+        Sync.Unsafe.defer(path.unsafe.exists())
+
+    def isDirectory(path: Path)(using Frame): Boolean < (Sync & Abort[JournalStorageError]) =
+        Sync.Unsafe.defer(path.unsafe.isDirectory())
+
+    // Idempotent, never aborts: matches today's discard(dir.unsafe.mkDir()) tolerance of an
+    // already-existing directory.
+    def mkDir(path: Path)(using Frame): Unit < Sync =
+        Sync.Unsafe.defer(discard(path.unsafe.mkDir()))
+
+    def list(path: Path)(using Frame): Chunk[Path] < (Sync & Abort[JournalStorageError]) =
+        Sync.Unsafe.defer(path.unsafe.list()).map:
+            case Result.Success(paths) => paths
+            case Result.Failure(e)     => Abort.fail(JournalStorageError(s"Cannot list directory '${path.unsafe.show}'", Present(e)))
+
+    // Folds the current exists()-then-readBytes() MANIFEST pattern into one backend round-trip:
+    // Absent when the marker file does not exist, Present with its bytes when it does.
+    def readMarker(path: Path)(using Frame): Maybe[Span[Byte]] < (Sync & Abort[JournalStorageError]) =
+        Sync.Unsafe.defer(path.unsafe.exists()).map { found =>
+            if !found then Absent
+            else
+                Sync.Unsafe.defer(path.unsafe.readBytes()).map:
+                    case Result.Success(bytes) => Present(bytes)
+                    case Result.Failure(e) => Abort.fail(JournalStorageError(s"Cannot read marker file '${path.unsafe.show}'", Present(e)))
+        }
+
+    def writeMarker(path: Path, bytes: Span[Byte])(using Frame): Unit < (Sync & Abort[JournalStorageError]) =
+        Sync.Unsafe.defer(path.unsafe.writeBytes(bytes)).map:
+            case Result.Success(_) => ()
+            case Result.Failure(e) => Abort.fail(JournalStorageError(s"Cannot write marker file '${path.unsafe.show}'", Present(e)))
 end StoreSeam
 
 private[kyo] object StoreSeam:

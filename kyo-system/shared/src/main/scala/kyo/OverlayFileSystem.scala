@@ -1106,19 +1106,33 @@ final private[kyo] class OverlayFileSystem[S](
     // --- Positioned channel (reads fall through to lower; writes stage in the upper
     // layer, replayed on commit like every other staged write) ---
 
+    private def ensureChannelTarget(path: Path, mode: FileSystem.ChannelMode): Unit < (S & Abort[FileException]) =
+        mode match
+            case FileSystem.ChannelMode.ReadWriteCreate =>
+                exists(path).map(found => if found then () else writeBytes(path, Span.empty[Byte], createFolders = true))
+            case FileSystem.ChannelMode.Read | FileSystem.ChannelMode.ReadWrite =>
+                exists(path).map(found => if found then () else Abort.fail(FileNotFoundException(path)))
+
     def openChannel(path: Path, mode: FileSystem.ChannelMode): Path.Channel[S] < (S & Scope & Abort[FileException]) =
-        val ensureTarget: Unit < (S & Abort[FileException]) =
-            mode match
-                case FileSystem.ChannelMode.ReadWriteCreate =>
-                    exists(path).map(found => if found then () else writeBytes(path, Span.empty[Byte], createFolders = true))
-                case FileSystem.ChannelMode.Read | FileSystem.ChannelMode.ReadWrite =>
-                    exists(path).map(found => if found then () else Abort.fail(FileNotFoundException(path)))
         // Scope.acquireRelease always folds in Sync; the cast is safe because S = Sync at the
         // only instantiation site (OverlayFileSystem.init), the same precedent as modifyPure.
-        Scope.acquireRelease(ensureTarget)(_ => ())
+        Scope.acquireRelease(ensureChannelTarget(path, mode))(_ => ())
             .asInstanceOf[Unit < (S & Scope & Abort[FileException])]
             .andThen(mkChannel(path, mode))
     end openChannel
+
+    private[kyo] def openChannelUnscoped(path: Path, mode: FileSystem.ChannelMode)(using
+        Frame
+    )
+        : (Path.Channel[S], () => Unit < S) < (S & Abort[FileException]) =
+        // Writes stage directly into the upper layer on every writeAt (mkChannel's own staged
+        // write), so there is no separate resource to release: the thunk is a plain no-op,
+        // matching openChannel's own no-op Scope release (`_ => ()`) above. Explicitly typed so the
+        // tuple's second element widens to `() => Unit < S`: kyo's `<` auto-widening applies to a
+        // value position, not to a function's return type nested inside a tuple.
+        val noRelease: () => Unit < S = () => ()
+        ensureChannelTarget(path, mode).andThen((mkChannel(path, mode), noRelease))
+    end openChannelUnscoped
 
     private def mkChannel(path: Path, mode: FileSystem.ChannelMode): Path.Channel[S] =
         new Path.Channel[S]:
@@ -1151,6 +1165,14 @@ final private[kyo] class OverlayFileSystem[S](
 
     def lock(path: Path, exclusive: Boolean): Path.FileLock < (S & Scope & Abort[FileException]) =
         lower.lock(path, exclusive)
+
+    private[kyo] def lockUnscoped(path: Path, exclusive: Boolean)(using
+        Frame
+    )
+        : (Path.FileLock, () => Unit < S) < (S & Abort[FileException]) =
+        // The overlay layer has no separate exclusion state (see lock above): delegate entirely
+        // to the lower service's own unscoped acquire and its release thunk.
+        lower.lockUnscoped(path, exclusive)
 
     // --- Commit / rollback ---
 
@@ -1679,6 +1701,16 @@ final private[kyo] class ForwardingLowerFileSystem(using Frame) extends FileSyst
                 "openChannel is unavailable through Path.virtual/sandbox/transaction's ephemeral forwarding service; hold a FileSystem[S] value directly"
             )
         ))
+    private[kyo] def openChannelUnscoped(path: Path, mode: FileSystem.ChannelMode)(using
+        Frame
+    )
+        : (Path.Channel[PathWrite], () => Unit < PathWrite) < (PathWrite & Abort[FileException]) =
+        Abort.fail(FileIOException(
+            path,
+            new IOException(
+                "openChannelUnscoped is unavailable through Path.virtual/sandbox/transaction's ephemeral forwarding service; hold a FileSystem[S] value directly"
+            )
+        ))
     def syncDir(path: Path): Unit < (PathWrite & Abort[FileException]) =
         Abort.fail(FileIOException(
             path,
@@ -1691,6 +1723,16 @@ final private[kyo] class ForwardingLowerFileSystem(using Frame) extends FileSyst
             path,
             new IOException(
                 "lock is unavailable through Path.virtual/sandbox/transaction's ephemeral forwarding service; hold a FileSystem[S] value directly"
+            )
+        ))
+    private[kyo] def lockUnscoped(path: Path, exclusive: Boolean)(using
+        Frame
+    )
+        : (Path.FileLock, () => Unit < PathWrite) < (PathWrite & Abort[FileException]) =
+        Abort.fail(FileIOException(
+            path,
+            new IOException(
+                "lockUnscoped is unavailable through Path.virtual/sandbox/transaction's ephemeral forwarding service; hold a FileSystem[S] value directly"
             )
         ))
 end ForwardingLowerFileSystem

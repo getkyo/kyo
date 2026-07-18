@@ -255,15 +255,29 @@ final private[kyo] class InMemoryFileSystem(state: AtomicRef[InMemoryFileSystem.
 
     // --- Positioned channel (mode gates writeAt/truncate at the call site) ---
 
+    private def ensureChannelTarget(path: Path, mode: FileSystem.ChannelMode): Unit < (Sync & Abort[FileException]) =
+        mode match
+            case FileSystem.ChannelMode.ReadWriteCreate =>
+                exists(path).map(found => if found then () else mkFile(path))
+            case FileSystem.ChannelMode.Read | FileSystem.ChannelMode.ReadWrite =>
+                exists(path).map(found => if found then () else Abort.fail(FileNotFoundException(path)))
+
     def openChannel(path: Path, mode: FileSystem.ChannelMode): Path.Channel[Sync] < (Sync & Scope & Abort[FileException]) =
-        val ensureTarget: Unit < (Sync & Abort[FileException]) =
-            mode match
-                case FileSystem.ChannelMode.ReadWriteCreate =>
-                    exists(path).map(found => if found then () else mkFile(path))
-                case FileSystem.ChannelMode.Read | FileSystem.ChannelMode.ReadWrite =>
-                    exists(path).map(found => if found then () else Abort.fail(FileNotFoundException(path)))
-        Scope.acquireRelease(ensureTarget)(_ => ()).andThen(mkChannel(path, mode))
+        Scope.acquireRelease(ensureChannelTarget(path, mode))(_ => ()).andThen(mkChannel(path, mode))
     end openChannel
+
+    private[kyo] def openChannelUnscoped(path: Path, mode: FileSystem.ChannelMode)(using
+        Frame
+    )
+        : (Path.Channel[Sync], () => Unit < Sync) < (Sync & Abort[FileException]) =
+        // The vended channel writes directly into the in-memory tree on every writeAt (mkChannel's
+        // own CAS write), so there is no separate resource to release: the thunk is a plain no-op,
+        // matching openChannel's own no-op Scope release (`_ => ()`) above. Explicitly typed so the
+        // tuple's second element widens to `() => Unit < Sync`: kyo's `<` auto-widening applies to a
+        // value position, not to a function's return type nested inside a tuple.
+        val noRelease: () => Unit < Sync = () => ()
+        ensureChannelTarget(path, mode).andThen((mkChannel(path, mode), noRelease))
+    end openChannelUnscoped
 
     private def mkChannel(path: Path, mode: FileSystem.ChannelMode): Path.Channel[Sync] =
         new Path.Channel[Sync]:
@@ -299,6 +313,12 @@ final private[kyo] class InMemoryFileSystem(state: AtomicRef[InMemoryFileSystem.
 
     def lock(path: Path, exclusive: Boolean): Path.FileLock < (Sync & Scope & Abort[FileException]) =
         Scope.acquireRelease(acquireLock(path, exclusive))(_ => releaseLock(path, exclusive))
+
+    private[kyo] def lockUnscoped(path: Path, exclusive: Boolean)(using
+        Frame
+    )
+        : (Path.FileLock, () => Unit < Sync) < (Sync & Abort[FileException]) =
+        acquireLock(path, exclusive).map(lock => (lock, () => releaseLock(path, exclusive)))
 
     private def acquireLock(path: Path, exclusive: Boolean): Path.FileLock < (Sync & Abort[FileException]) =
         modify { s =>
