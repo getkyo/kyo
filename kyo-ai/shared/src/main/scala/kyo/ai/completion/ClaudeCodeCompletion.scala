@@ -165,17 +165,27 @@ private[completion] object ClaudeCodeCompletion extends HarnessCompletion("Claud
                 executed <- AtomicRef.init(Chunk.empty[ExecutedTool])
                 meter    <- Meter.initMutex
                 handlers = tools.map(tool => mcpToolHandler(stateRef, executed, meter, tool))
-                server <- HttpServer.init(0, "127.0.0.1")(
-                    HttpHandler.webSocket("mcp") { (_, ws) =>
-                        Scope.run {
-                            JsonRpcHttpTransport.webSocket(ws).map { transport =>
-                                McpServer.initWith(transport, handlers.toSeq*) { _ =>
-                                    ws.onPeerClose
+                server <- Abort.run[HttpBindException] {
+                    HttpServer.init(0, "127.0.0.1")(
+                        HttpHandler.webSocket("mcp") { (_, ws) =>
+                            Scope.run {
+                                JsonRpcHttpTransport.webSocket(ws).map { transport =>
+                                    McpServer.initWith(transport, handlers.toSeq*) { _ =>
+                                        ws.onPeerClose
+                                    }
                                 }
                             }
                         }
-                    }
-                )
+                    )
+                }.map {
+                    case Result.Success(bound) => bound
+                    case Result.Failure(bindEx) =>
+                        Abort.fail(AIProviderUnavailableException(
+                            "Claude Code",
+                            s"failed to bind the MCP bridge server: ${bindEx.getMessage}"
+                        ))
+                    case Result.Panic(ex) => Abort.panic(ex)
+                }
                 url     = s"ws://127.0.0.1:${server.port}/mcp"
                 timeout = math.min(Int.MaxValue.toLong, math.max(1000L, config.timeout.toMillis)).toInt
                 bridge = McpBridge(

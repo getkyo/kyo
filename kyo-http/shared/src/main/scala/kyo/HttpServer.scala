@@ -23,6 +23,10 @@ import kyo.net.NetException
   * Note: Port 0 tells the OS to assign any available port. After binding, the actual port is available via `server.port`. This is the
   * recommended approach for tests where port collisions would be a problem.
   *
+  * A bind failure (for example the address is already in use) is an expected, recoverable condition: `init`, `initUnscoped`, and their
+  * `initWith` variants surface it as `Abort.fail(HttpBindException)`, so a caller can recover it with `Abort.run[HttpBindException]` rather
+  * than handling it as a defect.
+  *
   * WARNING: Binding to `0.0.0.0` (the default host) exposes the server on all network interfaces. Restrict to `127.0.0.1` for
   * localhost-only services.
   *
@@ -69,37 +73,47 @@ object HttpServer:
 
     // --- Scoped init methods ---
 
-    def init(handlers: HttpHandler[?, ?, ?]*)(using Frame): HttpServer < (Async & Scope) =
+    def init(handlers: HttpHandler[?, ?, ?]*)(using Frame): HttpServer < (Async & Scope & Abort[HttpBindException]) =
         init(HttpServerConfig.default)(handlers*)
 
-    def init(port: Int, host: String)(handlers: HttpHandler[?, ?, ?]*)(using Frame): HttpServer < (Async & Scope) =
+    def init(port: Int, host: String)(handlers: HttpHandler[?, ?, ?]*)(using
+        Frame
+    ): HttpServer < (Async & Scope & Abort[HttpBindException]) =
         init(HttpServerConfig.default.port(port).host(host))(handlers*)
 
-    def init(config: HttpServerConfig)(handlers: HttpHandler[?, ?, ?]*)(using Frame): HttpServer < (Async & Scope) =
+    def init(config: HttpServerConfig)(handlers: HttpHandler[?, ?, ?]*)(using
+        Frame
+    ): HttpServer < (Async & Scope & Abort[HttpBindException]) =
         Scope.acquireRelease(initUnscoped(config)(handlers*))(_.closeNow)
 
-    def initWith[A, S](handlers: HttpHandler[?, ?, ?]*)(f: HttpServer => A < S)(using Frame): A < (S & Async & Scope) =
+    def initWith[A, S](handlers: HttpHandler[?, ?, ?]*)(f: HttpServer => A < S)(using
+        Frame
+    ): A < (S & Async & Scope & Abort[HttpBindException]) =
         init(handlers*).map(f)
 
     def initWith[A, S](port: Int, host: String)(handlers: HttpHandler[?, ?, ?]*)(f: HttpServer => A < S)(using
         Frame
-    ): A < (S & Async & Scope) =
+    ): A < (S & Async & Scope & Abort[HttpBindException]) =
         init(port, host)(handlers*).map(f)
 
     def initWith[A, S](config: HttpServerConfig)(handlers: HttpHandler[?, ?, ?]*)(f: HttpServer => A < S)(using
         Frame
-    ): A < (S & Async & Scope) =
+    ): A < (S & Async & Scope & Abort[HttpBindException]) =
         init(config)(handlers*).map(f)
 
     // --- Unscoped init methods ---
 
-    def initUnscoped(handlers: HttpHandler[?, ?, ?]*)(using Frame): HttpServer < Async =
+    def initUnscoped(handlers: HttpHandler[?, ?, ?]*)(using Frame): HttpServer < (Async & Abort[HttpBindException]) =
         initUnscoped(HttpServerConfig.default)(handlers*)
 
-    def initUnscoped(port: Int, host: String)(handlers: HttpHandler[?, ?, ?]*)(using Frame): HttpServer < Async =
+    def initUnscoped(port: Int, host: String)(handlers: HttpHandler[?, ?, ?]*)(using
+        Frame
+    ): HttpServer < (Async & Abort[HttpBindException]) =
         initUnscoped(HttpServerConfig.default.port(port).host(host))(handlers*)
 
-    def initUnscoped(config: HttpServerConfig)(handlers: HttpHandler[?, ?, ?]*)(using Frame): HttpServer < Async =
+    def initUnscoped(config: HttpServerConfig)(handlers: HttpHandler[?, ?, ?]*)(using
+        Frame
+    ): HttpServer < (Async & Abort[HttpBindException]) =
         val allHandlers = config.openApi match
             case Present(ep) =>
                 val spec = OpenApiGenerator.generate(
@@ -136,7 +150,7 @@ object HttpServer:
                     val bindTarget = config.unixSocket match
                         case Present(path) => path
                         case Absent        => config.host
-                    throw HttpBindException(bindTarget, config.port, new java.io.IOException(netEx.getMessage))
+                    Abort.fail(HttpBindException(bindTarget, config.port, new java.io.IOException(netEx.getMessage)))
                 case Result.Panic(t) =>
                     if ownsTransport then transport.close()
                     throw t
@@ -144,17 +158,19 @@ object HttpServer:
         }
     end initUnscoped
 
-    def initUnscopedWith[A, S](handlers: HttpHandler[?, ?, ?]*)(f: HttpServer => A < S)(using Frame): A < (S & Async) =
+    def initUnscopedWith[A, S](handlers: HttpHandler[?, ?, ?]*)(f: HttpServer => A < S)(using
+        Frame
+    ): A < (S & Async & Abort[HttpBindException]) =
         initUnscoped(handlers*).map(f)
 
     def initUnscopedWith[A, S](port: Int, host: String)(handlers: HttpHandler[?, ?, ?]*)(f: HttpServer => A < S)(using
         Frame
-    ): A < (S & Async) =
+    ): A < (S & Async & Abort[HttpBindException]) =
         initUnscoped(port, host)(handlers*).map(f)
 
     def initUnscopedWith[A, S](config: HttpServerConfig)(handlers: HttpHandler[?, ?, ?]*)(f: HttpServer => A < S)(using
         Frame
-    ): A < (S & Async) =
+    ): A < (S & Async & Abort[HttpBindException]) =
         initUnscoped(config)(handlers*).map(f)
 
     // --- Unsafe API ---

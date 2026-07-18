@@ -3544,24 +3544,47 @@ class HttpServerTest extends BaseHttpTest:
             }
         }
 
-        "binding to in-use port fails with HttpBindException" in {
+        "binding to in-use port fails with a recoverable Abort[HttpBindException] (init)" in {
             val route = HttpRoute.getRaw("test").response(_.bodyText)
             val ep    = route.handler(_ => HttpResponse.ok("ok"))
             HttpServer.init(0, "localhost")(ep).map { server =>
                 val port = server.port
-                Abort.run[Throwable] {
+                // Abort.run[HttpBindException] proves the failure travels the typed abort channel and is recoverable:
+                // a bind failure must arrive as Result.Failure, not Result.Panic (a defect). A Panic fails the test.
+                Abort.run[HttpBindException] {
                     HttpServer.init(port, "localhost")(ep)
                 }.map {
                     case Result.Failure(e: HttpBindException) =>
-                        assert(e.port == port, s"BindError.port should be $port but was: ${e.port}")
-                        assert(e.host == "localhost", s"BindError.host should be localhost but was: ${e.host}")
-                        assert(e.getMessage.contains(port.toString), s"Error message should contain port $port but was: ${e.getMessage}")
-                    case Result.Panic(e: HttpBindException) =>
-                        assert(e.port == port, s"BindError.port should be $port but was: ${e.port}")
-                        assert(e.host == "localhost", s"BindError.host should be localhost but was: ${e.host}")
+                        assert(e.port == port, s"HttpBindException.port should be $port but was: ${e.port}")
+                        assert(e.host == "localhost", s"HttpBindException.host should be localhost but was: ${e.host}")
                         assert(e.getMessage.contains(port.toString), s"Error message should contain port $port but was: ${e.getMessage}")
                     case other =>
-                        fail(s"Expected HttpBindException on port $port but got: $other")
+                        fail(s"Expected a recoverable Abort.fail(HttpBindException) on port $port but got: $other")
+                }
+            }
+        }
+
+        "binding to in-use port fails with a recoverable Abort[HttpBindException] (initUnscoped)" in {
+            val route = HttpRoute.getRaw("test").response(_.bodyText)
+            val ep    = route.handler(_ => HttpResponse.ok("ok"))
+            HttpServer.initUnscoped(0, "localhost")(ep).map { server =>
+                val port = server.port
+                Abort.run[HttpBindException] {
+                    HttpServer.initUnscoped(port, "localhost")(ep)
+                }.map { result =>
+                    // Close the first (unscoped) server before asserting so cleanup happens regardless of the outcome.
+                    server.closeNow.andThen {
+                        result match
+                            case Result.Failure(e: HttpBindException) =>
+                                assert(e.port == port, s"HttpBindException.port should be $port but was: ${e.port}")
+                                assert(e.host == "localhost", s"HttpBindException.host should be localhost but was: ${e.host}")
+                                assert(
+                                    e.getMessage.contains(port.toString),
+                                    s"Error message should contain port $port but was: ${e.getMessage}"
+                                )
+                            case other =>
+                                fail(s"Expected a recoverable Abort.fail(HttpBindException) on port $port but got: $other")
+                    }
                 }
             }
         }

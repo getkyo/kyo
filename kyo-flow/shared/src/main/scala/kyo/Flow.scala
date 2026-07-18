@@ -344,21 +344,21 @@ object Flow:
       * Flow.runServer(orderFlow, shippingFlow)
       * ```
       */
-    def runServer(flows: Flow[?, ?, ?]*)(using Frame): HttpServer < (Async & Scope) =
+    def runServer(flows: Flow[?, ?, ?]*)(using Frame): HttpServer < (Async & Scope & Abort[HttpBindException]) =
         FlowStore.initMemory.map(store => runServer(store, flows*))
 
     def runServer[S](flows: Flow[?, ?, S]*)(
         runner: [V] => V < S => V < (Async & Scope & Abort[FlowException])
-    )(using Frame): HttpServer < (Async & Scope) =
+    )(using Frame): HttpServer < (Async & Scope & Abort[HttpBindException]) =
         FlowStore.initMemory.map(store => runServer(store, flows*)(runner))
 
     /** Start an HTTP server backed by a specific store. */
-    def runServer(store: FlowStore, flows: Flow[?, ?, ?]*)(using Frame): HttpServer < (Async & Scope) =
+    def runServer(store: FlowStore, flows: Flow[?, ?, ?]*)(using Frame): HttpServer < (Async & Scope & Abort[HttpBindException]) =
         runHandlers(store, flows*).map(h => HttpServer.init(h.toSeq*))
 
     def runServer[S](store: FlowStore, flows: Flow[?, ?, S]*)(
         runner: [V] => V < S => V < (Async & Scope & Abort[FlowException])
-    )(using Frame): HttpServer < (Async & Scope) =
+    )(using Frame): HttpServer < (Async & Scope & Abort[HttpBindException]) =
         runHandlers(store, flows*)(runner).map(h => HttpServer.init(h.toSeq*))
 
     /** Get HTTP handlers without starting a server. Compose with your own endpoints. */
