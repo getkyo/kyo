@@ -3,6 +3,7 @@ package kyo
 import java.io.IOException
 import java.nio.charset.Charset
 import java.nio.charset.StandardCharsets
+import kyo.internal.FileSystemCrc32
 import kyo.kernel.ArrowEffect
 
 // The overlay's staged-journal operation record. Unrelated to the conceptual Path.WriteOp
@@ -76,25 +77,8 @@ private[kyo] object WriteOpLog:
     private val Version: Byte                = 0x01
     private val MagicTerminator: Array[Byte] = Array('K'.toByte, 'Y'.toByte, 'C'.toByte, 'T'.toByte)
 
-    // Pure-Scala CRC32 (IEEE 802.3 polynomial). No java.util.zip; works on JVM, JS, Native.
-    private val crc32Table: Array[Int] = Array.tabulate(256) { n =>
-        var c = n
-        var k = 0
-        while k < 8 do
-            c = if (c & 1) != 0 then 0xedb88320 ^ (c >>> 1) else c >>> 1
-            k += 1
-        c
-    }
-
-    private def crc32(bytes: Array[Byte], offset: Int, len: Int): Int =
-        var crc = 0xffffffff
-        var i   = offset
-        val end = offset + len
-        while i < end do
-            crc = (crc >>> 8) ^ crc32Table((crc ^ bytes(i).toInt) & 0xff)
-            i += 1
-        crc ^ 0xffffffff
-    end crc32
+    // Table-driven CRC32 (IEEE 802.3 polynomial) moved to the shared kyo.internal.FileSystemCrc32
+    // (promoted so kyo.internal.ZipArchive's per-entry checksum reuses the same implementation).
 
     private def wI16(buf: scala.collection.mutable.ArrayBuffer[Byte], v: Int): Unit =
         buf += ((v >>> 8) & 0xff).toByte
@@ -196,12 +180,12 @@ private[kyo] object WriteOpLog:
         journal.foreach { op =>
             val body = encodeOp(op)
             wI32(buf, body.length)
-            wI32(buf, crc32(body, 0, body.length))
+            wI32(buf, FileSystemCrc32.of(body))
             buf ++= body
         }
         val priorArr = buf.toArray
         buf ++= MagicTerminator
-        wI32(buf, crc32(priorArr, 0, priorArr.length))
+        wI32(buf, FileSystemCrc32.of(priorArr))
         Span.fromUnsafe(buf.toArray)
     end encode
 
@@ -235,7 +219,7 @@ private[kyo] object WriteOpLog:
             arr(termPos + 2) != 'C' || arr(termPos + 3) != 'T'
         then return Result.succeed(Absent) // terminator absent: crash artifact
         val storedTermCrc = rI32(arr, termPos + 4)
-        if storedTermCrc != crc32(arr, 0, termPos) then return Result.succeed(Absent) // terminator CRC mismatch
+        if storedTermCrc != FileSystemCrc32.of(arr, 0, termPos) then return Result.succeed(Absent) // terminator CRC mismatch
         var pos = 5
         val ops = new scala.collection.mutable.ArrayBuffer[WriteOp]()
         while pos < termPos do
@@ -244,7 +228,7 @@ private[kyo] object WriteOpLog:
             val bodyCrc = rI32(arr, pos); pos += 4
             if bodyLen < 0 || pos + bodyLen > termPos then return Result.succeed(Absent)
             val bodyStart = pos
-            if bodyCrc != crc32(arr, pos, bodyLen) then return Result.succeed(Absent)
+            if bodyCrc != FileSystemCrc32.of(arr, pos, bodyLen) then return Result.succeed(Absent)
             pos += bodyLen
             decodeRecord(arr, bodyStart, bodyLen) match
                 case Absent      => return Result.succeed(Absent)

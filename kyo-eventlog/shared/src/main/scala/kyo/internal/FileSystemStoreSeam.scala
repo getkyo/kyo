@@ -36,9 +36,24 @@ private[kyo] object FileSystemStoreSeam:
     def apply(fs: FileSystem[Sync]): StoreSeam[Sync] = new StoreSeam[Sync]:
 
         def open(path: Path)(using Frame): StoreSeam.Handle[Sync] < (Sync & Abort[JournalStorageError]) =
-            mapFileError(fs.openChannelUnscoped(path, FileSystem.ChannelMode.ReadWriteCreate)).map((channel, releaseThunk) =>
-                channelHandle(channel, releaseThunk)
-            )
+            Abort.run[FileException](fs.openChannelUnscoped(path, FileSystem.ChannelMode.ReadWriteCreate)).map {
+                case Result.Success((channel, releaseThunk)) =>
+                    channelHandle(channel, releaseThunk)
+                case Result.Failure(_: FileIOException) =>
+                    // A genuinely read-only FileSystem (FileSystem.zipReadOnly) fails every
+                    // ReadWrite/ReadWriteCreate open at open time; a recovery-scan read never
+                    // needs write capability, so retry in Read mode. A later genuine write
+                    // attempt against the resulting handle (writeAt/truncate) still fails
+                    // per-call, the same contract every Read-mode channel already carries on
+                    // every backend.
+                    mapFileError(fs.openChannelUnscoped(path, FileSystem.ChannelMode.Read)).map((channel, releaseThunk) =>
+                        channelHandle(channel, releaseThunk)
+                    )
+                case Result.Failure(fe) =>
+                    Abort.fail(JournalStorageError(s"FileSystem operation failed: ${fe.getMessage}", Present(fe)))
+                case Result.Panic(e) =>
+                    throw e
+            }
 
         def acquireLock(lockRoot: Path)(using Frame): SegmentStore.Lock < (Sync & Abort[JournalStorageError]) =
             mapFileError(fs.lockUnscoped(lockRoot / "LOCK", exclusive = true)).map { (_, releaseThunk) =>

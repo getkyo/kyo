@@ -166,6 +166,31 @@ object FileSystem:
     def overlay[S](lower: FileSystem[S])(using Frame): CommitHandle[S] < (Sync & Scope) =
         OverlayFileSystem.init(lower)
 
+    /** Read-only view over a zip/jar archive: entries are files, entry-path prefixes are
+      * directories. `openChannel(mode = Read)` inflates the target entry into an in-memory
+      * `Span[Byte]` once and serves `readAt` slices from it; every write-family method and every
+      * `ReadWrite`/`ReadWriteCreate` channel open fail typed `Abort[FileException]`, since a
+      * compressed zip entry has no stable byte-offset-to-content mapping to write into in place.
+      * Its commit strategy is `Auto`: there is nothing to stage, every read is served directly
+      * from the archive index built at construction. Backed by a uniform pure-Scala codec
+      * (`kyo.internal.ZipArchive`/`ZipInflate`), identical on every platform: no `java.util.zip`
+      * anywhere.
+      */
+    def zipReadOnly(archive: Path)(using Frame): FileSystem[Sync] < (Sync & Scope & Abort[FileException]) =
+        ZipReadOnlyFileSystem.init(archive)
+
+    /** Writable zip via `CommitStrategy.Manual` rewrite: reads serve from `archive`'s entries as
+      * they stood when first observed (or from nothing, when `archive` does not yet exist),
+      * writes stage in an in-memory upper, and [[CommitHandle.commit]] rewrites the whole archive
+      * with the staged entries applied, atomically moved into place. There are no in-place
+      * random-access writes into a compressed entry: unlike [[overlay]], a [[CommitHandle.commit]]
+      * here never validates a read-set against a live lower and never raises `CommitConflict`;
+      * every commit method rewrites the whole archive unconditionally, uniformly STORED
+      * (uncompressed) on every platform via `kyo.internal.ZipArchive.write`.
+      */
+    def zip(archive: Path)(using Frame): CommitHandle[Sync] < (Sync & Scope) =
+        ZipRewriteFileSystem.init(archive)
+
     /** A [[FileSystem]] extension whose writes stage locally until an explicit commit validates
       * them against the underlying live service. [[FileSystem.overlay]] is the built-in
       * manual-commit factory; its [[FileSystem.commitStrategy]] is `CommitStrategy.Manual`.
