@@ -1,6 +1,7 @@
 package kyo.net
 
 import kyo.*
+import kyo.net.NetConnectionClosedException.Operation
 
 /** [[NetException]]'s re-rooted hierarchy: disjoint from [[Closed]], organized into three recoverable subcategories, and rendering each
   * leaf's structured fields into its message exactly once.
@@ -71,11 +72,11 @@ class NetExceptionTest extends Test:
     }
 
     "NetConnectionClosedException carries a typed operation (handshake vs upgrade)" in {
-        val handshake = NetConnectionClosedException("handshake")
-        val upgrade   = NetConnectionClosedException("upgrade")
+        val handshake = NetConnectionClosedException(Operation.Handshake)
+        val upgrade   = NetConnectionClosedException(Operation.Upgrade)
 
-        assert(handshake.operation == "handshake")
-        assert(upgrade.operation == "upgrade")
+        assert(handshake.operation == Operation.Handshake)
+        assert(upgrade.operation == Operation.Upgrade)
         assert(
             handshake.getMessage.contains("transport closed during handshake"),
             s"message must render the handshake operation, got ${handshake.getMessage}"
@@ -87,11 +88,11 @@ class NetExceptionTest extends Test:
     }
 
     "NetConnectionClosedException carries the start and close operations the transports also construct" in {
-        val start = NetConnectionClosedException("start")
-        val close = NetConnectionClosedException("close")
+        val start = NetConnectionClosedException(Operation.Start)
+        val close = NetConnectionClosedException(Operation.Close)
 
-        assert(start.operation == "start")
-        assert(close.operation == "close")
+        assert(start.operation == Operation.Start)
+        assert(close.operation == Operation.Close)
         assert(
             start.getMessage.contains("transport closed during start"),
             s"message must render the start operation, got ${start.getMessage}"
@@ -156,7 +157,7 @@ class NetExceptionTest extends Test:
             "NetBindException.getCause must return the constructor cause"
         )
         assert(
-            NetConnectionClosedException("read", cause).getCause == cause,
+            NetConnectionClosedException(Operation.Read, cause).getCause == cause,
             "NetConnectionClosedException.getCause must return the constructor cause"
         )
         assert(

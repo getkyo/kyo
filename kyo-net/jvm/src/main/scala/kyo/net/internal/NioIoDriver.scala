@@ -222,6 +222,7 @@ final private[kyo] class NioIoDriver private (@volatile private[net] var selecto
             val out   = new Array[Byte](total)
             var pos   = 0
             taken.foreach { a =>
+                // System.arraycopy: no kyo equivalent for a bulk primitive-array copy; fully qualified so kyo.System does not shadow it.
                 java.lang.System.arraycopy(a, 0, out, pos, a.length)
                 pos += a.length
             }
@@ -338,6 +339,7 @@ final private[kyo] class NioIoDriver private (@volatile private[net] var selecto
                 else deliverToUpgradeHandoff(handle, arr)
             case staged: UpgradeHandoff.Carryover =>
                 val combined = new Array[Byte](staged.bytes.length + arr.length)
+                // System.arraycopy: no kyo equivalent for the bulk carryover-merge copy; fully qualified so kyo.System does not shadow it.
                 java.lang.System.arraycopy(staged.bytes, 0, combined, 0, staged.bytes.length)
                 java.lang.System.arraycopy(arr, 0, combined, staged.bytes.length, arr.length)
                 if !handle.upgradeHandoff.compareAndSet(staged, UpgradeHandoff.Carryover(combined)) then
@@ -963,8 +965,10 @@ final private[kyo] class NioIoDriver private (@volatile private[net] var selecto
                                 val ready = key.readyOps()
                                 if (ready & SelectionKey.OP_ACCEPT) != 0 then
                                     discard(key.interestOps(key.interestOps() & ~SelectionKey.OP_ACCEPT))
+                                    // Safe: an OP_ACCEPT-ready key was registered by a ServerSocketChannel, the only channel type the driver registers for accept.
                                     dispatchAccept(key.channel().asInstanceOf[ServerSocketChannel])
                                 else
+                                    // Safe: a non-accept key (connect/read/write) was registered by a SocketChannel, the only channel type the driver registers for those ops.
                                     val channel = key.channel().asInstanceOf[SocketChannel]
                                     if (ready & SelectionKey.OP_CONNECT) != 0 then
                                         discard(key.interestOps(key.interestOps() & ~SelectionKey.OP_CONNECT))
@@ -1002,8 +1006,10 @@ final private[kyo] class NioIoDriver private (@volatile private[net] var selecto
                     val ready = key.readyOps()
                     if (ready & SelectionKey.OP_ACCEPT) != 0 then
                         discard(key.interestOps(key.interestOps() & ~SelectionKey.OP_ACCEPT))
+                        // Safe: an OP_ACCEPT-ready key was registered by a ServerSocketChannel, the only channel type the driver registers for accept.
                         dispatchAccept(key.channel().asInstanceOf[ServerSocketChannel])
                     else
+                        // Safe: a non-accept key (connect/read/write) was registered by a SocketChannel, the only channel type the driver registers for those ops.
                         val channel = key.channel().asInstanceOf[SocketChannel]
                         if (ready & SelectionKey.OP_CONNECT) != 0 then
                             discard(key.interestOps(key.interestOps() & ~SelectionKey.OP_CONNECT))

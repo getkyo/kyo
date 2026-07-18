@@ -51,6 +51,7 @@ private[kyo] object JsHandle:
             "data",
             { (chunk: js.Dynamic) =>
                 discard(socket.pause())
+                // Safe: a Node socket with no encoding set always emits its "data" chunks as Buffers, which are Uint8Arrays.
                 val nodeBuffer = chunk.asInstanceOf[js.typedarray.Uint8Array]
                 val arr        = copyFromNodeBuffer(nodeBuffer, nodeBuffer.length)
 

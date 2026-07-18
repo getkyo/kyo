@@ -2,6 +2,7 @@ package kyo.net.internal.posix
 
 import kyo.*
 import kyo.ffi.Buffer
+import kyo.net.NetConnectionClosedException.Operation
 import kyo.net.NetException
 import kyo.net.internal.TlsEngine
 import kyo.net.internal.transport.IoDriver
@@ -742,7 +743,7 @@ private[net] object PosixHandle:
         // holds the resources, so this read-then-set never races a concurrent CAS from either carrier.
         h.upgradeHandoff.getAndSet(PosixHandle.UpgradeHandoff.Idle) match
             case PosixHandle.UpgradeHandoff.Waiter(p, fr) =>
-                p.completeDiscard(Result.fail(kyo.net.NetConnectionClosedException("upgrade")(using fr)))
+                p.completeDiscard(Result.fail(kyo.net.NetConnectionClosedException(Operation.Upgrade)(using fr)))
             case _ => ()
         end match
         h.upgradeActive = false

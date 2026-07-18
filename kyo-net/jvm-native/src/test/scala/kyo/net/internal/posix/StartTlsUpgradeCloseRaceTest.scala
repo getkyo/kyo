@@ -4,6 +4,7 @@ import kyo.*
 import kyo.ffi.Buffer
 import kyo.ffi.Ffi
 import kyo.net.NetConnectionClosedException
+import kyo.net.NetConnectionClosedException.Operation
 import kyo.net.NetException
 import kyo.net.NetTlsConfig
 import kyo.net.Test
@@ -129,7 +130,7 @@ class StartTlsUpgradeCloseRaceTest extends Test:
                                         upgradeResult match
                                             case Result.Failure(e: NetConnectionClosedException) =>
                                                 assert(
-                                                    e.operation == "handshake" || e.operation == "upgrade",
+                                                    e.operation == Operation.Handshake || e.operation == Operation.Upgrade,
                                                     s"[iter $iter] close-mid-upgrade failure must name handshake or upgrade, got operation=${e.operation}"
                                                 )
                                                 discard(abortBranch.incrementAndGet())

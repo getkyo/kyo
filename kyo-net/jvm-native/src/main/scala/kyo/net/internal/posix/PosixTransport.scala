@@ -10,6 +10,7 @@ import kyo.net.NetAlreadyDetachedException
 import kyo.net.NetBindException
 import kyo.net.NetConnectException
 import kyo.net.NetConnectionClosedException
+import kyo.net.NetConnectionClosedException.Operation
 import kyo.net.NetConnectTimeoutException
 import kyo.net.NetDnsResolutionException
 import kyo.net.NetErrno
@@ -615,7 +616,7 @@ final private[net] class PosixTransport private[posix] (
                         reaped.set(true)
                         closeUnwiredHandle(handle, driver, connectPhase = false)
                         engine.free()
-                        promise.completeDiscard(Result.fail(NetConnectionClosedException("handshake")))
+                        promise.completeDiscard(Result.fail(NetConnectionClosedException(Operation.Handshake)))
                     }
                 )
                 // `promise` is this handshake's fd-and-engine owner, mirroring the STARTTLS upgrade's `out.onComplete` hook: driveHandshake's
@@ -695,7 +696,7 @@ final private[net] class PosixTransport private[posix] (
                 connection.close()
         else
             // The connection raced to a terminal/Upgrading state before start (a close won); it must not be handed out as open.
-            promise.completeDiscard(Result.fail(NetConnectionClosedException("start")))
+            promise.completeDiscard(Result.fail(NetConnectionClosedException(Operation.Start)))
         end if
     end completeConnect
 
@@ -1467,7 +1468,8 @@ final private[net] class PosixTransport private[posix] (
                 // connection to it: settling `out` drives the same release a handshake failure takes. Armed BEFORE the detach, so no close() can
                 // observe the connection Upgrading without an owner to hand itself to. A typed leaf, not an Interrupted panic: the upgrade did not
                 // fail on its own terms, its connection was closed underneath it.
-                posixConn.upgradeAbandon = Present(() => out.interruptDiscard(Result.Failure(NetConnectionClosedException("close"))))
+                posixConn.upgradeAbandon =
+                    Present(() => out.interruptDiscard(Result.Failure(NetConnectionClosedException(Operation.Close))))
                 // Arm the upgrade window BEFORE detach closes the inbound channel, on EVERY backend. Two distinct uses keyed on the same flag:
                 //   - io_uring: the plaintext ReadPump left a recv SQE kernel-owned (io_uring cannot cancel it) that will consume the peer's first
                 //     post-signal flight; its CQE reaps on the reap carrier. If that CQE reaps in the window between detach's inbound.close() and the
@@ -1555,7 +1557,7 @@ final private[net] class PosixTransport private[posix] (
                             handle.driver.submitEngineOp { () =>
                                 reaped.set(true)
                                 releaseFailedUpgrade(handle, engine)
-                                out.completeDiscard(Result.fail(NetConnectionClosedException("handshake")))
+                                out.completeDiscard(Result.fail(NetConnectionClosedException(Operation.Handshake)))
                             }
                         )
                         // `out` is this upgrade's fd-and-engine owner. driveHandshake's three outcomes below each discharge the obligation
@@ -1677,7 +1679,7 @@ final private[net] class PosixTransport private[posix] (
                                     else
                                         // The upgraded connection raced to a terminal/Upgrading state before start (a close won); it must not be
                                         // handed out as open.
-                                        out.completeDiscard(Result.fail(NetConnectionClosedException("start")))
+                                        out.completeDiscard(Result.fail(NetConnectionClosedException(Operation.Start)))
                                     end if
                                 end if
                             ,
@@ -1954,7 +1956,7 @@ final private[net] class PosixTransport private[posix] (
         try
             handle.driver.write(handle, data, offset) match
                 case WriteResult.Done  => cont()
-                case WriteResult.Error => onFailed(NetConnectionClosedException("send"))
+                case WriteResult.Error => onFailed(NetConnectionClosedException(Operation.Send))
                 case WriteResult.Partial(rem, newOffset) =>
                     awaitWritable(handle, cont = () => sendAll(handle, rem, newOffset, cont, onFailed, onPanic), onFailed, onPanic)
                 case WriteResult.TailPartial(rem, newOffset) =>
@@ -2090,9 +2092,9 @@ final private[net] class PosixTransport private[posix] (
             p.onComplete {
                 case Result.Success(bytes) =>
                     // An empty read is EOF mid-handshake: the peer closed before completing it. Surface that as the failure cause (a typed
-                    // NetConnectionClosedException("read")) so a bare close is distinguishable from a received fatal alert (which carries its own
+                    // NetConnectionClosedException(Operation.Read)) so a bare close is distinguishable from a received fatal alert (which carries its own
                     // engine-level failure, never this leaf): the dropped-alert symptom PosixTransportHandshakeAlertTest guards against.
-                    if bytes.isEmpty then onFailed(NetConnectionClosedException("read"))
+                    if bytes.isEmpty then onFailed(NetConnectionClosedException(Operation.Read))
                     else feedCiphertextThenCont(handle, engine, bytes.toArrayUnsafe, cont, onPanic, isReaped)
                 case Result.Failure(netEx) =>
                     onFailed(netEx)
@@ -2190,7 +2192,7 @@ final private[net] class PosixTransport private[posix] (
             else if n == 0 then
                 // EOF mid-handshake: the peer closed before completing it. The typed leaf distinguishes a bare close from a received fatal
                 // alert (see awaitReadCiphertext / PosixTransportHandshakeAlertTest).
-                onFailed(NetConnectionClosedException("read"))
+                onFailed(NetConnectionClosedException(Operation.Read))
             else if isWouldBlock(result.errorCode) then
                 awaitReadCiphertext(handle, engine, cont, onFailed, onPanic, isReaped)
             else
@@ -2244,7 +2246,7 @@ final private[net] class PosixTransport private[posix] (
                         // PeerFin, CleanClose, LocalShutdown, WouldBlock, Failed: the peer closed or the read could not deliver ciphertext.
                         // The typed leaf distinguishes a bare close from a received fatal alert (which fails the handshake with its
                         // own engine-level cause, never this leaf): the dropped-alert symptom PosixTransportHandshakeAlertTest guards against.
-                        onFailed(NetConnectionClosedException("read"))
+                        onFailed(NetConnectionClosedException(Operation.Read))
                 end match
             case Result.Failure(closed) => onFailed(closed)
             case Result.Panic(e)        => onPanic(e)

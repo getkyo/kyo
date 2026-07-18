@@ -8,6 +8,7 @@ import kyo.net.NetAlreadyDetachedException
 import kyo.net.NetBindException
 import kyo.net.NetConnectException
 import kyo.net.NetConnectionClosedException
+import kyo.net.NetConnectionClosedException.Operation
 import kyo.net.NetConnectTimeoutException
 import kyo.net.NetDnsResolutionException
 import kyo.net.NetException
@@ -339,7 +340,7 @@ final private[kyo] class JsTransport private (
                     promise.completeDiscard(Result.succeed(connection))
                 else
                     // The connection raced to a terminal/Upgrading state before start (a close won); it must not be handed out as open.
-                    promise.completeDiscard(Result.fail(NetConnectionClosedException("start")))
+                    promise.completeDiscard(Result.fail(NetConnectionClosedException(Operation.Start)))
                 end if
             }: js.Function0[Unit]
         ))
@@ -488,7 +489,7 @@ final private[kyo] class JsTransport private (
                     promise.completeDiscard(Result.succeed(connection))
                 else
                     // The connection raced to a terminal/Upgrading state before start (a close won); it must not be handed out as open.
-                    promise.completeDiscard(Result.fail(NetConnectionClosedException("start")))
+                    promise.completeDiscard(Result.fail(NetConnectionClosedException(Operation.Start)))
                 end if
             }: js.Function0[Unit]
         ))
@@ -527,7 +528,7 @@ final private[kyo] class JsTransport private (
                 // Unreachable: Connection.init registers nothing a concurrent close could reach before start() runs immediately above.
                 // Surfaced as a typed failure (not a Panic) since the return type already supports it and the shape here is eager/synchronous,
                 // unlike the deferred PosixTransport.stdio() (see PosixTransport.scala:197 above).
-                Fiber.Unsafe.fromResult(Result.fail(NetConnectionClosedException("start")))
+                Fiber.Unsafe.fromResult(Result.fail(NetConnectionClosedException(Operation.Start)))
             end if
     end stdio
 
@@ -745,7 +746,7 @@ final private[kyo] class JsTransport private (
         // the upgrade has succeeded the promise is complete and this is inherently a no-op, leaving the upgraded connection's socket untouched.
         // Armed BEFORE the detach, so no close() can observe the connection Upgrading without an owner to hand itself to. Without it a close() (a
         // scope teardown, a transport-level sweep) cannot reach a detached socket at all: Connection.closeFn never takes an Upgrading handle.
-        jsConn.upgradeAbandon = Present(() => promise.interruptDiscard(Result.Failure(NetConnectionClosedException("close"))))
+        jsConn.upgradeAbandon = Present(() => promise.interruptDiscard(Result.Failure(NetConnectionClosedException(Operation.Close))))
 
         // Detach closes channels and pauses+cancels the socket without destroying it.
         // Any bytes the ReadPump had already staged but caller had not consumed are returned.
@@ -767,6 +768,7 @@ final private[kyo] class JsTransport private (
                 var off      = 0
                 chunks.foreach { span =>
                     val arr = span.toArray
+                    // System.arraycopy: no kyo equivalent for a bulk primitive-array copy; fully qualified so kyo.System does not shadow it.
                     java.lang.System.arraycopy(arr, 0, buf, off, arr.length)
                     off += arr.length
                 }
@@ -881,7 +883,7 @@ final private[kyo] class JsTransport private (
                         newConn.close()
                 else
                     // The upgraded connection raced to a terminal/Upgrading state before start (a close won); it must not be handed out as open.
-                    promise.completeDiscard(Result.fail(NetConnectionClosedException("start")))
+                    promise.completeDiscard(Result.fail(NetConnectionClosedException(Operation.Start)))
                 end if
             }: js.Function0[Unit]
         ))

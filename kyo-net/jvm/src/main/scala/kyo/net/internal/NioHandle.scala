@@ -37,7 +37,8 @@ final private[kyo] class NioHandle private (
 ):
     import AllowUnsafe.embrace.danger
     val readBuffer: ByteBuffer = ByteBuffer.allocateDirect(readBufferSize)
-    val id: HandleId           = HandleId.next(java.lang.System.identityHashCode(channel))
+    // System.identityHashCode: identity-based seed for the handle id; fully qualified so kyo.System does not shadow it.
+    val id: HandleId = HandleId.next(java.lang.System.identityHashCode(channel))
     // Per-connection engine ownership gate. Acquired by the selector-carrier unwrap path (dispatchReadTls)
     // and the caller-carrier wrap path (writeTls) before any SSLEngine call, so wrap and unwrap never
     // overlap for one connection. The gate is also acquired before engine.closeOutbound / final wrap in

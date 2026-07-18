@@ -6,6 +6,7 @@ import kyo.*
 import kyo.ffi.Buffer
 import kyo.ffi.Ffi
 import kyo.net.NetConnectionClosedException
+import kyo.net.NetConnectionClosedException.Operation
 import kyo.net.internal.TlsEngine
 import kyo.net.internal.transport.IoDriver
 import kyo.net.internal.transport.ReadOutcome
@@ -322,6 +323,7 @@ final private[net] class PollerIoDriver private[posix] (
         // it legitimately parks forever with a pending armed read on a kept-alive connection): the stranded-op gate matches this name
         // the same way LeakCheck's fiber-leak allowlist already does (LeakCheck.defaultAllowlist), so the one driver that is SUPPOSED
         // to look parked-with-pending-work forever is exempted by the same convention, not a second one.
+        // System.identityHashCode: diagnostic instance id in the driver name; fully qualified so kyo.System does not shadow it.
         val diagName =
             "PollerIoDriver@" + java.lang.System.identityHashCode(this) +
                 (if kyo.net.internal.ProcessSharedTransport.isBuilding then " processSharedTransport" else "")
@@ -1771,6 +1773,7 @@ final private[net] class PollerIoDriver private[posix] (
                 else deliverToUpgradeHandoff(handle, arr)
             case staged: UpgradeHandoff.Carryover =>
                 val combined = new Array[Byte](staged.bytes.length + arr.length)
+                // System.arraycopy: no kyo equivalent for the bulk carryover-merge copy; fully qualified so kyo.System does not shadow it.
                 java.lang.System.arraycopy(staged.bytes, 0, combined, 0, staged.bytes.length)
                 java.lang.System.arraycopy(arr, 0, combined, staged.bytes.length, arr.length)
                 if !handle.upgradeHandoff.compareAndSet(staged, UpgradeHandoff.Carryover(combined)) then
@@ -1793,7 +1796,7 @@ final private[net] class PollerIoDriver private[posix] (
                 if eof then parked.promise.completeDiscard(Result.succeed(Span.empty[Byte]))
                 else
                     parked.promise.completeDiscard(
-                        Result.fail(NetConnectionClosedException("upgrade", s"recv failed fd=${handle.readFd} errno=$errno"))
+                        Result.fail(NetConnectionClosedException(Operation.Upgrade, s"recv failed fd=${handle.readFd} errno=$errno"))
                     )
                 end if
             case _ => ()

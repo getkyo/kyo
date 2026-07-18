@@ -30,12 +30,12 @@ final private[net] class BlockingReaderDriver private (real: IoDriver[PosixHandl
 
     def awaitRead(handle: PosixHandle, promise: Promise.Unsafe[ReadOutcome, Abort[Closed]])(using AllowUnsafe, Frame): Unit =
         // One read per handle (the IoDriver contract). The blocking read of a regular file returns near-instantly;
-        // its result is consumed via onComplete (or done()/poll() inline on JVM/Native) without re-entering the
-        // effect system. The spawned carrier runs the read and immediately registers the completion callback.
+        // the spawned carrier runs the read and delivers its result without re-entering the effect system.
         // Unsafe: Fiber.Unsafe.init spawns the read carrier without re-entering the effect system. The thunk body
-        // is plain Scala: it calls sockets.read to get the @Ffi.blocking fiber, then consumes the result inline
-        // via done()/poll() on JVM/Native (where the blocking task completes before the scheduler returns the
-        // fiber to the caller) or via onComplete on JS (where the blocking task is genuinely async).
+        // is plain Scala: it calls sockets.read to get the @Ffi.blocking fiber, then delivers the result on the same
+        // carrier, either inline via done()/poll() when the read already inline-completed, or via onComplete when the
+        // read fiber is still genuinely pending. This driver is JVM/Native-only (it reads through PosixHandle), so
+        // there is no JS delivery path here.
         discard(Fiber.Unsafe.init {
             val readFiber = sockets.read(handle.readFd, handle.readBuffer, handle.readBufferSize.toLong)
             def deliver(result: Ffi.Outcome[Long]): Unit =

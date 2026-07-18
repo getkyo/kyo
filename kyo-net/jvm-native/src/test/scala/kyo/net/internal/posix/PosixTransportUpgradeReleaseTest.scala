@@ -8,6 +8,7 @@ import kyo.ffi.Buffer
 import kyo.ffi.Ffi
 import kyo.net.Connection
 import kyo.net.NetConnectionClosedException
+import kyo.net.NetConnectionClosedException.Operation
 import kyo.net.NetException
 import kyo.net.NetTlsConfig
 import kyo.net.NetTlsProviderUnavailableException
@@ -232,7 +233,7 @@ class PosixTransportUpgradeReleaseTest extends Test:
                                             outcome match
                                                 case Result.Failure(e: NetConnectionClosedException) =>
                                                     assert(
-                                                        e.operation == "close",
+                                                        e.operation == Operation.Close,
                                                         s"the abandoned upgrade must fail its close leaf, got ${e.operation}"
                                                     )
                                                 case other =>
@@ -380,7 +381,7 @@ class PosixTransportUpgradeReleaseTest extends Test:
                                 outcome match
                                     case Result.Failure(e: NetConnectionClosedException) =>
                                         assert(
-                                            e.operation == "close",
+                                            e.operation == Operation.Close,
                                             s"the abandoned upgrade must fail its close leaf, got ${e.operation}"
                                         )
                                     case other =>

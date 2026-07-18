@@ -27,6 +27,7 @@ final private[net] class SelectedSelectionKeySet extends java.util.AbstractSet[S
     override def add(key: SelectionKey): Boolean =
         if count >= keys.length then
             val grown = new Array[SelectionKey](keys.length * 2)
+            // System.arraycopy: no kyo equivalent for a bulk array copy; fully qualified so kyo.System does not shadow it.
             java.lang.System.arraycopy(keys, 0, grown, 0, keys.length)
             keys = grown
         end if

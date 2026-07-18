@@ -21,6 +21,7 @@ import kyo.net.NetAlreadyDetachedException
 import kyo.net.NetBindException
 import kyo.net.NetConnectException
 import kyo.net.NetConnectionClosedException
+import kyo.net.NetConnectionClosedException.Operation
 import kyo.net.NetConnectTimeoutException
 import kyo.net.NetDnsResolutionException
 import kyo.net.NetException
@@ -265,7 +266,7 @@ final private[kyo] class NioTransport private (
             end if
         else
             // The connection raced to a terminal/Upgrading state before start (a close won); it must not be handed out as open.
-            promise.completeDiscard(Result.fail(NetConnectionClosedException("start")))
+            promise.completeDiscard(Result.fail(NetConnectionClosedException(Operation.Start)))
         end if
     end completeConnect
 
@@ -1268,7 +1269,8 @@ final private[kyo] class NioTransport private (
                 // untouched. Armed BEFORE the detach, so no close() can observe the connection Upgrading without an owner to hand itself to.
                 // Without it a close() (a scope teardown, a transport-level sweep) cannot reach a detached channel at all: Connection.closeFn
                 // never takes an Upgrading fd.
-                nioConn.upgradeAbandon = Present(() => promise.interruptDiscard(Result.Failure(NetConnectionClosedException("close"))))
+                nioConn.upgradeAbandon =
+                    Present(() => promise.interruptDiscard(Result.Failure(NetConnectionClosedException(Operation.Close))))
                 // Mark the handle upgrading BEFORE detach so the selector carrier recognizes the window: while set, a plaintext read the pump
                 // pulls off the socket is STASHED into the handle's salvage (NioIoDriver.dispatchReadPlain / onInboundClosedDuringRead) rather
                 // than completing the pump's promise (which would drop the peer's first TLS flight) or re-arming (which would steal the

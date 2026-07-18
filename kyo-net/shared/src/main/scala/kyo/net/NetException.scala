@@ -65,13 +65,35 @@ final case class NetConnectTimeoutException(host: String, port: Int, timeout: Du
 final case class NetBindException(host: String, port: Int, cause: String | Throwable = "")(using Frame)
     extends NetConnectionException(s"bind/listen on $host:$port failed${NetException.suffix(cause)}", cause)
 
-/** The transport closed while an in-flight operation was running. `operation` names what the close interrupted, one of: "read", "send",
-  * "handshake" (a TLS handshake), "upgrade" (a STARTTLS upgrade), "start" (the connection reached a terminal or upgrading state before its
-  * pumps could start, so it was never handed out as open), or "close" (an in-flight STARTTLS upgrade abandoned by a close of the underlying
-  * connection). A consumer branches on this field, never on message text.
+/** The transport closed while an in-flight operation was running. `operation` (a [[NetConnectionClosedException.Operation]]) names what the
+  * close interrupted; a consumer branches on this typed field, never on message text. The rendered message embeds the operation's lowercase
+  * label, so it still reads "transport closed during <operation>".
   */
-final case class NetConnectionClosedException(operation: String, cause: String | Throwable = "")(using Frame)
-    extends NetConnectionException(s"transport closed during $operation${NetException.suffix(cause)}", cause)
+final case class NetConnectionClosedException(operation: NetConnectionClosedException.Operation, cause: String | Throwable = "")(using
+    Frame
+) extends NetConnectionException(s"transport closed during ${operation.label}${NetException.suffix(cause)}", cause)
+
+object NetConnectionClosedException:
+    /** The in-flight transport operation a close interrupted. A consumer branches on this typed value instead of matching message text.
+      *
+      *   - [[Read]]: an inbound read.
+      *   - [[Send]]: an outbound send.
+      *   - [[Handshake]]: a TLS handshake.
+      *   - [[Upgrade]]: a STARTTLS upgrade.
+      *   - [[Start]]: the connection reached a terminal or upgrading state before its pumps could start, so it was never handed out as open.
+      *   - [[Close]]: an in-flight STARTTLS upgrade abandoned by a close of the underlying connection.
+      *
+      * `label` is the lowercase name embedded in the rendered exception message, preserving the "transport closed during <label>" shape.
+      */
+    enum Operation(val label: String) derives CanEqual:
+        case Read      extends Operation("read")
+        case Send      extends Operation("send")
+        case Handshake extends Operation("handshake")
+        case Upgrade   extends Operation("upgrade")
+        case Start     extends Operation("start")
+        case Close     extends Operation("close")
+    end Operation
+end NetConnectionClosedException
 
 /** A TLS operation failed. Recover the whole family with `Abort.recover[NetTlsException]`. */
 sealed abstract class NetTlsException(message: String, cause: String | Throwable = "")(using Frame)
