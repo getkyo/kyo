@@ -6,7 +6,7 @@ import scala.annotation.tailrec
 
 /** Writes values in Protocol Buffers wire format.
   *
-  * Field numbers are stable hash-based IDs computed from field names using XXH32. This provides schema evolution compatibility -
+  * Field numbers are stable hash-based IDs computed from field names (XXH32 applied to the name's JLS string hash). This provides schema evolution compatibility -
   * adding or removing fields doesn't affect existing field numbers.
   *
   * Field ID overrides can be configured via `withFieldIdOverrides` for interoperability with existing `.proto` definitions.
@@ -74,6 +74,12 @@ final class ProtobufWriter extends Writer:
     def withFieldIdOverrides(overrides: Map[String, Int]): this.type =
         fieldIdOverrides = overrides
         this
+
+    /** The current field-id override map, read by a caller that is about to replace it with a
+      * nested schema's own overrides, so the prior value can be restored once that nested write
+      * completes.
+      */
+    private[kyo] def fieldIdOverridesSnapshot: Map[String, Int] = fieldIdOverrides
 
     private def current: java.io.ByteArrayOutputStream = bufferStack.head
 

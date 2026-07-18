@@ -317,7 +317,7 @@ class StructureTest extends kyo.test.Test[Any]:
         }
 
         "derived generic sealed trait populates typeParams" in {
-            // Regression guard for CR-r1-003: buildSumSchema must thread typeParamStructures
+            // Regression guard: buildSumSchema must thread typeParamStructures
             // so that Structure.Type.Sum.typeParams is non-empty for generic sealed traits.
             val s = Schema[GenericSealed[Int]].structure
             s match
@@ -712,6 +712,36 @@ class StructureTest extends kyo.test.Test[Any]:
                     case other => fail(s"Expected Bool, got $other")
                 end match
             }
+
+            "bytes primitive" in {
+                val bytes = Span.from(Array[Byte](1, 2, 3))
+                val v     = Structure.Value.primitive(bytes)
+                v match
+                    case Structure.Value.Bytes(value) =>
+                        assert(CodecTestSupport.sameBytes(value, bytes))
+                    case other => fail(s"Expected Bytes, got $other")
+                end match
+            }
+
+            "instant primitive" in {
+                val instant = java.time.Instant.parse("2026-07-09T12:34:56Z")
+                val v       = Structure.Value.primitive(instant)
+                v match
+                    case Structure.Value.Instant(value) =>
+                        assert(value == instant)
+                    case other => fail(s"Expected Instant, got $other")
+                end match
+            }
+
+            "duration primitive" in {
+                val duration = java.time.Duration.ofSeconds(5, 123)
+                val v        = Structure.Value.primitive(duration)
+                v match
+                    case Structure.Value.Duration(value) =>
+                        assert(value == duration)
+                    case other => fail(s"Expected Duration, got $other")
+                end match
+            }
         }
 
         "Schema.toStructureValue" - {
@@ -758,6 +788,28 @@ class StructureTest extends kyo.test.Test[Any]:
                 val from2   = schema2.toStructureValue(person)
                 assert(from1 == from2)
             }
+
+            "bytes toStructureValue" in {
+                val bytes = Span.from(Array[Byte](4, 5, 6))
+                val dv    = summon[Schema[Span[Byte]]].toStructureValue(bytes)
+                dv match
+                    case Structure.Value.Bytes(value) =>
+                        assert(CodecTestSupport.sameBytes(value, bytes))
+                    case other => fail(s"Expected Bytes, got $other")
+                end match
+            }
+
+            "instant toStructureValue" in {
+                val instant = java.time.Instant.parse("2026-07-09T12:34:56Z")
+                val dv      = summon[Schema[java.time.Instant]].toStructureValue(instant)
+                assert(dv == Structure.Value.Instant(instant))
+            }
+
+            "duration toStructureValue" in {
+                val duration = java.time.Duration.ofSeconds(5, 123)
+                val dv       = summon[Schema[java.time.Duration]].toStructureValue(duration)
+                assert(dv == Structure.Value.Duration(duration))
+            }
         }
 
         "Structure.Value equality" - {
@@ -772,12 +824,67 @@ class StructureTest extends kyo.test.Test[Any]:
                 assert(Structure.Value.primitive("a") != Structure.Value.primitive(1))
             }
 
+            "decimal equality preserves Double semantics" in {
+                val zero     = Structure.Value.Decimal(0.0)
+                val negative = Structure.Value.Decimal(-0.0)
+
+                assert(zero == negative)
+                assert(zero.hashCode == negative.hashCode)
+                assert(Structure.Value.Decimal(Double.NaN) != Structure.Value.Decimal(Double.NaN))
+            }
+
             "record equality" in {
                 val r1 = Structure.Value.Record(Chunk(("x", Structure.Value.primitive(1))))
                 val r2 = Structure.Value.Record(Chunk(("x", Structure.Value.primitive(1))))
                 val r3 = Structure.Value.Record(Chunk(("x", Structure.Value.primitive(2))))
                 assert(r1 == r2)
                 assert(r1 != r3)
+            }
+
+            "equals/hashCode are reflexive and mutually consistent across every case" in {
+                // Structure.Value overrides equals/hashCode with a hand-rolled ordinal dispatch rather
+                // than a shape match because recursive extractor matching broke Scala.js equality for
+                // Bytes(Span[Byte]). An ordinal dispatch has no compiler-enforced exhaustiveness, so this
+                // sweep is the guard instead: `expectedCases` is derived from the compiler-synthesized
+                // Mirror for the enum, so it grows automatically when a case is added, and the assertion
+                // below fails the moment `samples` falls behind, catching an unguarded new case before it ships.
+                import scala.compiletime.constValue
+                import scala.deriving.Mirror
+
+                val mirror        = summon[Mirror.SumOf[Structure.Value]]
+                val expectedCases = constValue[Tuple.Size[mirror.MirroredElemTypes]]
+
+                val samples: List[Structure.Value] = List(
+                    Structure.Value.Record(Chunk(("x", Structure.Value.Null))),
+                    Structure.Value.VariantCase("V", Structure.Value.Null),
+                    Structure.Value.Sequence(Chunk(Structure.Value.Null)),
+                    Structure.Value.MapEntries(Chunk((Structure.Value.Null, Structure.Value.Null))),
+                    Structure.Value.Str("s"),
+                    Structure.Value.Bool(true),
+                    Structure.Value.Integer(1L),
+                    Structure.Value.Decimal(1.5),
+                    Structure.Value.BigNum(BigDecimal("1.5")),
+                    Structure.Value.Bytes(Span.from(Array[Byte](1, 2, 3))),
+                    Structure.Value.Instant(java.time.Instant.parse("2024-01-01T00:00:00Z")),
+                    Structure.Value.Duration(java.time.Duration.ofSeconds(5)),
+                    Structure.Value.Null
+                )
+
+                assert(
+                    samples.size == expectedCases,
+                    s"Structure.Value has $expectedCases cases but this sweep covers only ${samples.size}; " +
+                        "add a sample for the new case so its equals/hashCode contract stays guarded"
+                )
+
+                samples.foreach { value =>
+                    assert(value == value, s"reflexivity broken for $value")
+                    assert(value.hashCode == value.hashCode, s"hashCode not stable across calls for $value")
+                }
+
+                samples.foreach { value =>
+                    val others = samples.filterNot(_ == value)
+                    assert(others.forall(_ != value), s"$value compared equal to a value of a different case")
+                }
             }
         }
     }
@@ -1026,7 +1133,7 @@ class StructureTest extends kyo.test.Test[Any]:
             val json = w.resultString
             val r    = JsonReader(json)
             val got  = r.bytes()
-            assert(got.toArray.toSeq == data.toArray.toSeq)
+            assert(CodecTestSupport.sameBytes(got, data))
         }
 
         "json bigInt round-trip" in {
@@ -1097,7 +1204,7 @@ class StructureTest extends kyo.test.Test[Any]:
             val r   = new ProtobufReader(w.resultBytes)
             val _   = r.field()
             val got = r.bytes()
-            assert(got.toArray.toSeq == data.toArray.toSeq)
+            assert(CodecTestSupport.sameBytes(got, data))
         }
 
         "protobuf bigInt round-trip" in {
@@ -1188,10 +1295,27 @@ class StructureTest extends kyo.test.Test[Any]:
             val data = Span.from(Array[Byte](7, 8, 9))
             val w    = new StructureValueWriter
             w.bytes(data)
-            val dv  = w.getResult
+            val dv = w.getResult
+            dv match
+                case Structure.Value.Bytes(value) => assert(CodecTestSupport.sameBytes(value, data))
+                case other                        => fail(s"Expected Bytes, got $other")
             val r   = new StructureValueReader(dv)
             val got = r.bytes()
-            assert(got.toArray.toSeq == data.toArray.toSeq)
+            assert(CodecTestSupport.sameBytes(got, data))
+        }
+
+        "legacy string bytes decode" in {
+            val data    = Span.from(Array[Byte](7, 8, 9))
+            val encoded = java.util.Base64.getEncoder.encodeToString(data.toArray)
+            val r       = new StructureValueReader(Structure.Value.Str(encoded))
+            val got     = r.bytes()
+            assert(CodecTestSupport.sameBytes(got, data))
+        }
+
+        "base64-shaped string remains string" in {
+            val encoded = "AQID"
+            val got     = fromStructure(summon[Schema[String]], Structure.Value.Str(encoded))
+            assert(got == encoded)
         }
 
         "dynamic bigInt round-trip" in {
@@ -1217,7 +1341,14 @@ class StructureTest extends kyo.test.Test[Any]:
             val w     = new StructureValueWriter
             w.instant(value)
             val dv = w.getResult
-            val r  = new StructureValueReader(dv)
+            assert(dv == Structure.Value.Instant(value))
+            val r = new StructureValueReader(dv)
+            assert(r.instant() == value)
+        }
+
+        "legacy string instant decode" in {
+            val value = java.time.Instant.parse("2025-12-31T23:59:59Z")
+            val r     = new StructureValueReader(Structure.Value.Str(value.toString))
             assert(r.instant() == value)
         }
 
@@ -1226,7 +1357,14 @@ class StructureTest extends kyo.test.Test[Any]:
             val w     = new StructureValueWriter
             w.duration(value)
             val dv = w.getResult
-            val r  = new StructureValueReader(dv)
+            assert(dv == Structure.Value.Duration(value))
+            val r = new StructureValueReader(dv)
+            assert(r.duration() == value)
+        }
+
+        "legacy string duration decode" in {
+            val value = java.time.Duration.ofMinutes(90)
+            val r     = new StructureValueReader(Structure.Value.Str(value.toString))
             assert(r.duration() == value)
         }
 

@@ -171,6 +171,27 @@ if [ "${1:-}" = "--self-test" ]; then
     then record ok "Native link failure exits 1 before any test runs"
     else record no "Native link failure exits 1 before any test runs"; fi
 
+    # 8a. NATIVE_HEAVY pre-links each heavy module in its own process before the aggregate link.
+    : > "$CALLS"; : > "$HEAP"; make_fake_sbt 'echo "Tests: succeeded 100, failed 0"; exit 0'
+    PATH="$SELFDIR:$PATH" MAX_RETRIES=2 STALE_TIMEOUT=2 POLL_INTERVAL=1 CI_MON=0 \
+        NATIVE_HEAVY="kyo-schema" "$SELF" Native test >/dev/null 2>&1
+    CT_EXIT=$?
+    if call_nth_is 1 "kyo-schemaNative/Test/nativeLink" && call_nth_is 2 "kyoNative/Test/nativeLink" \
+       && calls_have "testKyo --all Native" && exit_is 0
+    then record ok "NATIVE_HEAVY pre-links heavy modules before the aggregate link"
+    else record no "NATIVE_HEAVY pre-links heavy modules before the aggregate link"; fi
+
+    # 8b. A heavy pre-link failure aborts before the aggregate link and before any tests.
+    : > "$CALLS"; : > "$HEAP"
+    make_fake_sbt 'if [ "$*" = "kyo-schemaNative/Test/nativeLink" ]; then exit 3; fi; echo "Tests: succeeded 100, failed 0"; exit 0'
+    PATH="$SELFDIR:$PATH" MAX_RETRIES=2 STALE_TIMEOUT=2 POLL_INTERVAL=1 CI_MON=0 \
+        NATIVE_HEAVY="kyo-schema" "$SELF" Native test >/dev/null 2>&1
+    CT_EXIT=$?
+    if calls_count 1 && call_nth_is 1 "kyo-schemaNative/Test/nativeLink" \
+       && calls_lack "kyoNative/Test/nativeLink" && calls_lack "testKyo" && exit_is 1
+    then record ok "NATIVE_HEAVY pre-link failure aborts before aggregate link and tests"
+    else record no "NATIVE_HEAVY pre-link failure aborts before aggregate link and tests"; fi
+
     # 9-20: Native crash-retry / check_log scenarios.
     # For these the fake sbt's link call must pass, so the body branches on $*.
     nat() {  # nat <name> <expected-exit> <run-body>
@@ -227,7 +248,7 @@ echo "Exception in thread \"main\" java.lang.RuntimeException: oops"; exit 1'
 
     echo ""
     echo "Results: $PASS/$TOTAL passed, $FAIL failed"
-    [ "$FAIL" -eq 0 ] && [ "$TOTAL" -eq 24 ]
+    [ "$FAIL" -eq 0 ] && [ "$TOTAL" -eq 26 ]
     exit $?
 fi
 
@@ -261,6 +282,15 @@ fi
 MAX_RETRIES=${MAX_RETRIES:-3}
 STALE_TIMEOUT=${STALE_TIMEOUT:-600}
 POLL_INTERVAL=${POLL_INTERVAL:-10}
+
+# Space-separated module names (e.g. "kyo-schema") whose SOLO native-link optimize peak needs an
+# isolated, fresh-heap sbt driver. Each is linked first in its own process, keeping its
+# whole-program optimize off the shared aggregate driver where the preceding modules have already
+# filled the 2G metaspace. Measured: kyo-schema alone peaks ~7.7G RSS in a clean process vs ~9.9G in
+# the accumulated aggregate (the delta is that accumulation), which OOM-killed the 8G-capped Native
+# driver. nativeLink is disk-cached per project, so the aggregate link below skips a module already
+# linked here. Empty by default; the CI workflow sets it for the Native target.
+NATIVE_HEAVY="${NATIVE_HEAVY:-}"
 
 log() { echo "=== [ci-test] $(date '+%H:%M:%S') $* ==="; }
 
@@ -357,6 +387,13 @@ run_native() {
         sbt "testKyo --phase compile-test Native" || return $?
         return 0
     fi
+    # Isolate each heavy module's native link in its own sbt driver before the aggregate link, so its
+    # whole-program optimize runs against a fresh heap and empty metaspace. The aggregate below reuses
+    # the on-disk nativeLink cache and skips what was linked here.
+    for heavy in $NATIVE_HEAVY; do
+        log "pre-linking heavy native module in an isolated driver: sbt ${heavy}Native/Test/nativeLink"
+        sbt "${heavy}Native/Test/nativeLink" || { log "native pre-link of $heavy failed"; return 1; }
+    done
     log "linking native test binaries: sbt kyoNative/Test/nativeLink"
     sbt "kyoNative/Test/nativeLink"
     link_exit=$?

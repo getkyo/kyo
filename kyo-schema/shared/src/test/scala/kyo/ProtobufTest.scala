@@ -118,7 +118,7 @@ class ProtobufTest extends kyo.test.Test[Any]:
             val person = MTPerson("Charlie", 40)
             val bytes1 = Protobuf.encode[MTPerson](person)
             val bytes2 = Protobuf.encode[MTPerson](person)
-            assert(bytes1.toArray.toSeq == bytes2.toArray.toSeq)
+            assert(CodecTestSupport.sameBytes(bytes1, bytes2))
         }
 
         "protobuf round-trip via Protobuf.decode" in {
@@ -201,6 +201,41 @@ class ProtobufTest extends kyo.test.Test[Any]:
             assert(schema.contains("message MTPerson"))
             assert(schema.contains(s"string name = ${kyo.internal.CodecMacro.fieldId("name")};"))
             assert(schema.contains(s"sint32 age = ${kyo.internal.CodecMacro.fieldId("age")};"))
+        }
+
+        "ProtoSchema base value primitive types match protobuf writers" in {
+            val structure = Structure.Type.Product(
+                "BaseValues",
+                Tag[Any],
+                Chunk.empty,
+                Chunk(
+                    Structure.Field(
+                        "bytes",
+                        Structure.Type.Primitive(Structure.PrimitiveKind.Bytes, Tag[Span[Byte]].asInstanceOf[Tag[Any]]),
+                        Maybe.empty,
+                        Maybe.empty,
+                        false
+                    ),
+                    Structure.Field(
+                        "instant",
+                        Structure.Type.Primitive(Structure.PrimitiveKind.Instant, Tag[java.time.Instant].asInstanceOf[Tag[Any]]),
+                        Maybe.empty,
+                        Maybe.empty,
+                        false
+                    ),
+                    Structure.Field(
+                        "duration",
+                        Structure.Type.Primitive(Structure.PrimitiveKind.Duration, Tag[java.time.Duration].asInstanceOf[Tag[Any]]),
+                        Maybe.empty,
+                        Maybe.empty,
+                        false
+                    )
+                )
+            )
+            val schema = ProtoSchema.fromStructure(structure, Map.empty)
+            assert(schema.contains(s"bytes bytes = ${kyo.internal.CodecMacro.fieldId("bytes")};"))
+            assert(schema.contains(s"sint64 instant = ${kyo.internal.CodecMacro.fieldId("instant")};"))
+            assert(schema.contains(s"sint64 duration = ${kyo.internal.CodecMacro.fieldId("duration")};"))
         }
 
         "ProtoSchema nested messages" in {
@@ -365,6 +400,25 @@ class ProtobufTest extends kyo.test.Test[Any]:
             interceptThrown[IllegalArgumentException] {
                 ProtoSchema.fromStructure(productWithListKey, Map.empty)
             }
+        }
+
+        "ProtoSchema Map[Bytes, V] field emits entry message instead of map syntax" in {
+            val bytesKeyMapping = Structure.Type.Mapping(
+                "Map",
+                Tag[Any],
+                Structure.Type.Primitive(Structure.PrimitiveKind.Bytes, Tag[Span[Byte]].asInstanceOf[Tag[Any]]),
+                Structure.Type.Primitive(Structure.PrimitiveKind.Int, Tag[Int].asInstanceOf[Tag[Any]])
+            )
+            val productWithBytesKey = Structure.Type.Product(
+                "MapWithBytesKey",
+                Tag[Any],
+                Chunk.empty,
+                Chunk(Structure.Field("value", bytesKeyMapping, Maybe.empty, Maybe.empty, false))
+            )
+            val schema = ProtoSchema.fromStructure(productWithBytesKey, Map.empty)
+            assert(!schema.contains("map<bytes, sint32>"))
+            assert(schema.contains("repeated ValueEntry value"))
+            assert(schema.contains("bytes key = 1;"))
         }
 
         "ProtoSchema Map[K, V] with non-default key types emits map<K, V>" in {
@@ -799,7 +853,7 @@ class ProtobufTest extends kyo.test.Test[Any]:
         val nativeBytes =
             given Schema[CFPerson] = Schema[CFPerson]
             Protobuf.encode(CFPerson("Bob", 30))
-        assert(bytes.toArray.toSeq == nativeBytes.toArray.toSeq, s"wire bytes must reflect write transform (age=30 on wire)")
+        assert(CodecTestSupport.sameBytes(bytes, nativeBytes), s"wire bytes must reflect write transform (age=30 on wire)")
     }
 
     "strict decode treats a unicode-digit wire key as an unknown name, not a numeric field id" in {
@@ -928,7 +982,7 @@ class ProtobufTest extends kyo.test.Test[Any]:
             assert(decoded.s.toSeq == v.s.toSeq)
             assert(decoded.set == v.set)
             assert(decoded.c == v.c)
-            assert(decoded.sp.toArray.toSeq == v.sp.toArray.toSeq)
+            assert(CodecTestSupport.sameBytes(decoded.sp, v.sp))
             assert(decoded.m == v.m)
             assert(decoded.n == v.n)
         }
@@ -1326,7 +1380,7 @@ class ProtobufTest extends kyo.test.Test[Any]:
                     // Set is unordered; element equality suffices.
                     assert(d.set == v.set)
                     assert(d.c == v.c)
-                    assert(d.sp.toArray.toSeq == v.sp.toArray.toSeq)
+                    assert(CodecTestSupport.sameBytes(d.sp, v.sp))
                     assert(d.m == v.m)
                     assert(d.n == v.n)
                 case other => fail(s"PB1716Collections encode/decode failed: $other")
@@ -1373,9 +1427,9 @@ class ProtobufTest extends kyo.test.Test[Any]:
 
         "INV-PBC-12-reserved-flag-and-control" in {
             val rows    = Protobuf.fieldNumberAudit[PBReserved]
-            val inBand  = rows.find(_.name == "r1641").get
+            val inBand  = rows.find(_.name == "r1635").get
             val control = rows.find(_.name == "ctrl").get
-            assert(inBand.inReservedRange == true, s"'r1641' (number=${inBand.number}) should be in reserved range 19000-19999")
+            assert(inBand.inReservedRange == true, s"'r1635' (number=${inBand.number}) should be in reserved range 19000-19999")
             assert(control.inReservedRange == false, s"'ctrl' (number=${control.number}) should NOT be in reserved range 19000-19999")
         }
 
@@ -1464,13 +1518,13 @@ class ProtobufTest extends kyo.test.Test[Any]:
         }
 
         "INV-PBC-12-reserved-WARNING-comment" in {
-            // Sub-case A: hash-derived-in-band. PBReserved.r1641 hashes to 19603.
+            // Sub-case A: hash-derived-in-band. PBReserved.r1635 hashes to 19700.
             val reservedOutput = Protobuf.protoSchema[PBReserved]
-            val r1641Line      = reservedOutput.linesIterator.find(_.contains(" r1641 = ")).getOrElse("")
+            val r1635Line      = reservedOutput.linesIterator.find(_.contains(" r1635 = ")).getOrElse("")
             val ctrlLine       = reservedOutput.linesIterator.find(_.contains(" ctrl = ")).getOrElse("")
             assert(
-                r1641Line.contains("WARNING: in proto3 reserved range 19000-19999"),
-                s"'r1641' (hash-derived in reserved band) must carry the WARNING: '$r1641Line'"
+                r1635Line.contains("WARNING: in proto3 reserved range 19000-19999"),
+                s"'r1635' (hash-derived in reserved band) must carry the WARNING: '$r1635Line'"
             )
             assert(
                 !ctrlLine.contains("WARNING"),
@@ -1553,12 +1607,12 @@ class ProtobufTest extends kyo.test.Test[Any]:
         "reserved-range WARNING always emitted even when suppressed" in {
             given Protobuf = Protobuf(Protobuf.Config(protoSchemaProvenance = false))
             val output     = Protobuf.protoSchema[PBReserved]
-            val r1641Line = output.linesIterator.find(_.contains(" r1641 = ")).getOrElse(
-                fail(s"'r1641' field not found in protoSchema output:\n$output")
+            val r1635Line = output.linesIterator.find(_.contains(" r1635 = ")).getOrElse(
+                fail(s"'r1635' field not found in protoSchema output:\n$output")
             )
             assert(
-                r1641Line.contains("WARNING: in proto3 reserved range 19000-19999"),
-                s"reserved-range WARNING must be emitted even when protoSchemaProvenance=false: '$r1641Line'"
+                r1635Line.contains("WARNING: in proto3 reserved range 19000-19999"),
+                s"reserved-range WARNING must be emitted even when protoSchemaProvenance=false: '$r1635Line'"
             )
         }
 
@@ -1590,6 +1644,161 @@ class ProtobufTest extends kyo.test.Test[Any]:
             val bytes                    = Protobuf.encode(value)
             val result                   = Protobuf.decode[PBRenameSimple](bytes)
             assert(result == Result.Success(value), s"rename+fieldId compose round-trip failed: $result")
+        }
+
+    }
+
+    // Non-String-key Dict round-trips through the real codec, and encode emits one
+    // length-delimited proto3 MapEntry per entry with the key tag before the value tag.
+    "dictSchema non-String-key Dict" - {
+
+        "round-trips a non-String-key Dict" in {
+            val holder  = MTIntStringDict(Dict(1 -> "one", 2 -> "two", 3 -> "three"))
+            val decoded = Protobuf.decode[MTIntStringDict](Protobuf.encode(holder)).getOrThrow
+            assert(decoded.d.get(1) == Maybe("one"))
+            assert(decoded.d.get(2) == Maybe("two"))
+            assert(decoded.d.get(3) == Maybe("three"))
+            assert(decoded.d.size == 3)
+        }
+
+        "round-trips a non-String-key Dict with non-empty collection values" in {
+            val holder  = MTIntChunkDict(Dict(1 -> Chunk("a", "b"), 2 -> Chunk("c")))
+            val encoded = Protobuf.encode(holder)
+            val decoded = Protobuf.decode[MTIntChunkDict](encoded).getOrThrow
+            assert(decoded.d.get(1) == Maybe(Chunk("a", "b")))
+            assert(decoded.d.get(2) == Maybe(Chunk("c")))
+            assert(encoded.size == 23)
+        }
+
+        "encode emits one length-delimited MapEntry per entry with the key tag before the value tag" in {
+            // Distinct from the round-trip leaves above: the bare-array form corrupts the wire
+            // bytes SILENTLY at encode time (no exception), so a decode-only assertion would pass
+            // for the wrong reason. This inspects the encoded bytes directly.
+            val holder  = MTIntStringDict(Dict(1 -> "one", 2 -> "two", 3 -> "three"))
+            val encoded = Protobuf.encode(holder).toArray
+            val dField  = CodecMacro.fieldId("d")
+
+            @tailrec def readVarint(bytes: Array[Byte], pos: Int, v: Long, sh: Int): (Long, Int) =
+                if pos >= bytes.length then (v, pos)
+                else
+                    val b  = bytes(pos) & 0xff
+                    val nv = v | ((b & 0x7f).toLong << sh)
+                    if (b & 0x80) != 0 then readVarint(bytes, pos + 1, nv, sh + 7)
+                    else (nv, pos + 1)
+
+            def skipNonDelimited(bytes: Array[Byte], pos: Int, wireType: Int): Int =
+                wireType match
+                    case 0 => readVarint(bytes, pos, 0L, 0)._2
+                    case 1 => pos + 8
+                    case 5 => pos + 4
+                    case _ => bytes.length
+
+            // Walks the top-level tag/value pairs and captures the CONTENT bytes (the length
+            // varint itself excluded) of every length-delimited record for `dField` (the outer
+            // array/MapEntry slot for `d`).
+            @tailrec def entryPayloads(bytes: Array[Byte], pos: Int, acc: List[Array[Byte]]): List[Array[Byte]] =
+                if pos >= bytes.length then acc.reverse
+                else
+                    val (tagVal, p1) = readVarint(bytes, pos, 0L, 0)
+                    val fieldNum     = (tagVal >>> 3).toInt
+                    val wireType     = (tagVal & 0x7).toInt
+                    if wireType == 2 then
+                        val (len, contentStart) = readVarint(bytes, p1, 0L, 0)
+                        val next                = contentStart + len.toInt
+                        if fieldNum == dField then
+                            entryPayloads(bytes, next, bytes.slice(contentStart, next) :: acc)
+                        else
+                            entryPayloads(bytes, next, acc)
+                        end if
+                    else
+                        entryPayloads(bytes, skipNonDelimited(bytes, p1, wireType), acc)
+                    end if
+
+            // A proto3 MapEntry payload leads with the key field's tag (field 1, Varint: 0x08).
+            def isMapEntry(payload: Array[Byte]): Boolean =
+                payload.length >= 2 && (payload(0) & 0xff) == 0x08
+
+            val payloads = entryPayloads(encoded, 0, Nil)
+            assert(
+                payloads.size == 3 && payloads.forall(isMapEntry),
+                "expected three MapEntry records with the key tag (0x08) leading each payload, got " +
+                    payloads.map(_.map(b => f"${b & 0xff}%02x").mkString).mkString("[", ", ", "]")
+            )
+        }
+
+    }
+
+    // OrderedDict Schema givens: both order round-trips are scoped in-process (no
+    // cross-implementation interop claim). kyo's own Protobuf writer emits one MapEntry per
+    // entry in call order and its reader walks pos forward through consecutive
+    // length-delimited submessages, so the round-trip preserves order; proto3 disclaims
+    // map-entry order for foreign implementations, so no cross-implementation guarantee is
+    // asserted.
+    "OrderedDict Schema givens" - {
+
+        // proto3 writes nothing for an empty map field, so decode sees no field at all and falls back
+        // to the schema's absent default. Map, Dict and OrderedDict must agree here.
+        "an empty OrderedDict field round-trips" in {
+            val holder  = MTOrderedDictConfig(OrderedDict.empty)
+            val encoded = Protobuf.encode(holder)
+            assert(encoded.size == 0)
+            val decoded = Protobuf.decode[MTOrderedDictConfig](encoded).getOrThrow
+            assert(decoded.settings.isEmpty)
+        }
+
+        "an empty Dict field round-trips" in {
+            val holder  = MTIntStringDict(Dict.empty)
+            val encoded = Protobuf.encode(holder)
+            assert(encoded.size == 0)
+            val decoded = Protobuf.decode[MTIntStringDict](encoded).getOrThrow
+            assert(decoded.d.isEmpty)
+        }
+
+        "an empty String-key Dict field round-trips" in {
+            val encoded = Protobuf.encode(MTStringDict(Dict.empty))
+            assert(encoded.size == 0)
+            assert(Protobuf.decode[MTStringDict](encoded).getOrThrow.d.isEmpty)
+        }
+
+        "an empty non-String-key OrderedDict field round-trips" in {
+            val encoded = Protobuf.encode(MTOrderedDictLevels(OrderedDict.empty))
+            assert(encoded.size == 0)
+            assert(Protobuf.decode[MTOrderedDictLevels](encoded).getOrThrow.byLevel.isEmpty)
+        }
+
+        "an empty OrderedDict field between two scalar fields round-trips, and the scalars survive" in {
+            val holder  = MTOrderedDictRecord("alice", OrderedDict.empty, 7)
+            val decoded = Protobuf.decode[MTOrderedDictRecord](Protobuf.encode(holder)).getOrThrow
+            assert(decoded.name == "alice")
+            assert(decoded.count == 7)
+            assert(decoded.settings.isEmpty)
+        }
+
+        "a populated OrderedDict field between two scalar fields keeps its order and the scalars" in {
+            val holder =
+                MTOrderedDictRecord(
+                    "alice",
+                    OrderedDict("zeta" -> 1, "alpha" -> 2, "mike" -> 3, "bravo" -> 4, "yankee" -> 5, "delta" -> 6),
+                    7
+                )
+            val decoded = Protobuf.decode[MTOrderedDictRecord](Protobuf.encode(holder)).getOrThrow
+            assert(decoded.name == "alice")
+            assert(decoded.count == 7)
+            assert(decoded.settings.toChunk.map(_._1) == Chunk("zeta", "alpha", "mike", "bravo", "yankee", "delta"))
+        }
+
+        "OrderedDict[String, V] field preserves insertion order across encode/decode (resolves stringOrderedDictSchema)" in {
+            val holder =
+                MTOrderedDictConfig(OrderedDict("zeta" -> 30, "alpha" -> 3, "mike" -> 8080, "bravo" -> 5, "yankee" -> 100, "delta" -> 42))
+            val decoded = Protobuf.decode[MTOrderedDictConfig](Protobuf.encode(holder)).getOrThrow
+            assert(decoded.settings.toChunk.map(_._1) == Chunk("zeta", "alpha", "mike", "bravo", "yankee", "delta"))
+        }
+
+        "OrderedDict[Int, String] field preserves insertion order across encode/decode (resolves orderedDictSchema, not stringOrderedDictSchema)" in {
+            val holder =
+                MTOrderedDictLevels(OrderedDict(30 -> "gold", 10 -> "bronze", 20 -> "silver", 50 -> "copper", 40 -> "tin", 60 -> "iron"))
+            val decoded = Protobuf.decode[MTOrderedDictLevels](Protobuf.encode(holder)).getOrThrow
+            assert(decoded.byLevel.toChunk.map(_._1) == Chunk(30, 10, 20, 50, 40, 60))
         }
 
     }
@@ -1714,8 +1923,8 @@ case class PBAuditInner(id: Int) derives Schema, CanEqual
 case class PBAuditPerson(name: String, inner: PBAuditInner) derives Schema, CanEqual
 case class PBAuditReuse(list: List[PBAuditInner], map: Map[String, PBAuditInner], ints: List[Int]) derives Schema, CanEqual
 case class PBAuditTree(value: Int, children: List[PBAuditTree]) derives Schema, CanEqual
-// r1641 hashes to 19603 (in proto3 reserved range 19000-19999); ctrl is the out-of-band control field.
-case class PBReserved(r1641: Int, ctrl: Int) derives Schema, CanEqual
+// r1635 hashes to 19700 (in proto3 reserved range 19000-19999); ctrl is the out-of-band control field.
+case class PBReserved(r1635: Int, ctrl: Int) derives Schema, CanEqual
 
 // Holder for testing that the reserved-range WARNING fires unconditionally on pinned-in-band numbers.
 case class PBReservedPinnedHolder(x: Int) derives Schema, CanEqual

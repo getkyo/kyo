@@ -109,7 +109,7 @@ final private[kyo] class HttpClientBackend private (
         try
             encodeAndSendDirectWith(conn, route, request)(
                 onInvalid = ex => resultPromise.completeDiscard(Result.fail(ex)),
-                f = responsePromise =>
+                f = (responsePromise, path) =>
                     // IOPromise.onComplete gives Result[Nothing, ParsedResponse] directly - no `< S` wrapper
                     responsePromise.onComplete { parseResult =>
                         parseResult match
@@ -139,7 +139,7 @@ final private[kyo] class HttpClientBackend private (
         try
             encodeAndSendDirectWith(conn, route, request)(
                 onInvalid = ex => resultPromise.completeDiscard(Result.fail(ex)),
-                f = responsePromise =>
+                f = (responsePromise, path) =>
                     // IOPromise.onComplete gives Result[Nothing, ParsedResponse] directly
                     responsePromise.onComplete { parseResult =>
                         parseResult match
@@ -291,7 +291,7 @@ final private[kyo] class HttpClientBackend private (
         request: HttpRequest[In]
     )(
         inline onInvalid: HttpException => A,
-        inline f: IOPromise[Nothing, ParsedResponse] => A
+        inline f: (IOPromise[Nothing, ParsedResponse], String) => A
     )(using AllowUnsafe, Frame): A =
         // Determine the effective host header value for this request.
         // If the request URL has an explicit host (e.g. after a redirect), recompute;
@@ -320,7 +320,7 @@ final private[kyo] class HttpClientBackend private (
                                 contentLength = 0,
                                 chunked = false
                             )
-                        f(promise)
+                        f(promise, path)
             ,
             onBuffered = (path, headers, body) =>
                 unsendableField(path, hostHeader, headers) match
@@ -336,7 +336,7 @@ final private[kyo] class HttpClientBackend private (
                                 contentLength = body.size.toInt,
                                 chunked = false
                             )
-                        f(promise)
+                        f(promise, path)
             ,
             onStreaming = (path, headers, bodyStream) =>
                 unsendableField(path, hostHeader, headers) match
@@ -356,7 +356,7 @@ final private[kyo] class HttpClientBackend private (
                             )
                         // Launch streaming body writer as a background fiber
                         streamRequestBody(conn, bodyStream)
-                        f(promise)
+                        f(promise, path)
         )
     end encodeAndSendDirectWith
 

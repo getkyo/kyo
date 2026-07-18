@@ -63,7 +63,7 @@ class ProtobufConformanceTest extends kyo.test.Test[Any]:
                 given Protobuf      = Protobuf(Protobuf.Config(conformance = Conformance.Permissive))
                 val permissiveBytes = Protobuf.encode(v)
                 assert(Protobuf.decode[PB1716MapInt](permissiveBytes) == Result.Success(v))
-                assert(strictBytes.toArray.toSeq == permissiveBytes.toArray.toSeq)
+                assert(CodecTestSupport.sameBytes(strictBytes, permissiveBytes))
             }
         }
 

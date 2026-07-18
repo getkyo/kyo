@@ -56,12 +56,68 @@ private[kyo] object SchemaSerializer:
             acc.toInt
     end wireFieldId
 
+    /** Threads a schema's field-id overrides onto a Protobuf writer, mirroring what `Protobuf.encode`
+      * does for its own entry point. `writeTo` calls this once for the outermost schema passed to
+      * `Schema.encode[C]` / `Schema.encodeString[C]`; `Schema.init`'s `serializeWrite` override also
+      * calls this directly for every schema reached at any nesting depth (a container element, a
+      * product field, or the outermost schema itself), so a nested schema's own pin is visible to the
+      * writer regardless of whether the nested schema carries a structural transform of its own.
+      *
+      * The writer-type check runs FIRST, before `fieldIdNameOverrides` is computed: this runs at
+      * every nesting depth, so computing the overrides map unconditionally would pay its
+      * rename-resolution cost at every node of every non-Protobuf encode too. Gating on the writer type first makes the call a single failed `isInstanceOf` check
+      * for every non-Protobuf writer, with `fieldIdNameOverrides` computed only on an actual
+      * `ProtobufWriter`, where a nonEmpty result can matter.
+      *
+      * Returns the writer's PRIOR override map, scoped to this call, so `restoreFieldIdOverridesForWrite`
+      * can put it back once this schema's own write completes: `Schema.init`'s `serializeWrite` calls
+      * this at every nesting depth, and a nested schema's own pin must not permanently replace an
+      * ancestor's pin for the remainder of the ancestor's write. `Absent` means this call made no
+      * change (this schema carried no overrides of its own, or the writer is not a `ProtobufWriter`),
+      * so there is nothing to restore and an ambient ancestor override, if any, is left untouched.
+      */
+    private[kyo] def threadFieldIdOverridesForWrite(schema: Schema[?], writer: Writer): Maybe[Map[String, Int]] =
+        writer match
+            case pw: ProtobufWriter =>
+                val overrides = schema.fieldIdNameOverrides
+                if overrides.nonEmpty then
+                    val prior = pw.fieldIdOverridesSnapshot
+                    // Installs this schema's pins on the writer: withFieldIdOverrides mutates the
+                    // writer's active override map (the side effect is the purpose) and returns the
+                    // writer for chaining, discarded here because `prior` captured above is what the
+                    // caller restores once this schema's write completes.
+                    val _ = pw.withFieldIdOverrides(overrides)
+                    Maybe.Present(prior)
+                else Maybe.Absent
+                end if
+            case _ => Maybe.Absent
+    end threadFieldIdOverridesForWrite
+
+    /** Restores a Protobuf writer's field-id override state saved by `threadFieldIdOverridesForWrite`,
+      * scoping a nested schema's overrides to its own `serializeWrite` call. `Absent` means the
+      * matching thread call made no change, so restoring is a no-op.
+      */
+    private[kyo] def restoreFieldIdOverridesForWrite(writer: Writer, prior: Maybe[Map[String, Int]]): Unit =
+        prior match
+            case Maybe.Present(overrides) =>
+                writer match
+                    case pw: ProtobufWriter => val _ = pw.withFieldIdOverrides(overrides)
+                    case _                  => ()
+            case Maybe.Absent => ()
+    end restoreFieldIdOverridesForWrite
+
     /** Writes a value to a Writer, dispatching to the direct or transform-aware path.
       *
       * A non-serializable Schema throws `SchemaNotSerializableException` from inside its own `serializeWrite` body (the sentinel lambda
       * installed by `Schema.create`/`createFrom`/`createWithFocused`). No outer Maybe match is needed.
+      *
+      * Top-level threading: covers a hand-written Schema whose `serializeWrite` does not self-thread
+      * (`Structure.scala`, `Json.scala` meta-schemas); redundant-but-harmless for every
+      * `Schema.init`-derived schema, which threads again (and restores) inside `serializeWrite`. Do
+      * NOT delete it; it is the only threading for the meta-schemas.
       */
     def writeTo[A](schema: Schema[A], value: A, writer: Writer)(using Frame): Unit =
+        val _ = threadFieldIdOverridesForWrite(schema, writer)
         schema.serializeWrite(value, writer)
 
     /** Transform-aware serialization path.
@@ -70,9 +126,67 @@ private[kyo] object SchemaSerializer:
       * target Writer.
       */
     def writeWithTransforms[A](schema: Schema[A], value: A, writer: Writer)(using Frame): Unit =
+        // `Schema.init`'s `serializeWrite` override threads a schema's own field-id overrides
+        // unconditionally, before branching on `hasTransforms`, for every schema reached at any
+        // nesting depth (a container element, a product field, or the outermost schema passed to
+        // `Schema.encode[C]` / `Protobuf.encode`). This block's own thread call is therefore
+        // redundant with that upstream call on every path that reaches here (`transformedWrite` is
+        // the only caller, always on the same schema instance whose `serializeWrite` already
+        // threaded it). The call here is an idempotent no-op on those paths and keeps this
+        // function correct standing alone for any caller that does not route through
+        // `serializeWrite`.
+        val fieldIdOverrides = schema.fieldIdNameOverrides
+        if fieldIdOverrides.nonEmpty then
+            writer match
+                case pw: ProtobufWriter => val _ = pw.withFieldIdOverrides(fieldIdOverrides)
+                case _                  => ()
+        end if
+
         val structWriter = StructureValueWriter()
         schema.rawSerializeWrite(value, structWriter)
         val original = structWriter.getResult
+
+        // Rename resolution, hoisted so both the field-transform application below and the
+        // wire-shape hint (topShape) share one computation. forwardMap/resolveTarget/resolvedRenames
+        // are schema-level (independent of the captured value), so computing them once here is safe
+        // regardless of whether schema.structure turns out to be a Product or something else.
+        val forwardMap = schema.renamedFields.toMap
+        def resolveTarget(name: String): String =
+            forwardMap.get(name) match
+                case Some(next) => resolveTarget(next)
+                case None       => name
+        val resolvedRenames: Map[String, String] =
+            if schema.renamedFields.isEmpty then Map.empty
+            else
+                schema.sourceFields.flatMap { sf =>
+                    if forwardMap.contains(sf.name) then Some(sf.name -> resolveTarget(sf.name))
+                    else None
+                }.toMap
+        val renamedSourceNames = resolvedRenames.keySet
+
+        // Field names carrying a write-direction transform: their materialized value is produced by
+        // the user-supplied transform, not by the field's own declared type, so the shape hint below
+        // must not apply the declared type to them (a transform is free to change the wire shape,
+        // e.g. a Map turned into a list of pairs).
+        val transformOverrideNames: Set[String] =
+            schema.fieldTransforms.collect { case (name, t) if t.write.isDefined => name }.toSet
+
+        // Shape hint for writeStructureValue: this schema's own product shape with each source
+        // field's wire (post-rename) name substituted for its declared name, so a renamed field's
+        // value keeps its original declared type available for the Map/object wire-shape decision.
+        // Dropped fields stay keyed under their original (never-emitted) name, which is harmless: the
+        // replay never looks up a name absent from the transformed tree. Transform-overridden fields
+        // are excluded entirely, so their value falls back to no shape hint (today's behavior). A
+        // schema whose structure is not a Product (e.g. a Sum, matching the case below that skips
+        // field-transform application entirely) carries no shape hint either.
+        val topShape: Maybe[Structure.Type] = schema.structure match
+            case p: Structure.Type.Product =>
+                Maybe(p.copy(fields =
+                    p.fields.filterNot(f => transformOverrideNames.contains(f.name))
+                        .map(f => f.copy(name = resolvedRenames.getOrElse(f.name, f.name)))
+                ))
+            case _ =>
+                Maybe.empty
 
         // Apply per-field write overrides. For each field with a write-direction transform,
         // extract the raw Scala value, run the user-supplied writer against a fresh
@@ -105,16 +219,6 @@ private[kyo] object SchemaSerializer:
                         // own fields. For a sum schema the materialized Record is a single-field wrapper whose
                         // key is the variant name, not a data field; that key is governed by the variant-naming
                         // layer and must not be run through applyFieldConvention here.
-                        val forwardMap = schema.renamedFields.toMap
-                        def resolveTarget(name: String): String =
-                            forwardMap.get(name) match
-                                case Some(next) => resolveTarget(next)
-                                case None       => name
-                        val resolvedRenames = schema.sourceFields.flatMap { sf =>
-                            if forwardMap.contains(sf.name) then Some(sf.name -> resolveTarget(sf.name))
-                            else None
-                        }.toMap
-                        val renamedSourceNames = resolvedRenames.keySet
 
                         // Transform original fields: drop, skip renamed sources, and omit empty/absent
                         // configured fields (keyed off the SOURCE name, before applyFieldConvention).
@@ -171,7 +275,15 @@ private[kyo] object SchemaSerializer:
                 requireTopLevelCapable(writer, "Untagged")
                 untaggedEncode(transformed)
 
-        writeStructureValue(writer, output)
+        // The shape hint is only valid against the External passthrough, where output is exactly
+        // transformed (the shape topShape describes); the other representations restructure the tree
+        // (a discriminator key added, a tuple flattened), so no hint is threaded there and the replay
+        // falls back to the object-shaped default for every Record it encounters.
+        val outputShape = selected match
+            case Schema.UnionRepresentation.External => topShape
+            case _                                   => Maybe.empty
+
+        writeStructureValue(writer, output, outputShape)
     end writeWithTransforms
 
     /** True iff `sourceName`'s value should be omitted on encode under the schema's effective omit
@@ -459,12 +571,64 @@ private[kyo] object SchemaSerializer:
                 fields
     end applyFieldConvention
 
+    /** Threads a schema's field-id overrides onto a Protobuf reader, mirroring what `Protobuf.decode`
+      * does for its own entry point. `readFrom` calls this once for the outermost schema passed to
+      * `Schema.decode[C]`; `Schema.init`'s `serializeRead` override also calls this directly for every
+      * schema reached at any nesting depth (a container element, a product field, or the outermost
+      * schema itself), so a nested schema's own pin is visible to the reader regardless of whether the
+      * nested schema carries a structural transform of its own.
+      *
+      * The reader-type check runs FIRST, before `fieldIdNameOverrides` is computed: this runs at
+      * every nesting depth, so computing the overrides map unconditionally would pay its
+      * rename-resolution cost at every node of every non-Protobuf decode too. Gating on the reader type first makes the call a single failed `isInstanceOf` check
+      * for every non-Protobuf reader, with `fieldIdNameOverrides` computed only on an actual
+      * `ProtobufReader`, where a nonEmpty result can matter.
+      *
+      * Returns the reader's PRIOR override map, scoped to this call, so `restoreFieldIdOverridesForRead`
+      * can put it back once this schema's own read completes: `Schema.init`'s `serializeRead` calls
+      * this at every nesting depth, and a nested schema's own pin must not permanently replace an
+      * ancestor's pin for the remainder of the ancestor's read. `Absent` means this call made no
+      * change (this schema carried no overrides of its own, or the reader is not a `ProtobufReader`),
+      * so there is nothing to restore and an ambient ancestor override, if any, is left untouched.
+      */
+    private[kyo] def threadFieldIdOverridesForRead(schema: Schema[?], reader: Reader): Maybe[Map[String, Int]] =
+        reader match
+            case pr: ProtobufReader =>
+                val overrides = schema.fieldIdNameOverrides
+                if overrides.nonEmpty then
+                    val prior = pr.fieldIdOverridesSnapshot
+                    val _     = pr.withFieldIdOverrides(overrides)
+                    Maybe.Present(prior)
+                else Maybe.Absent
+                end if
+            case _ => Maybe.Absent
+    end threadFieldIdOverridesForRead
+
+    /** Restores a Protobuf reader's field-id override state saved by `threadFieldIdOverridesForRead`,
+      * scoping a nested schema's overrides to its own `serializeRead` call. `Absent` means the
+      * matching thread call made no change, so restoring is a no-op.
+      */
+    private[kyo] def restoreFieldIdOverridesForRead(reader: Reader, prior: Maybe[Map[String, Int]]): Unit =
+        prior match
+            case Maybe.Present(overrides) =>
+                reader match
+                    case pr: ProtobufReader => val _ = pr.withFieldIdOverrides(overrides)
+                    case _                  => ()
+            case Maybe.Absent => ()
+    end restoreFieldIdOverridesForRead
+
     /** Reads a value from a Reader, dispatching to direct or transform-aware path.
       *
       * A non-serializable Schema throws `SchemaNotSerializableException` from inside its own `serializeRead` body (the sentinel lambda
       * installed by `Schema.create`/`createFrom`/`createWithFocused`).
+      *
+      * Top-level threading: covers a hand-written Schema whose `serializeRead` does not self-thread
+      * (`Structure.scala`, `Json.scala` meta-schemas); redundant-but-harmless for every
+      * `Schema.init`-derived schema, which threads again (and restores) inside `serializeRead`. Do
+      * NOT delete it; it is the only threading for the meta-schemas.
       */
     def readFrom[A](schema: Schema[A], reader: Reader): A =
+        val _ = threadFieldIdOverridesForRead(schema, reader)
         schema.serializeRead(reader)
 
     /** Transform-aware deserialization path.
@@ -473,6 +637,22 @@ private[kyo] object SchemaSerializer:
       * (by pre-populating their slots with zero values so required-field checks pass).
       */
     def readWithTransforms[A](schema: Schema[A], reader: Reader): A =
+        // `Schema.init`'s `serializeRead` override threads a schema's own field-id overrides
+        // unconditionally, before branching on `hasReadTransforms`, for every schema reached at any
+        // nesting depth (a container element, a product field, or the outermost schema passed to
+        // `Schema.decode[C]` / `Protobuf.decode`). This block's own thread call is therefore
+        // redundant with that upstream call on every path that reaches here (`transformedRead` and
+        // its `readChain`/`readWithDiscriminatorField` representation-retry helpers all operate on
+        // the same schema instance whose `serializeRead` already threaded it). The call here is an
+        // idempotent no-op on those paths and keeps this function correct standing alone for any
+        // caller that does not route through `serializeRead`.
+        val fieldIdOverrides = schema.fieldIdNameOverrides
+        if fieldIdOverrides.nonEmpty then
+            reader match
+                case pr: ProtobufReader => val _ = pr.withFieldIdOverrides(fieldIdOverrides)
+                case _                  => ()
+        end if
+
         // Build reverse rename map: external name (in JSON) -> original field name
         val forwardMap = schema.renamedFields.toMap
 
@@ -544,9 +724,13 @@ private[kyo] object SchemaSerializer:
                         case Some(fieldDefault) =>
                             Some(SyntheticField(field.name, () => materializeDefault(fieldDefault)))
                         case None if omitDefaultedNames.contains(field.name) =>
-                            val zero = zeroForField(field)
-                            if zero == null then None
-                            else Some(SyntheticField(field.name, () => zeroToStructureValue(zero)))
+                            if isOrderedDictOrDictTag(field) then
+                                emptyMappingWireValue(schema, field.name)
+                                    .map(v => SyntheticField(field.name, () => v))
+                            else
+                                val zero = zeroForField(field)
+                                if zero == null then None
+                                else Some(SyntheticField(field.name, () => zeroToStructureValue(zero)))
                         case None =>
                             None
                     end match
@@ -646,6 +830,9 @@ private[kyo] object SchemaSerializer:
                 case c: Char                  => Structure.Value.Str(c.toString)
                 case bd: BigDecimal           => Structure.Value.BigNum(bd)
                 case bi: BigInt               => Structure.Value.BigNum(BigDecimal(bi))
+                case bytes: Array[Byte]       => Structure.Value.Bytes(Span.from(bytes))
+                case i: java.time.Instant     => Structure.Value.Instant(i)
+                case d: java.time.Duration    => Structure.Value.Duration(d)
                 case m: (Maybe[?] @unchecked) => m.fold(Structure.Value.Null)(v => anyToStructureValue(v))
                 case o: Option[?]             => o.fold(Structure.Value.Null)(v => anyToStructureValue(v))
                 case sv: Structure.Value      => sv
@@ -665,27 +852,77 @@ private[kyo] object SchemaSerializer:
         end match
     end zeroToStructureValue
 
-    /** Writes a Structure.Value tree to a Writer. Reverse of StructureValueWriter. */
-    def writeStructureValue(writer: Writer, value: Structure.Value): Unit =
+    /** Unwraps Optional layers down to the first non-Optional type. `Structure.Value` never
+      * materializes a distinct node for `Optional` (the wrapped value is written directly, or the
+      * field is omitted), so a Maybe/Option-wrapped field's declared shape must see through the
+      * wrapper to reach the type that actually guides the Record replay below.
+      */
+    @tailrec private def unwrapOptionalShape(tpe: Structure.Type): Structure.Type =
+        tpe match
+            case Structure.Type.Optional(_, _, inner) => unwrapOptionalShape(inner)
+            case other                                => other
+
+    /** Writes a Structure.Value tree to a Writer. Reverse of StructureValueWriter.
+      *
+      * `shape` is an optional type hint carried down from the originating Schema's structure. It
+      * exists to break a genuine ambiguity in `Structure.Value`: `StructureValueWriter` materializes
+      * both a product and a string-keyed map as `Record` (`mapStart`/`mapEnd` build the same
+      * `ObjectFrame` as `objectStart`/`objectEnd`), so replaying a `Record` with no further
+      * information cannot tell the two apart. That is harmless for a self-describing codec, where an
+      * object and a map write identically, but Protobuf's wire encoding of the two is NOT
+      * interchangeable: an object is one nested sub-message under the field's own number, while a map
+      * is a REPEATED MapEntry sub-message per entry (key at field 1, value at field 2) under that
+      * same number. Replaying a map with object framing corrupts the wire (each entry key becomes a
+      * bogus hash-derived field number instead of a MapEntry key). When `shape` resolves to
+      * `Mapping`, the `Record` writes as a map; otherwise (no hint, or a genuine `Product`) it writes
+      * as an object, matching the shape-free behavior every caller other than `writeWithTransforms`
+      * still relies on.
+      */
+    def writeStructureValue(writer: Writer, value: Structure.Value, shape: Maybe[Structure.Type] = Maybe.empty): Unit =
         value match
             case Structure.Value.Record(fields) =>
-                writer.objectStart("", fields.size)
-                fields.foreach { (name, v) =>
-                    writer.fieldBytes(
-                        name.getBytes(java.nio.charset.StandardCharsets.UTF_8),
-                        CodecMacro.fieldId(name)
-                    )
-                    writeStructureValue(writer, v)
-                }
-                writer.objectEnd()
+                val resolvedShape = shape.map(unwrapOptionalShape)
+                resolvedShape match
+                    case Maybe.Present(Structure.Type.Mapping(_, _, _, valueType)) =>
+                        val valueShape = Maybe(unwrapOptionalShape(valueType))
+                        writer.mapStart(fields.size)
+                        fields.foreach { (name, v) =>
+                            writer.fieldBytes(name.getBytes(java.nio.charset.StandardCharsets.UTF_8), 0)
+                            writeStructureValue(writer, v, valueShape)
+                        }
+                        writer.mapEnd()
+                    case _ =>
+                        val fieldShapes: Map[String, Structure.Type] = resolvedShape match
+                            case Maybe.Present(p: Structure.Type.Product) =>
+                                p.fields.iterator.map(f => f.name -> unwrapOptionalShape(f.fieldType)).toMap
+                            case _ =>
+                                Map.empty
+                        writer.objectStart("", fields.size)
+                        fields.foreach { (name, v) =>
+                            writer.fieldBytes(
+                                name.getBytes(java.nio.charset.StandardCharsets.UTF_8),
+                                CodecMacro.fieldId(name)
+                            )
+                            writeStructureValue(writer, v, Maybe.fromOption(fieldShapes.get(name)))
+                        }
+                        writer.objectEnd()
+                end match
             case Structure.Value.Sequence(elements) =>
+                val elemShape = shape.map(unwrapOptionalShape) match
+                    case Maybe.Present(Structure.Type.Collection(_, _, elem)) => Maybe(unwrapOptionalShape(elem))
+                    case _                                                    => Maybe.empty
                 writer.arrayStart(elements.size)
-                elements.foreach(e => writeStructureValue(writer, e))
+                elements.foreach(e => writeStructureValue(writer, e, elemShape))
                 writer.arrayEnd()
             case Structure.Value.MapEntries(entries) =>
                 // Shape-aware MapEntries:
                 //   * all-String keys -> JSON object with each key as a field; round-trips through the universal Record shape.
                 //   * mixed/non-String keys -> array-of-pairs; non-String keys are inexpressible as JSON field names.
+                val (keyShape, valueShape) = shape.map(unwrapOptionalShape) match
+                    case Maybe.Present(Structure.Type.Mapping(_, _, k, v)) =>
+                        (Maybe(unwrapOptionalShape(k)), Maybe(unwrapOptionalShape(v)))
+                    case _ =>
+                        (Maybe.empty, Maybe.empty)
                 val allStringKeys = entries.forall {
                     case (Structure.Value.Str(_), _) => true
                     case _                           => false
@@ -698,15 +935,15 @@ private[kyo] object SchemaSerializer:
                                 writer.fieldBytes(s.getBytes(java.nio.charset.StandardCharsets.UTF_8), 0)
                             case _ => () // unreachable; allStringKeys is true
                         end match
-                        writeStructureValue(writer, v)
+                        writeStructureValue(writer, v, valueShape)
                     }
                     writer.mapEnd()
                 else
                     writer.arrayStart(entries.size)
                     entries.foreach { (k, v) =>
                         writer.arrayStart(2)
-                        writeStructureValue(writer, k)
-                        writeStructureValue(writer, v)
+                        writeStructureValue(writer, k, keyShape)
+                        writeStructureValue(writer, v, valueShape)
                         writer.arrayEnd()
                     }
                     writer.arrayEnd()
@@ -724,10 +961,13 @@ private[kyo] object SchemaSerializer:
             case Structure.Value.Integer(l) =>
                 if l >= Int.MinValue && l <= Int.MaxValue then writer.int(l.toInt)
                 else writer.long(l)
-            case Structure.Value.Decimal(d) => writer.double(d)
-            case Structure.Value.Bool(b)    => writer.boolean(b)
-            case Structure.Value.BigNum(bd) => writer.bigDecimal(bd)
-            case Structure.Value.Null       => writer.nil()
+            case Structure.Value.Decimal(d)  => writer.double(d)
+            case Structure.Value.Bool(b)     => writer.boolean(b)
+            case Structure.Value.BigNum(bd)  => writer.bigDecimal(bd)
+            case Structure.Value.Bytes(b)    => writer.bytes(b)
+            case Structure.Value.Instant(i)  => writer.instant(i)
+            case Structure.Value.Duration(d) => writer.duration(d)
+            case Structure.Value.Null        => writer.nil()
 
     /** Returns a zero/default value for a dropped field so required-field null checks pass during decode.
       *
@@ -752,13 +992,31 @@ private[kyo] object SchemaSerializer:
         show.startsWith("scala.collection.Set[")
     end isSetTag
 
-    /** True iff `field`'s declared type is a sequence-like collection, a set, or a map: the exact
-      * set for which [[zeroForField]] seeds a typed empty value. The encode-time omit gate consults
-      * this so an empty product (which also materializes as an empty `Record`) is never mistaken for
-      * an empty collection.
+    /** True iff `field`'s declared type is `OrderedDict[K, V]` or `Dict[K, V]`. Both are opaque
+      * types over an erased union (`Span[K | V] | TreeSeqMap[K, V]` / `Span[K | V] | HashMap[K, V]`),
+      * so their `Tag.show` is the SAME opaque-bound string for every key/value instantiation (unlike
+      * `Map`, whose show carries the element types): neither a `<:<` check nor a `scala.collection.*`
+      * show-prefix check can discriminate them. A show-prefix check against the opaque type's own
+      * qualified name is the only reliable discriminator, the same idiom `isMapTag` uses for its own
+      * variance gap.
+      */
+    private def isOrderedDictOrDictTag(field: Field[?, ?]): Boolean =
+        val show = field.tag.show
+        show.startsWith("(kyo.OrderedDict$package$.OrderedDict ") ||
+        show.startsWith("(kyo.Dict$package$.Dict ")
+    end isOrderedDictOrDictTag
+
+    /** True iff `field`'s declared type is a sequence-like collection, a set, or a map (including
+      * the opaque `OrderedDict`/`Dict` map types): the exact set the encode-time omit gate and the
+      * decode-time synthetic-injection gate both consult, so an empty product (which also
+      * materializes as an empty `Record`) is never mistaken for an empty collection. `OrderedDict`
+      * and `Dict` fields synthesize their decode-time zero value from the schema's declared
+      * structure (see [[emptyMappingWireValue]]) rather than from [[zeroForField]], since their
+      * opaque erasure gives `zeroForField` no runtime shape to introspect.
       */
     private def isCollectionOrMapTag(field: Field[?, ?]): Boolean =
         isMapTag(field) ||
+            isOrderedDictOrDictTag(field) ||
             isSetTag(field) ||
             field.tag <:< Tag[List[Any]] ||
             field.tag <:< Tag[Vector[Any]] ||
@@ -792,6 +1050,49 @@ private[kyo] object SchemaSerializer:
         end zeroFromTag
         field.default.fold(zeroFromTag)(_.asInstanceOf[AnyRef])
     end zeroForField
+
+    /** Returns the empty wire-shape `Structure.Value` for `fieldName`'s declared field type, when
+      * that field is an `OrderedDict`/`Dict` (a `Structure.Type.Mapping`). Used in place of
+      * [[zeroForField]] + [[zeroToStructureValue]] for these two types: both are opaque types whose
+      * empty value erases to a bare `Span`-backed array with no reliable runtime shape to
+      * pattern-match (unlike `Map`, a real generic class `zeroToStructureValue` matches directly), so
+      * the empty value is derived from the field's DECLARED structure instead of from an instance.
+      *
+      * A String key selects the `Record` (object) form, any other key the `Sequence` (array) form.
+      * This matches the default given resolution: the object-form given (`stringDictSchema`,
+      * `stringOrderedDictSchema`) is the more specific one for a String key and wins by default, and the
+      * array-form given (`dictSchema`, `orderedDictSchema`) is the only one for every other key. It is
+      * derived from the declared key structure because the declared structure is all that is reachable
+      * here; the wire form is a property of the bound given, and the field's own writer is not exposed
+      * on this path.
+      *
+      * Known boundary: a caller that explicitly binds the array-form given for a String key (rather
+      * than the object-form default) declares a structure byte-identical to the object-form given's,
+      * so this returns the object empty value while the bound reader expects the array form, and the
+      * decode fails with a typed `TypeMismatchException`. It fails loud, never silently, and only under
+      * that explicit non-default binding. Tracked in getkyo/kyo#1748.
+      *
+      * Returns `None` when `schema.structure` is not a `Product`, or carries no field named
+      * `fieldName`; this should not happen for a schema whose `sourceFields` supplied `fieldName` in
+      * the first place, but the empty result keeps the caller total rather than throwing.
+      */
+    private def emptyMappingWireValue[A](schema: Schema[A], fieldName: String): Option[Structure.Value] =
+        schema.structure match
+            case p: Structure.Type.Product =>
+                p.fields.find(_.name == fieldName).map { f =>
+                    unwrapOptionalShape(f.fieldType) match
+                        case Structure.Type.Mapping(_, _, keyType, _) =>
+                            unwrapOptionalShape(keyType) match
+                                case Structure.Type.Primitive(Structure.PrimitiveKind.String, _) =>
+                                    Structure.Value.Record(Chunk.empty)
+                                case _ =>
+                                    Structure.Value.Sequence(Chunk.empty)
+                        case _ =>
+                            Structure.Value.Sequence(Chunk.empty)
+                }
+            case _ =>
+                None
+    end emptyMappingWireValue
 
     /** Discriminator-aware deserialization path.
       *
@@ -1826,11 +2127,10 @@ private[kyo] object SchemaSerializer:
         private var _pendingSyntheticValue: Structure.Value = Structure.Value.Record(Chunk.empty)
 
         def objectEnd(): Unit =
-            if _syntheticReader.nonEmpty then
+            if _syntheticActive then
                 _syntheticReader.get.objectEnd()
-                if _syntheticActive then
-                    _syntheticDepth -= 1
-                    if _syntheticDepth == 0 then clearSynthetic()
+                _syntheticDepth -= 1
+                if _syntheticDepth == 0 then clearSynthetic()
             else inner.objectEnd()
 
         override def arrayStart(): Int =
@@ -1841,16 +2141,21 @@ private[kyo] object SchemaSerializer:
             else inner.arrayStart()
 
         override def arrayEnd(): Unit =
-            if _syntheticReader.nonEmpty then
+            if _syntheticActive then
                 _syntheticReader.get.arrayEnd()
-                if _syntheticActive then
-                    _syntheticDepth -= 1
-                    if _syntheticDepth == 0 then clearSynthetic()
+                _syntheticDepth -= 1
+                if _syntheticDepth == 0 then clearSynthetic()
             else inner.arrayEnd()
 
+        // field() reads the NEXT wire key of a map/keyed collection entry (Schema.scala's
+        // Map[String, V] and tuple-as-object codecs call it in that role); it is unrelated to the
+        // enclosing object's OWN field name, which lastFieldName() reports from _translatedField.
+        // Delegating unconditionally (never consulting _translatedField) keeps a real, non-synthetic
+        // Map field's keys wired to the underlying reader even when this object also carries a
+        // field transform elsewhere.
         def field(): String =
             if _syntheticReader.nonEmpty then _syntheticReader.get.field()
-            else _translatedField.getOrElse(inner.field())
+            else inner.field()
 
         override def hasNextField(): Boolean =
             if _syntheticReader.nonEmpty then _syntheticReader.get.hasNextField()
@@ -1974,11 +2279,10 @@ private[kyo] object SchemaSerializer:
             else inner.mapStart()
 
         override def mapEnd(): Unit =
-            if _syntheticReader.nonEmpty then
+            if _syntheticActive then
                 _syntheticReader.get.mapEnd()
-                if _syntheticActive then
-                    _syntheticDepth -= 1
-                    if _syntheticDepth == 0 then clearSynthetic()
+                _syntheticDepth -= 1
+                if _syntheticDepth == 0 then clearSynthetic()
             else inner.mapEnd()
 
         override def hasNextEntry(): Boolean =

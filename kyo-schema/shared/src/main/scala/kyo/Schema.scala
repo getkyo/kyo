@@ -133,6 +133,27 @@ abstract class Schema[A] @publicInBinary private[kyo] (
                     case Schema.UnionRepresentation.Untagged =>
                         internal.SchemaSerializer.readUntagged(this, reader)
 
+    /** Threads this schema's own field-id overrides onto a Protobuf writer/reader, at whatever nesting
+      * depth this schema is reached (the outermost schema passed to `Schema.encode[C]`/`Protobuf.encode`,
+      * a container element, or a product field). NON-inline for the same reason `transformedWrite` /
+      * `transformedRead` are: the `private[kyo]` `SchemaSerializer` reference is compiled here in
+      * `package kyo`, never inlined into a user `derives Schema` site, where a bare package-qualified
+      * reference inside `Schema.init`'s inline `serializeWrite` / `serializeRead` body would be re-emitted
+      * at the derivation call site and fail to resolve. `Schema.init`'s inline `serializeWrite` /
+      * `serializeRead` call these unconditionally, before branching on `hasTransforms` / `hasReadTransforms`,
+      * and pair each call with the matching `restoreFieldIdOverridesFor*` in a `finally` block, so a
+      * nested schema's own pin is scoped to its own call and never permanently replaces an ancestor's
+      * pin for the remainder of the ancestor's write/read.
+      */
+    @publicInBinary private[kyo] def threadFieldIdOverridesForWrite(writer: Writer): Maybe[Map[String, Int]] =
+        internal.SchemaSerializer.threadFieldIdOverridesForWrite(this, writer)
+    @publicInBinary private[kyo] def restoreFieldIdOverridesForWrite(writer: Writer, prior: Maybe[Map[String, Int]]): Unit =
+        internal.SchemaSerializer.restoreFieldIdOverridesForWrite(writer, prior)
+    @publicInBinary private[kyo] def threadFieldIdOverridesForRead(reader: Reader): Maybe[Map[String, Int]] =
+        internal.SchemaSerializer.threadFieldIdOverridesForRead(this, reader)
+    @publicInBinary private[kyo] def restoreFieldIdOverridesForRead(reader: Reader, prior: Maybe[Map[String, Int]]): Unit =
+        internal.SchemaSerializer.restoreFieldIdOverridesForRead(reader, prior)
+
     /** Get the focused value out of a root A. */
     @publicInBinary private[kyo] def getter(value: A): Maybe[Any]
 
@@ -192,6 +213,7 @@ abstract class Schema[A] @publicInBinary private[kyo] (
       *   the encoded bytes in the codec's wire format
       */
     def encode[C <: Codec](value: A)(using codec: C, frame: Frame): Span[Byte] =
+        codec.validate(structure)
         val w = codec.newWriter()
         writeTo(value, w)
         w.result()
@@ -214,6 +236,7 @@ abstract class Schema[A] @publicInBinary private[kyo] (
       *   the encoded value as a UTF-8 string
       */
     def encodeString[C <: Codec](value: A)(using codec: C, frame: Frame): String =
+        codec.validate(structure)
         val writer = codec.newWriter()
         internal.SchemaSerializer.writeTo(this, value, writer)
         writer.resultString
@@ -660,6 +683,12 @@ abstract class Schema[A] @publicInBinary private[kyo] (
     /** Schema-wide policy: omit empty collection/map fields on encode (emit no key, not `[]`/`{}`),
       * and decode-default a missing collection/map field to the typed empty value. Per-field
       * `omit(_.x).whenEmpty` overrides this for a specific field.
+      *
+      * One binding is not yet supported: an empty `Dict`/`OrderedDict` field whose schema is the
+      * explicitly-bound array-form given (`dictSchema`/`orderedDictSchema`) for a `String` key, rather
+      * than the object-form default. Under this policy it omits on encode but fails to decode with a
+      * typed `TypeMismatchException`. The default given for a `String` key is unaffected. Tracked in
+      * getkyo/kyo#1748.
       */
     def omitEmptyCollections: Schema[A] { type Focused = Schema.this.Focused } =
         Schema.copyWith(this)(omitEmptyCollectionsAll = true)
@@ -970,7 +999,7 @@ abstract class Schema[A] @publicInBinary private[kyo] (
 
     /** Returns the stable field ID for a given field name.
       *
-      * Field IDs are computed using XXH32 of the field name, producing stable 21-bit positive integers. These IDs are used by binary
+      * Field IDs are computed by applying XXH32 to the field name's JLS string hash, producing stable 21-bit positive integers. These IDs are used by binary
       * formats like Protocol Buffers and MessagePack for schema evolution compatibility.
       *
       * The ID remains stable across:
@@ -1052,6 +1081,12 @@ abstract class Schema[A] @publicInBinary private[kyo] (
       * {{{
       * Schema[User].fieldId(_.age)(42)  // Sets field ID 42 for the 'age' field
       * }}}
+      *
+      * A sealed trait or Scala 3 enum always derives each of its own variants' Schema fresh, so a
+      * standalone `given Schema[Variant] = Schema[Variant].fieldId(...)` declared for one specific
+      * variant type is never consulted by the parent sum's derivation. To pin a field number on a
+      * specific variant's field, annotate that field directly with `@proto.fieldNumber(n)`
+      * (`kyo.schema.proto.fieldNumber`), which derivation captures straight off the variant's fields.
       *
       * @param focus
       *   Focus lambda navigating to the field
@@ -1186,6 +1221,11 @@ abstract class Schema[A] @publicInBinary private[kyo] (
       * Mapping, or Open. Schema.transform preserves the structure of the source schema.
       */
     def structure: Structure.Type
+
+    @publicInBinary private[kyo] def writerForAnnotations(writer: Writer): Writer =
+        if writer.canWriteAnnotations then Schema.writerWithAnnotations(structure, writer)
+        else writer
+    end writerForAnnotations
 
     // --- Structural field operations ---
 
@@ -1475,6 +1515,171 @@ end Schema
 
 object Schema:
 
+    private[kyo] def annotationsFor(structure: Structure.Type): Chunk[Any] =
+        structure match
+            case product: Structure.Type.Product => product.annotations
+            case sum: Structure.Type.Sum         => sum.annotations
+            case _                               => Chunk.empty
+        end match
+    end annotationsFor
+
+    private[kyo] def writerWithAnnotations(structure: Structure.Type, writer: Writer): Writer =
+        if !writer.canWriteAnnotations then writer
+        else
+            val rootAnnotations = annotationsFor(structure)
+            val fieldAnnotations = structure match
+                case product: Structure.Type.Product =>
+                    product.fields.foldLeft(Map.empty[String, Chunk[Any]]) { (acc, field) =>
+                        if field.annotations.isEmpty then acc else acc.updated(field.name, field.annotations)
+                    }
+                case sum: Structure.Type.Sum =>
+                    sum.variants.foldLeft(Map.empty[String, Chunk[Any]]) { (acc, variant) =>
+                        if variant.annotations.isEmpty then acc else acc.updated(variant.name, variant.annotations)
+                    }
+                case _ =>
+                    Map.empty[String, Chunk[Any]]
+            if rootAnnotations.isEmpty && fieldAnnotations.isEmpty then writer
+            else
+                val annotated = AnnotationWriter(writer, fieldAnnotations)
+                annotated.annotations(rootAnnotations)
+                annotated
+            end if
+        end if
+    end writerWithAnnotations
+
+    final private class AnnotationWriter(delegate: Writer, fieldAnnotations: Map[String, Chunk[Any]]) extends Writer:
+        private var pendingAnnotations: Chunk[Any] = Chunk.empty
+
+        override def canWriteTopLevelNonObject: Boolean = delegate.canWriteTopLevelNonObject
+        override def canWriteAnnotations: Boolean       = delegate.canWriteAnnotations
+        override def codecName: String                  = delegate.codecName
+        override def capabilities: Codec.Capabilities   = delegate.capabilities
+
+        override def annotations(values: Chunk[Any]): Unit =
+            if values.nonEmpty then pendingAnnotations = pendingAnnotations ++ values
+        end annotations
+
+        def objectStart(name: String, size: Int): Unit =
+            beforeValue()
+            delegate.objectStart(name, size)
+        end objectStart
+
+        def objectEnd(): Unit =
+            delegate.objectEnd()
+
+        def arrayStart(size: Int): Unit =
+            beforeValue()
+            delegate.arrayStart(size)
+        end arrayStart
+
+        def arrayEnd(): Unit =
+            delegate.arrayEnd()
+
+        def fieldBytes(nameBytes: Array[Byte], fieldId: Int): Unit =
+            val name = new String(nameBytes, java.nio.charset.StandardCharsets.UTF_8)
+            delegate.fieldBytes(nameBytes, fieldId)
+            pendingAnnotations = fieldAnnotations.getOrElse(name, Chunk.empty)
+        end fieldBytes
+
+        override def field(name: String, fieldId: Int): Unit =
+            delegate.field(name, fieldId)
+            pendingAnnotations = fieldAnnotations.getOrElse(name, Chunk.empty)
+        end field
+
+        def string(value: String): Unit =
+            beforeValue()
+            delegate.string(value)
+        end string
+
+        def int(value: Int): Unit =
+            beforeValue()
+            delegate.int(value)
+        end int
+
+        def long(value: Long): Unit =
+            beforeValue()
+            delegate.long(value)
+        end long
+
+        def float(value: Float): Unit =
+            beforeValue()
+            delegate.float(value)
+        end float
+
+        def double(value: Double): Unit =
+            beforeValue()
+            delegate.double(value)
+        end double
+
+        def boolean(value: Boolean): Unit =
+            beforeValue()
+            delegate.boolean(value)
+        end boolean
+
+        def short(value: Short): Unit =
+            beforeValue()
+            delegate.short(value)
+        end short
+
+        def byte(value: Byte): Unit =
+            beforeValue()
+            delegate.byte(value)
+        end byte
+
+        def char(value: Char): Unit =
+            beforeValue()
+            delegate.char(value)
+        end char
+
+        def nil(): Unit =
+            beforeValue()
+            delegate.nil()
+        end nil
+
+        def mapStart(size: Int): Unit =
+            beforeValue()
+            delegate.mapStart(size)
+        end mapStart
+
+        def mapEnd(): Unit =
+            delegate.mapEnd()
+
+        def bytes(value: Span[Byte]): Unit =
+            beforeValue()
+            delegate.bytes(value)
+        end bytes
+
+        def bigInt(value: BigInt): Unit =
+            beforeValue()
+            delegate.bigInt(value)
+        end bigInt
+
+        def bigDecimal(value: BigDecimal): Unit =
+            beforeValue()
+            delegate.bigDecimal(value)
+        end bigDecimal
+
+        def instant(value: java.time.Instant): Unit =
+            beforeValue()
+            delegate.instant(value)
+        end instant
+
+        def duration(value: java.time.Duration): Unit =
+            beforeValue()
+            delegate.duration(value)
+        end duration
+
+        def result(): Span[Byte] =
+            delegate.result()
+
+        private def beforeValue(): Unit =
+            if pendingAnnotations.nonEmpty then
+                delegate.annotations(pendingAnnotations)
+                pendingAnnotations = Chunk.empty
+            end if
+        end beforeValue
+    end AnnotationWriter
+
     /** Core factory: inlines the caller's four lambdas into the abstract method bodies of a fresh `new Schema[A] { ... }` subclass.
       * Because `writeFn`, `readFn`, `getterFn`, `setterFn` are `inline` parameters, Scala 3 substitutes the caller's expression directly
       * into the method body: no `Function` closure is allocated.
@@ -1565,11 +1770,22 @@ object Schema:
             fieldMaterializedDefaults
         ):
             @publicInBinary def serializeWrite(value: A, writer: Writer): Unit =
-                if hasTransforms then transformedWrite(value, writer)
-                else rawSerializeWrite(value, writer)
+                val writeWriter           = writerForAnnotations(writer)
+                val priorFieldIdOverrides = threadFieldIdOverridesForWrite(writeWriter)
+                try
+                    if hasTransforms then transformedWrite(value, writeWriter)
+                    else rawSerializeWrite(value, writeWriter)
+                finally restoreFieldIdOverridesForWrite(writeWriter, priorFieldIdOverrides)
+                end try
+            end serializeWrite
             @publicInBinary def serializeRead(reader: Reader): A =
-                if hasReadTransforms then transformedRead(reader)
-                else rawSerializeRead(reader)
+                val priorFieldIdOverrides = threadFieldIdOverridesForRead(reader)
+                try
+                    if hasReadTransforms then transformedRead(reader)
+                    else rawSerializeRead(reader)
+                finally restoreFieldIdOverridesForRead(reader, priorFieldIdOverrides)
+                end try
+            end serializeRead
             @publicInBinary override def rawSerializeWrite(value: A, writer: Writer): Unit = writeFn(value, writer)
             @publicInBinary override def rawSerializeRead(reader: Reader): A               = readFn(reader)
             @publicInBinary def getter(value: A): Maybe[Any]                               = getterFn(value)
@@ -2180,7 +2396,7 @@ object Schema:
         Schema.init[java.time.Instant](
             writeFn = (v, w) => w.instant(v),
             readFn = _.instant(),
-            structure = Structure.Type.Primitive(Structure.PrimitiveKind.String, Tag[java.time.Instant].asInstanceOf[Tag[Any]])
+            structure = Structure.Type.Primitive(Structure.PrimitiveKind.Instant, Tag[java.time.Instant].asInstanceOf[Tag[Any]])
         )
 
     /** Schema for java.time.Duration values. */
@@ -2188,7 +2404,7 @@ object Schema:
         Schema.init[java.time.Duration](
             writeFn = (v, w) => w.duration(v),
             readFn = _.duration(),
-            structure = Structure.Type.Primitive(Structure.PrimitiveKind.String, Tag[java.time.Duration].asInstanceOf[Tag[Any]])
+            structure = Structure.Type.Primitive(Structure.PrimitiveKind.Duration, Tag[java.time.Duration].asInstanceOf[Tag[Any]])
         )
 
     /** Schema for kyo.Instant values. */
@@ -2248,7 +2464,7 @@ object Schema:
             writeFn = (v, w) => w.bytes(v),
             readFn = _.bytes(),
             absentDefaultValue = Maybe(Span.empty[Byte]),
-            structure = Structure.Type.Primitive(Structure.PrimitiveKind.String, Tag[Span[Byte]].asInstanceOf[Tag[Any]])
+            structure = Structure.Type.Primitive(Structure.PrimitiveKind.Bytes, Tag[Span[Byte]].asInstanceOf[Tag[Any]])
         )
 
     /** Frame schema: serializes as the raw encoded string. Frame is an opaque type backed by String at runtime.
@@ -2614,8 +2830,8 @@ object Schema:
     /** Schema for Map[K, V] with non-String keys.
       *
       * `stringMapSchema` is the more specific given for `Map[String, V]` (object encoding); this
-      * general given covers every other key type so `Map[Int, V]` and friends derive and round-trip
-      * on all codecs. Each entry is written as a two-field record (`key`, `value`): the Protobuf
+      * general given covers every other key type, so `Map[Int, V]` and friends derive. Each entry
+      * is written as a two-field record (`key`, `value`): the Protobuf
       * codec renders this as a standard proto3 `MapEntry` message, and self-describing codecs render
       * an array of `{key, value}` objects (a non-String key cannot be an object field name).
       */
@@ -2646,10 +2862,10 @@ object Schema:
                         // hasNextField advances past the inter-field separator (a no-op for
                         // Protobuf, the comma for a self-describing codec) before each field read.
                         discard(reader.hasNextField())
-                        val _ = reader.field() // "key"
+                        discard(reader.field()) // "key"
                         val k = kSchema.serializeRead(reader)
                         discard(reader.hasNextField())
-                        val _ = reader.field() // "value"
+                        discard(reader.field()) // "value"
                         val v = vSchema.serializeRead(reader)
                         reader.objectEnd()
                         builder += (k -> v)
@@ -2841,6 +3057,7 @@ object Schema:
                 reader.mapEnd()
                 dict
             ,
+            absentDefaultValue = Maybe(Dict.empty[String, V]),
             // Non-inline givens have no implicit Tag[V] in scope; fall back to Tag[Any].
             structure = Structure.Type.Mapping(
                 "Dict",
@@ -2851,7 +3068,14 @@ object Schema:
         )
     end stringDictSchema
 
-    /** Schema for Dict[K, V] with non-String keys - serializes as array of [k, v] pairs. */
+    /** Schema for Dict[K, V] with non-String keys.
+      *
+      * `stringDictSchema` is the more specific given for `Dict[String, V]` (object encoding); this
+      * general given covers every other key type, so `Dict[Int, V]` and friends derive. Each entry
+      * is written as a two-field record (`key`, `value`): the Protobuf
+      * codec renders this as a standard proto3 `MapEntry` message, and self-describing codecs render
+      * an array of `{key, value}` objects (a non-String key cannot be an object field name).
+      */
     given dictSchema[K, V](using kSchema0: => Schema[K], vSchema0: => Schema[V]): Schema[Dict[K, V]] =
         lazy val kSchema = kSchema0
         lazy val vSchema = vSchema0
@@ -2859,10 +3083,12 @@ object Schema:
             writeFn = (value, writer) =>
                 writer.arrayStart(value.size)
                 value.foreach { (k, v) =>
-                    writer.arrayStart(2)
+                    writer.objectStart("", 2)
+                    writer.field("key", 1)
                     kSchema.serializeWrite(k, writer)
+                    writer.field("value", 2)
                     vSchema.serializeWrite(v, writer)
-                    writer.arrayEnd()
+                    writer.objectEnd()
                 }
                 writer.arrayEnd()
             ,
@@ -2872,16 +3098,23 @@ object Schema:
                 def loop(dict: Dict[K, V], count: Int): Dict[K, V] =
                     if reader.hasNextElement() then
                         reader.checkCollectionSize(count)
-                        discard(reader.arrayStart())
+                        discard(reader.objectStart())
+                        // hasNextField advances past the inter-field separator (a no-op for
+                        // Protobuf, the comma for a self-describing codec) before each field read.
+                        discard(reader.hasNextField())
+                        discard(reader.field()) // "key"
                         val k = kSchema.serializeRead(reader)
+                        discard(reader.hasNextField())
+                        discard(reader.field()) // "value"
                         val v = vSchema.serializeRead(reader)
-                        reader.arrayEnd()
+                        reader.objectEnd()
                         loop(dict.update(k, v), count + 1)
                     else dict
                 val dict = loop(Dict.empty[K, V], 1)
                 reader.arrayEnd()
                 dict
             ,
+            absentDefaultValue = Maybe(Dict.empty[K, V]),
             // Non-inline givens have no implicit Tag[K] + Tag[V] in scope; fall back to Tag[Any].
             structure = Structure.Type.Mapping(
                 "Dict",
@@ -2891,6 +3124,117 @@ object Schema:
             )
         )
     end dictSchema
+
+    /** Schema for OrderedDict[String, V] - serializes as a JSON object.
+      *
+      * Note: the map's insertion order survives an encode/decode round-trip. Encoding walks the map
+      * in insertion order and decoding rebuilds it by inserting entries in wire order, so wire order
+      * becomes insertion order. For the Protobuf codec this holds between a kyo-schema encode and a
+      * kyo-schema decode: the generated `.proto` declares a `map<K, V>` field, and proto3 does
+      * not mandate entry order for map fields, so a foreign Protobuf implementation may
+      * reorder entries.
+      */
+    given stringOrderedDictSchema[V](using vSchema0: => Schema[V]): Schema[OrderedDict[String, V]] =
+        lazy val vSchema = vSchema0
+        Schema.init[OrderedDict[String, V]](
+            writeFn = (value, writer) =>
+                writer.mapStart(value.size)
+                discard(value.foldLeft(0) { (idx, k, v) =>
+                    writer.field(k, idx)
+                    vSchema.serializeWrite(v, writer)
+                    idx + 1
+                })
+                writer.mapEnd()
+            ,
+            readFn = reader =>
+                discard(reader.mapStart())
+                @tailrec
+                def loop(map: OrderedDict[String, V], count: Int): OrderedDict[String, V] =
+                    if reader.hasNextEntry() then
+                        reader.checkCollectionSize(count)
+                        val k = reader.field()
+                        val v = vSchema.serializeRead(reader)
+                        loop(map.update(k, v), count + 1)
+                    else map
+                val map = loop(OrderedDict.empty[String, V], 1)
+                reader.mapEnd()
+                map
+            ,
+            absentDefaultValue = Maybe(OrderedDict.empty[String, V]),
+            // Non-inline givens have no implicit Tag[V] in scope; fall back to Tag[Any].
+            structure = Structure.Type.Mapping(
+                "OrderedDict",
+                Tag[Any],
+                Structure.Type.Primitive(Structure.PrimitiveKind.String, Tag[String].asInstanceOf[Tag[Any]]),
+                vSchema.structure
+            )
+        )
+    end stringOrderedDictSchema
+
+    /** Schema for OrderedDict[K, V] with non-String keys.
+      *
+      * `stringOrderedDictSchema` is the more specific given for `OrderedDict[String, V]` (object
+      * encoding); this general given covers every other key type. Each entry is written as a
+      * two-field record (`key`, `value`), the same form `mapSchema` and `dictSchema` use: the
+      * Protobuf codec renders this as a standard proto3 `MapEntry` message, and self-describing
+      * codecs render an array of `{key, value}` objects (a non-String key cannot be an object field
+      * name).
+      *
+      * Note: the map's insertion order survives an encode/decode round-trip. Encoding walks the map
+      * in insertion order and decoding rebuilds it by inserting entries in wire order, so wire order
+      * becomes insertion order. For the Protobuf codec this holds between a kyo-schema encode and
+      * a kyo-schema decode: for every key type reachable under the default `Conformance.Strict` the
+      * generated `.proto` declares a `map<K, V>` field, and proto3 does not mandate entry order for
+      * map fields, so a foreign Protobuf implementation may reorder entries.
+      */
+    given orderedDictSchema[K, V](using kSchema0: => Schema[K], vSchema0: => Schema[V]): Schema[OrderedDict[K, V]] =
+        lazy val kSchema = kSchema0
+        lazy val vSchema = vSchema0
+        Schema.init[OrderedDict[K, V]](
+            writeFn = (value, writer) =>
+                writer.arrayStart(value.size)
+                value.foreach { (k, v) =>
+                    writer.objectStart("", 2)
+                    writer.field("key", 1)
+                    kSchema.serializeWrite(k, writer)
+                    writer.field("value", 2)
+                    vSchema.serializeWrite(v, writer)
+                    writer.objectEnd()
+                }
+                writer.arrayEnd()
+            ,
+            readFn = reader =>
+                discard(reader.arrayStart())
+                @tailrec
+                def loop(map: OrderedDict[K, V], count: Int): OrderedDict[K, V] =
+                    if reader.hasNextElement() then
+                        reader.checkCollectionSize(count)
+                        discard(reader.objectStart())
+                        // hasNextField advances past the inter-field separator (a no-op for
+                        // Protobuf, the comma for a self-describing codec) before each field read.
+                        discard(reader.hasNextField())
+                        discard(reader.field()) // "key"
+                        val k = kSchema.serializeRead(reader)
+                        discard(reader.hasNextField())
+                        discard(reader.field()) // "value"
+                        val v = vSchema.serializeRead(reader)
+                        reader.objectEnd()
+                        loop(map.update(k, v), count + 1)
+                    else map
+                val map = loop(OrderedDict.empty[K, V], 1)
+                reader.arrayEnd()
+                map
+            ,
+            absentDefaultValue = Maybe(OrderedDict.empty[K, V]),
+            // Non-inline givens have no implicit Tag[K] + Tag[V] in scope; fall back to Tag[Any].
+            structure = Structure.Type.Mapping(
+                "OrderedDict",
+                Tag[Any],
+                kSchema.structure,
+                vSchema.structure
+            )
+        )
+    end orderedDictSchema
 
     // --- Internal helpers ---
 
@@ -3095,11 +3439,22 @@ object Schema:
             type Focused = E
             @publicInBinary override private[kyo] val flattenedReadFields: Chunk[(String, String)] = flattenedReadFields0
             @publicInBinary def serializeWrite(value: A, writer: Writer): Unit =
-                if hasTransforms then transformedWrite(value, writer)
-                else rawSerializeWrite(value, writer)
+                val writeWriter           = writerForAnnotations(writer)
+                val priorFieldIdOverrides = threadFieldIdOverridesForWrite(writeWriter)
+                try
+                    if hasTransforms then transformedWrite(value, writeWriter)
+                    else rawSerializeWrite(value, writeWriter)
+                finally restoreFieldIdOverridesForWrite(writeWriter, priorFieldIdOverrides)
+                end try
+            end serializeWrite
             @publicInBinary def serializeRead(reader: Reader): A =
-                if hasReadTransforms then transformedRead(reader)
-                else rawSerializeRead(reader)
+                val priorFieldIdOverrides = threadFieldIdOverridesForRead(reader)
+                try
+                    if hasReadTransforms then transformedRead(reader)
+                    else rawSerializeRead(reader)
+                finally restoreFieldIdOverridesForRead(reader, priorFieldIdOverrides)
+                end try
+            end serializeRead
             @publicInBinary override def rawSerializeWrite(value: A, writer: Writer): Unit = writeFn(value, writer)
             @publicInBinary override def rawSerializeRead(reader: Reader): A               = readFn(reader)
             @publicInBinary def getter(value: A): Maybe[Any]                               = getterFn(value)
