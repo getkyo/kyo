@@ -177,6 +177,14 @@ private[kyo] object HostFileSystem:
         def syncDir(path: Path): Unit < (Sync & Abort[FileException]) =
             // Unsafe: bridges Path.Unsafe.syncDir into the safe tier
             Sync.Unsafe.defer(path.unsafe.syncDir())
+        def lock(path: Path, exclusive: Boolean): Path.FileLock < (Sync & Scope & Abort[FileException]) =
+            Scope.acquireRelease(
+                // Unsafe: bridges Path.Unsafe.lock into the safe tier
+                Sync.Unsafe.defer(Abort.get(path.unsafe.lock(exclusive)))
+            )(raw => Sync.Unsafe.defer(raw.release())).map { raw => // Unsafe: releases the vended raw lock at Scope exit
+                new Path.FileLock:
+                    def isExclusive: Boolean = raw.isExclusive
+            }
     end HostFileSystem
 
     final class RootConfinedHostFileSystem(rootReal: Path)(using Frame) extends FileSystem[Sync]:
@@ -288,5 +296,7 @@ private[kyo] object HostFileSystem:
             confined(path).andThen(host.openChannel(path, mode))
         def syncDir(path: Path): Unit < (Sync & Abort[FileException]) =
             confined(path).andThen(host.syncDir(path))
+        def lock(path: Path, exclusive: Boolean): Path.FileLock < (Sync & Scope & Abort[FileException]) =
+            confined(path).andThen(host.lock(path, exclusive))
     end RootConfinedHostFileSystem
 end HostFileSystem

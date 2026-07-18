@@ -101,6 +101,18 @@ case class FileIOException(path: Path, cause: IOException)(using Frame)
     extends FileException(s"I/O error on $path: ${cause.getMessage}", cause)
     with FileReadException with FileWriteException with FileFsException derives CanEqual
 
+/** Raised when [[FileSystem.lock]] cannot acquire an advisory lock because it is already held
+  * incompatibly by another holder (an exclusive lock excludes every other holder; a shared lock
+  * excludes only an exclusive holder). Non-blocking: raised immediately rather than waiting for
+  * the lock to free.
+  *
+  * @param path
+  *   The path the lock was requested on
+  */
+case class FileLockUnavailableException(path: Path)(using Frame)
+    extends FileException(s"Lock unavailable on $path; held incompatibly.")
+    with FileFsException derives CanEqual
+
 object FileException:
     given Render[FileException] with
         def asString(value: FileException): String = value.getMessage

@@ -87,6 +87,13 @@ trait FileSystem[S]:
     // value directly; never a Path.Op ArrowEffect case, never suspended through Path.run.
     def openChannel(path: Path, mode: FileSystem.ChannelMode): Path.Channel[S] < (S & Scope & Abort[FileException])
     def syncDir(path: Path): Unit < (S & Abort[FileException])
+
+    /** Acquires an advisory lock on `path`, Scope-released. `exclusive = true` excludes every
+      * other holder; `false` requests a shared lock admitting other concurrent shared holders
+      * while still excluding an exclusive holder. Non-blocking: fails
+      * `FileLockUnavailableException` immediately if the lock is held incompatibly, never waits.
+      */
+    def lock(path: Path, exclusive: Boolean): Path.FileLock < (S & Scope & Abort[FileException])
 end FileSystem
 
 object FileSystem:

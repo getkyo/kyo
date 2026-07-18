@@ -1145,6 +1145,13 @@ final private[kyo] class OverlayFileSystem[S](
 
     def syncDir(path: Path): Unit < (S & Abort[FileException]) = ()
 
+    // --- Advisory lock (delegates to lower; the overlay layer has no separate exclusion
+    // state, so contention is visible identically whether observed through the overlay or
+    // directly on the lower) ---
+
+    def lock(path: Path, exclusive: Boolean): Path.FileLock < (S & Scope & Abort[FileException]) =
+        lower.lock(path, exclusive)
+
     // --- Commit / rollback ---
 
     def rollback(using Frame): Unit < S =
@@ -1677,6 +1684,13 @@ final private[kyo] class ForwardingLowerFileSystem(using Frame) extends FileSyst
             path,
             new IOException(
                 "syncDir is unavailable through Path.virtual/sandbox/transaction's ephemeral forwarding service; hold a FileSystem[S] value directly"
+            )
+        ))
+    def lock(path: Path, exclusive: Boolean): Path.FileLock < (PathWrite & Scope & Abort[FileException]) =
+        Abort.fail(FileIOException(
+            path,
+            new IOException(
+                "lock is unavailable through Path.virtual/sandbox/transaction's ephemeral forwarding service; hold a FileSystem[S] value directly"
             )
         ))
 end ForwardingLowerFileSystem

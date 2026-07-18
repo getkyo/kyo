@@ -115,6 +115,14 @@ private[kyo] object NodeError:
             case "ENOTEMPTY"        => FileDirectoryNotEmptyException(path)
             case _                  => FileIOException(path, new IOException(e.getMessage))
 
+    /** Distinguishes the O_EXCL lockfile contention code (`EEXIST`) from every other filesystem
+      * error `Path.Unsafe.lock` can raise.
+      */
+    def translateLock(path: Path, e: js.JavaScriptException)(using Frame): FileFsException =
+        codeOf(e) match
+            case "EEXIST" => FileLockUnavailableException(path)
+            case _        => translateFs(path, e)
+
 end NodeError
 
 // --- NodePathUnsafe ---
@@ -451,6 +459,24 @@ final private[kyo] class NodePathUnsafe(raw: String) extends Path.Unsafe:
                     new NodeRawChannel(NodeFs.openSync(pathStr, "r+"), safe)
         }
 
+    // --- Advisory lock ---
+
+    // Node has no OS advisory lock primitive (no flock/FileChannel.tryLock analog); an O_EXCL
+    // ("wx") create-or-fail on a sibling "<path>.lock" file emulates exclusion. This is a
+    // create-or-fail primitive only, deliberately NOT the pid/host staleness-reclaim protocol
+    // kyo-eventlog's journal-root lock uses (kyo.internal.NodeFileLock): that protocol recovers
+    // a journal root from a crashed process, a concern this general single-Scope-lifetime
+    // capability does not share. `exclusive = false` (shared) degrades to the same exclusive
+    // O_EXCL create on Node: Node has no shared-lock primitive, so a shared request behaves
+    // exactly like an exclusive one.
+    def lock(exclusive: Boolean)(using AllowUnsafe, Frame): Result[FileException, Path.RawLock] =
+        catchLock {
+            val lockStr = pathStr + ".lock"
+            val fd      = NodeFs.openSync(lockStr, "wx")
+            NodeFs.closeSync(fd)
+            new NodeRawLock(lockStr)
+        }
+
     // --- Private helpers ---
 
     /** Splits content by newlines, dropping a single trailing empty element if the content ends with '\n'. This matches the behaviour of
@@ -489,6 +515,12 @@ final private[kyo] class NodePathUnsafe(raw: String) extends Path.Unsafe:
         try Result.succeed(expr)
         catch
             case e: js.JavaScriptException => Result.fail(NodeError.translateFs(safe, e))
+            case e: Throwable              => Result.panic(e)
+
+    private def catchLock[A](expr: => A)(using Frame): Result[FileException, A] =
+        try Result.succeed(expr)
+        catch
+            case e: js.JavaScriptException => Result.fail(NodeError.translateLock(safe, e))
             case e: Throwable              => Result.panic(e)
 
 end NodePathUnsafe
@@ -679,6 +711,21 @@ final private[kyo] class NodeRawChannel(fd: Int, path: Path) extends Path.RawCha
     def close()(using AllowUnsafe): Unit = NodeFs.closeSync(fd)
 
 end NodeRawChannel
+
+// --- NodeRawLock ---
+
+/** Concrete advisory lock backed by an O_EXCL sibling lockfile (`<path>.lock`). Node grants
+  * exclusive access only: `isExclusive` always returns `true`, regardless of the mode requested
+  * at `Path.Unsafe.lock`, since Node has no shared-lock primitive.
+  */
+final private[kyo] class NodeRawLock(lockStr: String) extends Path.RawLock:
+    def isExclusive: Boolean = true
+
+    // Unsafe: removes the lockfile so the next acquirer's O_EXCL create succeeds. Errors are
+    // suppressed because a failed unlink (e.g. already removed) is benign at release time.
+    def release()(using AllowUnsafe): Unit =
+        discard(Result.catching[Throwable](NodeFs.unlinkSync(lockStr)))
+end NodeRawLock
 
 // --- Byte / Uint8Array conversion helpers ---
 

@@ -8,7 +8,7 @@ private[kyo] object InMemoryFileSystem:
     object Node:
         def dir(now: Long): Node                     = Node(Map.empty, Absent, Path.PathStat(now, 0L))
         def file(bytes: Span[Byte], now: Long): Node = Node(Map.empty, Present(FileBody(bytes)), Path.PathStat(now, bytes.size.toLong))
-    final case class State(root: Node)
+    final case class State(root: Node, locks: Map[Chunk[String], Int] = Map.empty)
 
     def init(using Frame): FileSystem[Sync] < Sync =
         Sync.defer(java.lang.System.currentTimeMillis()).map { now =>
@@ -293,6 +293,40 @@ final private[kyo] class InMemoryFileSystem(state: AtomicRef[InMemoryFileSystem.
             def size()(using Frame): Long < (Sync & Abort[FileException]) = InMemoryFileSystem.this.size(path)
 
     def syncDir(path: Path): Unit < (Sync & Abort[FileException]) = ()
+
+    // --- Advisory lock (in-process CAS lock table; deterministic within a single process,
+    // matching the design's "inMemory: in-process AtomicRef lock table" placement) ---
+
+    def lock(path: Path, exclusive: Boolean): Path.FileLock < (Sync & Scope & Abort[FileException]) =
+        Scope.acquireRelease(acquireLock(path, exclusive))(_ => releaseLock(path, exclusive))
+
+    private def acquireLock(path: Path, exclusive: Boolean): Path.FileLock < (Sync & Abort[FileException]) =
+        modify { s =>
+            val held = s.locks.getOrElse(path.parts, 0)
+            val ok   = if exclusive then held == 0 else held >= 0
+            if ok then
+                val next = if exclusive then -1 else held + 1
+                Result.succeed((s.copy(locks = s.locks.updated(path.parts, next)), mkLock(exclusive)))
+            else
+                Result.fail(FileLockUnavailableException(path))
+            end if
+        }
+
+    private def releaseLock(path: Path, exclusive: Boolean): Unit < Sync =
+        Loop(()) { _ =>
+            state.get.map { cur =>
+                val held      = cur.locks.getOrElse(path.parts, 0)
+                val next      = if exclusive then 0 else held - 1
+                val nextLocks = if next <= 0 then cur.locks - path.parts else cur.locks.updated(path.parts, next)
+                state.compareAndSet(cur, cur.copy(locks = nextLocks)).map {
+                    case true  => Loop.done(())
+                    case false => Loop.continue(())
+                }
+            }
+        }
+
+    private def mkLock(exclusive: Boolean): Path.FileLock = new Path.FileLock:
+        def isExclusive: Boolean = exclusive
 
     // Unsafe: synchronous CAS write used by the in-memory write handle's finish(); the safe writeBytes
     // equivalent, without suspension, so it can run from the handle's AllowUnsafe finish().

@@ -499,6 +499,25 @@ object Path extends PathPlatformSpecific:
         def size()(using Frame): Long < (S & Abort[FileException])
     end Channel
 
+    /** An acquired advisory lock on a path, vended by [[FileSystem.lock]]. Release is
+      * Scope-driven: there is no explicit `release()` in this public surface; the `Scope`
+      * active at the [[FileSystem.lock]] call site releases the lock automatically when it
+      * exits. The token itself is evidence of possession for the duration of that `Scope`.
+      *
+      * On JVM and Native, an exclusive lock and a shared (`exclusive = false`) lock are both
+      * backed by a real OS advisory lock (`FileChannel.tryLock`), so a shared lock genuinely
+      * admits concurrent shared holders while excluding any exclusive holder. Node has no OS
+      * advisory lock primitive: every acquired lock there is exclusive regardless of the
+      * requested mode (a shared request degrades to exclusive), so `isExclusive` always returns
+      * `true` on that platform.
+      */
+    trait FileLock:
+        /** `true` when this lock excludes every other holder, including other shared holders;
+          * `false` when this lock is a shared lock admitting other concurrent shared holders.
+          */
+        def isExclusive: Boolean
+    end FileLock
+
     // --- Safe extension methods ---
 
     extension (self: Path)
@@ -1141,6 +1160,12 @@ object Path extends PathPlatformSpecific:
           */
         def openChannel(mode: FileSystem.ChannelMode)(using AllowUnsafe, Frame): Result[FileException, Path.RawChannel]
 
+        /** Acquires a raw advisory lock on this path per `exclusive`, non-blocking (fails
+          * immediately if the lock is held incompatibly rather than waiting). Platform
+          * implementations provide the concrete lock.
+          */
+        def lock(exclusive: Boolean)(using AllowUnsafe, Frame): Result[FileException, Path.RawLock]
+
         /** Lifts this `Unsafe` value back into the safe `Path` opaque type. */
         def safe: Path = this
 
@@ -1253,5 +1278,18 @@ object Path extends PathPlatformSpecific:
         /** Closes the channel, releasing all OS resources. */
         def close()(using AllowUnsafe): Unit
     end RawChannel
+
+    // --- Raw lock -- platform-provided advisory lock backing Path.FileLock ---
+
+    /** A raw advisory lock returned by `Path.Unsafe.lock`. Platform implementations provide the
+      * concrete class; `FileSystem` backends wrap it as the public [[Path.FileLock]].
+      */
+    abstract private[kyo] class RawLock:
+        /** `true` when this lock excludes every other holder, including other shared holders. */
+        def isExclusive: Boolean
+
+        /** Releases the lock, freeing it for another acquirer. */
+        def release()(using AllowUnsafe): Unit
+    end RawLock
 
 end Path

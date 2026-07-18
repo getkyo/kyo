@@ -2,6 +2,7 @@ package kyo.internal
 
 import java.io.IOException
 import java.nio.channels.FileChannel
+import java.nio.channels.OverlappingFileLockException
 import java.nio.charset.Charset
 import java.nio.charset.StandardCharsets
 import java.nio.file.AccessDeniedException
@@ -304,6 +305,48 @@ final private[kyo] class NioPathUnsafe(val jpath: java.nio.file.Path) extends Pa
             new NioRawChannel(FileChannel.open(jpath, opts*), safe)
         }
 
+    // --- Advisory lock ---
+
+    // POSIX advisory locks (fcntl, backing FileChannel.tryLock on Scala Native's javalib) do not
+    // exclude the owning process from reacquiring its own lock; a second same-process tryLock
+    // simply succeeds instead of throwing OverlappingFileLockException there (unlike the JVM's own
+    // in-process FileLockTable). NioPathLockRegistry enforces same-process exclusion explicitly on
+    // every platform, mirroring kyo.internal.FileJournalCore's heldRoots registry (kyo-eventlog);
+    // the platform tryLock call still provides genuine cross-process exclusion underneath it.
+    def lock(exclusive: Boolean)(using AllowUnsafe, Frame): Result[FileException, Path.RawLock] =
+        val key = jpath.toString
+        if !NioPathLockRegistry.acquire(key, exclusive) then Result.fail(FileLockUnavailableException(safe))
+        else
+            try
+                ensureParent(jpath)
+                val ch = FileChannel.open(jpath, StandardOpenOption.CREATE, StandardOpenOption.READ, StandardOpenOption.WRITE)
+                try
+                    val fl =
+                        try ch.tryLock(0L, Long.MaxValue, !exclusive)
+                        catch case _: OverlappingFileLockException => null
+                    if fl == null then
+                        ch.close()
+                        NioPathLockRegistry.release(key, exclusive)
+                        Result.fail(FileLockUnavailableException(safe))
+                    else
+                        Result.succeed(new NioRawLock(fl, ch, key, exclusive))
+                    end if
+                catch
+                    case e: IOException =>
+                        ch.close()
+                        NioPathLockRegistry.release(key, exclusive)
+                        Result.fail(FileIOException(safe, e))
+                end try
+            catch
+                case e: IOException =>
+                    NioPathLockRegistry.release(key, exclusive)
+                    Result.fail(FileIOException(safe, e))
+                case e: Throwable =>
+                    NioPathLockRegistry.release(key, exclusive)
+                    Result.panic(e)
+        end if
+    end lock
+
     // --- Helpers ---
 
     private def ensureParent(p: java.nio.file.Path): Unit =
@@ -489,6 +532,64 @@ final private[kyo] class NioRawChannel(channel: FileChannel, path: Path) extends
     def close()(using AllowUnsafe): Unit = channel.close()
 
 end NioRawChannel
+
+/** Concrete advisory lock backed by a `java.nio.channels.FileLock`. The backing `FileChannel` is
+  * opened solely to hold the lock and is closed on release, alongside the `FileLock` itself and
+  * this key's [[NioPathLockRegistry]] entry.
+  */
+final private[kyo] class NioRawLock(
+    fl: java.nio.channels.FileLock,
+    channel: FileChannel,
+    key: String,
+    requestedExclusive: Boolean
+) extends Path.RawLock:
+    def isExclusive: Boolean = !fl.isShared
+
+    def release()(using AllowUnsafe): Unit =
+        discard(Result.catching[Throwable](fl.release()))
+        discard(Result.catching[Throwable](channel.close()))
+        NioPathLockRegistry.release(key, requestedExclusive)
+    end release
+end NioRawLock
+
+/** Process-wide registry of advisory-lock keys currently held, keyed by canonical path string.
+  * Enforces same-process exclusion explicitly (see the rationale on `NioPathUnsafe.lock`),
+  * mirroring `kyo.internal.FileJournalCore.heldRoots` (kyo-eventlog). `-1` means exclusively held;
+  * a positive count is the number of concurrent shared holders; absent means unlocked.
+  */
+private[kyo] object NioPathLockRegistry:
+    private var heldCell: Maybe[AtomicRef.Unsafe[Map[String, Int]]] = Absent
+
+    private def held(using AllowUnsafe): AtomicRef.Unsafe[Map[String, Int]] =
+        heldCell match
+            case Present(r) => r
+            case Absent =>
+                val r = AtomicRef.Unsafe.init(Map.empty[String, Int])
+                heldCell = Present(r)
+                r
+
+    @scala.annotation.tailrec
+    private[kyo] def acquire(key: String, exclusive: Boolean)(using AllowUnsafe): Boolean =
+        val snap = held.get()
+        val h    = snap.getOrElse(key, 0)
+        val ok   = if exclusive then h == 0 else h >= 0
+        if !ok then false
+        else
+            val next = if exclusive then -1 else h + 1
+            if held.compareAndSet(snap, snap.updated(key, next)) then true
+            else acquire(key, exclusive)
+        end if
+    end acquire
+
+    @scala.annotation.tailrec
+    private[kyo] def release(key: String, exclusive: Boolean)(using AllowUnsafe): Unit =
+        val snap    = held.get()
+        val h       = snap.getOrElse(key, 0)
+        val next    = if exclusive then 0 else h - 1
+        val nextMap = if next <= 0 then snap - key else snap.updated(key, next)
+        if !held.compareAndSet(snap, nextMap) then release(key, exclusive)
+    end release
+end NioPathLockRegistry
 
 /** Concrete read handle backed by a `java.nio.channels.FileChannel`. */
 final private[kyo] class NioReadHandle(channel: FileChannel) extends Path.ReadHandle:

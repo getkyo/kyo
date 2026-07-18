@@ -68,8 +68,9 @@ class FileExceptionTest extends kyo.test.Test[Any]:
 
     // Exhaustive match on FileFsException covers all concrete subtypes — no wildcard.
     // FileNotFoundException, FileAccessDeniedException, FileNotADirectoryException,
-    // FileAlreadyExistsException, FileDirectoryNotEmptyException, and FileIOException all
-    // implement FileFsException. FileIsADirectoryException does NOT.
+    // FileAlreadyExistsException, FileDirectoryNotEmptyException, FileIOException, and
+    // FileLockUnavailableException all implement FileFsException. FileIsADirectoryException
+    // does NOT.
     "exhaustive match on FileFsException" in {
         val ex: FileFsException = FileNotFoundException(p)
         val result = ex match
@@ -79,6 +80,7 @@ class FileExceptionTest extends kyo.test.Test[Any]:
             case _: FileAlreadyExistsException     => "FileAlreadyExistsException"
             case _: FileDirectoryNotEmptyException => "FileDirectoryNotEmptyException"
             case _: FileIOException                => "FileIOException"
+            case _: FileLockUnavailableException   => "FileLockUnavailableException"
         assert(result == "FileNotFoundException")
     }
 
