@@ -1,5 +1,7 @@
 package kyo
 
+import kyo.kernel.Loop
+
 /** Private wiring for [[EventLog]]'s prepare/append/reader internals, and the concrete
   * [[Event.StreamSelector]]/[[Event.IdPolicy]] witnesses built by their named
   * constructors. Kept in a separate file (rather than inside `EventLog.scala`) because
@@ -76,6 +78,22 @@ private[kyo] object EventLogSupport:
         if index >= run.length then Absent
         else if run(index).directive.expectedOffset.isDefined then Present(index)
         else findNonHeadExpectedOffset(run, index + 1)
+
+    /** Page size [[copyStreamRaw]]/[[copyStreamWith]] use for each stream's read/append loop: a
+      * stream's events are copied in batches of this many, never one [[Journal.append]] call per
+      * event.
+      */
+    private[kyo] val migratePageSize = 256
+
+    /** Derives a fresh stream's initial [[ExpectedOffset]] and [[EventLog.MigrationReport.StreamSummary]]
+      * `lastOffset` accumulator from a target's current [[StreamInfo]]: `NoStream`/`Absent` for a
+      * genuinely empty target stream, `Exact`/`Present` otherwise. Shared by
+      * [[copyStreamRaw]] and [[copyStreamWith]].
+      */
+    private[kyo] def seedFromTargetInfo(info: StreamInfo): (ExpectedOffset, Maybe[Event.StreamOffset]) =
+        info match
+            case StreamInfo.Absent                  => (ExpectedOffset.NoStream, Absent)
+            case StreamInfo.Existing(_, lastOffset) => (ExpectedOffset.Exact(lastOffset), Present(lastOffset))
 end EventLogSupport
 
 extension (self: EventLog.type)
@@ -191,6 +209,89 @@ extension (self: EventLog.type)
             case Result.Success(et) => et
             case Result.Failure(_) =>
                 throw new IllegalStateException(s"schema-derived event type name was empty for ${schema.structure.name}")
+
+    /** Copies one stream's events from `source` to `target` unchanged (raw payload bytes, no
+      * decode/re-encode), backing [[EventLog.migrate]]. Seeds the first append's
+      * [[ExpectedOffset]] from `target`'s current [[StreamInfo]] via
+      * [[EventLogSupport.seedFromTargetInfo]] so a target already carrying data for `streamId`
+      * is extended contiguously rather than assumed empty; every event of `streamId` is read
+      * from `source` starting at offset zero on every call, so a repeat call re-appends the same
+      * events again.
+      */
+    private[kyo] def copyStreamRaw[S1, S2](
+        source: Journal.Reader[S1],
+        target: Journal.Backend[S2],
+        streamId: Event.StreamId
+    )(using
+        Frame
+    ): EventLog.MigrationReport.StreamSummary < (S1 & S2 & Abort[JournalReadFailure] & Abort[JournalAppendFailure] & Abort[
+        JournalStreamInfoFailure
+    ]) =
+        target.streamInfo(streamId).map { targetInfo =>
+            val (initialExpected, initialLastOffset) = EventLogSupport.seedFromTargetInfo(targetInfo)
+            Loop(Event.StreamOffset.first.value, initialExpected, 0L, initialLastOffset) {
+                (from, expected, copied, lastOffset) =>
+                    source.read(streamId, Event.StreamOffset.fromUnchecked(from), EventLogSupport.migratePageSize).map { page =>
+                        if page.isEmpty then Loop.done(EventLog.MigrationReport.StreamSummary(streamId, copied, lastOffset))
+                        else
+                            val pending = page.map(c => Event.Pending(c.id, c.eventType, c.payload, c.metadata))
+                            target.append(streamId, expected, pending).map { result =>
+                                Loop.continue(
+                                    from + page.length.toLong,
+                                    ExpectedOffset.Exact(result.lastOffset),
+                                    copied + page.length.toLong,
+                                    Present(result.lastOffset)
+                                )
+                            }
+                    }
+            }
+        }
+    end copyStreamRaw
+
+    /** Copies one stream's events from `source` to `target`, decoding each through `source`'s
+      * bound value codec, applying `transform`, and re-encoding the result through
+      * `targetCodecs` before appending, backing [[EventLog.migrateWith]]. Each event's id, type,
+      * and metadata carry over from `source` unchanged; only the payload is re-encoded. Seeds
+      * the first append's [[ExpectedOffset]] identically to [[copyStreamRaw]].
+      */
+    private[kyo] def copyStreamWith[X, Y, S1, S2](
+        source: EventLog.Reader[X, S1],
+        target: Journal.Backend[S2],
+        targetCodecs: EventLog.Codecs[Y],
+        streamId: Event.StreamId,
+        transform: X => Y < (S1 & S2)
+    )(using
+        Frame
+    ): EventLog.MigrationReport.StreamSummary < (S1 & S2 & Sync & Abort[JournalReadFailure] & Abort[JournalAppendFailure] & Abort[
+        JournalStreamInfoFailure
+    ]) =
+        target.streamInfo(streamId).map { targetInfo =>
+            val (initialExpected, initialLastOffset) = EventLogSupport.seedFromTargetInfo(targetInfo)
+            Loop(Event.StreamOffset.first.value, initialExpected, 0L, initialLastOffset) {
+                (from, expected, copied, lastOffset) =>
+                    source.read(streamId, Event.StreamOffset.fromUnchecked(from), EventLogSupport.migratePageSize).map { page =>
+                        if page.isEmpty then Loop.done(EventLog.MigrationReport.StreamSummary(streamId, copied, lastOffset))
+                        else
+                            Kyo.foreach(page) { rec =>
+                                transform(rec.payload).map(y =>
+                                    EventLogCodecs.encodeValue(targetCodecs.value, y).map(bytes =>
+                                        Event.Pending(rec.eventId, rec.eventType, bytes, rec.metadata)
+                                    )
+                                )
+                            }.map { pending =>
+                                target.append(streamId, expected, pending).map { result =>
+                                    Loop.continue(
+                                        from + page.length.toLong,
+                                        ExpectedOffset.Exact(result.lastOffset),
+                                        copied + page.length.toLong,
+                                        Present(result.lastOffset)
+                                    )
+                                }
+                            }
+                    }
+            }
+        }
+    end copyStreamWith
 end extension
 
 // The five StreamSelector/IdPolicy witness classes live in JournalEvent.scala, not here:

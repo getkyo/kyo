@@ -189,11 +189,83 @@ object EventLog:
     /** Typed preparation failure, distinct from Journal op failures. */
     final case class PreparationFailure(reason: String)(using Frame) extends KyoException
 
-    // prepareEnvelope, appendValidated, mkReader, and deriveEventType are private[kyo] over the
-    // Journal/Event.Pending surface, defined in EventLogSupport.scala. appendValidated holds the
-    // one batch validator shared by varargs and any Chunk overload, and resolves each contiguous
-    // run's directive-supplied expectedOffset (only the run's head command may carry a
-    // non-absent one). The StreamSelector/IdPolicy/AppendDirective witness classes
+    /** Immutable summary of an [[EventLog.migrate]] or [[EventLog.migrateWith]] call: one
+      * [[MigrationReport.StreamSummary]] per stream named in the call's `streams` argument, in
+      * the same order. No side channel; every observable outcome of a migrate call is carried
+      * here.
+      */
+    final case class MigrationReport(streams: Chunk[MigrationReport.StreamSummary]) derives CanEqual
+    object MigrationReport:
+        /** One named stream's outcome: the number of events copied by THIS call (never a
+          * cumulative or all-time count) and the target stream's last offset after the call
+          * completes. `lastOffset` is `Absent` only when the target stream is genuinely empty
+          * after the call, which happens exactly when the source stream itself has zero events
+          * and the target had none beforehand; a stream with prior target-side data reports its
+          * carried-over last offset even when `copied == 0`.
+          */
+        final case class StreamSummary(streamId: Event.StreamId, copied: Long, lastOffset: Maybe[Event.StreamOffset]) derives CanEqual
+    end MigrationReport
+
+    /** Copies every event of every stream named in `streams` from `source` to `target`,
+      * preserving each event's identity (id, type, metadata) and raw payload bytes exactly: no
+      * value decode, transform, or re-encode, so a source and target configured with different
+      * on-disk profiles (for example a Binary-segment source and a JSONL-segment target) migrate
+      * with no type obstacle, since both satisfy the identical raw [[Journal.Reader]]/
+      * [[Journal.Backend]] contract regardless of their bound value type. Before each stream's
+      * first append, reads `target`'s current [[StreamInfo]] and seeds the optimistic-append
+      * expectation from it (`NoStream` for a genuinely absent target stream, `Exact` otherwise),
+      * so a target that already carries data for a named stream is extended contiguously rather
+      * than assumed empty. Carries no deduplication: calling `migrate` again over an unchanged
+      * source and the same target re-appends the same events again, since a raw journal has no
+      * idempotency key to detect a repeat.
+      *
+      * @see
+      *   [[EventLog.migrateWith]] for the value-transforming rewrite variant
+      * @see
+      *   [[MigrationReport]] for the per-stream outcome this returns
+      */
+    def migrate[S1, S2](
+        source: Journal.Reader[S1],
+        target: Journal.Backend[S2],
+        streams: Chunk[Event.StreamId]
+    )(using
+        Frame
+    ): MigrationReport < (S1 & S2 & Abort[JournalReadFailure] & Abort[JournalAppendFailure] & Abort[JournalStreamInfoFailure]) =
+        Kyo.foreach(streams)(streamId => EventLog.copyStreamRaw(source, target, streamId)).map(MigrationReport(_))
+
+    /** Value-transforming rewrite-migrate: reads each stream named in `streams` from `source`
+      * through its bound value codec, applies `transform` to each decoded value, re-encodes the
+      * result through `targetCodecs`, and appends the re-encoded bytes to `target`. Each event's
+      * id, type, and metadata carry over unchanged from `source`; only the payload changes
+      * shape, from `X` to `Y`. Pays the migration cost once: the target's stored bytes are
+      * genuinely `Y`, not a read-time view. Seeds each stream's optimistic-append expectation
+      * from `target`'s current [[StreamInfo]], identically to [[EventLog.migrate]].
+      *
+      * @see
+      *   [[EventLog.Reader]]'s `upcast` extension for the zero-cost read-time adapter variant
+      * @see
+      *   [[MigrationReport]] for the per-stream outcome this returns
+      */
+    def migrateWith[X, Y, S1, S2](
+        source: EventLog.Reader[X, S1],
+        target: Journal.Backend[S2],
+        targetCodecs: EventLog.Codecs[Y],
+        streams: Chunk[Event.StreamId],
+        transform: X => Y < (S1 & S2)
+    )(using
+        Frame
+    ): MigrationReport < (S1 & S2 & Sync & Abort[JournalReadFailure] & Abort[JournalAppendFailure] & Abort[JournalStreamInfoFailure]) =
+        Kyo.foreach(streams)(streamId =>
+            EventLog.copyStreamWith(source, target, targetCodecs, streamId, transform)
+        ).map(MigrationReport(_))
+
+    // prepareEnvelope, appendValidated, mkReader, deriveEventType, copyStreamRaw, and
+    // copyStreamWith are private[kyo] over the Journal/Event.Pending surface, defined in
+    // EventLogSupport.scala. appendValidated holds the one batch validator shared by varargs and
+    // any Chunk overload, and resolves each contiguous run's directive-supplied expectedOffset
+    // (only the run's head command may carry a non-absent one). copyStreamRaw and copyStreamWith
+    // hold migrate's and migrateWith's shared per-stream read-page/append-page loop. The
+    // StreamSelector/IdPolicy/AppendDirective witness classes
     // (ConstantStreamSelector, KeyedStreamSelector, GeneratedEventIdPolicy,
     // DeterministicEventIdPolicy, CallerSuppliedEventIdPolicy, AppendDirective.Impl) are defined
     // in JournalEvent.scala (alongside sealed trait Event and object Event), not this file,
@@ -201,3 +273,26 @@ object EventLog:
     // subtype of a sealed trait must live in the same source file as the trait, and Scala
     // requires a companion object's nested members to be declared in one physical file.
 end EventLog
+
+/** Read-time value adapter over a typed reader: applies `f` to every decoded record without
+  * touching stored bytes. Zero migration cost since the transform runs on each read; the append
+  * lane is absent by type (there is no meaningful way to append a `Y` and store it as `X`), so
+  * this returns a plain [[EventLog.Reader]], never a full [[EventLog]] facade or a
+  * [[Journal.Backend]].
+  *
+  * @see
+  *   [[EventLog.migrateWith]] for the variant that pays the cost once and rewrites the target
+  */
+extension [X, S](reader: EventLog.Reader[X, S])
+    def upcast[Y](f: X => Y)(using Frame): EventLog.Reader[Y, S] =
+        new EventLog.Reader[Y, S]:
+            def read(streamId: Event.StreamId, from: Event.StreamOffset, maxCount: Int)(using
+                Frame
+            ): Chunk[Event.Record[Y]] < (S & Abort[JournalReadFailure]) =
+                reader.read(streamId, from, maxCount).map(_.map(rec =>
+                    Event.Record(rec.ref, rec.eventId, rec.eventType, rec.metadata, f(rec.payload))
+                ))
+            def streamInfo(streamId: Event.StreamId)(using Frame): StreamInfo < (S & Abort[JournalStreamInfoFailure]) =
+                reader.streamInfo(streamId)
+        end new
+end extension
