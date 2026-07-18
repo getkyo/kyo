@@ -192,6 +192,49 @@ class JournalTest extends kyo.test.Test[Any]:
         yield assert(result == appendResult)
     }
 
+    "resolver returns Found for a present entry" in {
+        val journalId = JournalId.validate("orders").getOrElse(throw new AssertionError("valid journal id"))
+        for
+            backend <- Journal.Backend.inMemory
+            _       <- Abort.run[JournalError](backend.append(streamId, ExpectedOffset.NoStream, Chunk(envelope)))
+            resolution <- Abort.run[JournalReadFailure](
+                new TestResolver(backend).resolve(JournalEntryRef(journalId, streamId, Event.StreamOffset.first))
+            )
+        yield resolution match
+            case Result.Success(Journal.EntryResolution.Found(record)) => assert(record == recorded)
+            case other                                                 => fail(s"expected Found(recorded), got: $other")
+        end for
+    }
+
+    "resolver distinguishes Missing from a storage failure" in {
+        val journalId     = JournalId.validate("orders").getOrElse(throw new AssertionError("valid journal id"))
+        val missingOffset = valid(Event.StreamOffset(41L))
+        val missingRef    = JournalEntryRef(journalId, streamId, missingOffset)
+        for
+            backend           <- Journal.Backend.inMemory
+            _                 <- Abort.run[JournalError](backend.append(streamId, ExpectedOffset.NoStream, Chunk(envelope)))
+            missingResolution <- Abort.run[JournalReadFailure](new TestResolver(backend).resolve(missingRef))
+            corruptBackend = new FailingBackend(readError = JournalStorageError("test read failure", Maybe.empty))
+            failureResolution <- Abort.run[JournalReadFailure](new TestResolver(corruptBackend).resolve(missingRef))
+        yield
+            assert(missingResolution == Result.succeed(Journal.EntryResolution.Missing))
+            assert(failureResolution == Result.fail(JournalStorageError("test read failure", Maybe.empty)))
+        end for
+    }
+
+    "resolver returns Denied when authorization fails, distinct from possession" in {
+        val journalId = JournalId.validate("orders").getOrElse(throw new AssertionError("valid journal id"))
+        val ref       = JournalEntryRef(journalId, streamId, Event.StreamOffset.first)
+        for
+            backend    <- Journal.Backend.inMemory
+            _          <- Abort.run[JournalError](backend.append(streamId, ExpectedOffset.NoStream, Chunk(envelope)))
+            resolution <- Abort.run[JournalReadFailure](new TestResolver(backend, authorized = false).resolve(ref))
+        yield
+            assert(resolution == Result.succeed(Journal.EntryResolution.Denied))
+            assert(resolution != Result.succeed(Journal.EntryResolution.Missing))
+        end for
+    }
+
     "Retry[JournalAppendFailure](Journal.append(...)) compiles and introduces Async" in {
         for
             b <- Journal.Backend.inMemory
@@ -249,4 +292,14 @@ class JournalTest extends kyo.test.Test[Any]:
         def streamInfo(streamId: Event.StreamId): StreamInfo < (Sync & Abort[JournalStreamInfoFailure]) =
             Abort.fail(streamInfoError)
     end FailingBackend
+
+    final private class TestResolver(backend: Journal.Backend[Sync], authorized: Boolean = true) extends Journal.EntryResolver[Sync]:
+        def resolve(ref: JournalEntryRef)(using Frame): Journal.EntryResolution < (Sync & Abort[JournalReadFailure]) =
+            if !authorized then Journal.EntryResolution.Denied
+            else
+                backend.read(ref.streamId, ref.offset, 1).map { events =>
+                    if events.isEmpty then Journal.EntryResolution.Missing
+                    else Journal.EntryResolution.Found(events(0))
+                }
+    end TestResolver
 end JournalTest

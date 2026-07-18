@@ -85,6 +85,24 @@ class JournalMetadataTest extends kyo.test.Test[Any]:
             val parsed = Abort.run[JournalIdentityError](JournalEntryRef.parse(ref.uri)).eval
             assert(parsed == Result.succeed(ref))
         }
+
+        "parse/render round trips a logical journal: URI carrying only logical ids, no path or segment" in {
+            val journalId = JournalId.validate("orders").getOrElse(throw new AssertionError("valid journal id"))
+            val streamId  = Event.StreamId("s1").getOrElse(throw new AssertionError("valid stream id"))
+            val offset    = Event.StreamOffset(7L).getOrElse(throw new AssertionError("valid offset"))
+            val ref       = JournalEntryRef(journalId, streamId, offset)
+
+            assert(ref.uri == "journal:orders/s1/7")
+            val parsed = Abort.run[JournalIdentityError](JournalEntryRef.parse(ref.uri)).eval
+            assert(parsed == Result.succeed(ref))
+        }
+
+        "a physical file:// URI is rejected at parse" in {
+            val result = Abort.run[JournalIdentityError](JournalEntryRef.parse("file:///var/journal/orders/000007.seg")).eval
+            result match
+                case Result.Failure(_: JournalIdentityError) => succeed("physical URI form never produces a ref")
+                case other                                   => fail(s"expected JournalIdentityError failure, got: $other")
+        }
     }
 
     "Event.Metadata.Value.metadataValueSchema" - {

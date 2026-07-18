@@ -203,6 +203,23 @@ object Journal:
                             Abort.run[JournalStreamInfoFailure](backend.streamInfo(sid)).map(r => Loop.continue(cont(r)))
         }
 
+    /** Read-only, storage-independent resolver for a [[JournalEntryRef]]. Routed by
+      * `ref.journalId`; [[EntryResolution.Denied]] and [[EntryResolution.Missing]] are distinct
+      * from a storage failure on the `Abort[JournalReadFailure]` row.
+      */
+    trait EntryResolver[S]:
+        def resolve(ref: JournalEntryRef)(using Frame): Journal.EntryResolution < (S & Abort[JournalReadFailure])
+    end EntryResolver
+
+    /** Result of resolving a logical reference: the record was found, is absent (Missing), or the
+      * possessor is not authorized (Denied). None of the three is a storage failure.
+      */
+    enum EntryResolution derives CanEqual:
+        case Found(record: Event.Committed)
+        case Missing
+        case Denied
+    end EntryResolution
+
     /** WARNING: Low-level API meant for integrations, libraries, and performance-sensitive code. See [[kyo.AllowUnsafe]] for more details.
       *
       * These ops are the blessed, audit-marked bypass of the capability-handler seam for performance-sensitive call sites: they run a
