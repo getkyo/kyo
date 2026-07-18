@@ -174,7 +174,7 @@ class FileJournalTest extends kyo.test.Test[Any]:
         Event.Definition.schema[FjEvent, FjEvent](fjEventStream)
 
     "Binary.configuration" - {
-        "opens a .seg backend and round-trips (INV-015)" in {
+        "opens a .seg backend and round-trips" in {
             val event = FjEvent("alice", 1)
             for
                 dir           <- freshDir("fj-binary-roundtrip")
@@ -201,7 +201,7 @@ class FileJournalTest extends kyo.test.Test[Any]:
     }
 
     "Jsonl.configuration" - {
-        "opens a .jsonl backend with JSON payloads (INV-015, INV-016)" in {
+        "opens a .jsonl backend with JSON payloads" in {
             val event = FjEvent("bob", 2)
             for
                 dir           <- freshDir("fj-jsonl-roundtrip")

@@ -26,13 +26,6 @@ object WebsiteReadmeException:
         case Missing, MalformedGroups, MalformedTable
 end WebsiteReadmeException
 
-/** The build-time transpile of a module README to the UI article subtree failed. Rare: the kyo-parse
-  * transpiler ([[DocsMarkdownRender.transpile]]) degrades unknown constructs to plain text rather than
-  * raising, so this signals a genuinely unexpected failure in the render pipeline.
-  */
-final case class WebsiteMarkdownException(slug: String, detail: String)(using Frame)
-    extends WebsiteException(s"markdown render failed for $slug: $detail")
-
 /** Writing a route's file failed. */
 final case class WebsiteEmitException(route: String, cause: Throwable)(using Frame)
     extends WebsiteException(s"emit failed for route $route", cause)

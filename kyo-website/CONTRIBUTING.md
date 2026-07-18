@@ -418,7 +418,6 @@ sealed `WebsiteException` base:
 (`WebsiteException.scala:17-18`, `WebsiteException.scala:37-38`):
 
 - `WebsiteReadmeException(path: Path, detail: WebsiteReadmeException.ReadmeFailure)`
-- `WebsiteMarkdownException`
 - `WebsiteEmitException(route: String, cause: Throwable)`
 
 A leaf's failure "detail" is a typed enum nested in that leaf's companion:

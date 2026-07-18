@@ -144,10 +144,10 @@ class FileJournalCoreFormatTest extends kyo.test.Test[Any]:
                 assert(!(dir / "MANIFEST").unsafe.exists())
         }
         "crash-partial binary root (segments present, MANIFEST write never landed) opens as binary" in {
-            // Distinct from the legacy-root case above only in NARRATIVE (a journal that started
+            // Distinct from the legacy-root case above only in narrative (a journal that started
             // writing and crashed before its first-open MANIFEST write completed, rather than a
             // pre-MANIFEST-era root); the engine has one code path for MANIFEST-absent-with-streams
-            // and treats both identically (D-024).
+            // and treats both identically.
             for
                 dir    <- freshDir
                 config <- binaryConfiguration

@@ -3,9 +3,9 @@ package kyo
 import kyo.AllowUnsafe.embrace.danger
 
 /** Scenario coverage for [[Journal.Backend.fileOver]] composed over the two zip/archive
-  * [[FileSystem]] backends this campaign adds: a journal replayed read-only from
-  * [[FileSystem.zipReadOnly]] over a migrated archive, and a journal batch-appended into
-  * [[FileSystem.zip]]'s staged upper, durable only after an explicit commit.
+  * [[FileSystem]] backends: a journal replayed read-only from [[FileSystem.zipReadOnly]] over a
+  * migrated archive, and a journal batch-appended into [[FileSystem.zip]]'s staged upper, durable
+  * only after an explicit commit.
   */
 class JournalZipOverTest extends kyo.test.Test[Any]:
 

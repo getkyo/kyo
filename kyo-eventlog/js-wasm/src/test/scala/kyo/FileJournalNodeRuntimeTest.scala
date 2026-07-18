@@ -58,11 +58,11 @@ class FileJournalNodeRuntimeTest extends kyo.test.Test[Any]:
 
     "Backend.file on non-Node runtime" - {
 
-        // The requireNode guard now lives in the platformSyncStore seam provider (steering.md
-        // Phase-03 seam-resolution decision), so it fires at first store operation (StoreSeam.open
-        // / acquireLock) during Scope.run's execution, not at the Journal.Backend.file call site.
-        // process stays shadowed across construction AND execution (sequenced via Sync.defer so it
-        // runs in program order around Scope.run), then is restored afterward either way.
+        // The requireNode guard lives in the platformSyncStore seam provider, so it fires at the
+        // first store operation (StoreSeam.open / acquireLock) during Scope.run's execution, not at
+        // the Journal.Backend.file call site. process stays shadowed across construction AND
+        // execution (sequenced via Sync.defer so it runs in program order around Scope.run), then is
+        // restored afterward either way.
         "produces JournalStorageError mentioning Node.js when isNodeRuntime is false" in {
             for
                 configuration <- binaryConfiguration
