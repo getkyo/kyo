@@ -968,14 +968,32 @@ final private[kyo] class HttpClientBackend private (
         discard(registry.register(conn)(c => closeUnsafe(c, closingGracePeriod)))
     end trackConn
 
-    /** Release a connection back to the pool or discard it on error. Does NOT touch the registry; removal happens only when a connection
-      * is actually closed (the pool's discard hook calls registry.remove).
+    /** Runs `use` on the checked-out connection, then returns the connection to the idle pool on success or discards (closes) it on any
+      * failure, panic, or interruption. Exactly one of release/discard runs, chosen by a compare-and-set on `released` so the two are
+      * mutually exclusive even when a success narrowly races an interrupt (a double discard would double-close the transport).
+      *
+      * The outcome cannot be read from `Sync.ensure`'s error argument: a typed `Abort.fail` (a non-2xx `failOnError`, a rejected non-ASCII
+      * redirect, a redirect loop) is handled up-stack, so the request fiber never records a failure and the finalizer always fires with
+      * `Absent` (see the ignored `SyncTest` case "runs finalizer on Abort.fail"). Treating that `Absent` as success would return a
+      * connection left in an unknown state to the keep-alive pool; on the process-global default client, which is never closed, that idle
+      * connection then outlives the request with no close ever requested. So release is driven by the success path reaching `use`'s result,
+      * and the `Sync.ensure` finalizer discards whenever that success path did not run, which also covers a panic or an interrupt.
+      *
+      * Neither branch touches the registry directly; the pool's discard hook calls `registry.remove`, and a released connection stays
+      * registered until it is later closed.
       */
-    private def releaseConn(key: HttpAddress, conn: HttpConnection, error: Maybe[Result.Error[Any]])(using AllowUnsafe): Unit =
-        error match
-            case Absent => pool.release(key, conn)
-            case _      => pool.discard(conn)
-    end releaseConn
+    private def releasingConn[A](key: HttpAddress, conn: HttpConnection)(
+        use: => A < (Async & Abort[HttpException])
+    )(using AllowUnsafe, Frame): A < (Async & Abort[HttpException]) =
+        val released = new java.util.concurrent.atomic.AtomicBoolean(false)
+        Sync.ensure { (_: Maybe[Result.Error[Any]]) =>
+            Sync.Unsafe.defer(if released.compareAndSet(false, true) then pool.discard(conn))
+        } {
+            use.map { result =>
+                Sync.Unsafe.defer(if released.compareAndSet(false, true) then pool.release(key, conn)).andThen(result)
+            }
+        }
+    end releasingConn
 
     def sendWithConfig[In, Out, A](
         route: HttpRoute[In, Out, Any],
@@ -1089,11 +1107,7 @@ final private[kyo] class HttpClientBackend private (
             pool.poll(key) match
                 case Present(conn) =>
                     val responseFiber = sendViaBackend(conn, route, request, config.maxResponseLength)
-                    Sync.ensure { (error: Maybe[Result.Error[Any]]) =>
-                        Sync.Unsafe.defer(releaseConn(key, conn, error))
-                    } {
-                        responseFiber.safe.use(f)
-                    }
+                    releasingConn(key, conn)(responseFiber.safe.use(f))
                 case _ =>
                     val reserved = pool.tryReserve(key)
                     if reserved then
@@ -1102,11 +1116,7 @@ final private[kyo] class HttpClientBackend private (
                             connectFiber.safe.use { conn =>
                                 trackConn(conn)
                                 val responseFiber = sendViaBackend(conn, route, request, config.maxResponseLength)
-                                Sync.ensure { (error: Maybe[Result.Error[Any]]) =>
-                                    Sync.Unsafe.defer(releaseConn(key, conn, error))
-                                } {
-                                    responseFiber.safe.use(f)
-                                }
+                                releasingConn(key, conn)(responseFiber.safe.use(f))
                             }
                         }
                     else
