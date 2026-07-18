@@ -1435,11 +1435,12 @@ lazy val `kyo-net` =
             // Scala Native compiles the WHOLE module's tests into one binary, and sbt's Native test bridge runs multiple TaskDefs (suites)
             // concurrently within that single process (real OS threads, unlike the JVM's per-suite fork isolation). Under that concurrency, MANY
             // suites' driver pools (each spawning its own reap-loop threads, sockets, and fds) are alive SIMULTANEOUSLY, competing for the
-            // process-wide thread scheduler and fd table. This used to reproducibly wedge the accept loop under load (TransportListenerTest's
-            // "handler throws" leaf) via a genuine logic bug, not mere contention: PollerIoDriver.submitChange gated its poll-loop wakeup behind a
-            // `wakePending` CAS that could observe a stale value and skip the wake entirely, permanently stranding a re-armed read with nothing
-            // left to return an already-parked poll. Fixed by making the wake unconditional (mirrors submitEngineOp's earlier B'-class fix, see
-            // PollerIoDriver.scala and PollerWakeReadArmTest); the suite now runs green under real parallel execution.
+            // process-wide thread scheduler and fd table. This is why PollerIoDriver.submitChange fires its poll-loop wakeup UNCONDITIONALLY
+            // rather than gating it behind a `wakePending` CAS: a gated wake can observe a stale value and skip the wake entirely, which would
+            // strand a re-armed read on an already-parked poll with nothing left to wake it and leave the accept loop wedged (TransportListenerTest's
+            // "handler throws" leaf drives exactly this path). The unconditional wake is the read-side counterpart of submitEngineOp's own
+            // unconditional wake (see PollerIoDriver.scala and PollerWakeReadArmTest), keeping the accept loop live under real parallel Native
+            // test execution.
             // KyoFfiPlugin bundles the C shims (kyo_uring.c, kyo_net_boringssl.c, kyo_net_openssl.c)
             // into the Scala Native binary by copying them under resources/scala-native (Scala Native
             // scans that dir on the classpath and compiles the C into the binary). Feed the static-folded

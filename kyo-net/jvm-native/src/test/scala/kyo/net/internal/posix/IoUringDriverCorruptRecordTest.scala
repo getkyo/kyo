@@ -8,7 +8,7 @@ import kyo.net.internal.TlsEngineLoopback
 import kyo.net.internal.TlsRealEngines
 import kyo.net.internal.transport.ReadOutcome
 
-/** io_uring-path parity guard for the fatal-record abort + read-produced-ciphertext drain (committed in ab8d49ec1, mirroring the poller's
+/** io_uring-path parity guard for the fatal-record abort + read-produced-ciphertext drain (mirroring the poller's
   * [[TlsEngineIoCorruptRecordTest]] / [[TlsEngineIoReadDrainTest]]).
   *
   * Both reproductions and fixes for the fatal-record swallow (RFC 5246 §7.2.2: a fatal record-layer error must terminate the connection, not

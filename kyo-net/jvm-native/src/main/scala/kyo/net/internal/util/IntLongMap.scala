@@ -3,7 +3,7 @@ package kyo.net.internal.util
 /** A small open-addressing `int -> long` map with primitive keys and values (no `Integer` / `Long` boxing), for the
   * [[kyo.net.internal.posix.PollerIoDriver]] `activeFds` table (fd -> current handle id).
   *
-  * Concurrent-collection audit (constraint 10): this map is NOT thread-safe. It is safe in the driver because EVERY mutation is
+  * Concurrent-collection audit: this map is NOT thread-safe. It is safe in the driver because EVERY mutation is
   * applied ONLY on the poll-loop carrier (the single-writer confinement): callers ENQUEUE a registration / change and the poll fiber
   * applies the `put` / `remove` from its change-apply path, never the caller. The confinement precedes this primitive swap (an unconfined
   * primitive map would be a data race). kyo has no primitive-keyed map, so the raw arrays are the documented no-equivalent exception,

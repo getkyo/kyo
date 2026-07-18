@@ -4,7 +4,7 @@ import kyo.net.internal.transport.Connection as NetConn
 
 /** Tests the [[kyo.internal.transport.ConnectionWireTransport]] adapter (kyo-net `Connection` -> `JsonRpcWireTransport`) and the framing that
   * sits on it via [[JsonRpcTransport.fromWire]]. Driven through a driverless in-memory `Connection` pair (no driver, no syscalls), so the cases
-  * run identically on every platform. Absorbs the framing and EOF assertions of the former JVM-only Content-Length stdio test.
+  * run identically on every platform. Covers the framing and EOF assertions over the connection wire transport.
   */
 class ConnectionWireTransportTest extends JsonRpcTest:
 

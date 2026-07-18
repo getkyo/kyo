@@ -9,7 +9,7 @@ import kyo.*
   * on macOS the kqueue and nio leaves run while io_uring and epoll cancel, on Linux the reverse. Every active leaf round-trips a real message
   * through a real echo handler over a real socket: no mocks, no in-memory shortcut.
   */
-class BackendEchoPilotTest extends Test:
+class BackendEchoTest extends Test:
 
     import AllowUnsafe.embrace.danger
 
@@ -149,4 +149,4 @@ class BackendEchoPilotTest extends Test:
             end for
     }
 
-end BackendEchoPilotTest
+end BackendEchoTest

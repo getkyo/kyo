@@ -4,7 +4,7 @@ package kyo.net.internal.util
   * [[kyo.net.internal.posix.PollerIoDriver]] pending tables (`pendingReads` / `pendingWritables` / `pendingAccepts`, each fd -> a handle or a
   * writable entry).
   *
-  * Concurrent-collection audit (constraint 10): this map is NOT thread-safe. It is safe in the driver because EVERY mutation is
+  * Concurrent-collection audit: this map is NOT thread-safe. It is safe in the driver because EVERY mutation is
   * applied ONLY on the poll-loop carrier (the single-writer confinement): callers ENQUEUE a registration / change and the poll fiber
   * applies the `put` / `remove`, never the caller. The confinement precedes this swap (an unconfined map would be a data race).
   * kyo has no primitive-keyed map, so the raw arrays are the documented no-equivalent exception, poll-fiber-confined. The map lives on the

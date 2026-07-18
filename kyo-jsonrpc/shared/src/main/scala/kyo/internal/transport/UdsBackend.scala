@@ -8,8 +8,7 @@ import kyo.net.NetPlatform
   *
   * Binds a listener on `sockPath` through the platform transport and serves a single client: the first accepted connection completes `first` and
   * becomes the wire; any later accept is closed immediately. Scope cleanup closes the accepted connection, closes the listener, and removes the
-  * socket file (kyo-net does not unlink it). Replaces the former per-platform implementations (a raw java.nio server on the JVM, throw-stubs on
-  * JS and Native) with one path that runs everywhere kyo-net's transport runs.
+  * socket file (kyo-net does not unlink it). A single backend path that runs everywhere kyo-net's transport runs.
   */
 private[kyo] object UdsBackend:
 
