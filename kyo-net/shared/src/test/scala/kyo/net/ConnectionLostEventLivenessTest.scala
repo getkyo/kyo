@@ -26,7 +26,7 @@ import kyo.net.internal.transport.WriteResult
   *
   * All drivers are synchronous mock implementations (inline callbacks, no real I/O). No Thread.sleep.
   */
-class XPLAT6Test extends Test:
+class ConnectionLostEventLivenessTest extends Test:
 
     import AllowUnsafe.embrace.danger
     given Frame = Frame.internal
@@ -175,4 +175,4 @@ class XPLAT6Test extends Test:
         }
     }
 
-end XPLAT6Test
+end ConnectionLostEventLivenessTest

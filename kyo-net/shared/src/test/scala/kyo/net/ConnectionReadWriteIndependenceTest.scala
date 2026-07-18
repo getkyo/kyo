@@ -22,9 +22,9 @@ import kyo.net.internal.transport.WriteResult
   *     discard pending outbound).
   *
   * All drivers are synchronous mock implementations (inline callbacks, no real I/O). The test uses `IoDriver[Unit]` over a
-  * `Connection[Unit]` so it stays fully in `shared/` (no JVM-specific handle types), matching the same scope as `XPLAT1Test`.
+  * `Connection[Unit]` so it stays fully in `shared/` (no JVM-specific handle types), matching the same scope as `ConnectionReadOutcomeContractTest`.
   */
-class XPLAT3Test extends Test:
+class ConnectionReadWriteIndependenceTest extends Test:
 
     import AllowUnsafe.embrace.danger
     given Frame = Frame.internal
@@ -175,4 +175,4 @@ class XPLAT3Test extends Test:
         }
     }
 
-end XPLAT3Test
+end ConnectionReadWriteIndependenceTest

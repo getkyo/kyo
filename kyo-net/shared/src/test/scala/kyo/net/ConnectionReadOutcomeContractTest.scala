@@ -18,7 +18,7 @@ import kyo.net.internal.transport.WriteResult
   * The three scenarios are NOT identical in outcome (bytes vs. EOF are different results), but the CONTRACT is backend-agnostic: the pump
   * delivers the outcome to the Connection's inbound channel the same way regardless of which mock driver fires the completion.
   */
-class XPLAT1Test extends Test:
+class ConnectionReadOutcomeContractTest extends Test:
 
     import AllowUnsafe.embrace.danger
     given Frame = Frame.internal
@@ -154,4 +154,4 @@ class XPLAT1Test extends Test:
         }
     }
 
-end XPLAT1Test
+end ConnectionReadOutcomeContractTest

@@ -890,7 +890,7 @@ class NioIoDriverTest extends Test:
     // -----------------------------------------------------------------------
 
     "registerChannelDeferredOnCancelledKey" in {
-        // Reproduce-first for the STARTTLS upgrade re-registration race (#343). detachForUpgrade cancels the channel's SelectionKey; the
+        // Reproduce-first for the STARTTLS upgrade re-registration race. detachForUpgrade cancels the channel's SelectionKey; the
         // cancelled key lingers in the selector's cancelled-key set until the poll carrier flushes it during select(). An immediate
         // registerChannel on the same channel therefore throws CancelledKeyException. The fix routes that re-registration through the poll
         // carrier (enqueue + wakeup + return success) instead of parking the calling carrier in a parkNanos retry loop.
