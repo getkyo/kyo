@@ -3,7 +3,8 @@ package kyo.net.internal.transport
 import kyo.*
 import kyo.net.Test
 
-/** Tests for the Connection.State machine fold: three lifecycle booleans replaced by one named-state atomic cell.
+/** Tests for the Connection.State machine fold: a single named-state enum held in one atomic cell, encoding the connection lifecycle rather than
+  * separate lifecycle flags.
   *
   * Each leaf builds a Connection[Unit] over a SpyDriver that counts cancel and closeHandle calls. The test then drives specific state
   * transitions and asserts the structural invariants on the named state cell: teardown runs exactly once, a detach-for-upgrade bars

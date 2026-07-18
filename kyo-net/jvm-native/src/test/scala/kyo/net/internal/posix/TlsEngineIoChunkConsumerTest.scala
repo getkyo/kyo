@@ -9,10 +9,10 @@ import kyo.net.internal.TlsRealEngines
 
 /** De-boxing witness: the [[ChunkConsumer]] single-abstract-method class on the TLS write encrypt path ([[TlsEngineIo.encryptPlaintext]]).
   *
-  * The change queue (submitChange/dispatchCmd adapted long-lambda) was already de-boxed in the committed baseline (the change FIFO is a raw
-  * `MpscLongQueue` carrying a primitive `long`); the one live numeric-boxing callback on the poller hot paths was the
+  * The change queue (submitChange/dispatchCmd adapted long-lambda) is already de-boxed (the change FIFO is a raw
+  * `MpscLongQueue` carrying a primitive `long`); the one live numeric-boxing callback on the poller hot paths is the
   * `(Buffer[Byte], Int) => Unit` per-record callback in `encryptPlaintext`, which a `Function2[Buffer[Byte], Int, Unit]` would box the `Int`
-  * length on per call (Scala 3 does not specialize Function2 on Int). It was converted to the `ChunkConsumer` SAM so the call-site lambda passes
+  * length on per call (Scala 3 does not specialize Function2 on Int). It uses the `ChunkConsumer` SAM so the call-site lambda passes
   * the primitive `Int` with no box.
   *
   * The witness asserts the SAM is BEHAVIOR-PRESERVING: every drained ciphertext chunk is handed to the SAM with the correct `(buf, len)`, and the
