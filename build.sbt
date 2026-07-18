@@ -677,6 +677,7 @@ lazy val `kyo-eventlog` =
         .settings(`kyo-settings`)
         .jvmSettings(
             mimaCheck(false),
+            libraryDependencies += "com.h2database" % "h2" % "2.2.224" % Test,
             Compile / unmanagedSourceDirectories +=
                 baseDirectory.value.getParentFile / "jvm-native" / "src" / "main" / "scala",
             Test / unmanagedSourceDirectories +=
