@@ -682,4 +682,110 @@ class OverlayFileSystemTest extends kyo.test.Test[Any]:
         }
     }
 
+    // A directory subtree spanning lower-only children (d/a.txt, d/sub/b.txt) and an upper-only
+    // staged child (d/c.txt). Seeds lower, then stages d/c.txt through the overlay.
+    private def seedSubtree(ov: FileSystem.CommitHandle[Sync], lower: FileSystem[Sync], d: Path): Unit < (Sync & Abort[FileException]) =
+        Path.runWith(lower) {
+            d.mkDir
+                .andThen((d / "a.txt").write("aaa"))
+                .andThen((d / "sub").mkDir)
+                .andThen((d / "sub" / "b.txt").write("bbb"))
+        }.andThen {
+            Path.runWith(ov)((d / "c.txt").write("ccc"))
+        }
+
+    "move of a directory relocates the whole subtree through the overlay and leaves the source gone" in {
+        withOverlay { (ov, lower) =>
+            val d = Path("d")
+            val e = Path("e")
+            seedSubtree(ov, lower, d).andThen {
+                Path.runWith(ov) {
+                    d.move(e).andThen {
+                        for
+                            a         <- (e / "a.txt").read
+                            b         <- (e / "sub" / "b.txt").read
+                            c         <- (e / "c.txt").read
+                            dExists   <- d.exists
+                            dAExists  <- (d / "a.txt").exists
+                            dCExists  <- (d / "c.txt").exists
+                            dSbExists <- (d / "sub" / "b.txt").exists
+                        yield assert(
+                            a == "aaa" && b == "bbb" && c == "ccc" &&
+                                !dExists && !dAExists && !dCExists && !dSbExists
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    "copy of a directory materializes the whole subtree under the target and leaves the source intact" in {
+        withOverlay { (ov, lower) =>
+            val d = Path("d")
+            val f = Path("f")
+            seedSubtree(ov, lower, d).andThen {
+                Path.runWith(ov) {
+                    d.copy(f).andThen {
+                        for
+                            fa <- (f / "a.txt").read
+                            fb <- (f / "sub" / "b.txt").read
+                            fc <- (f / "c.txt").read
+                            da <- (d / "a.txt").read
+                            db <- (d / "sub" / "b.txt").read
+                            dc <- (d / "c.txt").read
+                        yield assert(
+                            fa == "aaa" && fb == "bbb" && fc == "ccc" &&
+                                da == "aaa" && db == "bbb" && dc == "ccc"
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    "truncate with a size beyond the Int range aborts rather than silently emptying the file" in {
+        withOv { ov =>
+            val p = Path("big.txt")
+            Path.runWith(ov)(p.write("keep-me")).andThen {
+                Abort.run[FileException](Path.runWith(ov)(p.truncate(Int.MaxValue.toLong + 1L))).map {
+                    case Result.Failure(_: FileException) =>
+                        // The stored content must be untouched; a silent narrowing wraps to a negative
+                        // take and would empty the file instead of aborting.
+                        Path.runWith(ov)(p.read).map(v => assert(v == "keep-me"))
+                    case other => fail(s"expected FileException failure, got: $other")
+                }
+            }
+        }
+    }
+
+    "commit reproduces a directory move/copy subtree on the lower file system (replay path)" in {
+        withOverlay { (ov, lower) =>
+            val d = Path("d")
+            val e = Path("e")
+            val f = Path("f")
+            seedSubtree(ov, lower, d).andThen {
+                Path.runWith(ov)(d.copy(f).andThen(d.move(e))).andThen {
+                    ov.commitOverwrite.andThen {
+                        Path.runWith(lower) {
+                            for
+                                ea       <- (e / "a.txt").read
+                                eb       <- (e / "sub" / "b.txt").read
+                                ec       <- (e / "c.txt").read
+                                fa       <- (f / "a.txt").read
+                                fb       <- (f / "sub" / "b.txt").read
+                                fc       <- (f / "c.txt").read
+                                dExists  <- d.exists
+                                dAExists <- (d / "a.txt").exists
+                            yield assert(
+                                ea == "aaa" && eb == "bbb" && ec == "ccc" &&
+                                    fa == "aaa" && fb == "bbb" && fc == "ccc" &&
+                                    !dExists && !dAExists
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+
 end OverlayFileSystemTest

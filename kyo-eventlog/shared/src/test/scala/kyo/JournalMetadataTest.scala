@@ -97,6 +97,31 @@ class JournalMetadataTest extends kyo.test.Test[Any]:
             assert(parsed == Result.succeed(ref))
         }
 
+        "parse/render round trips a hierarchical (slash-containing) stream id" in {
+            val journalId = JournalId.validate("orders").getOrElse(throw new AssertionError("valid journal id"))
+            val streamId  = Event.StreamId("orders/2024").getOrElse(throw new AssertionError("valid stream id"))
+            val offset    = Event.StreamOffset(7L).getOrElse(throw new AssertionError("valid offset"))
+            val ref       = JournalEntryRef(journalId, streamId, offset)
+
+            assert(ref.uri == "journal:orders/orders/2024/7")
+            val parsed = Abort.run[JournalIdentityError](JournalEntryRef.parse(ref.uri)).eval
+            assert(parsed == Result.succeed(ref))
+        }
+
+        "a uri with too few slashes fails with a typed identity error" in {
+            val result = Abort.run[JournalIdentityError](JournalEntryRef.parse("journal:orders/7")).eval
+            result match
+                case Result.Failure(_: JournalIdentityError) => succeed("malformed uri never produces a ref")
+                case other                                   => fail(s"expected JournalIdentityError failure, got: $other")
+        }
+
+        "a uri with an empty stream segment fails with a typed identity error" in {
+            val result = Abort.run[JournalIdentityError](JournalEntryRef.parse("journal:orders//7")).eval
+            result match
+                case Result.Failure(_: JournalIdentityError) => succeed("empty stream segment never produces a ref")
+                case other                                   => fail(s"expected JournalIdentityError failure, got: $other")
+        }
+
         "a physical file:// URI is rejected at parse" in {
             val result = Abort.run[JournalIdentityError](JournalEntryRef.parse("file:///var/journal/orders/000007.seg")).eval
             result match

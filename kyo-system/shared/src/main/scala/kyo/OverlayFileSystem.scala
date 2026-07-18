@@ -468,6 +468,18 @@ final private[kyo] class OverlayFileSystem[S](
         if parts.isEmpty then Path("")
         else parts.tail.foldLeft(Path(parts.head))((acc, seg) => acc / seg)
 
+    // Guard a caller-supplied Long size/offset before narrowing to Int for the array-backed
+    // in-overlay representation. The overlay holds each file in a Span[Byte] (max Int.MaxValue
+    // bytes), so a value beyond the Int range can never address real content; fail loudly rather
+    // than silently wrapping to a negative index, which would empty or corrupt the file.
+    private def boundInt(path: Path, label: String, value: Long): Int < (S & Abort[FileException]) =
+        if value < 0L || value > Int.MaxValue.toLong then
+            Abort.fail(FileIOException(
+                path,
+                new IOException(s"$label $value exceeds the addressable Int range for the in-overlay file representation")
+            ))
+        else value.toInt
+
     // Walk ancestor prefixes from nearest to farthest. A Whiteout or OpaqueDir at the nearest
     // found ancestor hides this path when it has no direct upper entry of its own. A positive
     // Entry at an ancestor stops the walk: re-creation of that prefix makes its children visible.
@@ -749,13 +761,15 @@ final private[kyo] class OverlayFileSystem[S](
         withState { s =>
             s.upper.get(path.parts) match
                 case Some(Upper.Entry(Path.Entry.File(bytes, _))) =>
-                    val kept = Span.fromUnsafe(bytes.toArrayUnsafe.take(size.toInt))
-                    val stat = Path.PathStat(0L, kept.size.toLong)
-                    modifyPure { cur =>
-                        cur.copy(
-                            upper = cur.upper.updated(path.parts, Upper.Entry(Path.Entry.File(kept, stat))),
-                            journal = cur.journal.appended(WriteOp.WriteFile(path.parts, kept, stat))
-                        )
+                    boundInt(path, "truncate size", size).map { sz =>
+                        val kept = Span.fromUnsafe(bytes.toArrayUnsafe.take(sz))
+                        val stat = Path.PathStat(0L, kept.size.toLong)
+                        modifyPure { cur =>
+                            cur.copy(
+                                upper = cur.upper.updated(path.parts, Upper.Entry(Path.Entry.File(kept, stat))),
+                                journal = cur.journal.appended(WriteOp.WriteFile(path.parts, kept, stat))
+                            )
+                        }
                     }
                 case Some(_) => Abort.fail(FileNotFoundException(path))
                 case None =>
@@ -764,13 +778,15 @@ final private[kyo] class OverlayFileSystem[S](
                         lower.readBytes(path).map { bytes =>
                             lower.stat(path).map { lStat =>
                                 stampFile(path.parts, lStat, bytes).andThen {
-                                    val kept = Span.fromUnsafe(bytes.toArrayUnsafe.take(size.toInt))
-                                    val stat = Path.PathStat(0L, kept.size.toLong)
-                                    modifyPure { cur =>
-                                        cur.copy(
-                                            upper = cur.upper.updated(path.parts, Upper.Entry(Path.Entry.File(kept, stat))),
-                                            journal = cur.journal.appended(WriteOp.WriteFile(path.parts, kept, stat))
-                                        )
+                                    boundInt(path, "truncate size", size).map { sz =>
+                                        val kept = Span.fromUnsafe(bytes.toArrayUnsafe.take(sz))
+                                        val stat = Path.PathStat(0L, kept.size.toLong)
+                                        modifyPure { cur =>
+                                            cur.copy(
+                                                upper = cur.upper.updated(path.parts, Upper.Entry(Path.Entry.File(kept, stat))),
+                                                journal = cur.journal.appended(WriteOp.WriteFile(path.parts, kept, stat))
+                                            )
+                                        }
                                     }
                                 }
                             }
@@ -886,27 +902,34 @@ final private[kyo] class OverlayFileSystem[S](
         createFolders: Boolean
     ): Unit < (S & Abort[FileException]) =
         resolveEntry(from).map { resolved =>
-            withState { s =>
-                val targetExists: Boolean =
-                    s.upper.get(to.parts) match
-                        case Some(Upper.Whiteout) => false
-                        case Some(_)              => true
-                        case None                 => false // lower checked separately below
-                if targetExists && !replaceExisting then
-                    Abort.fail(FileAlreadyExistsException(to))
-                else
-                    lower.exists(to).map { lowerTargetExists =>
-                        if lowerTargetExists && !replaceExisting then
-                            Abort.fail(FileAlreadyExistsException(to))
-                        else
+            checkMoveTarget(to, replaceExisting) {
+                resolved match
+                    case file: Path.Entry.File =>
+                        // A file move keeps single-node semantics: whiteout the source, stage the
+                        // resolved file at the target, and journal one source-independent Move op.
+                        modifyPure { cur =>
+                            cur.copy(
+                                upper = cur.upper.updated(from.parts, Upper.Whiteout).updated(to.parts, Upper.Entry(file)),
+                                journal = cur.journal.appended(WriteOp.Move(from.parts, to.parts, file))
+                            )
+                        }
+                    case _: Path.Entry.Directory =>
+                        // A directory move relocates the entire subtree: every descendant visible in
+                        // the overlay view (upper-staged plus lower-only) is materialized under `to`,
+                        // and the whole source subtree is whiteouted so it is fully gone.
+                        collectSubtree(from).map { nodes =>
                             modifyPure { cur =>
-                                cur.copy(
-                                    upper = cur.upper.updated(from.parts, Upper.Whiteout).updated(to.parts, Upper.Entry(resolved)),
-                                    journal = cur.journal.appended(WriteOp.Move(from.parts, to.parts, resolved))
-                                )
+                                val (upperT, journalT) = stageSubtree(cur.upper, cur.journal, from, to, nodes)
+                                // Whiteout the source dir and every upper descendant of it (a direct
+                                // upper Entry outranks an ancestor whiteout, so each must be marked);
+                                // the Remove op recursively drops the source subtree from lower on commit.
+                                val srcKeys =
+                                    cur.upper.keysIterator.filter(k => k.size > from.parts.size && k.startsWith(from.parts)).toList
+                                val upperW =
+                                    srcKeys.foldLeft(upperT.updated(from.parts, Upper.Whiteout))((u, k) => u.updated(k, Upper.Whiteout))
+                                cur.copy(upper = upperW, journal = journalT.appended(WriteOp.Remove(from.parts)))
                             }
-                    }
-                end if
+                        }
             }
         }
 
@@ -919,28 +942,90 @@ final private[kyo] class OverlayFileSystem[S](
         createFolders: Boolean
     ): Unit < (S & Abort[FileException]) =
         resolveEntry(from).map { resolved =>
-            withState { s =>
-                val targetExists: Boolean =
-                    s.upper.get(to.parts) match
-                        case Some(Upper.Whiteout) => false
-                        case Some(_)              => true
-                        case None                 => false
-                if targetExists && !replaceExisting then
-                    Abort.fail(FileAlreadyExistsException(to))
-                else
-                    lower.exists(to).map { lowerTargetExists =>
-                        if lowerTargetExists && !replaceExisting then
-                            Abort.fail(FileAlreadyExistsException(to))
-                        else
+            checkMoveTarget(to, replaceExisting) {
+                resolved match
+                    case file: Path.Entry.File =>
+                        modifyPure { cur =>
+                            cur.copy(
+                                upper = cur.upper.updated(to.parts, Upper.Entry(file)),
+                                journal = cur.journal.appended(WriteOp.Copy(from.parts, to.parts, file))
+                            )
+                        }
+                    case _: Path.Entry.Directory =>
+                        // A directory copy materializes the entire subtree under `to`, leaving the
+                        // source intact (no whiteout, no Remove op).
+                        collectSubtree(from).map { nodes =>
                             modifyPure { cur =>
-                                cur.copy(
-                                    upper = cur.upper.updated(to.parts, Upper.Entry(resolved)),
-                                    journal = cur.journal.appended(WriteOp.Copy(from.parts, to.parts, resolved))
-                                )
+                                val (upperT, journalT) = stageSubtree(cur.upper, cur.journal, from, to, nodes)
+                                cur.copy(upper = upperT, journal = journalT)
                             }
-                    }
-                end if
+                        }
             }
+        }
+
+    // Shared target-existence guard for move/copy: fails with FileAlreadyExistsException when the
+    // target is present in upper or lower and replaceExisting is false, otherwise runs `body`.
+    private def checkMoveTarget[A](to: Path, replaceExisting: Boolean)(
+        body: => A < (S & Abort[FileException])
+    ): A < (S & Abort[FileException]) =
+        withState { s =>
+            val targetExists: Boolean =
+                s.upper.get(to.parts) match
+                    case Some(Upper.Whiteout) => false
+                    case Some(_)              => true
+                    case None                 => false // lower checked separately below
+            if targetExists && !replaceExisting then Abort.fail(FileAlreadyExistsException(to))
+            else
+                lower.exists(to).map { lowerTargetExists =>
+                    if lowerTargetExists && !replaceExisting then Abort.fail(FileAlreadyExistsException(to))
+                    else body
+                }
+            end if
+        }
+
+    // Materialize a preorder subtree (root-first) captured by collectSubtree under `to`, re-keying
+    // each node by its relative suffix under `from`. Files become upper Entry + WriteFile ops (bytes
+    // captured, so replay is source-independent); directories become OpaqueDir + WriteDirectory ops
+    // so the target holds exactly the staged subtree with no lower children leaking through.
+    private def stageSubtree(
+        upper: Map[Chunk[String], Upper],
+        journal: Chunk[WriteOp],
+        from: Path,
+        to: Path,
+        nodes: Chunk[(Chunk[String], Path.Entry)]
+    ): (Map[Chunk[String], Upper], Chunk[WriteOp]) =
+        nodes.foldLeft((upper, journal)) { case ((u, j), (nodeParts, entry)) =>
+            val targetParts = to.parts ++ nodeParts.drop(from.parts.size)
+            entry match
+                case Path.Entry.File(bytes, stat) =>
+                    (
+                        u.updated(targetParts, Upper.Entry(Path.Entry.File(bytes, stat))),
+                        j.appended(WriteOp.WriteFile(targetParts, bytes, stat))
+                    )
+                case Path.Entry.Directory(stat) =>
+                    (
+                        u.updated(targetParts, Upper.OpaqueDir(stat)),
+                        j.appended(WriteOp.WriteDirectory(targetParts, opaque = true))
+                    )
+            end match
+        }
+
+    // Enumerate `root` and every descendant through the overlay view (upper staged entries unioned
+    // with lower entries, minus whiteouts), preorder with parents before children so replay can
+    // create each directory before its contents. Each element carries the descendant's absolute
+    // parts and its resolved Path.Entry (file bytes + stat, or directory stat).
+    private def collectSubtree(root: Path): Chunk[(Chunk[String], Path.Entry)] < (S & Abort[FileException]) =
+        resolveEntry(root).map {
+            case file: Path.Entry.File =>
+                Chunk((root.parts, file: Path.Entry))
+            case dir: Path.Entry.Directory =>
+                list(root).map { children =>
+                    children.foldLeft[Chunk[(Chunk[String], Path.Entry)] < (S & Abort[FileException])](
+                        Chunk((root.parts, dir: Path.Entry))
+                    ) { (accKyo, child) =>
+                        accKyo.map(acc => collectSubtree(child).map(sub => acc.appendedAll(sub)))
+                    }
+                }
         }
 
     // Resolve a source path to a Path.Entry, checking upper first then lower.
@@ -1121,18 +1206,20 @@ final private[kyo] class OverlayFileSystem[S](
     private def mkChannel(path: Path, mode: FileSystem.ChannelMode): Path.Channel[S] =
         new Path.Channel[S]:
             def readAt(pos: Long, len: Int)(using Frame): Span[Byte] < (S & Abort[FileException]) =
-                readBytes(path).map(_.drop(pos.toInt).take(len))
+                boundInt(path, "channel read offset", pos).map(p => readBytes(path).map(_.drop(p).take(len)))
             def writeAt(pos: Long, bytes: Span[Byte])(using Frame): Unit < (S & Abort[FileException]) =
                 mode match
                     case FileSystem.ChannelMode.Read => Abort.fail(FileAccessDeniedException(path))
                     case _ =>
-                        Abort.recover[FileNotFoundException](_ => Span.empty[Byte])(readBytes(path)).map { existing =>
-                            val p = pos.toInt
-                            // Span.fill zero-fills the gap when writeAt lands past the current length.
-                            val padded  = if p <= existing.size then existing else existing ++ Span.fill[Byte](p - existing.size)(0.toByte)
-                            val tail    = padded.drop(p + bytes.size)
-                            val spliced = padded.take(p) ++ bytes ++ tail
-                            writeBytes(path, spliced, createFolders = true)
+                        boundInt(path, "channel write offset", pos).map { p =>
+                            Abort.recover[FileNotFoundException](_ => Span.empty[Byte])(readBytes(path)).map { existing =>
+                                // Span.fill zero-fills the gap when writeAt lands past the current length.
+                                val padded =
+                                    if p <= existing.size then existing else existing ++ Span.fill[Byte](p - existing.size)(0.toByte)
+                                val tail    = padded.drop(p + bytes.size)
+                                val spliced = padded.take(p) ++ bytes ++ tail
+                                writeBytes(path, spliced, createFolders = true)
+                            }
                         }
             def sync()(using Frame): Unit < (S & Abort[FileException]) = ()
             def truncate(size: Long)(using Frame): Unit < (S & Abort[FileException]) =

@@ -67,30 +67,42 @@ object JournalEntryRef:
         Abort.get(JournalEntryRef.parseLogical(uri))
 
     // journal:<journalId>/<streamId>/<offset> only; file:// and any other scheme or a bare
-    // physical path are rejected.
+    // physical path are rejected. The journalId (route-segment grammar) and the numeric offset
+    // never contain a '/', so only the streamId middle can; StreamId is deliberately permissive
+    // and accepts hierarchical ids like "orders/2024". The parse therefore anchors on the
+    // constrained outer segments: journalId is the text before the first '/', offset is the text
+    // after the last '/', and streamId is everything in between. At least two '/' are required
+    // (else the form is malformed).
     private[kyo] def parseLogical(uri: String)(using Frame): Result[JournalIdentityError, JournalEntryRef] =
         val Scheme = "journal:"
         if uri.isEmpty then Result.fail(JournalIdentityError("journal entry ref uri must not be empty"))
         else if !uri.startsWith(Scheme) then
             Result.fail(JournalIdentityError(s"journal entry ref uri '$uri' must use the 'journal:' scheme"))
         else
-            uri.substring(Scheme.length).split("/", -1) match
-                case Array(jidStr, sidStr, offStr) =>
-                    for
-                        journalId <- JournalId.validate(jidStr)
-                        streamId <- Event.StreamId(sidStr).mapFailure(e =>
-                            JournalIdentityError(s"journal entry ref uri '$uri' has an invalid stream segment: ${e.getMessage()}")
-                        )
-                        offsetValue <- Result.catching[NumberFormatException](offStr.toLong)
-                            .mapFailure(_ => JournalIdentityError(s"journal entry ref uri '$uri' has a non-numeric offset segment"))
-                        offset <- Event.StreamOffset(offsetValue).mapFailure(e =>
-                            JournalIdentityError(s"journal entry ref uri '$uri' has an invalid offset: ${e.getMessage()}")
-                        )
-                    yield JournalEntryRef(journalId, streamId, offset)
-                case _ =>
-                    Result.fail(JournalIdentityError(
-                        s"journal entry ref uri '$uri' must have the form journal:<journalId>/<streamId>/<offset>"
-                    ))
+            val rest       = uri.substring(Scheme.length)
+            val firstSlash = rest.indexOf('/')
+            val lastSlash  = rest.lastIndexOf('/')
+            if firstSlash < 0 || firstSlash == lastSlash then
+                Result.fail(JournalIdentityError(
+                    s"journal entry ref uri '$uri' must have the form journal:<journalId>/<streamId>/<offset>"
+                ))
+            else
+                val jidStr = rest.substring(0, firstSlash)
+                val sidStr = rest.substring(firstSlash + 1, lastSlash)
+                val offStr = rest.substring(lastSlash + 1)
+                for
+                    journalId <- JournalId.validate(jidStr)
+                    streamId <- Event.StreamId(sidStr).mapFailure(e =>
+                        JournalIdentityError(s"journal entry ref uri '$uri' has an invalid stream segment: ${e.getMessage()}")
+                    )
+                    offsetValue <- Result.catching[NumberFormatException](offStr.toLong)
+                        .mapFailure(_ => JournalIdentityError(s"journal entry ref uri '$uri' has a non-numeric offset segment"))
+                    offset <- Event.StreamOffset(offsetValue).mapFailure(e =>
+                        JournalIdentityError(s"journal entry ref uri '$uri' has an invalid offset: ${e.getMessage()}")
+                    )
+                yield JournalEntryRef(journalId, streamId, offset)
+                end for
+            end if
         end if
     end parseLogical
 
