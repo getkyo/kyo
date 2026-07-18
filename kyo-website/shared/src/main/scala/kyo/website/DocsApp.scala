@@ -150,23 +150,32 @@ object DocsApp:
                             html(group.modules.toSeq.map { mod =>
                                 val href    = s"/$prefix/${mod.slug}/"
                                 val outline = outlines.getOrElse(href, Chunk.empty)
+                                // Each module's tutorial child routes, filtered from the version's loaded tutorial rail by
+                                // module slug and rendered as an indented link list nested under the module node, so a
+                                // module's walkthroughs sit beneath it exactly like its sections.
+                                val tutorials = content.tutorials.filter(_.module == mod.slug)
                                 // The module node keys on `route` alone: the outline is static build-time
                                 // data (`outlines`, looked up by this module's canonical href), so when the
                                 // route flips to this module the node re-renders ACTIVE with its real
                                 // sections in the same paint. No per-navigation fetch, no stale-previous
                                 // flash, no load delay. A navigation away flips the match to false and the
-                                // node collapses to the bare link.
+                                // node collapses to the bare link. The tutorial rail is computed from the
+                                // same `r`, so a tutorial child link highlights active on its own route match.
                                 // Use UI.Ast.Reactive directly to avoid ambiguity with StringContext.render.
                                 UI.Ast.Reactive(route.map { r =>
+                                    val tutorialRail = sidebarTutorials(tutorials, prefix, mod.slug, r)
                                     if r.endsWith(s"/${mod.slug}/") || r == href then
                                         UI.li.cssClass("nav-item").cssClass("nav-item-active")(
                                             UI.a(mod.displayName).href(Href.Path(href)),
-                                            sidebarSections(outline)
+                                            sidebarSections(outline),
+                                            tutorialRail
                                         )
                                     else
                                         UI.li.cssClass("nav-item")(
-                                            UI.a(mod.displayName).href(Href.Path(href))
+                                            UI.a(mod.displayName).href(Href.Path(href)),
+                                            tutorialRail
                                         )
+                                    end if
                                 })
                             })*
                         )
@@ -305,6 +314,30 @@ object DocsApp:
             })
         )
     end contentArea
+
+    private def sidebarTutorials(
+        tutorials: Chunk[WebsiteContent.Tutorial],
+        prefix: String,
+        moduleSlug: String,
+        currentRoute: String
+    )(using Frame): UI =
+        // The active-highlighting mirrors the module link above: a tutorial child is active on an
+        // exact route match or when the current route ends with its own `/tutorials/<slug>/` segment.
+        // An empty tutorial set yields UI.empty, so a module with no walkthroughs adds nothing.
+        if tutorials.isEmpty then UI.empty
+        else
+            UI.ul.cssClass("sidebar-tutorials")(
+                tutorials.toSeq.map { t =>
+                    val href = s"/$prefix/$moduleSlug/tutorials/${t.declaration.slug}/"
+                    val item =
+                        if currentRoute == href || currentRoute.endsWith(s"/tutorials/${t.declaration.slug}/") then
+                            UI.li.cssClass("nav-item").cssClass("nav-item-active")
+                        else UI.li.cssClass("nav-item")
+                    item(UI.a(t.declaration.title).href(Href.Path(href)))
+                }*
+            )
+        end if
+    end sidebarTutorials
 
     private def sidebarSections(toc: Chunk[DocsMarkdown.Heading])(using Frame): UI =
         // The active item's in-page section outline, nested under its rail entry. The rail is exactly

@@ -36,3 +36,18 @@ final case class WebsiteMarkdownException(slug: String, detail: String)(using Fr
 /** Writing a route's file failed. */
 final case class WebsiteEmitException(route: String, cause: Throwable)(using Frame)
     extends WebsiteException(s"emit failed for route $route", cause)
+
+/** A tutorial child-route declaration is malformed, or a module declares two tutorials with the
+  * same slug. The `field` names the offending declaration field (`"slug"`, `"title"`, or
+  * `"source"`) and `detail` is the typed failure mode (see [[WebsiteTutorialException.TutorialFailure]]).
+  */
+final case class WebsiteTutorialException(field: String, detail: WebsiteTutorialException.TutorialFailure)(using Frame)
+    extends WebsiteException(s"tutorial declaration $field: $detail")
+
+object WebsiteTutorialException:
+    /** Typed tutorial-declaration failure modes: an empty required field, a slug that is not a
+      * valid lowercase route segment, or a duplicate slug across a module's tutorial set.
+      */
+    enum TutorialFailure derives CanEqual:
+        case Empty, InvalidSlug, DuplicateSlug
+end WebsiteTutorialException

@@ -126,6 +126,11 @@ object WebsiteBundleMain:
         // multi-segment route whose last segment is NOT in this set is off-tree: it full-
         // navigates to a clean server 404 instead of fetching a missing content.html into a broken shell.
         val knownSlugs: Set[String] = knownSlugsOf(island)
+        // The island's declared tutorial slugs. A `/<module>/tutorials/<slug>` route classifies as a
+        // tutorial child route only when its last segment is in this set, so SPA fetching resolves it
+        // to the same content path the SSG emitted; an unknown tutorial slug falls back to a full
+        // server navigation (route parity).
+        val knownTutorialSlugs: Set[String] = knownTutorialSlugsOf(island)
         // The island's pre-rendered article is the current route's article when the initial route is
         // a module page, and "" on `/` and `/<prefix>/` (the SSG seeds an empty island there). Seed
         // the cache so the module branch reuses the first-paint content instead of re-fetching it.
@@ -198,6 +203,7 @@ object WebsiteBundleMain:
                 route,
                 knownPrefixes,
                 knownSlugs,
+                knownTutorialSlugs,
                 island,
                 content,
                 articleRef,
@@ -411,6 +417,15 @@ object WebsiteBundleMain:
     private[website] def knownSlugsOf(island: DocsClient.DocsIsland): Set[String] =
         island.content.groups.flatMap(_.modules).map(_.slug).toSet
 
+    /** Derive the set of known tutorial slugs for the seeded island's content tree. A
+      * `/<module>/tutorials/<slug>` route classifies as [[RouteKind.Tutorial]] only when its last
+      * segment is in this set, so an unknown tutorial slug full-navigates to a clean server 404
+      * rather than fetching a missing content.html into a broken shell (the same guard
+      * [[knownSlugsOf]] gives module routes).
+      */
+    private[website] def knownTutorialSlugsOf(island: DocsClient.DocsIsland): Set[String] =
+        island.content.tutorials.map(_.declaration.slug).toSet
+
     /** The four route kinds the nav fiber dispatches on, named so the classification is a pure,
       * testable decision separate from the effectful branch bodies in [[navFiber]].
       *
@@ -421,7 +436,7 @@ object WebsiteBundleMain:
       *     is not a known module slug), which hands off to a full browser navigation.
       */
     private[website] enum RouteKind derives CanEqual:
-        case Landing, Module, Intro, OffTree
+        case Landing, Module, Tutorial, Intro, OffTree
 
     /** Classify a route's path segments into a [[RouteKind]], the pure decision [[navFiber]] dispatches
       * on. A multi-segment route is a [[Module]] ONLY when its last segment is a known module slug;
@@ -432,10 +447,14 @@ object WebsiteBundleMain:
     private[website] def classifyRoute(
         segments: Array[String],
         knownPrefixes: Set[String],
-        knownSlugs: Set[String]
+        knownSlugs: Set[String],
+        knownTutorialSlugs: Set[String]
     ): RouteKind =
         if segments.isEmpty then RouteKind.Landing
         else if segments.length >= 2 && knownSlugs.contains(segments(segments.length - 1)) then RouteKind.Module
+        else if segments.length >= 2 && segments(segments.length - 2) == "tutorials" &&
+            knownTutorialSlugs.contains(segments(segments.length - 1))
+        then RouteKind.Tutorial
         else if segments.length == 1 && knownPrefixes.contains(segments(0)) then RouteKind.Intro
         else RouteKind.OffTree
     end classifyRoute
@@ -463,6 +482,7 @@ object WebsiteBundleMain:
         route: Signal[String],
         knownPrefixes: Set[String],
         knownSlugs: Set[String],
+        knownTutorialSlugs: Set[String],
         island: DocsClient.DocsIsland,
         content: SignalRef[UI],
         articleRef: SignalRef[UI],
@@ -476,12 +496,18 @@ object WebsiteBundleMain:
                     nextRoute <- route.next
                     segments = nextRoute.split('/').filter(_.nonEmpty)
                     _ <-
-                        classifyRoute(segments, knownPrefixes, knownSlugs) match
+                        classifyRoute(segments, knownPrefixes, knownSlugs, knownTutorialSlugs) match
                             case RouteKind.Landing =>
                                 // Root `/`: swap to the landing body without a full reload.
                                 content.set(landingBody).andThen(updateHead(nextRoute, island))
                             case RouteKind.Module =>
                                 // Module route: fetch pre-rendered article from content.html, update article + TOC, show docs.
+                                showContentRoute(nextRoute, island, content, articleRef, loadingRef, docsBody)
+                            case RouteKind.Tutorial =>
+                                // Tutorial child route `/<prefix>/<module>/tutorials/<slug>/`: fetched and injected
+                                // exactly like a module from the route's own content.html, the SAME file
+                                // emitTutorialPage wrote (route parity by construction), so it hydrates in-shell
+                                // rather than full-navigating.
                                 showContentRoute(nextRoute, island, content, articleRef, loadingRef, docsBody)
                             case RouteKind.Intro =>
                                 // Intro/overview `/<knownPrefix>/`: the root-README overview is served at

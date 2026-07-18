@@ -48,7 +48,7 @@ class RouterRobustnessTest extends kyo.test.Test[Any]:
     // asserted OffTree and FAILED with RouteKind.Module.
     "unknown multi-segment slug is classified as OffTree, not Module" in {
         val segments = segmentsOf("/latest/does-not-exist/")
-        val kind     = WebsiteBundleMain.classifyRoute(segments, knownPrefixes, knownSlugs)
+        val kind     = WebsiteBundleMain.classifyRoute(segments, knownPrefixes, knownSlugs, Set.empty)
         assert(
             kind == WebsiteBundleMain.RouteKind.OffTree,
             s"unknown slug must land in the OffTree branch, got: $kind"
@@ -63,7 +63,7 @@ class RouterRobustnessTest extends kyo.test.Test[Any]:
     // A multi-segment route whose last segment IS a known module slug stays Module.
     "known multi-segment slug is classified as Module, not OffTree" in {
         val segments = segmentsOf("/latest/kyo-core/")
-        val kind     = WebsiteBundleMain.classifyRoute(segments, knownPrefixes, knownSlugs)
+        val kind     = WebsiteBundleMain.classifyRoute(segments, knownPrefixes, knownSlugs, Set.empty)
         assert(kind == WebsiteBundleMain.RouteKind.Module, s"known slug must classify as Module, got: $kind")
         succeed
     }
@@ -71,7 +71,7 @@ class RouterRobustnessTest extends kyo.test.Test[Any]:
     // The guard keys on the LAST segment, so a known slug under a known version prefix is Module too.
     "known slug under a version prefix is classified as Module (versioned)" in {
         val segments = segmentsOf("/v1.0.0-RC2/kyo-data/")
-        val kind     = WebsiteBundleMain.classifyRoute(segments, knownPrefixes, knownSlugs)
+        val kind     = WebsiteBundleMain.classifyRoute(segments, knownPrefixes, knownSlugs, Set.empty)
         assert(kind == WebsiteBundleMain.RouteKind.Module, s"known versioned slug must classify as Module, got: $kind")
         succeed
     }
@@ -80,18 +80,24 @@ class RouterRobustnessTest extends kyo.test.Test[Any]:
     // segment stays OffTree. These pin the unchanged branches.
     "root, known-prefix intro, and unknown single segment classify as Landing / Intro / OffTree" in {
         assert(
-            WebsiteBundleMain.classifyRoute(segmentsOf("/"), knownPrefixes, knownSlugs) == WebsiteBundleMain.RouteKind.Landing,
+            WebsiteBundleMain.classifyRoute(segmentsOf("/"), knownPrefixes, knownSlugs, Set.empty) == WebsiteBundleMain.RouteKind.Landing,
             "root must be Landing"
         )
         assert(
-            WebsiteBundleMain.classifyRoute(segmentsOf("/latest/"), knownPrefixes, knownSlugs) == WebsiteBundleMain.RouteKind.Intro,
+            WebsiteBundleMain.classifyRoute(
+                segmentsOf("/latest/"),
+                knownPrefixes,
+                knownSlugs,
+                Set.empty
+            ) == WebsiteBundleMain.RouteKind.Intro,
             "/latest/ must be Intro"
         )
         assert(
             WebsiteBundleMain.classifyRoute(
                 segmentsOf("/bogus/"),
                 knownPrefixes,
-                knownSlugs
+                knownSlugs,
+                Set.empty
             ) == WebsiteBundleMain.RouteKind.OffTree,
             "/bogus/ must be OffTree"
         )
@@ -121,7 +127,7 @@ class RouterRobustnessTest extends kyo.test.Test[Any]:
         )
 
         // A nav to /<islandTag>/ classifies as Intro when the island tag is seeded in.
-        val kind = WebsiteBundleMain.classifyRoute(segmentsOf(s"/$islandTag/"), noIslandPrefixes, Set.empty)
+        val kind = WebsiteBundleMain.classifyRoute(segmentsOf(s"/$islandTag/"), noIslandPrefixes, Set.empty, Set.empty)
         assert(
             kind == WebsiteBundleMain.RouteKind.Intro,
             s"/$islandTag/ must classify as Intro when the island tag is in knownPrefixes, got: $kind"
@@ -130,7 +136,7 @@ class RouterRobustnessTest extends kyo.test.Test[Any]:
         // Regression oracle: if the seed were absent (pre-fix behaviour), the same nav degrades to
         // OffTree. We verify this by building the pre-fix set explicitly.
         val preFix  = emptyVersionsIsland.toSeq.map(_.tag).toSet + "latest"
-        val kindOld = WebsiteBundleMain.classifyRoute(segmentsOf(s"/$islandTag/"), preFix, Set.empty)
+        val kindOld = WebsiteBundleMain.classifyRoute(segmentsOf(s"/$islandTag/"), preFix, Set.empty, Set.empty)
         assert(
             kindOld == WebsiteBundleMain.RouteKind.OffTree,
             s"pre-fix (island tag absent), /$islandTag/ degrades to OffTree, got: $kindOld"
@@ -146,7 +152,7 @@ class RouterRobustnessTest extends kyo.test.Test[Any]:
         assert(slugs.contains("kyo-data"), "kyo-data must be in the derived slug set")
         assert(!slugs.contains("kyo-stm"), "kyo-stm is not in the island, must not appear in derived slugs")
         // A multi-segment route to a derived slug classifies as Module via the real helper output.
-        val kind = WebsiteBundleMain.classifyRoute(segmentsOf("/latest/kyo-data/"), knownPrefixes, slugs)
+        val kind = WebsiteBundleMain.classifyRoute(segmentsOf("/latest/kyo-data/"), knownPrefixes, slugs, Set.empty)
         assert(kind == WebsiteBundleMain.RouteKind.Module, s"derived slug must classify as Module, got: $kind")
         succeed
     }

@@ -15,7 +15,8 @@ import kyo.*
 final case class WebsiteContent(
     intro: String,
     groups: Chunk[WebsiteContent.Group],
-    version: WebsiteVersion
+    version: WebsiteVersion,
+    tutorials: Chunk[WebsiteContent.Tutorial] = Chunk.empty
 ) derives CanEqual
 
 object WebsiteContent:
@@ -23,6 +24,11 @@ object WebsiteContent:
       * README order.
       */
     final case class Group(name: String, modules: Chunk[WebsiteModule]) derives CanEqual
+
+    /** One loaded tutorial child route for a version: the module it belongs to, the validated
+      * route declaration, and the loaded source content rendered as a docs-rail child page.
+      */
+    final case class Tutorial(module: String, declaration: WebsiteTutorial.Declaration, content: String) derives CanEqual
 
     /** Read the root README + each module README from a checked-out tree and parse the model.
       *
@@ -51,7 +57,12 @@ object WebsiteContent:
             // sidebar via parseGroups; that reads the table for navigation but does not alter the Overview.
             intro = rootReadme
             groups <- parseGroups(root, rootReadme)
-        yield WebsiteContent(intro, groups, version)
+            // Loads each module's declared tutorial child routes. For the current version a declared
+            // tutorial whose source is absent fails loud (WebsiteReadmeException.Missing naming the
+            // source); a legacy version that declares none renders without the rail and does not fail.
+            // The loaded tutorials feed generation, manifests, search, sitemap, head data, and outlines.
+            tutorials <- loadTutorials(root, version, groups)
+        yield WebsiteContent(intro, groups, version, tutorials)
 
     // ---- Private helpers ----
 
@@ -61,6 +72,28 @@ object WebsiteContent:
             case Result.Failure(_) => Abort.fail(WebsiteReadmeException(path, WebsiteReadmeException.ReadmeFailure.Missing))
             case p: Result.Panic   => Abort.error(p)
         }
+
+    /** Load each module's declared tutorial child routes for `version`. For the current version
+      * (`version.latest`), a declared tutorial whose source file is absent fails loud through
+      * `readRequired` (`WebsiteReadmeException.Missing` naming the source), exactly like a
+      * genuinely absent module README. A legacy version (`!version.latest`) emits NO tutorial rail
+      * and never aborts, mirroring `parseGroups`' absent-`## Modules` degradation, so an older tag
+      * that never shipped a tutorial's source still renders. Exposed `private[website]` so the
+      * tutorial tests exercise the fail-loud and tolerant paths directly with a hand-built group set.
+      */
+    private[website] def loadTutorials(
+        root: Path,
+        version: WebsiteVersion,
+        groups: Chunk[Group]
+    )(using Frame): Chunk[Tutorial] < (Sync & Abort[WebsiteException]) =
+        if !version.latest then Chunk.empty
+        else
+            val pairs = groups.flatMap(_.modules).flatMap(m => m.tutorials.map(d => (m.slug, d)))
+            Kyo.foreach(pairs) { case (moduleSlug, d) =>
+                readRequired(root / d.source).map(content => Tutorial(moduleSlug, d, content))
+            }
+        end if
+    end loadTutorials
 
     /** Find the `## Modules` section; if absent, return `Chunk.empty` (degrade-not-fail). When present,
       * parse each `### <Group>` heading and its following GFM pipe table into a `Group`, reading each

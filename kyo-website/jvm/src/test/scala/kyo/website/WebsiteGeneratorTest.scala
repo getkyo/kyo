@@ -1629,4 +1629,73 @@ class WebsiteGeneratorTest extends WebsiteTest:
         end for
     }
 
+    // ---- tutorial child pages: first-class SSG emission + manifest/search/sitemap inclusion ----
+
+    private val tutorialContent = "# Basic EventLog\n\n## Setup\nprose"
+    private val tutorialDecl =
+        WebsiteTutorial.Declaration("basic-eventlog", "Basic EventLog", Path("kyo-eventlog/docs/basic-eventlog.md"))
+    private val eventlogModule =
+        WebsiteModule(
+            "kyo-eventlog",
+            "Foundation",
+            "kyo-eventlog",
+            "# kyo-eventlog\n## Intro\nText.\n",
+            WebsiteModule.Platforms(true, true, true, true)
+        )
+    private val vWithTutorial =
+        WebsiteContent(
+            "intro",
+            Chunk(WebsiteContent.Group("Foundation", Chunk(eventlogModule))),
+            WebsiteVersion("v1.0.0-RC2", "1.0.0-RC2", true),
+            Chunk(WebsiteContent.Tutorial("kyo-eventlog", tutorialDecl, tutorialContent))
+        )
+
+    "emit writes a first-class tutorial page at <prefix>/<module>/tutorials/<slug>/" in {
+        for
+            out         <- tmpDir
+            bundleDir   <- stubBundleDir
+            _           <- emit(Chunk(vWithTutorial), out, bundleDir)
+            indexExists <- fileExists(out / "latest" / "kyo-eventlog" / "tutorials" / "basic-eventlog" / "index.html")
+            contentHtml <- readFile(out / "latest" / "kyo-eventlog" / "tutorials" / "basic-eventlog" / "content.html")
+            contentMd   <- readFile(out / "latest" / "kyo-eventlog" / "tutorials" / "basic-eventlog" / "content.md")
+        yield
+            assert(indexExists, "latest/kyo-eventlog/tutorials/basic-eventlog/index.html must exist")
+            // content.html carries the pre-rendered article JSON; its html field holds the rendered article.
+            assert(contentHtml.contains("\"html\""), s"content.html must carry an html field: $contentHtml")
+            assert(contentHtml.contains("\"headings\""), s"content.html must carry a headings array: $contentHtml")
+            val raw = contentHtml.replace("\\u003c", "<").replace("\\u003e", ">").replace("\\\"", "\"")
+            assert(raw.contains("<h"), s"content.html html field must carry rendered heading elements: $raw")
+            assert(raw.contains("Basic EventLog"), s"content.html must carry the tutorial title text: $raw")
+            assert(raw.contains("Setup"), s"content.html must carry the tutorial section text: $raw")
+            // content.md is the raw tutorial source, byte for byte.
+            assert(contentMd == tutorialContent, s"content.md must equal the raw tutorial content, got: $contentMd")
+        end for
+    }
+
+    "emit lists the tutorial route in manifest.json, search-index.json, and sitemap.xml" in {
+        for
+            out       <- tmpDir
+            bundleDir <- stubBundleDir
+            _         <- emit(Chunk(vWithTutorial), out, bundleDir)
+            manifest  <- readFile(out / "latest" / "manifest.json")
+            search    <- readFile(out / "latest" / "search-index.json")
+            sitemap   <- readFile(out / "sitemap.xml")
+        yield
+            assert(
+                manifest.contains("\"slug\": \"kyo-eventlog/tutorials/basic-eventlog\""),
+                s"manifest must list the tutorial route slug: $manifest"
+            )
+            assert(manifest.contains("\"title\": \"Basic EventLog\""), s"manifest tutorial entry must carry the title: $manifest")
+            assert(
+                search.contains("\"slug\": \"kyo-eventlog/tutorials/basic-eventlog\""),
+                s"search-index must list the tutorial route slug: $search"
+            )
+            assert(search.contains("\"title\": \"Basic EventLog\""), s"search-index tutorial entry must carry the title: $search")
+            assert(
+                sitemap.contains("<loc>https://getkyo.io/latest/kyo-eventlog/tutorials/basic-eventlog/</loc>"),
+                s"sitemap must list the tutorial route loc: $sitemap"
+            )
+        end for
+    }
+
 end WebsiteGeneratorTest
