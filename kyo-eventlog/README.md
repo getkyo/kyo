@@ -4,32 +4,35 @@
 
 A `Journal` program is a composed value. Operations (`append`, `read`, `streamInfo`) suspend as reified effects, and `Journal.run(backend)(program)` installs a storage backend, discharges the `Journal` capability, and leaves each operation's typed failure on the `Abort` row. Schemas, codecs, and domain event types live at the layer above; the payload is raw bytes throughout.
 
-The module targets JVM, JavaScript, Scala Native, and WebAssembly. It depends on `kyo-core`, `kyo-schema`, and `kyo-system`; callers using `Journal.Backend.file` must include `kyo-system` in their own build to construct a `Path` value. Metadata values are `MetadataValue` instances, an opaque wrapper around `Structure.Value` with a constructor-exact codec.
+The module targets JVM, JavaScript, Scala Native, and WebAssembly. It depends on `kyo-core`, `kyo-schema`, and `kyo-system`; callers using `Journal.Backend.file` must include `kyo-system` in their own build to construct a `Path` value. Metadata values are `Event.Metadata.Value` instances, an opaque wrapper around `Structure.Value` with a constructor-exact codec.
+
+For guided, worked walkthroughs, see the three tutorials: [Basic EventLog](docs/tutorials/basic-eventlog.md), [Raw Journal](docs/tutorials/raw-journal.md), and [Custom storage](docs/tutorials/custom-storage.md).
 
 <!-- doctest:setup
 ```scala
 import kyo.*
 
-sealed trait FleetEvent derives Schema
-case class VehicleAdded(id: String, make: String) extends FleetEvent derives Schema
-case class VehicleRetired(id: String)             extends FleetEvent derives Schema
+enum QuestEvent derives Schema, CanEqual:
+    case QuestStarted(quest: String, title: String)
+    case MembersJoined(quest: String, at: Long, location: String, members: Chunk[String])
+end QuestEvent
 
-val sid: StreamId      = StreamId("fleet-main").getOrThrow
-val evType1: EventType = EventType("VehicleAdded").getOrThrow
-val evType2: EventType = EventType("VehicleRetired").getOrThrow
-val evId1: EventId     = EventId("evt-001").getOrThrow
-val evId2: EventId     = EventId("evt-002").getOrThrow
+val questId: Event.StreamId = Event.StreamId("destroy-one-ring").getOrThrow
+val startedId: Event.Id     = Event.Id("quest-started-1").getOrThrow
+val joinedId: Event.Id      = Event.Id("members-joined-1").getOrThrow
+val startedType: Event.Type = Event.Type("QuestStarted").getOrThrow
+val joinedType: Event.Type  = Event.Type("MembersJoined").getOrThrow
 ```
 -->
 
 ```scala
 for
     backend <- Journal.Backend.inMemory
-    envelope = EventEnvelope(evId1, evType1, Span.empty, EventMetadata.empty)
+    pending = Event.Pending(startedId, startedType, Span.empty, Event.Metadata.empty)
     events <- Journal.run(backend):
         for
-            _ <- Journal.append(sid, ExpectedOffset.NoStream, Chunk(envelope))
-            r <- Journal.read(sid, StreamOffset.first, 10)
+            _ <- Journal.append(questId, ExpectedOffset.NoStream, Chunk(pending))
+            r <- Journal.read(questId, Event.StreamOffset.first, 10)
         yield r
 yield events
 end for
@@ -58,7 +61,7 @@ Before appending or reading events, pick a backend and wrap the program in `Jour
 | Operation | Row inside `run` | Residual after `run` (inMemory, `S = Sync`) |
 |---|---|---|
 | `append` | `AppendResult < (Journal & Abort[JournalAppendFailure])` | `AppendResult < (Sync & Abort[JournalAppendFailure])` |
-| `read` | `Chunk[RecordedEvent] < (Journal & Abort[JournalReadFailure])` | `Chunk[RecordedEvent] < (Sync & Abort[JournalReadFailure])` |
+| `read` | `Chunk[Event.Committed] < (Journal & Abort[JournalReadFailure])` | `Chunk[Event.Committed] < (Sync & Abort[JournalReadFailure])` |
 | `streamInfo` | `StreamInfo < (Journal & Abort[JournalStreamInfoFailure])` | `StreamInfo < (Sync & Abort[JournalStreamInfoFailure])` |
 
 For an `Async` backend, `Sync` in the residual column becomes `Async`; the per-op `Abort` traits stay on the row regardless of the backend.
@@ -66,15 +69,15 @@ For an `Async` backend, `Sync` in the residual column becomes `Async`; the per-o
 `Journal.run` does not add an umbrella `Abort[JournalError]` to the row. To handle all journal failures at once, wrap the program in `Abort.run[JournalError]`. Every per-op trait extends the sealed `JournalError` base, so the widening is sound:
 
 ```scala
-val safe: Result[JournalError, Chunk[RecordedEvent]] < Sync =
+val safe: Result[JournalError, Chunk[Event.Committed]] < Sync =
     for
         backend <- Journal.Backend.inMemory
-        envelope = EventEnvelope(evId1, evType1, Span.empty, EventMetadata.empty)
+        pending = Event.Pending(startedId, startedType, Span.empty, Event.Metadata.empty)
         result <- Abort.run[JournalError]:
             Journal.run(backend):
                 for
-                    _ <- Journal.append(sid, ExpectedOffset.NoStream, Chunk(envelope))
-                    r <- Journal.read(sid, StreamOffset.first, 10)
+                    _ <- Journal.append(questId, ExpectedOffset.NoStream, Chunk(pending))
+                    r <- Journal.read(questId, Event.StreamOffset.first, 10)
                 yield r
     yield result
 ```
@@ -91,40 +94,40 @@ val safe: Result[JournalError, Chunk[RecordedEvent]] < Sync =
 | `JournalStorageError` | yes | yes | yes | I/O failure (durable backends) |
 | `JournalInvalidIdentifierError` | | | | bad identifier; `Result.Failure` from constructors only |
 
-> **Note:** `JournalInvalidIdentifierError` is not a subtype of any op trait. It is the `Result.Failure` of `StreamId(...)`, `EventId(...)`, `EventType(...)`, `StreamOffset(...)`, `StreamVersion(...)`, and `MetadataKey(...)`, never on an `Abort` op row.
+> **Note:** `JournalInvalidIdentifierError` is not a subtype of any op trait. It is the `Result.Failure` of `Event.StreamId(...)`, `Event.Id(...)`, `Event.Type(...)`, `Event.StreamOffset(...)`, `Event.StreamVersion(...)`, and `Event.Metadata.Key(...)`, never on an `Abort` op row.
 
 ### Low-level escape hatch
 
 `Journal.Unsafe` bypasses the ArrowEffect suspend and handler dispatch, invoking the backend directly under its effect `S`. Use it in library integrations or performance-sensitive paths where the ArrowEffect round-trip is measurable overhead.
 
 ```scala
-def appendDirect(backend: Journal.Backend[Sync], env: EventEnvelope)(using
+def appendDirect(backend: Journal.Backend[Sync], event: Event.Pending)(using
     AllowUnsafe
 )
     : AppendResult < (Sync & Abort[JournalAppendFailure]) =
-    Journal.Unsafe.append(backend)(sid, ExpectedOffset.Any, Chunk(env))
+    Journal.Unsafe.append(backend)(questId, ExpectedOffset.Any, Chunk(event))
 ```
 
 The same per-op `Abort[<trait>]` failure surface applies as on the safe ops. The three unsafe duals are `Journal.Unsafe.append`, `Journal.Unsafe.read`, and `Journal.Unsafe.streamInfo`.
 
 ## Streams and events
 
-A stream is an ordered, append-only sequence of events sharing one identity, typically one aggregate or one logical log. Each event is submitted as an `EventEnvelope` and stored as a `RecordedEvent`. The payload is raw bytes; typed encoding and decoding belong to the layer above kyo-eventlog.
+A stream is an ordered, append-only sequence of events sharing one identity, typically one aggregate or one logical log. Each event is submitted as an `Event.Pending` and stored as an `Event.Committed`. The payload is raw bytes; typed encoding and decoding belong to the layer above kyo-eventlog.
 
-**Submitted (`EventEnvelope`):** `id: EventId`, `eventType: EventType`, `payload: Span[Byte]`, `metadata: EventMetadata`.
+**Submitted (`Event.Pending`):** `id: Event.Id`, `eventType: Event.Type`, `payload: Span[Byte]`, `metadata: Event.Metadata`.
 
-**Stored (`RecordedEvent`):** all four envelope fields plus `streamId: StreamId` and `offset: StreamOffset`.
+**Stored (`Event.Committed`):** all four pending fields plus `streamId: Event.StreamId` and `offset: Event.StreamOffset`.
 
-`StreamId`, `EventId`, `EventType`, `StreamOffset`, `StreamVersion`, and `MetadataKey` are all opaque `String` or `Long` values. Each constructor validates the input and returns `Result[JournalInvalidIdentifierError, T]`:
+`Event.StreamId`, `Event.Id`, `Event.Type`, `Event.StreamOffset`, `Event.StreamVersion`, and `Event.Metadata.Key` are all opaque `String` or `Long` values. Each constructor validates the input and returns `Result[JournalInvalidIdentifierError, T]`:
 
 ```scala
-val ok: Result[JournalInvalidIdentifierError, StreamId]  = StreamId("fleet-main")
-val bad: Result[JournalInvalidIdentifierError, StreamId] = StreamId("")
+val ok: Result[JournalInvalidIdentifierError, Event.StreamId]  = Event.StreamId("destroy-one-ring")
+val bad: Result[JournalInvalidIdentifierError, Event.StreamId] = Event.StreamId("")
 ```
 
-To unwrap into a plain value, call `.getOrThrow` on the result; because `JournalInvalidIdentifierError` extends `KyoException` which extends `Exception`, the required evidence holds. `StreamOffset` is zero-based; `StreamOffset.first` (`0L`) is the first event position in any stream. `StreamVersion` is the one-based count view: `StreamVersion.after(offset)` equals `offset.value + 1`.
+To unwrap into a plain value, call `.getOrThrow` on the result; because `JournalInvalidIdentifierError` extends `KyoException` which extends `Exception`, the required evidence holds. `Event.StreamOffset` is zero-based; `Event.StreamOffset.first` (`0L`) is the first event position in any stream. `Event.StreamVersion` is the one-based count view: `Event.StreamVersion.after(offset)` equals `offset.value + 1`.
 
-> **Note:** `Span` equality via `==` is reference-based. To compare payload contents, use `Span#is`, not `==` on `EventEnvelope` or `RecordedEvent`.
+> **Note:** `Span` equality via `==` is reference-based. To compare payload contents, use `Span#is`, not `==` on `Event.Pending` or `Event.Committed`.
 
 ## Append with optimistic concurrency
 
@@ -152,23 +155,23 @@ Events go into the named stream as an atomic batch: all events land with consecu
 val placed: AppendResult < (Sync & Abort[JournalAppendFailure]) =
     for
         backend <- Journal.Backend.inMemory
-        envelope = EventEnvelope(evId1, evType1, Span.empty, EventMetadata.empty)
-        result <- Journal.run(backend)(Journal.append(sid, ExpectedOffset.NoStream, Chunk(envelope)))
+        pending = Event.Pending(startedId, startedType, Span.empty, Event.Metadata.empty)
+        result <- Journal.run(backend)(Journal.append(questId, ExpectedOffset.NoStream, Chunk(pending)))
     yield result
 ```
 
 `AppendResult` carries `firstOffset`, `lastOffset`, and the post-append `streamInfo`. Use `lastOffset` as the `Exact` guard for the next append on the same stream:
 
 ```scala
-val fleetBatch: AppendResult < (Sync & Abort[JournalAppendFailure]) =
+val chained: AppendResult < (Sync & Abort[JournalAppendFailure]) =
     for
         backend <- Journal.Backend.inMemory
-        envelope1 = EventEnvelope(evId1, evType1, Span.empty, EventMetadata.empty)
-        envelope2 = EventEnvelope(evId2, evType2, Span.empty, EventMetadata.empty)
+        first  = Event.Pending(startedId, startedType, Span.empty, Event.Metadata.empty)
+        second = Event.Pending(joinedId, joinedType, Span.empty, Event.Metadata.empty)
         result <- Journal.run(backend):
             for
-                r1 <- Journal.append(sid, ExpectedOffset.NoStream, Chunk(envelope1))
-                r2 <- Journal.append(sid, ExpectedOffset.Exact(r1.lastOffset), Chunk(envelope2))
+                r1 <- Journal.append(questId, ExpectedOffset.NoStream, Chunk(first))
+                r2 <- Journal.append(questId, ExpectedOffset.Exact(r1.lastOffset), Chunk(second))
             yield r2
     yield result
 ```
@@ -181,9 +184,9 @@ When `Journal.append` fails with `JournalConflictError`, `actual` holds the `Str
 val attempt: Result[JournalAppendFailure, AppendResult] < Sync =
     for
         backend <- Journal.Backend.inMemory
-        envelope = EventEnvelope(evId1, evType1, Span.empty, EventMetadata.empty)
+        pending = Event.Pending(startedId, startedType, Span.empty, Event.Metadata.empty)
         result <- Abort.run[JournalAppendFailure]:
-            Journal.run(backend)(Journal.append(sid, ExpectedOffset.NoStream, Chunk(envelope)))
+            Journal.run(backend)(Journal.append(questId, ExpectedOffset.NoStream, Chunk(pending)))
     yield result
 ```
 
@@ -206,13 +209,13 @@ After events are appended, bounded reads and stream metadata queries let you rep
 
 ### Reading events
 
-`Journal.read` returns a bounded slice of a stream's events in ascending offset order. `Journal.read(streamId, from, maxCount)` returns `Chunk[RecordedEvent] < (Journal & Abort[JournalReadFailure])`.
+`Journal.read` returns a bounded slice of a stream's events in ascending offset order. `Journal.read(streamId, from, maxCount)` returns `Chunk[Event.Committed] < (Journal & Abort[JournalReadFailure])`.
 
 ```scala
-val fleetHistory: Chunk[RecordedEvent] < (Sync & Abort[JournalReadFailure]) =
+val history: Chunk[Event.Committed] < (Sync & Abort[JournalReadFailure]) =
     for
         backend <- Journal.Backend.inMemory
-        result  <- Journal.run(backend)(Journal.read(sid, StreamOffset.first, 100))
+        result  <- Journal.run(backend)(Journal.read(questId, Event.StreamOffset.first, 100))
     yield result
 ```
 
@@ -225,111 +228,96 @@ A missing stream, a `from` at or past the event count, and `maxCount <= 0` all r
 `StreamInfo` is either `Absent` or `Existing(version, lastOffset)`. The `exists` predicate distinguishes the two. For a contiguous stream, `version.value == lastOffset.value + 1` always holds.
 
 ```scala
-val fleetState: StreamInfo < (Sync & Abort[JournalStreamInfoFailure]) =
+val state: StreamInfo < (Sync & Abort[JournalStreamInfoFailure]) =
     for
         backend <- Journal.Backend.inMemory
-        result  <- Journal.run(backend)(Journal.streamInfo(sid))
+        result  <- Journal.run(backend)(Journal.streamInfo(questId))
     yield result
 ```
 
 ## Typed events with EventLog
 
-`EventLog[A]` wraps raw `Journal` operations with schema-driven encoding and decoding for domain type `A`. Construct with `for log <- EventLog[FleetEvent]` via `EventLog.apply` (requires `Schema[A]` in implicit scope, returns `EventLog[A] < Sync`). `EventLog.init[A]` is the `AllowUnsafe` bootstrap when you already hold `AllowUnsafe`. Call its methods inside `Journal.run(backend)(...)` exactly as you would call `Journal.append`, `Journal.read`, and `Journal.streamInfo`:
-
-`EventLog.apply[A]` is the normal constructor (`EventLog[A] < Sync`); `EventLog.init[A]` is the unsafe bootstrap when you already hold `AllowUnsafe`.
+`EventLog[A]` wraps raw `Journal` operations with schema-driven encoding and decoding for domain type `A`. Build the codecs with `EventLog.Codecs.schema[A]` (schema-derived value and metadata codecs), then construct the log with `EventLog.init(codecs, journalId)`; it captures no backend. Each concrete event carries an `Event.Definition[A, E]` given that supplies its type, stream, id policy, and metadata, so a caller writes `log.append(event)` with no visible codec or membership witness. Call its methods inside `Journal.run(backend)(...)` exactly as you would `Journal.append`, `Journal.read`, and `Journal.streamInfo`:
 
 ```scala
-val appended: AppendResult < (Sync & Abort[JournalAppendFailure]) =
+val appended =
     for
-        backend <- Journal.Backend.inMemory
-        log     <- EventLog[FleetEvent]
-        result <- Journal.run(backend) {
-            log.append(sid, ExpectedOffset.NoStream, Chunk(VehicleAdded("V001", "Toyota")))
-        }
+        journalId <- JournalId("quest-party")
+        name      <- Event.StreamName("quest")
+        codecs    <- EventLog.Codecs.schema[QuestEvent]()
+        log       <- EventLog.init(codecs, journalId)
+        backend   <- Journal.Backend.inMemory
+        result <- Journal.run(backend):
+            given Event.Definition[QuestEvent, QuestEvent.QuestStarted] =
+                Event.Definition.schema[QuestEvent, QuestEvent.QuestStarted](Event.StreamSelector.by(name)(e => Chunk(e.quest)))
+            log.append(QuestEvent.QuestStarted("destroy-one-ring", "Destroy the One Ring"): QuestEvent.QuestStarted)
     yield result
 ```
 
-`read` returns `Chunk[EventLog.Typed[A]]` with the decoded payload in `.payload`. Decode failures surface as `JournalCorruptedError` on the read row.
+`read` returns `Chunk[Event.Record[A]]` with the decoded payload in `.payload` and a logical `ref`. Decode failures surface as `JournalCorruptedError` on the read row.
 
-`EventLog.streamInfo` mirrors `Journal.streamInfo` on the same stream id and carries `Abort[JournalStreamInfoFailure]`.
+```scala
+val typedHistory =
+    for
+        journalId <- JournalId("quest-party")
+        name      <- Event.StreamName("quest")
+        codecs    <- EventLog.Codecs.schema[QuestEvent]()
+        log       <- EventLog.init(codecs, journalId)
+        backend   <- Journal.Backend.inMemory
+        records <- Journal.run(backend):
+            given Event.Definition[QuestEvent, QuestEvent.QuestStarted] =
+                Event.Definition.schema[QuestEvent, QuestEvent.QuestStarted](Event.StreamSelector.by(name)(e => Chunk(e.quest)))
+            for
+                r <- log.append(QuestEvent.QuestStarted("destroy-one-ring", "Destroy the One Ring"): QuestEvent.QuestStarted)
+                h <- log.read(r.streamId, Event.StreamOffset.first, 10)
+            yield h
+            end for
+    yield records
+```
 
-`EventPayloadCodec` selects how event payloads are stored on disk. Pass it to `Journal.Backend.file` and `Journal.Backend.fileAsync`:
-
-| Codec | Behavior |
-|---|---|
-| `EventPayloadCodec.bytes` (default) | Raw `Span[Byte]` identity encoding |
-| `EventPayloadCodec.schema[A]` | Binary segments store Ion Binary-encoded payloads (default); JSONL segments embed a JSON value transcoded through the schema (requires `Schema[A]`) |
-| `EventPayloadCodec.schema[A](binary)` | Same as above with an explicit binary `Codec` (e.g. `MsgPack()`) |
-
-`FileJournal.SegmentFormat` chooses the on-disk segment encoding, fixed at journal root creation:
-
-| Format | Segment files | Notes |
-|---|---|---|
-| `SegmentFormat.Binary` (default) | `.seg` with `KJN1` header | CRC32-verified binary frames |
-| `SegmentFormat.Jsonl` | `.jsonl` lines | Human-readable; payload shape follows the selected codec |
-
-Set `format` on `FileJournal.Config` when opening a new root. Set `metadataCodec` to choose the binary metadata wire format (`EventMetadataCodec.default` is Ion Binary; pass `EventMetadataCodec.msgPack` for the legacy MsgPack wire).
+`EventLog.Codecs` is the single value-and-metadata codec authority. `EventLog.Codecs.schema[A]` derives the value codec (Ion Binary for `.seg` segments, JSON for JSONL segments) and the metadata codec (`EventLog.MetadataCodec`, Ion Binary by default) from `Schema[A]`. There is no separate payload-codec or metadata-codec selector to pass to a backend: the codecs travel inside the `FileJournal.Configuration` (see Backends below), so a codec clash between a log and a backend is a compile error, not a runtime discovery.
 
 ## Write-side deciders
 
 A decider reads typed history, folds it into local state, and appends the next domain event when the state says to act. It is an ordinary `Journal.run` program using `EventLog[A]`: no separate decider API type is required.
 
-The write loop follows three steps: read the stream, decide the next event (a pure function over `Chunk[EventLog.Typed[A]]`), append with an `ExpectedOffset` guard. When a concurrent writer causes `JournalConflictError`, inspect `conflict.actual`, re-read if needed, and retry with the corrected guard (see Conflict recovery above).
+The write loop follows three steps: read the stream, decide the next event (a pure function over `Chunk[Event.Record[A]]`), append with an `ExpectedOffset` guard. When a concurrent writer causes `JournalConflictError`, inspect `conflict.actual`, re-read if needed, and retry with the corrected guard (see Conflict recovery above).
 
 ```scala
-def activeVehicleCount(events: Chunk[EventLog.Typed[FleetEvent]]): Int =
+def memberCount(events: Chunk[Event.Record[QuestEvent]]): Int =
     events.foldLeft(0) { (count, e) =>
         e.payload match
-            case VehicleAdded(_, _) => count + 1
-            case VehicleRetired(_)  => count - 1
+            case QuestEvent.MembersJoined(_, _, _, members) => count + members.size
+            case _                                          => count
     }
 
-def decideRetire(events: Chunk[EventLog.Typed[FleetEvent]]): Maybe[FleetEvent] =
-    events.foldLeft(Absent: Maybe[FleetEvent]) { (found, e) =>
-        found match
-            case Present(_) => found
-            case Absent =>
-                e.payload match
-                    case VehicleAdded(id, _) => Present(VehicleRetired(id))
-                    case _                   => Absent
-    }
-
-val deciderStep: Unit < (Sync & Abort[JournalAppendFailure | JournalReadFailure]) =
-    for
-        backend <- Journal.Backend.inMemory
-        log     <- EventLog[FleetEvent]
-        _ <- Journal.run(backend) {
-            for
-                events <- log.read(sid, StreamOffset.first, maxCount = 1000)
-                _ <- decideRetire(events) match
-                    case Present(event) =>
-                        val expected = events.lastOption match
-                            case Some(last) => ExpectedOffset.Exact(last.offset)
-                            case None       => ExpectedOffset.NoStream
-                        log.append(sid, expected, Chunk(event)).map(_ => ())
-                    case Absent =>
-                        Sync.defer(())
-            yield ()
-        }
-    yield ()
+def decideArrival(events: Chunk[Event.Record[QuestEvent]]): Maybe[QuestEvent] =
+    events.lastOption match
+        case Some(last) =>
+            last.payload match
+                case QuestEvent.MembersJoined(quest, at, _, _) =>
+                    Present(QuestEvent.MembersJoined(quest, at + 1, "Rivendell", Chunk.empty))
+                case _ => Absent
+        case None => Absent
 ```
 
-Projection (replaying events into a read model without writing) is the companion pattern: fold `Chunk[EventLog.Typed[A]]` with a pure function, as in the kyo-examples car rental demo.
+Projection (replaying events into a read model without writing) is the companion pattern: fold `Chunk[Event.Record[A]]` with a pure function, as in the kyo-examples car rental demo.
 
 ## Metadata
 
-`EventMetadata` holds infrastructure data alongside the payload: correlation identifiers, tracing keys, tags. Values are `MetadataValue` instances. `MetadataValue` is an opaque wrapper around `Structure.Value` with a constructor-exact codec that round-trips all ten `Structure.Value` constructors without loss through the binary metadata codec (Ion Binary by default). Construct with `MetadataValue(sv: Structure.Value)` and access the underlying value with `.value`. Domain fields belong in the encoded payload bytes; metadata is for infrastructure concerns that consumers need without decoding.
+`Event.Metadata` holds infrastructure data alongside the payload: correlation identifiers, tracing keys, tags. Values are `Event.Metadata.Value` instances. `Event.Metadata.Value` is an opaque wrapper around `Structure.Value` with a constructor-exact codec that round-trips all ten `Structure.Value` constructors without loss through the binary metadata codec (Ion Binary by default). Construct with `Event.Metadata.Value(sv: Structure.Value)` and access the underlying value with `.value`. Domain fields belong in the encoded payload bytes; metadata is for infrastructure concerns that consumers need without decoding.
 
 ```scala
-val key: Result[JournalInvalidIdentifierError, MetadataKey] = MetadataKey("trace.correlation_id")
-val meta: EventMetadata                                     = EventMetadata.empty
+val key: Result[JournalInvalidIdentifierError, Event.Metadata.Key] = Event.Metadata.Key("trace.correlation_id")
+val value: Event.Metadata.Value                                    = Event.Metadata.Value(Structure.Value.Str("req-42"))
+val meta: Event.Metadata                                           = Event.Metadata.empty
 ```
 
-`MetadataKey` is a validated dotted-path string. Empty keys, leading or trailing dots, and consecutive dots (`foo..bar`) are all rejected. `key.segments` splits on `.` and returns a `Chunk[String]`.
+`Event.Metadata.Key` is a validated dotted-path string. Empty keys, leading or trailing dots, and consecutive dots (`foo..bar`) are all rejected. `key.segments` splits on `.` and returns a `Chunk[String]`.
 
 ## Backends
 
-`Journal.Backend[S]` is the storage contract. Implement its three methods, each returning their op's failure trait under the backend's own effect `S`, and pass the instance to `Journal.run`. Backend methods capture a `Frame` at construction, not per call; custom backends must follow the same pattern so failures carry source-location information.
+`Journal.Backend[S]` is the storage contract. It extends `Journal.Reader[S]`, so it has exactly three methods: `read` and `streamInfo` from the reader, and `append` added by the backend. Each returns its op's failure trait under the backend's own effect `S`; pass the instance to `Journal.run`. Backend methods capture a `Frame` at construction, not per call; custom backends must follow the same pattern so failures carry source-location information.
 
 `Journal.Backend.inMemory` creates an ephemeral in-memory backend backed by an atomic CAS loop:
 
@@ -340,31 +328,38 @@ val inMem: Journal.Backend[Sync] < Sync =
 
 > **Note:** The in-memory backend is for tests and local programs; each call creates an isolated store and separate calls do not share state.
 
-`Journal.Backend.file` opens a durable, segment-based file journal rooted at a directory:
+`Journal.Backend.file` opens a durable, segment-based file journal rooted at a directory. It takes a `FileJournal.Configuration`, built by `FileJournal.Binary.configuration` (CRC-verified `.seg` segments, the default) or `FileJournal.Jsonl.configuration` (human-readable `.jsonl` segments). Both carry the log's `EventLog.Codecs` and optional `FileJournal.Options`:
 
-```scala doctest:expect=skipped
-val dir: Path = Path("my-journal")
-val backend: Journal.Backend[Sync] < (Sync & Scope & Abort[JournalStorageError]) =
-    Journal.Backend.file(dir, payloadCodec = EventPayloadCodec.bytes)
+```scala
+val opened =
+    Scope.run:
+        Path.run:
+            for
+                journalId <- JournalId("quest-party")
+                codecs    <- EventLog.Codecs.schema[QuestEvent]()
+                config    <- FileJournal.Binary.configuration(journalId, codecs)
+                dir       <- Path.tempDir("quest-party-")
+                backend   <- Journal.Backend.file(dir, config)
+                info      <- Journal.run(backend)(Journal.streamInfo(questId))
+            yield info
 ```
 
-`Journal.Backend.fileAsync` opens the same on-disk format under `Backend[Async]`. `Journal.Reader.file` and `Journal.Reader.fileAsync` open a read-only view that skips the writer lock (single-writer, multiple-reader).
+> **Note:** On disk, the Binary profile writes `.seg` segments and the JSONL profile writes `.jsonl` segments under the journal directory, both opened through `Journal.Backend.file`. A logical `JournalEntryRef` carries only ids (`journal:<journalId>/<streamId>/<offset>`), never a physical path, segment file, or byte offset.
 
-`Journal.Reader.file` and `Reader.fileAsync` mirror backend overloads: pass `FileJournal.Config` and `payloadCodec` when opening a read-only root (defaults match `Journal.Backend.file`).
+`Journal.Backend.fileAsync` opens the same on-disk format under `Backend[Async]`. `Journal.Reader.file` opens a read-only view over the committed frontier that skips the writer lock (single-writer, multiple-reader): it never mutates or truncates the tail, so write-mode owns all repair.
 
 This constructor is available on JVM, Native, and Node.js (including Wasm-under-Node). On a browser runtime (no `node:fs`) it fails immediately with a typed `JournalStorageError` rather than at first I/O; no browser persistence backend exists. The `dir` parameter is a `Path` from `kyo-system`. `Scope` finalization releases the root lock and closes all open segment channels. A second open of a held root directory fails immediately with `JournalStorageError`.
 
 On JVM and Native the root lock is an advisory file lock (`FileChannel.tryLock`); the OS drops it on process death, so no cleanup is needed after a crash. On Node.js the lock is an `O_EXCL` lockfile carrying the holder's pid and hostname. On the next open after a crash, the dead holder's pid is probed with `process.kill(pid, 0)`; an `ESRCH` result (no such process) triggers an atomic reclaim, and the open succeeds. An unparseable lock or a lock from another host is never reclaimed and fails closed. The crash-recovery guarantee (a dead holder's lock is always reclaimed on the next open) is the same on all platforms.
 
-Pass `FileJournal.Config` to override three knobs:
+Pass `FileJournal.Options` to override two knobs:
 
 | Field | Default | Notes |
 |---|---|---|
 | `fsync` | `Fsync.Always` | Flush each acknowledged append to stable storage before returning. Set to `Fsync.Disabled` only in tests; the crash-survival guarantee does not hold when `Fsync.Disabled` is set. |
 | `segmentSize` | `64L.mib` (64 MiB) | Soft rotation threshold. The threshold is checked before an append, not after, so the active segment can grow past it: a record larger than the threshold is written whole into the current active segment rather than a dedicated one. |
-| `format` | `SegmentFormat.Binary` | On-disk segment encoding; fixed at root creation via the `FORMAT` marker file. |
 
-Every acknowledged append (with `fsync = Fsync.Always`) survives a crash. A torn tail at the end of the active segment (from a prior crash) is silently truncated at recovery; prior committed events are never lost. Recovery runs lazily on the first touch of a stream, and a `read` or `streamInfo` can be that first touch, so a nominally read-only call can perform the one-time torn-tail truncation on disk. Non-tail corruption and unknown segment versions are fatal (`JournalCorruptedError`). Metadata values round-trip exactly through the file backend: all ten `Structure.Value` constructors encode without loss.
+The on-disk profile (Binary or JSONL) is fixed by the configuration factory at journal root creation. Every acknowledged append (with `fsync = Fsync.Always`) survives a crash. A torn tail at the end of the active segment (from a prior crash) is silently truncated at recovery; prior committed events are never lost. Recovery runs lazily on the first touch of a stream, and a `read` or `streamInfo` can be that first touch, so a nominally read-only call can perform the one-time torn-tail truncation on disk. Non-tail corruption and unknown segment versions are fatal (`JournalCorruptedError`). Metadata values round-trip exactly through the file backend: all ten `Structure.Value` constructors encode without loss.
 
 Every custom backend must pass `JournalBackendTest`, an abstract test class covering offset assignment, expected-offset semantics, batch atomicity, bounded reads, stream isolation, and concurrent conflict detection:
 
@@ -380,13 +375,21 @@ Because `Abort[JournalAppendFailure]` remains on the residual after `Journal.run
 val withRetry: AppendResult < (Async & Sync & Abort[JournalAppendFailure]) =
     for
         backend <- Journal.Backend.inMemory
-        envelope = EventEnvelope(evId1, evType1, Span.empty, EventMetadata.empty)
+        pending = Event.Pending(startedId, startedType, Span.empty, Event.Metadata.empty)
         result <- Journal.run(backend):
-            Retry[JournalAppendFailure](Journal.append(sid, ExpectedOffset.Any, Chunk(envelope)))
+            Retry[JournalAppendFailure](Journal.append(questId, ExpectedOffset.Any, Chunk(pending)))
     yield result
 ```
 
 After `Journal.run`, the residual carries both `Abort[JournalAppendFailure]` (for failures that exhausted retries) and `Async` (from the delay between attempts); both are resolvable at the call site. For a custom schedule, pass it as the first argument: `Retry[JournalAppendFailure](schedule)(Journal.append(...))`. `Retry` is suited to transient backend failures such as `JournalStorageError`; a stale `Exact(offset)` guard will conflict again on every attempt because the stream state does not change between retries, so that case requires re-computing the guard from updated stream state as shown in Conflict recovery.
+
+## Tutorials
+
+Three worked tutorials build on this reference:
+
+- [Basic EventLog](docs/tutorials/basic-eventlog.md): a typed `EventLog` for a quest party, covering union/enum/sealed-trait events, append, prepare, batch, guard, read, and the Binary and JSONL file profiles.
+- [Raw Journal](docs/tutorials/raw-journal.md): the envelope layer under `EventLog`, expected-offset guards, structural metadata, durability, recovery, committed-frontier readers, and logical references.
+- [Custom storage](docs/tutorials/custom-storage.md): the two built-in file profiles and implementing the `Journal.Backend` SPI directly.
 
 ## Demos
 

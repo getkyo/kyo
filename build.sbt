@@ -681,7 +681,16 @@ lazy val `kyo-eventlog` =
             Compile / unmanagedSourceDirectories +=
                 baseDirectory.value.getParentFile / "jvm-native" / "src" / "main" / "scala",
             Test / unmanagedSourceDirectories +=
-                baseDirectory.value.getParentFile / "jvm-native" / "src" / "test" / "scala"
+                baseDirectory.value.getParentFile / "jvm-native" / "src" / "test" / "scala",
+            // The per-subproject doctest smart-default scans only kyo-eventlog/README.md. The three
+            // tutorial guides under docs/tutorials carry doctest-validated fenced blocks, so each is
+            // named here explicitly alongside the README (this build has no recursive-glob helper).
+            doctestSources := Seq(
+                (ThisBuild / baseDirectory).value / "kyo-eventlog" / "README.md",
+                (ThisBuild / baseDirectory).value / "kyo-eventlog" / "docs" / "tutorials" / "basic-eventlog.md",
+                (ThisBuild / baseDirectory).value / "kyo-eventlog" / "docs" / "tutorials" / "raw-journal.md",
+                (ThisBuild / baseDirectory).value / "kyo-eventlog" / "docs" / "tutorials" / "custom-storage.md"
+            )
         )
         .nativeSettings(
             `native-settings`,

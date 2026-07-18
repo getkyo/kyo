@@ -215,8 +215,15 @@ object WebsiteContent:
                         )
                         // title = slug by design: the root README module table has no separate title
                         // column (`| [slug](target) | JVM | JS | Native | WASM | Identity |`), and the slug
-                        // (`kyo-core`, `kyo-data`, ...) is the display title for kyo modules.
-                        readRequired(root / slug / "README.md").map(readme => Present(WebsiteModule(slug, group, slug, readme, platforms)))
+                        // (`kyo-core`, `kyo-data`, ...) is the display title for kyo modules. A parsed module
+                        // gains its statically-registered tutorial child routes here: an unregistered module
+                        // keeps an empty rail, a registered one threads withTutorials' slug-uniqueness Abort.
+                        readRequired(root / slug / "README.md").map { readme =>
+                            val module       = WebsiteModule(slug, group, slug, readme, platforms)
+                            val declarations = WebsiteTutorials.forModule(slug)
+                            if declarations.isEmpty then Present(module)
+                            else module.withTutorials(declarations).map(Present(_))
+                        }
                     end if
             end match
         end if
