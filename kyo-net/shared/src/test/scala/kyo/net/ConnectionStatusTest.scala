@@ -2,7 +2,7 @@ package kyo.net
 
 import kyo.*
 
-/** INV-11: [[Connection.status]] is a total function of a single consistent [[kyo.net.internal.posix.HalfCloseState]] value, not a
+/** [[Connection.status]] is a total function of a single consistent [[kyo.net.internal.posix.HalfCloseState]] value, not a
   * torn read of two independent flags.
   *
   * These tests verify that each distinct close scenario maps to exactly the expected [[Connection.Status]] value, and that
@@ -13,8 +13,7 @@ import kyo.*
   * Truncated requires raw socket access; it is covered at the driver level in NioTransportTlsCloseReasonTest (JVM NIO) and
   * PollerIoDriverTlsHalfCloseEtTest (posix).
   *
-  * All leaves run via [[eachBackendTls]]. JS never wires `statusFn`, so every JS leaf asserts [[Connection.Status.Active]]
-  * (XPLAT-5).
+  * All leaves run via [[eachBackendTls]]. JS never wires `statusFn`, so every JS leaf asserts [[Connection.Status.Active]].
   */
 class ConnectionStatusTest extends Test:
 
@@ -23,7 +22,7 @@ class ConnectionStatusTest extends Test:
     private def drainInbound(conn: Connection)(using Frame): Unit < (Async & Abort[Closed]) =
         Abort.run[Closed](Loop.foreach(conn.inbound.safe.take.map(_ => Loop.continue))).map(_ => ())
 
-    "INV-11 clean-close: after server close_notify, status is CleanClose and not confused with Truncated or LocalClose" - eachBackendTls {
+    "clean-close: after server close_notify, status is CleanClose and not confused with Truncated or LocalClose" - eachBackendTls {
         (transport, serverTls, clientTls) =>
             for
                 serverConnCh <- Channel.init[Connection](1)
@@ -65,7 +64,7 @@ class ConnectionStatusTest extends Test:
             end for
     }
 
-    "INV-11 local-close: after client close, status is LocalClose and not confused with CleanClose or Truncated" - eachBackendTls {
+    "local-close: after client close, status is LocalClose and not confused with CleanClose or Truncated" - eachBackendTls {
         (transport, serverTls, clientTls) =>
             for
                 serverConnCh <- Channel.init[Connection](1)

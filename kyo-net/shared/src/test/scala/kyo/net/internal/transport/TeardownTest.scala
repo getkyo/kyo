@@ -35,7 +35,7 @@ class TeardownTest extends Test:
     "released-fires-exactly-once-with-in-flight-op" in {
         // The per-backend canRelease predicate gates AwaitingInFlight -> Released. A false predicate models an outstanding in-flight op: the
         // teardown reaches AwaitingInFlight but holds the release. When the predicate clears (the in-flight op completes) and the carriers retry,
-        // exactly one CAS into Released wins, so closeHandle runs exactly once. Pins: INV-4, INV-13, INV-SM-TEARDOWN. No sleep; latches drive it.
+        // exactly one CAS into Released wins, so closeHandle runs exactly once. No sleep; latches drive it.
         val spy        = new SpyDriver
         val canRelease = AtomicBoolean.Unsafe.init(false)
         val conn       = Connection.init[Unit]((), spy, 1, canRelease = () => canRelease.get())
@@ -65,9 +65,9 @@ class TeardownTest extends Test:
     }
 
     "undrained-inbound-does-not-block-fd-close" in {
-        // The read-side decoupling (INV-12 absence half, M-6): a pooled connection whose response was never consumed has buffered inbound bytes
+        // The read-side decoupling: a pooled connection whose response was never consumed has buffered inbound bytes
         // and NO reader. The fd teardown gates on the WRITE-side drain only, never the inbound channel, so the fd is closed promptly (no CLOSE_WAIT
-        // leak) while the buffered bytes stay available to a later live consumer via the closing channel. Pins: INV-12, M-6, INV-SM-TEARDOWN.
+        // leak) while the buffered bytes stay available to a later live consumer via the closing channel.
         val spy    = new SpyDriver
         val conn   = Connection.init[Unit]((), spy, 4)
         val staged = Span(7.toByte, 8.toByte, 9.toByte)

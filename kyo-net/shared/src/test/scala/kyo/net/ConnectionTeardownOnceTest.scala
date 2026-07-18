@@ -6,7 +6,7 @@ import kyo.net.internal.transport.IoDriver
 import kyo.net.internal.transport.ReadOutcome
 import kyo.net.internal.transport.WriteResult
 
-/** Yardstick INV-13: teardown (cancel + closeHandle) runs exactly once across concurrent close() calls.
+/** Teardown (cancel + closeHandle) runs exactly once across concurrent close() calls.
   *
   * The single CAS on Closing -> Closed is the structural guarantee: only the fiber that wins the CAS calls the teardown body; every other
   * concurrent close() call loses the CAS and is a no-op. No sleep; the latch drives the interleaving.

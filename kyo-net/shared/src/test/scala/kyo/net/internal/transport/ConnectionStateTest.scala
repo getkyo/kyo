@@ -6,8 +6,8 @@ import kyo.net.Test
 /** Tests for the Connection.State machine fold: three lifecycle booleans replaced by one named-state atomic cell.
   *
   * Each leaf builds a Connection[Unit] over a SpyDriver that counts cancel and closeHandle calls. The test then drives specific state
-  * transitions and asserts the structural invariants on the named state cell: teardown runs exactly once (INV-13), a detach-for-upgrade bars
-  * teardown (INV-14), and a close-then-detach loses the CAS (INV-SM-CONN).
+  * transitions and asserts the structural invariants on the named state cell: teardown runs exactly once, a detach-for-upgrade bars
+  * teardown, and a close-then-detach loses the CAS.
   */
 class ConnectionStateTest extends Test:
 

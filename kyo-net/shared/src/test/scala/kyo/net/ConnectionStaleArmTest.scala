@@ -6,7 +6,7 @@ import kyo.net.internal.transport.IoDriver
 import kyo.net.internal.transport.ReadOutcome
 import kyo.net.internal.transport.WriteResult
 
-/** INV-3 guard: no delivery to a settled or recycled promise.
+/** No delivery to a settled or recycled promise.
   *
   * When a STARTTLS upgrade recycles a connection on the same fd (new generation), any stale completion targeting the old generation's armed
   * promise cannot reach the new generation's armed promise. The guard is the reference-equality CAS on the read-arm owner cell: each arm
@@ -21,7 +21,7 @@ class ConnectionStaleArmTest extends Test:
     import AllowUnsafe.embrace.danger
     given Frame = Frame.internal
 
-    "INV3" - {
+    "no delivery to a settled or recycled promise" - {
 
         // Given: a STARTTLS stale recv and an fd-recycle (simulated as two Connection arms on the same driver).
         // When: the stale completion arrives (completes the old arm's promise).
@@ -30,7 +30,7 @@ class ConnectionStaleArmTest extends Test:
         // The reference-equality CAS is the guard: the stale arm holds the old cell (the old ReadPump
         // IOPromise object); the new arm installs a new cell (a new ReadPump IOPromise object). The two
         // cells are distinct objects (ne), so a stale completion fires on the old cell and cannot reach
-        // the new cell. This mirrors INV-1 at the Connection layer.
+        // the new cell. This mirrors the single-delivery-per-armed-read property at the Connection layer.
         "no-delivery-to-a-settled-promise" - {
 
             // Fail-before: demonstrate that a plain shared slot (no CAS protection) lets a stale

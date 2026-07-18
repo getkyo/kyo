@@ -6,7 +6,7 @@ import kyo.net.internal.transport.IoDriver
 import kyo.net.internal.transport.ReadOutcome
 import kyo.net.internal.transport.WriteResult
 
-/** XPLAT-1: The completion contract for a read is identical regardless of which backend delivers it.
+/** The completion contract for a read is identical regardless of which backend delivers it.
   *
   * A `ReadOutcome` delivered by any `IoDriver` instance must produce the same observable `Connection` state. This test exercises three
   * driver shapes (bytes delivery, peer-FIN, WouldBlock-then-bytes) through the same `Connection + ReadPump` path and asserts a concrete
@@ -38,7 +38,7 @@ class ConnectionReadOutcomeContractTest extends Test:
         def handleLabel(handle: Unit): String                                                                         = "stub"
     end StubDriver
 
-    "XPLAT1" - {
+    "completion contract is identical across backends" - {
         "completion-contract-identical-across-backends" - {
 
             // Scenario 1: bytes delivery.

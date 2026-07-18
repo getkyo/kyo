@@ -6,7 +6,7 @@ import kyo.ffi.Ffi
 import kyo.net.Test
 import kyo.net.internal.transport.ReadOutcome
 
-/** Yardstick INV-4 (no op uses a freed fd): the two inherited recycled-fd defects, each driven white-box over a real driver.
+/** No driver operation ever uses a freed fd: the two inherited recycled-fd defects, each driven white-box over a real driver.
   *
   *   - io_uring: a recv parked in `stalledSubmits` on a full submission queue must be failed Closed when the handle closes, NOT
   *     re-armed on the now-closed fd. At base `closeNow` cleared only `stalledRaw`, so the reap loop re-armed the parked recv on the closed fd

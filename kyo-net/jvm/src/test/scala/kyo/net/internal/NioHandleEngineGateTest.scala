@@ -11,7 +11,7 @@ import kyo.net.internal.TlsTestCert
 
 /** NIO engine-gate exclusion: concurrent read and write on the same TLS connection never corrupt data.
   *
-  * CONC-1: for one NIO TLS connection, the selector-carrier read path (dispatchReadTls) and the caller-carrier write path (writeTls) must
+  * For one NIO TLS connection, the selector-carrier read path (dispatchReadTls) and the caller-carrier write path (writeTls) must
   * never hold the per-connection engineGate simultaneously. The NioHandle.close path acquires and releases the gate.
   *
   * The NIO gate (engineGate: AtomicBoolean on NioHandle) serializes all SSLEngine calls for one connection. SSLEngine is stateful and not
@@ -114,7 +114,7 @@ class NioHandleEngineGateTest extends Test:
         (c, s)
     end openPair
 
-    "NIO CONC-1: engine gate exclusion under concurrent read, write, and close" - {
+    "NIO engine gate exclusion under concurrent read, write, and close" - {
 
         // A writer fiber and a reader fiber run concurrently on the same NIO TLS connection. The
         // writer calls the writeTls path (caller-carrier) while the selector thread calls the

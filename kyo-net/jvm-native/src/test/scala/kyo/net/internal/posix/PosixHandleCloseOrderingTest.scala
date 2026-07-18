@@ -6,7 +6,7 @@ import kyo.net.Test
 
 /** Read-dispatch-and-close ordering invariant for PosixHandle.
   *
-  * INV-5: a close that races an in-flight read-dispatch (or any other guard-holding op) must not free the handle's resources while the op is
+  * A close that races an in-flight read-dispatch (or any other guard-holding op) must not free the handle's resources while the op is
   * still using them. The guard on PosixHandle (see PosixHandle.guard, encoded as a holder count + CloseBit + Closed sentinel) enforces this:
   *
   *   - beginDispatch acquires a holder (increments the guard count).
@@ -32,7 +32,7 @@ class PosixHandleCloseOrderingTest extends Test:
     private def makeHandle(): PosixHandle =
         PosixHandle.stdio(PosixHandle.DefaultReadBufferSize)
 
-    "INV-5: read-dispatch and close ordering" - {
+    "read-dispatch and close ordering" - {
 
         // Base case: no dispatch in flight. requestClose frees immediately (guard goes to Closed,
         // the terminal state). A subsequent beginDispatch returns false (no use-after-free).

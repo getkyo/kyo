@@ -6,7 +6,7 @@ import kyo.net.internal.transport.IoDriver
 import kyo.net.internal.transport.ReadOutcome
 import kyo.net.internal.transport.WriteResult
 
-/** XPLAT-6: No backend permanently stalls a live connection when the first event is lost or delayed.
+/** No backend permanently stalls a live connection when the first event is lost or delayed.
   *
   * Each backend has a class of "lost event": a suppressed wake (io_uring), a dropped interest bit (NIO), a kqueue EV_CLEAR edge that
   * fires before the consumer is ready (kqueue). In each case the contract is: after the lost event the I/O loop retries and the
@@ -45,7 +45,7 @@ class ConnectionLostEventLivenessTest extends Test:
         def handleLabel(handle: Unit): String                                                                         = "stub"
     end StubDriver
 
-    "XPLAT6" - {
+    "no permanent stall on a lost event" - {
         "no-permanent-stall-on-lost-event" - {
 
             // Scenario 1: one suppressed arm (WouldBlock) before data arrives.

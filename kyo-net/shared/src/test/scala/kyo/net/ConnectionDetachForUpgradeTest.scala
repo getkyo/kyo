@@ -6,7 +6,7 @@ import kyo.net.internal.transport.IoDriver
 import kyo.net.internal.transport.ReadOutcome
 import kyo.net.internal.transport.WriteResult
 
-/** Yardstick INV-14: detachForUpgrade does NOT tear down the fd.
+/** detachForUpgrade does NOT tear down the fd.
   *
   * When a STARTTLS upgrade detaches a connection (Established -> Upgrading), the underlying socket must stay open so the TLS engine can
   * drive the handshake on it. The fd is the TLS upgrade's to manage; the Connection must not call closeHandle. A subsequent close() on the

@@ -7,7 +7,7 @@ import kyo.net.Test
 /** Invariant tests for the single-field [[HalfCloseState]] state machine via [[Connection.status]].
   *
   * All three tests drive a real TLS session through [[eachBackendTls]], so every registered backend x TLS-implementation cell is covered.
-  * JS never wires `statusFn` on its connections, so every JS leaf asserts [[Connection.Status.Active]] (XPLAT-5).
+  * JS never wires `statusFn` on its connections, so every JS leaf asserts [[Connection.Status.Active]].
   *
   * The three scenarios are:
   *   - `clean-close`: server calls `close()` (sends TLS close_notify); client drains inbound; expects [[Connection.Status.CleanClose]].
@@ -31,7 +31,7 @@ class HalfCloseStateTest extends Test:
         Abort.run[Closed](Loop.foreach(conn.inbound.safe.take.map(_ => Loop.continue))).map(_ => ())
 
     /** Expected [[Connection.Status]] on this platform for a given scenario reason. JS never wires `statusFn`, so every JS leaf
-      * sees [[Connection.Status.Active]] (XPLAT-5). On JVM and Native the engine path wires the fn and reports the true reason.
+      * sees [[Connection.Status.Active]]. On JVM and Native the engine path wires the fn and reports the true reason.
       */
     private def expected(reason: Connection.Status): Connection.Status =
         if kyo.internal.Platform.isJS then Connection.Status.Active else reason

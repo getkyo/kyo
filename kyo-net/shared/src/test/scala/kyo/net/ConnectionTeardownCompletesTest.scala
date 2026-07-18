@@ -6,11 +6,11 @@ import kyo.net.internal.transport.IoDriver
 import kyo.net.internal.transport.ReadOutcome
 import kyo.net.internal.transport.WriteResult
 
-/** Yardstick LIVE-7: a closing connection completes its teardown. close() drives the Connection.Teardown machine to Released, which closes the handle
+/** A closing connection completes its teardown. close() drives the Connection.Teardown machine to Released, which closes the handle
   * exactly once and fires the owning transport's onClose callback so the connection is dropped from the open-connection registry (a connection
   * whose teardown never completed would linger registered and leak its fd past the pool teardown).
   *
-  * The SpyDriver counts closeHandle; onClose sets a flag. Pins: LIVE-7.
+  * The SpyDriver counts closeHandle; onClose sets a flag.
   */
 class ConnectionTeardownCompletesTest extends Test:
 

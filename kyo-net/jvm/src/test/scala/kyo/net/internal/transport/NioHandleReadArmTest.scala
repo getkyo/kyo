@@ -13,7 +13,7 @@ import kyo.net.internal.ReadArmCell
   * These tests drive the read-arm owner cell directly, without a real I/O loop. They cover two
   * core properties:
   *
-  *   - INV-1 (yardstick): exactly one delivery per armed read. When two completers race on the same
+  *   - Exactly one delivery per armed read. When two completers race on the same
   *     armed cell, the first CAS to Absent wins and the second finds the cell already cleared.
   *   - NIO orphan interleaving: the stale pump re-arm scenario that historically hung STARTTLS
   *     handshakes. The handshake installs its cell after the pump's; a stale dispatch holding the
@@ -51,7 +51,7 @@ class NioHandleReadArmTest extends Test:
         (c, s)
     end openPair
 
-    "INV-1" - {
+    "read delivered exactly once per armed read" - {
 
         // Given: one armed read (a single Present(promise) cell installed in the readArm owner cell).
         // When: two completers both try to complete the armed promise via a CAS-clear of the cell.

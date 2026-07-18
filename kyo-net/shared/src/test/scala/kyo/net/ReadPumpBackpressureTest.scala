@@ -48,7 +48,7 @@ class ReadPumpBackpressureTest extends Test:
         def handleLabel(handle: Unit): String                         = "stub"
     end ParkingWriteDriver
 
-    "LIVE4" - {
+    "write backpressure does not deadlock inbound" - {
 
         // Given: the inbound channel filled then drained
         // When: the write pump is parked (AwaitingWritable)

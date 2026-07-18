@@ -3,13 +3,13 @@ package kyo.net.internal.posix
 import kyo.*
 import kyo.net.Test
 
-/** Driver-level guard test for the PosixHandle fd-mutex (R-039): the handle's `guard` is the generalized [[HandleGuard]] (independent read/write
+/** Driver-level guard test for the PosixHandle fd-mutex: the handle's `guard` is the generalized [[HandleGuard]] (independent read/write
   * holder bits plus a close bit), so a read dispatch and a write proceed full-duplex while a close requested mid-flight defers the resource free
   * to whichever holder releases last, running it exactly once.
   *
   * Observes the deferred free through a side effect of `PosixHandle.freeResources`: the reused read buffer is closed exactly once when the free
-  * runs (the bound fd is the driver's to close, not freeResources'; here the handle is unbound, so only the buffer free is exercised). Pins:
-  * R-039, INV-4, INV-13.
+  * runs (the bound fd is the driver's to close, not freeResources'; here the handle is unbound, so only the buffer free is exercised). This
+  * pins that no operation uses a freed resource, the deferred free runs exactly once, and the guard admits no acquire afterward.
   */
 class HandleGuardDriverTest extends Test:
 

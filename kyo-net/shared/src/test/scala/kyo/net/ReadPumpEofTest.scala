@@ -6,7 +6,7 @@ import kyo.net.internal.transport.IoDriver
 import kyo.net.internal.transport.ReadOutcome
 import kyo.net.internal.transport.WriteResult
 
-/** INV-10: WouldBlock (EAGAIN) must not be conflated with PeerFin (orderly EOF).
+/** WouldBlock (EAGAIN) must not be conflated with PeerFin (orderly EOF).
   *
   * These are the two non-bytes outcomes a driver can deliver:
   *
@@ -24,7 +24,7 @@ class ReadPumpEofTest extends Test:
     import AllowUnsafe.embrace.danger
     given Frame = Frame.internal
 
-    "INV10" - {
+    "WouldBlock is not conflated with PeerFin" - {
 
         // Given: an EAGAIN (WouldBlock) read followed by a peer-FIN read on the same connection.
         // When: each completes.

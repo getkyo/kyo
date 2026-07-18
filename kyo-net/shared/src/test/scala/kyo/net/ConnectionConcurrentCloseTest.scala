@@ -6,7 +6,7 @@ import kyo.net.internal.transport.IoDriver
 import kyo.net.internal.transport.ReadOutcome
 import kyo.net.internal.transport.WriteResult
 
-/** Yardstick CONC-4: the documented concurrent-use contract for close() and isOpen.
+/** The documented concurrent-use contract for close() and isOpen.
   *
   * close() is idempotent: multiple concurrent calls produce the same terminal state as one. isOpen reports a consistent boolean that
   * reflects the named state: once the state has settled to Closing or Closed, isOpen returns false for all subsequent reads, regardless of

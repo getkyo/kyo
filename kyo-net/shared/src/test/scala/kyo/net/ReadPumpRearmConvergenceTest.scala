@@ -6,7 +6,7 @@ import kyo.net.internal.transport.IoDriver
 import kyo.net.internal.transport.ReadOutcome
 import kyo.net.internal.transport.WriteResult
 
-/** LIVE-2: The pump converges to delivery under residual liveness cases: a trampoline-drop re-dispatch, a dropped ET edge, and a
+/** The pump converges to delivery under residual liveness cases: a trampoline-drop re-dispatch, a dropped ET edge, and a
   * short-submit-like window that forces multiple retry arms.
   *
   * These scenarios are all modeled through the same mechanism: the driver returns WouldBlock on an arm where data was nominally
@@ -43,7 +43,7 @@ class ReadPumpRearmConvergenceTest extends Test:
         def handleLabel(handle: Unit): String                                                                         = "stub"
     end StubDriver
 
-    "LIVE2" - {
+    "pump converges to delivery under residual liveness cases" - {
 
         // Scenario 1: WouldBlock on arm 1, bytes on arm 2.
         // Models the B2b trampoline drop: the first arm returns empty (the re-dispatch missed the data),

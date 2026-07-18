@@ -7,7 +7,7 @@ import kyo.net.Test
 import kyo.net.TransportConfig
 import kyo.net.internal.posix.PosixConstants
 
-/** LIVE-5: the TLS handshake terminates on jvm-native posix backends.
+/** The TLS handshake terminates on jvm-native posix backends.
   *
   * Two scenarios drive the real network path end to end:
   *
@@ -38,7 +38,7 @@ class PosixTransportHandshakeLivenessTest extends Test:
             cancel("No TLS provider staged for this host")
     end assumeTlsAndPoller
 
-    "LIVE5" - {
+    "handshake liveness" - {
         "handshake-terminates" - {
 
             // A real TLS handshake between a BoringSSL (or OpenSSL) client and server over a loopback

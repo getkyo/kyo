@@ -6,7 +6,7 @@ import kyo.net.internal.transport.IoDriver
 import kyo.net.internal.transport.ReadOutcome
 import kyo.net.internal.transport.WriteResult
 
-/** XPLAT-3: concurrent read delivery and write flush are independent through the Connection pumps.
+/** Concurrent read delivery and write flush are independent through the Connection pumps.
   *
   * A `Connection` drives two separate pumps: `ReadPump` (socket → inbound channel) and `WritePump` (outbound channel → socket). The
   * invariant is that the read path and the write path are independent: a write does not block a read, a read does not discard or reorder
@@ -43,7 +43,7 @@ class ConnectionReadWriteIndependenceTest extends Test:
         def handleLabel(handle: Unit): String                                                                         = "stub"
     end StubDriver
 
-    "XPLAT3" - {
+    "read and write paths are independent" - {
         "concurrent-read-write-independence" - {
 
             // Scenario 1: write span pre-queued before start; ReadPump delivers bytes on its first arm.

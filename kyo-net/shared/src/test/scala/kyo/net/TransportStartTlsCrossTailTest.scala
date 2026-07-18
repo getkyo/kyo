@@ -2,7 +2,7 @@ package kyo.net
 
 import kyo.*
 
-/** CONC-5: STARTTLS upgrade completes correctly under concurrent write pressure.
+/** STARTTLS upgrade completes correctly under concurrent write pressure.
   *
   * Drives N clients through simultaneous STARTTLS upgrades on a single transport, all gated by a Latch so they start concurrently.
   * Immediately after the upgrade, each client sends a payload, exercising the cross-tail send wire-order mechanism: the handshake's final
@@ -30,7 +30,7 @@ class TransportStartTlsCrossTailTest extends Test:
             else conn.inbound.safe.take.map(chunk => Loop.continue(acc ++ chunk.toArray))
         }
 
-    "CONC-5: concurrent STARTTLS upgrades with immediate post-upgrade writes complete without wire-order corruption" - eachBackendTls {
+    "concurrent STARTTLS upgrades with immediate post-upgrade writes complete without wire-order corruption" - eachBackendTls {
         (transport, serverTls, clientTls) =>
             val cli = clientTls.copy(sniHostname = Present("localhost"))
             for

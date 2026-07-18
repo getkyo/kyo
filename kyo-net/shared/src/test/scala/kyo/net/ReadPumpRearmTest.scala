@@ -6,7 +6,7 @@ import kyo.net.internal.transport.IoDriver
 import kyo.net.internal.transport.ReadOutcome
 import kyo.net.internal.transport.WriteResult
 
-/** LIVE-1: A read is delivered by the wake path AND by the fallback re-arm path when the wake is suppressed.
+/** A read is delivered by the wake path AND by the fallback re-arm path when the wake is suppressed.
   *
   * Two scenarios are exercised through the same Connection+ReadPump path using synchronous stub drivers:
   *
@@ -39,11 +39,11 @@ class ReadPumpRearmTest extends Test:
         def handleLabel(handle: Unit): String                                                                         = "stub"
     end StubDriver
 
-    "LIVE1" - {
+    "read delivered via wake path and fallback re-arm" - {
 
         // Scenario 1: bytes arrive on the first arm (wake-primary path).
         // The driver delivers bytes immediately; the pump must place them in inbound without re-arming.
-        // This pins LIVE-1: the primary wake path delivers in one shot.
+        // This pins that the primary wake path delivers in one shot.
         "wake-primary: bytes delivered on first arm without retry" in {
             val deliveredBytes = Array[Byte](1, 2, 3)
             var armCount       = 0

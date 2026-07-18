@@ -24,7 +24,7 @@ class WritePumpStateCasTest extends Test:
     import AllowUnsafe.embrace.danger
     given Frame = Frame.internal
 
-    "CONC3" - {
+    "each write handoff resolved by one winner" - {
 
         // Given: writable and take completion both attempt the AwaitingWritable -> Flushing handoff
         // When: each attempt is sequenced deterministically (first wins, second finds cell changed)

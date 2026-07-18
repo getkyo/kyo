@@ -26,7 +26,7 @@ class WritePumpResumeTest extends Test:
     import AllowUnsafe.embrace.danger
     given Frame = Frame.internal
 
-    "LIVE3" - {
+    "a parked write resumes and completes" - {
 
         // Given: a connection whose socket send buffer is full so the write parks (AwaitingWritable)
         // When: the socket becomes writable (promise completed)
