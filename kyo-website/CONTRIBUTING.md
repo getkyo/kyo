@@ -1,5 +1,10 @@
 # Contributing to kyo-website
 
+Tutorials are first-class per-module child routes. A `WebsiteTutorial.Declaration` is a
+validated slug/title/source value that participates in SSG, SPA routing, SSR hydration parity,
+manifests, search, sitemap, and SEO head data. A missing current-version tutorial source fails
+loud; a legacy version that declares no tutorials renders without the tutorial rail.
+
 Module-specific guidance for `kyo-website`. This complements the root
 [CONTRIBUTING.md](../CONTRIBUTING.md), which covers the global conventions this
 guide assumes: `using`-clause ordering, `inline` guidelines, naming, the Kyo
@@ -249,17 +254,23 @@ render are structurally identical (`SiteApp.scala:36-37`). Then run
 ### `WebsiteContent` is the complete render input for one version
 
 `WebsiteContent` is the complete render input for one documentation version: the
-full root-README markdown, the grouped modules, and the version record. It is a
-value (not files) so the renderer on `main` can render any tag's content
-(`WebsiteContent.scala:5-13`). The case class is
+full root-README markdown, the grouped modules, the version record, and the loaded
+tutorials. It is a value (not files) so the renderer on `main` can render any tag's
+content (`WebsiteContent.scala:5-13`). The case class is
 `WebsiteContent(intro: String, groups: Chunk[WebsiteContent.Group], version:
-WebsiteVersion)` (`WebsiteContent.scala:14-18`).
+WebsiteVersion, tutorials: Chunk[WebsiteContent.Tutorial] = Chunk.empty)`
+(`WebsiteContent.scala:15-20`).
 
 - `intro` holds the entire root README verbatim, rendered as the Overview page with
   fidelity (the transpiler is the only transformation); no section is sliced out
   (`WebsiteContent.scala:8-12`, `WebsiteContent.scala:50`).
 - A `Group` is one sidebar group: a root-README `### <Group>` heading name plus its
   modules in README order (`WebsiteContent.scala:22-24`).
+- `tutorials` holds the loaded `WebsiteContent.Tutorial` child routes for the version,
+  each pairing the owning module, the validated `WebsiteTutorial.Declaration`
+  (slug/title/source), and the loaded source content; it defaults to empty so a legacy
+  version that declares no tutorials renders without the tutorial rail
+  (`WebsiteContent.scala:28-31`).
 - A `WebsiteModule` is one module's doc-page input: its URL slug, the group it
   belongs to, its display title, the raw README Markdown, and which platforms it
   supports (`WebsiteModule.scala:3-12`).

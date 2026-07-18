@@ -4,6 +4,8 @@ Module-specific guide for kyo-eventlog. Read the repository-root [CONTRIBUTING.m
 
 **The headline invariant:** every `Journal` operation is encoded as an ArrowEffect: it suspends a reified op, carries its own `Abort[<per-op trait>]` in the row beside `Journal`, and the handler (`Journal.run`) discharges `Journal` while converting each backend `Abort` call into a `Result` that rides in the continuation, leaving the per-op traits on the residual. The safe-tier ops, the Op enum's GADT encoding, and the handler's per-branch `Abort.run` are all consequences of this single structural choice.
 
+**The typed layer:** codec authority is `EventLog.Codecs` (built by `EventLog.Codecs.schema`); `Event.Definition` carries member evidence and holds no codec slot; file backends are configured through `FileJournal.Configuration` and `FileJournal.Options`, each built by the `FileJournal.Binary` and `FileJournal.Jsonl` profile factories. The pre-r6 standalone file-config type, the public segment-format enum, and the old union-member and `from` typed-log constructors are all removed. `Journal.run(backend)(program)` is the only raw handler. A SWMR reader reads the committed frontier and never mutates or truncates the tail: write-mode owns all repair.
+
 ---
 
 ## Architecture overview
@@ -13,26 +15,26 @@ kyo-eventlog owns the Journal capability and its backing infrastructure:
 | File | Purpose |
 |---|---|
 | `Journal.scala` | `Journal` sealed trait; `Op` enum (GADT); `Reader[S]`; `Backend[S] extends Reader[S]`; public ops; `run` handler; `Unsafe` forwarders |
-| `EventLog.scala` | Typed facade `EventLog[A]` and `EventLog.Typed[A]` over raw journal ops |
-| `EventPayloadCodec.scala` | Payload encoding strategies (`bytes`, `schema[A]`) for file backends |
+| `EventLog.scala` | Typed program facade `EventLog[A]` over raw journal ops; the `EventLog.Codecs` / `ValueCodec` / `MetadataCodec` codec-authority aliases; `EventLog.Reader[A, S]` |
+| `EventLogCodecs.scala` | Codec authority: `Codecs[A]` (built by the `schema` and `bytes` factories), `ValueCodec[A]`, `MetadataCodec` |
 | `JournalError.scala` | Sealed `KyoException` hierarchy: umbrella base, three per-op traits, five leaves |
-| `JournalEvent.scala` | Wire-vocabulary types: `StreamId`, `EventId`, `EventType`, `StreamOffset`, `StreamVersion`, `ExpectedOffset`, `StreamInfo`, `EventEnvelope`, `RecordedEvent`, `AppendResult` |
-| `JournalMetadata.scala` | `EventMetadata` case class; `MetadataKey` opaque type |
+| `JournalEvent.scala` | The `Event` object: wire vocabulary `Event.StreamId`, `Event.Id`, `Event.Type`, `Event.StreamOffset`, `Event.StreamVersion`, `ExpectedOffset`, `StreamInfo`, `Event.Pending`, `Event.Committed`, `Event.Record`, `Event.Metadata`, `Event.Definition`; top-level `AppendResult` |
+| `JournalMetadata.scala` | `JournalId` opaque type, `JournalEntryRef` logical reference, `JournalIdentityError` |
 | `internal/InMemoryJournal.scala` | Ephemeral in-memory backend: CAS over `AtomicRef`, `Loop`-based retry |
-| `FileJournal.scala` | `FileJournal.Config`, `Fsync`, `SegmentFormat`; platform `Backend.file` / `Reader.file` extensions |
+| `FileJournal.scala` | `FileJournal.Options`, `Fsync`, `FileJournal.Configuration`, the `Binary` / `Jsonl` profile factories; the typed `Reader[A, S]` and `Backend[A, S]` traits |
 | `internal/FileJournalCore.scala` | Shared orchestration: recovery driver, segment index, in-process root registry, CAS claim, rotation, read path |
 | `internal/SegmentStore.scala` | `SegmentStore` (sync platform I/O) and `StoreSeam[S]` (effect-polymorphic I/O); `FileJournalCore` delegates all segment I/O to the injected `StoreSeam` |
-| `internal/FileJournalCore.scala:8-122`, `internal/JsonlSegmentCodec.scala` | `SegmentCodec` trait and `BinarySegmentCodec`; JSONL implementation; selected from `Config.format` at open time |
+| `internal/FileJournalCore.scala`, `internal/JsonlSegmentFormat.scala` | The format-dispatch seam and its binary implementation; the JSONL implementation; selected from the resolved profile at open time |
 | `internal/CRC32.scala` | Table-driven pure Scala CRC32 (reflected IEEE 802.3 polynomial `0xEDB88320`); byte-identical on every platform |
 | `jvm-native/src/main/scala/kyo/FileJournalBackend.scala` | `FileChannel`-backed store; `Backend.file`, `Backend.fileAsync`, `Reader.file`, `Reader.fileAsync` |
 | `js-wasm/src/main/scala/kyo/FileJournalBackend.scala` | `isNodeRuntime` predicate; sync and async file backends; reader extensions |
 | `js-wasm/src/main/scala/kyo/internal/NodeJournalStore.scala` | `NodeFsSync` / `NodeAsyncJournalStore` facades; `NodeSegmentStore`, `NodeHandle`, `NodeFileLock` |
 
-**Dependency rule:** kyo-eventlog depends on `kyo-core`, `kyo-schema`, and `kyo-system`. `kyo-schema` is pulled in for `Structure.Value`, `Codec.Writer`/`Reader`, and `Schema.init`, which `MetadataValue`'s constructor-exact codec uses. `kyo-system` is pulled in by the file backend: the shared orchestration uses `Path.Unsafe` for cross-platform directory operations (exists, mkdir, list), and the jvm-native backend additionally uses the `toJava` extension for `FileChannel.open`. The journal-specific Node facades (`NodeFsSync`, `NodeOsHost`, and the durability primitives `fdatasyncSync`/`fsyncSync`/`ftruncateSync`) live in the kyo-eventlog `js-wasm` tree rather than kyo-system, to keep those journal-specific bindings scoped to the module that needs them. No other kyo module is a compile-time dependency. [`build.sbt:675`]
+**Dependency rule:** kyo-eventlog depends on `kyo-core`, `kyo-schema`, and `kyo-system`. `kyo-schema` is pulled in for `Structure.Value`, `Codec.Writer`/`Reader`, and `Schema.init`, which `Event.Metadata.Value`'s constructor-exact codec uses. `kyo-system` is pulled in by the file backend: the shared orchestration uses `Path.Unsafe` for cross-platform directory operations (exists, mkdir, list), and the jvm-native backend additionally uses the `toJava` extension for `FileChannel.open`. The journal-specific Node facades (`NodeFsSync`, `NodeOsHost`, and the durability primitives `fdatasyncSync`/`fsyncSync`/`ftruncateSync`) live in the kyo-eventlog `js-wasm` tree rather than kyo-system, to keep those journal-specific bindings scoped to the module that needs them. No other kyo module is a compile-time dependency. [`build.sbt:675`]
 
 ### Runtime dependency direction
 
-Dependency direction flows downward at runtime: public capability ops and typed layers (`EventLog`, `Journal.append`/`read`/`streamInfo`) call into `Backend[S]`; durable backends inject platform stores and codecs into shared orchestration, never the reverse. `Journal.run` dispatches each suspended op to the installed backend; `FileJournalCore` delegates all segment I/O to injected `StoreSeam` and `SegmentCodec` seams and never references `FileChannel`, `toJava`, or other platform types directly. [`Journal.scala:143-149`, `FileJournalCore.scala:746-747`]
+Dependency direction flows downward at runtime: public capability ops and typed layers (`EventLog`, `Journal.append`/`read`/`streamInfo`) call into `Backend[S]`; durable backends inject platform stores and codecs into shared orchestration, never the reverse. `Journal.run` dispatches each suspended op to the installed backend; `FileJournalCore` delegates all segment I/O to injected `StoreSeam` and format-dispatch seams and never references `FileChannel`, `toJava`, or other platform types directly. [`Journal.scala:143-149`, `FileJournalCore.scala:746-747`]
 
 ### Source layout
 
@@ -43,7 +45,8 @@ kyo-eventlog/
     JournalError.scala
     JournalEvent.scala
     JournalMetadata.scala
-    FileJournal.scala              # Config and Fsync knobs
+    EventLogCodecs.scala           # codec authority (schema/bytes factories)
+    FileJournal.scala              # Options, Fsync, Configuration profiles
     internal/
       InMemoryJournal.scala
       FileJournalCore.scala        # shared orchestration and recovery driver
@@ -80,7 +83,7 @@ kyo-eventlog/
     CRC32EqualityTest.scala        # equality with java.util.zip.CRC32 over a fixed corpus (JVM-only)
 ```
 
-`Journal.Backend.file` and `FileJournal.Config` are available on all four platforms. On JVM and Native the backend uses a `FileChannel`-backed store. On JS and Wasm it uses Node's synchronous `fs` API and requires a Node.js runtime; on a browser runtime (no `node:fs`) the call fails immediately with a typed `JournalStorageError` rather than at first I/O. No browser persistence backend exists. The `jvm-native/` tree compiles on JVM and Native; the `js-wasm/` tree compiles on both JS and Wasm. All other public types and operations (`Journal`, `Journal.Backend.inMemory`, the wire types, the error hierarchy) compile and behave identically on all four platforms.
+`Journal.Backend.file` and `FileJournal.Configuration` are available on all four platforms. On JVM and Native the backend uses a `FileChannel`-backed store. On JS and Wasm it uses Node's synchronous `fs` API and requires a Node.js runtime; on a browser runtime (no `node:fs`) the call fails immediately with a typed `JournalStorageError` rather than at first I/O. No browser persistence backend exists. The `jvm-native/` tree compiles on JVM and Native; the `js-wasm/` tree compiles on both JS and Wasm. All other public types and operations (`Journal`, `Journal.Backend.inMemory`, the wire types, the error hierarchy) compile and behave identically on all four platforms.
 
 ---
 
@@ -103,7 +106,7 @@ Use this pattern whenever the input type constructor of an `ArrowEffect` is a na
 [`Journal.scala:40`]
 
 ```scala
-case StreamInfo(streamId: StreamId) extends Op[Result[JournalStreamInfoFailure, kyo.StreamInfo]]
+case StreamInfo(streamId: Event.StreamId) extends Op[Result[JournalStreamInfoFailure, kyo.StreamInfo]]
 ```
 
 Inside the `enum Op` body the unqualified name `StreamInfo` resolves to `Op.StreamInfo`, the case being defined. The result type must reference the top-level `kyo.StreamInfo` enum, so the fully qualified name is required. Any future op case whose result type names a type that shares a name with an existing Op case must use the same qualification.
@@ -158,11 +161,11 @@ Leaves and the op traits they implement:
   JournalEmptyAppendError()                                   JournalAppendFailure
   JournalConflictError(streamId, expected, actual)            JournalAppendFailure
   JournalInvalidIdentifierError(kind, value)                  (none: construction-time Result error)
-  JournalCorruptedError(streamId: Maybe[StreamId], detail)    JournalAppendFailure, JournalReadFailure, JournalStreamInfoFailure
+  JournalCorruptedError(streamId: Maybe[Event.StreamId], detail) JournalAppendFailure, JournalReadFailure, JournalStreamInfoFailure
   JournalStorageError(detail, cause: Maybe[Throwable])        JournalAppendFailure, JournalReadFailure, JournalStreamInfoFailure
 ```
 
-`JournalInvalidIdentifierError` carries no op trait because it is the `Result` error type returned by opaque-type constructors (such as `StreamId.apply`), not an op failure reachable via `Abort` in a journal program.
+`JournalInvalidIdentifierError` carries no op trait because it is the `Result` error type returned by opaque-type constructors (such as `Event.StreamId.apply`), not an op failure reachable via `Abort` in a journal program.
 
 `JournalCorruptedError` and `JournalStorageError` cross-cut all three ops because any durable backend operation can encounter storage corruption or I/O failure.
 
@@ -179,7 +182,7 @@ Leaves and the op traits they implement:
 A skeleton for a new append-only leaf:
 
 ```scala
-case class JournalMyError(streamId: StreamId, detail: String)(using Frame)
+case class JournalMyError(streamId: Event.StreamId, detail: String)(using Frame)
     extends JournalError(s"My failure on stream '${streamId.value}': $detail.")
     with JournalAppendFailure derives CanEqual
 ```
@@ -201,22 +204,22 @@ All public identifier and position types are opaque aliases for primitives. The 
 
 | Type | Underlying | Validation rule | Constants / derived ops |
 |---|---|---|---|
-| `StreamId` | `String` | Non-empty | `value` |
-| `EventId` | `String` | Non-empty | `value` |
-| `EventType` | `String` | Non-empty | `value` |
-| `StreamOffset` | `Long` | `[0, Long.MaxValue)` | `first = 0L`, `fromUnchecked` |
-| `StreamVersion` | `Long` | `>= 0` | `initial = 0L`, `after(offset)` |
-| `MetadataKey` | `String` | Non-empty; no leading, trailing, or consecutive dots | `value`, `segments: Chunk[String]` |
+| `Event.StreamId` | `String` | Non-empty | `value` |
+| `Event.Id` | `String` | Non-empty | `value` |
+| `Event.Type` | `String` | Non-empty | `value` |
+| `Event.StreamOffset` | `Long` | `[0, Long.MaxValue)` | `first = 0L`, `fromUnchecked` |
+| `Event.StreamVersion` | `Long` | `>= 0` | `initial = 0L`, `after(offset)` |
+| `Event.Metadata.Key` | `String` | Non-empty; no leading, trailing, or consecutive dots | `value`, `segments: Chunk[String]` |
 
 ### The version = lastOffset + 1 invariant
 
 [`JournalEvent.scala:123`, `internal/InMemoryJournal.scala:109-110`]
 
-`StreamVersion.after(offset)` computes `offset.value + 1L`. For a contiguous zero-based stream whose last event sits at `offset`, the version (one-based count of events) equals `offset.value + 1`. `InMemoryJournal.info` enforces this whenever it constructs a `StreamInfo.Existing`:
+`Event.StreamVersion.after(offset)` computes `offset.value + 1L`. For a contiguous zero-based stream whose last event sits at `offset`, the version (one-based count of events) equals `offset.value + 1`. `InMemoryJournal.info` enforces this whenever it constructs a `StreamInfo.Existing`:
 
 ```scala
-val lastOffset = StreamOffset.fromUnchecked(events.length.toLong - 1L)
-StreamInfo.Existing(StreamVersion.after(lastOffset), lastOffset)
+val lastOffset = Event.StreamOffset.fromUnchecked(events.length.toLong - 1L)
+StreamInfo.Existing(Event.StreamVersion.after(lastOffset), lastOffset)
 ```
 
 Any new backend must maintain this invariant or `JournalBackendTest`'s `streamInfo` leaves will fail.
@@ -230,73 +233,63 @@ Any new backend must maintain this invariant or `JournalBackendTest`'s `streamIn
 `ExpectedOffset` has three cases:
 - `Any`: the check is skipped.
 - `NoStream`: the stream must be absent.
-- `Exact(offset: StreamOffset)`: the live last offset must equal `offset`.
+- `Exact(offset: Event.StreamOffset)`: the live last offset must equal `offset`.
 
 `StreamInfo` has two cases:
 - `Absent`: the stream has no events.
-- `Existing(version: StreamVersion, lastOffset: StreamOffset)`: the stream has `version.value` events, the last at `lastOffset`.
+- `Existing(version: Event.StreamVersion, lastOffset: Event.StreamOffset)`: the stream has `version.value` events, the last at `lastOffset`.
 
 `StreamInfo` also provides `exists: Boolean` as a convenience method that returns `true` for `Existing` and `false` for `Absent`. [`JournalEvent.scala:158-162`]
 
 `JournalConflictError` carries the `actual: StreamInfo` observed at append time so a caller can inspect the conflict without a second round-trip.
 
-### EventEnvelope, RecordedEvent, AppendResult
+### Event.Pending, Event.Committed, AppendResult
 
-[`JournalEvent.scala:172-205`]
+[`JournalEvent.scala:622-641`, `JournalEvent.scala:841-846`]
 
-These are plain `final case class` values.
+These are plain `final case class` values. `Event.Pending` and `Event.Committed` are the two lifecycle shapes of an `Event`.
 
-`EventEnvelope` is the submitted form: `id`, `eventType`, `payload: Span[Byte]`, `metadata`. The payload is opaque bytes; schemas and codecs live above this layer.
+`Event.Pending` is the submitted form: `id`, `eventType`, `payload: Span[Byte]`, `metadata`. The payload is opaque bytes; schemas and codecs live above this layer.
 
-`RecordedEvent` is the stored form returned by reads: adds `streamId` and `offset` to the envelope fields. The field `id` in `EventEnvelope` is named `eventId` in `RecordedEvent`; all other envelope fields carry through with the same names. The `offset` is the zero-based position assigned by the backend.
+`Event.Committed` is the stored form returned by reads: it carries `streamId` and `offset` alongside the same `id`, `eventType`, `payload`, and `metadata` fields as `Event.Pending`. The `offset` is the zero-based position assigned by the backend.
 
 `AppendResult` reports the outcome of a successful batch append: `streamId`, `firstOffset`, `lastOffset`, and the post-append `streamInfo`.
 
-`Span` equality via `==` is reference-based. To compare payload contents, use `Span#is`, not `==` on envelopes or records.
+`Span` equality via `==` is reference-based. To compare payload contents, use `Span#is`, not `==` on pending or committed events.
 
 ---
 
-## EventMetadata and MetadataKey
+## Event.Metadata and Event.Metadata.Key
 
-[`JournalMetadata.scala:14-181`]
+[`JournalEvent.scala:269-611`]
 
-`EventMetadata` is a `final case class` wrapping `Map[MetadataKey, MetadataValue]` (`JournalMetadata.scala:14`). `MetadataValue` is an opaque type backed by `Structure.Value` with a constructor-exact codec: each of the ten `Structure.Value` constructors encodes as a one-field record keyed by its tag name (`str`, `int`, `bool`, `decimal`, `bignum`, `null`, `seq`, `record`, `entries`, `variant`), so every constructor round-trips without loss through the binary metadata codec the file backend uses (Ion Binary by default via `EventMetadataCodec.default`). The tag-keyed open shape (notably the array-of-arrays `entries` form) is not read back by every text codec, so the round-trip guarantee is scoped to the binary metadata path; `JournalMetadataTest` verifies all ten constructors through Ion Binary and MsgPack. Construct with `MetadataValue(sv: Structure.Value)` and project with `.value: Structure.Value`. Metadata is for infrastructure concerns (correlation identifiers, tracing tags) that consumers may need without decoding the payload.
+`Event.Metadata` is a `final case class` wrapping `Map[Event.Metadata.Key, Event.Metadata.Value]`. `Event.Metadata.Value` is an opaque type backed by `Structure.Value` with a constructor-exact codec: each of the ten `Structure.Value` constructors encodes as a one-field record keyed by its tag name (`str`, `int`, `bool`, `decimal`, `bignum`, `null`, `seq`, `record`, `entries`, `variant`), so every constructor round-trips without loss through the binary metadata codec the file backend uses (Ion Binary by default). The tag-keyed open shape (notably the array-of-arrays `entries` form) is not read back by every text codec, so the round-trip guarantee is scoped to the binary metadata path; `JournalMetadataTest` verifies all ten constructors through the binary path. Construct with `Event.Metadata.Value(sv: Structure.Value)` and project with `.value: Structure.Value`. Metadata is for infrastructure concerns (correlation identifiers, tracing tags) that consumers may need without decoding the payload.
 
-### EventMetadataCodec
+### Metadata wire versioning
 
-[`EventMetadataCodec.scala`]
+[`internal/FileJournalCore.scala:1714-1745`]
 
-Binary metadata wire format is configurable via `EventMetadataCodec`, selected through `FileJournal.Config.metadataCodec`:
+The metadata `Codec` is a construction-time choice on the codec authority: `EventLog.Codecs.schema(metadata = ...)` and `EventLog.Codecs.bytes(metadata = ...)` frame the `MetadataCodec` that the file segment codec applies. The binary wire version is derived internally, not selected through a public codec knob. A MsgPack-wrapped metadata codec writes the legacy version byte `0x01` for wire continuity; every other wrapped codec writes the current version byte `0x02`. On decode, `0x02` bodies decode through the configuration's wrapped codec and `0x01` bodies always decode through MsgPack, so a store written under an older MsgPack default still reads. This derivation is `private[kyo]` (the `encodeMetadata` / `decodeMetadata` path in `FileJournalCore`), not a caller-facing selector.
 
-| Value | Wire | Read compatibility |
-|---|---|---|
-| `EventMetadataCodec.default` / `ionBinary` | Version `0x02`, Ion Binary body | Accepts legacy `0x01` MsgPack bodies |
-| `EventMetadataCodec.msgPack` | Version `0x01`, MsgPack body | Strict `0x01` only |
+`Event.Metadata.Key` is an opaque `String` with dotted-path validation: non-empty, no leading dot, no trailing dot, no consecutive dots (`foo..bar` is rejected). `Event.Metadata.Key.apply` returns `Result[JournalInvalidIdentifierError, Key]`, and the `segments` extension splits on `.` and returns a `Chunk[String]`.
 
-`MetadataKey` is an opaque `String` with dotted-path validation: non-empty, no leading dot, no trailing dot, no consecutive dots (`foo..bar` is rejected). The `segments` extension splits on `.` and returns a `Chunk[String]`.
-
-`EventMetadata.empty` is the canonical metadata-free value.
+`Event.Metadata.empty` is the canonical metadata-free value.
 
 ---
 
 ## Typed event layer (EventLog)
 
-[`EventLog.scala`, `EventPayloadCodec.scala`]
+[`EventLog.scala`, `EventLogCodecs.scala`]
 
-`EventLog[A]` is a typed facade over raw `Journal` ops. It encodes domain values to bytes on append, decodes on read, and delegates storage to `Journal.append` / `Journal.read` / `Journal.streamInfo` inside `Journal.run`. No backend is captured at construction time.
+`EventLog[A]` is a typed program facade over raw `Journal` ops. It encodes domain values to bytes on append, decodes on read, and delegates storage to `Journal.append` / `Journal.read` / `Journal.streamInfo` inside `Journal.run`. It is constructed from an `EventLog.Codecs[A]` and a `JournalId`; no backend is captured at construction time.
 
-### Constructor decision: `EventLog.init` vs `EventLog.apply`
+### Single safe-tier constructor: `EventLog.init`
 
-[`EventLog.scala:98-106`]
+[`EventLog.scala:100-117`]
 
-| Factory | Tier | When to use |
-|---|---|---|
-| `EventLog.init[A]` | Unsafe (`using AllowUnsafe`) | Tests that need compile-time effect-row checks without the `Sync` bootstrap; never in production `src/main` |
-| `EventLog[A]` | Safe (`Sync.Unsafe.defer(init[A])`) | All production and integration-test construction inside `Journal.run` |
+There is one factory. `EventLog.init[A](codecs, journalId)` is safe-tier: it returns `EventLog[A] < Sync` and takes no `AllowUnsafe`. There is no unsafe/safe split and no `EventLog.apply`; construction is a single `Sync.defer` over the private constructor. The codec authority is supplied as `EventLog.Codecs[A]` (built by `EventLog.Codecs.schema` or `EventLog.Codecs.bytes`), and the log's identity is a `JournalId`.
 
-`EventLog.init` allocates a per-instance seed and monotonic counter under `AllowUnsafe`. `EventLog.apply` is the safe-tier single-boundary bootstrap: one `Sync.Unsafe.defer` wrapping `init`, so callers obtain `EventLog[A] < Sync` without importing `AllowUnsafe`.
-
-Safe-tier programs construct the log with `EventLog[A]` inside `Journal.run(backend)(...)`, then call `append`, `read`, and `streamInfo` in the same block. [`EventLog.scala:12-13`, `EventLogTest.scala:54-58`]
+Safe-tier programs build the log with `EventLog.init` and run its operations inside `Journal.run(backend)(...)`.
 
 ### Effect rows mirror `Journal`
 
@@ -316,23 +309,17 @@ The three operations carry the same per-op `Abort` traits as raw `Journal` ops:
 
 [`EventLog.scala:14-15`, `EventLog.scala:83-85`]
 
-Payload bytes that cannot be decoded fold into `JournalCorruptedError` so the row stays `Abort[JournalReadFailure]`, never widening to a codec-specific error:
+Payload bytes that cannot be decoded fold into `JournalCorruptedError` so the row stays `Abort[JournalReadFailure]`, never widening to a codec-specific error. The value interpreter (`EventLogCodecs.decodeValue`) performs this fold internally, so `EventLog.read` composes it directly:
 
 ```scala
-codec.decode(rec.payload).mapFailure(ex => JournalCorruptedError(Maybe(streamId), ex.getMessage))
+EventLogCodecs.decodeValue(codecs.value, rec.payload)
 ```
 
 ### Opaque producer event identifiers
 
 [`EventLog.scala:28-33`]
 
-Each event identifier assigned by `EventLog.append` is an opaque producer token drawn from a per-instance monotonic counter seeded at construction time. Identifiers carry no positional information and are not derived from the stream offset. They are independent of `RecordedEvent.offset`, which the backend assigns.
-
-### Test-only `embrace.danger` for compile-time row checks
-
-[`EventLogTest.scala:14-16`]
-
-Tests that call `EventLog.init` directly require `import AllowUnsafe.embrace.danger` to satisfy the `AllowUnsafe` evidence. This pattern is for compile-time effect-row assertions (type ascriptions on `append`, `read`, `streamInfo`) that bypass the `Sync.Unsafe.defer` bootstrap. Backend `src/main` sources never import `embrace.danger`; the prohibition in the unsafe-tier section below still applies to all main-source code.
+Each event identifier assigned through `EventLog.append` is an opaque producer token drawn from a per-instance monotonic counter. Identifiers carry no positional information and are not derived from the stream offset. They are independent of `Event.Committed.offset`, which the backend assigns.
 
 ### Write-side deciders
 
@@ -340,44 +327,29 @@ Write-side deciders are ordinary `Journal.run` programs using `EventLog[A]`: rea
 
 ---
 
-## EventPayloadCodec
+## Codec authority (EventLog.Codecs)
 
-[`EventPayloadCodec.scala:5-15`, `EventPayloadCodec.scala:55-76`]
+[`EventLogCodecs.scala:13-114`]
 
-A codec is selected when a file backend is constructed (`Backend.file`, `Backend.fileAsync`, `Reader.file`, `Reader.fileAsync`) and governs how every payload byte stream is written to binary segments and transcoded when the segment format is JSONL.
+`EventLog.Codecs[A]` is the single value+metadata codec authority (`EventLog.Codecs` aliases `EventLogCodecs`). A `Codecs[A]` pairs a `ValueCodec[A]` with a `MetadataCodec`; its constructor is `private[kyo]`, so it is built only by the two factories. The authority is bound at file-backend configuration (`FileJournal.Binary.configuration` / `FileJournal.Jsonl.configuration`) and by `EventLog.init`, and it governs how every payload byte stream is framed in binary segments and transcoded when the profile is JSONL.
 
 ### Selection decision: `bytes` vs `schema[A]`
 
-| Value | When to use | Encoding |
+| Factory | When to use | Encoding |
 |---|---|---|
-| `EventPayloadCodec.bytes` | Payloads are already `Span[Byte]`; no domain type to round-trip | Identity: raw bytes pass through unchanged |
-| `EventPayloadCodec.schema[A]` | Domain events are a typed `A` with `Schema[A]` | Ion Binary in binary segments (default); JSON when transcoded to JSONL |
-| `EventPayloadCodec.schema[A](binary)` | Same with an explicit binary `Codec` | Selected codec in binary segments; JSON when transcoded to JSONL |
+| `EventLog.Codecs.bytes` | Payloads are already `Span[Byte]`; no domain type to round-trip | Identity: raw bytes pass through unchanged (`ValueCodec.BytesValue`) |
+| `EventLog.Codecs.schema[A]` | Domain events are a typed `A` with `Schema[A]` | Ion Binary in binary segments (default); JSON when transcoded to JSONL (`ValueCodec.SchemaValue`) |
+| `EventLog.Codecs.schema[A](binary = ...)` | Same with an explicit binary `Codec` | Selected codec in binary segments; JSON when transcoded to JSONL |
 
-Default factory parameter on all file-backend extensions is `EventPayloadCodec.bytes`. Pass `EventPayloadCodec.schema[MyEvent]` when appending typed domain values through `EventLog[A]` or when you want schema-derived event types on read.
+`EventLog.Codecs.schema[A](binary = IonBinary(), json = Json(), metadata = IonBinary())` validates codec compatibility against `Schema[A]`'s top-level structure before returning; an incompatible pairing aborts `EventCodecConfigurationError` at construction, never as a per-event decode surprise. `EventLog.Codecs.bytes(metadata = IonBinary())` yields `Codecs[Span[Byte]]`; both factories share the same `Abort[EventCodecConfigurationError]` construction row.
 
-### Ion Binary in binary segments
+### Value framing
 
-[`EventPayloadCodec.scala`]
+[`EventLogCodecs.scala:81-114`]
 
-`SchemaPayloadCodec` encodes domain values with the selected binary `Codec` (Ion Binary by default) in binary (`.seg`) segments:
+The value and metadata codecs are data-only descriptors; the byte transform lives in the `private[kyo]` interpreter. `EventLogCodecs.encodeValue` frames a value through the descriptor's binary `Codec` (Ion Binary by default) for `.seg` segments; `EventLogCodecs.decodeValue` reverses it, folding undecodable bytes into `JournalCorruptedError` on `Abort[JournalReadFailure]`. A `SchemaValue` descriptor carries the `Schema[A]` and both the binary and JSON `Codec` choices, so the JSONL profile embeds the payload as JSON from the same descriptor; a `BytesValue` descriptor stores the value verbatim on both lanes.
 
-```scala
-private[kyo] def encode(value: A)(using Frame): Span[Byte] =
-    val w = binary.newWriter()
-    schema.writeTo(value, w)
-    w.result()
-```
-
-Pass `EventPayloadCodec.schema[MyEvent](MsgPack())` for explicit MsgPack encoding. `EventPayloadCodecTest` verifies round-trip encode/decode for Ion Binary default, explicit MsgPack, and `EventPayloadCodec.bytes`.
-
-### JSONL transcode path
-
-[`EventPayloadCodec.scala`]
-
-When `Config.format` is `SegmentFormat.Jsonl`, `JsonlSegmentCodec` uses the injected `EventPayloadCodec` to transcode payloads into JSON lines. For schema-derived payloads, `encodeForJsonl` decodes the binary bytes back to `A`, then re-encodes as JSON via `Schema.writeTo`. `decodeFromJsonl` reverses the path. `EventPayloadCodecTest` exercises the full round-trip through `encodeForJsonl` and `decodeFromJsonl`.
-
-At open time, `FileJournalCore` selects the `SegmentCodec` from the `FORMAT` marker: binary uses `new BinarySegmentCodec(config.metadataCodec)`; JSONL constructs `new JsonlSegmentCodec(payloadCodec, config.metadataCodec)`.
+At open time, `FileJournalCore` selects the format-dispatch seam from the resolved profile: the binary profile frames records through `EventLog.Codecs`' binary codec; the JSONL profile embeds the payload as JSON.
 
 ---
 
@@ -391,7 +363,7 @@ At open time, `FileJournalCore` selects the `SegmentCodec` from the `FORMAT` mar
 
 ```scala
 trait Reader[S]:
-    def read(streamId, from, maxCount): Chunk[RecordedEvent] < (S & Abort[JournalReadFailure])
+    def read(streamId, from, maxCount): Chunk[Event.Committed] < (S & Abort[JournalReadFailure])
     def streamInfo(streamId): StreamInfo < (S & Abort[JournalStreamInfoFailure])
 
 trait Backend[S] extends Reader[S]:
@@ -453,41 +425,50 @@ The contract exercised covers:
 `FileJournal` is the durable file backend: an append-only segment log on disk, available on JVM, Native, JS-under-Node, and Wasm-under-Node. Public entry points are extensions on `Journal.Backend.type` and `Journal.Reader.type` in each platform tree's `FileJournalBackend.scala`:
 
 ```scala
-Journal.Backend.file(dir: Path, config: FileJournal.Config = default, payloadCodec: EventPayloadCodec = EventPayloadCodec.bytes)
-    : Journal.Backend[Sync] < (Sync & Scope & Abort[JournalStorageError])
+// Build a typed configuration once from a JournalId and an EventLog.Codecs; the profile
+// factory resolves the profile name and media types and validates layout coherence.
+FileJournal.Binary.configuration[A](journalId: JournalId, codecs: EventLog.Codecs[A], options: FileJournal.Options = FileJournal.Options.default)
+    : FileJournal.Configuration[A] < Abort[FileJournal.ConfigurationError]
+FileJournal.Jsonl.configuration[A](journalId: JournalId, codecs: EventLog.Codecs[A], options: FileJournal.Options = FileJournal.Options.default)
+    : FileJournal.Configuration[A] < Abort[FileJournal.ConfigurationError]
 
-Journal.Backend.fileAsync(dir: Path, config: FileJournal.Config = default, payloadCodec: EventPayloadCodec = EventPayloadCodec.bytes)
-    : Journal.Backend[Async] < (Sync & Scope & Abort[JournalStorageError])
+// Open a Sync or Async backend, or a read-only SWMR reader, over that configuration.
+Journal.Backend.file[A](dir: Path, configuration: FileJournal.Configuration[A])
+    : FileJournal.Backend[A, Sync] < (Sync & Scope & Abort[JournalStorageError])
 
-Journal.Reader.file(dir: Path, config: FileJournal.Config = default, payloadCodec: EventPayloadCodec = EventPayloadCodec.bytes)
-    : Journal.Reader[Sync] < (Sync & Scope & Abort[JournalStorageError])
+Journal.Backend.fileOver[A](fs: FileSystem[Sync], dir: Path, configuration: FileJournal.Configuration[A])
+    : FileJournal.Backend[A, Sync] < (Sync & Scope & Abort[JournalStorageError])
 
-Journal.Reader.fileAsync(dir: Path, ...)
-    : Journal.Reader[Async] < (Sync & Scope & Abort[JournalStorageError])
+Journal.Backend.fileAsync[A](dir: Path, configuration: FileJournal.Configuration[A])
+    : FileJournal.Backend[A, Async] < (Sync & Scope & Abort[JournalStorageError])
+
+Journal.Reader.file[A](dir: Path, configuration: FileJournal.Configuration[A])
+    : FileJournal.Reader[A, Sync] < (Sync & Scope & Abort[JournalStorageError])
 ```
 
-The `dir` parameter is a `Path` from `kyo-system`. `Scope` finalization releases the advisory LOCK and closes all open segment channels.
+The `dir` parameter is a `Path` from `kyo-system`. `Scope` finalization releases the advisory LOCK and closes all open segment channels. `fileOver` runs the engine's physical store through a supplied `FileSystem[Sync]` (host, in-memory, or a commit-handle overlay) instead of the platform fast path, sharing the identical shared engine, group commit, and recovery.
 
 **Shared orchestration seams.** `FileJournalCore[S]` implements `Journal.Backend[S]` and is never returned by name; callers see `Journal.Backend[S]` or `Journal.Reader[S]`. Recovery, offset checks, framing, and rotation math are single-sourced. Two injected seams generalize over effect and format:
 
 | Seam | Role |
 |---|---|
 | `StoreSeam[S]` | Effect-polymorphic platform I/O (`open`, positioned read/write, sync, truncate, close); `Sync` wraps `SegmentStore` via `StoreSeam.sync`, `Async` uses `offloadStore` or `NodeAsyncJournalStore` |
-| `SegmentCodec` | Format-dispatch for segment encoding; selected from the `FORMAT` marker at open time (`Binary` or `JsonlSegmentCodec(payloadCodec)`) |
+| Format-dispatch seam | Segment encoding dispatch: the binary and JSONL implementations, selected from the resolved profile at open time |
 
 `ClaimSeam` and `FlushStrategy` are the two additional injection points where Sync and Async backends intentionally diverge (see below). [`FileJournalCore.scala:737-750`, `FileJournalCore.scala:752-765`]
 
 **Durable append path.** Public `Journal.append` suspends an `Op.Append` via `ArrowEffect.suspend`. `Journal.run` dispatches the op to `backend.append`. On the file backend, `FileJournalCore.append` wraps `appendCriticalSection` in `Sync.Unsafe.defer`. Inside `appendCriticalSection`: claim acquisition, expected-offset check, framed positional write, and flush strategy (claim held through flush on Sync, released early on Async). [`Journal.scala:148-149`, `FileJournalCore.scala:774-784`, `FileJournalCore.scala:830-903`]
 
-`FileJournal.Config` has three fields:
+`FileJournal.Options` has two fields (there is no format or codec slot; the profile and codecs live on `FileJournal.Configuration`, resolved by the `Binary` / `Jsonl` factory):
 
 | Field | Default | Notes |
 |---|---|---|
 | `fsync: Fsync` | `Fsync.Always` | Flush each acknowledged append to stable storage before returning. Set to `Fsync.Disabled` only in tests; the crash-survival guarantee does not hold when `Fsync.Disabled` is set. |
 | `segmentSize: FileSize` | `64L.mib` (64 MiB) | Soft rotation threshold. Checked before an append, not after. |
-| `format: SegmentFormat` | `SegmentFormat.Binary` | Fixed at root creation via the `FORMAT` marker file. `Binary` (`.seg`, CRC32 frames) or `Jsonl` (`.jsonl`, one JSON object per line). |
 
-**Segment format:** each segment file begins with `KJN1` + `0x01` (4-byte magic + 1-byte version). Record frames follow with the layout `length(4) | crc32(4) | body`; the CRC covers the body only. Each append batch is closed by a terminator (`KJNC` + record count + CRC), which is the commit boundary. A torn tail in the active segment (no valid terminator after the trailing record group, from a prior crash) is silently truncated at recovery with a WARN log entry naming the segment and byte range. Non-tail corruption and unknown segment versions are fatal (`JournalCorruptedError`).
+The profile (binary `.seg`, CRC32 frames; or JSONL `.jsonl`, one JSON object per line) is chosen by which factory builds the `FileJournal.Configuration`, `FileJournal.Binary.configuration` or `FileJournal.Jsonl.configuration`, and is fixed at root creation via the `FORMAT` marker file, not a settable `Options` field.
+
+**Segment format:** each binary segment file begins with `KJN1` + `0x01` (4-byte magic + 1-byte version). Record frames follow with the layout `length(4) | crc32(4) | body`; the CRC covers the body only. Each append batch is closed by a terminator (`KJNC` + record count + CRC), which is the commit boundary. A torn tail in the active segment (no valid terminator after the trailing record group, from a prior crash) is truncated at recovery only under a write-mode open, with a WARN log entry naming the segment and byte range; a SWMR reader never truncates (see Committed frontier below). Non-tail corruption and unknown segment versions are fatal (`JournalCorruptedError`).
 
 **CRC32:** the CRC is computed by a table-driven pure Scala implementation (`internal/CRC32.scala`) using the reflected IEEE 802.3 polynomial `0xEDB88320`, producing the same 32-bit values as `java.util.zip.CRC32`. Using one shared implementation across all platforms makes cross-platform byte-identity hold by construction rather than by relying on two independent standard libraries agreeing. `CRC32EqualityTest` (jvm-only) asserts equality with `java.util.zip.CRC32` over a fixed corpus; `FileJournalCodecTest` verifies known-answer vectors on every platform.
 
@@ -509,7 +490,7 @@ Sync.Unsafe.defer {
     val coordinator = GroupCommitCoordinator.init
     (ClaimSeam.async(), (fsync: FileJournal.Fsync) => FlushStrategy.groupCommit(fsync, coordinator))
 }.flatMap { (claim, flushFor) =>
-    FileJournalCore.open(dir, config, offloadStore(new FileChannelStore), payloadCodec, claim, flushFor)
+    FileJournalCore.open(dir, configuration, offloadStore(new FileChannelStore), claim, flushFor)
 }
 ```
 
@@ -527,13 +508,13 @@ Sync.Unsafe.defer {
 
 [`Journal.scala:43-49`, `FileJournalCore.scala:1376-1434`, `jvm-native/src/main/scala/kyo/FileJournalBackend.scala:230-274`, `js-wasm/src/main/scala/kyo/FileJournalBackend.scala:86-131`]
 
-Single-writer, multiple-reader (SWMR): concurrent writers must use `Journal.Backend.file` or `Journal.Backend.fileAsync`; readers opened through `Journal.Reader.file` or `Journal.Reader.fileAsync` never acquire the root lock and observe only data committed before the read.
+Single-writer, multiple-reader (SWMR): concurrent writers must use `Journal.Backend.file` or `Journal.Backend.fileAsync`; readers opened through `Journal.Reader.file` never acquire the root lock and observe only data committed before the read.
 
 **Writer opens.** `Backend.file` / `fileAsync` call `FileJournalCore.open`, which registers the root in `heldRoots` and acquires the platform lock. A second writer open of the same root in the same process fails immediately with `JournalStorageError` before OS lock acquisition. [`FileJournalCore.scala:1459-1460`]
 
-**Reader opens.** `Reader.file` / `Reader.fileAsync` delegate to `FileJournalCore.openReader`, which skips `registerRoot` and platform lock acquisition. The reader core wires `ClaimSeam.noop`, `FlushStrategy.noop`, a no-op lock, and `readerMode = true`. [`FileJournalCore.scala:1419-1434`]
+**Reader opens.** `Reader.file` delegates to `FileJournalCore.openReader`, which skips `registerRoot` and platform lock acquisition. The reader core wires `ClaimSeam.noop`, `FlushStrategy.noop`, a no-op lock, and `readerMode = true`. [`FileJournalCore.scala:1419-1434`]
 
-**Committed frontier.** Readers see only the committed frontier: a torn active tail (no valid batch terminator) is invisible until the writer completes the batch. `FileJournalSwmrTest` and `JournalReaderTest` exercise torn-tail invisibility and mid-file corruption. A recovery pass may truncate a torn tail in the active segment on first touch, so a nominally read-only call can perform one-time disk repair.
+**Committed frontier.** Readers see only the committed frontier: a torn active tail (no valid batch terminator) is invisible until the writer completes the batch. `FileJournalSwmrTest` and `JournalReaderTest` exercise torn-tail invisibility and mid-file corruption. A SWMR reader never mutates or truncates the tail: the `readerMode = true` gate skips the truncation entirely, so a read-only open performs no disk repair. Only a write-mode open (`Journal.Backend.file` / `fileAsync`) performs the one-time torn-tail repair on first touch.
 
 **Async read-only store wiring.**
 
@@ -543,12 +524,12 @@ Single-writer, multiple-reader (SWMR): concurrent writers must use `Journal.Back
 | JVM/Native async | `offloadStore(new FileChannelStore, isReadOnly = true)` |
 | JS/Wasm async | `new NodeAsyncJournalStore(isReadOnly = true)` |
 
-**Open recipe.** Seed data with a writer (`Backend.file`), then read through `Reader.file` or `Reader.fileAsync` inside `Scope` and `Abort.run[JournalStorageError]`:
+**Open recipe.** Seed data with a writer (`Backend.file`), then read through `Reader.file` inside `Scope` and `Abort.run[JournalStorageError]`:
 
 ```scala
 Scope.run {
-    Abort.run[JournalStorageError](Journal.Reader.file(dir, config, payloadCodec)).map { reader =>
-        Abort.run[JournalError](reader.read(sid, StreamOffset.first, maxCount))
+    Abort.run[JournalStorageError](Journal.Reader.file(dir, configuration)).map { reader =>
+        Abort.run[JournalError](reader.read(sid, Event.StreamOffset.first, maxCount))
     }
 }
 ```
@@ -607,7 +588,7 @@ The file backend's design is grounded in established storage engineering pattern
 
 [`internal/InMemoryJournal.scala:10-111`]
 
-`InMemoryJournal` implements `Journal.Backend[Sync]` using an `AtomicRef[State]` where `State` is an immutable `Map[StreamId, Chunk[RecordedEvent]]`. There are no locks; atomicity is achieved through a compare-and-set loop.
+`InMemoryJournal` implements `Journal.Backend[Sync]` using an `AtomicRef[State]` where `State` is an immutable `Map[Event.StreamId, Chunk[Event.Committed]]`. There are no locks; atomicity is achieved through a compare-and-set loop.
 
 The public factory is `Journal.Backend.inMemory` (`Journal.scala:97-98`), which delegates to the `private[kyo]` `InMemoryJournal.init`. `InMemoryJournal.init` allocates the `AtomicRef` inside `Sync` and wraps it in a new `InMemoryJournal`. Separate `Journal.Backend.inMemory` calls produce independent backends that do not share streams. [`internal/InMemoryJournal.scala:12-13`]
 
@@ -633,7 +614,7 @@ private def modify[A](operation: State => Result[JournalAppendFailure, (State, A
 
 `appendToState` is a pure function from the current `State` to either a `JournalAppendFailure` or the next `State` plus an `AppendResult`. If the CAS fails (another fiber modified the state between the read and the write), `Loop.continue` retries from the latest snapshot. If `appendToState` returns a failure, `Abort.get` surfaces it immediately without retrying.
 
-`StreamOffset.fromUnchecked` is used for internally assigned offsets because the backend guarantees they are valid: the first offset of a batch is the current event count, subsequent offsets increment by one, and the count is always in `[0, Long.MaxValue)` for any realistic workload. [`internal/InMemoryJournal.scala:72`, `80`]
+`Event.StreamOffset.fromUnchecked` is used for internally assigned offsets because the backend guarantees they are valid: the first offset of a batch is the current event count, subsequent offsets increment by one, and the count is always in `[0, Long.MaxValue)` for any realistic workload. [`internal/InMemoryJournal.scala:72`, `80`]
 
 ### Read and streamInfo
 
@@ -651,7 +632,7 @@ private def modify[A](operation: State => Result[JournalAppendFailure, (State, A
 
 ```scala
 def append[S](backend: Backend[S])(streamId, expected, events)(using AllowUnsafe): AppendResult < (S & Abort[JournalAppendFailure])
-def read[S](backend: Backend[S])(streamId, from, maxCount)(using AllowUnsafe): Chunk[RecordedEvent] < (S & Abort[JournalReadFailure])
+def read[S](backend: Backend[S])(streamId, from, maxCount)(using AllowUnsafe): Chunk[Event.Committed] < (S & Abort[JournalReadFailure])
 def streamInfo[S](backend: Backend[S])(streamId)(using AllowUnsafe): StreamInfo < (S & Abort[JournalStreamInfoFailure])
 ```
 
@@ -671,8 +652,8 @@ See the root [CONTRIBUTING.md](../CONTRIBUTING.md) for the global test naming ru
 |---|---|---|
 | `Journal.scala` | `JournalTest.scala` | Capability row types, `run` dispatch, `Unsafe` forwarders, inMemory integration |
 | `JournalError.scala` | `JournalTest.scala` | Error leaves exercised via `FailingBackend` and `JournalBackendTest` |
-| `JournalEvent.scala` | `JournalEventTest.scala` | Wire-type validation, opaque-type extensions, envelope/record fields |
-| `JournalMetadata.scala` | `JournalMetadataTest.scala` | `MetadataKey` validation, `EventMetadata` |
+| `JournalEvent.scala` | `JournalEventTest.scala`, `JournalMetadataTest.scala` | Wire-type validation, opaque-type extensions, Pending/Committed fields, `Event.Metadata` and `Event.Metadata.Key` validation |
+| `JournalMetadata.scala` | `FileJournalTest.scala`, `EventInterpolatorsTest.scala` | `JournalId`, `JournalEntryRef`, `JournalIdentityError` |
 | `internal/InMemoryJournal.scala` | `InMemoryJournalBackendTest.scala` | Covered via `JournalBackendTest` contract suite |
 | `FileJournal.scala`, `internal/FileJournalCore.scala`, `internal/SegmentStore.scala` | `FileJournalBackendTest.scala`, `FileJournalCrashTest.scala`, `FileJournalTest.scala` | All in `shared/src/test`; run on JVM, Native, JS-node, Wasm-node |
 | `internal/CRC32.scala` | `FileJournalCodecTest.scala` (shared); `jvm/src/test: CRC32EqualityTest.scala` | Known-answer vectors on all platforms; equality against `java.util.zip.CRC32` is JVM-only |
@@ -723,8 +704,8 @@ Run through this list before touching the internals or adding a new public surfa
 
 6. **New test.** Does it extend `kyo.test.Test[Any]`? Does it assert concrete values? Is it folded into the matching `*Test.scala` for the source it covers? Does concurrency use the `Latch` pattern rather than `sleep`? Is payload comparison done with `Span#is`, not `==`?
 
-7. **EventLog construction.** Is production code using `EventLog[A]` (safe `Sync.Unsafe.defer` bootstrap) inside `Journal.run`, not `EventLog.init`? Do `append` / `read` / `streamInfo` run inside the same `Journal.run` block? Are compile-time row checks in tests using `EventLog.init` with test-only `embrace.danger`, not in `src/main`? [`EventLog.scala:98-106`, `EventLogTest.scala:14-23`]
+7. **EventLog construction.** Is the log built with the single safe-tier `EventLog.init[A](codecs, journalId)` (which returns `EventLog[A] < Sync`, no `AllowUnsafe`)? Is the `EventLog.Codecs[A]` supplied from `EventLog.Codecs.schema` or `EventLog.Codecs.bytes`? Do the log's operations run inside a `Journal.run(backend)(...)` block? [`EventLog.scala:100-117`]
 
-8. **EventPayloadCodec selection.** Is `EventPayloadCodec.bytes` used when payloads are already raw `Span[Byte]`? Is `EventPayloadCodec.schema[A]` used when domain events need typed round-trip through `EventLog[A]`? Does the codec passed at file-backend open match the payload shape being appended? For JSONL segments, does the codec support the `encodeForJsonl` / `decodeFromJsonl` transcode path? [`EventPayloadCodec.scala:55-76`]
+8. **Codec selection.** Is `EventLog.Codecs.bytes` used when payloads are already raw `Span[Byte]`? Is `EventLog.Codecs.schema[A]` used when domain events need typed round-trip through `EventLog[A]`? Does the `EventLog.Codecs` bound onto the `FileJournal.Configuration` match the payload shape being appended? [`EventLogCodecs.scala:52-79`]
 
-9. **Reader vs writer file open.** Is a concurrent writer using `Backend.file` or `Backend.fileAsync` (acquires root lock and `heldRoots` registration)? Is a read-only follower using `Reader.file` or `Reader.fileAsync` (skips lock, sees only committed frontier)? Is async read-only wiring using `isReadOnly = true` on the store (`offloadStore(..., isReadOnly = true)` or `NodeAsyncJournalStore(isReadOnly = true)`)? [`jvm-native/src/main/scala/kyo/FileJournalBackend.scala:230-274`, `js-wasm/src/main/scala/kyo/FileJournalBackend.scala:86-131`, `FileJournalCore.scala:1376-1434`]
+9. **Reader vs writer file open.** Is a concurrent writer using `Backend.file` or `Backend.fileAsync` (acquires root lock and `heldRoots` registration)? Is a read-only follower using `Reader.file` (skips lock, sees only committed frontier)? Is async read-only wiring using `isReadOnly = true` on the store (`offloadStore(..., isReadOnly = true)` or `NodeAsyncJournalStore(isReadOnly = true)`)? [`jvm-native/src/main/scala/kyo/FileJournalBackend.scala:230-274`, `js-wasm/src/main/scala/kyo/FileJournalBackend.scala:86-131`, `FileJournalCore.scala:1376-1434`]

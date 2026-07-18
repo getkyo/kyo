@@ -1,5 +1,7 @@
 package kyo
 
+import kyo.AllowUnsafe.embrace.danger
+
 final case class LogTestEvent(name: String, value: Int) derives Schema, CanEqual
 
 // Union-member parity fixture.
@@ -938,6 +940,196 @@ class EventLogTest extends kyo.test.Test[Any]:
                 assert(metadata.get(Event.Attributes.SourceSystem) == Maybe("directive-system"))
             case other => fail(s"expected success, got: $other")
         end for
+    }
+
+    // Unsafe: JVM-only self-audits of the shipped guides, sources, and campaign diff on disk (a
+    // dev-time grep, not a runtime capability); mirrors JournalEventTest and DemoValidationTest's
+    // repo-root walk, recursive file listing, and bare-token helpers. These leaves are `.onlyJvm`
+    // because `user.dir`, the synchronous file reads, and the `git` invocation are JVM-only.
+    private def guardRepoRoot(): Path =
+        @scala.annotation.tailrec
+        def loop(dir: Path): Path =
+            if (dir / "build.sbt").unsafe.exists() then dir
+            else
+                dir.parent match
+                    case Maybe.Present(parent) => loop(parent)
+                    case Maybe.Absent          => throw new RuntimeException("repo root with build.sbt not found")
+        loop(Path(java.lang.System.getProperty("user.dir").nn))
+    end guardRepoRoot
+
+    private def guardFilesUnder(dir: Path): List[Path] =
+        if !dir.unsafe.exists() then List.empty
+        else
+            dir.unsafe.list().getOrThrow.toList.flatMap { entry =>
+                if entry.unsafe.isDirectory() && !entry.unsafe.isSymbolicLink() then guardFilesUnder(entry)
+                else List(entry)
+            }
+
+    private def guardRead(path: Path): String = path.unsafe.read().getOrThrow
+
+    // A whole-word token scan: the token is not immediately preceded by '.' or a word char (so
+    // `Event.StreamId` never trips a bare `StreamId` ban and `FileJournal.Configuration` never
+    // trips a `FileJournal.Config` ban) and not immediately followed by a word char.
+    private def guardBannedHits(text: String, token: String): List[String] =
+        val escaped = java.util.regex.Pattern.quote(token)
+        val pattern = s"(?<![.\\w])$escaped(?![\\w])".r
+        text.linesIterator.filter(line => pattern.findFirstIn(line).isDefined).toList
+    end guardBannedHits
+
+    // Lines that are not `//`, `*`, or `/*` comment/scaladoc lines: a JVM file-API token that
+    // appears only in prose (describing what jvm-native uses, or what is NOT referenced) is not a
+    // portability violation, only an actual code reference is.
+    private def guardCodeLines(lines: List[String]): List[String] =
+        lines.filter { line =>
+            val t = line.trim
+            !(t.startsWith("//") || t.startsWith("*") || t.startsWith("/*"))
+        }
+
+    "eventlog guide and shipped-surface guards" - {
+
+        "final eventlog guides carry the r6 names and no superseded name or reader-repair claim".onlyJvm in {
+            val root         = guardRepoRoot()
+            val contributing = guardRead(root / "kyo-eventlog" / "CONTRIBUTING.md")
+            val readme       = guardRead(root / "kyo-eventlog" / "README.md")
+            val combined     = contributing + "\n" + readme
+
+            val requiredNames =
+                List("EventLog.Codecs", "Event.Definition", "FileJournal.Configuration", "FileJournal.Options", "Journal.run(backend)")
+            requiredNames.foreach(name => assert(combined.contains(name), s"the r6 name '$name' is missing from the eventlog guides"))
+            assert(combined.contains("committed frontier"), "the committed-reader rule is missing from the eventlog guides")
+            assert(
+                contributing.contains("never mutates or truncates"),
+                "CONTRIBUTING.md must state the SWMR reader never mutates or truncates"
+            )
+
+            val supersededNames =
+                List("EventPayloadCodec", "FileJournal.Config", "SegmentFormat", "EventLog.Member", "EventLog.from")
+            List("CONTRIBUTING.md" -> contributing, "README.md" -> readme).foreach { case (doc, text) =>
+                supersededNames.foreach { name =>
+                    val hits = guardBannedHits(text, name)
+                    assert(hits.isEmpty, s"$doc carries the superseded name '$name': $hits")
+                }
+                assert(!text.contains("nominally read-only"), s"$doc carries the removed reader-truncation claim")
+                assert(!text.contains("read-only call can perform"), s"$doc carries the removed reader-truncation claim")
+            }
+        }
+
+        "attempting browser persistence fails loud by design: no browser-persistence or JVM file APIs in shared/JS-Wasm main".onlyJvm in {
+            val root = guardRepoRoot()
+            val trees = List(
+                root / "kyo-eventlog" / "shared" / "src" / "main",
+                root / "kyo-eventlog" / "js-wasm" / "src" / "main"
+            )
+            val allLines = trees.flatMap(guardFilesUnder)
+                .filter(_.toString.endsWith(".scala"))
+                .flatMap(p => guardRead(p).linesIterator.toList.map(line => p.toString -> line))
+
+            val browserSymbols = List("indexeddb", "opfs", "navigator.storage")
+            val browserHits = allLines.filter { case (_, line) =>
+                val low = line.toLowerCase
+                browserSymbols.exists(low.contains)
+            }
+            assert(browserHits.isEmpty, s"browser-persistence symbol in shared/JS-Wasm main: ${browserHits.take(10)}")
+
+            val jvmFileApis = List("java.nio.file", "java.io.File", "RandomAccessFile", "FileChannel", "java.util.zip", "java.nio.channels")
+            val codeHits = allLines
+                .filter { case (_, line) => guardCodeLines(List(line)).nonEmpty && jvmFileApis.exists(line.contains) }
+            assert(codeHits.isEmpty, s"JVM file API in shared/JS-Wasm main code: ${codeHits.take(10)}")
+        }
+
+        "no process leakage or local skill residuals in the shipped surface".onlyJvm in {
+            val root  = guardRepoRoot()
+            val roots = List("kyo-eventlog", "kyo-website", "kyo-system", "kyo-examples")
+            // Tokens assembled from fragments so this guard file, which is itself under a scanned
+            // root, is never flagged by the scan it runs.
+            val residuals = List(
+                "." + "agents",
+                "." + "agent/",
+                "readme" + "-skill",
+                "dev" + "-state",
+                "fresh" + "-eyes",
+                "gate" + "-design",
+                "ship" + "-scope"
+            )
+            val files = roots.flatMap(r => guardFilesUnder(root / r))
+                .filter(p => p.toString.endsWith(".scala") || p.toString.endsWith(".md"))
+                .filterNot(p => p.toString.contains("/.dev/") || p.toString.contains("/target/") || p.toString.contains("/node_modules/"))
+            val hits = files.flatMap { p =>
+                val text = guardRead(p)
+                residuals.filter(text.contains).map(token => s"${p.toString} [$token]")
+            }
+            assert(hits.isEmpty, s"process/skill residual in shipped surface: ${hits.take(10)}")
+        }
+
+        "no em or en dashes, attribution trailers, or weakened-suite deferral framing on campaign-added shipped lines".onlyJvm in {
+            val root = guardRepoRoot()
+            // Rename-aware diff against the campaign base scoped to the shipped roots plus the sole
+            // rename-origin root (kyo-core): the kyo-system Command/Process sources are renames from
+            // kyo-core, so keeping kyo-core in scope pairs them by rename detection and never counts
+            // their relocated pre-existing lines as added. Scoping to a shipped root alone would drop
+            // the kyo-core origin and false-positive on relocated project content; a whole-tree diff
+            // is correct but too slow. Only lines under the shipped roots are collected below.
+            // `textWithExitCode` drains stdout and stderr concurrently, so the large diff does not
+            // deadlock the process pipe the way `text` (single-drain) does.
+            Command("git", "merge-base", "HEAD", "main").cwd(root).textWithExitCode.flatMap { case (mergeBaseRaw, _) =>
+                val mergeBase = mergeBaseRaw.trim
+                Command(
+                    "git",
+                    "diff",
+                    "-M",
+                    "--find-renames",
+                    s"$mergeBase..HEAD",
+                    "--",
+                    "kyo-core",
+                    "kyo-eventlog",
+                    "kyo-website",
+                    "kyo-system",
+                    "kyo-examples",
+                    "build.sbt"
+                ).cwd(root).textWithExitCode.map { case (diff, _) =>
+                    val shippedRoots = List("kyo-eventlog/", "kyo-website/", "kyo-system/", "kyo-examples/")
+                    def shipped(f: String): Boolean =
+                        (f == "build.sbt" || shippedRoots.exists(f.startsWith)) && !f.startsWith(".dev/")
+
+                    val (_, revAdded) =
+                        diff.linesIterator.foldLeft((Maybe.Absent: Maybe[String], List.empty[String])) { case ((cur, acc), line) =>
+                            if line.startsWith("+++ b/") then (Maybe(line.substring(6)), acc)
+                            else if line.startsWith("+++ ") then (Maybe.Absent, acc)
+                            else if line.startsWith("+") then
+                                cur match
+                                    case Maybe.Present(f) if shipped(f) => (cur, line.substring(1) :: acc)
+                                    case _                              => (cur, acc)
+                            else (cur, acc)
+                        }
+                    val added = revAdded.reverse
+
+                    // Tokens assembled from code points and fragments so this guard file, which is
+                    // itself in the diff, is never flagged by the scan it runs.
+                    val emDash             = 0x2014.toChar.toString
+                    val enDash             = 0x2013.toChar.toString
+                    val attributionTrailer = List("Co", "Authored", "By").mkString("-")
+                    val deferralPhrases = List(
+                        List("known", "issue:"),
+                        List("known", "limitation"),
+                        List("good", "enough", "for", "now"),
+                        List("out", "of", "scope"),
+                        List("requires", "deeper", "investigation"),
+                        List("documented", "as", "a", "known"),
+                        List("for", "follow-up")
+                    ).map(_.mkString(" "))
+
+                    val violations = added.filter { line =>
+                        line.contains(emDash) ||
+                        line.contains(enDash) ||
+                        line.contains(attributionTrailer) || {
+                            val low = line.toLowerCase
+                            deferralPhrases.exists(low.contains)
+                        }
+                    }
+                    assert(violations.isEmpty, s"campaign-added shipped line carries a banned tell: ${violations.take(10)}")
+                }
+            }
+        }
     }
 
 end EventLogTest
