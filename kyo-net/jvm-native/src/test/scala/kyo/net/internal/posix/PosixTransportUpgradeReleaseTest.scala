@@ -2,6 +2,7 @@ package kyo.net.internal.posix
 
 import java.util.concurrent.atomic.AtomicBoolean as JAtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicReference
 import kyo.*
 import kyo.ffi.Buffer
 import kyo.ffi.Ffi
@@ -103,7 +104,11 @@ class PosixTransportUpgradeReleaseTest extends Test:
     /** As above, over a caller-supplied transport config and socket bindings (a recording decorator, so a leaf can observe or hook the
       * transport's own shutdown/close syscalls).
       */
-    private def withRecordingTransport[A](config: kyo.net.TransportConfig, transportSockets: SocketBindings)(
+    private def withRecordingTransport[A](
+        config: kyo.net.TransportConfig,
+        transportSockets: SocketBindings,
+        buildEngine: PosixTransport.TlsEngineFactory = PosixTransport.realEngineFactory
+    )(
         body: (PosixTransport, IoUringDriver, RecordingIoUringBindings) => A < (Abort[Closed] & Async)
     )(using Frame): A < (Abort[Closed] & Async) =
         val realUring = Ffi.load[IoUringBindings]
@@ -115,7 +120,7 @@ class PosixTransportUpgradeReleaseTest extends Test:
         val recording = RecordingIoUringBindings(realUring, realRing)
         val driver    = TestDrivers.forBindings(recording, realRing)
         discard(driver.start())
-        val transport = TestTransports.forTesting(config, driver, transportSockets, backendIsEpoll = false)
+        val transport = TestTransports.forTesting(config, driver, transportSockets, backendIsEpoll = false, buildEngine)
         Sync.ensure(Sync.defer(driver.close()))(body(transport, driver, recording))
     end withRecordingTransport
 
@@ -186,65 +191,66 @@ class PosixTransportUpgradeReleaseTest extends Test:
 
         "abandoned mid-handshake upgrade: releaseFailedUpgrade must not free the read buffer under the kernel-owned stale recv" in {
             PosixTestSockets.assumeUring()
-            withRecordingTransport { (transport, driver, recording) =>
-                PosixTestSockets.loopbackPair().map { case (client, accepted) =>
-                    Sync.ensure(Sync.defer(discard(sock.close(accepted)))) {
-                        val handle    = PosixHandle.socket(client, PosixHandle.DefaultReadBufferSize, Absent)
-                        val plaintext = transport.openWith(handle, driver)
-                        assert(plaintext.start(), "the plaintext connection must start")
-                        awaitCondition(5.seconds)(handle.recvInFlight).map { armed =>
-                            assert(armed, "the pump's recv SQE never became kernel-owned (a hang, not the release hazard under test)")
-                            // A want-read engine parks the handshake on its first read; the peer sends nothing, so the only recv that
-                            // can ever be in flight is the stale pump recv armed above (kernel-owned, uncancellable).
-                            val engine = new ParkedWantReadEngine
-                            transport.testEngineFactory = Present { (_, _, _) => engine }
-                            val upgrade = transport.upgradeToTls(plaintext, NetTlsConfig(trustAll = true), 16).safe
-                            awaitCondition(5.seconds)(engine.stepCount.get() >= 1).map { stepped =>
-                                assert(stepped, "the upgrade handshake never reached its first step")
-                                val reapLatch = recording.awaitReap()
-                                val probed    = Promise.Unsafe.init[(Boolean, Boolean), Abort[Closed]]()
-                                // Abandon the upgrade through the production route, ON THE REAP CARRIER via an engine op, mirroring the
-                                // buildEngine-failure leaf above: close() of the plaintext connection routes to the upgrade's owner promise,
-                                // whose discharge runs releaseFailedUpgrade (its closeUnwiredHandle shutdown forces the still-kernel-owned stale
-                                // recv to EOF, then driver.closeHandle enqueues the deferred close) on THIS carrier. A probe op enqueued from
-                                // inside the same op sits behind that discharge in the same drainEngineOps pass, so it observes the state strictly
-                                // after the release ran and strictly before that pass's later drainReady reap of the shutdown-forced EOF. Running
-                                // close() from inside the engine op (rather than on the test carrier, then enqueuing the probe after) removes the
-                                // gap between the two enqueues that a parallel preemption could let the reap carrier drain and reap across.
-                                driver.submitEngineOp { () =>
-                                    plaintext.close()
+            // A want-read engine parks the handshake on its first read; the peer sends nothing, so the only recv that
+            // can ever be in flight is the stale pump recv armed below (kernel-owned, uncancellable).
+            val engine = new ParkedWantReadEngine
+            withRecordingTransport(transportConfig, Ffi.load[SocketBindings], buildEngine = (_, _, _) => engine) {
+                (transport, driver, recording) =>
+                    PosixTestSockets.loopbackPair().map { case (client, accepted) =>
+                        Sync.ensure(Sync.defer(discard(sock.close(accepted)))) {
+                            val handle    = PosixHandle.socket(client, PosixHandle.DefaultReadBufferSize, Absent)
+                            val plaintext = transport.openWith(handle, driver)
+                            assert(plaintext.start(), "the plaintext connection must start")
+                            awaitCondition(5.seconds)(handle.recvInFlight).map { armed =>
+                                assert(armed, "the pump's recv SQE never became kernel-owned (a hang, not the release hazard under test)")
+                                val upgrade = transport.upgradeToTls(plaintext, NetTlsConfig(trustAll = true), 16).safe
+                                awaitCondition(5.seconds)(engine.stepCount.get() >= 1).map { stepped =>
+                                    assert(stepped, "the upgrade handshake never reached its first step")
+                                    val reapLatch = recording.awaitReap()
+                                    val probed    = Promise.Unsafe.init[(Boolean, Boolean), Abort[Closed]]()
+                                    // Abandon the upgrade through the production route, ON THE REAP CARRIER via an engine op, mirroring the
+                                    // buildEngine-failure leaf above: close() of the plaintext connection routes to the upgrade's owner promise,
+                                    // whose discharge runs releaseFailedUpgrade (its closeUnwiredHandle shutdown forces the still-kernel-owned stale
+                                    // recv to EOF, then driver.closeHandle enqueues the deferred close) on THIS carrier. A probe op enqueued from
+                                    // inside the same op sits behind that discharge in the same drainEngineOps pass, so it observes the state strictly
+                                    // after the release ran and strictly before that pass's later drainReady reap of the shutdown-forced EOF. Running
+                                    // close() from inside the engine op (rather than on the test carrier, then enqueuing the probe after) removes the
+                                    // gap between the two enqueues that a parallel preemption could let the reap carrier drain and reap across.
                                     driver.submitEngineOp { () =>
-                                        probed.completeDiscard(Result.succeed((handle.readBuffer.isClosed, reapLatch.done())))
+                                        plaintext.close()
+                                        driver.submitEngineOp { () =>
+                                            probed.completeDiscard(Result.succeed((handle.readBuffer.isClosed, reapLatch.done())))
+                                        }
                                     }
-                                }
-                                probed.safe.get.flatMap { case (closedDuringWindow, reapedDuringWindow) =>
-                                    assert(!reapedDuringWindow, "the stale recv CQE must not have reaped before the probe ran")
-                                    assert(
-                                        !closedDuringWindow,
-                                        "read buffer must stay open while the stale upgrade recv is kernel-owned (a bare close here frees kernel-owned memory)"
-                                    )
-                                    Abort.run[NetException](upgrade.get).map { outcome =>
-                                        outcome match
-                                            case Result.Failure(e: NetConnectionClosedException) =>
+                                    probed.safe.get.flatMap { case (closedDuringWindow, reapedDuringWindow) =>
+                                        assert(!reapedDuringWindow, "the stale recv CQE must not have reaped before the probe ran")
+                                        assert(
+                                            !closedDuringWindow,
+                                            "read buffer must stay open while the stale upgrade recv is kernel-owned (a bare close here frees kernel-owned memory)"
+                                        )
+                                        Abort.run[NetException](upgrade.get).map { outcome =>
+                                            outcome match
+                                                case Result.Failure(e: NetConnectionClosedException) =>
+                                                    assert(
+                                                        e.operation == "close",
+                                                        s"the abandoned upgrade must fail its close leaf, got ${e.operation}"
+                                                    )
+                                                case other =>
+                                                    fail(s"the abandoned upgrade must fail NetConnectionClosedException, got $other")
+                                            end match
+                                            reapLatch.safe.get.map { _ =>
                                                 assert(
-                                                    e.operation == "close",
-                                                    s"the abandoned upgrade must fail its close leaf, got ${e.operation}"
+                                                    handle.readBuffer.isClosed,
+                                                    "the deferred close must free the read buffer once the stale recv CQE is reaped"
                                                 )
-                                            case other => fail(s"the abandoned upgrade must fail NetConnectionClosedException, got $other")
-                                        end match
-                                        reapLatch.safe.get.map { _ =>
-                                            assert(
-                                                handle.readBuffer.isClosed,
-                                                "the deferred close must free the read buffer once the stale recv CQE is reaped"
-                                            )
-                                            assert(engine.freed.get(), "the abandoned upgrade's engine must be freed")
+                                                assert(engine.freed.get(), "the abandoned upgrade's engine must be freed")
+                                            }
                                         }
                                     }
                                 }
                             }
                         }
                     }
-                }
             }.map(_ => succeed)
         }
     }
@@ -345,7 +351,17 @@ class PosixTransportUpgradeReleaseTest extends Test:
             PosixTestSockets.assumePoller()
             val driver = PollerIoDriver.init(transportConfig)
             discard(driver.start())
-            val transport = TestTransports.forTesting(transportConfig, driver, Ffi.load[SocketBindings], backendIsEpoll = false)
+            // The engine must reference the plaintext connection this transport creates (its certSha256 hook closes it), so it is built after
+            // the transport and published into a slot the injected factory reads at upgrade time; the slot lives entirely in the test tree.
+            val engineSlot = new AtomicReference[TlsEngine]()
+            val transport =
+                TestTransports.forTesting(
+                    transportConfig,
+                    driver,
+                    Ffi.load[SocketBindings],
+                    backendIsEpoll = false,
+                    buildEngine = (_, _, _) => engineSlot.get()
+                )
             Sync.ensure(Sync.defer(driver.close())) {
                 PosixTestSockets.loopbackPair().map { case (client, accepted) =>
                     Sync.ensure(Sync.defer(discard(sock.close(accepted)))) {
@@ -358,7 +374,7 @@ class PosixTransportUpgradeReleaseTest extends Test:
                         // loses the already-won outcome gate and releases nothing, so the success completion that follows is the only
                         // place left that can see the settled promise and close the orphan.
                         val engine = new FinishWithCertHookEngine(onCertSha = () => plaintext.close())
-                        transport.testEngineFactory = Present { (_, _, _) => engine }
+                        engineSlot.set(engine)
                         Abort.run[NetException](transport.upgradeToTls(plaintext, NetTlsConfig(trustAll = true), 16).safe.get).map {
                             outcome =>
                                 outcome match

@@ -65,9 +65,10 @@ final case class NetConnectTimeoutException(host: String, port: Int, timeout: Du
 final case class NetBindException(host: String, port: Int, cause: String | Throwable = "")(using Frame)
     extends NetConnectionException(s"bind/listen on $host:$port failed${NetException.suffix(cause)}", cause)
 
-/** The transport closed while an in-flight operation was running: a close raced a read, send, TLS handshake, or STARTTLS upgrade.
-  * `operation` names what the close interrupted ("read", "send", "handshake", or "upgrade"),
-  * so no consumer branches on message text.
+/** The transport closed while an in-flight operation was running. `operation` names what the close interrupted, one of: "read", "send",
+  * "handshake" (a TLS handshake), "upgrade" (a STARTTLS upgrade), "start" (the connection reached a terminal or upgrading state before its
+  * pumps could start, so it was never handed out as open), or "close" (an in-flight STARTTLS upgrade abandoned by a close of the underlying
+  * connection). A consumer branches on this field, never on message text.
   */
 final case class NetConnectionClosedException(operation: String, cause: String | Throwable = "")(using Frame)
     extends NetConnectionException(s"transport closed during $operation${NetException.suffix(cause)}", cause)

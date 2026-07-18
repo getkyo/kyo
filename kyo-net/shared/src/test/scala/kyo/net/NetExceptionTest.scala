@@ -86,6 +86,22 @@ class NetExceptionTest extends Test:
         )
     }
 
+    "NetConnectionClosedException carries the start and close operations the transports also construct" in {
+        val start = NetConnectionClosedException("start")
+        val close = NetConnectionClosedException("close")
+
+        assert(start.operation == "start")
+        assert(close.operation == "close")
+        assert(
+            start.getMessage.contains("transport closed during start"),
+            s"message must render the start operation, got ${start.getMessage}"
+        )
+        assert(
+            close.getMessage.contains("transport closed during close"),
+            s"message must render the close operation, got ${close.getMessage}"
+        )
+    }
+
     "NetBackendUnavailableException folds two cases into one typed field" in {
         val named = NetBackendUnavailableException(Present("io_uring"))
         val none  = NetBackendUnavailableException(Absent)

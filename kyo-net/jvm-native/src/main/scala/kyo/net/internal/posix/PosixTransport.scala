@@ -60,6 +60,10 @@ final private[net] class PosixTransport private[posix] (
     representative: IoDriver[PosixHandle],
     sockets: SocketBindings,
     backendIsEpoll: Boolean,
+    // How this transport builds a TLS handshake engine for a config/host/role. A genuine construction dependency: production always supplies
+    // [[PosixTransport.realEngineFactory]] ([[TlsProviderPlatform.engine]]); the test tree supplies a fake through this same `private[posix]`
+    // constructor, so no engine-override seam lives in production.
+    engineFactory: PosixTransport.TlsEngineFactory,
     // Claim flag for the process-global stdio handle, so stdio is claimed at most once.
     stdioClaimed: AtomicBoolean.Unsafe,
     // Count of accept loops that have started but not yet exited. Each loop increments it on start and decrements it on exit (every path), so a
@@ -552,21 +556,13 @@ final private[net] class PosixTransport private[posix] (
         }
     end awaitConnectThen
 
-    /** Test-only engine construction override: `Absent` in every production transport, where [[buildEngine]] always goes through
-      * [[TlsProviderPlatform.engine]]. A test sets this (before `listen`/`connect`/`upgradeToTls` can race it; `@volatile` for cross-carrier
-      * visibility) to wrap the real engine in a spy, e.g. `RecordingTlsEngine`, so an accept-side handshake's engine reclaim becomes
-      * observable without an allocation counter: the engine is otherwise transport-internal, with no other injection point.
-      */
-    @volatile private[posix] var testEngineFactory: Maybe[(NetTlsConfig, String, Boolean) => TlsEngine] = Absent
-
-    /** Build the handshake engine for a config/host/role via [[TlsProviderPlatform.engine]], which honors a [[NetTlsConfig.tlsProvider]] pin
-      * (fail-closed if unavailable) and otherwise the platform-selected default.
+    /** Build the handshake engine for a config/host/role via the injected [[PosixTransport.TlsEngineFactory]]. In production the factory is
+      * [[PosixTransport.realEngineFactory]], which goes through [[TlsProviderPlatform.engine]] (honoring a [[NetTlsConfig.tlsProvider]] pin,
+      * fail-closed if unavailable, otherwise the platform-selected default). The `Frame` is applied here so a build failure carries this
+      * connect/listen/upgrade call site.
       */
     private def buildEngine(config: NetTlsConfig, hostname: String, isServer: Boolean)(using AllowUnsafe, Frame): TlsEngine =
-        testEngineFactory match
-            case Present(f) => f(config, hostname, isServer)
-            case Absent     => TlsProviderPlatform.engine(config, hostname, isServer)
-    end buildEngine
+        engineFactory(config, hostname, isServer)
 
     /** The posix transport drives any TLS engine the platform registry exposes (BoringSSL and the JDK SslEngine on JVM; BoringSSL and system
       * OpenSSL on Native), so a connection may pin any of those via [[NetTlsConfig.tlsProvider]]. This is the architectural set; whether a given
@@ -2285,6 +2281,19 @@ private[net] object PosixTransport:
         case Drained
         case ResourceExhausted
 
+    /** How the transport builds a TLS handshake engine for a config/host/role. Production always constructs the transport with
+      * [[realEngineFactory]]; the test tree substitutes a fake through the same `private[posix]` constructor (see `TestTransports.forTesting`),
+      * so no engine-override seam lives in production. The `AllowUnsafe`/`Frame` are supplied at call time (inside [[PosixTransport.buildEngine]])
+      * so a build failure carries the connect/listen/upgrade call site, not the construction site.
+      */
+    private[posix] type TlsEngineFactory = (NetTlsConfig, String, Boolean) => (AllowUnsafe, Frame) ?=> TlsEngine
+
+    /** The production TLS-engine factory: builds the engine via [[TlsProviderPlatform.engine]], honoring a [[NetTlsConfig.tlsProvider]] pin
+      * (fail-closed if unavailable) and otherwise the platform-selected default.
+      */
+    private[posix] val realEngineFactory: TlsEngineFactory =
+        (config, hostname, isServer) => TlsProviderPlatform.engine(config, hostname, isServer)
+
     /** Build the production transport over the given `pool`. The representative driver (pool.next() before any connection is opened, i.e.
       * drivers(0)) backs stdio and the backend-label queries. Loads the real socket bindings and detects whether the active poller backend
       * is epoll (the regular-file fallback's gate; true only on Linux when epoll, not io_uring, is selected).
@@ -2302,7 +2311,8 @@ private[net] object PosixTransport:
         pool: IoDriverPool[PosixHandle],
         representative: IoDriver[PosixHandle],
         sockets: SocketBindings,
-        backendIsEpoll: Boolean
+        backendIsEpoll: Boolean,
+        engineFactory: TlsEngineFactory = realEngineFactory
     )(using AllowUnsafe): PosixTransport =
         new PosixTransport(
             config = config,
@@ -2310,6 +2320,7 @@ private[net] object PosixTransport:
             representative = representative,
             sockets = sockets,
             backendIsEpoll = backendIsEpoll,
+            engineFactory = engineFactory,
             stdioClaimed = AtomicBoolean.Unsafe.init(false),
             acceptLoopsActive = AtomicLong.Unsafe.init(0)
         )

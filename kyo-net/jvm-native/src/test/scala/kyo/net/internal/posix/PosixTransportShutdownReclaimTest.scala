@@ -176,21 +176,25 @@ class PosixTransportShutdownReclaimTest extends Test:
     "PosixTransport close reclaims an in-flight accept-side handshake" - {
         "close() sweeps a stalled accept handshake's fd and engine, never stranding or double-closing it" in {
             assumeTlsReady()
-            val spy       = RecordingSocketBindings(Ffi.load[SocketBindings])
-            val real      = PollerBackend.default()
-            val pollerFd  = real.create()
-            val backend   = RecordingPollerBackend(real)
-            val driver    = TestDrivers.forBackend(backend, pollerFd, spy)
-            val transport = TestTransports.forTesting(kyo.net.TransportConfig.default, driver, spy, backendIsEpoll = false)
-            discard(driver.start())
-            // The handshake engine is otherwise transport-internal, with no other injection point, so testEngineFactory wraps the
+            val spy      = RecordingSocketBindings(Ffi.load[SocketBindings])
+            val real     = PollerBackend.default()
+            val pollerFd = real.create()
+            val backend  = RecordingPollerBackend(real)
+            val driver   = TestDrivers.forBackend(backend, pollerFd, spy)
+            // The handshake engine is otherwise transport-internal, with no other injection point, so the injected factory wraps the
             // real engine buildEngine constructs in a RecordingTlsEngine spy, making its free() count observable below.
             val capturedEngine = new AtomicReference[RecordingTlsEngine]()
-            transport.testEngineFactory = Present { (cfg, host, isServer) =>
-                val e = new RecordingTlsEngine(TlsProviderPlatform.engine(cfg, host, isServer))
-                capturedEngine.set(e)
-                e
-            }
+            val transport = TestTransports.forTesting(
+                kyo.net.TransportConfig.default,
+                driver,
+                spy,
+                backendIsEpoll = false,
+                buildEngine = (cfg, host, isServer) =>
+                    val e = new RecordingTlsEngine(TlsProviderPlatform.engine(cfg, host, isServer))
+                    capturedEngine.set(e)
+                    e
+            )
+            discard(driver.start())
             transport.listen("127.0.0.1", 0, 4, serverTls)(_ => ()).safe.get.map { listener =>
                 val baseline = backend.registerReadCount.get()
                 // A raw, non-TLS client that connects and sends nothing: the server's accept-side handshake starts (buildEngine + the first
@@ -212,7 +216,7 @@ class PosixTransportShutdownReclaimTest extends Test:
                             // handshake leaks its TLS engine on top of its fd; freeCount == 1 confirms sweepPendingHandshakes's teardown
                             // thunk reached engine.free(), not just the fd close.
                             val engine = capturedEngine.get()
-                            assert(engine != null, "the accept-side handshake must have built an engine through testEngineFactory")
+                            assert(engine != null, "the accept-side handshake must have built an engine through the injected factory")
                             assert(
                                 engine.freeCount.get() == 1,
                                 s"the handshake engine must be freed exactly once, was ${engine.freeCount.get()}"
@@ -286,12 +290,21 @@ class PosixTransportShutdownReclaimTest extends Test:
     "PosixTransport close() racing a mid-flight handshake's own step chain" - {
         "connect-side: close() sweeps the engine while a step is still enqueuing, and the next queued step skips instead of touching it" in {
             PosixTestSockets.assumePoller()
-            val spy       = RecordingSocketBindings(Ffi.load[SocketBindings])
-            val real      = PollerBackend.default()
-            val pollerFd  = real.create()
-            val backend   = RecordingPollerBackend(real)
-            val driver    = TestDrivers.forBackend(backend, pollerFd, spy)
-            val transport = TestTransports.forTesting(kyo.net.TransportConfig.default, driver, spy, backendIsEpoll = false)
+            val spy      = RecordingSocketBindings(Ffi.load[SocketBindings])
+            val real     = PollerBackend.default()
+            val pollerFd = real.create()
+            val backend  = RecordingPollerBackend(real)
+            val driver   = TestDrivers.forBackend(backend, pollerFd, spy)
+            // The engine references this transport (its onTrigger runs transport.close()), so it is built after the transport and published
+            // into a slot the injected factory reads at connect time; the slot lives entirely in the test tree.
+            val engineSlot = new AtomicReference[TlsEngine]()
+            val transport = TestTransports.forTesting(
+                kyo.net.TransportConfig.default,
+                driver,
+                spy,
+                backendIsEpoll = false,
+                buildEngine = (_, _, _) => engineSlot.get()
+            )
             discard(driver.start())
             // A RAW listening socket, entirely OUTSIDE this transport (never accepted into a tracked Connection): `transport.close()` tears
             // down only ITS OWN driver/connections, so this peer survives the close and the client's small writes keep landing in its kernel
@@ -314,7 +327,7 @@ class PosixTransportShutdownReclaimTest extends Test:
                         out.close()
                         ol.close()
                 val engine = new SelfPerpetuatingFakeEngine(triggerAt = 3, onTrigger = () => transport.close())
-                transport.testEngineFactory = Present { (_, _, _) => engine }
+                engineSlot.set(engine)
                 Abort.run[NetException](transport.connect("127.0.0.1", port, NetTlsConfig(trustAll = true)).safe.get).map { outcome =>
                     assert(outcome.isFailure, s"the connect handshake must fail once transport.close() races it mid-flight, got $outcome")
                 }.andThen {
@@ -330,12 +343,21 @@ class PosixTransportShutdownReclaimTest extends Test:
 
         "upgrade-side: close() sweeps the engine while a STARTTLS step is still enqueuing, and the next queued step skips instead of touching it" in {
             PosixTestSockets.assumePoller()
-            val spy       = RecordingSocketBindings(Ffi.load[SocketBindings])
-            val real      = PollerBackend.default()
-            val pollerFd  = real.create()
-            val backend   = RecordingPollerBackend(real)
-            val driver    = TestDrivers.forBackend(backend, pollerFd, spy)
-            val transport = TestTransports.forTesting(kyo.net.TransportConfig.default, driver, spy, backendIsEpoll = false)
+            val spy      = RecordingSocketBindings(Ffi.load[SocketBindings])
+            val real     = PollerBackend.default()
+            val pollerFd = real.create()
+            val backend  = RecordingPollerBackend(real)
+            val driver   = TestDrivers.forBackend(backend, pollerFd, spy)
+            // The engine references this transport (its onTrigger runs transport.close()), so it is built after the transport and published
+            // into a slot the injected factory reads at upgrade time; the slot lives entirely in the test tree.
+            val engineSlot = new AtomicReference[TlsEngine]()
+            val transport = TestTransports.forTesting(
+                kyo.net.TransportConfig.default,
+                driver,
+                spy,
+                backendIsEpoll = false,
+                buildEngine = (_, _, _) => engineSlot.get()
+            )
             discard(driver.start())
             PosixTestSockets.loopbackPair().map { case (clientFd, peerFd) =>
                 // The peer end is never read from (mirrors the connect-side leaf above): the upgrade's fake-engine bytes land in its receive
@@ -346,7 +368,7 @@ class PosixTransportShutdownReclaimTest extends Test:
                     val plaintext = transport.openWith(handle, driver)
                     plaintext.start()
                     val engine = new SelfPerpetuatingFakeEngine(triggerAt = 3, onTrigger = () => transport.close())
-                    transport.testEngineFactory = Present { (_, _, _) => engine }
+                    engineSlot.set(engine)
                     Abort.run[NetException](transport.upgradeToTls(
                         plaintext,
                         NetTlsConfig(trustAll = true),
@@ -372,12 +394,22 @@ class PosixTransportShutdownReclaimTest extends Test:
     "PosixTransport connect-side TLS handshake abandoned by its caller" - {
         "an interrupted TLS connect discharges the handshake obligation: the engine is freed and the fd closed exactly once" in {
             PosixTestSockets.assumePoller()
-            val spy       = RecordingSocketBindings(Ffi.load[SocketBindings])
-            val real      = PollerBackend.default()
-            val pollerFd  = real.create()
-            val backend   = RecordingPollerBackend(real)
-            val driver    = TestDrivers.forBackend(backend, pollerFd, spy)
-            val transport = TestTransports.forTesting(kyo.net.TransportConfig.default, driver, spy, backendIsEpoll = false)
+            val spy      = RecordingSocketBindings(Ffi.load[SocketBindings])
+            val real     = PollerBackend.default()
+            val pollerFd = real.create()
+            val backend  = RecordingPollerBackend(real)
+            val driver   = TestDrivers.forBackend(backend, pollerFd, spy)
+            // A want-read engine parks the connect handshake on its first read; the peer sends nothing, so the abandoned caller's promise
+            // settlement is the only route that can release the fd and engine. Built before the transport and injected through buildEngine.
+            val engine = new ParkedWantReadEngine
+            val transport =
+                TestTransports.forTesting(
+                    kyo.net.TransportConfig.default,
+                    driver,
+                    spy,
+                    backendIsEpoll = false,
+                    buildEngine = (_, _, _) => engine
+                )
             discard(driver.start())
             // A RAW listening socket entirely outside the transport (the connect-side idiom above): the kernel's backlog completes the
             // TCP connect, the client's want-read handshake sends nothing and parks awaiting bytes this peer never sends, and no deadline
@@ -399,8 +431,6 @@ class PosixTransportShutdownReclaimTest extends Test:
                     finally
                         out.close()
                         ol.close()
-                val engine = new ParkedWantReadEngine
-                transport.testEngineFactory = Present { (_, _, _) => engine }
                 for
                     fiber <-
                         Fiber.init(Abort.run[NetException](transport.connect("127.0.0.1", port, NetTlsConfig(trustAll = true)).safe.get))
@@ -433,15 +463,19 @@ class PosixTransportShutdownReclaimTest extends Test:
             // handshakeTimeout = Infinity exercises armHandshakeDeadline's no-timer branch, whose returned `disarm` is what this leaf targets:
             // registerHandshake hands this SAME disarm to BOTH the handshake's own onFinished and close()'s sweepPendingHandshakes, and a
             // constant-true gate (the pre-fix shape) lets both proceed instead of exactly one.
-            val config    = kyo.net.TransportConfig.default.copy(handshakeTimeout = Duration.Infinity)
-            val transport = TestTransports.forTesting(config, driver, spy, backendIsEpoll = false)
+            val config = kyo.net.TransportConfig.default.copy(handshakeTimeout = Duration.Infinity)
+            // The engine references this transport (its onTrigger runs transport.close()), so it is built after the transport and published
+            // into a slot the injected factory reads at accept time; the slot lives entirely in the test tree.
+            val engineSlot = new AtomicReference[TlsEngine]()
+            val transport =
+                TestTransports.forTesting(config, driver, spy, backendIsEpoll = false, buildEngine = (_, _, _) => engineSlot.get())
             discard(driver.start())
-            // No real TLS provider needed: testEngineFactory bypasses buildEngine's TlsProviderPlatform.engine call entirely, so serverTls's
+            // No real TLS provider needed: the injected factory bypasses buildEngine's TlsProviderPlatform.engine call entirely, so serverTls's
             // cert/key paths are never read. completeAfterTrigger = true: the SAME call that synchronously runs transport.close() (racing
             // close()'s sweep against this handshake's own outcome) also reports the handshake Done, so driveHandshake's Done branch reaches
             // onFinished immediately afterward, in the same call chain, with zero timing luck.
             val engine = new SelfPerpetuatingFakeEngine(triggerAt = 1, onTrigger = () => transport.close(), completeAfterTrigger = true)
-            transport.testEngineFactory = Present { (_, _, _) => engine }
+            engineSlot.set(engine)
             transport.listen("127.0.0.1", 0, 4, serverTls)(_ => ()).safe.get.map { listener =>
                 connectRaw(listener.port).map { clientFd =>
                     assertEventually(Sync.defer(engine.freed.get())).map { _ =>

@@ -49,7 +49,8 @@ end RecordingFeedEngine
   * "repeated STARTTLS upgrades" leaf under full-suite load, on both backends). The fix makes `lastPlaintextRead` a one-shot CAS claim: whichever
   * side wins delivers the flight, the loser skips.
   *
-  * The scenario drives a REAL loopback pair with a scripted [[RecordingFeedEngine]] (via [[PosixTransport.testEngineFactory]]) so the
+  * The scenario drives a REAL loopback pair with a scripted [[RecordingFeedEngine]] (injected through [[TestTransports.forTesting]]'s
+  * `buildEngine`) so the
   * production race is exercised end to end, with `channelCapacity = 1` forcing the second read (the flight) to park behind the first (the
   * signal, which fills the capacity-1 channel and is never consumed): `S` lands and fills the channel, `F` (a well-formed TLS handshake
   * record) is read off the socket next and parks the plaintext pump's put, so `upgradeToTls`'s `detachForUpgrade()` races that parked put
@@ -89,8 +90,15 @@ class PosixTransportUpgradeDoubleFeedTest extends Test:
             val pollerFd = real.create()
             val backend  = RecordingPollerBackend(real)
             val driver   = TestDrivers.forBackend(backend, pollerFd, spy)
+            val engine   = new RecordingFeedEngine
             val transport =
-                TestTransports.forTesting(kyo.net.TransportConfig.default.copy(channelCapacity = 1), driver, spy, backendIsEpoll = false)
+                TestTransports.forTesting(
+                    kyo.net.TransportConfig.default.copy(channelCapacity = 1),
+                    driver,
+                    spy,
+                    backendIsEpoll = false,
+                    buildEngine = (_, _, _) => engine
+                )
             discard(driver.start())
             PosixTestSockets.loopbackPair().map { case (clientFd, peerFd) =>
                 // The peer end is a raw socket never owned by the transport (no InternalConnection wraps it): closed unconditionally here.
@@ -98,8 +106,6 @@ class PosixTransportUpgradeDoubleFeedTest extends Test:
                     val handle    = PosixHandle.socket(clientFd, PosixHandle.DefaultReadBufferSize, Absent)
                     val plaintext = transport.openWith(handle, driver)
                     plaintext.start()
-                    val engine = new RecordingFeedEngine
-                    transport.testEngineFactory = Present { (_, _, _) => engine }
                     assert(sock.sendNow(peerFd, Buffer.fromArray[Byte](signal), signal.length.toLong, 0).value == signal.length.toLong)
                     awaitCondition(5.seconds)(plaintext.inbound.size().getOrElse(-1) == 1).map { landed =>
                         assert(landed, "the signal byte never landed in the inbound channel (a hang, not the race under test)")
@@ -145,19 +151,19 @@ class PosixTransportUpgradeDoubleFeedTest extends Test:
             discard(driver.start())
             Sync.ensure(Sync.defer(driver.close())) {
                 val sockets = Ffi.load[SocketBindings]
+                val engine  = new RecordingFeedEngine
                 val transport = TestTransports.forTesting(
                     kyo.net.TransportConfig.default.copy(channelCapacity = 1),
                     driver,
                     sockets,
-                    backendIsEpoll = false
+                    backendIsEpoll = false,
+                    buildEngine = (_, _, _) => engine
                 )
                 PosixTestSockets.loopbackPair().map { case (clientFd, peerFd) =>
                     Sync.ensure(Sync.defer(discard(sockets.close(peerFd)))) {
                         val handle    = PosixHandle.socket(clientFd, PosixHandle.DefaultReadBufferSize, Absent)
                         val plaintext = transport.openWith(handle, driver)
                         plaintext.start()
-                        val engine = new RecordingFeedEngine
-                        transport.testEngineFactory = Present { (_, _, _) => engine }
                         assert(sockets.sendNow(
                             peerFd,
                             Buffer.fromArray[Byte](signal),

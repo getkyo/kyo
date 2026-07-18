@@ -16,7 +16,8 @@ import kyo.net.internal.TlsTestCert
   * [[kyo.net.internal.SslEngineProvider]] and the inline NIO path reject BEFORE the handshake starts, while the native
   * [[kyo.net.internal.SslLibProvider]] providers (BoringSSL, system OpenSSL) instead bind an unmatchable identity and let the real
   * handshake reject it (so on Native, no registered provider throws pre-flight at all). Rather than depending on which concrete provider a
-  * host happens to have staged, the client side of this scenario is driven through [[PosixTransport.testEngineFactory]], so the catch-site
+  * host happens to have staged, the client side of this scenario is driven through an injected engine factory ([[TestTransports.forTesting]]'s
+  * `buildEngine`), so the catch-site
   * behavior under test is pinned deterministically on every platform; the server side still builds a real engine (any staged
   * provider), so the scenario stays a genuine loopback connect, not a fully synthetic one. The connect target is a real, resolvable address
   * (127.0.0.1): an empty host is deliberately NOT used here, since it exercises DNS resolution differently per platform (`getaddrinfo("")`
@@ -24,7 +25,7 @@ import kyo.net.internal.TlsTestCert
   *
   * The accept side of `listen` carries the same invariant in the other direction: a `buildEngine` failure while accepting one connection
   * must close only that connection's fd and never crash or wedge the shared accept loop, since the loop keeps serving every later
-  * connection on the same listener. `testEngineFactory` is reused for that direction by throwing only for `isServer = true`, so a listener
+  * connection on the same listener. The injected factory is reused for that direction by throwing only for `isServer = true`, so a listener
   * whose certificate is otherwise valid stays reachable by a second, unaffected connection attempt right after the first one fails.
   */
 class PosixTransportTlsConfigTest extends Test:
@@ -60,11 +61,11 @@ class PosixTransportTlsConfigTest extends Test:
       * earlier leaf could still be alive when the next leaf's own transport starts, letting a connection meant for the new leaf's
       * listener land on the stale one instead.
       */
-    private def withTransport[A](body: PosixTransport => A < (Async & Abort[NetException | Closed] & Scope))(using
-        Frame
-    ): A < (Async & Abort[NetException | Closed] & Scope) =
+    private def withTransport[A](buildEngine: PosixTransport.TlsEngineFactory)(
+        body: PosixTransport => A < (Async & Abort[NetException | Closed] & Scope)
+    )(using Frame): A < (Async & Abort[NetException | Closed] & Scope) =
         val driver     = PollerIoDriver.init(transportConfig)
-        val transport  = TestTransports.forTesting(transportConfig, driver, Ffi.load[SocketBindings], backendIsEpoll = false)
+        val transport  = TestTransports.forTesting(transportConfig, driver, Ffi.load[SocketBindings], backendIsEpoll = false, buildEngine)
         val driverDone = driver.start()
         Abort.run[NetException | Closed](body(transport)).map { result =>
             Sync.defer(transport.close()).andThen(Sync.defer(driver.close())).andThen(
@@ -75,13 +76,12 @@ class PosixTransportTlsConfigTest extends Test:
 
     "listen(tls) whose accept-side buildEngine throws closes only that connection and keeps the accept loop alive for the next one" in {
         assumeReady()
-        withTransport { transport =>
-            val serverEngineThrows = AtomicBoolean.Unsafe.init(true)
-            transport.testEngineFactory = Present { (cfg, host, isServer) =>
-                if isServer && serverEngineThrows.get() then
-                    throw NetTlsConfigException("synthetic accept-side engine construction failure (test)")
-                else TlsProviderPlatform.engine(cfg, host, isServer)
-            }
+        val serverEngineThrows = AtomicBoolean.Unsafe.init(true)
+        withTransport { (cfg, host, isServer) =>
+            if isServer && serverEngineThrows.get() then
+                throw NetTlsConfigException("synthetic accept-side engine construction failure (test)")
+            else TlsProviderPlatform.engine(cfg, host, isServer)
+        } { transport =>
             transport.listen("127.0.0.1", 0, 16, serverTls)(_ => ()).safe.get.map { listener =>
                 Abort.run[NetException | Closed](transport.connect("127.0.0.1", listener.port, verifyingClientTls).safe.get).map {
                     firstOutcome =>
@@ -110,17 +110,16 @@ class PosixTransportTlsConfigTest extends Test:
 
     "connect(tls) propagates a buildEngine NetTlsConfigException as-is, never re-wrapped as a handshake failure" in {
         assumeReady()
-        withTransport { transport =>
-            // The client role's engine build fails deterministically (the same condition and message SslEngineProvider/NioTransport reject
-            // for); the server role still builds a real engine, so the accept side completes normally and only the client connect fails.
-            transport.testEngineFactory = Present { (cfg, host, isServer) =>
-                if !isServer then
-                    throw NetTlsConfigException(
-                        "verifying client has no reference identity: a hostname is required to verify the server certificate (set trustAll " +
-                            "or hostnameVerification = false to opt out of name verification)"
-                    )
-                else TlsProviderPlatform.engine(cfg, host, isServer)
-            }
+        // The client role's engine build fails deterministically (the same condition and message SslEngineProvider/NioTransport reject
+        // for); the server role still builds a real engine, so the accept side completes normally and only the client connect fails.
+        withTransport { (cfg, host, isServer) =>
+            if !isServer then
+                throw NetTlsConfigException(
+                    "verifying client has no reference identity: a hostname is required to verify the server certificate (set trustAll " +
+                        "or hostnameVerification = false to opt out of name verification)"
+                )
+            else TlsProviderPlatform.engine(cfg, host, isServer)
+        } { transport =>
             transport.listen("127.0.0.1", 0, 16, serverTls)(_ => ()).safe.get.map { listener =>
                 Abort.run[NetException | Closed](transport.connect("127.0.0.1", listener.port, verifyingClientTls).safe.get).map {
                     outcome =>
