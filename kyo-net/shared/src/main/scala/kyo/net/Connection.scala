@@ -82,8 +82,7 @@ object Connection:
       * incomplete message as a truncation while still accepting a [[Truncated]] end after a complete length-framed message, the interop-safe
       * posture established stacks use (Go's `io.EOF` vs `io.ErrUnexpectedEOF`, OpenSSL's `ZERO_RETURN` vs `unexpected eof while reading`).
       *
-      * Distinct from the connection's internal lifecycle state, `kyo.net.internal.transport.Connection.State`: this enum is the public
-      * close-reason surfaced to a caller, not the internal open/upgrading/closing progression.
+      * This is the stream's close-reason, observable after [[Connection.status]] reports it: it is not a live open/closed connection status.
       */
     enum Status derives CanEqual:
         /** The connection is still open: no close has been observed yet. */
