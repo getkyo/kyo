@@ -1376,21 +1376,29 @@ class HttpClientTest extends BaseHttpTest:
                 val sizes   = Choice.eval(2, 4)
                 (for
                     size <- sizes
-                    c    <- initTrustAllClient(size)
-                    // Sequentially send 10 requests with different body data through a small pool
-                    // Each reuses a connection — tests mutable var reset in backend
-                    results <- Kyo.foreach(0 until 10) { i =>
-                        val request = HttpRequest.postRaw(
-                            HttpUrl(url.scheme, url.host, url.port, "/echo-reuse", Absent)
-                        ).addField("body", s"data-$i")
-                        HttpClient.withConfig(noTimeout) {
-                            c.sendWith(route, request)(identity)
+                    // Scope.run per branch, so each iteration's client is released before the next one is built. `initTrustAllClient` is
+                    // `HttpClient.init`, whose release registers in the ENCLOSING scope; without this the 2 sizes x 10 repeats = 20 clients
+                    // would all stay open until the leaf ends, and each owns its own transport (ioPoolSize drivers, one poller fd apiece).
+                    _ <- Scope.run {
+                        initTrustAllClient(size).map { c =>
+                            // Sequentially send 10 requests with different body data through a small pool
+                            // Each reuses a connection — tests mutable var reset in backend
+                            Kyo.foreach(0 until 10) { i =>
+                                val request = HttpRequest.postRaw(
+                                    HttpUrl(url.scheme, url.host, url.port, "/echo-reuse", Absent)
+                                ).addField("body", s"data-$i")
+                                HttpClient.withConfig(noTimeout) {
+                                    c.sendWith(route, request)(identity)
+                                }
+                            }.map { results =>
+                                assert(
+                                    results.zipWithIndex.forall { case (r, i) => r.fields.body == s"data-$i" },
+                                    s"Bodies: ${results.map(_.fields.body)}"
+                                )
+                            }
                         }
                     }
-                yield assert(
-                    results.zipWithIndex.forall { case (r, i) => r.fields.body == s"data-$i" },
-                    s"Bodies: ${results.map(_.fields.body)}"
-                ))
+                yield ())
                     .handle(Choice.run, _.unit, Loop.repeat(repeats))
                     .unit
             }
@@ -1412,20 +1420,28 @@ class HttpClientTest extends BaseHttpTest:
                 val sizes   = Choice.eval(2, 4)
                 (for
                     size <- sizes
-                    c    <- initTrustAllClient(size)
-                    streamReq = HttpRequest.getRaw(HttpUrl(url.scheme, url.host, url.port, "/stream-reuse", Absent))
-                    textReq   = HttpRequest.getRaw(HttpUrl(url.scheme, url.host, url.port, "/text-reuse", Absent))
-                    // Stream response, fully consume
-                    _ <- HttpClient.withConfig(noTimeout) {
-                        c.sendWith(streamRoute, streamReq) { resp =>
-                            resp.fields.body.run.map(_ => ())
+                    // Scope.run per branch: same reason as "connection reuse with varying data" above — the client's release registers in
+                    // the enclosing scope, so without this every iteration's client (and its transport) stays open until the leaf ends.
+                    _ <- Scope.run {
+                        initTrustAllClient(size).map { c =>
+                            val streamReq = HttpRequest.getRaw(HttpUrl(url.scheme, url.host, url.port, "/stream-reuse", Absent))
+                            val textReq   = HttpRequest.getRaw(HttpUrl(url.scheme, url.host, url.port, "/text-reuse", Absent))
+                            // Stream response, fully consume
+                            HttpClient.withConfig(noTimeout) {
+                                c.sendWith(streamRoute, streamReq) { resp =>
+                                    resp.fields.body.run.map(_ => ())
+                                }
+                            }.andThen {
+                                // Then buffered request on same pool — connection reused
+                                HttpClient.withConfig(noTimeout) {
+                                    c.sendWith(textRoute, textReq)(identity)
+                                }.map { result =>
+                                    assert(result.status == HttpStatus.OK && result.fields.body == "buffered")
+                                }
+                            }
                         }
                     }
-                    // Then buffered request on same pool — connection reused
-                    result <- HttpClient.withConfig(noTimeout) {
-                        c.sendWith(textRoute, textReq)(identity)
-                    }
-                yield assert(result.status == HttpStatus.OK && result.fields.body == "buffered"))
+                yield ())
                     .handle(Choice.run, _.unit, Loop.repeat(repeats))
                     .unit
             }
@@ -1513,25 +1529,29 @@ class HttpClientTest extends BaseHttpTest:
                 val repeats = 10
                 val sizes   = Choice.eval(2, 4, 8)
                 (for
-                    size  <- sizes
-                    c     <- initTrustAllClient(size)
-                    latch <- Latch.init(1)
-                    request = HttpRequest.getRaw(HttpUrl(url.scheme, url.host, url.port, "/ping", Absent))
-                    fibers <- Kyo.fill(size * 3)(Fiber.initUnscoped(
-                        latch.await.andThen(
-                            HttpClient.withConfig(noTimeout) {
-                                Abort.run[HttpException](c.sendWith(route, request)(identity))
+                    size <- sizes
+                    _ <- Scope.run {
+                        for
+                            c     <- initTrustAllClient(size)
+                            latch <- Latch.init(1)
+                            request = HttpRequest.getRaw(HttpUrl(url.scheme, url.host, url.port, "/ping", Absent))
+                            fibers <- Kyo.fill(size * 3)(Fiber.initUnscoped(
+                                latch.await.andThen(
+                                    HttpClient.withConfig(noTimeout) {
+                                        Abort.run[HttpException](c.sendWith(route, request)(identity))
+                                    }
+                                )
+                            ))
+                            _       <- latch.release
+                            results <- Kyo.foreach(fibers)(_.get)
+                            successes = results.count(_.isSuccess)
+                            poolExhausted = results.count {
+                                case Result.Failure(_: HttpPoolExhaustedException) => true
+                                case _                                             => false
                             }
-                        )
-                    ))
-                    _       <- latch.release
-                    results <- Kyo.foreach(fibers)(_.get)
-                    successes = results.count(_.isSuccess)
-                    poolExhausted = results.count {
-                        case Result.Failure(_: HttpPoolExhaustedException) => true
-                        case _                                             => false
+                        yield assert(successes + poolExhausted == size * 3 && successes > 0)
                     }
-                yield assert(successes + poolExhausted == size * 3 && successes > 0))
+                yield ())
                     .handle(Choice.run, _.unit, Loop.repeat(repeats))
                     .unit
             }
@@ -1544,20 +1564,24 @@ class HttpClientTest extends BaseHttpTest:
                 val repeats = 10
                 val sizes   = Choice.eval(2, 4, 8)
                 (for
-                    size  <- sizes
-                    c     <- initTrustAllClient(size)
-                    latch <- Latch.init(1)
-                    request = HttpRequest.getRaw(HttpUrl(url.scheme, url.host, url.port, "/burst", Absent))
-                    fibers <- Kyo.fill(size)(Fiber.initUnscoped(
-                        latch.await.andThen(
-                            HttpClient.withConfig(noTimeout) {
-                                c.sendWith(route, request)(identity)
-                            }
-                        )
-                    ))
-                    _       <- latch.release
-                    results <- Kyo.foreach(fibers)(_.get)
-                yield assert(results.forall(_.status == HttpStatus.OK)))
+                    size <- sizes
+                    _ <- Scope.run {
+                        for
+                            c     <- initTrustAllClient(size)
+                            latch <- Latch.init(1)
+                            request = HttpRequest.getRaw(HttpUrl(url.scheme, url.host, url.port, "/burst", Absent))
+                            fibers <- Kyo.fill(size)(Fiber.initUnscoped(
+                                latch.await.andThen(
+                                    HttpClient.withConfig(noTimeout) {
+                                        c.sendWith(route, request)(identity)
+                                    }
+                                )
+                            ))
+                            _       <- latch.release
+                            results <- Kyo.foreach(fibers)(_.get)
+                        yield assert(results.forall(_.status == HttpStatus.OK))
+                    }
+                yield ())
                     .handle(Choice.run, _.unit, Loop.repeat(repeats))
                     .unit
             }
@@ -1576,22 +1600,26 @@ class HttpClientTest extends BaseHttpTest:
                     // so back-to-back bursts at exactly pool capacity occasionally see HttpPoolExhausted
                     // on linux-x64/JVM CI under load. Headroom of 2 absorbs in-flight returns without
                     // changing the test's stress shape (still fires `size` concurrent per batch).
-                    c <- initTrustAllClient(size + 2)
-                    request = HttpRequest.getRaw(HttpUrl(url.scheme, url.host, url.port, "/stress", Absent))
-                    // Run 5 batches, each batch fires `size` concurrent requests with a latch
-                    _ <- Kyo.foreach(1 to 5) { _ =>
+                    _ <- Scope.run {
                         for
-                            latch <- Latch.init(1)
-                            fibers <- Kyo.fill(size)(Fiber.initUnscoped(
-                                latch.await.andThen(
-                                    HttpClient.withConfig(noTimeout) {
-                                        c.sendWith(route, request)(identity)
-                                    }
-                                )
-                            ))
-                            _       <- latch.release
-                            results <- Kyo.foreach(fibers)(_.get)
-                        yield assert(results.forall(_.status == HttpStatus.OK))
+                            c <- initTrustAllClient(size + 2)
+                            request = HttpRequest.getRaw(HttpUrl(url.scheme, url.host, url.port, "/stress", Absent))
+                            // Run 5 batches, each batch fires `size` concurrent requests with a latch
+                            _ <- Kyo.foreach(1 to 5) { _ =>
+                                for
+                                    latch <- Latch.init(1)
+                                    fibers <- Kyo.fill(size)(Fiber.initUnscoped(
+                                        latch.await.andThen(
+                                            HttpClient.withConfig(noTimeout) {
+                                                c.sendWith(route, request)(identity)
+                                            }
+                                        )
+                                    ))
+                                    _       <- latch.release
+                                    results <- Kyo.foreach(fibers)(_.get)
+                                yield assert(results.forall(_.status == HttpStatus.OK))
+                            }
+                        yield ()
                     }
                 yield ())
                     .handle(Choice.run, _.unit, Loop.repeat(repeats))
@@ -1614,38 +1642,41 @@ class HttpClientTest extends BaseHttpTest:
                 val repeats = 10
                 val sizes   = Choice.eval(2, 4)
                 (for
-                    size  <- sizes
-                    c     <- initTrustAllClient(size * 2)
-                    latch <- Latch.init(1)
-                    textReq   = HttpRequest.getRaw(HttpUrl(url.scheme, url.host, url.port, "/text", Absent))
-                    streamReq = HttpRequest.getRaw(HttpUrl(url.scheme, url.host, url.port, "/stream-mix", Absent))
-                    textFibers <- Kyo.fill(size)(Fiber.initUnscoped(
-                        latch.await.andThen(
-                            HttpClient.withConfig(noTimeout) {
-                                c.sendWith(textRoute, textReq)(identity)
-                            }
-                        )
-                    ))
-                    streamFibers <- Kyo.fill(size)(Fiber.initUnscoped(
-                        latch.await.andThen(
-                            HttpClient.withConfig(noTimeout) {
-                                c.sendWith(streamRoute, streamReq) { resp =>
-                                    resp.fields.body.run.map { chunks =>
-                                        chunks.foldLeft("")((acc, span) =>
-                                            acc + new String(span.toArrayUnsafe, "UTF-8")
-                                        )
+                    size <- sizes
+                    _ <- Scope.run {
+                        for
+                            c     <- initTrustAllClient(size * 2)
+                            latch <- Latch.init(1)
+                            textReq   = HttpRequest.getRaw(HttpUrl(url.scheme, url.host, url.port, "/text", Absent))
+                            streamReq = HttpRequest.getRaw(HttpUrl(url.scheme, url.host, url.port, "/stream-mix", Absent))
+                            textFibers <- Kyo.fill(size)(Fiber.initUnscoped(
+                                latch.await.andThen(
+                                    HttpClient.withConfig(noTimeout) {
+                                        c.sendWith(textRoute, textReq)(identity)
                                     }
-                                }
-                            }
-                        )
-                    ))
-                    _           <- latch.release
-                    textResults <- Kyo.foreach(textFibers)(_.get)
-                    streamData  <- Kyo.foreach(streamFibers)(_.get)
-                yield
-                    assert(textResults.forall(_.status == HttpStatus.OK))
-                    assert(streamData.forall(_.contains("chunk1")))
-                )
+                                )
+                            ))
+                            streamFibers <- Kyo.fill(size)(Fiber.initUnscoped(
+                                latch.await.andThen(
+                                    HttpClient.withConfig(noTimeout) {
+                                        c.sendWith(streamRoute, streamReq) { resp =>
+                                            resp.fields.body.run.map { chunks =>
+                                                chunks.foldLeft("")((acc, span) =>
+                                                    acc + new String(span.toArrayUnsafe, "UTF-8")
+                                                )
+                                            }
+                                        }
+                                    }
+                                )
+                            ))
+                            _           <- latch.release
+                            textResults <- Kyo.foreach(textFibers)(_.get)
+                            streamData  <- Kyo.foreach(streamFibers)(_.get)
+                        yield
+                            assert(textResults.forall(_.status == HttpStatus.OK))
+                            assert(streamData.forall(_.contains("chunk1")))
+                    }
+                yield ())
                     .handle(Choice.run, _.unit, Loop.repeat(repeats))
                     .unit
             }
@@ -1667,31 +1698,35 @@ class HttpClientTest extends BaseHttpTest:
                 val repeats = 10
                 val sizes   = Choice.eval(2, 4)
                 (for
-                    size  <- sizes
-                    c     <- initTrustAllClient(size)
-                    latch <- Latch.init(1)
-                    fibers <- Kyo.foreach(0 until size) { i =>
-                        Fiber.initUnscoped {
-                            latch.await.andThen {
-                                val marker = s"marker-$i"
-                                val bodyStream: Stream[Span[Byte], Async] = Stream.init(Seq(
-                                    Span.fromUnsafe(s"$marker-a,".getBytes("UTF-8")),
-                                    Span.fromUnsafe(s"$marker-b".getBytes("UTF-8"))
-                                ))
-                                val req = HttpRequest.postRaw(HttpUrl(url.scheme, url.host, url.port, "/echo-body", Absent))
-                                    .addField("body", bodyStream)
-                                HttpClient.withConfig(noTimeout) {
-                                    c.sendWith(postRoute, req) { resp =>
-                                        val body: String = resp.fields.body
-                                        (i, body)
+                    size <- sizes
+                    _ <- Scope.run {
+                        for
+                            c     <- initTrustAllClient(size)
+                            latch <- Latch.init(1)
+                            fibers <- Kyo.foreach(0 until size) { i =>
+                                Fiber.initUnscoped {
+                                    latch.await.andThen {
+                                        val marker = s"marker-$i"
+                                        val bodyStream: Stream[Span[Byte], Async] = Stream.init(Seq(
+                                            Span.fromUnsafe(s"$marker-a,".getBytes("UTF-8")),
+                                            Span.fromUnsafe(s"$marker-b".getBytes("UTF-8"))
+                                        ))
+                                        val req = HttpRequest.postRaw(HttpUrl(url.scheme, url.host, url.port, "/echo-body", Absent))
+                                            .addField("body", bodyStream)
+                                        HttpClient.withConfig(noTimeout) {
+                                            c.sendWith(postRoute, req) { resp =>
+                                                val body: String = resp.fields.body
+                                                (i, body)
+                                            }
+                                        }
                                     }
                                 }
                             }
-                        }
+                            _       <- latch.release
+                            results <- Kyo.foreach(fibers)(_.get)
+                        yield assert(results.forall { (i, body) => body.contains(s"marker-$i") })
                     }
-                    _       <- latch.release
-                    results <- Kyo.foreach(fibers)(_.get)
-                yield assert(results.forall { (i, body) => body.contains(s"marker-$i") }))
+                yield ())
                     .handle(Choice.run, _.unit, Loop.repeat(repeats))
                     .unit
             }
@@ -2039,24 +2074,28 @@ class HttpClientTest extends BaseHttpTest:
                 val repeats = 10
                 val sizes   = Choice.eval(2, 4)
                 (for
-                    size  <- sizes
-                    c     <- initTrustAllClient(size)
-                    latch <- Latch.init(1)
-                    slowReq = HttpRequest.getRaw(HttpUrl(url.scheme, url.host, url.port, "/slow-close", Absent))
-                    fibers <- Kyo.fill(size)(Fiber.initUnscoped(
-                        latch.await.andThen(
-                            HttpClient.withConfig(noTimeout) {
-                                Abort.run[HttpException](c.sendWith(slowRoute, slowReq)(identity))
-                            }
-                        )
-                    ))
-                    _ <- latch.release
-                    // Close immediately — fibers should complete (with errors), not hang
-                    _       <- c.closeNow
-                    results <- Kyo.foreach(fibers)(f => Abort.run[Throwable](f.get))
-                yield
-                    // All fibers must complete (success or failure), not hang
-                    assert(results.size == size))
+                    size <- sizes
+                    _ <- Scope.run {
+                        for
+                            c     <- initTrustAllClient(size)
+                            latch <- Latch.init(1)
+                            slowReq = HttpRequest.getRaw(HttpUrl(url.scheme, url.host, url.port, "/slow-close", Absent))
+                            fibers <- Kyo.fill(size)(Fiber.initUnscoped(
+                                latch.await.andThen(
+                                    HttpClient.withConfig(noTimeout) {
+                                        Abort.run[HttpException](c.sendWith(slowRoute, slowReq)(identity))
+                                    }
+                                )
+                            ))
+                            _ <- latch.release
+                            // Close immediately — fibers should complete (with errors), not hang
+                            _       <- c.closeNow
+                            results <- Kyo.foreach(fibers)(f => Abort.run[Throwable](f.get))
+                        yield
+                            // All fibers must complete (success or failure), not hang
+                            assert(results.size == size)
+                    }
+                yield ())
                     .handle(Choice.run, _.unit, Loop.repeat(repeats))
                     .unit
             }
