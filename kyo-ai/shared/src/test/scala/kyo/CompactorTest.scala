@@ -559,9 +559,7 @@ class CompactorTest extends kyo.test.Test[Any]:
 
     "INV-CMP-35: a coherent run is not split, and coherenceFloor is a live knob" in {
         Compactor.init(_.copy(tailTurns = 1)).map { c =>
-            // Four mutually-close vectors: the whole run's mean pairwise cosine clears the default floor, so it
-            // stays one run. Raising coherenceFloor above that mean forces the same run to split, proving the
-            // knob provably changes behavior (it was a dead knob before this fix).
+            // coherenceFloor gates the split: at the default floor the coherent run stays whole.
             val ctx = ctxOf(sm("s"), um("first"), am("m0"), am("m1"), am("m2"), am("m3"), um("latest"))
             val vectors = Dict[Int, Embedding](
                 (2, Embedding(Span(1.0f, 0.0f), "m", 2)),
@@ -580,8 +578,7 @@ class CompactorTest extends kyo.test.Test[Any]:
                 cc.summaryCandidates(cc.group(ctx, book0), ctx, st)
             }
             strict.map { strictRuns =>
-                // Raising the floor above the run's mean cosine fragments it: the 4-unit run no longer
-                // survives whole, proving coherenceFloor provably changes behavior (it was a dead knob before).
+                // Raising the floor above the run's mean cosine fragments it: no run of >=4 survives, so coherenceFloor drives the split.
                 assert(
                     strictRuns.map(_.map(_.id)) != runs.map(_.map(_.id)) && !strictRuns.exists(_.size >= 4),
                     s"raising coherenceFloor fragments the same run, proving the knob is live: ${strictRuns.map(_.map(_.id))}"
@@ -895,10 +892,7 @@ class CompactorTest extends kyo.test.Test[Any]:
 
     "INV-CMP-53: the cache gate binds L_cut to the post-edit suffix, not the whole view" in {
         Compactor.init.map { c =>
-            // A large unit sits in the frozen prefix (id 2); the edit demotes a moderate unit (id 3) whose
-            // rendered suffix is small. The true-suffix L_cut lets the gate pass; the old whole-view binding,
-            // dominated by the frozen prefix, would have blocked the same edit. A differential over the two
-            // bindings, so the leaf discriminates a shallow tail edit from a deep prefix edit through the gate.
+            // The true post-edit suffix is small, so the gate passes; whole-view occupancy, dominated by the frozen prefix, would exceed the gate.
             val ctx      = ctxOf(sm("s"), um("q"), am("M" * 4000), am("D" * 400), am("s1 small"), am("s2 small"), um("last"))
             val u        = c.group(ctx, book0).toList.find(_.id == 3).get
             val r        = Rendered(4, 1, 0, Chunk(sm("[c]")))
@@ -913,7 +907,7 @@ class CompactorTest extends kyo.test.Test[Any]:
             )
             assert(
                 !c.cacheGatePasses(saved, occupied, cachedReadDiscount = 0.1, writePremium = 1.0),
-                s"the old whole-view binding would have blocked the same edit: saved=$saved occupied=$occupied"
+                s"true-suffix L_cut must pass the gate that whole-view occupancy fails: saved=$saved occupied=$occupied"
             )
         }
     }
