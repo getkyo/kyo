@@ -1382,7 +1382,7 @@ class HttpClientTest extends BaseHttpTest:
                     _ <- Scope.run {
                         initTrustAllClient(size).map { c =>
                             // Sequentially send 10 requests with different body data through a small pool
-                            // Each reuses a connection — tests mutable var reset in backend
+                            // Each reuses a connection, which tests the mutable var reset in the backend
                             Kyo.foreach(0 until 10) { i =>
                                 val request = HttpRequest.postRaw(
                                     HttpUrl(url.scheme, url.host, url.port, "/echo-reuse", Absent)
@@ -1420,7 +1420,7 @@ class HttpClientTest extends BaseHttpTest:
                 val sizes   = Choice.eval(2, 4)
                 (for
                     size <- sizes
-                    // Scope.run per branch: same reason as "connection reuse with varying data" above — the client's release registers in
+                    // Scope.run per branch: same reason as "connection reuse with varying data" above. The client's release registers in
                     // the enclosing scope, so without this every iteration's client (and its transport) stays open until the leaf ends.
                     _ <- Scope.run {
                         initTrustAllClient(size).map { c =>
@@ -1432,7 +1432,7 @@ class HttpClientTest extends BaseHttpTest:
                                     resp.fields.body.run.map(_ => ())
                                 }
                             }.andThen {
-                                // Then buffered request on same pool — connection reused
+                                // Then buffered request on same pool, so the connection is reused
                                 HttpClient.withConfig(noTimeout) {
                                     c.sendWith(textRoute, textReq)(identity)
                                 }.map { result =>
@@ -2088,7 +2088,7 @@ class HttpClientTest extends BaseHttpTest:
                                 )
                             ))
                             _ <- latch.release
-                            // Close immediately — fibers should complete (with errors), not hang
+                            // Close immediately: fibers should complete (with errors), not hang
                             _       <- c.closeNow
                             results <- Kyo.foreach(fibers)(f => Abort.run[Throwable](f.get))
                         yield

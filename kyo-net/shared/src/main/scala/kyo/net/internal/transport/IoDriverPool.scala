@@ -61,9 +61,9 @@ final private[kyo] class IoDriverPool[Handle] private (
                 loop(i + 1)
         loop(0)
         // Publish only after every driver started, so close() either sees the complete set or (on the failure path above) the
-        // subset assigned there. Each entry completes when that driver's loop has finished its terminal teardown — that is, after
-        // its poller fd is closed and its scratch freed — which is what makes the close below a real release signal rather than
-        // just a request.
+        // subset assigned there. Each entry completes when that driver's loop has finished its terminal teardown, meaning after its
+        // poller fd is closed and its scratch freed. That is what makes the close below a real release signal rather than just a
+        // request.
         doneFibers = started
     end start
 
@@ -95,7 +95,7 @@ final private[kyo] class IoDriverPool[Handle] private (
       *
       * This is what gives [[close]] backpressure. Each driver's `start()` hands back exactly this signal and the pool retains it; a caller
       * that awaits the returned fiber knows the descriptors are gone, while one that does not must `discard` it explicitly. Without the
-      * await, `close()` only REQUESTS teardown — the driver's terminal hop is a scheduled activation, so the fds outlive the call, and a
+      * await, `close()` only REQUESTS teardown: the driver's terminal hop is a scheduled activation, so the fds outlive the call, and a
       * caller that closes one transport and immediately opens another transiently holds both.
       *
       * Completes immediately when the pool never started (no driver is running, and `close()` on a never-started driver releases its scratch
@@ -106,7 +106,7 @@ final private[kyo] class IoDriverPool[Handle] private (
       */
     private def awaitTornDown()(using AllowUnsafe, Frame): Fiber.Unsafe[Unit, Any] =
         // Every entry is non-null: start() publishes either the full set or, on its failure path, only the prefix that actually started.
-        // That trim matters — handing this loop a half-filled array would NPE here and mask the start failure being rethrown.
+        // That trim matters: handing this loop a half-filled array would NPE here and mask the start failure being rethrown.
         val fibers  = doneFibers
         val promise = Promise.Unsafe.init[Unit, Any]()
         if (fibers eq null) || fibers.isEmpty then promise.completeDiscard(Result.succeed(()))
