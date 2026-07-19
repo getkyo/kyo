@@ -814,7 +814,9 @@ lazy val `kyo-ffi-it` =
                     else if (os.contains("win")) "windows"
                     else if (os.contains("linux")) "linux"
                     else os
-                val bundled = ffiOut / s"libkyo_it_bundled-$osDetect-$arch.$ext"
+                // The plugin emits Windows libraries without the `lib` prefix; mirror its naming.
+                val prefix  = if (os.contains("win")) "" else "lib"
+                val bundled = ffiOut / s"${prefix}kyo_it_bundled-$osDetect-$arch.$ext"
                 new NodeJSEnv(
                     NodeJSEnv.Config()
                         .withArgs(List("--max_old_space_size=5120"))
