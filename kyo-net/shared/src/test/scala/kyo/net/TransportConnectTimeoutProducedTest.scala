@@ -34,7 +34,7 @@ class TransportConnectTimeoutProducedTest extends Test:
         // A finite, short connectTimeout arms the transport's internal connect-deadline. The connect to the black hole never completes, so the
         // deadline always wins; the produced leaf is the typed NetConnectTimeoutException, NOT the generic NetConnectException.
         val timeout   = 200.millis
-        val transport = NetPlatform.transport(TransportConfig.default.copy(connectTimeout = timeout))
+        val transport = NetPlatform.ownedTransport(TransportConfig.default.copy(connectTimeout = timeout))
         Abort.run[NetException | Closed | Timeout](
             // A generous survival window: if the deadline were NOT armed (the regression) the connect would hang and this would time out, failing
             // the assertion below rather than hanging the suite. With the deadline armed, the connect fails well within the window.

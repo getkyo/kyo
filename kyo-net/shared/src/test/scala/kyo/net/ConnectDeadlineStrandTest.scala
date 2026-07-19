@@ -3,9 +3,9 @@ package kyo.net
 import kyo.*
 
 /** Transport-level deterministic stress guard for the connect-deadline lost-wakeup on the
-  * `NetPlatform.transport(...).connect` path.
+  * `NetPlatform.ownedTransport(...).connect` path.
   *
-  * Drives the FULL public connect path (`NetPlatform.transport(...).connect`), which arms the `Clock`-driven connect deadline
+  * Drives the FULL public connect path (`NetPlatform.ownedTransport(...).connect`), which arms the `Clock`-driven connect deadline
   * (`config.connectTimeout`) racing the OS connect's write-readiness.
   * Connects run SEQUENTIALLY (a `Loop`, not a concurrency storm) against one real plaintext listener
   * that accepts and immediately closes; the connect deadline is a tight `config.connectTimeout`. Every connect MUST
@@ -25,7 +25,7 @@ class ConnectDeadlineStrandTest extends Test:
         // under load, so a failure here is a genuinely dropped/never-delivered write-readiness (the lost-wakeup), not a few-ms
         // latency tail against a too-tight bound. (TransportHandshakeTimeoutTest exercises a tight 60ms deadline;
         // this guard isolates DELIVERY correctness from deadline tightness, so it is not host-load-flaky.)
-        val transport = NetPlatform.transport(TransportConfig.default.copy(connectTimeout = 2.seconds))
+        val transport = NetPlatform.ownedTransport(TransportConfig.default.copy(connectTimeout = 2.seconds))
         transport.listen("127.0.0.1", 0, 128) { conn => conn.close() }.safe.get.map { listener =>
             val timeouts = new java.util.concurrent.atomic.AtomicInteger(0)
             val maxLatNs = new java.util.concurrent.atomic.AtomicLong(0L)
@@ -68,7 +68,7 @@ class ConnectDeadlineStrandTest extends Test:
         // immediately closes drives both: every connect MUST complete (succeed; a peer that already closed yields a clean connected-then-EOF, not
         // a connect failure). Any NetConnectException / NetConnectTimeoutException is a dropped connect arm. The generous 2s deadline isolates
         // delivery correctness from deadline tightness so this is not host-load-flaky.
-        val transport   = NetPlatform.transport(TransportConfig.default.copy(connectTimeout = 2.seconds))
+        val transport   = NetPlatform.ownedTransport(TransportConfig.default.copy(connectTimeout = 2.seconds))
         val concurrency = 128
         transport.listen("127.0.0.1", 0, 256) { conn => conn.close() }.safe.get.map { listener =>
             Async.foreach(0 until concurrency, concurrency) { _ =>

@@ -138,13 +138,11 @@ object HttpServer:
             Abort.run[NetException](listenFiber.safe.get).map {
                 case Result.Success(server) => server.safe
                 case Result.Failure(netEx) =>
-                    discard(transport.close()) // bind failed; we are aborting, so the release is not observed
                     val bindTarget = config.unixSocket match
                         case Present(path) => path
                         case Absent        => config.host
                     Abort.fail(HttpBindException(bindTarget, config.port, new java.io.IOException(netEx.getMessage)))
                 case Result.Panic(t) =>
-                    discard(transport.close()) // bind failed; we are aborting, so the release is not observed
                     throw t
             }
         }
@@ -276,11 +274,10 @@ object HttpServer:
 
             def forceCloseAndComplete(): Unit =
                 registry.closeAll(_.close())
-                // Release the transport this server owns after the accepted connections are closed, and complete only once its drivers have
-                // actually torn down. `Transport.close()` hands back a fiber that fires when the pool's descriptors are gone, so chaining here
-                // is what lets a caller awaiting this server's close know the port is free rather than merely scheduled for release. Chained
-                // rather than awaited so this stays non-blocking; the graceful arm composes the same way, since it routes through here too.
-                transport.close().onComplete(_ => discard(closedPromise.completeDiscard(Result.succeed(()))))
+                // The transport is NOT closed here. It is process-shared across every client and server using the same settings, so closing it
+                // would take every co-tenant's connections down with this server. What this server owns is its listener (closed above, which
+                // releases the bound port) and its accepted connections (closed just above), and those are what shutting it down must reclaim.
+                discard(closedPromise.completeDiscard(Result.succeed(())))
             end forceCloseAndComplete
 
             if gracePeriod <= Duration.Zero then
