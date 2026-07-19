@@ -603,6 +603,8 @@ final class RecordingPollerBackend(real: PollerBackend) extends PollerBackend:
         AllowUnsafe,
         Frame
     ): Fiber.Unsafe[Int, Any] =
+        if throwOnPoll.compareAndSet(true, false) then
+            throw new RuntimeException("injected poll failure (crash-containment guard)")
         lastPollTimeoutMs = timeoutMs.toLong
         pollEventsBufs.add(scratch.eventsBuffer)
         pollFdsArrays.add(scratch.fds)
@@ -674,6 +676,12 @@ final class RecordingPollerBackend(real: PollerBackend) extends PollerBackend:
     // One-shot callback fired at the START of wake() (after wakeInFlight is incremented, before delegating to real), so a test can hold the wake
     // mid-flight and drive a concurrent close into the wake-fd guard. null means none set; CAS to null before firing so it fires exactly once.
     @volatile var onWakeEnter: () => Unit = null
+
+    // When true, the next poll() throws instead of delegating. CAS to false on use so it fires exactly once. The authorized injection for the
+    // crash-containment guard: a driver cycle must contain a Throwable from anywhere in its body, run its terminal teardown, and complete its
+    // done-fiber as a panic, rather than dying silently and leaving close() to hang.
+    val throwOnPoll: java.util.concurrent.atomic.AtomicBoolean =
+        new java.util.concurrent.atomic.AtomicBoolean(false)
 
     // When true, the next registerWake returns false (forced failure) without calling real. CAS to false on use so it fires once.
     val forceRegisterWakeFail: java.util.concurrent.atomic.AtomicBoolean =

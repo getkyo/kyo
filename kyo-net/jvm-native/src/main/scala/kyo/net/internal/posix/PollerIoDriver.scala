@@ -17,6 +17,9 @@ import kyo.net.internal.util.IntLongMap
 import kyo.net.internal.util.IntRefMap
 import kyo.net.internal.util.MpscLongQueue
 import kyo.net.internal.util.writeFromBuffer
+import kyo.scheduler.InternalClock
+import kyo.scheduler.Scheduler
+import kyo.scheduler.Task
 
 /** Readiness-to-completion I/O driver over epoll (Linux) / kqueue (macOS/BSD), unified onto [[PosixHandle]] and the kyo-ffi bindings.
   *
@@ -25,14 +28,16 @@ import kyo.net.internal.util.writeFromBuffer
   * `send` / `recv` / `close`. It presents the unchanged completion `IoDriver[PosixHandle]` contract: callers deposit a `Promise` and the poll
   * loop fulfils it when the fd is ready and the read/write has been performed.
   *
-  * The poll loop runs on a dedicated carrier spawned via `Fiber.Unsafe.init` and drives a `while` loop that calls
-  * `backend.poll(pollerFd, timeoutMs = -1, clBuf, clN, pollScratch)` each cycle (indefinite park; the wakeup event returns it early).
-  * `backend.poll` returns a `Fiber.Unsafe` wrapping the
-  * `@Ffi.blocking` `epoll_wait` / `kevent`. On JVM/Native the wait fiber is already `done()` inline; the loop reads events via `poll()` and
-  * continues the next `while` iteration without growing the stack. On JS the wait fiber is genuinely pending; the loop exits the `while`,
-  * registers an `onComplete` callback that re-enters from the libuv event loop via `Fiber.Unsafe.init { pollLoop() }` on a fresh stack
-  * frame. The `done()/poll()` inline path prevents the `StackOverflowError` that naive self-recursive `onComplete` would cause
-  * (IOPromise.eval is not a trampoline).
+  * The poll runs on kyo scheduler carriers, never on a thread this driver owns. One reusable `Task` performs exactly ONE cycle per activation:
+  * it calls `backend.poll(pollerFd, timeoutMs = -1, clBuf, clN, pollScratch)` (indefinite park; the wakeup event returns it early), dispatches the
+  * events it harvested, re-arms the next wait onto a different carrier via `Scheduler.scheduleExcludingCurrent`, and returns `Task.Done`. That
+  * eat-what-you-kill shape is what keeps a carrier from being pinned: because each activation returns, the carrier goes back to its own queue and
+  * runs the completions the cycle just produced, rather than parking again with them queued behind it. A `while` loop here instead would pin its
+  * carrier (no fiber safepoints for `doPreempt` to reclaim) and a continuation completed inline could strand on that carrier's queue, which is the
+  * concurrent-STARTTLS hang this shape exists to prevent.
+  *
+  * `backend.poll` returns a `Fiber.Unsafe` wrapping the `@Ffi.blocking` `epoll_wait` / `kevent`, which on jvm-native completes inline, so the fiber
+  * is always already `done()` and the calling carrier is the one parked in the syscall for the wait's duration. (JS uses a separate driver.)
   *
   * Ordered interest changes: `epoll_ctl` and kqueue's `EV_ADD` / `EV_DELETE` are last-write-wins per fd+filter, so an interest change that runs
   * out of order can clobber a live one. Concretely, a STARTTLS upgrade detaches the plaintext pump (which `cancel`s the fd, i.e. submits a
@@ -65,7 +70,7 @@ final private[net] class PollerIoDriver private[posix] (
     sockets: SocketBindings,
     closedFlag: AtomicBoolean.Unsafe,
     // Per-driver reused poll/arm scratch. Allocated once at driver init. Ownership:
-    //   eventsBuffer + fds + flags: poll loop carrier (pollLoop + drainReady on the same fiber).
+    //   eventsBuffer + fds + flags: the poll cycle's carrier (the poll task's run + drainReady in the same activation).
     //   armBuf (epoll) / kqueueData.armBuf (kqueue): change worker (drainChanges + dispatchCmd on one worker fiber).
     // The two workers never access each other's scratch slots.
     //
@@ -177,7 +182,7 @@ final private[net] class PollerIoDriver private[posix] (
     // itself, but the field is @volatile so close() (on any carrier) observes it.
     @volatile private var diagRegistration: kyo.internal.Diagnostics.Registration | Null = null
 
-    // The driver-closed teardown reason, set by close() the instant it wins the closedFlag CAS (before submitEngineOp), so the pollLoop's
+    // The driver-closed teardown reason, set by close() the instant it wins the closedFlag CAS (before submitEngineOp), so the poll cycle's
     // terminal exit (a different carrier than close()'s caller) can run closeTeardown itself if close()'s own submitted op never gets
     // drained. Null only when the driver was never closed (terminal exit ran from a backend failure/panic instead), in which case no
     // closeTeardown claim is attempted here.
@@ -223,7 +228,7 @@ final private[net] class PollerIoDriver private[posix] (
     // Exposed for allocation-seam tests: the unboxed long element type proves neither a closure nor a boxed Long is allocated per change.
     //
     // Single-consumer drain model (mirrors IoUringDriver's engine FIFO over its reap loop): the change FIFO and the engine FIFO below are drained
-    // ONLY by the always-running poll-loop carrier, once per poll cycle (see drainFifos, called from pollLoop). `submitChange` / `submitEngineOp`
+    // ONLY by the always-running poll-loop carrier, once per poll cycle (see drainFifos, called from the poll task's run). `submitChange` / `submitEngineOp`
     // are pure offers that return immediately, so the offload contract (submit never drains on the submitting carrier; draining is on the separate
     // poll-loop carrier) holds, and there is exactly one consumer (the poll loop), so the MpscLongQueue / ConcurrentLinkedQueue single-consumer
     // contract is preserved with no flag. Draining on the poll loop, not a fire-and-forget `Fiber.Unsafe.init` task spawned per burst, is what
@@ -294,14 +299,17 @@ final private[net] class PollerIoDriver private[posix] (
     def handleLabel(handle: PosixHandle): String = s"fd=${handle.readFd}/${handle.writeFd}"
 
     def start()(using AllowUnsafe, Frame): Fiber.Unsafe[Unit, Any] =
-        // The poll loop runs on a DEDICATED daemon thread, NOT a kyo scheduler carrier. It is a non-preemptible, non-suspending loop (a plain
-        // while over backend.poll; on JVM/Native the @Ffi.blocking wait fiber completes inline), so on a carrier it PINS that carrier: the
-        // scheduler's doPreempt cannot reclaim a loop with no fiber safepoints, and under CPU contention a fiber continuation completed inline from
-        // the loop (a ReadPump byte delivery waking a parked take) can be routed back onto the pinned carrier by the scheduler's fallback and STRAND
-        // there, hanging the connection. A dedicated thread keeps the loop off the carrier pool, so every fiber it completes is scheduled
-        // (Worker.current() == null) onto a real carrier and nothing strands. The thread is a daemon, so it never blocks a clean JVM exit and is
-        // exempt from the non-daemon-thread leak check; it exits when close() sets closedFlag and triggers the wakeup via triggerWake().
-        // The returned Fiber.Unsafe completes when the loop thread exits. (JS/WASM use a separate driver and are unaffected.)
+        // The poll runs on scheduler carriers, one cycle per task activation, never on a thread of this driver's own.
+        // A `while` loop over backend.poll cannot run on a carrier: it has no fiber safepoints, so doPreempt cannot reclaim the carrier, and a
+        // continuation completed inline from the loop (a ReadPump byte delivery waking a parked take) can land on that pinned carrier's queue and
+        // strand there, because the loop never returns to drain it. That is the concurrent-STARTTLS hang.
+        // Instead pollTask performs exactly ONE cycle per run() and returns, so its carrier drains its queue and rejoins the pool like any other.
+        // Before returning it re-arms itself via scheduleExcludingCurrent, which prefers a DIFFERENT carrier for the next wait, so the carrier that
+        // just produced completions is free to run them instead of parking again with them queued behind it.
+        // Placement is best effort (the scheduler's random fallback does not exclude the caller), but a misplaced task cannot strand: a worker
+        // steals whenever its own queue empties and only goes idle when that steal also comes back empty, so the carrier that misplaced the task
+        // typically steals it straight back.
+        // The returned Fiber.Unsafe completes at the terminal exit (closedFlag observed, or a cycle threw). (JS/WASM use a separate driver.)
         // The wakeup is a liveness requirement for the indefinite park: without it, a submitted change or engine op has no way to return
         // the parked poll, causing a permanent stall. Arm it before starting the loop; fail the driver here rather than starting a loop
         // that would wedge on the first park with no way to recover. Armed before the loop starts so the very first submitted change
@@ -355,27 +363,16 @@ final private[net] class PollerIoDriver private[posix] (
                         pendingReads.size > 0 || pendingWritables.size > 0 || pendingAccepts.size > 0
                 )
         )
-        val donePromise = Promise.Unsafe.init[Unit, Any]()
-        val thread =
-            new Thread(
-                () =>
-                    try
-                        pollLoop()
-                        donePromise.completeDiscard(Result.succeed(()))
-                    catch
-                        case t: Throwable =>
-                            if !closedFlag.get() then Log.live.unsafe.error(s"$label poll loop crashed", t)
-                            donePromise.completeDiscard(Result.panic(t))
-                ,
-                s"$label-poll-loop"
-            )
-        thread.setDaemon(true)
-        thread.start()
+        val promise = Promise.Unsafe.init[Unit, Any]()
+        // Arm the first poll cycle on the scheduler. The chain is self-sustaining from here: every cycle re-arms the task onto a different carrier
+        // and returns, so no carrier is ever pinned in a loop. The chain ends when a cycle observes closedFlag or a cycle throws; both run the
+        // terminal exit, which is what completes this promise.
+        Scheduler.get.schedule(newPollTask(promise, kyo.net.internal.ProcessSharedTransport.isBuilding))
         // Fiber.Unsafe[A, S] is an opaque alias over IOPromiseBase[Any, A < (Async & S)] (kyo.Fiber.scala), structurally different from this
         // plainly-constructed Promise.Unsafe[Unit, Any], even though both erase to the same runtime object; the alias is transparent only
         // inside kyo.Fiber's own defining scope, so exposing donePromise as the locked IoDriver.start return needs this erased-boundary cast.
-        // Safe: the promise completes only with the Unit-success/panic values the poll-loop thread sets above.
-        donePromise.asInstanceOf[Fiber.Unsafe[Unit, Any]]
+        // Safe: the promise completes only with the Unit-success/panic values the terminal exit sets.
+        promise.asInstanceOf[Fiber.Unsafe[Unit, Any]]
     end start
 
     /** Free the per-driver poll scratch exactly once. Called by the poll loop carrier at its terminal exit (the loop ran and its last poll has
@@ -457,93 +454,167 @@ final private[net] class PollerIoDriver private[posix] (
         end while
     end closeWakeGuarded
 
-    /** Run the poll loop body on the current fiber. Called from `start()` and from the JS onComplete re-entry path. The while loop runs
-      * the JVM/Native inline-completion path without stack growth. On JS, where the wait fiber is genuinely pending, we exit the while
-      * loop and register an onComplete that calls `Fiber.Unsafe.init { pollLoop() }` to restart on a fresh libuv stack frame.
+    /** Build the driver's readiness poll as ONE reusable task that performs a single cycle per activation.
+      *
+      * Eat-what-you-kill: the carrier that harvests a batch of events is the one that dispatches it, and it re-arms the NEXT wait onto a different
+      * carrier first. Returning `Task.Done` every cycle is what keeps this clear of the old pinned-carrier failure: the carrier returns to its own
+      * queue and runs the completions this cycle produced, instead of parking again with them queued behind it.
+      *
+      * Re-arming LAST, after every access to the FIFOs, scratch and maps, is load-bearing. A successor can begin on another carrier before this
+      * activation's stack unwinds, so the reschedule must be the final statement that touches driver state; anything added after it would break the
+      * single-consumer confinement the change/engine FIFOs and the non-thread-safe pending maps depend on.
+      *
+      * Constructed once, from `start()`, both to capture that method's `AllowUnsafe`/`Frame` (Task.run supplies neither) and so that no task or
+      * closure is allocated per cycle. `donePromise` is closed over rather than held in a field: it is the driver's done-fiber, completed exactly
+      * once at the terminal exit.
       */
-    private def pollLoop()(using AllowUnsafe, Frame): Unit =
-        var running = !closedFlag.get()
-        // True only when the JS branch parked on a genuinely-pending wait fiber and registered an onComplete: the while loop exits but the loop
-        // is NOT terminal (it re-enters, or frees, from the onComplete). On JVM/Native the wait fiber is always done(), so this stays false and
-        // the free below runs after the while loop.
-        var enteredPending = false
-        while running do
-            // Apply any queued interest changes BEFORE parking so a change submitted since the last drain (e.g. a connect's write-interest arm via
-            // armSocketWritable -> submitChange) is registered with the kernel NOW, and the indefinite park that follows then returns immediately
-            // when the fd is already ready (a loopback connect's socket is writable at once, so epoll_wait/kevent returns at once). This, paired
-            // with the submitChange wake that returns a park when work arrives DURING it, is what keeps the connect write-readiness from being
-            // stranded until the next I/O event past a short connect deadline (the NetConnectTimeoutException regression).
-            // wakePending does not gate either wake path (both submitChange and submitEngineOp are unconditional); this reset only keeps the
-            // flag's per-cycle lifecycle consistent for the tests that pre-set it (see wakePending's own doc).
-            diagPollCycles += 1L
-            wakePending.set(false)
-            drainChanges()
-            // Pass the kqueue changelist (changelistBuf + nChanges) so kevent can submit pending changes (e.g. EV_DISABLE from
-            // dispatchWritable) atomically with the wait. On epoll the changelist / nChanges arguments are ignored by EpollPollerBackend.poll.
-            val (clBuf, clN) = pollScratch.kqueueData match
-                case Present(kq) => (kq.changelistBuf, kq.nChanges)
-                case Absent      => (pollScratch.armBuf, 0) // epoll: unused sentinel
-            val waitFiber =
-                backend.poll(pollerFd, timeoutMs = -1, clBuf, clN, pollScratch) // indefinite park; the wake event returns it early
-            if waitFiber.done() then
-                // JVM/Native inline-completion path: the @Ffi.blocking wait completed synchronously. Extract events and continue the
-                // while loop without growing the stack (the while iteration is the tail-loop equivalent of @tailrec).
+    private def newPollTask(donePromise: Promise.Unsafe[Unit, Any], processShared: Boolean)(using AllowUnsafe, Frame): Task =
+        new Task:
+            def run(startMillis: Long, clock: InternalClock, deadline: Long): Task.Result =
+                // The branch is on a value fixed at construction, so a process-lifetime driver runs EVERY cycle through the named frame below and
+                // an owned one never does. That is what keeps the end-of-run fiber-leak allowlist narrow: it excuses the two transports that are
+                // never closed by design, while a genuinely leaked owned transport still reports with a plain frame.
+                if processShared then processSharedTransportCycle(this, donePromise, startMillis, clock)
+                else runCycle(this, donePromise, startMillis, clock)
+
+    /** Wrapper frame that marks a cycle belonging to a process-lifetime transport (`kyo.net.NetPlatform.transport` or the default HTTP client's
+      * own transport), neither of which is ever closed by design. Both park head-of-line in the OS poll call for the JVM's lifetime, so at a test
+      * fork's end they are busy scheduler fibers; kyo-test's end-of-run fiber-leak check allowlists this frame by name
+      * (`LeakCheck.defaultAllowlist`). The method exists ONLY to put `processSharedTransport` on the carrier's stack, so it must stay on the call
+      * path of every cycle and must not be inlined away.
+      */
+    private def processSharedTransportCycle(
+        task: Task,
+        donePromise: Promise.Unsafe[Unit, Any],
+        startMillis: Long,
+        clock: InternalClock
+    )(using AllowUnsafe, Frame): Task.Result =
+        runCycle(task, donePromise, startMillis, clock)
+    end processSharedTransportCycle
+
+    /** One poll cycle: drain queued interest changes, park in the OS poll, dispatch what came back, and hand the next wait to another carrier. */
+    private def runCycle(
+        task: Task,
+        donePromise: Promise.Unsafe[Unit, Any],
+        startMillis: Long,
+        clock: InternalClock
+    )(using AllowUnsafe, Frame): Task.Result =
+        try
+            if closedFlag.get() then
+                // Terminal: end the chain instead of re-arming. Exactly one activation is ever live, so the maps and scratch are confined to
+                // this one, which is the precondition terminalTeardown's map access needs.
+                terminal(donePromise, Result.succeed(()))
+            else
+                // Apply any queued interest changes BEFORE parking so a change submitted since the last drain (e.g. a connect's
+                // write-interest arm via armSocketWritable -> submitChange) is registered with the kernel NOW, and the indefinite park that
+                // follows then returns immediately when the fd is already ready (a loopback connect's socket is writable at once, so
+                // epoll_wait/kevent returns at once). This, paired with the submitChange wake that returns a park when work arrives DURING
+                // it, is what keeps the connect write-readiness from being stranded until the next I/O event past a short connect deadline
+                // (the NetConnectTimeoutException regression).
+                // wakePending does not gate either wake path (both submitChange and submitEngineOp are unconditional); this reset only keeps
+                // the flag's per-cycle lifecycle consistent for the tests that pre-set it (see wakePending's own doc).
+                diagPollCycles += 1L
+                wakePending.set(false)
+                drainChanges()
+                // Pass the kqueue changelist (changelistBuf + nChanges) so kevent can submit pending changes (e.g. EV_DISABLE from
+                // dispatchWritable) atomically with the wait. On epoll the changelist / nChanges arguments are ignored by
+                // EpollPollerBackend.poll. Read into locals rather than a tuple: this runs on every cycle, and Maybe is opaque and
+                // null-backed, so isDefined/get allocate nothing.
+                val kq    = pollScratch.kqueueData
+                val clBuf = if kq.isDefined then kq.get.changelistBuf else pollScratch.armBuf
+                val clN   = if kq.isDefined then kq.get.nChanges else 0
+                // Indefinite park; the wake event returns it early. The production epoll/kqueue backends run the @Ffi.blocking wait inline,
+                // so THIS carrier is the one parked in epoll_wait/kevent for its duration and the fiber comes back already complete. A
+                // decorating backend may instead hand back a genuinely pending fiber, which the Absent arm below carries.
+                val waitFiber = backend.poll(pollerFd, timeoutMs = -1, clBuf, clN, pollScratch)
+                val self      = task
                 waitFiber.poll() match
                     case Present(Result.Success(_)) =>
-                        drainReady(pollScratch.fds, pollScratch.flags, pollScratch.ids, pollScratch.readyCount)
-                    case Present(Result.Failure(_)) => running = false // backend closed or error; exit loop
-                    case Present(Result.Panic(_))   => running = false // fatal backend error; exit loop
-                    case Absent                     => ()              // unreachable when done(); continue
+                        dispatchAndContinue(self)
+                    case Present(_) =>
+                        // Wait failed: end the chain, mirroring the old loop's exit on a backend failure or panic. Unreachable through the
+                        // production backends, which fold every inline outcome into a Success carrying a ready count, but reachable through a
+                        // decorator. The crash path is the catch below, not this arm.
+                        terminal(donePromise, Result.succeed(()))
+                    case Absent =>
+                        // The wait is genuinely pending. The scratch is still owned by the in-flight wait, so NOTHING may dispatch, re-arm or
+                        // tear down here: doing so frees the scratch out from under a live poll. Continue the chain from the completion
+                        // callback instead, which is the same handoff the previous loop used for a pending wait.
+                        waitFiber.onComplete {
+                            case Result.Success(_) =>
+                                try dispatchAndContinue(self)
+                                catch
+                                    case t: Throwable =>
+                                        if !closedFlag.get() then Log.live.unsafe.error(s"$label poll cycle crashed", t)
+                                        terminal(donePromise, Result.panic(t))
+                            case _ =>
+                                terminal(donePromise, Result.succeed(()))
+                        }
                 end match
-                if running then running = !closedFlag.get()
-            else
-                // JS path: the @Ffi.blocking fiber is genuinely pending. Exit the while loop and register a callback; libuv fires the
-                // callback on a fresh stack frame when the wait completes, avoiding unbounded stack growth.
-                running = false
-                enteredPending = true
-                waitFiber.onComplete {
-                    case Result.Success(_) =>
-                        drainReady(pollScratch.fds, pollScratch.flags, pollScratch.ids, pollScratch.readyCount)
-                        // Drain both FIFOs on the JS re-entry path too: JS is single-threaded so it never strands a drain, but the poll loop is the
-                        // sole FIFO consumer on every platform, so the drain must run on whichever poll path executes. This also runs any
-                        // close-teardown engine op (the maps are poll-fiber-confined; JS is single-threaded so the teardown never races the loop).
-                        drainFifos()
-                        if !closedFlag.get() then discard(Fiber.Unsafe.init { pollLoop() })
-                        else
-                            // Terminal JS exit: closed flag set, not re-entering, last poll done. terminalTeardown's own drainFifos is a
-                            // harmless extra pass (JS is single-threaded, so there is no cross-thread ordering concern here: nothing else
-                            // can run concurrently with the drainFifos above).
-                            terminalTeardown()
-                            backend.close(pollerFd)
-                            freeScratch()
-                        end if
-                    case _ =>
-                        // Terminal JS exit: wait failed, not re-entering.
-                        terminalTeardown()
-                        backend.close(pollerFd)
-                        freeScratch()
-                }
             end if
-            // Drain both FIFOs once per poll cycle on the JVM/Native always-running carrier, whether or not events fired this cycle: the poll loop is
-            // the sole consumer of the change/engine FIFOs, so a command or engine op enqueued by submitChange/submitEngineOp (or by this cycle's own
-            // dispatch) is drained here within one cycle. Each submit triggers the poll-loop wakeup so an indefinitely-parked poll returns when work
-            // arrives; a re-arm or engine op submitted while idle is never stranded. On the JS pending path the loop exited before reaching here, so
-            // the JS drain runs in onComplete.
-            if !enteredPending then drainFifos()
-        end while
-        // Terminal exit on JVM/Native (the while loop ended on closedFlag or a backend failure/panic): the last poll has completed and the maps +
-        // scratch are provably not in use, so the poll loop carrier finishes the teardown here. terminalTeardown runs any close-teardown engine
-        // op that close() submitted concurrently with the closedFlag set (so it is never stranded by the loop exiting first) and sweeps any
-        // fd-close obligation a TLS closeHandle registered too late to be drained normally; since it runs on this poll-loop carrier, the map
-        // access stays poll-fiber-confined. backend.close(pollerFd) runs AFTER the last poll, so the poller fd is never closed under an
-        // in-flight epoll_wait/kevent. Skipped when the JS branch parked on a pending wait fiber (not terminal: it tears down from the
-        // onComplete instead).
-        if !enteredPending then
-            terminalTeardown()
-            backend.close(pollerFd)
-            freeScratch()
-        end if
-    end pollLoop
+            Task.Done
+        catch
+            // Containment is mandatory, not defensive. Without it a throw from drainChanges, backend.poll or a drainReady dispatch leaves
+            // run() before the re-arm, Worker.runTask hands it to the uncaught handler and returns Done, and the chain is simply gone: no
+            // further cycles, no FIFO drains, every pending op hangs, donePromise never completes, and a later close() hangs too, because its
+            // rescue is gated on teardownComplete and nothing will ever set it. Throwable rather than NonFatal: a silently dead driver is
+            // worse than a rethrow.
+            case t: Throwable =>
+                if !closedFlag.get() then Log.live.unsafe.error(s"$label poll cycle crashed", t)
+                terminal(donePromise, Result.panic(t))
+                Task.Done
+        end try
+    end runCycle
+
+    /** Dispatch one completed wait's events, drain the FIFOs, and hand the next wait to another carrier.
+      *
+      * Shared by the inline path (the production backends complete the wait synchronously) and the pending path (a decorating backend completes it
+      * later, from its own callback), so both do exactly the same work in the same order and there is exactly ONE successor per cycle either way.
+      * A cycle observing a closed driver is NOT special-cased here: re-arming lets the next activation's top-of-run check run the single terminal
+      * exit, at the cost of one extra activation, rather than duplicating teardown at a second site.
+      */
+    private def dispatchAndContinue(task: Task)(using AllowUnsafe, Frame): Unit =
+        drainReady(pollScratch.fds, pollScratch.flags, pollScratch.ids, pollScratch.readyCount)
+        // Sole consumer of the change/engine FIFOs, once per cycle, whether or not events fired: a command or engine op enqueued by
+        // submitChange/submitEngineOp (or by this cycle's own dispatch) is drained within one cycle, and each submit wakes the park so an idle
+        // driver never strands one.
+        drainFifos()
+        reArm(task)
+    end dispatchAndContinue
+
+    /** Re-arm the next wait, preferring a carrier other than this one, and reset the task's scheduling priority to that of freshly submitted work.
+      *
+      * Worker.runTask bills wall-clock time to a task's runtime, and the poll parks inside that measurement, so a task reused for the driver's whole
+      * life would accumulate its entire idle time as if it were CPU time: it would sort last in every queue and eventually wrap into the preempt
+      * bit. Charging each cycle's own park instead is no better, and is what an earlier revision did: a long idle park produced a large key, which
+      * starved the poll under load and stopped readiness entirely (kyo-http's concurrency and connection-pool suites hung). Park duration is simply
+      * not a measure of scheduling debt; if anything a long park means the poll is now the most urgent work, not the least.
+      *
+      * Resetting to the fresh-task value (runtime 1, `Task.State.init`) makes the poll compete on equal terms with newly submitted work: never
+      * starved, and never jumped to the head of a queue ahead of work already waiting, which resetting to 0 alone would do. The ordering worry
+      * about running ahead of the completions this cycle produced does not apply in the normal case anyway: those completions land on the carrier
+      * that produced them, while `scheduleExcludingCurrent` places the poll on a different one, so they are not competing in the same queue.
+      */
+    private def reArm(task: Task): Unit =
+        task.resetRuntime()
+        task.addRuntime(1)
+        Scheduler.get.scheduleExcludingCurrent(task)
+    end reArm
+
+    /** The single terminal exit, shared by the closed, defensive-arm and crash paths.
+      *
+      * Runs the teardown the old loop ran on its way out: terminalTeardown drains any close-teardown engine op that close() submitted concurrently
+      * with the closedFlag set and sweeps any fd-close obligation a TLS closeHandle registered too late for a normal drain; backend.close(pollerFd)
+      * runs AFTER the last poll, so the poller fd is never closed under an in-flight epoll_wait/kevent; freeScratch is CAS-guarded against close()'s
+      * never-started path. It runs on whichever carrier ran the final cycle, which is safe for the same reason the old single carrier was: exactly
+      * one activation is ever live, so the maps stay confined to it.
+      */
+    private def terminal(donePromise: Promise.Unsafe[Unit, Any], result: Result[Nothing, Unit < Any])(using AllowUnsafe, Frame): Unit =
+        terminalTeardown()
+        backend.close(pollerFd)
+        freeScratch()
+        donePromise.completeDiscard(result)
+    end terminal
 
     /** The poll loop's terminal-exit teardown, shared by every exit path (JVM/Native's terminal `while`-exit and both JS onComplete terminal
       * branches): set [[terminal]] before the final drain (the ordering [[closeHandle]]'s put-then-recheck relies on), drain once more
@@ -1368,7 +1439,7 @@ final private[net] class PollerIoDriver private[posix] (
 
     /** Drain all ready events from one poll result, dispatching reads, writables, and error-only events in order.
       *
-      * Called from the `while`-loop body of `pollLoop` after `backend.poll` completes (inline on JVM/Native, via `onComplete` on JS). Each event:
+      * Called from the poll task's run after `backend.poll` completes (always inline on jvm-native). Each event:
       *   - Dispatches read-ready events to `dispatchRead` (or `dispatchAccept` for listen fds); under edge-triggered the fd is persistently
       *     armed and there is no survivor re-arm to submit.
       *   - Dispatches write-ready events to `dispatchWritable`.
@@ -2429,7 +2500,7 @@ final private[net] class PollerIoDriver private[posix] (
                 drainEngineOps()
     end drainEngineOps
 
-    /** Drain both per-driver FIFOs once, on the poll-loop carrier. The poll loop calls this every cycle (see [[pollLoop]]), making it the single
+    /** Drain both per-driver FIFOs once, on the carrier running the poll cycle. Every cycle calls this exactly once, making it the single
       * authoritative consumer of both FIFOs: `submitChange` / `submitEngineOp` only enqueue, so a submitted command or engine op is always drained
       * within one poll cycle. Each submit triggers the poll-loop wakeup unconditionally so a parked indefinite poll returns promptly
       * when work arrives. Draining on the poll-loop carrier, the one carrier running for the driver's whole life, avoids the Native TLS deadlock:
