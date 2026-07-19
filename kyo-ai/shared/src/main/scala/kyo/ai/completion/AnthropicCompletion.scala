@@ -33,10 +33,10 @@ private[completion] object AnthropicCompletion extends Completion:
         context: Context,
         tools: Chunk[Tool.internal.Info[?, ?, LLM]],
         resultSchema: Maybe[JsonSchema] = Absent
-    )(using Frame): Chunk[ContextMessage] < (LLM & Async & Abort[HttpException | AIGenException]) =
+    )(using Frame): Completion.Result < (LLM & Async & Abort[HttpException | AIGenException]) =
         fetch(config, Request(context, config, tools, resultSchema)).map(read)
 
-    private def read(response: Response)(using Frame): Chunk[ContextMessage] < LLM =
+    private def read(response: Response)(using Frame): Completion.Result < LLM =
         val text = response.content.collect {
             case c if c.`type` == "text" => c.text.getOrElse("")
         }.mkString("")
@@ -48,7 +48,12 @@ private[completion] object AnthropicCompletion extends Completion:
                     Json.encode(c.input.getOrElse(Structure.Value.Record(Chunk.empty)))
                 )
         }.to(Chunk)
-        Chunk(AssistantMessage(text, toolCalls))
+        // The internal snake_case wire Usage is decoded but was dropped; CONVERT it to the public
+        // camelCase Completion.Usage (no cached-tokens field on the Anthropic DTO, so Absent).
+        val usage = response.usage.map(u =>
+            Completion.Usage(inputTokens = u.input_tokens, outputTokens = u.output_tokens, cachedInputTokens = Absent)
+        )
+        Completion.Result(Chunk(AssistantMessage(text, toolCalls)), usage)
     end read
 
     private def fetch(config: Config, req: Request)(using Frame): Response < (LLM & Async & Abort[HttpException | AIGenException]) =

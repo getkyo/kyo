@@ -32,20 +32,68 @@ private[completion] object OpenAICompletion extends Completion:
         context: Context,
         tools: Chunk[Tool.internal.Info[?, ?, LLM]],
         resultSchema: Maybe[JsonSchema] = Absent
-    )(using Frame): Chunk[Message] < (LLM & Async & Abort[HttpException | AIGenException]) =
+    )(using Frame): Completion.Result < (LLM & Async & Abort[HttpException | AIGenException]) =
         fetch(config, Request(context, config, tools, resultSchema)).map(read)
 
-    private def read(response: Response)(using Frame): Chunk[Message] < (LLM & Sync & Abort[AIGenException]) =
+    private def read(response: Response)(using Frame): Completion.Result < (LLM & Sync & Abort[AIGenException]) =
         Maybe.fromOption(response.choices.headOption) match
             case Absent =>
                 Abort.fail(AIDecodeException("LLM response has no choices: " + Json.encode(response)))
             case Present(v) =>
-                Chunk(AssistantMessage(
+                val messages = Chunk(AssistantMessage(
                     v.message.content.getOrElse(""),
                     Chunk.from(v.message.tool_calls.getOrElse(Nil).map(c =>
                         Call(CallId(c.id), c.function.name, c.function.arguments)
                     ))
                 ))
+                val usage = response.usage.map(u =>
+                    Completion.Usage(
+                        inputTokens = u.prompt_tokens,
+                        outputTokens = u.completion_tokens,
+                        cachedInputTokens = u.prompt_tokens_details.flatMap(_.cached_tokens)
+                    )
+                )
+                Completion.Result(messages, usage)
+        end match
+    end read
+
+    /** Embeds inputs through the OpenAI-compatible `${apiUrl}/embeddings` route (OpenAI native and
+      * Gemini's openai-compat layer share this DTO shape). Other openai-compat providers have no such
+      * route; they inherit the trait default via provider gating below.
+      */
+    override def embed(config: Config, inputs: Chunk[String])(using
+        Frame
+    ): Chunk[Embedding] < (LLM & Async & Abort[HttpException | AIGenException]) =
+        // Only OpenAI and Gemini expose an openai-compat /embeddings endpoint. The other
+        // openai-compat providers route to the trait default rather than 404 against a missing route.
+        if !embeddingsCapable(config.provider) then Abort.fail(AIEmbeddingUnsupportedException(config.provider.name))
+        else
+            config.apiKey match
+                case Absent => Abort.fail(AIMissingApiKeyException(config.modelName))
+                case Present(key) =>
+                    val headers =
+                        Seq("content-type" -> "application/json", "Authorization" -> s"Bearer $key") ++
+                            config.apiOrg.map("OpenAI-Organization" -> _).toList
+                    val url  = s"${config.apiUrl}/embeddings"
+                    val body = Json.encode(EmbedRequest(config.modelName, inputs.toList))
+                    HttpClient.withConfig(_.timeout(config.timeout)) {
+                        HttpClient.postText(url, body, headers).map(resp =>
+                            Abort.get(Json.decode[EmbedResponse](resp)
+                                .mapFailure(e => HttpJsonDecodeException(e.getMessage, "POST", url)))
+                        )
+                    }.map { decoded =>
+                        // modelName/dim tag the space so the compactor never compares across models.
+                        Chunk.from(decoded.data.sortBy(_.index).map(d =>
+                            Embedding(Span.from(d.embedding.map(_.toFloat)), config.modelName, d.embedding.size)
+                        ))
+                    }
+            end match
+
+    // The two openai-compat providers with a real /embeddings route. Compared by name (a plain
+    // String): Config.Provider carries no CanEqual and this build compiles under
+    // -language:strictEquality, so a direct provider == Config.OpenAI comparison does not type-check.
+    private def embeddingsCapable(provider: Config.Provider): Boolean =
+        provider.name == Config.OpenAI.name || provider.name == Config.Gemini.name
 
     private def fetch(config: Config, req: Request)(using Frame): Response < (LLM & Async & Abort[HttpException | AIGenException]) =
         config.apiKey match
@@ -159,7 +207,16 @@ private[completion] object OpenAICompletion extends Completion:
         case class ResponseToolCall(id: String, function: ResponseFunctionCall) derives Schema
         case class ResponseMessage(content: Maybe[String], tool_calls: Maybe[List[ResponseToolCall]]) derives Schema
         case class Choice(message: ResponseMessage) derives Schema
-        case class Response(choices: List[Choice]) derives Schema
+        // usage rides the reply today undecoded; widened here to capture prompt/completion/cached tokens.
+        case class PromptTokensDetails(cached_tokens: Maybe[Int] = Absent) derives Schema
+        case class Usage(prompt_tokens: Int, completion_tokens: Int, prompt_tokens_details: Maybe[PromptTokensDetails] = Absent)
+            derives Schema
+        case class Response(choices: List[Choice], usage: Maybe[Usage] = Absent) derives Schema
+
+        // Embeddings request/response DTOs (OpenAI + Gemini openai-compat share this shape).
+        case class EmbedRequest(model: String, input: List[String]) derives Schema
+        case class EmbedDatum(embedding: List[Double], index: Int) derives Schema
+        case class EmbedResponse(data: List[EmbedDatum]) derives Schema
 
         // Streaming delta DTOs: the OpenAI SSE wire shape for streaming tool-call chunks.
         // Each data: line carries a StreamChunk whose choices[0].delta.tool_calls[0].function.arguments

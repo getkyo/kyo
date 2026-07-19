@@ -11,6 +11,8 @@ class AIExceptionTest extends kyo.test.Test[Any]:
             summon[AIDecodeException <:< AIGenException]
             summon[AIStreamDeltaException <:< AIStreamException]
             summon[AIStreamIncompleteException <:< AIStreamException]
+            summon[AIContextOverflowException <:< AIGenException]
+            summon[AIEmbeddingUnsupportedException <:< AIGenException]
             succeed
         }
         "a shared failure belongs to multiple operations" in {

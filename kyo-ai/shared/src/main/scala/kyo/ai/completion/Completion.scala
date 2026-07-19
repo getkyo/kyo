@@ -26,7 +26,18 @@ trait Completion:
         context: Context,
         tools: Chunk[Tool.internal.Info[?, ?, LLM]],
         resultSchema: Maybe[JsonSchema] = Absent
-    )(using Frame): Chunk[Message] < (LLM & Async & Abort[HttpException | AIGenException])
+    )(using Frame): Completion.Result < (LLM & Async & Abort[HttpException | AIGenException])
+
+    /** Embeds each input string with the provider's embeddings endpoint, one batched call.
+      *
+      * The default fails with `AIEmbeddingUnsupportedException`: only backends whose provider
+      * exposes an embeddings route override it (`OpenAICompletion` for OpenAI + Gemini's
+      * openai-compat layer). A caller pairs a supporting provider via `Config.embedder`.
+      */
+    def embed(config: Config, inputs: Chunk[String])(using
+        Frame
+    ): Chunk[Embedding] < (LLM & Async & Abort[HttpException | AIGenException]) =
+        Abort.fail(AIEmbeddingUnsupportedException(config.provider.name))
 
     /** Provides raw JSON fragments for the `{ resultValue: ... }` envelope consumed by `LLM.stream`.
       *
@@ -43,6 +54,18 @@ trait Completion:
 end Completion
 
 object Completion:
+
+    /** Provider-reported token usage for one completion, cache-aware. Distinct from each adapter's
+      * internal snake_case wire DTO: the wire DTO is decoded per adapter then CONVERTED to this
+      * type, never returned directly. `cachedInputTokens` is `Absent` when the provider does not
+      * report it.
+      */
+    final case class Usage(inputTokens: Int, outputTokens: Int, cachedInputTokens: Maybe[Int] = Absent) derives CanEqual
+
+    /** The widened `apply` result: the reply messages plus optional provider-reported usage.
+      * `messages` preserves today's behavior; `usage` is `Absent` when a backend does not report it.
+      */
+    final case class Result(messages: Chunk[Message], usage: Maybe[Usage]) derives CanEqual
 
     /** The OpenAI-compatible backend (OpenAI plus DeepSeek/Gemini/Groq/Baseten/OpenRouter). The concrete
       * implementation is package-private; reach it (and Anthropic) through these accessors.
@@ -69,7 +92,9 @@ object Completion:
     private[completion] def sseFragments(
         config: Config,
         request: StreamRequest < Abort[AIStreamException],
-        parseDeltaArguments: String => Result[String, Maybe[String]]
+        // Fully qualified: kyo.Result, not this object's own Result (the widened apply-result type),
+        // since an unqualified reference here would resolve to the local Completion.Result instead.
+        parseDeltaArguments: String => kyo.Result[String, Maybe[String]]
     )(using Frame): Stream[String, Async & Scope & Abort[AIStreamException]] < Async =
         given sseTag: Tag[Emit[Chunk[HttpSseEvent[String]]]] = Tag[Emit[Chunk[HttpSseEvent[String]]]]
         val route                                            = HttpRoute.postRaw("").request(_.bodyText).response(_.bodySseText)
@@ -90,9 +115,9 @@ object Completion:
                 }
             yield sseStream.map { event =>
                 parseDeltaArguments(event.data) match
-                    case Result.Success(Present(fragment)) => fragment
-                    case Result.Success(Absent)            => ""
-                    case Result.Failure(err)               => Abort.fail(AIStreamDeltaException(err))
+                    case kyo.Result.Success(Present(fragment)) => fragment
+                    case kyo.Result.Success(Absent)            => ""
+                    case kyo.Result.Failure(err)               => Abort.fail(AIStreamDeltaException(err))
             }.filterPure(_.nonEmpty)
         }
     end sseFragments

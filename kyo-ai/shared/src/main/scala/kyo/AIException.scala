@@ -57,6 +57,23 @@ case class AIDecodeException(detail: String)(using Frame)
 case class AIProviderUnavailableException(provider: String, detail: String)(using Frame)
     extends AIException(s"$provider provider is unavailable: $detail") with AIGenException with AIStreamException
 
+/** The forced path could not fit the transcript's unshrinkable roots (system, first/latest
+  * user, unresolved pairs, recent tail) inside the model's hard window, so it fails loudly
+  * rather than sending an over-limit request. The transcript loses nothing; only the view
+  * omits. It surfaces on `Compactor.render`'s `Abort[AIGenException]` row.
+  */
+case class AIContextOverflowException(viewTokens: Int, modelMaxTokens: Int)(using Frame)
+    extends AIException(
+        s"projected view of $viewTokens tokens exceeds the model's hard window of $modelMaxTokens tokens " +
+            "with no further demotable units"
+    ) with AIGenException
+
+/** The completion backend for the resolved provider exposes no embeddings endpoint, so
+  * `Completion.embed` cannot run. Pair a provider that does via `Config.embedder`.
+  */
+case class AIEmbeddingUnsupportedException(provider: String)(using Frame)
+    extends AIException(s"provider '$provider' does not support embeddings") with AIGenException
+
 /** A streaming SSE delta was not a parseable event for the provider. */
 case class AIStreamDeltaException(detail: String)(using Frame)
     extends AIException(s"malformed SSE delta: $detail") with AIStreamException

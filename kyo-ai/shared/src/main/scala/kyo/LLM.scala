@@ -512,7 +512,7 @@ object LLM:
                 s"kyo-ai gen backend=${config.provider.name} model=${config.modelName} " +
                     s"messages=${context.messages.size} tools=${allTools.size} thoughts=${thoughts.size} forceResult=$forceResult"
             )
-            messages <-
+            completion <-
                 HttpClient.withConfig(_.timeout(config.timeout)) {
                     Abort.run[Closed] {
                         config.provider
@@ -522,11 +522,13 @@ object LLM:
                                 Retry[HttpException](config.retrySchedule)(_)
                             )
                     }.map {
-                        case Result.Success(msgs) => msgs
-                        case Result.Failure(_)    => Abort.panic(AIMeterClosedException())
-                        case Result.Panic(ex)     => Abort.panic(ex)
+                        case Result.Success(res) => res
+                        case Result.Failure(_)   => Abort.panic(AIMeterClosedException())
+                        case Result.Panic(ex)    => Abort.panic(ex)
                     }
                 }
+            messages = completion.messages
+            // completion.usage feeds the usage calibration; unused on this line (default-off unchanged).
             _ <- Log.debug(
                 s"kyo-ai gen backend=${config.provider.name} returned messages=${messages.size} " +
                     s"toolCalls=${messages.collect { case msg: AssistantMessage => msg.calls.size }.sum}"

@@ -96,7 +96,11 @@ object TestCompletionServer:
                 if streaming then
                     Seq(sseRoute("v1/chat/completions", scripts, received), sseRoute("v1/messages", scripts, received))
                 else
-                    Seq(jsonRoute("v1/chat/completions", scripts, received), jsonRoute("v1/messages", scripts, received))
+                    Seq(
+                        jsonRoute("v1/chat/completions", scripts, received),
+                        jsonRoute("v1/messages", scripts, received),
+                        jsonRoute("v1/embeddings", scripts, received)
+                    )
             result <- HttpServer.initWith(HttpServerConfig.default)(handlers*) { server =>
                 val handle = new TestCompletionServer(scripts, received, s"http://127.0.0.1:${server.port}/v1")
                 f(handle)
@@ -109,13 +113,16 @@ object TestCompletionServer:
     private def popNext(scripts: AtomicRef[Chunk[Scripted]])(using Frame): Maybe[Scripted] < Async =
         scripts.getAndUpdate(_.drop(1)).map(_.headMaybe)
 
-    // Pops the next scripted response as a plain body, or the no-script default (an empty-choices OpenAI body).
-    private def nextBody(scripts: AtomicRef[Chunk[Scripted]])(using Frame): String < Async =
+    // Pops the next scripted response as a plain body, or a path-appropriate no-script default (an
+    // empty-choices completion body, or an empty-data embeddings body).
+    private def nextBody(path: String, scripts: AtomicRef[Chunk[Scripted]])(using Frame): String < Async =
+        val noScriptDefault = if path.contains("embeddings") then """{"data":[]}""" else """{"choices":[]}"""
         popNext(scripts).map {
             case Present(Scripted.Body(b)) => b
-            case Present(Scripted.Sse(cs)) => cs.headMaybe.getOrElse("""{"choices":[]}""")
-            case Absent                    => """{"choices":[]}"""
+            case Present(Scripted.Sse(cs)) => cs.headMaybe.getOrElse(noScriptDefault)
+            case Absent                    => noScriptDefault
         }
+    end nextBody
 
     // The non-streaming endpoint: capture the request, return the next scripted JSON body as plain text
     // (what the client's postText path reads).
@@ -126,7 +133,7 @@ object TestCompletionServer:
     )(using Frame): HttpHandler[?, ?, ?] =
         HttpRoute.postRaw(path).request(_.bodyText).response(_.bodyText).handler { req =>
             received.getAndUpdate(_.append(Captured(path, req.fields.body)))
-                .andThen(nextBody(scripts))
+                .andThen(nextBody(path, scripts))
                 .map(HttpResponse.ok(_))
         }
 
