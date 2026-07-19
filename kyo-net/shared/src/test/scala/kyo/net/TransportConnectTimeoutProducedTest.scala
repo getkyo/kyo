@@ -57,4 +57,29 @@ class TransportConnectTimeoutProducedTest extends Test:
         }
     }
 
+    // The same guard for a TLS connect. connectTimeout bounds the TCP phase whether or not the connection goes on to handshake, so a TLS connect
+    // to a black hole must produce the same typed leaf at the same deadline. The NIO floor armed the deadline only on its plaintext connect
+    // path, so a connectTls there parked until the caller's own timeout with no transport-level bound at all.
+    "a TLS connect that does not complete its TCP phase by the deadline fails with NetConnectTimeoutException".notNative in {
+        given Frame   = Frame.internal
+        val timeout   = 200.millis
+        val transport = NetPlatform.ownedTransport()
+        val tls       = NetTlsConfig(trustAll = true, sniHostname = Present("localhost"))
+        Abort.run[NetException | Closed | Timeout](
+            Async.timeout(5.seconds)(transport.connectTls(blackHoleHost, blackHolePort, tls, timeout).safe.get)
+        ).map { outcome =>
+            discard(transport.close())
+            outcome match
+                case Result.Failure(e: NetConnectTimeoutException) =>
+                    assert(e.timeout == timeout, s"expected the TLS connect's own $timeout deadline, got ${e.timeout}")
+                case other =>
+                    assert(
+                        false,
+                        s"expected NetConnectTimeoutException($timeout) from the TLS connect deadline, got $other " +
+                            "(a Timeout means the TLS connect path armed no deadline)"
+                    )
+            end match
+        }
+    }
+
 end TransportConnectTimeoutProducedTest

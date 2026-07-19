@@ -61,6 +61,12 @@ final case class NetUnixConnectException(path: String, cause: String | Throwable
 final case class NetConnectTimeoutException(host: String, port: Int, timeout: Duration)(using Frame)
     extends NetConnectionException(s"connect to $host:$port timed out after $timeout")
 
+/** A connect to the Unix-domain socket at `path` did not complete within `timeout`. A Unix socket has no port, so it carries the path where
+  * [[NetConnectTimeoutException]] carries host and port, mirroring the [[NetUnixConnectException]] / [[NetConnectException]] pairing.
+  */
+final case class NetUnixConnectTimeoutException(path: String, timeout: Duration)(using Frame)
+    extends NetConnectionException(s"connect to Unix socket '$path' timed out after $timeout")
+
 /** Binding/listening on `host:port` (or the bind step of a Unix listener) failed (address already in use, permission denied, ...). */
 final case class NetBindException(host: String, port: Int, cause: String | Throwable = "")(using Frame)
     extends NetConnectionException(s"bind/listen on $host:$port failed${NetException.suffix(cause)}", cause)

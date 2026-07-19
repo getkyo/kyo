@@ -18,6 +18,7 @@ import kyo.net.NetTlsConfig
 import kyo.net.NetTlsHandshakeException
 import kyo.net.NetTlsHandshakeTimeoutException
 import kyo.net.NetUnixConnectException
+import kyo.net.NetUnixConnectTimeoutException
 import kyo.net.internal.transport.*
 import kyo.scheduler.IOPromise
 import scala.scalajs.js
@@ -307,7 +308,11 @@ final private[kyo] class JsTransport private (
         if connectTimeout.isFinite then
             val timer = Clock.live.unsafe.sleep(connectTimeout)
             timer.onComplete { _ =>
-                promise.completeDiscard(Result.fail(NetConnectTimeoutException(host, port, connectTimeout)))
+                // port < 0 is the Unix sentinel the connect-failure leaves already use; a Unix socket has no port to report.
+                val leaf =
+                    if port < 0 then NetUnixConnectTimeoutException(host, connectTimeout)
+                    else NetConnectTimeoutException(host, port, connectTimeout)
+                promise.completeDiscard(Result.fail(leaf))
             }
             // Disarm: when the connect outcome completes `promise` first, interrupt the timer fiber so it never fires.
             promise.onComplete { _ =>
@@ -521,6 +526,10 @@ final private[kyo] class JsTransport private (
 
         val net    = js.Dynamic.global.require("net")
         val socket = net.createConnection(js.Dynamic.literal(path = path))
+
+        // A Unix connect parks where the OS allows it (Linux blocks when the accept queue is full; macOS fails fast), so it carries the same
+        // deadline a TCP connect does rather than accepting the parameter and ignoring it. -1 is the Unix sentinel, which selects the Unix leaf.
+        armConnectDeadline(promise, path, -1, connectTimeout)
 
         // Pause immediately - kyo controls data flow
         discard(socket.pause())

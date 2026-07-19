@@ -22,6 +22,7 @@ import kyo.net.NetTlsException
 import kyo.net.NetTlsHandshakeException
 import kyo.net.NetTlsHandshakeTimeoutException
 import kyo.net.NetUnixConnectException
+import kyo.net.NetUnixConnectTimeoutException
 import kyo.net.internal.HandshakeFailure
 import kyo.net.internal.HandshakeState
 import kyo.net.internal.TlsEngine
@@ -482,10 +483,16 @@ final private[net] class PosixTransport private[posix] (
         port: Int,
         timeout: Duration
     )(using AllowUnsafe, Frame): Unit =
-        if port >= 0 && timeout.isFinite then
+        // A Unix connect is bounded too. It parks where the OS lets it: on Linux a connect to a socket whose accept queue is full blocks,
+        // while macOS fails it fast with ECONNREFUSED, so the timer simply never fires there. The guard here was previously `port >= 0`, which
+        // skipped Unix entirely for want of a typed leaf to produce; `port < 0` is the same sentinel `connectFail` uses to pick the Unix leaf.
+        if timeout.isFinite then
             val timer = Clock.live.unsafe.sleep(timeout)
             timer.onComplete { _ =>
-                promise.completeDiscard(Result.fail(NetConnectTimeoutException(host, port, timeout)))
+                val leaf =
+                    if port < 0 then NetUnixConnectTimeoutException(host, timeout)
+                    else NetConnectTimeoutException(host, port, timeout)
+                promise.completeDiscard(Result.fail(leaf))
             }
             // Disarm: when the connect outcome completes `promise` first, interrupt the timer fiber so it never fires.
             promise.onComplete { _ =>

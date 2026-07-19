@@ -33,6 +33,7 @@ import kyo.net.NetTlsException
 import kyo.net.NetTlsHandshakeException
 import kyo.net.NetTlsHandshakeTimeoutException
 import kyo.net.NetUnixConnectException
+import kyo.net.NetUnixConnectTimeoutException
 import kyo.net.internal.transport.*
 import kyo.scheduler.IOPromise
 import scala.annotation.tailrec
@@ -428,6 +429,13 @@ final private[kyo] class NioTransport private (
     ): Fiber.Unsafe[NetConnection, Abort[NetException]] =
         kyo.net.Transport.checkConnectTimeout(connectTimeout)
         val promise = new IOPromise[NetException, Connection[NioHandle]]
+
+        // Arm the connect-deadline for the TCP phase, as the plaintext path does. connectTimeout bounds the connect whether or not the
+        // connection goes on to handshake, so a TLS connect to a peer that never answers must fail with the same typed leaf at the same
+        // deadline; without this the TLS path had no transport-level bound at all and parked until the caller's own timeout. Armed before the
+        // channel work so it covers the whole phase, and it races the OS outcome on `promise` (at most once), which is what discriminates the
+        // timeout leaf from a NetConnectException. The handshake phase that follows is bounded separately by tls.handshakeTimeout.
+        armConnectDeadline(promise, host, port, connectTimeout)
 
         // Hoisted so the catch can close it (same as the plaintext connect): channel.connect throws after the channel is open, and the failure
         // paths inside the try already close it, so only this synchronous catch was leaking the just-opened channel fd.
@@ -1167,7 +1175,11 @@ final private[kyo] class NioTransport private (
         if connectTimeout.isFinite then
             val timer = Clock.live.unsafe.sleep(connectTimeout)
             timer.onComplete { _ =>
-                connPromise.completeDiscard(Result.fail(NetConnectTimeoutException(host, port, connectTimeout)))
+                // port < 0 is the Unix sentinel the connect-failure leaves already use; a Unix socket has no port to report.
+                val leaf =
+                    if port < 0 then NetUnixConnectTimeoutException(host, connectTimeout)
+                    else NetConnectTimeoutException(host, port, connectTimeout)
+                connPromise.completeDiscard(Result.fail(leaf))
             }
             // Disarm: when the connect outcome completes connPromise first, interrupt the timer fiber so it never fires.
             connPromise.onComplete { _ =>
@@ -1197,6 +1209,9 @@ final private[kyo] class NioTransport private (
             else
                 // port = -1 sentinel: a Unix socket has no port, so connectFail routes failures to NetUnixConnectException.
                 awaitConnect(channel, path, -1, promise, config.channelCapacity, config.readChunkSize)
+                // A Unix connect parks where the OS allows it (Linux blocks when the accept queue is full; macOS fails fast), so it carries
+                // the same deadline a TCP connect does rather than accepting the parameter and ignoring it.
+                armConnectDeadline(promise, path, -1, connectTimeout)
             end if
         catch
             case e: IOException =>
