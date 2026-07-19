@@ -1641,6 +1641,32 @@ final private[net] class PosixTransport private[posix] (
                             case Result.Success(_) => ()
                             case _                 => dischargePendingHandshake(handshakeToken)
                         }
+                        // Bound the upgrade handshake, the third handshake role. A peer that never sends its side of the STARTTLS handshake
+                        // leaves this parked on a read forever; the plaintext connection has already been detached by now, so nothing else owns
+                        // the fd or the engine, and on the process-shared transport no later close() sweeps them. `handshakeDisarm` is the same
+                        // exactly-once gate driveHandshake's three outcomes use, so the deadline and the real outcome are mutually exclusive.
+                        // The teardown rides submitEngineOp for the same UAF reason the registered obligation above does. There is no fresh
+                        // connect port for an upgrade, so the leaf carries -1, matching the convention the handshake-failure leaf uses here.
+                        // `Duration.Infinity` arms no timer.
+                        if tls.handshakeTimeout.isFinite then
+                            val deadline = Clock.live.unsafe.sleep(tls.handshakeTimeout)
+                            deadline.onComplete { _ =>
+                                if handshakeDisarm() then
+                                    unregisterHandshake(handshakeToken)
+                                    handle.driver.submitEngineOp { () =>
+                                        reaped.set(true)
+                                        releaseFailedUpgrade(handle, engine)
+                                        out.completeDiscard(Result.fail(
+                                            NetTlsHandshakeTimeoutException(upgradeHost(tls, isServer), -1, tls.handshakeTimeout)
+                                        ))
+                                    }
+                            }
+                            out.onComplete { _ =>
+                                deadline.interruptDiscard(
+                                    Result.Panic(Closed("PosixTransport", summon[Frame], "upgrade settled before deadline"))
+                                )
+                            }
+                        end if
                         // driveUpgradeRead's parked waiter fails with the transport's own typed leaf (a close raced the in-flight read): surface
                         // it directly rather than re-wrapping a transport failure as a handshake one. Any other cause is a genuine handshake
                         // failure (protocol error, engine throw), wrapped as NetTlsHandshakeException as before.

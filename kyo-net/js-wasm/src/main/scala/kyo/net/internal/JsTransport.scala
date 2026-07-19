@@ -910,6 +910,23 @@ final private[kyo] class JsTransport private (
 
         val driver = pool.next()
 
+        // Bound the upgrade handshake. The plaintext connection was already detached above, so `promise` is the sole owner of the socket for
+        // the duration; a peer that never completes its side of the STARTTLS handshake would otherwise leave it parked forever with nothing to
+        // reclaim it, and the process-shared transport is never closed. Settling `promise` runs the same release a handshake failure takes, so
+        // the deadline reuses that path rather than adding a second teardown. There is no fresh connect port for an upgrade, so the leaf carries
+        // -1, matching the other backends. `Duration.Infinity` arms no timer.
+        if tls.handshakeTimeout.isFinite then
+            val deadline = Clock.live.unsafe.sleep(tls.handshakeTimeout)
+            deadline.onComplete { _ =>
+                val host = tls.sniHostname.getOrElse("")
+                if promise.complete(Result.fail(NetTlsHandshakeTimeoutException(host, -1, tls.handshakeTimeout))) then
+                    discard(tlsSocket.destroy())
+            }
+            promise.onComplete { _ =>
+                deadline.interruptDiscard(Result.Panic(Closed("JsTransport", summon[Frame], "upgrade settled before deadline")))
+            }
+        end if
+
         discard(tlsSocket.once(
             handshakeEvent,
             { () =>

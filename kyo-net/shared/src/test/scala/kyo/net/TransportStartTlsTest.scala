@@ -1,6 +1,7 @@
 package kyo.net
 
 import kyo.*
+import kyo.net.internal.TlsProviderPlatform
 
 /** Cross-backend, cross-TLS-implementation STARTTLS upgrade via the PUBLIC API only (`Transport.upgradeToTls` on both peers), over the full
   * backend x TLS-impl matrix via [[eachBackendTls]]. A real user cannot reach the connection's `private[net]` upgrade internals, so the server
@@ -12,6 +13,9 @@ import kyo.*
 class TransportStartTlsTest extends Test:
 
     import AllowUnsafe.embrace.danger
+
+    private def assumeTls(): Unit =
+        if !TlsProviderPlatform.registered.exists(_.isAvailable) then cancel("no TLS provider available on this backend")
 
     private val upgradeRequest: Span[Byte] = Span.from(Array[Byte]('U'))
     private val upgradeReady: Span[Byte]   = Span.from(Array[Byte]('R'))
@@ -315,6 +319,43 @@ class TransportStartTlsTest extends Test:
                     case Present(h) => assert(h.size == 32, s"the server cert hash must be 32 bytes (SHA-256), got ${h.size}")
                     case Absent     => fail("an upgraded TLS connection must report the server certificate hash (RFC 5929 channel binding)")
             end for
+        }
+    }
+
+    // A STARTTLS upgrade is the third handshake role, and it was the one with no deadline on any backend: an upgrade whose peer never sends a
+    // ServerHello leaves the handshake parked on a read forever, holding the detached fd and the TLS engine. The plaintext connection has
+    // already been detached by then, so nothing else reclaims them, and on the process-shared transport no later close() sweeps them either.
+    //
+    // The peer here accepts the plaintext connection and simply never upgrades, which is exactly a silent TLS peer from the upgrading side. The
+    // outer Async.timeout is the regression detector: with no deadline armed the upgrade parks and the window expires, failing the assertion
+    // below rather than hanging the suite.
+    "a STARTTLS upgrade whose peer never speaks TLS is reaped on its own deadline" in {
+        assumeTls()
+        given Frame = Frame.internal
+        TlsTestCertShared.writePems.map { case (_, _) =>
+            val transport = NetPlatform.ownedTransport()
+            transport.listen("127.0.0.1", 0, 16)(_ => ()).safe.get.map { silentListener =>
+                transport.connect("127.0.0.1", silentListener.port).safe.get.map { conn =>
+                    val clientTls =
+                        NetTlsConfig(trustAll = true, sniHostname = Present("localhost"), handshakeTimeout = 150.millis)
+                    Abort.run[NetException | Closed | Timeout](
+                        Async.timeout(5.seconds)(transport.upgradeToTls(conn, clientTls, 16).safe.get)
+                    ).map { outcome =>
+                        silentListener.close()
+                        discard(transport.close())
+                        outcome match
+                            case Result.Failure(e: NetTlsHandshakeTimeoutException) =>
+                                assert(e.timeout == 150.millis, s"expected the upgrade's own 150ms deadline, got ${e.timeout}")
+                            case other =>
+                                assert(
+                                    false,
+                                    s"expected NetTlsHandshakeTimeoutException(150ms) from the upgrade handshake deadline, got $other " +
+                                        "(a Timeout means no deadline was armed, so the detached fd and engine leak)"
+                                )
+                        end match
+                    }
+                }
+            }
         }
     }
 
