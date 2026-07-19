@@ -74,7 +74,7 @@ class CompactionReplayTest extends kyo.test.Test[Any]:
         }
     }
 
-    "Q-007 go/no-go: a real two-valued decision over the 6 sessions with a REACHABLE no-go branch" in {
+    "go/no-go: a real two-valued decision over the 6 sessions with a REACHABLE no-go branch" in {
         // The no-go branch is reachable: a synthetic scoreboard where the baseline beats the full design
         // on task-success and token cost returns NoGo, independent of the six real sessions.
         val baselineWins = List(

@@ -405,7 +405,7 @@ final class Compactor private (
             val dupOf      = duplicateMap(units, transcript)
             // ascending score, nudged by BAND-LOCAL verdicts (Stale demotes earlier, Keep holds back). A
             // verdict for a unit outside the fresh band is discarded (never consulted).
-            def effScore(u: Segment): Double =
+            def effectiveScore(u: Segment): Double =
                 val base = scores.get(u.id).getOrElse(0.0)
                 if band.contains(u.id) then
                     state.verdicts.get(u.id) match
@@ -414,11 +414,11 @@ final class Compactor private (
                         case _                      => base
                 else base
                 end if
-            end effScore
+            end effectiveScore
             val candidates =
                 units.toList
                     .filter(u => !rootSet.contains(u.id) && !u.unresolved)
-                    .sortBy(effScore)
+                    .sortBy(effectiveScore)
             @tailrec def demote(rem: List[Segment], st: CompactorState): CompactorState =
                 if viewTokens(project(transcript, st), st.book) <= target then st
                 else

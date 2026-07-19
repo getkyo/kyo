@@ -32,9 +32,10 @@ class LLMTest extends kyo.test.Test[Any]:
     def requestBody(server: TestCompletionServer)(using Frame): String < Async =
         server.captured.map(_.head.body)
 
-    /** The committed default-off golden: the enriched-request bytes for the fixed scripted turn in
-      * INV-CMP-39, captured from the pre-seam eval (compactor Absent) and pinned as a source constant. A
-      * seam edit that leaked a byte onto the Absent path fails INV-CMP-39 against this, not a self-derivation.
+    /** The committed default-off golden: the enriched-request bytes for the fixed scripted turn in the
+      * "default-off matches committed pre-change golden bytes" test below, captured from the pre-seam
+      * eval (compactor Absent) and pinned as a source constant. A seam edit that leaked a byte onto the
+      * Absent path fails that test against this, not a self-derivation.
       */
     val goldenDefaultOffRequest: String =
         """{"model":"gpt-4o","messages":[{"role":"system","content":"you are precise"},{"role":"user","content":"ping"},{"role":"system","content":"================== REMINDERS ==================\n\n1. Your response must contain ONLY the structured tool call\n2. The arguments must strictly follow the tool's json schema, including its semantics\n3. Always perform at least one tool call; it is the only agency you have\n4. Do not output regular text replies, especially empty ones\n5. Do not use a json code block; follow the tool-call format\n6. Generate valid json strictly following the json schema. Do NOT generate xml-like content"}],"tools":[{"function":{"description":"Call this tool with the result. Do not make parallel calls to this tool in the same completion. Only the first invocation will be considered.","name":"result_tool","strict":false,"parameters":{"type":"object","properties":{"resultValue":{"type":"string"}},"required":["resultValue"]}},"type":"function"}],"tool_choice":"required"}"""
@@ -665,7 +666,7 @@ class LLMTest extends kyo.test.Test[Any]:
         assert(ref1.isValid, "a ref to a live AI is valid")
     }
 
-    "INV-CMP-39: default-off matches committed pre-change golden bytes" in {
+    "default-off matches committed pre-change golden bytes" in {
         // With no compactor enabled (env.compactor Absent), the seam is a literal no-op: the enriched-request
         // bytes must equal the committed golden captured from the pre-seam eval, byte-for-byte. The golden was
         // captured independently of this edited path (a source constant), so a regression that leaks a byte
@@ -688,7 +689,7 @@ class LLMTest extends kyo.test.Test[Any]:
         }
     }
 
-    "INV-CMP-40: seam adds no Op, no slot shrink" in {
+    "seam adds no Op, no slot shrink" in {
         // (1) The LLM Op GADT stays at exactly 13 subclasses: the compaction seam mints no new Op.
         val theAi = new AI(0L, new AnyRef)
         val cfg   = serverConfig("http://127.0.0.1:1")
@@ -732,17 +733,17 @@ class LLMTest extends kyo.test.Test[Any]:
         }
     }
 
-    "INV-CMP-68: genLoop merge threads compactor instance-over-scope, last-wins" in {
+    "genLoop merge threads compactor instance-over-scope, last-wins" in {
         // The genLoop env-merge threads the compactor with instance-over-scope precedence
         // (session.env.compactor.orElse(scopeEnv.compactor)): a single active policy, last-wins, never a
         // pipeline. Read the scope and instance envs directly (no generation turn) and assert the precedence.
-        Compactor.init.map { cS =>
-            Compactor.init.map { cI =>
+        Compactor.init.map { scopeCompactor =>
+            Compactor.init.map { instanceCompactor =>
                 val withScope =
                     LLM.run {
-                        AI.enable(cS) {
+                        AI.enable(scopeCompactor) {
                             AI.init.map { withInstance =>
-                                withInstance.enable(cI).andThen {
+                                withInstance.enable(instanceCompactor).andThen {
                                     AI.init.map { bare =>
                                         for
                                             scopeEnv <- AI.env
@@ -764,14 +765,14 @@ class LLMTest extends kyo.test.Test[Any]:
                         }
                     }
                 withScope.map { case (scopeC, instC, bareC) =>
-                    assert(scopeC.exists(_ eq cS), "scope env carries cS")
-                    assert(instC.exists(_ eq cI), "instance env carries cI")
+                    assert(scopeC.exists(_ eq scopeCompactor), "scope env carries scopeCompactor")
+                    assert(instC.exists(_ eq instanceCompactor), "instance env carries instanceCompactor")
                     assert(
-                        instC.orElse(scopeC).exists(_ eq cI),
-                        "both present -> merge picks the instance compactor cI (instance-over-scope)"
+                        instC.orElse(scopeC).exists(_ eq instanceCompactor),
+                        "both present -> merge picks instanceCompactor (instance-over-scope)"
                     )
                     assert(bareC.isEmpty, "a bare instance holds Absent")
-                    assert(bareC.orElse(scopeC).exists(_ eq cS), "only scope present -> merge picks cS")
+                    assert(bareC.orElse(scopeC).exists(_ eq scopeCompactor), "only scope present -> merge picks scopeCompactor")
                     noScope.map { case (nScopeC, nInstC) =>
                         assert(nScopeC.isEmpty && nInstC.isEmpty, "neither present -> both Absent (byte-unchanged)")
                         assert(nInstC.orElse(nScopeC).isEmpty, "neither present -> merged compactor stays Absent")
@@ -781,7 +782,7 @@ class LLMTest extends kyo.test.Test[Any]:
         }
     }
 
-    "INV-CMP-69: an LLM-composed program stays in the < LLM row after the seam (no Async leak)" in {
+    "an LLM-composed program stays in the < LLM row after the seam (no Async leak)" in {
         // The load-bearing compile check: a program built ONLY from LLM operations ascribes to Unit < LLM,
         // proving the seam leaked no Async into the LLM effect's own row (Async still enters only at Gen/Stream,
         // riding LLM.run's residual). A seam edit that widened eval's own < LLM row would make this fail.

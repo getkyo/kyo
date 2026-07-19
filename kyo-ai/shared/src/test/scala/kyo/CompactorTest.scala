@@ -35,7 +35,7 @@ class CompactorTest extends kyo.test.Test[Any]:
 
     // ==== checkpoint 2: grouping ====
 
-    "INV-CMP-02: unit fusion + id (pair never severed)" in {
+    "unit fusion + id (pair never severed)" in {
         Compactor.init.map { c =>
             val ctx = ctxOf(
                 am("do", call("c1", "f", "{}"), call("c2", "g", "{}")),
@@ -50,7 +50,7 @@ class CompactorTest extends kyo.test.Test[Any]:
         }
     }
 
-    "INV-CMP-03: interleaved tool results group correctly" in {
+    "interleaved tool results group correctly" in {
         Compactor.init.map { c =>
             val ctx   = ctxOf(am("do", call("c1", "f", "{}")), um("unrelated"), tm("c1", "r1"))
             val units = c.group(ctx, book0)
@@ -62,7 +62,7 @@ class CompactorTest extends kyo.test.Test[Any]:
         }
     }
 
-    "INV-CMP-04: unresolved unit pinned verbatim" in {
+    "unresolved unit pinned verbatim" in {
         Compactor.init.map { c =>
             val ctx   = ctxOf(am("do", call("c1", "f", "{}")))
             val units = c.group(ctx, book0)
@@ -71,7 +71,7 @@ class CompactorTest extends kyo.test.Test[Any]:
         }
     }
 
-    "INV-CMP-01: transcript immutable across update" in {
+    "transcript immutable across update" in {
         Compactor.init(_.copy(effectiveCap = 40, windowFraction = 1.0)).map { c =>
             val ctx = ctxOf(
                 sm("system"),
@@ -90,7 +90,7 @@ class CompactorTest extends kyo.test.Test[Any]:
 
     // ==== checkpoint 3: graph ====
 
-    "INV-CMP-07: ref extraction + introducer index" in {
+    "ref extraction + introducer index" in {
         Compactor.init(_.copy(adjacencyWeight = 1.0)).map { c =>
             // unit0 introduces both a structured path and a bare word; unit1 re-mentions both plus "the".
             val ctx = ctxOf(
@@ -111,7 +111,7 @@ class CompactorTest extends kyo.test.Test[Any]:
         }
     }
 
-    "INV-CMP-08: ref repoint after supersession" in {
+    "ref repoint after supersession" in {
         Compactor.init.map { c =>
             val ctx = ctxOf(
                 um("u0 introduces key_f here"),
@@ -130,7 +130,7 @@ class CompactorTest extends kyo.test.Test[Any]:
         }
     }
 
-    "INV-CMP-09: keyless tool is a supersession no-op" in {
+    "keyless tool is a supersession no-op" in {
         Compactor.init.map { c =>
             val units      = Chunk(seg(0), seg(1))
             val superseded = c.supersession(units, Dict.empty) // no keys resolved => keyless
@@ -138,7 +138,7 @@ class CompactorTest extends kyo.test.Test[Any]:
         }
     }
 
-    "INV-CMP-10: read/write supersession trigger" in {
+    "read/write supersession trigger" in {
         Compactor.init.map { c =>
             val units = Chunk(seg(1), seg(3), seg(5))
             val keys =
@@ -149,7 +149,7 @@ class CompactorTest extends kyo.test.Test[Any]:
         }
     }
 
-    "INV-CMP-11: supersession is penalty not edge; W row-stochastic" in {
+    "supersession is penalty not edge; W row-stochastic" in {
         Compactor.init.map { c =>
             val units = Chunk(seg(0), seg(1), seg(2))
             val g = edges(
@@ -177,7 +177,7 @@ class CompactorTest extends kyo.test.Test[Any]:
 
     // ==== checkpoint 4: scoring ====
 
-    "INV-CMP-14: PPR mass split + geometric decay" in {
+    "PPR mass split + geometric decay" in {
         Compactor.init.map { c =>
             // chain 2 -> 1 -> 0 (Adj); seed on unit2.
             val units = Chunk(seg(0), seg(1), seg(2))
@@ -188,7 +188,7 @@ class CompactorTest extends kyo.test.Test[Any]:
         }
     }
 
-    "INV-CMP-15: Adj-only equals recency decay" in {
+    "Adj-only equals recency decay" in {
         Compactor.init.map { c =>
             val alpha = 0.15
             val units = Chunk(seg(0), seg(1), seg(2), seg(3))
@@ -202,7 +202,7 @@ class CompactorTest extends kyo.test.Test[Any]:
         }
     }
 
-    "INV-CMP-16: ref/sem jump bypasses hops; sem weight halves per semanticDecayHalfLife gap" in {
+    "ref/sem jump bypasses hops; sem weight halves per semanticDecayHalfLife gap" in {
         Compactor.init(_.copy(semanticDecayHalfLife = 1, semanticFloor = 0.0, semanticNeighbors = 5)).map { c =>
             val v     = Embedding(Span(1.0f, 0.0f), "m", 2)
             val ctx   = ctxOf(um("u0 token_shared alpha"), um("u1 token_shared beta"), um("u2 token_shared gamma"))
@@ -226,7 +226,7 @@ class CompactorTest extends kyo.test.Test[Any]:
         }
     }
 
-    "INV-CMP-17: hub discount + row-normalization" in {
+    "hub discount + row-normalization" in {
         Compactor.init.map { c =>
             // a token mentioned in many units gets a hub-discounted Ref weight.
             val ctx = ctxOf(
@@ -247,7 +247,7 @@ class CompactorTest extends kyo.test.Test[Any]:
         }
     }
 
-    "INV-CMP-18: pinned roots verbatim, not judged" in {
+    "pinned roots verbatim, not judged" in {
         Compactor.init(_.copy(tailTurns = 1)).map { c =>
             val ctx   = ctxOf(sm("sys"), um("first task"), am("mid"), am("do", call("c1", "f", "{}")), um("latest"))
             val units = c.group(ctx, book0)
@@ -259,7 +259,7 @@ class CompactorTest extends kyo.test.Test[Any]:
         }
     }
 
-    "INV-CMP-19: light system seed" in {
+    "light system seed" in {
         Compactor.init(_.copy(tailTurns = 1)).map { c =>
             val ctx   = ctxOf(sm("sys"), um("task"), um("objective"), am("final"))
             val units = c.group(ctx, book0)
@@ -268,7 +268,7 @@ class CompactorTest extends kyo.test.Test[Any]:
         }
     }
 
-    "INV-CMP-20: no separate recency prior; staleness = penalty + sem decay" in {
+    "no separate recency prior; staleness = penalty + sem decay" in {
         Compactor.init.map { c =>
             // recency arises only from the Adj chain; with no seed on a unit and no edges, its score is 0.
             val units = Chunk(seg(0), seg(1))
@@ -280,7 +280,7 @@ class CompactorTest extends kyo.test.Test[Any]:
         }
     }
 
-    "INV-CMP-21: moving frontier, same computation" in {
+    "moving frontier, same computation" in {
         Compactor.init.map { c =>
             val units = Chunk(seg(0), seg(1), seg(2))
             val g     = edges(2 -> List(Edge(1, EdgeKind.Adj, 1.0)), 1 -> List(Edge(0, EdgeKind.Adj, 1.0)))
@@ -292,7 +292,7 @@ class CompactorTest extends kyo.test.Test[Any]:
         }
     }
 
-    "INV-CMP-22: ordinal scores; fresh power iteration" in {
+    "ordinal scores; fresh power iteration" in {
         Compactor.init.map { c =>
             val units = Chunk(seg(0), seg(1))
             val g     = edges(1 -> List(Edge(0, EdgeKind.Adj, 1.0)))
@@ -303,7 +303,7 @@ class CompactorTest extends kyo.test.Test[Any]:
         }
     }
 
-    "INV-CMP-65: absent category folds into tail" in {
+    "absent category folds into tail" in {
         Compactor.init(_.copy(tailTurns = 1)).map { c =>
             // no unresolved unit: its 0.15 share folds into the tail (0.25 -> 0.40 on the tail unit).
             val ctx   = ctxOf(sm("sys"), um("task"), um("objective"), am("final"))
@@ -326,7 +326,7 @@ class CompactorTest extends kyo.test.Test[Any]:
 
     // ==== checkpoint 5/6: cut, band, project, ladder ====
 
-    "INV-CMP-23: budget sets the cut line" in {
+    "budget sets the cut line" in {
         // explicit large window so the occupancy gate lands on the UPDATE path deterministically; units are
         // large enough that masking them (a ~60-byte marker) genuinely shrinks the view toward the budget.
         Compactor.init(_.copy(effectiveCap = 40, windowFraction = 1.0, tailTurns = 1)).map { c =>
@@ -343,7 +343,7 @@ class CompactorTest extends kyo.test.Test[Any]:
         }
     }
 
-    "INV-CMP-24: band = K nearest cut; overflow waits" in {
+    "band = K nearest cut; overflow waits" in {
         Compactor.init(_.copy(bandSize = 2, tailTurns = 1)).map { c =>
             // six units, four demotable (non-root): the judge band is capped at bandSize=2, the overflow waits.
             val ctx   = ctxOf(sm("s"), um("first"), am("a"), am("b"), am("d"), um("latest"))
@@ -358,7 +358,7 @@ class CompactorTest extends kyo.test.Test[Any]:
     def resultBody(text: String): String =
         s"""{"choices":[{"message":{"role":"assistant","content":"$text","tool_calls":null}}]}"""
 
-    "INV-CMP-25: judge question scope" in {
+    "judge question scope" in {
         Compactor.init.map { c =>
             val ctx  = ctxOf(am("a " + ("x" * 50)))
             val band = c.group(ctx, book0).toList
@@ -369,7 +369,7 @@ class CompactorTest extends kyo.test.Test[Any]:
         }
     }
 
-    "INV-CMP-26: verdicts band-local ordinal" in {
+    "verdicts band-local ordinal" in {
         // update consumes state.verdicts: a Stale verdict on a band unit nudges it to be demoted, a Keep holds
         // it back. Differential: the SAME transcript, run once with a Stale verdict on the newest (highest-
         // score) demotable unit and once with a Keep, yields different demotion outcomes for that unit.
@@ -396,7 +396,7 @@ class CompactorTest extends kyo.test.Test[Any]:
         }
     }
 
-    "INV-CMP-27: stale verdict discarded" in {
+    "stale verdict discarded" in {
         Compactor.init(_.copy(effectiveCap = 30, windowFraction = 1.0, tailTurns = 1)).map { c =>
             // a verdict for a unit outside the fresh band (here the leading system ROOT, never in the band) is
             // discarded: it is not consulted and never forces the root's demotion.
@@ -416,7 +416,7 @@ class CompactorTest extends kyo.test.Test[Any]:
         }
     }
 
-    "INV-CMP-28: project total, covers/skip" in {
+    "project total, covers/skip" in {
         Compactor.init.map { c =>
             val ctx  = ctxOf(um("u0"), um("u1"), um("u2"), um("u3"))
             val st   = CompactorState.empty.copy(renderings = Dict[Int, Rendered]((0, Rendered(3, 3, 0, Chunk(sm("[summary of 0..2]"))))))
@@ -428,7 +428,7 @@ class CompactorTest extends kyo.test.Test[Any]:
         }
     }
 
-    "INV-CMP-29: markers provider-legal; pairs together" in {
+    "markers provider-legal; pairs together" in {
         Compactor.init.map { c =>
             val ctx = ctxOf(am("do", call("c1", "f", "{}")), tm("c1", "result"), um("after"))
             val st  = CompactorState.empty.copy(renderings = Dict[Int, Rendered]((0, Rendered(4, 1, 0, Chunk(sm("[compacted region 0]"))))))
@@ -439,7 +439,7 @@ class CompactorTest extends kyo.test.Test[Any]:
         }
     }
 
-    "INV-CMP-30: marker carries recall id" in {
+    "marker carries recall id" in {
         Compactor.init.map { c =>
             val ctx    = ctxOf(um("payload " + ("x" * 30)))
             val units  = c.group(ctx, book0)
@@ -449,7 +449,7 @@ class CompactorTest extends kyo.test.Test[Any]:
         }
     }
 
-    "INV-CMP-31: five levels; non-distorting preferred" in {
+    "five levels; non-distorting preferred" in {
         Compactor.init.map { c =>
             val ctx = ctxOf(um("filler " + ("x" * 200)))
             val u   = c.group(ctx, book0).head
@@ -463,7 +463,7 @@ class CompactorTest extends kyo.test.Test[Any]:
         }
     }
 
-    "INV-CMP-32: L1 skips diffs/patches" in {
+    "L1 skips diffs/patches" in {
         Compactor.init.map { c =>
             val json = "{\n  \"a\": 1,\n  \"a\": 1,\n  \"a\": 1\n}"
             val diff = "@@ -1,3 +1,3 @@\n-old\n+new\n context"
@@ -474,7 +474,7 @@ class CompactorTest extends kyo.test.Test[Any]:
         }
     }
 
-    "INV-CMP-33: L2 elision/masking zero distortion" in {
+    "L2 elision/masking zero distortion" in {
         Compactor.init(_.copy(elisionThreshold = 40)).map { c =>
             // distinct (non-repeating) oversized content: compress cannot reduce it, so the ladder elides at L2.
             val big = (0 until 30).map(i => s"line$i has distinct content").mkString("\n")
@@ -496,7 +496,7 @@ class CompactorTest extends kyo.test.Test[Any]:
         }
     }
 
-    "INV-CMP-34: dedup reference vs near-dup supersession" in {
+    "dedup reference vs near-dup supersession" in {
         Compactor.init.map { c =>
             val ctx   = ctxOf(um("identical payload text"), um("identical payload text"))
             val units = c.group(ctx, book0)
@@ -514,7 +514,7 @@ class CompactorTest extends kyo.test.Test[Any]:
         }
     }
 
-    "INV-CMP-35: summary from original, never re-summarized" in {
+    "summary from original, never re-summarized" in {
         Compactor.init(_.copy(tailTurns = 1)).map { c =>
             // a contiguous run of >= 2 demotable units is a summarization candidate; its source is the ORIGINAL
             // transcript content (never a prior summary).
@@ -537,7 +537,7 @@ class CompactorTest extends kyo.test.Test[Any]:
         }
     }
 
-    "INV-CMP-35: coherence split breaks a low-coherence run at the widest vector gap" in {
+    "coherence split breaks a low-coherence run at the widest vector gap" in {
         Compactor.init(_.copy(tailTurns = 1)).map { c =>
             // Two coherent clusters inside one contiguous run of demotable units: {2,3} near-identical, {4,5}
             // near-identical, cross-cluster near-orthogonal. The whole run's mean pairwise cosine sits below
@@ -557,7 +557,7 @@ class CompactorTest extends kyo.test.Test[Any]:
         }
     }
 
-    "INV-CMP-35: a coherent run is not split, and coherenceFloor is a live knob" in {
+    "a coherent run is not split, and coherenceFloor is a live knob" in {
         Compactor.init(_.copy(tailTurns = 1)).map { c =>
             // coherenceFloor gates the split: at the default floor the coherent run stays whole.
             val ctx = ctxOf(sm("s"), um("first"), am("m0"), am("m1"), am("m2"), am("m3"), um("latest"))
@@ -587,7 +587,7 @@ class CompactorTest extends kyo.test.Test[Any]:
         }
     }
 
-    "INV-CMP-35: an intermediate User boundary splits a run even with no vectors" in {
+    "an intermediate User boundary splits a run even with no vectors" in {
         Compactor.init(_.copy(tailTurns = 1)).map { c =>
             // A run of demotable units with an intermediate UserMessage (not the campaign's first or last user,
             // so not itself a root): the run splits around that user boundary rather than staying contiguous.
@@ -601,7 +601,7 @@ class CompactorTest extends kyo.test.Test[Any]:
         }
     }
 
-    "INV-CMP-36: L4 marker-only, recoverable" in {
+    "L4 marker-only, recoverable" in {
         Compactor.init.map { c =>
             val ctx = ctxOf(um("payload " + ("x" * 40)))
             val u   = c.group(ctx, book0).head
@@ -616,7 +616,7 @@ class CompactorTest extends kyo.test.Test[Any]:
         }
     }
 
-    "INV-CMP-49: demotion set definition" in {
+    "demotion set definition" in {
         Compactor.init(_.copy(tailTurns = 1)).map { c =>
             val ctx   = ctxOf(sm("s"), um("first"), am("a"), am("b"), um("latest"))
             val units = c.group(ctx, book0)
@@ -629,7 +629,7 @@ class CompactorTest extends kyo.test.Test[Any]:
 
     // ==== checkpoint 7: lifecycle / render ====
 
-    "INV-CMP-05: no derived state persisted (recomputed, not cached)" in {
+    "no derived state persisted (recomputed, not cached)" in {
         Compactor.init.map { c =>
             assert(CompactorState.empty.productArity == 5, "CompactorState persists exactly 5 fields")
             // grouping recomputed identically from the transcript.
@@ -640,7 +640,7 @@ class CompactorTest extends kyo.test.Test[Any]:
         }
     }
 
-    "INV-CMP-06: rebuild state from transcript" in {
+    "rebuild state from transcript" in {
         Compactor.init(_.copy(effectiveCap = 40, windowFraction = 1.0, tailTurns = 1)).map { c =>
             val ctx = ctxOf(sm("s"), um("first"), am("a " + ("x" * 120)), um("latest"))
             LLM.run {
@@ -653,7 +653,7 @@ class CompactorTest extends kyo.test.Test[Any]:
         }
     }
 
-    "INV-CMP-06 non-append guard: rewound transcript resets state; append does not (two sub-cases)" in {
+    "non-append guard: rewound transcript resets state; append does not (two sub-cases)" in {
         Compactor.init.map { c =>
             LLM.run {
                 AI.initWith { ai =>
@@ -696,7 +696,7 @@ class CompactorTest extends kyo.test.Test[Any]:
         }
     }
 
-    "INV-CMP-05/06 state-shape: CompactorState/Book/Rendered persist exactly the prescribed fields" in {
+    "state-shape: CompactorState/Book/Rendered persist exactly the prescribed fields" in {
         Compactor.init.map { _ =>
             assert(Segment(0, Chunk.empty, false, 0).productArity == 4, "Segment(id,messages,unresolved,tokens)")
             assert(Rendered(0, 0, 0, Chunk.empty).productArity == 4, "Rendered(level,covers,at,replacement)")
@@ -705,7 +705,7 @@ class CompactorTest extends kyo.test.Test[Any]:
         }
     }
 
-    "INV-CMP-37: byte-identical view between updates (golden)" in {
+    "byte-identical view between updates (golden)" in {
         Compactor.init(_.copy(effectiveCap = 100000, windowFraction = 1.0)).map { c =>
             val ctx = ctxOf(sm("s"), um("first"), am("small"), um("latest"))
             LLM.run {
@@ -721,10 +721,10 @@ class CompactorTest extends kyo.test.Test[Any]:
         }
     }
 
-    "INV-CMP-38: shallow-edit preference; recall at tail" in {
+    "shallow-edit preference; recall at tail" in {
         Compactor.init.map { c =>
             // recall appends at the tail rather than un-freezing a deep region: the marker points at recall,
-            // which lands a fresh tail message (verified end-to-end in INV-CMP-60).
+            // which lands a fresh tail message (verified end-to-end in "recall lands at tail, no prefix edit" below).
             val ctx    = ctxOf(um("deep " + ("x" * 30)))
             val units  = c.group(ctx, book0)
             val marker = c.maskMarker(units.head, ctx)
@@ -732,7 +732,7 @@ class CompactorTest extends kyo.test.Test[Any]:
         }
     }
 
-    "INV-CMP-41: decide against fresh derivation" in {
+    "decide against fresh derivation" in {
         Compactor.init.map { c =>
             // scores are computed against the freshly-derived graph, not a remembered conclusion.
             val units = Chunk(seg(0), seg(1))
@@ -742,7 +742,7 @@ class CompactorTest extends kyo.test.Test[Any]:
         }
     }
 
-    "INV-CMP-42: summary re-validated at adoption" in {
+    "summary re-validated at adoption" in {
         Compactor.init.map { c =>
             // a prepared summary for a unit that is now a root (no longer demotable) is not adopted.
             val ctx   = ctxOf(sm("s"), um("first"), um("latest"))
@@ -753,7 +753,7 @@ class CompactorTest extends kyo.test.Test[Any]:
     }
     val ctxBook: Book = book0
 
-    "INV-CMP-43: re-warmed unit keeps rendering (rescue is non-selection)" in {
+    "re-warmed unit keeps rendering (rescue is non-selection)" in {
         Compactor.init.map { c =>
             // a unit already rendered is not re-demoted, and rescue does not auto-promote it to verbatim.
             val st = CompactorState.empty.copy(renderings = Dict[Int, Rendered]((2, Rendered(2, 1, 0, Chunk(sm("[compacted 2]"))))))
@@ -764,7 +764,7 @@ class CompactorTest extends kyo.test.Test[Any]:
         }
     }
 
-    "INV-CMP-44: two-touch rule; forced exempt" in {
+    "two-touch rule; forced exempt" in {
         Compactor.init(_.copy(effectiveCap = 40, windowFraction = 1.0, tailTurns = 1)).map { c =>
             // ladderStep never deepens a unit reduced THIS pass (Rendered.at == updateIdx): the two-touch rule.
             val ctx0     = ctxOf(um("payload " + ("x" * 40)))
@@ -786,7 +786,7 @@ class CompactorTest extends kyo.test.Test[Any]:
         }
     }
 
-    "INV-CMP-45: tail bounded turns AND tokens" in {
+    "tail bounded turns AND tokens" in {
         Compactor.init(_.copy(tailTurns = 10, tailTokens = 5)).map { c =>
             // three units each 4 tokens; tailTokens=5 keeps only the newest (the older fall out on the token bound).
             val units = Chunk(Segment(0, Chunk(0), false, 4), Segment(1, Chunk(1), false, 4), Segment(2, Chunk(2), false, 4))
@@ -795,7 +795,7 @@ class CompactorTest extends kyo.test.Test[Any]:
         }
     }
 
-    "INV-CMP-46: render path model-free" in {
+    "render path model-free" in {
         Compactor.init(_.copy(effectiveCap = 100000, windowFraction = 1.0)).map { c =>
             // the synchronous render path returns a pure projection; no model output is consulted to build it.
             val ctx = ctxOf(sm("s"), um("first"), am("small"), um("latest"))
@@ -809,7 +809,7 @@ class CompactorTest extends kyo.test.Test[Any]:
         }
     }
 
-    "INV-CMP-47: stash does not change view bytes" in {
+    "stash does not change view bytes" in {
         Compactor.init.map { c =>
             val st = CompactorState.empty.copy(
                 vectors = Dict[Int, Embedding]((0, Embedding(Span(1.0f), "m", 1))),
@@ -822,7 +822,7 @@ class CompactorTest extends kyo.test.Test[Any]:
         }
     }
 
-    "INV-CMP-48: occupancy gate branches" in {
+    "occupancy gate branches" in {
         Compactor.init.map { c =>
             // E == min(windowFraction*window, effectiveCap), via the real effectiveLength.
             assert(
@@ -836,7 +836,7 @@ class CompactorTest extends kyo.test.Test[Any]:
         }
     }
 
-    "INV-CMP-50: one judge batch in flight" in {
+    "one judge batch in flight" in {
         TestCompletionServer.run { server =>
             val cfg = serverConfig(server.baseUrl)
             Compactor.init(_.copy(bandSize = 4, effectiveCap = 40, windowFraction = 1.0, tailTurns = 1)).map { c =>
@@ -855,7 +855,7 @@ class CompactorTest extends kyo.test.Test[Any]:
         }
     }
 
-    "INV-CMP-51: ladder pass order; non-blocking" in {
+    "ladder pass order; non-blocking" in {
         Compactor.init(_.copy(effectiveCap = 40, windowFraction = 1.0, tailTurns = 1)).map { c =>
             // the update runs its ladder synchronously and returns without waiting on a model response.
             val ctx = ctxOf(sm("s"), um("first"), am("a " + ("x" * 200)), um("latest"))
@@ -869,7 +869,7 @@ class CompactorTest extends kyo.test.Test[Any]:
         }
     }
 
-    "INV-CMP-52: co-pin check" in {
+    "co-pin check" in {
         Compactor.init.map { c =>
             // a live referrer keeps its Ref target co-pinned.
             val units = Chunk(seg(0), seg(1))
@@ -879,7 +879,7 @@ class CompactorTest extends kyo.test.Test[Any]:
         }
     }
 
-    "INV-CMP-53: cache gate defers deep edits" in {
+    "cache gate defers deep edits" in {
         Compactor.init.map { c =>
             // a shallow edit (large saving, small rendered tail) passes; a deep edit into a big frozen prefix defers.
             assert(c.cacheGatePasses(saved = 100, lCut = 20, cachedReadDiscount = 0.1, writePremium = 1.0), "shallow edit passes")
@@ -890,7 +890,7 @@ class CompactorTest extends kyo.test.Test[Any]:
         }
     }
 
-    "INV-CMP-53: the cache gate binds L_cut to the post-edit suffix, not the whole view" in {
+    "the cache gate binds L_cut to the post-edit suffix, not the whole view" in {
         Compactor.init.map { c =>
             // The true post-edit suffix is small, so the gate passes; whole-view occupancy, dominated by the frozen prefix, would exceed the gate.
             val ctx      = ctxOf(sm("s"), um("q"), am("M" * 4000), am("D" * 400), am("s1 small"), am("s2 small"), um("last"))
@@ -912,7 +912,7 @@ class CompactorTest extends kyo.test.Test[Any]:
         }
     }
 
-    "INV-CMP-54: rot rule triggers + book.skip" in {
+    "rot rule triggers + book.skip" in {
         Compactor.init(_.copy(effectiveCap = 200, windowFraction = 1.0, tailTurns = 1)).map { c =>
             // rot triggers: re-fetch threshold OR budget exhaustion; answer quality is never a trigger.
             assert(c.rotFires(refetchCount = 2, occupied = 0, e = 1000.0), "refetch >= refetchThreshold fires")
@@ -974,7 +974,7 @@ class CompactorTest extends kyo.test.Test[Any]:
 
     // ==== checkpoint 8: background / recall / forced / calibrate ====
 
-    "INV-CMP-55: forced path omit-only + overflow abort" in {
+    "forced path omit-only + overflow abort" in {
         Compactor.init(_.copy(effectiveCap = 1, windowFraction = 1.0, hardWindowFraction = 0.0001, tailTurns = 10)).map { c =>
             // window = 50 tokens; roots (system + first/last user + tail) alone exceed it -> Abort.
             val cfg = serverConfig("http://127.0.0.1:1").model(Config.OpenAI, "gpt-4o", 50)
@@ -993,7 +993,7 @@ class CompactorTest extends kyo.test.Test[Any]:
         }
     }
 
-    "INV-CMP-56: never-completing embedder still yields correct view" in {
+    "never-completing embedder still yields correct view" in {
         TestCompletionServer.run { server =>
             // no embeddings scripted: the embed fork never lands, yet render returns a deterministic view.
             val cfg = serverConfig(server.baseUrl)
@@ -1010,7 +1010,7 @@ class CompactorTest extends kyo.test.Test[Any]:
         }
     }
 
-    "INV-CMP-57: judge runs fresh, no transcript leak" in {
+    "judge runs fresh, no transcript leak" in {
         TestCompletionServer.run { server =>
             val cfg = serverConfig(server.baseUrl)
             // judge defaults to config.judge.getOrElse(chatCfg.provider.small); provider.small carries its OWN
@@ -1050,7 +1050,7 @@ class CompactorTest extends kyo.test.Test[Any]:
         }
     }
 
-    "INV-CMP-58: results only via cell (LLM.State untouched)" in {
+    "results only via cell (LLM.State untouched)" in {
         TestCompletionServer.run { server =>
             val cfg = serverConfig(server.baseUrl)
             Compactor.init(_.copy(effectiveCap = 100000, windowFraction = 1.0)).map { c =>
@@ -1068,7 +1068,7 @@ class CompactorTest extends kyo.test.Test[Any]:
         }
     }
 
-    "INV-CMP-59: background results are caches not authority" in {
+    "background results are caches not authority" in {
         Compactor.init.map { c =>
             // a stale landed verdict does not override the fresh liveness computation; score ignores verdicts.
             val units = Chunk(seg(0), seg(1))
@@ -1078,7 +1078,7 @@ class CompactorTest extends kyo.test.Test[Any]:
         }
     }
 
-    "INV-CMP-12: batched embed + mutual-kNN Sem edges; pre-embed structural-only ok" in {
+    "batched embed + mutual-kNN Sem edges; pre-embed structural-only ok" in {
         Compactor.init(_.copy(semanticFloor = 0.7, semanticNeighbors = 5, effectiveCap = 100000, windowFraction = 1.0)).map { c =>
             // close vectors for u0,u1; far for u2 -> Sem edge connects u0,u1 only.
             val ctx   = ctxOf(um("u0 body"), um("u1 body"), um("u2 body"))
@@ -1098,7 +1098,7 @@ class CompactorTest extends kyo.test.Test[Any]:
         }
     }
 
-    "INV-CMP-60: recall lands at tail, no prefix edit" in {
+    "recall lands at tail, no prefix edit" in {
         Compactor.init(_.copy(effectiveCap = 40, windowFraction = 1.0, tailTurns = 1)).map { c =>
             LLM.run {
                 AI.initWith { ai =>
@@ -1121,7 +1121,7 @@ class CompactorTest extends kyo.test.Test[Any]:
         val t = Compactor.internal.recallTool(c)
         t.infos.head.run.asInstanceOf[Any => (String < LLM)](id)
 
-    "INV-CMP-60 error: unknown/non-demoted id returns a typed no-such-region message" in {
+    "error: unknown/non-demoted id returns a typed no-such-region message" in {
         Compactor.init.map { c =>
             LLM.run {
                 AI.initWith { ai =>
@@ -1133,7 +1133,7 @@ class CompactorTest extends kyo.test.Test[Any]:
         }
     }
 
-    "INV-CMP-61: relevance recall hint-only default" in {
+    "relevance recall hint-only default" in {
         Compactor.init.map { c =>
             // relevance-driven recall is hint-only: nothing auto-re-injects a demoted region by default.
             val ctx = ctxOf(um("payload"))
@@ -1145,10 +1145,10 @@ class CompactorTest extends kyo.test.Test[Any]:
         }
     }
 
-    "INV-CMP-62: doubt-renders-more; forced at hard window" in {
+    "doubt-renders-more; forced at hard window" in {
         Compactor.init.map { c =>
             // below the hard window doubt renders MORE (fast path keeps content); an overflow surfaces as a
-            // typed AIContextOverflowException, never a silent truncation (see INV-CMP-55).
+            // typed AIContextOverflowException, never a silent truncation (see "forced path omit-only + overflow abort" below).
             val ctx = ctxOf(sm("s"), um("first"), um("latest"))
             LLM.run {
                 AI.initWith { ai =>
@@ -1160,7 +1160,7 @@ class CompactorTest extends kyo.test.Test[Any]:
         }
     }
 
-    "INV-CMP-63: scoped determinism golden" in {
+    "scoped determinism golden" in {
         Compactor.init.map { c =>
             val ctx = ctxOf(um("u0 sym_x"), um("u1 sym_x"), um("u2 other"))
             val v   = Embedding(Span(1.0f, 0.0f), "m", 2)
@@ -1179,7 +1179,7 @@ class CompactorTest extends kyo.test.Test[Any]:
         }
     }
 
-    "INV-CMP-64: cell pruned on instance GC" in {
+    "cell pruned on instance GC" in {
         Compactor.init.map { c =>
             // the cell is keyed by AIRef; the prune predicate mirrors LLM.State.pruned via ref.isValid.
             LLM.run {

@@ -88,7 +88,7 @@ class CompletionTest extends kyo.test.Test[Any]:
         }
     }
 
-    "INV-CMP-66: openai-compat usage decoded into Completion.Usage" in {
+    "openai-compat usage decoded into Completion.Usage" in {
         TestCompletionServer.run { server =>
             val config = keyedOpenAIConfig(server.baseUrl)
             val ctx    = Context.empty.userMessage("hello")
@@ -124,7 +124,7 @@ class CompletionTest extends kyo.test.Test[Any]:
         }
     }
 
-    "INV-CMP-66: anthropic wire Usage converted, cachedInputTokens Absent" in {
+    "anthropic wire Usage converted, cachedInputTokens Absent" in {
         TestCompletionServer.run { server =>
             val config = Config.Anthropic.default.apiKey("test-key").apiUrl(server.baseUrl)
             val ctx    = Context.empty.userMessage("hello")
@@ -152,7 +152,7 @@ class CompletionTest extends kyo.test.Test[Any]:
         }
     }
 
-    "INV-CMP-66: a reply with no usage yields Result.usage Absent" in {
+    "a reply with no usage yields Result.usage Absent" in {
         TestCompletionServer.run { server =>
             val config = keyedOpenAIConfig(server.baseUrl)
             val ctx    = Context.empty.userMessage("hello")
@@ -174,7 +174,7 @@ class CompletionTest extends kyo.test.Test[Any]:
         }
     }
 
-    "INV-CMP-67: embed CLEAN for OpenAI + Gemini (wire round-trip)" in {
+    "embed CLEAN for OpenAI + Gemini (wire round-trip)" in {
         def check(provider: Config.Provider) =
             TestCompletionServer.run { server =>
                 val config = provider.default.apiKey("test-key").apiUrl(server.baseUrl)
@@ -214,7 +214,7 @@ class CompletionTest extends kyo.test.Test[Any]:
         check(Config.OpenAI).andThen(check(Config.Gemini))
     }
 
-    "INV-CMP-67 absence: four openai-compat ABSENT providers Abort typed" in {
+    "absence: four openai-compat ABSENT providers Abort typed" in {
         def check(config: Config) =
             LLM.run(config) {
                 Abort.run[HttpException] {
@@ -235,7 +235,7 @@ class CompletionTest extends kyo.test.Test[Any]:
             .andThen(check(Config.OpenRouter.default))
     }
 
-    "INV-CMP-67 absence: Anthropic + CLI harnesses take the trait default" in {
+    "absence: Anthropic + CLI harnesses take the trait default" in {
         def check(config: Config) =
             LLM.run(config) {
                 Abort.run[HttpException] {
