@@ -141,7 +141,7 @@ final private[net] class PosixTransport private[posix] (
       * transport does not accumulate one entry per handshake forever.
       */
     // Concurrent-collection audit: same no-Kyo-equivalent rationale as `listeners`/`connections` above.
-    private val pendingHandshakes   = new java.util.concurrent.ConcurrentHashMap[Long, () => Unit]()
+    private val pendingHandshakes   = new java.util.concurrent.ConcurrentHashMap[Long, PosixTransport.PendingHandshake]()
     private val pendingHandshakeSeq = new java.util.concurrent.atomic.AtomicLong(0)
 
     /** Register a handshake's teardown obligation under an already-existing exactly-once `disarm` gate (the accept-side handshake deadline's
@@ -149,9 +149,9 @@ final private[net] class PosixTransport private[posix] (
       * handshake outcome (or the deadline) never discharges twice. Returns the token [[unregisterHandshake]] needs once the winning side
       * is known.
       */
-    private def registerHandshake(disarm: () => Boolean, teardown: () => Unit)(using AllowUnsafe): Long =
+    private def registerHandshake(owner: Maybe[PosixListener], disarm: () => Boolean, teardown: () => Unit)(using AllowUnsafe): Long =
         val token = pendingHandshakeSeq.incrementAndGet()
-        discard(pendingHandshakes.put(token, () => if disarm() then teardown()))
+        discard(pendingHandshakes.put(token, PosixTransport.PendingHandshake(owner, () => if disarm() then teardown())))
         token
     end registerHandshake
 
@@ -167,7 +167,9 @@ final private[net] class PosixTransport private[posix] (
     private[posix] def registerHandshake(teardown: () => Unit)(using AllowUnsafe): (Long, () => Boolean) =
         val settled           = AtomicBoolean.Unsafe.init(false)
         def disarm(): Boolean = settled.compareAndSet(false, true)
-        (registerHandshake(disarm, teardown), disarm)
+        // No owning listener: the connect and STARTTLS handshakes belong to a caller's own operation, not to an accept loop, so a listener
+        // close must not reclaim them.
+        (registerHandshake(Absent, disarm, teardown), disarm)
     end registerHandshake
 
     private[posix] def unregisterHandshake(token: Long)(using AllowUnsafe): Unit =
@@ -183,9 +185,30 @@ final private[net] class PosixTransport private[posix] (
       * process-shared transport is never closed. A no-op once the entry is gone (the outcome already unregistered it).
       */
     private def dischargePendingHandshake(token: Long)(using AllowUnsafe): Unit =
-        val discharge = pendingHandshakes.remove(token)
-        if discharge ne null then discharge()
+        val pending = pendingHandshakes.remove(token)
+        if pending ne null then pending.discharge()
     end dischargePendingHandshake
+
+    /** Discharge every still-registered handshake obligation owned by `listener`, removing each entry as it runs.
+      *
+      * Called when a listener closes, which is the reclamation point that actually happens for a server: the transport-wide
+      * [[sweepPendingHandshakes]] below runs only from `close()`, and the process-shared transport is never closed, so without this a handshake
+      * still in flight when its server shut down would hold its fd and engine for the life of the process. A peer that completes the TCP accept
+      * and then stalls reaches exactly that state whenever no deadline is armed, which is the default for a kyo-http server.
+      *
+      * Only this listener's obligations are touched: a client connect or a STARTTLS upgrade registers with no owner, and another listener's
+      * accepted handshakes stay registered under their own. Each entry runs the same exactly-once thunk the sweep runs, so discharging one that
+      * is concurrently finishing is a safe no-op for whichever loses.
+      */
+    private def dischargeListenerHandshakes(listener: PosixListener)(using AllowUnsafe): Unit =
+        val it = pendingHandshakes.entrySet().iterator()
+        while it.hasNext do
+            val entry = it.next()
+            if entry.getValue.owner.exists(_ eq listener) then
+                it.remove()
+                entry.getValue.discharge()
+        end while
+    end dischargeListenerHandshakes
 
     /** Discharge every still-registered handshake teardown, removing each entry as it runs. Called by `close()` before `pool.close()`, so a
       * handshake stalled forever (its peer stopped mid-flight, no deadline armed) is reclaimed instead of leaking its fd/engine past shutdown;
@@ -194,9 +217,9 @@ final private[net] class PosixTransport private[posix] (
     private def sweepPendingHandshakes()(using AllowUnsafe): Unit =
         val it = pendingHandshakes.values().iterator()
         while it.hasNext do
-            val discharge = it.next()
+            val pending = it.next()
             it.remove()
-            discharge()
+            pending.discharge()
         end while
     end sweepPendingHandshakes
 
@@ -985,6 +1008,9 @@ final private[net] class PosixTransport private[posix] (
         // The shutdown wakes a blocked/armed accept so it observes the close deterministically on every platform (close() alone does not
         // reliably interrupt an accept on Linux); it is harmless where the accept already failed (ENOTCONN on a listener is discarded).
         listener.onClose { () =>
+            // Reclaim any handshake this listener accepted that is still in flight. This is the reclamation point that actually happens for a
+            // server: the transport-wide sweep runs only from close(), which the process-shared transport never sees.
+            dischargeListenerHandshakes(listener)
             driver.closeListener(
                 handle,
                 () =>
@@ -1002,7 +1028,7 @@ final private[net] class PosixTransport private[posix] (
                     case Result.Success(fd) =>
                         // io_uring completes with the real accepted fd (>= 0); the poller uses -1 as a readiness sentinel.
                         // Handle the already-accepted fd directly before draining any further pending connections.
-                        if fd >= 0 then handleAccepted(fd, handler, tls, config)
+                        if fd >= 0 then handleAccepted(fd, handler, tls, config, listener)
                         acceptAll() match
                             case AcceptDrain.Drained =>
                                 // Backlog emptied (EAGAIN/EWOULDBLOCK) or a non-resource error consumed the event: re-arm immediately.
@@ -1045,7 +1071,7 @@ final private[net] class PosixTransport private[posix] (
                     val r  = sockets.acceptNow(listener.serverFd, noAddr, noLen)
                     val fd = r.value
                     if fd >= 0 then
-                        handleAccepted(fd, handler, tls, config)
+                        handleAccepted(fd, handler, tls, config, listener)
                         drain(transientRetries)
                     else if isWouldBlock(r.errorCode) then
                         // Backlog drained: re-arm read interest normally.
@@ -1085,7 +1111,8 @@ final private[net] class PosixTransport private[posix] (
         clientFd: Int,
         handler: Connection => Unit,
         tls: Maybe[NetTlsConfig],
-        config: kyo.net.NetConfig
+        config: kyo.net.NetConfig,
+        listener: PosixListener
     )(using AllowUnsafe, Frame): Unit =
         if !prepareClientSocket(clientFd, nodelay = true, config) then closeRawFd(clientFd)
         else
@@ -1163,7 +1190,9 @@ final private[net] class PosixTransport private[posix] (
                         () =>
                             unregisterHandshake(handshakeTokenRef.get()); handle.driver.submitEngineOp(() => teardown())
                     )
-                    handshakeTokenRef.set(registerHandshake(disarm, () => handle.driver.submitEngineOp(() => teardown())))
+                    handshakeTokenRef.set(
+                        registerHandshake(Present(listener), disarm, () => handle.driver.submitEngineOp(() => teardown()))
+                    )
                     driveHandshake(
                         handle,
                         engine,
@@ -2371,6 +2400,11 @@ final private[net] class PosixTransport private[posix] (
 end PosixTransport
 
 private[net] object PosixTransport:
+
+    /** One in-flight handshake's teardown obligation, plus the listener that accepted it when there is one. The owner is what lets a listener
+      * close reclaim its own handshakes without touching a client connect's or a STARTTLS upgrade's, which have no listener.
+      */
+    final private class PendingHandshake(val owner: Maybe[PosixListener], val discharge: () => Unit)
 
     /** Outcome of draining the listen-fd backlog via `acceptNow` in one readiness cycle, telling the accept loop how to re-arm.
       *

@@ -492,4 +492,62 @@ class PosixTransportShutdownReclaimTest extends Test:
         }
     }
 
+    "closing a listener reclaims the handshakes it accepted" - {
+
+        // The transport-wide sweep runs only from close(), and the process-shared transport is never closed, so for a server the reclamation
+        // point that actually happens is its listener closing. Without a per-listener discharge, a handshake still in flight when the server
+        // shut down held its fd and TLS engine for the life of the process.
+        //
+        // This leaf pins the case with NO deadline armed (handshakeTimeout = Infinity, which is what a kyo-http server ships), so the listener
+        // close is the only thing that can reclaim it: with a finite deadline the timer would eventually do it and the leaf would pass whether
+        // or not the discharge existed.
+        "a stalled accept handshake with no deadline is released when its listener closes" in {
+            PosixTestSockets.assumePoller()
+            assumeTlsReady()
+            val spy      = RecordingSocketBindings(Ffi.load[SocketBindings])
+            val real     = PollerBackend.default()
+            val pollerFd = real.create()
+            val backend  = RecordingPollerBackend(real)
+            val driver   = TestDrivers.forBackend(backend, pollerFd, spy)
+            val captured = new AtomicReference[RecordingTlsEngine]()
+            val transport = TestTransports.forTesting(
+                driver,
+                spy,
+                backendIsEpoll = false,
+                buildEngine = (cfg, host, isServer) =>
+                    val e = new RecordingTlsEngine(TlsProviderPlatform.engine(cfg, host, isServer))
+                    captured.set(e)
+                    e
+            )
+            discard(driver.start())
+            val unbounded = serverTls.copy(handshakeTimeout = Duration.Infinity)
+            transport.listenTls("127.0.0.1", 0, 4, unbounded)(_ => ()).safe.get.map { listener =>
+                val baseline = backend.registerReadCount.get()
+                // A raw, non-TLS client: the server's handshake starts and then parks on a read for a ClientHello that never arrives. No
+                // Connection exists for an in-flight handshake, so nothing else tracks this fd.
+                connectRaw(listener.port).map { clientFd =>
+                    assertEventually(Sync.defer(backend.registerReadCount.get() > baseline)).map { _ =>
+                        // Close ONLY the listener. The transport stays open, exactly as the process-shared transport does.
+                        //
+                        // The client fd stays OPEN and silent across the assertion below, and that is what makes this discriminating. Closing
+                        // it here would end the stalled handshake by itself: the server's parked read fails, its onFailed teardown runs, and
+                        // the engine is freed whether or not the listener discharged anything. Verified by removing the discharge and watching
+                        // an earlier version of this leaf still pass. With the peer held open there is no other route to engine.free().
+                        listener.close()
+                        assertEventually(Sync.defer(captured.get() != null && captured.get().freeCount.get() == 1)).map { _ =>
+                            val engine = captured.get()
+                            assert(
+                                engine.freeCount.get() == 1,
+                                s"the stalled handshake's engine must be freed exactly once by the listener close, was ${engine.freeCount.get()}"
+                            )
+                            discard(sock.close(clientFd))
+                            transport.close()
+                            succeed
+                        }
+                    }
+                }
+            }
+        }
+    }
+
 end PosixTransportShutdownReclaimTest
