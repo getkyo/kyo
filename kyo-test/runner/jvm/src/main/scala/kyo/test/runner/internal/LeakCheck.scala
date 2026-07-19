@@ -25,22 +25,21 @@ import scala.jdk.CollectionConverters.*
   */
 private[runner] object LeakCheck:
 
-    /** Built-in allowlist patterns applied by [[detect]] in addition to each suite's `RunConfig.leakCheckAllowlist`, for process-lifetime infra
-      * that legitimately outlives every test in the fork. Both entries name a process-shared I/O carrier that is never closed by design and so
-      * is a busy scheduler fiber at every net/http-using module's end-of-run check; the union covers both the current and the migrated network
-      * stack, so neither is reported as a leak.
+    /** Built-in allowlist pattern applied by [[detect]] in addition to each suite's `RunConfig.leakCheckAllowlist`, for process-lifetime infra
+      * that legitimately outlives every test in the fork.
       *
-      * `NioIoDriver` matches the pure-JDK NIO selector floor a process-lifetime transport falls back to when no posix backend is available: a
-      * `NioIoDriver` running a selector event loop on a scheduler fiber for the JVM's lifetime.
+      * `processSharedTransport` matches the I/O carriers of kyo-net's one process-lifetime transport, `kyo.net.NetPlatform.transport`, which
+      * every client and server in the process shares and which is never closed by design, so its idle carriers sit armed at every net- or
+      * http-using module's end-of-run check. Each driver routes a cycle through a `processSharedTransport*` frame only when that transport is
+      * the one being built (see `kyo.net.internal.ProcessSharedTransport`); an owned transport a caller is expected to close keeps its plain
+      * cycle frame, so a genuinely leaked owned transport is still reported.
       *
-      * `processSharedTransport` matches the I/O carriers of kyo-net's process-lifetime transports, never closed by design: the
-      * `kyo.net.NetPlatform.transport` singleton (shared across every client and server in the process) and the default HTTP client's own
-      * transport (a distinct pool built via `NetPlatform.processLifetimeTransport`). The kyo-net drivers route only these process-lifetime
-      * transports' carriers through a `processSharedTransport*` frame (see `kyo.net.internal.ProcessSharedTransport`); an owned, per-config
-      * transport a caller closes keeps its plain `pollLoop`/`reapLoop` frame, so a genuinely leaked owned transport is still reported rather than
-      * masked by a broad driver-name match.
+      * There was formerly a second entry, the bare driver name `NioIoDriver`, from when that driver ran its selector loop outside this marker
+      * scheme. It matched on driver identity rather than on the transport's lifetime, so it excused ANY carrier of that driver, including one
+      * belonging to an owned transport a test failed to close: precisely the leak this check exists to find. It is removed now that the driver
+      * marks its process-lifetime cycles like the others, which is what makes the narrow pattern sufficient.
       */
-    val defaultAllowlist: Chunk[String] = Chunk("NioIoDriver", "processSharedTransport")
+    val defaultAllowlist: Chunk[String] = Chunk("processSharedTransport")
 
     /** The set of open file descriptors, each as its `/proc/self/fd` symlink target (`socket:[inode]`, `pipe:[inode]`, a file path, a `.jar`,
       * ...). `Absent` on a platform without `/proc/self/fd` (macOS, Windows), where the descriptor probe is a no-op. The descriptor that the
