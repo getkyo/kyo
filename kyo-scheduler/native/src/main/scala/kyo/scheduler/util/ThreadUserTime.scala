@@ -39,9 +39,12 @@ private[scheduler] object ThreadUserTime {
       */
     def currentThreadId(): Long = pthread_self().toLong
 
-    /** Probes the platform's cross-thread CPU time counter resolution. */
+    /** Probes the platform's cross-thread CPU time counter resolution. Explores intervals well past the 2ms default (up to the 40ms
+      * ceiling) so a coarse platform counter is discovered rather than papered over; see the JVM implementation for the rationale.
+      */
     def probeResolution(): Long = {
         val default = 2000000L
+        val ceiling = 40000000L
         val started = new java.util.concurrent.CountDownLatch(1)
         val stop    = new java.util.concurrent.atomic.AtomicBoolean(false)
         val handle  = new java.util.concurrent.atomic.AtomicLong(0L)
@@ -54,14 +57,14 @@ private[scheduler] object ThreadUserTime {
         spinner.start()
         try {
             if (!started.await(5, java.util.concurrent.TimeUnit.SECONDS)) return default
-            probeLoop(handle.get(), 100000L, default)
+            probeLoop(handle.get(), 100000L, ceiling, default)
         } finally { stop.set(true); spinner.join(1000) }
     }
 
-    @tailrec private def probeLoop(tid: Long, intervalNs: Long, default: Long): Long =
-        if (intervalNs > default) default
+    @tailrec private def probeLoop(tid: Long, intervalNs: Long, ceiling: Long, default: Long): Long =
+        if (intervalNs > ceiling) default
         else if (probeVerify(tid, intervalNs, 5)) intervalNs
-        else probeLoop(tid, intervalNs * 2, default)
+        else probeLoop(tid, intervalNs * 2, ceiling, default)
 
     @tailrec private def probeVerify(tid: Long, intervalNs: Long, remaining: Int): Boolean =
         if (remaining <= 0) true
