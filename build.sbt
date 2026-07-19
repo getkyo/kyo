@@ -840,8 +840,10 @@ lazy val `kyo-ffi-it` =
                 }
                 if (!marker.exists()) {
                     log.info(s"[kyo-ffi-it JS] installing koffi@$koffiRange into $targetBase ...")
+                    // npm is npm.cmd on Windows, and CreateProcess resolves only .exe from a bare name.
+                    val npm = if (sys.props.getOrElse("os.name", "").toLowerCase.contains("win")) "npm.cmd" else "npm"
                     val rc = scala.sys.process.Process(
-                        Seq("npm", "install", "--no-audit", "--no-fund", "--silent"),
+                        Seq(npm, "install", "--no-audit", "--no-fund", "--silent"),
                         targetBase
                     ).!
                     if (rc != 0) sys.error(s"npm install koffi failed (exit $rc)")
