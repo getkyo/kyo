@@ -665,6 +665,7 @@ lazy val `kyo-schema` =
         .crossType(CrossType.Full)
         .dependsOn(`kyo-data` % "test->test;compile->compile")
         .dependsOn(`kyo-core` % "test->compile")
+        .dependsOn(`kyo-system` % "test->compile")
         .in(file("kyo-schema"))
         .withKyoTest
         .settings(`kyo-settings`)

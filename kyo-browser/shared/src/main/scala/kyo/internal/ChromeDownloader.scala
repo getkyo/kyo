@@ -207,11 +207,11 @@ private[kyo] object ChromeDownloader:
                 // memory bounded by `HttpClientConfig.maxResponseLength` (100 MiB), which rejects the full-Chrome zip
                 // (~200 MiB). `getStreamBytes` has no such cap; `writeTo` sinks each network chunk through a scoped write
                 // handle and removes the partial file if the download fails midway.
-                Scope.run {
+                Path.run(Scope.run {
                     HttpClient.getStreamBytes(url)
                         .mapChunkPure(_.map(span => Chunk.from(span.toArray)).flattenChunk)
                         .writeTo(dest)
-                }
+                })
             }
         }
 

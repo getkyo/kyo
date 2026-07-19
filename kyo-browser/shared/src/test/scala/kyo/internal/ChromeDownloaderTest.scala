@@ -309,7 +309,7 @@ class ChromeDownloaderTest extends BaseBrowserTest:
                 result <- HttpClient.withConfig(_.maxResponseLength(64 * 1024)) {
                     Abort.run[BrowserSetupException](ChromeDownloader.downloadZip(url, dest, 1.minute))
                 }
-                size <- dest.size
+                size <- Path.runReadOnly(dest.size)
             yield
                 assert(result.isSuccess, s"streamed download should succeed past the 64 KiB buffered cap, got: $result")
                 assert(size == bodySize.toLong, s"expected the full $bodySize-byte body on disk, got $size")
