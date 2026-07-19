@@ -14,8 +14,8 @@ class JournalZipOverTest extends kyo.test.Test[Any]:
 
     private val streamId = valid(Event.StreamId("zip-over-stream"))
 
-    private def envelope(n: Int): Event.Pending =
-        Event.Pending(
+    private def envelope(n: Int): Event.New =
+        Event.New(
             id = valid(Event.Id(s"zip-over-event-$n")),
             eventType = valid(Event.Type("ZipOverEvent")),
             payload = Span.from(s"""{"n":$n}""".getBytes("UTF-8")),

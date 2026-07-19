@@ -40,7 +40,7 @@ class EventSourcedTest extends kyo.test.Test[Any]:
         new EventSourced.EventCodec[AccountEvent]:
             def prepare(log: EventLog[AccountEvent])(event: AccountEvent, directive: EventLog.AppendDirective)(using
                 Frame
-            ): log.Command < (Sync & Abort[EventSourced.EventCodecError] & Abort[EventLog.PreparationFailure]) =
+            ): log.Prepared < (Sync & Abort[EventSourced.EventCodecError] & Abort[EventLog.PreparationFailure]) =
                 log.prepare(event, directive)
             def decode(record: Event.Record[AccountEvent])(using Frame): AccountEvent < Abort[EventSourced.EventCodecError] =
                 if record.eventType == accountEventType then record.payload
@@ -201,7 +201,7 @@ class EventSourcedTest extends kyo.test.Test[Any]:
                                 _ <- Journal.append(
                                     accountStreamId,
                                     ExpectedOffset.NoStream,
-                                    Chunk(Event.Pending(injectedId, wrongType, bytes, Event.Metadata.empty))
+                                    Chunk(Event.New(injectedId, wrongType, bytes, Event.Metadata.empty))
                                 )
                                 records <- store.read(accountStreamId, Event.StreamOffset.first, 10)
                                 decoded <- Kyo.foreach(records)(record => store.codec.decode(record))
@@ -223,7 +223,7 @@ class EventSourcedTest extends kyo.test.Test[Any]:
                                 _ <- Journal.append(
                                     accountStreamId,
                                     ExpectedOffset.NoStream,
-                                    Chunk(Event.Pending(
+                                    Chunk(Event.New(
                                         injectedId,
                                         accountEventType,
                                         Span.from(Array[Byte](0xff.toByte, 0x00.toByte, 0x01.toByte)),
@@ -304,5 +304,117 @@ class EventSourcedTest extends kyo.test.Test[Any]:
         ).map(_.message)
         assert(mirrorErrors.nonEmpty, "expected EventSourced to declare no MetadataValue type, alias, or mirror")
         assert(mirrorErrors.exists(_.contains("MetadataValue")))
+    }
+
+    private type QuestFailure =
+        JournalError | EventSourced.EventCodecError | EventSourced.DecideFailure | EventSourced.EvolveFailure | EventLog.PreparationFailure
+
+    // The bare-union QuestEvent has no CanEqual instance, so union payloads are compared through a
+    // total String projection instead of `==`.
+    private def questId(event: QuestEvent): String =
+        event match
+            case QuestStarted(id)        => s"started:$id"
+            case PartyJoined(id, member) => s"joined:$id:$member"
+
+    "EventStore.setup end-to-end decide with a derived EventCodec" in {
+        val journalId = freshJournalId("store-setup")
+        val qsStream  = valid(Event.StreamId("store-setup-qs"))
+        val pjStream  = valid(Event.StreamId("store-setup-pj"))
+        val decider = new EventSourced.Decider[QuestStarted, Int, QuestEvent]:
+            def initialState: Int = 0
+            def decide(state: Int, command: QuestStarted)(using Frame): Chunk[QuestEvent] < Abort[EventSourced.DecideFailure] =
+                Chunk[QuestEvent](command)
+            def evolve(state: Int, event: QuestEvent)(using Frame): Int < Abort[EventSourced.EvolveFailure] =
+                state + 1
+        for
+            store <- EventSourced.EventStore.setup[QuestEvent](journalId)
+                .codecs()
+                .define[QuestStarted](stream = Event.StreamSelector.constant(qsStream))
+                .define[PartyJoined](stream = Event.StreamSelector.constant(pjStream))
+                .build
+            backend <- Journal.Backend.inMemory
+            result <- Abort.run[QuestFailure] {
+                Journal.run(backend) {
+                    for
+                        r      <- EventSourced.decide(store, qsStream, QuestStarted("q1"), decider)
+                        events <- store.read(qsStream, Event.StreamOffset.first, 10)
+                    yield (r, events)
+                }
+            }
+        yield result match
+            case Result.Success((r, events)) =>
+                assert(r.size == 1, s"expected one appended result, got: $r")
+                assert(r(0).firstOffset.value == 0L)
+                assert(events.size == 1)
+                assert(questId(events(0).payload) == "started:q1")
+            case other => fail(s"expected success, got: $other")
+        end for
+    }
+
+    "EventStore.setup with an explicit .codec uses the supplied codec, not the derived one" in {
+        val jidTagged  = freshJournalId("store-tagged")
+        val jidDerived = freshJournalId("store-derived")
+        val qsStream   = valid(Event.StreamId("tag-qs"))
+        val pjStream   = valid(Event.StreamId("tag-pj"))
+
+        // A distinguishable codec: prepare is the derived dynamic path (writes the real bytes), but
+        // decode ignores the stored value and returns a fixed tagged event, so a `decide` history
+        // fold observes "CUSTOM" only when this codec (not the derived default) is in force.
+        val taggingCodec = new EventSourced.EventCodec[QuestEvent]:
+            def prepare(l: EventLog[QuestEvent])(event: QuestEvent, directive: EventLog.AppendDirective)(using
+                Frame
+            ): l.Prepared < (Sync & Abort[EventSourced.EventCodecError] & Abort[EventLog.PreparationFailure]) =
+                l.prepareDynamic(event, directive)
+            def decode(record: Event.Record[QuestEvent])(using Frame): QuestEvent < Abort[EventSourced.EventCodecError] =
+                PartyJoined("x", "CUSTOM")
+
+        // Folds the decoded history into a string, then emits it as a QuestStarted the value codec
+        // stores verbatim, so a later store.read makes the folded (codec-dependent) state observable.
+        val decider = new EventSourced.Decider[String, String, QuestEvent]:
+            def initialState: String = ""
+            def decide(state: String, command: String)(using Frame): Chunk[QuestEvent] < Abort[EventSourced.DecideFailure] =
+                if command == "emit" then Chunk[QuestEvent](QuestStarted(if state.isEmpty then "empty" else state))
+                else Chunk.empty
+            def evolve(state: String, event: QuestEvent)(using Frame): String < Abort[EventSourced.EvolveFailure] =
+                event match
+                    case QuestStarted(id)        => state + id
+                    case PartyJoined(id, member) => state + member
+
+        def program(store: EventSourced.EventStore[QuestEvent], backend: Journal.Backend[Sync]) =
+            Journal.run(backend) {
+                for
+                    _      <- store.appendAll(Chunk[QuestEvent](QuestStarted("real")))
+                    _      <- EventSourced.decide(store, qsStream, "emit", decider)
+                    events <- store.read(qsStream, Event.StreamOffset.first, 10)
+                yield events
+            }
+
+        for
+            storeTagged <- EventSourced.EventStore.setup[QuestEvent](jidTagged)
+                .codecs()
+                .define[QuestStarted](stream = Event.StreamSelector.constant(qsStream))
+                .define[PartyJoined](stream = Event.StreamSelector.constant(pjStream))
+                .codec(taggingCodec)
+                .build
+            storeDerived <- EventSourced.EventStore.setup[QuestEvent](jidDerived)
+                .codecs()
+                .define[QuestStarted](stream = Event.StreamSelector.constant(qsStream))
+                .define[PartyJoined](stream = Event.StreamSelector.constant(pjStream))
+                .build
+            backendT <- Journal.Backend.inMemory
+            backendD <- Journal.Backend.inMemory
+            resultT  <- Abort.run[QuestFailure](program(storeTagged, backendT))
+            resultD  <- Abort.run[QuestFailure](program(storeDerived, backendD))
+        yield (resultT, resultD) match
+            case (Result.Success(tagged), Result.Success(derived)) =>
+                assert(tagged.size == 2, s"expected the seed plus the decided event, got: $tagged")
+                assert(derived.size == 2, s"expected the seed plus the decided event, got: $derived")
+                // The second event is the emitted fold of decoded history: "CUSTOM" under the
+                // explicit codec, "real" under the derived identity codec.
+                assert(questId(tagged(1).payload) == "started:CUSTOM")
+                assert(questId(derived(1).payload) == "started:real")
+                assert(questId(tagged(1).payload) != questId(derived(1).payload))
+            case other => fail(s"expected both stores to succeed, got: $other")
+        end for
     }
 end EventSourcedTest

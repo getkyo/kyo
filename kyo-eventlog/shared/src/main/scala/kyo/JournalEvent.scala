@@ -3,7 +3,7 @@ package kyo
 /** The shape and identity vocabulary of a journaled event: `Event.Id`, `Event.Type`,
   * `Event.Metadata`, the stream-identity vocabulary (`Event.StreamId`/`Event.StreamName`/
   * `Event.StreamKey`/`Event.StreamOffset`/`Event.StreamVersion`/`Event.StreamSelector`), the
-  * two lifecycle shapes (`Event.Pending`, `Event.Committed`), and the per-member evidence
+  * two lifecycle shapes (`Event.New`, `Event.Recorded`), and the per-member evidence
   * vocabulary consumed by `EventLog` (`Event.Definition`, `Event.IdPolicy`, `Event.Record`,
   * the typed attribute facade). `EventLog` stays the LOG API (`append`/`read`/`prepare`); this
   * namespace is the SHAPE of what an event IS, not what a log DOES with it.
@@ -35,11 +35,11 @@ object Event:
 
     /** Identifier of a single event, assigned by the producer.
       *
-      * Event identifiers travel with the event from [[Event.Pending]] to [[Event.Committed]] unchanged; the journal does not generate or
+      * Event identifiers travel with the event from [[Event.New]] to [[Event.Recorded]] unchanged; the journal does not generate or
       * deduplicate them. The constructor validates that the identifier is non-empty and returns a `Result`.
       *
       * @see
-      *   [[kyo.Event.Pending]] which carries this identifier into an append
+      *   [[kyo.Event.New]] which carries this identifier into an append
       */
     opaque type Id = String
 
@@ -70,7 +70,7 @@ object Event:
       * a `Result`.
       *
       * @see
-      *   [[kyo.Event.Pending]] which pairs this label with a raw payload
+      *   [[kyo.Event.New]] which pairs this label with a raw payload
       */
     opaque type Type = String
 
@@ -260,7 +260,7 @@ object Event:
       * `values` field and wire shape are unaffected; only the read/write surface is typed.
       *
       * @see
-      *   [[kyo.Event.Pending]] and [[kyo.Event.Committed]] which carry this metadata
+      *   [[kyo.Event.New]] and [[kyo.Event.Recorded]] which carry this metadata
       * @see
       *   [[kyo.Event.Metadata.Key]] for the key validation rules
       * @see
@@ -617,9 +617,9 @@ object Event:
       * The journal treats the payload as opaque bytes; typed encoding and decoding live above this layer.
       *
       * @see
-      *   [[kyo.Event.Committed]] for the stored form returned by reads
+      *   [[kyo.Event.Recorded]] for the stored form returned by reads
       */
-    final case class Pending(
+    final case class New(
         id: Event.Id,
         eventType: Event.Type,
         payload: Span[Byte],
@@ -629,9 +629,9 @@ object Event:
     /** A stored event as returned by [[kyo.Journal.read]]: the pending event's data plus the stream identity and assigned offset.
       *
       * @see
-      *   [[kyo.Event.Pending]] for the submitted form
+      *   [[kyo.Event.New]] for the submitted form
       */
-    final case class Committed(
+    final case class Recorded(
         streamId: Event.StreamId,
         offset: Event.StreamOffset,
         id: Event.Id,
@@ -639,6 +639,66 @@ object Event:
         payload: Span[Byte],
         metadata: Event.Metadata
     ) extends Event derives CanEqual
+
+    /** Structure-name-keyed registry of the per-member [[Event.Definition]]s backing an
+      * [[kyo.EventLog]] built through [[kyo.EventLog.setup]]. One entry per routed leaf `E <: A`,
+      * keyed by `Schema[E].structure.name` (the same string [[kyo.EventLog.deriveEventType]]
+      * derives an [[Event.Type]] from), valued by its `Event.Definition[A, E]`. Carries a
+      * `matcher` mapping a runtime value to its member's structure name, derived at
+      * [[kyo.EventLog.Setup.build]] from compile-time member enumeration and installed by
+      * `withMatcher`. Empty on the [[kyo.EventLog.init]] path; populated by the builder on the
+      * [[kyo.EventLog.setup]] path. Not part of the locked public surface.
+      */
+    final class Routes[A] private[kyo] (
+        private[kyo] val entries: Map[String, Event.Definition[A, ?]],
+        private[kyo] val matcher: A => String
+    ):
+
+        /** Registers one member's definition under `Schema[E].structure.name`, returning the
+          * extended registry with the same `matcher`.
+          */
+        private[kyo] def added[E <: A](definition: Event.Definition[A, E])(using schema: Schema[E]): Routes[A] =
+            new Routes[A](entries.updated(schema.structure.name, definition), matcher)
+
+        /** Installs the value-to-structure-name `matcher` on the accumulated registry, called
+          * once at `build` with the compile-time-derived matcher.
+          */
+        private[kyo] def withMatcher(matcher: A => String): Routes[A] =
+            new Routes[A](entries, matcher)
+
+        /** Total static resolution by the statically-known leaf `E`, keyed by
+          * `Schema[E].structure.name`, backing `EventLog.routed`. A compile-time `RouteCoverage`
+          * proof (or the runtime-total fallback's own build-time check) guarantees every member of
+          * `A` is registered before `build` returns, so an absent entry here is an unreachable
+          * internal invariant violation, never user input.
+          */
+        private[kyo] def resolve[E <: A](using schema: Schema[E]): Event.Definition[A, E] =
+            Maybe.fromOption(entries.get(schema.structure.name)) match
+                case Present(definition) => definition.asInstanceOf[Event.Definition[A, E]]
+                case Absent              => throw new IllegalStateException(s"no route registered for ${schema.structure.name}")
+
+        /** Runtime resolution for a union-typed value whose leaf is not statically known (the
+          * derived-`EventCodec` path). Maps `value` to its member structure name through the baked
+          * `matcher`, then looks that key up; aborts [[kyo.EventLog.PreparationFailure]] naming the
+          * unrouted member. The one resolution path that can fail; unreachable on the
+          * compile-checked static path.
+          */
+        private[kyo] def resolveDynamic(value: A)(using Frame): Event.Definition[A, ?] < Abort[EventLog.PreparationFailure] =
+            val key = matcher(value)
+            Maybe.fromOption(entries.get(key)) match
+                case Present(definition) => definition
+                case Absent =>
+                    Abort.fail(EventLog.PreparationFailure(s"no route registered for event member $key"))
+            end match
+        end resolveDynamic
+    end Routes
+
+    object Routes:
+        /** The empty registry installed on the [[kyo.EventLog.init]] path; its `matcher` is never
+          * consulted there (dynamic resolution is a `setup`-only path).
+          */
+        private[kyo] def empty[A]: Routes[A] = new Routes[A](Map.empty, (_: A) => "")
+    end Routes
 
     // ---- per-member evidence ----
 

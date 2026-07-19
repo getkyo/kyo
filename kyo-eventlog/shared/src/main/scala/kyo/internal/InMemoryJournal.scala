@@ -12,7 +12,7 @@ private[kyo] object InMemoryJournal:
     def init(using Frame): Journal.Backend[Sync] < Sync =
         AtomicRef.init(State.empty).map(ref => new InMemoryJournal(ref))
 
-    final case class State(streams: Map[Event.StreamId, Chunk[Event.Committed]])
+    final case class State(streams: Map[Event.StreamId, Chunk[Event.Recorded]])
 
     private object State:
         val empty: State = State(Map.empty)
@@ -24,7 +24,7 @@ final private class InMemoryJournal(state: AtomicRef[InMemoryJournal.State])(usi
     def append(
         streamId: Event.StreamId,
         expected: ExpectedOffset,
-        events: Chunk[Event.Pending]
+        events: Chunk[Event.New]
     ): AppendResult < (Sync & Abort[JournalAppendFailure]) =
         if events.isEmpty then Abort.fail(JournalEmptyAppendError())
         else modify(current => appendToState(current, streamId, expected, events))
@@ -33,7 +33,7 @@ final private class InMemoryJournal(state: AtomicRef[InMemoryJournal.State])(usi
         streamId: Event.StreamId,
         from: Event.StreamOffset,
         maxCount: Int
-    ): Chunk[Event.Committed] < (Sync & Abort[JournalReadFailure]) =
+    ): Chunk[Event.Recorded] < (Sync & Abort[JournalReadFailure]) =
         state.use { current =>
             if maxCount <= 0 then Chunk.empty
             else
@@ -61,7 +61,7 @@ final private class InMemoryJournal(state: AtomicRef[InMemoryJournal.State])(usi
         current: State,
         streamId: Event.StreamId,
         expected: ExpectedOffset,
-        events: Chunk[Event.Pending]
+        events: Chunk[Event.New]
     ): Result[JournalAppendFailure, (State, AppendResult)] =
         val currentEvents = current.streams.getOrElse(streamId, Chunk.empty)
         val currentInfo   = info(currentEvents)
@@ -71,7 +71,7 @@ final private class InMemoryJournal(state: AtomicRef[InMemoryJournal.State])(usi
             val firstValue = currentEvents.length.toLong
             val recorded = Chunk.from(
                 events.zipWithIndex.map { (event, index) =>
-                    Event.Committed(
+                    Event.Recorded(
                         streamId = streamId,
                         offset = Event.StreamOffset.fromUnchecked(firstValue + index.toLong),
                         id = event.id,
@@ -103,7 +103,7 @@ final private class InMemoryJournal(state: AtomicRef[InMemoryJournal.State])(usi
                     case StreamInfo.Existing(_, lastOffset) => lastOffset == offset
                     case StreamInfo.Absent                  => false
 
-    private def info(events: Chunk[Event.Committed]): StreamInfo =
+    private def info(events: Chunk[Event.Recorded]): StreamInfo =
         if events.isEmpty then StreamInfo.Absent
         else
             val lastOffset = Event.StreamOffset.fromUnchecked(events.length.toLong - 1L)

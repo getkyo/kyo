@@ -42,14 +42,14 @@ private[kyo] trait SegmentFormat:
       * contiguous byte array suitable for one positional write to the segment handle. The caller
       * writes the returned bytes and then calls [[extractPositions]] to build the record index.
       */
-    def frameBatch(firstOffset: Long, events: Chunk[Event.Pending]): Array[Byte]
+    def frameBatch(firstOffset: Long, events: Chunk[Event.New]): Array[Byte]
 
     /** Per-record byte size for the binary format; used by the default [[extractPositions]]
       * implementation. For binary segments this is computed analytically from the field lengths;
       * for JSONL, [[extractPositions]] is overridden to scan the batch bytes for newlines, so
       * this method is not used for position computation in JSONL mode.
       */
-    def recordSize(env: Event.Pending): Long
+    def recordSize(env: Event.New): Long
 
     /** Extracts the per-record byte-start positions from the bytes returned by
       * [[frameBatch]]. The default implementation uses [[recordSize]] per event. JSONL overrides
@@ -58,7 +58,7 @@ private[kyo] trait SegmentFormat:
       */
     def extractPositions(
         firstOffset: Long,
-        events: Chunk[Event.Pending],
+        events: Chunk[Event.New],
         batchBytes: Array[Byte],
         startPos: Long
     ): Array[Long] =
@@ -223,7 +223,7 @@ final private[kyo] class BinarySegmentFormat(metadataCodec: EventLogCodecs.Metad
         }
     end validateHeader
 
-    def recordSize(env: Event.Pending): Long =
+    def recordSize(env: Event.New): Long =
         val idB = env.id.value.getBytes(BinarySegmentFormat.Utf8)
         val tpB = env.eventType.value.getBytes(BinarySegmentFormat.Utf8)
         val md  = FileJournalCore.encodeMetadata(metadataCodec, env.metadata)
@@ -331,7 +331,7 @@ final private[kyo] class BinarySegmentFormat(metadataCodec: EventLogCodecs.Metad
         else scanWindowForTerminator(arr, i + 1)
     end scanWindowForTerminator
 
-    def frameBatch(firstOffset: Long, events: Chunk[Event.Pending]): Array[Byte] =
+    def frameBatch(firstOffset: Long, events: Chunk[Event.New]): Array[Byte] =
         val recs  = new Array[Array[Byte]](events.length)
         var total = 0
         var i     = 0
@@ -735,7 +735,7 @@ final private[kyo] class FileJournalCore[A, S >: (Async & Abort[Throwable]) <: S
     def append(
         streamId: Event.StreamId,
         expected: ExpectedOffset,
-        events: Chunk[Event.Pending]
+        events: Chunk[Event.New]
     ): AppendResult < (S & Abort[JournalAppendFailure]) =
         if events.isEmpty then Abort.fail(JournalEmptyAppendError())
         else
@@ -749,11 +749,11 @@ final private[kyo] class FileJournalCore[A, S >: (Async & Abort[Throwable]) <: S
         streamId: Event.StreamId,
         from: Event.StreamOffset,
         maxCount: Int
-    ): Chunk[Event.Committed] < (S & Abort[JournalReadFailure]) =
+    ): Chunk[Event.Recorded] < (S & Abort[JournalReadFailure]) =
         Log.use { log =>
             // Unsafe: bridges Log.unsafe into the read critical section.
             Sync.Unsafe.defer(readCriticalSection(streamId, from, maxCount, log.unsafe).map(Abort.get))
-                .asInstanceOf[Chunk[Event.Committed] < (S & Abort[JournalReadFailure])]
+                .asInstanceOf[Chunk[Event.Recorded] < (S & Abort[JournalReadFailure])]
         }
 
     def streamInfo(streamId: Event.StreamId): StreamInfo < (S & Abort[JournalStreamInfoFailure]) =
@@ -791,7 +791,7 @@ final private[kyo] class FileJournalCore[A, S >: (Async & Abort[Throwable]) <: S
     private def appendCriticalSection(
         streamId: Event.StreamId,
         expected: ExpectedOffset,
-        events: Chunk[Event.Pending],
+        events: Chunk[Event.New],
         ref: AtomicRef.Unsafe[StreamState],
         log: Log.Unsafe
     )(using AllowUnsafe, Frame): Result[JournalAppendFailure, AppendResult] < S =
@@ -805,7 +805,7 @@ final private[kyo] class FileJournalCore[A, S >: (Async & Abort[Throwable]) <: S
     private def appendHoldingClaim(
         streamId: Event.StreamId,
         expected: ExpectedOffset,
-        events: Chunk[Event.Pending],
+        events: Chunk[Event.New],
         ref: AtomicRef.Unsafe[StreamState],
         claimed: StreamState,
         log: Log.Unsafe
@@ -825,7 +825,7 @@ final private[kyo] class FileJournalCore[A, S >: (Async & Abort[Throwable]) <: S
     private def appendReleasingEarly(
         streamId: Event.StreamId,
         expected: ExpectedOffset,
-        events: Chunk[Event.Pending],
+        events: Chunk[Event.New],
         ref: AtomicRef.Unsafe[StreamState],
         claimed: StreamState,
         log: Log.Unsafe
@@ -845,7 +845,7 @@ final private[kyo] class FileJournalCore[A, S >: (Async & Abort[Throwable]) <: S
     private def writeCriticalSection(
         streamId: Event.StreamId,
         expected: ExpectedOffset,
-        events: Chunk[Event.Pending],
+        events: Chunk[Event.New],
         ref: AtomicRef.Unsafe[StreamState],
         claimed: StreamState,
         log: Log.Unsafe
@@ -867,7 +867,7 @@ final private[kyo] class FileJournalCore[A, S >: (Async & Abort[Throwable]) <: S
         streamId: Event.StreamId,
         ref: AtomicRef.Unsafe[StreamState],
         s: StreamState,
-        events: Chunk[Event.Pending]
+        events: Chunk[Event.New]
     )(using AllowUnsafe, Frame): Result[JournalAppendFailure, (StoreSeam.Handle[S], String, Long, AppendResult)] < S =
         catchStorageError[(StoreSeam.Handle[S], String, Long, AppendResult)](s"Append to stream '${streamId.value}' failed") {
             val firstOffset = s.lastOffset + 1L
@@ -961,7 +961,7 @@ final private[kyo] class FileJournalCore[A, S >: (Async & Abort[Throwable]) <: S
         from: Event.StreamOffset,
         maxCount: Int,
         log: Log.Unsafe
-    )(using AllowUnsafe, Frame): Result[JournalReadFailure, Chunk[Event.Committed]] < S =
+    )(using AllowUnsafe, Frame): Result[JournalReadFailure, Chunk[Event.Recorded]] < S =
         val ref = cell(streamId)
         touchForRead(streamId, ref, log).map:
             case Result.Failure(err) => Result.fail(err)
@@ -1136,7 +1136,7 @@ final private[kyo] class FileJournalCore[A, S >: (Async & Abort[Throwable]) <: S
         fromOff: Long,
         toOff: Long,
         log: Log.Unsafe
-    )(using AllowUnsafe, Frame): Result[JournalReadFailure, Chunk[Event.Committed]] < S =
+    )(using AllowUnsafe, Frame): Result[JournalReadFailure, Chunk[Event.Recorded]] < S =
         Loop.indexed(s, false) { (idx, state, relisted) =>
             if readerMode && !relisted && fromOff <= state.durableOffset && !offsetInSegments(state, fromOff) then
                 refreshFromDisk(streamId, ref, log).map:
@@ -1150,11 +1150,11 @@ final private[kyo] class FileJournalCore[A, S >: (Async & Abort[Throwable]) <: S
     private def readRange(streamId: Event.StreamId, s: StreamState, fromOff: Long, toOff: Long)(using
         AllowUnsafe,
         Frame
-    ): Result[JournalReadFailure, Chunk[Event.Committed]] < S =
-        catchStorageError[Result[JournalReadFailure, Chunk[Event.Committed]]](s"Read of stream '${streamId.value}' failed") {
-            Loop.indexed(Chunk.empty[Event.Committed], fromOff) { (_, out, off) =>
+    ): Result[JournalReadFailure, Chunk[Event.Recorded]] < S =
+        catchStorageError[Result[JournalReadFailure, Chunk[Event.Recorded]]](s"Read of stream '${streamId.value}' failed") {
+            Loop.indexed(Chunk.empty[Event.Recorded], fromOff) { (_, out, off) =>
                 if off > toOff then
-                    Loop.done[Chunk[Event.Committed], Long, Result[JournalReadFailure, Chunk[Event.Committed]]](Result.succeed(out))
+                    Loop.done[Chunk[Event.Recorded], Long, Result[JournalReadFailure, Chunk[Event.Recorded]]](Result.succeed(out))
                 else
                     val seg    = segmentFor(s, off)
                     val handle = handleFor(seg.path)
@@ -1162,13 +1162,13 @@ final private[kyo] class FileJournalCore[A, S >: (Async & Abort[Throwable]) <: S
                         val pos = seg.recordPositions((off - seg.baseOffset).toInt)
                         codec.decodeRecordAt(h, pos).map:
                             case Result.Failure(detail) =>
-                                Loop.done[Chunk[Event.Committed], Long, Result[JournalReadFailure, Chunk[Event.Committed]]](
+                                Loop.done[Chunk[Event.Recorded], Long, Result[JournalReadFailure, Chunk[Event.Recorded]]](
                                     Result.fail(JournalCorruptedError(Present(streamId), detail))
                                 )
                             case Result.Success(dec) =>
                                 rebuild(streamId, dec) match
                                     case Result.Failure(err) =>
-                                        Loop.done[Chunk[Event.Committed], Long, Result[JournalReadFailure, Chunk[Event.Committed]]](
+                                        Loop.done[Chunk[Event.Recorded], Long, Result[JournalReadFailure, Chunk[Event.Recorded]]](
                                             Result.fail(err)
                                         )
                                     case Result.Success(ev) => Loop.continue(out :+ ev, off + 1L)
@@ -1176,11 +1176,11 @@ final private[kyo] class FileJournalCore[A, S >: (Async & Abort[Throwable]) <: S
             }
         }.map {
             case Result.Success(inner) => inner
-            case failure               => failure.asInstanceOf[Result[JournalReadFailure, Chunk[Event.Committed]]]
+            case failure               => failure.asInstanceOf[Result[JournalReadFailure, Chunk[Event.Recorded]]]
         }
     end readRange
 
-    private def rebuild(streamId: Event.StreamId, dec: DecodedRecord)(using AllowUnsafe): Result[JournalReadFailure, Event.Committed] =
+    private def rebuild(streamId: Event.StreamId, dec: DecodedRecord)(using AllowUnsafe): Result[JournalReadFailure, Event.Recorded] =
         val built =
             for
                 eid <- Event.Id(dec.eventId)
@@ -1188,7 +1188,7 @@ final private[kyo] class FileJournalCore[A, S >: (Async & Abort[Throwable]) <: S
                 // decodeMetadata uses the configured metadata codec; both BinarySegmentFormat.decodeRecordAt and
                 // JsonlSegmentFormat.decodeRecordAt store metadata in the selected binary shadow form in DecodedRecord.
                 md <- FileJournalCore.decodeMetadata(metadataCodec, dec.metadata)
-            yield Event.Committed(
+            yield Event.Recorded(
                 streamId = streamId,
                 offset = Event.StreamOffset.fromUnchecked(dec.offset),
                 id = eid,

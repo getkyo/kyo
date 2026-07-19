@@ -14,7 +14,7 @@ object EventSourced:
     trait EventCodec[A]:
         def prepare(log: EventLog[A])(event: A, directive: EventLog.AppendDirective)(using
             Frame
-        ): log.Command < (Sync & Abort[EventCodecError] & Abort[EventLog.PreparationFailure])
+        ): log.Prepared < (Sync & Abort[EventCodecError] & Abort[EventLog.PreparationFailure])
         // decode is a domain mapping over an already-decoded Record, not a second byte-decode.
         def decode(record: Event.Record[A])(using Frame): A < Abort[EventCodecError]
     end EventCodec
@@ -50,7 +50,73 @@ object EventSourced:
           */
         def init[A](log: EventLog[A], codec: EventCodec[A])(using Frame): EventStore[A] < Sync =
             Sync.defer(EventStore(log, codec))
+
+        /** Constructs an [[EventStore.Setup]] fluent builder that collapses the codecs +
+          * routes + optional event codec + store init steps into one expression, wrapping an
+          * [[EventLog.Setup]]. The pre-existing [[EventStore.init]] constructor is untouched
+          * and stays beside this (additive, not a replacement).
+          */
+        def setup[A](journalId: JournalId): EventStore.Setup[A, Any] =
+            new Setup[A, Any](EventLog.setup[A](journalId), Absent)
+
+        /** Fluent builder for an [[EventStore]] of domain type `A`, wrapping an
+          * [[EventLog.Setup]] (sharing its `Covered` phantom and its [[EventLog.RouteCoverage]]
+          * completeness proof). `codecs`/`define`/`codec` are PURE; all effectful resolution
+          * is deferred to [[Setup.build]].
+          */
+        final class Setup[A, Covered] private[kyo] (
+            log: EventLog.Setup[A, Covered],
+            codec: Maybe[EventCodec[A]]
+        ):
+            /** Delegates to the wrapped [[EventLog.Setup.codecs]]. */
+            def codecs(binary: Codec = IonBinary(), json: Codec = Json(), metadata: Codec = IonBinary()): Setup[A, Covered] =
+                new Setup[A, Covered](log.codecs(binary, json, metadata), codec)
+
+            /** Delegates to the wrapped [[EventLog.Setup.define]], widening coverage to
+              * `Covered & E`.
+              */
+            def define[E <: A](
+                stream: Event.StreamSelector[E],
+                eventId: Event.IdPolicy[E] = Event.IdPolicy.generated[E],
+                metadata: EventLog.Metadata[E] = EventLog.Metadata.empty[E]
+            )(using Schema[E], Tag[E], Frame): Setup[A, Covered & E] =
+                new Setup[A, Covered & E](log.define[E](stream, eventId, metadata), codec)
+
+            /** Supplies an explicit [[EventCodec]]; when omitted, `build` derives a default one
+              * from the built log's baked routes.
+              */
+            def codec(codec: EventSourced.EventCodec[A]): Setup[A, Covered] =
+                new Setup[A, Covered](log, Present(codec))
+
+            /** Runs the wrapped [[EventLog.Setup.build]] to obtain the [[EventLog]]
+              * (propagating its `Abort[EventLog.EventCodecConfigurationError]` codec-assembly
+              * row), then [[EventStore.init]] with the supplied-or-derived [[EventCodec]].
+              */
+            def build(using
+                EventLog.RouteCoverage[A, Covered],
+                Schema[A],
+                Frame
+            ): EventStore[A] < (Sync & Abort[EventLog.EventCodecConfigurationError]) =
+                log.build.map { builtLog =>
+                    val eventCodec = codec.getOrElse(EventSourced.derivedEventCodec(builtLog))
+                    EventStore(builtLog, eventCodec)
+                }
+        end Setup
     end EventStore
+
+    /** Default [[EventCodec]] derived from an [[EventLog]]'s baked routes when
+      * [[EventStore.Setup.codec]] is omitted: `prepare` resolves the member's
+      * [[Event.Definition]] dynamically by runtime class (via the log's routes) and `decode`
+      * is the identity over the already-decoded `Event.Record`'s payload.
+      */
+    private[kyo] def derivedEventCodec[A](log: EventLog[A]): EventCodec[A] =
+        new EventCodec[A]:
+            def prepare(l: EventLog[A])(event: A, directive: EventLog.AppendDirective)(using
+                Frame
+            ): l.Prepared < (Sync & Abort[EventCodecError] & Abort[EventLog.PreparationFailure]) =
+                l.prepareDynamic(event, directive)
+            def decode(record: Event.Record[A])(using Frame): A < Abort[EventCodecError] =
+                record.payload
 
     /** Decider authoring contract: decide a command against current state, evolve state by an
       * event. Failure rows are explicit.

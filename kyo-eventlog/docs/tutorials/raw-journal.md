@@ -2,8 +2,8 @@
 
 `EventLog[A]` is the typed layer. Under it sits the raw `Journal`: an append-only store of opaque
 byte payloads addressed by stream and offset. Working at this layer means assembling
-`Event.Pending` envelopes yourself, choosing the expected-offset guard on each append, and reading
-back `Event.Committed` records. Use it when you need control the typed layer abstracts away, or when
+`Event.New` envelopes yourself, choosing the expected-offset guard on each append, and reading
+back `Event.Recorded` records. Use it when you need control the typed layer abstracts away, or when
 you are building infrastructure on top of the journal.
 
 This tutorial stays with the quest-party domain from the [Basic EventLog](basic-eventlog.md)
@@ -17,7 +17,7 @@ import kyo.*
 
 ## Submit an envelope
 
-A submitted event is an `Event.Pending`: a producer-assigned `Event.Id`, an `Event.Type` routing
+A submitted event is an `Event.New`: a producer-assigned `Event.Id`, an `Event.Type` routing
 label, the raw `Span[Byte]` payload, and structural `Event.Metadata`. The journal treats the
 payload as opaque bytes; encoding is your concern at this layer. `Journal.append` takes the target
 stream, an `ExpectedOffset` guard, and a nonempty `Chunk` of pending events.
@@ -30,7 +30,7 @@ val submit =
         etype    <- Abort.get(Event.Type("QuestStarted"))
         backend  <- Journal.Backend.inMemory
         result <- Journal.run(backend):
-            val pending = Event.Pending(eventId, etype, Span.empty, Event.Metadata.empty)
+            val pending = Event.New(eventId, etype, Span.empty, Event.Metadata.empty)
             Journal.append(streamId, ExpectedOffset.NoStream, Chunk(pending))
     yield result
 ```
@@ -64,12 +64,12 @@ val chained =
                 r1 <- Journal.append(
                     streamId,
                     ExpectedOffset.NoStream,
-                    Chunk(Event.Pending(first, etype, Span.empty, Event.Metadata.empty))
+                    Chunk(Event.New(first, etype, Span.empty, Event.Metadata.empty))
                 )
                 r2 <- Journal.append(
                     streamId,
                     ExpectedOffset.Exact(r1.lastOffset),
-                    Chunk(Event.Pending(second, etype, Span.empty, Event.Metadata.empty))
+                    Chunk(Event.New(second, etype, Span.empty, Event.Metadata.empty))
                 )
             yield r2
     yield result
@@ -95,7 +95,7 @@ val tagged =
         backend  <- Journal.Backend.inMemory
         result <- Journal.run(backend):
             val metadata = Event.Metadata(Map(key -> Event.Metadata.Value(Structure.Value.Str("req-42"))))
-            Journal.append(streamId, ExpectedOffset.Any, Chunk(Event.Pending(eventId, etype, Span.empty, metadata)))
+            Journal.append(streamId, ExpectedOffset.Any, Chunk(Event.New(eventId, etype, Span.empty, metadata)))
     yield result
 ```
 

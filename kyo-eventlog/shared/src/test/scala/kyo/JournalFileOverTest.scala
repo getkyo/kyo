@@ -18,8 +18,8 @@ class JournalFileOverTest extends kyo.test.Test[Any]:
 
     private val streamId = valid(Event.StreamId("over-stream"))
 
-    private def envelope(n: Int): Event.Pending =
-        Event.Pending(
+    private def envelope(n: Int): Event.New =
+        Event.New(
             id = valid(Event.Id(s"over-event-$n")),
             eventType = valid(Event.Type("OverEvent")),
             payload = Span.from(s"""{"n":$n}""".getBytes("UTF-8")),
@@ -29,10 +29,10 @@ class JournalFileOverTest extends kyo.test.Test[Any]:
     private def journalId(name: String): JournalId =
         JournalId.validate(name)(using Frame.internal).getOrElse(throw new AssertionError("valid journal id"))
 
-    // Event.Committed.payload is a Span[Byte]; Span equality via == is reference-based (documented
+    // Event.Recorded.payload is a Span[Byte]; Span equality via == is reference-based (documented
     // on Event.payload), so comparing two independently-decoded event chunks needs a content-aware
-    // comparison rather than Chunk[Event.Committed] ==.
-    private def sameEvents(a: Chunk[Event.Committed], b: Chunk[Event.Committed]): Boolean =
+    // comparison rather than Chunk[Event.Recorded] ==.
+    private def sameEvents(a: Chunk[Event.Recorded], b: Chunk[Event.Recorded]): Boolean =
         a.length == b.length && a.zip(b).forall { (x, y) =>
             x.streamId == y.streamId && x.offset == y.offset && x.id == y.id &&
             x.eventType == y.eventType && x.payload.is(y.payload) && x.metadata == y.metadata

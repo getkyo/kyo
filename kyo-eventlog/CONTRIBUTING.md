@@ -18,7 +18,7 @@ kyo-eventlog owns the Journal capability and its backing infrastructure:
 | `EventLog.scala` | Typed program facade `EventLog[A]` over raw journal ops; the `EventLog.Codecs` / `ValueCodec` / `MetadataCodec` codec-authority aliases; `EventLog.Reader[A, S]` |
 | `EventLogCodecs.scala` | Codec authority: `Codecs[A]` (built by the `schema` and `bytes` factories), `ValueCodec[A]`, `MetadataCodec` |
 | `JournalError.scala` | Sealed `KyoException` hierarchy: umbrella base, three per-op traits, five leaves |
-| `JournalEvent.scala` | The `Event` object: wire vocabulary `Event.StreamId`, `Event.Id`, `Event.Type`, `Event.StreamOffset`, `Event.StreamVersion`, `ExpectedOffset`, `StreamInfo`, `Event.Pending`, `Event.Committed`, `Event.Record`, `Event.Metadata`, `Event.Definition`; top-level `AppendResult` |
+| `JournalEvent.scala` | The `Event` object: wire vocabulary `Event.StreamId`, `Event.Id`, `Event.Type`, `Event.StreamOffset`, `Event.StreamVersion`, `ExpectedOffset`, `StreamInfo`, `Event.New`, `Event.Recorded`, `Event.Record`, `Event.Metadata`, `Event.Definition`; top-level `AppendResult` |
 | `JournalMetadata.scala` | `JournalId` opaque type, `JournalEntryRef` logical reference, `JournalIdentityError` |
 | `internal/InMemoryJournal.scala` | Ephemeral in-memory backend: CAS over `AtomicRef`, `Loop`-based retry |
 | `FileJournal.scala` | `FileJournal.Options`, `Fsync`, `FileJournal.Configuration`, the `Binary` / `Jsonl` profile factories; the typed `Reader[A, S]` and `Backend[A, S]` traits |
@@ -243,15 +243,15 @@ Any new backend must maintain this invariant or `JournalBackendTest`'s `streamIn
 
 `JournalConflictError` carries the `actual: StreamInfo` observed at append time so a caller can inspect the conflict without a second round-trip.
 
-### Event.Pending, Event.Committed, AppendResult
+### Event.New, Event.Recorded, AppendResult
 
 [`JournalEvent.scala:622-641`, `JournalEvent.scala:841-846`]
 
-These are plain `final case class` values. `Event.Pending` and `Event.Committed` are the two lifecycle shapes of an `Event`.
+These are plain `final case class` values. `Event.New` and `Event.Recorded` are the two lifecycle shapes of an `Event`.
 
-`Event.Pending` is the submitted form: `id`, `eventType`, `payload: Span[Byte]`, `metadata`. The payload is opaque bytes; schemas and codecs live above this layer.
+`Event.New` is the submitted form: `id`, `eventType`, `payload: Span[Byte]`, `metadata`. The payload is opaque bytes; schemas and codecs live above this layer.
 
-`Event.Committed` is the stored form returned by reads: it carries `streamId` and `offset` alongside the same `id`, `eventType`, `payload`, and `metadata` fields as `Event.Pending`. The `offset` is the zero-based position assigned by the backend.
+`Event.Recorded` is the stored form returned by reads: it carries `streamId` and `offset` alongside the same `id`, `eventType`, `payload`, and `metadata` fields as `Event.New`. The `offset` is the zero-based position assigned by the backend.
 
 `AppendResult` reports the outcome of a successful batch append: `streamId`, `firstOffset`, `lastOffset`, and the post-append `streamInfo`.
 
@@ -319,7 +319,7 @@ EventLogCodecs.decodeValue(codecs.value, rec.payload)
 
 [`EventLog.scala:28-33`]
 
-Each event identifier assigned through `EventLog.append` is an opaque producer token drawn from a per-instance monotonic counter. Identifiers carry no positional information and are not derived from the stream offset. They are independent of `Event.Committed.offset`, which the backend assigns.
+Each event identifier assigned through `EventLog.append` is an opaque producer token drawn from a per-instance monotonic counter. Identifiers carry no positional information and are not derived from the stream offset. They are independent of `Event.Recorded.offset`, which the backend assigns.
 
 ### Write-side deciders
 
@@ -363,7 +363,7 @@ At open time, `FileJournalCore` selects the format-dispatch seam from the resolv
 
 ```scala
 trait Reader[S]:
-    def read(streamId, from, maxCount): Chunk[Event.Committed] < (S & Abort[JournalReadFailure])
+    def read(streamId, from, maxCount): Chunk[Event.Recorded] < (S & Abort[JournalReadFailure])
     def streamInfo(streamId): StreamInfo < (S & Abort[JournalStreamInfoFailure])
 
 trait Backend[S] extends Reader[S]:
@@ -588,7 +588,7 @@ The file backend's design is grounded in established storage engineering pattern
 
 [`internal/InMemoryJournal.scala:10-111`]
 
-`InMemoryJournal` implements `Journal.Backend[Sync]` using an `AtomicRef[State]` where `State` is an immutable `Map[Event.StreamId, Chunk[Event.Committed]]`. There are no locks; atomicity is achieved through a compare-and-set loop.
+`InMemoryJournal` implements `Journal.Backend[Sync]` using an `AtomicRef[State]` where `State` is an immutable `Map[Event.StreamId, Chunk[Event.Recorded]]`. There are no locks; atomicity is achieved through a compare-and-set loop.
 
 The public factory is `Journal.Backend.inMemory` (`Journal.scala:97-98`), which delegates to the `private[kyo]` `InMemoryJournal.init`. `InMemoryJournal.init` allocates the `AtomicRef` inside `Sync` and wraps it in a new `InMemoryJournal`. Separate `Journal.Backend.inMemory` calls produce independent backends that do not share streams. [`internal/InMemoryJournal.scala:12-13`]
 
@@ -632,7 +632,7 @@ private def modify[A](operation: State => Result[JournalAppendFailure, (State, A
 
 ```scala
 def append[S](backend: Backend[S])(streamId, expected, events)(using AllowUnsafe): AppendResult < (S & Abort[JournalAppendFailure])
-def read[S](backend: Backend[S])(streamId, from, maxCount)(using AllowUnsafe): Chunk[Event.Committed] < (S & Abort[JournalReadFailure])
+def read[S](backend: Backend[S])(streamId, from, maxCount)(using AllowUnsafe): Chunk[Event.Recorded] < (S & Abort[JournalReadFailure])
 def streamInfo[S](backend: Backend[S])(streamId)(using AllowUnsafe): StreamInfo < (S & Abort[JournalStreamInfoFailure])
 ```
 
@@ -652,7 +652,7 @@ See the root [CONTRIBUTING.md](../CONTRIBUTING.md) for the global test naming ru
 |---|---|---|
 | `Journal.scala` | `JournalTest.scala` | Capability row types, `run` dispatch, `Unsafe` forwarders, inMemory integration |
 | `JournalError.scala` | `JournalTest.scala` | Error leaves exercised via `FailingBackend` and `JournalBackendTest` |
-| `JournalEvent.scala` | `JournalEventTest.scala`, `JournalMetadataTest.scala` | Wire-type validation, opaque-type extensions, Pending/Committed fields, `Event.Metadata` and `Event.Metadata.Key` validation |
+| `JournalEvent.scala` | `JournalEventTest.scala`, `JournalMetadataTest.scala` | Wire-type validation, opaque-type extensions, New/Recorded fields, `Event.Metadata` and `Event.Metadata.Key` validation |
 | `JournalMetadata.scala` | `FileJournalTest.scala`, `EventInterpolatorsTest.scala` | `JournalId`, `JournalEntryRef`, `JournalIdentityError` |
 | `internal/InMemoryJournal.scala` | `InMemoryJournalBackendTest.scala` | Covered via `JournalBackendTest` contract suite |
 | `FileJournal.scala`, `internal/FileJournalCore.scala`, `internal/SegmentStore.scala` | `FileJournalBackendTest.scala`, `FileJournalCrashTest.scala`, `FileJournalTest.scala` | All in `shared/src/test`; run on JVM, Native, JS-node, Wasm-node |

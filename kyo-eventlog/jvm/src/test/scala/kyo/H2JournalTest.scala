@@ -12,8 +12,8 @@ class H2JournalTest extends kyo.test.Test[Any]:
     private def valid[A](r: Result[JournalInvalidIdentifierError, A]): A =
         r.getOrElse(throw new AssertionError("expected valid identifier"))
 
-    private def envelope(n: Int): Event.Pending =
-        Event.Pending(
+    private def envelope(n: Int): Event.New =
+        Event.New(
             id = valid(Event.Id(s"event-$n")),
             eventType = valid(Event.Type("UserRegistered")),
             payload = Span.from(s"""{"n":$n}""".getBytes("UTF-8")),

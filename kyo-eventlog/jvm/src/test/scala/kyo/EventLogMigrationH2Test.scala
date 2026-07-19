@@ -18,8 +18,8 @@ class EventLogMigrationH2Test extends kyo.test.Test[Any]:
     private def offset(value: Long): Event.StreamOffset =
         Event.StreamOffset(value).getOrElse(throw new AssertionError("valid offset"))
 
-    private def envelope(id: String, n: Int): Event.Pending =
-        Event.Pending(
+    private def envelope(id: String, n: Int): Event.New =
+        Event.New(
             id = valid(Event.Id(id)),
             eventType = valid(Event.Type("MigrateH2Event")),
             payload = Span.from(s"""{"n":$n}""".getBytes("UTF-8")),

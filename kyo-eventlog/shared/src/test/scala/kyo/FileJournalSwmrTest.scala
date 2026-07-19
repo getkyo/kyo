@@ -16,8 +16,8 @@ class FileJournalSwmrTest extends kyo.test.Test[Any]:
         r.getOrElse(throw new AssertionError("valid identifier"))
     private val sid       = valid(Event.StreamId("swmr-1"))
     private val journalId = JournalId.validate("fj-swmr")(using Frame.internal).getOrElse(throw new AssertionError("valid journal id"))
-    private def env(n: Int): Event.Pending =
-        Event.Pending(valid(Event.Id(s"e-$n")), valid(Event.Type("T")), Span.from(s"payload-$n".getBytes("UTF-8")), Event.Metadata.empty)
+    private def env(n: Int): Event.New =
+        Event.New(valid(Event.Id(s"e-$n")), valid(Event.Type("T")), Span.from(s"payload-$n".getBytes("UTF-8")), Event.Metadata.empty)
 
     private def binaryConfiguration(options: FileJournal.Options)(using Frame) =
         for
@@ -80,7 +80,7 @@ class FileJournalSwmrTest extends kyo.test.Test[Any]:
                 gate          <- Channel.initUnscoped[Unit](1)
                 writerReady   <- Channel.initUnscoped[Unit](1)
                 batch1Go      <- Channel.initUnscoped[Unit](1)
-                readerDone    <- Channel.initUnscoped[Chunk[Event.Committed]](1)
+                readerDone    <- Channel.initUnscoped[Chunk[Event.Recorded]](1)
                 (seam, claim, flushFor) <- Sync.Unsafe.defer {
                     val coordinator = GroupCommitCoordinator.init
                     (
@@ -165,14 +165,14 @@ class FileJournalSwmrTest extends kyo.test.Test[Any]:
                         case panic: Result.Panic => throw panic.exception
                     }
                 }
-                collected <- Loop.indexed(Chunk.empty[Event.Committed], Event.StreamOffset.first) { (_, acc, from) =>
+                collected <- Loop.indexed(Chunk.empty[Event.Recorded], Event.StreamOffset.first) { (_, acc, from) =>
                     Scope.run {
                         Abort.run[JournalStorageError](Journal.Reader.file(dir, configuration)).map {
                             case Result.Success(reader) =>
                                 Abort.run[JournalError](reader.read(sid, from, 100)).map {
                                     case Result.Success(chunk) =>
                                         if chunk.isEmpty then
-                                            Loop.done[Chunk[Event.Committed], Event.StreamOffset, Chunk[Event.Committed]](acc)
+                                            Loop.done[Chunk[Event.Recorded], Event.StreamOffset, Chunk[Event.Recorded]](acc)
                                         else
                                             val next = valid(Event.StreamOffset(chunk.last.offset.value + 1L))
                                             Loop.continue(acc ++ chunk, next)

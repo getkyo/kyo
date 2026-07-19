@@ -43,14 +43,14 @@ class EventLogTest extends kyo.test.Test[Any]:
     // same-stream runs can be asserted by call count rather than only by final stream state.
     private def countingBackend(inner: Journal.Backend[Sync], counter: AtomicInt)(using Frame): Journal.Backend[Sync] =
         new Journal.Backend[Sync]:
-            def append(streamId: Event.StreamId, expected: ExpectedOffset, events: Chunk[Event.Pending])
+            def append(streamId: Event.StreamId, expected: ExpectedOffset, events: Chunk[Event.New])
                 : AppendResult < (Sync & Abort[JournalAppendFailure]) =
                 counter.incrementAndGet.andThen(inner.append(streamId, expected, events))
             def read(
                 streamId: Event.StreamId,
                 from: Event.StreamOffset,
                 maxCount: Int
-            ): Chunk[Event.Committed] < (Sync & Abort[JournalReadFailure]) =
+            ): Chunk[Event.Recorded] < (Sync & Abort[JournalReadFailure]) =
                 inner.read(streamId, from, maxCount)
             def streamInfo(streamId: Event.StreamId): StreamInfo < (Sync & Abort[JournalStreamInfoFailure]) =
                 inner.streamInfo(streamId)
@@ -216,7 +216,7 @@ class EventLogTest extends kyo.test.Test[Any]:
                         _ <- Journal.append(
                             sid,
                             ExpectedOffset.NoStream,
-                            Chunk(Event.Pending(eventId, eventType, garbage, Event.Metadata.empty))
+                            Chunk(Event.New(eventId, eventType, garbage, Event.Metadata.empty))
                         )
                         events <- log.read(sid, Event.StreamOffset.first, 10)
                     yield events
@@ -402,11 +402,11 @@ class EventLogTest extends kyo.test.Test[Any]:
             """
             val log1: kyo.EventLog[kyo.LogTestEvent] = ???
             val log2: kyo.EventLog[kyo.LogTestEvent] = ???
-            val cmd: log1.Command = ???
+            val cmd: log1.Prepared = ???
             log2.appendAll(cmd)
             """
         ).map(_.message)
-        assert(errors.nonEmpty, "expected a Command prepared from log1 to be rejected by log2.appendAll")
+        assert(errors.nonEmpty, "expected a prepared event from log1 to be rejected by log2.appendAll")
     }
 
     "AppendDirective.expected sets the canonical expected offset and withExpected is absent" in {

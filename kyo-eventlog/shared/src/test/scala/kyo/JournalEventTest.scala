@@ -72,16 +72,16 @@ class JournalEventTest extends kyo.test.Test[Any]:
         }
     }
 
-    "Event.Pending and Event.Committed" - {
+    "Event.New and Event.Recorded" - {
         "carry payload bytes by value" in {
             val payload = Span.from("""{"name":"Ada"}""".getBytes("UTF-8"))
-            val envelope = Event.Pending(
+            val envelope = Event.New(
                 id = valid(Event.Id("event-1")),
                 eventType = valid(Event.Type("UserRegistered")),
                 payload = payload,
                 metadata = Event.Metadata.empty
             )
-            val recorded = Event.Committed(
+            val recorded = Event.Recorded(
                 streamId = valid(Event.StreamId("users-1")),
                 offset = Event.StreamOffset.first,
                 id = envelope.id,
@@ -116,15 +116,15 @@ class JournalEventTest extends kyo.test.Test[Any]:
     }
 
     "Event (sealed trait)" - {
-        "pattern-match over Event.Pending/Event.Committed reaches the shared id/eventType/metadata/payload members without narrowing" in {
+        "pattern-match over Event.New/Event.Recorded reaches the shared id/eventType/metadata/payload members without narrowing" in {
             val payload = Span.from("""{"name":"Ada"}""".getBytes("UTF-8"))
-            val pending = Event.Pending(
+            val pending = Event.New(
                 id = valid(Event.Id("event-1")),
                 eventType = valid(Event.Type("UserRegistered")),
                 payload = payload,
                 metadata = Event.Metadata.empty
             )
-            val committed = Event.Committed(
+            val committed = Event.Recorded(
                 streamId = valid(Event.StreamId("users-1")),
                 offset = Event.StreamOffset.first,
                 id = pending.id,
@@ -135,8 +135,8 @@ class JournalEventTest extends kyo.test.Test[Any]:
             val events: Chunk[Event] = Chunk(pending, committed)
 
             val matchedIds: Chunk[Event.Id] = events.map {
-                case p: Event.Pending   => p.id
-                case c: Event.Committed => c.id
+                case p: Event.New      => p.id
+                case c: Event.Recorded => c.id
             }
             assert(matchedIds == Chunk(pending.id, committed.id))
             assert(matchedIds(0) == matchedIds(1))
@@ -151,10 +151,10 @@ class JournalEventTest extends kyo.test.Test[Any]:
         }
     }
 
-    "Event.Committed.id (renamed from eventId)" - {
-        "equals the appended Event.Pending's id after a Journal.run(inMemory) append/read round-trip" in {
+    "Event.Recorded.id (renamed from eventId)" - {
+        "equals the appended Event.New's id after a Journal.run(inMemory) append/read round-trip" in {
             val streamId = valid(Event.StreamId("users-1"))
-            val pending = Event.Pending(
+            val pending = Event.New(
                 id = valid(Event.Id("event-1")),
                 eventType = valid(Event.Type("UserRegistered")),
                 payload = Span.from("""{"name":"Ada"}""".getBytes("UTF-8")),
@@ -176,7 +176,7 @@ class JournalEventTest extends kyo.test.Test[Any]:
         "has no .eventId member (compile-negative: the field genuinely renamed, not aliased)" in {
             val errors = scala.compiletime.testing.typeCheckErrors(
                 """
-                val committed: Event.Committed = ???
+                val committed: Event.Recorded = ???
                 val _: Event.Id = committed.eventId
                 """
             )
@@ -238,6 +238,29 @@ class JournalEventTest extends kyo.test.Test[Any]:
                 relocatedHits ++ deletedHits
             }
             assert(hits.isEmpty, s"stale symbol references found: ${hits.mkString(", ")}")
+        }
+
+        "kyo-eventlog shipped source uses only the D-045 New/Recorded/Prepared spellings, no Pending/Committed/Command survivor".onlyJvm in {
+            val bannedSpellings = List(
+                "Event.Pending",
+                "Event.Committed",
+                "EventEnvelope",
+                "RecordedEvent",
+                "final class Command",
+                "log.Command",
+                "#Command"
+            )
+            val requiredSpellings = List("Event.New", "Event.Recorded", "final class Prepared")
+            val sources           = sourceFileLines()
+
+            val banned = sources.flatMap { (file, lines) =>
+                lines.flatMap(line => bannedSpellings.collect { case s if line.contains(s) => s"$file [$s]: ${line.trim}" })
+            }
+            assert(banned.isEmpty, s"stale D-045 spellings found in shipped source: ${banned.mkString(", ")}")
+
+            val allLines = sources.flatMap((_, lines) => lines)
+            val missing  = requiredSpellings.filterNot(spelling => allLines.exists(_.contains(spelling)))
+            assert(missing.isEmpty, s"expected the new D-045 spellings to be present in shipped source, missing: ${missing.mkString(", ")}")
         }
     }
 end JournalEventTest

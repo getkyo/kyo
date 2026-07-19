@@ -9,14 +9,14 @@ class JournalTest extends kyo.test.Test[Any]:
     private val eventId   = valid(Event.Id("event-1"))
     private val eventType = valid(Event.Type("UserRegistered"))
 
-    private val envelope = Event.Pending(
+    private val envelope = Event.New(
         id = eventId,
         eventType = eventType,
         payload = Span.from("""{"name":"Ada"}""".getBytes("UTF-8")),
         metadata = Event.Metadata.empty
     )
 
-    private val recorded = Event.Committed(
+    private val recorded = Event.Recorded(
         streamId = streamId,
         offset = Event.StreamOffset.first,
         id = eventId,
@@ -30,7 +30,7 @@ class JournalTest extends kyo.test.Test[Any]:
     "operations expose the Journal capability and per-op Abort in the row" in {
         val _: AppendResult < (Journal & Abort[JournalAppendFailure]) =
             Journal.append(streamId, ExpectedOffset.NoStream, Chunk(envelope))
-        val _: Chunk[Event.Committed] < (Journal & Abort[JournalReadFailure]) =
+        val _: Chunk[Event.Recorded] < (Journal & Abort[JournalReadFailure]) =
             Journal.read(streamId, Event.StreamOffset.first, 10)
         val _: StreamInfo < (Journal & Abort[JournalStreamInfoFailure]) =
             Journal.streamInfo(streamId)
@@ -169,7 +169,7 @@ class JournalTest extends kyo.test.Test[Any]:
         yield
             val _: AppendResult < (Sync & Abort[JournalAppendFailure]) =
                 Journal.Unsafe.append(b)(streamId, ExpectedOffset.NoStream, Chunk(envelope))(using AllowUnsafe.embrace.danger)
-            val _: Chunk[Event.Committed] < (Sync & Abort[JournalReadFailure]) =
+            val _: Chunk[Event.Recorded] < (Sync & Abort[JournalReadFailure]) =
                 Journal.Unsafe.read(b)(streamId, Event.StreamOffset.first, 10)(using AllowUnsafe.embrace.danger)
             val _: StreamInfo < (Sync & Abort[JournalStreamInfoFailure]) =
                 Journal.Unsafe.streamInfo(b)(streamId)(using AllowUnsafe.embrace.danger)
@@ -247,7 +247,7 @@ class JournalTest extends kyo.test.Test[Any]:
     }
 
     private enum Call derives CanEqual:
-        case Append(streamId: Event.StreamId, expected: ExpectedOffset, events: Chunk[Event.Pending])
+        case Append(streamId: Event.StreamId, expected: ExpectedOffset, events: Chunk[Event.New])
         case Read(streamId: Event.StreamId, from: Event.StreamOffset, maxCount: Int)
         case Info(streamId: Event.StreamId)
     end Call
@@ -257,7 +257,7 @@ class JournalTest extends kyo.test.Test[Any]:
 
         def calls: Chunk[Call] = recordedCalls
 
-        def append(streamId: Event.StreamId, expected: ExpectedOffset, events: Chunk[Event.Pending])
+        def append(streamId: Event.StreamId, expected: ExpectedOffset, events: Chunk[Event.New])
             : AppendResult < (Sync & Abort[JournalAppendFailure]) =
             Sync.defer {
                 recordedCalls = recordedCalls.append(Call.Append(streamId, expected, events))
@@ -265,7 +265,7 @@ class JournalTest extends kyo.test.Test[Any]:
             }
 
         def read(streamId: Event.StreamId, from: Event.StreamOffset, maxCount: Int)
-            : Chunk[Event.Committed] < (Sync & Abort[JournalReadFailure]) =
+            : Chunk[Event.Recorded] < (Sync & Abort[JournalReadFailure]) =
             Sync.defer {
                 recordedCalls = recordedCalls.append(Call.Read(streamId, from, maxCount))
                 Chunk(recorded)
@@ -283,11 +283,11 @@ class JournalTest extends kyo.test.Test[Any]:
         readError: JournalReadFailure = JournalStorageError("test read failure", Maybe.empty),
         streamInfoError: JournalStreamInfoFailure = JournalStorageError("test streamInfo failure", Maybe.empty)
     ) extends Journal.Backend[Sync]:
-        def append(streamId: Event.StreamId, expected: ExpectedOffset, events: Chunk[Event.Pending])
+        def append(streamId: Event.StreamId, expected: ExpectedOffset, events: Chunk[Event.New])
             : AppendResult < (Sync & Abort[JournalAppendFailure]) =
             Abort.fail(appendError)
         def read(streamId: Event.StreamId, from: Event.StreamOffset, maxCount: Int)
-            : Chunk[Event.Committed] < (Sync & Abort[JournalReadFailure]) =
+            : Chunk[Event.Recorded] < (Sync & Abort[JournalReadFailure]) =
             Abort.fail(readError)
         def streamInfo(streamId: Event.StreamId): StreamInfo < (Sync & Abort[JournalStreamInfoFailure]) =
             Abort.fail(streamInfoError)

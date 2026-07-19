@@ -237,19 +237,19 @@ class FileJournalNodeLockTest extends kyo.test.Test[Any]:
             val refHash  = "a1f871e87a6265a58be510876984f1679db24271d6a2510643400ad6bf17216f"
             val streamId = valid(Event.StreamId("ref-stream"))
             val events = Chunk(
-                Event.Pending(
+                Event.New(
                     id = valid(Event.Id("e-1")),
                     eventType = valid(Event.Type("RefType")),
                     payload = Span.from("ref-payload-1".getBytes("UTF-8")),
                     metadata = Event.Metadata.empty
                 ),
-                Event.Pending(
+                Event.New(
                     id = valid(Event.Id("e-2")),
                     eventType = valid(Event.Type("RefType")),
                     payload = Span.from("ref-payload-2".getBytes("UTF-8")),
                     metadata = Event.Metadata.empty
                 ),
-                Event.Pending(
+                Event.New(
                     id = valid(Event.Id("e-3")),
                     eventType = valid(Event.Type("RefType")),
                     payload = Span.from("ref-payload-3".getBytes("UTF-8")),

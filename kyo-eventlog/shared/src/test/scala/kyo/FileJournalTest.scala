@@ -6,8 +6,8 @@ class FileJournalTest extends kyo.test.Test[Any]:
 
     private def valid[A](r: Result[JournalInvalidIdentifierError, A]): A =
         r.getOrElse(throw new AssertionError("valid identifier"))
-    private def env(n: Int, md: Event.Metadata = Event.Metadata.empty): Event.Pending =
-        Event.Pending(valid(Event.Id(s"e-$n")), valid(Event.Type("T")), Span.from(s"payload-$n".getBytes("UTF-8")), md)
+    private def env(n: Int, md: Event.Metadata = Event.Metadata.empty): Event.New =
+        Event.New(valid(Event.Id(s"e-$n")), valid(Event.Type("T")), Span.from(s"payload-$n".getBytes("UTF-8")), md)
 
     private def off(value: Long): Event.StreamOffset = valid(Event.StreamOffset(value))
 
@@ -83,7 +83,7 @@ class FileJournalTest extends kyo.test.Test[Any]:
             // segment 0 and ends in a later segment and assert contiguity, ordering, and payloads.
             // Then append one oversized record (payload > segmentSize) and read it back.
             val sid = valid(Event.StreamId("s"))
-            val big = Event.Pending(valid(Event.Id("big")), valid(Event.Type("T")), Span.from(new Array[Byte](512)), Event.Metadata.empty)
+            val big = Event.New(valid(Event.Id("big")), valid(Event.Type("T")), Span.from(new Array[Byte](512)), Event.Metadata.empty)
             for
                 dir    <- freshDir("fj-rot")
                 config <- binaryConfiguration("rot", FileJournal.Options(fsync = FileJournal.Fsync.Always, segmentSize = 256L.bytes))

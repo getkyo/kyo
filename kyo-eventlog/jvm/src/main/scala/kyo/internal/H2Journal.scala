@@ -115,7 +115,7 @@ final private class H2Journal(dataSource: DataSource)(using Frame) extends Journ
     def append(
         streamId: Event.StreamId,
         expected: ExpectedOffset,
-        events: Chunk[Event.Pending]
+        events: Chunk[Event.New]
     ): AppendResult < (Async & Abort[JournalAppendFailure]) =
         if events.isEmpty then Abort.fail(JournalEmptyAppendError())
         else
@@ -127,7 +127,7 @@ final private class H2Journal(dataSource: DataSource)(using Frame) extends Journ
         streamId: Event.StreamId,
         from: Event.StreamOffset,
         maxCount: Int
-    ): Chunk[Event.Committed] < (Async & Abort[JournalReadFailure]) =
+    ): Chunk[Event.Recorded] < (Async & Abort[JournalReadFailure]) =
         if maxCount <= 0 then Chunk.empty
         else
             // Unsafe: the whole read (borrow connection, ranged select, release) is one blocking
@@ -142,7 +142,7 @@ final private class H2Journal(dataSource: DataSource)(using Frame) extends Journ
     private def appendBlocking(
         streamId: Event.StreamId,
         expected: ExpectedOffset,
-        events: Chunk[Event.Pending]
+        events: Chunk[Event.New]
     ): Result[JournalAppendFailure, AppendResult] =
         var conn: Connection = null
         try
@@ -161,7 +161,7 @@ final private class H2Journal(dataSource: DataSource)(using Frame) extends Journ
         conn: Connection,
         streamId: Event.StreamId,
         expected: ExpectedOffset,
-        events: Chunk[Event.Pending]
+        events: Chunk[Event.New]
     ): Result[JournalAppendFailure, AppendResult] =
         val current = currentInfo(conn, streamId)
         if !matches(expected, current) then
@@ -188,7 +188,7 @@ final private class H2Journal(dataSource: DataSource)(using Frame) extends Journ
         end if
     end insertIfExpected
 
-    private def insertBatch(conn: Connection, streamId: Event.StreamId, firstValue: Long, events: Chunk[Event.Pending]): Unit =
+    private def insertBatch(conn: Connection, streamId: Event.StreamId, firstValue: Long, events: Chunk[Event.New]): Unit =
         val ps = conn.prepareStatement(insertSql)
         try
             events.zipWithIndex.foreach { (event, index) =>
@@ -209,7 +209,7 @@ final private class H2Journal(dataSource: DataSource)(using Frame) extends Journ
         streamId: Event.StreamId,
         from: Event.StreamOffset,
         maxCount: Int
-    ): Result[JournalReadFailure, Chunk[Event.Committed]] =
+    ): Result[JournalReadFailure, Chunk[Event.Recorded]] =
         var conn: Connection = null
         try
             conn = dataSource.getConnection()
@@ -227,7 +227,7 @@ final private class H2Journal(dataSource: DataSource)(using Frame) extends Journ
         streamId: Event.StreamId,
         from: Event.StreamOffset,
         maxCount: Int
-    ): Result[JournalReadFailure, Chunk[Event.Committed]] =
+    ): Result[JournalReadFailure, Chunk[Event.Recorded]] =
         val ps = conn.prepareStatement(selectRangeSql)
         try
             ps.setString(1, streamId.value)
@@ -235,7 +235,7 @@ final private class H2Journal(dataSource: DataSource)(using Frame) extends Journ
             ps.setInt(3, maxCount)
             val rs = ps.executeQuery()
             try
-                val builder                            = Chunk.newBuilder[Event.Committed]
+                val builder                            = Chunk.newBuilder[Event.Recorded]
                 var failure: Maybe[JournalReadFailure] = Absent
                 while failure.isEmpty && rs.next() do
                     val sequence      = rs.getLong(1)
@@ -247,7 +247,7 @@ final private class H2Journal(dataSource: DataSource)(using Frame) extends Journ
                         case Result.Failure(err) =>
                             failure = Present(JournalCorruptedError(Present(streamId), err.getMessage))
                         case Result.Success(metadata) =>
-                            builder += Event.Committed(
+                            builder += Event.Recorded(
                                 streamId = streamId,
                                 offset = Event.StreamOffset.fromUnchecked(sequence),
                                 id = Event.Id.fromUnchecked(eventId),

@@ -48,8 +48,8 @@ private[kyo] object EventLogSupport:
       * non-adjacently, starts a NEW run rather than merging with an earlier one, matching
       * Journal.append's per-call contiguous-offset-range semantics.
       */
-    private[kyo] def groupContiguousByStream[A](commands: Chunk[EventLog[A]#Command]): Chunk[Chunk[EventLog[A]#Command]] =
-        commands.foldLeft(Chunk.empty[Chunk[EventLog[A]#Command]]) { (acc, cmd) =>
+    private[kyo] def groupContiguousByStream[A](commands: Chunk[EventLog[A]#Prepared]): Chunk[Chunk[EventLog[A]#Prepared]] =
+        commands.foldLeft(Chunk.empty[Chunk[EventLog[A]#Prepared]]) { (acc, cmd) =>
             acc.lastMaybe match
                 case Present(run) if run.head.streamId == cmd.streamId => acc.dropRight(1) :+ (run :+ cmd)
                 case _                                                 => acc :+ Chunk(cmd)
@@ -62,7 +62,7 @@ private[kyo] object EventLogSupport:
       * index within the run, rather than being silently dropped or silently checked against the
       * wrong offset.
       */
-    private[kyo] def resolveRunExpectedOffset[A](run: Chunk[EventLog[A]#Command])(using
+    private[kyo] def resolveRunExpectedOffset[A](run: Chunk[EventLog[A]#Prepared])(using
         Frame
     ): Result[EventLog.PreparationFailure, ExpectedOffset] =
         findNonHeadExpectedOffset(run, 1) match
@@ -74,7 +74,7 @@ private[kyo] object EventLogSupport:
                 Result.succeed(run.head.directive.expectedOffset.getOrElse(ExpectedOffset.Any))
 
     @scala.annotation.tailrec
-    private def findNonHeadExpectedOffset[A](run: Chunk[EventLog[A]#Command], index: Int): Maybe[Int] =
+    private def findNonHeadExpectedOffset[A](run: Chunk[EventLog[A]#Prepared], index: Int): Maybe[Int] =
         if index >= run.length then Absent
         else if run(index).directive.expectedOffset.isDefined then Present(index)
         else findNonHeadExpectedOffset(run, index + 1)
@@ -104,7 +104,7 @@ extension (self: EventLog.type)
       * directive's override when present (the Definition's StreamSelector/IdPolicy is
       * NOT consulted at all for an overridden facet), or else resolved via
       * `ev.stream.resolve(event)` / `ev.eventId.next(event, streamId, ev.eventType, metadata)`.
-      * Assembles the [[Event.Pending]] `prepare` wraps in a `Command` alongside the resolved
+      * Assembles the [[Event.New]] `prepare` wraps in a `Prepared` alongside the resolved
       * `streamId`. Aborts `PreparationFailure` on stream, id, or codec resolution failure. No
       * Journal effect: prepare is pure staging.
       */
@@ -113,7 +113,7 @@ extension (self: EventLog.type)
         ev: Event.Definition[A, E],
         event: E,
         directive: EventLog.AppendDirective
-    )(using Frame): Result[EventLog.PreparationFailure, (Event.StreamId, Event.Pending)] =
+    )(using Frame): Result[EventLog.PreparationFailure, (Event.StreamId, Event.New)] =
         // Unsafe: EventLogCodecs.encodeValue's Sync suspension is a synchronous computation
         // with no real suspension point; evaluated inline so prepareEnvelope stays a plain
         // Result, matching the frozen EventLog.scala call site's
@@ -135,23 +135,23 @@ extension (self: EventLog.type)
                 case Present(eventId) => Result.succeed(eventId)
                 case Absent =>
                     Abort.run[EventLog.PreparationFailure](ev.eventId.next(event, streamId, ev.eventType, metadata)).eval
-            eventIdResult.map(eventId => (streamId, Event.Pending(eventId, ev.eventType, bytes, metadata)))
+            eventIdResult.map(eventId => (streamId, Event.New(eventId, ev.eventType, bytes, metadata)))
         }
     end prepareEnvelope
 
     /** Groups the batch into contiguous runs by resolved `streamId` (first-occurrence order
       * preserved across the whole batch; a `replaceStreamId` override already baked into
-      * `Command.streamId` at `prepare` time correctly starts a new run) and issues one
+      * `Prepared.streamId` at `prepare` time correctly starts a new run) and issues one
       * [[Journal.append]] per run, after validating that run's directive-supplied
       * `expectedOffset` (only the run's head command may carry a non-absent one,
       * [[EventLogSupport.resolveRunExpectedOffset]]). The returned `Chunk[AppendResult]` mirrors
       * every run's single result back across that run's original command positions, so the
       * outer shape always has one entry per input command, in original order, regardless of
-      * grouping. Path-dependent `Command` (`EventLog[A]#Command`) is accepted structurally:
-      * every concrete command is `this.Command` for the single log `appendAll` was called on,
+      * grouping. Path-dependent `Prepared` (`EventLog[A]#Prepared`) is accepted structurally:
+      * every concrete command is `this.Prepared` for the single log `appendAll` was called on,
       * which is always a subtype of the unbound projection.
       */
-    private[kyo] def appendValidated[A](commands: Chunk[EventLog[A]#Command])(using
+    private[kyo] def appendValidated[A](commands: Chunk[EventLog[A]#Prepared])(using
         Frame
     ): Chunk[AppendResult] < (Journal & Sync & Abort[EventLog.PreparationFailure] & Abort[JournalAppendFailure]) =
         val runs = EventLogSupport.groupContiguousByStream(commands)
@@ -234,7 +234,7 @@ extension (self: EventLog.type)
                     source.read(streamId, Event.StreamOffset.fromUnchecked(from), EventLogSupport.migratePageSize).map { page =>
                         if page.isEmpty then Loop.done(EventLog.MigrationReport.StreamSummary(streamId, copied, lastOffset))
                         else
-                            val pending = page.map(c => Event.Pending(c.id, c.eventType, c.payload, c.metadata))
+                            val pending = page.map(c => Event.New(c.id, c.eventType, c.payload, c.metadata))
                             target.append(streamId, expected, pending).map { result =>
                                 Loop.continue(
                                     from + page.length.toLong,
@@ -275,7 +275,7 @@ extension (self: EventLog.type)
                             Kyo.foreach(page) { rec =>
                                 transform(rec.payload).map(y =>
                                     EventLogCodecs.encodeValue(targetCodecs.value, y).map(bytes =>
-                                        Event.Pending(rec.eventId, rec.eventType, bytes, rec.metadata)
+                                        Event.New(rec.eventId, rec.eventType, bytes, rec.metadata)
                                     )
                                 )
                             }.map { pending =>

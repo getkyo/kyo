@@ -28,8 +28,8 @@ class FileJournalNodeAsyncLivenessTest extends kyo.test.Test[Any]:
             configuration <- FileJournal.Binary.configuration(journalId, codecs)
         yield configuration
 
-    private def envelope(id: String, payload: Array[Byte]): Event.Pending =
-        Event.Pending(
+    private def envelope(id: String, payload: Array[Byte]): Event.New =
+        Event.New(
             id = valid(Event.Id(id)),
             eventType = valid(Event.Type("LivenessProbe")),
             payload = Span.from(payload),

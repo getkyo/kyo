@@ -34,10 +34,10 @@ object Journal:
       * operation's per-op failure trait, which the public op lifts back to `Abort` on its own row.
       */
     private[kyo] enum Op[A]:
-        case Append(streamId: Event.StreamId, expected: ExpectedOffset, events: Chunk[Event.Pending])
+        case Append(streamId: Event.StreamId, expected: ExpectedOffset, events: Chunk[Event.New])
             extends Op[Result[JournalAppendFailure, AppendResult]]
         case Read(streamId: Event.StreamId, from: Event.StreamOffset, maxCount: Int)
-            extends Op[Result[JournalReadFailure, Chunk[Event.Committed]]]
+            extends Op[Result[JournalReadFailure, Chunk[Event.Recorded]]]
         case StreamInfo(streamId: Event.StreamId) extends Op[Result[JournalStreamInfoFailure, kyo.StreamInfo]]
     end Op
 
@@ -60,7 +60,7 @@ object Journal:
             streamId: Event.StreamId,
             from: Event.StreamOffset,
             maxCount: Int
-        ): Chunk[Event.Committed] < (S & Abort[JournalReadFailure])
+        ): Chunk[Event.Recorded] < (S & Abort[JournalReadFailure])
 
         /** Reports the stream's current state. */
         def streamInfo(streamId: Event.StreamId): StreamInfo < (S & Abort[JournalStreamInfoFailure])
@@ -87,7 +87,7 @@ object Journal:
         def append(
             streamId: Event.StreamId,
             expected: ExpectedOffset,
-            events: Chunk[Event.Pending]
+            events: Chunk[Event.New]
         ): AppendResult < (S & Abort[JournalAppendFailure])
     end Backend
 
@@ -157,7 +157,7 @@ object Journal:
     inline def append(
         streamId: Event.StreamId,
         expected: ExpectedOffset,
-        events: Chunk[Event.Pending]
+        events: Chunk[Event.New]
     )(using inline frame: Frame): AppendResult < (Journal & Abort[JournalAppendFailure]) =
         ArrowEffect.suspend(Tag[Journal], Op.Append(streamId, expected, events)).map(r => Abort.get(r))
 
@@ -169,7 +169,7 @@ object Journal:
         streamId: Event.StreamId,
         from: Event.StreamOffset,
         maxCount: Int
-    )(using inline frame: Frame): Chunk[Event.Committed] < (Journal & Abort[JournalReadFailure]) =
+    )(using inline frame: Frame): Chunk[Event.Recorded] < (Journal & Abort[JournalReadFailure]) =
         ArrowEffect.suspend(Tag[Journal], Op.Read(streamId, from, maxCount)).map(r => Abort.get(r))
 
     /** Reports the stream's current state: [[StreamInfo.Absent]] or [[StreamInfo.Existing]]. The in-memory backend never fails; a durable
@@ -215,7 +215,7 @@ object Journal:
       * possessor is not authorized (Denied). None of the three is a storage failure.
       */
     enum EntryResolution derives CanEqual:
-        case Found(record: Event.Committed)
+        case Found(record: Event.Recorded)
         case Missing
         case Denied
     end EntryResolution
@@ -237,7 +237,7 @@ object Journal:
         def append[S](backend: Backend[S])(
             streamId: Event.StreamId,
             expected: ExpectedOffset,
-            events: Chunk[Event.Pending]
+            events: Chunk[Event.New]
         )(using AllowUnsafe): AppendResult < (S & Abort[JournalAppendFailure]) =
             backend.append(streamId, expected, events)
 
@@ -246,7 +246,7 @@ object Journal:
             streamId: Event.StreamId,
             from: Event.StreamOffset,
             maxCount: Int
-        )(using AllowUnsafe): Chunk[Event.Committed] < (S & Abort[JournalReadFailure]) =
+        )(using AllowUnsafe): Chunk[Event.Recorded] < (S & Abort[JournalReadFailure]) =
             backend.read(streamId, from, maxCount)
 
         /** Reports stream state directly against `backend`, bypassing the ArrowEffect suspend and handler dispatch. */

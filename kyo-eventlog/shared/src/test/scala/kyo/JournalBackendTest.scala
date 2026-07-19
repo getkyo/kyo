@@ -17,8 +17,8 @@ abstract class JournalBackendTest[S >: Async <: Sync](newBackend: => Journal.Bac
     private val streamId = valid(Event.StreamId("users-1"))
     private val otherId  = valid(Event.StreamId("users-2"))
 
-    private def envelope(n: Int): Event.Pending =
-        Event.Pending(
+    private def envelope(n: Int): Event.New =
+        Event.New(
             id = valid(Event.Id(s"event-$n")),
             eventType = valid(Event.Type("UserRegistered")),
             payload = Span.from(s"""{"n":$n}""".getBytes("UTF-8")),
@@ -119,7 +119,7 @@ abstract class JournalBackendTest[S >: Async <: Sync](newBackend: => Journal.Bac
             for
                 backend <- newBackend
                 events  <- Abort.run[JournalError](backend.read(streamId, Event.StreamOffset.first, 10))
-            yield assert(events == Result.succeed(Chunk.empty[Event.Committed]))
+            yield assert(events == Result.succeed(Chunk.empty[Event.Recorded]))
         }
 
         "a non-positive maxCount returns an empty chunk" in {
@@ -129,8 +129,8 @@ abstract class JournalBackendTest[S >: Async <: Sync](newBackend: => Journal.Bac
                 zero    <- Abort.run[JournalError](backend.read(streamId, Event.StreamOffset.first, 0))
                 neg     <- Abort.run[JournalError](backend.read(streamId, Event.StreamOffset.first, -1))
             yield
-                assert(zero == Result.succeed(Chunk.empty[Event.Committed]))
-                assert(neg == Result.succeed(Chunk.empty[Event.Committed]))
+                assert(zero == Result.succeed(Chunk.empty[Event.Recorded]))
+                assert(neg == Result.succeed(Chunk.empty[Event.Recorded]))
         }
 
         "a from at or past the event count returns an empty chunk" in {
@@ -140,8 +140,8 @@ abstract class JournalBackendTest[S >: Async <: Sync](newBackend: => Journal.Bac
                 at      <- Abort.run[JournalError](backend.read(streamId, offset(2), 10))
                 past    <- Abort.run[JournalError](backend.read(streamId, offset(9), 10))
             yield
-                assert(at == Result.succeed(Chunk.empty[Event.Committed]))
-                assert(past == Result.succeed(Chunk.empty[Event.Committed]))
+                assert(at == Result.succeed(Chunk.empty[Event.Recorded]))
+                assert(past == Result.succeed(Chunk.empty[Event.Recorded]))
         }
 
         "returns events in offset order from the requested position, bounded by maxCount" in {
@@ -184,7 +184,7 @@ abstract class JournalBackendTest[S >: Async <: Sync](newBackend: => Journal.Bac
                 backend <- newBackend
                 _       <- Abort.run[JournalError](backend.append(streamId, ExpectedOffset.NoStream, Chunk(envelope(0))))
                 other   <- Abort.run[JournalError](backend.read(otherId, Event.StreamOffset.first, 10))
-            yield assert(other == Result.succeed(Chunk.empty[Event.Committed]))
+            yield assert(other == Result.succeed(Chunk.empty[Event.Recorded]))
         }
     }
 
@@ -230,7 +230,7 @@ abstract class JournalBackendTest[S >: Async <: Sync](newBackend: => Journal.Bac
                     Structure.Value.Str("payload")
                 ))
             ))
-            val ev = Event.Pending(
+            val ev = Event.New(
                 id = valid(Event.Id("meta-fidelity")),
                 eventType = valid(Event.Type("MetaTest")),
                 payload = Span.from(Array.emptyByteArray),

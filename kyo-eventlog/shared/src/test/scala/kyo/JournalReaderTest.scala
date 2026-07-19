@@ -14,8 +14,8 @@ class JournalReaderTest extends kyo.test.Test[Any]:
         r.getOrElse(throw new AssertionError("valid identifier"))
     private val sid       = valid(Event.StreamId("reader-1"))
     private val journalId = JournalId.validate("fj-reader")(using Frame.internal).getOrElse(throw new AssertionError("valid journal id"))
-    private def env(n: Int): Event.Pending =
-        Event.Pending(valid(Event.Id(s"e-$n")), valid(Event.Type("T")), Span.from(s"p$n".getBytes("UTF-8")), Event.Metadata.empty)
+    private def env(n: Int): Event.New =
+        Event.New(valid(Event.Id(s"e-$n")), valid(Event.Type("T")), Span.from(s"p$n".getBytes("UTF-8")), Event.Metadata.empty)
 
     // Unsafe: eagerly resolves the pure (no real Sync/IO) codec + configuration construction to a
     // plain value at class-init time; both factories can only fail on a genuine construction-time
@@ -44,7 +44,7 @@ class JournalReaderTest extends kyo.test.Test[Any]:
             case panic: Result.Panic => throw panic.exception
         }
 
-    private def appendClosed(dir: Path, batches: Seq[Chunk[Event.Pending]], configuration: FileJournal.Configuration[Span[Byte]])(using
+    private def appendClosed(dir: Path, batches: Seq[Chunk[Event.New]], configuration: FileJournal.Configuration[Span[Byte]])(using
         Frame
     ): Unit < Async =
         Scope.run {
@@ -94,7 +94,7 @@ class JournalReaderTest extends kyo.test.Test[Any]:
 
     private def readWithSyncReader(dir: Path, configuration: FileJournal.Configuration[Span[Byte]])(using
         Frame
-    ): Chunk[Event.Committed] < Async =
+    ): Chunk[Event.Recorded] < Async =
         Scope.run {
             Abort.run[JournalStorageError](Journal.Reader.file(dir, configuration)).map {
                 case Result.Success(reader) =>
@@ -110,7 +110,7 @@ class JournalReaderTest extends kyo.test.Test[Any]:
 
     private def readResultSync(dir: Path, configuration: FileJournal.Configuration[Span[Byte]])(using
         Frame
-    ): Result[JournalError, Chunk[Event.Committed]] < Async =
+    ): Result[JournalError, Chunk[Event.Recorded]] < Async =
         Scope.run {
             Abort.run[JournalStorageError](Journal.Reader.file(dir, configuration)).map {
                 case Result.Success(reader) => Abort.run[JournalError](reader.read(sid, Event.StreamOffset.first, Int.MaxValue))

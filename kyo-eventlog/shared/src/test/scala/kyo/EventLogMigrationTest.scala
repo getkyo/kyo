@@ -16,8 +16,8 @@ class EventLogMigrationTest extends kyo.test.Test[Any]:
     private def offset(value: Long): Event.StreamOffset =
         Event.StreamOffset(value).getOrElse(throw new AssertionError("valid offset"))
 
-    private def envelope(id: String, n: Int, eventType: String = "MigrateEvent"): Event.Pending =
-        Event.Pending(
+    private def envelope(id: String, n: Int, eventType: String = "MigrateEvent"): Event.New =
+        Event.New(
             id = valid(Event.Id(id)),
             eventType = valid(Event.Type(eventType)),
             payload = Span.from(s"""{"n":$n}""".getBytes("UTF-8")),
@@ -210,8 +210,8 @@ class EventLogMigrationTest extends kyo.test.Test[Any]:
                         streamId,
                         ExpectedOffset.NoStream,
                         Chunk(
-                            Event.Pending(valid(Event.Id("upcast-0")), valid(Event.Type("UpcastEvent")), encoded0, Event.Metadata.empty),
-                            Event.Pending(valid(Event.Id("upcast-1")), valid(Event.Type("UpcastEvent")), encoded1, Event.Metadata.empty)
+                            Event.New(valid(Event.Id("upcast-0")), valid(Event.Type("UpcastEvent")), encoded0, Event.Metadata.empty),
+                            Event.New(valid(Event.Id("upcast-1")), valid(Event.Type("UpcastEvent")), encoded1, Event.Metadata.empty)
                         )
                     ))
                     intReader <- EventLog.reader(backend)
@@ -258,13 +258,13 @@ class EventLogMigrationTest extends kyo.test.Test[Any]:
                         streamId,
                         ExpectedOffset.NoStream,
                         Chunk(
-                            Event.Pending(
+                            Event.New(
                                 valid(Event.Id("migrate-with-0")),
                                 valid(Event.Type("MigrateWithEvent")),
                                 encoded7,
                                 Event.Metadata.empty
                             ),
-                            Event.Pending(
+                            Event.New(
                                 valid(Event.Id("migrate-with-1")),
                                 valid(Event.Type("MigrateWithEvent")),
                                 encoded8,

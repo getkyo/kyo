@@ -66,12 +66,12 @@ val observable =
         appends <- AtomicInt.init(0)
         inner   <- Journal.Backend.inMemory
     yield new Journal.Backend[Sync]:
-        def append(streamId: Event.StreamId, expected: ExpectedOffset, events: Chunk[Event.Pending])
+        def append(streamId: Event.StreamId, expected: ExpectedOffset, events: Chunk[Event.New])
             : AppendResult < (Sync & Abort[JournalAppendFailure]) =
             appends.incrementAndGet.andThen(inner.append(streamId, expected, events))
 
         def read(streamId: Event.StreamId, from: Event.StreamOffset, maxCount: Int)
-            : Chunk[Event.Committed] < (Sync & Abort[JournalReadFailure]) =
+            : Chunk[Event.Recorded] < (Sync & Abort[JournalReadFailure]) =
             inner.read(streamId, from, maxCount)
 
         def streamInfo(streamId: Event.StreamId): StreamInfo < (Sync & Abort[JournalStreamInfoFailure]) =
@@ -91,18 +91,18 @@ val runCustom =
         inner    <- Journal.Backend.inMemory
         backend =
             new Journal.Backend[Sync]:
-                def append(streamId: Event.StreamId, expected: ExpectedOffset, events: Chunk[Event.Pending])
+                def append(streamId: Event.StreamId, expected: ExpectedOffset, events: Chunk[Event.New])
                     : AppendResult < (Sync & Abort[JournalAppendFailure]) =
                     appends.incrementAndGet.andThen(inner.append(streamId, expected, events))
 
                 def read(streamId: Event.StreamId, from: Event.StreamOffset, maxCount: Int)
-                    : Chunk[Event.Committed] < (Sync & Abort[JournalReadFailure]) =
+                    : Chunk[Event.Recorded] < (Sync & Abort[JournalReadFailure]) =
                     inner.read(streamId, from, maxCount)
 
                 def streamInfo(streamId: Event.StreamId): StreamInfo < (Sync & Abort[JournalStreamInfoFailure]) =
                     inner.streamInfo(streamId)
         result <- Journal.run(backend):
-            Journal.append(streamId, ExpectedOffset.NoStream, Chunk(Event.Pending(eventId, etype, Span.empty, Event.Metadata.empty)))
+            Journal.append(streamId, ExpectedOffset.NoStream, Chunk(Event.New(eventId, etype, Span.empty, Event.Metadata.empty)))
     yield result
 ```
 
