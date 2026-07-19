@@ -157,7 +157,7 @@ class AnthropicCompletionTest extends kyo.test.Test[Any]:
                     }
                 }.map { result =>
                     result match
-                        case Result.Success(Result.Success(Completion.Result(Chunk(msg: AssistantMessage), _))) =>
+                        case Result.Success(Result.Success(Completion.Reply(Chunk(msg: AssistantMessage), _))) =>
                             assert(msg.calls.size == 1, s"expected 1 call, got ${msg.calls.size}")
                             val call = msg.calls.head
                             assert(call.id == CallId("tu-1"), s"expected call id 'tu-1', got ${call.id}")

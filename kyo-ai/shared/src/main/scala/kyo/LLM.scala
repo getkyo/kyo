@@ -207,12 +207,17 @@ object LLM:
                     case Structure.Type.Primitive(Structure.PrimitiveKind.String, _) => true
                     case _                                                           => false
                 context(target).map { targetContext =>
-                    // Compaction seam for the stream path: consult env.compactor between the context read
-                    // and enrichedContext, same shape as eval's seam. Kyo's `.map` flattens the effectful
-                    // continuation, so no extra `{ view => ... }` block (and no dangling brace) is added;
-                    // the existing `.map { context => ... }` block stays 1:1, byte-unchanged when Absent.
-                    LLM.env
-                        .map(_.compactor.map(_.render(target, targetContext)).getOrElse(Kyo.lift(targetContext)))
+                    // Compaction seam for the stream path: consult the effective compactor between the
+                    // context read and enrichedContext, resolved the SAME way genLoop resolves it for gen
+                    // (the target instance's own enablement over the scope's, instance-over-scope), so an
+                    // `ai.enable(compactor)` is honored on the stream path, not only on gen. Byte-unchanged
+                    // when no compactor is effective (Absent).
+                    LLM.session(target).map { session =>
+                        LLM.env.map { scopeEnv =>
+                            val effective = session.env.compactor.orElse(scopeEnv.compactor)
+                            effective.map(_.render(target, targetContext)).getOrElse(Kyo.lift(targetContext))
+                        }
+                    }
                         .map(Prompt.internal.enrichedContext(_, toolInfos))
                         .map { context =>
                             // Wrap in the {resultValue: A} object envelope (an array of A in element mode); a bare
@@ -510,15 +515,20 @@ object LLM:
         for
             config   <- AI.config
             thoughts <- Thought.internal.infos
+            env      <- LLM.env
             tools    <- if !forceResult then Tool.internal.infos else Kyo.lift(Chunk.empty)
+            // The recall tool is registered here, bound to THIS calling instance, so a scope-wide compactor
+            // serving many instances resolves each recall against its own state (never another session's).
+            // Excluded when forcing the result, matching the user tools.
+            recallInfos = if forceResult then Chunk.empty
+            else env.compactor.map(c => Compactor.internal.recallTool(c, ai).infos).getOrElse(Chunk.empty)
             resultTool   = Tool.internal.resultToolInfo
-            allTools     = tools ++ resultTool.infos
+            allTools     = tools ++ recallInfos ++ resultTool.infos
             resultSchema = Thought.internal.resultJson(thoughts, Json.jsonSchema[A])
             ctx <- ai.context
             // Compaction seam: consult env.compactor between the context read and enrichedContext.
             // Absent -> view is ctx (byte-unchanged); Present -> the projected view. No new Op; the
             // transcript slot is never shrunk (ai.context is untouched).
-            env     <- LLM.env
             view    <- env.compactor.map(_.render(ai, ctx)).getOrElse(Kyo.lift(ctx))
             context <- Prompt.internal.enrichedContext(view, allTools)
             _ <- Log.debug(

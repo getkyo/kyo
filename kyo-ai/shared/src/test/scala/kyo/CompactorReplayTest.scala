@@ -1,9 +1,9 @@
 package kyo
 
-import CompactionReplayHarness.*
+import CompactorReplayHarness.*
 import kyo.ai.*
 
-class CompactionReplayTest extends kyo.test.Test[Any]:
+class CompactorReplayTest extends kyo.test.Test[Any]:
 
     "session 1 (supersession): full keeps latest state, baseline does not" in {
         replay(session1).map { sc =>
@@ -100,11 +100,23 @@ class CompactionReplayTest extends kyo.test.Test[Any]:
 
         Kyo.foreach(sessions)(replay).map { real =>
             val verdict = decide(real)
+            // The harness's deliverable is the DISCRIMINATING verdict: the full design clearly wins over the
+            // six real sessions (never merely "some enum value"). A regression that flips the real sessions to
+            // NoGo fails this loudly.
+            assert(verdict == GoNoGo.Go, s"the full design clearly wins over the six real sessions (decide == Go): $verdict")
+            // The scoreboards are MEASURED, not defaulted: every arm has a real token cost, and the full arm
+            // strictly wins tokens on at least one real session (it genuinely compacts under pressure).
             assert(
-                verdict == GoNoGo.Go || verdict == GoNoGo.NoGo,
-                s"a two-valued verdict was computed and recorded over the six real sessions: $verdict"
+                real.forall(s => s.full.tokenCost > 0 && s.baseline.tokenCost > 0),
+                s"every session scored a real token cost for both arms: ${real.map(s => (s.name, s.full.tokenCost, s.baseline.tokenCost))}"
+            )
+            assert(
+                real.exists(s => s.full.tokenCost < s.baseline.tokenCost),
+                s"the full arm strictly wins tokens on at least one real session: ${real.map(s =>
+                        (s.name, s.full.tokenCost, s.baseline.tokenCost)
+                    )}"
             )
         }
     }
 
-end CompactionReplayTest
+end CompactorReplayTest

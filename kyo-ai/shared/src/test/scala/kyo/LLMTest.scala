@@ -10,6 +10,11 @@ class LLMTest extends kyo.test.Test[Any]:
 
     case class City(name: String) derives Schema
 
+    def um(s: String): UserMessage                    = UserMessage(s, Absent)
+    def sm(s: String): SystemMessage                  = SystemMessage(s)
+    def am(s: String, calls: Call*): AssistantMessage = AssistantMessage(s, Chunk.from(calls))
+    def ctxOf(msgs: Message*): Context                = Context(Chunk.from(msgs))
+
     /** A config pointing the OpenAI backend at the test server, with a dummy key so the backend proceeds
       * to the HTTP call instead of aborting on a missing key.
       */
@@ -776,6 +781,44 @@ class LLMTest extends kyo.test.Test[Any]:
                     noScope.map { case (nScopeC, nInstC) =>
                         assert(nScopeC.isEmpty && nInstC.isEmpty, "neither present -> both Absent (byte-unchanged)")
                         assert(nInstC.orElse(nScopeC).isEmpty, "neither present -> merged compactor stays Absent")
+                    }
+                }
+            }
+        }
+    }
+
+    "instance compactor takes precedence over scope at the gen request seam" in {
+        // Beyond the env-merge above: drive a real generation with BOTH a scope compactor (huge cap, never
+        // compacts) and an instance compactor (tiny cap, compacts) enabled, and assert the OUTBOUND gen
+        // request is compacted, i.e. the INSTANCE compactor's rendering (instance-over-scope) reached the
+        // wire, not merely that Maybe.orElse picks it in the test body.
+        TestCompletionServer.run { server =>
+            val cfg = serverConfig(server.baseUrl)
+            // Enqueue several result bodies: the compactor's background embed/judge forks race the main gen
+            // for scripted responses off the shared queue, so the main completion needs one available whatever
+            // the arrival order. Feeding the forks a result body is harmless (they decode-fail and swallow).
+            Kyo.foreachDiscard(1 to 6)(_ => server.enqueueBody(resultToolBody("""{"resultValue":"done"}"""))).andThen {
+                Compactor.init(_.copy(effectiveCap = 100000, windowFraction = 1.0)).map { scopeC =>
+                    Compactor.init(_.copy(effectiveCap = 40, windowFraction = 1.0, tailTurns = 1)).map { instC =>
+                        LLM.run(cfg) {
+                            AI.enable(scopeC) {
+                                AI.init.map { ai =>
+                                    val ctx = ctxOf(sm("s"), um("first"), am("big " + ("x" * 400)), um("latest"))
+                                    ai.setContext(ctx).andThen(ai.enable(instC)).andThen(ai.gen[String]).andThen {
+                                        // The main gen request is the chat/completions request carrying the result tool
+                                        // (the judge fork's request does not); assert it carries the instance compactor's marker.
+                                        server.awaitCaptured(cap =>
+                                            cap.path == "v1/chat/completions" && cap.body.contains("result_tool")
+                                        ).map { mainReq =>
+                                            assert(
+                                                mainReq.body.contains("compacted region"),
+                                                s"the instance compactor's compaction reached the outbound gen request: ${mainReq.body}"
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
             }

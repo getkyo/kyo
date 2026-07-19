@@ -32,10 +32,10 @@ private[completion] object OpenAICompletion extends Completion:
         context: Context,
         tools: Chunk[Tool.internal.Info[?, ?, LLM]],
         resultSchema: Maybe[JsonSchema] = Absent
-    )(using Frame): Completion.Result < (LLM & Async & Abort[HttpException | AIGenException]) =
+    )(using Frame): Completion.Reply < (LLM & Async & Abort[HttpException | AIGenException]) =
         fetch(config, Request(context, config, tools, resultSchema)).map(read)
 
-    private def read(response: Response)(using Frame): Completion.Result < (LLM & Sync & Abort[AIGenException]) =
+    private def read(response: Response)(using Frame): Completion.Reply < (LLM & Sync & Abort[AIGenException]) =
         Maybe.fromOption(response.choices.headOption) match
             case Absent =>
                 Abort.fail(AIDecodeException("LLM response has no choices: " + Json.encode(response)))
@@ -53,7 +53,7 @@ private[completion] object OpenAICompletion extends Completion:
                         cachedInputTokens = u.prompt_tokens_details.flatMap(_.cached_tokens)
                     )
                 )
-                Completion.Result(messages, usage)
+                Completion.Reply(messages, usage)
         end match
     end read
 

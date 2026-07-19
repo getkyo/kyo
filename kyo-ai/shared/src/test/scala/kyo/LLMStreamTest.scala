@@ -2,6 +2,7 @@ package kyo
 
 import kyo.*
 import kyo.ai.*
+import kyo.ai.Context.*
 
 class LLMStreamTest extends kyo.test.Test[Any]:
 
@@ -215,6 +216,40 @@ class LLMStreamTest extends kyo.test.Test[Any]:
                             cap.body.contains("true"),
                             s"request body must carry stream:true for SSE: ${cap.body}"
                         )
+                    }
+                }
+            }
+        }
+    }
+
+    "an instance-enabled compactor is consulted on the stream seam (not only gen)" in {
+        // ai.enable(compactor) must take effect on the STREAM path too: streamAgainst resolves the effective
+        // compactor the same way genLoop does (instance-over-scope). Enable a compacting compactor on the
+        // named instance, stream against it, and assert the outbound stream request carries the compaction
+        // marker (proving the seam consulted the instance compactor, not only the scope env).
+        TestCompletionServer.runStreaming { server =>
+            val config = serverConfig(server.baseUrl)
+            // Enqueue several streams: the compactor's background judge fork races the main stream for
+            // scripted responses off the shared queue, so the main stream needs one whatever the order.
+            Kyo.foreachDiscard(1 to 4)(_ => server.enqueueStream(Chunk(argDelta("{\"resultValue\":\"ok\"}")))).andThen {
+                Compactor.init(_.copy(effectiveCap = 40, windowFraction = 1.0, tailTurns = 1)).map { c =>
+                    LLM.run(config) {
+                        AI.init.map { ai =>
+                            val ctx = Context(Chunk(
+                                SystemMessage("s"),
+                                UserMessage("first", Absent),
+                                AssistantMessage("big " + ("x" * 400)),
+                                UserMessage("latest", Absent)
+                            ))
+                            ai.enable(c).andThen(ai.setContext(ctx)).andThen(ai.stream[String].map(_.run)).andThen {
+                                server.captured.map { caps =>
+                                    assert(
+                                        caps.exists(cap => cap.path.contains("chat/completions") && cap.body.contains("compacted region")),
+                                        s"the instance-enabled compactor compacted the stream request: ${caps.map(_.body)}"
+                                    )
+                                }
+                            }
+                        }
                     }
                 }
             }

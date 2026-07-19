@@ -14,10 +14,10 @@ abstract private[completion] class HarnessCompletion(providerName: String) exten
         context: Context,
         tools: Chunk[Tool.internal.Info[?, ?, LLM]],
         resultSchema: Maybe[JsonSchema] = Absent
-    )(using Frame): Completion.Result < (LLM & Async & Abort[HttpException | AIGenException]) =
+    )(using Frame): Completion.Reply < (LLM & Async & Abort[HttpException | AIGenException]) =
         resultSchema match
             case Absent          => Abort.fail(AIDecodeException(s"$providerName completion requires a result schema"))
-            case Present(schema) => run(config, context, tools, schema).map(msgs => Completion.Result(msgs, Absent))
+            case Present(schema) => run(config, context, tools, schema).map(msgs => Completion.Reply(msgs, Absent))
 
     protected def run(
         config: Config,

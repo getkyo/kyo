@@ -18,7 +18,7 @@ import kyo.ai.Context.*
   * alone suffices and the baseline ties the full design, and [[decide]] returns NoGo whenever the full
   * design fails to clearly win.
   */
-object CompactionReplayHarness:
+object CompactorReplayHarness:
 
     // ---- go/no-go value types (harness-local; NOT the compaction judge's Compactor.internal.Verdict) ----
 
@@ -58,7 +58,7 @@ object CompactionReplayHarness:
     def ctxOf(msgs: Message*): Context                = Context(Chunk.from(msgs))
 
     /** The fixed byte-to-token book both arms count with, so the token comparison is apples-to-apples. */
-    val book0: Book = Book(0, 0, Dict.empty, 0.25, Set.empty)
+    val book0: Book = Book(0, 0.25, Set.empty, Set.empty, Set.empty)
 
     /** A config pointing the OpenAI backend at an unreachable dummy URL with a dummy key, and a fixed
       * model window. The dummy URL keeps `Compactor.render`'s detached background embed/judge dispatch
@@ -354,4 +354,4 @@ object CompactionReplayHarness:
             }
         }
 
-end CompactionReplayHarness
+end CompactorReplayHarness

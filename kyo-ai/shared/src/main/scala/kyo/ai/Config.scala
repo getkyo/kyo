@@ -51,6 +51,14 @@ final case class Config private (
     // Internal Maybe form for cross-run seed derivation, where the prior seed may be Absent.
     private[kyo] def seed(seed: Maybe[Int]): Config = copy(seed = seed)
 
+    /** Adopts another config's model identity (name and token cap) while keeping this config's transport
+      * (provider, credentials, apiUrl). The compactor resolves its cheap-tier judge/summarizer onto the
+      * active chat config through this, so the background call inherits the live credentials and endpoint
+      * rather than the credential-less catalog literal.
+      */
+    private[kyo] def modelFrom(model: Config): Config =
+        copy(modelName = model.modelName, modelMaxTokens = model.modelMaxTokens)
+
     def model(provider: Config.Provider, modelName: String, modelMaxTokens: Int): Config =
         copy(
             provider = provider,

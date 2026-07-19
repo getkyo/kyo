@@ -33,10 +33,10 @@ private[completion] object AnthropicCompletion extends Completion:
         context: Context,
         tools: Chunk[Tool.internal.Info[?, ?, LLM]],
         resultSchema: Maybe[JsonSchema] = Absent
-    )(using Frame): Completion.Result < (LLM & Async & Abort[HttpException | AIGenException]) =
+    )(using Frame): Completion.Reply < (LLM & Async & Abort[HttpException | AIGenException]) =
         fetch(config, Request(context, config, tools, resultSchema)).map(read)
 
-    private def read(response: Response)(using Frame): Completion.Result < LLM =
+    private def read(response: Response)(using Frame): Completion.Reply < LLM =
         val text = response.content.collect {
             case c if c.`type` == "text" => c.text.getOrElse("")
         }.mkString("")
@@ -53,7 +53,7 @@ private[completion] object AnthropicCompletion extends Completion:
         val usage = response.usage.map(u =>
             Completion.Usage(inputTokens = u.input_tokens, outputTokens = u.output_tokens, cachedInputTokens = Absent)
         )
-        Completion.Result(Chunk(AssistantMessage(text, toolCalls)), usage)
+        Completion.Reply(Chunk(AssistantMessage(text, toolCalls)), usage)
     end read
 
     private def fetch(config: Config, req: Request)(using Frame): Response < (LLM & Async & Abort[HttpException | AIGenException]) =

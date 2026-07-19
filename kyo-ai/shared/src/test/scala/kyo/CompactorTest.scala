@@ -15,9 +15,19 @@ class CompactorTest extends kyo.test.Test[Any]:
     def tm(id: String, s: String): ToolMessage        = ToolMessage(CallId(id), s)
     def call(id: String, fn: String, args: String)    = Call(CallId(id), fn, args)
     def ctxOf(msgs: Message*): Context                = Context(Chunk.from(msgs))
-    val book0: Book                                   = Book(0, 0, Dict.empty, 0.25, Set.empty)
+    val book0: Book                                   = Book(0, 0.25, Set.empty, Set.empty, Set.empty)
     def seg(id: Int): Segment                         = Segment(id, Chunk(id), false, 1)
     def edges(es: (Int, List[Edge])*): Graph          = Graph(Dict.from(es.map((k, v) => (k, Chunk.from(v))).toMap))
+
+    // Row sums of the row-normalized transition matrix (1.0 for a unit with out-edges, 0.0 for a dangling
+    // unit whose mass stays on the restart/seed). A test-local derivation over Graph: the row-stochastic
+    // property is a test assertion, not production surface.
+    def transitionRows(units: Chunk[Segment], graph: Graph): Dict[Int, Double] =
+        Dict.from(units.toList.map { u =>
+            val es  = graph.edges.get(u.id).getOrElse(Chunk.empty)
+            val sum = es.foldLeft(0.0)((a, e) => a + e.weight)
+            if sum <= 0.0 then (u.id, 0.0) else (u.id, es.foldLeft(0.0)((a, e) => a + e.weight / sum))
+        }.toMap)
 
     /** A config pointing the OpenAI backend at the test server, with a dummy key. */
     def serverConfig(baseUrl: String): Config =
@@ -149,6 +159,25 @@ class CompactorTest extends kyo.test.Test[Any]:
         }
     }
 
+    "Tool.Kind is load-bearing in supersession (a read does not supersede a prior write)" in {
+        Compactor.init.map { c =>
+            val units = Chunk(seg(1), seg(3))
+            // Two same-key units. When both are reads, the later read supersedes the earlier.
+            val bothRead = c.supersession(units, Dict[Int, (String, Tool.Kind)]((1, ("/f", Tool.Kind.Read)), (3, ("/f", Tool.Kind.Read))))
+            assert(bothRead.get(1) == Present(3), s"read then read: the re-read supersedes the prior read: $bothRead")
+            // Swapping ONLY unit1's kind Read -> Write changes the map: a read after a write does NOT
+            // supersede the write (the write stays live), so nothing is recorded. This is the differential
+            // that proves the kind is consumed, not discarded.
+            val writeThenRead =
+                c.supersession(units, Dict[Int, (String, Tool.Kind)]((1, ("/f", Tool.Kind.Write)), (3, ("/f", Tool.Kind.Read))))
+            assert(writeThenRead.isEmpty, s"write then read: the read must not supersede the prior write: $writeThenRead")
+            // A write after a write supersedes; a write after a read supersedes (already covered above).
+            val writeThenWrite =
+                c.supersession(units, Dict[Int, (String, Tool.Kind)]((1, ("/f", Tool.Kind.Write)), (3, ("/f", Tool.Kind.Write))))
+            assert(writeThenWrite.get(1) == Present(3), s"write then write: the later write supersedes the earlier: $writeThenWrite")
+        }
+    }
+
     "supersession is penalty not edge; W row-stochastic" in {
         Compactor.init.map { c =>
             val units = Chunk(seg(0), seg(1), seg(2))
@@ -157,7 +186,7 @@ class CompactorTest extends kyo.test.Test[Any]:
                 1 -> List(Edge(0, EdgeKind.Adj, 1.0), Edge(2, EdgeKind.Ref, 3.0)),
                 2 -> List(Edge(1, EdgeKind.Adj, 1.0))
             )
-            val rows = c.transitionRows(units, g)
+            val rows = transitionRows(units, g)
             assert(
                 eps(rows.get(0).getOrElse(0.0), 1.0) && eps(rows.get(1).getOrElse(0.0), 1.0) && eps(rows.get(2).getOrElse(0.0), 1.0),
                 s"every row of W must sum to 1: $rows"
@@ -242,7 +271,7 @@ class CompactorTest extends kyo.test.Test[Any]:
             ).getOrElse(Chunk.empty).filter(e => e.kind == EdgeKind.Ref && e.target == 0).map(_.weight).headOption.getOrElse(0.0)
             val mentions = 4
             assert(eps(refW, 3.0 / (1.0 + math.log(1.0 + mentions)), 1e-9), s"hub-discounted ref weight: $refW")
-            val rows = c.transitionRows(units, g)
+            val rows = transitionRows(units, g)
             rows.foreach((id, s) => assert(s == 0.0 || eps(s, 1.0), s"row $id normalized to 1: $s"))
         }
     }
@@ -366,6 +395,25 @@ class CompactorTest extends kyo.test.Test[Any]:
             val head = jc.messages.head.content.toLowerCase
             assert(head.contains("stale") || head.contains("superseded"), s"near-verifiable question: $head")
             assert(!head.contains("important"), s"never asks open-ended importance: $head")
+        }
+    }
+
+    "judge verdicts land per region, not band-wide; negation and unparsed lines land Uncertain" in {
+        Compactor.init.map { c =>
+            // A mixed per-region reply: region 2 STALE, region 5 KEEP, region 7 answered with a negation
+            // ("not stale; keep it") that does NOT match the strict line form. Each region gets ITS OWN
+            // verdict, never one band-wide verdict; the negated line inverts nothing (region 7 -> Uncertain).
+            val reply =
+                "region 2: STALE\n" +
+                    "region 5: KEEP\n" +
+                    "region 7 is not stale; keep it"
+            val parsed = c.parseVerdicts(reply)
+            assert(parsed.get(2) == Some(Verdict.Stale), s"region 2 lands Stale: $parsed")
+            assert(parsed.get(5) == Some(Verdict.Keep), s"region 5 lands Keep, not the band-wide Stale: $parsed")
+            assert(parsed.get(7).isEmpty, s"a negated/free-text line does not parse (lands Uncertain by default), never Stale: $parsed")
+            // SUPERSEDED is an alias for Stale; a bare reply with no region lines yields no verdicts.
+            assert(c.parseVerdicts("region 3: superseded").get(3) == Some(Verdict.Stale), "SUPERSEDED maps to Stale")
+            assert(c.parseVerdicts("keep everything please").isEmpty, "a reply with no strict region line yields no per-region verdict")
         }
     }
 
@@ -701,7 +749,7 @@ class CompactorTest extends kyo.test.Test[Any]:
             assert(Segment(0, Chunk.empty, false, 0).productArity == 4, "Segment(id,messages,unresolved,tokens)")
             assert(Rendered(0, 0, 0, Chunk.empty).productArity == 4, "Rendered(level,covers,at,replacement)")
             assert(CompactorState.empty.productArity == 5, "CompactorState(renderings,vectors,verdicts,prepared,book)")
-            assert(book0.productArity == 5, "Book(seen,lastDeepEdit,skip,tokensPerByte,inflight): no 6th field")
+            assert(book0.productArity == 5, "Book(seen,tokensPerByte,inflight,embedInflight,summaryInflight): no 6th field")
         }
     }
 
@@ -744,23 +792,55 @@ class CompactorTest extends kyo.test.Test[Any]:
 
     "summary re-validated at adoption" in {
         Compactor.init.map { c =>
-            // a prepared summary for a unit that is now a root (no longer demotable) is not adopted.
-            val ctx   = ctxOf(sm("s"), um("first"), um("latest"))
-            val units = c.group(ctx, ctxBook)
-            val roots = c.roots(units, ctx, book0.copy(seen = 3))
-            assert(roots.contains(0), "a now-root unit fails re-validation for a prepared summary")
+            // Adoption of a prepared summary is re-validated by the two-touch rule at ladderStep: a unit that
+            // STOOD at L1-2 since a PRIOR update (cur.at < updateIdx) adopts its prepared summary (L3); a unit
+            // reduced THIS pass (cur.at == updateIdx) is NOT adopted, deferring re-validation to the next pass.
+            val ctx      = ctxOf(um("region content " + ("x" * 50)))
+            val u        = c.group(ctx, book0).head
+            val prepared = Rendered(3, 1, 0, Chunk(sm("PREP")))
+            val stood = CompactorState.empty.copy(
+                renderings = Dict[Int, Rendered]((u.id, Rendered(2, 1, 0, Chunk(sm("[c]"))))),
+                prepared = Dict[Int, Rendered]((u.id, prepared))
+            )
+            assert(
+                c.ladderStep(u, stood, ctx, 10, Absent).exists(r => r.level == 3 && r.replacement.head.content == "PREP"),
+                "a unit standing since a prior update adopts its re-validated prepared summary at L3"
+            )
+            val thisPass = CompactorState.empty.copy(
+                renderings = Dict[Int, Rendered]((u.id, Rendered(2, 1, 10, Chunk(sm("[c]"))))),
+                prepared = Dict[Int, Rendered]((u.id, prepared))
+            )
+            assert(
+                c.ladderStep(u, thisPass, ctx, 10, Absent) == Absent,
+                "a unit reduced this pass is not adopted (two-touch defers re-validation)"
+            )
         }
     }
-    val ctxBook: Book = book0
 
     "re-warmed unit keeps rendering (rescue is non-selection)" in {
-        Compactor.init.map { c =>
-            // a unit already rendered is not re-demoted, and rescue does not auto-promote it to verbatim.
-            val st = CompactorState.empty.copy(renderings = Dict[Int, Rendered]((2, Rendered(2, 1, 0, Chunk(sm("[compacted 2]"))))))
-            assert(
-                st.renderings.get(2).map(_.level) == Present(2),
-                "a re-warmed unit keeps its current rendering; only recall restores verbatim"
-            )
+        Compactor.init(_.copy(effectiveCap = 100000, windowFraction = 1.0)).map { c =>
+            // rescue is non-selection: an already-rendered unit keeps its rendering across a render pass and
+            // is NEVER auto-restored to verbatim (only an explicit recall restores it).
+            val ctx = ctxOf(sm("s"), um("first"), am("mid content here"), um("latest"))
+            LLM.run {
+                AI.initWith { ai =>
+                    val ref = LLM.internal.AIRef(ai)
+                    val seeded = CompactorState.empty.copy(
+                        renderings = Dict[Int, Rendered]((2, Rendered(2, 1, 0, Chunk(sm("[compacted 2]"))))),
+                        book = book0.copy(seen = 4)
+                    )
+                    ai.setContext(ctx).andThen(c.cell.set(Dict((ref, seeded)))).andThen(c.render(ai, ctx)).map { view =>
+                        assert(
+                            view.messages.exists(_.content.contains("[compacted 2]")),
+                            s"the existing rendering is retained: ${view.messages}"
+                        )
+                        assert(
+                            !view.messages.exists(_.content.contains("mid content here")),
+                            "a re-warmed unit is not auto-restored to verbatim; only recall restores it"
+                        )
+                    }
+                }
+            }
         }
     }
 
@@ -837,21 +917,21 @@ class CompactorTest extends kyo.test.Test[Any]:
     }
 
     "one judge batch in flight" in {
-        TestCompletionServer.run { server =>
-            val cfg = serverConfig(server.baseUrl)
-            Compactor.init(_.copy(bandSize = 4, effectiveCap = 40, windowFraction = 1.0, tailTurns = 1)).map { c =>
-                server.enqueueBody(resultBody("keep")).andThen {
-                    LLM.run(cfg) {
-                        AI.initWith { ai =>
-                            val ctx = ctxOf(sm("s"), um("first"), am("a " + ("x" * 120)), am("b " + ("y" * 120)), um("latest"))
-                            ai.setContext(ctx).andThen(c.render(ai, ctx)).andThen {
-                                // a second render while a batch is inflight does not dispatch a second (dedup by book.inflight).
-                                c.render(ai, ctx).map(_ => assert(true, "a second render honors the one-batch-in-flight guard"))
-                            }
-                        }
-                    }
-                }
-            }
+        Compactor.init(_.copy(bandSize = 4, effectiveCap = 40, windowFraction = 1.0, tailTurns = 1)).map { c =>
+            // The one-batch-in-flight guard is dedup by book.inflight: a fresh judge band excludes every unit
+            // already dispatched-not-landed, so no second batch is dispatched for the same units while one is
+            // outstanding. Asserted deterministically over judgeBand (no fiber-timing race: the inflight
+            // clearing runs on a detached fiber, so an end-to-end server-count race would be non-deterministic).
+            val ctx   = ctxOf(sm("s"), um("first"), am("a " + ("x" * 120)), am("b " + ("y" * 120)), um("latest"))
+            val units = c.group(ctx, book0)
+            val band0 = c.judgeBand(units, ctx, CompactorState.empty)
+            assert(band0.nonEmpty, s"the first band is nonempty (there is a batch to dispatch): ${band0.map(_.id)}")
+            val inFlight = CompactorState.empty.copy(book = book0.copy(inflight = band0.map(_.id).toSet))
+            val band1    = c.judgeBand(units, ctx, inFlight)
+            assert(
+                band1.forall(u => !inFlight.book.inflight.contains(u.id)),
+                s"every unit already in flight is excluded from the next band: next=${band1.map(_.id)} inflight=${inFlight.book.inflight}"
+            )
         }
     }
 
@@ -912,15 +992,22 @@ class CompactorTest extends kyo.test.Test[Any]:
         }
     }
 
-    "rot rule triggers + book.skip" in {
+    "rot rule triggers + blocked deep edit deferred" in {
         Compactor.init(_.copy(effectiveCap = 200, windowFraction = 1.0, tailTurns = 1)).map { c =>
             // rot triggers: re-fetch threshold OR budget exhaustion; answer quality is never a trigger.
             assert(c.rotFires(refetchCount = 2, occupied = 0, e = 1000.0), "refetch >= refetchThreshold fires")
             assert(c.rotFires(refetchCount = 0, occupied = 1000, e = 1000.0), "budget exhaustion (viewTokens >= E) fires")
             assert(!c.rotFires(refetchCount = 1, occupied = 10, e = 1000.0), "answer quality is never a trigger")
-            // the re-fetch count is derived from recall(id) calls in the transcript after the unit's Rendered.at.
+            // the re-fetch count is derived from recall calls in the transcript (object wire shape {"id":n})
+            // after the unit's Rendered.at.
             val recalls =
-                ctxOf(sm("s"), am("r1", call("rc1", "recall", "2")), tm("rc1", "x"), am("r2", call("rc2", "recall", "2")), tm("rc2", "x"))
+                ctxOf(
+                    sm("s"),
+                    am("r1", call("rc1", "recall", """{"id":2}""")),
+                    tm("rc1", "x"),
+                    am("r2", call("rc2", "recall", """{"id":2}""")),
+                    tm("rc2", "x")
+                )
             assert(c.refetchCount(2, recalls, 0) == 2, s"two recall(2) calls => count 2: ${c.refetchCount(2, recalls, 0)}")
             assert(c.refetchCount(2, recalls, 3) == 1, "counting starts at the unit's Rendered.at")
             assert(c.refetchCount(9, recalls, 0) == 0, "recall calls for other ids do not count")
@@ -940,22 +1027,21 @@ class CompactorTest extends kyo.test.Test[Any]:
                         }
                     }
                 }
-            // no re-fetch, tiny saving, occupancy below E: the deep edit (L2->L4) is BLOCKED and records book.skip.
+            // no re-fetch, tiny saving, occupancy below E: the deep edit (L2->L4) is BLOCKED and the unit stays
+            // at L2 (deterministic re-derivation re-evaluates it next turn; no suppression record is kept).
             renderWith(base).map { blocked =>
-                assert(!blocked.book.skip.isEmpty, s"a blocked deep edit records book.skip: ${blocked.book.skip.toChunk.toList}")
-                assert(blocked.renderings.get(2).map(_.level) == Present(2), "the blocked unit stays at L2")
+                assert(blocked.renderings.get(2).map(_.level) == Present(2), "the blocked deep edit leaves the unit at L2")
                 // refetchThreshold (2) recall(2) calls now trip the rot rule: the deferred deep edit is PERMITTED
-                // (deepened to L4) and no longer recorded in book.skip.
-                val refetched = base.add(am("rc", call("k1", "recall", "2"))).add(tm("k1", "restored")).add(am(
+                // (deepened to L4).
+                val refetched = base.add(am("rc", call("k1", "recall", """{"id":2}"""))).add(tm("k1", "restored")).add(am(
                     "rc",
-                    call("k2", "recall", "2")
+                    call("k2", "recall", """{"id":2}""")
                 )).add(tm("k2", "restored"))
                 renderWith(refetched).map { permitted =>
                     assert(
                         permitted.renderings.get(2).map(_.level) == Present(4),
                         s"the re-fetched unit's deep edit is permitted and applied at L4: ${permitted.renderings.get(2)}"
                     )
-                    assert(permitted.book.skip.get(2) == Absent, "a permitted deep edit is not recorded as skipped")
                 }
             }
         }
@@ -1013,12 +1099,10 @@ class CompactorTest extends kyo.test.Test[Any]:
     "judge runs fresh, no transcript leak" in {
         TestCompletionServer.run { server =>
             val cfg = serverConfig(server.baseUrl)
-            // judge defaults to config.judge.getOrElse(chatCfg.provider.small); provider.small carries its OWN
-            // apiUrl (set by .model(...) at catalog construction), never the test server override, so the judge
-            // request would otherwise leave for the real provider endpoint and never reach this fake server at
-            // all. Pointing judge explicitly at the test server (the sanctioned Compactor.Config.judge override,
-            // precedented by "config knobs are overridable via init(f), including judge Present" below) is what
-            // makes the judge request observable here, deterministically, at all.
+            // judge = cfg pins the judge at the test server so its request is observable here (the default
+            // path, which inherits the active config's transport, is covered separately by "default judge
+            // path (no override) reaches the current provider authenticated"). This leaf's subject is the
+            // no-leak property: root/system content never reaches the judge.
             Compactor.init(_.copy(bandSize = 4, effectiveCap = 40, windowFraction = 1.0, tailTurns = 1, judge = Present(cfg))).map { c =>
                 server.enqueueBody(resultBody("stale")).andThen {
                     LLM.run(cfg) {
@@ -1042,6 +1126,34 @@ class CompactorTest extends kyo.test.Test[Any]:
                                         s"the judge request must not carry root/system content: ${judgeReq.body}"
                                     )
                                 }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    "default judge path (no override) reaches the current provider authenticated" in {
+        TestCompletionServer.run { server =>
+            val cfg = serverConfig(server.baseUrl)
+            // NO Config.judge override. The default judge inherits the ACTIVE chat config's credentials and
+            // apiUrl and only adopts the provider's cheap-tier model, so its request actually reaches the
+            // server. A credential-less catalog literal (the pre-fix behavior) would fail the missing-key
+            // check before egress and never arrive, so observing the request at all is the proof it is a real
+            // authenticated request on the current provider.
+            Compactor.init(_.copy(bandSize = 4, effectiveCap = 40, windowFraction = 1.0, tailTurns = 1)).map { c =>
+                LLM.run(cfg) {
+                    AI.initWith { ai =>
+                        val ctx = ctxOf(sm("s"), um("first"), am("band " + ("x" * 200)), um("latest"))
+                        ai.setContext(ctx).andThen(c.render(ai, ctx)).andThen {
+                            server.awaitCaptured(cap =>
+                                cap.path == "v1/chat/completions" && cap.body.contains("You judge context regions for compaction")
+                            ).map { judgeReq =>
+                                assert(
+                                    judgeReq.body.contains("gpt-5-nano"),
+                                    s"the default judge runs the current provider's cheap-tier model, not the chat model: ${judgeReq.body}"
+                                )
                             }
                         }
                     }
@@ -1107,7 +1219,7 @@ class CompactorTest extends kyo.test.Test[Any]:
                         c.cell.get.map { d =>
                             val demotedId =
                                 d.toChunk.headMaybe.map(_._2.renderings.toChunk.toList.map(_._1)).getOrElse(Nil).headOption.getOrElse(-1)
-                            runRecall(c, demotedId).map { out =>
+                            runRecall(c, ai, demotedId).map { out =>
                                 assert(out.contains("payload alpha"), s"recall returns the original content: $out")
                             }
                         }
@@ -1117,15 +1229,44 @@ class CompactorTest extends kyo.test.Test[Any]:
         }
     }
 
-    def runRecall(c: Compactor, id: Int)(using Frame): String < LLM =
-        val t = Compactor.internal.recallTool(c)
-        t.infos.head.run.asInstanceOf[Any => (String < LLM)](id)
+    def runRecall(c: Compactor, ai: AI, id: Int)(using Frame): String < LLM =
+        val t = Compactor.internal.recallTool(c, ai)
+        t.infos.head.run.asInstanceOf[Any => (String < LLM)](Compactor.internal.Recall(id))
+
+    "recall resolves against the CALLING instance only (no cross-session leak)" in {
+        // One scope compactor serving two instances. Both demote a unit at the SAME small id (unit ids are
+        // transcript indices, so they collide across sessions), with DIFFERENT content. Each instance's
+        // recall must return ITS OWN content, never the other session's.
+        Compactor.init(_.copy(effectiveCap = 40, windowFraction = 1.0, tailTurns = 1)).map { c =>
+            LLM.run {
+                AI.initWith { a =>
+                    AI.initWith { b =>
+                        val ctxA = ctxOf(sm("s"), um("first"), am("AAAA session-a-secret " + ("x" * 200)), um("latest"))
+                        val ctxB = ctxOf(sm("s"), um("first"), am("BBBB session-b-secret " + ("y" * 200)), um("latest"))
+                        a.setContext(ctxA).andThen(c.render(a, ctxA))
+                            .andThen(b.setContext(ctxB)).andThen(c.render(b, ctxB))
+                            .andThen {
+                                // unit 2 (the middle assistant) is demoted in BOTH sessions at the same id.
+                                runRecall(c, a, 2).map { outA =>
+                                    runRecall(c, b, 2).map { outB =>
+                                        assert(outA.contains("session-a-secret"), s"instance a recalls a's content: $outA")
+                                        assert(!outA.contains("session-b-secret"), s"instance a never sees b's content: $outA")
+                                        assert(outB.contains("session-b-secret"), s"instance b recalls b's content: $outB")
+                                        assert(!outB.contains("session-a-secret"), s"instance b never sees a's content: $outB")
+                                    }
+                                }
+                            }
+                    }
+                }
+            }
+        }
+    }
 
     "error: unknown/non-demoted id returns a typed no-such-region message" in {
         Compactor.init.map { c =>
             LLM.run {
                 AI.initWith { ai =>
-                    ai.setContext(ctxOf(um("a"))).andThen(runRecall(c, 9999)).map { out =>
+                    ai.setContext(ctxOf(um("a"))).andThen(runRecall(c, ai, 9999)).map { out =>
                         assert(out == "no such recallable region: 9999", s"typed no-such-region message, never a throw: $out")
                     }
                 }
@@ -1179,16 +1320,23 @@ class CompactorTest extends kyo.test.Test[Any]:
         }
     }
 
-    "cell pruned on instance GC" in {
-        Compactor.init.map { c =>
-            // the cell is keyed by AIRef; the prune predicate mirrors LLM.State.pruned via ref.isValid.
+    "cell prune keeps live entries across a render (drop path in CompactorPruneTest, JVM: WeakReference.clear)" in {
+        Compactor.init(_.copy(effectiveCap = 100000, windowFraction = 1.0)).map { c =>
+            // Every render runs the prune filter (d.filter((ref,_) => ref.isValid), mirroring LLM.State.pruned)
+            // so a long-lived scope compactor never accumulates dead entries. Here (cross-platform,
+            // deterministic) the live instance's entry SURVIVES the prune the render runs. The drop path (a
+            // collected ref removed) is exercised deterministically in the JVM-only CompactorPruneTest, which
+            // uses WeakReference.clear(), an API Scala.js (JS/Wasm) does not support.
             LLM.run {
-                AI.initWith { ai =>
-                    val ref = LLM.internal.AIRef(ai)
-                    c.cell.set(Dict((ref, CompactorState.empty))).andThen {
-                        c.cell.get.map { d =>
-                            assert(d.contains(ref), "the cell is keyed by AIRef")
-                            assert(ref.isValid, "a live instance's ref is valid; a collected one prunes like LLM.State.pruned")
+                AI.initWith { live =>
+                    val liveRef = LLM.internal.AIRef(live)
+                    val ctx     = ctxOf(um("hello"))
+                    c.cell.set(Dict((liveRef, CompactorState.empty))).andThen {
+                        live.setContext(ctx).andThen(c.render(live, ctx)).andThen {
+                            c.cell.get.map { d =>
+                                assert(d.contains(liveRef), "the live instance's entry survives the prune the render runs")
+                                assert(liveRef.isValid, "a live instance's ref is valid (kept by the prune predicate)")
+                            }
                         }
                     }
                 }

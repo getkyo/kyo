@@ -24,7 +24,10 @@ import scala.annotation.tailrec
   */
 final class Compactor private (
     private[kyo] val cell: AtomicRef[Dict[LLM.internal.AIRef, Compactor.internal.CompactorState]],
-    private[kyo] val config: Compactor.Config
+    private[kyo] val config: Compactor.Config,
+    // Provider names whose embeddings endpoint returned AIEmbeddingUnsupportedException once already, so
+    // the doomed embed fork is attempted at most once per provider rather than re-firing every render.
+    private[kyo] val embedUnsupported: AtomicRef[Set[String]]
 ) extends AI.Enablement[Any]:
 
     import Compactor.internal.*
@@ -74,24 +77,23 @@ final class Compactor private (
         Frame
     ): Unit < Sync =
         usage match
-            case Absent => ()
+            case Absent => Kyo.unit
             case Present(u) =>
-                val ref          = LLM.internal.AIRef(ai)
                 val requestBytes = byteSize(request)
-                cell.updateAndGet { d =>
-                    d.get(ref) match
-                        case Absent => d
-                        case Present(st) =>
-                            val obs = if requestBytes <= 0 then st.book.tokensPerByte
-                            else u.inputTokens.toDouble / requestBytes.toDouble
-                            val blended =
-                                (1.0 - calibrationSmoothing) * st.book.tokensPerByte + calibrationSmoothing * obs
-                            d.update(ref, st.copy(book = st.book.copy(tokensPerByte = blended)))
-                }.unit
+                landWith(ai) { st =>
+                    val obs =
+                        if requestBytes <= 0 then st.book.tokensPerByte
+                        else u.inputTokens.toDouble / requestBytes.toDouble
+                    val blended = (1.0 - calibrationSmoothing) * st.book.tokensPerByte + calibrationSmoothing * obs
+                    st.copy(book = st.book.copy(tokensPerByte = blended))
+                }
     end calibrate
 
     private[kyo] def enableIn(env: AIEnv)(using Frame): AIEnv =
-        env.compactor(this).addTools(Chunk(recallTool(this).asInstanceOf[Tool[Any]]))
+        // Sets the single active compactor. The `recall` tool is NOT registered here: it is bound to the
+        // CALLING instance in the gen seam (LLM.eval), so a scope-wide compactor serving many instances
+        // resolves each recall against the instance that issued it, never another's state.
+        env.compactor(this)
 
     private[kyo] def enableIn(session: AISession)(using Frame): AISession =
         session.copy(env = enableIn(session.env))
@@ -217,13 +219,19 @@ final class Compactor private (
     private[kyo] def supersession(units: Chunk[Segment], keys: Dict[Int, (String, Tool.Kind)]): Dict[Int, Int] =
         val ordered = units.toList.sortBy(_.id)
         val (result, _) =
-            ordered.foldLeft((Dict.empty[Int, Int], Map.empty[String, Int])) { case ((sup, last), u) =>
+            ordered.foldLeft((Dict.empty[Int, Int], Map.empty[String, (Int, Tool.Kind)])) { case ((sup, last), u) =>
                 keys.get(u.id) match
                     case Absent => (sup, last)
-                    case Present((k, _)) =>
+                    case Present((k, curKind)) =>
                         last.get(k) match
-                            case Some(prev) => (sup.update(prev, u.id), last.updated(k, u.id))
-                            case None       => (sup, last.updated(k, u.id))
+                            case Some((prevId, prevKind)) =>
+                                // A re-read supersedes a prior read; a write supersedes any prior same-key unit.
+                                // The one case that does NOT supersede: a read after a write. The write stays live
+                                // (the authoritative state-establishing record), so the kind is load-bearing here.
+                                val supersedes = curKind == Tool.Kind.Write || prevKind == Tool.Kind.Read
+                                val sup2       = if supersedes then sup.update(prevId, u.id) else sup
+                                (sup2, last.updated(k, (u.id, curKind)))
+                            case None => (sup, last.updated(k, (u.id, curKind)))
             }
         result
     end supersession
@@ -331,17 +339,6 @@ final class Compactor private (
             Dict.from(merged)
     end seedVector
 
-    // The row sums of the row-normalized transition matrix (1.0 for a unit with out-edges, 0.0 for a
-    // dangling unit whose mass stays on the restart/seed rather than dividing by zero).
-    private[kyo] def transitionRows(units: Chunk[Segment], graph: Graph): Dict[Int, Double] =
-        val rows = units.toList.map { u =>
-            val es  = graph.edges.get(u.id).getOrElse(Chunk.empty)
-            val sum = es.foldLeft(0.0)((a, e) => a + e.weight)
-            if sum <= 0.0 then (u.id, 0.0) else (u.id, es.foldLeft(0.0)((a, e) => a + e.weight / sum))
-        }
-        Dict.from(rows.toMap)
-    end transitionRows
-
     // ---- view / project (the rendering ladder) ----
 
     /** Pure: walks units in transcript order, emitting each unit's original messages (no renderings
@@ -355,13 +352,24 @@ final class Compactor private (
         else projectFrom(transcript, state, 0)
     end project
 
+    // `project` with the pass's units threaded in, so the demote loop's per-candidate occupancy checks do
+    // not re-group the transcript each iteration.
+    private def projectWith(transcript: Context, state: CompactorState, units: Chunk[Segment]): Context =
+        if state.renderings.isEmpty then transcript
+        else projectFrom(transcript, state, 0, units)
+
     // The projected view restricted to the units whose id is at or after `fromId` (fromId 0 yields the
     // whole view). Shares project's covers-skip rule so a suffix token count matches the emitted view
     // exactly: a summary entry with covers > 1 absorbs the next covers-1 units, never double-counted, and
     // a summary anchored before the cut keeps its absorbed units out of the suffix.
     private[kyo] def projectFrom(transcript: Context, state: CompactorState, fromId: Int): Context =
+        projectFrom(transcript, state, fromId, group(transcript, state.book))
+
+    // The units-threaded projection: callers in the per-candidate demote loop pass the units already
+    // grouped once for the pass, so `project`/`projectFrom` do not re-run `group` (a full transcript fold
+    // plus sort) on every candidate. Grouping is stable across a pass (book.tokensPerByte is constant).
+    private def projectFrom(transcript: Context, state: CompactorState, fromId: Int, units: Chunk[Segment]): Context =
         val rendering = state.renderings
-        val units     = group(transcript, state.book)
         val ordered   = units.toList.sortBy(_.id)
         val msgToId   = ordered.foldLeft(Map.empty[Int, Int])((m, u) => u.messages.foldLeft(m)((mm, idx) => mm.updated(idx, u.id)))
         // Units dropped because a preceding summary's covers-run subsumes them.
@@ -401,7 +409,12 @@ final class Compactor private (
             val referrers  = coPinReferrers(units, graph)
             val target     = config.updateTargetFraction * e
             val updateIdx  = transcript.messages.size
-            val band       = judgeBand(units, transcript, state).map(_.id).toSet
+            // The judge band is derived supersession-free (its own graph/scores), then reused by
+            // dispatchBackground rather than re-derived there. rootSet already holds this pass's roots.
+            val bandGraph  = deriveGraph(units, transcript, state, Dict.empty)
+            val bandScores = score(units, bandGraph, Dict.empty, seed)
+            val bandList   = bandFrom(units, bandScores, rootSet, state.book.inflight)
+            val band       = bandList.map(_.id).toSet
             val dupOf      = duplicateMap(units, transcript)
             // ascending score, nudged by BAND-LOCAL verdicts (Stale demotes earlier, Keep holds back). A
             // verdict for a unit outside the fresh band is discarded (never consulted).
@@ -420,7 +433,7 @@ final class Compactor private (
                     .filter(u => !rootSet.contains(u.id) && !u.unresolved)
                     .sortBy(effectiveScore)
             @tailrec def demote(rem: List[Segment], st: CompactorState): CompactorState =
-                if viewTokens(project(transcript, st), st.book) <= target then st
+                if viewTokens(projectWith(transcript, st, units), st.book) <= target then st
                 else
                     rem match
                         case Nil       => st
@@ -436,16 +449,17 @@ final class Compactor private (
                                         if r.level >= 3 then
                                             // a distorting (L3) or removing (L4) step is a DEEP edit: gate it by the
                                             // cache break-even OR the rot rule (re-fetch count since the unit's Rendered.at,
-                                            // OR budget exhaustion); a blocked deep edit records book.skip so it does not
-                                            // re-fire every turn.
-                                            val occupied = viewTokens(project(transcript, st), st.book)
+                                            // OR budget exhaustion). A blocked deep edit is simply not applied; the pass's
+                                            // deterministic re-derivation re-evaluates it next turn under the live occupancy,
+                                            // so no separate suppression record is needed.
+                                            val occupied = viewTokens(projectWith(transcript, st, units), st.book)
                                             val postEdit = st.copy(renderings = st.renderings.update(u.id, r))
-                                            val after    = viewTokens(project(transcript, postEdit), st.book)
+                                            val after    = viewTokens(projectWith(transcript, postEdit, units), st.book)
                                             val saved    = math.max(0, occupied - after)
                                             // L_cut is the rendered tail AFTER the edit point: the suffix from u onward under the
                                             // post-edit state, the tokens whose cache the edit actually invalidates (a shallow edit
                                             // near the tail invalidates little; a deep edit into the frozen prefix invalidates most).
-                                            val lCut    = viewTokens(projectFrom(transcript, postEdit, u.id), postEdit.book)
+                                            val lCut    = viewTokens(projectFrom(transcript, postEdit, u.id, units), postEdit.book)
                                             val curAt   = st.renderings.get(u.id).map(_.at).getOrElse(0)
                                             val refetch = refetchCount(u.id, transcript, curAt)
                                             val allowed = cacheGatePasses(saved, lCut, deepCacheDiscount, deepWritePremium) || rotFires(
@@ -453,18 +467,16 @@ final class Compactor private (
                                                 occupied,
                                                 e
                                             )
-                                            if allowed then
-                                                demote(rest, postEdit.copy(book = st.book.copy(lastDeepEdit = updateIdx)))
-                                            else
-                                                demote(rest, st.copy(book = st.book.copy(skip = st.book.skip.update(u.id, occupied))))
+                                            if allowed then demote(rest, postEdit)
+                                            else demote(rest, st)
                                             end if
                                         else
                                             demote(rest, st.copy(renderings = st.renderings.update(u.id, r)))
                                         end if
                             end if
             val demoted = demote(candidates, state)
-            dispatchBackground(ai, transcript, units, demoted).map { dispatched =>
-                commit(ai, transcript, dispatched).andThen(project(transcript, dispatched))
+            dispatchBackground(ai, transcript, units, demoted, bandList, rootSet).map { dispatched =>
+                commit(ai, transcript, dispatched).andThen(projectWith(transcript, dispatched, units))
             }
         }
     end update
@@ -564,9 +576,10 @@ final class Compactor private (
     private def queueEmbeddings(ai: AI, transcript: Context, units: Chunk[Segment], state: CompactorState)(using
         Frame
     ): CompactorState < (LLM & Async) =
-        // Dedup embeddings by landed VECTORS only; `book.inflight` is reserved for the judge batch, so
-        // embedding work never empties the ambiguous band that the judge and verdict-nudging consult.
-        val need = units.toList.filter(u => !state.vectors.contains(u.id))
+        // Dedup by landed VECTORS AND by units already dispatched-not-landed (book.embedInflight), so a slow
+        // endpoint is not re-issued the same paid batch every render. embedInflight is separate from the judge
+        // batch's `inflight`, so embedding work never empties the ambiguous band the judge consults.
+        val need = units.toList.filter(u => !state.vectors.contains(u.id) && !state.book.embedInflight.contains(u.id))
         if need.isEmpty then Kyo.lift(state)
         else
             val ids   = need.map(_.id)
@@ -575,9 +588,29 @@ final class Compactor private (
                 // Resolve the embedder config ONCE and dispatch through THAT provider's own backend,
                 // never the chat provider's backend with the embedder config as an argument.
                 val e = chatCfg.embedder.getOrElse(chatCfg)
-                val work: Unit < (LLM & Async & Abort[HttpException | AIGenException]) =
-                    AI.fresh(e.provider.completion.embed(e, batch)).map(embeddings => landEmbeddings(ai, ids, embeddings))
-                forkToCell(work).andThen(Kyo.lift(state))
+                embedUnsupported.get.map { unsupported =>
+                    // A provider that already answered "no embeddings endpoint" is never re-attempted: the
+                    // doomed fork would otherwise re-fire every render, allocating a fiber and an exception
+                    // per turn for no semantic edges.
+                    if unsupported.contains(e.provider.name) then Kyo.lift(state)
+                    else
+                        val work: Unit < (LLM & Async & Abort[HttpException | AIGenException]) =
+                            AI.fresh(e.provider.completion.embed(e, batch)).map(embeddings => landEmbeddings(ai, ids, embeddings))
+                        // Mark dispatched, fork, and clear embedInflight on EVERY outcome (success clears in
+                        // landEmbeddings; a failure clears here). An embed-unsupported failure additionally
+                        // records the provider so it is attempted at most once, with a single warning.
+                        val guarded: Unit < (LLM & Async) =
+                            Abort.run[HttpException | AIGenException](work).map {
+                                case Result.Failure(_: AIEmbeddingUnsupportedException) =>
+                                    markEmbedUnsupported(e.provider.name).andThen(clearEmbedInflight(ai, ids))
+                                case _ =>
+                                    clearEmbedInflight(ai, ids)
+                            }
+                        landWith(ai)(st => st.copy(book = st.book.copy(embedInflight = st.book.embedInflight ++ ids.toSet)))
+                            .andThen(forkToCell(guarded))
+                            .andThen(Kyo.lift(state))
+                    end if
+                }
             }
         end if
     end queueEmbeddings
@@ -589,11 +622,17 @@ final class Compactor private (
         val seed   = seedVector(units, transcript, state.book)
         val scores = score(units, graph, Dict.empty, seed)
         val roots0 = roots(units, transcript, state.book)
+        bandFrom(units, scores, roots0, state.book.inflight)
+    end judgeBand
+
+    // The band selection over already-computed scores/roots: the K non-root demotable units nearest the cut
+    // (lowest score), capped at bandSize, excluding units already in flight. Shared by judgeBand (which
+    // derives its own graph/scores) and the update pass (which passes its precomputed ones).
+    private def bandFrom(units: Chunk[Segment], scores: Dict[Int, Double], roots0: Set[Int], inflight: Set[Int]): List[Segment] =
         units.toList
-            .filter(u => !roots0.contains(u.id) && !u.unresolved && !state.book.inflight.contains(u.id))
+            .filter(u => !roots0.contains(u.id) && !u.unresolved && !inflight.contains(u.id))
             .sortBy(u => scores.get(u.id).getOrElse(0.0))
             .take(config.bandSize)
-    end judgeBand
 
     // Contiguous runs (>= 2 units) of non-root demotable units, each one summarization candidate the
     // background summarizer prepares (adopted at the next update after re-validation). A run breaks at roots,
@@ -601,7 +640,14 @@ final class Compactor private (
     // is split further at the widest pairwise-cosine gap until each sub-run's mean pairwise cosine clears
     // coherenceFloor, so only coherent regions co-summarize.
     private[kyo] def summaryCandidates(units: Chunk[Segment], transcript: Context, state: CompactorState): List[List[Segment]] =
-        val rootSet = roots(units, transcript, state.book)
+        summaryCandidates(units, transcript, state, roots(units, transcript, state.book))
+
+    private def summaryCandidates(
+        units: Chunk[Segment],
+        transcript: Context,
+        state: CompactorState,
+        rootSet: Set[Int]
+    ): List[List[Segment]] =
         val ordered = units.toList.sortBy(_.id)
         def boundary(u: Segment): Boolean =
             rootSet.contains(u.id) || u.unresolved || hasUser(u, transcript)
@@ -644,17 +690,26 @@ final class Compactor private (
             split(run)
     end coherenceSplit
 
-    private def dispatchBackground(ai: AI, transcript: Context, units: Chunk[Segment], state: CompactorState)(using
-        Frame
-    ): CompactorState < (LLM & Async) =
-        val band = judgeBand(units, transcript, state)
-        val runs = summaryCandidates(units, transcript, state).filter(run => !state.prepared.contains(run.head.id))
+    private def dispatchBackground(
+        ai: AI,
+        transcript: Context,
+        units: Chunk[Segment],
+        state: CompactorState,
+        band: List[Segment],
+        rootSet: Set[Int]
+    )(using Frame): CompactorState < (LLM & Async) =
+        val runs = summaryCandidates(units, transcript, state, rootSet)
+            .filter(run => !state.prepared.contains(run.head.id) && !state.book.summaryInflight.contains(run.head.id))
         if band.isEmpty && runs.isEmpty then Kyo.lift(state)
         else
-            val ids    = band.map(_.id)
-            val marked = state.copy(book = state.book.copy(inflight = state.book.inflight ++ ids.toSet))
+            val ids     = band.map(_.id)
+            val runHead = runs.headOption.map(_.head.id)
             AI.config.map { chatCfg =>
-                val judgeCfg = config.judge.getOrElse(chatCfg.provider.small)
+                // The default judge/summarizer inherits the ACTIVE chat config's transport (credentials,
+                // apiUrl) and only adopts the provider's cheap-tier MODEL, so it produces a real
+                // authenticated request rather than a credential-less catalog literal (which fails before
+                // egress). Config.judge overrides it wholesale.
+                val judgeCfg = config.judge.getOrElse(chatCfg.modelFrom(chatCfg.provider.small))
                 // The judge scores the ambiguous band; the summarizer prepares one candidate run. Both run
                 // fresh + withConfig(judge) so their prompts never touch the transcript, and both land in the
                 // cell only, consulted as caches by the next fresh update (never as authority).
@@ -667,6 +722,11 @@ final class Compactor private (
                             Chunk.empty
                         )))
                             .map(result => landVerdicts(ai, ids, result))
+                // Clear the judge inflight ids on EVERY outcome (success, transport/decode failure, missing
+                // key): only success used to release them, so any failure left the band permanently in
+                // flight, monotonically poisoning every later band. The guard restores them regardless.
+                val judgeGuarded: Unit < (LLM & Async) =
+                    Abort.run[HttpException | AIGenException](judgeWork).map(_ => clearInflight(ai, ids))
                 val summaryWork: Unit < (LLM & Async & Abort[HttpException | AIGenException]) =
                     runs.headOption match
                         case None => Kyo.unit
@@ -677,7 +737,21 @@ final class Compactor private (
                                 Chunk.empty
                             )))
                                 .map(result => landSummary(ai, run, result, transcript.messages.size))
-                forkToCell(judgeWork).andThen(forkToCell(summaryWork)).andThen(Kyo.lift(marked))
+                val summaryGuarded: Unit < (LLM & Async) =
+                    Abort.run[HttpException | AIGenException](summaryWork).map(_ => clearSummaryInflight(ai, runHead.toList))
+                // Persist the inflight additions to the CURRENT cell (merged, never overwritten from the
+                // render snapshot), then fork both jobs.
+                landWith(ai)(st =>
+                    st.copy(book =
+                        st.book.copy(
+                            inflight = st.book.inflight ++ ids.toSet,
+                            summaryInflight = st.book.summaryInflight ++ runHead.toList.toSet
+                        )
+                    )
+                )
+                    .andThen(forkToCell(judgeGuarded))
+                    .andThen(forkToCell(summaryGuarded))
+                    .andThen(Kyo.lift(state))
             }
         end if
     end dispatchBackground
@@ -694,40 +768,44 @@ final class Compactor private (
     end forkToCell
 
     private def landEmbeddings(ai: AI, ids: List[Int], embeddings: Chunk[Embedding])(using Frame): Unit < Sync =
-        val ref = LLM.internal.AIRef(ai)
-        cell.updateAndGet { d =>
-            d.get(ref) match
-                case Absent => d
-                case Present(st) =>
-                    val withVecs = ids.zip(embeddings.toList).foldLeft(st.vectors) { case (v, (id, emb)) => v.update(id, emb) }
-                    d.update(ref, st.copy(vectors = withVecs))
-        }.unit
+        landWith(ai) { st =>
+            val withVecs = ids.zip(embeddings.toList).foldLeft(st.vectors) { case (v, (id, emb)) => v.update(id, emb) }
+            st.copy(vectors = withVecs, book = st.book.copy(embedInflight = ids.foldLeft(st.book.embedInflight)(_ - _)))
+        }
     end landEmbeddings
 
-    private def landVerdicts(ai: AI, ids: List[Int], result: Completion.Result)(using Frame): Unit < Sync =
-        val text = result.messages.map(_.content).mkString(" ").toLowerCase
-        val v =
-            if text.contains("stale") || text.contains("superseded") then Verdict.Stale
-            else if text.contains("keep") then Verdict.Keep
-            else Verdict.Uncertain
-        val ref = LLM.internal.AIRef(ai)
-        cell.updateAndGet { d =>
-            d.get(ref) match
-                case Absent => d
-                case Present(st) =>
-                    val withV   = ids.foldLeft(st.verdicts)((m, id) => m.update(id, v))
-                    val cleared = ids.foldLeft(st.book.inflight)((s, id) => s - id)
-                    d.update(ref, st.copy(verdicts = withV, book = st.book.copy(inflight = cleared)))
-        }.unit
+    private def landVerdicts(ai: AI, ids: List[Int], result: Completion.Reply)(using Frame): Unit < Sync =
+        // One verdict PER region, parsed from the judge's per-region reply lines; a region the reply does not
+        // answer cleanly lands Uncertain, never Stale. inflight is cleared by the fork's guard, not here.
+        val parsed = parseVerdicts(result.messages.map(_.content).mkString("\n"))
+        landWith(ai)(st => st.copy(verdicts = ids.foldLeft(st.verdicts)((m, id) => m.update(id, parsed.getOrElse(id, Verdict.Uncertain)))))
     end landVerdicts
 
+    // Parses the judge's reply into one verdict per region id. Only a line matching EXACTLY
+    // `region <id>: STALE|SUPERSEDED|KEEP` (case-insensitive) yields a verdict; a line with any extra
+    // text (a negation like "region 2 is not stale") does not match and leaves that region unanswered, so
+    // substring "stale" can never invert a keep. STALE/SUPERSEDED map to Stale, KEEP to Keep.
+    private[kyo] def parseVerdicts(text: String): Map[Int, Verdict] =
+        text.linesIterator.foldLeft(Map.empty[Int, Verdict]) { (acc, raw) =>
+            verdictLine.findFirstMatchIn(raw.trim) match
+                case Some(m) =>
+                    val id      = m.group(1).toInt
+                    val verdict = if m.group(2).toLowerCase == "keep" then Verdict.Keep else Verdict.Stale
+                    acc.updated(id, verdict)
+                case None => acc
+        }
+
+    private val verdictLine = "(?i)^region\\s+(\\d+)\\s*:\\s*(stale|superseded|keep)\\s*$".r
+
     // The band-only judge context: a near-verifiable superseded/stale prompt plus each band unit's
-    // content, so the judge sees nothing of the transcript beyond the units under evaluation.
+    // content, so the judge sees nothing of the transcript beyond the units under evaluation. The strict
+    // per-region output format is what landVerdicts parses into one verdict per region.
     private[kyo] def judgeContext(band: List[Segment], transcript: Context): Context =
         val head = Context(Chunk(SystemMessage(
-            "You judge context regions for compaction. For each region, answer only whether it is " +
-                "SUPERSEDED or STALE (its information is fully captured elsewhere or no longer accurate). " +
-                "Answer only that near-verifiable question; do not judge importance or usefulness."
+            "You judge context regions for compaction. For EACH region, answer on its own line in EXACTLY the " +
+                "form `region <id>: STALE` or `region <id>: KEEP` (STALE when its information is fully captured " +
+                "elsewhere or no longer accurate, KEEP otherwise). Answer only that near-verifiable question; " +
+                "do not judge importance or usefulness."
         )))
         band.foldLeft(head)((ctx, u) => ctx.add(UserMessage(s"region ${u.id}: ${unitContent(u, transcript)}", Absent)))
     end judgeContext
@@ -742,25 +820,58 @@ final class Compactor private (
         run.foldLeft(head)((ctx, u) => ctx.add(UserMessage(s"region ${u.id}: ${unitContent(u, transcript)}", Absent)))
     end summaryContext
 
-    private def landSummary(ai: AI, run: List[Segment], result: Completion.Result, at: Int)(using Frame): Unit < Sync =
+    private def landSummary(ai: AI, run: List[Segment], result: Completion.Reply, at: Int)(using Frame): Unit < Sync =
         val text    = result.messages.map(_.content).mkString(" ").trim
         val summary = if text.isEmpty then s"[summary of regions ${run.head.id}..${run.last.id}]" else text
         val r       = Rendered(3, run.size, at, Chunk(SystemMessage(summary)))
-        val ref     = LLM.internal.AIRef(ai)
-        cell.updateAndGet { d =>
-            d.get(ref) match
-                case Absent      => d
-                case Present(st) => d.update(ref, st.copy(prepared = st.prepared.update(run.head.id, r)))
-        }.unit
+        landWith(ai)(st =>
+            st.copy(
+                prepared = st.prepared.update(run.head.id, r),
+                book = st.book.copy(summaryInflight = st.book.summaryInflight - run.head.id)
+            )
+        )
     end landSummary
 
     // ---- state cell access ----
 
-    private def stateFor(ai: AI, transcript: Context)(using Frame): CompactorState < Sync =
-        // AIRef equality/hash is by the AI's stable id (LLM.scala), so a freshly-built ref looks up,
-        // updates, and reset the stored entry without holding the referent; GC pruning drops stale keys.
+    // The single cell read-modify-write shape: apply `f` to the CURRENT entry (present only), leaving the
+    // Dict untouched when the entry is absent. All landers and commit go through this, so a write always
+    // folds into the value concurrently landed since the caller's snapshot, never a blind overwrite.
+    private def landWith(ai: AI)(f: CompactorState => CompactorState)(using Frame): Unit < Sync =
         val ref = LLM.internal.AIRef(ai)
         cell.updateAndGet { d =>
+            d.get(ref) match
+                case Absent      => d
+                case Present(st) => d.update(ref, f(st))
+        }.unit
+    end landWith
+
+    private def clearInflight(ai: AI, ids: List[Int])(using Frame): Unit < Sync =
+        if ids.isEmpty then Kyo.unit
+        else landWith(ai)(st => st.copy(book = st.book.copy(inflight = ids.foldLeft(st.book.inflight)(_ - _))))
+
+    private def clearEmbedInflight(ai: AI, ids: List[Int])(using Frame): Unit < Sync =
+        if ids.isEmpty then Kyo.unit
+        else landWith(ai)(st => st.copy(book = st.book.copy(embedInflight = ids.foldLeft(st.book.embedInflight)(_ - _))))
+
+    private def clearSummaryInflight(ai: AI, ids: List[Int])(using Frame): Unit < Sync =
+        if ids.isEmpty then Kyo.unit
+        else landWith(ai)(st => st.copy(book = st.book.copy(summaryInflight = ids.foldLeft(st.book.summaryInflight)(_ - _))))
+
+    private def markEmbedUnsupported(provider: String)(using Frame): Unit < Sync =
+        embedUnsupported.getAndUpdate(_ + provider).map { prior =>
+            if prior.contains(provider) then Kyo.unit
+            else Log.warn(s"kyo-ai compaction: provider $provider has no embeddings endpoint; skipping semantic edges for it")
+        }
+
+    private def stateFor(ai: AI, transcript: Context)(using Frame): CompactorState < Sync =
+        // AIRef equality/hash is by the AI's stable id (LLM.scala), so a freshly-built ref looks up and
+        // updates the stored entry without holding the referent. Every render sweeps GC'd (cleared) refs
+        // (mirrors LLM.State.pruned) so a long-lived scope compactor serving many short-lived instances
+        // never accumulates dead entries.
+        val ref = LLM.internal.AIRef(ai)
+        cell.updateAndGet { d0 =>
+            val d = d0.filter((r, _) => r.isValid)
             d.get(ref) match
                 case Present(st) =>
                     // Non-append guard: if history is no longer a prefix (setContext/forget/fresh rewrote
@@ -769,17 +880,18 @@ final class Compactor private (
                     else d
                 case Absent =>
                     d.update(ref, CompactorState.empty)
+            end match
         }.map(_.get(ref).getOrElse(CompactorState.empty))
     end stateFor
 
     private def commit(ai: AI, transcript: Context, state: CompactorState)(using Frame): Unit < Sync =
-        // Record the transcript length observed at this render so the next render's non-append guard
-        // can detect a shrunk/rewritten history (setContext/forget/fresh) and reset.
-        val ref = LLM.internal.AIRef(ai)
-        cell.updateAndGet { d =>
-            if d.contains(ref) then d.update(ref, state.copy(book = state.book.copy(seen = transcript.messages.size)))
-            else d
-        }.unit
+        // Merge the render's authority (renderings + observed transcript length) into the CURRENT cell
+        // value, preserving vectors/verdicts/prepared/inflight landed by background fibers between this
+        // render's snapshot and now. A blind overwrite would resurrect a cleared inflight without its
+        // verdicts (stranding those ids) and drop concurrently-landed vectors (re-paying for them).
+        landWith(ai)(current =>
+            current.copy(renderings = state.renderings, book = current.book.copy(seen = transcript.messages.size))
+        )
     end commit
 
     private[kyo] def stash(state: CompactorState): CompactorState =
@@ -789,7 +901,9 @@ final class Compactor private (
         state
 
     private[kyo] def viewTokens(view: Context, book: Book): Int =
-        // byte-based estimate scaled by the calibrated ratio.
+        // Char-based estimate scaled by the calibrated ratio. "bytes"/"tokensPerByte" throughout this file
+        // count String.length (UTF-16 code units), not encoded bytes; for non-ASCII the two differ, but the
+        // EWMA calibration (calibrate) absorbs any consistent ratio, so ranking is unaffected.
         (byteSize(view) * book.tokensPerByte).toInt
 
     private def byteSize(ctx: Context): Int =
@@ -952,18 +1066,28 @@ final class Compactor private (
     private[kyo] def rotFires(refetchCount: Int, occupied: Int, e: Double): Boolean =
         refetchCount >= config.refetchThreshold || occupied.toDouble >= e
 
-    // Re-fetch count for a demoted unit: recall(id) calls landed in the transcript AFTER the unit's
-    // Rendered.at. Derived from the transcript (never stored, so the locked state shape is untouched),
-    // which is what makes refetchThreshold a live rot-rule trigger: a demoted region the model keeps
-    // recalling has churned enough to earn a deferred deep edit.
+    // Re-fetch count for a demoted unit: recall calls for this unit id landed in the transcript AFTER the
+    // unit's Rendered.at. Derived from the transcript (never stored, so the locked state shape is
+    // untouched), which is what makes refetchThreshold a live rot-rule trigger: a demoted region the model
+    // keeps recalling has churned enough to earn a deferred deep edit. The recall argument is the object
+    // wire shape (`{"id":<n>}`), decoded through the same Recall schema the tool registers.
     private[kyo] def refetchCount(unitId: Int, transcript: Context, since: Int): Int =
         transcript.messages.zipWithIndex.foldLeft(0) { case (n, (m, i)) =>
             if i < since then n
             else
                 m match
-                    case AssistantMessage(_, calls) => n + calls.count(c => c.function == "recall" && c.arguments.trim == unitId.toString)
-                    case _                          => n
+                    case AssistantMessage(_, calls) =>
+                        n + calls.count(c => c.function == "recall" && recallArgId(c.arguments).contains(unitId))
+                    case _ => n
         }
+
+    // Extracts the recall unit id from the tool call's object-shaped arguments (`{"id":<n>}`). A pure,
+    // Frame-free parse (the kyo package cannot derive a Frame for Json.decode in a pure helper), sufficient
+    // for the rot-rule counting heuristic.
+    private def recallArgId(arguments: String): Maybe[Int] =
+        Maybe.fromOption(recallIdRegex.findFirstMatchIn(arguments).map(_.group(1).toInt))
+
+    private val recallIdRegex = "\"id\"\\s*:\\s*(-?\\d+)".r
 
     // EWMA weight on the newest observed tokens-per-byte ratio (0.3: the new sample nudges, the
     // running calibration holds most of the weight). Internal, not a Config knob.
@@ -1039,11 +1163,41 @@ object Compactor:
       * atomic per-instance state cell (Sync).
       */
     def init(f: Config => Config)(using Frame): Compactor < Sync =
-        AtomicRef.init(Dict.empty[LLM.internal.AIRef, CompactorState]).map(cell => new Compactor(cell, f(Config())))
+        val config = validated(f(Config()))
+        AtomicRef.init(Dict.empty[LLM.internal.AIRef, CompactorState]).map { cell =>
+            AtomicRef.init(Set.empty[String]).map(unsupported => new Compactor(cell, config, unsupported))
+        }
+    end init
 
-    /** The overridable-defaults record. Every knob ships with the seed design's extrapolated default
-      * (untuned against real traces; correctness is unaffected, only ranking quality). See each field's
-      * requirement in `02-public-api.yaml §3.1`.
+    // Validates the config's ordering and positivity invariants at construction (the sibling kyo.ai.Config
+    // clamps temperature; here an out-of-order or negative knob is a caller error surfaced loudly rather
+    // than a silently thrashing compactor). Returns the config unchanged when valid.
+    private def validated(c: Config): Config =
+        def require(cond: Boolean, msg: String): Unit =
+            if !cond then throw IllegalArgumentException(s"Compactor.Config: $msg")
+        require(
+            c.updateTargetFraction < c.updateTriggerFraction,
+            "updateTargetFraction must be below updateTriggerFraction (the hysteresis band)"
+        )
+        require(c.updateTargetFraction > 0.0, "updateTargetFraction must be positive")
+        require(c.hardWindowFraction > 0.0, "hardWindowFraction must be positive")
+        require(c.windowFraction > 0.0, "windowFraction must be positive")
+        require(c.effectiveCap > 0, "effectiveCap must be positive")
+        require(c.tailTurns > 0, "tailTurns must be positive")
+        require(c.tailTokens > 0, "tailTokens must be positive")
+        require(c.bandSize > 0, "bandSize must be positive")
+        require(c.restartWeight > 0.0 && c.restartWeight < 1.0, "restartWeight must be in (0, 1)")
+        require(c.supersessionPenalty >= 0.0, "supersessionPenalty must be non-negative")
+        require(c.referenceWeight >= 0.0 && c.adjacencyWeight >= 0.0 && c.semanticWeight >= 0.0, "edge weights must be non-negative")
+        require(c.semanticNeighbors > 0, "semanticNeighbors must be positive")
+        require(c.semanticDecayHalfLife > 0, "semanticDecayHalfLife must be positive")
+        require(c.elisionThreshold > 0, "elisionThreshold must be positive")
+        c
+    end validated
+
+    /** The overridable-defaults record. Defaults are untuned against real traces; they affect ranking
+      * quality, not correctness. `init` validates the ordering and positivity invariants (for example
+      * `updateTargetFraction` must sit below `updateTriggerFraction`).
       */
     final case class Config(
         windowFraction: Double = 0.5,
@@ -1103,11 +1257,18 @@ object Compactor:
         final case class Rendered(level: Int, covers: Int, at: Int, replacement: Chunk[Message])
 
         /** What the compactor did and when (underivable). seen = transcript length at last render
-          * (append-only guard); lastDeepEdit = where rot-rule re-fetch counting starts; skip = blocked
-          * deep edits (unit -> occupancy at block time); tokensPerByte = estimator calibration;
-          * inflight = units dispatched for embedding/judging (dedupe).
+          * (append-only guard); tokensPerByte = estimator calibration; inflight = band units dispatched
+          * for judging (dedupe, one batch at a time); embedInflight = units dispatched for embedding but
+          * not yet landed; summaryInflight = run heads dispatched for summarization but not yet landed.
+          * The three inflight sets stop a slow endpoint from re-issuing the same paid batch every render.
           */
-        final case class Book(seen: Int, lastDeepEdit: Int, skip: Dict[Int, Int], tokensPerByte: Double, inflight: Set[Int])
+        final case class Book(
+            seen: Int,
+            tokensPerByte: Double,
+            inflight: Set[Int],
+            embedInflight: Set[Int],
+            summaryInflight: Set[Int]
+        )
 
         /** Per-instance persisted state: the four derived-result caches plus the book. Everything else
           * (grouping, edges, supersession, scores, occupancy) is derived fresh.
@@ -1122,7 +1283,7 @@ object Compactor:
 
         object CompactorState:
             val empty: CompactorState =
-                CompactorState(Dict.empty, Dict.empty, Dict.empty, Dict.empty, Book(0, 0, Dict.empty, 0.25, Set.empty))
+                CompactorState(Dict.empty, Dict.empty, Dict.empty, Dict.empty, Book(0, 0.25, Set.empty, Set.empty, Set.empty))
 
         /** The cheap-tier judge's near-verifiable verdict on a band unit. */
         enum Verdict derives CanEqual:
@@ -1139,41 +1300,48 @@ object Compactor:
 
         final case class Edge(target: Int, kind: EdgeKind, weight: Double)
 
-        /** The recall tool the Compactor registers: kind = Read, NO compactionKey (a recall read is a
-          * rot-rule re-fetch signal, never a supersession trigger). Its run slices the LIVE
-          * transcript for the requested unit id and returns the verbatim content as a fresh ToolMessage
-          * at the tail, never editing the frozen prefix, never duplicating a historical call id.
+        /** The recall tool's single input, wrapped in an object so the wire tool schema is
+          * `{"id":{"type":"integer"}}`: providers reject a bare `{"type":"integer"}` parameter schema (the
+          * same object-schema constraint the result_tool envelope satisfies).
           */
-        def recallTool(compactor: Compactor)(using Frame): Tool[LLM] =
-            Tool.init[Int](
+        final case class Recall(id: Int) derives Schema, CanEqual
+
+        /** The recall tool the Compactor registers per CALLING instance: kind = Read, NO compactionKey (a
+          * recall read is a rot-rule re-fetch signal, never a supersession trigger). It is bound to `ai` at
+          * the gen seam (LLM.eval), so it resolves against ONLY that instance's own cell entry and
+          * transcript, never another session's (unit ids are transcript indices and collide across
+          * sessions). Its run slices the LIVE transcript for the requested unit id and returns the verbatim
+          * content as a fresh ToolMessage at the tail, never editing the frozen prefix, never duplicating a
+          * historical call id.
+          */
+        def recallTool(compactor: Compactor, ai: AI)(using Frame): Tool[LLM] =
+            val ref = LLM.internal.AIRef(ai)
+            Tool.init[Recall](
                 name = "recall",
                 description =
                     "Recall the full original content of a demoted region by its unit id (the id carried " +
                         "in the region's marker). Returns the verbatim content as a fresh tool result.",
                 kind = Tool.Kind.Read
-            ) { (id: Int) =>
-                // Find the instance whose compaction state marks `id` demoted, slice its live transcript
-                // for that unit, and return the original content; the tool machinery lands it as a fresh
-                // ToolMessage at the tail, so no frozen prefix is edited and no historical id is reused.
+            ) { (arg: Recall) =>
+                val id = arg.id
+                // Resolve against ONLY the calling instance's own state and transcript.
                 LLM.state.map { st =>
                     compactor.cell.get.map { d =>
-                        val found = d.foldLeft(Absent: Maybe[String]) { (acc, ref, cs) =>
-                            acc match
-                                case Present(_) => acc
-                                case Absent =>
-                                    if !cs.renderings.contains(id) then Absent
-                                    else
-                                        st.instances.get(ref) match
-                                            case Absent => Absent
-                                            case Present(session) =>
-                                                compactor.group(session.context, cs.book).filter(_.id == id).headMaybe match
-                                                    case Present(u) => Present(compactor.unitContent(u, session.context))
-                                                    case Absent     => Absent
-                        }
+                        val found =
+                            d.get(ref) match
+                                case Present(cs) if cs.renderings.contains(id) =>
+                                    st.instances.get(ref) match
+                                        case Present(session) =>
+                                            compactor.group(session.context, cs.book).filter(_.id == id).headMaybe match
+                                                case Present(u) => Present(compactor.unitContent(u, session.context))
+                                                case Absent     => Absent
+                                        case Absent => Absent
+                                case _ => Absent
                         found.getOrElse(s"no such recallable region: $id")
                     }
                 }
             }.asInstanceOf[Tool[LLM]]
+        end recallTool
 
     end internal
 end Compactor

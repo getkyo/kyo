@@ -26,7 +26,7 @@ trait Completion:
         context: Context,
         tools: Chunk[Tool.internal.Info[?, ?, LLM]],
         resultSchema: Maybe[JsonSchema] = Absent
-    )(using Frame): Completion.Result < (LLM & Async & Abort[HttpException | AIGenException])
+    )(using Frame): Completion.Reply < (LLM & Async & Abort[HttpException | AIGenException])
 
     /** Embeds each input string with the provider's embeddings endpoint, one batched call.
       *
@@ -65,7 +65,7 @@ object Completion:
     /** The widened `apply` result: the reply messages plus optional provider-reported usage.
       * `messages` preserves today's behavior; `usage` is `Absent` when a backend does not report it.
       */
-    final case class Result(messages: Chunk[Message], usage: Maybe[Usage]) derives CanEqual
+    final case class Reply(messages: Chunk[Message], usage: Maybe[Usage]) derives CanEqual
 
     /** The OpenAI-compatible backend (OpenAI plus DeepSeek/Gemini/Groq/Baseten/OpenRouter). The concrete
       * implementation is package-private; reach it (and Anthropic) through these accessors.
@@ -92,9 +92,7 @@ object Completion:
     private[completion] def sseFragments(
         config: Config,
         request: StreamRequest < Abort[AIStreamException],
-        // Fully qualified: kyo.Result, not this object's own Result (the widened apply-result type),
-        // since an unqualified reference here would resolve to the local Completion.Result instead.
-        parseDeltaArguments: String => kyo.Result[String, Maybe[String]]
+        parseDeltaArguments: String => Result[String, Maybe[String]]
     )(using Frame): Stream[String, Async & Scope & Abort[AIStreamException]] < Async =
         given sseTag: Tag[Emit[Chunk[HttpSseEvent[String]]]] = Tag[Emit[Chunk[HttpSseEvent[String]]]]
         val route                                            = HttpRoute.postRaw("").request(_.bodyText).response(_.bodySseText)
@@ -115,9 +113,9 @@ object Completion:
                 }
             yield sseStream.map { event =>
                 parseDeltaArguments(event.data) match
-                    case kyo.Result.Success(Present(fragment)) => fragment
-                    case kyo.Result.Success(Absent)            => ""
-                    case kyo.Result.Failure(err)               => Abort.fail(AIStreamDeltaException(err))
+                    case Result.Success(Present(fragment)) => fragment
+                    case Result.Success(Absent)            => ""
+                    case Result.Failure(err)               => Abort.fail(AIStreamDeltaException(err))
             }.filterPure(_.nonEmpty)
         }
     end sseFragments
