@@ -15,6 +15,10 @@ class BrowserLauncherJvmTest extends BaseBrowserTest:
 
     // createTempDir failure path: point at a read-only parent directory; assert Abort shape.
     "createTempDir aborts with BrowserSetupFailedException when the temp parent is not writable" in {
+        // POSIX permissions throw UnsupportedOperationException on Windows, and NTFS does not
+        // block an owner from creating entries in a read-only directory anyway, so the
+        // unwritable-parent scenario is expressible on POSIX hosts only.
+        assume(!Platform.isWindows, "POSIX directory permissions")
         val outerTmp = Paths.get(java.lang.System.getProperty("java.io.tmpdir"))
         val parent   = Files.createTempDirectory(outerTmp, s"kyo-browser-jvm-test-${UUID.randomUUID()}-")
 

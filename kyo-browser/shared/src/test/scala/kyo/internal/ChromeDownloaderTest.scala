@@ -138,7 +138,10 @@ class ChromeDownloaderTest extends BaseBrowserTest:
             arch = Arch.X86_64
         )
         System.let(sys)(ChromeDownloader.cacheRoot).map { root =>
-            assert(root.unsafe.show == "/custom/cache/dir", s"got '${root.unsafe.show}'")
+            // Compare against the same Path construction the override takes: a Windows host
+            // resolves the env value against the current drive, so the literal rendering is
+            // platform-dependent while the contract (root is the path the env denotes) is not.
+            assert(root.unsafe.show == Path("/custom/cache/dir").toString, s"got '${root.unsafe.show}'")
         }
     }
 

@@ -64,27 +64,40 @@ class BrowserLauncherCleanupJvmTest extends BaseBrowserTest:
             base.copy(extraArgs = Chunk(s"--user-agent=$tag"))
         }
 
-    /** Captures the snapshot of currently-running OS processes whose argv contains the given sentinel tag. Returns a sequence of
+    /** Captures the snapshot of currently-running OS processes whose command line contains the given sentinel tag. Returns a sequence of
       * `(pid, userDataDir)` pairs, where `userDataDir` is the value of the `--user-data-dir=...` argument the launcher passed to that Chrome
       * process.
       *
       * Implementation note: macOS's Java implementation of `ProcessHandle.info().arguments()` returns the full argv for processes the JVM
-      * owns (its own children); for other processes the result may be an empty Optional. Since this test only spawns Chromes via
+      * owns (its own children); for other processes the result may be an empty Optional. On Windows `arguments()` is always empty and
+      * `commandLine()` carries the unsplit command line instead, so both are consulted. Since this test only spawns Chromes via
       * `Browser.run` from the same JVM, our own Chromes are always discoverable.
       */
+    private val userDataDirArg = """--user-data-dir=("([^"]+)"|(\S+))""".r
+
     private def chromesByTag(tag: String): Seq[(Long, String)] =
         ProcessHandle.allProcesses().iterator().asScala.flatMap { ph =>
-            val info = ph.info()
-            val args = info.arguments().orElse(Array.empty[String])
+            val info    = ph.info()
+            val argsOpt = info.arguments()
             // We require BOTH the sentinel tag AND a `--user-data-dir=<...>` arg. The user-data-dir arg is what
-            // we actually want to capture. If the argv doesn't contain a tag match, this process isn't ours.
-            val hasTag = args.exists(_.contains(tag))
+            // we actually want to capture. If the command line doesn't contain a tag match, this process isn't ours.
             val captured: Maybe[(Long, String)] =
-                if !hasTag then Absent
+                if argsOpt.isPresent then
+                    val args = argsOpt.get
+                    if !args.exists(_.contains(tag)) then Absent
+                    else
+                        Maybe.fromOption(args.collectFirst {
+                            case a if a.startsWith("--user-data-dir=") => (ph.pid(), a.substring("--user-data-dir=".length))
+                        })
+                    end if
                 else
-                    Maybe.fromOption(args.collectFirst {
-                        case a if a.startsWith("--user-data-dir=") => (ph.pid(), a.substring("--user-data-dir=".length))
-                    })
+                    val cl = info.commandLine().orElse("")
+                    if !cl.contains(tag) then Absent
+                    else
+                        Maybe.fromOption(userDataDirArg.findFirstMatchIn(cl).map { m =>
+                            (ph.pid(), Option(m.group(2)).getOrElse(m.group(3)))
+                        })
+                    end if
             captured.toList
         }.toSeq
 
