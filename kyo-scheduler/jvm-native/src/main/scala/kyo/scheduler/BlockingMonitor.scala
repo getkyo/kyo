@@ -99,7 +99,7 @@ private[scheduler] class BlockingMonitor(
     // Per-slot sampling state, keyed by worker position (or by batch index in the
     // detection-only test path). lastThreadIds guards thread identity: the batch order
     // shifts as workers mount and unmount, and a slot's accumulated state must never be
-    // read against a sample of a different thread — comparing one thread's CPU time to
+    // read against a sample of a different thread: comparing one thread's CPU time to
     // another's fabricates idle/active verdicts and corrupts blockCounts.
     private val lastThreadIds = new Array[Long](maxWorkers)
     private val lastUserTimes = Array.fill[Long](maxWorkers)(-1L)
@@ -257,7 +257,7 @@ private[scheduler] class BlockingMonitor(
             clearTasks(prev, curr + 1)
         }
 
-    // Detection only — used by tests via sample() where there are no workers. Slots are
+    // Detection only, used by tests via sample() where there are no workers. Slots are
     // keyed by batch index; the identity guard in updateSlot applies the same way.
     @tailrec private def detectOnly(tids: Array[Long], count: Int, i: Int): Unit =
         if (i < count) {
