@@ -13,6 +13,7 @@ import kyo.net.NetConnectTimeoutException
 import kyo.net.NetDnsResolutionException
 import kyo.net.NetException
 import kyo.net.NetNotUpgradableException
+import kyo.net.NetSocketOptionUnsupportedException
 import kyo.net.NetStdioAlreadyOpenException
 import kyo.net.NetTlsConfig
 import kyo.net.NetTlsHandshakeException
@@ -79,6 +80,18 @@ final private[kyo] class JsTransport private (
       * to [[NetTlsHandshakeException]], a Unix target (`port < 0`) to [[NetUnixConnectException]], otherwise [[NetConnectException]]. The leaf
       * carries Node's own message; the code only selects the leaf.
       */
+    /** Reject a socket buffer size Node cannot honor.
+      *
+      * Node's net API exposes no way to set `SO_RCVBUF` or `SO_SNDBUF` (`socket.bufferSize` is a read-only count of bytes queued for writing),
+      * so a `Present` value cannot be applied here. Silently ignoring it would hand the caller a socket that does not have the buffer they
+      * asked for, which is the same config-truthfulness failure a silently-substituted TLS provider would be, so the operation fails closed.
+      * `Absent` is the default, so ordinary use pays one check per operation and never sees this.
+      */
+    private def rejectUnsupportedBuffers(config: kyo.net.NetConfig)(using Frame): Maybe[NetException] =
+        if config.soRcvBuf.isDefined then Present(NetSocketOptionUnsupportedException("SO_RCVBUF"))
+        else if config.soSndBuf.isDefined then Present(NetSocketOptionUnsupportedException("SO_SNDBUF"))
+        else Absent
+
     private def connectError(err: js.Dynamic, host: String, port: Int)(using Frame): NetException =
         val code = errCode(err)
         val msg  = errMessage(err)
@@ -336,6 +349,14 @@ final private[kyo] class JsTransport private (
         val promise = new IOPromise[NetException, Connection[JsHandle]]
         val driver  = pool.next()
 
+        rejectUnsupportedBuffers(config) match
+            case Present(e) =>
+                discard(socket.destroy())
+                promise.completeDiscard(Result.fail(e))
+                return promise.asInstanceOf[Fiber.Unsafe[NetConnection, Abort[NetException]]]
+            case Absent => ()
+        end match
+
         // Arm the connect-deadline: when the caller's connectTimeout is finite, a Clock-driven timer fails `promise` with the typed
         // NetConnectTimeoutException if the Node socket neither connects nor errors first. The deadline arm and the OS outcome race on the same
         // `promise` (completeDiscard, at most once), so a deadline-fired close surfaces the timeout leaf and an OS-failure close surfaces
@@ -448,7 +469,14 @@ final private[kyo] class JsTransport private (
         handler: NetConnection => Unit,
         config: kyo.net.NetConfig
     )(using AllowUnsafe, Frame): Fiber.Unsafe[NetListener, Abort[NetException]] =
-        val promise  = new IOPromise[NetException, NetListener]
+        val promise = new IOPromise[NetException, NetListener]
+        rejectUnsupportedBuffers(config) match
+            case Present(e) =>
+                discard(server.close())
+                promise.completeDiscard(Result.fail(e))
+                return promise.asInstanceOf[Fiber.Unsafe[NetListener, Abort[NetException]]]
+            case Absent => ()
+        end match
         val listener = new JsListener(server, NetAddress.Tcp(host, port))
 
         discard(server.on(
@@ -523,6 +551,13 @@ final private[kyo] class JsTransport private (
         kyo.net.Transport.checkConnectTimeout(connectTimeout)
         val promise = new IOPromise[NetException, Connection[JsHandle]]
         val driver  = pool.next()
+
+        rejectUnsupportedBuffers(config) match
+            case Present(e) =>
+                promise.completeDiscard(Result.fail(e))
+                return promise.asInstanceOf[Fiber.Unsafe[NetConnection, Abort[NetException]]]
+            case Absent => ()
+        end match
 
         val net    = js.Dynamic.global.require("net")
         val socket = net.createConnection(js.Dynamic.literal(path = path))
@@ -648,6 +683,12 @@ final private[kyo] class JsTransport private (
         handler: NetConnection => Unit
     )(using AllowUnsafe, Frame): Fiber.Unsafe[NetListener, Abort[NetException]] =
         val promise = new IOPromise[NetException, NetListener]
+        rejectUnsupportedBuffers(config) match
+            case Present(e) =>
+                promise.completeDiscard(Result.fail(e))
+                return promise.asInstanceOf[Fiber.Unsafe[NetListener, Abort[NetException]]]
+            case Absent => ()
+        end match
 
         val net    = js.Dynamic.global.require("net")
         val server = net.createServer()

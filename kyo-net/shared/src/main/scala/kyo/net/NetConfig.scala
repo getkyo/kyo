@@ -20,9 +20,11 @@ import kyo.*
   *     at the cost of higher per-connection memory usage. It seeds a buffer that then adapts to the traffic it sees. Applies where the
   *     transport owns its read buffer, which is the posix and NIO backends; the Node backend has no read buffer of its own, since Node
   *     delivers chunks it sizes itself, so the value has nothing to act on there.
-  *   - `soRcvBuf`: when `Present(n)`, sets `SO_RCVBUF` to `n` bytes on the connect fd, the listen fd, and each accepted fd. `Absent` (the
-  *     default) leaves the kernel's default unchanged. Applied by the posix backends.
-  *   - `soSndBuf`: same as `soRcvBuf` for `SO_SNDBUF` (the send buffer).
+  *   - `soRcvBuf`: when `Present(n)`, sets `SO_RCVBUF` to `n` bytes on the connect socket, the listen socket, and each accepted socket.
+  *     `Absent` (the default) leaves the kernel's default unchanged. Node exposes no socket-buffer API, so on JS a `Present` value fails the
+  *     operation with [[NetSocketOptionUnsupportedException]] rather than being silently ignored.
+  *   - `soSndBuf`: same as `soRcvBuf` for `SO_SNDBUF` (the send buffer). A listening socket has no send buffer, so this applies to connect and
+  *     accepted sockets only.
   */
 case class NetConfig(
     channelCapacity: Int = NetConfig.DefaultChannelCapacity,

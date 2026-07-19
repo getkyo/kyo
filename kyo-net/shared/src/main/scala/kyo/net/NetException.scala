@@ -132,6 +132,14 @@ final case class NetTlsConfigException(cause: String | Throwable = "")(using Fra
 sealed abstract class NetCapabilityException(message: String, cause: String | Throwable = "")(using Frame)
     extends NetException(message, cause)
 
+/** The socket option named by `option` (`SO_RCVBUF` or `SO_SNDBUF`) cannot be honored by this transport, so the operation fails rather than
+  * proceeding with a setting the caller asked for and would not get. Node exposes no socket-buffer API (its `socket.bufferSize` reports bytes
+  * queued for writing and sets nothing), so the JS transport reports this for a `Present` [[NetConfig.soRcvBuf]] or [[NetConfig.soSndBuf]].
+  * Follows the same config-truthfulness rule as a pinned TLS provider the transport cannot supply: fail closed, never substitute silently.
+  */
+final case class NetSocketOptionUnsupportedException(option: String)(using Frame)
+    extends NetCapabilityException(s"socket option $option is not supported by this transport")
+
 /** No usable I/O backend: a forced backend named by `backend` is unavailable, or (`Absent`) no backend is available on this host. */
 final case class NetBackendUnavailableException(backend: Maybe[String], cause: String | Throwable = "")(using Frame)
     extends NetCapabilityException(

@@ -79,6 +79,22 @@ final private[kyo] class NioTransport private (
     /** Build a connection over `handle` and register it in [[connections]], wiring its `onClose` so it self-removes when its handle is torn
       * down. Used for every connection so `close()` can reclaim any that did not close on their own.
       */
+    /** Apply the caller's socket buffer sizes to a channel, the NIO counterpart of the posix `applySocketBuffers`.
+      *
+      * `sendSupported` distinguishes the two channel kinds, because Java does: a `SocketChannel` (TCP and Unix alike) supports both
+      * `SO_RCVBUF` and `SO_SNDBUF`, while a `ServerSocketChannel` supports only `SO_RCVBUF`, a listening socket having no send buffer, and
+      * setting the send buffer on one throws. The posix transport can pass both to `setsockopt` on its listen fd because the syscall simply
+      * stores the value there; on this floor the unsupported one is skipped rather than attempted and swallowed.
+      *
+      * Applied before `bind` on a listen channel: `SO_RCVBUF` seeds the receive window that accepted connections inherit, and the kernel
+      * fixes window scaling at bind time, so setting it afterwards would not take effect.
+      */
+    private def applySocketBuffers(channel: java.nio.channels.NetworkChannel, config: kyo.net.NetConfig, sendSupported: Boolean): Unit =
+        config.soRcvBuf.foreach(n => discard(channel.setOption(StandardSocketOptions.SO_RCVBUF, Integer.valueOf(n))))
+        if sendSupported then
+            config.soSndBuf.foreach(n => discard(channel.setOption(StandardSocketOptions.SO_SNDBUF, Integer.valueOf(n))))
+    end applySocketBuffers
+
     private def initTracked(handle: NioHandle, channelCapacity: Int)(using AllowUnsafe, Frame): Connection[NioHandle] =
         val conn = Connection.init(handle, driver, channelCapacity, () => discard(connections.remove(handle)))
         discard(connections.put(handle, conn))
@@ -147,6 +163,7 @@ final private[kyo] class NioTransport private (
             channel = SocketChannel.open()
             channel.configureBlocking(false)
             channel.setOption(StandardSocketOptions.TCP_NODELAY, java.lang.Boolean.TRUE)
+            applySocketBuffers(channel, config, sendSupported = true)
             Log.live.unsafe.debug(s"NioTransport connect $host:$port channel=${channel.hashCode()}")
 
             val connected = channel.connect(new InetSocketAddress(host, port))
@@ -287,6 +304,7 @@ final private[kyo] class NioTransport private (
             serverChannel = ServerSocketChannel.open()
             serverChannel.configureBlocking(false)
             serverChannel.setOption(StandardSocketOptions.SO_REUSEADDR, java.lang.Boolean.TRUE)
+            applySocketBuffers(serverChannel, config, sendSupported = false)
             serverChannel.bind(new InetSocketAddress(host, port), backlog)
 
             if !driver.registerServerChannel(serverChannel) then
@@ -379,6 +397,7 @@ final private[kyo] class NioTransport private (
                     listener.address match
                         case _: NetAddress.Tcp => clientChannel.setOption(StandardSocketOptions.TCP_NODELAY, java.lang.Boolean.TRUE)
                         case _                 => ()
+                    applySocketBuffers(clientChannel, config, sendSupported = true)
                     Log.live.unsafe.debug(
                         s"NioTransport accepted client channel=${clientChannel.hashCode()} on server port=${listener.port}"
                     )
@@ -444,6 +463,7 @@ final private[kyo] class NioTransport private (
             channel = SocketChannel.open()
             channel.configureBlocking(false)
             channel.setOption(StandardSocketOptions.TCP_NODELAY, java.lang.Boolean.TRUE)
+            applySocketBuffers(channel, config, sendSupported = true)
             Log.live.unsafe.debug(s"NioTransport TLS connect $host:$port channel=${channel.hashCode()}")
 
             val connected = channel.connect(new InetSocketAddress(host, port))
@@ -1012,6 +1032,7 @@ final private[kyo] class NioTransport private (
             serverChannel = ServerSocketChannel.open()
             serverChannel.configureBlocking(false)
             serverChannel.setOption(StandardSocketOptions.SO_REUSEADDR, java.lang.Boolean.TRUE)
+            applySocketBuffers(serverChannel, config, sendSupported = false)
             serverChannel.bind(new InetSocketAddress(host, port), backlog)
 
             if !driver.registerServerChannel(serverChannel) then
@@ -1067,6 +1088,7 @@ final private[kyo] class NioTransport private (
                 if clientChannel ne null then
                     clientChannel.configureBlocking(false)
                     clientChannel.setOption(StandardSocketOptions.TCP_NODELAY, java.lang.Boolean.TRUE)
+                    applySocketBuffers(clientChannel, config, sendSupported = true)
                     Log.live.unsafe.debug(
                         s"NioTransport TLS accepted client channel=${clientChannel.hashCode()} on server port=${listener.port}"
                     )
@@ -1198,6 +1220,7 @@ final private[kyo] class NioTransport private (
             val addr    = java.net.UnixDomainSocketAddress.of(path)
             val channel = SocketChannel.open(StandardProtocolFamily.UNIX)
             channel.configureBlocking(false)
+            applySocketBuffers(channel, config, sendSupported = true)
             Log.live.unsafe.debug(s"NioTransport connectUnix $path channel=${channel.hashCode()}")
 
             val connected = channel.connect(addr)
@@ -1235,6 +1258,7 @@ final private[kyo] class NioTransport private (
             val addr          = java.net.UnixDomainSocketAddress.of(path)
             val serverChannel = ServerSocketChannel.open(StandardProtocolFamily.UNIX)
             serverChannel.configureBlocking(false)
+            applySocketBuffers(serverChannel, config, sendSupported = false)
             serverChannel.bind(addr, backlog)
 
             if !driver.registerServerChannel(serverChannel) then

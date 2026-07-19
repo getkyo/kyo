@@ -452,4 +452,42 @@ class NioTransportTest extends Test:
         }
     }
 
+    // The NIO floor accepted soRcvBuf/soSndBuf and never applied them: setOption was used for TCP_NODELAY and SO_REUSEADDR but never for the
+    // buffers, so the fields were silently ignored on this backend. Two connects on ONE transport asking for different sizes must come back
+    // with different sizes; the comparison is on SO_SNDBUF because macOS auto-tunes SO_RCVBUF non-monotonically on connected loopback sockets
+    // (measured: a request of 16384 read back as 326640 and 262144 as 277644), while the send buffer tracks the request.
+    "socket buffer sizes are applied per connect" in {
+        val transport = NioTransport.init()
+        val smallReq  = 16384
+        val largeReq  = 262144
+        def sndOf(conn: kyo.net.Connection): Int =
+            conn.asInstanceOf[kyo.net.internal.transport.Connection[NioHandle]].handle.channel
+                .getOption(java.net.StandardSocketOptions.SO_SNDBUF).intValue
+        Abort.run[NetException | Closed] {
+            transport.listen("127.0.0.1", 0, 4)(_ => ()).safe.get.map { listener =>
+                val small = kyo.net.NetConfig.default.copy(soRcvBuf = Present(smallReq), soSndBuf = Present(smallReq))
+                val large = kyo.net.NetConfig.default.copy(soRcvBuf = Present(largeReq), soSndBuf = Present(largeReq))
+                transport.connect("127.0.0.1", listener.port, config = small).safe.get.map { smallConn =>
+                    transport.connect("127.0.0.1", listener.port, config = large).safe.get.map { largeConn =>
+                        Sync.defer {
+                            val smallSnd = sndOf(smallConn)
+                            val largeSnd = sndOf(largeConn)
+                            smallConn.close()
+                            largeConn.close()
+                            listener.close()
+                            assert(
+                                largeSnd > smallSnd,
+                                s"SO_SNDBUF: the connect asking for $largeReq got $largeSnd, the one asking for $smallReq got $smallSnd; " +
+                                    "equal values mean the per-connect config never reached the channel"
+                            )
+                            succeed
+                        }
+                    }
+                }
+            }
+        }.map { result =>
+            Sync.defer(discard(transport.close())).andThen(Abort.get(result))
+        }
+    }
+
 end NioTransportTest
