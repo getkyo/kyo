@@ -265,24 +265,35 @@ object CompactionReplayHarness:
             neededNeedles = Seq("OBJDEP_NEEDLE")
         )
 
-    // Session 5: a discriminator carried in the first user message (a full-arm root) that a correct
-    // completion depends on. The full arm keeps it verbatim; the baseline drops it into its summary. The
-    // baseline outcome is MEASURED into the scoreboard, never forced false a priori.
+    // Session 5: the discriminator DISCRIMINATOR_XY lives ONLY in an EARLY NON-ROOT assistant note
+    // (the "triage note" unit), never in a pinned root, so its survival is attributable to
+    // graph-liveness scoring, not to root-pinning. The note also introduces the shared identifier
+    // LEDGER_KEY; the last-user objective (a pinned root) references LEDGER_KEY, so deriveGraph draws a
+    // Ref edge objective -> triage-note and coPinReferrers records the note as co-pinned by a live
+    // root. Under real occupancy pressure (effectiveCap=50 like session 1: e=50, updateTrigger=35,
+    // hardWindow=115200; the ~370-token transcript crosses the update trigger without reaching the hard
+    // window, so the UPDATE path runs), the demote loop masks the least-live filler units but skips the
+    // co-pinned triage note, whose nonzero PPR score (mass flowing from the seeded objective root along
+    // that Ref edge) keeps it above pure filler. So DISCRIMINATOR_XY survives verbatim in the full view
+    // by transitive liveness, while the baseline's unconditional keep-last-4 truncation folds the early
+    // note into its opaque summary and drops the discriminator. The baseline outcome is MEASURED into
+    // the scoreboard, never forced false a priori.
     val session5: Session =
         Session(
             name = "session 5 (discriminator)",
             transcript = ctxOf(
                 sm("sys"),
-                um("task fix the bug in DISCRIMINATOR_XY module"),
-                am("looking into it " + ("a" * 80)),
-                am("checking logs " + ("b" * 80)),
-                am("found a lead " + ("c" * 80)),
-                am("still digging " + ("d" * 80)),
-                um("any update"),
-                am("almost there " + ("e" * 40))
+                um("task investigate the failing deploy pipeline"),
+                am("early triage note the LEDGER_KEY field is corrupt and DISCRIMINATOR_XY is the exact failing case " + ("a" * 40)),
+                am("step one " + ("b" * 300)),
+                am("step two " + ("c" * 300)),
+                am("step three " + ("d" * 300)),
+                am("step four " + ("e" * 300)),
+                um("confirm the LEDGER_KEY fix is landing before we close out"),
+                am("on it verifying now " + ("f" * 40))
             ),
             config = dummyConfig(128000),
-            tune = identity,
+            tune = _.copy(effectiveCap = 50, windowFraction = 1.0, tailTurns = 2),
             keyed = false,
             window = 128000,
             requiredNeedles = Seq("DISCRIMINATOR_XY"),

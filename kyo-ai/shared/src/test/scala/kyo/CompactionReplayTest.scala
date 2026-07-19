@@ -43,9 +43,18 @@ class CompactionReplayTest extends kyo.test.Test[Any]:
         }
     }
 
-    "session 5 (discriminator): low-but-nonzero-PPR content survives in full; baseline outcome is MEASURED, not forced" in {
+    "session 5 (discriminator): graph-liveness keeps a non-root early note alive under real pressure; baseline outcome is MEASURED, not forced" in {
         replay(session5).map { sc =>
-            assert(sc.full.taskSuccess, s"the discriminator survives verbatim in the full arm's view: ${sc.full}")
+            // Under real occupancy pressure the full arm compacts: the projected view is strictly smaller
+            // than the raw transcript. A no-op render (view == transcript) would fail this loudly.
+            assert(
+                sc.full.tokenCost < sc.occupancy,
+                s"the full arm shrinks the view under pressure: full=${sc.full.tokenCost} transcript=${sc.occupancy}"
+            )
+            // The discriminator lives only in an early NON-root note the objective still references, so it
+            // survives by graph-liveness (co-pinned via a live root's Ref edge, nonzero PPR score), not by
+            // root-pinning; the baseline's keep-last-4 truncation drops it into its opaque summary.
+            assert(sc.full.taskSuccess, s"the discriminator survives via graph-liveness in the full arm's view: ${sc.full}")
             // The baseline arm's outcome is recorded as whatever it actually computes; the leaf asserts a
             // scoreboard value was measured for it, never that it fails.
             assert(sc.baseline.tokenCost >= 0, s"the baseline arm's scoreboard was measured: ${sc.baseline}")
