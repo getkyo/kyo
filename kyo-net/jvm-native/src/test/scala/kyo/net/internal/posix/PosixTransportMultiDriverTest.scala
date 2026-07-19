@@ -227,7 +227,7 @@ class PosixTransportMultiDriverTest extends Test:
                                 s"pool size must be $expected (max(1, ioPoolSize)), got ${posix.pool.size}"
                             )
                             succeed
-                        finally transport.close()
+                        finally discard(transport.close())
                     }
                 }
         end match

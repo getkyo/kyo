@@ -326,7 +326,7 @@ class PosixTransportShutdownReclaimTest extends Test:
                     finally
                         out.close()
                         ol.close()
-                val engine = new SelfPerpetuatingFakeEngine(triggerAt = 3, onTrigger = () => transport.close())
+                val engine = new SelfPerpetuatingFakeEngine(triggerAt = 3, onTrigger = () => discard(transport.close()))
                 engineSlot.set(engine)
                 Abort.run[NetException](transport.connect("127.0.0.1", port, NetTlsConfig(trustAll = true)).safe.get).map { outcome =>
                     assert(outcome.isFailure, s"the connect handshake must fail once transport.close() races it mid-flight, got $outcome")
@@ -367,7 +367,7 @@ class PosixTransportShutdownReclaimTest extends Test:
                     val handle    = PosixHandle.socket(clientFd, PosixHandle.DefaultReadBufferSize, Absent)
                     val plaintext = transport.openWith(handle, driver)
                     plaintext.start()
-                    val engine = new SelfPerpetuatingFakeEngine(triggerAt = 3, onTrigger = () => transport.close())
+                    val engine = new SelfPerpetuatingFakeEngine(triggerAt = 3, onTrigger = () => discard(transport.close()))
                     engineSlot.set(engine)
                     Abort.run[NetException](transport.upgradeToTls(
                         plaintext,
@@ -474,7 +474,8 @@ class PosixTransportShutdownReclaimTest extends Test:
             // cert/key paths are never read. completeAfterTrigger = true: the SAME call that synchronously runs transport.close() (racing
             // close()'s sweep against this handshake's own outcome) also reports the handshake Done, so driveHandshake's Done branch reaches
             // onFinished immediately afterward, in the same call chain, with zero timing luck.
-            val engine = new SelfPerpetuatingFakeEngine(triggerAt = 1, onTrigger = () => transport.close(), completeAfterTrigger = true)
+            val engine =
+                new SelfPerpetuatingFakeEngine(triggerAt = 1, onTrigger = () => discard(transport.close()), completeAfterTrigger = true)
             engineSlot.set(engine)
             transport.listen("127.0.0.1", 0, 4, serverTls)(_ => ()).safe.get.map { listener =>
                 connectRaw(listener.port).map { clientFd =>

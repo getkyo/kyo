@@ -1216,7 +1216,7 @@ final private[net] class PosixTransport private[posix] (
       * DOES eventually free it, but only once the driver's reap loop gets a scheduler turn to run the async teardown `pool.close()` queues below,
       * which is not bounded by the time this call returns (an intermittent CLOSE_WAIT leak under a fast-completing test's leak check).
       */
-    def close()(using AllowUnsafe, Frame): Unit =
+    def close()(using AllowUnsafe, Frame): Fiber.Unsafe[Unit, Any] =
         connections.values().forEach { c =>
             c.close()
             c.forceCloseIfUpgrading()
@@ -1224,6 +1224,7 @@ final private[net] class PosixTransport private[posix] (
         connections.clear()
         listeners.forEach(l => l.close())
         sweepPendingHandshakes()
+        // The pool's fiber is this transport's release signal: it completes once every driver has torn down and its fds are gone.
         pool.close()
     end close
 

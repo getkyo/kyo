@@ -1194,9 +1194,10 @@ final private[kyo] class HttpClientBackend private (
         discard(pool.close())
         val closePromise = Promise.Unsafe.init[Unit, Any]()
         registry.closeAll(conn => closeUnsafe(conn, gracePeriod))
-        // Release the transport this client owns.
-        transport.close()
-        closePromise.completeDiscard(Result.succeed(()))
+        // Release the transport this client owns, and complete only once its drivers have torn down. `Transport.close()` returns a fiber that
+        // fires when the pool's descriptors are gone; chaining it here is what gives `HttpClient.close` real backpressure, so a caller that
+        // closes a client and immediately builds another does not transiently hold both pools' fds.
+        transport.close().onComplete(_ => closePromise.completeDiscard(Result.succeed(())))
         closePromise
     end closeFiber
 

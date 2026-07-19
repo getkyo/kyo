@@ -1184,7 +1184,7 @@ final private[kyo] class NioTransport private (
         promise.asInstanceOf[Fiber.Unsafe[NetListener, Abort[NetException]]]
     end listenUnix
 
-    def close()(using AllowUnsafe, Frame): Unit =
+    def close()(using AllowUnsafe, Frame): Fiber.Unsafe[Unit, Any] =
         // Close every still-open connection first, while the driver is alive, so each connection's fd is reclaimed instead of being stranded when
         // the pool tears down; a connection whose ordinary close never ran (peer FIN never arrived, handler never closed it) would otherwise leak.
         // forceCloseIfUpgrading additionally covers a connection stuck Upgrading (ordinary close() is a no-op there by design, deferring to the
@@ -1202,6 +1202,7 @@ final private[kyo] class NioTransport private (
         // else pending) never runs that pass on its own and every fd closed above leaks in CLOSE_WAIT past this call returning. NioListener.close
         // already wakes the selector for the identical reason on a listener close; connection close here had no equivalent nudge.
         driver.wakeup()
+        // The pool's fiber is this transport's release signal: it completes once the driver has torn down and its fds are gone.
         pool.close()
     end close
 

@@ -73,7 +73,7 @@ class NioTransportStdioTest extends Test:
             catch case _: java.io.IOException => ()
             java.lang.System.setIn(savedIn)
             java.lang.System.setOut(savedOut)
-            transport.close()
+            discard(transport.close())
         end restore
 
         // Take from the connection's inbound channel until `target` bytes accumulated (a pipe read may split the message across reads).

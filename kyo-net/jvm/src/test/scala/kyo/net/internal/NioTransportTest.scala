@@ -41,7 +41,7 @@ class NioTransportTest extends Test:
             assert(transport.pool ne null)
             succeed
         finally
-            transport.close()
+            discard(transport.close())
         end try
     }
 
@@ -53,7 +53,7 @@ class NioTransportTest extends Test:
             assert(driver ne null)
             succeed
         finally
-            transport.close()
+            discard(transport.close())
         end try
     }
 
@@ -93,7 +93,7 @@ class NioTransportTest extends Test:
                 latch.countDown()
                 conn.close()
                 serverSock.close()
-                transport.close()
+                discard(transport.close())
         }
     }
 
@@ -125,7 +125,7 @@ class NioTransportTest extends Test:
                 succeed
             finally
                 listener.close()
-                transport.close()
+                discard(transport.close())
         }
     }
 
@@ -139,7 +139,7 @@ class NioTransportTest extends Test:
                 succeed
             finally
                 listener.close()
-                transport.close()
+                discard(transport.close())
         }
     }
 
@@ -214,7 +214,7 @@ class NioTransportTest extends Test:
                         latch.countDown()
                         clientConn.close()
                         listener.close()
-                        transport.close()
+                        discard(transport.close())
                 }
             }
     }
