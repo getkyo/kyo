@@ -176,6 +176,21 @@ class ChromeDownloaderTest extends BaseBrowserTest:
         }
     }
 
+    "extractArgs(Windows) names the System32 bsdtar absolutely so a PATH-shadowing MSYS tar is never picked" in {
+        val args = ChromeDownloader.extractArgs(OS.Windows, Present("C:\\Windows"), "C:/tmp/a.zip", "C:/cache/dest")
+        assert(args == Seq("C:\\Windows\\System32\\tar.exe", "-xf", "C:/tmp/a.zip", "-C", "C:/cache/dest"))
+    }
+
+    "extractArgs(Windows) without SystemRoot falls back to tar on PATH" in {
+        val args = ChromeDownloader.extractArgs(OS.Windows, Absent, "a.zip", "dest")
+        assert(args == Seq("tar", "-xf", "a.zip", "-C", "dest"))
+    }
+
+    "extractArgs off Windows uses unzip" in {
+        val args = ChromeDownloader.extractArgs(OS.Linux, Absent, "a.zip", "dest")
+        assert(args == Seq("unzip", "-q", "a.zip", "-d", "dest"))
+    }
+
     "resolvePlatform(Linux, Arm) → Abort.fail with BrowserSetupFailedException" in {
         Abort.run[BrowserSetupException](ChromeDownloader.resolvePlatform(OS.Linux, Arch.Arm)).map {
             case Result.Failure(ex: BrowserSetupFailedException) =>
