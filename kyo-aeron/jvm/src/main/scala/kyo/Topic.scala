@@ -83,7 +83,17 @@ object Topic:
       */
     def run[A, S](driver: MediaDriver)(v: A < (Topic & S))(using Frame): A < (Async & S) =
         Sync.defer {
-            val aeron = Aeron.connect(new Aeron.Context().aeronDirectoryName(driver.aeronDirectoryName()))
+            // Aeron's default error handler terminates the whole JVM (System.exit) on fatal client
+            // errors such as a driver timeout; log them instead and let the affected operations fail
+            // through the closed client.
+            val context = new Aeron.Context()
+                .aeronDirectoryName(driver.aeronDirectoryName())
+                .errorHandler { t =>
+                    import AllowUnsafe.embrace.danger
+                    // Unsafe: invoked on aeron's conductor thread, outside any kyo effect.
+                    Log.live.unsafe.error("aeron client error", t)
+                }
+            val aeron = Aeron.connect(context)
             Sync.ensure(aeron.close()) {
                 run(aeron)(v)
             }

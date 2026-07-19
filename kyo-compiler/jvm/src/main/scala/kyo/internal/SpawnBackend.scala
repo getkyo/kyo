@@ -182,7 +182,7 @@ private[kyo] object SpawnBackend:
 
     /** Connects an aeron client to the pool's shared driver directory; closed in `close`. */
     private def aeronClient(driver: MediaDriver)(using Frame): Aeron < Sync =
-        Sync.defer(Aeron.connect(new Aeron.Context().aeronDirectoryName(driver.aeronDirectoryName())))
+        Sync.defer(Aeron.connect(CompilerPool.clientContext(driver.aeronDirectoryName())))
 
     /** Wires the Exchange over the two aeron streams against the captured client: `send` publishes an
       * `Envelope.Req` via `Topic.publish[Envelope]`, `receive` is the reply `Topic.stream[Envelope]`,

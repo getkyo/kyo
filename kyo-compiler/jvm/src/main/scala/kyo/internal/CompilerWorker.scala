@@ -112,7 +112,7 @@ private[internal] object WorkerServer:
       */
     private def connect(aeronDir: String)(using Frame): Aeron < (Sync & Scope) =
         Scope.acquireRelease(
-            Sync.defer(Aeron.connect(new Aeron.Context().aeronDirectoryName(aeronDir)))
+            Sync.defer(Aeron.connect(CompilerPool.clientContext(aeronDir)))
         )(a => Sync.defer(a.close()))
 
     /** Drives the backend for one request and publishes the id-matched response; a backend failure or

@@ -50,7 +50,7 @@ class SpawnBackendTest extends kyo.test.Test[Any]:
     private def withDriver[A](f: MediaDriver => A < (Async & Abort[CompilerException] & Scope))(using
         Frame
     ): A < (Async & Abort[CompilerException]) =
-        Scope.run(Scope.acquireRelease(Sync.defer(MediaDriver.launchEmbedded()))(d => Sync.defer(d.close())).map(f))
+        Scope.run(Scope.acquireRelease(Sync.defer(CompilerPool.launchDriver()))(d => Sync.defer(d.close())).map(f))
 
     "a fixed buffer yields equal results on Local and Spawn (parity)" in {
         withDriver { driver =>
@@ -212,7 +212,7 @@ class SpawnBackendTest extends kyo.test.Test[Any]:
         val closed   = new java.util.concurrent.atomic.AtomicInteger(0)
         Scope.run {
             Scope.acquireRelease(
-                Sync.defer { discard(launched.incrementAndGet()); MediaDriver.launchEmbedded() }
+                Sync.defer { discard(launched.incrementAndGet()); CompilerPool.launchDriver() }
             )(d => Sync.defer { discard(closed.incrementAndGet()); d.close() }).map { driver =>
                 for
                     // Two distinct configs force two distinct worker sessions over the one shared driver;
