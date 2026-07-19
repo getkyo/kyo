@@ -240,7 +240,7 @@ class JournalEventTest extends kyo.test.Test[Any]:
             assert(hits.isEmpty, s"stale symbol references found: ${hits.mkString(", ")}")
         }
 
-        "kyo-eventlog shipped source uses only the D-045 New/Recorded/Prepared spellings, no Pending/Committed/Command survivor".onlyJvm in {
+        "kyo-eventlog shipped source uses only the New/Recorded/Prepared spellings, no Pending/Committed/Command survivor".onlyJvm in {
             val bannedSpellings = List(
                 "Event.Pending",
                 "Event.Committed",
@@ -256,11 +256,11 @@ class JournalEventTest extends kyo.test.Test[Any]:
             val banned = sources.flatMap { (file, lines) =>
                 lines.flatMap(line => bannedSpellings.collect { case s if line.contains(s) => s"$file [$s]: ${line.trim}" })
             }
-            assert(banned.isEmpty, s"stale D-045 spellings found in shipped source: ${banned.mkString(", ")}")
+            assert(banned.isEmpty, s"stale event spellings found in shipped source: ${banned.mkString(", ")}")
 
             val allLines = sources.flatMap((_, lines) => lines)
             val missing  = requiredSpellings.filterNot(spelling => allLines.exists(_.contains(spelling)))
-            assert(missing.isEmpty, s"expected the new D-045 spellings to be present in shipped source, missing: ${missing.mkString(", ")}")
+            assert(missing.isEmpty, s"expected the new event spellings to be present in shipped source, missing: ${missing.mkString(", ")}")
         }
     }
 end JournalEventTest

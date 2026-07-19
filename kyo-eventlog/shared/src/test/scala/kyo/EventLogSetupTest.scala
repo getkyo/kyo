@@ -1,7 +1,7 @@
 package kyo
 
 /** Focused spec for the additive [[EventLog.setup]] / [[EventLog.Setup]] / [[EventLog.RouteCoverage]]
-  * route-coverage builder half of D-045. Reuses the top-level `QuestEvent`/`ColorEvent`/`ShapeEvent`
+  * route-coverage builder. Reuses the top-level `QuestEvent`/`ColorEvent`/`ShapeEvent`
   * fixtures declared in `EventLogTest.scala` (same `kyo` package). The builder centralizes the
   * scattered per-member `given Event.Definition`s into one fluent expression baked behind
   * `import log.given`, and proves route completeness at `build` through a compile-time
