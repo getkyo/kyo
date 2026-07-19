@@ -61,7 +61,9 @@ on:
 # its own; cancel-in-progress only acts within a group, so a later push never cancels an earlier
 # main run.
 concurrency:
-  group: ci-${{ github.event.pull_request.number || github.sha }}-${{ inputs.mode }}-${{ inputs.targets }}-${{ inputs.oses }}-${{ inputs.command }}-${{ inputs.custom-runner }}
+  # Custom-mode groups key on the run id (no dedup): the free-form command must never reach
+  # the group name, where a multi-line value invalidates the workflow.
+  group: ci-${{ github.event.pull_request.number || github.sha }}-${{ inputs.mode }}-${{ inputs.targets }}-${{ inputs.oses }}-${{ inputs.mode == 'custom' && github.run_id || 0 }}-${{ inputs.custom-runner }}
   cancel-in-progress: true
 
 jobs:

@@ -51,9 +51,11 @@ jobs:
 
   build:
     needs: prep
-    # JVM full runs peak at ~95-100 min (browser/UI/caliban suites serialize under a shared Chrome
-    # instance that cannot take concurrent CDP connections). 180 min gives headroom above that peak.
-    timeout-minutes: 180
+    # JVM full runs peak at ~95-100 min on Linux (browser/UI/caliban suites serialize under a
+    # shared Chrome instance that cannot take concurrent CDP connections) and run slower on the
+    # Windows pole, where runner-slot contention has pushed a full JVM run past 180 min. 240 min
+    # bounds a genuine hang while giving the slowest pole real headroom.
+    timeout-minutes: 240
     strategy:
       fail-fast: false
       max-parallel: 4
