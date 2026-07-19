@@ -136,23 +136,31 @@ object Frame:
 
     private val allowKyoFileSuffixes = Set("Test.scala", "Spec.scala", "Bench.scala")
 
-    // Single-slot per-file memo for the source file's normalized content and its line
-    // split, keyed on the SOURCE FILE OBJECT identity. The compiler caches one source-file
-    // object per file for the whole run, so within a file every expansion finds the same
-    // object and hits; a hit reuses the stored content and line split and does NOT read the
-    // content again. Identity keying is required for correctness: a recompiled file produces
-    // a NEW source-file object, so it misses and recomputes; a stale window is impossible.
+    // Single-slot per-file memo for the source file's content and its line split, keyed
+    // on the SOURCE FILE OBJECT identity. The compiler caches one source-file object per
+    // file for the whole run, so within a file every expansion finds the same object and
+    // hits; a hit reuses the stored content and line split and does NOT read the content
+    // again. Identity keying is required for correctness: a recompiled file produces a NEW
+    // source-file object, so it misses and recomputes; a stale window is impossible.
     // Reading content reconstructs a fresh string each call, so the hit path that skips that
     // read is the whole point. The slot is volatile for cross-thread visibility of the
     // reference write; a parallel expansion on another file is last-writer-wins and the loser
     // simply misses and recomputes the same values. Absent until the first miss.
+    //
+    // The content is kept EXACTLY as the compiler read it, never normalized: position
+    // offsets (pos.end) index the compiler's raw chars, and for a CRLF source a
+    // CRLF-to-LF normalization shifts every offset after the first line break, sending
+    // near-end-of-file offsets past the shortened content (StringIndexOutOfBounds during
+    // expansion) and silently mis-anchoring all earlier ones. The line split is
+    // terminator-agnostic instead: linesIterator strips \n, \r\n, and \r alike, so the
+    // line/column consumers see identical lines either way.
     @volatile private var fileCache: Maybe[(AnyRef, String, Array[String])] = Absent
 
     private def contentAndLines(sourceFile: AnyRef, fetchContent: => String): (String, Array[String]) =
         fileCache match
             case Present((sf, content, lines)) if sf eq sourceFile => (content, lines)
             case _ =>
-                val content = fetchContent.replace("\r\n", "\n")
+                val content = fetchContent
                 val lines   = content.linesIterator.toArray
                 fileCache = Present((sourceFile, content, lines))
                 (content, lines)
@@ -180,9 +188,9 @@ object Frame:
         val cls    = FindEnclosing(_.isClassDef).map(_.fullName).getOrElse("?")
         val caller = FindEnclosing(_.isDefDef).map(_.name).getOrElse("?")
 
-        // Resolve the file's normalized content and line split from the per-file memo. On a hit
-        // (same source-file object) the content is reused without re-reading it; on a miss the
-        // content is read once, normalized, split, and stored.
+        // Resolve the file's content and line split from the per-file memo. On a hit (same
+        // source-file object) the content is reused without re-reading it; on a miss the
+        // content is read once, split, and stored.
         val (rawContent, lines) =
             contentAndLines(
                 pos.sourceFile.asInstanceOf[AnyRef],
@@ -199,7 +207,8 @@ object Frame:
         // Caveats: returns "?" in the rare case the call is split across lines by comments or
         // unusual whitespace. Operator-named methods (return the operator string like "+", "==",
         // "::") and backticked identifiers (return the content without backticks) are both
-        // handled.
+        // handled. rawContent is the compiler's chars, so pos.end indexes it consistently for
+        // any line-terminator style; the \r of a CRLF break is skipped as whitespace.
         val callee = extractCalleeName(rawContent, pos.end)
 
         val snippet =
@@ -210,11 +219,10 @@ object Frame:
             // window is the snippet.
             //
             // pos.endColumn is the 0-based column on pos.endLine where the marker is inserted.
-            // This line/column placement corresponds to the position offset `pos.end` maps to
-            // in the normalized (LF) content: for LF source it produces the same marker
-            // placement as a direct offset-based insertion, and it is also CRLF-correct
-            // because a raw-offset insertion into CRLF source would drift the marker right by
-            // the count of preceding CRs, while the line/column split sidesteps that drift.
+            // The line/column placement is exact for any line-terminator style: the memoized
+            // line split strips \n, \r\n, and \r alike, so a raw-offset insertion into the
+            // joined window would drift right by the count of preceding CRs on CRLF source,
+            // while the per-line column placement sidesteps that drift.
             val markerCol = pos.endColumn
             val from      = pos.startLine - 1
             val until     = math.min(pos.endLine + 2, lines.length)

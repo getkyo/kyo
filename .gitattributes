@@ -1,2 +1,7 @@
 # Force LF line endings for all text files to ensure consistent behavior across platforms
 * text=auto eol=lf
+
+# FrameCrlfTest guards Frame derivation on CRLF sources; its working-tree line
+# endings must stay CRLF on every platform (it is excluded from scalafmt for
+# the same reason).
+kyo-data/shared/src/test/scala/kyo/FrameCrlfTest.scala text eol=crlf
