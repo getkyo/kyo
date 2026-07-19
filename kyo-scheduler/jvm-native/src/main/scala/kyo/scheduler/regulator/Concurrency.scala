@@ -64,6 +64,36 @@ final class Concurrency(
         measure(nowNanos.getAsLong() - start - 1000000)
     }
 
+    // One-shot jitter-threshold calibration against the platform's idle probe noise (see
+    // Regulator.calibrate). Runs on its own short-lived daemon thread so scheduler startup is
+    // not delayed; the regulator holds at the configured thresholds until it lands.
+    if (config.calibrationProbes > 0) {
+        val thread = new Thread(
+            (
+                () => {
+                    val n  = config.calibrationProbes
+                    val xs = new Array[Double](n)
+                    var i  = 0
+                    while (i < n) {
+                        val start = nowNanos.getAsLong()
+                        sleep(1)
+                        xs(i) = (nowNanos.getAsLong() - start - 1000000L).toDouble
+                        i += 1
+                    }
+                    var sum = 0.0
+                    xs.foreach(sum += _)
+                    val mean = sum / n
+                    var acc  = 0.0
+                    xs.foreach(x => acc += (x - mean) * (x - mean))
+                    calibrate(Math.sqrt(acc / n))
+                }
+            ): Runnable,
+            "kyo-scheduler-concurrency-calibration"
+        )
+        thread.setDaemon(true)
+        thread.start()
+    }
+
     /** Updates the number of worker threads based on regulation decisions.
       *
       * @param diff
@@ -88,6 +118,7 @@ object Concurrency {
         jitterUpperThreshold = concurrencyJitterUpperThreshold(),
         jitterLowerThreshold = concurrencyJitterLowerThreshold(),
         loadAvgTarget = concurrencyLoadAvgTarget(),
-        stepExp = concurrencyStepExp()
+        stepExp = concurrencyStepExp(),
+        calibrationProbes = concurrencyCalibrationProbes()
     )
 }

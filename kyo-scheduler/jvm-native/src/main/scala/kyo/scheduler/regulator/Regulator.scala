@@ -62,12 +62,17 @@ abstract class Regulator(
 ) {
     import config.*
 
-    private var step            = 0
-    private val measurements    = new MovingStdDev(collectWindow)
-    private val probesSent      = new LongAdder
-    private val probesCompleted = new LongAdder
-    private val adjustments     = new LongAdder
-    private val updates         = new LongAdder
+    private var step = 0
+    // Effective jitter thresholds: start at the configured values and are raised at most once
+    // by calibrate() when the platform's measured probe noise floor exceeds them. Volatile:
+    // written by the calibration thread, read by the timer thread running adjust().
+    @volatile private var jitterUpperEffective: Double = config.jitterUpperThreshold
+    @volatile private var jitterLowerEffective: Double = config.jitterLowerThreshold
+    private val measurements                           = new MovingStdDev(collectWindow)
+    private val probesSent                             = new LongAdder
+    private val probesCompleted                        = new LongAdder
+    private val adjustments                            = new LongAdder
+    private val updates                                = new LongAdder
 
     /** Collect a performance measurement.
       *
@@ -99,6 +104,24 @@ abstract class Regulator(
         probesCompleted.increment()
         stats.measurement.observe(Math.max(0, v.toDouble))
         synchronized(measurements.observe(v))
+    }
+
+    /** Raises the effective jitter thresholds above the platform's measured idle probe noise.
+      *
+      * The configured thresholds encode the probe noise of a precise-timer platform; on a platform whose idle noise floor lands at or
+      * above them (Windows sleep wake-ups quantize to 1-2ms, a ~0.7ms standard deviation with zero contention), the regulator freezes in
+      * the dead band: jitter never falls below the grow threshold, so a loaded scheduler never adds workers. Calibration re-anchors the
+      * band to the measured floor: grow below 2x the floor, shrink above 3x. The configured values remain the lower bound, so a platform
+      * whose noise sits below them keeps the exact configured behavior, and the raise is capped at 10x the configured values so a
+      * calibration taken under startup load cannot disable regulation.
+      *
+      * @param baselineJitter
+      *   Standard deviation in nanoseconds of idle probe measurements
+      */
+    private[scheduler] def calibrate(baselineJitter: Double): Unit = {
+        def bounded(v: Double, floor: Double): Double = Math.min(Math.max(v, floor), floor * 10)
+        jitterLowerEffective = bounded(baselineJitter * 2, config.jitterLowerThreshold)
+        jitterUpperEffective = bounded(baselineJitter * 3, config.jitterUpperThreshold)
     }
 
     /** Stop the regulator.
@@ -156,12 +179,12 @@ abstract class Regulator(
             val jitter = synchronized(measurements.dev())
             val load   = loadAvg.getAsDouble()
 
-            // Determine adjustment direction based on jitter thresholds
-            if (jitter > jitterUpperThreshold) {
+            // Determine adjustment direction based on the effective (possibly calibrated) thresholds
+            if (jitter > jitterUpperEffective) {
                 // High jitter - increase negative step size
                 if (step < 0) step -= 1
                 else step = -1
-            } else if (jitter < jitterLowerThreshold && load >= loadAvgTarget) {
+            } else if (jitter < jitterLowerEffective && load >= loadAvgTarget) {
                 // Low jitter and sufficient load - increase positive step size
                 if (step > 0) step += 1
                 else step = 1
