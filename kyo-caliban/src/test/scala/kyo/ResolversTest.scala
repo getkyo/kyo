@@ -27,7 +27,7 @@ class ResolverTest extends BaseCalibanTest:
 
     val defaultQuery = Query(42, 42, 42, 42, 42)
 
-    def startServer(using Frame): HttpServer < (Async & Scope & Abort[CalibanError]) =
+    def startServer(using Frame): HttpServer < (Async & Scope & Abort[CalibanError] & Abort[HttpBindException]) =
         for
             interpreter <- Resolvers.get(graphQL(RootResolver(defaultQuery)))
             server      <- Resolvers.run(interpreter)

@@ -279,4 +279,93 @@ class HttpHeadersTest extends BaseHttpTest:
         }
     }
 
+    "invalidField" - {
+
+        // Catches a predicate that reports a header the serializer can in fact write, which would reject ordinary traffic.
+        "reports nothing for writable headers" in {
+            val h = HttpHeaders.empty
+                .add("Accept", "application/json")
+                .add("Authorization", "Bearer token123")
+            assert(h.invalidField == Absent)
+        }
+
+        // The load-bearing leaf: a field value may carry obs-text (%x80-FF) per RFC 9110 section 5.5, so a non-ASCII
+        // value is legal HTTP and reporting it would reject traffic the RFC permits. Catches a predicate built on an
+        // ASCII test rather than a control-character one.
+        "reports nothing for a non-ASCII value, which is legal obs-text" in {
+            val h = HttpHeaders.empty.add("X-Trace", "café").add("X-City", "münchen")
+            assert(h.invalidField == Absent)
+        }
+
+        // CR and LF are the re-framing bytes and both are ASCII, so an ASCII-only predicate admits every one of them.
+        "reports a header value carrying CR" in {
+            val h = HttpHeaders.empty.add("X-Trace", "bar\rX-Admin: true")
+            assert(h.invalidField == Present("the value of header 'X-Trace'"))
+        }
+
+        "reports a header value carrying LF" in {
+            val h = HttpHeaders.empty.add("X-Trace", "bar\nX-Admin: true")
+            assert(h.invalidField == Present("the value of header 'X-Trace'"))
+        }
+
+        // Catches a predicate that only inspects names, and one that stops at the first header: the offender sits second.
+        "reports a CRLF-bearing value naming the header but never the value" in {
+            val h = HttpHeaders.empty
+                .add("Accept", "application/json")
+                .add("X-Trace", "bar\r\nX-Admin: true")
+            assert(h.invalidField == Present("the value of header 'X-Trace'"))
+            // A header value can hold a credential, so the description must not carry it.
+            assert(!h.invalidField.getOrElse("").contains("X-Admin"))
+        }
+
+        // RFC 9110 section 5.5 names NUL alongside CR and LF, and DEL is a control character the field grammar excludes.
+        "reports a header value carrying NUL or DEL" in {
+            assert(HttpHeaders.empty.add("X-A", "a\u0000b").invalidField == Present("the value of header 'X-A'"))
+            assert(HttpHeaders.empty.add("X-B", "a\u007fb").invalidField == Present("the value of header 'X-B'"))
+        }
+
+        // HTAB is the one control character a field value may carry (RFC 9110 section 5.5 field-content), so a predicate
+        // that rejects every char below 0x20 is over-strict.
+        "reports nothing for a value carrying HTAB" in {
+            assert(HttpHeaders.empty.add("X-A", "a\tb").invalidField == Absent)
+        }
+
+        // A field name is a token (RFC 9110 section 5.6.2). This is strictly stronger than an ASCII test: SP is ASCII,
+        // and "X Trace: v" reads to a recipient as the name "X" carrying the value "Trace: v".
+        "reports a header name that is not a token" in {
+            assert(HttpHeaders.empty.add("X Trace", "v").invalidField == Present("the name of the header at index 0"))
+            assert(HttpHeaders.empty.add("X-Café", "v").invalidField == Present("the name of the header at index 0"))
+            assert(HttpHeaders.empty.add("A", "1").add("X:B", "v").invalidField == Present("the name of the header at index 1"))
+        }
+
+        // The description of a non-token name must not quote the name back: unlike a value's header name (a token by the
+        // time it is quoted), the offending name here is the untrusted part and the description reaches a log line.
+        "never quotes a non-token name back into the description" in {
+            val h = HttpHeaders.empty.add("X\r\nInjected", "v")
+            assert(h.invalidField == Present("the name of the header at index 0"))
+            assert(!h.invalidField.getOrElse("").contains("Injected"))
+        }
+
+        // The over-strictness guard for the token check: every tchar RFC 9110 section 5.6.2 lists must be accepted.
+        "reports nothing for a name using the full tchar set" in {
+            assert(HttpHeaders.empty.add("!#$%&'*+-.^_`|~0Az", "v").invalidField == Absent)
+        }
+
+        // Catches a predicate that reads only the first pair, or that walks the flat chunk one slot at a time instead of
+        // in name/value pairs (which would mistake a value for a name and misreport the offender).
+        "reports the first offender when several headers follow it" in {
+            val h = HttpHeaders.empty
+                .add("A", "1")
+                .add("B", "bar\r\nX-Admin: true")
+                .add("C", "3")
+                .add("D", "x\ny")
+            assert(h.invalidField == Present("the value of header 'B'"))
+        }
+
+        // Catches a predicate that mistakes a decoded String for the wire form: an empty collection has no offender.
+        "reports nothing for empty headers" in {
+            assert(HttpHeaders.empty.invalidField == Absent)
+        }
+    }
+
 end HttpHeadersTest

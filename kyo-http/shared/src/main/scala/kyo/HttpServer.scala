@@ -1,27 +1,30 @@
 package kyo
 
 import kyo.*
-import kyo.internal.HttpPlatformTransport
 import kyo.internal.codec.OpenApiGenerator
 import kyo.internal.server.HttpRouter
 import kyo.internal.server.UnsafeServerDispatch
-import kyo.internal.transport.Connection
-import kyo.internal.transport.Transport
+import kyo.internal.transport.NetConfigTranslation
+import kyo.net.NetException
 
 /** HTTP server that binds one or more handlers to a port and manages the server lifecycle.
   *
-  * `HttpServer.init` returns a server managed by `Scope` — it shuts down automatically when the enclosing scope exits. Use
+  * `HttpServer.init` returns a server managed by `Scope`, it shuts down automatically when the enclosing scope exits. Use
   * `HttpServer.initUnscoped` when you need manual lifecycle control and must close the server explicitly via `close()`. Both forms accept
   * one or more `HttpHandler` instances as varargs and an optional `HttpServerConfig`.
   *
   * When `HttpServerConfig.openApi` is configured, the server automatically generates an OpenAPI 3.x spec from all registered handlers and
   * serves it at the configured path (default: `/openapi.json`).
   *
-  * The `initWith` variants combine `init` and a continuation — they bind the server and pass it to a function, which is useful for keeping
+  * The `initWith` variants combine `init` and a continuation, they bind the server and pass it to a function, which is useful for keeping
   * the server reference local to the block that uses it.
   *
   * Note: Port 0 tells the OS to assign any available port. After binding, the actual port is available via `server.port`. This is the
   * recommended approach for tests where port collisions would be a problem.
+  *
+  * A bind failure (for example the address is already in use) is an expected, recoverable condition: `init`, `initUnscoped`, and their
+  * `initWith` variants surface it as `Abort.fail(HttpBindException)`, so a caller can recover it with `Abort.run[HttpBindException]` rather
+  * than handling it as a defect.
   *
   * WARNING: Binding to `0.0.0.0` (the default host) exposes the server on all network interfaces. Restrict to `127.0.0.1` for
   * localhost-only services.
@@ -69,37 +72,47 @@ object HttpServer:
 
     // --- Scoped init methods ---
 
-    def init(handlers: HttpHandler[?, ?, ?]*)(using Frame): HttpServer < (Async & Scope) =
+    def init(handlers: HttpHandler[?, ?, ?]*)(using Frame): HttpServer < (Async & Scope & Abort[HttpBindException]) =
         init(HttpServerConfig.default)(handlers*)
 
-    def init(port: Int, host: String)(handlers: HttpHandler[?, ?, ?]*)(using Frame): HttpServer < (Async & Scope) =
+    def init(port: Int, host: String)(handlers: HttpHandler[?, ?, ?]*)(using
+        Frame
+    ): HttpServer < (Async & Scope & Abort[HttpBindException]) =
         init(HttpServerConfig.default.port(port).host(host))(handlers*)
 
-    def init(config: HttpServerConfig)(handlers: HttpHandler[?, ?, ?]*)(using Frame): HttpServer < (Async & Scope) =
+    def init(config: HttpServerConfig)(handlers: HttpHandler[?, ?, ?]*)(using
+        Frame
+    ): HttpServer < (Async & Scope & Abort[HttpBindException]) =
         Scope.acquireRelease(initUnscoped(config)(handlers*))(_.closeNow)
 
-    def initWith[A, S](handlers: HttpHandler[?, ?, ?]*)(f: HttpServer => A < S)(using Frame): A < (S & Async & Scope) =
+    def initWith[A, S](handlers: HttpHandler[?, ?, ?]*)(f: HttpServer => A < S)(using
+        Frame
+    ): A < (S & Async & Scope & Abort[HttpBindException]) =
         init(handlers*).map(f)
 
     def initWith[A, S](port: Int, host: String)(handlers: HttpHandler[?, ?, ?]*)(f: HttpServer => A < S)(using
         Frame
-    ): A < (S & Async & Scope) =
+    ): A < (S & Async & Scope & Abort[HttpBindException]) =
         init(port, host)(handlers*).map(f)
 
     def initWith[A, S](config: HttpServerConfig)(handlers: HttpHandler[?, ?, ?]*)(f: HttpServer => A < S)(using
         Frame
-    ): A < (S & Async & Scope) =
+    ): A < (S & Async & Scope & Abort[HttpBindException]) =
         init(config)(handlers*).map(f)
 
     // --- Unscoped init methods ---
 
-    def initUnscoped(handlers: HttpHandler[?, ?, ?]*)(using Frame): HttpServer < Async =
+    def initUnscoped(handlers: HttpHandler[?, ?, ?]*)(using Frame): HttpServer < (Async & Abort[HttpBindException]) =
         initUnscoped(HttpServerConfig.default)(handlers*)
 
-    def initUnscoped(port: Int, host: String)(handlers: HttpHandler[?, ?, ?]*)(using Frame): HttpServer < Async =
+    def initUnscoped(port: Int, host: String)(handlers: HttpHandler[?, ?, ?]*)(using
+        Frame
+    ): HttpServer < (Async & Abort[HttpBindException]) =
         initUnscoped(HttpServerConfig.default.port(port).host(host))(handlers*)
 
-    def initUnscoped(config: HttpServerConfig)(handlers: HttpHandler[?, ?, ?]*)(using Frame): HttpServer < Async =
+    def initUnscoped(config: HttpServerConfig)(handlers: HttpHandler[?, ?, ?]*)(using
+        Frame
+    ): HttpServer < (Async & Abort[HttpBindException]) =
         val allHandlers = config.openApi match
             case Present(ep) =>
                 val spec = OpenApiGenerator.generate(
@@ -120,30 +133,36 @@ object HttpServer:
             if serverFilter eq HttpFilter.noop then allHandlers
             else allHandlers.map(h => HttpHandler.withFilter(h, serverFilter))
         Sync.Unsafe.defer {
-            val listenFiber = Unsafe.init(HttpPlatformTransport.transport, config, filteredHandlers)
-            Abort.run[Closed](listenFiber.safe.get).map {
+            val transport   = kyo.net.NetPlatform.transport(NetConfigTranslation.toNetTransportConfig(config.transportConfig))
+            val listenFiber = Unsafe.init(transport, config, filteredHandlers)
+            Abort.run[NetException](listenFiber.safe.get).map {
                 case Result.Success(server) => server.safe
-                case Result.Failure(closed) =>
+                case Result.Failure(netEx) =>
+                    transport.close()
                     val bindTarget = config.unixSocket match
                         case Present(path) => path
                         case Absent        => config.host
-                    throw HttpBindException(bindTarget, config.port, new java.io.IOException(closed.getMessage))
-                case Result.Panic(t) => throw t
+                    Abort.fail(HttpBindException(bindTarget, config.port, new java.io.IOException(netEx.getMessage)))
+                case Result.Panic(t) =>
+                    transport.close()
+                    throw t
             }
         }
     end initUnscoped
 
-    def initUnscopedWith[A, S](handlers: HttpHandler[?, ?, ?]*)(f: HttpServer => A < S)(using Frame): A < (S & Async) =
+    def initUnscopedWith[A, S](handlers: HttpHandler[?, ?, ?]*)(f: HttpServer => A < S)(using
+        Frame
+    ): A < (S & Async & Abort[HttpBindException]) =
         initUnscoped(handlers*).map(f)
 
     def initUnscopedWith[A, S](port: Int, host: String)(handlers: HttpHandler[?, ?, ?]*)(f: HttpServer => A < S)(using
         Frame
-    ): A < (S & Async) =
+    ): A < (S & Async & Abort[HttpBindException]) =
         initUnscoped(port, host)(handlers*).map(f)
 
     def initUnscopedWith[A, S](config: HttpServerConfig)(handlers: HttpHandler[?, ?, ?]*)(f: HttpServer => A < S)(using
         Frame
-    ): A < (S & Async) =
+    ): A < (S & Async & Abort[HttpBindException]) =
         initUnscoped(config)(handlers*).map(f)
 
     // --- Unsafe API ---
@@ -182,58 +201,74 @@ object HttpServer:
           * @return
           *   A fiber that completes with the unsafe server once bound
           */
-        def init[H](
-            transport: Transport[H],
+        def init(
+            transport: kyo.net.Transport,
             config: HttpServerConfig,
             handlers: Seq[HttpHandler[?, ?, ?]]
-        )(using AllowUnsafe, Frame): Fiber.Unsafe[Unsafe, Abort[Closed]] =
+        )(using AllowUnsafe, Frame): Fiber.Unsafe[Unsafe, Abort[NetException]] =
             val router = HttpRouter(handlers, config.cors)
             // Track every accepted connection so the server can close them on shutdown: the transport listener owns only
             // the listening socket, so an accepted keep-alive connection would otherwise stay open until a 60s idle timer
             // fires (it leaks whenever the peer keeps its side pooled rather than sending an EOF). The shared registry is
             // the same mechanism HttpClientBackend uses for the connections it creates.
-            val registry = new kyo.internal.ConnectionRegistry[Connection[H]]
-            def tracked(conn: Connection[H]): Unit < Async =
+            val registry = new kyo.internal.ConnectionRegistry[kyo.net.Connection]
+            def tracked(conn: kyo.net.Connection): Unit =
                 // Prune closed entries on accept (no per-connection close hook), then register this one. register closes
                 // the connection itself and returns false when a shutdown races this accept, so the connection is
                 // neither served nor left open, and a failing close is contained inside the registry rather than
                 // surfacing on the accept path.
                 registry.pruneClosed(_.isOpen)
                 if registry.register(conn)(_.close()) then
-                    UnsafeServerDispatch.serve(router, conn.inbound, conn.outbound, config)
+                    // Pass the connection's close signal so a handler parked on a foreign await is interrupted when the
+                    // connection closes (kyo.net.Connection.onClosing, completed in closeFn's win branch), plus a close
+                    // hook the idle timer routes through so an idle-close also fires that signal (and flushes the
+                    // outbound tail) instead of racing the WritePump re-entry.
+                    UnsafeServerDispatch.serve(
+                        router,
+                        conn.inbound,
+                        conn.outbound,
+                        config,
+                        Present(conn.onClosing),
+                        Present(() => conn.close())
+                    )
                 else
-                    Kyo.unit
+                    (
+                )
                 end if
             end tracked
             val listenFiber = (config.unixSocket, config.tls) match
                 case (Present(path), _) =>
                     transport.listenUnix(path, config.backlog)(tracked)
                 case (Absent, Present(tls)) =>
-                    transport.listen(config.host, config.port, config.backlog, tls)(tracked)
+                    NetConfigTranslation.listenTls(transport, config.host, config.port, config.backlog, tls)(tracked)
                 case _ =>
                     transport.listen(config.host, config.port, config.backlog)(tracked)
-            listenFiber.map(listener => new ListenerUnsafe(listener, registry))
+            listenFiber.map(listener => new ListenerUnsafe(listener, transport, registry))
         end init
     end Unsafe
 
     // --- Private implementations ---
 
-    /** Unsafe implementation wrapping a Listener from Transport, plus the registry of accepted connections it owns. */
-    final private class ListenerUnsafe[H](
-        listener: kyo.internal.transport.Listener,
-        registry: kyo.internal.ConnectionRegistry[Connection[H]]
+    /** Unsafe implementation wrapping a Listener from Transport, plus the registry of accepted connections it owns. The server owns its
+      * transport, so closing the server also closes that transport to release its driver/pool.
+      */
+    final private class ListenerUnsafe(
+        listener: kyo.net.Listener,
+        transport: kyo.net.Transport,
+        registry: kyo.internal.ConnectionRegistry[kyo.net.Connection]
     )(using allow: AllowUnsafe) extends Unsafe:
-        private val closedPromise = Promise.Unsafe.init[Unit, Any]()
+        private val closedPromise            = Promise.Unsafe.init[Unit, Any]()
+        private val httpAddress: HttpAddress = NetConfigTranslation.toHttpAddress(listener.address)
 
-        def port: Int = listener.address match
+        def port: Int = httpAddress match
             case HttpAddress.Tcp(_, p) => p
             case HttpAddress.Unix(_)   => -1
 
-        def host: String = listener.address match
+        def host: String = httpAddress match
             case HttpAddress.Tcp(h, _) => h
             case HttpAddress.Unix(_)   => "localhost"
 
-        def address: HttpAddress = listener.address
+        def address: HttpAddress = httpAddress
 
         def closeFiber(gracePeriod: Duration)(using AllowUnsafe, Frame): Fiber.Unsafe[Unit, Any] =
             listener.close()       // stop accepting new connections first
@@ -241,6 +276,8 @@ object HttpServer:
 
             def forceCloseAndComplete(): Unit =
                 registry.closeAll(_.close())
+                // Release the transport this server owns after the accepted connections are closed so its driver/pool is freed.
+                transport.close()
                 discard(closedPromise.completeDiscard(Result.succeed(())))
             end forceCloseAndComplete
 

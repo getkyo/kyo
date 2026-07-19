@@ -30,13 +30,15 @@ private[runner] object LeakCheck:
       * is a busy scheduler fiber at every net/http-using module's end-of-run check; the union covers both the current and the migrated network
       * stack, so neither is reported as a leak.
       *
-      * `NioIoDriver` matches kyo-http's process-wide IO transport (`HttpPlatformTransport.transport`), a lazy singleton whose `NioIoDriver` runs
-      * a selector event loop on a scheduler fiber for the JVM's lifetime.
+      * `NioIoDriver` matches the pure-JDK NIO selector floor a process-lifetime transport falls back to when no posix backend is available: a
+      * `NioIoDriver` running a selector event loop on a scheduler fiber for the JVM's lifetime.
       *
-      * `processSharedTransport` matches the I/O carrier of kyo-net's process-shared default transport (`kyo.net.NetPlatform.transport`): a lazy
-      * singleton shared across every client and server in the process and never closed by design. The kyo-net drivers route ONLY this singleton's
-      * carrier through a `processSharedTransport*` frame (see `kyo.net.internal.ProcessSharedTransport`); an owned, per-config transport keeps its
-      * plain `pollLoop`/`reapLoop` frame, so a genuinely leaked owned transport is still reported rather than masked by a broad driver-name match.
+      * `processSharedTransport` matches the I/O carriers of kyo-net's process-lifetime transports, never closed by design: the
+      * `kyo.net.NetPlatform.transport` singleton (shared across every client and server in the process) and the default HTTP client's own
+      * transport (a distinct pool built via `NetPlatform.processLifetimeTransport`). The kyo-net drivers route only these process-lifetime
+      * transports' carriers through a `processSharedTransport*` frame (see `kyo.net.internal.ProcessSharedTransport`); an owned, per-config
+      * transport a caller closes keeps its plain `pollLoop`/`reapLoop` frame, so a genuinely leaked owned transport is still reported rather than
+      * masked by a broad driver-name match.
       */
     val defaultAllowlist: Chunk[String] = Chunk("NioIoDriver", "processSharedTransport")
 
@@ -196,6 +198,24 @@ private[runner] object LeakCheck:
         }
     end awaitSchedulerIdle
 
+    /** Re-samples the leaked-descriptor set until it drains to empty or `budgetNanos` elapses, parking `settleNanos` between samples, and
+      * returns the descriptors that persisted through EVERY sample. A descriptor still mid-teardown at `done()` (an async deferred close
+      * discharged on the reap thread, or a FIN cascade) drains within the budget and is dropped; a genuinely leaked descriptor never closes
+      * and so survives the whole budget and is returned. The intersection is monotonic (the set only shrinks), so this can only drop a
+      * descriptor that actually closed during the window, never a real leak. An empty first sample returns immediately, so a clean run pays
+      * nothing.
+      */
+    def awaitFdDrain(leaksNow: () => Chunk[String], budgetNanos: Long, settleNanos: Long): Chunk[String] =
+        val deadline = System.nanoTime() + budgetNanos
+        var current  = leaksNow()
+        while current.nonEmpty && System.nanoTime() < deadline do
+            LockSupport.parkNanos(settleNanos)
+            val sample = leaksNow()
+            current = current.filter(sample.contains)
+        end while
+        current
+    end awaitFdDrain
+
     /** True when running inside an sbt forked test JVM (`sbt.ForkMain`), the only JVM where end-of-run leak detection is both sound (the fork
       * holds only this run's resources) and safe to fail by exit (failing the main sbt JVM would take sbt down). Two agreeing signals: the
       * `sun.java.command` property and an `sbt.ForkMain` frame on the `main` thread. Defaults to `false` on any ambiguity, because the verdict
@@ -241,16 +261,17 @@ private[runner] object LeakCheck:
         "0B" -> "CLOSING"
     )
 
-    /** For a `socket:[inode]` target, resolves the connection's TCP state and local/remote ports from `/proc/net/tcp{,6}`, so a leaked socket
-      * is actionable rather than an opaque inode: e.g. `CLOSE_WAIT` means the peer closed and this side held the connection open, and the ports
-      * say which side it is (an ephemeral local port to a server's remote port is a client connection). Returns "" for a non-socket target or an
-      * inode that cannot be resolved.
+    /** For a `socket:[inode]` target, resolves the socket to an actionable description: a TCP connection's state and local/remote ports from
+      * `/proc/net/tcp{,6}` (e.g. `CLOSE_WAIT` means the peer closed and this side held the connection open, and the ports say which side it
+      * is), or a Unix-domain socket's path from `/proc/net/unix`. A socket with no row in any of those tables is a TCP fd already in kernel
+      * state CLOSED (protocol teardown done, fd not yet `close(2)`'d) or a closed unnamed UDS: the suffix says so explicitly rather than
+      * leaving the inode ambiguous. Returns "" for a non-socket target.
       */
     def describeSocket(target: String): String =
         if !target.startsWith("socket:[") then ""
         else
             val inode = target.stripPrefix("socket:[").stripSuffix("]")
-            def scan(path: String): Maybe[String] =
+            def scanTcp(path: String): Maybe[String] =
                 try
                     val lines              = java.nio.file.Files.readAllLines(Paths.get(path)).asScala
                     var res: Maybe[String] = Maybe.empty
@@ -266,7 +287,22 @@ private[runner] object LeakCheck:
                     }
                     res
                 catch case _: Throwable => Maybe.empty
-            scan("/proc/net/tcp").orElse(scan("/proc/net/tcp6")).getOrElse("")
+            def scanUnix(): Maybe[String] =
+                try
+                    val lines              = java.nio.file.Files.readAllLines(Paths.get("/proc/net/unix")).asScala
+                    var res: Maybe[String] = Maybe.empty
+                    lines.foreach { line =>
+                        val f = line.trim.split("\\s+")
+                        // columns: Num RefCount Protocol Flags Type St Inode [Path]; inode at index 6, optional path at index 7
+                        if res.isEmpty && f.length > 6 && f(6) == inode then
+                            val path = if f.length > 7 then f(7) else "<unnamed>"
+                            res = Maybe(s" [unix $path]")
+                        end if
+                    }
+                    res
+                catch case _: Throwable => Maybe.empty
+            scanTcp("/proc/net/tcp").orElse(scanTcp("/proc/net/tcp6")).orElse(scanUnix())
+                .getOrElse(" [no /proc/net row: CLOSED-state TCP fd or closed Unix-domain socket]")
     end describeSocket
 
     /** Leak-debug attribution: descriptor target -> the leaf path that first left it open. Populated only in leak-debug mode (see
@@ -322,7 +358,8 @@ private[runner] object LeakCheck:
         checkSockets: Boolean,
         idleBudgetNanos: Long,
         settleNanos: Long,
-        pollNanos: Long
+        pollNanos: Long,
+        fdDrainBudgetNanos: Long
     ): Maybe[String] =
         val findings           = Chunk.newBuilder[String]
         val effectiveAllowlist = defaultAllowlist ++ allowlist
@@ -364,21 +401,24 @@ private[runner] object LeakCheck:
         if checkFileDescriptors || checkSockets then
             baseline.fds match
                 case Maybe.Present(before) =>
-                    // A descriptor may be mid-close at done(): a client connection closes asynchronously while it processes the
-                    // server's FIN (EOF -> pump teardown -> channel close). Require a descriptor to remain leaked across a second
-                    // settle so an in-flight close is not mistaken for a leak; a genuinely leaked descriptor never closes and so
-                    // survives the recheck. (Safe: this can only drop descriptors that closed during the window, never a real leak.)
+                    // A descriptor may still be mid-close at done(): a client connection closes asynchronously while it processes the
+                    // server's FIN (EOF -> pump teardown -> channel close), and an io_uring deferred close runs its close(2) on the reap
+                    // thread a few cycles after done() observed scheduler quiescence (the reap loop is a dedicated thread, not a
+                    // scheduler carrier, so awaitSchedulerIdle cannot see it). Re-sample until the leaked set drains to empty or the drain
+                    // budget elapses, so a still-completing teardown is not mistaken for a leak; a genuinely leaked descriptor never
+                    // closes and so survives the whole budget. (Safe: awaitFdDrain only ever drops descriptors that closed during the
+                    // window, never a real leak.)
                     def leaksNow(): Chunk[String] =
                         val raw = openFdTargets().map(fdLeaks(before, _, effectiveAllowlist)).getOrElse(Chunk.empty)
                         fdLeaksForCategories(raw, checkSockets, checkFileDescriptors)
-                    val first = leaksNow()
-                    if first.nonEmpty then
-                        LockSupport.parkNanos(settleNanos)
-                        val second     = leaksNow()
-                        val persistent = first.filter(second.contains)
-                        if persistent.nonEmpty then
-                            val described = persistent.map(t => t + describeSocket(t) + originOf(t))
-                            findings += s"file-descriptor leak (${persistent.size}): ${described.mkString("; ")}"
+                    val persistent = awaitFdDrain(() => leaksNow(), fdDrainBudgetNanos, settleNanos)
+                    if persistent.nonEmpty then
+                        val described = persistent.map(t => t + describeSocket(t) + originOf(t))
+                        // Attach the live driver diagnostics: the io_uring/poller dump names each driver's pendingCloses / closeAfterDrain
+                        // / inFlight, so a survivor is self-classifying (a stranded deferred close names the fd; an abandoned connection
+                        // shows a pending recv with no close requested) rather than an opaque inode.
+                        findings += s"file-descriptor leak (${persistent.size}): ${described.mkString("; ")}" +
+                            s"\n  driver diagnostics at probe time:\n${kyo.internal.Diagnostics.dumpAll()}"
                     end if
                 case Maybe.Absent => () // /proc/self/fd unavailable: descriptor probe is a no-op on this platform.
             end match

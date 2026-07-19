@@ -1,20 +1,20 @@
 package kyo
 
 import kyo.*
-import kyo.internal.HttpPlatformTransport
 import kyo.internal.client.HttpClientBackend
+import kyo.internal.transport.NetConfigTranslation
 
 /** HTTP client with connection pooling, retries, redirects, and typed request/response handling.
   *
   * HttpClient manages a per-host connection pool shared across all fibers. Convenience methods like `getJson`, `postText`, and `getSseJson`
-  * create an [[kyo.HttpRoute]] internally and delegate to the typed send path — routes are the underlying abstraction even when users don't
+  * create an [[kyo.HttpRoute]] internally and delegate to the typed send path, routes are the underlying abstraction even when users don't
   * interact with them directly. For full control over request and response encoding, use `sendWith` with an explicit route.
   *
   * The active client and its configuration live in fiber-local storage via `Local`. All companion-object methods (`getJson`, `postJson`,
   * etc.) use a shared default client. To scope a custom client or configuration to a block of code:
-  *   - `HttpClient.let(client) { ... }` — install a specific client instance for the duration
-  *   - `HttpClient.withConfig(_.timeout(10.seconds)) { ... }` — transform the config (stacks with the current config)
-  *   - `HttpClient.withConfig(config) { ... }` — replace the config entirely (discards current config)
+  *   - `HttpClient.let(client) { ... }`: install a specific client instance for the duration
+  *   - `HttpClient.withConfig(_.timeout(10.seconds)) { ... }`: transform the config (stacks with the current config)
+  *   - `HttpClient.withConfig(config) { ... }`: replace the config entirely (discards current config)
   *   - `HttpClient.withFilter(filter) { ... }`: add a scoped client filter for outgoing requests
   *   - `HttpClient.withoutFilters { ... }`: clear configured client filters for a nested scope
   *   - `HttpClient.withoutAutoFilters { ... }`: disable ServiceLoader-discovered filters for a nested scope
@@ -41,21 +41,26 @@ import kyo.internal.client.HttpClientBackend
   * @see
   *   [[kyo.HttpWebSocket]] WebSocket connections opened via `HttpClient.webSocket`
   */
-opaque type HttpClient = HttpClientBackend[?]
+opaque type HttpClient = HttpClientBackend
 
 object HttpClient:
 
-    // Bootstrap boundary: lazy val requires eager evaluation of the suspended pool init.
+    // Bootstrap boundary: lazy val requires eager evaluation of the suspended pool init. The shared default client owns its own transport,
+    // distinct from the process-global `NetPlatform.transport` singleton, so a `HttpClient.use(_.close)` on this client cannot close that
+    // shared transport for the whole process. But like the singleton this client is never closed (it lives for the process), so its transport
+    // is built through the process-lifetime path: its idle keep-alive carriers are allowlisted by the fiber-leak / stranded-op gate rather than
+    // reported as a leaked owned transport.
     private lazy val defaultClient: HttpClient =
         import AllowUnsafe.embrace.danger
-        given Frame = Frame.internal
-        initUnsafe(HttpPlatformTransport.transport, 100, 60.seconds)
+        given Frame   = Frame.internal
+        val transport = kyo.net.NetPlatform.processLifetimeTransport(NetConfigTranslation.toNetTransportConfig(HttpTransportConfig.default))
+        initUnsafe(transport, 100, 60.seconds)
     end defaultClient
 
     private val local: Local[(HttpClient, HttpClientConfig)] =
         Local.init((defaultClient, HttpClientConfig()))
 
-    // Cached non-generic routes — avoids per-request allocation for convenience methods.
+    // Cached non-generic routes, avoids per-request allocation for convenience methods.
     private val routeGetText      = HttpRoute.getText("")
     private val routeGetBinary    = HttpRoute.getBinary("")
     private val routePostText     = HttpRoute.postText("")
@@ -98,6 +103,9 @@ object HttpClient:
 
         /** Reference equality check (for testing scope isolation). */
         private[kyo] def eq(that: HttpClient): Boolean = (self: AnyRef) eq (that: AnyRef)
+
+        /** True once this client's pool has been closed. For testing the close/release path only (see [[init]]'s Scope release). */
+        private[kyo] def isPoolClosed(using AllowUnsafe): Boolean = self.isPoolClosed
     end extension
 
     // --- Context management ---
@@ -126,14 +134,13 @@ object HttpClient:
     def update[A, S](f: HttpClient => HttpClient)(v: A < S)(using Frame): A < S =
         local.use { (client, config) => local.let((f(client), config))(v) }
 
-    /** Applies a config transformation for all `HttpClient` calls within the given computation. Stacks with the current config —
-      * `withConfig(_.timeout(5.seconds)) { withConfig(_.retry(schedule)) { ... } }` results in a config with both timeout and retry set.
+    /** Applies a config transformation for all `HttpClient` calls within the given computation. Stacks with the current config,      * `withConfig(_.timeout(5.seconds)) { withConfig(_.retry(schedule)) { ... } }` results in a config with both timeout and retry set.
       */
     def withConfig[A, S](f: HttpClientConfig => HttpClientConfig)(v: A < S)(using Frame): A < S =
         local.use { (client, config) => local.let((client, f(config)))(v) }
 
     /** Replaces the config entirely for all `HttpClient` calls within the given computation. Unlike the function overload, this does not
-      * stack — it discards the current config.
+      * stack, it discards the current config.
       */
     def withConfig[A, S](config: HttpClientConfig)(v: A < S)(using Frame): A < S =
         local.use { (client, _) => local.let((client, config))(v) }
@@ -158,26 +165,38 @@ object HttpClient:
 
     /** Creates a scoped client with its own connection pool. The client closes automatically when the enclosing Scope exits. Use
       * `HttpClient.let(client) { ... }` to make it the active client for a block of code.
+      *
+      * `transportConfig` tunes the byte transport and HTTP parser for this client (buffer sizes, channel capacity, the HTTP header limit).
+      * It is a construction-time setting because the connection pool and its transport are built once and shared across all requests; a
+      * per-request override could not rebuild a pooled transport. The client builds and owns its transport, closing it on shutdown.
       */
     def init(
         maxConnectionsPerHost: Int = 100,
         idleConnectionTimeout: Duration = 60.seconds,
-        defaultTlsConfig: HttpTlsConfig = HttpTlsConfig.default
+        defaultTlsConfig: HttpTlsConfig = HttpTlsConfig.default,
+        transportConfig: HttpTransportConfig = HttpTransportConfig.default
     )(using Frame): HttpClient < (Async & Scope) =
-        Scope.acquireRelease(initUnscoped(maxConnectionsPerHost, idleConnectionTimeout, defaultTlsConfig))(_.closeNow)
+        Scope.acquireRelease(initUnscoped(
+            maxConnectionsPerHost,
+            idleConnectionTimeout,
+            defaultTlsConfig,
+            transportConfig
+        ))(HttpClient.closeNow(_))
 
     /** Creates a client with its own connection pool that must be closed explicitly via `close()`. Prefer `init` with Scope-based lifecycle
-      * unless you need manual control.
+      * unless you need manual control. See [[init]] for the meaning of `transportConfig`.
       */
     def initUnscoped(
         maxConnectionsPerHost: Int = 100,
         idleConnectionTimeout: Duration = 60.seconds,
-        defaultTlsConfig: HttpTlsConfig = HttpTlsConfig.default
+        defaultTlsConfig: HttpTlsConfig = HttpTlsConfig.default,
+        transportConfig: HttpTransportConfig = HttpTransportConfig.default
     )(using frame: Frame): HttpClient < Sync =
         require(maxConnectionsPerHost > 0, s"maxConnectionsPerHost must be positive: $maxConnectionsPerHost")
         require(idleConnectionTimeout > Duration.Zero, s"idleConnectionTimeout must be positive: $idleConnectionTimeout")
         Sync.Unsafe.defer {
-            initUnsafe(HttpPlatformTransport.transport, maxConnectionsPerHost, idleConnectionTimeout, defaultTlsConfig)
+            val transport = kyo.net.NetPlatform.transport(NetConfigTranslation.toNetTransportConfig(transportConfig))
+            initUnsafe(transport, maxConnectionsPerHost, idleConnectionTimeout, defaultTlsConfig, transportConfig)
         }
     end initUnscoped
 
@@ -856,7 +875,7 @@ object HttpClient:
             url.copy(rawQuery = Present(merged))
 
     /** Sends a request and extracts the body, failing with HttpStatusException on non-2xx. Used by body-only convenience methods (getText,
-      * getJson, etc.). Response methods use sendUrl directly with identity — no status check.
+      * getJson, etc.). Response methods use sendUrl directly with identity, no status check.
       */
     private def sendUrlBody[Out, A](
         url: HttpUrl,
@@ -927,11 +946,12 @@ object HttpClient:
     // --- Private implementation ---
 
     private def initUnsafe(
-        transport: kyo.internal.transport.Transport[?],
+        transport: kyo.net.Transport,
         maxConnectionsPerHost: Int,
         idleConnectionTimeout: Duration,
-        defaultTlsConfig: kyo.HttpTlsConfig = kyo.HttpTlsConfig.default
-    )(using AllowUnsafe, Frame): HttpClientBackend[?] =
-        HttpClientBackend.init(transport, maxConnectionsPerHost, idleConnectionTimeout, defaultTlsConfig)
+        defaultTlsConfig: kyo.HttpTlsConfig = kyo.HttpTlsConfig.default,
+        transportConfig: HttpTransportConfig = HttpTransportConfig.default
+    )(using AllowUnsafe, Frame): HttpClientBackend =
+        HttpClientBackend.init(transport, maxConnectionsPerHost, idleConnectionTimeout, defaultTlsConfig, transportConfig)
 
 end HttpClient

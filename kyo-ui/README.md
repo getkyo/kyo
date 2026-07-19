@@ -1205,7 +1205,7 @@ The session is the WebSocket connection. The WS handler owns the reactive subscr
 import UI.*
 import kyo.*
 
-val server: Unit < (Async & Scope) =
+val server: Unit < (Async & Scope & Abort[HttpBindException]) =
     for
         counter <- Signal.initRef(0)
         page = div(
