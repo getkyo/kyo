@@ -22,6 +22,21 @@ class PageDownloadTest extends kyo.BrowserTest:
         assert(PageDownload.Behavior.Default.wire == "default")
     }
 
+    // Chrome's Windows download target determination silently never finalizes a download whose
+    // downloadPath carries forward slashes; the wire boundary must hand Chrome native separators.
+    "nativeDownloadPath converts separators on Windows" in {
+        assert(PageDownload.nativeDownloadPath(System.OS.Windows, "C:/Users/me/dl") == "C:\\Users\\me\\dl")
+    }
+
+    "nativeDownloadPath keeps backslashes on Windows" in {
+        assert(PageDownload.nativeDownloadPath(System.OS.Windows, "C:\\Users\\me\\dl") == "C:\\Users\\me\\dl")
+    }
+
+    "nativeDownloadPath passes through unchanged off Windows" in {
+        assert(PageDownload.nativeDownloadPath(System.OS.Linux, "/tmp/dl") == "/tmp/dl")
+        assert(PageDownload.nativeDownloadPath(System.OS.MacOS, "/tmp/dl") == "/tmp/dl")
+    }
+
     // Rewired from session.exchange.events (removed with the old CdpClient)
     // to Browser.onDownload (the production subscription API using CdpBackend.downloadEventDispatchers).
 

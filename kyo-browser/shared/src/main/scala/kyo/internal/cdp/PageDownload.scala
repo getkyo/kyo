@@ -50,6 +50,14 @@ private[kyo] object PageDownload:
         eventsEnabled: Maybe[Boolean] = Absent
     ) derives Schema
 
+    /** `downloadPath` in the form Chrome's platform expects. Chrome's Windows download target determination silently never finalizes a
+      * download whose `downloadPath` carries forward slashes: the bytes stream, `Page.downloadProgress` never reaches `completed`, and no
+      * file lands. Separators are therefore converted to backslashes on Windows; other platforms use forward slashes natively and pass
+      * through unchanged.
+      */
+    private[kyo] def nativeDownloadPath(os: System.OS, path: String): String =
+        if os == System.OS.Windows then path.replace('/', '\\') else path
+
     /** Configure download behavior for the current browser context.
       *
       * When `behavior = Allow`, downloads land in `downloadPath` and Chrome emits `Page.downloadWillBegin` and `Page.downloadProgress`
@@ -60,12 +68,14 @@ private[kyo] object PageDownload:
         behavior: Behavior,
         downloadPath: Maybe[String]
     )(using Frame): Unit < (Async & Abort[BrowserReadException]) =
-        val params = SetDownloadBehaviorParams(
-            behavior = behavior,
-            downloadPath = downloadPath,
-            eventsEnabled = Present(true)
-        )
-        client.sendUnit[SetDownloadBehaviorParams]("Page.setDownloadBehavior", params)
+        System.operatingSystem.map { os =>
+            val params = SetDownloadBehaviorParams(
+                behavior = behavior,
+                downloadPath = downloadPath.map(nativeDownloadPath(os, _)),
+                eventsEnabled = Present(true)
+            )
+            client.sendUnit[SetDownloadBehaviorParams]("Page.setDownloadBehavior", params)
+        }
     end setDownloadBehavior
 
     /** CDP wire shape for `Page.downloadWillBegin`. Decoded once by the notification handler and carried as the event's typed `params`;
