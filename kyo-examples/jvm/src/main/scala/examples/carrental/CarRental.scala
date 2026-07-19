@@ -77,12 +77,12 @@ object CarRental extends KyoApp:
         Scope.run {
             Path.run {
                 for
-                    dir           <- Path.tempDir("car-rental")
-                    fleetId       <- JournalId("fleet")
-                    codecs        <- EventLogCodecs.schema[RentalEvent]()
-                    configuration <- FileJournal.Binary.configuration(fleetId, codecs)
-                    log           <- EventLog.init(codecs, fleetId)
-                    backend       <- Journal.Backend.file(dir, configuration)
+                    dir     <- Path.tempDir("car-rental")
+                    fleetId <- JournalId("fleet")
+                    codecs  <- EventLogCodecs.schema[RentalEvent]()
+                    configuration = FileJournal.Binary.configuration(fleetId, codecs)
+                    log     <- EventLog.init(codecs, fleetId)
+                    backend <- Journal.Backend.file(dir, configuration)
                     _ <- Journal.run(backend) {
                         for
                             _ <- log.append(

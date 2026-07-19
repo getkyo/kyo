@@ -426,11 +426,12 @@ The contract exercised covers:
 
 ```scala
 // Build a typed configuration once from a JournalId and an EventLog.Codecs; the profile
-// factory resolves the profile name and media types and validates layout coherence.
+// factory resolves the profile name and derives the metadata and payload media types from
+// the codecs. Pure: it constructs the Configuration value directly, no effect.
 FileJournal.Binary.configuration[A](journalId: JournalId, codecs: EventLog.Codecs[A], options: FileJournal.Options = FileJournal.Options.default)
-    : FileJournal.Configuration[A] < Abort[FileJournal.ConfigurationError]
+    : FileJournal.Configuration[A]
 FileJournal.Jsonl.configuration[A](journalId: JournalId, codecs: EventLog.Codecs[A], options: FileJournal.Options = FileJournal.Options.default)
-    : FileJournal.Configuration[A] < Abort[FileJournal.ConfigurationError]
+    : FileJournal.Configuration[A]
 
 // Open a Sync or Async backend, or a read-only SWMR reader, over that configuration.
 Journal.Backend.file[A](dir: Path, configuration: FileJournal.Configuration[A])

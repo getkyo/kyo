@@ -47,35 +47,29 @@ object FileJournal:
     object Binary:
         /** Built-in binary configuration over the shared segmented-append engine. Resolves
           * `profileName = "binary"` directly: this factory IS the binary profile, so no
-          * typeclass is summoned for a profile identity.
+          * typeclass is summoned for a profile identity. Derives `metadataMediaType` and
+          * `payloadMediaType` from the supplied codecs' media types.
           */
         def configuration[A](
             journalId: JournalId,
             codecs: EventLog.Codecs[A],
             options: Options = Options.default
-        )(using Frame): Configuration[A] < Abort[ConfigurationError] =
-            // Resolves the literal profileName "binary" and the codecs' value/metadata
-            // Codec.mediaType into payloadMediaType/metadataMediaType, and validates
-            // root marker/layout coherence against the shared engine.
-            Abort.get(FileJournal.binaryConfiguration(journalId, codecs, options))
+        )(using Frame): Configuration[A] =
+            FileJournal.binaryConfiguration(journalId, codecs, options)
     end Binary
 
     object Jsonl:
         /** Built-in JSONL configuration; `.jsonl` segments, no file header, codec-driven
-          * payload. Resolves `profileName = "jsonl"` directly.
+          * payload. Resolves `profileName = "jsonl"` directly and derives `metadataMediaType`
+          * and `payloadMediaType` from the supplied codecs' media types.
           */
         def configuration[A](
             journalId: JournalId,
             codecs: EventLog.Codecs[A],
             options: Options = Options.default
-        )(using Frame): Configuration[A] < Abort[ConfigurationError] =
-            Abort.get(FileJournal.jsonlConfiguration(journalId, codecs, options))
+        )(using Frame): Configuration[A] =
+            FileJournal.jsonlConfiguration(journalId, codecs, options)
     end Jsonl
-
-    /** Configuration validation failure (root marker, layout version, media-type
-      * derivation).
-      */
-    final case class ConfigurationError(reason: String)(using Frame) extends KyoException
 
     // binaryConfiguration / jsonlConfiguration are private[kyo] extension methods on
     // FileJournal.type (kyo-eventlog/shared/src/main/scala/kyo/

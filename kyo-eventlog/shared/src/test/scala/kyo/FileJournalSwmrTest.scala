@@ -21,8 +21,8 @@ class FileJournalSwmrTest extends kyo.test.Test[Any]:
 
     private def binaryConfiguration(options: FileJournal.Options)(using Frame) =
         for
-            codecs        <- EventLogCodecs.bytes()
-            configuration <- FileJournal.Binary.configuration(journalId, codecs, options)
+            codecs <- EventLogCodecs.bytes()
+            configuration = FileJournal.Binary.configuration(journalId, codecs, options)
         yield configuration
 
     private def freshDir(prefix: String)(using Frame): Path < (Sync & Scope) =

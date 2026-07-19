@@ -27,7 +27,7 @@ val binary =
     for
         journalId <- JournalId("quest-party")
         codecs    <- EventLog.Codecs.schema[String]()
-        config    <- FileJournal.Binary.configuration(journalId, codecs)
+        config = FileJournal.Binary.configuration(journalId, codecs)
     yield config
 ```
 
@@ -36,7 +36,7 @@ val jsonl =
     for
         journalId <- JournalId("quest-party")
         codecs    <- EventLog.Codecs.schema[String]()
-        config    <- FileJournal.Jsonl.configuration(journalId, codecs, FileJournal.Options(segmentSize = 16L.mib))
+        config = FileJournal.Jsonl.configuration(journalId, codecs, FileJournal.Options(segmentSize = 16L.mib))
     yield config
 ```
 

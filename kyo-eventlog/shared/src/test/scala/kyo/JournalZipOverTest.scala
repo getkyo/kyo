@@ -24,11 +24,10 @@ class JournalZipOverTest extends kyo.test.Test[Any]:
 
     private def configuration(name: String)(using
         Frame
-    ): FileJournal.Configuration[Span[Byte]] < Abort[EventCodecConfigurationError | FileJournal.ConfigurationError] =
-        for
-            codecs <- EventLogCodecs.bytes()
-            config <- FileJournal.Binary.configuration(journalId(name), codecs, FileJournal.Options.default)
-        yield config
+    ): FileJournal.Configuration[Span[Byte]] < Abort[EventCodecConfigurationError] =
+        EventLogCodecs.bytes().map { codecs =>
+            FileJournal.Binary.configuration(journalId(name), codecs, FileJournal.Options.default)
+        }
 
     private def journalId(name: String): JournalId =
         JournalId.validate(name)(using Frame.internal).getOrElse(throw new AssertionError("valid journal id"))

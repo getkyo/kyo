@@ -30,10 +30,10 @@ class JournalReaderTest extends kyo.test.Test[Any]:
         evalPure(EventLogCodecs.bytes())(using Frame.internal)
 
     private val binaryConfiguration: FileJournal.Configuration[Span[Byte]] =
-        evalPure(FileJournal.Binary.configuration(journalId, identityCodecs))(using Frame.internal)
+        FileJournal.Binary.configuration(journalId, identityCodecs)(using Frame.internal)
 
     private val jsonlConfiguration: FileJournal.Configuration[Span[Byte]] =
-        evalPure(FileJournal.Jsonl.configuration(journalId, identityCodecs))(using Frame.internal)
+        FileJournal.Jsonl.configuration(journalId, identityCodecs)(using Frame.internal)
 
     private val e0End: Int = HeaderSize + binaryCodec.recordSize(env(0)).toInt + TerminatorSize
 

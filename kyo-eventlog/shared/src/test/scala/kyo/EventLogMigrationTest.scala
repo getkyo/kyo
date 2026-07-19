@@ -33,18 +33,18 @@ class EventLogMigrationTest extends kyo.test.Test[Any]:
 
     private def binaryConfig(name: String)(using
         Frame
-    ): FileJournal.Configuration[Span[Byte]] < Abort[EventCodecConfigurationError | FileJournal.ConfigurationError] =
+    ): FileJournal.Configuration[Span[Byte]] < Abort[EventCodecConfigurationError] =
         for
             codecs <- EventLogCodecs.bytes()
-            config <- FileJournal.Binary.configuration(journalId(name), codecs, FileJournal.Options.default)
+            config = FileJournal.Binary.configuration(journalId(name), codecs, FileJournal.Options.default)
         yield config
 
     private def jsonlConfig(name: String)(using
         Frame
-    ): FileJournal.Configuration[Span[Byte]] < Abort[EventCodecConfigurationError | FileJournal.ConfigurationError] =
+    ): FileJournal.Configuration[Span[Byte]] < Abort[EventCodecConfigurationError] =
         for
             codecs <- EventLogCodecs.bytes()
-            config <- FileJournal.Jsonl.configuration(journalId(name), codecs, FileJournal.Options.default)
+            config = FileJournal.Jsonl.configuration(journalId(name), codecs, FileJournal.Options.default)
         yield config
 
     "migrate copies a stream from a Binary-profile host journal to a Jsonl-profile host journal with no type obstacle, and MigrationReport reports the copy" in {
@@ -202,10 +202,10 @@ class EventLogMigrationTest extends kyo.test.Test[Any]:
             hostTempDir("kyo-eventlog-migrate-upcast").map { dir =>
                 for
                     intCodecs <- EventLogCodecs.schema[Int]()
-                    intConfig <- FileJournal.Binary.configuration(journalId("migrate-upcast"), intCodecs, FileJournal.Options.default)
-                    backend   <- Journal.Backend.file(dir, intConfig)
-                    encoded0  <- EventLogCodecs.encodeValue(intCodecs.value, 1)
-                    encoded1  <- EventLogCodecs.encodeValue(intCodecs.value, 2)
+                    intConfig = FileJournal.Binary.configuration(journalId("migrate-upcast"), intCodecs, FileJournal.Options.default)
+                    backend  <- Journal.Backend.file(dir, intConfig)
+                    encoded0 <- EventLogCodecs.encodeValue(intCodecs.value, 1)
+                    encoded1 <- EventLogCodecs.encodeValue(intCodecs.value, 2)
                     _ <- Abort.run[JournalError](backend.append(
                         streamId,
                         ExpectedOffset.NoStream,
@@ -246,9 +246,9 @@ class EventLogMigrationTest extends kyo.test.Test[Any]:
                 for
                     intCodecs    <- EventLogCodecs.schema[Int]()
                     stringCodecs <- EventLogCodecs.schema[String]()
-                    sourceConfig <-
+                    sourceConfig =
                         FileJournal.Binary.configuration(journalId("migrate-with-source"), intCodecs, FileJournal.Options.default)
-                    targetConfig <-
+                    targetConfig =
                         FileJournal.Binary.configuration(journalId("migrate-with-target"), stringCodecs, FileJournal.Options.default)
                     sourceBackend <- Journal.Backend.file(sourceDir, sourceConfig)
                     targetBackend <- Journal.Backend.file(targetDir, targetConfig)

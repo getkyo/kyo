@@ -19,26 +19,16 @@ class FileJournalCrashTest extends kyo.test.Test[Any]:
 
     private def defaultConfiguration(using Frame): FileJournal.Configuration[Span[Byte]] < Async =
         Abort.run[EventCodecConfigurationError](EventLogCodecs.bytes()).map {
-            case Result.Success(codecs) =>
-                Abort.run[FileJournal.ConfigurationError](FileJournal.Binary.configuration(journalId, codecs)).map {
-                    case Result.Success(configuration) => configuration
-                    case Result.Failure(err)           => throw err
-                    case panic: Result.Panic           => throw panic.exception
-                }
-            case Result.Failure(err) => throw err
-            case panic: Result.Panic => throw panic.exception
+            case Result.Success(codecs) => FileJournal.Binary.configuration(journalId, codecs)
+            case Result.Failure(err)    => throw err
+            case panic: Result.Panic    => throw panic.exception
         }
 
     private def jsonlConfiguration(using Frame): FileJournal.Configuration[Span[Byte]] < Async =
         Abort.run[EventCodecConfigurationError](EventLogCodecs.bytes()).map {
-            case Result.Success(codecs) =>
-                Abort.run[FileJournal.ConfigurationError](FileJournal.Jsonl.configuration(journalId, codecs)).map {
-                    case Result.Success(configuration) => configuration
-                    case Result.Failure(err)           => throw err
-                    case panic: Result.Panic           => throw panic.exception
-                }
-            case Result.Failure(err) => throw err
-            case panic: Result.Panic => throw panic.exception
+            case Result.Success(codecs) => FileJournal.Jsonl.configuration(journalId, codecs)
+            case Result.Failure(err)    => throw err
+            case panic: Result.Panic    => throw panic.exception
         }
 
     // Byte after the committed terminator of a single-event batch [e0]: the exhaustive sweep cuts from here

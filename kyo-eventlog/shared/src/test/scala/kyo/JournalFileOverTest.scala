@@ -48,11 +48,10 @@ class JournalFileOverTest extends kyo.test.Test[Any]:
     private def configuration(name: String, options: FileJournal.Options = FileJournal.Options.default)(using
         Frame
     )
-        : FileJournal.Configuration[Span[Byte]] < Abort[EventCodecConfigurationError | FileJournal.ConfigurationError] =
-        for
-            codecs <- EventLogCodecs.bytes()
-            config <- FileJournal.Binary.configuration(journalId(name), codecs, options)
-        yield config
+        : FileJournal.Configuration[Span[Byte]] < Abort[EventCodecConfigurationError] =
+        EventLogCodecs.bytes().map { codecs =>
+            FileJournal.Binary.configuration(journalId(name), codecs, options)
+        }
 
     // Appends one event at a time, listing the stream's on-disk segment directory after each
     // append, until FileJournalCore's own rotateIfNeeded seals the active segment and creates a

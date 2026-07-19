@@ -18,8 +18,8 @@ class FileJournalTest extends kyo.test.Test[Any]:
         Frame
     ) =
         for
-            codecs        <- EventLogCodecs.bytes()
-            configuration <- FileJournal.Binary.configuration(journalId(suffix), codecs, options)
+            codecs <- EventLogCodecs.bytes()
+            configuration = FileJournal.Binary.configuration(journalId(suffix), codecs, options)
         yield configuration
 
     // A fresh temp root. Path.tempDir carries PathWrite & Sync & Scope; Path.run discharges
@@ -166,7 +166,7 @@ class FileJournalTest extends kyo.test.Test[Any]:
         }
     }
 
-    // --- typed FileJournal.Configuration leaves (checkpoint 3 acceptance) -----------------------
+    // --- typed FileJournal.Configuration leaves ------------------------------------------------
 
     private val fjEventStreamId: Event.StreamId              = valid(Event.StreamId("fj-event-stream"))
     private val fjEventStream: Event.StreamSelector[FjEvent] = Event.StreamSelector.constant(fjEventStreamId)
@@ -177,12 +177,12 @@ class FileJournalTest extends kyo.test.Test[Any]:
         "opens a .seg backend and round-trips" in {
             val event = FjEvent("alice", 1)
             for
-                dir           <- freshDir("fj-binary-roundtrip")
-                jid           <- Sync.defer(journalId("binary-roundtrip"))
-                codecs        <- EventLogCodecs.schema[FjEvent]()
-                configuration <- FileJournal.Binary.configuration(jid, codecs)
-                log           <- EventLog.init(codecs, jid)
-                backend       <- discharge(Journal.Backend.file(dir, configuration))
+                dir    <- freshDir("fj-binary-roundtrip")
+                jid    <- Sync.defer(journalId("binary-roundtrip"))
+                codecs <- EventLogCodecs.schema[FjEvent]()
+                configuration = FileJournal.Binary.configuration(jid, codecs)
+                log     <- EventLog.init(codecs, jid)
+                backend <- discharge(Journal.Backend.file(dir, configuration))
                 decoded <- dischargeLog(Journal.run(backend) {
                     for
                         _      <- log.append(event)
@@ -204,13 +204,13 @@ class FileJournalTest extends kyo.test.Test[Any]:
         "opens a .jsonl backend with JSON payloads" in {
             val event = FjEvent("bob", 2)
             for
-                dir           <- freshDir("fj-jsonl-roundtrip")
-                jid           <- Sync.defer(journalId("jsonl-roundtrip"))
-                codecs        <- EventLogCodecs.schema[FjEvent]()
-                configuration <- FileJournal.Jsonl.configuration(jid, codecs)
-                log           <- EventLog.init(codecs, jid)
-                backend       <- discharge(Journal.Backend.file(dir, configuration))
-                _             <- dischargeLog(Journal.run(backend)(log.append(event)))
+                dir    <- freshDir("fj-jsonl-roundtrip")
+                jid    <- Sync.defer(journalId("jsonl-roundtrip"))
+                codecs <- EventLogCodecs.schema[FjEvent]()
+                configuration = FileJournal.Jsonl.configuration(jid, codecs)
+                log     <- EventLog.init(codecs, jid)
+                backend <- discharge(Journal.Backend.file(dir, configuration))
+                _       <- dischargeLog(Journal.run(backend)(log.append(event)))
                 line <- Sync.Unsafe.defer {
                     val segPath = dir / "streams" / fjEventStreamId.value / "00000000000000000000.jsonl"
                     val bytes   = segPath.unsafe.readBytes().getOrElse(Span.empty[Byte])
@@ -230,17 +230,17 @@ class FileJournalTest extends kyo.test.Test[Any]:
     }
 
     "profileName and MANIFEST" - {
-        "Binary.configuration resolves the literal profileName and the MANIFEST carries it (R-136)" in {
+        "Binary.configuration resolves the literal profileName and the MANIFEST carries it" in {
             for
-                binaryJid    <- Sync.defer(journalId("profilename-binary"))
-                jsonlJid     <- Sync.defer(journalId("profilename-jsonl"))
-                codecs       <- EventLogCodecs.schema[FjEvent]()
-                binaryConfig <- FileJournal.Binary.configuration(binaryJid, codecs)
-                jsonlConfig  <- FileJournal.Jsonl.configuration(jsonlJid, codecs)
-                binaryDir    <- freshDir("fj-profilename-binary")
-                jsonlDir     <- freshDir("fj-profilename-jsonl")
-                _            <- discharge(Journal.Backend.file(binaryDir, binaryConfig))
-                _            <- discharge(Journal.Backend.file(jsonlDir, jsonlConfig))
+                binaryJid <- Sync.defer(journalId("profilename-binary"))
+                jsonlJid  <- Sync.defer(journalId("profilename-jsonl"))
+                codecs    <- EventLogCodecs.schema[FjEvent]()
+                binaryConfig = FileJournal.Binary.configuration(binaryJid, codecs)
+                jsonlConfig  = FileJournal.Jsonl.configuration(jsonlJid, codecs)
+                binaryDir <- freshDir("fj-profilename-binary")
+                jsonlDir  <- freshDir("fj-profilename-jsonl")
+                _         <- discharge(Journal.Backend.file(binaryDir, binaryConfig))
+                _         <- discharge(Journal.Backend.file(jsonlDir, jsonlConfig))
                 binaryManifest <- Sync.Unsafe.defer {
                     val bytes = (binaryDir / "MANIFEST").unsafe.readBytes().getOrElse(Span.empty[Byte])
                     new String(bytes.toArray, "UTF-8")
@@ -258,11 +258,11 @@ class FileJournalTest extends kyo.test.Test[Any]:
 
         "Binary.configuration and Jsonl.configuration resolve profileName directly with no ProfileName typeclass in scope" in {
             for
-                binaryJid    <- Sync.defer(journalId("profilename-direct-binary"))
-                jsonlJid     <- Sync.defer(journalId("profilename-direct-jsonl"))
-                codecs       <- EventLogCodecs.schema[FjEvent]()
-                binaryConfig <- FileJournal.Binary.configuration(binaryJid, codecs)
-                jsonlConfig  <- FileJournal.Jsonl.configuration(jsonlJid, codecs)
+                binaryJid <- Sync.defer(journalId("profilename-direct-binary"))
+                jsonlJid  <- Sync.defer(journalId("profilename-direct-jsonl"))
+                codecs    <- EventLogCodecs.schema[FjEvent]()
+                binaryConfig = FileJournal.Binary.configuration(binaryJid, codecs)
+                jsonlConfig  = FileJournal.Jsonl.configuration(jsonlJid, codecs)
             yield
                 assert(binaryConfig.profileName == "binary")
                 assert(jsonlConfig.profileName == "jsonl")
@@ -271,17 +271,17 @@ class FileJournalTest extends kyo.test.Test[Any]:
     }
 
     "Codec.mediaType" - {
-        "derives Configuration's payloadMediaType/metadataMediaType for Binary and Jsonl and the MANIFEST round-trips them (R-135)" in {
+        "derives Configuration's payloadMediaType/metadataMediaType for Binary and Jsonl and the MANIFEST round-trips them" in {
             for
-                binaryDir    <- freshDir("fj-mediatype-binary")
-                jsonlDir     <- freshDir("fj-mediatype-jsonl")
-                binaryJid    <- Sync.defer(journalId("mediatype-binary"))
-                jsonlJid     <- Sync.defer(journalId("mediatype-jsonl"))
-                codecs       <- EventLogCodecs.schema[FjEvent](binary = IonBinary(), json = Json(), metadata = IonBinary())
-                binaryConfig <- FileJournal.Binary.configuration(binaryJid, codecs)
-                jsonlConfig  <- FileJournal.Jsonl.configuration(jsonlJid, codecs)
-                _            <- discharge(Journal.Backend.file(binaryDir, binaryConfig))
-                _            <- discharge(Journal.Backend.file(jsonlDir, jsonlConfig))
+                binaryDir <- freshDir("fj-mediatype-binary")
+                jsonlDir  <- freshDir("fj-mediatype-jsonl")
+                binaryJid <- Sync.defer(journalId("mediatype-binary"))
+                jsonlJid  <- Sync.defer(journalId("mediatype-jsonl"))
+                codecs    <- EventLogCodecs.schema[FjEvent](binary = IonBinary(), json = Json(), metadata = IonBinary())
+                binaryConfig = FileJournal.Binary.configuration(binaryJid, codecs)
+                jsonlConfig  = FileJournal.Jsonl.configuration(jsonlJid, codecs)
+                _ <- discharge(Journal.Backend.file(binaryDir, binaryConfig))
+                _ <- discharge(Journal.Backend.file(jsonlDir, jsonlConfig))
                 binaryManifest <- Sync.Unsafe.defer {
                     val bytes = (binaryDir / "MANIFEST").unsafe.readBytes().getOrElse(Span.empty[Byte])
                     new String(bytes.toArray, "UTF-8")
@@ -301,12 +301,12 @@ class FileJournalTest extends kyo.test.Test[Any]:
     }
 
     "MANIFEST-less root" - {
-        "a MANIFEST-less root with existing streams/ entries still opens, inferring Binary with default media types (INV-PATHCAP-19)" in {
+        "a MANIFEST-less root with existing streams/ entries still opens, inferring Binary with default media types" in {
             for
                 dir    <- freshDir("fj-manifestless")
                 jid    <- Sync.defer(journalId("manifestless"))
                 codecs <- EventLogCodecs.bytes()
-                config <- FileJournal.Binary.configuration(jid, codecs)
+                config = FileJournal.Binary.configuration(jid, codecs)
                 _ <- Sync.Unsafe.defer {
                     // Simulate a crash between segment creation and the first-open MANIFEST write.
                     discard((dir / "streams").unsafe.mkDir())

@@ -471,9 +471,9 @@ class EventLogTest extends kyo.test.Test[Any]:
                 case Result.Failure(err) => throw err
                 case panic: Result.Panic => throw panic.exception
             }
-            codecs        <- EventLogCodecs.schema[LogTestEvent]()
-            configuration <- FileJournal.Binary.configuration(journalId, codecs)
-            log           <- EventLog.init(codecs, journalId)
+            codecs <- EventLogCodecs.schema[LogTestEvent]()
+            configuration = FileJournal.Binary.configuration(journalId, codecs)
+            log <- EventLog.init(codecs, journalId)
             _ <- Scope.run {
                 for
                     backend <- Journal.Backend.file(dir, configuration)

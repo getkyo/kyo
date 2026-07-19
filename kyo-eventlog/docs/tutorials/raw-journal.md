@@ -111,7 +111,7 @@ val durableConfig =
     for
         journalId <- JournalId("quest-party")
         codecs    <- EventLog.Codecs.bytes()
-        config <- FileJournal.Binary.configuration(
+        config = FileJournal.Binary.configuration(
             journalId,
             codecs,
             FileJournal.Options(fsync = FileJournal.Fsync.Always)
@@ -135,9 +135,9 @@ val reopened =
                 journalId <- JournalId("quest-party")
                 streamId  <- Abort.get(Event.StreamId("destroy-one-ring"))
                 codecs    <- EventLog.Codecs.bytes()
-                config    <- FileJournal.Binary.configuration(journalId, codecs)
-                dir       <- Path.tempDir("quest-party-")
-                backend   <- Journal.Backend.file(dir, config)
+                config = FileJournal.Binary.configuration(journalId, codecs)
+                dir     <- Path.tempDir("quest-party-")
+                backend <- Journal.Backend.file(dir, config)
                 // Reopening and reading is a first touch: torn-tail recovery, if any, runs
                 // transparently here before the read returns.
                 events <- Journal.run(backend)(Journal.read(streamId, Event.StreamOffset.first, 100))
@@ -158,10 +158,10 @@ val committed =
                 journalId <- JournalId("quest-party")
                 streamId  <- Abort.get(Event.StreamId("destroy-one-ring"))
                 codecs    <- EventLog.Codecs.bytes()
-                config    <- FileJournal.Binary.configuration(journalId, codecs)
-                dir       <- Path.tempDir("quest-party-")
-                reader    <- Journal.Reader.file(dir, config)
-                events    <- reader.read(streamId, Event.StreamOffset.first, 100)
+                config = FileJournal.Binary.configuration(journalId, codecs)
+                dir    <- Path.tempDir("quest-party-")
+                reader <- Journal.Reader.file(dir, config)
+                events <- reader.read(streamId, Event.StreamOffset.first, 100)
             yield events
 ```
 

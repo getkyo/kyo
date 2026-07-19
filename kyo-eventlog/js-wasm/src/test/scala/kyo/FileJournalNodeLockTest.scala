@@ -40,9 +40,9 @@ class FileJournalNodeLockTest extends kyo.test.Test[Any]:
 
     private def binaryConfiguration(using Frame) =
         for
-            codecs        <- EventLogCodecs.bytes()
-            journalId     <- JournalId("fj-nodelock")
-            configuration <- FileJournal.Binary.configuration(journalId, codecs)
+            codecs    <- EventLogCodecs.bytes()
+            journalId <- JournalId("fj-nodelock")
+            configuration = FileJournal.Binary.configuration(journalId, codecs)
         yield configuration
 
     // Plants a LOCK file in `dir` with arbitrary content (used by failure-matrix cases).

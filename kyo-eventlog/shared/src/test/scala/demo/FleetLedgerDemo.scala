@@ -64,7 +64,7 @@ object FleetLedgerDemo extends KyoApp:
         evalPure(EventLogCodecs.schema[FleetEvent]())
 
     private val jsonlConfiguration: FileJournal.Configuration[FleetEvent] =
-        evalPure(FileJournal.Jsonl.configuration(journalId, fleetCodecs))
+        FileJournal.Jsonl.configuration(journalId, fleetCodecs)
 
     def flow(using Frame): LedgerSnapshot < (Async & Abort[FileException | JournalError | EventLog.PreparationFailure]) =
         Scope.run {

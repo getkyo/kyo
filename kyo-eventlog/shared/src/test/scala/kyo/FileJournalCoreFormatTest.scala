@@ -18,14 +18,14 @@ class FileJournalCoreFormatTest extends kyo.test.Test[Any]:
 
     private def binaryConfiguration(using Frame) =
         for
-            codecs        <- EventLogCodecs.bytes()
-            configuration <- FileJournal.Binary.configuration(journalId, codecs)
+            codecs <- EventLogCodecs.bytes()
+            configuration = FileJournal.Binary.configuration(journalId, codecs)
         yield configuration
 
     private def jsonlConfiguration(using Frame) =
         for
-            codecs        <- EventLogCodecs.bytes()
-            configuration <- FileJournal.Jsonl.configuration(journalId, codecs)
+            codecs <- EventLogCodecs.bytes()
+            configuration = FileJournal.Jsonl.configuration(journalId, codecs)
         yield configuration
 
     // Opens the backend with the given configuration, returns the JournalStorageError if the open fails.

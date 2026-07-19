@@ -340,10 +340,10 @@ val opened =
             for
                 journalId <- JournalId("quest-party")
                 codecs    <- EventLog.Codecs.schema[QuestEvent]()
-                config    <- FileJournal.Binary.configuration(journalId, codecs)
-                dir       <- Path.tempDir("quest-party-")
-                backend   <- Journal.Backend.file(dir, config)
-                info      <- Journal.run(backend)(Journal.streamInfo(questId))
+                config = FileJournal.Binary.configuration(journalId, codecs)
+                dir     <- Path.tempDir("quest-party-")
+                backend <- Journal.Backend.file(dir, config)
+                info    <- Journal.run(backend)(Journal.streamInfo(questId))
             yield info
 ```
 

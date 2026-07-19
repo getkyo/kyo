@@ -45,10 +45,10 @@ class EventLogMigrationH2Test extends kyo.test.Test[Any]:
         Scope.run {
             hostTempDir("kyo-eventlog-migrate-h2").map { dir =>
                 for
-                    codecs       <- EventLogCodecs.bytes()
-                    sourceConfig <- FileJournal.Binary.configuration(journalId("migrate-h2-source"), codecs, FileJournal.Options.default)
-                    source       <- Journal.Backend.file(dir, sourceConfig)
-                    target       <- Journal.Backend.h2(dataSource)
+                    codecs <- EventLogCodecs.bytes()
+                    sourceConfig = FileJournal.Binary.configuration(journalId("migrate-h2-source"), codecs, FileJournal.Options.default)
+                    source <- Journal.Backend.file(dir, sourceConfig)
+                    target <- Journal.Backend.h2(dataSource)
                     _ <- Abort.run[JournalError](source.append(
                         streamId,
                         ExpectedOffset.NoStream,

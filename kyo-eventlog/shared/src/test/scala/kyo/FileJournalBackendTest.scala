@@ -19,12 +19,7 @@ class FileJournalBinaryBackendTest
                 case Result.Success(c)   => c
                 case Result.Failure(err) => throw err
                 case panic: Result.Panic => throw panic.exception
-            val configuration = Abort.run[FileJournal.ConfigurationError](
-                FileJournal.Binary.configuration(journalId, codecs)
-            ).eval match
-                case Result.Success(c)   => c
-                case Result.Failure(err) => throw err
-                case panic: Result.Panic => throw panic.exception
+            val configuration = FileJournal.Binary.configuration(journalId, codecs)
             Abort.run[JournalStorageError](
                 Journal.Backend.file(dir, configuration)
             ).map {
@@ -52,12 +47,7 @@ class FileJournalJsonlBackendTest
                 case Result.Success(c)   => c
                 case Result.Failure(err) => throw err
                 case panic: Result.Panic => throw panic.exception
-            val configuration = Abort.run[FileJournal.ConfigurationError](
-                FileJournal.Jsonl.configuration(journalId, codecs)
-            ).eval match
-                case Result.Success(c)   => c
-                case Result.Failure(err) => throw err
-                case panic: Result.Panic => throw panic.exception
+            val configuration = FileJournal.Jsonl.configuration(journalId, codecs)
             Abort.run[JournalStorageError](
                 Journal.Backend.file(dir, configuration)
             ).map {

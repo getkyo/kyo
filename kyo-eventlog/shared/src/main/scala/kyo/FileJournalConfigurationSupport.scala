@@ -22,19 +22,17 @@ extension (self: FileJournal.type)
         journalId: JournalId,
         codecs: EventLog.Codecs[A],
         options: FileJournal.Options
-    )(using frame: Frame): Result[FileJournal.ConfigurationError, FileJournal.Configuration[A]] =
+    )(using frame: Frame): FileJournal.Configuration[A] =
         val payloadMediaType = codecs.value match
             case EventLogCodecs.ValueCodec.SchemaValue(_, binary, _) => binary.mediaType
             case _: EventLogCodecs.ValueCodec.BytesValue.type        => "application/octet-stream"
-        Result.succeed(
-            FileJournal.Configuration[A](
-                journalId = journalId,
-                codecs = codecs,
-                options = options,
-                profileName = "binary",
-                metadataMediaType = codecs.metadata.codec.mediaType,
-                payloadMediaType = payloadMediaType
-            )
+        FileJournal.Configuration[A](
+            journalId = journalId,
+            codecs = codecs,
+            options = options,
+            profileName = "binary",
+            metadataMediaType = codecs.metadata.codec.mediaType,
+            payloadMediaType = payloadMediaType
         )
     end binaryConfiguration
 
@@ -46,19 +44,17 @@ extension (self: FileJournal.type)
         journalId: JournalId,
         codecs: EventLog.Codecs[A],
         options: FileJournal.Options
-    )(using frame: Frame): Result[FileJournal.ConfigurationError, FileJournal.Configuration[A]] =
+    )(using frame: Frame): FileJournal.Configuration[A] =
         val payloadMediaType = codecs.value match
             case EventLogCodecs.ValueCodec.SchemaValue(_, _, json) => json.mediaType
             case _: EventLogCodecs.ValueCodec.BytesValue.type      => "application/json"
-        Result.succeed(
-            FileJournal.Configuration[A](
-                journalId = journalId,
-                codecs = codecs,
-                options = options,
-                profileName = "jsonl",
-                metadataMediaType = codecs.metadata.codec.mediaType,
-                payloadMediaType = payloadMediaType
-            )
+        FileJournal.Configuration[A](
+            journalId = journalId,
+            codecs = codecs,
+            options = options,
+            profileName = "jsonl",
+            metadataMediaType = codecs.metadata.codec.mediaType,
+            payloadMediaType = payloadMediaType
         )
     end jsonlConfiguration
 end extension

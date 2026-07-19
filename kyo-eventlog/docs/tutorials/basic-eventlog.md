@@ -244,10 +244,10 @@ type parameter.
 ```scala
 val profiles =
     for
-        journalId    <- JournalId("quest-party")
-        codecs       <- EventLog.Codecs.schema[QuestEvent]()
-        binaryConfig <- FileJournal.Binary.configuration(journalId, codecs)
-        jsonlConfig  <- FileJournal.Jsonl.configuration(journalId, codecs)
+        journalId <- JournalId("quest-party")
+        codecs    <- EventLog.Codecs.schema[QuestEvent]()
+        binaryConfig = FileJournal.Binary.configuration(journalId, codecs)
+        jsonlConfig  = FileJournal.Jsonl.configuration(journalId, codecs)
     yield (binaryConfig, jsonlConfig)
 ```
 
@@ -262,10 +262,10 @@ val persisted =
                 journalId <- JournalId("quest-party")
                 name      <- Event.StreamName("quest")
                 codecs    <- EventLog.Codecs.schema[QuestEvent]()
-                config    <- FileJournal.Binary.configuration(journalId, codecs)
-                dir       <- Path.tempDir("quest-party-")
-                log       <- EventLog.init(codecs, journalId)
-                backend   <- Journal.Backend.file(dir, config)
+                config = FileJournal.Binary.configuration(journalId, codecs)
+                dir     <- Path.tempDir("quest-party-")
+                log     <- EventLog.init(codecs, journalId)
+                backend <- Journal.Backend.file(dir, config)
                 records <- Journal.run(backend):
                     given Event.Definition[QuestEvent, QuestStarted] =
                         Event.Definition.schema[QuestEvent, QuestStarted](Event.StreamSelector.by(name)(e => Chunk(e.quest)))
