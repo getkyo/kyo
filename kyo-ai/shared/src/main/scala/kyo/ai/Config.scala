@@ -27,7 +27,8 @@ final case class Config private (
     meter: Meter = Meter.Noop,
     timeout: Duration = 2.minutes,
     maxIterations: Int = 5,
-    retrySchedule: Schedule = Schedule.repeat(10)
+    retrySchedule: Schedule = Schedule.repeat(10),
+    embedder: Maybe[Config] = Absent
 ):
     def apiUrl(url: String): Config                    = copy(apiUrl = url)
     def apiKey(key: String): Config                    = copy(apiKey = Present(key))
@@ -39,6 +40,13 @@ final case class Config private (
     def timeout(timeout: Duration): Config             = copy(timeout = timeout)
     def maxIterations(max: Int): Config                = copy(maxIterations = max)
     def retrySchedule(retrySchedule: Schedule): Config = copy(retrySchedule = retrySchedule)
+
+    /** Pairs a different provider config for embeddings. When a compactor is enabled, its embedding
+      * step resolves `embedder.getOrElse(this)` and embeds through THAT provider's completion, so
+      * `Absent` embeds with the chat config itself. `Completion.embed` does not read this field; the
+      * resolution lives in the compactor.
+      */
+    def embedder(config: Config): Config = copy(embedder = Present(config))
 
     // Internal Maybe form for cross-run seed derivation, where the prior seed may be Absent.
     private[kyo] def seed(seed: Maybe[Int]): Config = copy(seed = seed)
@@ -107,6 +115,14 @@ object Config:
     ):
         val orgKey: String = keyName + "_ORG"
         def default: Config
+
+        /** The provider's cheap-tier catalog entry, the primary cheap-tier selector the
+          * compactor's judge/summarizer select via `AI.withConfig`. Concrete with a `= default`
+          * fallback so an external `Provider` subclass keeps compiling and degrades safely (it
+          * runs the judge on the provider's default entry, costlier but never wrong); the nine
+          * built-in catalog objects override it with their cheap entry, the single source of truth.
+          */
+        def small: Config = default
     end Provider
 
     object Provider:
@@ -141,12 +157,13 @@ object Config:
             "ANTHROPIC_API_KEY",
             Completion.anthropic
         ):
-        val opus_4_8: Config   = catalog(this, "claude-opus-4-8", 1000000)
-        val sonnet_4_6: Config = catalog(this, "claude-sonnet-4-6", 1000000)
-        val haiku_4_5: Config  = catalog(this, "claude-haiku-4-5-20251001", 200000)
-        val fable_5: Config    = catalog(this, "claude-fable-5", 1000000)
-        val sonnet_4_5: Config = catalog(this, "claude-sonnet-4-5-20250929", 200000)
-        def default: Config    = opus_4_8
+        val opus_4_8: Config       = catalog(this, "claude-opus-4-8", 1000000)
+        val sonnet_4_6: Config     = catalog(this, "claude-sonnet-4-6", 1000000)
+        val haiku_4_5: Config      = catalog(this, "claude-haiku-4-5-20251001", 200000)
+        val fable_5: Config        = catalog(this, "claude-fable-5", 1000000)
+        val sonnet_4_5: Config     = catalog(this, "claude-sonnet-4-5-20250929", 200000)
+        def default: Config        = opus_4_8
+        override def small: Config = haiku_4_5
     end Anthropic
 
     case object OpenAI extends Provider(
@@ -155,19 +172,20 @@ object Config:
             "OPENAI_API_KEY",
             Completion.openAI
         ):
-        val gpt_5_5: Config      = catalog(this, "gpt-5.5", 1050000)
-        val gpt_5_4: Config      = catalog(this, "gpt-5.4", 1050000)
-        val gpt_5_4_mini: Config = catalog(this, "gpt-5.4-mini", 400000)
-        val gpt_5: Config        = catalog(this, "gpt-5", 400000)
-        val gpt_5_mini: Config   = catalog(this, "gpt-5-mini", 400000)
-        val gpt_5_nano: Config   = catalog(this, "gpt-5-nano", 400000)
-        val gpt_4_1: Config      = catalog(this, "gpt-4.1", 1047576)
-        val gpt_4_1_mini: Config = catalog(this, "gpt-4.1-mini", 1047576)
-        val gpt_4o: Config       = catalog(this, "gpt-4o", 128000)
-        val gpt_4o_mini: Config  = catalog(this, "gpt-4o-mini", 128000)
-        val o3: Config           = catalog(this, "o3", 200000)
-        val o4_mini: Config      = catalog(this, "o4-mini", 200000)
-        def default: Config      = gpt_5_4
+        val gpt_5_5: Config        = catalog(this, "gpt-5.5", 1050000)
+        val gpt_5_4: Config        = catalog(this, "gpt-5.4", 1050000)
+        val gpt_5_4_mini: Config   = catalog(this, "gpt-5.4-mini", 400000)
+        val gpt_5: Config          = catalog(this, "gpt-5", 400000)
+        val gpt_5_mini: Config     = catalog(this, "gpt-5-mini", 400000)
+        val gpt_5_nano: Config     = catalog(this, "gpt-5-nano", 400000)
+        val gpt_4_1: Config        = catalog(this, "gpt-4.1", 1047576)
+        val gpt_4_1_mini: Config   = catalog(this, "gpt-4.1-mini", 1047576)
+        val gpt_4o: Config         = catalog(this, "gpt-4o", 128000)
+        val gpt_4o_mini: Config    = catalog(this, "gpt-4o-mini", 128000)
+        val o3: Config             = catalog(this, "o3", 200000)
+        val o4_mini: Config        = catalog(this, "o4-mini", 200000)
+        def default: Config        = gpt_5_4
+        override def small: Config = gpt_5_nano
     end OpenAI
 
     case object DeepSeek extends Provider(
@@ -179,6 +197,7 @@ object Config:
         val deepseek_v4_flash: Config = catalog(this, "deepseek-v4-flash", 1000000)
         val deepseek_v4_pro: Config   = catalog(this, "deepseek-v4-pro", 1000000)
         def default: Config           = deepseek_v4_flash
+        override def small: Config    = deepseek_v4_flash
     end DeepSeek
 
     case object Gemini extends Provider(
@@ -191,6 +210,7 @@ object Config:
         val gemini_2_5_flash: Config      = catalog(this, "gemini-2.5-flash", 1048576)
         val gemini_2_5_flash_lite: Config = catalog(this, "gemini-2.5-flash-lite", 1048576)
         def default: Config               = gemini_2_5_flash
+        override def small: Config        = gemini_2_5_flash_lite
     end Gemini
 
     case object Groq extends Provider(
@@ -204,6 +224,7 @@ object Config:
         val llama_3_3_70b_versatile: Config = catalog(this, "llama-3.3-70b-versatile", 131072)
         val llama_3_1_8b_instant: Config    = catalog(this, "llama-3.1-8b-instant", 131072)
         def default: Config                 = gpt_oss_120b
+        override def small: Config          = llama_3_1_8b_instant
     end Groq
 
     case object Baseten extends Provider(
@@ -215,6 +236,7 @@ object Config:
         val deepseek_v4_pro: Config = catalog(this, "deepseek-ai/DeepSeek-V4-Pro", 1000000)
         val gpt_oss_120b: Config    = catalog(this, "openai/gpt-oss-120b", 131072)
         def default: Config         = deepseek_v4_pro
+        override def small: Config  = gpt_oss_120b
     end Baseten
 
     case object OpenRouter extends Provider(
@@ -238,6 +260,7 @@ object Config:
         val gpt_oss_20b: Config               = catalog(this, "openai/gpt-oss-20b:nitro", 131072)
         val gpt_5_mini: Config                = catalog(this, "openai/gpt-5-mini", 400000)
         def default: Config                   = grok_4_fast
+        override def small: Config            = llama_3_1_8b_instruct
     end OpenRouter
 
     case object ClaudeCode extends Provider(
@@ -247,10 +270,11 @@ object Config:
             Completion.claudeCode,
             usesApiKey = false
         ):
-        val opus: Config    = catalog(this, "opus", 1000000)
-        val sonnet: Config  = catalog(this, "sonnet", 1000000)
-        val haiku: Config   = catalog(this, "haiku", 200000)
-        def default: Config = sonnet
+        val opus: Config           = catalog(this, "opus", 1000000)
+        val sonnet: Config         = catalog(this, "sonnet", 1000000)
+        val haiku: Config          = catalog(this, "haiku", 200000)
+        def default: Config        = sonnet
+        override def small: Config = haiku
     end ClaudeCode
 
     case object Codex extends Provider(
@@ -260,12 +284,13 @@ object Config:
             Completion.codex,
             usesApiKey = false
         ):
-        val auto: Config       = catalog(this, "", 400000)
-        val gpt_5_5: Config    = catalog(this, "gpt-5.5", 1050000)
-        val gpt_5_4: Config    = catalog(this, "gpt-5.4", 1050000)
-        val gpt_5: Config      = catalog(this, "gpt-5", 400000)
-        val gpt_5_mini: Config = catalog(this, "gpt-5-mini", 400000)
-        def default: Config    = auto
+        val auto: Config           = catalog(this, "", 400000)
+        val gpt_5_5: Config        = catalog(this, "gpt-5.5", 1050000)
+        val gpt_5_4: Config        = catalog(this, "gpt-5.4", 1050000)
+        val gpt_5: Config          = catalog(this, "gpt-5", 400000)
+        val gpt_5_mini: Config     = catalog(this, "gpt-5-mini", 400000)
+        def default: Config        = auto
+        override def small: Config = gpt_5_mini
     end Codex
 
 end Config

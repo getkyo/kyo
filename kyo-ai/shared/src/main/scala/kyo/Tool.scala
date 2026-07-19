@@ -30,18 +30,42 @@ object Tool:
 
     import internal.*
 
-    /** Builds a typed tool from an input type, output type, name, description, prompt, and run function. */
+    /** Declares whether a tool reads or writes the state its `compactionKey` names, so the
+      * compactor can tell a re-read from a write when applying supersession.
+      */
+    enum Kind derives CanEqual:
+        case Read, Write
+
+    /** Builds a typed tool from an input type, output type, name, description, prompt, and run function.
+      *
+      * `kind` and `compactionKey` are the compaction-supersession metadata: a tool supplying a
+      * `compactionKey` extractor opts into key-based supersession (a later same-key unit supersedes an
+      * earlier one); the default `_ => Absent` is keyless (never supersedes, never superseded). `kind`
+      * distinguishes a re-read from a write. Both default so every existing call site compiles unchanged.
+      */
     def init[In](using
         Schema[In]
     )[Out: Schema, S](
         name: String,
         description: String = "",
-        prompt: Prompt[S] = Prompt.empty
+        prompt: Prompt[S] = Prompt.empty,
+        kind: Tool.Kind = Tool.Kind.Read,
+        compactionKey: In => Maybe[String] = (_: In) => Absent
     )(
         run: In => Out < S
     )(using frame: Frame): Tool[S] =
         new Tool[S]:
-            def infos = Chunk(Info(name, description, prompt, run, summon[Schema[In]], summon[Schema[Out]], frame))
+            def infos = Chunk(Info(
+                name,
+                description,
+                prompt,
+                run,
+                summon[Schema[In]],
+                summon[Schema[Out]],
+                frame,
+                kind,
+                compactionKey.asInstanceOf[Any => Maybe[String]]
+            ))
 
     /** Combines tools into one. */
     def aggregate[S](tools: Tool[S]*): Tool[S] =
@@ -60,7 +84,9 @@ object Tool:
             run: In => Out < (LLM & S),
             inputSchema: Schema[In],
             outputSchema: Schema[Out],
-            createdAt: Frame
+            createdAt: Frame,
+            kind: Tool.Kind = Tool.Kind.Read,
+            compactionKey: Any => Maybe[String] = (_: Any) => Absent
         )
 
         def infos(using Frame): Chunk[Info[?, ?, LLM]] < LLM =
@@ -85,6 +111,7 @@ object Tool:
                 outputSchema = summon[Schema[Unit]],
                 createdAt = frame
             )
+            // kind/compactionKey take their Read/keyless defaults: the result tool never supersedes.
             new Tool[LLM]:
                 def infos = Chunk(info)
         end resultToolInfo

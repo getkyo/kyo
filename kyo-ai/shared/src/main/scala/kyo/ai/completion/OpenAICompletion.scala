@@ -207,7 +207,7 @@ private[completion] object OpenAICompletion extends Completion:
         case class ResponseToolCall(id: String, function: ResponseFunctionCall) derives Schema
         case class ResponseMessage(content: Maybe[String], tool_calls: Maybe[List[ResponseToolCall]]) derives Schema
         case class Choice(message: ResponseMessage) derives Schema
-        // usage rides the reply today undecoded; widened here to capture prompt/completion/cached tokens.
+        // Decodes the reply's usage object (prompt/completion/cached tokens).
         case class PromptTokensDetails(cached_tokens: Maybe[Int] = Absent) derives Schema
         case class Usage(prompt_tokens: Int, completion_tokens: Int, prompt_tokens_details: Maybe[PromptTokensDetails] = Absent)
             derives Schema

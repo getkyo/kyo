@@ -31,4 +31,10 @@ class EmbeddingTest extends kyo.test.Test[Any]:
         assert(a.cosine(b) == Absent, s"a dim-0 pair must guard the division by zero, got: ${a.cosine(b)}")
     }
 
+    "a same-space all-zeros vector yields cosine 0.0, never a division by zero" in {
+        val a = Embedding(Span(0f, 0f, 0f), "m", 3)
+        val b = Embedding(Span(1f, 0f, 0f), "m", 3)
+        assert(a.cosine(b) == Present(0.0), s"an all-zeros vector must guard the zero-norm division, got: ${a.cosine(b)}")
+    }
+
 end EmbeddingTest

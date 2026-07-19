@@ -39,7 +39,15 @@ class CompletionTest extends kyo.test.Test[Any]:
                         OpenAICompletion(config, ctx, Chunk.empty)
                     }
                 }.map { result =>
-                    assert(result.isSuccess)
+                    result match
+                        case Result.Success(res) =>
+                            assert(
+                                res.messages == Chunk(AssistantMessage("hello", Chunk.empty)),
+                                s"expected the decoded assistant message, got: ${res.messages}"
+                            )
+                            assert(res.usage == Absent, s"expected Absent usage when the wire omits it, got: ${res.usage}")
+                        case other =>
+                            assert(false, s"expected success, got: $other")
                 }
             }
         }

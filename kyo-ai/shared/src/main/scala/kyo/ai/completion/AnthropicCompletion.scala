@@ -48,8 +48,8 @@ private[completion] object AnthropicCompletion extends Completion:
                     Json.encode(c.input.getOrElse(Structure.Value.Record(Chunk.empty)))
                 )
         }.to(Chunk)
-        // The internal snake_case wire Usage is decoded but was dropped; CONVERT it to the public
-        // camelCase Completion.Usage (no cached-tokens field on the Anthropic DTO, so Absent).
+        // Convert the internal snake_case wire Usage to the public camelCase Completion.Usage (the
+        // Anthropic DTO has no cached-tokens field, so cachedInputTokens is Absent).
         val usage = response.usage.map(u =>
             Completion.Usage(inputTokens = u.input_tokens, outputTokens = u.output_tokens, cachedInputTokens = Absent)
         )

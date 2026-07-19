@@ -152,6 +152,34 @@ class ConfigTest extends kyo.test.Test[Any]:
         assert(Config.Codex.default.modelName == "")
     }
 
+    "Config.embedder builder round-trips" in {
+        val config = Config.OpenAI.default
+        val e      = Config.Anthropic.default
+        config.embedder(e).embedder match
+            case Present(c) => assert(c eq e, s"expected the paired embedder config, got: $c")
+            case Absent     => assert(false, "expected embedder to be Present after the builder call")
+        assert(config.embedder == Absent, s"a default Config must leave embedder Absent, got: ${config.embedder}")
+    }
+
+    "every catalog Provider.small resolves to its named cheap literal" in {
+        assert(Config.Anthropic.small.modelName == "claude-haiku-4-5-20251001" && (Config.Anthropic.small.provider eq Config.Anthropic))
+        assert(Config.OpenAI.small.modelName == "gpt-5-nano" && (Config.OpenAI.small.provider eq Config.OpenAI))
+        assert(Config.DeepSeek.small.modelName == "deepseek-v4-flash" && (Config.DeepSeek.small.provider eq Config.DeepSeek))
+        assert(Config.Gemini.small.modelName == "gemini-2.5-flash-lite" && (Config.Gemini.small.provider eq Config.Gemini))
+        assert(Config.Groq.small.modelName == "llama-3.1-8b-instant" && (Config.Groq.small.provider eq Config.Groq))
+        assert(Config.Baseten.small.modelName == "openai/gpt-oss-120b" && (Config.Baseten.small.provider eq Config.Baseten))
+        assert(
+            Config.OpenRouter.small.modelName == "meta-llama/llama-3.1-8b-instruct:nitro" && (Config.OpenRouter.small.provider eq Config.OpenRouter)
+        )
+        assert(Config.ClaudeCode.small.modelName == "haiku" && (Config.ClaudeCode.small.provider eq Config.ClaudeCode))
+        assert(Config.Codex.small.modelName == "gpt-5-mini" && (Config.Codex.small.provider eq Config.Codex))
+    }
+
+    "Provider.small is a distinct accessor from default where the catalog differs" in {
+        assert(Config.Anthropic.small.modelName != Config.Anthropic.default.modelName)
+        assert(Config.OpenAI.small.modelName != Config.OpenAI.default.modelName)
+    }
+
     private class TestUnsafeSystem(
         envVars: Map[String, String] = Map.empty,
         properties: Map[String, String] = Map.empty

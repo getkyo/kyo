@@ -528,7 +528,7 @@ object LLM:
                     }
                 }
             messages = completion.messages
-            // completion.usage feeds the usage calibration; unused on this line (default-off unchanged).
+            // completion.usage carries provider usage for the estimator; not consumed here.
             _ <- Log.debug(
                 s"kyo-ai gen backend=${config.provider.name} returned messages=${messages.size} " +
                     s"toolCalls=${messages.collect { case msg: AssistantMessage => msg.calls.size }.sum}"

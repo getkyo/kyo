@@ -174,4 +174,51 @@ class ToolTest extends kyo.test.Test[Any]:
         }
     }
 
+    "Tool.init defaults: kind Read, compactionKey keyless" in {
+        val tool = Tool.init[Int]("t")(_ => 1)
+        val info = tool.infos.head
+        assert(info.kind == Tool.Kind.Read)
+        assert(info.compactionKey(42) == Absent, s"a keyless default must yield Absent, got: ${info.compactionKey(42)}")
+    }
+
+    "Tool.init custom write key surfaces on Info" in {
+        case class FileArg(path: String) derives Schema
+        val tool = Tool.init[FileArg]("edit", kind = Tool.Kind.Write, compactionKey = (i: FileArg) => Present(i.path))(_ => ())
+        val info = tool.infos.head
+        assert(info.kind == Tool.Kind.Write)
+        assert(
+            info.compactionKey(FileArg("/a")) == Present("/a"),
+            s"expected the extractor's key, got: ${info.compactionKey(FileArg("/a"))}"
+        )
+    }
+
+    "Tool.Kind derives CanEqual and is a closed two-case enum" in {
+        assert(Tool.Kind.Read == Tool.Kind.Read)
+        assert(Tool.Kind.Read != Tool.Kind.Write)
+        assert(Tool.Kind.values.length == 2, s"expected exactly 2 cases, got: ${Tool.Kind.values.length}")
+    }
+
+    "an existing no-metadata Tool.init call site still compiles and behaves unchanged" in {
+        val callId     = CallId("legacy-id")
+        val call       = Call(callId, "legacy", "5")
+        val legacyTool = Tool.init[Int]("legacy", "desc")(n => n + 1)
+        val legacyInfo = legacyTool.infos.head.asInstanceOf[Tool.internal.Info[?, ?, LLM]]
+        LLM.run(
+            AI.init.map { ai =>
+                Tool.internal.handle(ai, Chunk(legacyInfo), Chunk(call))
+                    .andThen(ai.context.map(identity))
+            }
+        ).map { ctx =>
+            val result = ctx.messages.toList.collectFirst {
+                case ToolMessage(cid, content) if cid == callId => content
+            }
+            assert(result == Some(Json.encode(6)), s"expected the legacy tool's encoded run result, got: $result")
+            assert(legacyInfo.kind == Tool.Kind.Read, "a no-metadata call site must default kind to Read")
+            assert(
+                legacyInfo.compactionKey(999) == Absent,
+                "a no-metadata call site must default compactionKey to keyless"
+            )
+        }
+    }
+
 end ToolTest
