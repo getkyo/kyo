@@ -42,6 +42,14 @@ on:
         type: string
         required: false
         default: './scripts/ci-test.sh JVM test'
+      custom-runner:
+        description: 'Used only when mode=custom: the GitHub-hosted runner label the command runs on.'
+        type: choice
+        options:
+          - ubuntu-latest
+          - ubuntu-24.04-arm
+          - windows-latest
+        default: ubuntu-latest
       ref:
         description: 'Git ref (branch or sha) to check out and test. Defaults to the ref the workflow is dispatched on.'
         type: string
@@ -53,7 +61,7 @@ on:
 # its own; cancel-in-progress only acts within a group, so a later push never cancels an earlier
 # main run.
 concurrency:
-  group: ci-${{ github.event.pull_request.number || github.sha }}-${{ inputs.mode }}-${{ inputs.targets }}-${{ inputs.oses }}-${{ inputs.command }}
+  group: ci-${{ github.event.pull_request.number || github.sha }}-${{ inputs.mode }}-${{ inputs.targets }}-${{ inputs.oses }}-${{ inputs.command }}-${{ inputs.custom-runner }}
   cancel-in-progress: true
 
 jobs:
@@ -133,7 +141,7 @@ jobs:
     needs: prep
     if: ${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'custom' }}
     timeout-minutes: 180
-    runs-on: ubuntu-latest
+    runs-on: ${{ inputs.custom-runner }}
     env:
       SBT_TASK_LIMIT: 1
       JAVA_OPTS: '-Xmx12G -Xss10M -XX:+UseG1GC -XX:+UseCompactObjectHeaders -XX:MaxMetaspaceSize=2G -XX:ReservedCodeCacheSize=256M -Dfile.encoding=UTF-8'
@@ -143,9 +151,19 @@ jobs:
         with:
           ref: ${{ inputs.ref || github.ref }}
           fetch-depth: 0
+      - id: os
+        shell: bash
+        env:
+          RUNNER_LABEL: ${{ inputs.custom-runner }}
+        run: |
+          case "$RUNNER_LABEL" in
+            windows-*) echo "os=windows-x64" >> "$GITHUB_OUTPUT" ;;
+            *-arm)     echo "os=linux-arm64" >> "$GITHUB_OUTPUT" ;;
+            *)         echo "os=linux-x64" >> "$GITHUB_OUTPUT" ;;
+          esac
       - uses: ./.github/actions/setup
         with:
-          os: linux-x64
+          os: ${{ steps.os.outputs.os }}
           target: JVM
       - name: Run command
         shell: bash
