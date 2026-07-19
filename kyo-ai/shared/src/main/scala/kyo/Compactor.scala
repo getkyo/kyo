@@ -181,11 +181,11 @@ final class Compactor private (
                     }
                 }
             // Semantic: symmetric mutual-kNN over landed vectors above the floor, decayed by gap.
-            val vecUnits                = ordered.filter(u => state.vectors.contains(u.id))
-            def vec(id: Int): Embedding = state.vectors.get(id).getOrElse(sys.error("missing vector"))
+            val vecUnits                       = ordered.filter(u => state.vectors.contains(u.id))
+            def vec(id: Int): Maybe[Embedding] = state.vectors.get(id)
             def neighbors(u: Segment): List[(Int, Double)] =
                 vecUnits.filter(_.id != u.id).flatMap { v =>
-                    vec(u.id).cosine(vec(v.id)) match
+                    vec(u.id).flatMap(a => vec(v.id).flatMap(a.cosine)) match
                         case Present(c) if c >= config.semanticFloor => List((v.id, c))
                         case _                                       => Nil
                 }.sortBy(-_._2).take(config.semanticNeighbors)
@@ -351,34 +351,41 @@ final class Compactor private (
       * is always provider-legal.
       */
     private[kyo] def project(transcript: Context, state: CompactorState): Context =
-        val rendering = state.renderings
-        if rendering.isEmpty then transcript
-        else
-            val units   = group(transcript, state.book)
-            val ordered = units.toList.sortBy(_.id)
-            val msgToId = ordered.foldLeft(Map.empty[Int, Int])((m, u) => u.messages.foldLeft(m)((mm, idx) => mm.updated(idx, u.id)))
-            // Units dropped because a preceding summary's covers-run subsumes them.
-            val covered = ordered.zipWithIndex.foldLeft(Set.empty[Int]) { case (acc, (u, p)) =>
-                rendering.get(u.id) match
-                    case Present(r) if r.covers > 1 =>
-                        acc ++ ordered.slice(p + 1, math.min(p + r.covers, ordered.size)).map(_.id)
-                    case _ => acc
-            }
-            val (out, _) =
-                transcript.messages.zipWithIndex.foldLeft((Chunk.empty[Message], Set.empty[Int])) {
-                    case ((acc, emitted), (m, i)) =>
-                        val uid = msgToId.getOrElse(i, i)
-                        if covered.contains(uid) then (acc, emitted)
-                        else if emitted.contains(uid) then (acc, emitted)
-                        else
-                            rendering.get(uid) match
-                                case Present(r) => (acc ++ r.replacement, emitted + uid)
-                                case Absent     => (acc.append(m), emitted)
-                        end if
-                }
-            Context(out)
-        end if
+        if state.renderings.isEmpty then transcript
+        else projectFrom(transcript, state, 0)
     end project
+
+    // The projected view restricted to the units whose id is at or after `fromId` (fromId 0 yields the
+    // whole view). Shares project's covers-skip rule so a suffix token count matches the emitted view
+    // exactly: a summary entry with covers > 1 absorbs the next covers-1 units, never double-counted, and
+    // a summary anchored before the cut keeps its absorbed units out of the suffix.
+    private[kyo] def projectFrom(transcript: Context, state: CompactorState, fromId: Int): Context =
+        val rendering = state.renderings
+        val units     = group(transcript, state.book)
+        val ordered   = units.toList.sortBy(_.id)
+        val msgToId   = ordered.foldLeft(Map.empty[Int, Int])((m, u) => u.messages.foldLeft(m)((mm, idx) => mm.updated(idx, u.id)))
+        // Units dropped because a preceding summary's covers-run subsumes them.
+        val covered = ordered.zipWithIndex.foldLeft(Set.empty[Int]) { case (acc, (u, p)) =>
+            rendering.get(u.id) match
+                case Present(r) if r.covers > 1 =>
+                    acc ++ ordered.slice(p + 1, math.min(p + r.covers, ordered.size)).map(_.id)
+                case _ => acc
+        }
+        val (out, _) =
+            transcript.messages.zipWithIndex.foldLeft((Chunk.empty[Message], Set.empty[Int])) {
+                case ((acc, emitted), (m, i)) =>
+                    val uid = msgToId.getOrElse(i, i)
+                    if uid < fromId then (acc, emitted)
+                    else if covered.contains(uid) then (acc, emitted)
+                    else if emitted.contains(uid) then (acc, emitted)
+                    else
+                        rendering.get(uid) match
+                            case Present(r) => (acc ++ r.replacement, emitted + uid)
+                            case Absent     => (acc.append(m), emitted)
+                    end if
+            }
+        Context(out)
+    end projectFrom
 
     // ---- lifecycle helpers ----
 
@@ -432,26 +439,22 @@ final class Compactor private (
                                             // OR budget exhaustion); a blocked deep edit records book.skip so it does not
                                             // re-fire every turn.
                                             val occupied = viewTokens(project(transcript, st), st.book)
-                                            val after = viewTokens(
-                                                project(transcript, st.copy(renderings = st.renderings.update(u.id, r))),
-                                                st.book
-                                            )
-                                            val saved   = math.max(0, occupied - after)
+                                            val postEdit = st.copy(renderings = st.renderings.update(u.id, r))
+                                            val after    = viewTokens(project(transcript, postEdit), st.book)
+                                            val saved    = math.max(0, occupied - after)
+                                            // L_cut is the rendered tail AFTER the edit point: the suffix from u onward under the
+                                            // post-edit state, the tokens whose cache the edit actually invalidates (a shallow edit
+                                            // near the tail invalidates little; a deep edit into the frozen prefix invalidates most).
+                                            val lCut    = viewTokens(projectFrom(transcript, postEdit, u.id), postEdit.book)
                                             val curAt   = st.renderings.get(u.id).map(_.at).getOrElse(0)
                                             val refetch = refetchCount(u.id, transcript, curAt)
-                                            val allowed = cacheGatePasses(saved, occupied, deepCacheDiscount, deepWritePremium) || rotFires(
+                                            val allowed = cacheGatePasses(saved, lCut, deepCacheDiscount, deepWritePremium) || rotFires(
                                                 refetch,
                                                 occupied,
                                                 e
                                             )
                                             if allowed then
-                                                demote(
-                                                    rest,
-                                                    st.copy(
-                                                        renderings = st.renderings.update(u.id, r),
-                                                        book = st.book.copy(lastDeepEdit = updateIdx)
-                                                    )
-                                                )
+                                                demote(rest, postEdit.copy(book = st.book.copy(lastDeepEdit = updateIdx)))
                                             else
                                                 demote(rest, st.copy(book = st.book.copy(skip = st.book.skip.update(u.id, occupied))))
                                             end if
@@ -592,20 +595,54 @@ final class Compactor private (
             .take(config.bandSize)
     end judgeBand
 
-    // Contiguous runs (>= 2 units) of non-root demotable units, split at roots: each is one summarization
-    // candidate the background summarizer prepares (adopted at the next update after re-validation).
+    // Contiguous runs (>= 2 units) of non-root demotable units, each one summarization candidate the
+    // background summarizer prepares (adopted at the next update after re-validation). A run breaks at roots,
+    // unresolved units, and intermediate User boundaries; when every unit in a run carries a landed vector it
+    // is split further at the widest pairwise-cosine gap until each sub-run's mean pairwise cosine clears
+    // coherenceFloor, so only coherent regions co-summarize.
     private[kyo] def summaryCandidates(units: Chunk[Segment], transcript: Context, state: CompactorState): List[List[Segment]] =
         val rootSet = roots(units, transcript, state.book)
         val ordered = units.toList.sortBy(_.id)
+        def boundary(u: Segment): Boolean =
+            rootSet.contains(u.id) || u.unresolved || hasUser(u, transcript)
         @tailrec def group(rem: List[Segment], cur: List[Segment], acc: List[List[Segment]]): List[List[Segment]] =
             rem match
                 case Nil => (if cur.nonEmpty then cur.reverse :: acc else acc).reverse
                 case u :: rest =>
-                    if rootSet.contains(u.id) || u.unresolved then
+                    if boundary(u) then
                         group(rest, Nil, if cur.nonEmpty then cur.reverse :: acc else acc)
                     else group(rest, u :: cur, acc)
-        group(ordered, Nil, Nil).filter(_.size >= 2)
+        group(ordered, Nil, Nil).flatMap(run => coherenceSplit(run, state)).filter(_.size >= 2)
     end summaryCandidates
+
+    // Splits a run at the widest adjacent pairwise-cosine gap until every sub-run's mean pairwise cosine
+    // clears coherenceFloor, applied only when every unit in the run carries a landed vector (with no
+    // vectors the run is left to the structural split alone). An Absent cosine (a cross-space mismatch)
+    // counts as a maximal gap and a below-floor contribution, so it forces a split rather than passing.
+    private def coherenceSplit(run: List[Segment], state: CompactorState): List[List[Segment]] =
+        if run.size < 2 || !run.forall(u => state.vectors.contains(u.id)) then List(run)
+        else
+            def vec(u: Segment): Maybe[Embedding] = state.vectors.get(u.id)
+            def meanCosine(sub: List[Segment]): Double =
+                val cosines = sub.combinations(2).toList.map {
+                    case a :: b :: Nil => vec(a).flatMap(x => vec(b).flatMap(x.cosine)).getOrElse(0.0)
+                    case _             => 0.0
+                }
+                if cosines.isEmpty then 1.0 else cosines.sum / cosines.size
+            end meanCosine
+            def split(sub: List[Segment]): List[List[Segment]] =
+                if sub.size < 2 || meanCosine(sub) >= config.coherenceFloor then List(sub)
+                else
+                    val gaps = sub.sliding(2).toList.map {
+                        case a :: b :: Nil =>
+                            vec(a).flatMap(x => vec(b).flatMap(x.cosine)).map(1.0 - _).getOrElse(Double.MaxValue)
+                        case _ => 0.0
+                    }
+                    val cut           = gaps.zipWithIndex.maxBy(_._1)._2 + 1
+                    val (left, right) = sub.splitAt(cut)
+                    split(left) ++ split(right)
+            split(run)
+    end coherenceSplit
 
     private def dispatchBackground(ai: AI, transcript: Context, units: Chunk[Segment], state: CompactorState)(using
         Frame
@@ -686,7 +723,7 @@ final class Compactor private (
 
     // The band-only judge context: a near-verifiable superseded/stale prompt plus each band unit's
     // content, so the judge sees nothing of the transcript beyond the units under evaluation.
-    private def judgeContext(band: List[Segment], transcript: Context): Context =
+    private[kyo] def judgeContext(band: List[Segment], transcript: Context): Context =
         val head = Context(Chunk(SystemMessage(
             "You judge context regions for compaction. For each region, answer only whether it is " +
                 "SUPERSEDED or STALE (its information is fully captured elsewhere or no longer accurate). " +
@@ -751,7 +788,7 @@ final class Compactor private (
         // and the emitted view stays byte-identical at this step.
         state
 
-    private def viewTokens(view: Context, book: Book): Int =
+    private[kyo] def viewTokens(view: Context, book: Book): Int =
         // byte-based estimate scaled by the calibrated ratio.
         (byteSize(view) * book.tokensPerByte).toInt
 

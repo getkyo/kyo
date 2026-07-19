@@ -362,21 +362,12 @@ class CompactorTest extends kyo.test.Test[Any]:
         Compactor.init.map { c =>
             val ctx  = ctxOf(am("a " + ("x" * 50)))
             val band = c.group(ctx, book0).toList
-            val jc   = invokeJudgeContext(c, band, ctx)
+            val jc   = c.judgeContext(band, ctx)
             val head = jc.messages.head.content.toLowerCase
             assert(head.contains("stale") || head.contains("superseded"), s"near-verifiable question: $head")
             assert(!head.contains("important"), s"never asks open-ended importance: $head")
         }
     }
-
-    // Reflect the private judgeContext by rebuilding through the public band path is not exposed; assert
-    // the prompt indirectly by dispatching and reading the server request in INV-CMP-57 instead.
-    def invokeJudgeContext(c: Compactor, band: List[Segment], ctx: Context): Context =
-        Context(Chunk(SystemMessage(
-            "You judge context regions for compaction. For each region, answer only whether it is " +
-                "SUPERSEDED or STALE (its information is fully captured elsewhere or no longer accurate). " +
-                "Answer only that near-verifiable question; do not judge importance or usefulness."
-        )))
 
     "INV-CMP-26: verdicts band-local ordinal" in {
         // update consumes state.verdicts: a Stale verdict on a band unit nudges it to be demoted, a Keep holds
@@ -542,6 +533,73 @@ class CompactorTest extends kyo.test.Test[Any]:
             assert(
                 step.exists(r => r.level == 3 && r.replacement.head.content == "PREP from original"),
                 s"L3 adopts the prepared summary: $step"
+            )
+        }
+    }
+
+    "INV-CMP-35: coherence split breaks a low-coherence run at the widest vector gap" in {
+        Compactor.init(_.copy(tailTurns = 1)).map { c =>
+            // Two coherent clusters inside one contiguous run of demotable units: {2,3} near-identical, {4,5}
+            // near-identical, cross-cluster near-orthogonal. The whole run's mean pairwise cosine sits below
+            // coherenceFloor (0.55) but each cluster independently clears it, so the run splits into two.
+            val ctx   = ctxOf(sm("s"), um("first"), am("m0"), am("m1"), am("m2"), am("m3"), um("latest"))
+            val units = c.group(ctx, book0)
+            val v2    = Embedding(Span(1.0f, 0.0f), "m", 2)
+            val v3    = Embedding(Span(0.99f, 0.14f), "m", 2)
+            val v4    = Embedding(Span(0.0f, 1.0f), "m", 2)
+            val v5    = Embedding(Span(0.14f, 0.99f), "m", 2)
+            val st    = CompactorState.empty.copy(vectors = Dict[Int, Embedding]((2, v2), (3, v3), (4, v4), (5, v5)))
+            val runs  = c.summaryCandidates(units, ctx, st)
+            assert(
+                runs.map(_.map(_.id).toSet).toSet == Set(Set(2, 3), Set(4, 5)),
+                s"a low-coherence run splits at the widest cosine gap into two coherent sub-runs: ${runs.map(_.map(_.id))}"
+            )
+        }
+    }
+
+    "INV-CMP-35: a coherent run is not split, and coherenceFloor is a live knob" in {
+        Compactor.init(_.copy(tailTurns = 1)).map { c =>
+            // Four mutually-close vectors: the whole run's mean pairwise cosine clears the default floor, so it
+            // stays one run. Raising coherenceFloor above that mean forces the same run to split, proving the
+            // knob provably changes behavior (it was a dead knob before this fix).
+            val ctx = ctxOf(sm("s"), um("first"), am("m0"), am("m1"), am("m2"), am("m3"), um("latest"))
+            val vectors = Dict[Int, Embedding](
+                (2, Embedding(Span(1.0f, 0.0f), "m", 2)),
+                (3, Embedding(Span(0.99f, 0.14f), "m", 2)),
+                (4, Embedding(Span(0.98f, 0.2f), "m", 2)),
+                (5, Embedding(Span(0.97f, 0.24f), "m", 2))
+            )
+            val units = c.group(ctx, book0)
+            val st    = CompactorState.empty.copy(vectors = vectors)
+            val runs  = c.summaryCandidates(units, ctx, st)
+            assert(
+                runs.map(_.map(_.id)) == List(List(2, 3, 4, 5)),
+                s"a coherent run stays whole under the default floor: ${runs.map(_.map(_.id))}"
+            )
+            val strict = Compactor.init(_.copy(tailTurns = 1, coherenceFloor = 0.999)).map { cc =>
+                cc.summaryCandidates(cc.group(ctx, book0), ctx, st)
+            }
+            strict.map { strictRuns =>
+                // Raising the floor above the run's mean cosine fragments it: the 4-unit run no longer
+                // survives whole, proving coherenceFloor provably changes behavior (it was a dead knob before).
+                assert(
+                    strictRuns.map(_.map(_.id)) != runs.map(_.map(_.id)) && !strictRuns.exists(_.size >= 4),
+                    s"raising coherenceFloor fragments the same run, proving the knob is live: ${strictRuns.map(_.map(_.id))}"
+                )
+            }
+        }
+    }
+
+    "INV-CMP-35: an intermediate User boundary splits a run even with no vectors" in {
+        Compactor.init(_.copy(tailTurns = 1)).map { c =>
+            // A run of demotable units with an intermediate UserMessage (not the campaign's first or last user,
+            // so not itself a root): the run splits around that user boundary rather than staying contiguous.
+            val ctx   = ctxOf(sm("s"), um("first"), am("a0"), am("a1"), um("mid"), am("b0"), am("b1"), um("latest"))
+            val units = c.group(ctx, book0)
+            val runs  = c.summaryCandidates(units, ctx, CompactorState.empty)
+            assert(
+                runs.map(_.map(_.id).toSet).toSet == Set(Set(2, 3), Set(5, 6)),
+                s"the run splits around the intermediate user unit (id 4), never sweeping it in: ${runs.map(_.map(_.id))}"
             )
         }
     }
@@ -835,6 +893,31 @@ class CompactorTest extends kyo.test.Test[Any]:
         }
     }
 
+    "INV-CMP-53: the cache gate binds L_cut to the post-edit suffix, not the whole view" in {
+        Compactor.init.map { c =>
+            // A large unit sits in the frozen prefix (id 2); the edit demotes a moderate unit (id 3) whose
+            // rendered suffix is small. The true-suffix L_cut lets the gate pass; the old whole-view binding,
+            // dominated by the frozen prefix, would have blocked the same edit. A differential over the two
+            // bindings, so the leaf discriminates a shallow tail edit from a deep prefix edit through the gate.
+            val ctx      = ctxOf(sm("s"), um("q"), am("M" * 4000), am("D" * 400), am("s1 small"), am("s2 small"), um("last"))
+            val u        = c.group(ctx, book0).toList.find(_.id == 3).get
+            val r        = Rendered(4, 1, 0, Chunk(sm("[c]")))
+            val post     = CompactorState.empty.copy(renderings = Dict[Int, Rendered]((u.id, r)))
+            val occupied = c.viewTokens(c.project(ctx, CompactorState.empty), book0)
+            val saved    = occupied - c.viewTokens(c.project(ctx, post), book0)
+            val lCut     = c.viewTokens(c.projectFrom(ctx, post, u.id), book0)
+            assert(lCut < occupied, s"the post-edit suffix ($lCut) is a strict subset of the whole view ($occupied)")
+            assert(
+                c.cacheGatePasses(saved, lCut, cachedReadDiscount = 0.1, writePremium = 1.0),
+                s"the true-suffix binding passes the gate: saved=$saved lCut=$lCut"
+            )
+            assert(
+                !c.cacheGatePasses(saved, occupied, cachedReadDiscount = 0.1, writePremium = 1.0),
+                s"the old whole-view binding would have blocked the same edit: saved=$saved occupied=$occupied"
+            )
+        }
+    }
+
     "INV-CMP-54: rot rule triggers + book.skip" in {
         Compactor.init(_.copy(effectiveCap = 200, windowFraction = 1.0, tailTurns = 1)).map { c =>
             // rot triggers: re-fetch threshold OR budget exhaustion; answer quality is never a trigger.
@@ -936,16 +1019,34 @@ class CompactorTest extends kyo.test.Test[Any]:
     "INV-CMP-57: judge runs fresh, no transcript leak" in {
         TestCompletionServer.run { server =>
             val cfg = serverConfig(server.baseUrl)
-            Compactor.init(_.copy(bandSize = 4, effectiveCap = 40, windowFraction = 1.0, tailTurns = 1)).map { c =>
+            // judge defaults to config.judge.getOrElse(chatCfg.provider.small); provider.small carries its OWN
+            // apiUrl (set by .model(...) at catalog construction), never the test server override, so the judge
+            // request would otherwise leave for the real provider endpoint and never reach this fake server at
+            // all. Pointing judge explicitly at the test server (the sanctioned Compactor.Config.judge override,
+            // precedented by "config knobs are overridable via init(f), including judge Present" below) is what
+            // makes the judge request observable here, deterministically, at all.
+            Compactor.init(_.copy(bandSize = 4, effectiveCap = 40, windowFraction = 1.0, tailTurns = 1, judge = Present(cfg))).map { c =>
                 server.enqueueBody(resultBody("stale")).andThen {
                     LLM.run(cfg) {
                         AI.initWith { ai =>
                             val secret = "SECRETROOTCONTENT"
                             val ctx    = ctxOf(sm("s " + secret), um("first"), am("band " + ("x" * 200)), um("latest"))
-                            ai.setContext(ctx).andThen(c.render(ai, ctx)).map { _ =>
-                                server.captured.map { caps =>
-                                    val bodies = caps.map(_.body).mkString(" ")
-                                    assert(!bodies.contains(secret), s"the judge request must not carry root/system content: $bodies")
+                            ai.setContext(ctx).andThen(c.render(ai, ctx)).andThen {
+                                // Await the judge's own request deterministically (its unique system prompt, the
+                                // same text judgeContext seeds), rather than racing render's background dispatch
+                                // fiber: the embeddings fork legitimately embeds every non-vectorized unit including
+                                // root content (the class's own PRIVACY note), so a blanket assertion over every
+                                // captured body is over-broad and, worse, only holds by the accident of the embed
+                                // fiber not having landed yet. Scoping to the judge request keeps the no-leak
+                                // property (root/system content never reaches the judge) exact, proven the moment
+                                // that specific request lands, never before and never by polling.
+                                server.awaitCaptured(cap =>
+                                    cap.path == "v1/chat/completions" && cap.body.contains("You judge context regions for compaction")
+                                ).map { judgeReq =>
+                                    assert(
+                                        !judgeReq.body.contains(secret),
+                                        s"the judge request must not carry root/system content: ${judgeReq.body}"
+                                    )
                                 }
                             }
                         }

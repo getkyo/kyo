@@ -207,24 +207,31 @@ object LLM:
                     case Structure.Type.Primitive(Structure.PrimitiveKind.String, _) => true
                     case _                                                           => false
                 context(target).map { targetContext =>
-                    Prompt.internal.enrichedContext(targetContext, toolInfos).map { context =>
-                        // Wrap in the {resultValue: A} object envelope (an array of A in element mode); a bare
-                        // non-object schema is rejected by the providers, which require an object tool schema. The
-                        // array schema is derived through kyo-schema's chunk Schema, not hand-built.
-                        val resultValueSchema =
-                            if stringMode then Json.jsonSchema[A] else Json.jsonSchema(using Schema.chunkSchema(using schema))
-                        val resultSchema = Thought.internal.resultJson(Chunk.empty, resultValueSchema)
-                        val completion   = config.provider.completion
-                        Log.debug(
-                            s"kyo-ai stream backend=${config.provider.name} model=${config.modelName} " +
-                                s"mode=${if stringMode then "prefix" else "elements"} messages=${context.messages.size} tools=${toolInfos.size}"
-                        ).andThen(completion.streamFragments(config, context, resultSchema, toolInfos)).map { fragments =>
-                            Stream[A, Async & Scope & Abort[AIStreamException]] {
-                                if stringMode then consumePrefixFragments(fragments, schema)
-                                else consumeElementFragments(fragments, schema)
+                    // Compaction seam for the stream path: consult env.compactor between the context read
+                    // and enrichedContext, same shape as eval's seam. Kyo's `.map` flattens the effectful
+                    // continuation, so no extra `{ view => ... }` block (and no dangling brace) is added;
+                    // the existing `.map { context => ... }` block stays 1:1, byte-unchanged when Absent.
+                    LLM.env
+                        .map(_.compactor.map(_.render(target, targetContext)).getOrElse(Kyo.lift(targetContext)))
+                        .map(Prompt.internal.enrichedContext(_, toolInfos))
+                        .map { context =>
+                            // Wrap in the {resultValue: A} object envelope (an array of A in element mode); a bare
+                            // non-object schema is rejected by the providers, which require an object tool schema. The
+                            // array schema is derived through kyo-schema's chunk Schema, not hand-built.
+                            val resultValueSchema =
+                                if stringMode then Json.jsonSchema[A] else Json.jsonSchema(using Schema.chunkSchema(using schema))
+                            val resultSchema = Thought.internal.resultJson(Chunk.empty, resultValueSchema)
+                            val completion   = config.provider.completion
+                            Log.debug(
+                                s"kyo-ai stream backend=${config.provider.name} model=${config.modelName} " +
+                                    s"mode=${if stringMode then "prefix" else "elements"} messages=${context.messages.size} tools=${toolInfos.size}"
+                            ).andThen(completion.streamFragments(config, context, resultSchema, toolInfos)).map { fragments =>
+                                Stream[A, Async & Scope & Abort[AIStreamException]] {
+                                    if stringMode then consumePrefixFragments(fragments, schema)
+                                    else consumeElementFragments(fragments, schema)
+                                }
                             }
                         }
-                    }
                 }
         }
     end streamAgainst
@@ -465,6 +472,7 @@ object LLM:
             LLM.env.map { scopeEnv =>
                 val merged = scopeEnv
                     .copy(config = session.env.config.orElse(scopeEnv.config))
+                    .copy(compactor = session.env.compactor.orElse(scopeEnv.compactor))
                     .addPrompt(session.env.prompt)
                     .addTools(session.env.tools)
                     .addThoughts(session.env.thoughts)
@@ -506,8 +514,13 @@ object LLM:
             resultTool   = Tool.internal.resultToolInfo
             allTools     = tools ++ resultTool.infos
             resultSchema = Thought.internal.resultJson(thoughts, Json.jsonSchema[A])
-            ctx     <- ai.context
-            context <- Prompt.internal.enrichedContext(ctx, allTools)
+            ctx <- ai.context
+            // Compaction seam: consult env.compactor between the context read and enrichedContext.
+            // Absent -> view is ctx (byte-unchanged); Present -> the projected view. No new Op; the
+            // transcript slot is never shrunk (ai.context is untouched).
+            env     <- LLM.env
+            view    <- env.compactor.map(_.render(ai, ctx)).getOrElse(Kyo.lift(ctx))
+            context <- Prompt.internal.enrichedContext(view, allTools)
             _ <- Log.debug(
                 s"kyo-ai gen backend=${config.provider.name} model=${config.modelName} " +
                     s"messages=${context.messages.size} tools=${allTools.size} thoughts=${thoughts.size} forceResult=$forceResult"
@@ -528,7 +541,10 @@ object LLM:
                     }
                 }
             messages = completion.messages
-            // completion.usage carries provider usage for the estimator; not consumed here.
+            // Usage calibration: feed the completed request's provider-reported usage back to the
+            // compactor's estimator (book.tokensPerByte). calibrate sizes the enriched request itself; a
+            // no-op when no compactor is enabled or usage Absent.
+            _ <- env.compactor.map(_.calibrate(ai, completion.usage, context)).getOrElse(Kyo.unit)
             _ <- Log.debug(
                 s"kyo-ai gen backend=${config.provider.name} returned messages=${messages.size} " +
                     s"toolCalls=${messages.collect { case msg: AssistantMessage => msg.calls.size }.sum}"

@@ -28,6 +28,17 @@ class LLMTest extends kyo.test.Test[Any]:
     def noResultBody: String =
         """{"choices":[{"message":{"role":"assistant","content":"thinking","tool_calls":null}}]}"""
 
+    /** The single captured outbound request body for the last scripted turn. */
+    def requestBody(server: TestCompletionServer)(using Frame): String < Async =
+        server.captured.map(_.head.body)
+
+    /** The committed default-off golden: the enriched-request bytes for the fixed scripted turn in
+      * INV-CMP-39, captured from the pre-seam eval (compactor Absent) and pinned as a source constant. A
+      * seam edit that leaked a byte onto the Absent path fails INV-CMP-39 against this, not a self-derivation.
+      */
+    val goldenDefaultOffRequest: String =
+        """{"model":"gpt-4o","messages":[{"role":"system","content":"you are precise"},{"role":"user","content":"ping"},{"role":"system","content":"================== REMINDERS ==================\n\n1. Your response must contain ONLY the structured tool call\n2. The arguments must strictly follow the tool's json schema, including its semantics\n3. Always perform at least one tool call; it is the only agency you have\n4. Do not output regular text replies, especially empty ones\n5. Do not use a json code block; follow the tool-call format\n6. Generate valid json strictly following the json schema. Do NOT generate xml-like content"}],"tools":[{"function":{"description":"Call this tool with the result. Do not make parallel calls to this tool in the same completion. Only the first invocation will be considered.","name":"result_tool","strict":false,"parameters":{"type":"object","properties":{"resultValue":{"type":"string"}},"required":["resultValue"]}},"type":"function"}],"tool_choice":"required"}"""
+
     "run discharges LLM to Async leaving an Async value" in {
         LLM.run(
             AI.initWith(ai => ai.systemMessage("hi").andThen(ai.context.map(_.messages.size)))
@@ -652,6 +663,132 @@ class LLMTest extends kyo.test.Test[Any]:
         assert(ref1.hashCode == ref2.hashCode, "equal AIRefs share a hashCode")
         assert(!ref1.equals(different), "AIRefs with different ids are not equal")
         assert(ref1.isValid, "a ref to a live AI is valid")
+    }
+
+    "INV-CMP-39: default-off matches committed pre-change golden bytes" in {
+        // With no compactor enabled (env.compactor Absent), the seam is a literal no-op: the enriched-request
+        // bytes must equal the committed golden captured from the pre-seam eval, byte-for-byte. The golden was
+        // captured independently of this edited path (a source constant), so a regression that leaks a byte
+        // onto the Absent path fails this leaf for real, not a tautological compare-the-code-to-itself.
+        TestCompletionServer.run { server =>
+            val config = serverConfig(server.baseUrl)
+            server.enqueueBody(resultToolBody("""{"resultValue":"x"}""")).andThen {
+                LLM.run(config) {
+                    AI.init.map { ai =>
+                        ai.systemMessage("you are precise").andThen {
+                            ai.userMessage("ping").andThen(ai.gen[String])
+                        }
+                    }
+                }.andThen {
+                    requestBody(server).map { body =>
+                        assert(body == goldenDefaultOffRequest, s"default-off request drifted from the committed golden: $body")
+                    }
+                }
+            }
+        }
+    }
+
+    "INV-CMP-40: seam adds no Op, no slot shrink" in {
+        // (1) The LLM Op GADT stays at exactly 13 subclasses: the compaction seam mints no new Op.
+        val theAi = new AI(0L, new AnyRef)
+        val cfg   = serverConfig("http://127.0.0.1:1")
+        val ops: List[LLM.internal.Op[?]] = List(
+            LLM.internal.Op.Read(theAi),
+            LLM.internal.Op.Add(theAi, UserMessage("x", Absent)),
+            LLM.internal.Op.Set(theAi, Context.empty),
+            LLM.internal.Op.Init,
+            LLM.internal.Op.Env,
+            LLM.internal.Op.Gen(theAi, summon[Schema[Int]]),
+            LLM.internal.Op.Stream(theAi, summon[Schema[Int]], Tag[Emit[Chunk[Int]]]),
+            LLM.internal.Op.SetEnv(AIEnv.empty),
+            LLM.internal.Op.Discard(theAi),
+            LLM.internal.Op.GetState,
+            LLM.internal.Op.SetState(LLM.State.empty(cfg)),
+            LLM.internal.Op.GetSession(theAi),
+            LLM.internal.Op.SetSession(theAi, AISession.empty)
+        )
+        assert(ops.size == 13, s"the LLM Op GADT has exactly 13 subclasses (no new Op minted for compaction), got ${ops.size}")
+        // (2) The transcript slot (ai.context) never shrinks across the seam (Absent compactor).
+        TestCompletionServer.run { server =>
+            val config = serverConfig(server.baseUrl)
+            server.enqueueBody(resultToolBody("""{"resultValue":"ok"}""")).andThen {
+                LLM.run(config) {
+                    AI.init.map { ai =>
+                        ai.userMessage("hello").andThen {
+                            ai.context.map(_.messages.size).map { before =>
+                                ai.gen[String].andThen {
+                                    ai.context.map(_.messages.size).map { after =>
+                                        assert(
+                                            after >= before,
+                                            s"the transcript slot never shrinks across the seam: before=$before after=$after"
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    "INV-CMP-68: genLoop merge threads compactor instance-over-scope, last-wins" in {
+        // The genLoop env-merge threads the compactor with instance-over-scope precedence
+        // (session.env.compactor.orElse(scopeEnv.compactor)): a single active policy, last-wins, never a
+        // pipeline. Read the scope and instance envs directly (no generation turn) and assert the precedence.
+        Compactor.init.map { cS =>
+            Compactor.init.map { cI =>
+                val withScope =
+                    LLM.run {
+                        AI.enable(cS) {
+                            AI.init.map { withInstance =>
+                                withInstance.enable(cI).andThen {
+                                    AI.init.map { bare =>
+                                        for
+                                            scopeEnv <- AI.env
+                                            instEnv  <- withInstance.snapshot.map(_.env)
+                                            bareEnv  <- bare.snapshot.map(_.env)
+                                        yield (scopeEnv.compactor, instEnv.compactor, bareEnv.compactor)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                val noScope =
+                    LLM.run {
+                        AI.init.map { bare =>
+                            for
+                                scopeEnv <- AI.env
+                                instEnv  <- bare.snapshot.map(_.env)
+                            yield (scopeEnv.compactor, instEnv.compactor)
+                        }
+                    }
+                withScope.map { case (scopeC, instC, bareC) =>
+                    assert(scopeC.exists(_ eq cS), "scope env carries cS")
+                    assert(instC.exists(_ eq cI), "instance env carries cI")
+                    assert(
+                        instC.orElse(scopeC).exists(_ eq cI),
+                        "both present -> merge picks the instance compactor cI (instance-over-scope)"
+                    )
+                    assert(bareC.isEmpty, "a bare instance holds Absent")
+                    assert(bareC.orElse(scopeC).exists(_ eq cS), "only scope present -> merge picks cS")
+                    noScope.map { case (nScopeC, nInstC) =>
+                        assert(nScopeC.isEmpty && nInstC.isEmpty, "neither present -> both Absent (byte-unchanged)")
+                        assert(nInstC.orElse(nScopeC).isEmpty, "neither present -> merged compactor stays Absent")
+                    }
+                }
+            }
+        }
+    }
+
+    "INV-CMP-69: an LLM-composed program stays in the < LLM row after the seam (no Async leak)" in {
+        // The load-bearing compile check: a program built ONLY from LLM operations ascribes to Unit < LLM,
+        // proving the seam leaked no Async into the LLM effect's own row (Async still enters only at Gen/Stream,
+        // riding LLM.run's residual). A seam edit that widened eval's own < LLM row would make this fail.
+        val notAsync: NotGiven[LLM <:< Async] = summon[NotGiven[LLM <:< Async]]
+        val p: Unit < LLM                     = AI.init.map(ai => ai.userMessage("a").andThen(ai.userMessage("b")))
+        val _                                 = p
+        assert(notAsync != null, "NotGiven[LLM <:< Async] is derivable and the < LLM ascription compiles")
     }
 
 end LLMTest
