@@ -1,12 +1,15 @@
 name: ci
 # Unified trigger workflow. One entry point for every build/test path:
-#   push to main      -> mode=full  across both arches
-#   pull_request      -> mode=diff  across both arches
-#   workflow_dispatch -> flexible: pick targets, mode (full/diff/custom), and arches
+#   push to main      -> mode=full  across all os poles
+#   pull_request      -> mode=diff  across all os poles
+#   workflow_dispatch -> flexible: pick targets, mode (full/diff/custom), and oses
 #
-# prep derives mode + arches + targets from the trigger, then build fans out one
-# build.yml call per arch (each call matrixes JVM/JS/Native/Wasm internally). custom is
-# the single-runner eval escape hatch, fired only on a workflow_dispatch with mode=custom.
+# prep derives mode + os poles + targets from the trigger, then build fans out one
+# build.yml call per pole (each call matrixes the pole's targets internally). The Linux
+# poles run JVM/JS/Native/Wasm; windows-x64 runs JVM/JS/Wasm (the Native target's
+# libcurl/libh2o/openssl toolchain is provisioned via apt and has no Windows port).
+# custom is the single-runner eval escape hatch, fired only on a workflow_dispatch
+# with mode=custom.
 on:
   push:
     branches:
@@ -29,14 +32,11 @@ on:
           - diff
           - custom
         default: full
-      arches:
-        description: 'Which arches to run (space-separated subset of x64 arm64).'
-        type: choice
-        options:
-          - 'x64 arm64'
-          - 'x64'
-          - 'arm64'
-        default: 'x64 arm64'
+      oses:
+        description: 'Space-separated os poles to run (subset of linux-x64 linux-arm64 windows-x64).'
+        type: string
+        required: false
+        default: 'linux-x64 linux-arm64 windows-x64'
       command:
         description: 'Used only when mode=custom: the recommended form is ./scripts/ci-test.sh <platform> <action>.'
         type: string
@@ -53,7 +53,7 @@ on:
 # its own; cancel-in-progress only acts within a group, so a later push never cancels an earlier
 # main run.
 concurrency:
-  group: ci-${{ github.event.pull_request.number || github.sha }}-${{ inputs.mode }}-${{ inputs.targets }}-${{ inputs.arches }}-${{ inputs.command }}
+  group: ci-${{ github.event.pull_request.number || github.sha }}-${{ inputs.mode }}-${{ inputs.targets }}-${{ inputs.oses }}-${{ inputs.command }}
   cancel-in-progress: true
 
 jobs:
@@ -61,14 +61,13 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       mode: ${{ steps.derive.outputs.mode }}
-      arches: ${{ steps.derive.outputs.arches }}
-      targets: ${{ steps.derive.outputs.targets }}
+      poles: ${{ steps.derive.outputs.poles }}
     steps:
       - id: derive
         env:
           EVENT_NAME: ${{ github.event_name }}
           INPUT_MODE: ${{ inputs.mode }}
-          INPUT_ARCHES: ${{ inputs.arches }}
+          INPUT_OSES: ${{ inputs.oses }}
           INPUT_TARGETS: ${{ inputs.targets }}
         run: |
           case "$EVENT_NAME" in
@@ -78,25 +77,41 @@ jobs:
           esac
 
           if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
-            arches=$(jq -cn --arg s "$INPUT_ARCHES" '
-              $s
-              | split(" ")
-              | map(select(length > 0))
-              | map(
-                  if . == "x64" then {os: "linux-x64", image: "ubuntu-latest"}
-                  elif . == "arm64" then {os: "linux-arm64", image: "ubuntu-24.04-arm"}
-                  else empty end
-                )')
+            oses="$INPUT_OSES"
             targets="$INPUT_TARGETS"
           else
-            arches='[{"os":"linux-x64","image":"ubuntu-latest"},{"os":"linux-arm64","image":"ubuntu-24.04-arm"}]'
+            oses='linux-x64 linux-arm64 windows-x64'
             targets='JVM JS Native Wasm'
           fi
 
+          for os in $oses; do
+            case "$os" in
+              linux-x64|linux-arm64|windows-x64) ;;
+              *) echo "unknown os pole '$os' (expected a subset of: linux-x64 linux-arm64 windows-x64)" >&2; exit 1 ;;
+            esac
+          done
+
+          # One pole per requested os, carrying the intersection of the pole's supported
+          # targets with the requested targets (windows-x64 has no Native toolchain). A
+          # pole whose intersection is empty is dropped so the matrix never spawns a
+          # no-op build.yml call.
+          poles=$(jq -cn --arg oses "$oses" --arg targets "$targets" '
+            ($targets | split(" ") | map(select(length > 0))) as $req
+            | $oses
+            | split(" ")
+            | map(select(length > 0))
+            | map(
+                if . == "linux-x64" then {os: ., image: "ubuntu-latest", supported: ["JVM","JS","Native","Wasm"]}
+                elif . == "linux-arm64" then {os: ., image: "ubuntu-24.04-arm", supported: ["JVM","JS","Native","Wasm"]}
+                else {os: ., image: "windows-latest", supported: ["JVM","JS","Wasm"]}
+                end
+              )
+            | map({os, image, targets: (.supported | map(. as $t | select($req | index($t))) | join(" "))})
+            | map(select(.targets != ""))')
+
           {
             echo "mode=$mode"
-            echo "arches=$arches"
-            echo "targets=$targets"
+            echo "poles=$poles"
           } >> "$GITHUB_OUTPUT"
 
   build:
@@ -105,12 +120,12 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        arch: ${{ fromJSON(needs.prep.outputs.arches) }}
+        pole: ${{ fromJSON(needs.prep.outputs.poles) }}
     uses: ./.github/workflows/build.yml
     with:
-      os: ${{ matrix.arch.os }}
-      runner-image: ${{ matrix.arch.image }}
-      targets: ${{ needs.prep.outputs.targets }}
+      os: ${{ matrix.pole.os }}
+      runner-image: ${{ matrix.pole.image }}
+      targets: ${{ matrix.pole.targets }}
       mode: ${{ needs.prep.outputs.mode }}
       ref: ${{ inputs.ref }}
 
