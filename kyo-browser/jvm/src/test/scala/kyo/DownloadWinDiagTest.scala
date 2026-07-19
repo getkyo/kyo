@@ -63,6 +63,36 @@ class DownloadWinDiagTest extends BrowserTest:
     private def useTab(f: BrowserTab => Unit < (Async & Abort[Any])): Unit < (Browser & Abort[Any]) =
         Env.use[internal.BrowserTab](f).asInstanceOf[Unit < (Browser & Abort[Any])]
 
+    "diag C: page-domain allow with native separators" in {
+        withBrowser {
+            for
+                tempPath <- Path.tempDir("kyo-diag-dl-c-")
+                dir = tempPath.toString.replace('/', java.io.File.separatorChar)
+                _ <- Browser.allowDownloads(dir)
+                _ <- Browser.goto(page("<a id='dl' href='data:text/plain,diag-content-c' download='diag-c.txt'>dl</a>"))
+                _ <- Browser.click(Browser.Selector.id("dl"))
+                _ <- Async.delay(10.seconds)(Kyo.unit)
+            yield
+                listDir("C toPath", dir)
+                assert(dir.nonEmpty)
+        }
+    }
+
+    "diag D: page-domain allow with resolved long-form native path" in {
+        withBrowser {
+            for
+                tempPath <- Path.tempDir("kyo-diag-dl-d-")
+                dir = new java.io.File(tempPath.toString).getCanonicalFile.getAbsolutePath
+                _ <- Browser.allowDownloads(dir)
+                _ <- Browser.goto(page("<a id='dl' href='data:text/plain,diag-content-d' download='diag-d.txt'>dl</a>"))
+                _ <- Browser.click(Browser.Selector.id("dl"))
+                _ <- Async.delay(10.seconds)(Kyo.unit)
+            yield
+                listDir("D toPath", dir)
+                assert(dir.nonEmpty)
+        }
+    }
+
     "diag B: browser-domain allowAndName" in {
         withBrowser {
             for
