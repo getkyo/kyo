@@ -472,6 +472,41 @@ final private[kyo] class NodeReadHandle(fd: Int) extends Path.ReadHandle:
     // Current read position (Node.js readSync with explicit position)
     private var pos: Long = 0L
 
+    // Single-owner scan buffer for readLong, reused across calls; grows once to fit. Confined to this
+    // handle instance.
+    private var scan: Array[Byte] = new Array[Byte](512)
+
+    // The typed-array view readSync fills, retained across calls alongside `scan`: a fresh Uint8Array per
+    // fill step allocates on every read, which is the per-read allocation readLong exists to avoid.
+    // Reallocated only when `scan` grows.
+    private var scanView: Uint8Array = new Uint8Array(scan.length)
+
+    def readLong()(using AllowUnsafe): Long =
+        @scala.annotation.tailrec
+        def fill(offset: Long, total: Int): Int =
+            if total == scan.length then
+                val grown = new Array[Byte](scan.length * 2)
+                java.lang.System.arraycopy(scan, 0, grown, 0, total)
+                scan = grown
+                scanView = new Uint8Array(grown.length)
+            end if
+            val n = NodeFs.readSync(fd, scanView, total, scan.length - total, offset.toDouble)
+            if n == 0 then total
+            else
+                // A hot-path byte copy out of the JS typed array, the same shape readChunk above uses:
+                // a per-byte closure would allocate on every read, which is what this primitive exists
+                // to avoid.
+                var i = 0
+                while i < n do
+                    scan(total + i) = scanView(total + i).toByte
+                    i += 1
+                fill(offset + n, total + n)
+            end if
+        end fill
+        val len = fill(0L, 0)
+        Path.ReadHandle.parseLeadingLong(scan, len)
+    end readLong
+
     def readChunk(buffer: Array[Byte])(using AllowUnsafe): Path.ReadResult =
         val uint8 = new Uint8Array(buffer.length)
         val n     = NodeFs.readSync(fd, uint8, 0, buffer.length, pos.toDouble)

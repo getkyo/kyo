@@ -178,19 +178,19 @@ private[sbt] object CodegenBridge {
         Some(loader)
     }
 
-    /** SHA-256 over the bundled codegen (`/kyo-ffi-plugin/bundled.txt` and every JAR it lists),
-      * identifying the codegen version baked into this plugin build.
+    /** SHA-256 fingerprint of the codegen classpath, folding in the BYTES of every entry so
+      * ffiGenerate's cache stays incrementally correct when the codegen itself changes, not only when
+      * the binding sources change. Entries are visited in sorted-path order for determinism:
+      *   - a jar (file) contributes its full bytes;
+      *   - a directory contributes each contained regular file's directory-relative path plus bytes, in
+      *     sorted order.
       *
-      * ffiGenerate folds this into its `FileFunction.cached` config key so that a plugin or codegen
-      * change with unchanged binding sources still invalidates the previously generated `*Impl.scala`.
-      * Without it, such a change is a cache hit and the stale impl survives until a manual `clean`
-      * (#255). Cached: the bundle is fixed for the JVM session. Returns "unknown" when the bundle is
-      * absent, the case where ffiGenerate is already a no-op.
-      */
-    /** SHA-256 fingerprint of the codegen classpath: the bytes of each jar (in sorted-path order for
-      * stability), so ffiGenerate's cache stays incrementally correct when the codegen changes. A
-      * codegen upgrade (a new `kyo-ffi-codegen` version resolving different jars) invalidates the
-      * cache. Returns "unknown" when the classpath is empty, the case where ffiGenerate is a no-op.
+      * Hashing directory contents is load-bearing: the in-repo codegen's own output is a
+      * `target/.../classes` DIRECTORY, not a jar, so an emitter edit (a changed `.class`) only moves the
+      * fingerprint when directory bytes are folded in. Without it the edit is a cache hit and the stale
+      * `*Impl.scala` survives until a manual `clean` (#255); the published path resolves a jar whose
+      * bytes change on a version bump and was already covered. Returns "unknown" when the classpath is
+      * empty, the case where ffiGenerate is a no-op.
       */
     def codegenFingerprint(codegenClasspath: Seq[String]): String = {
         if (codegenClasspath.isEmpty) return "unknown"
@@ -202,6 +202,20 @@ private[sbt] object CodegenBridge {
                 val in = new java.io.FileInputStream(f)
                 try md.update(readAll(in))
                 finally in.close()
+            } else if (f.isDirectory) {
+                val base   = f.toPath
+                val walker = Files.walk(base)
+                try {
+                    import scala.collection.JavaConverters._
+                    walker.iterator().asScala
+                        .filter(p => Files.isRegularFile(p))
+                        .toList
+                        .sortBy(p => base.relativize(p).toString)
+                        .foreach { p =>
+                            md.update(base.relativize(p).toString.getBytes(java.nio.charset.StandardCharsets.UTF_8))
+                            md.update(Files.readAllBytes(p))
+                        }
+                } finally walker.close()
             }
         }
         md.digest().map(b => "%02x".format(b)).mkString
