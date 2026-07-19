@@ -41,7 +41,7 @@ object Tool:
       * `kind` and `compactionKey` are the compaction-supersession metadata: a tool supplying a
       * `compactionKey` extractor opts into key-based supersession (a later same-key unit supersedes an
       * earlier one); the default `_ => Absent` is keyless (never supersedes, never superseded). `kind`
-      * distinguishes a re-read from a write. Both default so every existing call site compiles unchanged.
+      * distinguishes a re-read from a write. Both default, so specifying either is optional.
       */
     def init[In](using
         Schema[In]

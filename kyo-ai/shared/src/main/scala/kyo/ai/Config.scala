@@ -116,11 +116,9 @@ object Config:
         val orgKey: String = keyName + "_ORG"
         def default: Config
 
-        /** The provider's cheap-tier catalog entry, the primary cheap-tier selector the
-          * compactor's judge/summarizer select via `AI.withConfig`. Concrete with a `= default`
-          * fallback so an external `Provider` subclass keeps compiling and degrades safely (it
-          * runs the judge on the provider's default entry, costlier but never wrong); the nine
-          * built-in catalog objects override it with their cheap entry, the single source of truth.
+        /** The provider's cheap-tier catalog entry, selected by the compactor's judge/summarizer.
+          * Concrete with a `= default` fallback: a `Provider` subclass that does not override it
+          * runs on `default`; the nine built-in catalogs override it with their cheap entry.
           */
         def small: Config = default
     end Provider

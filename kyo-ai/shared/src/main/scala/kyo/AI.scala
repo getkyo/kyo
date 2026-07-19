@@ -38,7 +38,7 @@ object AI:
     export kyo.ai.Image
 
     /** A composable element of the generation surface that can be enabled on an `AI`: a [[kyo.Tool]], a
-      * [[kyo.Prompt]], a [[kyo.Thought]], or a [[kyo.Mode]].
+      * [[kyo.Prompt]], a [[kyo.Thought]], a [[kyo.Mode]], or a [[kyo.Compactor]].
       *
       * `AI.enable` layers enablements over a scoped computation; `ai.enable` layers them onto a single
       * instance. Both take varargs or a `Seq` and accept a mix of kinds in one call. `S` is the capability an
@@ -47,7 +47,7 @@ object AI:
       */
     trait Enablement[-S]:
         // How this enablement layers itself onto the scope env (AI.enable) or one instance's session
-        // (ai.enable). private[kyo] so only the module's four kinds implement it; users compose, never extend.
+        // (ai.enable). private[kyo] so only the module's five kinds implement it; users compose, never extend.
         private[kyo] def enableIn(env: AIEnv)(using Frame): AIEnv
         private[kyo] def enableIn(session: AISession)(using Frame): AISession
     end Enablement
