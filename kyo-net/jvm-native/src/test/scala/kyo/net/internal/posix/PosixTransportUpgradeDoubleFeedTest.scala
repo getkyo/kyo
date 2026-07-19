@@ -140,7 +140,7 @@ class PosixTransportUpgradeDoubleFeedTest extends Test:
 
         "io_uring: a channel-offer failure during detachForUpgrade must not deliver the coalesced flight to the engine twice" in {
             PosixTestSockets.assumeUring()
-            val depth = math.max(256, kyo.net.TransportConfig.default.ioPoolSize * 64)
+            val depth = math.max(256, kyo.net.ioPoolSize() * 64)
             val uring = Ffi.load[IoUringBindings]
             val ring  = Buffer.alloc[Byte](uring.kyo_uring_sizeof().toInt)
             val rc    = uring.io_uring_queue_init(depth, ring, 0)

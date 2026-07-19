@@ -45,7 +45,6 @@ private[kyo] object NetConfigTranslation:
         TransportConfig(
             channelCapacity = c.channelCapacity,
             readChunkSize = c.readChunkSize,
-            ioPoolSize = c.ioPoolSize,
             connectTimeout = c.connectTimeout,
             handshakeTimeout = c.handshakeTimeout
         )

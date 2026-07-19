@@ -12,9 +12,6 @@ package kyo
   *   - `maxHeaderSize`, hard limit on the total byte size of HTTP headers. Requests or responses exceeding this limit are rejected with a
   *     protocol error. Default 65536 (64 KiB). Enforced by kyo-http's HTTP/1.1 parser (server dispatch and client connection), not by the
   *     underlying byte transport.
-  *   - `ioPoolSize`, sizes the io_uring submission-queue depth on the Linux io_uring backend, where the depth is `max(256, ioPoolSize * 64)`.
-  *     It has no effect on the epoll, kqueue, NIO, or Node backends, and does NOT set a thread count: every backend runs a single I/O
-  *     event-loop driver per transport. Defaults to `max(1, cores / 2)`.
   *   - `connectTimeout`, deadline for a client TCP connect to complete. When finite, the transport arms a `Clock`-driven deadline as the
   *     connect is issued and fails the connect with `NetConnectTimeoutException` if the OS does not deliver a connect outcome (connected or
   *     refused) within the deadline. Bounds the client-side connect independently of the server accept handshake. Defaults to `30.seconds`.
@@ -35,7 +32,6 @@ case class HttpTransportConfig(
     channelCapacity: Int,
     readChunkSize: Int,
     maxHeaderSize: Int,
-    ioPoolSize: Int,
     connectTimeout: Duration = 30.seconds,
     handshakeTimeout: Duration = Duration.Infinity
 ) derives CanEqual:
@@ -46,7 +42,6 @@ case class HttpTransportConfig(
     def channelCapacity(v: Int): HttpTransportConfig       = copy(channelCapacity = v)
     def readChunkSize(v: Int): HttpTransportConfig         = copy(readChunkSize = v)
     def maxHeaderSize(v: Int): HttpTransportConfig         = copy(maxHeaderSize = v)
-    def ioPoolSize(v: Int): HttpTransportConfig            = copy(ioPoolSize = v)
     def connectTimeout(v: Duration): HttpTransportConfig   = copy(connectTimeout = v)
     def handshakeTimeout(v: Duration): HttpTransportConfig = copy(handshakeTimeout = v)
 end HttpTransportConfig
@@ -56,7 +51,6 @@ object HttpTransportConfig:
         channelCapacity = 4,
         readChunkSize = 8192,
         maxHeaderSize = 65536,
-        ioPoolSize = Math.max(1, Runtime.getRuntime.availableProcessors() / 2),
         connectTimeout = 30.seconds,
         handshakeTimeout = Duration.Infinity
     )

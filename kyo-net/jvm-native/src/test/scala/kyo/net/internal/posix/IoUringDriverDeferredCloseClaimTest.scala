@@ -35,7 +35,7 @@ class IoUringDriverDeferredCloseClaimTest extends Test:
         "skips the deferred shutdown(SHUT_RD) once a racing transport-path close already claimed the fd, so a recycled fd is never corrupted" in {
             PosixTestSockets.assumeUring()
             given Frame   = Frame.internal
-            val depth     = math.max(256, kyo.net.TransportConfig.default.ioPoolSize * 64)
+            val depth     = math.max(256, kyo.net.ioPoolSize() * 64)
             val realUring = Ffi.load[IoUringBindings]
             val realRing  = Buffer.alloc[Byte](realUring.kyo_uring_sizeof().toInt)
             val rc        = realUring.io_uring_queue_init(depth, realRing, 0)

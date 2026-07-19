@@ -394,7 +394,7 @@ object PosixTestSockets:
             val available =
                 try
                     val uring = Ffi.load[IoUringBindings]
-                    val depth = math.max(256, config.ioPoolSize * 64)
+                    val depth = math.max(256, kyo.net.ioPoolSize() * 64)
                     val ring  = Buffer.alloc[Byte](uring.kyo_uring_sizeof().toInt)
                     val rc    = uring.io_uring_queue_init(depth, ring, 0)
                     // io_uring_queue_init returns 0 on success or -errno on failure and does NOT set the global errno

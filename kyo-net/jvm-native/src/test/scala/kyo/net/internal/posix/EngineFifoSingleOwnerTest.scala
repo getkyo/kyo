@@ -91,7 +91,7 @@ class EngineFifoSingleOwnerTest extends Test:
       */
     private def uringArm(using Frame): Maybe[(String, IoDriver[PosixHandle], () => Unit)] =
         try
-            val depth     = math.max(256, kyo.net.TransportConfig.default.ioPoolSize * 64)
+            val depth     = math.max(256, kyo.net.ioPoolSize() * 64)
             val realUring = Ffi.load[IoUringBindings]
             val realRing  = Buffer.alloc[Byte](realUring.kyo_uring_sizeof().toInt)
             val rc        = realUring.io_uring_queue_init(depth, realRing, 0)

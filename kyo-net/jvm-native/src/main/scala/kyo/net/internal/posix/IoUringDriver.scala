@@ -2334,7 +2334,7 @@ private[net] object IoUringDriver:
       */
     def init(config: kyo.net.TransportConfig)(using AllowUnsafe, Frame): IoUringDriver =
         val uring = Ffi.load[IoUringBindings]
-        val depth = math.max(256, config.ioPoolSize * 64)
+        val depth = math.max(256, kyo.net.ioPoolSize() * 64)
         val ring  = Buffer.alloc[Byte](uring.kyo_uring_sizeof().toInt) // sizeof(struct io_uring), via the shim
         // Probe the kernel version via the uname FFI shim and select the SETUP-flag tier. The probe is mandatory because flag
         // availability varies by kernel version; see selectRingFlags for the tier breakdown and the rationale for which flags

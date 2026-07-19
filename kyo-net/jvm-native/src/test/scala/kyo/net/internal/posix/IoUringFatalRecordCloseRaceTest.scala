@@ -100,7 +100,7 @@ class IoUringFatalRecordCloseRaceTest extends Test:
     end awaitCondition
 
     private def newRing()(using Frame): Buffer[Byte] =
-        val depth = math.max(256, kyo.net.TransportConfig.default.ioPoolSize * 64)
+        val depth = math.max(256, kyo.net.ioPoolSize() * 64)
         val uring = Ffi.load[IoUringBindings]
         val ring  = Buffer.alloc[Byte](uring.kyo_uring_sizeof().toInt)
         val rc    = uring.io_uring_queue_init(depth, ring, 0)

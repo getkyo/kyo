@@ -37,11 +37,11 @@ class IoUringHandshakeTimeoutOrderingTest extends Test:
 
     private def sock = Ffi.load[SocketBindings]
 
-    // ioPoolSize = 1 pins the io_uring ring depth to max(256, 1*64) = 256, which fits the privileged-container cgroup `io_uring.max` cap (the
+    // 1*64) = 256, which fits the privileged-container cgroup `io_uring.max` cap (the
     // production default depth is rejected there and falls back to epoll). assumeUring probes at this same depth, so the gate matches the ring
     // the transport will build. handshakeTimeout = 1s is finite (so the deadline arms and reaps the stalled handshake) yet long enough that the
     // test reliably detects the in-flight recv and registers its reap latch BEFORE the deadline fires.
-    private val transportConfig: TransportConfig = TransportConfig.default.copy(ioPoolSize = 1, handshakeTimeout = 1.second)
+    private val transportConfig: TransportConfig = TransportConfig.default.copy(handshakeTimeout = 1.second)
 
     private def assumeTls(): Unit =
         if !TlsProviderPlatform.registered.exists(_.isAvailable) then cancel("no TLS provider available on this backend")

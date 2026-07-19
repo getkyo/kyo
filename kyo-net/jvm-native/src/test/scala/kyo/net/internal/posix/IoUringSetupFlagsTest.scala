@@ -60,7 +60,7 @@ class IoUringSetupFlagsTest extends Test:
         "queueInitSucceedsWithProbedFlags: queue_init with the probe-selected flags returns 0 on the real kernel" in {
             PosixTestSockets.assumeUring()
             val uring = Ffi.load[IoUringBindings]
-            val depth = math.max(256, kyo.net.TransportConfig.default.ioPoolSize * 64)
+            val depth = math.max(256, kyo.net.ioPoolSize() * 64)
             val ring  = Buffer.alloc[Byte](uring.kyo_uring_sizeof().toInt)
             val flags = IoUringDriver.selectRingFlags(uring.kyo_uring_kernel_version())
             val rc    = uring.io_uring_queue_init(depth, ring, flags)

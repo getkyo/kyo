@@ -63,7 +63,7 @@ class IoUringCloseHalfCloseRaceTest extends Test:
         "closing a connection with an in-flight recv and no peer FIN must not stamp PeerEof (LocalClose, not Truncated)" in {
             PosixTestSockets.assumeUring()
             given Frame = Frame.internal
-            val depth   = math.max(256, kyo.net.TransportConfig.default.ioPoolSize * 64)
+            val depth   = math.max(256, kyo.net.ioPoolSize() * 64)
             val uring   = Ffi.load[IoUringBindings]
             val ring    = Buffer.alloc[Byte](uring.kyo_uring_sizeof().toInt)
             val rc      = uring.io_uring_queue_init(depth, ring, 0)

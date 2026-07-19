@@ -8,24 +8,16 @@ class TransportConfigTest extends Test:
         val config = TransportConfig.default
         assert(config.channelCapacity == 4)
         assert(config.readChunkSize == 8192)
-        assert(config.ioPoolSize == Math.max(1, Runtime.getRuntime.availableProcessors() / 2))
         assert(config.connectTimeout == 30.seconds)
         assert(config.handshakeTimeout == 30.seconds)
         succeed
     }
 
-    "ioPoolSize default is at least 1" in {
-        // max(1, cores / 2) is never below 1 even on a single-core reported runtime
-        assert(TransportConfig.default.ioPoolSize >= 1)
-        succeed
-    }
-
     "builder methods produce correct values" in {
         val config = TransportConfig.default
-            .copy(channelCapacity = 8, readChunkSize = 4096, ioPoolSize = 3, connectTimeout = 5.seconds, handshakeTimeout = 5.seconds)
+            .copy(channelCapacity = 8, readChunkSize = 4096, connectTimeout = 5.seconds, handshakeTimeout = 5.seconds)
         assert(config.channelCapacity == 8)
         assert(config.readChunkSize == 4096)
-        assert(config.ioPoolSize == 3)
         assert(config.connectTimeout == 5.seconds)
         assert(config.handshakeTimeout == 5.seconds)
         succeed
@@ -36,7 +28,6 @@ class TransportConfigTest extends Test:
         val updated = base.copy(channelCapacity = 99)
         assert(updated.channelCapacity == 99)
         assert(updated.readChunkSize == base.readChunkSize)
-        assert(updated.ioPoolSize == base.ioPoolSize)
         assert(updated.connectTimeout == base.connectTimeout)
         assert(updated.handshakeTimeout == base.handshakeTimeout)
         succeed
@@ -47,18 +38,6 @@ class TransportConfigTest extends Test:
         val updated = base.copy(readChunkSize = 99)
         assert(updated.readChunkSize == 99)
         assert(updated.channelCapacity == base.channelCapacity)
-        assert(updated.ioPoolSize == base.ioPoolSize)
-        assert(updated.connectTimeout == base.connectTimeout)
-        assert(updated.handshakeTimeout == base.handshakeTimeout)
-        succeed
-    }
-
-    "ioPoolSize overrides exactly one field" in {
-        val base    = TransportConfig.default
-        val updated = base.copy(ioPoolSize = 99)
-        assert(updated.ioPoolSize == 99)
-        assert(updated.channelCapacity == base.channelCapacity)
-        assert(updated.readChunkSize == base.readChunkSize)
         assert(updated.connectTimeout == base.connectTimeout)
         assert(updated.handshakeTimeout == base.handshakeTimeout)
         succeed
@@ -70,7 +49,6 @@ class TransportConfigTest extends Test:
         assert(updated.handshakeTimeout == 10.seconds)
         assert(updated.channelCapacity == base.channelCapacity)
         assert(updated.readChunkSize == base.readChunkSize)
-        assert(updated.ioPoolSize == base.ioPoolSize)
         assert(updated.connectTimeout == base.connectTimeout)
         succeed
     }
@@ -92,7 +70,6 @@ class TransportConfigTest extends Test:
         assert(updated.soSndBuf == Present(32768))
         assert(updated.channelCapacity == base.channelCapacity)
         assert(updated.readChunkSize == base.readChunkSize)
-        assert(updated.ioPoolSize == base.ioPoolSize)
         assert(updated.connectTimeout == base.connectTimeout)
         assert(updated.handshakeTimeout == base.handshakeTimeout)
         succeed

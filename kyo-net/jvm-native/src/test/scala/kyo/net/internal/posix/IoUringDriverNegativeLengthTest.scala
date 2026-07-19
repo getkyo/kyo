@@ -48,7 +48,7 @@ class IoUringDriverNegativeLengthTest extends Test:
     private def withRealRing[A](body: (IoUringBindings, Buffer[Byte]) => A)(using Frame): A =
         val uring = Ffi.load[IoUringBindings]
         val ring  = Buffer.alloc[Byte](uring.kyo_uring_sizeof().toInt)
-        val rc    = uring.io_uring_queue_init(math.max(256, kyo.net.TransportConfig.default.ioPoolSize * 64), ring, 0)
+        val rc    = uring.io_uring_queue_init(math.max(256, kyo.net.ioPoolSize() * 64), ring, 0)
         if rc != 0 then
             ring.close()
             throw Closed("IoUringDriverNegativeLengthTest", summon[Frame], s"queue_init failed: rc=$rc")
@@ -115,7 +115,7 @@ class IoUringDriverNegativeLengthTest extends Test:
 
         "a rejected recv prep fails the read promise observably (Closed), not a silent SQE drop / hang" in {
             PosixTestSockets.assumeUring()
-            val depth     = math.max(256, kyo.net.TransportConfig.default.ioPoolSize * 64)
+            val depth     = math.max(256, kyo.net.ioPoolSize() * 64)
             val realUring = Ffi.load[IoUringBindings]
             val realRing  = Buffer.alloc[Byte](realUring.kyo_uring_sizeof().toInt)
             val rc        = realUring.io_uring_queue_init(depth, realRing, 0)

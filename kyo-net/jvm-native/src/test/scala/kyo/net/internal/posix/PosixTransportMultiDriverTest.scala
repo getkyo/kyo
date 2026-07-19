@@ -219,7 +219,7 @@ class PosixTransportMultiDriverTest extends Test:
                 Sync.defer(entry.build(TransportConfig.default, summon[Frame])).map { transport =>
                     // A posix backend entry always builds a PosixTransport; the cast reaches its pool to count drivers.
                     val posix    = transport.asInstanceOf[PosixTransport]
-                    val expected = math.max(1, TransportConfig.default.ioPoolSize)
+                    val expected = math.max(1, kyo.net.ioPoolSize())
                     Sync.defer {
                         try
                             assert(

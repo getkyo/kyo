@@ -50,7 +50,7 @@ class IoUringQueuedRecvOrderingTest extends Test:
         "a second recv armed while the first is in flight is queued (not a second SQE) and fires in order once the first reaps" in {
             PosixTestSockets.assumeUring()
             given Frame = Frame.internal
-            val depth   = math.max(256, kyo.net.TransportConfig.default.ioPoolSize * 64)
+            val depth   = math.max(256, kyo.net.ioPoolSize() * 64)
             val uring   = Ffi.load[IoUringBindings]
             val ring    = Buffer.alloc[Byte](uring.kyo_uring_sizeof().toInt)
             val rc      = uring.io_uring_queue_init(depth, ring, 0)

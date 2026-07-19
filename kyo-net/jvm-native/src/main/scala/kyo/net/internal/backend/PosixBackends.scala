@@ -71,7 +71,7 @@ private[net] object IoUringBackend extends PosixIoBackend:
     def isAvailable(using AllowUnsafe): Boolean =
         // Probe at the production queue depth (the same max(256, ioPoolSize * 64) IoUringDriver.init builds), not a fixed 256, so a sandbox that
         // initializes a small ring but rejects the production-depth ring is reported unavailable here rather than selected and failing at build.
-        val depth = math.max(256, TransportConfig.default.ioPoolSize * 64)
+        val depth = math.max(256, kyo.net.ioPoolSize() * 64)
         PosixConstants.isLinux && probe(Ffi.load[IoUringBindings].kyo_uring_probe_available(depth))
     end isAvailable
     def createDriver(config: TransportConfig)(using AllowUnsafe, Frame): IoDriver[PosixHandle] =
@@ -109,7 +109,7 @@ final private[net] class PosixEntry(backend: PosixIoBackend) extends Entry:
         // and carrier fiber; pool.next() distributes new connections round-robin across the drivers, and each connection is then bound to one
         // driver for its lifetime, so per-handle single-driver ownership holds downstream. Both JVM and Native run the scheduler over real OS
         // threads, so each driver's poll loop parks its own carrier thread and ioPoolSize drivers give real cross-core parallelism.
-        val n       = math.max(1, config.ioPoolSize)
+        val n       = kyo.net.ioPoolSize()
         val drivers = Array.fill(n)(backend.createDriver(config))
         val pool    = IoDriverPool.init(drivers)
         pool.start() // all-or-nothing: on any driver-start failure this closes the started subset and rethrows.

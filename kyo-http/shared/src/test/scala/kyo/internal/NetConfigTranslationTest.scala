@@ -105,17 +105,15 @@ class NetConfigTranslationTest extends kyo.test.Test[Any]:
 
     "toNetTransportConfig" - {
 
-        "copies the five byte-transport fields by name" in {
+        "copies the byte-transport fields by name" in {
             val http = HttpTransportConfig.default
                 .channelCapacity(7)
                 .readChunkSize(2048)
-                .ioPoolSize(3)
                 .connectTimeout(15.seconds)
                 .handshakeTimeout(250.millis)
             val result = NetConfigTranslation.toNetTransportConfig(http)
             assert(result.channelCapacity == 7)
             assert(result.readChunkSize == 2048)
-            assert(result.ioPoolSize == 3)
             assert(result.connectTimeout == 15.seconds)
             assert(result.handshakeTimeout == 250.millis)
         }
@@ -136,19 +134,17 @@ class NetConfigTranslationTest extends kyo.test.Test[Any]:
             val result = NetConfigTranslation.toNetTransportConfig(http)
             assert(result.channelCapacity == HttpTransportConfig.default.channelCapacity)
             assert(result.readChunkSize == HttpTransportConfig.default.readChunkSize)
-            assert(result.ioPoolSize == HttpTransportConfig.default.ioPoolSize)
             assert(result.connectTimeout == HttpTransportConfig.default.connectTimeout)
             assert(result.handshakeTimeout == HttpTransportConfig.default.handshakeTimeout)
         }
 
-        "default input maps the five byte-transport fields from HttpTransportConfig.default" in {
+        "default input maps the byte-transport fields from HttpTransportConfig.default" in {
             // HttpTransportConfig.default.handshakeTimeout is Duration.Infinity (off by default, caller-composable via Async.timeout),
             // while TransportConfig.default.handshakeTimeout is 30.seconds. The two configs intentionally differ on this field:
             // the HTTP layer preserves backward-compatible behavior; kyo-net enables the slowloris guard by default.
             val result = NetConfigTranslation.toNetTransportConfig(HttpTransportConfig.default)
             assert(result.channelCapacity == HttpTransportConfig.default.channelCapacity)
             assert(result.readChunkSize == HttpTransportConfig.default.readChunkSize)
-            assert(result.ioPoolSize == HttpTransportConfig.default.ioPoolSize)
             assert(result.connectTimeout == HttpTransportConfig.default.connectTimeout)
             assert(result.handshakeTimeout == HttpTransportConfig.default.handshakeTimeout)
         }
