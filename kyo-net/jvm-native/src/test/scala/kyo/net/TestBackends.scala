@@ -29,7 +29,7 @@ object TestBackends:
     final case class Entry(
         name: String,
         isAvailable: Boolean,
-        build: (TransportConfig, Frame) => Transport
+        build: Frame => Transport
     )
 
     /** Every registered backend on this host, in registry order. The harness registers one leaf per entry and cancels the leaves whose
@@ -45,7 +45,7 @@ object TestBackends:
             Entry(
                 name = entry.name,
                 isAvailable = entry.isAvailable,
-                build = (config, frame) => entry.build(config)(using summon[AllowUnsafe], frame)
+                build = frame => entry.build()(using summon[AllowUnsafe], frame)
             )
         }
     end all

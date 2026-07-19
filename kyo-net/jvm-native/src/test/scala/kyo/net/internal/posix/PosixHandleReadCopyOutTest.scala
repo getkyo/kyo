@@ -50,7 +50,7 @@ class PosixHandleReadCopyOutTest extends Test:
 
         "delivered bytes equal the payload byte-for-byte" in {
             assumePoller()
-            val driver = PollerIoDriver.init(kyo.net.TransportConfig.default)
+            val driver = PollerIoDriver.init()
             discard(driver.start())
             Sync.ensure(Sync.defer(driver.close())) {
                 PosixTestSockets.loopbackPair().map { case (client, accepted) =>
@@ -67,7 +67,7 @@ class PosixHandleReadCopyOutTest extends Test:
 
         "back-to-back reads: a second read does not corrupt the first's already-delivered bytes (no aliasing)" in {
             assumePoller()
-            val driver = PollerIoDriver.init(kyo.net.TransportConfig.default)
+            val driver = PollerIoDriver.init()
             discard(driver.start())
             Sync.ensure(Sync.defer(driver.close())) {
                 PosixTestSockets.loopbackPair().map { case (client, accepted) =>
@@ -93,7 +93,7 @@ class PosixHandleReadCopyOutTest extends Test:
 
         "bytes are correct across a chunk boundary (a payload split over two reads)" in {
             assumePoller()
-            val driver = PollerIoDriver.init(kyo.net.TransportConfig.default)
+            val driver = PollerIoDriver.init()
             discard(driver.start())
             Sync.ensure(Sync.defer(driver.close())) {
                 PosixTestSockets.loopbackPair().map { case (client, accepted) =>

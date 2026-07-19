@@ -2,8 +2,8 @@ package kyo.net.internal.posix
 
 import kyo.*
 import kyo.ffi.Ffi
+import kyo.net.NetConfig
 import kyo.net.Test
-import kyo.net.TransportConfig
 
 /** Ghost-accept regression guard for the io_uring listener teardown: a CLOSED listener's still-queued accept arm must never run against a
   * recycled fd number and steal a later listener's connections.
@@ -30,13 +30,13 @@ class IoUringListenerCloseRecycleTest extends Test:
 
     import AllowUnsafe.embrace.danger
 
-    private val transportConfig = TransportConfig.default
+    private val transportConfig = NetConfig.default
 
     "a closed listener's queued accept arm never steals a later listener's connections" in {
         PosixTestSockets.assumeUring()
-        val driver = IoUringDriver.init(transportConfig)
+        val driver = IoUringDriver.init()
         discard(driver.start())
-        val transport = TestTransports.forTesting(transportConfig, driver, Ffi.load[SocketBindings], backendIsEpoll = false)
+        val transport = TestTransports.forTesting(driver, Ffi.load[SocketBindings], backendIsEpoll = false)
         Sync.ensure(Sync.defer { transport.close(); driver.close() }) {
             val gate  = new java.util.concurrent.CountDownLatch(1)
             val pinIn = Promise.Unsafe.init[Unit, Abort[Closed]]()

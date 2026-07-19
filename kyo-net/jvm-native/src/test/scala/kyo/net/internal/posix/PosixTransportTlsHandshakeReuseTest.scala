@@ -24,7 +24,7 @@ class PosixTransportTlsHandshakeReuseTest extends Test:
 
     import AllowUnsafe.embrace.danger
 
-    private val transportConfig = kyo.net.TransportConfig.default
+    private val transportConfig = kyo.net.NetConfig.default
 
     private val serverTls = NetTlsConfig(
         certChainPath = Present(TlsTestCert.certPath),
@@ -55,8 +55,8 @@ class PosixTransportTlsHandshakeReuseTest extends Test:
     private def withTransport[A](body: PosixTransport => A < (Async & Abort[NetException | Closed] & Scope))(using
         Frame
     ): A < (Async & Abort[NetException | Closed] & Scope) =
-        val driver     = PollerIoDriver.init(transportConfig)
-        val transport  = TestTransports.forTesting(transportConfig, driver, Ffi.load[SocketBindings], backendIsEpoll = false)
+        val driver     = PollerIoDriver.init()
+        val transport  = TestTransports.forTesting(driver, Ffi.load[SocketBindings], backendIsEpoll = false)
         val driverDone = driver.start()
         Abort.run[NetException | Closed](body(transport)).map { result =>
             Sync.defer(transport.close()).andThen(Sync.defer(driver.close())).andThen(
@@ -78,7 +78,7 @@ class PosixTransportTlsHandshakeReuseTest extends Test:
             withTransport { transport =>
                 for
                     ready <- Channel.init[Unit](1)
-                    listener <- transport.listen("127.0.0.1", 0, 16, serverTls) { serverConn =>
+                    listener <- transport.listenTls("127.0.0.1", 0, 16, serverTls) { serverConn =>
                         discard(Sync.Unsafe.evalOrThrow {
                             Fiber.initUnscoped {
                                 Abort.run[Closed] {
@@ -96,7 +96,7 @@ class PosixTransportTlsHandshakeReuseTest extends Test:
                     }.safe.get
                     // The handshake runs to completion over multiple read-ciphertext parks (the per-handshake promise path); the round-trip proves
                     // it completed correctly.
-                    client <- transport.connect("127.0.0.1", listener.port, clientTls).safe.get
+                    client <- transport.connectTls("127.0.0.1", listener.port, clientTls).safe.get
                     _      <- ready.take
                     msg = "handshake-reuse-roundtrip".getBytes("UTF-8")
                     _      <- client.outbound.safe.put(Span.fromUnsafe(msg))
@@ -124,7 +124,8 @@ class PosixTransportTlsHandshakeReuseTest extends Test:
                         })
                     }.safe.get
                     // Run the TLS connect in a fiber so we can interrupt it while its handshake is parked awaiting the (never-coming) ServerHello.
-                    fiber  <- Fiber.init(Abort.run[kyo.net.NetException](transport.connect("127.0.0.1", listener.port, clientTls).safe.get))
+                    fiber <-
+                        Fiber.init(Abort.run[kyo.net.NetException](transport.connectTls("127.0.0.1", listener.port, clientTls).safe.get))
                     _      <- accepted.take // the server has accepted the TCP connection; the client handshake is now in flight / parked
                     done   <- fiber.interrupt
                     result <- fiber.getResult

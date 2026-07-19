@@ -2,9 +2,9 @@ package kyo.internal.transport
 
 import kyo.*
 import kyo.net.NetAddress
+import kyo.net.NetConfig
 import kyo.net.NetException
 import kyo.net.NetTlsConfig
-import kyo.net.TransportConfig
 
 /** Translation seam between kyo-http's public config/address vocabulary and kyo-net's internal transport types.
   *
@@ -16,7 +16,7 @@ import kyo.net.TransportConfig
   */
 private[kyo] object NetConfigTranslation:
 
-    def toNetTlsConfig(tls: HttpTlsConfig): NetTlsConfig =
+    def toNetTlsConfig(tls: HttpTlsConfig, handshakeTimeout: Duration): NetTlsConfig =
         NetTlsConfig(
             trustAll = tls.trustAll,
             sniHostname = tls.sniHostname,
@@ -25,7 +25,8 @@ private[kyo] object NetConfigTranslation:
             clientAuth = toNetClientAuth(tls.clientAuth),
             trustStorePath = tls.trustStorePath,
             minVersion = toNetVersion(tls.minVersion),
-            maxVersion = toNetVersion(tls.maxVersion)
+            maxVersion = toNetVersion(tls.maxVersion),
+            handshakeTimeout = handshakeTimeout
             // caCertPath and hostnameVerification take their NetTlsConfig defaults
             // (Absent / true): HttpTlsConfig has no field for them.
         )
@@ -35,28 +36,31 @@ private[kyo] object NetConfigTranslation:
             case NetAddress.Tcp(host, port) => HttpAddress.Tcp(host, port)
             case NetAddress.Unix(path)      => HttpAddress.Unix(path)
 
-    /** Translate kyo-http's `HttpTransportConfig` to kyo-net's `TransportConfig` (the five byte-transport fields; the names match). Used to
+    /** Translate kyo-http's `HttpTransportConfig` to kyo-net's `NetConfig` (the five byte-transport fields; the names match). Used to
       * build each client's and server's own transport via `NetPlatform.transport`, so fields like `connectTimeout` (the client TCP connect
       * deadline), `handshakeTimeout` (the slowloris-handshake DoS guard), and `channelCapacity`/`readChunkSize` take effect. `maxHeaderSize`
       * is intentionally NOT mapped: it is an HTTP-parser limit that kyo-http enforces itself (server dispatch and client connection), not a
-      * byte-transport concern, so kyo.net.TransportConfig has no such field.
+      * byte-transport concern, so kyo.net.NetConfig has no such field.
       */
-    def toNetTransportConfig(c: HttpTransportConfig): TransportConfig =
-        TransportConfig(
-            channelCapacity = c.channelCapacity,
-            readChunkSize = c.readChunkSize,
-            connectTimeout = c.connectTimeout,
-            handshakeTimeout = c.handshakeTimeout
-        )
+    def toNetConfig(c: HttpTransportConfig): NetConfig =
+        NetConfig(channelCapacity = c.channelCapacity, readChunkSize = c.readChunkSize)
 
     /** Wraps transport.connect with TLS config translation. Keeps the kyo.net.NetTlsConfig reference inside internal/. */
     def connectTls(
         transport: kyo.net.Transport,
         host: String,
         port: Int,
-        tls: HttpTlsConfig
+        tls: HttpTlsConfig,
+        connectTimeout: Duration,
+        transportConfig: HttpTransportConfig
     )(using AllowUnsafe, Frame): Fiber.Unsafe[kyo.net.Connection, Abort[NetException]] =
-        transport.connect(host, port, toNetTlsConfig(tls))
+        transport.connectTls(
+            host,
+            port,
+            toNetTlsConfig(tls, transportConfig.handshakeTimeout),
+            connectTimeout,
+            toNetConfig(transportConfig)
+        )
 
     /** Wraps transport.listen with TLS config translation. Keeps the kyo.net.NetTlsConfig reference inside internal/. */
     def listenTls(
@@ -64,9 +68,16 @@ private[kyo] object NetConfigTranslation:
         host: String,
         port: Int,
         backlog: Int,
-        tls: HttpTlsConfig
+        tls: HttpTlsConfig,
+        transportConfig: HttpTransportConfig
     )(handler: kyo.net.Connection => Unit)(using AllowUnsafe, Frame): Fiber.Unsafe[kyo.net.Listener, Abort[NetException]] =
-        transport.listen(host, port, backlog, toNetTlsConfig(tls))(handler)
+        transport.listenTls(
+            host,
+            port,
+            backlog,
+            toNetTlsConfig(tls, transportConfig.handshakeTimeout),
+            toNetConfig(transportConfig)
+        )(handler)
 
     private def toNetClientAuth(auth: HttpTlsConfig.ClientAuth): NetTlsConfig.ClientAuth =
         auth match

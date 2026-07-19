@@ -26,7 +26,7 @@ class RecordingDecoratorsTest extends Test:
         PosixTestSockets.assumePoller().andThen {
             val recording = new RecordingSocketBindings(sock)
             PosixTestSockets.loopbackPair(recording).map { case (client, accepted) =>
-                val driver = PollerIoDriver.init(kyo.net.TransportConfig.default)
+                val driver = PollerIoDriver.init()
                 discard(driver.start())
                 Sync.ensure(Sync.defer(driver.close())) {
                     val clientH   = PosixHandle.socket(client, PosixHandle.DefaultReadBufferSize, Absent)

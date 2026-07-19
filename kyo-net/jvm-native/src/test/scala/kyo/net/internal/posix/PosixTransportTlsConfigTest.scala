@@ -32,7 +32,7 @@ class PosixTransportTlsConfigTest extends Test:
 
     import AllowUnsafe.embrace.danger
 
-    private val transportConfig = kyo.net.TransportConfig.default
+    private val transportConfig = kyo.net.NetConfig.default
 
     private val serverTls = NetTlsConfig(
         certChainPath = Present(TlsTestCert.certPath),
@@ -64,8 +64,8 @@ class PosixTransportTlsConfigTest extends Test:
     private def withTransport[A](buildEngine: PosixTransport.TlsEngineFactory)(
         body: PosixTransport => A < (Async & Abort[NetException | Closed] & Scope)
     )(using Frame): A < (Async & Abort[NetException | Closed] & Scope) =
-        val driver     = PollerIoDriver.init(transportConfig)
-        val transport  = TestTransports.forTesting(transportConfig, driver, Ffi.load[SocketBindings], backendIsEpoll = false, buildEngine)
+        val driver     = PollerIoDriver.init()
+        val transport  = TestTransports.forTesting(driver, Ffi.load[SocketBindings], backendIsEpoll = false, buildEngine)
         val driverDone = driver.start()
         Abort.run[NetException | Closed](body(transport)).map { result =>
             Sync.defer(transport.close()).andThen(Sync.defer(driver.close())).andThen(
@@ -82,11 +82,15 @@ class PosixTransportTlsConfigTest extends Test:
                 throw NetTlsConfigException("synthetic accept-side engine construction failure (test)")
             else TlsProviderPlatform.engine(cfg, host, isServer)
         } { transport =>
-            transport.listen("127.0.0.1", 0, 16, serverTls)(_ => ()).safe.get.map { listener =>
-                Abort.run[NetException | Closed](transport.connect("127.0.0.1", listener.port, verifyingClientTls).safe.get).map {
+            transport.listenTls("127.0.0.1", 0, 16, serverTls)(_ => ()).safe.get.map { listener =>
+                Abort.run[NetException | Closed](transport.connectTls("127.0.0.1", listener.port, verifyingClientTls).safe.get).map {
                     firstOutcome =>
                         serverEngineThrows.set(false)
-                        Abort.run[NetException | Closed](transport.connect("127.0.0.1", listener.port, verifyingClientTls).safe.get).map {
+                        Abort.run[NetException | Closed](transport.connectTls(
+                            "127.0.0.1",
+                            listener.port,
+                            verifyingClientTls
+                        ).safe.get).map {
                             secondOutcome =>
                                 listener.close()
                                 assert(
@@ -120,8 +124,8 @@ class PosixTransportTlsConfigTest extends Test:
                 )
             else TlsProviderPlatform.engine(cfg, host, isServer)
         } { transport =>
-            transport.listen("127.0.0.1", 0, 16, serverTls)(_ => ()).safe.get.map { listener =>
-                Abort.run[NetException | Closed](transport.connect("127.0.0.1", listener.port, verifyingClientTls).safe.get).map {
+            transport.listenTls("127.0.0.1", 0, 16, serverTls)(_ => ()).safe.get.map { listener =>
+                Abort.run[NetException | Closed](transport.connectTls("127.0.0.1", listener.port, verifyingClientTls).safe.get).map {
                     outcome =>
                         listener.close()
                         outcome match

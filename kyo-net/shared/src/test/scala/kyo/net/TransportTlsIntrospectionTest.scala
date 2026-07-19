@@ -18,8 +18,8 @@ class TransportTlsIntrospectionTest extends Test:
     "after a TLS handshake the client reports the server leaf-cert SHA-256 (32 bytes, golden), idempotent, Absent after close" - eachBackendTls {
         (transport, serverTls, clientTls) =>
             for
-                listener <- transport.listen("127.0.0.1", 0, 16, serverTls)(_ => ()).safe.get
-                client   <- transport.connect("127.0.0.1", listener.port, clientTls).safe.get
+                listener <- transport.listenTls("127.0.0.1", 0, 16, serverTls)(_ => ()).safe.get
+                client   <- transport.connectTls("127.0.0.1", listener.port, clientTls).safe.get
             yield
                 val hash      = client.serverCertificateHash
                 val hashAgain = client.serverCertificateHash

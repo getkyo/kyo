@@ -22,7 +22,7 @@ class StartTlsUpgradeTest extends Test:
 
     import AllowUnsafe.embrace.danger
 
-    private val transportConfig = kyo.net.TransportConfig.default
+    private val transportConfig = kyo.net.NetConfig.default
     private def sock            = Ffi.load[SocketBindings]
 
     private val serverTls = NetTlsConfig(
@@ -41,15 +41,15 @@ class StartTlsUpgradeTest extends Test:
 
     "STARTTLS feeds staged ciphertext with no prefix loss and reuses the same fd" in {
         assumeReady()
-        val driver = PollerIoDriver.init(transportConfig)
+        val driver = PollerIoDriver.init()
         discard(driver.start())
-        val transport = TestTransports.forTesting(transportConfig, driver, Ffi.load[SocketBindings], backendIsEpoll = false)
+        val transport = TestTransports.forTesting(driver, Ffi.load[SocketBindings], backendIsEpoll = false)
         Sync.ensure(Sync.defer(driver.close())) {
             loopbackPair().map { case (clientFd, serverFd) =>
                 val clientHandle = PosixHandle.socket(clientFd, PosixHandle.DefaultReadBufferSize, Absent)
                 val serverHandle = PosixHandle.socket(serverFd, PosixHandle.DefaultReadBufferSize, Absent)
-                val clientPlain  = transport.openWith(clientHandle, driver)
-                val serverPlain  = transport.openWith(serverHandle, driver)
+                val clientPlain  = transport.openWith(clientHandle, driver, kyo.net.NetConfig.DefaultChannelCapacity)
+                val serverPlain  = transport.openWith(serverHandle, driver, kyo.net.NetConfig.DefaultChannelCapacity)
                 clientPlain.start()
                 serverPlain.start()
 
@@ -94,8 +94,8 @@ class StartTlsUpgradeTest extends Test:
     }
 
     "STARTTLS on a non-upgradable in-memory connection aborts NetNotUpgradableException" in {
-        val driver    = PollerIoDriver.init(transportConfig)
-        val transport = TestTransports.forTesting(transportConfig, driver, Ffi.load[SocketBindings], backendIsEpoll = false)
+        val driver    = PollerIoDriver.init()
+        val transport = TestTransports.forTesting(driver, Ffi.load[SocketBindings], backendIsEpoll = false)
         Sync.ensure(Sync.defer(driver.close())) {
             val inbound  = Channel.Unsafe.init[Span[Byte]](8)
             val outbound = Channel.Unsafe.init[Span[Byte]](8)

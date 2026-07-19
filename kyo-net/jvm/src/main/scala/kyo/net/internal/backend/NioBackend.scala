@@ -2,7 +2,7 @@ package kyo.net.internal.backend
 
 import java.nio.channels.spi.SelectorProvider
 import kyo.*
-import kyo.net.TransportConfig
+import kyo.net.NetConfig
 import kyo.net.internal.NioHandle
 import kyo.net.internal.NioIoDriver
 import kyo.net.internal.transport.IoDriver
@@ -29,6 +29,6 @@ private[net] object NioBackend extends IoBackend:
 
     // Covariant return: the trait declares IoDriver[Handle]; this floor produces the concrete NioIoDriver the JVM
     // transport drives (it calls NioIoDriver-specific channel-registration methods), so the concrete type is preserved.
-    def createDriver(config: TransportConfig)(using AllowUnsafe, Frame): NioIoDriver =
+    def createDriver()(using AllowUnsafe, Frame): NioIoDriver =
         NioIoDriver.init()
 end NioBackend

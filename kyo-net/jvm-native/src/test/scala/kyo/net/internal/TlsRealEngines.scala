@@ -3,9 +3,9 @@ package kyo.net.internal
 import kyo.*
 import kyo.ffi.Ffi
 import kyo.net.Connection
+import kyo.net.NetConfig
 import kyo.net.NetException
 import kyo.net.NetTlsConfig
-import kyo.net.TransportConfig
 import kyo.net.internal.posix.PollerIoDriver
 import kyo.net.internal.posix.PosixConstants
 import kyo.net.internal.posix.PosixHandle
@@ -134,25 +134,25 @@ object TlsRealEngines:
       *
       * Anti-flakiness: connect and listen use real Fiber.Unsafe latches (Fiber.initUnscoped) completing on the real kernel accept; no sleep.
       */
-    def realTlsLoopback[A, S](config: TransportConfig)(
+    def realTlsLoopback[A, S](config: NetConfig)(
         f: (Connection, Connection) => A < S
     )(using Frame): A < (S & Async & Abort[NetException | Closed]) =
         import AllowUnsafe.embrace.danger
-        val driver    = PollerIoDriver.init(config)
+        val driver    = PollerIoDriver.init()
         val pool      = IoDriverPool.init(Array[IoDriver[PosixHandle]](driver))
-        val transport = PosixTransport.init(config, pool)
+        val transport = PosixTransport.init(pool)
         discard(driver.start())
         val serverTls = serverConfig
         val clientTls = clientConfig
         Abort.run[NetException | Closed] {
             val acceptedCh = Channel.Unsafe.init[Connection](1)
             val listenerF =
-                transport.listen("127.0.0.1", 0, 16, serverTls) { serverConn =>
+                transport.listenTls("127.0.0.1", 0, 16, serverTls) { serverConn =>
                     discard(acceptedCh.putFiber(serverConn))
                 }.safe
             for
                 listener   <- listenerF.get
-                clientConn <- transport.connect("127.0.0.1", listener.port, clientTls).safe.get
+                clientConn <- transport.connectTls("127.0.0.1", listener.port, clientTls).safe.get
                 serverConn <- acceptedCh.takeFiber().safe.get
                 result     <- f(clientConn, serverConn)
             yield

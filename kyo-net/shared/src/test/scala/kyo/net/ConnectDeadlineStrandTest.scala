@@ -25,7 +25,7 @@ class ConnectDeadlineStrandTest extends Test:
         // under load, so a failure here is a genuinely dropped/never-delivered write-readiness (the lost-wakeup), not a few-ms
         // latency tail against a too-tight bound. (TransportHandshakeTimeoutTest exercises a tight 60ms deadline;
         // this guard isolates DELIVERY correctness from deadline tightness, so it is not host-load-flaky.)
-        val transport = NetPlatform.ownedTransport(TransportConfig.default.copy(connectTimeout = 2.seconds))
+        val transport = NetPlatform.ownedTransport()
         transport.listen("127.0.0.1", 0, 128) { conn => conn.close() }.safe.get.map { listener =>
             val timeouts = new java.util.concurrent.atomic.AtomicInteger(0)
             val maxLatNs = new java.util.concurrent.atomic.AtomicLong(0L)
@@ -36,7 +36,7 @@ class ConnectDeadlineStrandTest extends Test:
                 if i >= total then Loop.done(i)
                 else
                     val t0 = java.lang.System.nanoTime()
-                    Abort.run[NetException](transport.connect("127.0.0.1", listener.port).safe.get).map { outcome =>
+                    Abort.run[NetException](transport.connect("127.0.0.1", listener.port, 2.seconds).safe.get).map { outcome =>
                         val latNs = java.lang.System.nanoTime() - t0
                         maxLatNs.updateAndGet(p => math.max(p, latNs))
                         outcome match
@@ -68,11 +68,11 @@ class ConnectDeadlineStrandTest extends Test:
         // immediately closes drives both: every connect MUST complete (succeed; a peer that already closed yields a clean connected-then-EOF, not
         // a connect failure). Any NetConnectException / NetConnectTimeoutException is a dropped connect arm. The generous 2s deadline isolates
         // delivery correctness from deadline tightness so this is not host-load-flaky.
-        val transport   = NetPlatform.ownedTransport(TransportConfig.default.copy(connectTimeout = 2.seconds))
+        val transport   = NetPlatform.ownedTransport()
         val concurrency = 128
         transport.listen("127.0.0.1", 0, 256) { conn => conn.close() }.safe.get.map { listener =>
             Async.foreach(0 until concurrency, concurrency) { _ =>
-                Abort.run[NetException](transport.connect("127.0.0.1", listener.port).safe.get).map {
+                Abort.run[NetException](transport.connect("127.0.0.1", listener.port, 2.seconds).safe.get).map {
                     case Result.Success(conn) =>
                         conn.close()
                         Absent

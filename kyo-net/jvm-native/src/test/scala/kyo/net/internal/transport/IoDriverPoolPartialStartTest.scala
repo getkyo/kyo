@@ -25,7 +25,7 @@ class IoDriverPoolPartialStartTest extends Test:
     import AllowUnsafe.embrace.danger
     given Frame = Frame.internal
 
-    private val transportConfig = kyo.net.TransportConfig.default
+    private val transportConfig = kyo.net.NetConfig.default
 
     private def assumePoller(): Unit =
         PosixTestSockets.assumePoller()
@@ -33,7 +33,7 @@ class IoDriverPoolPartialStartTest extends Test:
 
     /** Build `n` real PollerIoDriver instances wrapped in RecordingIoDriver spies (fully delegating). */
     private def mkRealSpies(n: Int): Array[RecordingIoDriver] =
-        Array.fill(n)(new RecordingIoDriver(PollerIoDriver.init(transportConfig)))
+        Array.fill(n)(new RecordingIoDriver(PollerIoDriver.init()))
 
     // --- partialStartIsAllOrNothing ---
     // When the k-th driver's start() throws, pool.start() must:

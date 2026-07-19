@@ -33,12 +33,7 @@ class NioEngineOwnershipTest extends Test:
     private val clientTlsConfig: NetTlsConfig = NetTlsConfig(trustAll = true)
 
     private def mkTransport()(using Frame): NioTransport =
-        NioTransport.init(
-            channelCapacity = 8,
-            readBufferSize = NioHandle.DefaultReadBufferSize,
-            connectTimeout = Duration.Infinity,
-            handshakeTimeout = Duration.Infinity
-        )
+        NioTransport.init()
 
     /** Server echo fiber for TLS connections. Suspends on each inbound take via the Async effect, so the scheduler (not the NIO selector
       * carrier) resumes the fiber when data arrives. This breaks the synchronous callback chain that would otherwise run writeTls directly on
@@ -119,9 +114,9 @@ class NioEngineOwnershipTest extends Test:
         "TLS handshake completes and gate is released: first write+read round-trip arrives intact" in {
             given Frame   = Frame.internal
             val transport = mkTransport()
-            transport.listen("127.0.0.1", 0, 50, serverTlsConfig)(startEchoFiber).safe.get.map { listener =>
+            transport.listenTls("127.0.0.1", 0, 50, serverTlsConfig)(startEchoFiber).safe.get.map { listener =>
                 val port = listener.port
-                transport.connect("127.0.0.1", port, clientTlsConfig).safe.get.map { conn =>
+                transport.connectTls("127.0.0.1", port, clientTlsConfig).safe.get.map { conn =>
                     // Single round-trip: write then read back. If gate is stuck post-handshake, writeTls
                     // spins and the take never resolves.
                     val msg = Span.fromUnsafe("gate-released-check".getBytes("UTF-8"))
@@ -147,9 +142,9 @@ class NioEngineOwnershipTest extends Test:
         "two back-to-back TLS writes to same connection both delivered in order" in {
             given Frame   = Frame.internal
             val transport = mkTransport()
-            transport.listen("127.0.0.1", 0, 50, serverTlsConfig)(startEchoFiber).safe.get.map { listener =>
+            transport.listenTls("127.0.0.1", 0, 50, serverTlsConfig)(startEchoFiber).safe.get.map { listener =>
                 val port = listener.port
-                transport.connect("127.0.0.1", port, clientTlsConfig).safe.get.map { conn =>
+                transport.connectTls("127.0.0.1", port, clientTlsConfig).safe.get.map { conn =>
                     val msg1 = Span.fromUnsafe("frame-1".getBytes("UTF-8"))
                     val msg2 = Span.fromUnsafe("frame-2-longer".getBytes("UTF-8"))
                     conn.outbound.safe.put(msg1).andThen(conn.outbound.safe.put(msg2)).andThen {
@@ -175,9 +170,9 @@ class NioEngineOwnershipTest extends Test:
         "sequential NIO TLS write/read cycles all correct across many rounds" in {
             given Frame   = Frame.internal
             val transport = mkTransport()
-            transport.listen("127.0.0.1", 0, 50, serverTlsConfig)(startEchoFiber).safe.get.map { listener =>
+            transport.listenTls("127.0.0.1", 0, 50, serverTlsConfig)(startEchoFiber).safe.get.map { listener =>
                 val port = listener.port
-                transport.connect("127.0.0.1", port, clientTlsConfig).safe.get.map { conn =>
+                transport.connectTls("127.0.0.1", port, clientTlsConfig).safe.get.map { conn =>
                     driveConnection(conn, connId = 0, rounds = 60, window = 1).map { ok =>
                         conn.close()
                         listener.close()
@@ -217,11 +212,11 @@ class NioEngineOwnershipTest extends Test:
         "gate is per-connection: two independent NIO TLS connections complete concurrently" in {
             given Frame   = Frame.internal
             val transport = mkTransport()
-            transport.listen("127.0.0.1", 0, 50, serverTlsConfig)(startEchoFiber).safe.get.map { listener =>
+            transport.listenTls("127.0.0.1", 0, 50, serverTlsConfig)(startEchoFiber).safe.get.map { listener =>
                 val port = listener.port
                 Async.zip(
-                    transport.connect("127.0.0.1", port, clientTlsConfig).safe.get,
-                    transport.connect("127.0.0.1", port, clientTlsConfig).safe.get
+                    transport.connectTls("127.0.0.1", port, clientTlsConfig).safe.get,
+                    transport.connectTls("127.0.0.1", port, clientTlsConfig).safe.get
                 ).map { (conn0, conn1) =>
                     Async.zip(
                         driveConnection(conn0, connId = 0, rounds = 20, window = 4),
@@ -245,15 +240,15 @@ class NioEngineOwnershipTest extends Test:
         "new connection after close gets a fresh unowned gate: first round-trip works" in {
             given Frame   = Frame.internal
             val transport = mkTransport()
-            transport.listen("127.0.0.1", 0, 50, serverTlsConfig)(startEchoFiber).safe.get.map { listener =>
+            transport.listenTls("127.0.0.1", 0, 50, serverTlsConfig)(startEchoFiber).safe.get.map { listener =>
                 val port = listener.port
-                transport.connect("127.0.0.1", port, clientTlsConfig).safe.get.map { conn1 =>
+                transport.connectTls("127.0.0.1", port, clientTlsConfig).safe.get.map { conn1 =>
                     // Use and close the first connection.
                     val msg1 = Span.fromUnsafe("first-conn".getBytes("UTF-8"))
                     conn1.outbound.safe.put(msg1).andThen(conn1.inbound.safe.take).map { _ =>
                         conn1.close()
                         // Open a second connection; its gate must be fresh (unowned).
-                        transport.connect("127.0.0.1", port, clientTlsConfig).safe.get.map { conn2 =>
+                        transport.connectTls("127.0.0.1", port, clientTlsConfig).safe.get.map { conn2 =>
                             val msg2 = Span.fromUnsafe("second-conn".getBytes("UTF-8"))
                             conn2.outbound.safe.put(msg2).andThen {
                                 conn2.inbound.safe.take.map { received =>

@@ -24,7 +24,7 @@ object TestBackends:
     final case class Entry(
         name: String,
         isAvailable: Boolean,
-        build: (TransportConfig, Frame) => Transport
+        build: Frame => Transport
     )
 
     /** Every registered backend on this host (the single Node backend). The harness registers one leaf per entry and cancels the leaves whose
@@ -36,13 +36,7 @@ object TestBackends:
             Entry(
                 name = backend.name,
                 isAvailable = backend.isAvailable,
-                build = (config, frame) =>
-                    JsTransport.init(
-                        poolSize = 1,
-                        channelCapacity = config.channelCapacity,
-                        connectTimeout = config.connectTimeout,
-                        handshakeTimeout = config.handshakeTimeout
-                    )(using summon[AllowUnsafe], frame)
+                build = frame => JsTransport.init(poolSize = 1)(using summon[AllowUnsafe], frame)
             )
         }
     end all

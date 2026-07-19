@@ -110,14 +110,14 @@ class JsConcurrentEchoTest extends Test:
                 }
             loopEcho()
         val listenFiber =
-            if tls then transport.listen("127.0.0.1", 0, 128, serverTls)(serverHandler)
+            if tls then transport.listenTls("127.0.0.1", 0, 128, serverTls)(serverHandler)
             else transport.listen("127.0.0.1", 0, 128)(serverHandler)
         for
             listener <- listenFiber.safe.get
             port = listener.port
             results <- Async.fillIndexed(connections, connections) { connId =>
                 val connectFiber =
-                    if tls then transport.connect("127.0.0.1", port, clientTls)
+                    if tls then transport.connectTls("127.0.0.1", port, clientTls)
                     else transport.connect("127.0.0.1", port)
                 val perConnection: Boolean < (Async & Abort[NetException | Closed] & Scope) =
                     connectFiber.safe.get.map { conn =>

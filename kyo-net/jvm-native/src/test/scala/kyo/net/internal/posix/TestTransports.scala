@@ -17,14 +17,13 @@ object TestTransports:
       * [[PosixTransport.realEngineFactory]]) where a test needs to observe or script the engine the transport is otherwise the sole builder of.
       */
     def forTesting(
-        config: kyo.net.TransportConfig,
         ioDriver: IoDriver[PosixHandle],
         sockets: SocketBindings,
         backendIsEpoll: Boolean,
         buildEngine: PosixTransport.TlsEngineFactory = PosixTransport.realEngineFactory
     )(using AllowUnsafe): PosixTransport =
         val pool = IoDriverPool.init(Array(ioDriver))
-        PosixTransport.init(config, pool, ioDriver, sockets, backendIsEpoll, buildEngine)
+        PosixTransport.init(pool, ioDriver, sockets, backendIsEpoll, buildEngine)
     end forTesting
 
 end TestTransports

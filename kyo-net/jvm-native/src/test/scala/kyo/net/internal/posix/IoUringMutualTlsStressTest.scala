@@ -4,11 +4,11 @@ import kyo.*
 import kyo.ffi.Ffi
 import kyo.net.Connection
 import kyo.net.Listener
+import kyo.net.NetConfig
 import kyo.net.NetException
 import kyo.net.NetTlsConfig
 import kyo.net.Test
 import kyo.net.TlsTestCertShared
-import kyo.net.TransportConfig
 import kyo.net.internal.TlsRealEngines
 
 // Regression guard for the io_uring STARTTLS multi-record upgrade stall: a TOCTOU race in the upgrade-byte handoff between the handshake-driving
@@ -22,7 +22,7 @@ class IoUringMutualTlsStressTest extends Test:
 
     import AllowUnsafe.embrace.danger
 
-    private val tcfg = TransportConfig.default
+    private val tcfg = NetConfig.default
 
     private val upgradeRequest: Span[Byte] = Span.from(Array[Byte]('U'))
     private val upgradeReady: Span[Byte]   = Span.from(Array[Byte]('R'))
@@ -110,8 +110,8 @@ class IoUringMutualTlsStressTest extends Test:
             end oneUpgrade
 
             def oneGroup(g: Int): Unit < (Async & Abort[NetException | Closed]) =
-                val driver    = IoUringDriver.init(tcfg)
-                val transport = TestTransports.forTesting(tcfg, driver, Ffi.load[SocketBindings], backendIsEpoll = false)
+                val driver    = IoUringDriver.init()
+                val transport = TestTransports.forTesting(driver, Ffi.load[SocketBindings], backendIsEpoll = false)
                 discard(driver.start())
                 startTlsEchoServer(transport).map { listener =>
                     Loop(0) { round =>

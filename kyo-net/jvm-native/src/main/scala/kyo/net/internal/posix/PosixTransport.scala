@@ -20,6 +20,7 @@ import kyo.net.NetStdioAlreadyOpenException
 import kyo.net.NetTlsConfig
 import kyo.net.NetTlsException
 import kyo.net.NetTlsHandshakeException
+import kyo.net.NetTlsHandshakeTimeoutException
 import kyo.net.NetUnixConnectException
 import kyo.net.internal.HandshakeFailure
 import kyo.net.internal.HandshakeState
@@ -56,7 +57,6 @@ import kyo.scheduler.IOPromise
   * the first post-upgrade socket read (so no byte is dropped), drives the handshake over the same fd, and rebuilds the connection.
   */
 final private[net] class PosixTransport private[posix] (
-    config: kyo.net.TransportConfig,
     val pool: IoDriverPool[PosixHandle],
     representative: IoDriver[PosixHandle],
     sockets: SocketBindings,
@@ -120,9 +120,12 @@ final private[net] class PosixTransport private[posix] (
       *
       * Called exactly once per handle's lifetime (a STARTTLS upgrade reuses the same handle/id, it does not call this again).
       */
-    private def openTracked(handle: PosixHandle, driver: IoDriver[PosixHandle])(using AllowUnsafe, Frame): InternalConnection[PosixHandle] =
+    private def openTracked(handle: PosixHandle, driver: IoDriver[PosixHandle], channelCapacity: Int)(using
+        AllowUnsafe,
+        Frame
+    ): InternalConnection[PosixHandle] =
         handle.driver = driver
-        val conn = InternalConnection.init(handle, driver, config.channelCapacity, () => discard(connections.remove(handle.id.packed)))
+        val conn = InternalConnection.init(handle, driver, channelCapacity, () => discard(connections.remove(handle.id.packed)))
         discard(connections.put(handle.id.packed, conn))
         conn
     end openTracked
@@ -203,14 +206,14 @@ final private[net] class PosixTransport private[posix] (
       * `Closed` (the CAS fails) so fd 0/1 are never double-owned. The connection closes its driver registration on scope exit but never closes
       * fds 0/1 (the process owns them).
       */
-    override def stdio()(using AllowUnsafe, Frame): Fiber.Unsafe[Connection, Abort[NetException]] =
+    override def stdio(channelCapacity: Int, readChunkSize: Int)(using AllowUnsafe, Frame): Fiber.Unsafe[Connection, Abort[NetException]] =
         if !stdioClaimed.compareAndSet(false, true) then
             // Exactly one stdio per process (no double-ownership of fd 0/1).
             Fiber.Unsafe.fromResult(Result.fail(NetStdioAlreadyOpenException()))
         else
             Fiber.Unsafe.init {
-                val handle           = PosixHandle.stdio(PosixHandle.DefaultReadBufferSize)
-                val conn: Connection = openWith(handle, selectDriver(handle.readFd))
+                val handle           = PosixHandle.stdio(readChunkSize)
+                val conn: Connection = openWith(handle, selectDriver(handle.readFd), channelCapacity)
                 if !conn.start() then
                     // Unreachable: openWith (:211-217) registers the connection nowhere a concurrent close could reach before start() runs
                     // immediately above, so the Created -> Established CAS cannot lose here. Defensive assertion, not a reachable path.
@@ -236,12 +239,12 @@ final private[net] class PosixTransport private[posix] (
     /** Build an internal connection over `handle`/`driver`, returned as the public `Connection`. Binds `handle.driver` so every per-handle op
       * (read/write/await/closeHandle/submitEngineOp) routes through the driver this handle was assigned to. The caller starts it.
       */
-    private[posix] def openWith(handle: PosixHandle, driver: IoDriver[PosixHandle])(using
+    private[posix] def openWith(handle: PosixHandle, driver: IoDriver[PosixHandle], channelCapacity: Int)(using
         AllowUnsafe,
         Frame
     ): InternalConnection[PosixHandle] =
         handle.driver = driver
-        InternalConnection.init(handle, driver, config.channelCapacity)
+        InternalConnection.init(handle, driver, channelCapacity)
     end openWith
 
     // ---------------------------------------------------------------------------------------------------------------------------------------
@@ -249,15 +252,22 @@ final private[net] class PosixTransport private[posix] (
     // ---------------------------------------------------------------------------------------------------------------------------------------
 
     /** Connect a non-blocking TCP socket to `host:port` and complete with an open plaintext [[Connection]]. */
-    def connect(host: String, port: Int)(using AllowUnsafe, Frame): Fiber.Unsafe[Connection, Abort[NetException]] =
-        connectResolving(host, port, nodelay = true, tls = Absent)
-
-    /** Connect a non-blocking TCP socket to `host:port`, then drive a client TLS handshake before completing. */
-    def connect(host: String, port: Int, tls: NetTlsConfig)(using
+    def connect(host: String, port: Int, connectTimeout: Duration, config: kyo.net.NetConfig)(using
         AllowUnsafe,
         Frame
     ): Fiber.Unsafe[Connection, Abort[NetException]] =
-        connectResolving(host, port, nodelay = true, tls = Present((tls, host)))
+        kyo.net.Transport.checkConnectTimeout(connectTimeout)
+        connectResolving(host, port, nodelay = true, tls = Absent, connectTimeout = connectTimeout, config = config)
+    end connect
+
+    /** Connect a non-blocking TCP socket to `host:port`, then drive a client TLS handshake before completing. */
+    def connectTls(host: String, port: Int, tls: NetTlsConfig, connectTimeout: Duration, config: kyo.net.NetConfig)(using
+        AllowUnsafe,
+        Frame
+    ): Fiber.Unsafe[Connection, Abort[NetException]] =
+        kyo.net.Transport.checkConnectTimeout(connectTimeout)
+        connectResolving(host, port, nodelay = true, tls = Present((tls, host)), connectTimeout = connectTimeout, config = config)
+    end connectTls
 
     /** Resolve `host` (numeric / loopback inline, otherwise through the offloaded-blocking [[HostResolver]]) and then drive the connect.
       *
@@ -271,14 +281,18 @@ final private[net] class PosixTransport private[posix] (
         host: String,
         port: Int,
         nodelay: Boolean,
-        tls: Maybe[(NetTlsConfig, String)]
+        tls: Maybe[(NetTlsConfig, String)],
+        connectTimeout: Duration,
+        config: kyo.net.NetConfig
     )(using AllowUnsafe, Frame): Fiber.Unsafe[Connection, Abort[NetException]] =
         val target  = s"$host:$port"
         val promise = new IOPromise[NetException, Connection]
+        // The resolution fiber runs after this method returns, so `config` reaches the connect the same way `tls` and `promise` do: captured by
+        // the continuation built here. Every later step in the chain is likewise a closure created during this call, or a method it invokes.
         resolveAndEncode(host, port).onComplete {
             case Result.Success(pending) =>
                 // pending: (Int, Buffer[Byte], Int) < Any; .eval extracts the concrete tuple, mirroring resolveAndEncode's own identical step.
-                connectImpl(Present(pending.eval), nodelay, target, host, port, tls, promise)
+                connectImpl(Present(pending.eval), nodelay, target, host, port, tls, promise, connectTimeout, config)
             case Result.Failure(e) =>
                 promise.completeDiscard(Result.fail(e))
             case Result.Panic(e) =>
@@ -294,7 +308,11 @@ final private[net] class PosixTransport private[posix] (
     /** Connect a non-blocking Unix-domain socket to `path` and complete with an open plaintext [[Connection]] (no `TCP_NODELAY`). A Unix path
       * needs no name resolution, so the encoded `sockaddr` is built inline and handed straight to [[connectImpl]] with no resolver fiber.
       */
-    def connectUnix(path: String)(using AllowUnsafe, Frame): Fiber.Unsafe[Connection, Abort[NetException]] =
+    def connectUnix(path: String, connectTimeout: Duration, config: kyo.net.NetConfig)(using
+        AllowUnsafe,
+        Frame
+    ): Fiber.Unsafe[Connection, Abort[NetException]] =
+        kyo.net.Transport.checkConnectTimeout(connectTimeout)
         val promise = new IOPromise[NetException, Connection]
         connectImpl(
             SockAddr.encodeUnix(PosixConstants.AF_UNIX, path).map((b, l) => (PosixConstants.AF_UNIX, b, l)),
@@ -303,7 +321,9 @@ final private[net] class PosixTransport private[posix] (
             host = path,
             port = -1, // sentinel: a Unix socket has no port; connectFail routes port < 0 to NetUnixConnectException
             tls = Absent,
-            promise = promise
+            promise = promise,
+            connectTimeout = connectTimeout,
+            config = config
         )
         // Fiber.Unsafe[A, S] is an opaque alias over IOPromiseBase[Any, A < (Async & S)] (kyo.Fiber.scala), structurally different from this
         // plainly-constructed, invariant IOPromise[NetException, Connection], even though both erase to the same runtime object; the
@@ -408,7 +428,9 @@ final private[net] class PosixTransport private[posix] (
         host: String,
         port: Int,
         tls: Maybe[(NetTlsConfig, String)],
-        promise: IOPromise[NetException, Connection]
+        promise: IOPromise[NetException, Connection],
+        connectTimeout: Duration,
+        config: kyo.net.NetConfig
     )(using AllowUnsafe, Frame): Unit =
         encoded match
             case Absent =>
@@ -419,32 +441,34 @@ final private[net] class PosixTransport private[posix] (
                 if fd < 0 then
                     addr.close()
                     promise.completeDiscard(Result.fail(connectFail(host, port, new NetErrno(sockR.errorCode))))
-                else if !prepareClientSocket(fd, nodelay) then
+                else if !prepareClientSocket(fd, nodelay, config) then
                     addr.close()
                     closeRawFd(fd)
                     promise.completeDiscard(Result.fail(connectFail(host, port, "")))
                 else
                     val driver = pool.next()
+                    // The handle carries the caller's read size for the rest of its life (PosixHandle.readBufferSize), so every later read on
+                    // this connection uses it without the config having to be reachable from the handle.
                     val handle = PosixHandle.socket(fd, config.readChunkSize, connectTarget = Present((addr, len)))
                     handle.driver = driver
                     // Arm the connect-deadline before either arm awaits, so the deadline races the OS connect on the same `promise` for both the
                     // io_uring completion arm and the epoll/kqueue readiness arm. A deadline-fired close surfaces the typed
                     // NetConnectTimeoutException; an OS-failure close surfaces NetConnectException through `connectFail`: the close cause is
                     // discriminated by which arm completes `promise` first (completeDiscard, at most once).
-                    armConnectDeadline(promise, host, port)
+                    armConnectDeadline(promise, host, port, connectTimeout)
                     if isCompletionConnect(driver) then
                         // Completion arm (io_uring): the driver submits the connect SQE itself against `handle.connectTarget`.
-                        awaitConnectThen(handle, addr, driver, target, host, port, tls, promise, checkSoError = false)
+                        awaitConnectThen(handle, addr, driver, target, host, port, tls, promise, checkSoError = false, config)
                     else
                         // Readiness arm (epoll/kqueue): issue the non-blocking connect, then wait for write-readiness + SO_ERROR.
-                        driveReadinessConnect(handle, addr, len, driver, target, host, port, tls, promise)
+                        driveReadinessConnect(handle, addr, len, driver, target, host, port, tls, promise, config)
                     end if
                 end if
         end match
     end connectImpl
 
-    /** Arm a `Clock`-driven deadline for one in-flight client TCP connect, mirroring the accept-path `armHandshakeDeadline`. When
-      * `config.connectTimeout` is finite (and the target is a TCP host:port, not a Unix socket whose `port < 0` has no typed timeout leaf),
+    /** Arm a `Clock`-driven deadline for one in-flight client TCP connect, mirroring the accept-path `armHandshakeDeadline`. When the caller's
+      * `connectTimeout` is finite (and the target is a TCP host:port, not a Unix socket whose `port < 0` has no typed timeout leaf),
       * schedule `Clock.live.unsafe.sleep(d).onComplete(...)` (a timer fiber on the clock executor, never a blocked carrier) and fail `promise`
       * with `NetConnectTimeoutException(host, port, connectTimeout)` when the deadline fires. `promise.completeDiscard` completes the promise at
       * most once, so the deadline and the OS connect outcome are mutually exclusive. This is the close-cause discrimination: the deadline arm is
@@ -455,9 +479,9 @@ final private[net] class PosixTransport private[posix] (
     private def armConnectDeadline(
         promise: IOPromise[NetException, Connection],
         host: String,
-        port: Int
+        port: Int,
+        timeout: Duration
     )(using AllowUnsafe, Frame): Unit =
-        val timeout = config.connectTimeout
         if port >= 0 && timeout.isFinite then
             val timer = Clock.live.unsafe.sleep(timeout)
             timer.onComplete { _ =>
@@ -483,16 +507,17 @@ final private[net] class PosixTransport private[posix] (
         host: String,
         port: Int,
         tls: Maybe[(NetTlsConfig, String)],
-        promise: IOPromise[NetException, Connection]
+        promise: IOPromise[NetException, Connection],
+        config: kyo.net.NetConfig
     )(using AllowUnsafe, Frame): Unit =
         takeNow(sockets.connect(handle.writeFd, addr, len)) match
             case Present(result) =>
                 val rc = result.value
                 if rc == 0 then
                     // Immediate connect (loopback): no SO_ERROR check needed.
-                    completeOrTls(handle, addr, driver, target, port, tls, promise)
+                    completeOrTls(handle, addr, driver, target, port, tls, promise, config)
                 else if result.errorCode == PosixConstants.EINPROGRESS then
-                    awaitConnectThen(handle, addr, driver, target, host, port, tls, promise, checkSoError = true)
+                    awaitConnectThen(handle, addr, driver, target, host, port, tls, promise, checkSoError = true, config)
                 else
                     addr.close()
                     closeUnwiredHandle(handle, driver, connectPhase = true)
@@ -500,7 +525,7 @@ final private[net] class PosixTransport private[posix] (
                 end if
             case Absent =>
                 // The inline-completed connect fiber yielded no value (only possible off JVM/Native, where the poller does not run).
-                awaitConnectThen(handle, addr, driver, target, host, port, tls, promise, checkSoError = true)
+                awaitConnectThen(handle, addr, driver, target, host, port, tls, promise, checkSoError = true, config)
         end match
     end driveReadinessConnect
 
@@ -517,7 +542,8 @@ final private[net] class PosixTransport private[posix] (
         port: Int,
         tls: Maybe[(NetTlsConfig, String)],
         promise: IOPromise[NetException, Connection],
-        checkSoError: Boolean
+        checkSoError: Boolean,
+        config: kyo.net.NetConfig
     )(using AllowUnsafe, Frame): Unit =
         val writablePromise = new IOPromise[Closed, Unit]
         writablePromise.onComplete { result =>
@@ -528,7 +554,7 @@ final private[net] class PosixTransport private[posix] (
                         addr.close()
                         closeUnwiredHandle(handle, driver, connectPhase = true)
                         promise.completeDiscard(Result.fail(connectFail(host, port, new NetErrno(err))))
-                    else completeOrTls(handle, addr, driver, target, port, tls, promise)
+                    else completeOrTls(handle, addr, driver, target, port, tls, promise, config)
                     end if
                 case Result.Failure(closed) =>
                     addr.close()
@@ -582,11 +608,12 @@ final private[net] class PosixTransport private[posix] (
         target: String,
         port: Int,
         tls: Maybe[(NetTlsConfig, String)],
-        promise: IOPromise[NetException, Connection]
+        promise: IOPromise[NetException, Connection],
+        config: kyo.net.NetConfig
     )(using AllowUnsafe, Frame): Unit =
         addr.close()
         tls match
-            case Absent               => completeConnect(handle, driver, promise)
+            case Absent               => completeConnect(handle, driver, promise, config.channelCapacity)
             case Present((cfg, host)) =>
                 // buildEngine can throw a NetTlsException (an unavailable pinned provider, an unreadable PEM, or an SSL context/engine init
                 // failure; and on the JDK floor provider, a verifying client with no reference identity, i.e. an empty connect host), so a
@@ -633,6 +660,34 @@ final private[net] class PosixTransport private[posix] (
                     case Result.Success(_) => ()
                     case _                 => dischargePendingHandshake(handshakeToken)
                 }
+                // Bound the handshake itself, mirroring the accept side. Without this a peer that completes the TCP connect and then never
+                // sends a ServerHello parks this handshake on a read that never arrives, holding the fd and the engine; on the process-shared
+                // transport no later close() sweeps them, so it is a permanent leak rather than a slow connect. `handshakeDisarm` is the same
+                // exactly-once gate driveHandshake's three outcomes use, so the deadline and the real outcome are mutually exclusive, and the
+                // winner interrupts the loser's timer. The teardown goes through submitEngineOp for the same UAF reason the registered
+                // obligation above does: it must be serialized against any handshake step already in flight on the engine FIFO.
+                // `Duration.Infinity` arms no timer at all.
+                if cfg.handshakeTimeout.isFinite then
+                    val deadline = Clock.live.unsafe.sleep(cfg.handshakeTimeout)
+                    deadline.onComplete { _ =>
+                        if handshakeDisarm() then
+                            unregisterHandshake(handshakeToken)
+                            driver.submitEngineOp { () =>
+                                reaped.set(true)
+                                closeUnwiredHandle(handle, driver, connectPhase = false)
+                                engine.free()
+                                promise.completeDiscard(Result.fail(NetTlsHandshakeTimeoutException(host, port, cfg.handshakeTimeout)))
+                            }
+                    }
+                    // The handshake settled first: interrupt the timer so it never fires.
+                    promise.onComplete { _ =>
+                        deadline.interruptDiscard(Result.Panic(Closed(
+                            "PosixTransport",
+                            summon[Frame],
+                            "handshake settled before deadline"
+                        )))
+                    }
+                end if
                 driveHandshake(
                     handle,
                     engine,
@@ -640,7 +695,7 @@ final private[net] class PosixTransport private[posix] (
                         if handshakeDisarm() then
                             unregisterHandshake(handshakeToken)
                             handle.tls = Present(engine)
-                            completeConnect(handle, driver, promise),
+                            completeConnect(handle, driver, promise, config.channelCapacity),
                     onFailed = cause =>
                         if handshakeDisarm() then
                             unregisterHandshake(handshakeToken)
@@ -675,12 +730,15 @@ final private[net] class PosixTransport private[posix] (
     private def completeConnect(
         handle: PosixHandle,
         driver: IoDriver[PosixHandle],
-        promise: IOPromise[NetException, Connection]
+        promise: IOPromise[NetException, Connection],
+        channelCapacity: Int
     )(using AllowUnsafe, Frame): Unit =
-        val connection = openTracked(handle, driver)
+        val connection = openTracked(handle, driver, channelCapacity)
+        // The upgradeFn closure is where this connection's capacity persists: a later STARTTLS builds its replacement connection with the
+        // capacity the originating connect asked for, with no config stored on the connection itself.
         connection.upgradeFn = Present { (cfg, frame) =>
             given Frame = frame
-            upgradeToTls(connection, cfg, config.channelCapacity)
+            upgradeToTls(connection, cfg, channelCapacity)
         }
         installCertHash(connection, handle)
         // Point the handle's inboundSink at THIS connection before anything can reap on it (see PosixHandle.inboundSink).
@@ -764,16 +822,16 @@ final private[net] class PosixTransport private[posix] (
     // ---------------------------------------------------------------------------------------------------------------------------------------
 
     /** Listen for plaintext TCP connections on `host:port`, resolving the actual (possibly ephemeral) port. */
-    def listen(host: String, port: Int, backlog: Int)(
+    def listen(host: String, port: Int, backlog: Int, config: kyo.net.NetConfig)(
         handler: Connection => Unit
     )(using AllowUnsafe, Frame): Fiber.Unsafe[NetListener, Abort[NetException]] =
-        listenResolving(host, port, backlog, handler, tls = Absent)
+        listenResolving(host, port, backlog, handler, tls = Absent, config = config)
 
     /** Listen for TLS TCP connections on `host:port`; each accepted connection drives a server handshake before reaching the handler. */
-    def listen(host: String, port: Int, backlog: Int, tls: NetTlsConfig)(
+    def listenTls(host: String, port: Int, backlog: Int, tls: NetTlsConfig, config: kyo.net.NetConfig)(
         handler: Connection => Unit
     )(using AllowUnsafe, Frame): Fiber.Unsafe[NetListener, Abort[NetException]] =
-        listenResolving(host, port, backlog, handler, tls = Present(tls))
+        listenResolving(host, port, backlog, handler, tls = Present(tls), config = config)
 
     /** Resolve the bind `host` (numeric / loopback inline, otherwise through the offloaded-blocking [[HostResolver]]) and then bind + listen.
       *
@@ -787,13 +845,14 @@ final private[net] class PosixTransport private[posix] (
         port: Int,
         backlog: Int,
         handler: Connection => Unit,
-        tls: Maybe[NetTlsConfig]
+        tls: Maybe[NetTlsConfig],
+        config: kyo.net.NetConfig
     )(using AllowUnsafe, Frame): Fiber.Unsafe[NetListener, Abort[NetException]] =
         val promise = new IOPromise[NetException, NetListener]
         resolveAndEncode(host, port).onComplete {
             case Result.Success(pending) =>
                 // pending: (Int, Buffer[Byte], Int) < Any; .eval extracts the concrete tuple, mirroring resolveAndEncode's own identical step.
-                listenImpl(Present(pending.eval), nodelay = true, host, port, unixPath = Absent, backlog, handler, tls, promise)
+                listenImpl(Present(pending.eval), nodelay = true, host, port, unixPath = Absent, backlog, handler, tls, promise, config)
             case Result.Failure(e) =>
                 promise.completeDiscard(Result.fail(e))
             case Result.Panic(e) =>
@@ -809,7 +868,7 @@ final private[net] class PosixTransport private[posix] (
     /** Listen for plaintext connections on a Unix-domain socket `path` (no `TCP_NODELAY`, `NetAddress.Unix`, port -1). A Unix path needs no
       * name resolution, so the encoded `sockaddr` is built inline and handed straight to [[listenImpl]] with no resolver fiber.
       */
-    def listenUnix(path: String, backlog: Int)(
+    def listenUnix(path: String, backlog: Int, config: kyo.net.NetConfig)(
         handler: Connection => Unit
     )(using AllowUnsafe, Frame): Fiber.Unsafe[NetListener, Abort[NetException]] =
         val promise = new IOPromise[NetException, NetListener]
@@ -822,7 +881,8 @@ final private[net] class PosixTransport private[posix] (
             backlog,
             handler,
             tls = Absent,
-            promise = promise
+            promise = promise,
+            config = config
         )
         // Fiber.Unsafe[A, S] is an opaque alias over IOPromiseBase[Any, A < (Async & S)] (kyo.Fiber.scala), structurally different from this
         // plainly-constructed, invariant IOPromise[NetException, NetListener], even though both erase to the same runtime object; the alias
@@ -844,7 +904,8 @@ final private[net] class PosixTransport private[posix] (
         backlog: Int,
         handler: Connection => Unit,
         tls: Maybe[NetTlsConfig],
-        promise: IOPromise[NetException, NetListener]
+        promise: IOPromise[NetException, NetListener],
+        config: kyo.net.NetConfig
     )(using AllowUnsafe, Frame): Unit =
         encoded match
             case Absent =>
@@ -857,7 +918,7 @@ final private[net] class PosixTransport private[posix] (
                         promise.completeDiscard(Result.fail(NetBindException(host, port, new NetErrno(sockR.errorCode))))
                     else
                         setReuseAddr(fd)
-                        applySocketBuffers(fd)
+                        applySocketBuffers(fd, config)
                         val bindR = sockets.bind(fd, addr, len)
                         if bindR.value != 0 then
                             closeRawFd(fd)
@@ -879,7 +940,7 @@ final private[net] class PosixTransport private[posix] (
                                 // Flip fd non-blocking BEFORE arming the poller (atomic with awaitAccept arming; no busy-spin window).
                                 if shim.kyo_posix_set_nonblocking(fd) != 0 then
                                     Log.live.unsafe.warn(s"listen: failed to set listen fd non-blocking fd=$fd")
-                                startAcceptLoop(listener, handler, tls)
+                                startAcceptLoop(listener, handler, tls, config)
                                 promise.completeDiscard(Result.succeed(listener))
                             end if
                         end if
@@ -901,7 +962,8 @@ final private[net] class PosixTransport private[posix] (
     private def startAcceptLoop(
         listener: PosixListener,
         handler: Connection => Unit,
-        tls: Maybe[NetTlsConfig]
+        tls: Maybe[NetTlsConfig],
+        config: kyo.net.NetConfig
     )(using AllowUnsafe, Frame): Unit =
         discard(acceptLoopsActive.incrementAndGet())
         val driver = pool.next()
@@ -933,7 +995,7 @@ final private[net] class PosixTransport private[posix] (
                     case Result.Success(fd) =>
                         // io_uring completes with the real accepted fd (>= 0); the poller uses -1 as a readiness sentinel.
                         // Handle the already-accepted fd directly before draining any further pending connections.
-                        if fd >= 0 then handleAccepted(fd, handler, tls)
+                        if fd >= 0 then handleAccepted(fd, handler, tls, config)
                         acceptAll() match
                             case AcceptDrain.Drained =>
                                 // Backlog emptied (EAGAIN/EWOULDBLOCK) or a non-resource error consumed the event: re-arm immediately.
@@ -976,7 +1038,7 @@ final private[net] class PosixTransport private[posix] (
                     val r  = sockets.acceptNow(listener.serverFd, noAddr, noLen)
                     val fd = r.value
                     if fd >= 0 then
-                        handleAccepted(fd, handler, tls)
+                        handleAccepted(fd, handler, tls, config)
                         drain(transientRetries)
                     else if isWouldBlock(r.errorCode) then
                         // Backlog drained: re-arm read interest normally.
@@ -1015,16 +1077,17 @@ final private[net] class PosixTransport private[posix] (
     private def handleAccepted(
         clientFd: Int,
         handler: Connection => Unit,
-        tls: Maybe[NetTlsConfig]
+        tls: Maybe[NetTlsConfig],
+        config: kyo.net.NetConfig
     )(using AllowUnsafe, Frame): Unit =
-        if !prepareClientSocket(clientFd, nodelay = true) then closeRawFd(clientFd)
+        if !prepareClientSocket(clientFd, nodelay = true, config) then closeRawFd(clientFd)
         else
             val driver = pool.next()
             val handle = PosixHandle.socket(clientFd, config.readChunkSize, connectTarget = Absent)
             handle.driver = driver
             tls match
                 case Absent =>
-                    spawnHandler(openTracked(handle, driver), driver, handler)
+                    spawnHandler(openTracked(handle, driver, config.channelCapacity), driver, handler, config.channelCapacity)
                 case Present(cfg) =>
                     val engine =
                         try buildEngine(cfg, "", isServer = true)
@@ -1089,6 +1152,7 @@ final private[net] class PosixTransport private[posix] (
                     val handshakeTokenRef = new java.util.concurrent.atomic.AtomicLong(0L)
                     val disarm = armHandshakeDeadline(
                         clientFd,
+                        cfg.handshakeTimeout,
                         () =>
                             unregisterHandshake(handshakeTokenRef.get()); handle.driver.submitEngineOp(() => teardown())
                     )
@@ -1100,7 +1164,7 @@ final private[net] class PosixTransport private[posix] (
                             if disarm() then
                                 unregisterHandshake(handshakeTokenRef.get())
                                 handle.tls = Present(engine)
-                                spawnHandler(openTracked(handle, driver), driver, handler),
+                                spawnHandler(openTracked(handle, driver, config.channelCapacity), driver, handler, config.channelCapacity),
                         onFailed = cause =>
                             if disarm() then
                                 unregisterHandshake(handshakeTokenRef.get())
@@ -1128,12 +1192,12 @@ final private[net] class PosixTransport private[posix] (
       * OR the deadline's expiry) wins and proceeds; every later caller returns `false` and is a no-op. So the handshake outcome and the
       * deadline are mutually exclusive: only one runs the teardown / completion.
       *
-      *   - When `config.handshakeTimeout` is finite, this schedules `Clock.live.unsafe.sleep(d).onComplete(...)` (the same non-blocking timer
+      *   - When the listener's `handshakeTimeout` is finite, this schedules `Clock.live.unsafe.sleep(d).onComplete(...)` (the same non-blocking timer
       *     idiom [[startAcceptLoop.scheduleAcceptAfterBackoff]] uses: a timer fiber on the clock executor, never a blocked carrier). If the
       *     deadline fires before the handshake completes, the timer wins the guard and runs `onDeadline` (the connection's fd + engine
       *     teardown), reaping a stalled handshake. When the handshake completes first it wins the guard and interrupts the timer fiber, so the
       *     timer never fires.
-      *   - When `config.handshakeTimeout` is `Duration.Infinity`, NO timer is armed, but the returned `disarm` is still a fresh one-shot gate
+      *   - When the listener's `handshakeTimeout` is `Duration.Infinity`, NO timer is armed, but the returned `disarm` is still a fresh one-shot gate
       *     (its own `AtomicBoolean` CAS), not a constant `true`: [[registerHandshake]] hands this SAME `disarm` to `close()`'s
       *     [[sweepPendingHandshakes]], which can call it concurrently with the handshake's own outcome callback even though no deadline timer
       *     is racing it. A constant-`true` gate would let both callers win at once: the sweep frees the engine (`teardown()`) while the
@@ -1141,8 +1205,7 @@ final private[net] class PosixTransport private[posix] (
       *     deadline involved at all. The one-shot gate keeps the exactly-once contract [[registerHandshake]]'s doc promises regardless of
       *     whether a timer is armed.
       */
-    private def armHandshakeDeadline(clientFd: Int, onDeadline: () => Unit)(using AllowUnsafe, Frame): () => Boolean =
-        val timeout = config.handshakeTimeout
+    private def armHandshakeDeadline(clientFd: Int, timeout: Duration, onDeadline: () => Unit)(using AllowUnsafe, Frame): () => Boolean =
         if !timeout.isFinite then
             val settled = AtomicBoolean.Unsafe.init(false)
             () => settled.compareAndSet(false, true)
@@ -1171,7 +1234,8 @@ final private[net] class PosixTransport private[posix] (
     private def spawnHandler(
         connection: InternalConnection[PosixHandle],
         driver: IoDriver[PosixHandle],
-        handler: Connection => Unit
+        handler: Connection => Unit,
+        channelCapacity: Int
     )(using AllowUnsafe, Frame): Unit =
         // Server-accepted connection: mark its origin so a STARTTLS upgrade through the public upgradeToTls runs in the TLS server role
         // (upgradeToTls reads isServerOrigin), and route its upgradeFn through the same public entry as the client so the role lives in one
@@ -1179,7 +1243,7 @@ final private[net] class PosixTransport private[posix] (
         connection.isServerOrigin = true
         connection.upgradeFn = Present { (cfg, frame) =>
             given Frame = frame
-            upgradeToTls(connection, cfg, config.channelCapacity)
+            upgradeToTls(connection, cfg, channelCapacity)
         }
         installCertHash(connection, connection.handle)
         // Point the handle's inboundSink at THIS connection before anything can reap on it (see PosixHandle.inboundSink).
@@ -1248,7 +1312,7 @@ final private[net] class PosixTransport private[posix] (
       * SIGPIPE (process kill on Native). Gating it behind `nodelay` left `connectUnix` (which passes `nodelay = false`) exposed. `TCP_NODELAY`
       * stays gated on `nodelay`: disabling Nagle is a TCP-only performance choice and is meaningless on a Unix-domain socket.
       */
-    private def prepareClientSocket(fd: Int, nodelay: Boolean)(using AllowUnsafe): Boolean =
+    private def prepareClientSocket(fd: Int, nodelay: Boolean, config: kyo.net.NetConfig)(using AllowUnsafe): Boolean =
         if shim.kyo_posix_set_nonblocking(fd) != 0 then false
         else
             if PosixConstants.isMacOrBsd then
@@ -1258,14 +1322,14 @@ final private[net] class PosixTransport private[posix] (
                 if PosixConstants.isLinux then
                     setIntOpt(fd, PosixConstants.IPPROTO_TCP, PosixConstants.TCP_QUICKACK, 1)
             end if
-            applySocketBuffers(fd)
+            applySocketBuffers(fd, config)
             true
     end prepareClientSocket
 
     /** Apply the configured SO_RCVBUF and SO_SNDBUF socket buffer sizes when Present. A kernel may silently clamp the value to a site-maximum
       * (see setsockopt(7) SO_RCVBUF). Both options are best-effort: a failure does not abort the connection. Absent leaves the kernel default.
       */
-    private def applySocketBuffers(fd: Int)(using AllowUnsafe): Unit =
+    private def applySocketBuffers(fd: Int, config: kyo.net.NetConfig)(using AllowUnsafe): Unit =
         config.soRcvBuf.foreach(sz => setIntOpt(fd, PosixConstants.SOL_SOCKET, PosixConstants.SO_RCVBUF, sz))
         config.soSndBuf.foreach(sz => setIntOpt(fd, PosixConstants.SOL_SOCKET, PosixConstants.SO_SNDBUF, sz))
 
@@ -1628,7 +1692,7 @@ final private[net] class PosixTransport private[posix] (
                                     // spawnHandler do for a directly-connected or accepted connection. Without this the TLS connection
                                     // produced by STARTTLS could not report its RFC 5929 channel-binding hash (certHashFn stays null ->
                                     // serverCertificateHash returns Absent). The re-upgrade function keeps the same role this upgrade ran in.
-                                    wireUpgraded(upgraded, isServer)
+                                    wireUpgraded(upgraded, isServer, channelCapacity)
                                     // Re-point the handle's inboundSink at the UPGRADED connection now (see PosixHandle.inboundSink), before anything
                                     // below can reap a late-arriving orphan recv that uses it: onFinished runs synchronously on the same carrier that
                                     // drains every completion for this handle (the reap carrier, for io_uring), so this write happens-before any
@@ -1754,11 +1818,14 @@ final private[net] class PosixTransport private[posix] (
       * (server). `certHashFn` exposes the engine's RFC 5929 channel-binding token now that the handle is TLS; `upgradeFn` keeps the same role
       * the connection was upgraded in, so a further upgrade does not silently flip client/server.
       */
-    private def wireUpgraded(upgraded: InternalConnection[PosixHandle], isServer: Boolean)(using AllowUnsafe, Frame): Unit =
+    private def wireUpgraded(upgraded: InternalConnection[PosixHandle], isServer: Boolean, channelCapacity: Int)(using
+        AllowUnsafe,
+        Frame
+    ): Unit =
         upgraded.isServerOrigin = isServer
         upgraded.upgradeFn = Present { (cfg, frame) =>
             given Frame = frame
-            upgradeToTls(upgraded, cfg, config.channelCapacity)
+            upgradeToTls(upgraded, cfg, channelCapacity)
         }
         installCertHash(upgraded, upgraded.handle)
     end wireUpgraded
@@ -2300,16 +2367,15 @@ private[net] object PosixTransport:
       * drivers(0)) backs stdio and the backend-label queries. Loads the real socket bindings and detects whether the active poller backend
       * is epoll (the regular-file fallback's gate; true only on Linux when epoll, not io_uring, is selected).
       */
-    def init(config: kyo.net.TransportConfig, pool: IoDriverPool[PosixHandle])(using AllowUnsafe): PosixTransport =
+    def init(pool: IoDriverPool[PosixHandle])(using AllowUnsafe): PosixTransport =
         val representative = pool.next()
-        init(config, pool, representative, Ffi.load[SocketBindings], backendIsEpoll(representative))
+        init(pool, representative, Ffi.load[SocketBindings], backendIsEpoll(representative))
 
     /** Build a transport over a caller-supplied pool, representative driver, socket bindings, and epoll flag, allocating the transport's unsafe
       * fields under the caller's `AllowUnsafe`: the construction site propagates the capability rather than each field bridging it. Shared by
       * [[init]] and the test construction helper so the unsafe allocation lives in one place.
       */
     private[posix] def init(
-        config: kyo.net.TransportConfig,
         pool: IoDriverPool[PosixHandle],
         representative: IoDriver[PosixHandle],
         sockets: SocketBindings,
@@ -2317,7 +2383,6 @@ private[net] object PosixTransport:
         engineFactory: TlsEngineFactory = realEngineFactory
     )(using AllowUnsafe): PosixTransport =
         new PosixTransport(
-            config = config,
             pool = pool,
             representative = representative,
             sockets = sockets,

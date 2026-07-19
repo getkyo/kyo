@@ -1,7 +1,6 @@
 package kyo.net
 
-import kyo.Absent
-import kyo.Maybe
+import kyo.*
 
 /** TLS configuration for client and server connections.
   *
@@ -54,8 +53,21 @@ case class NetTlsConfig(
       * determines which ids it can honor (the posix transport drives any registered engine provider; the NIO floor drives `jdk` inline; JS
       * drives `node`).
       */
-    tlsProvider: Maybe[String] = Absent
-) derives CanEqual
+    tlsProvider: Maybe[String] = Absent,
+    /** Deadline for the TLS handshake performed by the operation this config is passed to: a client `connectTls`, each connection accepted by
+      * a `listenTls`, or an `upgradeToTls`. A peer that completes the TCP phase and then stalls the handshake (sends nothing, or a partial
+      * ClientHello, and never finishes) would otherwise pin the fd, the TLS engine, and the per-connection buffers indefinitely (a slowloris
+      * handshake-stall denial of service, CWE-400), and on the process-shared transport nothing later reclaims them. When finite, the
+      * transport arms a `Clock`-driven deadline as the handshake begins and reaps the connection on expiry, running the same fd and engine
+      * teardown a failed handshake runs. `Duration.Infinity` arms no deadline. The default `30.seconds` arms the guard for both roles.
+      */
+    handshakeTimeout: Duration = 30.seconds
+) derives CanEqual:
+    require(
+        handshakeTimeout > Duration.Zero || handshakeTimeout == Duration.Infinity,
+        s"handshakeTimeout must be positive or Infinity: $handshakeTimeout"
+    )
+end NetTlsConfig
 
 object NetTlsConfig:
     enum ClientAuth derives CanEqual:

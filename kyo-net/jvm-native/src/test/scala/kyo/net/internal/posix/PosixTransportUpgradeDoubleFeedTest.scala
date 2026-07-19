@@ -93,7 +93,6 @@ class PosixTransportUpgradeDoubleFeedTest extends Test:
             val engine   = new RecordingFeedEngine
             val transport =
                 TestTransports.forTesting(
-                    kyo.net.TransportConfig.default.copy(channelCapacity = 1),
                     driver,
                     spy,
                     backendIsEpoll = false,
@@ -104,7 +103,7 @@ class PosixTransportUpgradeDoubleFeedTest extends Test:
                 // The peer end is a raw socket never owned by the transport (no InternalConnection wraps it): closed unconditionally here.
                 Sync.ensure(Sync.defer(discard(sock.close(peerFd)))) {
                     val handle    = PosixHandle.socket(clientFd, PosixHandle.DefaultReadBufferSize, Absent)
-                    val plaintext = transport.openWith(handle, driver)
+                    val plaintext = transport.openWith(handle, driver, kyo.net.NetConfig.DefaultChannelCapacity)
                     plaintext.start()
                     assert(sock.sendNow(peerFd, Buffer.fromArray[Byte](signal), signal.length.toLong, 0).value == signal.length.toLong)
                     awaitCondition(5.seconds)(plaintext.inbound.size().getOrElse(-1) == 1).map { landed =>
@@ -153,7 +152,6 @@ class PosixTransportUpgradeDoubleFeedTest extends Test:
                 val sockets = Ffi.load[SocketBindings]
                 val engine  = new RecordingFeedEngine
                 val transport = TestTransports.forTesting(
-                    kyo.net.TransportConfig.default.copy(channelCapacity = 1),
                     driver,
                     sockets,
                     backendIsEpoll = false,
@@ -162,7 +160,7 @@ class PosixTransportUpgradeDoubleFeedTest extends Test:
                 PosixTestSockets.loopbackPair().map { case (clientFd, peerFd) =>
                     Sync.ensure(Sync.defer(discard(sockets.close(peerFd)))) {
                         val handle    = PosixHandle.socket(clientFd, PosixHandle.DefaultReadBufferSize, Absent)
-                        val plaintext = transport.openWith(handle, driver)
+                        val plaintext = transport.openWith(handle, driver, kyo.net.NetConfig.DefaultChannelCapacity)
                         plaintext.start()
                         assert(sockets.sendNow(
                             peerFd,

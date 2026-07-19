@@ -43,7 +43,7 @@ class ConnectionHalfCloseOutboundTest extends Test:
 
     import AllowUnsafe.embrace.danger
 
-    private val transportConfig = kyo.net.TransportConfig.default
+    private val transportConfig = kyo.net.NetConfig.default
 
     private def assumePoller(): Unit =
         if !(PosixConstants.isLinux || PosixConstants.isMacOrBsd) then
@@ -69,7 +69,7 @@ class ConnectionHalfCloseOutboundTest extends Test:
 
         "queued outbound bytes are flushed (not dropped) when the peer half-closes (SHUT_WR -> read EOF)" in {
             assumePoller()
-            val driver = PollerIoDriver.init(transportConfig)
+            val driver = PollerIoDriver.init()
             val spy    = new RecordingIoDriver(driver)
             discard(driver.start())
             Sync.ensure(Sync.defer(driver.close())) {

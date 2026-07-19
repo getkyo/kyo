@@ -2561,7 +2561,7 @@ private[net] object PollerIoDriver:
     final private case class Registration(handle: PosixHandle, kind: RegKind)
 
     /** Build a driver over a fresh poller fd for the OS-appropriate backend (epoll on Linux, kqueue on macOS/BSD). */
-    def init(config: kyo.net.TransportConfig)(using AllowUnsafe, Frame): PollerIoDriver =
+    def init()(using AllowUnsafe, Frame): PollerIoDriver =
         val backend = PollerBackend.default()
         val fd      = backend.create()
         init(backend, fd, Ffi.load[SocketBindings])

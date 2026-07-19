@@ -3,8 +3,8 @@ package kyo.net.internal.posix
 import kyo.*
 import kyo.ffi.Buffer
 import kyo.ffi.Ffi
+import kyo.net.NetConfig
 import kyo.net.Test
-import kyo.net.TransportConfig
 
 /** Reproduce-first regression for a STARTTLS upgrade-handoff drop on io_uring: without an `onInboundClosedDuringRead` override,
   * [[IoUringDriver]] would fall back to [[kyo.net.internal.transport.IoDriver]]'s no-op default, so a STARTTLS upgrade racing the plaintext
@@ -65,14 +65,13 @@ class IoUringUpgradeHandoffDropTest extends Test:
                 val sock = Ffi.load[SocketBindings]
                 PosixTestSockets.loopbackPair().map { case (client, accepted) =>
                     val transport = TestTransports.forTesting(
-                        TransportConfig.default.copy(channelCapacity = 1),
                         driver,
                         sock,
                         backendIsEpoll = false
                     )
                     val handle = PosixHandle.socket(accepted, PosixHandle.DefaultReadBufferSize, Absent)
                     Sync.ensure(Sync.defer { discard(sock.close(client)); driver.closeHandle(handle) }) {
-                        val conn = transport.openWith(handle, driver)
+                        val conn = transport.openWith(handle, driver, kyo.net.NetConfig.DefaultChannelCapacity)
                         conn.start()
 
                         val chunkA = Array[Byte](1, 2, 3, 4, 5)

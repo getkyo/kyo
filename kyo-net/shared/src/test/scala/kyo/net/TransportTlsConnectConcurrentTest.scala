@@ -21,7 +21,7 @@ class TransportTlsConnectConcurrentTest extends Test:
 
     "many concurrent connect-time TLS connections on one transport all echo" - eachBackendTls { (transport, serverTls, clientTls) =>
         val cli = clientTls.copy(sniHostname = Present("localhost"))
-        transport.listen("127.0.0.1", 0, 256, serverTls) { serverConn =>
+        transport.listenTls("127.0.0.1", 0, 256, serverTls) { serverConn =>
             discard(Sync.Unsafe.evalOrThrow {
                 Fiber.initUnscoped {
                     Abort.run[Closed] {
@@ -35,7 +35,7 @@ class TransportTlsConnectConcurrentTest extends Test:
             Async.fillIndexed(concurrency, concurrency) { i =>
                 val msg = s"tls-connect-concurrent-$i".getBytes("UTF-8")
                 Abort.run[Closed](
-                    transport.connect("127.0.0.1", listener.port, cli).safe.get.flatMap { conn =>
+                    transport.connectTls("127.0.0.1", listener.port, cli).safe.get.flatMap { conn =>
                         conn.outbound.safe.put(Span.fromUnsafe(msg)).andThen {
                             collectToLen(conn, msg.length).map { echoed =>
                                 conn.close()

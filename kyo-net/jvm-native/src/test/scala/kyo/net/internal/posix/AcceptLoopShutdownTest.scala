@@ -31,7 +31,7 @@ class AcceptLoopShutdownTest extends Test:
 
     import AllowUnsafe.embrace.danger
 
-    private val transportConfig = kyo.net.TransportConfig.default
+    private val transportConfig = kyo.net.NetConfig.default
 
     private def assumePollerReady(): Unit =
         if !(PosixConstants.isLinux || PosixConstants.isMacOrBsd) then
@@ -49,8 +49,8 @@ class AcceptLoopShutdownTest extends Test:
     private def withTransport[A](body: PosixTransport => A < (Async & Abort[NetException | Closed] & Scope))(using
         Frame
     ): A < (Async & Abort[NetException | Closed] & Scope) =
-        val driver     = PollerIoDriver.init(transportConfig)
-        val transport  = TestTransports.forTesting(transportConfig, driver, Ffi.load[SocketBindings], backendIsEpoll = false)
+        val driver     = PollerIoDriver.init()
+        val transport  = TestTransports.forTesting(driver, Ffi.load[SocketBindings], backendIsEpoll = false)
         val driverDone = driver.start()
         Abort.run[NetException | Closed](body(transport)).map { result =>
             Sync.defer(driver.close()).andThen(

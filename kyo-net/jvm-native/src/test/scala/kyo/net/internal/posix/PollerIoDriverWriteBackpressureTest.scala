@@ -166,7 +166,7 @@ class PollerIoDriverWriteBackpressureTest extends Test:
             val plaintext    = Array.tabulate[Byte](256 * 1024)(i => ((i % 251) + 1).toByte)
             val clientEngine = TlsRealEngines.singleEngine(isServer = false)
             val serverEngine = TlsRealEngines.singleEngine(isServer = true)
-            val driver       = PollerIoDriver.init(kyo.net.TransportConfig.default)
+            val driver       = PollerIoDriver.init()
             discard(driver.start())
             Sync.ensure(Sync.defer(driver.close())) {
                 smallBufferedPair(sndBuf = 2048, rcvBuf = 2048).map { case (client, accepted) =>
@@ -214,7 +214,7 @@ class PollerIoDriverWriteBackpressureTest extends Test:
             val serverEngine1 = TlsRealEngines.singleEngine(isServer = true)
             val clientEngine2 = TlsRealEngines.singleEngine(isServer = false)
             val serverEngine2 = TlsRealEngines.singleEngine(isServer = true)
-            val driver        = PollerIoDriver.init(kyo.net.TransportConfig.default)
+            val driver        = PollerIoDriver.init()
             discard(driver.start())
             Sync.ensure(Sync.defer(driver.close())) {
                 smallBufferedPair(sndBuf = 2048, rcvBuf = 2048).map { case (client1, accepted1) =>

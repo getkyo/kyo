@@ -2,8 +2,8 @@ package kyo.net.internal.backend
 
 import kyo.*
 import kyo.ffi.Ffi
+import kyo.net.NetConfig
 import kyo.net.Test
-import kyo.net.TransportConfig
 import kyo.net.internal.posix.SocketBindings
 
 /** Cross-backend consistency guard for stale-errno init: every I/O backend must build a working transport even when a PRIOR syscall on the
@@ -44,7 +44,7 @@ class IoBackendStaleErrnoTest extends Test:
                         s"precondition: socket(-1,-1,-1) must fail and set errno, got value=${dirty.value} errorCode=${dirty.errorCode}"
                     )
                     val transport =
-                        try entry.build(TransportConfig.default)
+                        try entry.build()
                         catch
                             case c: Closed =>
                                 fail(

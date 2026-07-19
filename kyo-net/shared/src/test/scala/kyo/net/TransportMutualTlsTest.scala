@@ -30,7 +30,7 @@ class TransportMutualTlsTest extends Test:
 
     /** Listen with a clientAuth=Required server whose accepted connections echo their inbound stream. */
     private def echoListener(transport: Transport, tls: NetTlsConfig)(using Frame): Listener < (Async & Abort[NetException]) =
-        transport.listen("127.0.0.1", 0, 16, tls) { serverConn =>
+        transport.listenTls("127.0.0.1", 0, 16, tls) { serverConn =>
             discard(Sync.Unsafe.evalOrThrow {
                 Fiber.initUnscoped {
                     Abort.run[Closed] {
@@ -50,7 +50,7 @@ class TransportMutualTlsTest extends Test:
             echoListener(transport, serverMtls(serverTls)).map { listener =>
                 val message = "kyo-mtls-reject".getBytes("UTF-8")
                 val connectAndEcho: Array[Byte] < (Async & Abort[NetException | Closed]) =
-                    transport.connect("127.0.0.1", listener.port, clientTls).safe.get.map { client =>
+                    transport.connectTls("127.0.0.1", listener.port, clientTls).safe.get.map { client =>
                         client.outbound.safe.put(Span.fromUnsafe(message)).andThen(collect(client, message.length))
                     }
                 val outcome: Result[NetException | Closed | Timeout, Array[Byte]] < Async =
@@ -75,7 +75,7 @@ class TransportMutualTlsTest extends Test:
                 // true deadlock still fails well within the suite's 60s leaf budget. Mirrors kyo.net.Test's generous-ceiling rationale; 5s was too
                 // tight for the cold/loaded gate and produced spurious timeouts on every cell at once.
                 val connectAndEcho: (Connection, Array[Byte]) < (Async & Abort[NetException | Closed]) =
-                    transport.connect("127.0.0.1", listener.port, clientWithCert).safe.get.map { client =>
+                    transport.connectTls("127.0.0.1", listener.port, clientWithCert).safe.get.map { client =>
                         client.outbound.safe.put(Span.fromUnsafe(message)).andThen(collect(client, message.length)).map(client -> _)
                     }
                 val outcome: Result[NetException | Closed | Timeout, (Connection, Array[Byte])] < Async =

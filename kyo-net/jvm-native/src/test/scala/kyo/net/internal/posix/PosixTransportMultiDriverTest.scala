@@ -3,10 +3,10 @@ package kyo.net.internal.posix
 import java.util.Collections
 import java.util.IdentityHashMap
 import kyo.*
+import kyo.net.NetConfig
 import kyo.net.NetException
 import kyo.net.Test
 import kyo.net.TestBackends
-import kyo.net.TransportConfig
 import kyo.net.internal.transport.IoDriver
 import kyo.net.internal.transport.IoDriverPool
 
@@ -34,9 +34,9 @@ class PosixTransportMultiDriverTest extends Test:
         Frame
     ): A < (Async & Abort[NetException | Closed] & Scope) =
         val drivers: Array[IoDriver[PosixHandle]] =
-            Array.fill(n)(PollerIoDriver.init(TransportConfig.default).asInstanceOf[IoDriver[PosixHandle]])
+            Array.fill(n)(PollerIoDriver.init().asInstanceOf[IoDriver[PosixHandle]])
         val pool      = IoDriverPool.init(drivers)
-        val transport = PosixTransport.init(TransportConfig.default, pool)
+        val transport = PosixTransport.init(pool)
         pool.start()
         Abort.run[NetException | Closed](body(transport)).map { result =>
             Sync.defer(transport.close()).andThen(Abort.get(result))
@@ -59,9 +59,9 @@ class PosixTransportMultiDriverTest extends Test:
         val M = N * 2
         // Capture pool drivers for identity comparison: the handle's .driver must be one of these.
         val driverArray: Array[IoDriver[PosixHandle]] =
-            Array.fill(N)(PollerIoDriver.init(TransportConfig.default).asInstanceOf[IoDriver[PosixHandle]])
+            Array.fill(N)(PollerIoDriver.init().asInstanceOf[IoDriver[PosixHandle]])
         val pool      = IoDriverPool.init(driverArray)
-        val transport = PosixTransport.init(TransportConfig.default, pool)
+        val transport = PosixTransport.init(pool)
         pool.start()
         val poolDriverSet = Collections.newSetFromMap(new IdentityHashMap[IoDriver[PosixHandle], java.lang.Boolean]())
         driverArray.foreach(d => discard(poolDriverSet.add(d)))
@@ -178,9 +178,9 @@ class PosixTransportMultiDriverTest extends Test:
         assumePoller()
         val N = 3
         val drivers: Array[IoDriver[PosixHandle]] =
-            Array.fill(N)(PollerIoDriver.init(TransportConfig.default).asInstanceOf[IoDriver[PosixHandle]])
+            Array.fill(N)(PollerIoDriver.init().asInstanceOf[IoDriver[PosixHandle]])
         val pool      = IoDriverPool.init(drivers)
-        val transport = PosixTransport.init(TransportConfig.default, pool)
+        val transport = PosixTransport.init(pool)
         pool.start()
 
         // Open one real connection so the accept loop is live, then close everything.
@@ -216,7 +216,7 @@ class PosixTransportMultiDriverTest extends Test:
             case None =>
                 Sync.defer(cancel("no posix backend selected/available on this host (pool-size check is posix-only)"))
             case Some(entry) =>
-                Sync.defer(entry.build(TransportConfig.default, summon[Frame])).map { transport =>
+                Sync.defer(entry.build(summon[Frame])).map { transport =>
                     // A posix backend entry always builds a PosixTransport; the cast reaches its pool to count drivers.
                     val posix    = transport.asInstanceOf[PosixTransport]
                     val expected = math.max(1, kyo.net.ioPoolSize())

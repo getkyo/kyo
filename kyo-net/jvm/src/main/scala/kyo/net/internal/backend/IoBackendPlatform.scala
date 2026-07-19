@@ -2,8 +2,8 @@ package kyo.net.internal.backend
 
 import kyo.*
 import kyo.net.NetBackendUnavailableException
+import kyo.net.NetConfig
 import kyo.net.Transport
-import kyo.net.TransportConfig
 import kyo.net.internal.NioTransport
 import kyo.net.internal.posix.PosixTransport
 
@@ -12,7 +12,7 @@ import kyo.net.internal.posix.PosixTransport
   * The JVM ships two families of backend that drive DIFFERENT handle types: `NioBackend` produces an `IoDriver[NioHandle]` (the pure-JDK
   * floor), while the posix backends (`IoUringBackend`, `EpollBackend`, `KqueueBackend`) produce an `IoDriver[PosixHandle]` over Panama. They
   * cannot share one `IoDriver`-typed list. The registry therefore represents each entry by its selectable identity (`name` / `priority` /
-  * `isAvailable`) plus a `build: TransportConfig => Transport` thunk that constructs (and starts) the entry's transport. Selection runs
+  * `isAvailable`) plus a `build` thunk that constructs (and starts) the entry's transport. Selection runs
   * over the identity fields via the same shared `IoBackend.select` both registries use; the winner's `build` thunk is then invoked.
   *
   * On a posix host the highest-priority available entry is a posix backend (io_uring on a capable Linux, epoll on any other Linux, kqueue on
@@ -31,13 +31,8 @@ private[net] object IoBackendPlatform:
         def name                                    = NioBackend.name
         def priority                                = NioBackend.priority
         def isAvailable(using AllowUnsafe): Boolean = NioBackend.isAvailable
-        def build(config: TransportConfig)(using AllowUnsafe, Frame): Transport =
-            NioTransport.init(
-                channelCapacity = config.channelCapacity,
-                readBufferSize = config.readChunkSize,
-                connectTimeout = config.connectTimeout,
-                handshakeTimeout = config.handshakeTimeout
-            )
+        def build()(using AllowUnsafe, Frame): Transport =
+            NioTransport.init()
     end NioEntry
 
     /** The registry: posix backends (io_uring 30, epoll 20, kqueue 20) above the always-available Nio floor (10). On a posix host the highest
@@ -65,13 +60,13 @@ private[net] object IoBackendPlatform:
       * falling back to the next when a higher-priority one is available (its cheap probe passed) but fails to build at production scale
       * (io_uring whose production-depth ring cannot init on a restricted host degrades to epoll rather than failing the whole transport).
       */
-    def transport(config: TransportConfig)(using AllowUnsafe, Frame): Transport =
+    def transport()(using AllowUnsafe, Frame): Transport =
         IoBackend.selectAndBuild[Entry, Transport](
             registered,
             _.name,
             _.priority,
             _.isAvailable,
-            _.build(config),
+            _.build(),
             forced = Maybe(kyo.net.backend()).filter(_.nonEmpty),
             onUnavailable = NetBackendUnavailableException(_)
         ).getOrThrow

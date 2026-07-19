@@ -126,7 +126,7 @@ class PollerIoDriverStandingReadTest extends Test:
     "PollerIoDriver standing read on one fd" - {
         "a burst of back-to-back peer writes is all delivered to a re-arming standing read (no lost re-arm)" in {
             assumePoller()
-            val driver = PollerIoDriver.init(kyo.net.TransportConfig.default)
+            val driver = PollerIoDriver.init()
             discard(driver.start())
             Sync.ensure(Sync.defer(driver.close())) {
                 loopbackPair().map { case (client, accepted) =>

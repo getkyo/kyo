@@ -40,14 +40,14 @@ class HalfCloseStateTest extends Test:
         (transport, serverTls, clientTls) =>
             for
                 serverConnCh <- Channel.init[Connection](1)
-                listener <- transport.listen("127.0.0.1", 0, 16, serverTls) { serverConn =>
+                listener <- transport.listenTls("127.0.0.1", 0, 16, serverTls) { serverConn =>
                     discard(Sync.Unsafe.evalOrThrow {
                         Fiber.initUnscoped {
                             Abort.run[Closed](serverConnCh.put(serverConn)).map(_ => ())
                         }
                     })
                 }.safe.get
-                client     <- transport.connect("127.0.0.1", listener.port, clientTls).safe.get
+                client     <- transport.connectTls("127.0.0.1", listener.port, clientTls).safe.get
                 serverConn <- serverConnCh.take
                 _ = serverConn.close() // sends TLS close_notify then TCP FIN
                 _ <- drainInbound(client) // suspends until inbound closes after close_notify
@@ -67,14 +67,14 @@ class HalfCloseStateTest extends Test:
         (transport, serverTls, clientTls) =>
             for
                 serverConnCh <- Channel.init[Connection](1)
-                listener <- transport.listen("127.0.0.1", 0, 16, serverTls) { serverConn =>
+                listener <- transport.listenTls("127.0.0.1", 0, 16, serverTls) { serverConn =>
                     discard(Sync.Unsafe.evalOrThrow {
                         Fiber.initUnscoped {
                             Abort.run[Closed](serverConnCh.put(serverConn)).map(_ => ())
                         }
                     })
                 }.safe.get
-                client     <- transport.connect("127.0.0.1", listener.port, clientTls).safe.get
+                client     <- transport.connectTls("127.0.0.1", listener.port, clientTls).safe.get
                 serverConn <- serverConnCh.take
                 _ = client.close() // local close before any server-initiated close
             yield
@@ -99,14 +99,14 @@ class HalfCloseStateTest extends Test:
             for
                 ready        <- Channel.init[Unit](1)
                 serverConnCh <- Channel.init[Connection](1)
-                listener <- transport.listen("127.0.0.1", 0, 16, serverTls) { serverConn =>
+                listener <- transport.listenTls("127.0.0.1", 0, 16, serverTls) { serverConn =>
                     discard(Sync.Unsafe.evalOrThrow {
                         Fiber.initUnscoped {
                             Abort.run[Closed](serverConnCh.put(serverConn)).map(_ => ())
                         }
                     })
                 }.safe.get
-                client     <- transport.connect("127.0.0.1", listener.port, clientTls).safe.get
+                client     <- transport.connectTls("127.0.0.1", listener.port, clientTls).safe.get
                 serverConn <- serverConnCh.take
                 // Reader: signals readiness, then drains inbound with cooperative suspension at each take.
                 // The Closed raised when inbound closes is caught by Abort.run, terminating the loop.

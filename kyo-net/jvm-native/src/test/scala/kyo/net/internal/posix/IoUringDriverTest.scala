@@ -36,7 +36,7 @@ class IoUringDriverTest extends Test:
 
     /** Start a fresh REAL driver over an actual io_uring ring, run `body`, then close it. The reap loop runs on the driver's own fiber. */
     private def withRealDriver[A](body: IoUringDriver => A < (Abort[Closed] & Async))(using Frame): A < (Abort[Closed] & Async) =
-        val driver = IoUringDriver.init(kyo.net.TransportConfig.default)
+        val driver = IoUringDriver.init()
         discard(driver.start())
         Sync.ensure(Sync.defer(driver.close()))(body(driver))
     end withRealDriver
@@ -144,7 +144,7 @@ class IoUringDriverTest extends Test:
             Loop(0) { i =>
                 if i >= 50 then Loop.done(succeed)
                 else
-                    val driver = IoUringDriver.init(kyo.net.TransportConfig.default)
+                    val driver = IoUringDriver.init()
                     discard(driver.start())
                     PosixTestSockets.loopbackPair().map { case (client, accepted) =>
                         val acceptedH = PosixHandle.socket(accepted, PosixHandle.DefaultReadBufferSize, Absent)
@@ -174,7 +174,7 @@ class IoUringDriverTest extends Test:
             // The recheck drains it on the submitting carrier, so the promise fails Closed promptly through submitConnect's
             // driver-closed rejection. Waiting on start()'s done fiber makes the ordering deterministic: it completes only when the
             // reap loop has returned, strictly after the final drain.
-            val driver = IoUringDriver.init(kyo.net.TransportConfig.default)
+            val driver = IoUringDriver.init()
             val done   = driver.start()
             driver.close()
             done.safe.get.map { _ =>
@@ -249,7 +249,7 @@ class IoUringDriverTest extends Test:
             try
                 PosixTestSockets.assumeUring()
                 // Gate passed: the production-depth ring is available. Confirm the driver also initializes successfully.
-                val driver = IoUringDriver.init(kyo.net.TransportConfig.default)
+                val driver = IoUringDriver.init()
                 driver.close()
                 succeed
             catch
@@ -267,7 +267,7 @@ class IoUringDriverTest extends Test:
             PosixTestSockets.assumeUring()
             // Gate passed: the production ring is available at max(256, ioPoolSize*64).
             // IoUringDriver.init uses the exact same formula and config, so it must succeed.
-            val driver = IoUringDriver.init(kyo.net.TransportConfig.default)
+            val driver = IoUringDriver.init()
             driver.close()
             succeed
         }

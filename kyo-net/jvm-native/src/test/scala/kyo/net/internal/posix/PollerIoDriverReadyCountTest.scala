@@ -28,7 +28,7 @@ class PollerIoDriverReadyCountTest extends Test:
         "readyCount drives the correct number of dispatches when many fds are ready at once" in {
             assumePoller()
             val n      = 6
-            val driver = PollerIoDriver.init(kyo.net.TransportConfig.default)
+            val driver = PollerIoDriver.init()
             discard(driver.start())
             Sync.ensure(Sync.defer(driver.close())) {
                 // Build N loopback pairs.
@@ -75,7 +75,7 @@ class PollerIoDriverReadyCountTest extends Test:
 
         "a single ready fd delivers exactly one read (count of 1 is exact)" in {
             assumePoller()
-            val driver = PollerIoDriver.init(kyo.net.TransportConfig.default)
+            val driver = PollerIoDriver.init()
             discard(driver.start())
             Sync.ensure(Sync.defer(driver.close())) {
                 PosixTestSockets.loopbackPair().map { case (client, accepted) =>

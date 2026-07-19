@@ -112,7 +112,7 @@ class PollerIoDriverTlsHalfCloseEtTest extends Test:
                 TlsRealEngines.assumeTlsReady()
                 PosixTestSockets.assumePoller()
                 TlsRealEngines.withEngines { (clientEngine, serverEngine) =>
-                    val driver = PollerIoDriver.init(kyo.net.TransportConfig.default)
+                    val driver = PollerIoDriver.init()
                     discard(driver.start())
                     Sync.ensure(Sync.defer(driver.close())) {
                         PosixTestSockets.loopbackPair().map { case (client, accepted) =>
@@ -204,7 +204,7 @@ class PollerIoDriverTlsHalfCloseEtTest extends Test:
                 TlsRealEngines.assumeTlsReady()
                 PosixTestSockets.assumePoller()
                 TlsRealEngines.withEngines { (clientEngine, serverEngine) =>
-                    val driver = PollerIoDriver.init(kyo.net.TransportConfig.default)
+                    val driver = PollerIoDriver.init()
                     discard(driver.start())
                     Sync.ensure(Sync.defer(driver.close())) {
                         PosixTestSockets.loopbackPair().map { case (client, accepted) =>

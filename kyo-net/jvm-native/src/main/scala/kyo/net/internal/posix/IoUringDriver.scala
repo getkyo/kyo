@@ -2332,7 +2332,7 @@ private[net] object IoUringDriver:
       * (the SQ/CQ mmaps are owned internally by liburing). Throws `NetBackendUnavailableException` if `io_uring_queue_init` fails (e.g. the
       * kernel is too old or the process is sandboxed from io_uring at the production ring depth).
       */
-    def init(config: kyo.net.TransportConfig)(using AllowUnsafe, Frame): IoUringDriver =
+    def init()(using AllowUnsafe, Frame): IoUringDriver =
         val uring = Ffi.load[IoUringBindings]
         val depth = math.max(256, kyo.net.ioPoolSize() * 64)
         val ring  = Buffer.alloc[Byte](uring.kyo_uring_sizeof().toInt) // sizeof(struct io_uring), via the shim

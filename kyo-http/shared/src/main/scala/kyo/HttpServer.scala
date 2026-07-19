@@ -133,7 +133,7 @@ object HttpServer:
             if serverFilter eq HttpFilter.noop then allHandlers
             else allHandlers.map(h => HttpHandler.withFilter(h, serverFilter))
         Sync.Unsafe.defer {
-            val transport   = kyo.net.NetPlatform.transport(NetConfigTranslation.toNetTransportConfig(config.transportConfig))
+            val transport   = kyo.net.NetPlatform.transport
             val listenFiber = Unsafe.init(transport, config, filteredHandlers)
             Abort.run[NetException](listenFiber.safe.get).map {
                 case Result.Success(server) => server.safe
@@ -234,13 +234,21 @@ object HttpServer:
                 )
                 end if
             end tracked
+            val netConfig = NetConfigTranslation.toNetConfig(config.transportConfig)
             val listenFiber = (config.unixSocket, config.tls) match
                 case (Present(path), _) =>
-                    transport.listenUnix(path, config.backlog)(tracked)
+                    transport.listenUnix(path, config.backlog, netConfig)(tracked)
                 case (Absent, Present(tls)) =>
-                    NetConfigTranslation.listenTls(transport, config.host, config.port, config.backlog, tls)(tracked)
+                    NetConfigTranslation.listenTls(
+                        transport,
+                        config.host,
+                        config.port,
+                        config.backlog,
+                        tls,
+                        config.transportConfig
+                    )(tracked)
                 case _ =>
-                    transport.listen(config.host, config.port, config.backlog)(tracked)
+                    transport.listen(config.host, config.port, config.backlog, netConfig)(tracked)
             listenFiber.map(listener => new ListenerUnsafe(listener, transport, registry))
         end init
     end Unsafe

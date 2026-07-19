@@ -37,7 +37,7 @@ class PosixTransportAcceptEmfileTest extends Test:
 
     import AllowUnsafe.embrace.danger
 
-    private val transportConfig = kyo.net.TransportConfig.default
+    private val transportConfig = kyo.net.NetConfig.default
 
     // EMFILE = 24 on both Linux and macOS/BSD (stable POSIX errno). Not defined in PosixConstants (part of the defect: the accept loop has no
     // branch for it), so it is spelled out here.
@@ -123,8 +123,8 @@ class PosixTransportAcceptEmfileTest extends Test:
         "does not spin on acceptNow EMFILE while a connection is pending (bounded retry)" in {
             assumePollerReady()
             val spy       = new EmfileAcceptSockets(Ffi.load[SocketBindings])
-            val driver    = PollerIoDriver.init(transportConfig)
-            val transport = TestTransports.forTesting(transportConfig, driver, spy, backendIsEpoll = false)
+            val driver    = PollerIoDriver.init()
+            val transport = TestTransports.forTesting(driver, spy, backendIsEpoll = false)
             discard(driver.start())
             Sync.ensure(Sync.defer(driver.close())) {
                 for

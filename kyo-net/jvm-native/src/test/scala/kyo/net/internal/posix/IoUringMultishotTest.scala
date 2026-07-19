@@ -26,7 +26,7 @@ class IoUringMultishotTest extends Test:
     private def sock = Ffi.load[SocketBindings]
 
     private def withRealDriver[A](body: IoUringDriver => A < (Abort[Closed] & Async))(using Frame): A < (Abort[Closed] & Async) =
-        val driver = IoUringDriver.init(kyo.net.TransportConfig.default)
+        val driver = IoUringDriver.init()
         discard(driver.start())
         Sync.ensure(Sync.defer(driver.close()))(body(driver))
     end withRealDriver

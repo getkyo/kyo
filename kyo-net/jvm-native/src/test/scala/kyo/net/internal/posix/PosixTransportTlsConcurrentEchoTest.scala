@@ -139,7 +139,7 @@ class PosixTransportTlsConcurrentEchoTest extends Test:
             assumeReady()
             val transport = NetPlatform.transport
             for
-                listener <- transport.listen("127.0.0.1", 0, 128, serverTls) { serverConn =>
+                listener <- transport.listenTls("127.0.0.1", 0, 128, serverTls) { serverConn =>
                     echoLoop(serverConn)
                 }.safe.get
                 port = listener.port
@@ -149,7 +149,7 @@ class PosixTransportTlsConcurrentEchoTest extends Test:
                 // cert read with live decrypt and races the concurrent encrypt (writer fiber) on the same engine, paced naturally by
                 // the echo. No extra fibers are spawned, so no scheduler starvation from a separate hammering probe loop.
                 results <- Async.fillIndexed(connections, connections) { connId =>
-                    transport.connect("127.0.0.1", port, clientTls).safe.get.map { conn =>
+                    transport.connectTls("127.0.0.1", port, clientTls).safe.get.map { conn =>
                         val expected = conn.serverCertificateHash match
                             case Present(h) => h.toArray
                             case Absent     => Array.emptyByteArray
@@ -182,12 +182,12 @@ class PosixTransportTlsConcurrentEchoTest extends Test:
             assumeReady()
             val transport = NetPlatform.transport
             for
-                listener <- transport.listen("127.0.0.1", 0, 128, serverTls) { serverConn =>
+                listener <- transport.listenTls("127.0.0.1", 0, 128, serverTls) { serverConn =>
                     echoLoop(serverConn)
                 }.safe.get
                 port = listener.port
                 results <- Async.fillIndexed(connections, connections) { connId =>
-                    transport.connect("127.0.0.1", port, clientTls).safe.get.map { conn =>
+                    transport.connectTls("127.0.0.1", port, clientTls).safe.get.map { conn =>
                         Channel.init[Unit](window).map { permits =>
                             Kyo.foreach(0 until window)(_ => permits.put(())).andThen {
                                 driveConnection(conn, connId, permits, Absent).map { ok =>

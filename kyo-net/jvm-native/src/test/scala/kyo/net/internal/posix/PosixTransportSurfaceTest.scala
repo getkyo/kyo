@@ -21,7 +21,7 @@ class PosixTransportSurfaceTest extends Test:
 
     import AllowUnsafe.embrace.danger
 
-    private val transportConfig = kyo.net.TransportConfig.default
+    private val transportConfig = kyo.net.NetConfig.default
 
     private def assumePoller(): Unit =
         if !(PosixConstants.isLinux || PosixConstants.isMacOrBsd) then
@@ -43,8 +43,8 @@ class PosixTransportSurfaceTest extends Test:
     private def withTransport[A](body: PosixTransport => A < (Async & Abort[NetException | Closed] & Scope))(using
         Frame
     ): A < (Async & Abort[NetException | Closed] & Scope) =
-        val driver     = PollerIoDriver.init(transportConfig)
-        val transport  = TestTransports.forTesting(transportConfig, driver, Ffi.load[SocketBindings], backendIsEpoll = false)
+        val driver     = PollerIoDriver.init()
+        val transport  = TestTransports.forTesting(driver, Ffi.load[SocketBindings], backendIsEpoll = false)
         val driverDone = driver.start()
         // Run the body, then ALWAYS close the transport and driver and await the driver's exit fiber, re-raising the body's outcome.
         // transport.close() tears the readiness-driven accept loops down synchronously (see the scaladoc); the exit-fiber await is what

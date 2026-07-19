@@ -306,7 +306,7 @@ ${enc.encodeToString(caDer)}
     ): A < (Async & Abort[NetException | Closed]) =
         val transport = NetPlatform.transport
         for
-            listener <- transport.listen("127.0.0.1", 0, 128, serverTls) { serverConn =>
+            listener <- transport.listenTls("127.0.0.1", 0, 128, serverTls) { serverConn =>
                 discard(Sync.Unsafe.evalOrThrow {
                     Fiber.initUnscoped {
                         Abort.run[Closed] {
@@ -318,7 +318,7 @@ ${enc.encodeToString(caDer)}
                 })
             }.safe.get
             port = listener.port
-            conn   <- transport.connect("127.0.0.1", port, clientTls).safe.get
+            conn   <- transport.connectTls("127.0.0.1", port, clientTls).safe.get
             result <- body(conn)
         yield
             conn.close()

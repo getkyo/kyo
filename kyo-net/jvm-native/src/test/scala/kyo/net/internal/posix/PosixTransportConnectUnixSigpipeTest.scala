@@ -34,7 +34,7 @@ class PosixTransportConnectUnixSigpipeTest extends Test:
 
     import AllowUnsafe.embrace.danger
 
-    private val transportConfig = kyo.net.TransportConfig.default
+    private val transportConfig = kyo.net.NetConfig.default
 
     private def assumeKqueue(): Unit =
         if !PosixConstants.isMacOrBsd then
@@ -101,8 +101,8 @@ class PosixTransportConnectUnixSigpipeTest extends Test:
             // A unique short path under /tmp (well under the 108-byte sun_path limit). nanoTime gives uniqueness without java.util.UUID.
             val path      = s"/tmp/kyo-net-sigpipe-${java.lang.System.nanoTime()}.sock"
             val spy       = new OptRecordingSockets(Ffi.load[SocketBindings])
-            val driver    = PollerIoDriver.init(transportConfig)
-            val transport = TestTransports.forTesting(transportConfig, driver, spy, backendIsEpoll = false)
+            val driver    = PollerIoDriver.init()
+            val transport = TestTransports.forTesting(driver, spy, backendIsEpoll = false)
             discard(driver.start())
             Abort.run[Closed] {
                 for

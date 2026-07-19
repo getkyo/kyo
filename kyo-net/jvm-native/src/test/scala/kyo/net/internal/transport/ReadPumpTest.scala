@@ -26,7 +26,7 @@ class ReadPumpTest extends Test:
     import AllowUnsafe.embrace.danger
     given Frame = Frame.internal
 
-    private val transportConfig = kyo.net.TransportConfig.default
+    private val transportConfig = kyo.net.NetConfig.default
     private val sock            = Ffi.load[SocketBindings]
 
     private def assumePoller(): Unit =
@@ -88,7 +88,7 @@ class ReadPumpTest extends Test:
         // When latch completes, channel is guaranteed to have data.
         "bytes are forwarded to the channel (real driver)" in {
             assumePoller()
-            val real = PollerIoDriver.init(transportConfig)
+            val real = PollerIoDriver.init()
             val spy  = new RecordingIoDriver(real)
             discard(spy.start())
             PosixTestSockets.loopbackPair().map { case (clientFd, peerFd) =>
@@ -127,7 +127,7 @@ class ReadPumpTest extends Test:
         // No re-registration on EOF; teardown fires inline.
         "EOF on empty span closes pump" in {
             assumePoller()
-            val real        = PollerIoDriver.init(transportConfig)
+            val real        = PollerIoDriver.init()
             val spy         = new RecordingIoDriver(real)
             val closedLatch = Promise.Unsafe.init[Unit, Any]()
             discard(spy.start())
@@ -161,7 +161,7 @@ class ReadPumpTest extends Test:
         // Anti-flakiness: two onAwaitRead latches confirm two sequential deliveries.
         "channel accepts offer and continues reading (sequential deliveries)" in {
             assumePoller()
-            val real = PollerIoDriver.init(transportConfig)
+            val real = PollerIoDriver.init()
             val spy  = new RecordingIoDriver(real)
             discard(spy.start())
             PosixTestSockets.loopbackPair().map { case (clientFd, peerFd) =>
@@ -197,7 +197,7 @@ class ReadPumpTest extends Test:
         // pattern (i % 251) makes any reordering or loss observable. No park-observation hook is needed: the assertion is on the delivered bytes.
         "a slow consumer backpressures the pump with no byte loss and order preserved (park + resume)" in {
             assumePoller()
-            val real = PollerIoDriver.init(transportConfig)
+            val real = PollerIoDriver.init()
             val spy  = new RecordingIoDriver(real)
             discard(spy.start())
             PosixTestSockets.loopbackPair().map { case (clientFd, peerFd) =>
@@ -227,7 +227,7 @@ class ReadPumpTest extends Test:
         // run. The observable assertion: closeFn is never called by the pump on this path.
         "closing the inbound channel under backpressure does not tear the pump down" in {
             assumePoller()
-            val real = PollerIoDriver.init(transportConfig)
+            val real = PollerIoDriver.init()
             val spy  = new RecordingIoDriver(real)
             discard(spy.start())
             PosixTestSockets.loopbackPair().map { case (clientFd, peerFd) =>
@@ -258,7 +258,7 @@ class ReadPumpTest extends Test:
         // Anti-flakiness: closeFnLatch completes when teardown runs. Triggered by real ECONNRESET.
         "driver read failure causes teardown" in {
             assumePoller()
-            val real        = PollerIoDriver.init(transportConfig)
+            val real        = PollerIoDriver.init()
             val spy         = new RecordingIoDriver(real)
             val closedLatch = Promise.Unsafe.init[Unit, Any]()
             discard(spy.start())
@@ -292,7 +292,7 @@ class ReadPumpTest extends Test:
         // closeFnLatch fires when teardown completes.
         "channel closed before offer: Failure(Closed) causes teardown" in {
             assumePoller()
-            val real        = PollerIoDriver.init(transportConfig)
+            val real        = PollerIoDriver.init()
             val spy         = new RecordingIoDriver(real)
             val closedLatch = Promise.Unsafe.init[Unit, Any]()
             discard(spy.start())
@@ -332,7 +332,7 @@ class ReadPumpTest extends Test:
         // sequence: deliver 2 frames (latches) -> assert frames in channel -> close peer (EOF) -> drain -> closedLatch
         "EOF preserves already-buffered bytes (Docker exec stderr-empty repro)" in {
             assumePoller()
-            val real        = PollerIoDriver.init(transportConfig)
+            val real        = PollerIoDriver.init()
             val spy         = new RecordingIoDriver(real)
             val closedLatch = Promise.Unsafe.init[Unit, Any]()
             discard(spy.start())
@@ -398,7 +398,7 @@ class ReadPumpTest extends Test:
         // Anti-flakiness: closeFnLatch fires when teardown runs. channel.closed() is true after.
         "teardown closes channel and calls closeFn" in {
             assumePoller()
-            val real        = PollerIoDriver.init(transportConfig)
+            val real        = PollerIoDriver.init()
             val spy         = new RecordingIoDriver(real)
             val closedLatch = Promise.Unsafe.init[Unit, Any]()
             discard(spy.start())
@@ -432,7 +432,7 @@ class ReadPumpTest extends Test:
         // Drain frame (consumer action) -> triggers closeAwaitEmpty to complete -> closedLatch fires.
         "EOF after data delivery causes teardown after consumer drains" in {
             assumePoller()
-            val real        = PollerIoDriver.init(transportConfig)
+            val real        = PollerIoDriver.init()
             val spy         = new RecordingIoDriver(real)
             val closedLatch = Promise.Unsafe.init[Unit, Any]()
             discard(spy.start())

@@ -23,15 +23,15 @@ class IoDriverPoolTest extends Test:
     import AllowUnsafe.embrace.danger
     given Frame = Frame.internal
 
-    private val transportConfig = kyo.net.TransportConfig.default
+    private val transportConfig = kyo.net.NetConfig.default
 
     private def assumePoller(): Unit =
         PosixTestSockets.assumePoller()
         ()
 
-    /** Build n unstarted RecordingIoDriver instances over real PollerIoDriver.init(transportConfig). */
+    /** Build n unstarted RecordingIoDriver instances over real PollerIoDriver.init(). */
     private def mkSpies(n: Int): Array[RecordingIoDriver] =
-        Array.fill(n)(new RecordingIoDriver(PollerIoDriver.init(transportConfig)))
+        Array.fill(n)(new RecordingIoDriver(PollerIoDriver.init()))
 
     "init with single driver: next returns that driver" in {
         assumePoller()
@@ -156,7 +156,7 @@ class IoDriverPoolTest extends Test:
         assumePoller()
         val closeOrder = mutable.ListBuffer[Int]()
         val rawSpies = Array.tabulate(2) { i =>
-            val spy = new RecordingIoDriver(PollerIoDriver.init(transportConfig))
+            val spy = new RecordingIoDriver(PollerIoDriver.init())
             spy.onClose = () => closeOrder += i
             spy
         }

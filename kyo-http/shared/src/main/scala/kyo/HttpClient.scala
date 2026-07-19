@@ -51,7 +51,7 @@ object HttpClient:
     private lazy val defaultClient: HttpClient =
         import AllowUnsafe.embrace.danger
         given Frame   = Frame.internal
-        val transport = kyo.net.NetPlatform.transport(NetConfigTranslation.toNetTransportConfig(HttpTransportConfig.default))
+        val transport = kyo.net.NetPlatform.transport
         initUnsafe(transport, 100, 60.seconds)
     end defaultClient
 
@@ -194,7 +194,7 @@ object HttpClient:
         require(maxConnectionsPerHost > 0, s"maxConnectionsPerHost must be positive: $maxConnectionsPerHost")
         require(idleConnectionTimeout > Duration.Zero, s"idleConnectionTimeout must be positive: $idleConnectionTimeout")
         Sync.Unsafe.defer {
-            val transport = kyo.net.NetPlatform.transport(NetConfigTranslation.toNetTransportConfig(transportConfig))
+            val transport = kyo.net.NetPlatform.transport
             initUnsafe(transport, maxConnectionsPerHost, idleConnectionTimeout, defaultTlsConfig, transportConfig)
         }
     end initUnscoped

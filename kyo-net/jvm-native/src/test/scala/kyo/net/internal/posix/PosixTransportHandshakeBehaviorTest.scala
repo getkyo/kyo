@@ -29,7 +29,7 @@ class PosixTransportHandshakeBehaviorTest extends Test:
 
     import AllowUnsafe.embrace.danger
 
-    private val transportConfig = kyo.net.TransportConfig.default
+    private val transportConfig = kyo.net.NetConfig.default
 
     private val serverTls = NetTlsConfig(
         certChainPath = Present(TlsTestCert.certPath),
@@ -68,8 +68,8 @@ class PosixTransportHandshakeBehaviorTest extends Test:
     private def withTransport[A](body: PosixTransport => A < (Async & Abort[NetException | Closed] & Scope))(using
         Frame
     ): A < (Async & Abort[NetException | Closed] & Scope) =
-        val driver     = PollerIoDriver.init(transportConfig)
-        val transport  = TestTransports.forTesting(transportConfig, driver, Ffi.load[SocketBindings], backendIsEpoll = false)
+        val driver     = PollerIoDriver.init()
+        val transport  = TestTransports.forTesting(driver, Ffi.load[SocketBindings], backendIsEpoll = false)
         val driverDone = driver.start()
         Abort.run[NetException | Closed](body(transport)).map { result =>
             Sync.defer(transport.close()).andThen(Sync.defer(driver.close())).andThen(
@@ -99,7 +99,7 @@ class PosixTransportHandshakeBehaviorTest extends Test:
             withTransport { transport =>
                 for
                     handlerReady <- Channel.init[Unit](1)
-                    listener <- transport.listen("127.0.0.1", 0, 16, serverTls) { serverConn =>
+                    listener <- transport.listenTls("127.0.0.1", 0, 16, serverTls) { serverConn =>
                         discard(Sync.Unsafe.evalOrThrow {
                             Fiber.initUnscoped {
                                 Abort.run[Closed] {
@@ -114,7 +114,7 @@ class PosixTransportHandshakeBehaviorTest extends Test:
                             }
                         })
                     }.safe.get
-                    client <- transport.connect("127.0.0.1", listener.port, clientTls).safe.get
+                    client <- transport.connectTls("127.0.0.1", listener.port, clientTls).safe.get
                     _      <- handlerReady.take
                     msg = "handshake-want-read-want-write-roundtrip".getBytes("UTF-8")
                     _      <- client.outbound.safe.put(Span.fromUnsafe(msg))
@@ -142,7 +142,7 @@ class PosixTransportHandshakeBehaviorTest extends Test:
             withTransport { transport =>
                 for
                     ready <- Channel.init[Unit](1)
-                    listener <- transport.listen("127.0.0.1", 0, 16, serverTls) { serverConn =>
+                    listener <- transport.listenTls("127.0.0.1", 0, 16, serverTls) { serverConn =>
                         discard(Sync.Unsafe.evalOrThrow {
                             Fiber.initUnscoped {
                                 Abort.run[Closed] {
@@ -158,7 +158,7 @@ class PosixTransportHandshakeBehaviorTest extends Test:
                             }
                         })
                     }.safe.get
-                    client <- transport.connect("127.0.0.1", listener.port, clientTls).safe.get
+                    client <- transport.connectTls("127.0.0.1", listener.port, clientTls).safe.get
                     _      <- ready.take
                     // A 128 KB payload: large enough to fill the loopback socket send buffer and trigger WriteResult.Partial / awaitWritable.
                     payload = Array.tabulate[Byte](128 * 1024)(i => (i & 0xff).toByte)
@@ -185,7 +185,7 @@ class PosixTransportHandshakeBehaviorTest extends Test:
                         // Close without sending anything: the TLS client will receive a truncated handshake.
                         serverConn.close()
                     }.safe.get
-                    outcome <- Abort.run[NetException | Closed](transport.connect("127.0.0.1", listener.port, clientTls).safe.get)
+                    outcome <- Abort.run[NetException | Closed](transport.connectTls("127.0.0.1", listener.port, clientTls).safe.get)
                 yield assert(outcome.isFailure, s"expected Closed on TLS-to-plaintext handshake failure, got $outcome")
             }
         }

@@ -79,7 +79,7 @@ class PollerIoDriverTest extends Test:
 
     /** Start a fresh driver, run `body` with it, then close it. The poll loop runs on the driver's own fiber for the duration. */
     private def withDriver[A](body: PollerIoDriver => A < (Abort[Closed] & Async))(using Frame): A < (Abort[Closed] & Async) =
-        val driver = PollerIoDriver.init(kyo.net.TransportConfig.default)
+        val driver = PollerIoDriver.init()
         discard(driver.start())
         Sync.ensure(Sync.defer(driver.close()))(body(driver))
     end withDriver

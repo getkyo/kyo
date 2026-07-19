@@ -47,7 +47,7 @@ class PollerIoDriverPromiseReuseTest extends Test:
 
         "reusedPromiseInterruptLifecycle" in {
             assumePoller()
-            val driver = PollerIoDriver.init(kyo.net.TransportConfig.default)
+            val driver = PollerIoDriver.init()
             discard(driver.start())
             Sync.ensure(Sync.defer(driver.close())) {
                 PosixTestSockets.loopbackPair().map { case (client, accepted) =>

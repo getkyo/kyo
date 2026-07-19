@@ -18,12 +18,12 @@ class PollerIoDriverPreRegisterReadTest extends Test:
     import AllowUnsafe.embrace.danger
     given Frame = Frame.internal
 
-    private val transportConfig = kyo.net.TransportConfig.default
+    private val transportConfig = kyo.net.NetConfig.default
     private val sock            = Ffi.load[SocketBindings]
 
     "a read registered after the peer's bytes already arrived is still delivered (no lost edge)" in {
         PosixTestSockets.assumePoller()
-        val real = PollerIoDriver.init(transportConfig)
+        val real = PollerIoDriver.init()
         val spy  = new RecordingIoDriver(real)
         discard(spy.start())
         Kyo.foreach(0 until 20) { i =>

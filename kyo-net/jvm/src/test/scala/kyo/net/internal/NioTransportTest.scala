@@ -23,12 +23,7 @@ class NioTransportTest extends Test:
 
     /** Create a transport using the standard factory. Starts its own event loop driver. Caller must call close(). */
     def mkTransport()(using Frame): NioTransport =
-        NioTransport.init(
-            channelCapacity = 8,
-            readBufferSize = NioHandle.DefaultReadBufferSize,
-            connectTimeout = Duration.Infinity,
-            handshakeTimeout = Duration.Infinity
-        )
+        NioTransport.init()
 
     // -----------------------------------------------------------------------
     // Construction
@@ -229,12 +224,12 @@ class NioTransportTest extends Test:
 
         val tlsConfig = serverTlsConfig
 
-        transport.listen("127.0.0.1", 0, 50, tlsConfig) { conn =>
+        transport.listenTls("127.0.0.1", 0, 50, tlsConfig) { conn =>
             conn.close()
         }.safe.get.map { listener =>
             val port      = listener.port
             val clientTls = NetTlsConfig(trustAll = true)
-            Abort.run[NetException](transport.connect("127.0.0.1", port, clientTls).safe.get).map { result =>
+            Abort.run[NetException](transport.connectTls("127.0.0.1", port, clientTls).safe.get).map { result =>
                 listener.close()
                 transport.close()
                 result match
@@ -308,12 +303,12 @@ class NioTransportTest extends Test:
         // pump observes as EOF and tears the connection down (setting the connection's closed flag) before the client reads the cert hash, making
         // serverCertificateHash Absent by the "Absent after close" contract. The shared TransportTlsIntrospectionTest uses the same open-handler
         // shape for this reason; listener.close() / transport.close() below tear the server side down.
-        transport.listen("127.0.0.1", 0, 50, serverTlsConfig) { _ =>
+        transport.listenTls("127.0.0.1", 0, 50, serverTlsConfig) { _ =>
             ()
         }.safe.get.map { listener =>
             val port      = listener.port
             val clientTls = NetTlsConfig(trustAll = true)
-            Abort.run[NetException](transport.connect("127.0.0.1", port, clientTls).safe.get).map { result =>
+            Abort.run[NetException](transport.connectTls("127.0.0.1", port, clientTls).safe.get).map { result =>
                 result match
                     case Result.Success(conn) =>
                         // Read the cert hash on the still-open connection (the server handler above does not close it).

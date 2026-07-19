@@ -144,7 +144,7 @@ class PollerIoDriverTlsInboundBioBoundTest extends Test:
                 val clientEngine    = TlsRealEngines.singleEngine(isServer = false)
                 val serverEngine    = TlsRealEngines.singleEngine(isServer = true)
                 val recordingServer = RecordingTlsEngine(serverEngine)
-                val driver          = PollerIoDriver.init(kyo.net.TransportConfig.default)
+                val driver          = PollerIoDriver.init()
                 discard(driver.start())
                 Sync.ensure(Sync.defer(driver.close())) {
                     PosixTestSockets.loopbackPair().map { case (client, accepted) =>

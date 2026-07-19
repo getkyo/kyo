@@ -3,8 +3,8 @@ package kyo.net.internal.posix
 import kyo.*
 import kyo.ffi.Buffer
 import kyo.ffi.Ffi
+import kyo.net.NetConfig
 import kyo.net.Test
-import kyo.net.TransportConfig
 import kyo.net.internal.TlsEngine
 
 /** Engine-FIFO containment: a throwing engine op must not kill the drain loop.
@@ -38,7 +38,7 @@ class EngineThrowFifoContinuesTest extends Test:
         // Enqueue a throwing op followed by a succeeding op; drain once; assert the succeeding op ran.
         "throwing op does not kill the FIFO: succeeding op still runs" in {
             assumePoller()
-            val driver = PollerIoDriver.init(TransportConfig.default)
+            val driver = PollerIoDriver.init()
             try
                 var succeedingRan = false
 
@@ -61,7 +61,7 @@ class EngineThrowFifoContinuesTest extends Test:
         // Multiple throwing ops followed by succeeding ops: the FIFO stays alive across all of them.
         "multiple throwing ops do not kill the FIFO: succeeding ops still run" in {
             assumePoller()
-            val driver = PollerIoDriver.init(TransportConfig.default)
+            val driver = PollerIoDriver.init()
             try
                 var countRan = 0
 
@@ -85,7 +85,7 @@ class EngineThrowFifoContinuesTest extends Test:
         // the outer catch catches Throwable; even an Error escaping the inner op is contained.
         "Error (not just RuntimeException) is contained" in {
             assumePoller()
-            val driver = PollerIoDriver.init(TransportConfig.default)
+            val driver = PollerIoDriver.init()
             try
                 var afterErrorRan = false
 
@@ -104,7 +104,7 @@ class EngineThrowFifoContinuesTest extends Test:
         // is re-entrant across cycles and the queue is not permanently poisoned by a prior throw.
         "FIFO continues across poll cycles after a throw" in {
             assumePoller()
-            val driver = PollerIoDriver.init(TransportConfig.default)
+            val driver = PollerIoDriver.init()
             try
                 var cycle1Ran = false
                 var cycle2Ran = false
@@ -135,7 +135,7 @@ class EngineThrowFifoContinuesTest extends Test:
         // failure). The continuity of the FIFO is preserved by the inner catch, not the outer one.
         "inner-catch: feedAndDecrypt throw fails connection typed, next op still runs" in {
             assumePoller()
-            val driver = PollerIoDriver.init(TransportConfig.default)
+            val driver = PollerIoDriver.init()
             try
                 // Stub TlsEngine whose feedCiphertext throws. This models the JDK SSLEngine raising
                 // SSLHandshakeException on a received fatal TLS alert during an unwrap call.

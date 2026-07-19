@@ -88,7 +88,7 @@ class PollerIoDriverConcurrentInterestTest extends Test:
     "PollerIoDriver concurrent read/write interest on the same fd" - {
         "a read parked next to a writable on the same fd is not starved: both complete" in {
             assumePoller()
-            val driver = PollerIoDriver.init(kyo.net.TransportConfig.default)
+            val driver = PollerIoDriver.init()
             discard(driver.start())
             Sync.ensure(Sync.defer(driver.close())) {
                 loopbackPair().map { case (client, accepted) =>

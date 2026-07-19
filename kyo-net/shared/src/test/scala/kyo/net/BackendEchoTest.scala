@@ -96,8 +96,8 @@ class BackendEchoTest extends Test:
 
     "TLS echo round-trips a message" - eachBackendTls { (transport, serverTls, clientTls) =>
         for
-            listener <- transport.listen("127.0.0.1", 0, 16, serverTls)(echo).safe.get
-            conn     <- transport.connect("127.0.0.1", listener.port, clientTls).safe.get
+            listener <- transport.listenTls("127.0.0.1", 0, 16, serverTls)(echo).safe.get
+            conn     <- transport.connectTls("127.0.0.1", listener.port, clientTls).safe.get
             message = "kyo-backend-tls-echo-pilot".getBytes("UTF-8")
             _      <- conn.outbound.safe.put(Span.fromUnsafe(message))
             echoed <- collect(conn, message.length)
@@ -124,10 +124,10 @@ class BackendEchoTest extends Test:
             val perConn   = 64 * 1024
             val chunkSize = 4 * 1024
             for
-                listener <- transport.listen("127.0.0.1", 0, 64, serverTls)(echo).safe.get
+                listener <- transport.listenTls("127.0.0.1", 0, 64, serverTls)(echo).safe.get
                 _ <- Async.foreach(0 until conns, conns) { c =>
                     val body: Unit < (Async & Abort[NetException | Closed]) =
-                        transport.connect("127.0.0.1", listener.port, clientTls).safe.get.map { conn =>
+                        transport.connectTls("127.0.0.1", listener.port, clientTls).safe.get.map { conn =>
                             val payload = Array.tabulate[Byte](perConn)(i => ((c * 131 + i) % 251).toByte)
                             val writer = Async.foreach(payload.grouped(chunkSize).toSeq, 1) { ch =>
                                 conn.outbound.safe.put(Span.fromUnsafe(ch))

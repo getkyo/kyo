@@ -2,8 +2,8 @@ package kyo.net.internal.backend
 
 import kyo.*
 import kyo.net.NetBackendUnavailableException
+import kyo.net.NetConfig
 import kyo.net.Transport
-import kyo.net.TransportConfig
 
 /** Native `registered` list and selection entry point.
   *
@@ -43,13 +43,13 @@ private[net] object IoBackendPlatform:
       * falling back to the next when a higher-priority one is available (its cheap probe passed) but fails to build at production scale
       * (io_uring whose production-depth ring cannot init on a restricted host degrades to epoll rather than failing the whole transport).
       */
-    def transport(config: TransportConfig)(using AllowUnsafe, Frame): Transport =
+    def transport()(using AllowUnsafe, Frame): Transport =
         IoBackend.selectAndBuild[Entry, Transport](
             registered,
             _.name,
             _.priority,
             _.isAvailable,
-            _.build(config),
+            _.build(),
             forced = Maybe(kyo.net.backend()).filter(_.nonEmpty),
             onUnavailable = NetBackendUnavailableException(_)
         ).getOrThrow

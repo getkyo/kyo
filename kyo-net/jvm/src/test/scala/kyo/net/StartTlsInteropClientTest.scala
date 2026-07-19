@@ -63,7 +63,7 @@ class StartTlsInteropClientTest extends Test:
         if !uringEntry.isAvailable then cancel("io_uring not available on this host")
 
         TlsTestCertShared.writePems.flatMap { case (certPath, keyPath) =>
-            Sync.defer(uringEntry.build(TransportConfig.default, summon[Frame])).flatMap { transport =>
+            Sync.defer(uringEntry.build(summon[Frame])).flatMap { transport =>
                 Sync.ensure(Sync.defer(transport.close())) {
 
                     val serverOutput = new ConcurrentLinkedQueue[String]()

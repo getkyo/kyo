@@ -4,8 +4,8 @@ import java.util.concurrent.atomic.AtomicInteger
 import kyo.*
 import kyo.ffi.Buffer
 import kyo.ffi.Ffi
+import kyo.net.NetConfig
 import kyo.net.Test
-import kyo.net.TransportConfig
 
 /** The io_uring availability probe is invoked at the production queue depth `max(256, ioPoolSize * 64)`, not a fixed 256.
   *

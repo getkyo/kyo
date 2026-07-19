@@ -105,6 +105,13 @@ sealed abstract class NetTlsException(message: String, cause: String | Throwable
 final case class NetTlsHandshakeException(host: String, port: Int, cause: String | Throwable = "")(using Frame)
     extends NetTlsException(s"TLS handshake with $host:$port failed${NetException.suffix(cause)}", cause)
 
+/** The TLS handshake with `host:port` did not complete within `timeout`, so the connection was reaped and its fd and engine released. Applies
+  * to all three handshake roles: a client `connectTls`, a connection accepted by a `listenTls`, and a STARTTLS `upgradeToTls`. For an upgrade
+  * or an accepted connection there is no fresh connect port, so `port` is `-1`.
+  */
+final case class NetTlsHandshakeTimeoutException(host: String, port: Int, timeout: Duration)(using Frame)
+    extends NetTlsException(s"TLS handshake with $host:$port timed out after $timeout")
+
 /** The pinned or forced TLS provider is not available on this transport (an unregistered id, or one whose capability probe failed). */
 final case class NetTlsProviderUnavailableException(provider: String, cause: String | Throwable = "")(using Frame)
     extends NetTlsException(s"TLS provider '$provider' is not available${NetException.suffix(cause)}", cause)

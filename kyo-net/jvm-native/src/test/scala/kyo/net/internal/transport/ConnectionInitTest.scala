@@ -22,7 +22,7 @@ class ConnectionInitTest extends Test:
     import AllowUnsafe.embrace.danger
     given Frame = Frame.internal
 
-    private val transportConfig = kyo.net.TransportConfig.default
+    private val transportConfig = kyo.net.NetConfig.default
     private val sock            = Ffi.load[SocketBindings]
 
     private def assumePoller(): Unit =
@@ -62,7 +62,7 @@ class ConnectionInitTest extends Test:
     // Anti-flakiness: AtomicBoolean CAS in Connection.init is synchronous; spy counts readable immediately after close.
     "close is idempotent: second close is a no-op" in {
         assumePoller()
-        val real = PollerIoDriver.init(transportConfig)
+        val real = PollerIoDriver.init()
         val spy  = new RecordingIoDriver(real)
         discard(spy.start())
         PosixTestSockets.loopbackPair().map { case (clientFd, peerFd) =>
@@ -84,7 +84,7 @@ class ConnectionInitTest extends Test:
     // record the order into a ListBuffer with no async involved.
     "close closes channels and calls driver cancel before closeHandle" in {
         assumePoller()
-        val real       = PollerIoDriver.init(transportConfig)
+        val real       = PollerIoDriver.init()
         val closeOrder = scala.collection.mutable.ListBuffer[String]()
         val spy        = new RecordingIoDriver(real)
         spy.onCancel = () => closeOrder += "cancel"
@@ -114,7 +114,7 @@ class ConnectionInitTest extends Test:
     // observable; the send and drain run concurrently so the kernel buffers cannot deadlock.
     "inbound backpressure delivers every byte in order to a slow consumer (channel wiring)" in {
         assumePoller()
-        val real = PollerIoDriver.init(transportConfig)
+        val real = PollerIoDriver.init()
         val spy  = new RecordingIoDriver(real)
         discard(spy.start())
         PosixTestSockets.loopbackPair().map { case (clientFd, peerFd) =>
@@ -137,7 +137,7 @@ class ConnectionInitTest extends Test:
     // onClosing (the parked-handler close signal kyo-http observes) completes exactly when closeFn wins the close, and not before.
     "onClosing completes when the connection is closed" in {
         assumePoller()
-        val real = PollerIoDriver.init(transportConfig)
+        val real = PollerIoDriver.init()
         val spy  = new RecordingIoDriver(real)
         discard(spy.start())
         PosixTestSockets.loopbackPair().map { case (clientFd, peerFd) =>
@@ -156,7 +156,7 @@ class ConnectionInitTest extends Test:
     // The production trigger: a peer FIN drives the ReadPump to EOF/teardown, which reaches closeFn and completes onClosing.
     "onClosing completes on a peer-driven ReadPump teardown" in {
         assumePoller()
-        val real = PollerIoDriver.init(transportConfig)
+        val real = PollerIoDriver.init()
         val spy  = new RecordingIoDriver(real)
         discard(spy.start())
         PosixTestSockets.loopbackPair().map { case (clientFd, peerFd) =>
@@ -176,7 +176,7 @@ class ConnectionInitTest extends Test:
     // fire onClosing (state Upgrading bars closeFn's win branch); the upgraded connection is a fresh init with its own signal.
     "onClosing does not complete on detachForUpgrade" in {
         assumePoller()
-        val real = PollerIoDriver.init(transportConfig)
+        val real = PollerIoDriver.init()
         val spy  = new RecordingIoDriver(real)
         discard(spy.start())
         PosixTestSockets.loopbackPair().map { case (clientFd, peerFd) =>

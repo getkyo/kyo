@@ -3,11 +3,11 @@ package kyo.net.internal.posix
 import kyo.*
 import kyo.ffi.Buffer
 import kyo.ffi.Ffi
+import kyo.net.NetConfig
 import kyo.net.NetException
 import kyo.net.NetTlsConfig
 import kyo.net.Test
 import kyo.net.TlsTestCertShared
-import kyo.net.TransportConfig
 import kyo.net.internal.TlsProviderPlatform
 
 /** Deterministic, memory-tool-free reproduce-first for the io_uring handshake-timeout use-after-free.
@@ -41,8 +41,6 @@ class IoUringHandshakeTimeoutOrderingTest extends Test:
     // production default depth is rejected there and falls back to epoll). assumeUring probes at this same depth, so the gate matches the ring
     // the transport will build. handshakeTimeout = 1s is finite (so the deadline arms and reaps the stalled handshake) yet long enough that the
     // test reliably detects the in-flight recv and registers its reap latch BEFORE the deadline fires.
-    private val transportConfig: TransportConfig = TransportConfig.default.copy(handshakeTimeout = 1.second)
-
     private def assumeTls(): Unit =
         if !TlsProviderPlatform.registered.exists(_.isAvailable) then cancel("no TLS provider available on this backend")
 
@@ -66,7 +64,7 @@ class IoUringHandshakeTimeoutOrderingTest extends Test:
         val driver    = TestDrivers.forBindings(recording, realRing)
         discard(driver.start())
         // backendIsEpoll = false: the driver is io_uring, so the regular-file fallback never applies.
-        val transport = TestTransports.forTesting(transportConfig, driver, sock, backendIsEpoll = false)
+        val transport = TestTransports.forTesting(driver, sock, backendIsEpoll = false)
         Sync.ensure(Sync.defer(transport.close()))(body(transport, recording))
     end withRecordingTransport
 
@@ -95,16 +93,18 @@ class IoUringHandshakeTimeoutOrderingTest extends Test:
     "IoUringDriver handshake-timeout teardown" - {
 
         "the stalled-handshake recv readBuffer is freed only AFTER its in-flight recv CQE reaps, never while the recv is kernel-owned" in {
-            PosixTestSockets.assumeUring(transportConfig)
+            PosixTestSockets.assumeUring()
             assumeTls()
             given Frame = Frame.internal
             TlsTestCertShared.writePems.map { case (certPath, keyPath) =>
-                val serverTls = NetTlsConfig(certChainPath = Present(certPath), privateKeyPath = Present(keyPath))
+                // A finite 1s handshake deadline: long enough that the test registers its reap latch before the deadline fires.
+                val serverTls =
+                    NetTlsConfig(certChainPath = Present(certPath), privateKeyPath = Present(keyPath), handshakeTimeout = 1.second)
                 withRecordingTransport { (transport, recording) =>
                     // A finite, short handshakeTimeout so the deadline reaps the stalled server handshake. The plaintext raw client never sends a
                     // ClientHello, so the server handshake parks in awaitReadCiphertext with exactly ONE in-flight io_uring op: the recv SQE into
                     // the server handle's readBuffer (the server has sent nothing, the client has sent nothing, so no other CQE precedes the reap).
-                    transport.listen("127.0.0.1", 0, 16, serverTls) { _ => () }.safe.get.map { listener =>
+                    transport.listenTls("127.0.0.1", 0, 16, serverTls) { _ => () }.safe.get.map { listener =>
                         rawStallingClient(listener.port).map { clientFd =>
                             // Wait until the server handshake has submitted its in-flight recv SQE. The recording spy records every recv buffer the
                             // driver hands the kernel; during the stalled handshake the ONLY driver recv is the server handshake's awaitRead, so the

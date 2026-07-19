@@ -2,10 +2,10 @@ package kyo.net.internal.posix
 
 import kyo.*
 import kyo.ffi.Ffi
+import kyo.net.NetConfig
 import kyo.net.NetException
 import kyo.net.NetTlsConfig
 import kyo.net.Test
-import kyo.net.TransportConfig
 import kyo.net.internal.TlsRealEngines
 import kyo.net.internal.TlsTestCert
 
@@ -32,7 +32,7 @@ class PosixTransportHandshakeAlertTest extends Test:
 
     import AllowUnsafe.embrace.danger
 
-    private val transportConfig = TransportConfig.default
+    private val transportConfig = NetConfig.default
 
     private def assumePollerReady(): Unit =
         if !(PosixConstants.isLinux || PosixConstants.isMacOrBsd) then
@@ -49,8 +49,8 @@ class PosixTransportHandshakeAlertTest extends Test:
     private def withTransport[A](body: PosixTransport => A < (Async & Abort[NetException | Closed] & Scope))(using
         Frame
     ): A < (Async & Abort[NetException | Closed] & Scope) =
-        val driver     = PollerIoDriver.init(transportConfig)
-        val transport  = TestTransports.forTesting(transportConfig, driver, Ffi.load[SocketBindings], backendIsEpoll = false)
+        val driver     = PollerIoDriver.init()
+        val transport  = TestTransports.forTesting(driver, Ffi.load[SocketBindings], backendIsEpoll = false)
         val driverDone = driver.start()
         Abort.run[NetException | Closed](body(transport)).map { result =>
             Sync.defer(transport.close()).andThen(Sync.defer(driver.close())).andThen(
@@ -79,8 +79,12 @@ class PosixTransportHandshakeAlertTest extends Test:
                 import NetTlsConfig.Version.*
                 // Server accepts only TLS 1.3; the client offers only TLS 1.2, so the server's real engine rejects the ClientHello, queues a
                 // protocol_version fatal alert, and the accept handshake fails on the fatal (`-2`) arm.
-                transport.listen("127.0.0.1", 0, 16, serverTls(TLS13, TLS13)) { _ => () }.safe.get.map { listener =>
-                    Abort.run[NetException | Closed](transport.connect("127.0.0.1", listener.port, clientTls(TLS12, TLS12)).safe.get).map {
+                transport.listenTls("127.0.0.1", 0, 16, serverTls(TLS13, TLS13)) { _ => () }.safe.get.map { listener =>
+                    Abort.run[NetException | Closed](transport.connectTls(
+                        "127.0.0.1",
+                        listener.port,
+                        clientTls(TLS12, TLS12)
+                    ).safe.get).map {
                         outcome =>
                             val message = outcome match
                                 case Result.Failure(e) => e.getMessage
@@ -107,7 +111,7 @@ class PosixTransportHandshakeAlertTest extends Test:
             TlsRealEngines.assumeTlsReady()
             import NetTlsConfig.Version.*
             withTransport { transport =>
-                transport.listen("127.0.0.1", 0, 16, serverTls(TLS12, TLS13)) { serverConn =>
+                transport.listenTls("127.0.0.1", 0, 16, serverTls(TLS12, TLS13)) { serverConn =>
                     discard(Sync.Unsafe.evalOrThrow {
                         Fiber.initUnscoped {
                             Abort.run[Closed] {
@@ -120,7 +124,7 @@ class PosixTransportHandshakeAlertTest extends Test:
                         }
                     })
                 }.safe.get.map { listener =>
-                    transport.connect("127.0.0.1", listener.port, clientTls(TLS12, TLS13)).safe.get.map { client =>
+                    transport.connectTls("127.0.0.1", listener.port, clientTls(TLS12, TLS13)).safe.get.map { client =>
                         val message = "version-overlap-roundtrip".getBytes("UTF-8")
                         client.outbound.safe.put(Span.fromUnsafe(message)).andThen {
                             Loop(Array.emptyByteArray) { acc =>

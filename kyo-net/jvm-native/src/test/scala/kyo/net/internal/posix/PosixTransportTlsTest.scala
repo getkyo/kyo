@@ -22,7 +22,7 @@ class PosixTransportTlsTest extends Test:
 
     import AllowUnsafe.embrace.danger
 
-    private val transportConfig = kyo.net.TransportConfig.default
+    private val transportConfig = kyo.net.NetConfig.default
 
     private val serverTls = NetTlsConfig(
         certChainPath = Present(TlsTestCert.certPath),
@@ -56,8 +56,8 @@ class PosixTransportTlsTest extends Test:
     private def withTransport[A](body: PosixTransport => A < (Async & Abort[NetException | Closed] & Scope))(using
         Frame
     ): A < (Async & Abort[NetException | Closed] & Scope) =
-        val driver     = PollerIoDriver.init(transportConfig)
-        val transport  = TestTransports.forTesting(transportConfig, driver, Ffi.load[SocketBindings], backendIsEpoll = false)
+        val driver     = PollerIoDriver.init()
+        val transport  = TestTransports.forTesting(driver, Ffi.load[SocketBindings], backendIsEpoll = false)
         val driverDone = driver.start()
         Abort.run[NetException | Closed](body(transport)).map { result =>
             Sync.defer(transport.close()).andThen(Sync.defer(driver.close())).andThen(
@@ -102,7 +102,7 @@ class PosixTransportTlsTest extends Test:
             withTransport { transport =>
                 for
                     accepted <- Channel.init[Unit](1)
-                    listener <- transport.listen("127.0.0.1", 0, 16, serverTls) { serverConn =>
+                    listener <- transport.listenTls("127.0.0.1", 0, 16, serverTls) { serverConn =>
                         // TLS echo handler: the handshake already completed before this runs; echo each decrypted chunk back encrypted.
                         discard(Sync.Unsafe.evalOrThrow {
                             Fiber.initUnscoped {
@@ -118,7 +118,7 @@ class PosixTransportTlsTest extends Test:
                             }
                         })
                     }.safe.get
-                    client <- transport.connect("127.0.0.1", listener.port, clientTls).safe.get
+                    client <- transport.connectTls("127.0.0.1", listener.port, clientTls).safe.get
                     message = "posix-tls-encrypted-roundtrip".getBytes("UTF-8")
                     _      <- client.outbound.safe.put(Span.fromUnsafe(message))
                     _      <- accepted.take
@@ -142,7 +142,7 @@ class PosixTransportTlsTest extends Test:
             assumeReady()
             withTransport { transport =>
                 deadPort().map { port =>
-                    Abort.run[NetException | Closed](transport.connect("127.0.0.1", port, clientTls).safe.get).map { outcome =>
+                    Abort.run[NetException | Closed](transport.connectTls("127.0.0.1", port, clientTls).safe.get).map { outcome =>
                         assert(outcome.isFailure, s"expected Closed connecting TLS to dead port $port, got $outcome")
                     }
                 }

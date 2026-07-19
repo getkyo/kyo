@@ -18,12 +18,7 @@ class NioTransportStdioTest extends Test:
 
     /** Create a transport using the standard factory. Starts its own event loop driver. Caller must call close(). */
     def mkTransport()(using Frame): NioTransport =
-        NioTransport.init(
-            channelCapacity = 8,
-            readBufferSize = NioHandle.DefaultReadBufferSize,
-            connectTimeout = Duration.Infinity,
-            handshakeTimeout = Duration.Infinity
-        )
+        NioTransport.init()
 
     /** Returns whether `pattern` occurs as a contiguous slice of `haystack`. */
     private def containsSlice(haystack: Array[Byte], pattern: Array[Byte]): Boolean =

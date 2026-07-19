@@ -21,7 +21,7 @@ class PosixTestSocketsTest extends Test:
     "loopbackPair real round-trip: 4 bytes written on client are received byte-equal on accepted" in {
         PosixTestSockets.assumePoller().andThen {
             PosixTestSockets.loopbackPair().map { case (client, accepted) =>
-                val driver = PollerIoDriver.init(kyo.net.TransportConfig.default)
+                val driver = PollerIoDriver.init()
                 discard(driver.start())
                 Sync.ensure(Sync.defer(driver.close())) {
                     val clientH   = PosixHandle.socket(client, PosixHandle.DefaultReadBufferSize, Absent)
@@ -48,7 +48,7 @@ class PosixTestSocketsTest extends Test:
         PosixTestSockets.assumePoller().andThen {
             val recording = new RecordingSocketBindings(sock)
             PosixTestSockets.loopbackPair(recording).map { case (client, accepted) =>
-                val driver = PollerIoDriver.init(kyo.net.TransportConfig.default)
+                val driver = PollerIoDriver.init()
                 discard(driver.start())
                 Sync.ensure(Sync.defer(driver.close())) {
                     val clientH   = PosixHandle.socket(client, PosixHandle.DefaultReadBufferSize, Absent)
@@ -81,7 +81,7 @@ class PosixTestSocketsTest extends Test:
             // the helper creates a real connected pair where drainPeer's awaitRead latch fires on real recv.
             // Anti-flakiness: drainPeer latches on the real kernel recv event via Promise.Unsafe, not a sleep.
             PosixTestSockets.smallBufferedPair(sndBuf = 2048, rcvBuf = 2048).map { case (client, accepted) =>
-                val driver = PollerIoDriver.init(kyo.net.TransportConfig.default)
+                val driver = PollerIoDriver.init()
                 discard(driver.start())
                 Sync.ensure(Sync.defer(driver.close())) {
                     val clientH   = PosixHandle.socket(client, PosixHandle.DefaultReadBufferSize, Absent)
@@ -103,7 +103,7 @@ class PosixTestSocketsTest extends Test:
     "resetPeer: SO_LINGER {1,0} close causes ECONNRESET on peer recv (non-zero errorCode)" in {
         PosixTestSockets.assumePoller().andThen {
             PosixTestSockets.loopbackPair().map { case (client, accepted) =>
-                val driver = PollerIoDriver.init(kyo.net.TransportConfig.default)
+                val driver = PollerIoDriver.init()
                 discard(driver.start())
                 Sync.ensure(Sync.defer(driver.close())) {
                     val acceptedH = PosixHandle.socket(accepted, PosixHandle.DefaultReadBufferSize, Absent)
@@ -132,7 +132,7 @@ class PosixTestSocketsTest extends Test:
     "closePeerForEof: peer close produces EOF (empty Span or Closed)" in {
         PosixTestSockets.assumePoller().andThen {
             PosixTestSockets.loopbackPair().map { case (client, accepted) =>
-                val driver = PollerIoDriver.init(kyo.net.TransportConfig.default)
+                val driver = PollerIoDriver.init()
                 discard(driver.start())
                 Sync.ensure(Sync.defer(driver.close())) {
                     val acceptedH = PosixHandle.socket(accepted, PosixHandle.DefaultReadBufferSize, Absent)
@@ -158,7 +158,7 @@ class PosixTestSocketsTest extends Test:
     "halfClose: SHUT_WR produces EOF on peer without closing connection" in {
         PosixTestSockets.assumePoller().andThen {
             PosixTestSockets.loopbackPair().map { case (client, accepted) =>
-                val driver = PollerIoDriver.init(kyo.net.TransportConfig.default)
+                val driver = PollerIoDriver.init()
                 discard(driver.start())
                 Sync.ensure(Sync.defer(driver.close())) {
                     val acceptedH = PosixHandle.socket(accepted, PosixHandle.DefaultReadBufferSize, Absent)

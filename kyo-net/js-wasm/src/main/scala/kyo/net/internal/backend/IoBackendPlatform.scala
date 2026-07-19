@@ -2,7 +2,7 @@ package kyo.net.internal.backend
 
 import kyo.*
 import kyo.net.NetBackendUnavailableException
-import kyo.net.TransportConfig
+import kyo.net.NetConfig
 import kyo.net.internal.JsHandle
 import kyo.net.internal.JsIoDriver
 import kyo.net.internal.transport.IoDriver
@@ -16,7 +16,7 @@ private[net] object NodeBackend extends IoBackend:
     def name                                    = "node"
     def priority                                = 10
     def isAvailable(using AllowUnsafe): Boolean = true
-    def createDriver(config: TransportConfig)(using AllowUnsafe, Frame): IoDriver[JsHandle] =
+    def createDriver()(using AllowUnsafe, Frame): IoDriver[JsHandle] =
         JsIoDriver.init()
 end NodeBackend
 
@@ -40,7 +40,7 @@ private[net] object IoBackendPlatform:
         ).getOrThrow
 
     /** Build the selected JS driver. */
-    def driver(config: TransportConfig)(using AllowUnsafe, Frame): IoDriver[JsHandle] =
-        selected.createDriver(config)
+    def driver()(using AllowUnsafe, Frame): IoDriver[JsHandle] =
+        selected.createDriver()
 
 end IoBackendPlatform
