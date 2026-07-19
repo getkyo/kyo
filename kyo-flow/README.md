@@ -334,10 +334,10 @@ val result     = Flow.runLocal(simpleFlow, "x" ~ 42)
 
 ```scala
 // In-memory store (development)
-val serverDev: HttpServer < (Async & Scope) = Flow.runServer(orderFlow, shippingFlow)
+val serverDev: HttpServer < (Async & Scope & Abort[HttpBindException]) = Flow.runServer(orderFlow, shippingFlow)
 
 // Durable store (production)
-val serverProd: HttpServer < (Async & Scope) =
+val serverProd: HttpServer < (Async & Scope & Abort[HttpBindException]) =
     FlowStore.initMemory.map(store => Flow.runServer(store, orderFlow, shippingFlow))
 ```
 
