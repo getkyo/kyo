@@ -722,6 +722,46 @@ class BlockingMonitorTest extends AnyFreeSpec with NonImplicitAssertions {
                 }
             }
         }
+
+        "interrupts a blocked worker above the shrunken currentWorkers bound" in {
+            // The regulator can shrink the admitted worker count while workers above the bound
+            // still hold mounted tasks; the monitor must keep scanning those slots, or a blocked
+            // worker there is never flagged, never compensated for, and never interrupted.
+            val started     = new CountDownLatch(1)
+            val interrupted = new AtomicBoolean(false)
+            val sleeper = new Thread((() => {
+                started.countDown()
+                try Thread.sleep(60000)
+                catch { case _: InterruptedException => interrupted.set(true) }
+            }): Runnable)
+            sleeper.setDaemon(true)
+            sleeper.start()
+            assert(started.await(5, TimeUnit.SECONDS))
+
+            val clock = InternalClock(TestExecutors.cached)
+            val worker = new Worker(2, TestExecutors.cached, (_, _) => (), _ => null, clock, 10) {
+                def currentInterruptEpoch(): Long = 0L
+                def shouldStop()                  = false
+            }
+            val task = TestTask()
+            task.interrupted = true
+            worker.mount = sleeper
+            worker.mountId = sleeper.getId
+            worker.currentTask = task
+
+            val workers = new Array[Worker](4)
+            workers(2) = worker
+
+            val monitor = new BlockingMonitor(workers, () => 2, 4, TestExecutors.cached)
+            try
+                eventually(timeout(scaled(Span(10, Seconds)))) {
+                    assert(interrupted.get(), "a mounted worker above currentWorkers must still be scanned and interrupted")
+                }
+            finally {
+                monitor.stop()
+                clock.stop()
+            }
+        }
     }
 
     // ── interrupt storms ────────────────────────────────────────────────

@@ -165,8 +165,11 @@ private[scheduler] class BlockingMonitor(
     private def cycle(): Unit = {
         cycles += 1
         try {
-            val n     = currentWorkers()
-            val count = collect(n, 0, 0)
+            // Scan every worker slot, not just the first currentWorkers(): the regulator can
+            // shrink the admitted count while workers above it still hold mounted tasks (e.g.
+            // blocked in a syscall), and an unscanned worker is never flagged blocked, never
+            // compensated for, and never receives its requested interrupt.
+            val count = collect(workers.length, 0, 0)
             // Clear task references from positions no longer in use
             clearTasks(lastCount, count)
             lastCount = count
