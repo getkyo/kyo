@@ -2,7 +2,7 @@ package kyo.scheduler.top
 
 import java.io.File
 import java.io.FileWriter
-import java.nio.file.AtomicMoveNotSupportedException
+import java.io.IOException
 import java.nio.file.Files
 import java.nio.file.StandardCopyOption
 
@@ -26,12 +26,15 @@ private[top] object StatusFile {
                 writer.close()
             val source = tmp.toPath
             val target = new File(path).toPath
+            // The atomic-unsupported exception type is absent from Scala Native's javalib, so the
+            // fallback catches the platform-portable supertypes; a failed atomic move (unsupported
+            // or e.g. cross-device) retries as a plain replace either way.
             try {
                 val _ = Files.move(source, target, StandardCopyOption.ATOMIC_MOVE)
             } catch {
-                case _: AtomicMoveNotSupportedException =>
-                    val _ = Files.move(source, target, StandardCopyOption.REPLACE_EXISTING)
                 case _: UnsupportedOperationException =>
+                    val _ = Files.move(source, target, StandardCopyOption.REPLACE_EXISTING)
+                case _: IOException =>
                     val _ = Files.move(source, target, StandardCopyOption.REPLACE_EXISTING)
             }
         } catch {
