@@ -45,14 +45,15 @@ opaque type HttpClient = HttpClientBackend
 
 object HttpClient:
 
-    // Bootstrap boundary: lazy val requires eager evaluation of the suspended pool init. The shared default client owns its own
-    // transport like any other client (uniform ownership): it is never closed, so its driver pool lives for the process. It must NOT
-    // borrow the process-global `NetPlatform.transport`, or a `HttpClient.use(_.close)` on this client would close that shared transport
-    // for the whole process.
+    // Bootstrap boundary: lazy val requires eager evaluation of the suspended pool init. The shared default client owns its own transport,
+    // distinct from the process-global `NetPlatform.transport` singleton, so a `HttpClient.use(_.close)` on this client cannot close that
+    // shared transport for the whole process. But like the singleton this client is never closed (it lives for the process), so its transport
+    // is built through the process-lifetime path: its idle keep-alive carriers are allowlisted by the fiber-leak / stranded-op gate rather than
+    // reported as a leaked owned transport.
     private lazy val defaultClient: HttpClient =
         import AllowUnsafe.embrace.danger
         given Frame   = Frame.internal
-        val transport = kyo.net.NetPlatform.transport(NetConfigTranslation.toNetTransportConfig(HttpTransportConfig.default))
+        val transport = kyo.net.NetPlatform.processLifetimeTransport(NetConfigTranslation.toNetTransportConfig(HttpTransportConfig.default))
         initUnsafe(transport, 100, 60.seconds)
     end defaultClient
 

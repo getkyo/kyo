@@ -1,19 +1,20 @@
 package kyo.net.internal
 
-/** Marks the construction of the process-shared default transport ([[kyo.net.NetPlatform.transport]]) so each I/O driver's poll/reap carrier
-  * spawned during that construction runs through a distinctly named wrapper frame.
+/** Marks the construction of a process-lifetime transport (one never closed by design) so each I/O driver's poll/reap carrier spawned during
+  * that construction runs through a distinctly named wrapper frame.
   *
-  * `NetPlatform.transport` is a process-lifetime singleton that is never closed by design (it is shared across every client and server in the
-  * process). Its idle carrier blocks head-of-line in the OS poll call for the JVM's lifetime, so at a test fork's end it shows up as a busy
-  * scheduler fiber. That is expected infrastructure, not a leak. The kyo-test end-of-run fiber-leak check allowlists the wrapper frame this
-  * marker produces (`processSharedTransport`), which appears ONLY on the shared singleton's carriers. An owned transport (built per-config and
-  * closed by its owner) keeps the plain `pollLoop`/`reapLoop` frame, so a genuinely leaked owned transport still trips the check rather than
-  * being masked by a broad driver-name allowlist.
+  * There are two such transports: the `NetPlatform.transport` singleton (shared across every client and server in the process) and the default
+  * HTTP client's own transport (built via `NetPlatform.processLifetimeTransport`; a distinct pool the default client owns but never closes).
+  * Each blocks head-of-line in the OS poll call for the JVM's lifetime, so at a test fork's end it shows up as a busy scheduler fiber with an
+  * idle kept-alive connection parked. That is expected infrastructure, not a leak. The kyo-test end-of-run fiber-leak and stranded-op checks
+  * allowlist the wrapper frame this marker produces (`processSharedTransport`), which appears only on these process-lifetime transports'
+  * carriers. An owned transport a caller closes keeps the plain `pollLoop`/`reapLoop` frame, so a genuinely leaked owned transport still trips
+  * the check rather than being masked by a broad driver-name allowlist.
   *
-  * The flag is a build-scoped thread-local: `whileBuilding` sets it around the singleton's construction, and each driver's `start()` reads it
-  * on the same (construction) thread when it decides which carrier body to spawn. The carrier body then runs on a scheduler worker, but the
-  * decision is made before the spawn, so the worker's stack carries the chosen frame. Only the singleton build sets the flag; every other
-  * transport construction reads `false` and uses the plain carrier.
+  * The flag is a build-scoped thread-local: `whileBuilding` sets it around a process-lifetime transport's construction, and each driver's
+  * `start()` reads it on the same (construction) thread when it decides which carrier body to spawn. The carrier body then runs on a scheduler
+  * worker, but the decision is made before the spawn, so the worker's stack carries the chosen frame. Only the process-lifetime construction
+  * paths set the flag; every owned per-config construction a caller will close reads `false` and uses the plain carrier.
   */
 private[net] object ProcessSharedTransport:
 

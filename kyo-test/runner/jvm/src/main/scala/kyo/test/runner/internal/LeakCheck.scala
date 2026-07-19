@@ -30,13 +30,15 @@ private[runner] object LeakCheck:
       * is a busy scheduler fiber at every net/http-using module's end-of-run check; the union covers both the current and the migrated network
       * stack, so neither is reported as a leak.
       *
-      * `NioIoDriver` matches kyo-http's process-wide IO transport (`HttpPlatformTransport.transport`), a lazy singleton whose `NioIoDriver` runs
-      * a selector event loop on a scheduler fiber for the JVM's lifetime.
+      * `NioIoDriver` matches the pure-JDK NIO selector floor a process-lifetime transport falls back to when no posix backend is available: a
+      * `NioIoDriver` running a selector event loop on a scheduler fiber for the JVM's lifetime.
       *
-      * `processSharedTransport` matches the I/O carrier of kyo-net's process-shared default transport (`kyo.net.NetPlatform.transport`): a lazy
-      * singleton shared across every client and server in the process and never closed by design. The kyo-net drivers route ONLY this singleton's
-      * carrier through a `processSharedTransport*` frame (see `kyo.net.internal.ProcessSharedTransport`); an owned, per-config transport keeps its
-      * plain `pollLoop`/`reapLoop` frame, so a genuinely leaked owned transport is still reported rather than masked by a broad driver-name match.
+      * `processSharedTransport` matches the I/O carriers of kyo-net's process-lifetime transports, never closed by design: the
+      * `kyo.net.NetPlatform.transport` singleton (shared across every client and server in the process) and the default HTTP client's own
+      * transport (a distinct pool built via `NetPlatform.processLifetimeTransport`). The kyo-net drivers route only these process-lifetime
+      * transports' carriers through a `processSharedTransport*` frame (see `kyo.net.internal.ProcessSharedTransport`); an owned, per-config
+      * transport a caller closes keeps its plain `pollLoop`/`reapLoop` frame, so a genuinely leaked owned transport is still reported rather than
+      * masked by a broad driver-name match.
       */
     val defaultAllowlist: Chunk[String] = Chunk("NioIoDriver", "processSharedTransport")
 

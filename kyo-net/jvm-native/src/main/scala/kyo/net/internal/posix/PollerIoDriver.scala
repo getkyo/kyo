@@ -318,10 +318,11 @@ final private[net] class PollerIoDriver private[posix] (
         // their own per-config transport rather than using the singleton. Held in diagRegistration and closed from close() so a
         // per-test driver's entry does not accumulate in the process-global registry for the rest of the run.
         //
-        // The registered name carries a `processSharedTransport` marker for the by-design process-lifetime singleton (never closed, so
-        // it legitimately parks forever with a pending armed read on a kept-alive connection): the stranded-op gate matches this name
-        // the same way LeakCheck's fiber-leak allowlist already does (LeakCheck.defaultAllowlist), so the one driver that is SUPPOSED
-        // to look parked-with-pending-work forever is exempted by the same convention, not a second one.
+        // The registered name carries a `processSharedTransport` marker for a by-design process-lifetime transport (the shared singleton
+        // or the default HTTP client's own transport), never closed, so it legitimately parks forever with a pending armed read on a
+        // kept-alive connection: the stranded-op gate matches this name the same way LeakCheck's fiber-leak allowlist already does
+        // (LeakCheck.defaultAllowlist), so a driver that is SUPPOSED to look parked-with-pending-work forever is exempted by the same
+        // convention, not a second one.
         // System.identityHashCode: diagnostic instance id in the driver name; fully qualified so kyo.System does not shadow it.
         val diagName =
             "PollerIoDriver@" + java.lang.System.identityHashCode(this) +

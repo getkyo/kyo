@@ -26,4 +26,10 @@ private[kyo] object NetPlatformTransport:
             connectTimeout = config.connectTimeout,
             handshakeTimeout = config.handshakeTimeout
         )
+
+    /** Process-lifetime variant used for the default HTTP client's transport. JS has no Diagnostics-registering I/O drivers (the stranded-op /
+      * fiber-leak gate has nothing to allowlist here), so no marker is needed: a plain per-config build.
+      */
+    def configuredProcessLifetime(config: TransportConfig)(using AllowUnsafe, Frame): Transport =
+        configured(config)
 end NetPlatformTransport

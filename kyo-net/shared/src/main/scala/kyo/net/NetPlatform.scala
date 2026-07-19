@@ -24,4 +24,13 @@ object NetPlatform:
       */
     def transport(config: TransportConfig)(using AllowUnsafe, Frame): Transport =
         kyo.net.internal.NetPlatformTransport.configured(config)
+
+    /** A per-config transport marked as a process-lifetime transport (never closed by design), for the process-wide default HTTP client. Like
+      * the owned `transport(config)` it builds and owns its own driver pool, distinct from the [[transport]] singleton, so closing the default
+      * client cannot close that shared singleton. But because this transport is itself never closed (it lives for the process, like the
+      * singleton), its idle carriers are allowlisted by the fiber-leak / stranded-op gate rather than reported as a leaked owned transport (see
+      * `kyo.net.internal.ProcessSharedTransport`). Internal: only the lazy, never-closed default client uses it.
+      */
+    private[kyo] def processLifetimeTransport(config: TransportConfig)(using AllowUnsafe, Frame): Transport =
+        kyo.net.internal.NetPlatformTransport.configuredProcessLifetime(config)
 end NetPlatform
