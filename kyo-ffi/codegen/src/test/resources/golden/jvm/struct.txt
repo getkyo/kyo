@@ -20,7 +20,7 @@ final class StructBindingsImpl extends StructBindings:
             pSeg.set(JAVA_INT, 0L, p.x)
             pSeg.set(JAVA_INT, 4L, p.y)
             val out = __kyoScratch$.alloc(pointLayout.byteSize(), pointLayout.byteAlignment(), "kyo.example.StructBindings", "move")
-            val errnoSeg = __kyoScratch$.alloc(4L, 4L, "kyo.example.StructBindings", "move")
+            val errnoSeg = __kyoScratch$.alloc(captureLayout.byteSize(), captureLayout.byteAlignment(), "kyo.example.StructBindings", "move")
             val _: Unit = moveMH.invokeExact(errnoSeg, out, pSeg, dx)
             kyo.example.golden.Point(out.get(JAVA_INT, 0L), out.get(JAVA_INT, 4L))
         finally __kyoScratch$.reset(__kyoMark$)
@@ -31,6 +31,7 @@ object StructBindingsImpl:
     private val lib      = NativeLoader.load("kyo_struct")
     private val linker   = Linker.nativeLinker()
     private val capture  = Linker.Option.captureCallState("errno")
+    private val captureLayout = Linker.Option.captureStateLayout()
 
     private val pointLayout: MemoryLayout = MemoryLayout.structLayout(JAVA_INT, JAVA_INT)
     StructAbiCheck.verifyByteSize("kyo.example.StructBindings", "Point", 8L, pointLayout.byteSize())

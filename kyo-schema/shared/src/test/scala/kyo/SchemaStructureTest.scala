@@ -1495,6 +1495,46 @@ class SchemaStructureTest extends kyo.test.Test[Any]:
                 case other => fail(s"Expected Mapping but got $other")
             end match
         }
+        "stringOrderedDictSchema produces Mapping structure with name OrderedDict and Primitive(String) key" in {
+            val schema = summon[Schema[OrderedDict[String, Boolean]]]
+            schema.structure match
+                case m: Structure.Type.Mapping =>
+                    assert(m.name == "OrderedDict")
+                    m.keyType match
+                        case Structure.Type.Primitive(Structure.PrimitiveKind.String, _) => succeed
+                        case other => fail(s"Expected Primitive(String) but got $other")
+                    end match
+                case other => fail(s"Expected Mapping but got $other")
+            end match
+        }
+        "orderedDictSchema produces Mapping structure with name OrderedDict" in {
+            val schema = summon[Schema[OrderedDict[Int, String]]]
+            schema.structure match
+                case m: Structure.Type.Mapping =>
+                    assert(m.name == "OrderedDict")
+                    assert(m.keyType eq summon[Schema[Int]].structure)
+                    assert(m.valueType eq summon[Schema[String]].structure)
+                case other => fail(s"Expected Mapping but got $other")
+            end match
+        }
+        "stringOrderedDictSchema and orderedDictSchema with String key use different givens" in {
+            // stringOrderedDictSchema: keyType is Primitive(String)
+            // orderedDictSchema: keyType is Schema[String].structure (also Primitive(String) but distinct path)
+            val stringOrderedDictS = summon[Schema[OrderedDict[String, Int]]]
+            stringOrderedDictS.structure match
+                case m: Structure.Type.Mapping =>
+                    m.keyType match
+                        case Structure.Type.Primitive(Structure.PrimitiveKind.String, _) => succeed
+                        case other => fail(s"Expected Primitive(String) but got $other")
+                    end match
+                case other => fail(s"Expected Mapping but got $other")
+            end match
+            val orderedDictS = summon[Schema[OrderedDict[Int, Int]]]
+            orderedDictS.structure match
+                case m: Structure.Type.Mapping => assert(m.keyType eq summon[Schema[Int]].structure)
+                case other                     => fail(s"Expected Mapping but got $other")
+            end match
+        }
         "Schema[Map[String,Int]].structure returns same reference on repeated calls" in {
             val schema = summon[Schema[Map[String, Int]]]
             assert(schema.structure eq schema.structure)

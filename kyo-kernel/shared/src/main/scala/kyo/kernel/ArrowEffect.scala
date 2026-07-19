@@ -584,7 +584,15 @@ object ArrowEffect:
                     Safepoint.handle(kyo.input)(
                         eval = handle[Any](kyo.input, kyo(_, context)),
                         continue = handleLoop(_, context),
-                        suspend = handleLoop(kyo, context)
+                        // The deferred re-entry runs outside the try/catch below, so it needs its
+                        // own recover wrapper or a handler exception escapes when the safepoint
+                        // denies inline evaluation (e.g. fiber preemption).
+                        suspend =
+                            try handleLoop(kyo, context)
+                            catch
+                                case ex if NonFatal(ex) =>
+                                    Safepoint.enrich(ex)
+                                    recover(ex)
                     )
                 case kyo: KyoSuspend[IX, OX, EX, Any, A, E & S & S2 & S3] @unchecked =>
                     new KyoContinue[IX, OX, EX, Any, B, S & S2 & S3](kyo):

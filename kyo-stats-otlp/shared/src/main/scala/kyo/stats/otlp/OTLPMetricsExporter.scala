@@ -5,13 +5,26 @@ import kyo.stats.internal.*
 
 /** Periodically collects metrics from the global `StatsRegistry` and exports them to an OTLP collector.
   *
-  * Counters and counter-gauges are exported as delta sums, histograms include explicit bucket boundaries and counts, and gauges report
-  * their current value. Metrics with zero activity since the last export are skipped. Weak references to metric instances are cleaned up
-  * during iteration to avoid a second pass that would deadlock on Scala Native.
+  * Counters and counter-gauges are exported as DELTA sums: they drain on read, so each data point carries the activity since the previous
+  * export and a counter with no activity is skipped. Histograms are exported with CUMULATIVE temporality and a fixed series-start time,
+  * because their buckets, count, min, max and sum are lifetime values that never drain; a histogram that has ever been observed is
+  * therefore re-sent on every export, carrying the same lifetime totals, rather than being skipped for having no new activity. Gauges
+  * report their current value. Weak references to metric instances are cleaned up during iteration to avoid a second pass that would
+  * deadlock on Scala Native.
   */
 object OTLPMetricsExporter:
 
     private val lastExportTime =
+        import AllowUnsafe.embrace.danger
+        AtomicRef.Unsafe.init[Instant](Instant.Epoch)
+
+    // The start of the histogram series, captured at the first flush and never advanced. A histogram data
+    // point carries CUMULATIVE temporality because its buckets, count, min, max and sum are lifetime values
+    // that never drain (the buckets are LongAdders and summary() is a non-draining snapshot every caller
+    // re-reads), and a cumulative point's start time is the start of the SERIES, not the previous export.
+    // A counter data point keeps the previous export as its start, because a counter genuinely drains on
+    // read (UnsafeCounter.get is adder.sumThenReset).
+    private val histogramSeriesStart =
         import AllowUnsafe.embrace.danger
         AtomicRef.Unsafe.init[Instant](Instant.Epoch)
 
@@ -36,6 +49,17 @@ object OTLPMetricsExporter:
                 val prevExport = lastExportTime.getAndSet(now)
                 val startStr   = instantToNanos(prevExport)
                 val nowStr     = instantToNanos(now)
+
+                // The first flush fixes the histogram series start; every later flush reuses it.
+                val seriesStart =
+                    val current = histogramSeriesStart.get()
+                    if current == Instant.Epoch then
+                        discard(histogramSeriesStart.compareAndSet(Instant.Epoch, now))
+                        histogramSeriesStart.get()
+                    else current
+                    end if
+                end seriesStart
+                val seriesStr = instantToNanos(seriesStart)
 
                 val registry = StatsRegistry.internal
                 val metrics  = ChunkBuilder.init[Metric]
@@ -108,15 +132,16 @@ object OTLPMetricsExporter:
                                 unit = "1",
                                 histogram = Present(OTLPHistogram(
                                     dataPoints = Seq(HistogramDataPoint(
-                                        startTimeUnixNano = startStr,
+                                        startTimeUnixNano = seriesStr,
                                         timeUnixNano = nowStr,
                                         count = summary.count.toString,
                                         explicitBounds = summary.boundaries.toSeq,
                                         bucketCounts = summary.bucketCounts.map(_.toString).toSeq,
                                         min = summary.min,
-                                        max = summary.max
+                                        max = summary.max,
+                                        sum = summary.sum
                                     )),
-                                    aggregationTemporality = OTLPModel.DeltaTemporality
+                                    aggregationTemporality = OTLPModel.CumulativeTemporality
                                 ))
                             ))
                         end if

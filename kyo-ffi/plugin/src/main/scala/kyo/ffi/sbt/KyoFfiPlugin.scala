@@ -83,6 +83,42 @@ object KyoFfiPlugin extends AutoPlugin {
           * for `ProcessBuilder`. Useful in tests and for debugging build issues.
           */
         val ffiDumpCcCommand = taskKey[Seq[Seq[String]]]("Return the cc command-line that ffiCompile would invoke.")
+
+        /** koffi bootstrap for a Scala.js FFI consumer's TEST classpath: an idempotent `npm install` of
+          * koffi, pinned to the range the runtime probe expects, hooked on `Test / compile` so `test`,
+          * `testOnly` and `testQuick` all trigger it, and so it re-runs after a clean wipes node_modules.
+          * `packageName` names the emitted package.json. Apply inside `.jsSettings`.
+          *
+          * The CommonJS linker setting stays with the consumer: this is a Scala 2.12 sbt plugin with no
+          * sbt-scalajs dependency (it detects Scala.js by auto-plugin label), so `scalaJSLinkerConfig` and
+          * `ModuleKind` do not resolve here. Each consumer keeps that one line in its own `.jsSettings`,
+          * where `ScalaJSPlugin` is enabled and those types are in scope.
+          */
+        def ffiKoffiJsBootstrap(packageName: String): Seq[sbt.Def.Setting[?]] =
+            Seq(
+                Test / compile := (Test / compile).dependsOn(Def.task {
+                    val log        = streams.value.log
+                    val targetBase = target.value
+                    val marker     = targetBase / "node_modules" / "koffi" / "package.json"
+                    val koffiRange = NpmBundleTemplate.KoffiSupportedRange
+                    val pjContent  = s"""{"name":"$packageName","private":true,"dependencies":{"koffi":"$koffiRange"}}"""
+                    val pj         = targetBase / "package.json"
+                    if (!pj.exists() || IO.read(pj) != pjContent) {
+                        IO.createDirectory(targetBase)
+                        IO.write(pj, pjContent)
+                    }
+                    if (!marker.exists()) {
+                        log.info(s"[$packageName] installing koffi@$koffiRange into $targetBase ...")
+                        // npm is npm.cmd on Windows, and CreateProcess resolves only .exe from a bare name.
+                        val npm = if (sys.props.getOrElse("os.name", "").toLowerCase.contains("win")) "npm.cmd" else "npm"
+                        val rc = scala.sys.process.Process(
+                            Seq(npm, "install", "--no-audit", "--no-fund", "--silent"),
+                            targetBase
+                        ).!
+                        if (rc != 0) sys.error(s"npm install koffi failed (exit $rc)")
+                    }
+                }).value
+            )
     }
 
     import autoImport._

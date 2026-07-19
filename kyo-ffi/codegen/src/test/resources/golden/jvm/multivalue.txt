@@ -20,7 +20,7 @@ final class MultiValueBindingsImpl extends MultiValueBindings:
                 val bufSeg = kyo.ffi.internal.FfiUnsafe.expect[MemorySegment](buf.raw.asInstanceOf[AnyRef], classOf[MemorySegment], "MemorySegment on JVM", "kyo.example.MultiValueBindings", "readInto")
                 val __kyoMultiOut$ = __kyoScratch$.alloc(4L, 4L, "kyo.example.MultiValueBindings", "readInto")
                 val eofOut = __kyoMultiOut$.asSlice(0L, 4L)
-                val errnoSeg = __kyoScratch$.alloc(4L, 4L, "kyo.example.MultiValueBindings", "readInto")
+                val errnoSeg = __kyoScratch$.alloc(captureLayout.byteSize(), captureLayout.byteAlignment(), "kyo.example.MultiValueBindings", "readInto")
                 val retVal: Int = readIntoMH.invokeExact(errnoSeg, fd, bufSeg, eofOut)
                 kyo.example.golden.ReadResult(retVal, eofOut.get(JAVA_INT, 0L) != 0)
             finally __kyoScratch$.reset(__kyoMark$)
@@ -32,6 +32,7 @@ object MultiValueBindingsImpl:
     private val lib      = NativeLoader.load("kyo_mv")
     private val linker   = Linker.nativeLinker()
     private val capture  = Linker.Option.captureCallState("errno")
+    private val captureLayout = Linker.Option.captureStateLayout()
 
     private val readIntoMH: MethodHandle = linker.downcallHandle(
         lib.find("read_into").orElseThrow(),
