@@ -9,7 +9,7 @@ private[kyo] trait UnixSocketTestHelperImpl extends UnixSocketTestHelper:
 
     private val fs = HttpFs.asInstanceOf[js.Dynamic]
 
-    def tempSocketPath()(using Frame): String < Sync =
+    protected def createTempSocketPath()(using Frame): String < Sync =
         Sync.defer {
             val tmpDir = fs.mkdtempSync(HttpNodePath.join(HttpOs.tmpdir(), "kyo-unix-test-")).toString
             HttpNodePath.join(tmpDir, "test.sock")

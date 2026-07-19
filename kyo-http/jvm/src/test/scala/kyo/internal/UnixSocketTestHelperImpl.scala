@@ -4,7 +4,7 @@ import kyo.*
 
 private[kyo] trait UnixSocketTestHelperImpl extends UnixSocketTestHelper:
 
-    def tempSocketPath()(using Frame): String < Sync =
+    protected def createTempSocketPath()(using Frame): String < Sync =
         Sync.defer {
             val tmpDir = java.io.File.createTempFile("kyo-unix-test", "")
             tmpDir.delete()

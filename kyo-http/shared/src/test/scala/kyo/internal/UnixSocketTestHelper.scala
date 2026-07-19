@@ -3,7 +3,17 @@ package kyo.internal
 import kyo.*
 
 private[kyo] trait UnixSocketTestHelper:
-    def tempSocketPath()(using Frame): String < Sync
+
+    /** Creates a temp socket path for a unix-server test, cancelling the leaf when the platform cannot bind AF_UNIX sockets (see
+      * [[unixSocketsSupported]]). Every socket-binding test acquires its path here, so the gate covers builder-based and inline servers
+      * alike; pure URL-parsing tests never call it and keep running everywhere.
+      */
+    def tempSocketPath()(using Frame): String < Sync =
+        Sync.defer {
+            if !unixSocketsSupported then throw kyo.test.TestCancelled("AF_UNIX sockets unsupported on this platform")
+        }.andThen(createTempSocketPath())
+
+    protected def createTempSocketPath()(using Frame): String < Sync
     def cleanupSocket(path: String): Unit
 
     /** Whether this platform can bind AF_UNIX sockets in these tests. Node has no AF_UNIX support on Windows (a filesystem listen path

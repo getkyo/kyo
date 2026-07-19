@@ -1192,7 +1192,6 @@ class HttpWebSocketTest extends BaseHttpTest with internal.UnixSocketTestHelperI
     private def withWsUnixServer[A, S](handlers: HttpHandler[?, ?, ?]*)(
         test: String => A < (S & Async & Abort[HttpException])
     )(using Frame): A < (S & Async & Scope & Abort[HttpException]) =
-        assume(unixSocketsSupported, "AF_UNIX sockets")
         tempSocketPath().map { sockPath =>
             val config = HttpServerConfig.default.unixSocket(sockPath)
             Sync.ensure(Sync.defer(cleanupSocket(sockPath))) {

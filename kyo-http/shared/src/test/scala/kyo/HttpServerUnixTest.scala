@@ -13,7 +13,6 @@ class HttpServerUnixTest extends BaseHttpTest with internal.UnixSocketTestHelper
     private def withUnixServer[A, S](handlers: HttpHandler[?, ?, ?]*)(
         test: (HttpServer, String) => A < (S & Async & Abort[HttpException])
     )(using Frame): A < (S & Async & Scope & Abort[HttpException]) =
-        assume(unixSocketsSupported, "AF_UNIX sockets")
         tempSocketPath().map { sockPath =>
             val config = HttpServerConfig.default.unixSocket(sockPath)
             Sync.ensure(Sync.defer(cleanupSocket(sockPath))) {
