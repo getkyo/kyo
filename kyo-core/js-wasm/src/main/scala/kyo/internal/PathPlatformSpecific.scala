@@ -619,6 +619,12 @@ abstract private[kyo] class PathPlatformSpecific extends PathDirectories:
                 val hasDrive = nonEmpty.headOption.exists(s => s.length == 2 && s(1) == ':')
                 val raw =
                     if isAbs && !hasDrive then "/" + nonEmpty.mkString("/")
+                    else if hasDrive then
+                        // A drive designator head is the volume root, matching the JVM/Native
+                        // representation. Render it rooted: a bare "C:" reads as Windows'
+                        // drive-relative current directory, which win32 normalize turns into
+                        // "C:." and corrupts every derived accessor.
+                        nonEmpty.head + "/" + nonEmpty.tail.mkString("/")
                     else nonEmpty.mkString("/")
                 // NodePath.normalize resolves .., ., redundant separators;
                 // constructor normalizes \ to /
