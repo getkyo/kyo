@@ -23,8 +23,17 @@ class ProcessSharedTransportTest extends Test:
     private def markedDrivers: Set[String] =
         Diagnostics.probeAll().iterator.map(_._1).filter(_.contains("processSharedTransport")).toSet
 
+    /** The marker is carried by a driver's Diagnostics registration, and only the posix drivers register one: `NioIoDriver` registers no probe
+      * at all, so on a run that forces the nio floor there is nothing for the frame to appear on and nothing for the leak-check allowlist to
+      * match. Cancel there rather than assert an empty set, which would report the forced backend as a marker regression.
+      */
+    private def assumeRegisteringDriver(): Unit =
+        if Diagnostics.probeAll().isEmpty then cancel("the active backend registers no Diagnostics probes; the marker has nothing to mark")
+
     "the shared transport marks its drivers; an owned one does not" in {
         Sync.Unsafe.defer {
+            discard(NetPlatform.transport)
+            assumeRegisteringDriver()
             // Force the one shared instance, then assert marked drivers EXIST rather than that a delta appeared. There is only one shared
             // transport, so it cannot be rebuilt to produce a delta, and another leaf having already forced it must not change the outcome.
             discard(NetPlatform.transport)

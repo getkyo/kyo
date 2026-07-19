@@ -70,7 +70,10 @@ class JvmPosixBackendSelectionTest extends Test:
                     cancel("no posix backend on this host; selection round-trip needs epoll/kqueue/io_uring")
                 end if
         end match
-        // The built production transport must use a PosixTransport (the unified posix path), not NioTransport.
+        // The built production transport must use a PosixTransport (the unified posix path), not NioTransport. This leaf's premise is that a
+        // posix backend WINS selection, so a run that forces the nio floor (KYO_NET_ONLY=nio or -Dkyo.net.backend=nio, the cell-isolation and
+        // forced-backend CI legs) has deliberately removed the thing under test; cancel rather than report a failure the run itself caused.
+        if IoBackendPlatform.selected.name == "nio" then cancel("nio is forced; this leaf asserts posix wins selection")
         val unsafe = IoBackendPlatform.transport()
         assert(unsafe.isInstanceOf[PosixTransport], s"production transport is ${unsafe.getClass.getSimpleName}, expected PosixTransport")
         val payload = "posix-echo".getBytes
