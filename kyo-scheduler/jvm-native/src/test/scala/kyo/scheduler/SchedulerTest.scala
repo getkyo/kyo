@@ -115,10 +115,13 @@ class SchedulerTest extends AnyFreeSpec with NonImplicitAssertions {
                 Task.Done
             }))
             tasks.foreach(scheduler.schedule)
-            eventually(assert(scheduler.busyFiberTraces().size >= n))
-            val result = scheduler.busyFiberTraces()
+            // The snapshot deliberately includes loaded-but-unmounted workers (a task queued on a
+            // worker whose thread has not mounted yet) with an empty mount name, so the coverage
+            // assertions read the mounted entries: all n busy workers must appear, each on a
+            // distinct mount.
+            eventually(assert(scheduler.busyFiberTraces().count(_.mount.nonEmpty) >= n))
+            val result = scheduler.busyFiberTraces().filter(_.mount.nonEmpty)
             assert(result.size >= n)
-            assert(result.forall(_.mount.nonEmpty))
             assert(result.map(_.mount).distinct.size == result.size)
             assert(result.forall(_.fiberTrace == ""))
             cdl.countDown()
