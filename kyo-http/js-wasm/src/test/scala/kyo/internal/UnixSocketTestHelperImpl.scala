@@ -5,6 +5,8 @@ import scala.scalajs.js
 
 private[kyo] trait UnixSocketTestHelperImpl extends UnixSocketTestHelper:
 
+    override def unixSocketsSupported: Boolean = !Platform.isWindows
+
     private val fs = HttpFs.asInstanceOf[js.Dynamic]
 
     def tempSocketPath()(using Frame): String < Sync =
