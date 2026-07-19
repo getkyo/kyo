@@ -378,6 +378,48 @@ class BlockingMonitorTest extends AnyFreeSpec with NonImplicitAssertions {
                 thread.join(5000)
             }
         }
+
+        "updateSlot" - {
+
+            "flat samples of the same thread read as idle after the baseline" in {
+                val m = new BlockingMonitor(4)
+                assert(!m.updateSlot(0, 7L, 100L), "first sample must be baseline only")
+                assert(m.updateSlot(0, 7L, 100L))
+                assert(m.updateSlot(0, 7L, 100L))
+            }
+
+            "an advancing sample resets the idle accumulation" in {
+                val m = new BlockingMonitor(4)
+                assert(!m.updateSlot(0, 7L, 100L))
+                assert(m.updateSlot(0, 7L, 100L))
+                assert(!m.updateSlot(0, 7L, 150L), "advancing time must clear the idle state")
+                assert(m.updateSlot(0, 7L, 150L))
+            }
+
+            "a thread change at the slot resets the baseline even when sampled values collide" in {
+                val m = new BlockingMonitor(4)
+                assert(!m.updateSlot(0, 7L, 100L))
+                assert(m.updateSlot(0, 7L, 100L))
+                assert(!m.updateSlot(0, 8L, 100L), "a new thread must not inherit the previous occupant's state")
+                assert(m.updateSlot(0, 8L, 100L), "the new thread accumulates from its own baseline")
+            }
+
+            "slots accumulate independently" in {
+                val m = new BlockingMonitor(4)
+                assert(!m.updateSlot(0, 7L, 100L))
+                assert(!m.updateSlot(1, 8L, 200L))
+                assert(m.updateSlot(0, 7L, 100L))
+                assert(!m.updateSlot(1, 8L, 250L))
+            }
+
+            "unavailable samples never read as idle" in {
+                val m = new BlockingMonitor(4)
+                assert(!m.updateSlot(0, 7L, -1L))
+                assert(!m.updateSlot(0, 7L, -1L), "-1 samples must not match each other as idle")
+                assert(!m.updateSlot(0, 7L, 100L), "recovery sample is a fresh baseline")
+                assert(m.updateSlot(0, 7L, 100L))
+            }
+        }
     }
 
     // ── blocking compensation (scheduler-level tests) ───────────────────
@@ -678,6 +720,46 @@ class BlockingMonitorTest extends AnyFreeSpec with NonImplicitAssertions {
                 (0 until count).foreach { i =>
                     assert(interrupted(i).get(), s"task $i should have been interrupted")
                 }
+            }
+        }
+
+        "interrupts a blocked worker above the shrunken currentWorkers bound" in {
+            // The regulator can shrink the admitted worker count while workers above the bound
+            // still hold mounted tasks; the monitor must keep scanning those slots, or a blocked
+            // worker there is never flagged, never compensated for, and never interrupted.
+            val started     = new CountDownLatch(1)
+            val interrupted = new AtomicBoolean(false)
+            val sleeper = new Thread((() => {
+                started.countDown()
+                try Thread.sleep(60000)
+                catch { case _: InterruptedException => interrupted.set(true) }
+            }): Runnable)
+            sleeper.setDaemon(true)
+            sleeper.start()
+            assert(started.await(5, TimeUnit.SECONDS))
+
+            val clock = InternalClock(TestExecutors.cached)
+            val worker = new Worker(2, TestExecutors.cached, (_, _) => (), _ => null, clock, 10) {
+                def currentInterruptEpoch(): Long = 0L
+                def shouldStop()                  = false
+            }
+            val task = TestTask()
+            task.interrupted = true
+            worker.mount = sleeper
+            worker.mountId = sleeper.getId
+            worker.currentTask = task
+
+            val workers = new Array[Worker](4)
+            workers(2) = worker
+
+            val monitor = new BlockingMonitor(workers, () => 2, 4, TestExecutors.cached)
+            try
+                eventually(timeout(scaled(Span(10, Seconds)))) {
+                    assert(interrupted.get(), "a mounted worker above currentWorkers must still be scanned and interrupted")
+                }
+            finally {
+                monitor.stop()
+                clock.stop()
             }
         }
     }

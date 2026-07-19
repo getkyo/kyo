@@ -7,7 +7,7 @@ package kyo
   * ```scala
   * package myapp.features
   * object newCheckout extends DynamicFlag[Boolean](false)
-  * // -Dmyapp.features.newCheckout="true@premium/50%"
+  * // -Dmyapp.features.newCheckout="rollout:true@premium/50%"
   * // newCheckout(userId, "premium") => true for 50% of premium users
   * ```
   *
@@ -188,7 +188,9 @@ abstract class DynamicFlag[A](default: A, validate: A => Either[Throwable, A] = 
             typedBuf += validateValue(parsed, fullExpr)
         }
 
-        val choices     = Rollout.parseChoices(expression, failFast, name, validator)
+        val choices =
+            if (isRollout(expression)) Rollout.parseChoices(rolloutPayload(expression), failFast, name, validator)
+            else Rollout.plainChoices(expression, validator)
         val typedValues = typedBuf.toIndexedSeq
         State(expression, choices, typedValues)
     }

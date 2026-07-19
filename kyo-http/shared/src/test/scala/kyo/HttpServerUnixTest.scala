@@ -21,6 +21,7 @@ class HttpServerUnixTest extends BaseHttpTest with internal.UnixSocketTestHelper
                 }
             }
         }
+    end withUnixServer
 
     // ── Transport Integration ─────────────────────────────────────────────────
 

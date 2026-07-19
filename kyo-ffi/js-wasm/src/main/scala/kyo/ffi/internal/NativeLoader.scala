@@ -88,9 +88,15 @@ object NativeLoader:
       * through so a SONAME-per-OS path can be slotted in here without touching `jsResolve`.
       */
     def resolveSystemLib(libraryId: String, os: String): Option[String] =
-        // security: only well-known, fixed system-library names map to the process default scope; everything else
+        // security: only well-known, fixed system-library names map to a system resolution; everything else
         // (including operator-supplied ids) keeps the bare-name / explicit-path resolution above.
         libraryId match
+            case "c" | "m" if os == "windows" =>
+                // Windows has no RTLD_DEFAULT-style process scope koffi can bind portably; the universal
+                // C runtime carries the standard C and math symbols (abs, floor, memcpy, strlen, getenv,
+                // pow, ...) for both families. POSIX-only names (getpid, time) exist there only as their
+                // underscore-prefixed CRT variants and fail at symbol lookup.
+                Some("ucrtbase.dll")
             case "c" | "m" | "pthread" | "dl" | "rt" =>
                 // `null` tells koffi to bind against the process default symbol scope (RTLD_DEFAULT). The value is
                 // intentionally null, not the bare name, so glibc / musl / macOS are all covered without a SONAME.

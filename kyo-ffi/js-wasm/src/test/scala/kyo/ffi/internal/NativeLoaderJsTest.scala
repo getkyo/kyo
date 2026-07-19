@@ -66,10 +66,10 @@ class NativeLoaderJsTest extends Test:
 
     // --- system-library resolution (libc and friends) ---
 
-    "resolveSystemLib maps known system libraries to the process default scope (null) on every OS" in {
+    "resolveSystemLib maps known system libraries to the process default scope (null) on POSIX hosts" in {
         // `null` makes koffi.load bind against the process default symbol scope (RTLD_DEFAULT), which carries
-        // libc / libm / pthread on every platform. The resolution is platform-uniform, so it holds for any OS tag.
-        for os <- List("linux", "darwin", "freebsd", "windows", "unknown") do
+        // libc / libm / pthread on every POSIX platform.
+        for os <- List("linux", "darwin", "freebsd", "unknown") do
             assert(NativeLoader.resolveSystemLib("c", os) == Some(null))
             assert(NativeLoader.resolveSystemLib("m", os) == Some(null))
             assert(NativeLoader.resolveSystemLib("pthread", os) == Some(null))
@@ -78,16 +78,29 @@ class NativeLoaderJsTest extends Test:
         end for
     }
 
+    "resolveSystemLib maps the C and math families to the universal CRT on Windows" in {
+        // Windows has no RTLD_DEFAULT-style process scope koffi can bind portably; ucrtbase.dll
+        // carries the standard C and math symbols. The POSIX-only families have no Windows
+        // counterpart and keep the default-scope resolution, failing at symbol lookup.
+        assert(NativeLoader.resolveSystemLib("c", "windows") == Some("ucrtbase.dll"))
+        assert(NativeLoader.resolveSystemLib("m", "windows") == Some("ucrtbase.dll"))
+        assert(NativeLoader.resolveSystemLib("pthread", "windows") == Some(null))
+        assert(NativeLoader.resolveSystemLib("dl", "windows") == Some(null))
+        assert(NativeLoader.resolveSystemLib("rt", "windows") == Some(null))
+    }
+
     "resolveSystemLib returns None for non-system libraries so they keep bare-name resolution" in {
         assert(NativeLoader.resolveSystemLib("kyo_test_loader", "linux") == None)
         assert(NativeLoader.resolveSystemLib("kyonet_posix_uring", "linux") == None)
         assert(NativeLoader.resolveSystemLib("crypto", "darwin") == None)
     }
 
-    "jsResolve('c') resolves libc to the process default scope (null), not the unloadable bare name 'c'" in {
+    "jsResolve('c') resolves libc to a loadable system resolution, not the unloadable bare name 'c'" in {
         // Before the fix this returned the bare id "c", which koffi.load cannot dlopen on Linux glibc
-        // (the loadable SONAME is libc.so.6). It now resolves to null → RTLD_DEFAULT.
-        assert(NativeLoader.jsResolve("c") == null)
+        // (the loadable SONAME is libc.so.6). POSIX hosts resolve to null (RTLD_DEFAULT); a Windows
+        // host resolves to the universal CRT.
+        val expected = if kyo.internal.Platform.isWindows then "ucrtbase.dll" else null
+        assert(NativeLoader.jsResolve("c") == expected)
     }
 
     "jsResolve env-var override still wins over system-library resolution for 'c'" in {

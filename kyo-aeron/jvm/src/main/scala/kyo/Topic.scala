@@ -83,7 +83,10 @@ object Topic:
       */
     def run[A, S](driver: MediaDriver)(v: A < (Topic & S))(using Frame): A < (Async & S) =
         Sync.defer {
-            val aeron = Aeron.connect(new Aeron.Context().aeronDirectoryName(driver.aeronDirectoryName()))
+            // Aeron's default error handler terminates the whole JVM on fatal client errors;
+            // AeronClients installs a survivable handler that fails operations through the
+            // closed client instead.
+            val aeron = kyo.internal.AeronClients.connect(driver.aeronDirectoryName())
             Sync.ensure(aeron.close()) {
                 run(aeron)(v)
             }

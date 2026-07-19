@@ -20,6 +20,7 @@ class HttpClientUnixTest extends BaseHttpTest with internal.UnixSocketTestHelper
                 }
             }
         }
+    end withUnixServer
 
     // ── HttpUrl parsing (unit tests, no server needed) ──────────────────────
 

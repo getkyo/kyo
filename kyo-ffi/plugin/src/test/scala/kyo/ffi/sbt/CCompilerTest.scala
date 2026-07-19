@@ -335,12 +335,14 @@ class CCompilerTest extends AnyFunSuite with Matchers {
 
     test("vendoredArchiveLinkFlags: darwin static links each .a by full path (no -Bstatic)") {
         // ld64 has no -Bstatic; the staged archive is named by full path so the link is static.
+        // The path is a HOST filesystem path (the linker runs on the host), so the expectation
+        // is derived through File rather than a hardcoded separator style.
         val libDir = new File("/tmp/bssl/lib")
         val flags  = CCompiler.vendoredArchiveLinkFlags(Seq(libDir), Seq("ssl", "crypto"), staticLink = true, os = "darwin")
         // Archives are named by absolute path under libDir; no -L, no -Bstatic on darwin.
         flags should have size 2
-        flags(0) should endWith("/tmp/bssl/lib/libssl.a")
-        flags(1) should endWith("/tmp/bssl/lib/libcrypto.a")
+        flags(0) shouldBe new File(libDir, "libssl.a").getAbsolutePath
+        flags(1) shouldBe new File(libDir, "libcrypto.a").getAbsolutePath
         flags should not contain ("-Wl,-Bstatic")
         flags should not contain ("-Wl,-Bdynamic")
         flags.foreach(f => f should not startWith ("-L"))
@@ -379,9 +381,8 @@ class CCompilerTest extends AnyFunSuite with Matchers {
         val libDir = new File("/tmp/bssl/lib")
         val flags  = CCompiler.vendoredArchiveForceLoadFlags(Seq(libDir), Seq("ssl", "crypto"), staticLink = true, os = "darwin")
         flags should have size 2
-        flags(0) should startWith("-Wl,-force_load,")
-        flags(0) should endWith("/tmp/bssl/lib/libssl.a")
-        flags(1) should endWith("/tmp/bssl/lib/libcrypto.a")
+        flags(0) shouldBe s"-Wl,-force_load,${new File(libDir, "libssl.a").getAbsolutePath}"
+        flags(1) shouldBe s"-Wl,-force_load,${new File(libDir, "libcrypto.a").getAbsolutePath}"
         flags should not contain ("-Wl,--whole-archive")
     }
 
@@ -442,8 +443,8 @@ class CCompilerTest extends AnyFunSuite with Matchers {
         )
         cmd should contain("-shared")
         cmd.containsSlice(Seq("-I", incDir.getAbsolutePath)) shouldBe true
-        cmd.exists(_.endsWith("/tmp/bssl/lib/libssl.a")) shouldBe true
-        cmd.exists(_.endsWith("/tmp/bssl/lib/libcrypto.a")) shouldBe true
+        cmd should contain(new File(libDir, "libssl.a").getAbsolutePath)
+        cmd should contain(new File(libDir, "libcrypto.a").getAbsolutePath)
         cmd should not contain ("-Wl,-Bstatic")
         cmd should not contain ("-static")
     }

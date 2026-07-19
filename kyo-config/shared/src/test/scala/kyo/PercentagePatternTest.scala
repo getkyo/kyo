@@ -20,7 +20,7 @@ class PercentagePatternTest extends AnyFreeSpec {
 
         "three-arm split — 33/33/34" in {
             val flag = PctTestFlags.threeArm
-            flag.update("a@33%;b@33%;c")
+            flag.update("rollout:a@33%;b@33%;c")
             // bucket 0-32 → a
             val key0  = findKeyWithBucket(0)
             val key32 = findKeyWithBucket(32)
@@ -40,7 +40,7 @@ class PercentagePatternTest extends AnyFreeSpec {
 
         "two-arm split — 50/50" in {
             val flag = PctTestFlags.twoArm
-            flag.update("a@50%;b")
+            flag.update("rollout:a@50%;b")
             val key25 = findKeyWithBucket(25)
             val key75 = findKeyWithBucket(75)
             assert(flag.evaluate(key25) == "a")
@@ -49,7 +49,7 @@ class PercentagePatternTest extends AnyFreeSpec {
 
         "90/10 holdout" in {
             val flag = PctTestFlags.holdout
-            flag.update("treatment@90%;holdout")
+            flag.update("rollout:treatment@90%;holdout")
             val key10 = findKeyWithBucket(10)
             val key95 = findKeyWithBucket(95)
             assert(flag.evaluate(key10) == "treatment")
@@ -58,7 +58,7 @@ class PercentagePatternTest extends AnyFreeSpec {
 
         "uneven three-way — 10/20/70" in {
             val flag = PctTestFlags.unevenThree
-            flag.update("a@10%;b@20%;c")
+            flag.update("rollout:a@10%;b@20%;c")
             // a: buckets 0-9
             val key5 = findKeyWithBucket(5)
             assert(flag.evaluate(key5) == "a")
@@ -72,18 +72,18 @@ class PercentagePatternTest extends AnyFreeSpec {
 
         "percentage stacking — increasing weight never disables" in {
             val flag = PctTestFlags.stacking
-            flag.update("a@33%;b")
+            flag.update("rollout:a@33%;b")
             val key10 = findKeyWithBucket(10)
             assert(flag.evaluate(key10) == "a")
             // Increase weight to 50%
-            flag.update("a@50%;b")
+            flag.update("rollout:a@50%;b")
             // Same key should still get "a" (bucket 10 < 50)
             assert(flag.evaluate(key10) == "a")
         }
 
         "single 100% — all get value" in {
             val flag = PctTestFlags.hundred
-            flag.update("a@100%")
+            flag.update("rollout:a@100%")
             for (i <- 0 until 100) {
                 val key = findKeyWithBucket(i)
                 assert(flag.evaluate(key) == "a", s"bucket=$i")
@@ -92,7 +92,7 @@ class PercentagePatternTest extends AnyFreeSpec {
 
         "single 0% — all get default or terminal" in {
             val flag = PctTestFlags.zero
-            flag.update("a@0%;b")
+            flag.update("rollout:a@0%;b")
             for (i <- 0 until 100) {
                 val key = findKeyWithBucket(i)
                 assert(flag.evaluate(key) == "b", s"bucket=$i")
@@ -101,7 +101,7 @@ class PercentagePatternTest extends AnyFreeSpec {
 
         "path + percentage weights" in {
             val flag = PctTestFlags.pathPct
-            flag.update("a@prod/33%;b@prod/33%;c@prod;d")
+            flag.update("rollout:a@prod/33%;b@prod/33%;c@prod;d")
             val key10 = findKeyWithBucket(10) // in a range
             val key40 = findKeyWithBucket(40) // in b range
             val key70 = findKeyWithBucket(70) // in c range (path-only match, catches rest of prod)
@@ -115,7 +115,7 @@ class PercentagePatternTest extends AnyFreeSpec {
         "weights > 100% normalized at update (not init)" in {
             val flag = PctTestFlags.normalized
             // At update time, 60% + 60% = 120%, should be normalized to 50% + 50%
-            flag.update("a@60%;b@60%")
+            flag.update("rollout:a@60%;b@60%")
             // After normalization, all 100 buckets should be covered by a or b
             var aCount = 0
             var bCount = 0
@@ -136,7 +136,7 @@ class PercentagePatternTest extends AnyFreeSpec {
         "weights > 100% preserves proportions" in {
             val flag = PctTestFlags.proportions
             // 90% + 30% = 120%, normalized to 75% + 25%
-            flag.update("a@90%;b@30%;c")
+            flag.update("rollout:a@90%;b@30%;c")
             var aCount = 0
             var bCount = 0
             var cCount = 0
@@ -155,7 +155,7 @@ class PercentagePatternTest extends AnyFreeSpec {
         "single weight > 100% clamped at update" in {
             val flag = PctTestFlags.clamped
             // At update, 150% should be clamped
-            flag.update("a@150%")
+            flag.update("rollout:a@150%")
             // Should match all buckets
             for (i <- 0 until 100) {
                 val key = findKeyWithBucket(i)
@@ -165,7 +165,7 @@ class PercentagePatternTest extends AnyFreeSpec {
 
         "weights sum exactly 100% — all buckets covered" in {
             val flag = PctTestFlags.exact100
-            flag.update("a@50%;b@50%")
+            flag.update("rollout:a@50%;b@50%")
             var aCount = 0
             var bCount = 0
             for (i <- 0 until 100) {
@@ -181,7 +181,7 @@ class PercentagePatternTest extends AnyFreeSpec {
 
         "weights sum < 100% with no terminal — falls to default" in {
             val flag = PctTestFlags.under100
-            flag.update("a@30%;b@30%")
+            flag.update("rollout:a@30%;b@30%")
             val key80 = findKeyWithBucket(80)
             // bucket 80 is beyond 60% cumulative → falls to constructor default
             assert(flag.evaluate(key80) == "default")
@@ -191,7 +191,7 @@ class PercentagePatternTest extends AnyFreeSpec {
             // This test just verifies that the expression parses correctly
             // The warning goes to stderr — we can't easily capture it in a test
             val flag = PctTestFlags.numericWarn
-            flag.update("a@50")
+            flag.update("rollout:a@50")
             // "50" is treated as a path segment, not a percentage
             // So it only matches attribute "50"
             assert(flag.evaluate("user1", "50") == "a")
@@ -201,7 +201,7 @@ class PercentagePatternTest extends AnyFreeSpec {
         "empty value before @ is a parse error" in {
             val flag = PctTestFlags.emptyValue
             val ex = intercept[FlagException] {
-                flag.update("@prod/50%")
+                flag.update("rollout:@prod/50%")
             }
             assert(ex.getMessage.contains("empty value"))
         }

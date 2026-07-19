@@ -221,17 +221,25 @@ private[kyo] object ChromeDownloader:
             }
         }
 
+    /** The archive-extraction command line. Windows uses the System32 bsdtar (which reads zip), named absolutely via `systemRoot` because
+      * PATH can shadow it with an MSYS tar (Git for Windows) that cannot read zip and dies on startup outside an MSYS shell. Unix uses
+      * `unzip`.
+      */
+    private[kyo] def extractArgs(os: System.OS, systemRoot: Maybe[String], archive: String, dest: String): Seq[String] =
+        if os == System.OS.Windows then
+            val tar = systemRoot.map(r => s"$r\\System32\\tar.exe").getOrElse("tar")
+            Seq(tar, "-xf", archive, "-C", dest)
+        else Seq("unzip", "-q", archive, "-d", dest)
+
     private[kyo] def extractZip(archive: Path, dest: Path)(using
         Frame
     )
         : Unit < (Async & Abort[BrowserSetupException]) =
         for
-            os <- System.operatingSystem
-            _  <- createDir(dest)
-            // Windows 10+ ships `tar` that handles zip. Unix has `unzip`.
-            cmd =
-                if os == System.OS.Windows then Command("tar", "-xf", archive.toString, "-C", dest.toString)
-                else Command("unzip", "-q", archive.toString, "-d", dest.toString)
+            os   <- System.operatingSystem
+            root <- System.env[String]("SystemRoot")
+            _    <- createDir(dest)
+            cmd = Command(extractArgs(os, root, archive.toString, dest.toString)*)
             _ <- Abort.recover[CommandException | Process.ExitCode] { err =>
                 failSetup(s"failed to extract $archive → $dest: $err", err)
             } {

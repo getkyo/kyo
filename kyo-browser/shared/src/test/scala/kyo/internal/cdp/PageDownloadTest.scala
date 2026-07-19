@@ -22,6 +22,21 @@ class PageDownloadTest extends kyo.BrowserTest:
         assert(PageDownload.Behavior.Default.wire == "default")
     }
 
+    // Chrome's Windows download target determination silently never finalizes a download whose
+    // downloadPath carries forward slashes; the wire boundary must hand Chrome native separators.
+    "nativeDownloadPath converts separators on Windows" in {
+        assert(PageDownload.nativeDownloadPath(System.OS.Windows, "C:/Users/me/dl") == "C:\\Users\\me\\dl")
+    }
+
+    "nativeDownloadPath keeps backslashes on Windows" in {
+        assert(PageDownload.nativeDownloadPath(System.OS.Windows, "C:\\Users\\me\\dl") == "C:\\Users\\me\\dl")
+    }
+
+    "nativeDownloadPath passes through unchanged off Windows" in {
+        assert(PageDownload.nativeDownloadPath(System.OS.Linux, "/tmp/dl") == "/tmp/dl")
+        assert(PageDownload.nativeDownloadPath(System.OS.MacOS, "/tmp/dl") == "/tmp/dl")
+    }
+
     // Rewired from session.exchange.events (removed with the old CdpClient)
     // to Browser.onDownload (the production subscription API using CdpBackend.downloadEventDispatchers).
 
@@ -38,7 +53,7 @@ class PageDownloadTest extends kyo.BrowserTest:
                 done   <- Promise.init[Unit, Any]
                 events <- AtomicRef.init(Chunk.empty[Browser.DownloadEvent])
                 // Subscribe to download events using the production API; rewired from deleted session.exchange.events.
-                _ <- Browser.onDownload(captureEvents(events, done, unique)) {
+                _ <- Browser.onDownload(captureEvents(events, done, unique, completeOnWillBegin = true)) {
                     Browser.goto(html).andThen(Browser.click(Browser.Selector.id("dl"))).andThen(done.get)
                 }
                 captured <- events.get
@@ -64,7 +79,7 @@ class PageDownloadTest extends kyo.BrowserTest:
                 _      <- Browser.allowDownloads(tempDir)
                 done   <- Promise.init[Unit, Any]
                 events <- AtomicRef.init(Chunk.empty[Browser.DownloadEvent])
-                _ <- Browser.onDownload(captureEvents(events, done, unique)) {
+                _ <- Browser.onDownload(captureEvents(events, done, unique, completeOnWillBegin = false)) {
                     Browser.goto(html).andThen(Browser.click(Browser.Selector.id("dl"))).andThen(done.get)
                 }
                 captured <- events.get
@@ -109,20 +124,23 @@ class PageDownloadTest extends kyo.BrowserTest:
 
     // --- helpers ---
 
-    /** Captures download events into `events`; completes `done` when a terminal condition is met.
+    /** Captures download events into `events`; completes `done` when the test's terminal condition is met.
       *
-      * For `WillBegin` events matching `uniqueFilename`: marks done. For `Progress` with state=completed: marks done.
-      * Used by both `WillBegin` and `guid-match` tests so the same handler drives `onDownload`.
+      * With `completeOnWillBegin = true`, a `WillBegin` event matching `uniqueFilename` marks done; otherwise only a `Progress` with
+      * state=completed does. The guid-match test MUST wait for the completed event: `WillBegin` always arrives first, and completing on
+      * it tears the `onDownload` subscription down in a race with the completed `Progress` (lost reliably on Windows, where download
+      * finalization takes a few extra milliseconds).
       */
     private def captureEvents(
         events: AtomicRef[Chunk[Browser.DownloadEvent]],
         done: Promise[Unit, Any],
-        uniqueFilename: String
+        uniqueFilename: String,
+        completeOnWillBegin: Boolean
     )(using Frame): Browser.DownloadEvent => Unit < Sync =
         ev =>
             events.updateAndGet(_ :+ ev).andThen {
                 ev match
-                    case Browser.DownloadEvent.WillBegin(_, _, fn) if fn.contains(uniqueFilename) =>
+                    case Browser.DownloadEvent.WillBegin(_, _, fn) if completeOnWillBegin && fn.contains(uniqueFilename) =>
                         done.complete(Result.succeed(())).unit
                     case Browser.DownloadEvent.Progress(_, _, _, "completed") =>
                         done.complete(Result.succeed(())).unit

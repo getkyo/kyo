@@ -168,6 +168,17 @@ private[kyo] object CompilerPool:
       */
     val ownVersion: String = "3.8.4"
 
+    /** Launches the pool's embedded MediaDriver with a client-liveness timeout sized for loaded CI hosts: the aeron default (10s)
+      * assumes dedicated cores, and a compile burst can stall a client conductor past it, which the driver treats as client death.
+      */
+    private[kyo] def launchDriver(): MediaDriver =
+        MediaDriver.launchEmbedded(
+            new MediaDriver.Context()
+                .clientLivenessTimeoutNs(java.util.concurrent.TimeUnit.SECONDS.toNanos(30))
+                // aeron requires the unblock timeout to exceed client liveness.
+                .publicationUnblockTimeoutNs(java.util.concurrent.TimeUnit.SECONDS.toNanos(40))
+        )
+
     /** Opens a pool: allocates the global compile-cap Meter, the one shared embedded MediaDriver,
       * and the close-on-evict instance cache (the finalizer closes every evicted instance and
       * force-kills every evicted worker). Scope-managed.
@@ -183,7 +194,7 @@ private[kyo] object CompilerPool:
                     case _                        => ()
                 }
             ).map { instances =>
-                Scope.acquireRelease(Sync.defer(MediaDriver.launchEmbedded()))(d => Sync.defer(d.close())).map { driver =>
+                Scope.acquireRelease(Sync.defer(launchDriver()))(d => Sync.defer(d.close())).map { driver =>
                     AtomicInt.init(0).map { streamIdCounter =>
                         new CompilerPool(settings, instances, globalSemaphore, driver, streamIdCounter): Compiler.Pool
                     }

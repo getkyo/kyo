@@ -64,29 +64,54 @@ class BrowserLauncherCleanupJvmTest extends BaseBrowserTest:
             base.copy(extraArgs = Chunk(s"--user-agent=$tag"))
         }
 
-    /** Captures the snapshot of currently-running OS processes whose argv contains the given sentinel tag. Returns a sequence of
+    /** Captures the snapshot of currently-running OS processes whose command line contains the given sentinel tag. Returns a sequence of
       * `(pid, userDataDir)` pairs, where `userDataDir` is the value of the `--user-data-dir=...` argument the launcher passed to that Chrome
       * process.
       *
       * Implementation note: macOS's Java implementation of `ProcessHandle.info().arguments()` returns the full argv for processes the JVM
-      * owns (its own children); for other processes the result may be an empty Optional. Since this test only spawns Chromes via
-      * `Browser.run` from the same JVM, our own Chromes are always discoverable.
+      * owns (its own children); for other processes the result may be an empty Optional. On Windows both `arguments()` and `commandLine()`
+      * come back empty through `ProcessHandle`, so the scan queries WMI (`Win32_Process`) through PowerShell instead, which exposes the
+      * full command line for same-user processes. Since this test only spawns Chromes via `Browser.run` from the same JVM, our own
+      * Chromes are always discoverable.
       */
+    private val userDataDirArg = """--user-data-dir=("([^"]+)"|(\S+))""".r
+
     private def chromesByTag(tag: String): Seq[(Long, String)] =
-        ProcessHandle.allProcesses().iterator().asScala.flatMap { ph =>
-            val info = ph.info()
-            val args = info.arguments().orElse(Array.empty[String])
-            // We require BOTH the sentinel tag AND a `--user-data-dir=<...>` arg. The user-data-dir arg is what
-            // we actually want to capture. If the argv doesn't contain a tag match, this process isn't ours.
-            val hasTag = args.exists(_.contains(tag))
-            val captured: Maybe[(Long, String)] =
-                if !hasTag then Absent
-                else
-                    Maybe.fromOption(args.collectFirst {
-                        case a if a.startsWith("--user-data-dir=") => (ph.pid(), a.substring("--user-data-dir=".length))
-                    })
-            captured.toList
+        if Platform.isWindows then chromesByTagWindows(tag)
+        else
+            ProcessHandle.allProcesses().iterator().asScala.flatMap { ph =>
+                val args = ph.info().arguments().orElse(Array.empty[String])
+                // We require BOTH the sentinel tag AND a `--user-data-dir=<...>` arg. The user-data-dir arg is what
+                // we actually want to capture. If the argv doesn't contain a tag match, this process isn't ours.
+                val hasTag = args.exists(_.contains(tag))
+                val captured: Maybe[(Long, String)] =
+                    if !hasTag then Absent
+                    else
+                        Maybe.fromOption(args.collectFirst {
+                            case a if a.startsWith("--user-data-dir=") => (ph.pid(), a.substring("--user-data-dir=".length))
+                        })
+                captured.toList
+            }.toSeq
+
+    private def chromesByTagWindows(tag: String): Seq[(Long, String)] =
+        val script =
+            "Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -like '*" + tag +
+                "*' } | ForEach-Object { '' + $_.ProcessId + '|' + $_.CommandLine }"
+        val output =
+            try scala.sys.process.Process(Seq("powershell", "-NoProfile", "-Command", script)).!!
+            catch case _: Throwable => ""
+        output.linesIterator.flatMap { line =>
+            line.split('|') match
+                case parts if parts.length >= 2 =>
+                    val cl = parts.drop(1).mkString("|")
+                    // Requiring the user-data-dir arg also excludes this scan's own PowerShell
+                    // process, whose command line carries the tag but never that argument.
+                    parts(0).trim.toLongOption.zip(
+                        userDataDirArg.findFirstMatchIn(cl).map(m => Option(m.group(2)).getOrElse(m.group(3)))
+                    )
+                case _ => None
         }.toSeq
+    end chromesByTagWindows
 
     /** Wait (≤ `timeoutMs`, polling every `stepMs`) until `cond()` becomes true. Returns `true` on success, `false` on timeout.
       * Plain blocking call. Used by post-scope assertions where the kyo runtime has already torn everything down and no further

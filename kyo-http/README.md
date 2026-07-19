@@ -963,7 +963,7 @@ Passing `readOnly = true` makes the mutating `PUT` and `POST` endpoints return 4
 Update a flag by PUTting the rollout expression as a plain-text body (not JSON):
 
 ```bash
-curl -X PUT -d 'true@premium/50%' http://localhost:8080/flags/myapp.features.newCheckout
+curl -X PUT -d 'rollout:true@premium/50%' http://localhost:8080/flags/myapp.features.newCheckout
 ```
 
 ```scala doctest:expect=skipped

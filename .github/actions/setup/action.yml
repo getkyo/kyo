@@ -1,9 +1,10 @@
 name: setup
 description: >-
   Provision a kyo build job: JDK + sbt (coursier), the coursier and kyo-browser
-  caches under one key namespace, and conditional Node, native libraries, and
-  rootless podman. Each conditional step is derived from os and target alone;
-  the caller passes no provisioning flags. Checkout is the caller's responsibility.
+  caches under one key namespace, and conditional Node, native libraries,
+  rootless podman (Linux), and the Windows build environment. Each conditional
+  step is derived from os and target alone; the caller passes no provisioning
+  flags. Checkout is the caller's responsibility.
 inputs:
   os:
     description: 'Target os/arch identifier (e.g. linux-x64, linux-arm64).'
@@ -126,7 +127,52 @@ runs:
         podman version
         docker version
 
+    - name: Configure build environment (Windows)
+      if: ${{ contains(inputs.os, 'windows') }}
+      shell: bash
+      run: |
+        # KYO_POD_RUNTIME=none: kyo-pod registers container suites for any runtime whose
+        # CLI answers `version`, and Windows runners can carry a Docker daemon in
+        # Windows-containers mode that answers but cannot run the suites' Linux images.
+        # Pinning to a never-available runtime registers zero container leaves. Written
+        # via GITHUB_ENV (not a conditional workflow `env:` entry) because an
+        # empty-string KYO_POD_RUNTIME would disable the suites on the Linux poles too.
+        # SBT_UPDATE_LIMIT=1: serialize dependency resolution; concurrent resolution
+        # trips Windows file locking (see build.sbt concurrentRestrictions).
+        # CC=gcc: the kyo-ffi plugin and kyo-ffi-it compile C test libraries with `cc`,
+        # which the Windows image does not provide; MinGW gcc does. The version print
+        # doubles as a fail-fast presence check.
+        {
+          echo "KYO_POD_RUNTIME=none"
+          echo "SBT_UPDATE_LIMIT=1"
+          echo "CC=gcc"
+        } >> "$GITHUB_ENV"
+        gcc --version | head -1
+
     - uses: coursier/setup-action@v3.0.0
       with:
         jvm: corretto:25
         apps: sbt
+
+    - name: Verify sbt resolves in bash (Windows)
+      if: ${{ contains(inputs.os, 'windows') }}
+      shell: bash
+      run: |
+        # Build steps run under Git Bash (`shell: bash`), which resolves `sbt` and
+        # `sbt.exe` from PATH but not `sbt.bat`. If coursier installed only the .bat
+        # launcher, bridge it with a wrapper script on PATH.
+        if command -v sbt >/dev/null 2>&1; then
+          echo "sbt resolves: $(command -v sbt)"
+          exit 0
+        fi
+        sbt_bat=$(command -v sbt.bat || true)
+        if [ -z "$sbt_bat" ]; then
+          echo "no sbt or sbt.bat on PATH after coursier setup" >&2
+          exit 1
+        fi
+        shim_dir="$RUNNER_TEMP/kyo-shims"
+        mkdir -p "$shim_dir"
+        printf '#!/usr/bin/env bash\nexec "%s" "$@"\n' "$sbt_bat" > "$shim_dir/sbt"
+        chmod +x "$shim_dir/sbt"
+        echo "$shim_dir" >> "$GITHUB_PATH"
+        echo "sbt shim: $shim_dir/sbt -> $sbt_bat"

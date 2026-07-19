@@ -29,24 +29,56 @@ final private[kyo] class SpawnBackend(
 ) extends Backend:
 
     def run(request: Request)(using Frame): Response < (Async & Abort[CompilerException]) =
-        exchange(request)
-            .handle(Abort.run[TransportError | Closed])
+        // The round-trip is bounded so a dead transport (e.g. the aeron driver torn down under the
+        // client, whose conductor error no longer exits the JVM) surfaces as a typed failure
+        // instead of a hang; in pooled use the pool's stuckTimeout reclaims first.
+        Async.timeout(SpawnBackend.opTimeout)(exchange(request))
+            .handle(Abort.run[TransportError | Closed | Timeout])
             .map {
                 case Result.Success(Response.Failed(error)) => Abort.fail(error)
                 case Result.Success(response)               => response
                 case Result.Failure(TransportError(m))      => Abort.fail(CompilerTransportException(m))
-                case Result.Failure(_)                      => Abort.fail(CompilerTransportException("worker session closed"))
-                case Result.Panic(err)                      => Abort.fail(CompilerTransportException(err))
+                case Result.Failure(_: Timeout) =>
+                    Abort.fail(CompilerTransportException(s"worker transport unresponsive after ${SpawnBackend.opTimeout.show}"))
+                case Result.Failure(_) => Abort.fail(CompilerTransportException("worker session closed"))
+                case Result.Panic(err) => Abort.fail(CompilerTransportException(err))
             }
 
     def close(using Frame): Unit < (Async & Abort[Throwable]) =
-        exchange.close
-            .andThen(Sync.defer(aeron.close()))
+        // The exchange and client teardown can wedge inside the aeron client when the driver is
+        // already gone; bound them and always reclaim the worker process.
+        Async.timeout(SpawnBackend.closeTimeout)(exchange.close.andThen(Sync.defer(aeron.close())))
+            .handle(Abort.run[Timeout])
+            .unit
             .andThen(process.destroyForcibly)
+            .andThen(awaitWorkerExit)
+
+    /** Confirms the worker is dead before close returns. Windows completes the exit wait slightly
+      * before `isAlive` flips false, so the wait alone is not proof of death; a closed backend must
+      * never leave a worker alive holding the shared aeron medium files, so liveness is polled
+      * (bounded) after the exit wait.
+      */
+    private def awaitWorkerExit(using Frame): Unit < Async =
+        def poll(attempts: Int): Unit < Async =
+            process.isAlive.map { alive =>
+                if !alive || attempts <= 0 then ()
+                else Async.sleep(10.millis).andThen(poll(attempts - 1))
+            }
+        process.waitFor(SpawnBackend.closeTimeout).andThen(poll(100))
+    end awaitWorkerExit
 
 end SpawnBackend
 
 private[kyo] object SpawnBackend:
+
+    /** Bounds a single worker round-trip; a transport whose driver died mid-flight fails typed instead of hanging. The pool's
+      * stuckTimeout (default 1 minute) reclaims first in pooled use, so this fires only for direct backend users.
+      */
+    private[kyo] val opTimeout: Duration = 2.minutes
+
+    /** Bounds close's exchange and aeron-client teardown, which can block inside the client when the driver is already gone. */
+    private[kyo] val closeTimeout: Duration = 10.seconds
+
     /** Spawns the worker JVM, connects the aeron client, wires the Exchange, and wraps all three in a
       * SpawnBackend.
       *
@@ -182,7 +214,7 @@ private[kyo] object SpawnBackend:
 
     /** Connects an aeron client to the pool's shared driver directory; closed in `close`. */
     private def aeronClient(driver: MediaDriver)(using Frame): Aeron < Sync =
-        Sync.defer(Aeron.connect(new Aeron.Context().aeronDirectoryName(driver.aeronDirectoryName())))
+        Sync.defer(AeronClients.connect(driver.aeronDirectoryName()))
 
     /** Wires the Exchange over the two aeron streams against the captured client: `send` publishes an
       * `Envelope.Req` via `Topic.publish[Envelope]`, `receive` is the reply `Topic.stream[Envelope]`,
