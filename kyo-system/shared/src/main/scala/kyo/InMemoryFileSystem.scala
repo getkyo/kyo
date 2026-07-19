@@ -376,6 +376,16 @@ private[kyo] object InMemoryHandles:
                         i += 1
                     pos += n
                     Path.ReadResult(n)
+            def readLong()(using AllowUnsafe): Long =
+                // Parses from the start of the content into a fresh buffer, leaving the readChunk cursor untouched.
+                val len = bytes.size
+                val buf = new Array[Byte](len)
+                var i   = 0
+                while i < len do
+                    buf(i) = bytes(i)
+                    i += 1
+                Path.ReadHandle.parseLeadingLong(buf, len)
+            end readLong
             def position(offset: Long)(using AllowUnsafe): Unit = pos = offset.toInt
             def close()(using AllowUnsafe): Unit                = ()
 

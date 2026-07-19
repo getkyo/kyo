@@ -411,14 +411,20 @@ object JvmEmitter extends EmitterBase.Ops with PlatformTypes:
         end if
 
         // errno segment last (convention: errnoSeg is always passed first to invokeExact, but declaration order just needs to be before invoke).
-        bodyInner ++= s"val errnoSeg = __kyoScratch$$.alloc(4L, 4L, $fqnLit, $methodLit)\n"
+        // The capture-state segment must be sized to `Linker.Option.captureStateLayout()`, the full canonical capture struct the
+        // running platform supports regardless of which fields were requested: 4 bytes on Linux/macOS ([errno]) but 12 bytes on
+        // Windows ([GetLastError, WSAGetLastError, errno]). A hardcoded 4-byte segment overflows the 12-byte Windows capture write,
+        // so the size and alignment come from the layout (companion `captureLayout`), correct on every platform.
+        bodyInner ++= s"val errnoSeg = __kyoScratch$$.alloc(captureLayout.byteSize(), captureLayout.byteAlignment(), $fqnLit, $methodLit)\n"
 
         // The invocation.
         bodyInner ++= invokeLine
         bodyInner ++= "\n"
-        // Capture errno from the segment if this method returns an Outcome.
+        // Capture errno from the segment if this method returns an Outcome. errno is read at its real field offset
+        // within the capture struct (companion `errnoOffset`): 0 on Linux/macOS, but 8 on Windows where errno is the
+        // third field; reading offset 0 on Windows would read GetLastError instead.
         if method.withError then
-            bodyInner ++= "val __errno = errnoSeg.get(JAVA_INT, 0L)\n"
+            bodyInner ++= "val __errno = errnoSeg.get(JAVA_INT, errnoOffset)\n"
 
         // When the method carries a retained callback parameter AND argument marshalling spilled to fresh confined arenas
         // (oversized Buffer[Byte], string, or struct-by-value param), the spill arenas must outlive the method, the C-side retained
@@ -623,7 +629,9 @@ object JvmEmitter extends EmitterBase.Ops with PlatformTypes:
             inner ++= l
             inner ++= "\n"
         }
-        inner ++= s"val errnoSeg = __kyoScratch$$.alloc(4L, 4L, $fqnLit, $methodLit)\n"
+        // Capture-state segment sized from the platform's captureStateLayout() (see emitPlainMethodBody): 4 bytes on
+        // Linux/macOS ([errno]), 12 on Windows ([GetLastError, WSAGetLastError, errno]).
+        inner ++= s"val errnoSeg = __kyoScratch$$.alloc(captureLayout.byteSize(), captureLayout.byteAlignment(), $fqnLit, $methodLit)\n"
 
         val fixedLayouts =
             if fixed.isEmpty then "Nil"
@@ -652,7 +660,7 @@ object JvmEmitter extends EmitterBase.Ops with PlatformTypes:
             case ReturnShape.Void =>
                 inner ++= s"val _ = $invokeCall\n"
                 if method.withError then
-                    inner ++= "val __errno = errnoSeg.get(JAVA_INT, 0L)\n"
+                    inner ++= "val __errno = errnoSeg.get(JAVA_INT, errnoOffset)\n"
                     inner ++= "Ffi.Outcome.fromValueErrno(0L, __errno)\n"
                 else
                     inner ++= "()\n"
@@ -660,7 +668,7 @@ object JvmEmitter extends EmitterBase.Ops with PlatformTypes:
             case ReturnShape.Primitive(TypeRef.BooleanT) =>
                 inner ++= s"val retVal = $invokeCall\n"
                 if method.withError then
-                    inner ++= "val __errno = errnoSeg.get(JAVA_INT, 0L)\n"
+                    inner ++= "val __errno = errnoSeg.get(JAVA_INT, errnoOffset)\n"
                     inner ++= "Ffi.Outcome.fromValueErrno(if retVal.asInstanceOf[java.lang.Integer].intValue() != 0 then 1L else 0L, __errno)\n"
                 else
                     inner ++= s"retVal.asInstanceOf[java.lang.Integer].intValue() != 0\n"
@@ -676,7 +684,7 @@ object JvmEmitter extends EmitterBase.Ops with PlatformTypes:
                     case "Double" => "doubleValue()"
                 inner ++= s"val retVal = $invokeCall\n"
                 if method.withError then
-                    inner ++= "val __errno = errnoSeg.get(JAVA_INT, 0L)\n"
+                    inner ++= "val __errno = errnoSeg.get(JAVA_INT, errnoOffset)\n"
                     inner ++= s"Ffi.Outcome.fromValueErrno(retVal.asInstanceOf[$boxed].$prim.toLong, __errno)\n"
                 else
                     inner ++= s"retVal.asInstanceOf[$boxed].$prim\n"
@@ -1052,6 +1060,14 @@ object JvmEmitter extends EmitterBase.Ops with PlatformTypes:
         sb ++= s"""    private val lib      = NativeLoader.load("${spec.library}")\n"""
         sb ++= "    private val linker   = Linker.nativeLinker()\n"
         sb ++= """    private val capture  = Linker.Option.captureCallState("errno")""" + "\n"
+        // The captured downcall's leading state segment must be sized to `captureStateLayout()`, the full canonical
+        // capture struct the running platform supports: 4 bytes on Linux/macOS ([errno]) but 12 on Windows
+        // ([GetLastError, WSAGetLastError, errno]). Derived once at class-init so every errnoSeg alloc is sized right.
+        sb ++= "    private val captureLayout = Linker.Option.captureStateLayout()\n"
+        // errnoOffset is errno's byte offset within that struct (0 on Linux/macOS, 8 on Windows). Emitted only when a
+        // method reads errno (withError); a captured downcall with no Outcome return never reads it.
+        if spec.methods.exists(_.withError) then
+            sb ++= """    private val errnoOffset = captureLayout.byteOffset(java.lang.foreign.MemoryLayout.PathElement.groupElement("errno"))""" + "\n"
         if needsCritOn then
             // `Linker.Option.critical(...)` was added in JDK 22. Detect it reflectively at class-init time
             // so the emitted impl still class-loads under JDK 21 (capture-only downcall path).

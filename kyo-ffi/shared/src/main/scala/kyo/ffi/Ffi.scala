@@ -327,8 +327,12 @@ object Ffi:
         end use
     end Guard
 
-    /** Load and instantiate the generated impl for a binding trait `T`. Cached after the first call. Triggers ABI checks and native library
-      * load on first use.
+    /** Load and instantiate the generated impl for a binding trait `T`. Cached after the first call.
+      *
+      * This constructs the impl only. The generated impl defers both its ABI check and its native library load to the FIRST binding method
+      * CALL, not to this `load`: the checks run when the impl's companion initializes, which a bare `Ffi.load` does not touch. A
+      * `LibraryNotFound` or `AbiMismatch` therefore surfaces from the first invocation on `T`, not from here, so a caller that must contain a
+      * load failure cannot wrap `load` alone: it guards the first binding call, or forces a probe read inside the same guard.
       *
       * @throws kyo.ffi.FfiLoadError
       *   on a documented load failure: `LibraryNotFound` (native library not resolvable), `AbiMismatch`, `Unsupported` (32-bit host,

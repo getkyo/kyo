@@ -19,6 +19,20 @@ class ArrowEffectTest extends kyo.test.Test[Any]:
     def testEffect3(b: Boolean): Double < TestEffect3 =
         ArrowEffect.suspend[Any](Tag[TestEffect3], b)
 
+    // Denies the first Safepoint.enter so Safepoint.handle takes the
+    // Effect.defer path instead of evaluating the handler inline, the
+    // same deferral fiber preemption triggers nondeterministically.
+    def denyOnce(): Safepoint.Interceptor =
+        new Safepoint.Interceptor:
+            var denied                                                     = false
+            def addFinalizer(f: Maybe[Result.Error[Any]] => Unit): Unit    = ()
+            def removeFinalizer(f: Maybe[Result.Error[Any]] => Unit): Unit = ()
+            def enter(frame: Frame, value: Any): Boolean =
+                if denied then true
+                else
+                    denied = true
+                    false
+
     "suspend" in {
         val effect: String < TestEffect1 = testEffect1(42)
         discard(effect)
@@ -175,6 +189,24 @@ class ArrowEffectTest extends kyo.test.Test[Any]:
 
             assert(finalResult.eval == 42)
         }
+
+        "defers when the safepoint denies entry and completes on evaluation" in {
+            Safepoint.eval {
+                val effect = testEffect1(42)
+                val result: String < TestEffect1 = Safepoint.immediate(denyOnce()) {
+                    ArrowEffect.handleFirst(Tag[TestEffect1], effect)(
+                        [C] => (input, cont) => cont(input.toString),
+                        identity
+                    )
+                }
+                assert(result.evalNow.isEmpty, "the denied safepoint should defer the handler")
+
+                val finalResult = ArrowEffect.handle(Tag[TestEffect1], result) {
+                    [C] => (input, cont) => cont(input.toString)
+                }
+                assert(finalResult.eval == "42")
+            }
+        }
     }
 
     "handle.catching" - {
@@ -197,6 +229,32 @@ class ArrowEffectTest extends kyo.test.Test[Any]:
                     case _: RuntimeException => "recovered"
                 }
             )
+            assert(result.eval == "42")
+        }
+
+        "failure when the safepoint defers the handler" in {
+            val effect = ArrowEffect.suspend[Int](Tag[TestEffect1], 42)
+            val result = Safepoint.immediate(denyOnce()) {
+                ArrowEffect.handleCatching(Tag[TestEffect1], effect)(
+                    [C] => (input, cont) => throw new RuntimeException("Test exception"),
+                    recover = {
+                        case _: RuntimeException => "recovered"
+                    }
+                )
+            }
+            assert(result.eval == "recovered")
+        }
+
+        "success when the safepoint defers the handler" in {
+            val effect = ArrowEffect.suspend[Int](Tag[TestEffect1], 42)
+            val result = Safepoint.immediate(denyOnce()) {
+                ArrowEffect.handleCatching(Tag[TestEffect1], effect)(
+                    [C] => (input, cont) => cont(input.toString),
+                    recover = {
+                        case _: RuntimeException => "recovered"
+                    }
+                )
+            }
             assert(result.eval == "42")
         }
     }
@@ -261,10 +319,6 @@ class ArrowEffectTest extends kyo.test.Test[Any]:
     }
 
     "handlePartial" - {
-        abstract class TestInterceptor extends Safepoint.Interceptor:
-            def addFinalizer(f: () => Unit): Unit    = {}
-            def removeFinalizer(f: () => Unit): Unit = {}
-
         "evaluates pure values" in {
             val x: Int < Any = 5
             val result = ArrowEffect.handlePartial(
@@ -281,20 +335,45 @@ class ArrowEffectTest extends kyo.test.Test[Any]:
             assert(result.evalNow == Maybe(5))
         }
 
+        // Safepoint.eval keeps the enclosing fiber's preemption interceptor from
+        // denying Safepoint.enter, which would make partialLoop retry the drained
+        // deferral for as long as the preempt flag stays set.
         "suspends at effects" in {
-            val x: Int < TestEffect1 = testEffect1(5).map(_ => 6)
-            val result = ArrowEffect.handlePartial(
-                Tag[TestEffect1],
-                Tag[TestEffect2],
-                x,
-                Context.empty
-            )(
-                stop =
-                    false,
-                [C] => (input, cont) => cont(input.toString),
-                [C] => (input, cont) => cont(input.toInt)
-            )
-            assert(result.evalNow == Maybe(6))
+            Safepoint.eval {
+                val x: Int < TestEffect1 = testEffect1(5).map(_ => 6)
+                val result = ArrowEffect.handlePartial(
+                    Tag[TestEffect1],
+                    Tag[TestEffect2],
+                    x,
+                    Context.empty
+                )(
+                    stop =
+                        false,
+                    [C] => (input, cont) => cont(input.toString),
+                    [C] => (input, cont) => cont(input.toInt)
+                )
+                assert(result.evalNow == Maybe(6))
+            }
+        }
+
+        "drains a deferred handler continuation" in {
+            Safepoint.eval {
+                val x: Int < TestEffect1 = testEffect1(5).map(_ => 6)
+                val result = Safepoint.immediate(denyOnce()) {
+                    ArrowEffect.handlePartial(
+                        Tag[TestEffect1],
+                        Tag[TestEffect2],
+                        x,
+                        Context.empty
+                    )(
+                        stop =
+                            false,
+                        [C] => (input, cont) => cont(input.toString),
+                        [C] => (input, cont) => cont(input.toInt)
+                    )
+                }
+                assert(result.evalNow == Maybe(6))
+            }
         }
 
         "respects the stop condition" in {
@@ -379,17 +458,21 @@ class ArrowEffectTest extends kyo.test.Test[Any]:
                     identity
                 )
 
+            // Safepoint.eval keeps the enclosing fiber's preemption interceptor from
+            // deferring the inline handling, which would make evalNow observe Absent.
             "done callback receives unwrapped value" in {
-                val comp                                 = suspendNested(5)
-                val nested: Int < NestedTestEffect < Any = Nested(comp)
+                Safepoint.eval {
+                    val comp                                 = suspendNested(5)
+                    val nested: Int < NestedTestEffect < Any = Nested(comp)
 
-                val result = handle(nested)
+                    val result = handle(nested)
 
-                assert(result == nested, "handleFirst should return the nested computation")
+                    assert(result == nested, "handleFirst should return the nested computation")
 
-                val flattened                           = flatten(result)
-                val finalResult: Int < NestedTestEffect = handle(flattened)
-                assert(finalResult.evalNow == Maybe(50))
+                    val flattened                           = flatten(result)
+                    val finalResult: Int < NestedTestEffect = handle(flattened)
+                    assert(finalResult.evalNow == Maybe(50))
+                }
             }
         }
 
@@ -489,16 +572,21 @@ class ArrowEffectTest extends kyo.test.Test[Any]:
                     [C] => (input, cont) => cont(input * 10)
                 )
 
+            // Safepoint.eval keeps the enclosing fiber's preemption interceptor from
+            // deferring the flatten step, which would make partialLoop retry the
+            // drained deferral for as long as the preempt flag stays set.
             "unwraps Nested and handles inner suspension" in {
-                val comp: Int < NestedTestEffect         = suspendNested(5)
-                val nested: Int < NestedTestEffect < Any = Nested(comp)
+                Safepoint.eval {
+                    val comp: Int < NestedTestEffect         = suspendNested(5)
+                    val nested: Int < NestedTestEffect < Any = Nested(comp)
 
-                val result = handle(nested)
-                assert(result == nested, "handlePartial should return the nested computation")
+                    val result = handle(nested)
+                    assert(result == nested, "handlePartial should return the nested computation")
 
-                val flattened   = flatten(result)
-                val finalResult = handle(flattened)
-                assert(finalResult.evalNow == Maybe(50))
+                    val flattened   = flatten(result)
+                    val finalResult = handle(flattened)
+                    assert(finalResult.evalNow == Maybe(50))
+                }
             }
         }
     }

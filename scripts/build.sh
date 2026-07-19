@@ -170,7 +170,11 @@ container_provision() {
         JS|Wasm|all) node_pkgs="nodejs npm" ;;
     esac
     case "$platform" in
-        Native|all) native_pkgs="libcurl4-openssl-dev libidn2-dev libh2o-evloop-dev=2.2.5+dfsg2-8.1ubuntu3" ;;
+        # clang, cc (build-essential), and libssl-dev are preinstalled on GitHub runners,
+        # so the CI setup action never lists them; a bare container needs them explicitly
+        # (scala-native drives clang, kyo-ffi-it's bundled lib builds with cc, and the
+        # openssl-linked modules need -lssl -lcrypto).
+        Native|all) native_pkgs="clang build-essential libssl-dev libcurl4-openssl-dev libidn2-dev libh2o-evloop-dev=2.2.5+dfsg2-8.1ubuntu3" ;;
     esac
     cat <<PROVISION
 export DEBIAN_FRONTEND=noninteractive
@@ -180,10 +184,15 @@ if command -v apt-get >/dev/null 2>&1; then
 fi
 export COURSIER_CACHE=/root/.cache/coursier
 if ! command -v cs >/dev/null 2>&1; then
-    arch=\$(uname -m); cs_arch=x86_64-pc-linux
-    [ "\$arch" = aarch64 ] && cs_arch=aarch64-pc-linux
-    curl -fsSL "https://github.com/coursier/coursier/releases/latest/download/cs-\$cs_arch.gz" \
-        | gzip -d > /usr/local/bin/cs && chmod +x /usr/local/bin/cs
+    # Linux aarch64 launchers are published by VirtusLab's coursier-m1 releases, not
+    # by coursier/coursier (whose latest release has no aarch64-pc-linux asset).
+    arch=\$(uname -m)
+    if [ "\$arch" = aarch64 ]; then
+        cs_url="https://github.com/VirtusLab/coursier-m1/releases/latest/download/cs-aarch64-pc-linux.gz"
+    else
+        cs_url="https://github.com/coursier/coursier/releases/latest/download/cs-x86_64-pc-linux.gz"
+    fi
+    curl -fsSL "\$cs_url" | gzip -d > /usr/local/bin/cs && chmod +x /usr/local/bin/cs
 fi
 eval "\$(cs java --jvm corretto:25 --env)"
 command -v sbt >/dev/null 2>&1 || cs install sbt >/dev/null
