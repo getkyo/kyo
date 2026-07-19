@@ -132,9 +132,8 @@ lazy val `kyo-settings` = Seq(
     Test / testOptions += Tests.Argument(TestFrameworks.ScalaTest, "-oDG"),
     ThisBuild / versionScheme := Some("early-semver"),
     Test / javaOptions += "--add-opens=java.base/java.lang=ALL-UNNAMED",
-    // Exclude generated FFI binding implementations from coverage. They are machine-generated glue
-    // (src_managed by the kyo-ffi codegen: the *BindingsImpl classes), so measuring their line
-    // coverage tracks the generator, not hand-written code, and skews the module coverage figure.
+    // Exclude generated FFI binding impls (src_managed *BindingsImpl from the kyo-ffi codegen): measuring
+    // them tracks the generator, not hand-written code.
     coverageExcludedFiles := ".*src_managed.*",
     // Compact object headers (JEP 519, a product flag in JDK 25 which the build requires) shrink the
     // per-object header from 12-16 to 8 bytes. The test forks allocate heavily (kyo-tasty decodes 80k
@@ -169,8 +168,7 @@ lazy val `kyo-settings` = Seq(
 
 Global / excludeLintKeys += doctestPredef
 Global / excludeLintKeys += doctestExtraClasspath
-// coverageExcludedFiles is consumed only when the scoverage plugin is active (sbt coverage ...), so a
-// plain build/test would otherwise lint it as an unused setting.
+// coverageExcludedFiles is read only under `sbt coverage ...`; a plain build would lint it as unused.
 Global / excludeLintKeys += coverageExcludedFiles
 
 Global / onLoad := {
@@ -1192,19 +1190,16 @@ def boringSslStaged(baseDir: File): Boolean = {
     (d / "include" / "openssl" / "ssl.h").exists()
 }
 
-// BoringSSL is C++; the shim is C but the static archives reference the C++ runtime, which must be
-// linked DYNAMICALLY (not folded into the static window). darwin's clang toolchain uses libc++
-// (-lc++); the linux container builds BoringSSL with g++, so libstdc++ (-lstdc++). Emitted as raw
-// linkFlags so they sit after the static archives and stay dynamic.
+// BoringSSL is C++, so its static archives reference the C++ runtime, which must be linked dynamically
+// (after the static window): -lc++ on darwin (clang/libc++), -lstdc++ on Linux (g++). Raw linkFlags so
+// they sit after the archives and stay dynamic.
 def boringSslCxxRuntimeFlags: Seq[String] = {
     val osName = System.getProperty("os.name", "").toLowerCase
     if (osName.contains("mac")) Seq("-lc++")
     else Seq("-lstdc++")
 }
 
-// System-OpenSSL prefix (the brew openssl@3/openssl tree on macOS; None on Linux, where the headers
-// and libs are on the default system path). The kyonet_openssl shim and the kept kyo_tls_* fallback
-// both compile and link against this tree.
+// System-OpenSSL prefix: the brew openssl@3/openssl tree on macOS; None on Linux (default system path).
 def systemOpensslPrefix: Option[File] = {
     val isMac = System.getProperty("os.name").toLowerCase.contains("mac")
     if (isMac) {
@@ -1215,9 +1210,8 @@ def systemOpensslPrefix: Option[File] = {
     } else None
 }
 
-// -I include dirs for the system-OpenSSL header probe / compile: the brew tree's include/ on macOS,
-// /usr/include on Linux (always present so the Native codegen header probe finds openssl/ssl.h there
-// and emits the kyonet_openssl binding as @extern rather than a throwing stub).
+// -I dirs for the system-OpenSSL probe/compile: brew include/ on macOS, /usr/include on Linux. The Native
+// codegen probe must find openssl/ssl.h here, or it emits a throwing stub instead of an @extern binding.
 def systemOpensslIncludeDirs: Seq[File] =
     systemOpensslPrefix.map(p => Seq(p / "include")).getOrElse(Seq(new java.io.File("/usr/include")))
 
@@ -1225,27 +1219,19 @@ def systemOpensslIncludeDirs: Seq[File] =
 def systemOpensslLibDirs: Seq[File] =
     systemOpensslPrefix.map(p => Seq(p / "lib")).getOrElse(Nil)
 
-// The exact link/compile flags `openssl-native-settings` appends to a Native module's nativeConfig (system
-// OpenSSL: the brew openssl@3/openssl tree on macOS, the default system path on Linux, via
-// `systemOpensslPrefix`). Factored out so `stripSystemOpensslForStagedBoringSsl` below can recompute the
-// identical sequence to undo it by exact subsequence match, rather than a token-level filter: both
-// BoringSSL's own linkLibs and these use the identical `-lssl`/`-lcrypto` spelling on Linux (the Linux static
-// link wraps them `-Wl,-Bstatic ... -Wl,-Bdynamic`; darwin's staticLink instead force-loads BoringSSL by
-// archive path, so only Linux has this exact collision), so a bare token filter would strip BoringSSL's own
-// flags too wherever they already coexist in the same nativeConfig (a downstream module that inherits
-// BoringSSL's link flags transitively, before openssl-native-settings runs).
+// The exact flags `openssl-native-settings` appends for system OpenSSL. Factored out so
+// `stripSystemOpensslForStagedBoringSsl` can undo it by exact subsequence match: on Linux BoringSSL's own
+// archives share the identical `-lssl`/`-lcrypto` spelling, so a bare token filter would also strip
+// BoringSSL's flags wherever the two coexist in one nativeConfig (darwin force-loads by path, no collision).
 def systemOpensslNativeLinkOpts: Seq[String] =
     systemOpensslPrefix.map(p => Seq(s"-L${(p / "lib").getAbsolutePath}", "-lssl", "-lcrypto")).getOrElse(Seq("-lssl", "-lcrypto"))
 
 def systemOpensslNativeCompileOpts: Seq[String] =
     systemOpensslPrefix.map(p => Seq(s"-I${(p / "include").getAbsolutePath}")).getOrElse(Nil)
 
-// Removes EVERY non-overlapping occurrence of `pattern` as a CONTIGUOUS subsequence of `xs`, wherever it
-// occurs (not only a prefix or suffix); a no-op if `pattern` is empty or does not occur. Native settings
-// compose across several sources that can each independently contribute the identical system-OpenSSL flag
-// sequence (a downstream module's transitively-folded FFI manifest AND openssl-native-settings' own literal
-// append both land the same `-I<system>/include`, for example), so the contribution this file needs to undo
-// is neither reliably the trailing slice of the combined list NOR guaranteed to occur only once.
+// Removes every occurrence of `pattern` as a contiguous subsequence of `xs` (no-op if empty or absent).
+// The system-OpenSSL flags can appear more than once and not as the trailing slice (a transitively-folded
+// FFI manifest AND openssl-native-settings both append them), so removal must scan, not drop a tail.
 def removeSubsequence[A](xs: Seq[A], pattern: Seq[A]): Seq[A] =
     if (pattern.isEmpty) xs
     else {
@@ -1258,15 +1244,11 @@ def removeSubsequence[A](xs: Seq[A], pattern: Seq[A]): Seq[A] =
         loop(xs)
     }
 
-// Undoes `openssl-native-settings`'s system-OpenSSL contribution (by exact subsequence removal, wherever it
-// landed in the combined list; see `removeSubsequence`) and prepends the staged BoringSSL include, so a
-// Native binary's bundled TLS shim (kyo_ssl_common.h, shared by the BoringSSL and OpenSSL FFI C) sees
-// BoringSSL headers rather than expanding `SSL_set_tlsext_host_name` to the system-OpenSSL `SSL_ctrl` macro,
-// which segfaults when called on a BoringSSL `SSL*` (a jump through a null vtable slot at the ABI mismatch;
-// diagnosed against kyo-http's Native binary, the fix is generic to any Native module linking this shim).
-// `kyoNetBase` must resolve to kyo-net's OWN directory (the staged archives live there), regardless of the
-// calling module's own `baseDirectory`. A no-op when BoringSSL is not staged for the host os-arch (the
-// documented system-OpenSSL fallback stands).
+// Undoes `openssl-native-settings`'s system-OpenSSL flags (by subsequence removal, wherever they landed;
+// see `removeSubsequence`) and prepends the staged BoringSSL include so a bundled TLS shim sees BoringSSL
+// headers. Otherwise `SSL_set_tlsext_host_name` expands to the system-OpenSSL `SSL_ctrl` macro, which
+// segfaults on a BoringSSL `SSL*` (ABI mismatch). `kyoNetBase` must be kyo-net's OWN dir (the staged
+// archives live there), not the caller's `baseDirectory`. No-op when BoringSSL is not staged.
 def stripSystemOpensslForStagedBoringSsl(kyoNetBase: File)(base: NativeConfig): NativeConfig =
     if (!boringSslStaged(kyoNetBase)) base
     else {
@@ -1277,19 +1259,13 @@ def stripSystemOpensslForStagedBoringSsl(kyoNetBase: File)(base: NativeConfig): 
         base.withLinkingOptions(strippedLinking).withCompileOptions(bsslInc +: strippedCompile)
     }
 
-// The staged BoringSSL force-load LINK window for kyo-net's OWN staged archives, in the byte-identical spelling
-// kyo-net's Native link emits via `ffiNativeLinkingOptions` (which routes through
-// `CCompiler.vendoredArchiveForceLoadFlags`):
-//   - linux: `-L<stagedLib> -Wl,--whole-archive -lssl -lcrypto -Wl,--no-whole-archive`
-//   - darwin: `-Wl,-force_load,<stagedLib>/libssl.a -Wl,-force_load,<stagedLib>/libcrypto.a`
-// followed by the dynamic C++ runtime BoringSSL's C++ archives reference (`-lstdc++` on linux, `-lc++` on
-// darwin). Force-loading pulls every archive member regardless of link order, so a bundled TLS shim's
-// `SSL_*`/`crypto_*` references resolve wherever Scala Native places the compiled C. A no-op (empty Seq) when
-// BoringSSL is not staged for the host os-arch (the documented system-OpenSSL fallback stands). `kyoNetBase`
-// must resolve to kyo-net's OWN directory (the staged archives live there), regardless of the caller's own
-// `baseDirectory`. This reconstructs (rather than reuses) the plugin's flags because `CCompiler` is
-// `private[sbt]` to `kyo.ffi.sbt` and a downstream module (kyo-http) that does not own the FFI libraries has
-// no `ffiNativeLinkingOptions` task to read; the spelling here is kept identical to the plugin's.
+// kyo-net's staged-BoringSSL force-load link window, in the byte-identical spelling `ffiNativeLinkingOptions`
+// emits, followed by the dynamic C++ runtime (force-loading pulls every archive member regardless of order):
+//   - linux: `-L<lib> -Wl,--whole-archive -lssl -lcrypto -Wl,--no-whole-archive`
+//   - darwin: `-Wl,-force_load,<lib>/libssl.a -Wl,-force_load,<lib>/libcrypto.a`
+// Reconstructed rather than reused because `CCompiler` is `private[sbt]` and downstream kyo-http (which does
+// not own the FFI libs) has no `ffiNativeLinkingOptions` task. `kyoNetBase` = kyo-net's OWN dir; no-op when
+// BoringSSL is not staged.
 def stagedBoringSslForceLoadLinkOpts(kyoNetBase: File): Seq[String] =
     if (!boringSslStaged(kyoNetBase)) Nil
     else {
@@ -1307,11 +1283,10 @@ lazy val `kyo-net` =
     crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
         .crossType(CrossType.Full)
         .dependsOn(`kyo-core`, `kyo-config`)
-        // FFI (Panama on JVM, Scala Native @extern) backs the posix transport on JVM and Native only.
-        // The FFI bindings live in jvm-native/; JS and Wasm use the Node backend (no FFI). So the
-        // KyoFfiPlugin, the kyo-ffi dependency, and the C-shim ffiLibraries are scoped to JVM and Native.
-        // ffiCodegenClasspath hands the plugin the codegen project's own classpath so a cold build generates
-        // the FFI impls in-build, with no bundled plugin resource and no reload (mirrors kyo-ffi-it).
+        // FFI (Panama on JVM, Scala Native @extern) backs the posix transport on JVM and Native only; JS and
+        // Wasm use the Node backend. So KyoFfiPlugin, the kyo-ffi dependency, and the C-shim ffiLibraries are
+        // scoped here. ffiCodegenClasspath feeds the plugin the codegen classpath for in-build gen (mirrors
+        // kyo-ffi-it).
         .jvmConfigure(
             _.enablePlugins(KyoFfiPlugin)
                 .dependsOn(`kyo-ffi`.jvm)
@@ -1326,37 +1301,24 @@ lazy val `kyo-net` =
         .withKyoTest
         .settings(`kyo-settings`)
         .platformsSettings(JVMPlatform, NativePlatform)(
-            // POSIX socket / epoll / kqueue bindings resolve to system libc (declared in ffiSystemLibraries),
-            // so only the io_uring shim needs a declared library here. cSources picks up kyo_uring.c from
-            // shared/src/main/c/*.c. The shim's #if guard compiles to a stub on non-Linux (macOS, Windows),
-            // so liburing is linked only where it exists: linkLibsByOs maps the uring system lib to the
-            // "linux" key, leaving the macOS / Windows command with no -luring. staticLink folds liburing
-            // into the shipped artifact so it carries no runtime liburing dependency (RI-003).
-            // On Native, IoUringBindings is `nativeBundled` (no `@link`): the plugin copies kyo_uring.c
-            // under resources/scala-native so Scala Native compiles it into the binary, and only the
-            // static-folded `-luring` reaches the final link via ffiNativeLinkingOptions (Linux only).
+            // Only the io_uring shim needs a declared library: the POSIX socket/epoll/kqueue bindings resolve
+            // to system libc. The shim's #if guard stubs out on non-Linux, so linkLibsByOs maps -luring to the
+            // "linux" key only; staticLink folds liburing into the artifact (no runtime dependency, RI-003).
+            // On Native, IoUringBindings is `nativeBundled`: the plugin copies kyo_uring.c under
+            // resources/scala-native, and only the static-folded -luring reaches the final link (Linux).
             ffiLibraries := {
-                // The shared base dir (../shared) for the cross-project. baseDirectory points at the
-                // per-platform dir (jvm/native/js); the C lives under shared/src/main.
+                // baseDirectory is the per-platform dir (jvm/native/js); the C lives under ../shared/src/main.
                 val sharedBase = baseDirectory.value / ".." / "shared"
                 val kyoNetBase = baseDirectory.value / ".."
                 val isNative   = ffiTargetPlatform.value == "Native"
-                // BoringSSL (kyonet_boringssl): the kyo_net_boringssl.c shim links the staged static
-                // archives + re-exports kyo_tls_*. The shim insulates the raw SSL_* ABI (RI-006). On
-                // JVM the plugin compiles it to a loadable .so/.dylib (Panama dlopen); on Native Scala
-                // Native compiles the C into the binary and archive-links the staged libssl/libcrypto.
-                //   - includeDirs: the staged openssl/ header tree (-I staged/<osArch>/include).
-                //   - libDirs + linkLibs(ssl,crypto) + staticLink: the static-folded BoringSSL archives
-                //     (linux: -L + -Wl,-Bstatic; darwin: archive-path link via vendoredArchiveLinkFlags).
-                //   - linkFlags: the dynamic C++ runtime BoringSSL needs (-lc++ / -lstdc++).
-                // When BoringSSL is not staged for the host os-arch, compile the stub C instead
-                // (c-boringssl-stub/kyo_net_boringssl_stub.c): it DEFINES the full kyo_bssl_* surface
-                // as "unavailable" stubs (probe_available -> 0, the rest -> 0/NULL/-1), with no
-                // BoringSSL headers and no staged archives. That keeps the kyonet_boringssl library
-                // linkable on Native (the @extern symbols resolve) and loadable on JVM, while
-                // probe_available() == false makes BoringSslProvider.isAvailable report false so TLS
-                // falls back to the kyonet_openssl shim (Native) / jdk floor (JVM) and the BoringSSL
-                // load tests cancel rather than fail.
+                // BoringSSL (kyonet_boringssl): the kyo_net_boringssl.c shim links the staged static archives
+                // and insulates the raw SSL_* ABI (RI-006). JVM compiles it to a loadable lib (Panama dlopen);
+                // Native compiles the C in and archive-links the staged libssl/libcrypto. includeDirs = staged
+                // openssl/ headers; libDirs+linkLibs+staticLink = the static archives; linkFlags = the dynamic
+                // C++ runtime (-lc++/-lstdc++).
+                // When BoringSSL is not staged, compile the stub C instead: it defines the full kyo_bssl_*
+                // surface as "unavailable" (probe_available -> 0), so the library stays linkable/loadable and
+                // BoringSslProvider.isAvailable reports false, falling TLS back to the OpenSSL shim / JDK floor.
                 val staged    = boringSslStaged(kyoNetBase)
                 val stagedDir = boringSslStagedDir(kyoNetBase)
                 val boringSsl =
@@ -1364,9 +1326,8 @@ lazy val `kyo-net` =
                         FfiLibrary(
                             id = "kyonet_boringssl",
                             cSources = (sharedBase / "src" / "main" / "c-boringssl" ** "*.c").get,
-                            // The shared kyo_ssl_common.h is pulled in by the shim's quoted include; declaring it
-                            // as a header tracks it as a compile input so a change to the shared body invalidates
-                            // the cached C compile.
+                            // Declaring the shared kyo_ssl_common.h as a header tracks it as a compile input,
+                            // so a change to the shared body invalidates the cached C compile.
                             cHeaders = (sharedBase / "src" / "main" / "c-boringssl" ** "*.h").get,
                             includeDirs = Seq(stagedDir / "include"),
                             libDirs = Seq(stagedDir / "lib"),
@@ -1379,23 +1340,14 @@ lazy val `kyo-net` =
                             id = "kyonet_boringssl",
                             cSources = (sharedBase / "src" / "main" / "c-boringssl-stub" ** "*.c").get
                         )
-                // System OpenSSL (kyonet_openssl): the kyo_net_openssl.c shim is the BoringSSL twin
-                // against the host's system OpenSSL (macOS: openssl@3 via brew; Linux: libssl-dev on
-                // /usr/include + /usr/lib), the Native fallback below BoringSSL. Its kyo_ossl_* prefix
-                // keeps it distinct from kyo_bssl_* on the single Native binary; the raw SSL_* in both
-                // resolve to the one TLS impl the binary links (the system OpenSSL dylib), so the two
-                // surfaces coexist with no symbol clash (RI-006).
-                //   - includeDirs: gate the Native header probe so openssl/ssl.h resolves and the
-                //     binding emits @extern (not a throwing stub) where OpenSSL is present.
-                //   - libDirs + linkLibs(ssl,crypto) + staticLink (JVM / JS only): link the
-                //     plugin-compiled loadable lib against the openssl@3 static archives
-                //     (libssl.a/libcrypto.a) so Panama / koffi carry no runtime dylib-path dependency.
-                //     On Native the shim's SSL_* are already linked by openssl-native-settings
-                //     (-L<prefix>/lib -lssl -lcrypto), so the FfiLibrary contributes NO link flags
-                //     there (an empty libDirs would otherwise emit a -Wl,-Bstatic -lssl fold that can
-                //     fail where no system libssl.a is installed); only includeDirs + cSources apply.
-                // When OpenSSL headers are absent for the host the probe stubs the binding and
-                // SystemOpenSslProvider.isAvailable reports false.
+                // System OpenSSL (kyonet_openssl): the kyo_net_openssl.c shim, the BoringSSL twin against host
+                // system OpenSSL (macOS: openssl@3 via brew; Linux: libssl-dev). Its kyo_ossl_* prefix keeps it
+                // distinct from kyo_bssl_* in the one Native binary; both resolve raw SSL_* to the single linked
+                // TLS impl, so they coexist without clash (RI-006). includeDirs gate the Native probe so it emits
+                // @extern where OpenSSL is present. On Native the shim's SSL_* are already linked by
+                // openssl-native-settings, so this contributes NO link flags (an empty libDirs would emit a
+                // -Wl,-Bstatic -lssl fold that fails without a system libssl.a); JVM/JS link the loadable lib
+                // against the openssl@3 static archives. When headers are absent the probe stubs the binding.
                 val openSsl =
                     if (!systemOpensslIncludeDirs.exists(d => (d / "openssl" / "ssl.h").exists()))
                         FfiLibrary(id = "kyonet_openssl", cSources = Nil)
@@ -1432,63 +1384,40 @@ lazy val `kyo-net` =
         .nativeSettings(
             `native-settings`,
             `openssl-native-settings`,
-            // Scala Native compiles the WHOLE module's tests into one binary, and sbt's Native test bridge runs multiple TaskDefs (suites)
-            // concurrently within that single process (real OS threads, unlike the JVM's per-suite fork isolation). Under that concurrency, MANY
-            // suites' driver pools (each spawning its own reap-loop threads, sockets, and fds) are alive SIMULTANEOUSLY, competing for the
-            // process-wide thread scheduler and fd table. This is why PollerIoDriver.submitChange fires its poll-loop wakeup UNCONDITIONALLY
-            // rather than gating it behind a `wakePending` CAS: a gated wake can observe a stale value and skip the wake entirely, which would
-            // strand a re-armed read on an already-parked poll with nothing left to wake it and leave the accept loop wedged (TransportListenerTest's
-            // "handler throws" leaf drives exactly this path). The unconditional wake is the read-side counterpart of submitEngineOp's own
-            // unconditional wake (see PollerIoDriver.scala and PollerWakeReadArmTest), keeping the accept loop live under real parallel Native
-            // test execution.
-            // KyoFfiPlugin bundles the C shims (kyo_uring.c, kyo_net_boringssl.c, kyo_net_openssl.c)
-            // into the Scala Native binary by copying them under resources/scala-native (Scala Native
-            // scans that dir on the classpath and compiles the C into the binary). Feed the static-folded
-            // system link libs (e.g. -luring on Linux; nothing on macOS) and the staged BoringSSL archives
-            // to the final link via nativeConfig.linkingOptions. Scala Native places the compiled C objects
-            // BEFORE these linkingOptions, so each shim's `-l`/archive references resolve at nativeLink.
+            // Scala Native compiles the whole module's tests into one binary and runs suites concurrently in
+            // that single process (real OS threads, no per-suite fork isolation). This parallelism is why
+            // PollerIoDriver wakes its poll loop unconditionally (see PollerIoDriver.scala, PollerWakeReadArmTest):
+            // a gated wake could observe a stale value, strand a re-armed read, and wedge the accept loop.
             //
-            // BoringSSL-when-staged: ONE TLS impl per Native binary (Netty's model). The plugin copies the
-            // BoringSSL and OpenSSL shims' .c into the binary but does NOT carry the library `includeDirs`
-            // to Scala Native's compile of that bundled C, so by default the bundled C resolves
-            // `openssl/ssl.h` to the SYSTEM OpenSSL headers (/usr/include on Linux, brew on macOS). That
-            // turns BoringSSL's real exported functions (e.g. SSL_CTX_set_min_proto_version) into the
-            // system-OpenSSL SSL_CTX_ctrl(...) MACRO, which BoringSSL's libssl.a does not export, and
-            // nativeLink fails with "undefined reference to SSL_CTX_ctrl". The fix: when BoringSSL is staged
-            // for the host os-arch, prepend `-I<staged>/include` to compileOptions so it precedes the
-            // system include dirs (clang searches -I dirs left to right, and any -I precedes the implicit
-            // /usr/include), making BOTH shims' bundled C resolve openssl/ssl.h to BoringSSL's headers and
-            // their SSL_*/crypto_* references resolve to BoringSSL's real exported functions, satisfied by
-            // the staged BoringSSL archive. With BoringSSL the one impl, strip the system OpenSSL link flags
-            // (-lssl/-lcrypto and the brew -L from openssl-native-settings): BoringSSL provides the whole
-            // SSL_*/crypto_* surface, so a second system OpenSSL on the link line would only shadow/conflict.
-            // When BoringSSL is UNstaged, none of this applies: the bundled BoringSSL stub C (no openssl
-            // headers, no archive) links, the OpenSSL shim compiles against system OpenSSL, and the system
-            // -lssl/-lcrypto from openssl-native-settings backs TLS (the documented fallback).
-            // The strip-and-prepend logic (drop openssl-native-settings' system OpenSSL flags, prepend the staged
-            // BoringSSL include) is factored into `stripSystemOpensslForStagedBoringSsl` so kyo-http's identical
-            // Native-linking need (see its own `nativeSettings` below) reuses the same idiom instead of a second
-            // copy; only the ffiLinking append is kyo-net-specific (it owns the FFI libraries directly, so its
-            // own staged-BoringSSL archive/link flags come from `ffiNativeLinkingOptions` rather than a
-            // downstream module's transitively-folded FFI manifest).
+            // KyoFfiPlugin bundles the C shims (kyo_uring.c, the TLS shims) into the Native binary under
+            // resources/scala-native. Feed the static-folded system libs (-luring on Linux) and staged BoringSSL
+            // archives to the final link via nativeConfig.linkingOptions; Scala Native places the compiled C
+            // objects before them, so each shim's -l/archive references resolve at nativeLink.
+            //
+            // BoringSSL-when-staged: one TLS impl per Native binary. The plugin bundles the shim .c but not its
+            // includeDirs, so the bundled C would resolve openssl/ssl.h to system OpenSSL, turning BoringSSL's
+            // exports into system SSL_CTX_ctrl MACROs its libssl.a lacks ("undefined reference to SSL_CTX_ctrl"
+            // at nativeLink). stripSystemOpensslForStagedBoringSsl prepends -I<staged>/include (clang reads -I
+            // left to right, ahead of /usr/include) so the bundled C resolves BoringSSL headers, and strips the
+            // system -lssl/-lcrypto since BoringSSL is the one impl. Unstaged: bundled stub C + system-OpenSSL
+            // fallback, none of this applies.
+            // The strip-and-prepend is factored into stripSystemOpensslForStagedBoringSsl so kyo-http reuses it
+            // (see its nativeSettings below). Only the ffiLinking append is kyo-net-specific: it owns the FFI
+            // libraries, so its staged-BoringSSL archive/link flags come from ffiNativeLinkingOptions.
             nativeConfig := {
                 val kyoNetBase = baseDirectory.value / ".."
                 val ffiLinking = ffiNativeLinkingOptions.value
                 val stripped   = stripSystemOpensslForStagedBoringSsl(kyoNetBase)(nativeConfig.value)
                 stripped.withLinkingOptions(stripped.linkingOptions ++ ffiLinking)
             },
-            // The BoringSSL and OpenSSL shims (kyo_net_boringssl.c, kyo_net_openssl.c) share one TLS
-            // state-machine body, kyo_ssl_common.h, pulled in by a quoted `#include "kyo_ssl_common.h"`.
-            // KyoFfiPlugin's Native flat-copy stages only the .c sources under resources/scala-native, not
-            // their headers, and Scala Native compiles each .c from that flat dir, so the quoted include
-            // would not resolve there. Stage the two co-located headers into the same flat dir alongside the
-            // copied .c so each shim's quoted include resolves on Native. (On JVM the plugin compiles each
-            // .c in place at its source path, so the include already resolves from the source directory.)
+            // The TLS shims share kyo_ssl_common.h via a quoted #include. The plugin's Native flat-copy stages
+            // only the .c under resources/scala-native, and Scala Native compiles each .c from that flat dir,
+            // so the quoted include would not resolve. Stage the co-located headers into the same flat dir. (On
+            // JVM each .c compiles in place at its source path, so the include already resolves.)
             Compile / resourceGenerators += Def.task {
                 val sharedBase = baseDirectory.value / ".." / "shared" / "src" / "main"
                 val destDir    = (Compile / resourceManaged).value / "scala-native"
-                // The two co-located headers are byte-identical (each shim's directory carries its own copy
-                // so the quoted include resolves on JVM); on the flat Native dir they collapse to one file.
+                // The two co-located headers are byte-identical; on the flat Native dir they collapse to one.
                 val headers = Seq(
                     sharedBase / "c-boringssl" / "kyo_ssl_common.h",
                     sharedBase / "c-openssl" / "kyo_ssl_common.h"
@@ -1496,8 +1425,8 @@ lazy val `kyo-net` =
                 IO.createDirectory(destDir)
                 headers.map { src =>
                     val dest = destDir / src.getName
-                    // Copy only when content differs so the generated resource (and nativeLink's classpath
-                    // hash) stays stable across no-change builds, mirroring the plugin's own C-source stage.
+                    // Copy only when content differs, keeping the generated resource (and nativeLink's
+                    // classpath hash) stable across no-change builds.
                     if (!dest.exists() || !IO.read(dest).equals(IO.read(src)))
                         IO.copyFile(src, dest, preserveLastModified = true)
                     dest
@@ -1535,9 +1464,8 @@ lazy val `kyo-net` =
                         .withEnv(Map("KYO_FFI_KYONET_POSIX_URING_PATH" -> lib.getAbsolutePath))
                 )
             },
-            // Bootstrap koffi into Node's resolver before tests run. Hooked on Test / compile (not
-            // Test / test) so test, testOnly, and testQuick all trigger it, and it re-runs after a
-            // clean wipes node_modules. Idempotent on the marker file.
+            // Bootstrap koffi into Node's resolver. Hooked on Test / compile (not Test / test) so test,
+            // testOnly, and testQuick all trigger it, and it re-runs after a clean. Idempotent on the marker.
             Test / compile := (Test / compile).dependsOn(Def.task {
                 val log        = streams.value.log
                 val targetBase = target.value
@@ -1627,32 +1555,18 @@ lazy val `kyo-http` =
         .nativeSettings(
             `native-settings`,
             `openssl-native-settings`,
-            // kyo-http does not own the BoringSSL/OpenSSL FFI libraries itself (only kyo-net enables
-            // KyoFfiPlugin); it inherits the bundled TLS shim C and its manifest-derived link/compile flags
-            // transitively via `native-settings`'s classpath fold, PLUS `openssl-native-settings`'s own system
-            // OpenSSL flags above. Two things must hold on this Native binary:
-            //
-            // COMPILE: left as-is, the shim's bundled C compiles against system OpenSSL headers (the transitive
-            // fold gives no ordering guarantee that BoringSSL's `-I` precedes the system one), so
-            // `SSL_set_tlsext_host_name` expands to the OpenSSL `SSL_ctrl` macro and segfaults when called on a
-            // BoringSSL `SSL*` (a client TLS handshake to a hostname, e.g. HttpClientTest's "tls" variant:
-            // EXC_BAD_ACCESS at PC=0 inside SSL_ctrl's tail dispatch). `stripSystemOpensslForStagedBoringSsl`
-            // prepends BoringSSL's `-I` so the bundled C sees BoringSSL headers here too, removing the SSL_ctrl
-            // reference. It also strips the system `-lssl -lcrypto` (BoringSSL is the one TLS impl).
-            //
-            // LINK: that strip removes `-lssl -lcrypto` WHEREVER it occurs, and on Linux kyo-net's
-            // transitively-folded BoringSSL `--whole-archive` window spells its archives with the IDENTICAL
-            // `-lssl -lcrypto`, so the strip empties that window too and every SSL_*/crypto_* symbol goes
-            // undefined at nativeLink (the link line reports "Linking with [pthread, dl, m]", no SSL library).
-            // Re-append kyo-net's own staged BoringSSL force-load window (the byte-identical spelling
-            // `ffiNativeLinkingOptions` emits for kyo-net) so the archives are force-loaded here, matching how
-            // kyo-net links. Restricted to non-darwin: on darwin the folded BoringSSL window force-loads by
-            // archive PATH (`-Wl,-force_load,<archive>`), which the `-lssl -lcrypto` strip never matches, so
-            // its manifest flags survive intact and a second copy would `-force_load` each archive twice
-            // (duplicate symbols). When BoringSSL is not staged, both the strip and the re-append are no-ops
-            // (the system-OpenSSL fallback stands). `kyoNetBase` resolves to kyo-net's own directory (two
-            // levels up from kyo-http's Native `baseDirectory`, then across), since the staged BoringSSL
-            // archives live there, not under kyo-http.
+            // kyo-http does not own the FFI libraries (only kyo-net enables KyoFfiPlugin); it inherits the
+            // bundled TLS shim C and its link/compile flags transitively via native-settings, plus
+            // openssl-native-settings' own system-OpenSSL flags. Two fixes on this binary:
+            // COMPILE: stripSystemOpensslForStagedBoringSsl prepends BoringSSL's -I so the bundled C sees
+            // BoringSSL headers (otherwise SSL_set_tlsext_host_name expands to the system SSL_ctrl macro and
+            // segfaults on a BoringSSL SSL* at handshake, e.g. HttpClientTest's "tls" variant), and strips the
+            // system -lssl/-lcrypto.
+            // LINK: that strip also empties kyo-net's transitively-folded --whole-archive window on Linux (it
+            // spells its archives with the identical -lssl -lcrypto), so every SSL_* symbol goes undefined at
+            // nativeLink. Re-append kyo-net's force-load window. Non-darwin only: darwin force-loads by archive
+            // PATH, which the strip never matches, so re-appending would force_load each archive twice
+            // (duplicate symbols). Unstaged: both are no-ops. kyoNetBase resolves to kyo-net's own dir.
             nativeConfig := {
                 val kyoNetBase   = baseDirectory.value / ".." / ".." / "kyo-net"
                 val stripped     = stripSystemOpensslForStagedBoringSsl(kyoNetBase)(nativeConfig.value)
@@ -1661,13 +1575,10 @@ lazy val `kyo-http` =
                 if (bsslReappend.isEmpty) stripped
                 else stripped.withLinkingOptions(stripped.linkingOptions ++ bsslReappend)
             },
-            // Scala Native resolves `java.util.ServiceLoader.load` at LINK time: a provider present in
-            // META-INF/services is linked only when ALSO enlisted here. Enlist the shared test factory so the
-            // auto-filter tests exercise real ServiceLoader discovery on Native, the same way a Native user
-            // enlists their own HttpFilter.Factory (JVM reads META-INF/services directly; JS uses the
-            // JSServiceLoaderRegistry shim). The load site is a plain method in HttpFilter.Factory, not a lazy
-            // val, to dodge a Scala Native 0.5.12 codegen crash (see loadFactories there). Plain string
-            // literal: the "$" must not interpolate.
+            // Scala Native resolves ServiceLoader.load at LINK time: a META-INF/services provider is linked
+            // only when also enlisted here. Enlist the shared test factory so the auto-filter tests exercise
+            // real discovery on Native. (The load site is a plain method, not a lazy val, to dodge a Scala
+            // Native 0.5.12 codegen crash (see loadFactories); plain string literal so the "$" does not interpolate.)
             Test / nativeConfig ~= (_.withServiceProviders(Map("kyo.HttpFilter$Factory" -> Seq("kyo.HttpFilterTestFactory"))))
         )
         .wasmSettings(`wasm-settings`)
@@ -1717,13 +1628,12 @@ lazy val `kyo-jsonrpc` =
         .withKyoTest
         .settings(`kyo-settings`)
         .jvmSettings(mimaCheck(false))
-        // kyo-net's Native FFI links the BoringSSL/OpenSSL C shim unconditionally, so any downstream Native module needs the
-        // SSL link flags (-lssl -lcrypto). Same setting kyo-http and kyo-jsonrpc-http carry; the io_uring -luring flag propagates
-        // through the kyo-ffi plugin on Linux.
+        // kyo-net's Native FFI links the TLS shim unconditionally, so downstream Native modules need the SSL
+        // link flags (-lssl -lcrypto); io_uring's -luring propagates through the kyo-ffi plugin on Linux.
         .nativeSettings(`native-settings`, `openssl-native-settings`)
         .wasmSettings(`wasm-settings`)
-        // kyo-jsonrpc now depends on kyo-net, whose JS transports @JSImport Node built-ins (node:net, node:os, node:path),
-        // so the JS linker needs a module kind (default is NoModule). CommonJS matches kyo-net and kyo-jsonrpc-http.
+        // kyo-net's JS transports @JSImport Node built-ins, so the JS linker needs a module kind (default is
+        // NoModule); CommonJS matches kyo-net and kyo-jsonrpc-http.
         .jsSettings(`js-settings`, scalaJSLinkerConfig ~= { _.withModuleKind(ModuleKind.CommonJSModule) })
 
 lazy val `kyo-jsonrpc-http` =
@@ -2560,11 +2470,10 @@ lazy val `openssl-native-settings` = Seq(
     }
 )
 
-// Reads the FFI native-flag manifests KyoFfiPlugin writes for every dependency on the classpath (one
-// `<module>.flags` file per FFI module under `relDir`), one flag per line, deduped in first-seen order so
-// a BoringSSL `-I` precedes a later system include. A downstream Native module folds a dependency's
-// link/compile flags into its own nativeConfig so the dependency's bundled C compiles and links the same
-// way it does in the owning module (see `native-settings`).
+// Reads the FFI native-flag manifests KyoFfiPlugin writes per FFI dependency (one *.flags file per module
+// under `relDir`), one flag per line, deduped first-seen so a BoringSSL `-I` precedes a later system include.
+// A downstream Native module folds a dependency's flags in so the dep's bundled C compiles and links the way
+// it does in the owning module (see `native-settings`).
 def readFfiNativeManifest(cp: Seq[Attributed[File]], relDir: Seq[String]): Seq[String] =
     cp.flatMap { entry =>
         val dir = relDir.foldLeft(entry.data)(_ / _)
@@ -2577,17 +2486,13 @@ lazy val `native-settings` = Seq(
     Test / testForkedParallel                         := false,
     Test / envVars += "SCALANATIVE_THREAD_STACK_SIZE" -> "33554432",
     libraryDependencies += "io.github.cquiroz"       %%% "scala-java-time" % "2.7.0",
-    // A dependency's `nativeBundled` FFI C (e.g. kyo-net's kyo_uring.c and TLS shims) is compiled into THIS
-    // Native binary by Scala Native (it scans every `scala-native` dir on the classpath), so this binary both
-    // COMPILES that C (must use the same `-I` headers, or a `SSL_*` reference resolves to the wrong library)
-    // and LINKS its symbols (io_uring_*, SSL_*). `nativeConfig` does not propagate across a project
-    // dependency, so without the flags the downstream build fails (compile against system openssl headers ->
-    // `SSL_CTX_ctrl` macro, then `undefined reference to SSL_CTX_ctrl`; or `undefined reference to
-    // io_uring_*`). KyoFfiPlugin writes each FFI module's link + compile flags to
-    // `META-INF/kyo-ffi/native-{link,compile}-flags/*.flags` manifests (`ffiNativeFlagsManifestGenerator`);
-    // read every dependency's manifests off the classpath and fold them into this binary's nativeConfig,
-    // mirroring how the bundled C itself propagates. A module that owns its FFI flags (kyo-net) does not see
-    // its own manifests here (dependencyClasspath excludes own output) and wires them directly instead.
+    // A dependency's `nativeBundled` FFI C (kyo-net's kyo_uring.c and TLS shims) is compiled into THIS Native
+    // binary by Scala Native (it scans every `scala-native` dir on the classpath), so this binary both compiles
+    // that C (needs the same `-I` headers, or an `SSL_*` reference resolves to the wrong library) and links its
+    // symbols. `nativeConfig` does not propagate across a project dependency, so without folding the flags in
+    // the downstream build fails (`SSL_CTX_ctrl` macro / `undefined reference to io_uring_*`). Read every
+    // dependency's plugin-written manifests off the classpath. A module that owns its FFI flags (kyo-net) does
+    // not see its own manifests here and wires them directly instead.
     nativeConfig := {
         val base         = nativeConfig.value
         val cp           = (Compile / dependencyClasspath).value

@@ -31,7 +31,6 @@ final private[kyo] class HttpClientBackend private (
     private val pool: ConnectionPool[HttpConnection],
     private val registry: kyo.internal.ConnectionRegistry[HttpConnection],
     val maxConnectionsPerHost: Int,
-    ownsTransport: Boolean,
     val clientFrame: Frame
 ):
     private val CrLf          = Span.fromUnsafe(Http1StreamContext.CRLF)
@@ -1185,11 +1184,6 @@ final private[kyo] class HttpClientBackend private (
     /** True once `closeFiber` has closed the pool. For testing the Scope-based `init`'s release path only. */
     private[kyo] def isPoolClosed(using AllowUnsafe): Boolean = pool.isClosed
 
-    /** True when this client built and owns a per-config transport rather than sharing the process-global one. For testing the transport
-      * selection in `HttpClient.initUnscoped` only.
-      */
-    private[kyo] def hasOwnTransport(using AllowUnsafe): Boolean = ownsTransport
-
     def closeFiber(gracePeriod: Duration)(using AllowUnsafe, Frame): Fiber.Unsafe[Unit, Any] =
         // Mark closing FIRST so any new connection gets closed immediately by trackConn.
         closingGracePeriod = gracePeriod
@@ -1200,8 +1194,8 @@ final private[kyo] class HttpClientBackend private (
         discard(pool.close())
         val closePromise = Promise.Unsafe.init[Unit, Any]()
         registry.closeAll(conn => closeUnsafe(conn, gracePeriod))
-        // Release a per-config transport this client owns (the shared global transport is never closed here).
-        if ownsTransport then transport.close()
+        // Release the transport this client owns.
+        transport.close()
         closePromise.completeDiscard(Result.succeed(()))
         closePromise
     end closeFiber
@@ -1213,16 +1207,14 @@ private[kyo] object HttpClientBackend:
     /** Create a fully pooled backend for production use.
       *
       * `transportConfig` carries this client's byte-transport and HTTP-parser tuning (notably `maxHeaderSize`, the HTTP header limit the
-      * client parser enforces). `ownsTransport` is true when the caller built a per-config transport for this client (rather than reusing the
-      * shared global one); when true, closing the client also closes that transport so its driver and pool are released.
+      * client parser enforces). The client owns `transport`; closing the client closes it so its driver and pool are released.
       */
     def init(
         transport: kyo.net.Transport,
         maxConnsPerHost: Int,
         idleConnectionTimeout: Duration,
         defaultTlsConfig: HttpTlsConfig = HttpTlsConfig.default,
-        transportConfig: HttpTransportConfig = HttpTransportConfig.default,
-        ownsTransport: Boolean = false
+        transportConfig: HttpTransportConfig = HttpTransportConfig.default
     )(using AllowUnsafe, Frame): HttpClientBackend =
         val registry = new kyo.internal.ConnectionRegistry[HttpConnection]
         val pool = ConnectionPool.init[HttpConnection](
@@ -1241,7 +1233,6 @@ private[kyo] object HttpClientBackend:
             pool,
             registry,
             maxConnsPerHost,
-            ownsTransport,
             summon[Frame]
         )
     end init

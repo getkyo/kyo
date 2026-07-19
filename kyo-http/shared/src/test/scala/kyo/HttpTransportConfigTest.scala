@@ -28,27 +28,28 @@ class HttpTransportConfigTest extends BaseHttpTest:
 
     "client transport ownership" - {
 
-        // The customization baseline is kyo-http's own default, not kyo.net's: the two libraries' defaults legitimately differ
-        // (handshakeTimeout Infinity vs 30 seconds), so a kyo-net baseline classifies EVERY default-config client as customized. Each
-        // such client then builds a private driver pool and closes it on closeNow, and that close races the client's own in-flight
-        // connects (an engine op armed after the driver's reap loop exits stalls until the transport's 30s connect deadline).
-
-        "default config shares the process-global transport" in {
-            HttpClient.init().map { c =>
-                Sync.Unsafe.defer(assert(!c.hasOwnTransport))
-            }
-        }
-
-        "maxHeaderSize-only change shares the process-global transport" in {
-            // maxHeaderSize is an HTTP-parser limit honored by the backend, not a byte-transport field.
-            HttpClient.init(transportConfig = HttpTransportConfig.default.maxHeaderSize(32768)).map { c =>
-                Sync.Unsafe.defer(assert(!c.hasOwnTransport))
-            }
-        }
-
-        "byte-transport field change builds an owned transport" in {
-            HttpClient.init(transportConfig = HttpTransportConfig.default.channelCapacity(8)).map { c =>
-                Sync.Unsafe.defer(assert(c.hasOwnTransport))
+        "every client owns and releases its transport when its Scope exits" in {
+            // No client shares a process-global transport: each builds its own via init and closes it on shutdown. The Scope
+            // release closing the pool proves that owned-transport release ran for both a default-config and a customized-config
+            // client (the customized one applies a byte-transport field, so its transport is unambiguously per-config).
+            var captured: Maybe[(HttpClient, HttpClient)] = Absent
+            Scope.run {
+                HttpClient.init().map { defaultClient =>
+                    HttpClient.init(transportConfig = HttpTransportConfig.default.channelCapacity(8)).map { customClient =>
+                        captured = Present((defaultClient, customClient))
+                    }
+                }
+            }.andThen {
+                captured match
+                    case Present((defaultClient, customClient)) =>
+                        Sync.Unsafe.defer(
+                            assert(
+                                defaultClient.isPoolClosed && customClient.isPoolClosed,
+                                "the Scope release must close each client's owned transport"
+                            )
+                        )
+                    case Absent =>
+                        fail("clients were not captured")
             }
         }
     }

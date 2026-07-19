@@ -1,7 +1,6 @@
 package kyo
 
 import kyo.*
-import kyo.internal.HttpPlatformTransport
 import kyo.internal.codec.OpenApiGenerator
 import kyo.internal.server.HttpRouter
 import kyo.internal.server.UnsafeServerDispatch
@@ -134,25 +133,18 @@ object HttpServer:
             if serverFilter eq HttpFilter.noop then allHandlers
             else allHandlers.map(h => HttpHandler.withFilter(h, serverFilter))
         Sync.Unsafe.defer {
-            // Reuse the process-global shared transport for the default config (no per-server resources). When the config customizes
-            // transport tuning, build and OWN a per-config transport so handshakeTimeout (the slowloris-handshake DoS guard) and the
-            // other HttpTransportConfig fields actually take effect rather than being ignored under the shared default transport. An
-            // owned transport is closed when the server closes (and on a bind failure here, so it never leaks).
-            val ownsTransport = config.transportConfig != HttpTransportConfig.default
-            val transport =
-                if ownsTransport then kyo.net.NetPlatform.transport(NetConfigTranslation.toNetTransportConfig(config.transportConfig))
-                else HttpPlatformTransport.transport
-            val listenFiber = Unsafe.init(transport, config, filteredHandlers, ownsTransport)
+            val transport   = kyo.net.NetPlatform.transport(NetConfigTranslation.toNetTransportConfig(config.transportConfig))
+            val listenFiber = Unsafe.init(transport, config, filteredHandlers)
             Abort.run[NetException](listenFiber.safe.get).map {
                 case Result.Success(server) => server.safe
                 case Result.Failure(netEx) =>
-                    if ownsTransport then transport.close()
+                    transport.close()
                     val bindTarget = config.unixSocket match
                         case Present(path) => path
                         case Absent        => config.host
                     Abort.fail(HttpBindException(bindTarget, config.port, new java.io.IOException(netEx.getMessage)))
                 case Result.Panic(t) =>
-                    if ownsTransport then transport.close()
+                    transport.close()
                     throw t
             }
         }
@@ -212,8 +204,7 @@ object HttpServer:
         def init(
             transport: kyo.net.Transport,
             config: HttpServerConfig,
-            handlers: Seq[HttpHandler[?, ?, ?]],
-            ownsTransport: Boolean = false
+            handlers: Seq[HttpHandler[?, ?, ?]]
         )(using AllowUnsafe, Frame): Fiber.Unsafe[Unsafe, Abort[NetException]] =
             val router = HttpRouter(handlers, config.cors)
             // Track every accepted connection so the server can close them on shutdown: the transport listener owns only
@@ -252,20 +243,18 @@ object HttpServer:
                     NetConfigTranslation.listenTls(transport, config.host, config.port, config.backlog, tls)(tracked)
                 case _ =>
                     transport.listen(config.host, config.port, config.backlog)(tracked)
-            listenFiber.map(listener => new ListenerUnsafe(listener, transport, ownsTransport, registry))
+            listenFiber.map(listener => new ListenerUnsafe(listener, transport, registry))
         end init
     end Unsafe
 
     // --- Private implementations ---
 
-    /** Unsafe implementation wrapping a Listener from Transport, plus the registry of accepted connections it owns. When `ownsTransport`
-      * is true (the server built a per-config transport rather than reusing the shared global one), closing the server also closes that
-      * transport so its driver/pool is released.
+    /** Unsafe implementation wrapping a Listener from Transport, plus the registry of accepted connections it owns. The server owns its
+      * transport, so closing the server also closes that transport to release its driver/pool.
       */
     final private class ListenerUnsafe(
         listener: kyo.net.Listener,
         transport: kyo.net.Transport,
-        ownsTransport: Boolean,
         registry: kyo.internal.ConnectionRegistry[kyo.net.Connection]
     )(using allow: AllowUnsafe) extends Unsafe:
         private val closedPromise            = Promise.Unsafe.init[Unit, Any]()
@@ -287,9 +276,8 @@ object HttpServer:
 
             def forceCloseAndComplete(): Unit =
                 registry.closeAll(_.close())
-                // When the server built a per-config transport (not the shared global one), release it after the accepted
-                // connections are closed so its driver/pool is freed.
-                if ownsTransport then transport.close()
+                // Release the transport this server owns after the accepted connections are closed so its driver/pool is freed.
+                transport.close()
                 discard(closedPromise.completeDiscard(Result.succeed(())))
             end forceCloseAndComplete
 

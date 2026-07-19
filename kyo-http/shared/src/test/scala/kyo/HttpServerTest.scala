@@ -12,10 +12,7 @@ class HttpServerTest extends BaseHttpTest:
 
     val client = internal.HttpTestPlatformBackend.client
 
-    /** Registers "plain" and "tls" sub-tests. Caller uses: "name" - { runServer(handler) { url => ... } } Both subtests skip on Native —
-      * the Linux epoll IO driver intermittently deadlocks the embedded HTTP server under CI load (every request hits the test-body 60s
-      * timeout). Tracked separately.
-      */
+    /** Registers "plain" and "tls" sub-tests. Caller uses: "name" - { runServer(handler) { url => ... } } */
     def runServer(handlers: HttpHandler[?, ?, ?]*)(
         test: kyo.test.AssertScope ?=> HttpUrl => Unit < (Async & Abort[Any] & Scope)
     )(using Frame): Unit =
@@ -3508,31 +3505,37 @@ class HttpServerTest extends BaseHttpTest:
         }
 
         "handler error after client disconnect does not crash" in {
-            val route = HttpRoute.getRaw("slow-fail").response(_.bodyText)
+            val route   = HttpRoute.getRaw("slow-fail").response(_.bodyText)
+            val okRoute = HttpRoute.getRaw("ok").response(_.bodyText)
             Latch.init(1).map { handlerStarted =>
-                Latch.init(1).map { handlerDone =>
-                    Promise.init[Unit, Any].map { clientDisconnected =>
-                        val ep = route.handler { _ =>
-                            handlerStarted.release.andThen {
-                                clientDisconnected.get.andThen {
-                                    handlerDone.release.andThen {
-                                        throw new RuntimeException("delayed boom")
-                                        HttpResponse.ok("unreachable")
-                                    }
-                                }
+                Promise.init[Unit, Any].map { clientDisconnected =>
+                    val ep = route.handler { _ =>
+                        handlerStarted.release.andThen {
+                            clientDisconnected.get.andThen {
+                                throw new RuntimeException("delayed boom")
+                                HttpResponse.ok("unreachable")
                             }
                         }
-                        withServer(ep) { url =>
-                            Fiber.initUnscoped(
-                                Abort.run[Throwable] {
-                                    sendRaw(url, HttpMethod.GET, "/slow-fail")
-                                }
-                            ).map { requestFiber =>
-                                handlerStarted.await.andThen {
-                                    requestFiber.interrupt.andThen {
-                                        clientDisconnected.complete(Result.succeed(())).andThen {
-                                            handlerDone.await.map(_ =>
-                                                succeed("handler completed after client disconnect without crashing")
+                    }
+                    val okEp = okRoute.handler(_ => HttpResponse.ok("ok"))
+                    withServer(ep, okEp) { url =>
+                        Fiber.initUnscoped(
+                            Abort.run[Throwable] {
+                                sendRaw(url, HttpMethod.GET, "/slow-fail")
+                            }
+                        ).map { requestFiber =>
+                            handlerStarted.await.andThen {
+                                requestFiber.interrupt.andThen {
+                                    clientDisconnected.complete(Result.succeed(())).andThen {
+                                        // After the client disconnects, the parked handler is either resumed (and throws, writing an
+                                        // error to the now-closed connection) or reclaimed first by the connection-close watcher
+                                        // (UnsafeServerDispatch interrupts a handler parked on a foreign await when its connection
+                                        // closes). Both paths are non-crashing; awaiting the handler's own completion would hang on the
+                                        // reclaim path, so assert the server survived by serving a fresh request instead.
+                                        sendRaw(url, HttpMethod.GET, "/ok").map { resp =>
+                                            assert(
+                                                resp.status == HttpStatus.OK && resp.fields.body == "ok",
+                                                s"server must still serve after a client disconnect; got ${resp.status} ${resp.fields.body}"
                                             )
                                         }
                                     }

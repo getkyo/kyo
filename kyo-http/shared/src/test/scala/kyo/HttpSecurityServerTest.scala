@@ -23,7 +23,7 @@ class HttpSecurityServerTest extends BaseHttpTest:
       */
     def sendRawBytes(host: String, port: Int, raw: Array[Byte])(using Frame): String < (Async & Abort[Any]) =
         Sync.Unsafe.defer {
-            val transport = internal.HttpPlatformTransport.transport
+            val transport = kyo.net.NetPlatform.transport
             val fiber     = transport.connect(host, port)
             Abort.run[Closed](fiber.safe.get).map {
                 case Result.Success(conn) =>
@@ -134,10 +134,10 @@ class HttpSecurityServerTest extends BaseHttpTest:
                 .transportConfig(tc)
             HttpServer.init(serverConfig)(echoHandler).map { server =>
                 // Raw plaintext client: completes the TCP accept but never sends a ClientHello, so the server-side TLS
-                // handshake parks. The bug this guards (handshakeTimeout silently ignored under the shared default transport)
-                // would leave the connection pinned and the bounded await below would expire (Timeout, the regression
-                // symptom); the deadline reaps the accepted fd, which the client observes as its inbound
-                // terminating (Closed, or an empty EOF span).
+                // handshake parks. The bug this guards (handshakeTimeout not honored by the server's transport) would leave
+                // the connection pinned and the bounded await below would expire (Timeout, the regression symptom); the
+                // deadline reaps the accepted fd, which the client observes as its inbound terminating (Closed, or an empty
+                // EOF span).
                 Sync.Unsafe.defer {
                     val transport = kyo.net.NetPlatform.transport
                     transport.connect("localhost", server.port).safe.get.map { conn =>

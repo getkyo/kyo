@@ -13,7 +13,6 @@ import kyo.net.internal.posix.PosixConstants
 import kyo.net.internal.posix.PosixHandle
 import kyo.net.internal.posix.PosixTransport
 import kyo.net.internal.posix.SocketBindings
-import kyo.net.internal.transport.Connection
 import kyo.net.internal.transport.IoDriver
 import kyo.net.internal.transport.IoDriverPool
 
@@ -113,24 +112,6 @@ final private[net] class PosixEntry(backend: PosixIoBackend) extends Entry:
         val n       = math.max(1, config.ioPoolSize)
         val drivers = Array.fill(n)(backend.createDriver(config))
         val pool    = IoDriverPool.init(drivers)
-        // Force kyo.net.tls's module init HERE, on this single constructing thread, before pool.start() spawns the pool's driver
-        // threads. TlsProvider.selectFor reads kyo.net.tls() inline on every unpinned TLS engine build, which runs on whichever
-        // driver thread accepts or completes the connection; two drivers hitting that read for the first time at once race Scala
-        // Native's module-init fast path (a plain load) against another thread still inside the slow path's atomic publish,
-        // observed via ThreadSanitizer as a data race on kyo.net.tls$'s module pointer. Touching it here relies on Thread.start's
-        // own happens-before guarantee instead: every driver thread pool.start() spawns below is guaranteed to see it already
-        // resolved, so no driver thread can ever again race another driver thread on its first-time initialization.
-        discard(kyo.net.tls())
-        // Same reasoning for every Connection.State enum case: each no-arg case is its own lazily-
-        // initialized Scala Native module, and Connection.init (called for every accepted or connected socket, so on whichever
-        // driver thread handles that socket) touches Created first, with the other cases reached from later, equally
-        // concurrent state transitions. ThreadSanitizer confirmed the identical module-init race on Created once the
-        // kyo.net.tls race above was closed; warming every case here closes the whole enum rather than one case at a time.
-        discard(Connection.State.Created)
-        discard(Connection.State.Established)
-        discard(Connection.State.Upgrading)
-        discard(Connection.State.Closing)
-        discard(Connection.State.Closed)
         pool.start() // all-or-nothing: on any driver-start failure this closes the started subset and rethrows.
         PosixTransport.init(config, pool)
     end build

@@ -1,7 +1,6 @@
 package kyo
 
 import kyo.*
-import kyo.internal.HttpPlatformTransport
 import kyo.internal.client.HttpClientBackend
 import kyo.internal.transport.NetConfigTranslation
 
@@ -46,11 +45,15 @@ opaque type HttpClient = HttpClientBackend
 
 object HttpClient:
 
-    // Bootstrap boundary: lazy val requires eager evaluation of the suspended pool init.
+    // Bootstrap boundary: lazy val requires eager evaluation of the suspended pool init. The shared default client owns its own
+    // transport like any other client (uniform ownership): it is never closed, so its driver pool lives for the process. It must NOT
+    // borrow the process-global `NetPlatform.transport`, or a `HttpClient.use(_.close)` on this client would close that shared transport
+    // for the whole process.
     private lazy val defaultClient: HttpClient =
         import AllowUnsafe.embrace.danger
-        given Frame = Frame.internal
-        initUnsafe(HttpPlatformTransport.transport, 100, 60.seconds)
+        given Frame   = Frame.internal
+        val transport = kyo.net.NetPlatform.transport(NetConfigTranslation.toNetTransportConfig(HttpTransportConfig.default))
+        initUnsafe(transport, 100, 60.seconds)
     end defaultClient
 
     private val local: Local[(HttpClient, HttpClientConfig)] =
@@ -102,11 +105,6 @@ object HttpClient:
 
         /** True once this client's pool has been closed. For testing the close/release path only (see [[init]]'s Scope release). */
         private[kyo] def isPoolClosed(using AllowUnsafe): Boolean = self.isPoolClosed
-
-        /** True when this client built and owns a per-config transport rather than sharing the process-global one. For testing the
-          * transport selection in [[initUnscoped]] only.
-          */
-        private[kyo] def hasOwnTransport(using AllowUnsafe): Boolean = self.hasOwnTransport
     end extension
 
     // --- Context management ---
@@ -169,7 +167,7 @@ object HttpClient:
       *
       * `transportConfig` tunes the byte transport and HTTP parser for this client (buffer sizes, channel capacity, the HTTP header limit).
       * It is a construction-time setting because the connection pool and its transport are built once and shared across all requests; a
-      * per-request override could not rebuild a pooled transport. Customizing it builds a transport this client owns and closes on shutdown.
+      * per-request override could not rebuild a pooled transport. The client builds and owns its transport, closing it on shutdown.
       */
     def init(
         maxConnectionsPerHost: Int = 100,
@@ -177,15 +175,12 @@ object HttpClient:
         defaultTlsConfig: HttpTlsConfig = HttpTlsConfig.default,
         transportConfig: HttpTransportConfig = HttpTransportConfig.default
     )(using Frame): HttpClient < (Async & Scope) =
-        // NOT `_.closeNow`: HttpClient is `opaque type HttpClient = HttpClientBackend`, and this call site sits inside HttpClient's own
-        // defining object, where opaque-type transparency makes HttpClientBackend's member `closeNow(conn: HttpConnection)` visible too.
-        // `_.closeNow` there resolves to THAT member (arity mismatch resolved by eta-expansion into an unapplied `HttpConnection => Unit
-        // < Async`, which type-checks as the release function's `Any` result without ever calling it), not the zero-arg extension below,
-        // so the scope's release silently did nothing: the pool and its owned transport were never closed. `close(Duration.Zero)` has no
-        // colliding member on HttpClientBackend, so it is unambiguous; it is exactly what the `closeNow` extension itself calls.
-        Scope.acquireRelease(initUnscoped(maxConnectionsPerHost, idleConnectionTimeout, defaultTlsConfig, transportConfig))(_.close(
-            Duration.Zero
-        ))
+        Scope.acquireRelease(initUnscoped(
+            maxConnectionsPerHost,
+            idleConnectionTimeout,
+            defaultTlsConfig,
+            transportConfig
+        ))(HttpClient.closeNow(_))
 
     /** Creates a client with its own connection pool that must be closed explicitly via `close()`. Prefer `init` with Scope-based lifecycle
       * unless you need manual control. See [[init]] for the meaning of `transportConfig`.
@@ -199,20 +194,8 @@ object HttpClient:
         require(maxConnectionsPerHost > 0, s"maxConnectionsPerHost must be positive: $maxConnectionsPerHost")
         require(idleConnectionTimeout > Duration.Zero, s"idleConnectionTimeout must be positive: $idleConnectionTimeout")
         Sync.Unsafe.defer {
-            // Reuse the process-global shared transport unless the config changes a byte-transport field (channelCapacity, readChunkSize,
-            // ioPoolSize, connectTimeout, handshakeTimeout). When it does, build and OWN a per-config transport so those fields take effect
-            // rather than being ignored under the shared default transport, and close it when the client closes. The customization baseline
-            // is kyo-http's OWN default translated to transport terms, never `kyo.net.TransportConfig.default`: the two libraries' defaults
-            // legitimately differ (kyo-http defaults `handshakeTimeout` to Infinity, kyo-net to 30 seconds), so a kyo-net baseline classifies
-            // every default-config client as customized, giving each client a private driver pool whose close then races the client's own
-            // in-flight connects. A maxHeaderSize-only change keeps the shared transport (maxHeaderSize is an HTTP-parser limit honored by
-            // the backend, not a byte-transport field), avoiding a redundant driver.
-            val netConfig     = NetConfigTranslation.toNetTransportConfig(transportConfig)
-            val ownsTransport = netConfig != NetConfigTranslation.toNetTransportConfig(HttpTransportConfig.default)
-            val transport =
-                if ownsTransport then kyo.net.NetPlatform.transport(netConfig)
-                else HttpPlatformTransport.transport
-            initUnsafe(transport, maxConnectionsPerHost, idleConnectionTimeout, defaultTlsConfig, transportConfig, ownsTransport)
+            val transport = kyo.net.NetPlatform.transport(NetConfigTranslation.toNetTransportConfig(transportConfig))
+            initUnsafe(transport, maxConnectionsPerHost, idleConnectionTimeout, defaultTlsConfig, transportConfig)
         }
     end initUnscoped
 
@@ -966,9 +949,8 @@ object HttpClient:
         maxConnectionsPerHost: Int,
         idleConnectionTimeout: Duration,
         defaultTlsConfig: kyo.HttpTlsConfig = kyo.HttpTlsConfig.default,
-        transportConfig: HttpTransportConfig = HttpTransportConfig.default,
-        ownsTransport: Boolean = false
+        transportConfig: HttpTransportConfig = HttpTransportConfig.default
     )(using AllowUnsafe, Frame): HttpClientBackend =
-        HttpClientBackend.init(transport, maxConnectionsPerHost, idleConnectionTimeout, defaultTlsConfig, transportConfig, ownsTransport)
+        HttpClientBackend.init(transport, maxConnectionsPerHost, idleConnectionTimeout, defaultTlsConfig, transportConfig)
 
 end HttpClient
