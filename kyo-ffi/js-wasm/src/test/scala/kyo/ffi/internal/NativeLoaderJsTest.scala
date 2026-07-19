@@ -66,16 +66,27 @@ class NativeLoaderJsTest extends Test:
 
     // --- system-library resolution (libc and friends) ---
 
-    "resolveSystemLib maps known system libraries to the process default scope (null) on every OS" in {
+    "resolveSystemLib maps known system libraries to the process default scope (null) on POSIX hosts" in {
         // `null` makes koffi.load bind against the process default symbol scope (RTLD_DEFAULT), which carries
-        // libc / libm / pthread on every platform. The resolution is platform-uniform, so it holds for any OS tag.
-        for os <- List("linux", "darwin", "freebsd", "windows", "unknown") do
+        // libc / libm / pthread on every POSIX platform.
+        for os <- List("linux", "darwin", "freebsd", "unknown") do
             assert(NativeLoader.resolveSystemLib("c", os) == Some(null))
             assert(NativeLoader.resolveSystemLib("m", os) == Some(null))
             assert(NativeLoader.resolveSystemLib("pthread", os) == Some(null))
             assert(NativeLoader.resolveSystemLib("dl", os) == Some(null))
             assert(NativeLoader.resolveSystemLib("rt", os) == Some(null))
         end for
+    }
+
+    "resolveSystemLib maps the C and math families to the universal CRT on Windows" in {
+        // Windows has no RTLD_DEFAULT-style process scope koffi can bind portably; ucrtbase.dll
+        // carries the standard C and math symbols. The POSIX-only families have no Windows
+        // counterpart and keep the default-scope resolution, failing at symbol lookup.
+        assert(NativeLoader.resolveSystemLib("c", "windows") == Some("ucrtbase.dll"))
+        assert(NativeLoader.resolveSystemLib("m", "windows") == Some("ucrtbase.dll"))
+        assert(NativeLoader.resolveSystemLib("pthread", "windows") == Some(null))
+        assert(NativeLoader.resolveSystemLib("dl", "windows") == Some(null))
+        assert(NativeLoader.resolveSystemLib("rt", "windows") == Some(null))
     }
 
     "resolveSystemLib returns None for non-system libraries so they keep bare-name resolution" in {
