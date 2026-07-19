@@ -249,12 +249,12 @@ class EventLogTest extends kyo.test.Test[Any]:
         assert(record.payload == event)
     }
 
-    "apparatus-absent stale-symbol guard: the removed FileJournal component apparatus does not resolve" in {
+    "apparatus-absent guard: the FileJournal component apparatus does not resolve" in {
         // The component-assembly apparatus (SegmentedComponents, the twelve component marker
-        // traits, FileJournal.segmented), the deleted codec traits (EventPayloadCodec,
-        // EventMetadataCodec), and the removed phantom profile apparatus (Profile, ProfileName,
-        // the two-parameter Configuration form) are gone, not merely private; every reference
-        // below must fail to type-check.
+        // traits, FileJournal.segmented), the codec traits (EventPayloadCodec,
+        // EventMetadataCodec), and the phantom-typed profile apparatus (Profile, ProfileName,
+        // the two-parameter Configuration form) are absent from the public surface, not merely
+        // private; every reference below must fail to type-check.
         val errors = scala.compiletime.testing.typeCheckErrors(
             """
             val a: kyo.FileJournal.SegmentedComponents[kyo.FileJournal.Binary] = ???
@@ -278,7 +278,7 @@ class EventLogTest extends kyo.test.Test[Any]:
         assert(errors.exists(_.contains("Configuration")))
     }
 
-    // --- plan-mandated acceptance leaves (design/05-plan.yaml tests.leaves) ---------------------
+    // --- union member and direct-append acceptance -----------------------------------------------
 
     "union member direct append inside Journal.run" in {
         val journalId = freshJournalId("union")
@@ -357,10 +357,9 @@ class EventLogTest extends kyo.test.Test[Any]:
     }
 
     "appendAll(first, rest*) varargs is nonempty and shares the Chunk validator" in {
-        // The locked surface has exactly one appendAll(first, rest*) implementation (no separate
-        // Chunk-taking overload this phase); the single appendValidated helper it shares with a
-        // future Chunk path is evidenced structurally, not by a second call shape. All three
-        // commands resolve to the same stream (testStream is a single fixed constant), so they
+        // There is exactly one appendAll(first, rest*) implementation and no separate Chunk-taking
+        // overload; it routes through the shared appendValidated helper. All three commands resolve
+        // to the same stream (testStream is a single fixed constant), so they
         // group into one contiguous run and one Journal.append call: the returned Chunk mirrors
         // that one run's single AppendResult back across all three original positions.
         val journalId = freshJournalId("appendall")
@@ -500,7 +499,7 @@ class EventLogTest extends kyo.test.Test[Any]:
         end for
     }
 
-    "Event.Definition carries no codec slot (positive guard, now that EventPayloadCodec/EventMetadataCodec are deleted)" in {
+    "Event.Definition carries no codec slot" in {
         val errors = external.EventLogCodecsAccessibilityFixture.eventDefinitionErrorMessages
         assert(errors.nonEmpty)
         assert(errors.exists(_.contains("Definition")))
@@ -1003,15 +1002,15 @@ class EventLogTest extends kyo.test.Test[Any]:
                 "CONTRIBUTING.md must state the SWMR reader never mutates or truncates"
             )
 
-            val supersededNames =
+            val bannedNames =
                 List("EventPayloadCodec", "FileJournal.Config", "SegmentFormat", "EventLog.Member", "EventLog.from")
             List("CONTRIBUTING.md" -> contributing, "README.md" -> readme).foreach { case (doc, text) =>
-                supersededNames.foreach { name =>
+                bannedNames.foreach { name =>
                     val hits = guardBannedHits(text, name)
-                    assert(hits.isEmpty, s"$doc carries the superseded name '$name': $hits")
+                    assert(hits.isEmpty, s"$doc carries the banned name '$name': $hits")
                 }
-                assert(!text.contains("nominally read-only"), s"$doc carries the removed reader-truncation claim")
-                assert(!text.contains("read-only call can perform"), s"$doc carries the removed reader-truncation claim")
+                assert(!text.contains("nominally read-only"), s"$doc carries a disallowed reader-truncation claim")
+                assert(!text.contains("read-only call can perform"), s"$doc carries a disallowed reader-truncation claim")
             }
         }
 

@@ -51,44 +51,45 @@ object EventSourced:
         def init[A](log: EventLog[A], codec: EventCodec[A])(using Frame): EventStore[A] < Sync =
             Sync.defer(EventStore(log, codec))
 
-        /** Constructs an [[EventStore.Setup]] fluent builder that collapses the codecs +
+        /** Constructs an [[EventStore.Builder]] fluent builder that collapses the codecs +
           * routes + optional event codec + store init steps into one expression, wrapping an
-          * [[EventLog.Setup]]. The pre-existing [[EventStore.init]] constructor is untouched
-          * and stays beside this (additive, not a replacement).
+          * [[EventLog.Builder]].
           */
-        def setup[A](journalId: JournalId): EventStore.Setup[A, Any] =
-            new Setup[A, Any](EventLog.setup[A](journalId), Absent)
+        def builder[A](journalId: JournalId): EventStore.Builder[A, Any] =
+            new Builder[A, Any](EventLog.builder[A](journalId), Absent)
 
         /** Fluent builder for an [[EventStore]] of domain type `A`, wrapping an
-          * [[EventLog.Setup]] (sharing its `Covered` phantom and its [[EventLog.RouteCoverage]]
+          * [[EventLog.Builder]] (sharing its `Covered` phantom and its [[EventLog.RouteCoverage]]
           * completeness proof). `codecs`/`define`/`codec` are PURE; all effectful resolution
-          * is deferred to [[Setup.build]].
+          * is deferred to [[Builder.build]].
           */
-        final class Setup[A, Covered] private[kyo] (
-            log: EventLog.Setup[A, Covered],
+        final class Builder[A, Covered] private[kyo] (
+            log: EventLog.Builder[A, Covered],
             codec: Maybe[EventCodec[A]]
         ):
-            /** Delegates to the wrapped [[EventLog.Setup.codecs]]. */
-            def codecs(binary: Codec = IonBinary(), json: Codec = Json(), metadata: Codec = IonBinary()): Setup[A, Covered] =
-                new Setup[A, Covered](log.codecs(binary, json, metadata), codec)
+            /** Delegates to the wrapped [[EventLog.Builder.codecs]]; optional, as on the wrapped
+              * builder (skipping it applies the same defaults at `build`).
+              */
+            def codecs(binary: Codec = IonBinary(), json: Codec = Json(), metadata: Codec = IonBinary()): Builder[A, Covered] =
+                new Builder[A, Covered](log.codecs(binary, json, metadata), codec)
 
-            /** Delegates to the wrapped [[EventLog.Setup.define]], widening coverage to
+            /** Delegates to the wrapped [[EventLog.Builder.define]], widening coverage to
               * `Covered & E`.
               */
             def define[E <: A](
                 stream: Event.StreamSelector[E],
                 eventId: Event.IdPolicy[E] = Event.IdPolicy.generated[E],
                 metadata: EventLog.Metadata[E] = EventLog.Metadata.empty[E]
-            )(using Schema[E], Tag[E], Frame): Setup[A, Covered & E] =
-                new Setup[A, Covered & E](log.define[E](stream, eventId, metadata), codec)
+            )(using Schema[E], Tag[E], Frame): Builder[A, Covered & E] =
+                new Builder[A, Covered & E](log.define[E](stream, eventId, metadata), codec)
 
             /** Supplies an explicit [[EventCodec]]; when omitted, `build` derives a default one
               * from the built log's baked routes.
               */
-            def codec(codec: EventSourced.EventCodec[A]): Setup[A, Covered] =
-                new Setup[A, Covered](log, Present(codec))
+            def codec(codec: EventSourced.EventCodec[A]): Builder[A, Covered] =
+                new Builder[A, Covered](log, Present(codec))
 
-            /** Runs the wrapped [[EventLog.Setup.build]] to obtain the [[EventLog]]
+            /** Runs the wrapped [[EventLog.Builder.build]] to obtain the [[EventLog]]
               * (propagating its `Abort[EventLog.EventCodecConfigurationError]` codec-assembly
               * row), then [[EventStore.init]] with the supplied-or-derived [[EventCodec]].
               */
@@ -98,18 +99,19 @@ object EventSourced:
                 Frame
             ): EventStore[A] < (Sync & Abort[EventLog.EventCodecConfigurationError]) =
                 log.build.map { builtLog =>
-                    val eventCodec = codec.getOrElse(EventSourced.derivedEventCodec(builtLog))
+                    val eventCodec = codec.getOrElse(EventSourced.derivedEventCodec[A])
                     EventStore(builtLog, eventCodec)
                 }
-        end Setup
+        end Builder
     end EventStore
 
     /** Default [[EventCodec]] derived from an [[EventLog]]'s baked routes when
-      * [[EventStore.Setup.codec]] is omitted: `prepare` resolves the member's
+      * [[EventStore.Builder.codec]] is omitted: `prepare` resolves the member's
       * [[Event.Definition]] dynamically by runtime class (via the log's routes) and `decode`
-      * is the identity over the already-decoded `Event.Record`'s payload.
+      * is the identity over the already-decoded `Event.Record`'s payload. The log to prepare
+      * against is the `EventCodec.prepare` parameter, so this factory takes none.
       */
-    private[kyo] def derivedEventCodec[A](log: EventLog[A]): EventCodec[A] =
+    private[kyo] def derivedEventCodec[A]: EventCodec[A] =
         new EventCodec[A]:
             def prepare(l: EventLog[A])(event: A, directive: EventLog.AppendDirective)(using
                 Frame

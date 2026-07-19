@@ -36,9 +36,10 @@ end QuestPath
 
 ## Construct a log
 
-The ergonomic way to build an `EventLog[A]` is `EventLog.setup`: a fluent builder that stages the
+The ergonomic way to build an `EventLog[A]` is `EventLog.builder`: a fluent builder that stages the
 codec choices, registers one `define[E]` per member of `A`, and bakes the per-member routing into
-the produced log. `build` proves at compile time that every member of `A` is routed (a missing
+the produced log. Calling `.codecs` is optional: skip it to take the defaults, or call it to pick
+specific codecs. `build` proves at compile time that every member of `A` is routed (a missing
 `define` is a compile error), assembles the `EventLog.Codecs[A]` from `Schema[A]` (Ion Binary for
 `.seg` segments, JSON for JSONL segments, Ion Binary for metadata), and returns the log. The
 `JournalId` is a logical route-segment identity; it carries no physical path meaning.
@@ -48,15 +49,14 @@ val questLog =
     for
         journalId <- JournalId("quest-party")
         started   <- Event.StreamName("quest")
-        log <- EventLog.setup[QuestEvent](journalId)
-            .codecs()
+        log <- EventLog.builder[QuestEvent](journalId)
             .define[QuestStarted](Event.StreamSelector.by(started)(e => Chunk(e.quest)))
             .define[MembersJoined](Event.StreamSelector.by(started)(e => Chunk(e.quest)))
             .build
     yield log
 ```
 
-`EventLog.setup` captures no backend. Every operation is an ordinary `Journal` program run inside
+`EventLog.builder` captures no backend. Every operation is an ordinary `Journal` program run inside
 `Journal.run(backend)(program)`. Bringing the baked routing into scope with `import log.given`
 lets `log.append(event)` resolve each member's `Event.Definition` with no hand-written `given`.
 
@@ -76,8 +76,9 @@ val questLogLowLevel =
 
 Each concrete event resolves an `Event.Definition[A, E]` given: the member evidence that supplies
 the event type, the stream selector, the id policy, and the metadata for `E`. A log built through
-`EventLog.setup` already bakes that evidence in, so `import log.given` brings it into scope and
-`log.append(event)` needs nothing else. Here the stream is derived from the quest id through
+`EventLog.builder` already bakes that evidence in, so `import log.given` brings it into scope and
+`log.append(event)` needs nothing else, even for a value typed at the domain supertype `QuestEvent`.
+Here the stream is derived from the quest id through
 `Event.StreamSelector.by`, so every event about one quest routes to one stream.
 
 ```scala
@@ -85,8 +86,7 @@ val started =
     for
         journalId <- JournalId("quest-party")
         name      <- Event.StreamName("quest")
-        log <- EventLog.setup[QuestEvent](journalId)
-            .codecs()
+        log <- EventLog.builder[QuestEvent](journalId)
             .define[QuestStarted](Event.StreamSelector.by(name)(e => Chunk(e.quest)))
             .define[MembersJoined](Event.StreamSelector.by(name)(e => Chunk(e.quest)))
             .build

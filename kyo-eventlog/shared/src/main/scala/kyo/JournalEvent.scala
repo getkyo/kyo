@@ -184,6 +184,13 @@ object Event:
           */
         def canonical[E](name: StreamName, key: StreamKey[E]): StreamSelector[E] =
             KeyedStreamSelector(name, key.components)
+
+        /** A selector that aborts every resolution with `reason`, used only by the [[Event.Routes]]
+          * supertype witness so an unrouted append fails loud instead of landing on a placeholder
+          * stream.
+          */
+        private[kyo] def unroutable[E](reason: String): StreamSelector[E] =
+            UnroutableStreamSelector(reason)
     end StreamSelector
 
     /** Zero-based position of an event within its stream.
@@ -641,47 +648,64 @@ object Event:
     ) extends Event derives CanEqual
 
     /** Structure-name-keyed registry of the per-member [[Event.Definition]]s backing an
-      * [[kyo.EventLog]] built through [[kyo.EventLog.setup]]. One entry per routed leaf `E <: A`,
+      * [[kyo.EventLog]] built through [[kyo.EventLog.builder]]. One entry per routed leaf `E <: A`,
       * keyed by `Schema[E].structure.name` (the same string [[kyo.EventLog.deriveEventType]]
       * derives an [[Event.Type]] from), valued by its `Event.Definition[A, E]`. Carries a
       * `matcher` mapping a runtime value to its member's structure name, derived at
-      * [[kyo.EventLog.Setup.build]] from compile-time member enumeration and installed by
-      * `withMatcher`. Empty on the [[kyo.EventLog.init]] path; populated by the builder on the
-      * [[kyo.EventLog.setup]] path. Not part of the locked public surface.
+      * [[kyo.EventLog.Builder.build]] from compile-time member enumeration and installed by
+      * `withMatcher`. Routing requires distinct member structure names: `duplicates` records every
+      * structure-name key two members collided on, so `build` rejects the ambiguity loudly rather
+      * than let one member silently shadow the other. Empty on the [[kyo.EventLog.init]] path;
+      * populated by the builder on the [[kyo.EventLog.builder]] path.
       */
     final class Routes[A] private[kyo] (
         private[kyo] val entries: Map[String, Event.Definition[A, ?]],
-        private[kyo] val matcher: A => String
+        private[kyo] val matcher: A => String,
+        private[kyo] val duplicates: Set[String]
     ):
 
+        /** Whether no member route is registered, separating the [[kyo.EventLog.init]] path
+          * (empty, hand-written static per-member givens) from the [[kyo.EventLog.builder]] path
+          * (populated, runtime-value routing).
+          */
+        private[kyo] def isEmpty: Boolean = entries.isEmpty
+
         /** Registers one member's definition under `Schema[E].structure.name`, returning the
-          * extended registry with the same `matcher`.
+          * extended registry with the same `matcher`. When that key is already present the
+          * structure name is recorded in `duplicates`, so `build` can reject the ambiguous
+          * registration rather than let one member silently shadow the other.
           */
         private[kyo] def added[E <: A](definition: Event.Definition[A, E])(using schema: Schema[E]): Routes[A] =
-            new Routes[A](entries.updated(schema.structure.name, definition), matcher)
+            val key            = schema.structure.name
+            val nextDuplicates = if entries.contains(key) then duplicates + key else duplicates
+            new Routes[A](entries.updated(key, definition), matcher, nextDuplicates)
+        end added
 
         /** Installs the value-to-structure-name `matcher` on the accumulated registry, called
-          * once at `build` with the compile-time-derived matcher.
+          * once at `build` with the compile-time-derived matcher. Preserves `entries` and
+          * `duplicates`.
           */
         private[kyo] def withMatcher(matcher: A => String): Routes[A] =
-            new Routes[A](entries, matcher)
+            new Routes[A](entries, matcher, duplicates)
 
-        /** Total static resolution by the statically-known leaf `E`, keyed by
-          * `Schema[E].structure.name`, backing `EventLog.routed`. A compile-time `RouteCoverage`
-          * proof (or the runtime-total fallback's own build-time check) guarantees every member of
-          * `A` is registered before `build` returns, so an absent entry here is an unreachable
-          * internal invariant violation, never user input.
+        /** Total, non-throwing resolution backing `EventLog.witness` (the `routed` given) for a
+          * statically-known type `E <: A`, keyed by `Schema[E].structure.name`. A registered leaf
+          * key yields that member's real `Definition`; an absent key (the domain-supertype case,
+          * where `E` is `A` itself and carries no per-member route) yields a single cached sentinel
+          * `Definition` that only satisfies the given's signature. The sentinel is never consulted
+          * for routing: builder-path appends resolve the real member by runtime value through
+          * `EventLog.prepareDynamic`/`resolveDynamic`, not through this witness.
           */
-        private[kyo] def resolve[E <: A](using schema: Schema[E]): Event.Definition[A, E] =
+        private[kyo] def witness[E <: A](using schema: Schema[E]): Event.Definition[A, E] =
             Maybe.fromOption(entries.get(schema.structure.name)) match
                 case Present(definition) => definition.asInstanceOf[Event.Definition[A, E]]
-                case Absent              => throw new IllegalStateException(s"no route registered for ${schema.structure.name}")
+                case Absent              => Routes.supertypeWitness.asInstanceOf[Event.Definition[A, E]]
 
-        /** Runtime resolution for a union-typed value whose leaf is not statically known (the
-          * derived-`EventCodec` path). Maps `value` to its member structure name through the baked
-          * `matcher`, then looks that key up; aborts [[kyo.EventLog.PreparationFailure]] naming the
-          * unrouted member. The one resolution path that can fail; unreachable on the
-          * compile-checked static path.
+        /** Runtime resolution for a value routed by its concrete member: every builder-path append
+          * dispatches through here by the runtime value, as does the derived-`EventCodec` path.
+          * Maps `value` to its member structure name through the baked `matcher`, then looks that
+          * key up; aborts [[kyo.EventLog.PreparationFailure]] naming the unrouted member. Fails
+          * loud, never a panic, when a value's member has no route.
           */
         private[kyo] def resolveDynamic(value: A)(using Frame): Event.Definition[A, ?] < Abort[EventLog.PreparationFailure] =
             val key = matcher(value)
@@ -695,9 +719,38 @@ object Event:
 
     object Routes:
         /** The empty registry installed on the [[kyo.EventLog.init]] path; its `matcher` is never
-          * consulted there (dynamic resolution is a `setup`-only path).
+          * consulted there (runtime-value routing is a [[kyo.EventLog.builder]]-only path).
           */
-        private[kyo] def empty[A]: Routes[A] = new Routes[A](Map.empty, (_: A) => "")
+        private[kyo] def empty[A]: Routes[A] = new Routes[A](Map.empty, (_: A) => "", Set.empty)
+
+        /** The single cached sentinel `Definition` [[Routes.witness]] returns for the
+          * domain-supertype case, built only from total constructors so the `routed` given never
+          * throws at summon. A builder-built log routes every append by the runtime value through
+          * `resolveDynamic` and never touches this definition. On the [[kyo.EventLog.init]] path,
+          * `EventLog.prepare` recognizes this instance by reference identity through
+          * [[Routes.isSupertypeWitness]] and aborts a typed [[kyo.EventLog.PreparationFailure]]
+          * before reading any of its fields, so it is a pure identity marker. Its stream selector is
+          * itself an aborting one ([[UnroutableStreamSelector]]) as a second layer: if that identity
+          * guard were ever bypassed, the append still fails loud rather than land on a placeholder
+          * stream.
+          */
+        private val supertypeWitness: Event.Definition[Any, Nothing] =
+            Event.Definition[Any, Nothing](
+                Event.Type.fromUnchecked("routed-supertype-witness"),
+                Event.StreamSelector.unroutable(
+                    "no route resolved for this append: a log from EventLog.init routes appends through a hand-written `given Event.Definition` per member, not through `import log.given`"
+                ),
+                Event.IdPolicy.generated[Nothing],
+                EventLog.Metadata.empty[Nothing]
+            )
+
+        /** Whether `definition` is the routing-inert supertype witness, by reference identity. The
+          * witness is a single cached instance produced only by [[Routes.witness]] for an unrouted
+          * type; `EventLog.prepare` tests this to fail an append loud before any directive facet
+          * (including a stream-id override) can route the event to a placeholder stream.
+          */
+        private[kyo] def isSupertypeWitness(definition: Event.Definition[?, ?]): Boolean =
+            definition.asInstanceOf[AnyRef] eq supertypeWitness
     end Routes
 
     // ---- per-member evidence ----
@@ -808,6 +861,16 @@ end Event
   */
 final private[kyo] case class ConstantStreamSelector[E](streamId: Event.StreamId) extends Event.StreamSelector[E]:
     def resolve(event: E)(using Frame): Event.StreamId < Abort[EventLog.PreparationFailure] = streamId
+
+/** Aborts every resolution with `reason`, backing the [[Event.Routes]] supertype witness's stream
+  * as a second layer of defense. `EventLog.prepare` already rejects the witness by reference
+  * identity before this selector could run, so under the current append paths this abort is not
+  * reached; it exists so that a value reaching stream resolution through the witness still fails
+  * loud with a typed [[kyo.EventLog.PreparationFailure]] rather than route to a placeholder stream.
+  */
+final private[kyo] case class UnroutableStreamSelector[E](reason: String) extends Event.StreamSelector[E]:
+    def resolve(event: E)(using Frame): Event.StreamId < Abort[EventLog.PreparationFailure] =
+        Abort.fail(EventLog.PreparationFailure(reason))
 
 /** Every event routes to `name`/`components(event)`'s length-prefixed canonical stream id.
   * Built by [[Event.StreamSelector.by]] and [[Event.StreamSelector.canonical]].

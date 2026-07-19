@@ -22,7 +22,7 @@ object EventLogCodecsAccessibilityFixture:
       * `eventType`/`stream`/`eventId`/`metadata` and no codec-typed member, so a snippet reading a
       * `.codec` (or `.valueCodec`/`.metadataCodec`) member off a constructed value fails to
       * type-check. An absence check (asserting `Event.Definition` does not exist at all) would
-      * type-check cleanly and silently pass now that the type exists, so this fixture asserts the
+      * type-check cleanly and silently pass because the type exists, so this fixture asserts the
       * stronger, always-meaningful property instead.
       */
     def eventDefinitionErrorMessages: List[String] =

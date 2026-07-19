@@ -28,16 +28,22 @@ final class EventLog[A] private (
         private[kyo] val directive: EventLog.AppendDirective
     )
 
-    /** Instance-level given resolving the [[Event.Definition]] for a statically-known member
-      * `E <: A` from the baked routes, so a log built through [[EventLog.setup]] satisfies the
+    /** Instance-level given resolving the [[Event.Definition]] for a statically-known type
+      * `E <: A` from the baked routes, so a log built through [[EventLog.builder]] satisfies the
       * unchanged `append`/`prepare`/`appendAll` `(using Event.Definition[A, E], Frame)`
-      * signatures from `import log.given` with no hand-written per-member `given`. On the
-      * [[EventLog.init]] path the routes are empty and this given is not brought into scope
-      * (the init path supplies its own hand-written `given Event.Definition`s instead); mixing
-      * `import log.given` with hand-written givens on one log is a usage error.
+      * signatures from `import log.given` with no hand-written per-member `given`. Total by
+      * construction: a registered leaf resolves to its real `Definition`; the domain-supertype
+      * case (`E` is `A` itself, the natural type of a decider's folded `Chunk[A]` element)
+      * resolves to a routing-inert sentinel, because builder-path appends route by the runtime
+      * value through `prepareDynamic`, never through this given's definition. This is an
+      * unconditional member given, so `import log.given` brings it into scope on any log,
+      * including one from [[EventLog.init]]. The init path is meant to supply hand-written
+      * per-member `given Event.Definition`s and not use `import log.given`; if `import log.given`
+      * is used on an init log, this given resolves to the sentinel and `prepare` aborts a typed
+      * `PreparationFailure` rather than route the event anywhere.
       */
     given routed[E <: A](using Schema[E]): Event.Definition[A, E] =
-        routes.resolve[E]
+        routes.witness[E]
 
     /** Prepares a union-typed value whose leaf is not statically known, resolving its
       * [[Event.Definition]] from the baked routes by runtime class (the derived-`EventCodec`
@@ -73,16 +79,30 @@ final class EventLog[A] private (
         ev: Event.Definition[A, E],
         frame: Frame
     ): Prepared < (Sync & Abort[EventLog.PreparationFailure]) =
-        // Encodes via EventLogCodecs.encodeValue(codecs.value, event) (codecs.value is the
-        // data-only descriptor; the interpreter performs the transform), resolves the real
-        // per-member stream via ev.stream.resolve(event), the real event id via
-        // ev.eventId.next(event, streamId, ev.eventType, metadata), and real metadata via
-        // ev.metadata.values(event); assembles Event.New and wraps it, with the
-        // resolved streamId, in a Prepared. Aborts PreparationFailure on stream/id resolution
-        // failure. No Journal effect: prepare is pure staging.
-        Abort.get(EventLog.prepareEnvelope(codecs, ev, event, directive)).map((streamId, envelope) =>
-            new Prepared(streamId, envelope, directive)
-        )
+        // Two staging paths share one Prepared shape. On the init path (empty routes, hand-written
+        // per-member givens) the supplied `ev` is the member's real Definition, so prepare stages
+        // statically through prepareEnvelope: encodes via EventLogCodecs.encodeValue(codecs.value,
+        // event), resolves the per-member stream via ev.stream.resolve(event), the event id via
+        // ev.eventId.next(...), and metadata via ev.metadata.values(event). On the builder path
+        // (populated routes) `ev` may be the routing-inert supertype witness, so prepare dispatches
+        // by the runtime value through prepareDynamic, which resolves the real member from the baked
+        // routes (E <: A, so `event` is an A) and then runs the identical envelope assembly. Either
+        // path aborts PreparationFailure (never panics) on a stream/id/codec resolution failure. No
+        // Journal effect: prepare is pure staging.
+        if routes.isEmpty then
+            if Event.Routes.isSupertypeWitness(ev) then
+                // The init path supplied the routing-inert supertype witness (its `routed` given was
+                // brought into scope without a hand-written per-member given). Fail loud before any
+                // directive facet is honored, so no override path can route the event to a
+                // placeholder stream.
+                Abort.fail(EventLog.PreparationFailure(
+                    "no route resolved for this append: a log from EventLog.init routes appends through a hand-written `given Event.Definition` per member, not through `import log.given`"
+                ))
+            else
+                Abort.get(EventLog.prepareEnvelope(codecs, ev, event, directive)).map((streamId, envelope) =>
+                    new Prepared(streamId, envelope, directive)
+                )
+        else prepareDynamic(event, directive)
 
     /** Appends a nonempty batch atomically. Varargs are nonempty by construction (first is
       * required); `Chunk` batching shares the same validator.
@@ -152,12 +172,8 @@ object EventLog:
     type MetadataCodec = EventLogCodecs.MetadataCodec
     val MetadataCodec = EventLogCodecs.MetadataCodec
 
-    /** The pre-existing schema-derived codec-configuration failure, given its documented home
-      * under `EventLog` (the same `final case class EventCodecConfigurationError(reason:
-      * String)(using Frame) extends KyoException` `EventLog.Codecs.schema`/`bytes` raise),
-      * mirroring the `type Codecs[A] = EventLogCodecs.Codecs[A]` alias idiom, so
-      * `EventLog.EventCodecConfigurationError` and `Setup.build`'s
-      * `Abort[EventCodecConfigurationError]` row resolve.
+    /** The schema-derived codec-configuration failure raised by `EventLog.Codecs.schema`/`bytes`
+      * and by `Builder.build`, homed here as `EventLog.EventCodecConfigurationError`.
       */
     type EventCodecConfigurationError = kyo.EventCodecConfigurationError
 
@@ -165,30 +181,33 @@ object EventLog:
     def init[A](codecs: Codecs[A], journalId: JournalId)(using Frame): EventLog[A] < Sync =
         Sync.defer(new EventLog[A](journalId, codecs, Event.Routes.empty[A]))
 
-    /** Constructs an [[EventLog.Setup]] fluent builder that centralizes the scattered
-      * per-member `given Event.Definition`s into one expression and bakes them into the
-      * produced log behind `import log.given`. The pre-existing [[EventLog.init]] constructor
-      * is untouched and stays beside this (additive, not a replacement).
+    /** Constructs an [[EventLog.Builder]] fluent builder that centralizes the per-member
+      * `given Event.Definition`s into one expression and bakes them into the produced log
+      * behind `import log.given`.
       */
-    def setup[A](journalId: JournalId): EventLog.Setup[A, Any] =
-        new Setup[A, Any](journalId, Absent, Event.Routes.empty[A])
+    def builder[A](journalId: JournalId): EventLog.Builder[A, Any] =
+        new Builder[A, Any](journalId, Absent, Event.Routes.empty[A])
 
     /** Fluent builder for an [[EventLog]] of domain type `A`. `codecs`/`define` are PURE (no
-      * effect); all effectful resolution is deferred to [[Setup.build]]. `Covered` is the
+      * effect); all effectful resolution is deferred to [[Builder.build]]. `Covered` is the
       * phantom running intersection of routed member types, widened by each `define[E]` to
       * `Covered & E`, so [[RouteCoverage]] proves at `build` that every member of `A` is
-      * routed.
+      * routed. Calling `codecs` is optional: when it is not called, `build` applies the same
+      * defaults `codecs` uses (`IonBinary()` value binary, `Json()` value json, `IonBinary()`
+      * metadata), so `EventLog.builder[A](jid).define(...).build` and the same chain with an
+      * intervening no-arg `.codecs()` produce identical logs.
       */
-    final class Setup[A, Covered] private[kyo] (
+    final class Builder[A, Covered] private[kyo] (
         journalId: JournalId,
         codecChoice: Maybe[(Codec, Codec, Codec)],
         routes: Event.Routes[A]
     ):
         /** Stages the value binary/json and metadata codec choices; defaults match
-          * [[EventLog.Codecs.schema]]. Pure: the fallible assembly is deferred to `build`.
+          * [[EventLog.Codecs.schema]]. Optional: skipping this call leaves `build` to apply the
+          * same defaults. Pure: the fallible assembly is deferred to `build`.
           */
-        def codecs(binary: Codec = IonBinary(), json: Codec = Json(), metadata: Codec = IonBinary()): Setup[A, Covered] =
-            new Setup[A, Covered](journalId, Present((binary, json, metadata)), routes)
+        def codecs(binary: Codec = IonBinary(), json: Codec = Json(), metadata: Codec = IonBinary()): Builder[A, Covered] =
+            new Builder[A, Covered](journalId, Present((binary, json, metadata)), routes)
 
         /** Registers member `E`'s full [[Event.Definition]] (event type, stream selector, id
           * policy, metadata producer), widening the phantom coverage to `Covered & E`. The
@@ -198,37 +217,50 @@ object EventLog:
             stream: Event.StreamSelector[E],
             eventId: Event.IdPolicy[E] = Event.IdPolicy.generated[E],
             metadata: EventLog.Metadata[E] = EventLog.Metadata.empty[E]
-        )(using Schema[E], Tag[E], Frame): Setup[A, Covered & E] =
+        )(using Schema[E], Tag[E], Frame): Builder[A, Covered & E] =
             val definition = Event.Definition.schema[A, E](stream, eventId, metadata)
-            new Setup[A, Covered & E](journalId, codecChoice, routes.added[E](definition))
+            new Builder[A, Covered & E](journalId, codecChoice, routes.added[E](definition))
         end define
 
         /** Assembles the staged codec choices into an [[EventLog.Codecs]] (the same fallible
           * Schema-plus-Codec assembly [[EventLog.Codecs.schema]] performs, hence the
           * `Abort[EventCodecConfigurationError]` row) and produces the [[EventLog]] carrying
           * the baked routes. `RouteCoverage[A, Covered]` proves every member of `A` is routed.
+          * Routing keys members by `Schema[E].structure.name`; if two members collided on one
+          * structure name, `build` aborts an [[EventCodecConfigurationError]] naming the
+          * colliding name(s) rather than let one member silently shadow the other.
           */
         def build(using EventLog.RouteCoverage[A, Covered], Schema[A], Frame): EventLog[A] < (Sync & Abort[EventCodecConfigurationError]) =
             val (binary, json, metadata) = codecChoice.getOrElse((IonBinary(), Json(), IonBinary()))
             val resolvedRoutes           = routes.withMatcher(summon[EventLog.RouteCoverage[A, Covered]].matcher)
-            EventLog.Codecs.schema[A](binary, json, metadata).map(codecs => new EventLog[A](journalId, codecs, resolvedRoutes))
+            if resolvedRoutes.duplicates.nonEmpty then
+                Abort.fail(EventCodecConfigurationError(
+                    s"two event members share the structure name(s): ${resolvedRoutes.duplicates.toList.sorted.mkString(", ")}; routing requires distinct member structure names"
+                ))
+            else
+                EventLog.Codecs.schema[A](binary, json, metadata).map(codecs => new EventLog[A](journalId, codecs, resolvedRoutes))
+            end if
         end build
-    end Setup
+    end Builder
 
     /** Compile-time proof that every member of domain type `A` is present in the accumulated
-      * `Covered` intersection of an [[EventLog.Setup]]. Required as a `using` parameter on
-      * [[Setup.build]]. For each member `Mi` of `A`, `Covered <:< Mi` (an intersection is a
+      * `Covered` intersection of an [[EventLog.Builder]]. Required as a `using` parameter on
+      * [[Builder.build]]. For each member `Mi` of `A`, `Covered <:< Mi` (an intersection is a
       * subtype of exactly its components), else compilation fails naming the unrouted `Mi`.
       * Users never write a `RouteCoverage` instance; they rely on the summoned given.
       */
     sealed trait RouteCoverage[A, Covered]:
         /** Maps a runtime value of `A` to its member's `Schema[Mi].structure.name`, the key
           * `Event.Routes` stores each member under. Derived from compile-time member
-          * enumeration alongside the coverage proof and consumed only by
-          * `Event.Routes#resolveDynamic`; carried here because `Setup.build`'s using clause
-          * exposes this evidence as its sole member-aware parameter. Coverage checking (which
-          * unrouted members are rejected, and whether at compile time or at prepare time) and
-          * value dispatch (this matcher) are separate concerns delivered on one evidence.
+          * enumeration alongside the coverage proof and consumed by the routes' `matcher`;
+          * carried here because `Builder.build`'s using clause exposes this evidence as its sole
+          * member-aware parameter. Coverage checking (which unrouted members are rejected, and
+          * whether at compile time or at prepare time) and value dispatch (this matcher) are
+          * separate concerns delivered on one evidence. Dispatch keys on `Schema[Mi].structure.name`,
+          * so it requires distinct member structure names: two members that erase to the same name
+          * (for example a generic `Box[Int] | Box[String]`, or two same-simple-name types) are not
+          * disambiguated by this matcher; that collision is caught at `build` from
+          * `Event.Routes.duplicates`, never silently misrouted.
           */
         private[kyo] def matcher: A => String
     end RouteCoverage
@@ -261,8 +293,11 @@ object EventLog:
 
         /** Selects `value`'s member by concrete-type test over the enumerated element types
           * and yields that member's `Schema[Mi].structure.name`, the exact key
-          * `EventLog.Setup.define` stores it under. `isInstanceOf` is total and
-          * cross-platform; the `Mirror.SumOf` enumeration makes the empty case unreachable.
+          * `EventLog.Builder.define` stores it under. `isInstanceOf` is cross-platform and the
+          * `Mirror.SumOf` enumeration covers every member, so the empty case is a defect rather
+          * than reachable input. It routes by structure name, so it does not disambiguate two
+          * members that erase to the same structure name; such a collision is caught at `build`
+          * from `Event.Routes.duplicates`, never silently misrouted here.
           */
         inline def matchMember[A, Elems <: Tuple](value: A): String =
             inline scala.compiletime.erasedValue[Elems] match

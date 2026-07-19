@@ -316,10 +316,10 @@ class EventSourcedTest extends kyo.test.Test[Any]:
             case QuestStarted(id)        => s"started:$id"
             case PartyJoined(id, member) => s"joined:$id:$member"
 
-    "EventStore.setup end-to-end decide with a derived EventCodec" in {
-        val journalId = freshJournalId("store-setup")
-        val qsStream  = valid(Event.StreamId("store-setup-qs"))
-        val pjStream  = valid(Event.StreamId("store-setup-pj"))
+    "EventStore.builder end-to-end decide with a derived EventCodec" in {
+        val journalId = freshJournalId("store-builder")
+        val qsStream  = valid(Event.StreamId("store-builder-qs"))
+        val pjStream  = valid(Event.StreamId("store-builder-pj"))
         val decider = new EventSourced.Decider[QuestStarted, Int, QuestEvent]:
             def initialState: Int = 0
             def decide(state: Int, command: QuestStarted)(using Frame): Chunk[QuestEvent] < Abort[EventSourced.DecideFailure] =
@@ -327,8 +327,7 @@ class EventSourcedTest extends kyo.test.Test[Any]:
             def evolve(state: Int, event: QuestEvent)(using Frame): Int < Abort[EventSourced.EvolveFailure] =
                 state + 1
         for
-            store <- EventSourced.EventStore.setup[QuestEvent](journalId)
-                .codecs()
+            store <- EventSourced.EventStore.builder[QuestEvent](journalId)
                 .define[QuestStarted](stream = Event.StreamSelector.constant(qsStream))
                 .define[PartyJoined](stream = Event.StreamSelector.constant(pjStream))
                 .build
@@ -351,7 +350,7 @@ class EventSourcedTest extends kyo.test.Test[Any]:
         end for
     }
 
-    "EventStore.setup with an explicit .codec uses the supplied codec, not the derived one" in {
+    "EventStore.builder with an explicit .codec uses the supplied codec, not the derived one" in {
         val jidTagged  = freshJournalId("store-tagged")
         val jidDerived = freshJournalId("store-derived")
         val qsStream   = valid(Event.StreamId("tag-qs"))
@@ -390,14 +389,12 @@ class EventSourcedTest extends kyo.test.Test[Any]:
             }
 
         for
-            storeTagged <- EventSourced.EventStore.setup[QuestEvent](jidTagged)
-                .codecs()
+            storeTagged <- EventSourced.EventStore.builder[QuestEvent](jidTagged)
                 .define[QuestStarted](stream = Event.StreamSelector.constant(qsStream))
                 .define[PartyJoined](stream = Event.StreamSelector.constant(pjStream))
                 .codec(taggingCodec)
                 .build
-            storeDerived <- EventSourced.EventStore.setup[QuestEvent](jidDerived)
-                .codecs()
+            storeDerived <- EventSourced.EventStore.builder[QuestEvent](jidDerived)
                 .define[QuestStarted](stream = Event.StreamSelector.constant(qsStream))
                 .define[PartyJoined](stream = Event.StreamSelector.constant(pjStream))
                 .build

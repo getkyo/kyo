@@ -237,15 +237,14 @@ val state: StreamInfo < (Sync & Abort[JournalStreamInfoFailure]) =
 
 ## Typed events with EventLog
 
-`EventLog[A]` wraps raw `Journal` operations with schema-driven encoding and decoding for domain type `A`. The ergonomic constructor is `EventLog.setup`: a fluent builder that stages the codec choices, registers one `define[E]` per member of `A`, and bakes the per-member routing into the log. `build` proves at compile time that every member of `A` is routed and returns the log; it captures no backend. `import log.given` brings the baked `Event.Definition`s into scope, so a caller writes `log.append(event)` with no visible codec or membership witness. Call its methods inside `Journal.run(backend)(...)` exactly as you would `Journal.append`, `Journal.read`, and `Journal.streamInfo`:
+`EventLog[A]` wraps raw `Journal` operations with schema-driven encoding and decoding for domain type `A`. The ergonomic constructor is `EventLog.builder`: a fluent builder that stages the codec choices, registers one `define[E]` per member of `A`, and bakes the per-member routing into the log. Calling `.codecs` is optional: skip it to take the defaults, or call it to pick specific codecs. `build` proves at compile time that every member of `A` is routed and returns the log; it captures no backend. `import log.given` brings the baked `Event.Definition`s into scope, so a caller writes `log.append(event)` with no visible codec or membership witness, even when the value is typed at the domain supertype `A` (as a decider's folded events are). Call its methods inside `Journal.run(backend)(...)` exactly as you would `Journal.append`, `Journal.read`, and `Journal.streamInfo`:
 
 ```scala
 val appended =
     for
         journalId <- JournalId("quest-party")
         name      <- Event.StreamName("quest")
-        log <- EventLog.setup[QuestEvent](journalId)
-            .codecs()
+        log <- EventLog.builder[QuestEvent](journalId)
             .define[QuestEvent.QuestStarted](Event.StreamSelector.by(name)(e => Chunk(e.quest)))
             .define[QuestEvent.MembersJoined](Event.StreamSelector.by(name)(e => Chunk(e.quest)))
             .build

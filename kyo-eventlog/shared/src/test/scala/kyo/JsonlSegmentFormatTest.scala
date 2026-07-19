@@ -374,10 +374,10 @@ class JsonlSegmentFormatTest extends kyo.test.Test[Any]:
         }
     }
 
-    // --- compile-shape: extends the renamed engine trait, matching BinarySegmentFormat's parity ---
+    // --- compile-shape: extends the SegmentFormat engine trait, matching BinarySegmentFormat's parity ---
 
     "type hierarchy" - {
-        "JsonlSegmentFormat is constructible and extends the renamed SegmentFormat trait" in {
+        "JsonlSegmentFormat is constructible and extends the SegmentFormat trait" in {
             val instance: SegmentFormat = codec
             assert(instance.segmentExtension == ".jsonl")
             val parityErrors = scala.compiletime.testing.typeCheckErrors(

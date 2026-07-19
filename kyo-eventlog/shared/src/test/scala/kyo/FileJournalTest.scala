@@ -354,8 +354,8 @@ class FileJournalTest extends kyo.test.Test[Any]:
         }
     }
 
-    "stale-symbol guards" - {
-        "SegmentFormat/Config/Assembly and the deleted EventPayloadCodec/EventMetadataCodec traits are absent" in {
+    "absent-symbol guards" - {
+        "SegmentFormat/Config/Assembly, EventPayloadCodec, and EventMetadataCodec are absent" in {
             val errors = scala.compiletime.testing.typeCheckErrors(
                 """
                 val a = kyo.FileJournal.SegmentFormat.Binary
@@ -432,7 +432,7 @@ class FileJournalTest extends kyo.test.Test[Any]:
             assert(componentsErrors.nonEmpty, "Configuration must not carry a components field")
         }
 
-        "FileJournal.Configuration has no P (compile-shape): the two-parameter form no longer resolves" in {
+        "FileJournal.Configuration has no P (compile-shape): the two-parameter form does not resolve" in {
             val twoParamErrors = scala.compiletime.testing.typeCheckErrors(
                 """
                 val c: kyo.FileJournal.Configuration[Int, kyo.FileJournal.Binary] = ???
@@ -447,7 +447,7 @@ class FileJournalTest extends kyo.test.Test[Any]:
             assert(oneParamErrors.isEmpty, s"expected the one-parameter Configuration form to type-check cleanly, got: $oneParamErrors")
         }
 
-        "renames complete: no SegmentCodec/BoundCodecs symbol remains in internal/" in {
+        "no SegmentCodec or BoundCodecs symbol is present in internal/" in {
             val absentErrors = scala.compiletime.testing.typeCheckErrors(
                 """
                 val a: kyo.internal.SegmentCodec = ???
@@ -497,7 +497,7 @@ class FileJournalTest extends kyo.test.Test[Any]:
     }
 
     "lifecycle-container surface" - {
-        "FileJournal.XmlContainer is absent and RollingFile is not a locked public surface" in {
+        "FileJournal.XmlContainer and FileJournal.RollingFile are absent" in {
             val errors = scala.compiletime.testing.typeCheckErrors(
                 """
                 val a: kyo.FileJournal.XmlContainer = ???

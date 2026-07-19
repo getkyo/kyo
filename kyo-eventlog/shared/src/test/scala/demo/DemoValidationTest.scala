@@ -42,7 +42,7 @@ class DemoValidationTest extends kyo.test.Test[Any]:
     private def rawText(): String    = docText("docs", "tutorials", "raw-journal.md")
     private def customText(): String = docText("docs", "tutorials", "custom-storage.md")
 
-    // A stale token that is one whole word not immediately preceded by '.' (so `Event.StreamId`
+    // A banned token that is one whole word not immediately preceded by '.' (so `Event.StreamId`
     // never trips the bare-`StreamId` ban) and not the prefix of a longer identifier (so
     // `FileJournal.Configuration` never trips the `FileJournal.Config` ban).
     private def bannedHits(text: String, token: String): List[String] =
@@ -81,7 +81,7 @@ class DemoValidationTest extends kyo.test.Test[Any]:
         assert(!fleetPrimary, "Fleet must never be labeled the primary teaching domain")
     }
 
-    "no stale surface, spelling drift, or URI path leakage in docs/examples".onlyJvm in {
+    "no banned surface symbol, spelling drift, or URI path leakage in docs/examples".onlyJvm in {
         val docs = List(
             "README.md"      -> readmeText(),
             "basic-eventlog" -> basicText(),
@@ -91,7 +91,7 @@ class DemoValidationTest extends kyo.test.Test[Any]:
         docs.foreach { case (name, text) =>
             bannedSymbols.foreach { symbol =>
                 val hits = bannedHits(text, symbol)
-                assert(hits.isEmpty, s"$name carries the removed symbol '$symbol': $hits")
+                assert(hits.isEmpty, s"$name carries the banned symbol '$symbol': $hits")
             }
             assert(!text.contains("Pippin"), s"$name uses the banned Pippin spelling (source parity is Pippen)")
             assert(!text.contains("file://"), s"$name leaks a physical file:// URI")

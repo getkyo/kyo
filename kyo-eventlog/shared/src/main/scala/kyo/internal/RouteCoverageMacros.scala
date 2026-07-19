@@ -10,10 +10,12 @@ import scala.quoted.*
   * intersection is a subtype of `Mi`, an intersection being a subtype of exactly its
   * components, so a routed leaf satisfies `Covered <:< Mi`; a compile error names the first
   * unrouted leaf) and the runtime dispatch matcher (`value.isInstanceOf[Mi]` selects the leaf
-  * and yields its `Schema[Mi].structure.name`, the exact key [[kyo.EventLog.Setup.define]]
-  * stores that member under; `isInstanceOf` is total and cross-platform). Kept in a SEPARATE
-  * file from [[kyo.EventLog]]: a Scala 3 macro cannot be called from the same source file that
-  * defines it, mirroring [[kyo.internal.EventInterpolatorMacros]].
+  * and yields its `Schema[Mi].structure.name`, the exact key [[kyo.EventLog.Builder.define]]
+  * stores that member under; `isInstanceOf` is cross-platform, and routing by structure name
+  * requires distinct member structure names, so two leaves that erase to one structure name are
+  * not disambiguated here and are caught at `build` from `Event.Routes.duplicates`). Kept in a
+  * SEPARATE file from [[kyo.EventLog]]: a Scala 3 macro cannot be called from the same source file
+  * that defines it, mirroring [[kyo.internal.EventInterpolatorMacros]].
   */
 private[kyo] object RouteCoverageMacros:
 
@@ -31,7 +33,7 @@ private[kyo] object RouteCoverageMacros:
         val unrouted = leafReprs.filterNot(leaf => coveredRepr <:< leaf)
         if unrouted.nonEmpty then
             report.errorAndAbort(
-                s"EventLog.setup is missing a .define for union member ${unrouted.head.show}; every member of the domain type must be routed before build"
+                s"EventLog.builder is missing a .define for union member ${unrouted.head.show}; every member of the domain type must be routed before build"
             )
         end if
 

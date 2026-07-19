@@ -137,8 +137,8 @@ class JournalReaderTest extends kyo.test.Test[Any]:
             }
         end tornTailCase
 
-        // Reader.fileAsync is not part of the locked surface (design/02-public-api.yaml locks only
-        // Journal.Reader.file); no async-reader torn-tail cases exist on the public surface.
+        // The public reader surface is Journal.Reader.file (sync); there is no async reader, so
+        // only sync torn-tail cases exist.
         tornTailCase("sync binary reader", binaryConfiguration, binarySegmentPath, _ => e0End)
         tornTailCase("sync jsonl reader", jsonlConfiguration, jsonlSegmentPath, _.length - 1)
     }
@@ -163,8 +163,8 @@ class JournalReaderTest extends kyo.test.Test[Any]:
             }
         end corruptCase
 
-        // Reader.fileAsync is not part of the locked surface; no async-reader corruption cases
-        // exist on the public surface.
+        // The public reader surface is Journal.Reader.file (sync); there is no async reader, so
+        // only sync corruption cases exist.
         corruptCase("sync binary reader", binaryConfiguration, binarySegmentPath)
         corruptCase("sync jsonl reader", jsonlConfiguration, jsonlSegmentPath)
     }

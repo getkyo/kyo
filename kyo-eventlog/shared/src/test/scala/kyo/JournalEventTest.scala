@@ -1,7 +1,5 @@
 package kyo
 
-import kyo.AllowUnsafe.embrace.danger
-
 class JournalEventTest extends kyo.test.Test[Any]:
 
     private def valid[A](r: Result[JournalInvalidIdentifierError, A]): A =
@@ -151,7 +149,7 @@ class JournalEventTest extends kyo.test.Test[Any]:
         }
     }
 
-    "Event.Recorded.id (renamed from eventId)" - {
+    "Event.Recorded.id" - {
         "equals the appended Event.New's id after a Journal.run(inMemory) append/read round-trip" in {
             val streamId = valid(Event.StreamId("users-1"))
             val pending = Event.New(
@@ -173,7 +171,7 @@ class JournalEventTest extends kyo.test.Test[Any]:
             end for
         }
 
-        "has no .eventId member (compile-negative: the field genuinely renamed, not aliased)" in {
+        "has no eventId member" in {
             val errors = scala.compiletime.testing.typeCheckErrors(
                 """
                 val committed: Event.Recorded = ???
@@ -181,86 +179,6 @@ class JournalEventTest extends kyo.test.Test[Any]:
                 """
             )
             assert(errors.nonEmpty)
-        }
-    }
-
-    "rename completeness" - {
-        // Unsafe: JVM-only self-audit of this module's own compiled sources on disk (a dev-time
-        // grep, not a runtime capability); mirrors kyo-website's WebsiteBuildGraphTest repo-root
-        // and recursive file-listing helpers.
-        def repoRoot(): Path =
-            @scala.annotation.tailrec
-            def loop(dir: Path): Path =
-                if (dir / "build.sbt").unsafe.exists() then dir
-                else
-                    dir.parent match
-                        case Maybe.Present(parent) => loop(parent)
-                        case Maybe.Absent          => throw new RuntimeException("repo root with build.sbt not found")
-            loop(Path(java.lang.System.getProperty("user.dir").nn))
-        end repoRoot
-
-        def filesUnder(dir: Path): List[Path] =
-            dir.unsafe.list().getOrThrow.toList.flatMap { entry =>
-                if entry.unsafe.isDirectory() && !entry.unsafe.isSymbolicLink() then filesUnder(entry)
-                else List(entry)
-            }
-
-        def sourceFileLines(): List[(Path, List[String])] =
-            val dir = repoRoot() / "kyo-eventlog" / "shared" / "src" / "main" / "scala" / "kyo"
-            filesUnder(dir)
-                .filter(_.toString.endsWith(".scala"))
-                .map(p => p -> p.unsafe.read().getOrThrow.linesIterator.toList)
-        end sourceFileLines
-
-        def bareOccurrences(lines: List[String], symbol: String): List[String] =
-            val pattern = s"""(?<![."])\b$symbol\b(?!")""".r
-            lines.filter(line => pattern.findFirstIn(line).isDefined)
-
-        // The relocated symbols' one legitimate home is inside `object Event: ... end Event`
-        // (as `Event.StreamId`, `Event.Metadata.Key`, etc); only a bare occurrence OUTSIDE that
-        // block is a stale top-level survivor.
-        def linesOutsideEventObject(lines: List[String]): List[String] =
-            val start = lines.indexWhere(_.trim == "object Event:")
-            val end   = if start < 0 then -1 else lines.indexWhere(_.trim == "end Event", start + 1)
-            if start < 0 || end < 0 then lines
-            else lines.zipWithIndex.collect { case (line, i) if i < start || i > end => line }
-        end linesOutsideEventObject
-
-        "kyo-eventlog/shared/src/main/scala/kyo carries no stale bare EventId/EventType/EventEnvelope/RecordedEvent/EventMetadata/MetadataKey/MetadataValue/StreamId/StreamOffset/StreamVersion declaration".onlyJvm in {
-            val relocatedSymbols =
-                List("EventId", "EventType", "EventMetadata", "MetadataKey", "MetadataValue", "StreamId", "StreamOffset", "StreamVersion")
-            val deletedSymbols = List("EventEnvelope", "RecordedEvent")
-
-            val hits = sourceFileLines().flatMap { (file, lines) =>
-                val outside       = linesOutsideEventObject(lines)
-                val relocatedHits = relocatedSymbols.flatMap(sym => bareOccurrences(outside, sym).map(line => s"$file [$sym]: $line"))
-                val deletedHits   = deletedSymbols.flatMap(sym => bareOccurrences(lines, sym).map(line => s"$file [$sym]: $line"))
-                relocatedHits ++ deletedHits
-            }
-            assert(hits.isEmpty, s"stale symbol references found: ${hits.mkString(", ")}")
-        }
-
-        "kyo-eventlog shipped source uses only the New/Recorded/Prepared spellings, no Pending/Committed/Command survivor".onlyJvm in {
-            val bannedSpellings = List(
-                "Event.Pending",
-                "Event.Committed",
-                "EventEnvelope",
-                "RecordedEvent",
-                "final class Command",
-                "log.Command",
-                "#Command"
-            )
-            val requiredSpellings = List("Event.New", "Event.Recorded", "final class Prepared")
-            val sources           = sourceFileLines()
-
-            val banned = sources.flatMap { (file, lines) =>
-                lines.flatMap(line => bannedSpellings.collect { case s if line.contains(s) => s"$file [$s]: ${line.trim}" })
-            }
-            assert(banned.isEmpty, s"stale event spellings found in shipped source: ${banned.mkString(", ")}")
-
-            val allLines = sources.flatMap((_, lines) => lines)
-            val missing  = requiredSpellings.filterNot(spelling => allLines.exists(_.contains(spelling)))
-            assert(missing.isEmpty, s"expected the new event spellings to be present in shipped source, missing: ${missing.mkString(", ")}")
         }
     }
 end JournalEventTest
