@@ -135,15 +135,20 @@ final private[net] class IoUringDriver private[posix] (
     // closeHandle), which is what made the unconditional teardown-close break TLS round-trips.
     private val pendingCloses = new ConcurrentHashMap[Long, PosixHandle]()
 
-    // Handles whose pending raw tail could not flush because the SUBMISSION queue was full (flushRaw's get_sqe returned Absent), so the remainder
+    // Handles whose pending SEND tail could not flush because the SUBMISSION queue was full (the flush's get_sqe returned Absent), so the remainder
     // is buffered with no send in flight. SQ-full has no per-handle send CQE to re-drive the flush, so the reap loop re-flushes these (on the
     // engine FIFO worker) after each CQE batch, which freed at least one SQ slot. Backpressures rather than busy-spinning: at most one re-flush per
     // drained batch per handle, and a re-flush that hits SQ-full again re-adds the handle. A set so a handle re-flushed once is not queued twice.
-    private val stalledRaw = ConcurrentHashMap.newKeySet[PosixHandle]()
+    //
+    // Covers BOTH send tails, the raw one ([[flushRaw]]) and the TLS one ([[flushTls]]). A TLS flush that cannot submit strands its ciphertext
+    // exactly as a raw one does: the tail holds bytes, `sendInFlight` stays clear, and nothing else ever re-drives it, so the peer waits forever
+    // for a record that was encrypted but never sent. Only a later write on the same handle would flush it, which a request/response protocol
+    // never issues. Registering both tails here is what makes the reap turn's re-flush the single owner of that recovery.
+    private val stalledSends = ConcurrentHashMap.newKeySet[PosixHandle]()
 
     // Promise-bearing arms (recv, accept, connect) that could not submit because the SUBMISSION queue was full (their get_sqe returned Absent): no
     // SQE is in flight, so no CQE will re-drive them. The reap loop re-arms these after each CQE batch frees an SQ slot (reArmStalledSubmits in
-    // drainReady), mirroring stalledRaw for sends: a transient SQ-full BACKPRESSURES the operation (its promise stays pending) instead of failing
+    // drainReady), mirroring stalledSends for sends: a transient SQ-full BACKPRESSURES the operation (its promise stays pending) instead of failing
     // it. A failed accept would wedge the accept loop (its onComplete reads Failure as "listener closed" and stops re-arming), and a failed connect
     // would drop a connection that would otherwise succeed; parking removes both. Each entry is the PendingOp (Read/Accept/Connect) carrying the
     // fields to re-submit; it is NOT registered (no key) while parked here, and a parked Accept keeps its addr/len buffers alive for the re-submit.
@@ -326,7 +331,7 @@ final private[net] class IoUringDriver private[posix] (
                     end if
                 case Absent =>
                     // SUBMISSION queue full: no recv SQE is in flight, so no CQE will re-drive this read. Park it (the promise stays pending) and
-                    // re-arm after the next CQE batch frees a slot (reArmStalledSubmits), mirroring stalledRaw for sends so a transient SQ-full
+                    // re-arm after the next CQE batch frees a slot (reArmStalledSubmits), mirroring stalledSends for sends so a transient SQ-full
                     // backpressures the read instead of failing the connection. unregister first: the key is re-assigned on re-submit. recvInFlight
                     // stays false: nothing kernel-owned touches the buffer yet, so the later re-arm (reArmStalledSubmits, calling submitRecv
                     // directly) must not itself trip the exclusive-use guard above.
@@ -595,7 +600,7 @@ final private[net] class IoUringDriver private[posix] (
                                 then
                                     unregister(key)
                                     sendBuf.close()
-                                    discard(stalledRaw.add(handle))
+                                    discard(stalledSends.add(handle))
                                 else
                                     uring.kyo_uring_sqe_set_data64(sqe, key)
                                     // Exactly one raw send SQE is now outstanding for this handle; cleared when its CQE reaps (onRawSendComplete).
@@ -607,7 +612,7 @@ final private[net] class IoUringDriver private[posix] (
                                 // pump never busy-spins and no byte is dropped.
                                 unregister(key)
                                 sendBuf.close()
-                                discard(stalledRaw.add(handle))
+                                discard(stalledSends.add(handle))
                         end match
                     end if
             end match
@@ -726,7 +731,8 @@ final private[net] class IoUringDriver private[posix] (
                                 // C cast and becomes an out-of-bounds kernel read. The unsentLen > 0 guard above already keeps a negative length out of
                                 // this branch today, so the shim return is 0 here; the check is the defensive boundary for a future signedness bug. On a
                                 // non-zero return the SQE was NOT prepared, so leave sendInFlight clear (the same not-submitted handling as SQ-full): the
-                                // mirror stays allocated and the remainder stays pending for the next flush, no silent SQE drop, no byte loss.
+                                // mirror stays allocated, the remainder stays pending, and the handle is parked for the reap turn's re-flush, no
+                                // silent SQE drop, no byte loss.
                                 if uring.kyo_uring_prep_send(
                                         sqe,
                                         handle.writeFd,
@@ -736,6 +742,7 @@ final private[net] class IoUringDriver private[posix] (
                                     ) != 0
                                 then
                                     unregister(key)
+                                    discard(stalledSends.add(handle))
                                 else
                                     uring.kyo_uring_sqe_set_data64(sqe, key)
                                     // Exactly one TlsWrite SQE is now outstanding for this handle; cleared when its CQE reaps (onTlsSendComplete).
@@ -743,8 +750,12 @@ final private[net] class IoUringDriver private[posix] (
                                     submitBatched()
                             case Absent =>
                                 // SQ full: nothing was submitted; the mirror was never handed to the kernel and can be left allocated for
-                                // the next flush. Leave sendInFlight clear so the next flush (from the next write or re-flush) can retry.
+                                // the next flush. Leave sendInFlight clear so the re-flush below can retry, and park the handle in
+                                // stalledSends so that re-flush actually happens. Without the park the ciphertext sits in the tail with no
+                                // send in flight and no CQE to re-drive it: only a LATER write on this handle would flush it, so a peer
+                                // waiting on a request/response exchange (which writes once and then reads) hangs until its deadline.
                                 unregister(key)
+                                discard(stalledSends.add(handle))
                         end match
                     end if
             end match
@@ -1075,7 +1086,7 @@ final private[net] class IoUringDriver private[posix] (
     private def closeNow(handle: PosixHandle)(using AllowUnsafe, Frame): Unit =
         // PosixHandle.close (freeResources) clears the raw pending tail; the close-after-drain handshake already ensured no raw send is in flight.
         // Drop the handle from the SQ-full re-flush set so a closed handle is never re-flushed.
-        discard(stalledRaw.remove(handle))
+        discard(stalledSends.remove(handle))
         // Drop any recv/accept/connect this handle parked on a full SQ: a parked op left in stalledSubmits is re-armed by the next
         // reArmStalledSubmits turn, which would submit an SQE on this now-closed fd (EBADF, or worse a recv on the fd's recycled successor). Fail
         // each parked op's promise Closed and release its pinned buffers before the fd close. closeNow runs on the reap carrier, the sole producer
@@ -1250,7 +1261,7 @@ final private[net] class IoUringDriver private[posix] (
             closeOrphanedAcceptCqes()
             pending.clear()
             inFlight.clear()
-            stalledRaw.clear()
+            stalledSends.clear()
             // Fail any recv/accept/connect that parked on a full SQ and was never re-armed: the reap carrier has exited (a tryTeardown precondition),
             // so no batch will re-arm it and its promise would otherwise hang. Release each parked op's pinned buffers too (a parked Accept still
             // holds its addr/len placeholders). The deque is quiescent here (its only producers, the submit helpers and reArmStalledSubmits, run on
@@ -1345,7 +1356,7 @@ final private[net] class IoUringDriver private[posix] (
                 closeAfterDrain.forEach((k, _) => discard(cad.append(k).append(' ')))
                 s"closed=${closedFlag.get()} reapExited=${reapExited.get()} ringExited=${ringExited.get()} reapCycles=$diagReapCycles " +
                     s"pending(${pending.size})=[$pend] inFlight=[$infl] closeAfterDrain(${closeAfterDrain.size})=[$cad] " +
-                    s"pendingCloses=${pendingCloses.size} stalledRaw=${stalledRaw.size}"
+                    s"pendingCloses=${pendingCloses.size} stalledSends=${stalledSends.size}"
             ,
             probe = () =>
                 kyo.internal.Diagnostics.Probe(
@@ -1508,7 +1519,7 @@ final private[net] class IoUringDriver private[posix] (
                 // Park INDEFINITELY only when all three conditions hold: the wake multishot is armed, no op is stalled on a full SQ (a stalled
                 // op has no pending CQE to re-drive it, so it needs a bounded turn to reach reArmStalled), and IORING_FEAT_NODROP is confirmed
                 // (the kernel never drops the wake CQE). Bounded otherwise, so a missing wake can never hang the chain.
-                val hasStalled = !stalledRaw.isEmpty || !stalledSubmits.isEmpty
+                val hasStalled = !stalledSends.isEmpty || !stalledSubmits.isEmpty
                 val timeout    = if wakePollArmed && !hasStalled && nodropAvailable then Long.MaxValue else ReapTimeoutNs
                 // Hand off everything this carrier is holding BEFORE parking in the wait below. The park pins this worker for the whole
                 // duration of the wait, and a task sitting in its local queue cannot run while it is pinned: nothing else frees a parked
@@ -1664,7 +1675,7 @@ final private[net] class IoUringDriver private[posix] (
         end while
     end closeOrphanedAcceptCqes
 
-    /** Re-arm every operation that parked on a full submission queue: raw sends in [[stalledRaw]] and recv/accept/connect in [[stalledSubmits]].
+    /** Re-arm every operation that parked on a full submission queue: sends in [[stalledSends]] and recv/accept/connect in [[stalledSubmits]].
       * Called once per reap turn from [[runCycle]] AFTER the fused submit-and-wait has submitted the turn's accumulated SQEs to the kernel and
       * freed the SQ ring slots, so a parked op sees space and re-arms. Runs on EVERY turn (whether a CQE arrived OR the wait timed out with none):
       * SQ space is freed by SUBMIT, not by reaping CQEs, so a parked op on an otherwise-idle ring (its only in-flight op stalled, no unrelated
@@ -1672,24 +1683,33 @@ final private[net] class IoUringDriver private[posix] (
       * busy-spinning (a re-arm that hits SQ-full again re-parks for the next turn).
       */
     private def reArmStalled()(using AllowUnsafe, Frame): Unit =
-        reflushStalledRaw()
+        reflushStalledSends()
         reArmStalledSubmits()
     end reArmStalled
 
-    /** Re-flush every handle whose raw tail stalled on a full submission queue (drained from [[stalledRaw]]). Called once per reap turn via
+    /** Re-flush every handle whose send tail stalled on a full submission queue (drained from [[stalledSends]]). Called once per reap turn via
       * [[reArmStalled]] after submit frees SQ slots. Each re-flush runs on the engine FIFO worker (the tail's single owner), so it never races a
-      * concurrent append/flush; if the SQ is still full the re-flush re-adds the handle. Bounded by SQ-slot availability, never a spin. A handle
-      * with no pending tail (already drained or closed) is a harmless no-op inside flushRaw.
+      * concurrent append/flush; if the SQ is still full the re-flush re-adds the handle. Bounded by SQ-slot availability, never a spin.
+      *
+      * BOTH tails are re-flushed, because a handle can stall on either and the set does not record which. Each flush is a no-op when its own tail
+      * is empty, already fully sent, or the handle is closed, so driving both is idempotent rather than wasteful. The order is load-bearing and
+      * matches the cross-tail wire-order rule: `flushRaw` first, and `flushTls` then defers itself whenever the raw tail still has bytes in flight
+      * or queued (`onRawSendComplete` re-flushes the TLS tail once the raw one drains), so a STARTTLS handle can never put two send SQEs on one fd
+      * and reorder the wire bytes.
       */
-    private def reflushStalledRaw()(using AllowUnsafe, Frame): Unit =
-        val it = stalledRaw.iterator()
+    private def reflushStalledSends()(using AllowUnsafe, Frame): Unit =
+        val it = stalledSends.iterator()
         while it.hasNext do
             val handle = it.next()
             it.remove()
-            // Re-flush on the FIFO worker (single owner of the tail); flushRaw is a no-op if nothing is pending or a send is already in flight.
-            submitEngineOp(() => flushRaw(handle))
+            // Re-flush on the FIFO worker (single owner of both tails); each flush is a no-op if its tail has nothing pending or a send is
+            // already in flight. flushRaw first, so flushTls sees a non-empty raw tail and defers to preserve the cross-tail wire order.
+            submitEngineOp { () =>
+                flushRaw(handle)
+                flushTls(handle)
+            }
         end while
-    end reflushStalledRaw
+    end reflushStalledSends
 
     /** Re-arm every recv/accept/connect that parked on a full submission queue ([[stalledSubmits]]). Called once per reap turn via [[reArmStalled]]
       * after submit frees SQ slots. Runs on the reap carrier, so it calls the submit helpers directly. The current batch is snapshotted and the queue
@@ -1708,7 +1728,7 @@ final private[net] class IoUringDriver private[posix] (
                     case PendingOp.Accept(promise, h, noAddr, noLen) => submitAccept(promise, h, noAddr, noLen)
                     case PendingOp.Connect(promise, h)               => submitConnect(promise, h)
                     case PendingOp.Write(_, _, _, _) | PendingOp.TlsWrite(_, _, _) =>
-                        () // sends park in stalledRaw / the in-flight send tail, never here
+                        () // sends park in stalledSends / the in-flight send tail, never here
                 end match
             end while
     end reArmStalledSubmits
