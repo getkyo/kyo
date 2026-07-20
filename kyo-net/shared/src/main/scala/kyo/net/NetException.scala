@@ -111,9 +111,11 @@ sealed abstract class NetTlsException(message: String, cause: String | Throwable
 final case class NetTlsHandshakeException(host: String, port: Int, cause: String | Throwable = "")(using Frame)
     extends NetTlsException(s"TLS handshake with $host:$port failed${NetException.suffix(cause)}", cause)
 
-/** The TLS handshake with `host:port` did not complete within `timeout`, so the connection was reaped and its fd and engine released. Applies
-  * to all three handshake roles: a client `connectTls`, a connection accepted by a `listenTls`, and a STARTTLS `upgradeToTls`. For an upgrade
-  * or an accepted connection there is no fresh connect port, so `port` is `-1`.
+/** The TLS handshake with `host:port` did not complete within `timeout`, so the connection was reaped and its fd and engine released.
+  *
+  * Reaches a caller from the two roles that have one waiting: a client `connectTls`, carrying the host and port it connected to, and a STARTTLS
+  * `upgradeToTls`, where `port` is `-1` because an upgrade has no fresh connect port. A connection accepted by a `listenTls` has no caller
+  * promise to fail, since it was never handed out, so its deadline reaps the fd and engine and logs the reap rather than surfacing this.
   */
 final case class NetTlsHandshakeTimeoutException(host: String, port: Int, timeout: Duration)(using Frame)
     extends NetTlsException(s"TLS handshake with $host:$port timed out after $timeout")

@@ -71,7 +71,7 @@ class IoUringUpgradeHandoffDropTest extends Test:
                     )
                     val handle = PosixHandle.socket(accepted, PosixHandle.DefaultReadBufferSize, Absent)
                     Sync.ensure(Sync.defer { discard(sock.close(client)); driver.closeHandle(handle) }) {
-                        val conn = transport.openWith(handle, driver, kyo.net.NetConfig.DefaultChannelCapacity)
+                        val conn = transport.openWith(handle, driver, channelCapacity = 1)
                         conn.start()
 
                         val chunkA = Array[Byte](1, 2, 3, 4, 5)

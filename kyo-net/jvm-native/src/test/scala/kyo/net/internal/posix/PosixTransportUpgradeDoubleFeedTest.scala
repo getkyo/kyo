@@ -103,7 +103,7 @@ class PosixTransportUpgradeDoubleFeedTest extends Test:
                 // The peer end is a raw socket never owned by the transport (no InternalConnection wraps it): closed unconditionally here.
                 Sync.ensure(Sync.defer(discard(sock.close(peerFd)))) {
                     val handle    = PosixHandle.socket(clientFd, PosixHandle.DefaultReadBufferSize, Absent)
-                    val plaintext = transport.openWith(handle, driver, kyo.net.NetConfig.DefaultChannelCapacity)
+                    val plaintext = transport.openWith(handle, driver, channelCapacity = 1)
                     plaintext.start()
                     assert(sock.sendNow(peerFd, Buffer.fromArray[Byte](signal), signal.length.toLong, 0).value == signal.length.toLong)
                     awaitCondition(5.seconds)(plaintext.inbound.size().getOrElse(-1) == 1).map { landed =>
@@ -160,7 +160,7 @@ class PosixTransportUpgradeDoubleFeedTest extends Test:
                 PosixTestSockets.loopbackPair().map { case (clientFd, peerFd) =>
                     Sync.ensure(Sync.defer(discard(sockets.close(peerFd)))) {
                         val handle    = PosixHandle.socket(clientFd, PosixHandle.DefaultReadBufferSize, Absent)
-                        val plaintext = transport.openWith(handle, driver, kyo.net.NetConfig.DefaultChannelCapacity)
+                        val plaintext = transport.openWith(handle, driver, channelCapacity = 1)
                         plaintext.start()
                         assert(sockets.sendNow(
                             peerFd,

@@ -82,8 +82,8 @@ final private[net] class IoUringDriver private[posix] (
     reapExited: AtomicBoolean.Unsafe,
     keyGen: AtomicLong.Unsafe, // dense user_data keys (NOT fds: SQEs self-identify)
     pendingSubmits: AtomicLong.Unsafe,
-    // The cqe pointer scratch is owned solely by the reap carrier (reapLoop and drainReady both run on it), allocated once for the driver
-    // lifetime. Both methods are called sequentially on the same carrier: reapLoop calls drainReady inline after the wait, then loops; the two
+    // The cqe pointer scratch is owned solely by the reap carrier (runCycle and drainReady both run on it), allocated once for the driver
+    // lifetime. Both methods are called sequentially on the same carrier: runCycle calls drainReady inline after the wait, then re-arms; the two
     // sites never overlap.
     cqePtr: Buffer[Long],
     // Reap-loop wakeup (mirrors the poller's eventfd wake). The reap carrier is the SINGLE producer of SQEs, so a cross-carrier submission
@@ -105,7 +105,7 @@ final private[net] class IoUringDriver private[posix] (
     nodropAvailable: Boolean
 ) extends IoDriver[PosixHandle], TlsEngineIo:
 
-    // Whether the wake multishot POLL_ADD is currently armed on the ring. Reap-carrier-only (armWake runs in reapLoop and completeMultishot, both
+    // Whether the wake multishot POLL_ADD is currently armed on the ring. Reap-carrier-only (armWake runs in runCycle and completeMultishot, both
     // on the reap carrier), so a plain var is single-owner. The reap wait parks indefinitely only when this is true, NODROP is confirmed, and no
     // ops are stalled; a re-arm has not yet succeeded (SQ-full) leaves it false, and the loop uses the bounded park until the arm lands.
     private var wakePollArmed = false
@@ -117,7 +117,7 @@ final private[net] class IoUringDriver private[posix] (
     private val pending = new ConcurrentHashMap[Long, PendingOp]()
 
     // Cross-carrier submission handoff: every SQ operation (get_sqe + prep + submit) and every TLS engine op for every connection on this driver
-    // runs on the single reap carrier, which drains this queue at the top of each reap cycle (see [[submitEngineOp]] / [[reapLoop]]). One producer
+    // runs on the single reap carrier, which drains this queue at the top of each reap cycle (see [[submitEngineOp]] / [[runCycle]]). One producer
     // for the io_uring submission ring; no two engine ops overlap on the same engine because one carrier runs them in FIFO order.
     private val engineQueue = new ConcurrentLinkedQueue[() => Unit]()
 
@@ -1468,13 +1468,6 @@ final private[net] class IoUringDriver private[posix] (
     // IORING_CQE_F_MORE = (1U << 1) = 2. When set on a CQE, the submission is still live and will fire more CQEs (multishot lifecycle).
     private val CqeFMore = 2
 
-    /** Run the reap loop on the current carrier. Submits accumulated SQEs and parks indefinitely when the wake is armed (the common case), or
-      * for up to ReapTimeoutNs during the re-arm window, via the fused submit-and-wait enter, then drains every ready CQE and completes the
-      * keyed promises. On JVM/Native the wait fiber is already done() on return; the while loop continues inline without stack growth. On JS
-      * the wait fiber is genuinely pending: the while loop exits, an onComplete callback re-enters via a fresh `Fiber.Unsafe.init`. The
-      * `cqePtr` buffer is the driver field allocated once at construction; it is safe because reapLoop and drainReady run sequentially on
-      * the same carrier (drainReady is called inline before the next wait).
-      */
     /** The ONE task this driver reuses for every reap turn, built in `start()` so it captures `AllowUnsafe` and `Frame`, which `Task.run` does
       * not supply, and so no task or closure is allocated per turn.
       */
@@ -1492,9 +1485,10 @@ final private[net] class IoUringDriver private[posix] (
 
     /** One reap turn: arm the wake, drain cross-carrier engine ops, flush the SQ, then park for a CQE.
       *
-      * The order is load-bearing and unchanged from the loop this replaces. `drainEngineOps` (inside `flushSubmits`' prepare path) is the sole
-      * producer of submission-queue entries and `get_sqe` is not thread-safe, so it must run where exactly one activation is live; flushing puts
-      * every prepared SQE on the kernel BEFORE the park, so the park is never entered with an unsubmitted op outstanding.
+      * The order is load-bearing and unchanged from the loop this replaces. `drainEngineOps` runs as its own step before `flushSubmits`, which
+      * only submits: the drain is the sole producer of submission-queue entries, and `get_sqe` is not thread-safe, so it must run where exactly
+      * one activation is live. Flushing then puts every prepared SQE on the kernel BEFORE the park, so the park is never entered with an
+      * unsubmitted op outstanding.
       */
     private def runCycle(task: Task, donePromise: Promise.Unsafe[Unit, Any])(using AllowUnsafe, Frame): Task.Result =
         try
@@ -1626,7 +1620,7 @@ final private[net] class IoUringDriver private[posix] (
 
     /** Drain the CQE ring starting from `firstCqe`, completing each keyed promise in turn. Peeks additional CQEs via
       * `kyo_uring_peek_cqe` until the queue is empty. Uses the driver-field `cqePtr` (allocated once at construction,
-      * safe because drainReady is called only from reapLoop, which owns the reap carrier exclusively).
+      * safe because drainReady is called only from runCycle, which owns the reap carrier for the turn).
       */
     private def drainReady(firstCqe: Long)(using AllowUnsafe, Frame): Unit =
         var cqe = firstCqe
@@ -1666,7 +1660,7 @@ final private[net] class IoUringDriver private[posix] (
     end closeOrphanedAcceptCqes
 
     /** Re-arm every operation that parked on a full submission queue: raw sends in [[stalledRaw]] and recv/accept/connect in [[stalledSubmits]].
-      * Called once per reap turn from [[reapLoop]] AFTER the fused submit-and-wait has submitted the turn's accumulated SQEs to the kernel and
+      * Called once per reap turn from [[runCycle]] AFTER the fused submit-and-wait has submitted the turn's accumulated SQEs to the kernel and
       * freed the SQ ring slots, so a parked op sees space and re-arms. Runs on EVERY turn (whether a CQE arrived OR the wait timed out with none):
       * SQ space is freed by SUBMIT, not by reaping CQEs, so a parked op on an otherwise-idle ring (its only in-flight op stalled, no unrelated
       * traffic) must not wait for some other connection's CQE to be un-stranded. One attempt per turn, so SQ-full backpressures rather than
@@ -2219,7 +2213,7 @@ final private[net] class IoUringDriver private[posix] (
       * reap carrier so the submission ring has exactly one producer: `io_uring_get_sqe` mutates the SQ tail and is not thread-safe, and
       * `io_uring_wait_cqes` (the reap wait) itself submits, so any SQE prepared off the reap carrier would race the wait's flush and be lost
       * (a dropped op whose CQE never arrives, a 15s hang) or corrupt a coalesced handshake record (`bad_record_mac`). So read/write/connect/accept
-      * arming and the TLS engine ops all enqueue here; [[reapLoop]] drains the queue at the top of each cycle, before it flushes and waits. The
+      * arming and the TLS engine ops all enqueue here; [[runCycle]] drains the queue at the top of each cycle, before it flushes and waits. The
       * queue is the only cross-carrier handoff; running the op is single-owner. An op enqueued while the reap carrier is parked indefinitely
       * is returned promptly by `wakeReapLoop()`, which writes the wake eventfd and returns the indefinite park at once rather than waiting
       * for an unrelated CQE.
@@ -2241,7 +2235,7 @@ final private[net] class IoUringDriver private[posix] (
     end submitEngineOp
 
     /** Drain every queued engine/submission op in order on the CURRENT (reap) carrier, running each to completion before the next, then return.
-      * Called inline from [[reapLoop]] each cycle (and once more at reap-loop exit so a close fails every still-queued op's promise via the
+      * Called inline from [[runCycle]] each cycle (and once more at the terminal exit so a close fails every still-queued op's promise via the
       * closedFlag rejection in `awaitRead`/`submitRecv`). A throwing op must not abort the drain: that would strand every later op (a
       * multi-connection silent hang, Netty #7337 class). Each engine op already has an inner catch for expected typed failures (see the
       * dispatchReadTls feed op); this outer catch is a backstop for any unexpected throw that escapes the inner boundary.

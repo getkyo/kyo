@@ -23,8 +23,9 @@ import kyo.*
   *   - `soRcvBuf`: when `Present(n)`, sets `SO_RCVBUF` to `n` bytes on the connect socket, the listen socket, and each accepted socket.
   *     `Absent` (the default) leaves the kernel's default unchanged. Node exposes no socket-buffer API, so on JS a `Present` value fails the
   *     operation with [[NetSocketOptionUnsupportedException]] rather than being silently ignored.
-  *   - `soSndBuf`: same as `soRcvBuf` for `SO_SNDBUF` (the send buffer). A listening socket has no send buffer, so this applies to connect and
-  *     accepted sockets only.
+  *   - `soSndBuf`: same as `soRcvBuf` for `SO_SNDBUF` (the send buffer). It shapes the sockets that actually send, the connect socket and each
+  *     accepted socket. The posix backends also set it on the listen socket before `bind`, because an accepted socket inherits its buffer sizes
+  *     from the listener it came from; NIO instead skips it there, a `ServerSocketChannel` rejecting the option outright.
   */
 case class NetConfig(
     channelCapacity: Int = NetConfig.DefaultChannelCapacity,

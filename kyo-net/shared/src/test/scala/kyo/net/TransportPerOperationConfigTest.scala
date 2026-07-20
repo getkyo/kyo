@@ -75,7 +75,17 @@ class TransportPerOperationConfigTest extends Test:
             Abort.run[NetException | Closed | Timeout](
                 Async.timeout(10.seconds)(transport.connect(blackHoleHost, blackHolePort, tight).safe.get)
             ).map { tightOutcome =>
-                generousFiber.interrupt.map { _ =>
+                // The generous connect must STILL BE PARKED at this moment. Without this check the leaf proves only that the tight connect
+                // timed out, which a single shared deadline would also produce: the assertions below would pass unchanged if both connects
+                // were racing one 200ms timer. Poll before interrupting, since interrupting settles it.
+                generousFiber.poll.map { generousStillPending =>
+                    assert(
+                        generousStillPending.isEmpty,
+                        s"the connect that asked for $generous must still be parked when the $tight one has already fired; " +
+                            s"it settled as $generousStillPending, which is what a shared or construction-captured deadline looks like"
+                    )
+                    generousFiber.interrupt
+                }.map { _ =>
                     tightOutcome match
                         case Result.Failure(e: NetConnectTimeoutException) =>
                             assert(

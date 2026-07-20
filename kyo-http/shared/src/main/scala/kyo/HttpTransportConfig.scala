@@ -1,6 +1,6 @@
 package kyo
 
-/** Low-level transport tuning for the NIO pump-and-parser pipeline used by both client and server.
+/** Low-level transport tuning for the byte transport underlying both client and server.
   *
   * All parameters have production-ready defaults. Override only when profiling reveals a bottleneck or when deploying on hardware with
   * unusual memory or CPU characteristics.

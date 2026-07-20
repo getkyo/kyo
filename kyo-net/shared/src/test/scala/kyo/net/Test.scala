@@ -121,9 +121,10 @@ abstract class Test extends kyo.test.Test[Any]:
     )(skipCell: (String, String) => Maybe[String])(using Frame): Unit =
         tlsLeaves(NetConfig.default)(skipCell)(scenario)
 
-    /** As [[eachBackendTls]], but builds each cell's transport with `config` instead of `NetConfig.default`, so a config-driven behavior
-      * (e.g. a finite `handshakeTimeout`) is asserted across the same backend x TLS-impl matrix. The cell's provider pin and lifecycle handling
-      * are identical to the no-config form.
+    /** As [[eachBackendTls]], but passes `config` to each cell's operations instead of `NetConfig.default`, so a config-driven behavior
+      * (e.g. a non-default `readChunkSize` or an explicit `soRcvBuf`) is asserted across the same backend x TLS-impl matrix. A handshake
+      * deadline is NOT one of these: it rides `NetTlsConfig.handshakeTimeout`, which the cell's own TLS configs carry. The cell's provider pin
+      * and lifecycle handling are identical to the no-config form.
       */
     def eachBackendTls(config: NetConfig)(
         scenario: (
