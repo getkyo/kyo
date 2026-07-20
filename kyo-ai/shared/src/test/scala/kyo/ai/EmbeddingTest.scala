@@ -4,6 +4,15 @@ import kyo.*
 
 class EmbeddingTest extends kyo.test.Test[Any]:
 
+    "embedding Schema round-trips through Json (vector, modelName, dim preserved)" in {
+        val original = Embedding(Span(0.1f, 0.2f, 0.3f), "text-embedding-3-small", 3)
+        val json     = Json.encode(original)
+        val decoded  = Json.decode[Embedding](json).getOrThrow
+        assert(decoded.vector(0) == 0.1f && decoded.vector(1) == 0.2f && decoded.vector(2) == 0.3f)
+        assert(decoded.modelName == "text-embedding-3-small")
+        assert(decoded.dim == 3)
+    }
+
     "cosine of two same-space vectors returns the analytic value" in {
         val a = Embedding(Span(1f, 0f, 0f), "m", 3)
         val b = Embedding(Span(1f, 0f, 0f), "m", 3)

@@ -20,7 +20,7 @@ import kyo.*
   * @param dim
   *   the vector length, a redundant guard checked alongside `modelName`.
   */
-final case class Embedding(vector: Span[Float], modelName: String, dim: Int) derives CanEqual:
+final case class Embedding(vector: Span[Float], modelName: String, dim: Int) derives CanEqual, Schema:
 
     /** The cosine similarity with `that`, guarded by the embedding space. Returns
       * `Absent` when the two embeddings do not share a `(modelName, dim)` space, so a
