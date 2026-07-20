@@ -16,9 +16,9 @@ final class WithErrorBindingsImpl extends WithErrorBindings:
         val __kyoScratch$ = Scratch.currentFor("kyo.example.WithErrorBindings", Scratch.configuredSize)
         val __kyoMark$ = __kyoScratch$.mark()
         try
-            val errnoSeg = __kyoScratch$.alloc(4L, 4L, "kyo.example.WithErrorBindings", "failable")
+            val errnoSeg = __kyoScratch$.alloc(captureLayout.byteSize(), captureLayout.byteAlignment(), "kyo.example.WithErrorBindings", "failable")
             val retVal: Int = failableMH.invokeExact(errnoSeg, x)
-            val __errno = errnoSeg.get(JAVA_INT, 0L)
+            val __errno = errnoSeg.get(JAVA_INT, errnoOffset)
             val __kyoResult = retVal
             Ffi.Outcome.fromValueErrno(__kyoResult.toLong, __errno)
         finally __kyoScratch$.reset(__kyoMark$)
@@ -29,6 +29,8 @@ object WithErrorBindingsImpl:
     private val lib      = NativeLoader.load("kyo_we")
     private val linker   = Linker.nativeLinker()
     private val capture  = Linker.Option.captureCallState("errno")
+    private val captureLayout = Linker.Option.captureStateLayout()
+    private val errnoOffset = captureLayout.byteOffset(java.lang.foreign.MemoryLayout.PathElement.groupElement("errno"))
 
     private val failableMH: MethodHandle = linker.downcallHandle(
         lib.find("failable").orElseThrow(),

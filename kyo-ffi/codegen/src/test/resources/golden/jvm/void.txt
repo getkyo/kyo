@@ -16,7 +16,7 @@ final class VoidBindingsImpl extends VoidBindings:
         val __kyoScratch$ = Scratch.currentFor("kyo.example.VoidBindings", Scratch.configuredSize)
         val __kyoMark$ = __kyoScratch$.mark()
         try
-            val errnoSeg = __kyoScratch$.alloc(4L, 4L, "kyo.example.VoidBindings", "noop")
+            val errnoSeg = __kyoScratch$.alloc(captureLayout.byteSize(), captureLayout.byteAlignment(), "kyo.example.VoidBindings", "noop")
             val _: Unit = noopMH.invokeExact(errnoSeg)
             ()
         finally __kyoScratch$.reset(__kyoMark$)
@@ -27,6 +27,7 @@ object VoidBindingsImpl:
     private val lib      = NativeLoader.load("kyo_void")
     private val linker   = Linker.nativeLinker()
     private val capture  = Linker.Option.captureCallState("errno")
+    private val captureLayout = Linker.Option.captureStateLayout()
 
     private val noopMH: MethodHandle = linker.downcallHandle(
         lib.find("noop").orElseThrow(),

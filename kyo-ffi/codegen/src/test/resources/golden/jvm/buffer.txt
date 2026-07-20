@@ -18,7 +18,7 @@ final class BufferBindingsImpl extends BufferBindings:
             val __kyoMark$ = __kyoScratch$.mark()
             try
                 val bufSeg = kyo.ffi.internal.FfiUnsafe.expect[MemorySegment](buf.raw.asInstanceOf[AnyRef], classOf[MemorySegment], "MemorySegment on JVM", "kyo.example.BufferBindings", "process")
-                val errnoSeg = __kyoScratch$.alloc(4L, 4L, "kyo.example.BufferBindings", "process")
+                val errnoSeg = __kyoScratch$.alloc(captureLayout.byteSize(), captureLayout.byteAlignment(), "kyo.example.BufferBindings", "process")
                 val retVal: Int = processMH.invokeExact(errnoSeg, bufSeg, len)
                 retVal
             finally __kyoScratch$.reset(__kyoMark$)
@@ -30,6 +30,7 @@ object BufferBindingsImpl:
     private val lib      = NativeLoader.load("kyo_buf")
     private val linker   = Linker.nativeLinker()
     private val capture  = Linker.Option.captureCallState("errno")
+    private val captureLayout = Linker.Option.captureStateLayout()
 
     private val processMH: MethodHandle = linker.downcallHandle(
         lib.find("process").orElseThrow(),

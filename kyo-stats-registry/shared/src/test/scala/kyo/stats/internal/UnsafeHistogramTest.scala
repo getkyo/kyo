@@ -549,4 +549,33 @@ class UnsafeHistogramTest extends AnyFreeSpec {
         }
     }
 
+    "sum accumulator" - {
+        // This spec is shared, so it compiles and links on JS and Native as well as the JVM. That is the
+        // second property these leaves carry: a java.util.concurrent.atomic.DoubleAdder accumulator does
+        // not exist in the Scala.js javalib and would fail to link here, and a LongAdder would truncate
+        // every fractional observation and report 0.0 below.
+        "accumulates fractional Double observations with full precision" in {
+            val h = newHistogram()
+            h.observe(0.5)
+            h.observe(0.25)
+            h.observe(0.25)
+            val s = h.summary()
+            assert(s.sum == 1.0)
+            assert(s.count == 3)
+        }
+
+        "summary() is read-idempotent: the histogram does not drain on read" in {
+            val h = newHistogram()
+            h.observe(10.0)
+            h.observe(20.0)
+            h.observe(30.0)
+            val first  = h.summary()
+            val second = h.summary()
+            assert(first.count == 3)
+            assert(second.count == 3)
+            assert(first.sum == 60.0)
+            assert(second.sum == 60.0)
+        }
+    }
+
 }

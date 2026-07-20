@@ -251,7 +251,8 @@ class OTLPModelTest extends kyo.test.Test[Any]:
                         explicitBounds = Seq(1.0, 5.0, 10.0, 50.0),
                         bucketCounts = Seq("2", "3", "4", "1", "0"),
                         min = 0.5,
-                        max = 42.0
+                        max = 42.0,
+                        sum = 123.5
                     )),
                     aggregationTemporality = OTLPModel.DeltaTemporality
                 ))

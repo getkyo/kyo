@@ -1823,4 +1823,69 @@ class JvmEmitterTest extends kyo.test.Test[Any]:
         assert(!handleDefLine.contains("Outcome"))
     }
 
+    // -------------------------------------------------------------------------
+    // Section: capture-state segment sizing (Windows 12-byte layout guard)
+    // -------------------------------------------------------------------------
+
+    "the errno capture segment is sized from captureStateLayout(), never a hardcoded 4 bytes" in {
+        // `Linker.Option.captureStateLayout()` is the full canonical capture struct the running platform supports:
+        // 4 bytes on Linux/macOS ([errno]) but 12 bytes on Windows ([GetLastError, WSAGetLastError, errno]). A
+        // hardcoded 4-byte capture segment overflows on Windows, so the segment size must come from the layout.
+        // This assertion is host-independent: it inspects the emitted text, so the bug class is caught on any host.
+        val spec = mkTrait(
+            "CaptureSizing",
+            "kyo_capture",
+            List(
+                mkMethod(
+                    "add",
+                    "add",
+                    List(ParamSpec("a", TypeRef.IntT), ParamSpec("b", TypeRef.IntT)),
+                    ReturnShape.Primitive(TypeRef.IntT)
+                )
+            )
+        )
+        val src = JvmEmitter.emit(spec)
+        // The companion derives the layout once at class-init.
+        assert(src.contains("private val captureLayout = Linker.Option.captureStateLayout()"))
+        // The errno segment allocation is sized from the layout, not a literal.
+        assert(src.contains("val errnoSeg = __kyoScratch$.alloc(captureLayout.byteSize(), captureLayout.byteAlignment(),"))
+        // The bug shape (a hardcoded 4-byte errno segment) must not reappear.
+        assert(!src.contains("val errnoSeg = __kyoScratch$.alloc(4L, 4L,"))
+        // A binding that never reads errno (no Outcome return) does not emit the errnoOffset constant.
+        assert(!src.contains("errnoOffset"))
+    }
+
+    "variadic bindings also size the errno capture segment from captureStateLayout()" in {
+        val spec = mkTrait(
+            "VariadicCapture",
+            "kyo_vcapture",
+            List(
+                mkMethod("vsum", "vsum", List(ParamSpec("count", TypeRef.IntT)), ReturnShape.Primitive(TypeRef.IntT), hasVarargs = true)
+            )
+        )
+        val src = JvmEmitter.emit(spec)
+        assert(src.contains("private val captureLayout = Linker.Option.captureStateLayout()"))
+        assert(src.contains("val errnoSeg = __kyoScratch$.alloc(captureLayout.byteSize(), captureLayout.byteAlignment(),"))
+        assert(!src.contains("val errnoSeg = __kyoScratch$.alloc(4L, 4L,"))
+    }
+
+    "an Outcome (withError) binding reads errno at its layout offset, not a hardcoded 0" in {
+        // On Windows errno is the third field of the capture struct (offset 8); reading at offset 0 would read
+        // GetLastError instead. The read targets errnoOffset, computed from the layout's `errno` member offset.
+        val spec = mkTrait(
+            "ErrnoOffset",
+            "kyo_errno_off",
+            List(
+                mkMethod("failable", "failable", List(ParamSpec("x", TypeRef.IntT)), ReturnShape.Primitive(TypeRef.IntT), withError = true)
+            )
+        )
+        val src = JvmEmitter.emit(spec)
+        assert(src.contains(
+            """private val errnoOffset = captureLayout.byteOffset(java.lang.foreign.MemoryLayout.PathElement.groupElement("errno"))"""
+        ))
+        assert(src.contains("val __errno = errnoSeg.get(JAVA_INT, errnoOffset)"))
+        // The bug shape (errno read hardcoded at offset 0) must not reappear.
+        assert(!src.contains("errnoSeg.get(JAVA_INT, 0L)"))
+    }
+
 end JvmEmitterTest

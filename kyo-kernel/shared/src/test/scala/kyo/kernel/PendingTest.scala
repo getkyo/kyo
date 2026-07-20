@@ -2,6 +2,7 @@ package kyo.kernel
 
 import kyo.*
 import kyo.kernel.*
+import kyo.kernel.internal.Safepoint
 import scala.annotation.nowarn
 
 class PendingTest extends kyo.test.Test[Any]:
@@ -152,14 +153,19 @@ class PendingTest extends kyo.test.Test[Any]:
             assert(x.evalNow == Maybe.empty)
         }
 
+        // Safepoint.eval keeps the enclosing fiber's preemption interceptor from
+        // deferring TestEffect.run's inline handling, which would make evalNow
+        // observe Absent.
         "accepts nested computations" in {
-            Kyo.lift(TestEffect(1)).evalNow match
-                case Absent => fail()
-                case Present(v) =>
-                    TestEffect.run(v).evalNow match
-                        case Absent     => fail()
-                        case Present(v) => assert(v == 2)
-            end match
+            Safepoint.eval {
+                Kyo.lift(TestEffect(1)).evalNow match
+                    case Absent => fail()
+                    case Present(v) =>
+                        TestEffect.run(v).evalNow match
+                            case Absent     => fail()
+                            case Present(v) => assert(v == 2)
+                end match
+            }
         }
     }
 

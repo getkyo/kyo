@@ -404,9 +404,54 @@ end NioWriteHandle
 /** Concrete read handle backed by a `java.nio.channels.FileChannel`. */
 final private[kyo] class NioReadHandle(channel: FileChannel) extends Path.ReadHandle:
 
+    // Single-owner cache of the last wrapped buffer: a repeated read into the same reused array reuses
+    // this ByteBuffer instead of allocating a fresh wrapper per call. Confined to this handle instance.
+    private var cached: java.nio.ByteBuffer = null
+
+    // Single-owner scan buffer for readLong: refilled from position 0 on each call and reused across
+    // calls. It grows once to fit a larger file; the steady-state re-read of a small /proc snapshot then
+    // allocates nothing. Confined to this handle instance.
+    private var scan: Array[Byte] = new Array[Byte](512)
+
+    // The ByteBuffer view of `scan`, retained across calls exactly as `cached` is retained for readChunk:
+    // wrapping the array on each fill step allocates a wrapper per read, which is the per-read allocation
+    // readLong exists to avoid. Re-wrapped only when `scan` grows.
+    private var scanBuffer: java.nio.ByteBuffer = java.nio.ByteBuffer.wrap(scan)
+
+    def readLong()(using AllowUnsafe): Long =
+        // readChunk and readLong share this channel's single OS position, so readLong reads from the start
+        // and then restores the caller's position, leaving an interleaved readChunk cursor undisturbed.
+        val resume = channel.position()
+        position(0L)
+        @scala.annotation.tailrec
+        def fill(total: Int): Int =
+            if total == scan.length then
+                val grown = new Array[Byte](scan.length * 2)
+                java.lang.System.arraycopy(scan, 0, grown, 0, total)
+                scan = grown
+                scanBuffer = java.nio.ByteBuffer.wrap(grown)
+            end if
+            discard(scanBuffer.clear())
+            discard(scanBuffer.position(total))
+            val n = channel.read(scanBuffer)
+            if n <= 0 then total else fill(total + n)
+        end fill
+        val len = fill(0)
+        position(resume)
+        Path.ReadHandle.parseLeadingLong(scan, len)
+    end readLong
+
     def readChunk(buffer: Array[Byte])(using AllowUnsafe): Path.ReadResult =
-        val bb = java.nio.ByteBuffer.wrap(buffer)
+        val bb =
+            if (cached ne null) && (cached.array eq buffer) then
+                cached.clear()
+                cached
+            else
+                val fresh = java.nio.ByteBuffer.wrap(buffer)
+                cached = fresh
+                fresh
         Path.ReadResult(channel.read(bb))
+    end readChunk
 
     def position(offset: Long)(using AllowUnsafe): Unit =
         discard(channel.position(offset))
