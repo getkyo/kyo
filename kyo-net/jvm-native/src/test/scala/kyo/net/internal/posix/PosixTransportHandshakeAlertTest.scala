@@ -38,7 +38,8 @@ class PosixTransportHandshakeAlertTest extends Test:
         if !(PosixConstants.isLinux || PosixConstants.isMacOrBsd) then
             cancel("PosixTransport TLS handshake tests need epoll (Linux) or kqueue (macOS/BSD)")
 
-    /** Build a transport over a fresh real poller driver, run `body`, then close the transport and the driver.
+    /** Build a transport over a fresh real poller driver, run `body`, then close the driver (this transport is never closed, mirroring
+      * production). Each leaf closes its own listener.
       *
       * Awaits the driver's own poll-loop-exit fiber after `close()` (rather than discarding it) so the underlying thread and listener socket
       * are provably gone before this computation completes: `close()` itself only requests teardown (`submitEngineOp` + `triggerWake()`) and
@@ -53,7 +54,7 @@ class PosixTransportHandshakeAlertTest extends Test:
         val transport  = TestTransports.forTesting(driver, Ffi.load[SocketBindings], backendIsEpoll = false)
         val driverDone = driver.start()
         Abort.run[NetException | Closed](body(transport)).map { result =>
-            Sync.defer(transport.close()).andThen(Sync.defer(driver.close())).andThen(
+            Sync.defer(driver.close()).andThen(
                 Abort.run(driverDone.safe.get).unit
             ).andThen(Abort.get(result))
         }
@@ -86,6 +87,7 @@ class PosixTransportHandshakeAlertTest extends Test:
                         clientTls(TLS12, TLS12)
                     ).safe.get).map {
                         outcome =>
+                            listener.close()
                             val message = outcome match
                                 case Result.Failure(e) => e.getMessage
                                 case other             => fail(s"expected the version-mismatch handshake to fail, got $other")
@@ -132,6 +134,7 @@ class PosixTransportHandshakeAlertTest extends Test:
                                 else client.inbound.safe.take.map(chunk => Loop.continue(acc ++ chunk.toArray))
                             }.map { echoed =>
                                 client.close()
+                                listener.close()
                                 assert(
                                     echoed.sameElements(message),
                                     s"matching-version handshake must complete and round-trip, got '${new String(echoed, "UTF-8")}'"

@@ -52,7 +52,8 @@ class PosixTransportTlsConfigTest extends Test:
         if !tlsAvailable then cancel("No TLS provider staged for this host")
     end assumeReady
 
-    /** Mirrors [[PosixTransportTlsTest.withTransport]]: a fresh real poller driver + transport, closed after `body` completes.
+    /** Mirrors [[PosixTransportTlsTest.withTransport]]: a fresh real poller driver + transport, the driver closed after `body` completes (this
+      * transport is never closed, mirroring production).
       *
       * Awaits the driver's own poll-loop-exit fiber after `close()` (rather than discarding it) so the underlying thread and listener
       * socket are provably gone before this computation completes: `close()` itself only requests teardown (`submitEngineOp` +
@@ -68,7 +69,7 @@ class PosixTransportTlsConfigTest extends Test:
         val transport  = TestTransports.forTesting(driver, Ffi.load[SocketBindings], backendIsEpoll = false, buildEngine)
         val driverDone = driver.start()
         Abort.run[NetException | Closed](body(transport)).map { result =>
-            Sync.defer(transport.close()).andThen(Sync.defer(driver.close())).andThen(
+            Sync.defer(driver.close()).andThen(
                 Abort.run(driverDone.safe.get).unit
             ).andThen(Abort.get(result))
         }

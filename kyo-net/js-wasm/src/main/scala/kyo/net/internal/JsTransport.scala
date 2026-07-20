@@ -363,20 +363,31 @@ final private[kyo] class JsTransport private (
         host: String,
         port: Int,
         connectTimeout: Duration
-    )(using AllowUnsafe, Frame): Unit =
+    )(using AllowUnsafe, Frame): () => Unit =
         if connectTimeout.isFinite then
-            val timer = Clock.live.unsafe.sleep(connectTimeout)
+            // Disarming INTERRUPTS the timer, which completes it and fires the callback below, so that callback must distinguish "the deadline
+            // elapsed" from "the deadline was called off". Harmless while the only disarm ran after `promise` had already settled (the
+            // at-most-once completeDiscard made it a no-op); handing the deadline off at the TCP boundary, with the promise still pending
+            // through the handshake, makes it live.
+            val disarmed = AtomicBoolean.Unsafe.init(false)
+            val timer    = Clock.live.unsafe.sleep(connectTimeout)
             timer.onComplete { _ =>
-                // port < 0 is the Unix sentinel the connect-failure leaves already use; a Unix socket has no port to report.
-                val leaf =
-                    if port < 0 then NetUnixConnectTimeoutException(host, connectTimeout)
-                    else NetConnectTimeoutException(host, port, connectTimeout)
-                promise.completeDiscard(Result.fail(leaf))
+                if !disarmed.get() then
+                    // port < 0 is the Unix sentinel the connect-failure leaves already use; a Unix socket has no port to report.
+                    val leaf =
+                        if port < 0 then NetUnixConnectTimeoutException(host, connectTimeout)
+                        else NetConnectTimeoutException(host, port, connectTimeout)
+                    promise.completeDiscard(Result.fail(leaf))
             }
-            // Disarm: when the connect outcome completes `promise` first, interrupt the timer fiber so it never fires.
-            promise.onComplete { _ =>
+            def disarm(): Unit =
+                // Set BEFORE the interrupt, so the callback the interrupt triggers observes it.
+                disarmed.set(true)
                 timer.interruptDiscard(Result.Panic(Closed("JsTransport", summon[Frame], "connect completed before deadline")))
-            }
+            end disarm
+            // Backstop for every way this connect can end before its TCP phase completes.
+            promise.onComplete(_ => disarm())
+            () => disarm()
+        else () => ()
     end armConnectDeadline
 
     private def connectSocket(
@@ -407,26 +418,36 @@ final private[kyo] class JsTransport private (
         // NetConnectTimeoutException if the Node socket neither connects nor errors first. The deadline arm and the OS outcome race on the same
         // `promise` (completeDiscard, at most once), so a deadline-fired close surfaces the timeout leaf and an OS-failure close surfaces
         // NetConnectException through `connectError`: the close cause is discriminated by which arm completes `promise` first.
-        armConnectDeadline(promise, host, port, connectTimeout)
+        val disarmConnectDeadline = armConnectDeadline(promise, host, port, connectTimeout)
 
         // A TLS connect completes on "secureConnect", which fires only after the handshake finishes, so a peer that accepts the TCP connection
         // and then never speaks TLS would leave this promise parked with only the connect deadline covering it. Node emits "connect" first, at
         // the exact TCP-to-handshake boundary, so the handshake deadline is armed there: `connectTimeout` bounds the TCP phase and
         // `handshakeTimeout` the handshake phase, matching the contract the other backends implement rather than conflating the two into one
         // combined bound. `Duration.Infinity` arms nothing.
-        if connectEvent == "secureConnect" && handshakeTimeout.isFinite then
+        if connectEvent == "secureConnect" then
             discard(socket.once(
                 "connect",
                 { () =>
-                    val deadline = Clock.live.unsafe.sleep(handshakeTimeout)
-                    deadline.onComplete { _ =>
-                        // Destroy the socket so Node releases the fd; the promise carries the typed leaf either way.
-                        if promise.complete(Result.fail(NetTlsHandshakeTimeoutException(host, port, handshakeTimeout))) then
-                            discard(socket.destroy())
-                    }
-                    promise.onComplete { _ =>
-                        deadline.interruptDiscard(Result.Panic(Closed("JsTransport", summon[Frame], "handshake settled before deadline")))
-                    }
+                    // The TCP phase is established: its deadline stops owning the connection, so a stall from here on is attributed to the
+                    // handshake rather than reported as a connect timeout (whose own doc says no connect outcome was delivered). Runs even
+                    // when handshakeTimeout is Infinity, because that is what the contract means: phase two is then unbounded by request.
+                    disarmConnectDeadline()
+                    if handshakeTimeout.isFinite then
+                        val deadline = Clock.live.unsafe.sleep(handshakeTimeout)
+                        deadline.onComplete { _ =>
+                            // Destroy the socket so Node releases the fd; the promise carries the typed leaf either way.
+                            if promise.complete(Result.fail(NetTlsHandshakeTimeoutException(host, port, handshakeTimeout))) then
+                                discard(socket.destroy())
+                        }
+                        promise.onComplete { _ =>
+                            deadline.interruptDiscard(Result.Panic(Closed(
+                                "JsTransport",
+                                summon[Frame],
+                                "handshake settled before deadline"
+                            )))
+                        }
+                    end if
                 }: js.Function0[Unit]
             ))
         end if
@@ -612,7 +633,8 @@ final private[kyo] class JsTransport private (
 
         // A Unix connect parks where the OS allows it (Linux blocks when the accept queue is full; macOS fails fast), so it carries the same
         // deadline a TCP connect does rather than accepting the parameter and ignoring it. -1 is the Unix sentinel, which selects the Unix leaf.
-        armConnectDeadline(promise, path, -1, connectTimeout)
+        // A Unix connect has one phase, so its deadline runs to the outcome; the returned disarm is unused (the promise backstop covers it).
+        discard(armConnectDeadline(promise, path, -1, connectTimeout))
 
         // Pause immediately - kyo controls data flow
         discard(socket.pause())

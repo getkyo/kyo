@@ -1612,6 +1612,14 @@ final private[net] class IoUringDriver private[posix] (
     private def terminal(donePromise: Promise.Unsafe[Unit, Any], result: Result[Nothing, Unit < Any])(using AllowUnsafe, Frame): Unit =
         closedFlag.set(true)
         reapExited.set(true)
+        // Unregister the Diagnostics probe here as well as in close(). This path SETS closedFlag rather than winning close()'s CAS, so after
+        // any self-exit (a fatal rc, a failed wait, a crashed cycle) a later close() finds the CAS already lost and its own unregister never
+        // runs, stranding this driver's entry in the process-global registry for the life of the JVM, the owner's close() included. The poller
+        // arm leaves close() runnable and NIO routes its terminal through close(), so io_uring was the one driver that could strand an entry.
+        // Safe to run twice: Registration.close() removes an entry from the registry, and removing an absent one is a no-op, so whichever of
+        // this and close() runs second does nothing.
+        val reg = diagRegistration
+        if reg ne null then reg.close()
         drainAfterReapExit()
         donePromise.completeDiscard(result)
     end terminal

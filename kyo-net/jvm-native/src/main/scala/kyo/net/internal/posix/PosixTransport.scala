@@ -448,7 +448,7 @@ final private[net] class PosixTransport private[posix] (
                     // io_uring completion arm and the epoll/kqueue readiness arm. A deadline-fired close surfaces the typed
                     // NetConnectTimeoutException; an OS-failure close surfaces NetConnectException through `connectFail`: the close cause is
                     // discriminated by which arm completes `promise` first (completeDiscard, at most once).
-                    armConnectDeadline(promise, host, port, connectTimeout)
+                    handle.connectDeadlineDisarm = Present(armConnectDeadline(promise, host, port, connectTimeout))
                     if isCompletionConnect(driver) then
                         // Completion arm (io_uring): the driver submits the connect SQE itself against `handle.connectTarget`.
                         awaitConnectThen(handle, addr, driver, target, host, port, tls, promise, checkSoError = false, config)
@@ -474,23 +474,35 @@ final private[net] class PosixTransport private[posix] (
         host: String,
         port: Int,
         timeout: Duration
-    )(using AllowUnsafe, Frame): Unit =
+    )(using AllowUnsafe, Frame): () => Unit =
         // A Unix connect is bounded too. It parks where the OS lets it: on Linux a connect to a socket whose accept queue is full blocks,
         // while macOS fails it fast with ECONNREFUSED, so the timer simply never fires there. The guard here was previously `port >= 0`, which
         // skipped Unix entirely for want of a typed leaf to produce; `port < 0` is the same sentinel `connectFail` uses to pick the Unix leaf.
         if timeout.isFinite then
-            val timer = Clock.live.unsafe.sleep(timeout)
+            // Disarming INTERRUPTS the timer, which completes it and fires the callback below, so that callback must distinguish "the deadline
+            // elapsed" from "the deadline was called off". This was latent while the only disarm ran after `promise` had already settled (the
+            // at-most-once completeDiscard then made the callback a no-op); handing the deadline off at the end of the TCP phase, with the
+            // promise still pending through the handshake, makes it live: without this flag every TLS connect fails instantly with a connect
+            // timeout at the moment its TCP phase completes.
+            val disarmed = AtomicBoolean.Unsafe.init(false)
+            val timer    = Clock.live.unsafe.sleep(timeout)
             timer.onComplete { _ =>
-                val leaf =
-                    if port < 0 then NetUnixConnectTimeoutException(host, timeout)
-                    else NetConnectTimeoutException(host, port, timeout)
-                promise.completeDiscard(Result.fail(leaf))
+                if !disarmed.get() then
+                    val leaf =
+                        if port < 0 then NetUnixConnectTimeoutException(host, timeout)
+                        else NetConnectTimeoutException(host, port, timeout)
+                    promise.completeDiscard(Result.fail(leaf))
             }
-            // Disarm: when the connect outcome completes `promise` first, interrupt the timer fiber so it never fires.
-            promise.onComplete { _ =>
+            def disarm(): Unit =
+                // Set BEFORE the interrupt, so the callback the interrupt triggers observes it.
+                disarmed.set(true)
                 timer.interruptDiscard(Result.Panic(Closed("PosixTransport", summon[Frame], "connect completed before deadline")))
-            }
-        end if
+            end disarm
+            // Backstop for every way this connect can end before its TCP phase completes: an OS failure, the caller interrupting, a listener
+            // teardown. The TCP-phase handoff in completeOrTls is what disarms it on the success path.
+            promise.onComplete(_ => disarm())
+            () => disarm()
+        else () => ()
     end armConnectDeadline
 
     /** Issue the readiness-arm non-blocking connect: 0 means the connect completed inline (loopback), `EINPROGRESS` means it is in flight and
@@ -611,6 +623,12 @@ final private[net] class PosixTransport private[posix] (
         config: kyo.net.NetConfig
     )(using AllowUnsafe, Frame): Unit =
         addr.close()
+        // The TCP phase is established here, so its deadline stops owning the connection. Transport.connectTls documents connectTimeout as
+        // bounding the TCP phase and NetTlsConfig.handshakeTimeout as bounding the handshake, worst case their sum; leaving the connect timer
+        // armed through the handshake makes the real bound min(connectTimeout, tcp + handshake) and reports a pure handshake stall as
+        // NetConnectTimeoutException, whose own doc says the OS delivered no connect outcome. The handshake below arms its own deadline.
+        handle.connectDeadlineDisarm.foreach(_())
+        handle.connectDeadlineDisarm = Absent
         tls match
             case Absent               => completeConnect(handle, driver, promise, config.channelCapacity)
             case Present((cfg, host)) =>

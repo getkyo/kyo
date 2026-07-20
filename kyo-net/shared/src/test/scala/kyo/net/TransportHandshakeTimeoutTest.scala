@@ -4,8 +4,8 @@ import kyo.*
 import kyo.net.internal.TlsProviderPlatform
 
 /** Cross-backend server accept-handshake deadline (`NetTlsConfig.handshakeTimeout`, CWE-400 slowloris), via the PUBLIC
-  * `NetPlatform.ownedTransport()` factory so the SAME test runs against every backend: posix (JVM default + Native), the NIO floor and the
-  * epoll driver (forced-backend CI legs), and Node (JS).
+  * one process-shared `NetPlatform.transport`, so the SAME test runs against whichever backend the platform selected: posix (JVM default +
+  * Native), the NIO floor and the epoll driver (forced-backend CI legs), and Node (JS).
   *
   * The deadline arms per accepted connection: a plaintext client completes the TCP accept but never sends a ClientHello, so the server
   * handshake parks; a finite `handshakeTimeout` reaps it (closing the accepted fd), which the client observes as its inbound terminating.
@@ -26,6 +26,47 @@ class TransportHandshakeTimeoutTest extends Test:
             else conn.inbound.safe.take.map(chunk => Loop.continue(acc ++ chunk.toArray))
         }
 
+    // The CLIENT-role counterpart, and the phase-handoff contract Transport.connectTls documents: connectTimeout bounds the TCP phase,
+    // NetTlsConfig.handshakeTimeout bounds the handshake, so the worst case is their sum rather than whichever timer happens to be shorter.
+    //
+    // A plaintext listener accepts the TCP connection and then never speaks TLS, so the TCP phase completes in microseconds while the client's
+    // handshake parks forever waiting for a ServerHello. connectTimeout is deliberately set FAR shorter than handshakeTimeout: if the connect
+    // timer still owned the connection past the TCP phase, it would fire first and report a connect timeout for a stall that is entirely in
+    // the handshake, which is the misclassification this pins. The handshake timer must own it instead.
+    "connectTls hands the deadline from the TCP phase to the handshake phase" in {
+        assumeTls()
+        given Frame = Frame.internal
+        // The one process-shared transport, like every other caller: this leaf asserts per-operation deadline behavior, not transport-level
+        // isolation, so it has no reason to build its own I/O fabric.
+        val transport = NetPlatform.transport
+        // Plaintext listener: completes the accept, never sends a ServerHello.
+        transport.listen("127.0.0.1", 0, 16)(_ => ()).safe.get.map { listener =>
+            val clientTls = NetTlsConfig(trustAll = true, handshakeTimeout = 3.seconds)
+            Abort.run[NetException](
+                transport.connectTls("127.0.0.1", listener.port, clientTls, connectTimeout = 200.millis).safe.get
+            ).map { outcome =>
+                // Close the listener, never the transport: it is the process-shared one.
+                listener.close()
+                outcome match
+                    case Result.Failure(e: NetTlsHandshakeTimeoutException) =>
+                        assert(
+                            e.timeout == 3.seconds,
+                            s"the handshake phase must fail on ITS OWN deadline, got ${e.timeout}"
+                        )
+                        succeed
+                    case Result.Failure(e: NetConnectTimeoutException) =>
+                        assert(
+                            false,
+                            s"the TCP phase completed, so its ${e.timeout} deadline must have been disarmed at connect: a handshake stall " +
+                                "reported as a connect timeout means the connect timer still owned the connection through the handshake"
+                        )
+                    case other =>
+                        assert(false, s"expected the handshake deadline to fire, got $other")
+                end match
+            }
+        }
+    }
+
     "a stalled server TLS handshake is reaped after the deadline on every backend" in {
         assumeTls()
         given Frame = Frame.internal
@@ -35,13 +76,12 @@ class TransportHandshakeTimeoutTest extends Test:
             // (no reap, i.e. the deadline was not honored) fails rather than hangs.
             val serverTls =
                 NetTlsConfig(certChainPath = Present(certPath), privateKeyPath = Present(keyPath), handshakeTimeout = 150.millis)
-            val transport = NetPlatform.ownedTransport()
+            val transport = NetPlatform.transport
             transport.listenTls("127.0.0.1", 0, 16, serverTls) { _ => () }.safe.get.map { listener =>
                 transport.connect("127.0.0.1", listener.port).safe.get.map { client =>
                     Abort.run[Timeout](Async.timeout(5.seconds)(Abort.run[Closed](client.inbound.safe.take))).map { outcome =>
                         client.close()
                         listener.close()
-                        transport.close()
                         // The reap closes the accepted fd; the client's inbound either fails Closed (channel torn down) or delivers an empty
                         // EOF span, depending on backend. Both are reaps; a Timeout (the window expired) means no reap, the regression symptom.
                         val reaped = outcome match
@@ -70,13 +110,11 @@ class TransportHandshakeTimeoutTest extends Test:
         TlsTestCertShared.writePems.map { case (certPath, keyPath) =>
             val serverTls =
                 NetTlsConfig(certChainPath = Present(certPath), privateKeyPath = Present(keyPath), handshakeTimeout = 60.millis)
-            val transport = NetPlatform.ownedTransport()
-            // handshakeTimeout arms ONLY the server accept-handshake reap; a client connect is bounded by the connect operation's own connectTimeout.
-            // A 60ms reap deadline is tight enough that under load the loopback connect-readiness delivery can race it and fire a spurious
-            // NetConnectTimeoutException unrelated to the reap UAF this guard exercises. The client transport therefore uses a generous
-            // connectTimeout (the 30s default) so the loopback connect completes well before any connect deadline, while the server transport
-            // keeps the finite 60ms handshakeTimeout that drives the reap. The reap is still asserted 30 times below.
-            val clientTransport = NetPlatform.ownedTransport()
+            val transport = NetPlatform.transport
+            // One transport serves both roles: handshakeTimeout arms ONLY the server accept-handshake reap (it rides serverTls on the
+            // listener), while the client connects with the default 30s connectTimeout, so the loopback connect completes well before any
+            // connect deadline could fire a spurious NetConnectTimeoutException unrelated to the reap this guard exercises. Two deadlines,
+            // two operations, one transport: that is exactly what the per-operation model buys.
             transport.listenTls("127.0.0.1", 0, 64, serverTls) { _ => () }.safe.get.map { listener =>
                 // Each iteration: a plaintext client completes the TCP accept but never sends a ClientHello, so the server handshake parks with an
                 // in-flight recv; the 60ms deadline reaps it (closing the accepted fd), which the client observes as its inbound terminating. A
@@ -85,7 +123,7 @@ class TransportHandshakeTimeoutTest extends Test:
                 Loop(0) { i =>
                     if i >= 30 then Loop.done(i)
                     else
-                        clientTransport.connect("127.0.0.1", listener.port).safe.get.map { client =>
+                        transport.connect("127.0.0.1", listener.port).safe.get.map { client =>
                             Abort.run[Timeout](Async.timeout(5.seconds)(Abort.run[Closed](client.inbound.safe.take))).map { outcome =>
                                 client.close()
                                 val reaped = outcome match
@@ -101,8 +139,6 @@ class TransportHandshakeTimeoutTest extends Test:
                         }
                 }.map { n =>
                     listener.close()
-                    clientTransport.close()
-                    transport.close()
                     assert(n == 30, s"expected 30 stall+reap cycles, completed $n")
                 }
             }
@@ -118,7 +154,7 @@ class TransportHandshakeTimeoutTest extends Test:
             val serverTls =
                 NetTlsConfig(certChainPath = Present(certPath), privateKeyPath = Present(keyPath), handshakeTimeout = 1.second)
             val clientTls = NetTlsConfig(trustAll = true, sniHostname = Present("localhost"))
-            val transport = NetPlatform.ownedTransport()
+            val transport = NetPlatform.transport
             transport.listenTls("127.0.0.1", 0, 16, serverTls) { serverConn =>
                 discard(Sync.Unsafe.evalOrThrow {
                     Fiber.initUnscoped {
@@ -137,7 +173,6 @@ class TransportHandshakeTimeoutTest extends Test:
                             collect(client, message.length).map { echoed =>
                                 client.close()
                                 listener.close()
-                                transport.close()
                                 assert(
                                     echoed.sameElements(message),
                                     s"a completed handshake must not be reaped; it round-trips past the deadline, got '${new String(echoed, "UTF-8")}'"
@@ -159,13 +194,12 @@ class TransportHandshakeTimeoutTest extends Test:
             // reaped within 500ms, so the inbound take must NOT complete within the window. The bounded Async.timeout must expire (Failure),
             // proving no early reap. The window is an Async suspension, not a thread block.
             assert(NetTlsConfig.default.handshakeTimeout == 30.seconds)
-            val transport = NetPlatform.ownedTransport()
+            val transport = NetPlatform.transport
             transport.listenTls("127.0.0.1", 0, 16, serverTls) { _ => () }.safe.get.map { listener =>
                 transport.connect("127.0.0.1", listener.port).safe.get.map { client =>
                     Abort.run[Timeout](Async.timeout(500.millis)(Abort.run[Closed](client.inbound.safe.take))).map { outcome =>
                         client.close()
                         listener.close()
-                        transport.close()
                         assert(
                             outcome.isFailure,
                             s"a stalled handshake must not be reaped within 500ms when handshakeTimeout is 30s, got $outcome"
@@ -189,13 +223,12 @@ class TransportHandshakeTimeoutTest extends Test:
                 privateKeyPath = Present(keyPath),
                 handshakeTimeout = Duration.Infinity
             )
-            val transport = NetPlatform.ownedTransport()
+            val transport = NetPlatform.transport
             transport.listenTls("127.0.0.1", 0, 16, serverTls) { _ => () }.safe.get.map { listener =>
                 transport.connect("127.0.0.1", listener.port).safe.get.map { client =>
                     Abort.run[Timeout](Async.timeout(500.millis)(Abort.run[Closed](client.inbound.safe.take))).map { outcome =>
                         client.close()
                         listener.close()
-                        transport.close()
                         assert(
                             outcome.isFailure,
                             s"a stalled handshake must not be reaped when handshakeTimeout is Infinity (no timer is armed), got $outcome"
@@ -216,14 +249,13 @@ class TransportHandshakeTimeoutTest extends Test:
     "a client TLS handshake that stalls is reaped on its own deadline" in {
         assumeTls()
         given Frame   = Frame.internal
-        val transport = NetPlatform.ownedTransport()
+        val transport = NetPlatform.transport
         transport.listen("127.0.0.1", 0, 16)(_ => ()).safe.get.map { silentListener =>
             val clientTls = NetTlsConfig(trustAll = true, sniHostname = Present("localhost"), handshakeTimeout = 150.millis)
             Abort.run[NetException | Closed | Timeout](
                 Async.timeout(5.seconds)(transport.connectTls("127.0.0.1", silentListener.port, clientTls).safe.get)
             ).map { outcome =>
                 silentListener.close()
-                discard(transport.close())
                 outcome match
                     case Result.Failure(e: NetTlsHandshakeTimeoutException) =>
                         assert(e.timeout == 150.millis, s"expected the client's own 150ms deadline, got ${e.timeout}")

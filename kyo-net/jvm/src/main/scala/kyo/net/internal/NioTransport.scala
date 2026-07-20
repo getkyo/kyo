@@ -226,7 +226,8 @@ final private[kyo] class NioTransport private (
                 // OS outcome race on the same `promise` (completeDiscard, at most once), so a deadline-fired close surfaces the timeout leaf and
                 // an OS-failure close surfaces NetConnectException: the close cause is discriminated by which arm completes `promise` first.
                 awaitConnect(channel, host, port, promise, config.channelCapacity, config.readChunkSize)
-                armConnectDeadline(promise, host, port, connectTimeout)
+                // A plaintext connect has one phase, so its deadline runs to the outcome; the promise backstop disarms it.
+                discard(armConnectDeadline(promise, host, port, connectTimeout))
             end if
         catch
             case e: UnresolvedAddressException =>
@@ -501,7 +502,7 @@ final private[kyo] class NioTransport private (
         // deadline; without this the TLS path had no transport-level bound at all and parked until the caller's own timeout. Armed before the
         // channel work so it covers the whole phase, and it races the OS outcome on `promise` (at most once), which is what discriminates the
         // timeout leaf from a NetConnectException. The handshake phase that follows is bounded separately by tls.handshakeTimeout.
-        armConnectDeadline(promise, host, port, connectTimeout)
+        val disarmConnectDeadline = armConnectDeadline(promise, host, port, connectTimeout)
 
         // Hoisted so the catch can close it (same as the plaintext connect): channel.connect throws after the channel is open, and the failure
         // paths inside the try already close it, so only this synchronous catch was leaking the just-opened channel fd.
@@ -515,6 +516,8 @@ final private[kyo] class NioTransport private (
 
             val connected = channel.connect(new InetSocketAddress(host, port))
             if connected then
+                // TCP phase established: hand the deadline off to the handshake, which is bounded by tls.handshakeTimeout.
+                disarmConnectDeadline()
                 startTlsHandshake(
                     channel,
                     host,
@@ -528,7 +531,7 @@ final private[kyo] class NioTransport private (
                     config.readChunkSize
                 )
             else
-                awaitConnectThenTls(channel, host, port, tls, promise, config.channelCapacity, config.readChunkSize)
+                awaitConnectThenTls(channel, host, port, tls, promise, config.channelCapacity, config.readChunkSize, disarmConnectDeadline)
             end if
         catch
             case e: UnresolvedAddressException =>
@@ -553,13 +556,16 @@ final private[kyo] class NioTransport private (
         tls: NetTlsConfig,
         promise: IOPromise[NetException, Connection[NioHandle]],
         channelCapacity: Int,
-        readChunkSize: Int
+        readChunkSize: Int,
+        // Called at the TCP-to-handshake boundary: connectTimeout bounds the TCP phase, tls.handshakeTimeout the handshake.
+        disarmConnectDeadline: () => Unit
     )(using AllowUnsafe, Frame): Unit =
         // For fast localhost, check if already connected.
         // Returns true if the connect was handled (success or error), false if still pending.
         def tryFinishConnect(): Boolean =
             try
                 if channel.finishConnect() then
+                    disarmConnectDeadline()
                     startTlsHandshake(
                         channel,
                         host,
@@ -593,6 +599,7 @@ final private[kyo] class NioTransport private (
                     result match
                         case Result.Success(_) =>
                             Log.live.unsafe.debug(s"NioTransport TCP connected, starting TLS handshake channel=${channel.hashCode()}")
+                            disarmConnectDeadline()
                             startTlsHandshake(
                                 channel,
                                 host,
@@ -1262,20 +1269,31 @@ final private[kyo] class NioTransport private (
         host: String,
         port: Int,
         connectTimeout: Duration
-    )(using AllowUnsafe, Frame): Unit =
+    )(using AllowUnsafe, Frame): () => Unit =
         if connectTimeout.isFinite then
-            val timer = Clock.live.unsafe.sleep(connectTimeout)
+            // Disarming INTERRUPTS the timer, which completes it and fires the callback below, so that callback must distinguish "the deadline
+            // elapsed" from "the deadline was called off". Harmless while the only disarm ran after connPromise had already settled (the
+            // at-most-once completeDiscard made it a no-op); handing the deadline off at the TCP boundary, with the promise still pending
+            // through the handshake, makes it live.
+            val disarmed = AtomicBoolean.Unsafe.init(false)
+            val timer    = Clock.live.unsafe.sleep(connectTimeout)
             timer.onComplete { _ =>
-                // port < 0 is the Unix sentinel the connect-failure leaves already use; a Unix socket has no port to report.
-                val leaf =
-                    if port < 0 then NetUnixConnectTimeoutException(host, connectTimeout)
-                    else NetConnectTimeoutException(host, port, connectTimeout)
-                connPromise.completeDiscard(Result.fail(leaf))
+                if !disarmed.get() then
+                    // port < 0 is the Unix sentinel the connect-failure leaves already use; a Unix socket has no port to report.
+                    val leaf =
+                        if port < 0 then NetUnixConnectTimeoutException(host, connectTimeout)
+                        else NetConnectTimeoutException(host, port, connectTimeout)
+                    connPromise.completeDiscard(Result.fail(leaf))
             }
-            // Disarm: when the connect outcome completes connPromise first, interrupt the timer fiber so it never fires.
-            connPromise.onComplete { _ =>
+            def disarm(): Unit =
+                // Set BEFORE the interrupt, so the callback the interrupt triggers observes it.
+                disarmed.set(true)
                 timer.interruptDiscard(Result.Panic(Closed("NioTransport", summon[Frame], "connect completed before deadline")))
-            }
+            end disarm
+            // Backstop for every way this connect can end before its TCP phase completes.
+            connPromise.onComplete(_ => disarm())
+            () => disarm()
+        else () => ()
     end armConnectDeadline
 
     def connectUnix(path: String, connectTimeout: Duration, config: kyo.net.NetConfig)(using
@@ -1303,7 +1321,7 @@ final private[kyo] class NioTransport private (
                 awaitConnect(channel, path, -1, promise, config.channelCapacity, config.readChunkSize)
                 // A Unix connect parks where the OS allows it (Linux blocks when the accept queue is full; macOS fails fast), so it carries
                 // the same deadline a TCP connect does rather than accepting the parameter and ignoring it.
-                armConnectDeadline(promise, path, -1, connectTimeout)
+                discard(armConnectDeadline(promise, path, -1, connectTimeout))
             end if
         catch
             case e: IOException =>

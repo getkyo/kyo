@@ -53,11 +53,11 @@ class PosixTransportHandshakeBehaviorTest extends Test:
         if !(PosixConstants.isLinux || PosixConstants.isMacOrBsd) then
             cancel("PosixTransport tests need epoll (Linux) or kqueue (macOS/BSD)")
 
-    /** Build a transport over a fresh real poller driver, run `body`, then close the transport and the driver. No accept-loop drain is needed:
-      * with the poller (epoll/kqueue) the accept loop is readiness-driven and never parks in a blocking `accept`. `transport.close()` closes every
-      * listener, and `PosixListener.close()` (on the calling fiber) deregisters the accept interest via `driver.cancel`, which inline-completes the
-      * parked accept promise with `Closed`; that completion runs the accept loop's exit branch inline (`IOPromise.flush`), then the listener
-      * `shutdown`s + closes the listen fd, all synchronously.
+    /** Build a transport over a fresh real poller driver, run `body`, then close the driver (this transport is never closed, mirroring
+      * production). Each leaf closes its own listeners: with the poller (epoll/kqueue) the accept loop is readiness-driven and never parks in a
+      * blocking `accept`, so a listener's own `close()` (on the calling fiber) deregisters the accept interest via `driver.cancel`, which
+      * inline-completes the parked accept promise with `Closed`; that completion runs the accept loop's exit branch inline (`IOPromise.flush`),
+      * then the listener `shutdown`s + closes the listen fd, all synchronously.
       *
       * The driver's own poll-loop thread is a separate story: `driver.close()` only requests teardown (`submitEngineOp` + `triggerWake()`) and
       * returns immediately, without waiting for the poll-loop carrier to actually run it. Awaiting the driver's own exit fiber after `close()`
@@ -72,7 +72,7 @@ class PosixTransportHandshakeBehaviorTest extends Test:
         val transport  = TestTransports.forTesting(driver, Ffi.load[SocketBindings], backendIsEpoll = false)
         val driverDone = driver.start()
         Abort.run[NetException | Closed](body(transport)).map { result =>
-            Sync.defer(transport.close()).andThen(Sync.defer(driver.close())).andThen(
+            Sync.defer(driver.close()).andThen(
                 Abort.run(driverDone.safe.get).unit
             ).andThen(Abort.get(result))
         }
@@ -122,6 +122,7 @@ class PosixTransportHandshakeBehaviorTest extends Test:
                     certHash = client.serverCertificateHash
                 yield
                     client.close()
+                    listener.close()
                     assert(echoed.sameElements(msg), s"TLS round-trip mismatch: got '${new String(echoed, "UTF-8")}'")
                     certHash match
                         case Absent     => fail("client did not observe the server certificate hash after handshake")
@@ -166,6 +167,7 @@ class PosixTransportHandshakeBehaviorTest extends Test:
                     echoed <- collect(client, payload.length)
                 yield
                     client.close()
+                    listener.close()
                     assert(echoed.sameElements(payload), s"large TLS round-trip mismatch at length ${echoed.length}")
             }
         }
@@ -186,7 +188,9 @@ class PosixTransportHandshakeBehaviorTest extends Test:
                         serverConn.close()
                     }.safe.get
                     outcome <- Abort.run[NetException | Closed](transport.connectTls("127.0.0.1", listener.port, clientTls).safe.get)
-                yield assert(outcome.isFailure, s"expected Closed on TLS-to-plaintext handshake failure, got $outcome")
+                yield
+                    listener.close()
+                    assert(outcome.isFailure, s"expected Closed on TLS-to-plaintext handshake failure, got $outcome")
             }
         }
 
@@ -235,10 +239,12 @@ class PosixTransportHandshakeBehaviorTest extends Test:
                             }
                         }
                     }
-                yield assert(
-                    results.forall(identity),
-                    s"not all $n connections were accepted and round-tripped correctly"
-                )
+                yield
+                    listener.close()
+                    assert(
+                        results.forall(identity),
+                        s"not all $n connections were accepted and round-tripped correctly"
+                    )
             }
         }
 
@@ -289,6 +295,7 @@ class PosixTransportHandshakeBehaviorTest extends Test:
                 yield
                     firstClient.close()
                     secondClient.close()
+                    listener.close()
                     assert(throwCount.get() >= 2, s"expected at least 2 handler invocations, got ${throwCount.get()}")
             }
         }
@@ -324,6 +331,7 @@ class PosixTransportHandshakeBehaviorTest extends Test:
                     echoed <- collect(client, msg.length)
                 yield
                     client.close()
+                    listener.close()
                     assert(echoed.sameElements(msg), s"plaintext round-trip mismatch: got '${new String(echoed, "UTF-8")}'")
             }
         }

@@ -129,7 +129,7 @@ class HandshakeEngineFreeTest extends Test:
         val transport  = TestTransports.forTesting(driver, Ffi.load[SocketBindings], backendIsEpoll = false)
         val driverDone = driver.start()
         Abort.run[NetException | Closed](body(transport)).map { result =>
-            Sync.defer(transport.close()).andThen(Sync.defer(driver.close())).andThen(
+            Sync.defer(driver.close()).andThen(
                 Abort.run(driverDone.safe.get).unit
             ).andThen(Abort.get(result))
         }
@@ -174,6 +174,7 @@ class HandshakeEngineFreeTest extends Test:
                                 }
                             }.andThen {
                                 settledOwnCount(sockets, listener.port, base).map { after =>
+                                    listener.close()
                                     assert(
                                         after - base <= fdSlack,
                                         s"failing handshakes leaked descriptors: listener-port socket count rose from $base to $after over $k iterations"
@@ -287,6 +288,7 @@ class HandshakeEngineFreeTest extends Test:
                         Sync.defer(countSocketsOnPort(sockets, listener.port)).map { base =>
                             soak(k)(_ => roundTrip()).andThen {
                                 settledOwnCount(sockets, listener.port, base).map { after =>
+                                    listener.close()
                                     assert(
                                         after - base <= fdSlack,
                                         s"successful handshakes leaked descriptors on close: listener-port socket count rose from $base to $after over $k iterations"

@@ -43,8 +43,13 @@ class IoBackendStaleErrnoTest extends Test:
                         dirty.value < 0 && dirty.errorCode != 0,
                         s"precondition: socket(-1,-1,-1) must fail and set errno, got value=${dirty.value} errorCode=${dirty.errorCode}"
                     )
+                    // Built inside ProcessSharedTransport.whileBuilding: this leaf builds a fresh, ad-hoc transport per available backend (the
+                    // stale-errno precondition demands a brand new driver each time), never through NetPlatform's own single shared instance,
+                    // so nothing else ever closes it. Marking its driver's cycle the same way NetPlatform.transport's construction does keeps it
+                    // correctly excused from the end-of-run leak check, exactly like the one real process-shared transport, rather than tripping
+                    // a false leaked-owned-transport report for a transport this test never had a way to close (transports have no close()).
                     val transport =
-                        try entry.build()
+                        try kyo.net.internal.ProcessSharedTransport.whileBuilding(entry.build())
                         catch
                             case c: Closed =>
                                 fail(
@@ -53,7 +58,7 @@ class IoBackendStaleErrnoTest extends Test:
                                         s"errno: ${c.getMessage}"
                                 )
                     // The transport built. Prove the backend actually works after the stale errno: bind an ephemeral port and connect to it.
-                    Sync.ensure(Sync.defer(transport.close())) {
+                    Sync.defer(()).andThen {
                         for
                             listener <- transport.listen("127.0.0.1", 0, 128)(_ => ()).safe.get
                             port = listener.port

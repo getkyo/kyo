@@ -31,6 +31,8 @@ class IoUringDriverCrashContainmentTest extends Test:
             // Arm before start so the failure lands in the first cycle's wait, inside the body where containment must hold.
             stub.throwOnWait.set(true)
             val done = drv.start()
+            // start() registers this driver in the process-global Diagnostics registry, under a name carrying its identity hash.
+            val diagName = "IoUringDriver@" + java.lang.System.identityHashCode(drv)
 
             // Without containment this get would hang: the chain would be gone with the promise never completed.
             done.safe.getResult.map { result =>
@@ -49,6 +51,13 @@ class IoUringDriverCrashContainmentTest extends Test:
                     stub.eventfdCloseCount.get() == 1,
                     s"the terminal exit must close the wake eventfd after a crashed cycle, " +
                         s"got ${stub.eventfdCloseCount.get()} closes"
+                )
+                // The registry proof. This exit SETS closedFlag rather than winning close()'s CAS, so a later close() finds the CAS lost and
+                // its own unregister never runs: without an unregister here a crashed driver's probe outlives it in the process-global
+                // registry for the life of the JVM, and every crash leaks another entry.
+                assert(
+                    !kyo.internal.Diagnostics.dumpAll().contains(diagName),
+                    s"a crashed driver must not leave $diagName registered in the process-global Diagnostics registry"
                 )
                 succeed
             }

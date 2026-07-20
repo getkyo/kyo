@@ -25,7 +25,7 @@ class ConnectDeadlineStrandTest extends Test:
         // under load, so a failure here is a genuinely dropped/never-delivered write-readiness (the lost-wakeup), not a few-ms
         // latency tail against a too-tight bound. (TransportHandshakeTimeoutTest exercises a tight 60ms deadline;
         // this guard isolates DELIVERY correctness from deadline tightness, so it is not host-load-flaky.)
-        val transport = NetPlatform.ownedTransport()
+        val transport = NetPlatform.transport
         transport.listen("127.0.0.1", 0, 128) { conn => conn.close() }.safe.get.map { listener =>
             val timeouts = new java.util.concurrent.atomic.AtomicInteger(0)
             val maxLatNs = new java.util.concurrent.atomic.AtomicLong(0L)
@@ -48,7 +48,6 @@ class ConnectDeadlineStrandTest extends Test:
                     }
             }.map { _ =>
                 listener.close()
-                transport.close()
                 val timedOut = timeouts.get()
                 val maxMs    = maxLatNs.get() / 1000000
                 assert(
@@ -68,7 +67,7 @@ class ConnectDeadlineStrandTest extends Test:
         // immediately closes drives both: every connect MUST complete (succeed; a peer that already closed yields a clean connected-then-EOF, not
         // a connect failure). Any NetConnectException / NetConnectTimeoutException is a dropped connect arm. The generous 2s deadline isolates
         // delivery correctness from deadline tightness so this is not host-load-flaky.
-        val transport   = NetPlatform.ownedTransport()
+        val transport   = NetPlatform.transport
         val concurrency = 128
         transport.listen("127.0.0.1", 0, 256) { conn => conn.close() }.safe.get.map { listener =>
             Async.foreach(0 until concurrency, concurrency) { _ =>
@@ -81,7 +80,6 @@ class ConnectDeadlineStrandTest extends Test:
                 }
             }.map { outcomes =>
                 listener.close()
-                transport.close()
                 val failures       = outcomes.flatMap(_.toList)
                 val connectExc     = failures.count(_ == "NetConnectException")
                 val connectTimeout = failures.count(_ == "NetConnectTimeoutException")

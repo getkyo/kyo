@@ -121,7 +121,6 @@ class IoUringMutualTlsStressTest extends Test:
                                 .map(_ => Loop.continue(round + 1))
                     }.map { _ =>
                         listener.close()
-                        transport.close()
                         driver.close()
                     }
                 }

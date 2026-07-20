@@ -159,7 +159,6 @@ class IoDriverPoolTest extends Test:
         val pool                             = IoDriverPool.init(spies)
         // start() delegates to each real JsIoDriver.start(); close afterward must be clean.
         pool.start()
-        pool.close()
         succeed
     }
 
@@ -174,46 +173,6 @@ class IoDriverPoolTest extends Test:
         assert(thrown.getMessage.contains("throwOnStart"), s"expected throwOnStart message, got: ${thrown.getMessage}")
         // Driver 0 (already started) must have been closed by the all-or-nothing cleanup.
         assert(rawSpies(0).closeCalls.get() >= 1, "driver 0 must be closed by the all-or-nothing cleanup")
-        succeed
-    }
-
-    "close is idempotent: second close skips driver close calls" in {
-        val rawSpies                         = mkSpies(2)
-        val spies: Array[IoDriver[JsHandle]] = rawSpies.asInstanceOf[Array[IoDriver[JsHandle]]]
-        val pool                             = IoDriverPool.init(spies)
-        pool.start()
-        pool.close()
-        pool.close()
-        // Each driver's close() must be called exactly once (AtomicBoolean CAS in the pool).
-        val allClosedOnce = rawSpies.forall(d => d.closeCalls.get() == 1)
-        assert(allClosedOnce, s"each driver must be closed exactly once, got ${rawSpies.map(_.closeCalls.get()).toList}")
-        succeed
-    }
-
-    "close closes every driver in order" in {
-        val closeOrder = mutable.ListBuffer[Int]()
-        val rawSpies = Array.tabulate(2) { i =>
-            val spy = new RecordingDriver(JsIoDriver.init())
-            spy.onClose = () => closeOrder += i
-            spy
-        }
-        val spies: Array[IoDriver[JsHandle]] = rawSpies.asInstanceOf[Array[IoDriver[JsHandle]]]
-        val pool                             = IoDriverPool.init(spies)
-        pool.start()
-        pool.close()
-
-        assert(rawSpies(0).closeCalls.get() == 1, "driver 0 must be closed exactly once")
-        assert(rawSpies(1).closeCalls.get() == 1, "driver 1 must be closed exactly once")
-        // Driver close order: 0 then 1 (sequential closeLoop in IoDriverPool).
-        assert(closeOrder.toList == List(0, 1), s"driver close order must be sequential, got $closeOrder")
-        succeed
-    }
-
-    "close is safe when the pool was never started" in {
-        val spies: Array[IoDriver[JsHandle]] = mkSpies(3).asInstanceOf[Array[IoDriver[JsHandle]]]
-        val pool                             = IoDriverPool.init(spies)
-        // Do NOT call pool.start(); close() must still close every driver without throwing.
-        pool.close()
         succeed
     }
 

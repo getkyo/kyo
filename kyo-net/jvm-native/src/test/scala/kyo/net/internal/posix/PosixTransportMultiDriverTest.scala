@@ -29,7 +29,7 @@ class PosixTransportMultiDriverTest extends Test:
         PosixTestSockets.assumePoller()
         ()
 
-    /** Build a real transport backed by `n` real PollerIoDriver instances, start the pool, run `body`, then close the transport. */
+    /** Build a real transport backed by `n` real PollerIoDriver instances, start the pool, run `body`, then close each driver. */
     private def withNDriverTransport[A](n: Int)(body: PosixTransport => A < (Async & Abort[NetException | Closed] & Scope))(using
         Frame
     ): A < (Async & Abort[NetException | Closed] & Scope) =
@@ -39,7 +39,7 @@ class PosixTransportMultiDriverTest extends Test:
         val transport = PosixTransport.init(pool)
         pool.start()
         Abort.run[NetException | Closed](body(transport)).map { result =>
-            Sync.defer(transport.close()).andThen(Abort.get(result))
+            Sync.defer(drivers.foreach(_.close())).andThen(Abort.get(result))
         }
     end withNDriverTransport
 
@@ -88,7 +88,7 @@ class PosixTransportMultiDriverTest extends Test:
                 }
             }
         }.map { result =>
-            Sync.defer(transport.close()).andThen(Abort.get(result))
+            Sync.defer(driverArray.foreach(_.close())).andThen(Abort.get(result))
         }
     }
 
@@ -171,37 +171,6 @@ class PosixTransportMultiDriverTest extends Test:
         }
     end exercisesRealParallelismBody
 
-    // --- poolCloseLeaksNothing ---
-    // After transport.close() (which calls pool.close()), all N real driver fibers are interrupted and a second close() is idempotent.
-    // Anti-flakiness: close() is synchronous wrt the CAS guard; no sleep.
-    "poolCloseLeaksNothing" in {
-        assumePoller()
-        val N = 3
-        val drivers: Array[IoDriver[PosixHandle]] =
-            Array.fill(N)(PollerIoDriver.init().asInstanceOf[IoDriver[PosixHandle]])
-        val pool      = IoDriverPool.init(drivers)
-        val transport = PosixTransport.init(pool)
-        pool.start()
-
-        // Open one real connection so the accept loop is live, then close everything.
-        Abort.run[NetException | Closed] {
-            transport.listen("127.0.0.1", 0, 4)(_ => ()).safe.get.map { listener =>
-                transport.connect("127.0.0.1", listener.port).safe.get.map { conn =>
-                    conn.close()
-                    listener.close()
-                }
-            }
-        }.map { _ =>
-            Sync.defer {
-                // First close: stops all N driver fibers and releases their resources.
-                transport.close()
-                // Second close: must be idempotent and not throw (AtomicBoolean CAS in pool.close is the guard).
-                transport.close()
-                succeed
-            }
-        }
-    }
-
     // --- poolSizeMatchesIoPoolSize ---
     // The production registry build path sizes the pool at max(1, ioPoolSize) drivers on every platform: both JVM and Native run each driver's
     // poll loop on its own OS thread, so ioPoolSize drivers give real cross-core parallelism on both. With the default ioPoolSize > 1 on any
@@ -216,19 +185,16 @@ class PosixTransportMultiDriverTest extends Test:
             case None =>
                 Sync.defer(cancel("no posix backend selected/available on this host (pool-size check is posix-only)"))
             case Some(entry) =>
-                Sync.defer(entry.build(summon[Frame])).map { transport =>
-                    // A posix backend entry always builds a PosixTransport; the cast reaches its pool to count drivers.
-                    val posix    = transport.asInstanceOf[PosixTransport]
+                Sync.defer {
+                    // A posix backend entry always builds a PosixTransport; the cast reaches its pool to count drivers. The entry's transport
+                    // is process-lifetime and shared (mirroring NetPlatform.transport), so this reads it without closing it.
+                    val posix    = entry.transport.asInstanceOf[PosixTransport]
                     val expected = math.max(1, kyo.net.ioPoolSize())
-                    Sync.defer {
-                        try
-                            assert(
-                                posix.pool.size == expected,
-                                s"pool size must be $expected (max(1, ioPoolSize)), got ${posix.pool.size}"
-                            )
-                            succeed
-                        finally discard(transport.close())
-                    }
+                    assert(
+                        posix.pool.size == expected,
+                        s"pool size must be $expected (max(1, ioPoolSize)), got ${posix.pool.size}"
+                    )
+                    succeed
                 }
         end match
     }

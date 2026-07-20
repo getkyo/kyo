@@ -930,7 +930,7 @@ final class RecordingIoDriver(real: IoDriver[PosixHandle]) extends IoDriver[Posi
     // Count of closeHandle() calls.
     val closeHandleCalls: AtomicInteger = new AtomicInteger(0)
 
-    // Count of close() calls (pool close path: IoDriverPool.close() calls driver.close(), not closeHandle).
+    // Count of close() calls (the driver's own shutdown, not closeHandle).
     val closeCalls: AtomicInteger = new AtomicInteger(0)
 
     // Callbacks fired after the corresponding call is recorded and before delegating to the real driver. They let a test record the order

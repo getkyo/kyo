@@ -125,7 +125,6 @@ class NioHandleEngineGateTest extends Test:
                     driveConnection(conn, connId = 0, rounds = 40, window = 4).map { ok =>
                         conn.close()
                         listener.close()
-                        transport.close()
                         assert(ok, "an echoed frame did not match its request byte for byte (engine gate violation would cause this)")
                     }
                 }
@@ -153,7 +152,6 @@ class NioHandleEngineGateTest extends Test:
                         conn0.close()
                         conn1.close()
                         listener.close()
-                        transport.close()
                         assert(ok0, "connection 0: echoed frame did not match request (gate interference or engine corruption)")
                         assert(ok1, "connection 1: echoed frame did not match request (gate interference or engine corruption)")
                     }
@@ -181,7 +179,6 @@ class NioHandleEngineGateTest extends Test:
                     }
                 }.map { results =>
                     listener.close()
-                    transport.close()
                     assert(results.forall(identity), "a NIO TLS echo frame did not match its request byte for byte (engine gate violation)")
                 }
             }

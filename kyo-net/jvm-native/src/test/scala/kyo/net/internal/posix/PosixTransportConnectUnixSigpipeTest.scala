@@ -106,13 +106,14 @@ class PosixTransportConnectUnixSigpipeTest extends Test:
             discard(driver.start())
             Abort.run[Closed] {
                 for
-                    _      <- transport.listenUnix(path, 16)(_ => ()).safe.get
-                    client <- transport.connectUnix(path).safe.get
+                    listener <- transport.listenUnix(path, 16)(_ => ()).safe.get
+                    client   <- transport.connectUnix(path).safe.get
                 yield
                     // The connectUnix client fd is the LAST fd handed to connect (the listen path never calls connect). Record it before
                     // teardown so the assertion targets exactly that socket.
                     val connectFd = client.asInstanceOf[kyo.net.internal.transport.Connection[PosixHandle]].handle.readFd
                     client.close()
+                    listener.close()
                     val calls = scala.jdk.CollectionConverters.IteratorHasAsScala(spy.setsockoptCalls.iterator()).asScala.toList
                     assert(
                         calls.contains((connectFd, PosixConstants.SOL_SOCKET, PosixConstants.SO_NOSIGPIPE)),
@@ -122,7 +123,7 @@ class PosixTransportConnectUnixSigpipeTest extends Test:
                     )
                 end for
             }.map { result =>
-                Sync.defer(transport.close()).andThen(Sync.defer(driver.close())).andThen(Abort.get(result))
+                Sync.defer(driver.close()).andThen(Abort.get(result))
             }
         }
     }

@@ -8,13 +8,12 @@ import kyo.net.Test
 
 /** Guards the process-shared transport marker (see [[ProcessSharedTransport]]) and the sharing it marks.
   *
-  * `NetPlatform.transport` is one instance for the whole process, shared by every client and server and never closed, so its drivers MUST carry
-  * the `processSharedTransport` frame: their idle kept-alive carriers are expected to sit armed forever, and the end-of-run stranded-op /
-  * fiber-leak gate allowlists them on that frame. `NetPlatform.ownedTransport()` is the escape hatch a caller closes itself, so it MUST stay
-  * unmarked, or a genuinely leaked owned transport would be silently excused.
+  * `NetPlatform.transport` is the single instance for the whole process, shared by every client and server and never closed, so its drivers
+  * MUST carry the `processSharedTransport` frame: their idle kept-alive carriers are expected to sit armed forever, and the end-of-run
+  * stranded-op / fiber-leak gate allowlists them on that frame.
   *
-  * A regression in either direction is costly: an unmarked shared transport fails the fork's stranded-op check for every module using the
-  * process-wide `HttpClient.*` API with a keep-alive connection, and a marked owned transport hides real leaks.
+  * An unmarked shared transport fails the fork's stranded-op check for every module using the process-wide `HttpClient.*` API with a keep-alive
+  * connection.
   */
 class ProcessSharedTransportTest extends Test:
 
@@ -30,7 +29,7 @@ class ProcessSharedTransportTest extends Test:
     private def assumeRegisteringDriver(): Unit =
         if Diagnostics.probeAll().isEmpty then cancel("the active backend registers no Diagnostics probes; the marker has nothing to mark")
 
-    "the shared transport marks its drivers; an owned one does not" in {
+    "the shared transport marks its drivers" in {
         Sync.Unsafe.defer {
             discard(NetPlatform.transport)
             assumeRegisteringDriver()
@@ -39,26 +38,16 @@ class ProcessSharedTransportTest extends Test:
             discard(NetPlatform.transport)
             val marked = markedDrivers
             assert(marked.nonEmpty, "the shared transport must mark its drivers with the processSharedTransport frame")
-
-            // An owned transport builds its own drivers; none of them may be marked, or a genuinely leaked owned transport would be excused.
-            val owned      = NetPlatform.ownedTransport()
-            val afterOwned = markedDrivers
-            discard(owned.close())
-            assert(afterOwned == marked, "ownedTransport must not carry the processSharedTransport marker")
         }
     }
 
-    "there is exactly one shared transport, and an owned one is not it" in {
+    "there is exactly one shared transport" in {
         Sync.Unsafe.defer {
             // Settings are passed per operation, so wanting different ones is never a reason to build a second transport. Every caller of the
             // shared instance gets this one, whatever config it intends to pass to its connects and listens.
             val a = NetPlatform.transport
             val b = NetPlatform.transport
             assert(a eq b, "every caller must get the same instance, or clients and servers would each build their own I/O fabric")
-
-            val owned = NetPlatform.ownedTransport()
-            assert(owned ne a, "ownedTransport must hand back an isolated instance, never the shared one")
-            discard(owned.close())
             succeed
         }
     }

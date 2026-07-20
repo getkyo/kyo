@@ -65,7 +65,7 @@ class IoUringHandshakeTimeoutOrderingTest extends Test:
         discard(driver.start())
         // backendIsEpoll = false: the driver is io_uring, so the regular-file fallback never applies.
         val transport = TestTransports.forTesting(driver, sock, backendIsEpoll = false)
-        Sync.ensure(Sync.defer(transport.close()))(body(transport, recording))
+        Sync.ensure(Sync.defer(driver.close()))(body(transport, recording))
     end withRecordingTransport
 
     /** Open a raw client socket and connect it to `port` on 127.0.0.1, returning the client fd. The client then sends NOTHING, so the server-side

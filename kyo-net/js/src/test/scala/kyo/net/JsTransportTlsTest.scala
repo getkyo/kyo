@@ -347,7 +347,6 @@ class JsTransportTlsTest extends Test:
             _        <- Sync.defer(listener.close())
             outcome  <- Abort.run[Timeout](Async.timeout(3.seconds)(Abort.run[Closed](client.inbound.safe.take)))
             _        <- Sync.defer(client.close())
-            _        <- Sync.defer(discard(transport.close()))
         yield assert(
             outcome.isSuccess,
             s"closing the listener must destroy its unsettled accepted socket, got $outcome"

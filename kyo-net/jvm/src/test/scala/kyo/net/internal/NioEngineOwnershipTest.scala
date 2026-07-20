@@ -124,7 +124,6 @@ class NioEngineOwnershipTest extends Test:
                         conn.inbound.safe.take.map { received =>
                             conn.close()
                             listener.close()
-                            transport.close()
                             assert(
                                 received.toArray sameElements msg.toArray,
                                 "round-trip failed: gate not released after handshake"
@@ -151,7 +150,6 @@ class NioEngineOwnershipTest extends Test:
                         fillTo(conn, Array.emptyByteArray, msg1.size + msg2.size).map { received =>
                             conn.close()
                             listener.close()
-                            transport.close()
                             val expected = msg1.toArray ++ msg2.toArray
                             assert(
                                 received.take(expected.length) sameElements expected,
@@ -176,7 +174,6 @@ class NioEngineOwnershipTest extends Test:
                     driveConnection(conn, connId = 0, rounds = 60, window = 1).map { ok =>
                         conn.close()
                         listener.close()
-                        transport.close()
                         assert(ok, "a NIO TLS echo frame did not match after sequential cycles (gate leak would cause this)")
                     }
                 }
@@ -225,7 +222,6 @@ class NioEngineOwnershipTest extends Test:
                         conn0.close()
                         conn1.close()
                         listener.close()
-                        transport.close()
                         assert(ok0, "connection 0: frame mismatch (gate shared across connections would cause this)")
                         assert(ok1, "connection 1: frame mismatch (gate shared across connections would cause this)")
                     }
@@ -254,7 +250,6 @@ class NioEngineOwnershipTest extends Test:
                                 conn2.inbound.safe.take.map { received =>
                                     conn2.close()
                                     listener.close()
-                                    transport.close()
                                     assert(
                                         received.toArray sameElements msg2.toArray,
                                         "second connection's round-trip failed (gate leak from first connection would cause this)"

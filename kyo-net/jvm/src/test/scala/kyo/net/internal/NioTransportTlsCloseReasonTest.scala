@@ -46,7 +46,7 @@ class NioTransportTlsCloseReasonTest extends Test:
       */
     private lazy val clientTls: NetTlsConfig = NetTlsConfig(trustAll = true)
 
-    /** Build an inline NIO transport directly (forces the NioTransport path; see suite scaladoc). Caller must close it. */
+    /** Build an inline NIO transport directly (forces the NioTransport path; see suite scaladoc). Process-lifetime: never closed. */
     private def mkTransport()(using Frame): NioTransport =
         NioTransport.init()
 
@@ -71,7 +71,6 @@ class NioTransportTlsCloseReasonTest extends Test:
         given Frame   = Frame.internal
         val transport = mkTransport()
         runStatusScenario(transport, ServerClose.CleanCloseNotify).map { reason =>
-            transport.close()
             assert(
                 reason == NetConnection.Status.CleanClose,
                 "SECURITY: inline NIO TLS connection did not report an orderly close after the peer sent a close_notify before the FIN " +
@@ -88,7 +87,6 @@ class NioTransportTlsCloseReasonTest extends Test:
         given Frame   = Frame.internal
         val transport = mkTransport()
         runStatusScenario(transport, ServerClose.BareFin).map { reason =>
-            transport.close()
             assert(
                 reason == NetConnection.Status.Truncated,
                 "SECURITY: inline NIO TLS connection did not report a truncation after the peer's bare FIN with no close_notify " +

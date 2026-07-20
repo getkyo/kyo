@@ -37,7 +37,7 @@ class IoUringListenerCloseRecycleTest extends Test:
         val driver = IoUringDriver.init()
         discard(driver.start())
         val transport = TestTransports.forTesting(driver, Ffi.load[SocketBindings], backendIsEpoll = false)
-        Sync.ensure(Sync.defer { transport.close(); driver.close() }) {
+        Sync.ensure(Sync.defer { driver.close() }) {
             val gate  = new java.util.concurrent.CountDownLatch(1)
             val pinIn = Promise.Unsafe.init[Unit, Abort[Closed]]()
             driver.submitEngineOp { () =>

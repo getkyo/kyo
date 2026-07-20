@@ -27,16 +27,14 @@ class PosixTransportSurfaceTest extends Test:
         if !(PosixConstants.isLinux || PosixConstants.isMacOrBsd) then
             cancel("PosixTransport TCP/UDS surface needs epoll (Linux) or kqueue (macOS/BSD)")
 
-    /** Build a transport over a fresh real poller driver, run `body`, then close the transport and the driver. No accept-loop drain is needed:
-      * with the poller (epoll/kqueue) the accept loop is readiness-driven and never parks in a blocking `accept`. `transport.close()` closes every
-      * listener, and `PosixListener.close()` (on the calling fiber) deregisters the accept interest via `driver.cancel`, which inline-completes the
-      * parked accept promise with `Closed`; that completion runs the accept loop's exit branch inline (`IOPromise.flush`), then the listener
-      * `shutdown`s + closes the listen fd, all synchronously.
+    /** Build a transport over a fresh real poller driver, run `body`, then close the driver. Each leaf closes its own listeners (this transport is
+      * never closed, mirroring production: a transport is process-lifetime). No accept-loop drain is needed: with the poller (epoll/kqueue) the
+      * accept loop is readiness-driven and never parks in a blocking `accept`.
       *
-      * The driver's own poll-loop thread is a separate story from the listener fd closing synchronously above: `driver.close()` only requests
-      * teardown (`submitEngineOp` + `triggerWake()`) and returns immediately, without waiting for the poll-loop carrier to actually run it.
-      * Awaiting the driver's own exit fiber after `close()` (rather than discarding it) makes the underlying thread provably gone before this
-      * computation completes, closing the window where, under kyo-test's concurrent leaf scheduling, a not-yet-fully-torn-down
+      * The driver's own poll-loop thread is a separate story from a listener fd closing synchronously via its own `close()`: `driver.close()`
+      * only requests teardown (`submitEngineOp` + `triggerWake()`) and returns immediately, without waiting for the poll-loop carrier to
+      * actually run it. Awaiting the driver's own exit fiber after `close()` (rather than discarding it) makes the underlying thread provably
+      * gone before this computation completes, closing the window where, under kyo-test's concurrent leaf scheduling, a not-yet-fully-torn-down
       * driver from an earlier leaf could still be alive when the next leaf's own transport starts, letting a connection meant for the new
       * leaf's listener land on the stale one instead.
       */
@@ -46,11 +44,9 @@ class PosixTransportSurfaceTest extends Test:
         val driver     = PollerIoDriver.init()
         val transport  = TestTransports.forTesting(driver, Ffi.load[SocketBindings], backendIsEpoll = false)
         val driverDone = driver.start()
-        // Run the body, then ALWAYS close the transport and driver and await the driver's exit fiber, re-raising the body's outcome.
-        // transport.close() tears the readiness-driven accept loops down synchronously (see the scaladoc); the exit-fiber await is what
-        // proves the driver's own poll-loop thread has actually stopped, not just the listener fd.
+        // Run the body, then ALWAYS close the driver and await its exit fiber, re-raising the body's outcome.
         Abort.run[NetException | Closed](body(transport)).map { result =>
-            Sync.defer(transport.close()).andThen(Sync.defer(driver.close())).andThen(
+            Sync.defer(driver.close()).andThen(
                 Abort.run(driverDone.safe.get).unit
             ).andThen(Abort.get(result))
         }
@@ -130,6 +126,7 @@ class PosixTransportSurfaceTest extends Test:
                         case Absent     => fail("server connection was never captured")
                     client.close()
                     serverOpt.foreach(_.close())
+                    listener.close()
                     assert(port > 0, s"ephemeral port not resolved: $port")
                     assert(echoed.sameElements(message), s"echo mismatch: got '${new String(echoed, "UTF-8")}'")
                     assert(clientFd >= 0, s"client fd not a real fd: $clientFd")
@@ -165,6 +162,7 @@ class PosixTransportSurfaceTest extends Test:
                     outcome <- Abort.run[Closed](server.inbound.safe.take)
                 yield
                     server.close()
+                    listener.close()
                     assert(outcome.isFailure, s"expected Closed on the accepted connection after the client closed, got $outcome")
                 end for
             }
@@ -175,6 +173,7 @@ class PosixTransportSurfaceTest extends Test:
             withTransport { transport =>
                 transport.listen("127.0.0.1", 0, 16)(_ => ()).safe.get.map { listener =>
                     val addr = listener.address
+                    listener.close()
                     assert(addr == NetAddress.Tcp("127.0.0.1", listener.port), s"unexpected address $addr")
                 }
             }
@@ -223,6 +222,7 @@ class PosixTransportSurfaceTest extends Test:
                     echoed <- collect(client, message.length)
                 yield
                     client.close()
+                    listener.close()
                     assert(echoed.sameElements(message), s"localhost echo mismatch: got '${new String(echoed, "UTF-8")}'")
                 end for
             }
@@ -258,6 +258,7 @@ class PosixTransportSurfaceTest extends Test:
                     echoed <- collect(client, message.length)
                 yield
                     client.close()
+                    listener.close()
                     assert(echoed.sameElements(message), s"numeric echo mismatch: got '${new String(echoed, "UTF-8")}'")
                 end for
             }
@@ -325,6 +326,7 @@ class PosixTransportSurfaceTest extends Test:
                         case Absent     => fail("server connection was never captured")
                     client.close()
                     serverOpt.foreach(_.close())
+                    listener.close()
                     assert(listener.port == -1, s"Unix listener port must be -1, got ${listener.port}")
                     assert(listener.address == NetAddress.Unix(path), s"unexpected Unix address ${listener.address}")
                     assert(echoed.sameElements(message), s"UDS echo mismatch: got '${new String(echoed, "UTF-8")}'")

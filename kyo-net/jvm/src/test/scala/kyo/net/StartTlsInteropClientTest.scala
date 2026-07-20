@@ -63,104 +63,102 @@ class StartTlsInteropClientTest extends Test:
         if !uringEntry.isAvailable then cancel("io_uring not available on this host")
 
         TlsTestCertShared.writePems.flatMap { case (certPath, keyPath) =>
-            Sync.defer(uringEntry.build(summon[Frame])).flatMap { transport =>
-                Sync.ensure(Sync.defer(transport.close())) {
+            Sync.defer(uringEntry.transport).flatMap { transport =>
 
-                    val serverOutput = new ConcurrentLinkedQueue[String]()
-                    val serverReady  = new AtomicBoolean(false)
+                val serverOutput = new ConcurrentLinkedQueue[String]()
+                val serverReady  = new AtomicBoolean(false)
 
-                    // Pick an ephemeral port then start openssl s_server with minimal flags.
-                    // -rev: server reverses each input line and echoes it back.
-                    // No -starttls (removed in newer container images), no -no_dhe.
-                    Sync.defer {
-                        val s    = new ServerSocket(0)
-                        val port = s.getLocalPort
-                        s.close()
-                        val pb = new java.lang.ProcessBuilder(
-                            "openssl",
-                            "s_server",
-                            "-accept",
-                            port.toString,
-                            "-cert",
-                            certPath,
-                            "-key",
-                            keyPath,
-                            "-rev"
-                        )
-                        pb.redirectErrorStream(true)
-                        val proc = pb.start()
-                        // Capture all s_server output in a daemon thread so it is visible on failure.
-                        val readerThread = new Thread(
-                            () =>
-                                try
-                                    val reader = new BufferedReader(new InputStreamReader(proc.getInputStream))
-                                    var line   = reader.readLine()
-                                    while line != null do
-                                        discard(serverOutput.offer(line))
-                                        if line.contains("ACCEPT") then serverReady.set(true)
-                                        line = reader.readLine()
-                                    end while
-                                catch case _: Exception => (),
-                            "openssl-reader"
-                        )
-                        readerThread.setDaemon(true)
-                        readerThread.start()
-                        (proc, port)
-                    }.flatMap { case (proc, port) =>
-                        Sync.ensure(Sync.defer { proc.destroy(); () }) {
-                            // Poll serverReady up to 15s; cancel (not fail) on timeout since this
-                            // is infrastructure, not a code defect.
-                            Abort.run[Timeout](
-                                Async.timeout(15.seconds) {
-                                    Loop.foreach {
-                                        if serverReady.get() then Loop.done(())
-                                        else Async.sleep(100.millis).andThen(Loop.continue)
-                                    }
+                // Pick an ephemeral port then start openssl s_server with minimal flags.
+                // -rev: server reverses each input line and echoes it back.
+                // No -starttls (removed in newer container images), no -no_dhe.
+                Sync.defer {
+                    val s    = new ServerSocket(0)
+                    val port = s.getLocalPort
+                    s.close()
+                    val pb = new java.lang.ProcessBuilder(
+                        "openssl",
+                        "s_server",
+                        "-accept",
+                        port.toString,
+                        "-cert",
+                        certPath,
+                        "-key",
+                        keyPath,
+                        "-rev"
+                    )
+                    pb.redirectErrorStream(true)
+                    val proc = pb.start()
+                    // Capture all s_server output in a daemon thread so it is visible on failure.
+                    val readerThread = new Thread(
+                        () =>
+                            try
+                                val reader = new BufferedReader(new InputStreamReader(proc.getInputStream))
+                                var line   = reader.readLine()
+                                while line != null do
+                                    discard(serverOutput.offer(line))
+                                    if line.contains("ACCEPT") then serverReady.set(true)
+                                    line = reader.readLine()
+                                end while
+                            catch case _: Exception => (),
+                        "openssl-reader"
+                    )
+                    readerThread.setDaemon(true)
+                    readerThread.start()
+                    (proc, port)
+                }.flatMap { case (proc, port) =>
+                    Sync.ensure(Sync.defer { proc.destroy(); () }) {
+                        // Poll serverReady up to 15s; cancel (not fail) on timeout since this
+                        // is infrastructure, not a code defect.
+                        Abort.run[Timeout](
+                            Async.timeout(15.seconds) {
+                                Loop.foreach {
+                                    if serverReady.get() then Loop.done(())
+                                    else Async.sleep(100.millis).andThen(Loop.continue)
                                 }
-                            ).flatMap {
-                                case Result.Failure(_) =>
-                                    Sync.defer(cancel(
-                                        s"openssl s_server did not print ACCEPT within 15s on port $port " +
-                                            s"(process alive=${proc.isAlive}). Output:\n${outputString(serverOutput)}"
-                                    ))
-                                case Result.Success(_) =>
-                                    val clientTls =
-                                        NetTlsConfig(trustAll = true, sniHostname = Present("localhost"))
-
-                                    // 8 iterations: each opens a new TCP connection, upgrades to TLS,
-                                    // sends "ping\n", and reads the reversed echo from openssl -rev.
-                                    // The TLS handshake would fail with bad_record_mac if the kyo-net
-                                    // send-order mechanism were broken.
-                                    Loop(0) { i =>
-                                        if i >= 8 then Loop.done(())
-                                        else
-                                            Abort.run[Timeout | Closed](
-                                                Async.timeout(15.seconds) {
-                                                    for
-                                                        conn    <- transport.connect("127.0.0.1", port).safe.get
-                                                        tlsConn <- transport.upgradeToTls(conn, clientTls, 16).safe.get
-                                                        payload = "ping\n".getBytes
-                                                        _      <- tlsConn.outbound.safe.put(Span.fromUnsafe(payload))
-                                                        echoed <- tlsConn.inbound.safe.take
-                                                        _ = assert(
-                                                            echoed.size > 0,
-                                                            s"iteration $i: expected echo from openssl s_server -rev, got empty"
-                                                        )
-                                                    yield tlsConn.close()
-                                                    end for
-                                                }
-                                            ).map {
-                                                case Result.Failure(e) =>
-                                                    fail(
-                                                        s"iteration $i: TLS handshake or echo failed: $e. " +
-                                                            s"openssl s_server output:\n${outputString(serverOutput)}"
-                                                    )
-                                                    Loop.continue(i + 1)
-                                                case Result.Success(_) =>
-                                                    Loop.continue(i + 1)
-                                            }
-                                    }
                             }
+                        ).flatMap {
+                            case Result.Failure(_) =>
+                                Sync.defer(cancel(
+                                    s"openssl s_server did not print ACCEPT within 15s on port $port " +
+                                        s"(process alive=${proc.isAlive}). Output:\n${outputString(serverOutput)}"
+                                ))
+                            case Result.Success(_) =>
+                                val clientTls =
+                                    NetTlsConfig(trustAll = true, sniHostname = Present("localhost"))
+
+                                // 8 iterations: each opens a new TCP connection, upgrades to TLS,
+                                // sends "ping\n", and reads the reversed echo from openssl -rev.
+                                // The TLS handshake would fail with bad_record_mac if the kyo-net
+                                // send-order mechanism were broken.
+                                Loop(0) { i =>
+                                    if i >= 8 then Loop.done(())
+                                    else
+                                        Abort.run[Timeout | Closed](
+                                            Async.timeout(15.seconds) {
+                                                for
+                                                    conn    <- transport.connect("127.0.0.1", port).safe.get
+                                                    tlsConn <- transport.upgradeToTls(conn, clientTls, 16).safe.get
+                                                    payload = "ping\n".getBytes
+                                                    _      <- tlsConn.outbound.safe.put(Span.fromUnsafe(payload))
+                                                    echoed <- tlsConn.inbound.safe.take
+                                                    _ = assert(
+                                                        echoed.size > 0,
+                                                        s"iteration $i: expected echo from openssl s_server -rev, got empty"
+                                                    )
+                                                yield tlsConn.close()
+                                                end for
+                                            }
+                                        ).map {
+                                            case Result.Failure(e) =>
+                                                fail(
+                                                    s"iteration $i: TLS handshake or echo failed: $e. " +
+                                                        s"openssl s_server output:\n${outputString(serverOutput)}"
+                                                )
+                                                Loop.continue(i + 1)
+                                            case Result.Success(_) =>
+                                                Loop.continue(i + 1)
+                                        }
+                                }
                         }
                     }
                 }

@@ -130,7 +130,8 @@ object TlsRealEngines:
       *
       * Creates a fresh PollerIoDriver and
       * PosixTransport, listens on an ephemeral port with the test cert, connects from the client side with trustAll, completes the TLS
-      * handshake, then hands both connections to `f`. The transport and driver are closed when `f` returns.
+      * handshake, then hands both connections to `f`. The driver is closed when `f` returns (this transport is never closed, mirroring
+      * production).
       *
       * Anti-flakiness: connect and listen use real Fiber.Unsafe latches (Fiber.initUnscoped) completing on the real kernel accept; no sleep.
       */
@@ -162,10 +163,7 @@ object TlsRealEngines:
                 result
             end for
         }.map { r =>
-            Sync.defer {
-                transport.close()
-                driver.close()
-            }.andThen(Abort.get(r))
+            Sync.defer(driver.close()).andThen(Abort.get(r))
         }
     end realTlsLoopback
 

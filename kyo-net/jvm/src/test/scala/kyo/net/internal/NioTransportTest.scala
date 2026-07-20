@@ -23,7 +23,7 @@ class NioTransportTest extends Test:
         privateKeyPath = Present(TlsTestCert.keyPath)
     )
 
-    /** Create a transport using the standard factory. Starts its own event loop driver. Caller must call close(). */
+    /** Create a transport using the standard factory. Starts its own event loop driver. Process-lifetime: never closed. */
     def mkTransport()(using Frame): NioTransport =
         NioTransport.init()
 
@@ -34,24 +34,16 @@ class NioTransportTest extends Test:
     "init stores IoDriverPool" in {
         given Frame   = Frame.internal
         val transport = mkTransport()
-        try
-            assert(transport.pool ne null)
-            succeed
-        finally
-            discard(transport.close())
-        end try
+        assert(transport.pool ne null)
+        succeed
     }
 
     "init stores IoDriver in pool" in {
         given Frame   = Frame.internal
         val transport = mkTransport()
-        try
-            val driver = transport.pool.next()
-            assert(driver ne null)
-            succeed
-        finally
-            discard(transport.close())
-        end try
+        val driver    = transport.pool.next()
+        assert(driver ne null)
+        succeed
     }
 
     // -----------------------------------------------------------------------
@@ -90,7 +82,6 @@ class NioTransportTest extends Test:
                 latch.countDown()
                 conn.close()
                 serverSock.close()
-                discard(transport.close())
         }
     }
 
@@ -99,7 +90,6 @@ class NioTransportTest extends Test:
         val transport = mkTransport()
         // Port 1: connection refused on loopback
         Abort.run[NetException](transport.connect("127.0.0.1", 1).safe.get).map { result =>
-            transport.close()
             // Either refused (Failure) or panicked; a success would be unusual but allowed
             // OS-nondeterministic connect-refused-vs-reuse outcome covers all Result cases
             assert(result.isFailure || result.isPanic || result.isSuccess)
@@ -122,7 +112,6 @@ class NioTransportTest extends Test:
                 succeed
             finally
                 listener.close()
-                discard(transport.close())
         }
     }
 
@@ -136,7 +125,6 @@ class NioTransportTest extends Test:
                 succeed
             finally
                 listener.close()
-                discard(transport.close())
         }
     }
 
@@ -148,7 +136,6 @@ class NioTransportTest extends Test:
             val port = listener1.port
             Abort.run[NetException](transport.listen("127.0.0.1", port, 50)(_ => ()).safe.get).map { result2 =>
                 listener1.close()
-                transport.close()
                 assert(result2.isFailure)
                 succeed
             }
@@ -177,7 +164,6 @@ class NioTransportTest extends Test:
             accepted.safe.get.map { _ =>
                 clientSock.close()
                 listener.close()
-                transport.close()
                 succeed
             }
         }
@@ -211,7 +197,6 @@ class NioTransportTest extends Test:
                         latch.countDown()
                         clientConn.close()
                         listener.close()
-                        discard(transport.close())
                 }
             }
     }
@@ -233,7 +218,6 @@ class NioTransportTest extends Test:
             val clientTls = NetTlsConfig(trustAll = true)
             Abort.run[NetException](transport.connectTls("127.0.0.1", port, clientTls).safe.get).map { result =>
                 listener.close()
-                transport.close()
                 result match
                     case Result.Success(conn) =>
                         conn.close()
@@ -261,7 +245,6 @@ class NioTransportTest extends Test:
             listener.close()
             // After close, further connect attempts should fail or be refused
             Abort.run[NetException](transport.connect("127.0.0.1", port).safe.get).map { result =>
-                transport.close()
                 // Either connection refused (failure) or the port was taken; either way listener is closed
                 // OS-nondeterministic listener-close outcome
                 assert(result.isFailure || result.isSuccess)
@@ -304,7 +287,7 @@ class NioTransportTest extends Test:
         // The server handler keeps the connection open (does not close): closing it immediately sends a FIN that, under load, the client's read
         // pump observes as EOF and tears the connection down (setting the connection's closed flag) before the client reads the cert hash, making
         // serverCertificateHash Absent by the "Absent after close" contract. The shared TransportTlsIntrospectionTest uses the same open-handler
-        // shape for this reason; listener.close() / transport.close() below tear the server side down.
+        // shape for this reason; listener.close() below tears the server side down.
         transport.listenTls("127.0.0.1", 0, 50, serverTlsConfig) { _ =>
             ()
         }.safe.get.map { listener =>
@@ -317,16 +300,13 @@ class NioTransportTest extends Test:
                         val hash = conn.serverCertificateHash
                         conn.close()
                         listener.close()
-                        transport.close()
                         assert(hash.isDefined, s"serverCertificateHash must be Present after TLS handshake, got Absent")
                         succeed
                     case Result.Failure(e) =>
                         listener.close()
-                        transport.close()
                         fail(s"TLS connect failed: $e")
                     case Result.Panic(e) =>
                         listener.close()
-                        transport.close()
                         fail(s"TLS connect panicked: $e")
                 end match
             }
@@ -362,7 +342,6 @@ class NioTransportTest extends Test:
                         c1.close()
                         c2.close()
                         listener.close()
-                        transport.close()
                         assert(acceptCount.get() >= 2, s"expected at least 2 accepted connections, got ${acceptCount.get()}")
                         succeed
                     }
@@ -380,7 +359,6 @@ class NioTransportTest extends Test:
         val transport = mkTransport()
         val badPath   = "/tmp/kyo-nio-test-does-not-exist-" + java.util.UUID.randomUUID() + ".sock"
         Abort.run[NetException](transport.connectUnix(badPath).safe.get).map { result =>
-            transport.close()
             assert(result.isFailure)
             succeed
         }
@@ -445,7 +423,6 @@ class NioTransportTest extends Test:
                             client.close()
                             serverConnRef.unsafe.get().foreach(_.close())
                             listener.close()
-                            transport.close()
                             discard(new java.io.File(path).delete())
                         end try
                     }
@@ -487,9 +464,7 @@ class NioTransportTest extends Test:
                     }
                 }
             }
-        }.map { result =>
-            Sync.defer(discard(transport.close())).andThen(Abort.get(result))
-        }
+        }.map(Abort.get)
     }
 
     // A connection accepted by listenTls but whose handshake has not completed has no Connection yet, so it is invisible to the registry
@@ -525,9 +500,7 @@ class NioTransportTest extends Test:
                     }
                 }
             }
-        }.map { result =>
-            Sync.defer(discard(transport.close())).andThen(Abort.get(result))
-        }
+        }.map(Abort.get)
     }
 
     // The companion to the leaf above, for the window it cannot reach. The registration runs on the selector carrier while
@@ -562,9 +535,7 @@ class NioTransportTest extends Test:
                     end match
                 }
             }
-        }.map { result =>
-            Sync.defer(discard(transport.close())).andThen(Abort.get(result))
-        }
+        }.map(Abort.get)
     }
 
 end NioTransportTest

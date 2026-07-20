@@ -29,8 +29,31 @@ object TestBackends:
     final case class Entry(
         name: String,
         isAvailable: Boolean,
-        build: Frame => Transport
-    )
+        private val make: Frame => Transport
+    ):
+        // One transport per backend, built on first use and never torn down, mirroring production: a transport is process-lifetime, so the
+        // harness holds one per backend for the run rather than building and discarding one per leaf. Cells share it exactly as every client
+        // and server in a process shares NetPlatform.transport; per-connection settings travel with each operation, so sharing costs a cell
+        // nothing. Synchronized because leaves can run concurrently and this must construct exactly once per backend.
+        private var built: Maybe[Transport] = Absent
+
+        def transport(using frame: Frame): Transport =
+            synchronized {
+                built match
+                    case Present(t) => t
+                    case Absent     =>
+                        // Built under the process-lifetime marker, because that is now what it is: one transport per backend, never torn
+                        // down, held for the whole run. The marker names its drivers' carriers `processSharedTransport`, which the
+                        // stranded-op and fiber-leak gates allowlist. Without it those gates read a by-design-parked driver (idle, with
+                        // reads armed on still-open connections) as a lost wakeup. This is the same exemption NetPlatform.transport gets,
+                        // applied on the same grounds rather than a second convention.
+                        val t = kyo.net.internal.ProcessSharedTransport.whileBuilding(make(frame))
+                        built = Present(t)
+                        t
+                end match
+            }
+        end transport
+    end Entry
 
     /** Every registered backend on this host, in registry order. The harness registers one leaf per entry and cancels the leaves whose
       * `isAvailable` is false, so a backend that should be available but is not stays visible as a canceled leaf rather than silently
@@ -45,7 +68,7 @@ object TestBackends:
             Entry(
                 name = entry.name,
                 isAvailable = entry.isAvailable,
-                build = frame => entry.build()(using summon[AllowUnsafe], frame)
+                make = frame => entry.build()(using summon[AllowUnsafe], frame)
             )
         }
     end all

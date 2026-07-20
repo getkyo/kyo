@@ -146,7 +146,7 @@ class PosixTransportAcceptEmfileTest extends Test:
                     _ <- Async.sleep(settleWindow)
                 yield
                     val count = spy.acceptNowCalls.get()
-                    transport.close()
+                    listener.close()
                     discard(spy.close(clientFd))
                     assert(
                         count <= bound,

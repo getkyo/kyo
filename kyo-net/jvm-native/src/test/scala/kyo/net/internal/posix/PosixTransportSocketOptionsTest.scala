@@ -47,7 +47,7 @@ class PosixTransportSocketOptionsTest extends Test:
         end try
     end getIntOpt
 
-    /** Build a real transport backed by one PollerIoDriver, connect a loopback client, run `body` with the real client fd, then close. */
+    /** Build a real transport backed by one PollerIoDriver, connect a loopback client, run `body` with the real client fd, then close the driver. */
     private def withRealClientFd[A](config: NetConfig)(body: (
         SocketBindings,
         Int
@@ -71,7 +71,7 @@ class PosixTransportSocketOptionsTest extends Test:
                 }
             }
         }.map { result =>
-            Sync.defer(transport.close()).andThen(Abort.get(result))
+            Sync.defer(driver.close()).andThen(Abort.get(result))
         }
     end withRealClientFd
 
@@ -132,7 +132,7 @@ class PosixTransportSocketOptionsTest extends Test:
                 }
             }
         }.map { result =>
-            Sync.defer(transport.close()).andThen(Abort.get(result))
+            Sync.defer(driver.close()).andThen(Abort.get(result))
         }
     }
 

@@ -283,7 +283,7 @@ class PosixTransportTest extends Test:
                 }
             }
         }.map { result =>
-            Sync.defer(transport.close()).andThen(Abort.get(result))
+            Sync.defer(driver.close()).andThen(Abort.get(result))
         }
     }
 

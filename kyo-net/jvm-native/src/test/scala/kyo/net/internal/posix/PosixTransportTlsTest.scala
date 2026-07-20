@@ -42,10 +42,10 @@ class PosixTransportTlsTest extends Test:
         if !tlsAvailable then cancel("No TLS provider staged for this host")
     end assumeReady
 
-    /** Build a transport over a fresh real poller driver, run `body`, then close the transport and the driver. `transport.close()` tears the
-      * accept loop down synchronously: with the poller (epoll/kqueue) the accept loop never parks in a blocking `accept`, it is
-      * readiness-driven, so closing every listener deregisters the accept interest via `driver.cancel`, which inline-completes the parked
-      * accept promise with `Closed` and runs the accept loop's exit branch (`IOPromise.flush`) before `transport.close()` returns.
+    /** Build a transport over a fresh real poller driver, run `body`, then close the driver (this transport is never closed, mirroring
+      * production). Each leaf closes its own listeners: with the poller (epoll/kqueue) the accept loop never parks in a blocking `accept`, it is
+      * readiness-driven, so a listener's own `close()` deregisters the accept interest via `driver.cancel`, which inline-completes the parked
+      * accept promise with `Closed` and runs the accept loop's exit branch (`IOPromise.flush`) synchronously.
       *
       * The driver's own poll-loop thread is a separate story: `driver.close()` only requests teardown (`submitEngineOp` + `triggerWake()`)
       * and returns immediately, without waiting for the poll-loop carrier to actually run it. Awaiting the driver's own exit fiber after
@@ -60,7 +60,7 @@ class PosixTransportTlsTest extends Test:
         val transport  = TestTransports.forTesting(driver, Ffi.load[SocketBindings], backendIsEpoll = false)
         val driverDone = driver.start()
         Abort.run[NetException | Closed](body(transport)).map { result =>
-            Sync.defer(transport.close()).andThen(Sync.defer(driver.close())).andThen(
+            Sync.defer(driver.close()).andThen(
                 Abort.run(driverDone.safe.get).unit
             ).andThen(Abort.get(result))
         }
@@ -126,6 +126,7 @@ class PosixTransportTlsTest extends Test:
                     certHash = client.serverCertificateHash
                 yield
                     client.close()
+                    listener.close()
                     assert(echoed.sameElements(message), s"TLS echo mismatch: got '${new String(echoed, "UTF-8")}'")
                     val hashBytes = certHash match
                         case Present(h) => h.toArray

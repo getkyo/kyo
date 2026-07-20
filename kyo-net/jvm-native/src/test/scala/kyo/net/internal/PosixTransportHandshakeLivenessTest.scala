@@ -67,7 +67,7 @@ class PosixTransportHandshakeLivenessTest extends Test:
                     privateKeyPath = Present(TlsTestCert.keyPath)
                 )
                 // Short deadline: a client that stalls the TLS handshake must be reaped within 150ms.
-                val transport = NetPlatform.ownedTransport()
+                val transport = NetPlatform.transport
                 transport.listenTls("127.0.0.1", 0, 16, serverTls.copy(handshakeTimeout = 150.millis)) { _ => () }.safe.get.map {
                     listener =>
                         // Plain TCP connect (no TLS): the client completes the TCP handshake but never
@@ -77,7 +77,6 @@ class PosixTransportHandshakeLivenessTest extends Test:
                                 outcome =>
                                     client.close()
                                     listener.close()
-                                    transport.close()
                                     // Reap: inbound ends with an empty EOF span or a Closed abort.
                                     // Timeout (the 5s window expired with no reap) is the regression symptom.
                                     val reaped = outcome match

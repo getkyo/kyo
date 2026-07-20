@@ -333,7 +333,7 @@ class TransportStartTlsTest extends Test:
         assumeTls()
         given Frame = Frame.internal
         TlsTestCertShared.writePems.map { case (_, _) =>
-            val transport = NetPlatform.ownedTransport()
+            val transport = NetPlatform.transport
             transport.listen("127.0.0.1", 0, 16)(_ => ()).safe.get.map { silentListener =>
                 transport.connect("127.0.0.1", silentListener.port).safe.get.map { conn =>
                     val clientTls =
@@ -342,7 +342,6 @@ class TransportStartTlsTest extends Test:
                         Async.timeout(5.seconds)(transport.upgradeToTls(conn, clientTls, 16).safe.get)
                     ).map { outcome =>
                         silentListener.close()
-                        discard(transport.close())
                         outcome match
                             case Result.Failure(e: NetTlsHandshakeTimeoutException) =>
                                 assert(e.timeout == 150.millis, s"expected the upgrade's own 150ms deadline, got ${e.timeout}")

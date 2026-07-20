@@ -44,7 +44,8 @@ class PosixTransportTlsHandshakeReuseTest extends Test:
         if !tlsAvailable then cancel("No TLS provider staged for this host")
     end assumeTlsReady
 
-    /** Build a transport over a fresh real poller driver, run `body`, then close the transport and the driver.
+    /** Build a transport over a fresh real poller driver, run `body`, then close the driver (this transport is never closed, mirroring
+      * production).
       *
       * Awaits the driver's own poll-loop-exit fiber after `close()` (rather than discarding it) so the underlying thread and listener socket
       * are provably gone before this computation completes: `close()` itself only requests teardown (`submitEngineOp` + `triggerWake()`) and
@@ -59,7 +60,7 @@ class PosixTransportTlsHandshakeReuseTest extends Test:
         val transport  = TestTransports.forTesting(driver, Ffi.load[SocketBindings], backendIsEpoll = false)
         val driverDone = driver.start()
         Abort.run[NetException | Closed](body(transport)).map { result =>
-            Sync.defer(transport.close()).andThen(Sync.defer(driver.close())).andThen(
+            Sync.defer(driver.close()).andThen(
                 Abort.run(driverDone.safe.get).unit
             ).andThen(Abort.get(result))
         }
@@ -103,6 +104,7 @@ class PosixTransportTlsHandshakeReuseTest extends Test:
                     echoed <- collect(client, msg.length)
                 yield
                     client.close()
+                    listener.close()
                     assert(echoed.sameElements(msg), s"TLS handshake round-trip mismatch: got '${new String(echoed, "UTF-8")}'")
             }
         }
@@ -130,6 +132,7 @@ class PosixTransportTlsHandshakeReuseTest extends Test:
                     done   <- fiber.interrupt
                     result <- fiber.getResult
                 yield
+                    listener.close()
                     // The interrupt is honored (it won the race with the never-completing handshake).
                     assert(done, "fiber.interrupt returned false: the parked handshake fiber was not interrupted")
                     // The fiber unwound to a terminal result (no strand / no hang): a Panic(interrupt) or a typed Failure, never a Success of a

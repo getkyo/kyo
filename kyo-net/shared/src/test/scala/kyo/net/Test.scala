@@ -45,7 +45,7 @@ abstract class Test extends kyo.test.Test[Any]:
       *
       * Env filtering follows kyo-browser's visible-cancel style, not kyo-pod's silent filter-at-registration: a leaf is registered for EVERY
       * registered backend, and the unavailable ones `cancel(...)` rather than vanishing, so a backend that should be available but probes false
-      * stays visible as a canceled leaf instead of hiding a probe regression. The built transport is closed via [[Scope.ensure]], so it is
+      * stays visible as a canceled leaf instead of hiding a probe regression. The backend's transport is process-lifetime, so it is
       * released regardless of how the scenario completes.
       */
     def eachBackend(scenario: Transport => (kyo.test.AssertScope ?=> Unit < (Async & Abort[NetException | Closed] & Scope)))(using
@@ -96,7 +96,7 @@ abstract class Test extends kyo.test.Test[Any]:
       * `jdk` inline; JS only `node`) and CANCELS when it cannot, so the valid-combination knowledge lives in production and evolves with the
       * transports rather than as a fixed table in the tests. A cell also cancels when its backend is unavailable on the host, or when the
       * provider's library is not staged ([[TlsProvider.isAvailable]]) -- so an absent BoringSSL bundle shows up as canceled cells, not failures.
-      * Transport lifecycle matches [[eachBackend]] (visible cancel, [[Scope.ensure]] close); the cert is written cross-platform through
+      * Transport lifecycle matches [[eachBackend]] (visible cancel, one process-lifetime transport per backend); the cert is written cross-platform through
       * [[TlsTestCertShared.writePems]].
       */
     def eachBackendTls(
@@ -162,12 +162,11 @@ abstract class Test extends kyo.test.Test[Any]:
                             // Build the cell's transport eagerly so its TLS capability can be queried for a clean, visible cancel BEFORE the scenario
                             // runs (the same eager-cancel placement the availability checks above use). An unsupported cell closes the just-built
                             // transport and cancels rather than running a mislabeled handshake on a substituted implementation.
-                            val transport = entry.build(summon[Frame])
+                            val transport = entry.transport
                             if !transport.supportedTlsProviders.contains(provider.name) then
-                                transport.close()
                                 cancel(s"backend ${entry.name} does not drive TLS impl ${provider.name}")
                             else
-                                Scope.ensure(Sync.defer(transport.close())).andThen {
+                                Sync.defer(()).andThen {
                                     TlsTestCertShared.writePems.map { case (certPath, keyPath) =>
                                         val serverTls = NetTlsConfig(
                                             certChainPath = Present(certPath),
@@ -184,16 +183,16 @@ abstract class Test extends kyo.test.Test[Any]:
         end for
     end tlsLeaves
 
-    /** Build the entry's transport with `NetConfig.default`, register a [[Scope.ensure]] that closes it on scope exit, and run
-      * `scenario` against it. The close runs whether the scenario succeeds, fails, or aborts, so no backend leaks its driver pool.
+    /** Run `scenario` against this backend's transport.
+      *
+      * The transport is the entry's process-lifetime instance, built on first use and shared by every leaf for that backend, exactly as
+      * production shares [[kyo.net.NetPlatform.transport]]. There is no close: a transport lives for the process. A leaf reclaims what it
+      * actually owns, its listeners and connections.
       */
     private def withTransport(entry: TestBackends.Entry)(
         scenario: Transport => (kyo.test.AssertScope ?=> Unit < (Async & Abort[NetException | Closed] & Scope))
     )(using frame: Frame, as: kyo.test.AssertScope): Unit < (Async & Abort[NetException | Closed] & Scope) =
-        import AllowUnsafe.embrace.danger
-        Sync.defer(entry.build(frame)).map { transport =>
-            Scope.ensure(Sync.defer(transport.close())).andThen(scenario(transport))
-        }
+        Sync.defer(entry.transport).map(transport => scenario(transport))
     end withTransport
 
 end Test
