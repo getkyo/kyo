@@ -242,6 +242,17 @@ final private[net] class PollerIoDriver private[posix] (
     // carriers at once.
     private val engineQueue = new ConcurrentLinkedQueue[() => Unit]()
 
+    // Serializes engine ops offered AFTER the poll loop is gone. While the loop runs it is the queue's only consumer, which is what keeps
+    // TLS engine ops for one handle strictly ordered; once terminalTeardown has completed, that consumer no longer exists, so late ops need
+    // their own single-drainer gate or two carriers could run two engine ops concurrently against the same engine.
+    // Unsafe: created at construction with no ambient AllowUnsafe; the danger bridge builds it here and its accesses run under the caller's.
+    private val lateDrainClaim = AtomicBoolean.Unsafe.init(false)(using AllowUnsafe.embrace.danger)
+
+    // The carrier currently holding lateDrainClaim, or null. Read by submitEngineOp's recheck to detect a RE-ENTRANT offer from inside a
+    // late-drained op (engineFreeSink routes one): that op's own drain pass will poll what it just offered, so re-entering the drain here
+    // would only spin against a claim this same carrier already holds.
+    @volatile private var lateDrainOwner: Thread = null
+
     // Registered fd-close obligations for TLS handles (mirrors IoUringDriver.pendingCloses): closeHandle's TLS branch defers the real
     // sockets.close/PosixHandle.close behind an engine op (so the close_notify send is serialized behind any in-flight read/write for this
     // connection), which strands forever if the op lands in engineQueue after the poll loop's one-shot terminal drain has already run
@@ -1442,6 +1453,11 @@ final private[net] class PollerIoDriver private[posix] (
                 closeTeardown(closed)
                 backend.close(pollerFd)
                 freeScratch()
+                // Mark the teardown finished on this path too. No loop ever ran, so drainFifos will never run either, which is exactly
+                // what these flags are read to mean: submitEngineOp's recheck drains a late op here instead of leaving it queued for a
+                // consumer that does not exist, and closeHandle self-closes inline instead of deferring to that same absent consumer.
+                terminal.set(true)
+                teardownComplete.set(true)
             end if
         end if
     end close
@@ -2486,6 +2502,35 @@ final private[net] class PollerIoDriver private[posix] (
     override def submitEngineOp(op: () => Unit)(using AllowUnsafe, Frame): Unit =
         discard(engineQueue.offer(op))
         triggerWake()
+        // Offer-then-recheck, the same shape closeHandle's put-then-recheck and IoUringDriver.submitEngineOp use. Once terminalTeardown has
+        // completed, drainFifos never runs again, so an op landing after it has no consumer at all: a listener-close discharge queued there
+        // never frees its engine or closes its fd, and the wake above cannot help because there is no loop left to wake. teardownComplete is
+        // set strictly before the terminal exit's own re-sweep, so either that pass observes this op or this recheck does. Skipped for a
+        // re-entrant offer from inside a late-drained op, whose own pass will pick it up.
+        if teardownComplete.get() && (lateDrainOwner ne Thread.currentThread()) then drainAfterTeardown()
+    end submitEngineOp
+
+    /** Drain engine ops offered after the poll loop's terminal teardown completed, on the calling carrier.
+      *
+      * The recheck half of [[submitEngineOp]]'s offer-then-recheck. [[lateDrainClaim]] keeps late drains mutually exclusive, standing in for
+      * the single-consumer guarantee the poll loop used to provide, so late ops stay serialized against each other rather than running two at
+      * a time against one TLS engine. Losing the claim is not a reason to return: the holder may already have passed the op just offered, so
+      * this retries until the queue is observably empty, whoever drained it.
+      */
+    private def drainAfterTeardown()(using AllowUnsafe, Frame): Unit =
+        var settled = false
+        while !settled do
+            if lateDrainClaim.compareAndSet(false, true) then
+                lateDrainOwner = Thread.currentThread()
+                try drainEngineOps()
+                finally
+                    lateDrainOwner = null
+                    lateDrainClaim.set(false)
+                end try
+            end if
+            settled = engineQueue.isEmpty()
+        end while
+    end drainAfterTeardown
 
     /** Drain the engine-op FIFO to empty, running each op to completion before the next. Called once per poll cycle from [[drainFifos]] on the single
       * poll-loop carrier, so it is the FIFO's only consumer (the ConcurrentLinkedQueue single-consumer contract holds with no flag). An op offered
