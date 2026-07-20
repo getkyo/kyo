@@ -16,7 +16,7 @@ class EvalCounterTest extends AnyFreeSpec {
 
         "separate counters per value" in {
             val flag = EvalCounterTestFlags.perValue
-            flag.update("a@premium;b")
+            flag.update("rollout:a@premium;b")
             for (_ <- 0 until 3) flag("user1", "premium"): Unit
             for (_ <- 0 until 7) flag("user1", "basic"): Unit
             val counts = flag.evaluationCounts
@@ -26,12 +26,12 @@ class EvalCounterTest extends AnyFreeSpec {
 
         "counters survive update()" in {
             val flag = EvalCounterTestFlags.surviveUpdate
-            flag.update("a@x")
+            flag.update("rollout:a@x")
             flag("user1", "x"): Unit
             flag("user1", "x"): Unit
             val countsBefore = flag.evaluationCounts("a")
             assert(countsBefore == 2)
-            flag.update("b@x")
+            flag.update("rollout:b@x")
             flag("user1", "x"): Unit
             val countsAfter = flag.evaluationCounts
             assert(countsAfter("a") == 2) // old counter preserved
@@ -41,7 +41,7 @@ class EvalCounterTest extends AnyFreeSpec {
         "counter includes default value" in {
             val flag = EvalCounterTestFlags.includesDefault
             // No matching choices — returns default (42)
-            flag.update("100@enterprise")
+            flag.update("rollout:100@enterprise")
             flag("user1", "basic"): Unit
             flag("user2", "free"): Unit
             val counts = flag.evaluationCounts
@@ -50,7 +50,7 @@ class EvalCounterTest extends AnyFreeSpec {
 
         "evaluationCounts() returns all values" in {
             val flag = EvalCounterTestFlags.allValues
-            flag.update("a@x;b@y;c")
+            flag.update("rollout:a@x;b@y;c")
             flag("user1", "x"): Unit
             flag("user1", "y"): Unit
             flag("user1", "z"): Unit
@@ -93,7 +93,7 @@ class EvalCounterTest extends AnyFreeSpec {
 
         "counter is approximate under many calls" in {
             val flag = EvalCounterTestFlags.concurrent
-            flag.update("a@x;b")
+            flag.update("rollout:a@x;b")
             for (t <- 0 until 10) {
                 for (_ <- 0 until 100) {
                     flag(s"user-$t", "x"): Unit
