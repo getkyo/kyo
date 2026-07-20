@@ -103,6 +103,17 @@ object TlsRealEngines:
       * tests) can drive a single real native free without a competing finally that would double-free the native session. The server role uses the
       * cert/key config so it can complete a real handshake (via [[TlsEngineLoopback.handshake]]); the client role uses `trustAll`.
       */
+    /** Cancel unless BoringSSL is staged, for a leaf that will build its engine with [[singleEngine]].
+      *
+      * Exists so such a leaf can gate BEFORE it allocates sockets. singleEngine itself cancels when BoringSSL is missing, and a leaf that has
+      * already opened a loopback pair by then leaks it: the cancel unwinds past the cleanup. That is only reachable on a host staging exactly
+      * one of the two providers, which is why it survived a general sweep. [[assumeTlsReady]] is NOT a substitute: it accepts OpenSSL too.
+      */
+    def assumeBoringSslReady()(using Frame): Unit =
+        if !boringSslAvailable() then
+            throw new kyo.test.TestCancelled("BoringSSL not staged for this host")
+    end assumeBoringSslReady
+
     def singleEngine(isServer: Boolean)(using Frame, AllowUnsafe): TlsEngine =
         if !boringSslAvailable() then
             throw new kyo.test.TestCancelled("BoringSSL not staged for this host")
