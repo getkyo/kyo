@@ -181,12 +181,12 @@ final private[kyo] class NioIoDriver private (@volatile private[net] var selecto
 
     /** Re-arm the next cycle onto a DIFFERENT carrier, so the one that just ran the cycle is free to run the continuations it produced.
       *
-      * The runtime reset plus a single unit mirrors a freshly submitted task: the wall-clock a cycle spends parked in `select` is billed to the
-      * task, and carrying it forward would make the chain look long-running and starve it against genuinely short tasks.
+      * `Task.rearm` puts the chain back at the priority of a freshly submitted task and releases the cycle from the carrier's time billing: a cycle
+      * is spent parked in `select`, and carrying that wall-clock forward would make the chain look long-running and starve it against genuinely
+      * short tasks.
       */
     private def reArm(task: Task): Unit =
-        task.resetRuntime()
-        task.addRuntime(1)
+        task.rearm()
         Scheduler.get.scheduleExcludingCurrent(task)
     end reArm
 

@@ -29,7 +29,7 @@ class JvmPosixBackendSelectionTest extends Test:
       */
     private def echoRoundTrip(transport: kyo.net.Transport, payload: Array[Byte])(using
         Frame
-    ): Array[Byte] < (Async & Abort[kyo.net.NetException | Closed]) =
+    ): Array[Byte] < (Async & Abort[kyo.net.NetException | Closed] & Scope) =
         for
             listener <- transport.listen("127.0.0.1", 0, 128) { serverConn =>
                 discard(Sync.Unsafe.evalOrThrow {
@@ -40,8 +40,10 @@ class JvmPosixBackendSelectionTest extends Test:
                     }
                 })
             }.safe.get
+            _ <- Scope.ensure(Sync.defer(listener.close()))
             port = listener.port
             conn     <- transport.connect("127.0.0.1", port).safe.get
+            _        <- Scope.ensure(Sync.defer(conn.close()))
             _        <- conn.outbound.safe.put(Span.from(payload))
             received <- conn.inbound.safe.take
         yield

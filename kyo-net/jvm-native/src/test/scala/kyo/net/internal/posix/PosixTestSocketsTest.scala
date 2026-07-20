@@ -37,6 +37,8 @@ class PosixTestSocketsTest extends Test:
                             driver.closeHandle(acceptedH)
                             assert(got.toArray.toList == List[Byte](1, 2, 3, 4), s"got ${got.toArray.toList}")
                         case other =>
+                            driver.closeHandle(clientH)
+                            driver.closeHandle(acceptedH)
                             fail(s"expected Bytes, got $other")
                     }
                 }
@@ -67,6 +69,8 @@ class PosixTestSocketsTest extends Test:
                                 s"expected bytes [10,20,30] from real socket, got ${got.toArray.toList}"
                             )
                         case other =>
+                            driver.closeHandle(clientH)
+                            driver.closeHandle(acceptedH)
                             fail(s"expected Bytes, got $other")
                     }
                 }

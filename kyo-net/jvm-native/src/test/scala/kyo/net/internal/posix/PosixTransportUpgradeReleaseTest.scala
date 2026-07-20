@@ -169,6 +169,9 @@ class PosixTransportUpgradeReleaseTest extends Test:
                                     "read buffer must stay open while the recv SQE is in flight (a bare close here frees kernel-owned memory)"
                                 )
                                 Abort.run[NetException](upgradeFiber.get().safe.get).map { outcome =>
+                                    // Defensive: the upgrade is expected to fail closed (unavailable provider); if a regression ever
+                                    // let it succeed, close the unexpected upgraded connection rather than leak it.
+                                    outcome.foreach(_.close())
                                     outcome match
                                         case Result.Failure(_: NetTlsProviderUnavailableException) => ()
                                         case other =>
@@ -230,6 +233,9 @@ class PosixTransportUpgradeReleaseTest extends Test:
                                             "read buffer must stay open while the stale upgrade recv is kernel-owned (a bare close here frees kernel-owned memory)"
                                         )
                                         Abort.run[NetException](upgrade.get).map { outcome =>
+                                            // Defensive: the abandoned upgrade is expected to fail; if a regression ever let it
+                                            // succeed, close the unexpected upgraded connection rather than leak it.
+                                            outcome.foreach(_.close())
                                             outcome match
                                                 case Result.Failure(e: NetConnectionClosedException) =>
                                                     assert(
@@ -311,6 +317,9 @@ class PosixTransportUpgradeReleaseTest extends Test:
                                     val unavailableProvider = NetTlsConfig(tlsProvider = Present("nonexistent-tls-provider"))
                                     Abort.run[NetException](transport.upgradeToTls(plaintext, unavailableProvider, 16).safe.get).map {
                                         outcome =>
+                                            // Defensive: the upgrade is expected to fail closed (unavailable provider); if a
+                                            // regression ever let it succeed, close the unexpected upgraded connection rather than leak it.
+                                            outcome.foreach(_.close())
                                             outcome match
                                                 case Result.Failure(_: NetTlsProviderUnavailableException) => ()
                                                 case other =>
@@ -377,6 +386,9 @@ class PosixTransportUpgradeReleaseTest extends Test:
                         engineSlot.set(engine)
                         Abort.run[NetException](transport.upgradeToTls(plaintext, NetTlsConfig(trustAll = true), 16).safe.get).map {
                             outcome =>
+                                // Defensive: the upgrade is expected to settle as NetConnectionClosedException; if a regression ever
+                                // let it succeed, close the unexpected orphaned connection rather than leak it.
+                                outcome.foreach(_.close())
                                 outcome match
                                     case Result.Failure(e: NetConnectionClosedException) =>
                                         assert(

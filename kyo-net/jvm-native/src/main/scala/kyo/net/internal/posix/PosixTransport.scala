@@ -154,6 +154,11 @@ final private[net] class PosixTransport private[posix] (
         (registerHandshake(Absent, disarm, teardown), disarm)
     end registerHandshake
 
+    /** Number of handshake teardown obligations still registered. `private[posix]` for the registry-drain test: an obligation that settles
+      * must leave no entry behind, and on a process-lifetime transport a retained one is never reclaimed by anything.
+      */
+    private[posix] def pendingHandshakeCount: Int = pendingHandshakes.size
+
     private[posix] def unregisterHandshake(token: Long)(using AllowUnsafe): Unit =
         discard(pendingHandshakes.remove(token))
 
@@ -461,7 +466,8 @@ final private[net] class PosixTransport private[posix] (
     end connectImpl
 
     /** Arm a `Clock`-driven deadline for one in-flight client TCP connect, mirroring the accept-path `armHandshakeDeadline`. When the caller's
-      * `connectTimeout` is finite (and the target is a TCP host:port, not a Unix socket whose `port < 0` has no typed timeout leaf),
+      * `connectTimeout` is finite (for a TCP host:port and for a Unix socket alike; `port < 0` selects the Unix leaf rather than skipping the
+      * deadline, which is what it used to do),
       * schedule `Clock.live.unsafe.sleep(d).onComplete(...)` (a timer fiber on the clock executor, never a blocked carrier) and fail `promise`
       * with `NetConnectTimeoutException(host, port, connectTimeout)` when the deadline fires. `promise.completeDiscard` completes the promise at
       * most once, so the deadline and the OS connect outcome are mutually exclusive. This is the close-cause discrimination: the deadline arm is
@@ -475,9 +481,14 @@ final private[net] class PosixTransport private[posix] (
         port: Int,
         timeout: Duration
     )(using AllowUnsafe, Frame): () => Unit =
-        // A Unix connect is bounded too. It parks where the OS lets it: on Linux a connect to a socket whose accept queue is full blocks,
-        // while macOS fails it fast with ECONNREFUSED, so the timer simply never fires there. The guard here was previously `port >= 0`, which
-        // skipped Unix entirely for want of a typed leaf to produce; `port < 0` is the same sentinel `connectFail` uses to pick the Unix leaf.
+        // A Unix connect is bounded too, though not because the kernel parks it: the OS connect settles promptly on every arm this transport ships: a
+        // non-blocking AF_UNIX connect completes inline or fails fast, never reporting "in progress" (measured on Linux 6.x and macOS, and
+        // IORING_OP_CONNECT against a full backlog reaps -EAGAIN immediately). What the deadline actually bounds is this transport's own
+        // asynchronous path to the promise: the engine-queue handoff, submission-queue backpressure, CQE delivery, and the driver carrier
+        // being scheduled at all. A blocking connect(2) DOES park on a full backlog, but prepareClientSocket sets O_NONBLOCK first, so that
+        // is not a path taken here.
+        // The guard here was previously `port >= 0`, which skipped Unix entirely for want of a typed leaf to produce; `port < 0` is the same
+        // sentinel `connectFail` uses to pick the Unix leaf.
         if timeout.isFinite then
             // Disarming INTERRUPTS the timer, which completes it and fires the callback below, so that callback must distinguish "the deadline
             // elapsed" from "the deadline was called off". This was latent while the only disarm ran after `promise` had already settled (the
@@ -1171,15 +1182,23 @@ final private[net] class PosixTransport private[posix] (
                     // ordering, not one the JMM gives a plain var write/read pair, so the token goes through the AtomicLong: the write
                     // below happens-before any subsequent read the timer's callback performs.
                     val handshakeTokenRef = new java.util.concurrent.atomic.AtomicLong(0L)
-                    val disarm = armHandshakeDeadline(
+                    val armed = armHandshakeDeadline(
                         clientFd,
                         cfg.handshakeTimeout,
                         () =>
                             unregisterHandshake(handshakeTokenRef.get()); handle.driver.submitEngineOp(() => teardown())
                     )
-                    handshakeTokenRef.set(
+                    val disarm = armed.disarm
+                    val handshakeToken =
                         registerHandshake(Present(listener), disarm, () => handle.driver.submitEngineOp(() => teardown()))
-                    )
+                    handshakeTokenRef.set(handshakeToken)
+                    // Zero-token window. A deadline that fires before the publish above reads a token of 0, so its unregisterHandshake removes
+                    // nothing, and the entry registered a moment earlier is left with an already-spent gate: no later discharge can fire its
+                    // thunk, so it sits in pendingHandshakes for the life of the process. Nothing else would reclaim it either, since the
+                    // transport is never closed and this entry's owning listener may outlive it by hours. Re-running the unregister here with
+                    // the real token closes the window; whichever of this and the timer's own cleanup runs second removes an absent key, which
+                    // is a no-op.
+                    if armed.hasFired() then unregisterHandshake(handshakeToken)
                     driveHandshake(
                         handle,
                         engine,
@@ -1228,25 +1247,35 @@ final private[net] class PosixTransport private[posix] (
       *     deadline involved at all. The one-shot gate keeps the exactly-once contract [[registerHandshake]]'s doc promises regardless of
       *     whether a timer is armed.
       */
-    private def armHandshakeDeadline(clientFd: Int, timeout: Duration, onDeadline: () => Unit)(using AllowUnsafe, Frame): () => Boolean =
+    private def armHandshakeDeadline(clientFd: Int, timeout: Duration, onDeadline: () => Unit)(using
+        AllowUnsafe,
+        Frame
+    ): PosixTransport.ArmedDeadline =
         if !timeout.isFinite then
             val settled = AtomicBoolean.Unsafe.init(false)
-            () => settled.compareAndSet(false, true)
+            PosixTransport.ArmedDeadline(disarm = () => settled.compareAndSet(false, true), hasFired = () => false)
         else
             val settled = AtomicBoolean.Unsafe.init(false)
+            val fired   = AtomicBoolean.Unsafe.init(false)
             val timer   = Clock.live.unsafe.sleep(timeout)
             timer.onComplete { _ =>
                 if settled.compareAndSet(false, true) then
+                    // Published BEFORE onDeadline runs, so a caller that reads hasFired after publishing its registration token either sees
+                    // true here or is guaranteed that onDeadline's own cleanup ran with the real token.
+                    fired.set(true)
                     val reapedState = HandshakeState.Failed(HandshakeFailure.DeadlineReaped)
                     Log.live.unsafe.warn(s"PosixTransport server TLS handshake timed out fd=$clientFd after ${timeout.show}: $reapedState")
                     onDeadline()
             }
-            () =>
-                if settled.compareAndSet(false, true) then
-                    // The handshake won the race: disarm the deadline so the timer never fires (its onComplete sees the guard already set).
-                    timer.interruptDiscard(Result.Panic(Closed("PosixTransport", summon[Frame], "handshake completed before deadline")))
-                    true
-                else false
+            PosixTransport.ArmedDeadline(
+                disarm = () =>
+                    if settled.compareAndSet(false, true) then
+                        // The handshake won the race: disarm the deadline so the timer never fires (its onComplete sees the guard already set).
+                        timer.interruptDiscard(Result.Panic(Closed("PosixTransport", summon[Frame], "handshake completed before deadline")))
+                        true
+                    else false,
+                hasFired = () => fired.get()
+            )
         end if
     end armHandshakeDeadline
 
@@ -2353,6 +2382,15 @@ final private[net] class PosixTransport private[posix] (
 end PosixTransport
 
 private[net] object PosixTransport:
+
+    /** One armed handshake deadline: the exactly-once gate the handshake outcome and the timer race for, plus a read of whether the timer has
+      * already fired.
+      *
+      * `hasFired` exists for the registration window: a caller arms the deadline before it has a registration token to give the timer's
+      * cleanup, so a timer that fires in between cleans up nothing. Reading `hasFired` once the token is published tells the caller to run
+      * that cleanup itself. It is a plain read, never a gate: only `disarm` decides who owns the teardown.
+      */
+    final case class ArmedDeadline(disarm: () => Boolean, hasFired: () => Boolean)
 
     /** One in-flight handshake's teardown obligation, plus the listener that accepted it when there is one. The owner is what lets a listener
       * close reclaim its own handshakes without touching a client connect's or a STARTTLS upgrade's, which have no listener.

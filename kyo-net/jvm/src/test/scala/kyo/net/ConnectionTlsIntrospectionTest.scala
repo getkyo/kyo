@@ -303,7 +303,7 @@ ${enc.encodeToString(caDer)}
     /** Spin up a TLS echo server, connect with TLS, run body with the client connection. */
     private def withTlsConnection[A](serverTls: NetTlsConfig, clientTls: NetTlsConfig)(
         body: Connection => A < (Async & Abort[Closed])
-    ): A < (Async & Abort[NetException | Closed]) =
+    ): A < (Async & Abort[NetException | Closed] & Scope) =
         val transport = NetPlatform.transport
         for
             listener <- transport.listenTls("127.0.0.1", 0, 128, serverTls) { serverConn =>
@@ -317,13 +317,12 @@ ${enc.encodeToString(caDer)}
                     }
                 })
             }.safe.get
+            _ <- Scope.ensure(Sync.defer(listener.close()))
             port = listener.port
             conn   <- transport.connectTls("127.0.0.1", port, clientTls).safe.get
+            _      <- Scope.ensure(Sync.defer(conn.close()))
             result <- body(conn)
-        yield
-            conn.close()
-            listener.close()
-            result
+        yield result
         end for
     end withTlsConnection
 

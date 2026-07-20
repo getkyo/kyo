@@ -60,13 +60,19 @@ class PosixTransportSocketOptionsTest extends Test:
         val transport = PosixTransport.init(pool)
         pool.start()
         Abort.run[NetException | Closed] {
-            transport.listen("127.0.0.1", 0, 4)(_ => ()).safe.get.map { listener =>
-                transport.connect("127.0.0.1", listener.port, config = config).safe.get.map { conn =>
-                    val fd = conn.asInstanceOf[kyo.net.internal.transport.Connection[PosixHandle]].handle.readFd
-                    body(sockets, fd).map { result =>
-                        conn.close()
-                        listener.close()
-                        result
+            Scope.run {
+                transport.listen("127.0.0.1", 0, 4)(_ => ()).safe.get.map { listener =>
+                    Scope.ensure(Sync.defer(listener.close())).andThen {
+                        transport.connect("127.0.0.1", listener.port, config = config).safe.get.map { conn =>
+                            Scope.ensure(Sync.defer(conn.close())).andThen {
+                                val fd = conn.asInstanceOf[kyo.net.internal.transport.Connection[PosixHandle]].handle.readFd
+                                body(sockets, fd).map { result =>
+                                    conn.close()
+                                    listener.close()
+                                    result
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -102,31 +108,43 @@ class PosixTransportSocketOptionsTest extends Test:
         def fdOf(conn: kyo.net.Connection): Int =
             conn.asInstanceOf[kyo.net.internal.transport.Connection[PosixHandle]].handle.readFd
         Abort.run[NetException | Closed] {
-            transport.listen("127.0.0.1", 0, 4)(_ => ()).safe.get.map { listener =>
-                val small = NetConfig.default.copy(soRcvBuf = Present(smallReq), soSndBuf = Present(smallReq))
-                val large = NetConfig.default.copy(soRcvBuf = Present(largeReq), soSndBuf = Present(largeReq))
-                transport.connect("127.0.0.1", listener.port, config = small).safe.get.map { smallConn =>
-                    transport.connect("127.0.0.1", listener.port, config = large).safe.get.map { largeConn =>
-                        Sync.defer {
-                            val smallSnd = getIntOpt(sockets, fdOf(smallConn), PosixConstants.SOL_SOCKET, PosixConstants.SO_SNDBUF)
-                            val largeSnd = getIntOpt(sockets, fdOf(largeConn), PosixConstants.SOL_SOCKET, PosixConstants.SO_SNDBUF)
-                            val smallRcv = getIntOpt(sockets, fdOf(smallConn), PosixConstants.SOL_SOCKET, PosixConstants.SO_RCVBUF)
-                            val largeRcv = getIntOpt(sockets, fdOf(largeConn), PosixConstants.SOL_SOCKET, PosixConstants.SO_RCVBUF)
-                            smallConn.close()
-                            largeConn.close()
-                            listener.close()
-                            assert(
-                                largeSnd > smallSnd,
-                                s"SO_SNDBUF: the connect asking for $largeReq got $largeSnd, the one asking for $smallReq got $smallSnd; " +
-                                    "equal values mean neither connect's config reached its socket"
-                            )
-                            if PosixConstants.isLinux then
-                                assert(
-                                    largeRcv > smallRcv,
-                                    s"SO_RCVBUF: the connect asking for $largeReq got $largeRcv, the one asking for $smallReq got $smallRcv"
-                                )
-                            end if
-                            succeed
+            Scope.run {
+                transport.listen("127.0.0.1", 0, 4)(_ => ()).safe.get.map { listener =>
+                    Scope.ensure(Sync.defer(listener.close())).andThen {
+                        val small = NetConfig.default.copy(soRcvBuf = Present(smallReq), soSndBuf = Present(smallReq))
+                        val large = NetConfig.default.copy(soRcvBuf = Present(largeReq), soSndBuf = Present(largeReq))
+                        transport.connect("127.0.0.1", listener.port, config = small).safe.get.map { smallConn =>
+                            Scope.ensure(Sync.defer(smallConn.close())).andThen {
+                                transport.connect("127.0.0.1", listener.port, config = large).safe.get.map { largeConn =>
+                                    Scope.ensure(Sync.defer(largeConn.close())).andThen {
+                                        Sync.defer {
+                                            val smallSnd =
+                                                getIntOpt(sockets, fdOf(smallConn), PosixConstants.SOL_SOCKET, PosixConstants.SO_SNDBUF)
+                                            val largeSnd =
+                                                getIntOpt(sockets, fdOf(largeConn), PosixConstants.SOL_SOCKET, PosixConstants.SO_SNDBUF)
+                                            val smallRcv =
+                                                getIntOpt(sockets, fdOf(smallConn), PosixConstants.SOL_SOCKET, PosixConstants.SO_RCVBUF)
+                                            val largeRcv =
+                                                getIntOpt(sockets, fdOf(largeConn), PosixConstants.SOL_SOCKET, PosixConstants.SO_RCVBUF)
+                                            smallConn.close()
+                                            largeConn.close()
+                                            listener.close()
+                                            assert(
+                                                largeSnd > smallSnd,
+                                                s"SO_SNDBUF: the connect asking for $largeReq got $largeSnd, the one asking for $smallReq got $smallSnd; " +
+                                                    "equal values mean neither connect's config reached its socket"
+                                            )
+                                            if PosixConstants.isLinux then
+                                                assert(
+                                                    largeRcv > smallRcv,
+                                                    s"SO_RCVBUF: the connect asking for $largeReq got $largeRcv, the one asking for $smallReq got $smallRcv"
+                                                )
+                                            end if
+                                            succeed
+                                        }
+                                    }
+                                }
+                            }
                         }
                     }
                 }

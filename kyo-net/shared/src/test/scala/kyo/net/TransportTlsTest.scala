@@ -39,7 +39,9 @@ class TransportTlsTest extends Test:
                         }
                     })
                 }.safe.get
+                _      <- Scope.ensure(Sync.defer(listener.close()))
                 client <- transport.connectTls("127.0.0.1", listener.port, clientTls).safe.get
+                _      <- Scope.ensure(Sync.defer(client.close()))
                 message = "kyo-shared-tls-roundtrip".getBytes("UTF-8")
                 _      <- client.outbound.safe.put(Span.fromUnsafe(message))
                 _      <- accepted.take
@@ -60,11 +62,15 @@ class TransportTlsTest extends Test:
         val srv = serverTls.copy(minVersion = TLS13, maxVersion = TLS13)
         val cli = clientTls.copy(minVersion = TLS12, maxVersion = TLS12)
         transport.listenTls("127.0.0.1", 0, 16, srv)(_ => ()).safe.get.map { listener =>
-            Abort.run[NetException | Closed | Timeout](
-                Async.timeout(5.seconds)(transport.connectTls("127.0.0.1", listener.port, cli).safe.get)
-            ).map { outcome =>
-                listener.close()
-                assert(outcome.isFailure, s"a TLS version-mismatch handshake must fail on this cell, got $outcome")
+            Scope.ensure(Sync.defer(listener.close())).andThen {
+                Abort.run[NetException | Closed | Timeout](
+                    Async.timeout(5.seconds)(transport.connectTls("127.0.0.1", listener.port, cli).safe.get)
+                ).map { outcome =>
+                    listener.close()
+                    // Defensive: if this ever unexpectedly succeeds, the returned connection must still not leak.
+                    outcome.foreach(conn => conn.close())
+                    assert(outcome.isFailure, s"a TLS version-mismatch handshake must fail on this cell, got $outcome")
+                }
             }
         }
     }
@@ -73,11 +79,15 @@ class TransportTlsTest extends Test:
         // The server is plaintext and closes each accepted connection immediately, so it never performs a TLS handshake. A connect(tls) client
         // must fail (the handshake aborts on EOF), not hang or silently succeed. Bounded so a cell that hung would fail the guard.
         transport.listen("127.0.0.1", 0, 16)(conn => conn.close()).safe.get.map { listener =>
-            Abort.run[NetException | Closed | Timeout](
-                Async.timeout(5.seconds)(transport.connectTls("127.0.0.1", listener.port, clientTls).safe.get)
-            ).map { outcome =>
-                listener.close()
-                assert(outcome.isFailure, s"a TLS client against a plaintext server must fail on this cell, got $outcome")
+            Scope.ensure(Sync.defer(listener.close())).andThen {
+                Abort.run[NetException | Closed | Timeout](
+                    Async.timeout(5.seconds)(transport.connectTls("127.0.0.1", listener.port, clientTls).safe.get)
+                ).map { outcome =>
+                    listener.close()
+                    // Defensive: if this ever unexpectedly succeeds, the returned connection must still not leak.
+                    outcome.foreach(conn => conn.close())
+                    assert(outcome.isFailure, s"a TLS client against a plaintext server must fail on this cell, got $outcome")
+                }
             }
         }
     }

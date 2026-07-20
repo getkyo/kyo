@@ -979,8 +979,15 @@ final class RecordingIoDriver(real: IoDriver[PosixHandle]) extends IoDriver[Posi
         end if
     end awaitWritable
 
+    // When true, awaitConnect swallows the call: it neither submits nor completes the promise. Reproduces the transport's own asynchronous
+    // path stalling with the connect still pending, which is what the connect deadline actually bounds (the OS connect itself always settles
+    // promptly). The in-repo stall classes with this exact shape are an op stranded on the engine queue, a submission parked on a full SQ,
+    // and a driver carrier that never gets scheduled.
+    @volatile var stallConnect: Boolean = false
+
     def awaitConnect(handle: PosixHandle, promise: Promise.Unsafe[Unit, Abort[Closed]])(using AllowUnsafe, Frame): Unit =
-        real.awaitConnect(handle, promise)
+        if stallConnect then ()
+        else real.awaitConnect(handle, promise)
 
     def awaitAccept(handle: PosixHandle, promise: Promise.Unsafe[Int, Abort[Closed]])(using AllowUnsafe, Frame): Unit =
         real.awaitAccept(handle, promise)

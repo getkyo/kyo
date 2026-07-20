@@ -61,13 +61,17 @@ class IoBackendStaleErrnoTest extends Test:
                     Sync.defer(()).andThen {
                         for
                             listener <- transport.listen("127.0.0.1", 0, 128)(_ => ()).safe.get
+                            // Registered before the connect: if the connect below aborts with a NetException instead of returning a Result
+                            // (Abort.run[Closed] only catches an actual Closed, never a NetException, see NetExceptionTest's "a Closed handler
+                            // does not catch a NetException"), the for-comprehension short-circuits before the yield block below runs, so a
+                            // plain trailing listener.close() there would never execute.
+                            _ <- Scope.ensure(Sync.defer(listener.close()))
                             port = listener.port
                             outcome <- Abort.run[Closed](transport.connect("127.0.0.1", port).safe.get)
                         yield
                             outcome match
                                 case Result.Success(conn) => conn.close()
                                 case _                    => ()
-                            listener.close()
                             assert(port > 0, s"${entry.name}: listener must bind an ephemeral port, got $port")
                             assert(
                                 outcome.isSuccess,

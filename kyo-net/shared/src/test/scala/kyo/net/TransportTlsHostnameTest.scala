@@ -37,7 +37,9 @@ class TransportTlsHostnameTest extends Test:
                         }
                     })
                 }.safe.get
+                _      <- Scope.ensure(Sync.defer(listener.close()))
                 client <- transport.connectTls("127.0.0.1", listener.port, cli).safe.get
+                _      <- Scope.ensure(Sync.defer(client.close()))
                 msg = "verified".getBytes("UTF-8")
                 _      <- client.outbound.safe.put(Span.fromUnsafe(msg))
                 _      <- accepted.take
@@ -53,13 +55,18 @@ class TransportTlsHostnameTest extends Test:
         (transport, serverTls, clientTls) =>
             val cli = verifyingClient(serverTls, clientTls)
             transport.listenTls("127.0.0.1", 0, 16, serverTls)(_ => ()).safe.get.map { listener =>
-                // An empty host gives a verifying client nothing to check the certificate name against. It must NOT silently accept a chain-valid
-                // cert: the connect fails closed (either at the pre-connect identity guard or during the handshake). Bounded.
-                Abort.run[NetException | Closed | Timeout](
-                    Async.timeout(5.seconds)(transport.connectTls("", listener.port, cli).safe.get)
-                ).map { outcome =>
-                    listener.close()
-                    assert(outcome.isFailure, s"a verifying client with an empty host must fail closed, got $outcome")
+                Scope.ensure(Sync.defer(listener.close())).andThen {
+                    // An empty host gives a verifying client nothing to check the certificate name against. It must NOT silently accept a
+                    // chain-valid cert: the connect fails closed (either at the pre-connect identity guard or during the handshake). Bounded.
+                    Abort.run[NetException | Closed | Timeout](
+                        Async.timeout(5.seconds)(transport.connectTls("", listener.port, cli).safe.get)
+                    ).map { outcome =>
+                        listener.close()
+                        // Defensive: if this ever unexpectedly succeeds (the assertion below would then fail the leaf), the returned
+                        // connection must still not leak.
+                        outcome.foreach(conn => conn.close())
+                        assert(outcome.isFailure, s"a verifying client with an empty host must fail closed, got $outcome")
+                    }
                 }
             }
     }
@@ -77,11 +84,15 @@ class TransportTlsHostnameTest extends Test:
                 )
                 val cli = NetTlsConfig(caCertPath = Present(wrongCert), tlsProvider = clientTls.tlsProvider)
                 transport.listenTls("127.0.0.1", 0, 16, srv)(_ => ()).safe.get.map { listener =>
-                    Abort.run[NetException | Closed | Timeout](
-                        Async.timeout(5.seconds)(transport.connectTls("127.0.0.1", listener.port, cli).safe.get)
-                    ).map { outcome =>
-                        listener.close()
-                        assert(outcome.isFailure, s"a verifying client must reject a name-mismatched server cert, got $outcome")
+                    Scope.ensure(Sync.defer(listener.close())).andThen {
+                        Abort.run[NetException | Closed | Timeout](
+                            Async.timeout(5.seconds)(transport.connectTls("127.0.0.1", listener.port, cli).safe.get)
+                        ).map { outcome =>
+                            listener.close()
+                            // Defensive: if this ever unexpectedly succeeds, the returned connection must still not leak.
+                            outcome.foreach(conn => conn.close())
+                            assert(outcome.isFailure, s"a verifying client must reject a name-mismatched server cert, got $outcome")
+                        }
                     }
                 }
             }

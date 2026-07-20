@@ -136,7 +136,9 @@ class PosixTransportShutdownReclaimTest extends Test:
             // upgrade path's abandoned caller does.
             val rawServer = sock.socket(PosixConstants.AF_INET, PosixConstants.SOCK_STREAM, 0).value
             val (sa, sl)  = SockAddr.encodeInet4(PosixConstants.AF_INET, "127.0.0.1", 0).getOrElse(fail("encode failed"))
-            Sync.ensure(Sync.defer { sa.close(); discard(sock.close(rawServer)) }) {
+            // The driver is closed last, as the sibling leaves do: this leaf started it, and a transport is process-lifetime, so nothing
+            // else ever reclaims its poller fd or stops its poll loop.
+            Sync.ensure(Sync.defer { sa.close(); discard(sock.close(rawServer)); driver.close() }) {
                 assert(sock.bind(rawServer, sa, sl).value == 0)
                 assert(sock.listen(rawServer, 4).value == 0)
                 val out = Buffer.alloc[Byte](SockAddr.inet4Size)
@@ -200,27 +202,34 @@ class PosixTransportShutdownReclaimTest extends Test:
             discard(driver.start())
             val unbounded = serverTls.copy(handshakeTimeout = Duration.Infinity)
             transport.listenTls("127.0.0.1", 0, 4, unbounded)(_ => ()).safe.get.map { listener =>
-                val baseline = backend.registerReadCount.get()
-                // A raw, non-TLS client: the server's handshake starts and then parks on a read for a ClientHello that never arrives. No
-                // Connection exists for an in-flight handshake, so nothing else tracks this fd.
-                connectRaw(listener.port).map { clientFd =>
-                    assertEventually(Sync.defer(backend.registerReadCount.get() > baseline)).map { _ =>
-                        // Close ONLY the listener. The transport stays open, exactly as the process-shared transport does.
-                        //
-                        // The client fd stays OPEN and silent across the assertion below, and that is what makes this discriminating. Closing
-                        // it here would end the stalled handshake by itself: the server's parked read fails, its onFailed teardown runs, and
-                        // the engine is freed whether or not the listener discharged anything. Verified by removing the discharge and watching
-                        // an earlier version of this leaf still pass. With the peer held open there is no other route to engine.free().
-                        listener.close()
-                        assertEventually(Sync.defer(captured.get() != null && captured.get().freeCount.get() == 1)).map { _ =>
-                            val engine = captured.get()
-                            assert(
-                                engine.freeCount.get() == 1,
-                                s"the stalled handshake's engine must be freed exactly once by the listener close, was ${engine.freeCount.get()}"
-                            )
-                            discard(sock.close(clientFd))
-                            driver.close()
-                            succeed
+                // Guards the listener even on a path that fails before the explicit close()/driver.close() below run (e.g. connectRaw or
+                // an assertEventually failing). Idempotent, so it is a harmless no-op after the explicit listener.close() on the success path.
+                Scope.ensure(Sync.defer(listener.close())).andThen {
+                    val baseline = backend.registerReadCount.get()
+                    // A raw, non-TLS client: the server's handshake starts and then parks on a read for a ClientHello that never arrives. No
+                    // Connection exists for an in-flight handshake, so nothing else tracks this fd.
+                    connectRaw(listener.port).map { clientFd =>
+                        // Same guard for the raw client fd: closed explicitly below on success, but reclaimed here on any earlier failure.
+                        Scope.ensure(Sync.defer(discard(sock.close(clientFd)))).andThen {
+                            assertEventually(Sync.defer(backend.registerReadCount.get() > baseline)).map { _ =>
+                                // Close ONLY the listener. The transport stays open, exactly as the process-shared transport does.
+                                //
+                                // The client fd stays OPEN and silent across the assertion below, and that is what makes this discriminating. Closing
+                                // it here would end the stalled handshake by itself: the server's parked read fails, its onFailed teardown runs, and
+                                // the engine is freed whether or not the listener discharged anything. Verified by removing the discharge and watching
+                                // an earlier version of this leaf still pass. With the peer held open there is no other route to engine.free().
+                                listener.close()
+                                assertEventually(Sync.defer(captured.get() != null && captured.get().freeCount.get() == 1)).map { _ =>
+                                    val engine = captured.get()
+                                    assert(
+                                        engine.freeCount.get() == 1,
+                                        s"the stalled handshake's engine must be freed exactly once by the listener close, was ${engine.freeCount.get()}"
+                                    )
+                                    discard(sock.close(clientFd))
+                                    driver.close()
+                                    succeed
+                                }
+                            }
                         }
                     }
                 }

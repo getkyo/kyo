@@ -53,24 +53,29 @@ class TransportStartTlsCrossTailTest extends Test:
                         }
                     })
                 }.safe.get
+                _ <- Scope.ensure(Sync.defer(listener.close()))
                 // Latch(1): one release unblocks all N waiters simultaneously.
                 latch <- Latch.init(1)
                 fibers <- Kyo.foreach(Chunk.from(1 to concurrency)) { i =>
+                    // Scope.run keeps this per-attempt: conn/tlsConn are closed as soon as THIS attempt finishes (success, a
+                    // failed Abort, or the per-fiber Async.timeout interrupt below), rather than deferring 32-way to the
+                    // leaf's own Scope, which would hold every fiber's connection open simultaneously until the whole leaf ends.
                     val attempt: Boolean < (Async & Abort[NetException | Closed]) =
-                        for
-                            conn    <- transport.connect("127.0.0.1", listener.port).safe.get
-                            _       <- conn.outbound.safe.put(upgradeSignal)
-                            _       <- conn.inbound.safe.take
-                            tlsConn <- transport.upgradeToTls(conn, cli, 16).safe.get
-                            // Post-upgrade write immediately: exercises the cross-tail defer/kick when the
-                            // handshake's raw final flight may not yet have reaped its CQE.
-                            payload = Array.fill[Byte](1024)((i % 127 + 1).toByte)
-                            _      <- tlsConn.outbound.safe.put(Span.fromUnsafe(payload))
-                            echoed <- collectN(tlsConn, payload.length)
-                        yield
-                            tlsConn.close()
-                            java.util.Arrays.equals(echoed.take(payload.length), payload)
-                        end for
+                        Scope.run(
+                            for
+                                conn    <- transport.connect("127.0.0.1", listener.port).safe.get
+                                _       <- Scope.ensure(Sync.defer(conn.close()))
+                                _       <- conn.outbound.safe.put(upgradeSignal)
+                                _       <- conn.inbound.safe.take
+                                tlsConn <- transport.upgradeToTls(conn, cli, 16).safe.get
+                                _       <- Scope.ensure(Sync.defer(tlsConn.close()))
+                                // Post-upgrade write immediately: exercises the cross-tail defer/kick when the
+                                // handshake's raw final flight may not yet have reaped its CQE.
+                                payload = Array.fill[Byte](1024)((i % 127 + 1).toByte)
+                                _      <- tlsConn.outbound.safe.put(Span.fromUnsafe(payload))
+                                echoed <- collectN(tlsConn, payload.length)
+                            yield java.util.Arrays.equals(echoed.take(payload.length), payload)
+                        )
                     end attempt
                     val body: Result[NetException | Timeout | Closed, Boolean] < Async =
                         // All N fibers park here until latch.release fires, maximizing upgrade overlap.

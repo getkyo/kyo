@@ -50,7 +50,12 @@ class IoUringListenerCloseRecycleTest extends Test:
                 // wedge every later test on this scheduler); the normal-path countDown below fires first and the extra release is a no-op.
                 val stolenByA = new java.util.concurrent.atomic.AtomicInteger(0)
                 Sync.ensure(Sync.defer(gate.countDown())) {
-                    transport.listen("127.0.0.1", 0, 16)(_ => discard(stolenByA.incrementAndGet())).safe.get.map { listenerA =>
+                    transport.listen("127.0.0.1", 0, 16) { conn =>
+                        // If the regression this leaf guards against ever resurfaces, A's dead handler still receives the stolen
+                        // connection; close it rather than leaking it on top of the already-failing assertion below.
+                        discard(stolenByA.incrementAndGet())
+                        conn.close()
+                    }.safe.get.map { listenerA =>
                         listenerA.close()
                         val handledByB = new java.util.concurrent.atomic.AtomicInteger(0)
                         val bothToB    = Promise.Unsafe.init[Unit, Abort[Closed]]()
@@ -58,23 +63,28 @@ class IoUringListenerCloseRecycleTest extends Test:
                             if handledByB.incrementAndGet() == 2 then bothToB.completeDiscard(Result.succeed(()))
                             conn.close()
                         }.safe.get.map { listenerB =>
-                            gate.countDown()
-                            transport.connect("127.0.0.1", listenerB.port).safe.get.map { c1 =>
-                                transport.connect("127.0.0.1", listenerB.port).safe.get.map { c2 =>
-                                    // A ghost accept is single-shot, so it can steal at most one connection: requiring BOTH dispatches to
-                                    // reach B makes the theft deterministic regardless of which pending accept the kernel completes first.
-                                    bothToB.safe.get.map { _ =>
-                                        c1.close()
-                                        c2.close()
-                                        listenerB.close()
-                                        assert(
-                                            stolenByA.get() == 0,
-                                            s"the closed listener's ghost accept stole ${stolenByA.get()} connection(s) from the next listener"
-                                        )
-                                        assert(
-                                            handledByB.get() == 2,
-                                            s"both connections must reach the live listener, got ${handledByB.get()}"
-                                        )
+                            // Registered as soon as B is up: a connect below can abort with a NetException before the tail block that used
+                            // to hold the only listenerB.close(), which would leak the listener.
+                            Scope.ensure(Sync.defer(listenerB.close())).andThen {
+                                gate.countDown()
+                                transport.connect("127.0.0.1", listenerB.port).safe.get.map { c1 =>
+                                    Scope.ensure(Sync.defer(c1.close())).andThen {
+                                        transport.connect("127.0.0.1", listenerB.port).safe.get.map { c2 =>
+                                            Scope.ensure(Sync.defer(c2.close())).andThen {
+                                                // A ghost accept is single-shot, so it can steal at most one connection: requiring BOTH dispatches to
+                                                // reach B makes the theft deterministic regardless of which pending accept the kernel completes first.
+                                                bothToB.safe.get.map { _ =>
+                                                    assert(
+                                                        stolenByA.get() == 0,
+                                                        s"the closed listener's ghost accept stole ${stolenByA.get()} connection(s) from the next listener"
+                                                    )
+                                                    assert(
+                                                        handledByB.get() == 2,
+                                                        s"both connections must reach the live listener, got ${handledByB.get()}"
+                                                    )
+                                                }
+                                            }
+                                        }
                                     }
                                 }
                             }

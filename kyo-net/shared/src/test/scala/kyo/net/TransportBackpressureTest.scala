@@ -56,7 +56,9 @@ class TransportBackpressureTest extends Test:
             val payload   = Array.tabulate[Byte](256 * 1024)(i => (i % 251).toByte)
             for
                 listener <- echoListener(transport)
+                _        <- Scope.ensure(Sync.defer(listener.close()))
                 conn     <- transport.connect("127.0.0.1", listener.port).safe.get
+                _        <- Scope.ensure(Sync.defer(conn.close()))
                 got      <- Async.zip(sendAll(conn, payload), drainAll(conn, payload.length)).map(_._2)
             yield
                 conn.close()

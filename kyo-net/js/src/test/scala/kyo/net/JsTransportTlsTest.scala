@@ -1,6 +1,7 @@
 package kyo.net
 
 import kyo.*
+import kyo.net.internal.JsListener
 import kyo.net.internal.JsTransport
 import scala.scalajs.js as sjs
 
@@ -146,6 +147,9 @@ class JsTransportTlsTest extends Test:
             (server, port) = serverAndPort
             result <- Abort.run[NetException](transport.connectTls("127.0.0.1", port, clientTls13).safe.get)
         yield
+            // This handshake succeeds, so the result carries a live connection. Node's server.close() only stops accepting and never
+            // releases an established socket, so closing the connection here is the only thing that reclaims either end.
+            result.foreach(_.close())
             discard(server.close())
             assert(result.isSuccess, s"a TLS1.3 client against a TLS1.3 server must succeed, got: $result")
         end for
@@ -236,6 +240,10 @@ class JsTransportTlsTest extends Test:
             port = listener.port
             result <- Abort.run[NetException](transport.connectTls("localhost", port, verifyingClient).safe.get)
         yield
+            // This handshake succeeds, so the result carries a live connection. A listener close only reclaims sockets still mid-handshake,
+            // never one already handed to the accept handler, so closing the client here is what releases both ends (its FIN tears down the
+            // accepted side).
+            result.foreach(_.close())
             listener.close()
             assert(result.isSuccess, s"a verifying client with a matching host must connect, got: $result")
         end for
@@ -344,9 +352,15 @@ class JsTransportTlsTest extends Test:
         for
             listener <- transport.listenTls("127.0.0.1", 0, 128, unbounded) { _ => () }.safe.get
             client   <- transport.connect("127.0.0.1", listener.port).safe.get
-            _        <- Sync.defer(listener.close())
-            outcome  <- Abort.run[Timeout](Async.timeout(3.seconds)(Abort.run[Closed](client.inbound.safe.take)))
-            _        <- Sync.defer(client.close())
+            // Barrier: the client's connect resolving proves only that IT saw the TCP handshake. Node's server-side "connection" event can
+            // fire afterwards, in the same libuv turn, so closing here without waiting could sweep an empty list and let the leaf pass on
+            // server.close() dropping a backlogged connection instead, whether or not the reclaim works at all.
+            _ <- assertEventually(Sync.defer(listener.asInstanceOf[JsListener].pendingAcceptHandshakeCount > 0))
+            _ <- Sync.defer(listener.close())
+            // The discharge must have emptied the registry, not merely stopped accepting.
+            _       <- assertEventually(Sync.defer(listener.asInstanceOf[JsListener].pendingAcceptHandshakeCount == 0))
+            outcome <- Abort.run[Timeout](Async.timeout(3.seconds)(Abort.run[Closed](client.inbound.safe.take)))
+            _       <- Sync.defer(client.close())
         yield assert(
             outcome.isSuccess,
             s"closing the listener must destroy its unsettled accepted socket, got $outcome"

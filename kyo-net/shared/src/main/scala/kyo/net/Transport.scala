@@ -65,8 +65,10 @@ abstract class Transport:
     /** Open a connection over process stdin (fd 0, read) and stdout (fd 1, write). Returns a fiber that completes with the open connection,
       * or aborts [[NetStdioAlreadyOpenException]] when a stdio connection is already open (fds 0/1 are process-global).
       *
-      * Takes the two connection-shape values rather than a whole [[NetConfig]] because they are the only two that can act here: fds 0/1 are
-      * inherited already open, so there is no socket to set buffer options on and no connect or handshake to bound.
+      * Takes the two connection-shape values rather than a whole [[NetConfig]] because the rest cannot act here: fds 0/1 are inherited already
+      * open, so there is no socket to set buffer options on and no connect or handshake to bound. `readChunkSize` acts only where the transport
+      * owns its read buffer, which is the posix and NIO backends; the Node backend sizes its own chunks, so it accepts the value and has
+      * nothing to apply it to, exactly as [[NetConfig.readChunkSize]] describes for ordinary connections.
       *
       * Every shipped backend supports stdio: the PosixHandle-backed transport, the JVM NIO floor, and the Node-stream transport.
       * [[NetStdioUnsupportedException]] remains the contract for a transport with no byte stream to fd 0/1 (e.g. an in-memory transport).

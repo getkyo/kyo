@@ -5,6 +5,19 @@ trait Task {
 
     @volatile private var state: Task.State = Task.State.init
 
+    // Bumped by every rearm(). The carrier samples it on both sides of a run and skips its end-of-run
+    // billing when it changed, which is what lets a self-rescheduling task keep the priority it chose.
+    // A monotonic counter rather than a flag because a flag would have to be cleared before each run,
+    // and that clear (issued by the successor carrier, which can already be running the re-armed task)
+    // can land between the previous carrier's rearm and its own check, re-opening the billing. @volatile
+    // for the same straddle: the two samples must be two real reads, not one folded read compared with
+    // itself. The increment is a non-atomic RMW like the state writes, so two carriers running the same
+    // task at once could lose one; that is the malformed case a re-arming task already rules out by
+    // handing the scheduler exactly one successor per run.
+    @volatile private var rearms: Int = 0
+
+    private[scheduler] def rearmCount(): Int = rearms
+
     def doPreempt(): Unit = {
         val s = this.state
         if (!s.preempting)
@@ -55,6 +68,30 @@ trait Task {
       */
     def resetRuntime(): Unit =
         this.state = state.resetRuntime
+
+    /** Re-arms this task at the priority of freshly submitted work, releasing the current run from time billing.
+      *
+      * For the self-rescheduling loop shape: one reusable task that hands its own successor to the scheduler from
+      * inside `run`, an I/O driver's readiness poll being the canonical case, where the whole activation is spent
+      * parked in `epoll_wait`, `kevent` or `select`. The carrier bills a run's wall-clock time to `runtime` after
+      * `run` returns, so without this the park would land on top of the priority chosen here and the loop would
+      * sort behind every freshly submitted task in whatever queue it was re-armed into. Park duration is not a
+      * measure of scheduling debt; if anything a long park means the poll is now the most urgent work.
+      *
+      * Priority lands at `Task.State.init`, the value a newly submitted task carries, so the loop competes on
+      * equal terms with new work: never starved behind it, and never jumped ahead of work already queued, which
+      * resetting to 0 alone would do. A task that re-arms must return `Task.Done`; returning `Task.Preempted`
+      * would have the carrier queue it a second time, on top of the successor it already handed off.
+      */
+    def rearm(): Unit = {
+        // Bumped before the state write so a carrier that sees the new count but the old runtime skips its
+        // billing anyway: skipping is the safe direction, billing is what destroys the priority chosen here.
+        rearms += 1
+        this.state = Task.State.init
+        // Same re-assert as addRuntime and doPreempt: this write can erase a concurrent interrupt reset.
+        if (needsInterrupt())
+            resetRuntime()
+    }
 }
 
 object Task {
@@ -65,11 +102,11 @@ object Task {
       *   - **bit 31 (sign)**: preempting — set by `preempt` (a bit-set, not a negation, so it is valid even at runtime 0) to signal the
       *     task should yield at the next effect boundary so the worker can serve other queued tasks (time-slice fairness)
       *
-      * `state` is mutated by non-atomic read-modify-writes from multiple threads — the worker (addRuntime), the coordinator (doPreempt, via
-      * Worker.checkStalling), and an interrupter (resetRuntime, via IOTask.onComplete). A lost preemption or runtime increment is benign,
-      * but a lost interrupt-priority reset would let load starve an interrupted task, so it is protected without atomics: every RMW writer
-      * (addRuntime, doPreempt) re-asserts the reset after its own write, and Worker.run never requeues a task whose promise is already
-      * complete. Fiber interruption
+      * `state` is mutated by non-atomic read-modify-writes from multiple threads: the worker (addRuntime), the coordinator (doPreempt, via
+      * Worker.checkStalling), an interrupter (resetRuntime, via IOTask.onComplete), and a self-rescheduling task (rearm). A lost preemption
+      * or runtime increment is benign, but a lost interrupt-priority reset would let load starve an interrupted task, so it is protected
+      * without atomics: every RMW writer (addRuntime, doPreempt, rearm) re-asserts the reset after its own write, and Worker.run never
+      * requeues a task whose promise is already complete. Fiber interruption
       * itself is observed from IOPromise's CAS-updated state, never from this field.
       */
     private[scheduler] type State = Int

@@ -20,7 +20,10 @@ class TransportFailureTaxonomyTest extends Test:
         Abort.run[NetException | Closed](transport.connect("nonexistent.invalid", 80).safe.get).map { result =>
             val ok = result match
                 case Result.Failure(_: NetDnsResolutionException) => true
-                case _                                            => false
+                case Result.Success(conn) =>
+                    conn.close()
+                    false
+                case _ => false
             assert(ok, s"an unresolvable host must fail NetDnsResolutionException, got $result")
         }
     }
@@ -31,7 +34,10 @@ class TransportFailureTaxonomyTest extends Test:
         Abort.run[NetException | Closed](transport.connect("127.0.0.1", 1).safe.get).map { result =>
             val ok = result match
                 case Result.Failure(_: NetConnectException) => true
-                case _                                      => false
+                case Result.Success(conn) =>
+                    conn.close()
+                    false
+                case _ => false
             assert(ok, s"a connect to a refused port must fail NetConnectException, got $result")
         }
     }
@@ -41,7 +47,10 @@ class TransportFailureTaxonomyTest extends Test:
         Abort.run[NetException | Closed](transport.connectUnix(path).safe.get).map { result =>
             val ok = result match
                 case Result.Failure(_: NetUnixConnectException) => true
-                case _                                          => false
+                case Result.Success(conn) =>
+                    conn.close()
+                    false
+                case _ => false
             assert(ok, s"connectUnix to a missing socket must fail NetUnixConnectException, got $result")
         }
     }

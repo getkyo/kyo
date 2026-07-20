@@ -89,8 +89,13 @@ class PosixTransportHandshakeAlertTest extends Test:
                         outcome =>
                             listener.close()
                             val message = outcome match
-                                case Result.Failure(e) => e.getMessage
-                                case other             => fail(s"expected the version-mismatch handshake to fail, got $other")
+                                case Result.Failure(e)    => e.getMessage
+                                case Result.Success(conn) =>
+                                    // Not expected (the whole leaf asserts this handshake fails), but if it ever does succeed the returned
+                                    // connection must still be closed rather than leaked.
+                                    conn.close()
+                                    fail(s"expected the version-mismatch handshake to fail, got $outcome")
+                                case other => fail(s"expected the version-mismatch handshake to fail, got $other")
                             // The server drains + sends its fatal alert before close; the client's engine consumes it and the connect fails with the
                             // engine-level handshake failure (a NetTlsHandshakeException, "TLS handshake with <host>:<port> failed[: <cause>]"). A
                             // bare-close server would instead make the client read a bare EOF mid-handshake, with the failure cause "peer closed during
@@ -126,19 +131,23 @@ class PosixTransportHandshakeAlertTest extends Test:
                         }
                     })
                 }.safe.get.map { listener =>
-                    transport.connectTls("127.0.0.1", listener.port, clientTls(TLS12, TLS13)).safe.get.map { client =>
-                        val message = "version-overlap-roundtrip".getBytes("UTF-8")
-                        client.outbound.safe.put(Span.fromUnsafe(message)).andThen {
-                            Loop(Array.emptyByteArray) { acc =>
-                                if acc.length >= message.length then Loop.done(acc)
-                                else client.inbound.safe.take.map(chunk => Loop.continue(acc ++ chunk.toArray))
-                            }.map { echoed =>
-                                client.close()
-                                listener.close()
-                                assert(
-                                    echoed.sameElements(message),
-                                    s"matching-version handshake must complete and round-trip, got '${new String(echoed, "UTF-8")}'"
-                                )
+                    // Registered as soon as each resource is up: outbound.put/inbound.take below can abort with Closed before reaching the
+                    // trailing client.close()/listener.close() that used to be the only cleanup, which would leak both.
+                    Scope.ensure(Sync.defer(listener.close())).andThen {
+                        transport.connectTls("127.0.0.1", listener.port, clientTls(TLS12, TLS13)).safe.get.map { client =>
+                            Scope.ensure(Sync.defer(client.close())).andThen {
+                                val message = "version-overlap-roundtrip".getBytes("UTF-8")
+                                client.outbound.safe.put(Span.fromUnsafe(message)).andThen {
+                                    Loop(Array.emptyByteArray) { acc =>
+                                        if acc.length >= message.length then Loop.done(acc)
+                                        else client.inbound.safe.take.map(chunk => Loop.continue(acc ++ chunk.toArray))
+                                    }.map { echoed =>
+                                        assert(
+                                            echoed.sameElements(message),
+                                            s"matching-version handshake must complete and round-trip, got '${new String(echoed, "UTF-8")}'"
+                                        )
+                                    }
+                                }
                             }
                         }
                     }

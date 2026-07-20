@@ -131,7 +131,9 @@ object TlsRealEngines:
       * Creates a fresh PollerIoDriver and
       * PosixTransport, listens on an ephemeral port with the test cert, connects from the client side with trustAll, completes the TLS
       * handshake, then hands both connections to `f`. The driver is closed when `f` returns (this transport is never closed, mirroring
-      * production).
+      * production). The listener and both connections are registered with [[Scope.ensure]] as soon as each is acquired, so every one of
+      * them is closed even if a later acquisition step or `f` itself aborts (the driver's own teardown only fails pending I/O
+      * promises, it never closes an idle handle's fd).
       *
       * Anti-flakiness: connect and listen use real Fiber.Unsafe latches (Fiber.initUnscoped) completing on the real kernel accept; no sleep.
       */
@@ -146,22 +148,23 @@ object TlsRealEngines:
         val serverTls = serverConfig
         val clientTls = clientConfig
         Abort.run[NetException | Closed] {
-            val acceptedCh = Channel.Unsafe.init[Connection](1)
-            val listenerF =
-                transport.listenTls("127.0.0.1", 0, 16, serverTls) { serverConn =>
-                    discard(acceptedCh.putFiber(serverConn))
-                }.safe
-            for
-                listener   <- listenerF.get
-                clientConn <- transport.connectTls("127.0.0.1", listener.port, clientTls).safe.get
-                serverConn <- acceptedCh.takeFiber().safe.get
-                result     <- f(clientConn, serverConn)
-            yield
-                clientConn.close()
-                serverConn.close()
-                listener.close()
-                result
-            end for
+            Scope.run {
+                val acceptedCh = Channel.Unsafe.init[Connection](1)
+                val listenerF =
+                    transport.listenTls("127.0.0.1", 0, 16, serverTls) { serverConn =>
+                        discard(acceptedCh.putFiber(serverConn))
+                    }.safe
+                for
+                    listener   <- listenerF.get
+                    _          <- Scope.ensure(Sync.defer(listener.close()))
+                    clientConn <- transport.connectTls("127.0.0.1", listener.port, clientTls).safe.get
+                    _          <- Scope.ensure(Sync.defer(clientConn.close()))
+                    serverConn <- acceptedCh.takeFiber().safe.get
+                    _          <- Scope.ensure(Sync.defer(serverConn.close()))
+                    result     <- f(clientConn, serverConn)
+                yield result
+                end for
+            }
         }.map { r =>
             Sync.defer(driver.close()).andThen(Abort.get(r))
         }

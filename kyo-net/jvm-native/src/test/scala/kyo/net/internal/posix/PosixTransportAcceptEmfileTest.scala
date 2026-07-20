@@ -129,16 +129,22 @@ class PosixTransportAcceptEmfileTest extends Test:
             Sync.ensure(Sync.defer(driver.close())) {
                 for
                     listener <- transport.listen("127.0.0.1", 0, 16)(_ => ()).safe.get
+                    // Registered as soon as the listener is up: the connect below (or its inline assert) can fail before the tail block that
+                    // used to hold the only listener.close(), which would leak the listener.
+                    _ <- Scope.ensure(Sync.defer(listener.close()))
                     port = listener.port
                     // One real client connect: the listen fd gets exactly one backlog entry, so it is genuinely read-ready and the poll loop
                     // drives the transport's acceptAll -> acceptNow path against the injected EMFILE.
                     clientFd <-
-                        val fd       = spy.socket(PosixConstants.AF_INET, PosixConstants.SOCK_STREAM, 0).value
-                        val (ca, cl) = SockAddr.encodeInet4(PosixConstants.AF_INET, "127.0.0.1", port).getOrElse(fail("encode failed"))
-                        spy.connect(fd, ca, cl).safe.get.map { r =>
-                            ca.close()
-                            assert(r.value == 0, s"client connect failed errno=${r.errorCode}")
-                            fd
+                        val fd = spy.socket(PosixConstants.AF_INET, PosixConstants.SOCK_STREAM, 0).value
+                        // Registered immediately for the same reason: the raw client fd's only close used to sit past the same connect/assert.
+                        Scope.ensure(Sync.defer(discard(spy.close(fd)))).andThen {
+                            val (ca, cl) = SockAddr.encodeInet4(PosixConstants.AF_INET, "127.0.0.1", port).getOrElse(fail("encode failed"))
+                            spy.connect(fd, ca, cl).safe.get.map { r =>
+                                ca.close()
+                                assert(r.value == 0, s"client connect failed errno=${r.errorCode}")
+                                fd
+                            }
                         }
                     // Let the accept loop run against the injected EMFILE for the settle window: the spin ceiling, not a timing assertion (a
                     // spinning loop floods acceptNow far past `bound` inside it; the backoff re-arm issues only a handful). This is
@@ -146,8 +152,6 @@ class PosixTransportAcceptEmfileTest extends Test:
                     _ <- Async.sleep(settleWindow)
                 yield
                     val count = spy.acceptNowCalls.get()
-                    listener.close()
-                    discard(spy.close(clientFd))
                     assert(
                         count <= bound,
                         s"accept loop spun: $count acceptNow(EMFILE) calls for ONE pending connection in the settle window (bound $bound). " +

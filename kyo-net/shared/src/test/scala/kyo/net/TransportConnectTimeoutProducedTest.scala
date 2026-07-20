@@ -46,6 +46,13 @@ class TransportConnectTimeoutProducedTest extends Test:
                         e.host == blackHoleHost && e.port == blackHolePort && e.timeout == timeout,
                         s"expected NetConnectTimeoutException($blackHoleHost, $blackHolePort, $timeout), got $e"
                     )
+                case Result.Success(conn) =>
+                    conn.close()
+                    assert(
+                        false,
+                        s"expected the internal connect-deadline to produce NetConnectTimeoutException($blackHoleHost, $blackHolePort, $timeout), " +
+                            s"got a successful connect to a black-hole address"
+                    )
                 case other =>
                     assert(
                         false,
@@ -70,6 +77,12 @@ class TransportConnectTimeoutProducedTest extends Test:
             outcome match
                 case Result.Failure(e: NetConnectTimeoutException) =>
                     assert(e.timeout == timeout, s"expected the TLS connect's own $timeout deadline, got ${e.timeout}")
+                case Result.Success(conn) =>
+                    conn.close()
+                    assert(
+                        false,
+                        s"expected NetConnectTimeoutException($timeout) from the TLS connect deadline, got a successful connect to a black-hole address"
+                    )
                 case other =>
                     assert(
                         false,

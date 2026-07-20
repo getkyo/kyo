@@ -117,6 +117,58 @@ class TaskTest extends AnyFreeSpec with NonImplicitAssertions {
         }
     }
 
+    "rearm" - {
+        // A self-rescheduling task hands its successor to the scheduler from inside run(), so the carrier's
+        // end-of-run billing would land on the priority chosen here. rearm bumps a count the carrier samples
+        // around the run (Worker.runTask) to skip that billing.
+        class RearmTask(runtimeValue: Int = 0) extends TestTask(runtimeValue) {
+            @volatile var interrupted              = false
+            override def needsInterrupt(): Boolean = interrupted
+            def checkRearmCount(): Int             = rearmCount()
+        }
+
+        "lands at the fresh-task priority" in {
+            val t = new RearmTask(1000)
+            assert(t.checkRuntime() == 1001)
+            t.rearm()
+            assert(t.checkRuntime() == 1)
+        }
+
+        "does not jump ahead of work already queued" in {
+            // 1, not 0: resetRuntime's 0 would sort the loop ahead of every waiting task.
+            val t = new RearmTask(1000)
+            t.rearm()
+            val fresh = new RearmTask(0)
+            assert(t.checkRuntime() == fresh.checkRuntime())
+        }
+
+        "clears preemption" in {
+            val t = new RearmTask(1000)
+            t.doPreempt()
+            assert(t.checkShouldPreempt())
+            t.rearm()
+            assert(!t.checkShouldPreempt())
+        }
+
+        "bumps the count on every call" in {
+            val t = new RearmTask(0)
+            assert(t.checkRearmCount() == 0)
+            t.rearm()
+            assert(t.checkRearmCount() == 1)
+            t.rearm()
+            assert(t.checkRearmCount() == 2)
+        }
+
+        "re-asserts the reset on an interrupted task" in {
+            // Same invariant addRuntime and doPreempt carry: this write can erase a concurrent
+            // interrupt reset, so an interrupted task must still converge to 0.
+            val t = new RearmTask(1000)
+            t.interrupted = true
+            t.rearm()
+            assert(t.checkRuntime() == 0)
+        }
+    }
+
     "fiberTrace" - {
         "Task.fiberTrace default returns empty string" in {
             val task = Task.apply(() => ())

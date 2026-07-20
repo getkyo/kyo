@@ -155,30 +155,42 @@ class HandshakeEngineFreeTest extends Test:
                 // teardown) and every connect fails after receiving the server's alert (client-side engine + fd teardown). Both descriptors per
                 // iteration must be released.
                 transport.listenTls("127.0.0.1", 0, 16, serverTls(TLS13, TLS13)) { _ => () }.safe.get.map { listener =>
-                    // Baseline after the listener + driver are up and one warmup failure has settled any lazy allocation. The count is of sockets
-                    // with this listener's port at one end (accept-side local, connect-side peer), so it ignores other suites' descriptors.
-                    Abort.run[NetException | Closed](transport.connectTls(
-                        "127.0.0.1",
-                        listener.port,
-                        clientTls(TLS12, TLS12)
-                    ).safe.get).andThen {
-                        Sync.defer(countSocketsOnPort(sockets, listener.port)).map { base =>
-                            soak(k) { _ =>
-                                Abort.run[NetException | Closed](transport.connectTls(
-                                    "127.0.0.1",
-                                    listener.port,
-                                    clientTls(TLS12, TLS12)
-                                ).safe.get).map {
-                                    o =>
-                                        assert(o.isFailure, s"expected the version-mismatch handshake to fail, got $o")
-                                }
-                            }.andThen {
-                                settledOwnCount(sockets, listener.port, base).map { after =>
-                                    listener.close()
-                                    assert(
-                                        after - base <= fdSlack,
-                                        s"failing handshakes leaked descriptors: listener-port socket count rose from $base to $after over $k iterations"
-                                    )
+                    // Registered as soon as the listener is up: the soak loop below can abort past the tail block that used to hold the only
+                    // listener.close() (a version-mismatch handshake that unexpectedly SUCCEEDS fails its own assert before that tail ever runs), so
+                    // a plain trailing close is not enough to guarantee the listener is released.
+                    Scope.ensure(Sync.defer(listener.close())).andThen {
+                        // Baseline after the listener + driver are up and one warmup failure has settled any lazy allocation. The count is of sockets
+                        // with this listener's port at one end (accept-side local, connect-side peer), so it ignores other suites' descriptors.
+                        Abort.run[NetException | Closed](transport.connectTls(
+                            "127.0.0.1",
+                            listener.port,
+                            clientTls(TLS12, TLS12)
+                        ).safe.get).map {
+                            // A version-mismatch handshake is expected to fail; if it ever unexpectedly succeeds the returned connection must
+                            // still be closed rather than leaked.
+                            case Result.Success(conn) => conn.close()
+                            case _                    => ()
+                        }.andThen {
+                            Sync.defer(countSocketsOnPort(sockets, listener.port)).map { base =>
+                                soak(k) { _ =>
+                                    Abort.run[NetException | Closed](transport.connectTls(
+                                        "127.0.0.1",
+                                        listener.port,
+                                        clientTls(TLS12, TLS12)
+                                    ).safe.get).map {
+                                        o =>
+                                            o match
+                                                case Result.Success(conn) => conn.close()
+                                                case _                    => ()
+                                            assert(o.isFailure, s"expected the version-mismatch handshake to fail, got $o")
+                                    }
+                                }.andThen {
+                                    settledOwnCount(sockets, listener.port, base).map { after =>
+                                        assert(
+                                            after - base <= fdSlack,
+                                            s"failing handshakes leaked descriptors: listener-port socket count rose from $base to $after over $k iterations"
+                                        )
+                                    }
                                 }
                             }
                         }
@@ -208,6 +220,12 @@ class HandshakeEngineFreeTest extends Test:
                         transportConfig.channelCapacity
                     ).safe.get).map {
                         o =>
+                            // The upgrade is expected to fail on the peer's early EOF; if it ever unexpectedly succeeds the returned TLS
+                            // connection must still be closed rather than leaked (the pre-upgrade `plaintext` handle was already detached into
+                            // the upgrade attempt, so this new connection is the only thing left owning the fd).
+                            o match
+                                case Result.Success(conn) => conn.close()
+                                case _                    => ()
                             assert(o.isFailure, s"expected the EOF-during-handshake upgrade to fail, got $o")
                             // The failure path closes the detached plaintext fd in its teardown continuation, which runs a scheduler turn after
                             // upgradeToTls completes Failure, not synchronously with it. Await the close (fstat returns < 0, EBADF, on the closed
@@ -236,7 +254,12 @@ class HandshakeEngineFreeTest extends Test:
                                     clientTls(TLS12, TLS13),
                                     transportConfig.channelCapacity
                                 ).safe.get).map {
-                                    o => assert(o.isFailure, s"expected the upgrade to fail on EOF, got $o")
+                                    o =>
+                                        // Same close-on-unexpected-success guard as the upfront upgrade above.
+                                        o match
+                                            case Result.Success(conn) => conn.close()
+                                            case _                    => ()
+                                        assert(o.isFailure, s"expected the upgrade to fail on EOF, got $o")
                                 }.andThen {
                                     assertEventually(Sync.defer {
                                         val stat = Buffer.alloc[Byte](PosixConstants.statSize)
@@ -271,28 +294,40 @@ class HandshakeEngineFreeTest extends Test:
                         }
                     })
                 }.safe.get.map { listener =>
-                    def roundTrip(): Unit < (Async & Abort[NetException | Closed] & Scope) =
-                        transport.connectTls("127.0.0.1", listener.port, clientTls(TLS12, TLS13)).safe.get.map { client =>
-                            val msg = "soak-roundtrip".getBytes("UTF-8")
-                            client.outbound.safe.put(Span.fromUnsafe(msg)).andThen {
-                                Loop(Array.emptyByteArray) { acc =>
-                                    if acc.length >= msg.length then Loop.done(acc)
-                                    else client.inbound.safe.take.map(c => Loop.continue(acc ++ c.toArray))
-                                }.map { echoed =>
-                                    client.close()
-                                    discard(assert(echoed.sameElements(msg), s"round-trip mismatch: '${new String(echoed, "UTF-8")}'"))
+                    // Registered as soon as the listener is up: a roundTrip's put/take can abort with Closed (its own declared effect row
+                    // includes Abort[Closed]), which would otherwise skip past the tail block that used to hold the only listener.close().
+                    Scope.ensure(Sync.defer(listener.close())).andThen {
+                        def roundTrip(): Unit < (Async & Abort[NetException | Closed] & Scope) =
+                            transport.connectTls("127.0.0.1", listener.port, clientTls(TLS12, TLS13)).safe.get.map { client =>
+                                // Sync.ensure, NOT Scope.ensure: this runs once per soak iteration, and a Scope registration would defer
+                                // every iteration's close to the END of the enclosing scope, i.e. past the descriptor assertion below. The
+                                // leaf would then measure all k connections still open and read that as the leak it is meant to detect.
+                                // Sync.ensure is scoped to this body, so the connection closes when its own round trip ends, on the abort
+                                // path too.
+                                Sync.ensure(Sync.defer(client.close())) {
+                                    val msg = "soak-roundtrip".getBytes("UTF-8")
+                                    client.outbound.safe.put(Span.fromUnsafe(msg)).andThen {
+                                        Loop(Array.emptyByteArray) { acc =>
+                                            if acc.length >= msg.length then Loop.done(acc)
+                                            else client.inbound.safe.take.map(c => Loop.continue(acc ++ c.toArray))
+                                        }.map { echoed =>
+                                            discard(assert(
+                                                echoed.sameElements(msg),
+                                                s"round-trip mismatch: '${new String(echoed, "UTF-8")}'"
+                                            ))
+                                        }
+                                    }
                                 }
                             }
-                        }
-                    roundTrip().andThen {
-                        Sync.defer(countSocketsOnPort(sockets, listener.port)).map { base =>
-                            soak(k)(_ => roundTrip()).andThen {
-                                settledOwnCount(sockets, listener.port, base).map { after =>
-                                    listener.close()
-                                    assert(
-                                        after - base <= fdSlack,
-                                        s"successful handshakes leaked descriptors on close: listener-port socket count rose from $base to $after over $k iterations"
-                                    )
+                        roundTrip().andThen {
+                            Sync.defer(countSocketsOnPort(sockets, listener.port)).map { base =>
+                                soak(k)(_ => roundTrip()).andThen {
+                                    settledOwnCount(sockets, listener.port, base).map { after =>
+                                        assert(
+                                            after - base <= fdSlack,
+                                            s"successful handshakes leaked descriptors on close: listener-port socket count rose from $base to $after over $k iterations"
+                                        )
+                                    }
                                 }
                             }
                         }

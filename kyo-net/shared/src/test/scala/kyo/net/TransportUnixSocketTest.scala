@@ -37,7 +37,9 @@ class TransportUnixSocketTest extends Test:
                         }
                     })
                 }.safe.get
+                _      <- Scope.ensure(Sync.defer(listener.close()))
                 client <- transport.connectUnix(path).safe.get
+                _      <- Scope.ensure(Sync.defer(client.close()))
                 message = "kyo-uds-roundtrip".getBytes("UTF-8")
                 _ <- client.outbound.safe.put(Span.fromUnsafe(message))
                 _ <- accepted.take
@@ -65,48 +67,15 @@ class TransportUnixSocketTest extends Test:
             val transport = NetPlatform.transport
             val path      = s"/tmp/kyo-uds-deadline-${java.lang.System.nanoTime()}.sock"
             transport.listenUnix(path, 16)(_ => ()).safe.get.map { listener =>
-                Abort.run[NetException | Closed](transport.connectUnix(path, 5.seconds).safe.get).map { outcome =>
-                    listener.close()
-                    outcome match
-                        case Result.Success(conn) =>
-                            conn.close()
-                            succeed
-                        case other =>
-                            assert(false, s"a Unix connect with a generous finite deadline must succeed, got $other")
-                    end match
-                }
-            }
-        }
-
-        // The deadline-fires direction needs a Unix connect that actually parks, which is OS-dependent: on Linux a connect to a socket whose
-        // accept queue is full blocks, so the deadline is reachable, while macOS fails it fast with ECONNREFUSED (measured: with backlog 1 and a
-        // listener that never accepts, every subsequent connect returned ECONNREFUSED in well under a millisecond). So this asserts the typed
-        // leaf where the OS can produce it and cancels where it cannot, rather than asserting something macOS would satisfy vacuously.
-        "a Unix connect that parks past its deadline fails with the typed Unix timeout leaf" in {
-            if !kyo.net.internal.posix.PosixConstants.isLinux then
-                cancel("a Unix connect only parks on Linux; macOS fails a full-backlog connect fast with ECONNREFUSED")
-            val transport = NetPlatform.transport
-            val path      = s"/tmp/kyo-uds-park-${java.lang.System.nanoTime()}.sock"
-            val timeout   = 200.millis
-            // Backlog 1 and a handler that never returns leaves the accept queue full, so a later connect parks.
-            transport.listenUnix(path, 1)(_ => ()).safe.get.map { listener =>
-                Loop.indexed(0) { (i, _) =>
-                    if i >= 8 then Loop.done(())
-                    else Abort.run[NetException | Closed](transport.connectUnix(path, timeout).safe.get).map(_ => Loop.continue(0))
-                }.andThen {
-                    Abort.run[NetException | Closed | Timeout](
-                        Async.timeout(5.seconds)(transport.connectUnix(path, timeout).safe.get)
-                    ).map { outcome =>
+                Scope.ensure(Sync.defer(listener.close())).andThen {
+                    Abort.run[NetException | Closed](transport.connectUnix(path, 5.seconds).safe.get).map { outcome =>
                         listener.close()
                         outcome match
-                            case Result.Failure(e: NetUnixConnectTimeoutException) =>
-                                assert(e.timeout == timeout, s"expected the connect's own $timeout deadline, got ${e.timeout}")
-                                assert(e.path == path, s"expected the Unix path in the leaf, got ${e.path}")
+                            case Result.Success(conn) =>
+                                conn.close()
+                                succeed
                             case other =>
-                                assert(
-                                    false,
-                                    s"expected NetUnixConnectTimeoutException($timeout) once the accept queue is full, got $other"
-                                )
+                                assert(false, s"a Unix connect with a generous finite deadline must succeed, got $other")
                         end match
                     }
                 }

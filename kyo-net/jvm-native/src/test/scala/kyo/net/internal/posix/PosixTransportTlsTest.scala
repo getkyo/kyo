@@ -59,7 +59,9 @@ class PosixTransportTlsTest extends Test:
         val driver     = PollerIoDriver.init()
         val transport  = TestTransports.forTesting(driver, Ffi.load[SocketBindings], backendIsEpoll = false)
         val driverDone = driver.start()
-        Abort.run[NetException | Closed](body(transport)).map { result =>
+        // Scope.run resolves the body's own Scope.ensure finalizers (each leaf's listener/connection closes) BEFORE the driver
+        // teardown below runs, so a leaf never closes a handle after its owning driver is already gone.
+        Abort.run[NetException | Closed](Scope.run(body(transport))).map { result =>
             Sync.defer(driver.close()).andThen(
                 Abort.run(driverDone.safe.get).unit
             ).andThen(Abort.get(result))
@@ -118,7 +120,9 @@ class PosixTransportTlsTest extends Test:
                             }
                         })
                     }.safe.get
+                    _      <- Scope.ensure(Sync.defer(listener.close()))
                     client <- transport.connectTls("127.0.0.1", listener.port, clientTls).safe.get
+                    _      <- Scope.ensure(Sync.defer(client.close()))
                     message = "posix-tls-encrypted-roundtrip".getBytes("UTF-8")
                     _      <- client.outbound.safe.put(Span.fromUnsafe(message))
                     _      <- accepted.take
@@ -144,6 +148,9 @@ class PosixTransportTlsTest extends Test:
             withTransport { transport =>
                 deadPort().map { port =>
                     Abort.run[NetException | Closed](transport.connectTls("127.0.0.1", port, clientTls).safe.get).map { outcome =>
+                        // Defensive: connect is expected to fail against a dead port; if a regression ever made it succeed,
+                        // close the unexpected connection rather than leak it.
+                        outcome.foreach(_.close())
                         assert(outcome.isFailure, s"expected Closed connecting TLS to dead port $port, got $outcome")
                     }
                 }

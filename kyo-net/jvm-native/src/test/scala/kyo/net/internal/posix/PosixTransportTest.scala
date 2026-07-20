@@ -92,28 +92,35 @@ class PosixTransportTest extends Test:
             val driver = PollerIoDriver.init()
             discard(driver.start())
             val transport = TestTransports.forTesting(driver, Ffi.load[SocketBindings], backendIsEpoll = false)
+            // Scope.run resolves writer/reader's own Scope.ensure finalizers BEFORE the Sync.ensure driver.close() above runs.
             Sync.ensure(Sync.defer(driver.close())) {
-                loopbackPair().map { case (client, accepted) =>
-                    val writer =
-                        transport.openWith(
-                            PosixHandle.socket(client, PosixHandle.DefaultReadBufferSize, Absent),
-                            driver,
-                            kyo.net.NetConfig.DefaultChannelCapacity
-                        )
-                    val reader =
-                        transport.openWith(
-                            PosixHandle.socket(accepted, PosixHandle.DefaultReadBufferSize, Absent),
-                            driver,
-                            kyo.net.NetConfig.DefaultChannelCapacity
-                        )
-                    writer.start()
-                    reader.start()
-                    val payload = Span.fromUnsafe(Array.tabulate[Byte](12)(i => (i + 1).toByte))
-                    writer.outbound.safe.put(payload).andThen {
-                        reader.inbound.safe.take.map { got =>
-                            writer.close()
-                            reader.close()
-                            assert(got.toArray.toList == payload.toArray.toList, s"round-trip got ${got.toArray.toList}")
+                Scope.run {
+                    loopbackPair().map { case (client, accepted) =>
+                        val writer =
+                            transport.openWith(
+                                PosixHandle.socket(client, PosixHandle.DefaultReadBufferSize, Absent),
+                                driver,
+                                kyo.net.NetConfig.DefaultChannelCapacity
+                            )
+                        val reader =
+                            transport.openWith(
+                                PosixHandle.socket(accepted, PosixHandle.DefaultReadBufferSize, Absent),
+                                driver,
+                                kyo.net.NetConfig.DefaultChannelCapacity
+                            )
+                        writer.start()
+                        reader.start()
+                        Scope.ensure(Sync.defer(writer.close())).andThen {
+                            Scope.ensure(Sync.defer(reader.close())).andThen {
+                                val payload = Span.fromUnsafe(Array.tabulate[Byte](12)(i => (i + 1).toByte))
+                                writer.outbound.safe.put(payload).andThen {
+                                    reader.inbound.safe.take.map { got =>
+                                        writer.close()
+                                        reader.close()
+                                        assert(got.toArray.toList == payload.toArray.toList, s"round-trip got ${got.toArray.toList}")
+                                    }
+                                }
+                            }
                         }
                     }
                 }
@@ -266,18 +273,31 @@ class PosixTransportTest extends Test:
         def bufferOf(conn: kyo.net.Connection): Int =
             conn.asInstanceOf[kyo.net.internal.transport.Connection[PosixHandle]].handle.readBufferSize
         Abort.run[NetException | Closed] {
-            transport.listen("127.0.0.1", 0, 4)(_ => ()).safe.get.map { listener =>
-                transport.connect("127.0.0.1", listener.port, config = kyo.net.NetConfig(readChunkSize = 1024)).safe.get.map { small =>
-                    transport.connect("127.0.0.1", listener.port, config = kyo.net.NetConfig(readChunkSize = 65536)).safe.get.map { large =>
-                        Sync.defer {
-                            val smallBuffer = bufferOf(small)
-                            val largeBuffer = bufferOf(large)
-                            small.close()
-                            large.close()
-                            listener.close()
-                            assert(smallBuffer == 1024, s"the connection that asked for 1024 got $smallBuffer")
-                            assert(largeBuffer == 65536, s"the connection that asked for 65536 got $largeBuffer")
-                            succeed
+            Scope.run {
+                transport.listen("127.0.0.1", 0, 4)(_ => ()).safe.get.map { listener =>
+                    Scope.ensure(Sync.defer(listener.close())).andThen {
+                        transport.connect("127.0.0.1", listener.port, config = kyo.net.NetConfig(readChunkSize = 1024)).safe.get.map {
+                            small =>
+                                Scope.ensure(Sync.defer(small.close())).andThen {
+                                    transport.connect(
+                                        "127.0.0.1",
+                                        listener.port,
+                                        config = kyo.net.NetConfig(readChunkSize = 65536)
+                                    ).safe.get.map { large =>
+                                        Scope.ensure(Sync.defer(large.close())).andThen {
+                                            Sync.defer {
+                                                val smallBuffer = bufferOf(small)
+                                                val largeBuffer = bufferOf(large)
+                                                small.close()
+                                                large.close()
+                                                listener.close()
+                                                assert(smallBuffer == 1024, s"the connection that asked for 1024 got $smallBuffer")
+                                                assert(largeBuffer == 65536, s"the connection that asked for 65536 got $largeBuffer")
+                                                succeed
+                                            }
+                                        }
+                                    }
+                                }
                         }
                     }
                 }

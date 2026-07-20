@@ -26,9 +26,11 @@ class ConnectionTest extends Test:
                     })
                 }
                 listener <- listenerFiber.safe.get
+                _        <- Scope.ensure(Sync.defer(listener.close()))
                 _        <- portRef.set(listener.port)
                 port = listener.port
                 conn <- transport.connect("127.0.0.1", port).safe.get
+                _    <- Scope.ensure(Sync.defer(conn.close()))
                 msg = Span.from("hello".getBytes)
                 _     <- conn.outbound.safe.put(msg)
                 bytes <- conn.inbound.safe.take
@@ -58,6 +60,7 @@ class ConnectionTest extends Test:
                 _    <- Scope.ensure(Sync.defer(listener.close()))
                 conn <- transport.connect("127.0.0.1", listener.port).safe.get
                 peer <- accepted.safe.get
+                _    <- Scope.ensure(Sync.defer(peer.close()))
                 // This listener is plaintext and never answers a ClientHello, so the upgrade parks on a handshake read nothing will ever complete.
                 // The detach runs synchronously inside upgradeToTls, so `conn` is already Upgrading by the time close() runs below: the
                 // abandonment is forced by construction rather than by timing, on every backend.
@@ -97,6 +100,7 @@ class ConnectionTest extends Test:
                     _    <- Scope.ensure(Sync.defer(listener.close()))
                     conn <- transport.connect("127.0.0.1", listener.port).safe.get
                     peer <- accepted.safe.get
+                    _    <- Scope.ensure(Sync.defer(peer.close()))
                     // Parks forever exactly as above: a plaintext listener never answers the ClientHello.
                     upgrade <- Sync.defer(transport.upgradeToTls(conn, clientTls, 16).safe)
                     // The awaiting fiber's body is ONLY the await, so the upgrade's Async.Join is at the head of its computation: that is what
@@ -136,6 +140,7 @@ class ConnectionTest extends Test:
             val transport = NetPlatform.transport
             for
                 listener <- transport.listen("127.0.0.1", 0, 128)(_ => ()).safe.get
+                _        <- Scope.ensure(Sync.defer(listener.close()))
                 port = listener.port
                 conn <- transport.connect("127.0.0.1", port).safe.get
                 _ = conn.close()

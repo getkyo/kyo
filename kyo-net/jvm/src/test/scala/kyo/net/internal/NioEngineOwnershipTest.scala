@@ -115,19 +115,23 @@ class NioEngineOwnershipTest extends Test:
             given Frame   = Frame.internal
             val transport = mkTransport()
             transport.listenTls("127.0.0.1", 0, 50, serverTlsConfig)(startEchoFiber).safe.get.map { listener =>
-                val port = listener.port
-                transport.connectTls("127.0.0.1", port, clientTlsConfig).safe.get.map { conn =>
-                    // Single round-trip: write then read back. If gate is stuck post-handshake, writeTls
-                    // spins and the take never resolves.
-                    val msg = Span.fromUnsafe("gate-released-check".getBytes("UTF-8"))
-                    conn.outbound.safe.put(msg).andThen {
-                        conn.inbound.safe.take.map { received =>
-                            conn.close()
-                            listener.close()
-                            assert(
-                                received.toArray sameElements msg.toArray,
-                                "round-trip failed: gate not released after handshake"
-                            )
+                Scope.ensure(Sync.defer(listener.close())).andThen {
+                    val port = listener.port
+                    transport.connectTls("127.0.0.1", port, clientTlsConfig).safe.get.map { conn =>
+                        Scope.ensure(Sync.defer(conn.close())).andThen {
+                            // Single round-trip: write then read back. If gate is stuck post-handshake, writeTls
+                            // spins and the take never resolves.
+                            val msg = Span.fromUnsafe("gate-released-check".getBytes("UTF-8"))
+                            conn.outbound.safe.put(msg).andThen {
+                                conn.inbound.safe.take.map { received =>
+                                    conn.close()
+                                    listener.close()
+                                    assert(
+                                        received.toArray sameElements msg.toArray,
+                                        "round-trip failed: gate not released after handshake"
+                                    )
+                                }
+                            }
                         }
                     }
                 }
@@ -142,19 +146,23 @@ class NioEngineOwnershipTest extends Test:
             given Frame   = Frame.internal
             val transport = mkTransport()
             transport.listenTls("127.0.0.1", 0, 50, serverTlsConfig)(startEchoFiber).safe.get.map { listener =>
-                val port = listener.port
-                transport.connectTls("127.0.0.1", port, clientTlsConfig).safe.get.map { conn =>
-                    val msg1 = Span.fromUnsafe("frame-1".getBytes("UTF-8"))
-                    val msg2 = Span.fromUnsafe("frame-2-longer".getBytes("UTF-8"))
-                    conn.outbound.safe.put(msg1).andThen(conn.outbound.safe.put(msg2)).andThen {
-                        fillTo(conn, Array.emptyByteArray, msg1.size + msg2.size).map { received =>
-                            conn.close()
-                            listener.close()
-                            val expected = msg1.toArray ++ msg2.toArray
-                            assert(
-                                received.take(expected.length) sameElements expected,
-                                "one or both frames did not arrive correctly (gate release failure would cause this)"
-                            )
+                Scope.ensure(Sync.defer(listener.close())).andThen {
+                    val port = listener.port
+                    transport.connectTls("127.0.0.1", port, clientTlsConfig).safe.get.map { conn =>
+                        Scope.ensure(Sync.defer(conn.close())).andThen {
+                            val msg1 = Span.fromUnsafe("frame-1".getBytes("UTF-8"))
+                            val msg2 = Span.fromUnsafe("frame-2-longer".getBytes("UTF-8"))
+                            conn.outbound.safe.put(msg1).andThen(conn.outbound.safe.put(msg2)).andThen {
+                                fillTo(conn, Array.emptyByteArray, msg1.size + msg2.size).map { received =>
+                                    conn.close()
+                                    listener.close()
+                                    val expected = msg1.toArray ++ msg2.toArray
+                                    assert(
+                                        received.take(expected.length) sameElements expected,
+                                        "one or both frames did not arrive correctly (gate release failure would cause this)"
+                                    )
+                                }
+                            }
                         }
                     }
                 }
@@ -169,12 +177,16 @@ class NioEngineOwnershipTest extends Test:
             given Frame   = Frame.internal
             val transport = mkTransport()
             transport.listenTls("127.0.0.1", 0, 50, serverTlsConfig)(startEchoFiber).safe.get.map { listener =>
-                val port = listener.port
-                transport.connectTls("127.0.0.1", port, clientTlsConfig).safe.get.map { conn =>
-                    driveConnection(conn, connId = 0, rounds = 60, window = 1).map { ok =>
-                        conn.close()
-                        listener.close()
-                        assert(ok, "a NIO TLS echo frame did not match after sequential cycles (gate leak would cause this)")
+                Scope.ensure(Sync.defer(listener.close())).andThen {
+                    val port = listener.port
+                    transport.connectTls("127.0.0.1", port, clientTlsConfig).safe.get.map { conn =>
+                        Scope.ensure(Sync.defer(conn.close())).andThen {
+                            driveConnection(conn, connId = 0, rounds = 60, window = 1).map { ok =>
+                                conn.close()
+                                listener.close()
+                                assert(ok, "a NIO TLS echo frame did not match after sequential cycles (gate leak would cause this)")
+                            }
+                        }
                     }
                 }
             }
@@ -210,20 +222,26 @@ class NioEngineOwnershipTest extends Test:
             given Frame   = Frame.internal
             val transport = mkTransport()
             transport.listenTls("127.0.0.1", 0, 50, serverTlsConfig)(startEchoFiber).safe.get.map { listener =>
-                val port = listener.port
-                Async.zip(
-                    transport.connectTls("127.0.0.1", port, clientTlsConfig).safe.get,
-                    transport.connectTls("127.0.0.1", port, clientTlsConfig).safe.get
-                ).map { (conn0, conn1) =>
+                Scope.ensure(Sync.defer(listener.close())).andThen {
+                    val port = listener.port
                     Async.zip(
-                        driveConnection(conn0, connId = 0, rounds = 20, window = 4),
-                        driveConnection(conn1, connId = 1, rounds = 20, window = 4)
-                    ).map { (ok0, ok1) =>
-                        conn0.close()
-                        conn1.close()
-                        listener.close()
-                        assert(ok0, "connection 0: frame mismatch (gate shared across connections would cause this)")
-                        assert(ok1, "connection 1: frame mismatch (gate shared across connections would cause this)")
+                        transport.connectTls("127.0.0.1", port, clientTlsConfig).safe.get,
+                        transport.connectTls("127.0.0.1", port, clientTlsConfig).safe.get
+                    ).map { (conn0, conn1) =>
+                        Scope.ensure(Sync.defer(conn0.close())).andThen {
+                            Scope.ensure(Sync.defer(conn1.close())).andThen {
+                                Async.zip(
+                                    driveConnection(conn0, connId = 0, rounds = 20, window = 4),
+                                    driveConnection(conn1, connId = 1, rounds = 20, window = 4)
+                                ).map { (ok0, ok1) =>
+                                    conn0.close()
+                                    conn1.close()
+                                    listener.close()
+                                    assert(ok0, "connection 0: frame mismatch (gate shared across connections would cause this)")
+                                    assert(ok1, "connection 1: frame mismatch (gate shared across connections would cause this)")
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -237,23 +255,29 @@ class NioEngineOwnershipTest extends Test:
             given Frame   = Frame.internal
             val transport = mkTransport()
             transport.listenTls("127.0.0.1", 0, 50, serverTlsConfig)(startEchoFiber).safe.get.map { listener =>
-                val port = listener.port
-                transport.connectTls("127.0.0.1", port, clientTlsConfig).safe.get.map { conn1 =>
-                    // Use and close the first connection.
-                    val msg1 = Span.fromUnsafe("first-conn".getBytes("UTF-8"))
-                    conn1.outbound.safe.put(msg1).andThen(conn1.inbound.safe.take).map { _ =>
-                        conn1.close()
-                        // Open a second connection; its gate must be fresh (unowned).
-                        transport.connectTls("127.0.0.1", port, clientTlsConfig).safe.get.map { conn2 =>
-                            val msg2 = Span.fromUnsafe("second-conn".getBytes("UTF-8"))
-                            conn2.outbound.safe.put(msg2).andThen {
-                                conn2.inbound.safe.take.map { received =>
-                                    conn2.close()
-                                    listener.close()
-                                    assert(
-                                        received.toArray sameElements msg2.toArray,
-                                        "second connection's round-trip failed (gate leak from first connection would cause this)"
-                                    )
+                Scope.ensure(Sync.defer(listener.close())).andThen {
+                    val port = listener.port
+                    transport.connectTls("127.0.0.1", port, clientTlsConfig).safe.get.map { conn1 =>
+                        Scope.ensure(Sync.defer(conn1.close())).andThen {
+                            // Use and close the first connection.
+                            val msg1 = Span.fromUnsafe("first-conn".getBytes("UTF-8"))
+                            conn1.outbound.safe.put(msg1).andThen(conn1.inbound.safe.take).map { _ =>
+                                conn1.close()
+                                // Open a second connection; its gate must be fresh (unowned).
+                                transport.connectTls("127.0.0.1", port, clientTlsConfig).safe.get.map { conn2 =>
+                                    Scope.ensure(Sync.defer(conn2.close())).andThen {
+                                        val msg2 = Span.fromUnsafe("second-conn".getBytes("UTF-8"))
+                                        conn2.outbound.safe.put(msg2).andThen {
+                                            conn2.inbound.safe.take.map { received =>
+                                                conn2.close()
+                                                listener.close()
+                                                assert(
+                                                    received.toArray sameElements msg2.toArray,
+                                                    "second connection's round-trip failed (gate leak from first connection would cause this)"
+                                                )
+                                            }
+                                        }
+                                    }
                                 }
                             }
                         }

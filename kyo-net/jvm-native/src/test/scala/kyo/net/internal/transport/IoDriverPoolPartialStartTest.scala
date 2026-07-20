@@ -9,8 +9,9 @@ import kyo.net.internal.posix.RecordingIoDriver
 
 /** All-or-nothing partial-start teardown test for [[IoDriverPool]].
   *
-  * Verifies that when the k-th driver's `start()` raises a failure, `IoDriverPool.start()` rethrows the failure AND closes all
-  * k-1 already-started drivers, leaving no partially-started transport alive. The controlled fault is the single enumerated injection on
+  * Verifies that when the k-th driver's `start()` raises a failure, `IoDriverPool.start()` rethrows the failure AND closes EVERY driver in
+  * the pool, leaving no partially-started transport alive and no descriptor held. Every driver, not just the started prefix: a driver
+  * allocates its poller/ring/selector fd in its constructor, so the one whose start() threw and every driver after it already hold one. The controlled fault is the single enumerated injection on
   * [[RecordingIoDriver.throwOnStart]]: when set to true, the next `start()` call throws a [[RuntimeException]] instead of delegating, while
   * every other method still delegates to the real driver. This is the only deterministic way to force a mid-array start failure because
   * `PollerIoDriver.start()` itself does not raise synchronous errors (it spawns the poll-loop fiber, which could fail asynchronously if the
@@ -60,10 +61,20 @@ class IoDriverPoolPartialStartTest extends Test:
             rawSpies(0).closeCalls.get() >= 1,
             s"driver 0 (already-started) must be closed by the all-or-nothing rollback, got closeCalls=${rawSpies(0).closeCalls.get()}"
         )
-        // Driver 1 never started (it threw), so its closeCalls may be 0 or 1 (close() is called on all in the rollback).
-        // Driver 2 was never reached (loop stops at the failing index), so it must be closed too (close() iterates all N).
-        // The invariant is that the transport build fails entirely; no driver was handed to a live transport.
-        // No transport is built: pool.start() threw before PosixTransport.init could be called.
+        // The rollback must close EVERY driver, not just the started prefix. Each of these was constructed by PollerIoDriver.init(), which
+        // allocates the poller fd in the constructor, before start() is ever called: driver 1's start() threw and driver 2 was never
+        // reached, yet both already hold a live epoll/kqueue fd. Closing only the started prefix leaks one descriptor per driver from the
+        // failing index onward, for the life of the process, whenever a non-first driver fails to start (EMFILE at startup, say).
+        assert(
+            rawSpies(1).closeCalls.get() >= 1,
+            s"driver 1 (its start() threw, fd already allocated at construction) must be closed by the rollback, " +
+                s"got closeCalls=${rawSpies(1).closeCalls.get()}"
+        )
+        assert(
+            rawSpies(2).closeCalls.get() >= 1,
+            s"driver 2 (never reached, fd already allocated at construction) must be closed by the rollback, " +
+                s"got closeCalls=${rawSpies(2).closeCalls.get()}"
+        )
         succeed
     }
 
@@ -82,8 +93,11 @@ class IoDriverPoolPartialStartTest extends Test:
             thrown.getMessage.contains("throwOnStart"),
             s"pool.start must rethrow when the first driver fails, got: ${thrown.getMessage}"
         )
-        // No driver was started (index 0 was first), so no cleanup close is needed. The pool must still have rethrown.
-        // Driver 1 was never reached (loop stopped at index 0), so either 0 or 1 closeCalls is correct.
+        // No driver was started (index 0 was first), so IoDriverPool.rollback's already-started-prefix close (startedCount=0) closes
+        // nothing, and driver 1 was never reached either (the loop stopped at index 0): both real drivers still hold a live pollerFd
+        // (PollerIoDriver.init() allocates it before start() is ever called). Close them here so the test does not leak either fd.
+        rawSpies(0).close()
+        rawSpies(1).close()
         succeed
     }
 

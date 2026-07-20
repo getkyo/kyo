@@ -47,7 +47,9 @@ class HalfCloseStateTest extends Test:
                         }
                     })
                 }.safe.get
+                _          <- Scope.ensure(Sync.defer(listener.close()))
                 client     <- transport.connectTls("127.0.0.1", listener.port, clientTls).safe.get
+                _          <- Scope.ensure(Sync.defer(client.close()))
                 serverConn <- serverConnCh.take
                 _ = serverConn.close() // sends TLS close_notify then TCP FIN
                 _ <- drainInbound(client) // suspends until inbound closes after close_notify
@@ -74,7 +76,9 @@ class HalfCloseStateTest extends Test:
                         }
                     })
                 }.safe.get
+                _          <- Scope.ensure(Sync.defer(listener.close()))
                 client     <- transport.connectTls("127.0.0.1", listener.port, clientTls).safe.get
+                _          <- Scope.ensure(Sync.defer(client.close()))
                 serverConn <- serverConnCh.take
                 _ = client.close() // local close before any server-initiated close
             yield
@@ -106,7 +110,9 @@ class HalfCloseStateTest extends Test:
                         }
                     })
                 }.safe.get
+                _          <- Scope.ensure(Sync.defer(listener.close()))
                 client     <- transport.connectTls("127.0.0.1", listener.port, clientTls).safe.get
+                _          <- Scope.ensure(Sync.defer(client.close()))
                 serverConn <- serverConnCh.take
                 // Reader: signals readiness, then drains inbound with cooperative suspension at each take.
                 // The Closed raised when inbound closes is caught by Abort.run, terminating the loop.

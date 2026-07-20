@@ -1303,6 +1303,15 @@ final private[kyo] class NioTransport private (
         kyo.net.Transport.checkConnectTimeout(connectTimeout)
         val promise = new IOPromise[NetException, Connection[NioHandle]]
 
+        // Armed BEFORE the connect, not inside the connect-pending branch below. A non-blocking AF_UNIX connect never reports "pending"
+        // here: it either completes inline or throws, so an arm inside that branch never ran and connectUnix accepted connectTimeout and
+        // ignored it. The deadline bounds this transport's own asynchronous path (the driver registration and completion handoff), which is
+        // what can actually leave the promise pending; the promise.onComplete backstop inside armConnectDeadline disarms it the moment an
+        // inline success or a throw settles the promise, so arming early costs a completed connect nothing.
+        // port = -1 sentinel: a Unix socket has no port, so the deadline produces NetUnixConnectTimeoutException.
+        val disarmConnectDeadline = armConnectDeadline(promise, path, -1, connectTimeout)
+        discard(disarmConnectDeadline)
+
         try
             val addr    = java.net.UnixDomainSocketAddress.of(path)
             val channel = SocketChannel.open(StandardProtocolFamily.UNIX)
@@ -1319,9 +1328,6 @@ final private[kyo] class NioTransport private (
             else
                 // port = -1 sentinel: a Unix socket has no port, so connectFail routes failures to NetUnixConnectException.
                 awaitConnect(channel, path, -1, promise, config.channelCapacity, config.readChunkSize)
-                // A Unix connect parks where the OS allows it (Linux blocks when the accept queue is full; macOS fails fast), so it carries
-                // the same deadline a TCP connect does rather than accepting the parameter and ignoring it.
-                discard(armConnectDeadline(promise, path, -1, connectTimeout))
             end if
         catch
             case e: IOException =>
@@ -1679,8 +1685,11 @@ private[kyo] object NioTransport:
 end NioTransport
 
 /** Active server-side listener for a NIO TCP or Unix-domain socket. Holds the server channel and tracks closed state. */
-final private class NioListener(
-    private val serverChannel: ServerSocketChannel,
+final private[net] class NioListener(
+    // `private[net]` (not `private`) so the socket-option test can read the LISTENING channel's SO_RCVBUF back. That value is applied
+    // pre-bind and is the one accepted sockets inherit, and unlike a connected socket's it is not subject to the kernel's non-monotonic
+    // auto-tuning, so it is the only place this path can be asserted directly.
+    private[net] val serverChannel: ServerSocketChannel,
     val port: Int,
     val host: String,
     private val driver: NioIoDriver,

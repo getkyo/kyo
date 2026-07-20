@@ -170,7 +170,10 @@ class PosixHandleWriteTailBoundTest extends Test:
                     val rc        = realUring.io_uring_queue_init(depth, realRing, 0)
                     if rc != 0 then
                         realRing.close()
+                        discard(sock.close(writeFd))
+                        discard(sock.close(peerFd))
                         throw Closed("PosixHandleWriteTailBoundTest", summon[Frame], s"queue_init failed: rc=$rc")
+                    end if
                     val driver = TestDrivers.forBindings(RecordingIoUringBindings(realUring, realRing), realRing)
                     val handle = PosixHandle.socket(writeFd, PosixHandle.DefaultReadBufferSize, Absent)
                     discard(driver.start())
@@ -199,7 +202,12 @@ class PosixHandleWriteTailBoundTest extends Test:
                     val rc        = realUring.io_uring_queue_init(depth, realRing, 0)
                     if rc != 0 then
                         realRing.close()
+                        discard(sock.close(writeFd))
+                        discard(sock.close(peerFd))
+                        clientEngine.free()
+                        serverEngine.free()
                         throw Closed("PosixHandleWriteTailBoundTest", summon[Frame], s"queue_init failed: rc=$rc")
+                    end if
                     val driver = TestDrivers.forBindings(RecordingIoUringBindings(realUring, realRing), realRing)
                     val handle = PosixHandle.socket(writeFd, PosixHandle.DefaultReadBufferSize, Absent)
                     handle.tls = Present(clientEngine)

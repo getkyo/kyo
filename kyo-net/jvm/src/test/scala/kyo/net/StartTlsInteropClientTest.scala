@@ -135,18 +135,25 @@ class StartTlsInteropClientTest extends Test:
                                     else
                                         Abort.run[Timeout | Closed](
                                             Async.timeout(15.seconds) {
-                                                for
-                                                    conn    <- transport.connect("127.0.0.1", port).safe.get
-                                                    tlsConn <- transport.upgradeToTls(conn, clientTls, 16).safe.get
-                                                    payload = "ping\n".getBytes
-                                                    _      <- tlsConn.outbound.safe.put(Span.fromUnsafe(payload))
-                                                    echoed <- tlsConn.inbound.safe.take
-                                                    _ = assert(
-                                                        echoed.size > 0,
-                                                        s"iteration $i: expected echo from openssl s_server -rev, got empty"
-                                                    )
-                                                yield tlsConn.close()
-                                                end for
+                                                // Scoped per-iteration (not the leaf's Scope): 8 rounds run in this loop, and deferring
+                                                // conn/tlsConn cleanup to the leaf's own Scope would hold every round's connection open
+                                                // simultaneously until the whole leaf ends, matching the startTlsClient idiom in
+                                                // TransportStartTlsTest.scala.
+                                                Scope.run(
+                                                    for
+                                                        conn    <- transport.connect("127.0.0.1", port).safe.get
+                                                        _       <- Scope.ensure(Sync.defer(conn.close()))
+                                                        tlsConn <- transport.upgradeToTls(conn, clientTls, 16).safe.get
+                                                        _       <- Scope.ensure(Sync.defer(tlsConn.close()))
+                                                        payload = "ping\n".getBytes
+                                                        _      <- tlsConn.outbound.safe.put(Span.fromUnsafe(payload))
+                                                        echoed <- tlsConn.inbound.safe.take
+                                                        _ = assert(
+                                                            echoed.size > 0,
+                                                            s"iteration $i: expected echo from openssl s_server -rev, got empty"
+                                                        )
+                                                    yield ()
+                                                )
                                             }
                                         ).map {
                                             case Result.Failure(e) =>

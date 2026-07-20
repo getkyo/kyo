@@ -135,6 +135,11 @@ class IoDriverPoolTest extends Test:
         assert(thrown.getMessage.contains("throwOnStart"), s"expected throwOnStart message, got: ${thrown.getMessage}")
         // Driver 0 (already started) must have been closed by the all-or-nothing cleanup.
         assert(rawSpies(0).closeCalls.get() >= 1, "driver 0 must be closed by the all-or-nothing cleanup")
+        // IoDriverPool.rollback only closes the already-started prefix (driver 0 here). Driver 1 (threw on start) and driver 2 (never
+        // reached) each still hold a live pollerFd from PollerIoDriver.init(), which allocates the poller fd before start() is ever
+        // called; close them here so the test does not leak either real fd.
+        rawSpies(1).close()
+        rawSpies(2).close()
         succeed
     }
 

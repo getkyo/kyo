@@ -38,24 +38,32 @@ final private[kyo] class IoDriverPool[Handle] private (
                 try discard(drivers(i).start())
                 catch
                     case ex: Throwable if NonFatal(ex) =>
-                        // All-or-nothing: a partially-started pool is never handed to a transport. Tear the already-started prefix down and
-                        // rethrow, so the build fails atomically rather than running fewer drivers than ioPoolSize requested. This is the ONE
+                        // All-or-nothing: a partially-started pool is never handed to a transport. Tear EVERY driver down and rethrow, so
+                        // the build fails atomically rather than running fewer drivers than ioPoolSize requested, and so no driver is left
+                        // holding the descriptor it allocated at construction. This is the ONE
                         // place a driver is closed from outside its own terminal exit: a transport is process-lifetime and never shuts down, so
                         // a pool that was successfully handed over is never torn down. Guarded on NonFatal: on a fatal throwable the process is
                         // dying and the rollback is moot, so let it propagate uncaught.
-                        rollback(i)
+                        rollback()
                         throw ex
                 end try
                 loop(i + 1)
         loop(0)
     end start
 
-    /** Close the first `startedCount` drivers after a failed start. Each driver's own close is CAS-guarded, and the pool is discarded
-      * immediately afterwards, so this neither needs nor waits for a teardown signal.
+    /** Close EVERY driver in the pool after a failed start.
+      *
+      * Not just the started prefix: a driver allocates its poller, ring or selector descriptor in its CONSTRUCTOR, so by the time `start()`
+      * is called every driver in the array already holds one. Closing only the drivers that started would leak the descriptor of the one
+      * whose `start()` threw, plus every driver after it, for the life of the process. Closing a never-started driver is well defined on all
+      * three backends: it tears down synchronously, since there is no loop carrier to defer to.
+      *
+      * Each driver's own close is CAS-guarded, so closing the started prefix a second time is a no-op, and the pool is discarded immediately
+      * afterwards, so this neither needs nor waits for a teardown signal.
       */
-    private def rollback(startedCount: Int)(using AllowUnsafe, Frame): Unit =
+    private def rollback()(using AllowUnsafe, Frame): Unit =
         @tailrec def loop(i: Int): Unit =
-            if i < startedCount then
+            if i < drivers.length then
                 discard(drivers(i).close())
                 loop(i + 1)
         loop(0)

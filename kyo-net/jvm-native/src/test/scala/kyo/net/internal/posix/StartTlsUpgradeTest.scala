@@ -44,48 +44,60 @@ class StartTlsUpgradeTest extends Test:
         val driver = PollerIoDriver.init()
         discard(driver.start())
         val transport = TestTransports.forTesting(driver, Ffi.load[SocketBindings], backendIsEpoll = false)
+        // Scope.run resolves the body's own Scope.ensure finalizers (the plaintext/upgraded connection closes below) BEFORE the
+        // Sync.ensure driver.close() above runs.
         Sync.ensure(Sync.defer(driver.close())) {
-            loopbackPair().map { case (clientFd, serverFd) =>
-                val clientHandle = PosixHandle.socket(clientFd, PosixHandle.DefaultReadBufferSize, Absent)
-                val serverHandle = PosixHandle.socket(serverFd, PosixHandle.DefaultReadBufferSize, Absent)
-                val clientPlain  = transport.openWith(clientHandle, driver, kyo.net.NetConfig.DefaultChannelCapacity)
-                val serverPlain  = transport.openWith(serverHandle, driver, kyo.net.NetConfig.DefaultChannelCapacity)
-                clientPlain.start()
-                serverPlain.start()
+            Scope.run {
+                loopbackPair().map { case (clientFd, serverFd) =>
+                    val clientHandle = PosixHandle.socket(clientFd, PosixHandle.DefaultReadBufferSize, Absent)
+                    val serverHandle = PosixHandle.socket(serverFd, PosixHandle.DefaultReadBufferSize, Absent)
+                    val clientPlain  = transport.openWith(clientHandle, driver, kyo.net.NetConfig.DefaultChannelCapacity)
+                    val serverPlain  = transport.openWith(serverHandle, driver, kyo.net.NetConfig.DefaultChannelCapacity)
+                    clientPlain.start()
+                    serverPlain.start()
+                    Scope.ensure(Sync.defer(clientPlain.close())).andThen {
+                        Scope.ensure(Sync.defer(serverPlain.close())).andThen {
+                            val message = "starttls-no-byte-dropped".getBytes("UTF-8")
 
-                val message = "starttls-no-byte-dropped".getBytes("UTF-8")
+                            // Postgres-style STARTTLS negotiation: the client sends a 1-byte upgrade signal in plaintext, the server reads it,
+                            // and only then do both sides upgrade. This drains the plaintext pumps' pending reads before the upgrade
+                            // re-registers the fd, so the handshake read does not race a stale plaintext read.
+                            val signal = clientPlain.outbound.safe.put(Span.fromUnsafe(Array[Byte]('U'.toByte))).andThen {
+                                serverPlain.inbound.safe.take.map(sig =>
+                                    assert(sig.toArray.sameElements(Array[Byte]('U'.toByte)), "lost the upgrade signal")
+                                )
+                            }
 
-                // Postgres-style STARTTLS negotiation: the client sends a 1-byte upgrade signal in plaintext, the server reads it, and only
-                // then do both sides upgrade. This drains the plaintext pumps' pending reads before the upgrade re-registers the fd, so the
-                // handshake read does not race a stale plaintext read.
-                val signal = clientPlain.outbound.safe.put(Span.fromUnsafe(Array[Byte]('U'.toByte))).andThen {
-                    serverPlain.inbound.safe.take.map(sig =>
-                        assert(sig.toArray.sameElements(Array[Byte]('U'.toByte)), "lost the upgrade signal")
-                    )
-                }
+                            signal.andThen {
+                                // Drive both upgrades concurrently (the handshake is a two-party exchange over the fds).
+                                val serverUpgrade =
+                                    transport.upgradeRole(serverPlain, serverTls, transportConfig.channelCapacity, isServer = true).safe
+                                val clientUpgrade =
+                                    transport.upgradeRole(clientPlain, clientTls, transportConfig.channelCapacity, isServer = false).safe
+                                Async.zip(clientUpgrade.get, serverUpgrade.get)
+                            }.map { case (clientTlsConn, serverTlsConn) =>
+                                Scope.ensure(Sync.defer(clientTlsConn.close())).andThen {
+                                    Scope.ensure(Sync.defer(serverTlsConn.close())).andThen {
+                                        // fd reuse: the upgraded connections sit on the SAME fds as the plaintext ones.
+                                        val clientUpFd = clientTlsConn.asInstanceOf[InternalConnection[PosixHandle]].handle.readFd
+                                        val serverUpFd = serverTlsConn.asInstanceOf[InternalConnection[PosixHandle]].handle.readFd
+                                        assert(clientUpFd == clientFd, s"client fd churned: $clientFd -> $clientUpFd")
+                                        assert(serverUpFd == serverFd, s"server fd churned: $serverFd -> $serverUpFd")
 
-                signal.andThen {
-                    // Drive both upgrades concurrently (the handshake is a two-party exchange over the fds).
-                    val serverUpgrade = transport.upgradeRole(serverPlain, serverTls, transportConfig.channelCapacity, isServer = true).safe
-                    val clientUpgrade =
-                        transport.upgradeRole(clientPlain, clientTls, transportConfig.channelCapacity, isServer = false).safe
-                    Async.zip(clientUpgrade.get, serverUpgrade.get)
-                }.map { case (clientTlsConn, serverTlsConn) =>
-                    // fd reuse: the upgraded connections sit on the SAME fds as the plaintext ones.
-                    val clientUpFd = clientTlsConn.asInstanceOf[InternalConnection[PosixHandle]].handle.readFd
-                    val serverUpFd = serverTlsConn.asInstanceOf[InternalConnection[PosixHandle]].handle.readFd
-                    assert(clientUpFd == clientFd, s"client fd churned: $clientFd -> $clientUpFd")
-                    assert(serverUpFd == serverFd, s"server fd churned: $serverFd -> $serverUpFd")
-
-                    // no prefix loss: the server decrypts the FULL message the client encrypts.
-                    clientTlsConn.outbound.safe.put(Span.fromUnsafe(message)).andThen {
-                        collect(serverTlsConn, message.length).map { received =>
-                            clientTlsConn.close()
-                            serverTlsConn.close()
-                            assert(
-                                received.sameElements(message),
-                                s"decrypted stream mismatch: got '${new String(received, "UTF-8")}'"
-                            )
+                                        // no prefix loss: the server decrypts the FULL message the client encrypts.
+                                        clientTlsConn.outbound.safe.put(Span.fromUnsafe(message)).andThen {
+                                            collect(serverTlsConn, message.length).map { received =>
+                                                clientTlsConn.close()
+                                                serverTlsConn.close()
+                                                assert(
+                                                    received.sameElements(message),
+                                                    s"decrypted stream mismatch: got '${new String(received, "UTF-8")}'"
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+                            }
                         }
                     }
                 }

@@ -60,6 +60,11 @@ class TransportHandshakeTimeoutTest extends Test:
                             s"the TCP phase completed, so its ${e.timeout} deadline must have been disarmed at connect: a handshake stall " +
                                 "reported as a connect timeout means the connect timer still owned the connection through the handshake"
                         )
+                    case Result.Success(conn) =>
+                        // Regression path: the handshake deadline never fired and connectTls handed back a live connection. Close it so a
+                        // failing run does not also leak the socket.
+                        conn.close()
+                        assert(false, s"expected the handshake deadline to fire, got a successful connection instead")
                     case other =>
                         assert(false, s"expected the handshake deadline to fire, got $other")
                 end match
@@ -78,17 +83,20 @@ class TransportHandshakeTimeoutTest extends Test:
                 NetTlsConfig(certChainPath = Present(certPath), privateKeyPath = Present(keyPath), handshakeTimeout = 150.millis)
             val transport = NetPlatform.transport
             transport.listenTls("127.0.0.1", 0, 16, serverTls) { _ => () }.safe.get.map { listener =>
-                transport.connect("127.0.0.1", listener.port).safe.get.map { client =>
-                    Abort.run[Timeout](Async.timeout(5.seconds)(Abort.run[Closed](client.inbound.safe.take))).map { outcome =>
-                        client.close()
-                        listener.close()
-                        // The reap closes the accepted fd; the client's inbound either fails Closed (channel torn down) or delivers an empty
-                        // EOF span, depending on backend. Both are reaps; a Timeout (the window expired) means no reap, the regression symptom.
-                        val reaped = outcome match
-                            case Result.Success(Result.Success(span)) => span.isEmpty
-                            case Result.Success(Result.Failure(_))    => true
-                            case _                                    => false
-                        assert(reaped, s"expected the finite handshakeTimeout to reap the stalled server handshake, got $outcome")
+                // Guards the listener if `transport.connect` itself were to fail before the trailing `listener.close()` below.
+                Scope.ensure(Sync.defer(listener.close())).andThen {
+                    transport.connect("127.0.0.1", listener.port).safe.get.map { client =>
+                        Abort.run[Timeout](Async.timeout(5.seconds)(Abort.run[Closed](client.inbound.safe.take))).map { outcome =>
+                            client.close()
+                            listener.close()
+                            // The reap closes the accepted fd; the client's inbound either fails Closed (channel torn down) or delivers an empty
+                            // EOF span, depending on backend. Both are reaps; a Timeout (the window expired) means no reap, the regression symptom.
+                            val reaped = outcome match
+                                case Result.Success(Result.Success(span)) => span.isEmpty
+                                case Result.Success(Result.Failure(_))    => true
+                                case _                                    => false
+                            assert(reaped, s"expected the finite handshakeTimeout to reap the stalled server handshake, got $outcome")
+                        }
                     }
                 }
             }
@@ -116,30 +124,34 @@ class TransportHandshakeTimeoutTest extends Test:
             // connect deadline could fire a spurious NetConnectTimeoutException unrelated to the reap this guard exercises. Two deadlines,
             // two operations, one transport: that is exactly what the per-operation model buys.
             transport.listenTls("127.0.0.1", 0, 64, serverTls) { _ => () }.safe.get.map { listener =>
-                // Each iteration: a plaintext client completes the TCP accept but never sends a ClientHello, so the server handshake parks with an
-                // in-flight recv; the 60ms deadline reaps it (closing the accepted fd), which the client observes as its inbound terminating. A
-                // Timeout (the 5s window expired with no reap) is the regression symptom (the deadline was not honored); a Closed or empty-EOF span
-                // is a reap. The clients run sequentially so each stall+reap is a clean, isolated cycle that exercises the teardown path once.
-                Loop(0) { i =>
-                    if i >= 30 then Loop.done(i)
-                    else
-                        transport.connect("127.0.0.1", listener.port).safe.get.map { client =>
-                            Abort.run[Timeout](Async.timeout(5.seconds)(Abort.run[Closed](client.inbound.safe.take))).map { outcome =>
-                                client.close()
-                                val reaped = outcome match
-                                    case Result.Success(Result.Success(span)) => span.isEmpty
-                                    case Result.Success(Result.Failure(_))    => true
-                                    case _                                    => false
-                                assert(
-                                    reaped,
-                                    s"iteration $i: expected the finite handshakeTimeout to reap the stalled handshake, got $outcome"
-                                )
-                                Loop.continue(i + 1)
+                // Guarantees the listener is released even if an iteration's assertion fails partway through the loop, which would otherwise
+                // skip the trailing `listener.close()` below and leak the listen fd for the rest of the run.
+                Scope.ensure(Sync.defer(listener.close())).andThen {
+                    // Each iteration: a plaintext client completes the TCP accept but never sends a ClientHello, so the server handshake parks with an
+                    // in-flight recv; the 60ms deadline reaps it (closing the accepted fd), which the client observes as its inbound terminating. A
+                    // Timeout (the 5s window expired with no reap) is the regression symptom (the deadline was not honored); a Closed or empty-EOF span
+                    // is a reap. The clients run sequentially so each stall+reap is a clean, isolated cycle that exercises the teardown path once.
+                    Loop(0) { i =>
+                        if i >= 30 then Loop.done(i)
+                        else
+                            transport.connect("127.0.0.1", listener.port).safe.get.map { client =>
+                                Abort.run[Timeout](Async.timeout(5.seconds)(Abort.run[Closed](client.inbound.safe.take))).map { outcome =>
+                                    client.close()
+                                    val reaped = outcome match
+                                        case Result.Success(Result.Success(span)) => span.isEmpty
+                                        case Result.Success(Result.Failure(_))    => true
+                                        case _                                    => false
+                                    assert(
+                                        reaped,
+                                        s"iteration $i: expected the finite handshakeTimeout to reap the stalled handshake, got $outcome"
+                                    )
+                                    Loop.continue(i + 1)
+                                }
                             }
-                        }
-                }.map { n =>
-                    listener.close()
-                    assert(n == 30, s"expected 30 stall+reap cycles, completed $n")
+                    }.map { n =>
+                        listener.close()
+                        assert(n == 30, s"expected 30 stall+reap cycles, completed $n")
+                    }
                 }
             }
         }
@@ -166,17 +178,22 @@ class TransportHandshakeTimeoutTest extends Test:
                     }
                 })
             }.safe.get.map { listener =>
-                transport.connectTls("127.0.0.1", listener.port, clientTls).safe.get.map { client =>
-                    Async.sleep(1500.millis).andThen {
-                        val message = "completes-within-deadline".getBytes("UTF-8")
-                        client.outbound.safe.put(Span.fromUnsafe(message)).andThen {
-                            collect(client, message.length).map { echoed =>
-                                client.close()
-                                listener.close()
-                                assert(
-                                    echoed.sameElements(message),
-                                    s"a completed handshake must not be reaped; it round-trips past the deadline, got '${new String(echoed, "UTF-8")}'"
-                                )
+                // Both are guaranteed to be released even if the put/collect below aborts before reaching the trailing close() calls.
+                Scope.ensure(Sync.defer(listener.close())).andThen {
+                    transport.connectTls("127.0.0.1", listener.port, clientTls).safe.get.map { client =>
+                        Scope.ensure(Sync.defer(client.close())).andThen {
+                            Async.sleep(1500.millis).andThen {
+                                val message = "completes-within-deadline".getBytes("UTF-8")
+                                client.outbound.safe.put(Span.fromUnsafe(message)).andThen {
+                                    collect(client, message.length).map { echoed =>
+                                        client.close()
+                                        listener.close()
+                                        assert(
+                                            echoed.sameElements(message),
+                                            s"a completed handshake must not be reaped; it round-trips past the deadline, got '${new String(echoed, "UTF-8")}'"
+                                        )
+                                    }
+                                }
                             }
                         }
                     }
@@ -196,14 +213,17 @@ class TransportHandshakeTimeoutTest extends Test:
             assert(NetTlsConfig.default.handshakeTimeout == 30.seconds)
             val transport = NetPlatform.transport
             transport.listenTls("127.0.0.1", 0, 16, serverTls) { _ => () }.safe.get.map { listener =>
-                transport.connect("127.0.0.1", listener.port).safe.get.map { client =>
-                    Abort.run[Timeout](Async.timeout(500.millis)(Abort.run[Closed](client.inbound.safe.take))).map { outcome =>
-                        client.close()
-                        listener.close()
-                        assert(
-                            outcome.isFailure,
-                            s"a stalled handshake must not be reaped within 500ms when handshakeTimeout is 30s, got $outcome"
-                        )
+                // Guards the listener if `transport.connect` itself were to fail before the trailing `listener.close()` below.
+                Scope.ensure(Sync.defer(listener.close())).andThen {
+                    transport.connect("127.0.0.1", listener.port).safe.get.map { client =>
+                        Abort.run[Timeout](Async.timeout(500.millis)(Abort.run[Closed](client.inbound.safe.take))).map { outcome =>
+                            client.close()
+                            listener.close()
+                            assert(
+                                outcome.isFailure,
+                                s"a stalled handshake must not be reaped within 500ms when handshakeTimeout is 30s, got $outcome"
+                            )
+                        }
                     }
                 }
             }
@@ -225,14 +245,17 @@ class TransportHandshakeTimeoutTest extends Test:
             )
             val transport = NetPlatform.transport
             transport.listenTls("127.0.0.1", 0, 16, serverTls) { _ => () }.safe.get.map { listener =>
-                transport.connect("127.0.0.1", listener.port).safe.get.map { client =>
-                    Abort.run[Timeout](Async.timeout(500.millis)(Abort.run[Closed](client.inbound.safe.take))).map { outcome =>
-                        client.close()
-                        listener.close()
-                        assert(
-                            outcome.isFailure,
-                            s"a stalled handshake must not be reaped when handshakeTimeout is Infinity (no timer is armed), got $outcome"
-                        )
+                // Guards the listener if `transport.connect` itself were to fail before the trailing `listener.close()` below.
+                Scope.ensure(Sync.defer(listener.close())).andThen {
+                    transport.connect("127.0.0.1", listener.port).safe.get.map { client =>
+                        Abort.run[Timeout](Async.timeout(500.millis)(Abort.run[Closed](client.inbound.safe.take))).map { outcome =>
+                            client.close()
+                            listener.close()
+                            assert(
+                                outcome.isFailure,
+                                s"a stalled handshake must not be reaped when handshakeTimeout is Infinity (no timer is armed), got $outcome"
+                            )
+                        }
                     }
                 }
             }
@@ -259,6 +282,14 @@ class TransportHandshakeTimeoutTest extends Test:
                 outcome match
                     case Result.Failure(e: NetTlsHandshakeTimeoutException) =>
                         assert(e.timeout == 150.millis, s"expected the client's own 150ms deadline, got ${e.timeout}")
+                    case Result.Success(conn) =>
+                        // Regression path: the client handshake deadline never fired and connectTls handed back a live connection. Close it so
+                        // a failing run does not also leak the socket and TLS engine.
+                        conn.close()
+                        assert(
+                            false,
+                            "expected NetTlsHandshakeTimeoutException(150ms) from the client handshake deadline, got a successful connection"
+                        )
                     case other =>
                         assert(
                             false,

@@ -52,11 +52,15 @@ class TransportListenerTest extends Test:
                             }
                         })
                 }.safe.get
+                // Guards the listener if either connect below fails outright, and the second connection if the put/take below aborts before
+                // reaching the trailing close() calls in the yield below.
+                _ <- Scope.ensure(Sync.defer(listener.close()))
                 // First connection: triggers the throwing handler. Best-effort; it may be torn down.
                 first <- transport.connect("127.0.0.1", listener.port).safe.get
                 _ = first.close()
                 // Second connection must still be accepted and echo, proving the accept loop survived the handler throw.
                 second <- transport.connect("127.0.0.1", listener.port).safe.get
+                _      <- Scope.ensure(Sync.defer(second.close()))
                 message = "after-throw".getBytes("UTF-8")
                 _      <- second.outbound.safe.put(Span.fromUnsafe(message))
                 echoed <- second.inbound.safe.take

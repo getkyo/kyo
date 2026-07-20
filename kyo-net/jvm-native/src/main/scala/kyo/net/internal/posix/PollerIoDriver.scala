@@ -602,22 +602,21 @@ final private[net] class PollerIoDriver private[posix] (
         reArm(task)
     end dispatchAndContinue
 
-    /** Re-arm the next wait, preferring a carrier other than this one, and reset the task's scheduling priority to that of freshly submitted work.
+    /** Re-arm the next wait, preferring a carrier other than this one, at the scheduling priority of freshly submitted work.
       *
-      * Worker.runTask bills wall-clock time to a task's runtime, and the poll parks inside that measurement, so a task reused for the driver's whole
-      * life would accumulate its entire idle time as if it were CPU time: it would sort last in every queue and eventually wrap into the preempt
-      * bit. Charging each cycle's own park instead is no better, and is what an earlier revision did: a long idle park produced a large key, which
-      * starved the poll under load and stopped readiness entirely (kyo-http's concurrency and connection-pool suites hung). Park duration is simply
-      * not a measure of scheduling debt; if anything a long park means the poll is now the most urgent work, not the least.
+      * `Task.rearm` is what makes that priority stick. The poll parks inside the run the carrier measures, so a task reused for the driver's whole
+      * life would otherwise accumulate its entire idle time as if it were CPU time: it would sort last in every queue and eventually wrap into the
+      * preempt bit. Charging each cycle's own park instead is no better, and is what an earlier revision did: a long idle park produced a large key,
+      * which starved the poll under load and stopped readiness entirely (kyo-http's concurrency and connection-pool suites hung). Park duration is
+      * simply not a measure of scheduling debt; if anything a long park means the poll is now the most urgent work, not the least.
       *
-      * Resetting to the fresh-task value (runtime 1, `Task.State.init`) makes the poll compete on equal terms with newly submitted work: never
+      * Landing at the fresh-task value (runtime 1, `Task.State.init`) makes the poll compete on equal terms with newly submitted work: never
       * starved, and never jumped to the head of a queue ahead of work already waiting, which resetting to 0 alone would do. The ordering worry
       * about running ahead of the completions this cycle produced does not apply in the normal case anyway: those completions land on the carrier
       * that produced them, while `scheduleExcludingCurrent` places the poll on a different one, so they are not competing in the same queue.
       */
     private def reArm(task: Task): Unit =
-        task.resetRuntime()
-        task.addRuntime(1)
+        task.rearm()
         Scheduler.get.scheduleExcludingCurrent(task)
     end reArm
 

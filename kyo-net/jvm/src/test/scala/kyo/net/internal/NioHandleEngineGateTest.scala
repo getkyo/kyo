@@ -120,12 +120,19 @@ class NioHandleEngineGateTest extends Test:
             given Frame   = Frame.internal
             val transport = mkTransport()
             transport.listenTls("127.0.0.1", 0, 50, serverTlsConfig)(startEchoFiber).safe.get.map { listener =>
-                val port = listener.port
-                transport.connectTls("127.0.0.1", port, clientTlsConfig).safe.get.map { conn =>
-                    driveConnection(conn, connId = 0, rounds = 40, window = 4).map { ok =>
-                        conn.close()
-                        listener.close()
-                        assert(ok, "an echoed frame did not match its request byte for byte (engine gate violation would cause this)")
+                Scope.ensure(Sync.defer(listener.close())).andThen {
+                    val port = listener.port
+                    transport.connectTls("127.0.0.1", port, clientTlsConfig).safe.get.map { conn =>
+                        Scope.ensure(Sync.defer(conn.close())).andThen {
+                            driveConnection(conn, connId = 0, rounds = 40, window = 4).map { ok =>
+                                conn.close()
+                                listener.close()
+                                assert(
+                                    ok,
+                                    "an echoed frame did not match its request byte for byte (engine gate violation would cause this)"
+                                )
+                            }
+                        }
                     }
                 }
             }
@@ -140,20 +147,26 @@ class NioHandleEngineGateTest extends Test:
             given Frame   = Frame.internal
             val transport = mkTransport()
             transport.listenTls("127.0.0.1", 0, 50, serverTlsConfig)(startEchoFiber).safe.get.map { listener =>
-                val port = listener.port
-                Async.zip(
-                    transport.connectTls("127.0.0.1", port, clientTlsConfig).safe.get,
-                    transport.connectTls("127.0.0.1", port, clientTlsConfig).safe.get
-                ).map { (conn0, conn1) =>
+                Scope.ensure(Sync.defer(listener.close())).andThen {
+                    val port = listener.port
                     Async.zip(
-                        driveConnection(conn0, connId = 0, rounds = 20, window = 4),
-                        driveConnection(conn1, connId = 1, rounds = 20, window = 4)
-                    ).map { (ok0, ok1) =>
-                        conn0.close()
-                        conn1.close()
-                        listener.close()
-                        assert(ok0, "connection 0: echoed frame did not match request (gate interference or engine corruption)")
-                        assert(ok1, "connection 1: echoed frame did not match request (gate interference or engine corruption)")
+                        transport.connectTls("127.0.0.1", port, clientTlsConfig).safe.get,
+                        transport.connectTls("127.0.0.1", port, clientTlsConfig).safe.get
+                    ).map { (conn0, conn1) =>
+                        Scope.ensure(Sync.defer(conn0.close())).andThen {
+                            Scope.ensure(Sync.defer(conn1.close())).andThen {
+                                Async.zip(
+                                    driveConnection(conn0, connId = 0, rounds = 20, window = 4),
+                                    driveConnection(conn1, connId = 1, rounds = 20, window = 4)
+                                ).map { (ok0, ok1) =>
+                                    conn0.close()
+                                    conn1.close()
+                                    listener.close()
+                                    assert(ok0, "connection 0: echoed frame did not match request (gate interference or engine corruption)")
+                                    assert(ok1, "connection 1: echoed frame did not match request (gate interference or engine corruption)")
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -169,17 +182,24 @@ class NioHandleEngineGateTest extends Test:
             val transport   = mkTransport()
             val connections = 8
             transport.listenTls("127.0.0.1", 0, 50, serverTlsConfig)(startEchoFiber).safe.get.map { listener =>
-                val port = listener.port
-                Async.fillIndexed(connections, connections) { connId =>
-                    transport.connectTls("127.0.0.1", port, clientTlsConfig).safe.get.map { conn =>
-                        driveConnection(conn, connId, rounds = 20, window = 4).map { ok =>
-                            conn.close()
-                            ok
+                Scope.ensure(Sync.defer(listener.close())).andThen {
+                    val port = listener.port
+                    Async.fillIndexed(connections, connections) { connId =>
+                        transport.connectTls("127.0.0.1", port, clientTlsConfig).safe.get.map { conn =>
+                            Scope.ensure(Sync.defer(conn.close())).andThen {
+                                driveConnection(conn, connId, rounds = 20, window = 4).map { ok =>
+                                    conn.close()
+                                    ok
+                                }
+                            }
                         }
+                    }.map { results =>
+                        listener.close()
+                        assert(
+                            results.forall(identity),
+                            "a NIO TLS echo frame did not match its request byte for byte (engine gate violation)"
+                        )
                     }
-                }.map { results =>
-                    listener.close()
-                    assert(results.forall(identity), "a NIO TLS echo frame did not match its request byte for byte (engine gate violation)")
                 }
             }
         }

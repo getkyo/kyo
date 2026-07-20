@@ -49,6 +49,8 @@ class RecordingDecoratorsTest extends Test:
                             // (The server fd was closed inside loopbackPair by the recording spy.)
                             assert(!recording.closeCounts.isEmpty, "no close was recorded despite loopbackPair closing the server fd")
                         case other =>
+                            driver.closeHandle(clientH)
+                            driver.closeHandle(acceptedH)
                             fail(s"expected ReadOutcome.Bytes but got $other")
                     }
                 }

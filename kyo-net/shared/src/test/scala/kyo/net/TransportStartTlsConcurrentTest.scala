@@ -48,15 +48,23 @@ class TransportStartTlsConcurrentTest extends Test:
             else conn.inbound.safe.take.map(chunk => Loop.continue(acc ++ chunk.toArray))
         }
 
-    /** One client: connect plaintext, signal, await ready, upgrade to TLS, send `msg`, read the echo back, return whether it round-tripped. */
+    /** One client: connect plaintext, signal, await ready, upgrade to TLS, send `msg`, read the echo back, return whether it round-tripped.
+      *
+      * Both `conn` and `tlsConn` are Scope.ensure-guarded right after acquisition: `conn` may fail the plaintext handshake exchange or the
+      * upgrade before ever becoming `tlsConn` (closing it is still safe and idempotent even once it has detached into the upgrade), and
+      * `tlsConn` may fail the post-upgrade echo before reaching its own trailing close() in the yield. Without these guards a per-client
+      * failure under load leaks that client's connection for the life of the process-shared transport.
+      */
     private def runClient(transport: Transport, port: Int, clientTls: NetTlsConfig, msg: Array[Byte])(using
         Frame
-    ): Boolean < (Async & Abort[NetException | Closed]) =
+    ): Boolean < (Async & Abort[NetException | Closed] & Scope) =
         for
             conn     <- transport.connect("127.0.0.1", port).safe.get
+            _        <- Scope.ensure(Sync.defer(conn.close()))
             _        <- conn.outbound.safe.put(upgradeRequest)
             _        <- conn.inbound.safe.take
             tlsConn  <- transport.upgradeToTls(conn, clientTls, 16).safe.get
+            _        <- Scope.ensure(Sync.defer(tlsConn.close()))
             _        <- tlsConn.outbound.safe.put(Span.fromUnsafe(msg))
             received <- collectToLen(tlsConn, msg.length)
         yield
@@ -67,20 +75,23 @@ class TransportStartTlsConcurrentTest extends Test:
         (transport, serverTls, clientTls) =>
             val cli = clientTls.copy(sniHostname = Present("localhost"))
             startTlsEchoServer(transport, serverTls).map { listener =>
-                Async.fillIndexed(concurrency, concurrency) { i =>
-                    // A 24KB per-client payload that spans multiple TLS records (max record ~16KB): a multi-record echo needs the ReadPump to re-arm
-                    // after each record, so this guards BOTH the concurrent-upgrade hang AND the multi-record read-rearm path in one test. Each client's
-                    // bytes are distinct (header + index-derived fill) so the round-trip equality check confirms no cross-connection misrouting.
-                    val header = s"starttls-concurrent-$i-".getBytes("UTF-8")
-                    val msg    = header ++ Array.fill[Byte](24576)((i % 251 + 1).toByte)
-                    Abort.run[NetException | Closed](runClient(transport, listener.port, cli, msg)).map {
-                        case Result.Success(ok) => ok
-                        case _                  => false
+                // Guards the listener if fillIndexed itself were to fail outside the per-client Abort.run below.
+                Scope.ensure(Sync.defer(listener.close())).andThen {
+                    Async.fillIndexed(concurrency, concurrency) { i =>
+                        // A 24KB per-client payload that spans multiple TLS records (max record ~16KB): a multi-record echo needs the ReadPump to re-arm
+                        // after each record, so this guards BOTH the concurrent-upgrade hang AND the multi-record read-rearm path in one test. Each client's
+                        // bytes are distinct (header + index-derived fill) so the round-trip equality check confirms no cross-connection misrouting.
+                        val header = s"starttls-concurrent-$i-".getBytes("UTF-8")
+                        val msg    = header ++ Array.fill[Byte](24576)((i % 251 + 1).toByte)
+                        Abort.run[NetException | Closed](runClient(transport, listener.port, cli, msg)).map {
+                            case Result.Success(ok) => ok
+                            case _                  => false
+                        }
+                    }.map { results =>
+                        listener.close()
+                        val failed = results.count(ok => !ok)
+                        assert(failed == 0, s"$failed of $concurrency concurrent STARTTLS upgrades failed to upgrade and round-trip")
                     }
-                }.map { results =>
-                    listener.close()
-                    val failed = results.count(ok => !ok)
-                    assert(failed == 0, s"$failed of $concurrency concurrent STARTTLS upgrades failed to upgrade and round-trip")
                 }
             }
     }

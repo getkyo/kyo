@@ -216,7 +216,7 @@ final private[kyo] class JsTransport private (
         // Infinity arms no timer (no handshake deadline).
         armServerHandshakeDeadlines(server, tls.handshakeTimeout)
         // TLS servers emit "secureConnection" after handshake (not "connection" which fires on raw TCP)
-        val dischargeHandshakes = trackAcceptHandshakes(server)
+        val tracking = trackAcceptHandshakes(server)
         listenServer(
             server,
             host,
@@ -226,7 +226,8 @@ final private[kyo] class JsTransport private (
             connectionEvent = "secureConnection",
             handler,
             config,
-            onClose = Present(dischargeHandshakes)
+            onClose = Present(tracking.discharge),
+            acceptHandshakeCount = Present(tracking.inFlightCount)
         )
     end listenTls
 
@@ -291,7 +292,7 @@ final private[kyo] class JsTransport private (
       * Registered unconditionally, unlike the deadline arms, because the leak is worst exactly when no deadline is armed. The settled marker is
       * the one [[armServerHandshakeDeadlines]] already uses, so a socket the deadline destroyed is not destroyed twice.
       */
-    private def trackAcceptHandshakes(server: js.Dynamic)(using AllowUnsafe, Frame): () => Unit =
+    private def trackAcceptHandshakes(server: js.Dynamic)(using AllowUnsafe, Frame): JsTransport.AcceptHandshakeTracking =
         // JS is single-threaded, so a plain mutable buffer needs no synchronization: every mutation runs on the Node event loop.
         val inFlight = scala.collection.mutable.ListBuffer.empty[js.Dynamic]
         def settle(rawSocket: js.Dynamic): Unit =
@@ -307,14 +308,18 @@ final private[kyo] class JsTransport private (
                 if !js.isUndefined(tlsSocket) && tlsSocket != null then settle(tlsSocket.selectDynamic("_parent"))
             }: js.Function2[js.Dynamic, js.Dynamic, Unit]
         ))
-        () =>
-            inFlight.foreach { rawSocket =>
-                // Skip one the deadline already claimed and destroyed; the marker is shared with armServerHandshakeDeadlines.
-                if js.isUndefined(rawSocket.selectDynamic(handshakeSettledProp)) then
-                    rawSocket.updateDynamic(handshakeSettledProp)(true)
-                    discard(rawSocket.destroy())
-            }
-            inFlight.clear()
+        JsTransport.AcceptHandshakeTracking(
+            discharge = () =>
+                inFlight.foreach { rawSocket =>
+                    // Skip one the deadline already claimed and destroyed; the marker is shared with armServerHandshakeDeadlines.
+                    if js.isUndefined(rawSocket.selectDynamic(handshakeSettledProp)) then
+                        rawSocket.updateDynamic(handshakeSettledProp)(true)
+                        discard(rawSocket.destroy())
+                }
+                inFlight.clear()
+            ,
+            inFlightCount = () => inFlight.size
+        )
     end trackAcceptHandshakes
 
     private def armServerHandshakeDeadlines(server: js.Dynamic, handshakeTimeout: Duration)(using AllowUnsafe, Frame): Unit =
@@ -351,7 +356,8 @@ final private[kyo] class JsTransport private (
     end armServerHandshakeDeadlines
 
     /** Arm a `Clock`-driven deadline for one in-flight client TCP connect. When the caller's `connectTimeout` is finite (and the target is a TCP host:port,
-      * not a Unix socket whose `port < 0` has no typed timeout leaf), schedule `Clock.live.unsafe.sleep(d).onComplete(...)` (a timer fiber on the
+      * for a Unix socket too; `port < 0` selects the Unix leaf rather than skipping the deadline), schedule
+      * `Clock.live.unsafe.sleep(d).onComplete(...)` (a timer fiber on the
       * clock executor, never a blocked carrier) and fail `promise` with `NetConnectTimeoutException(host, port, connectTimeout)` when the
       * deadline fires. `promise.completeDiscard` completes the promise at most once, so the deadline and the Node connect/error outcome are
       * mutually exclusive. This is the close-cause discrimination: the deadline arm is the only producer of the typed timeout leaf, so a
@@ -535,7 +541,8 @@ final private[kyo] class JsTransport private (
         connectionEvent: String,
         handler: NetConnection => Unit,
         config: kyo.net.NetConfig,
-        onClose: Maybe[() => Unit] = Absent
+        onClose: Maybe[() => Unit] = Absent,
+        acceptHandshakeCount: Maybe[() => Int] = Absent
     )(using AllowUnsafe, Frame): Fiber.Unsafe[NetListener, Abort[NetException]] =
         val promise = new IOPromise[NetException, NetListener]
         rejectUnsupportedBuffers(config) match
@@ -547,6 +554,7 @@ final private[kyo] class JsTransport private (
         end match
         val listener = new JsListener(server, NetAddress.Tcp(host, port))
         onClose.foreach(listener.onClose)
+        acceptHandshakeCount.foreach(listener.acceptHandshakeCount)
 
         discard(server.on(
             connectionEvent,
@@ -631,7 +639,9 @@ final private[kyo] class JsTransport private (
         val net    = js.Dynamic.global.require("net")
         val socket = net.createConnection(js.Dynamic.literal(path = path))
 
-        // A Unix connect parks where the OS allows it (Linux blocks when the accept queue is full; macOS fails fast), so it carries the same
+        // A Unix connect carries a deadline for the same reason a TCP one does: Node's connect is asynchronous by contract, so the promise
+        // stays pending across an event-loop turn regardless of how fast the OS settles the socket. It is NOT the kernel parking on a full
+        // accept queue, which is what this comment used to claim. It carries the same
         // deadline a TCP connect does rather than accepting the parameter and ignoring it. -1 is the Unix sentinel, which selects the Unix leaf.
         // A Unix connect has one phase, so its deadline runs to the outcome; the returned disarm is unused (the promise backstop covers it).
         discard(armConnectDeadline(promise, path, -1, connectTimeout))
@@ -1094,6 +1104,11 @@ end JsTransport
 
 /** Factory for `JsTransport`. Creates a pool of `JsIoDriver` instances (usually just one, since JS is single-threaded). */
 private[kyo] object JsTransport:
+
+    /** What [[JsTransport.trackAcceptHandshakes]] hands back: the listener-close discharge, and a live count of accepted sockets whose TLS
+      * handshake has not settled. The count exists so a test can barrier on registration rather than racing Node's `connection` event.
+      */
+    final private[internal] case class AcceptHandshakeTracking(discharge: () => Unit, inFlightCount: () => Int)
     def init(poolSize: Int = 1)(using AllowUnsafe, Frame): JsTransport =
         // Obtain each driver through the capability-probed registry rather than constructing JsIoDriver
         // directly. The JS registry holds only NodeBackend, so the selected driver is the same JsIoDriver used
@@ -1109,7 +1124,7 @@ end JsTransport
   * subsequently read-only. An `AtomicBoolean` guards the closed flag for consistency with other platform implementations even though JS is
   * single-threaded.
   */
-final private class JsListener(
+final private[net] class JsListener(
     private val server: js.Dynamic,
     private var _address: NetAddress
 ) extends NetListener:
@@ -1120,6 +1135,18 @@ final private class JsListener(
     private var onCloseHook: Maybe[() => Unit] = Absent
 
     private[internal] def onClose(f: () => Unit): Unit = onCloseHook = Present(f)
+
+    /** Number of sockets this listener has accepted whose TLS handshake has not settled yet, or 0 when it tracks none (a plaintext listener).
+      *
+      * `private[internal]` for the reclaim test, which must barrier on the socket being REGISTERED before it closes the listener: Node's
+      * `connection` event can fire after the client's connect resolves, so a test that closes immediately would sweep an empty list and pass
+      * on the backlogged connection being dropped instead, whether or not the reclaim works.
+      */
+    private var acceptHandshakeCountFn: Maybe[() => Int] = Absent
+
+    private[net] def acceptHandshakeCount(f: () => Int): Unit = acceptHandshakeCountFn = Present(f)
+
+    private[net] def pendingAcceptHandshakeCount: Int = acceptHandshakeCountFn.fold(0)(_())
     // JS is single-threaded, but closed flag uses atomic for consistency with other listeners
     // Unsafe: created at construction with no ambient AllowUnsafe; the danger bridge builds it here and its accesses run under the caller's
     // AllowUnsafe.

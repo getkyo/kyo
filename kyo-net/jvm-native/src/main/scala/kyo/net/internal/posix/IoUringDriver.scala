@@ -1584,12 +1584,12 @@ final private[net] class IoUringDriver private[posix] (
 
     /** Re-arm the next turn onto a DIFFERENT carrier, so the one that just ran the turn is free to run the completions it produced.
       *
-      * The runtime reset plus a single unit mirrors a freshly submitted task: the wall-clock a turn spends parked is billed to the task, and
-      * carrying it forward would make the chain look long-running and starve it against genuinely short tasks.
+      * `Task.rearm` puts the chain back at the priority of a freshly submitted task and releases the turn from the carrier's time billing: a turn
+      * is spent parked in the fused submit-and-wait, and carrying that wall-clock forward would make the chain look long-running and starve it
+      * against genuinely short tasks.
       */
     private def reArm(task: Task): Unit =
-        task.resetRuntime()
-        task.addRuntime(1)
+        task.rearm()
         Scheduler.get.scheduleExcludingCurrent(task)
     end reArm
 

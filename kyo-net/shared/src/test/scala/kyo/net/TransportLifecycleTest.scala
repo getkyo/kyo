@@ -71,7 +71,11 @@ class TransportLifecycleTest extends Test:
                         }
                     })
                 }.safe.get
+                // Guards the listener and the client connection if `fail(...)` below fires (server connection never captured), which would
+                // otherwise throw before the trailing `listener.close()` in the yield below runs.
+                _    <- Scope.ensure(Sync.defer(listener.close()))
                 conn <- transport.connect("127.0.0.1", listener.port).safe.get
+                _    <- Scope.ensure(Sync.defer(conn.close()))
                 _    <- accepted.take
                 server <- serverRef.get.map {
                     case Present(c) => c
@@ -105,7 +109,11 @@ class TransportLifecycleTest extends Test:
                         }
                     })
                 }.safe.get
+                // Guards the listener and client if `fail(...)` below fires (server connection never captured) or `assertEventually` exhausts
+                // its retry budget, either of which would otherwise throw before the trailing close() calls in the yield below run.
+                _      <- Scope.ensure(Sync.defer(listener.close()))
                 client <- transport.connect("127.0.0.1", listener.port).safe.get
+                _      <- Scope.ensure(Sync.defer(client.close()))
                 _      <- accepted.take
                 server <- serverRef.get.map {
                     case Present(c) => c

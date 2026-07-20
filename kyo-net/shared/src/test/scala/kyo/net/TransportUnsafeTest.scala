@@ -26,7 +26,9 @@ class TransportUnsafeTest extends Test:
                     }
                 })
             }.safe.get
+            _    <- Scope.ensure(Sync.defer(listener.close()))
             conn <- transport.connect("127.0.0.1", listener.port).safe.get
+            _    <- Scope.ensure(Sync.defer(conn.close()))
             msg = Span.from("unsafe-echo".getBytes("UTF-8"))
             _   <- conn.outbound.safe.put(msg)
             got <- conn.inbound.safe.take
@@ -41,6 +43,9 @@ class TransportUnsafeTest extends Test:
         val transport = NetPlatform.transport
         // Use port 1: reserved, no service should be listening, and the connect must be refused.
         Abort.run[NetException](transport.connect("127.0.0.1", 1).safe.get).map { result =>
+            // Defensive: if a connect to port 1 ever unexpectedly succeeds (the assertion below then fails the leaf), the
+            // returned connection must still not leak.
+            result.foreach(conn => conn.close())
             assert(result.isFailure, s"expected a NetException connecting to port 1 (refused/unreachable), got $result")
         }
     }
@@ -56,9 +61,13 @@ class TransportUnsafeTest extends Test:
                 serverConn.close()
                 discard(fired.unsafe.offer(()))
             }.safe.get
+            _  <- Scope.ensure(Sync.defer(listener.close()))
             c1 <- transport.connect("127.0.0.1", listener.port).safe.get
+            _  <- Scope.ensure(Sync.defer(c1.close()))
             c2 <- transport.connect("127.0.0.1", listener.port).safe.get
+            _  <- Scope.ensure(Sync.defer(c2.close()))
             c3 <- transport.connect("127.0.0.1", listener.port).safe.get
+            _  <- Scope.ensure(Sync.defer(c3.close()))
             // Take one signal per accepted connection: each take returns the instant that handler ran, draining deterministically.
             _ <- fired.take
             _ <- fired.take
@@ -89,7 +98,9 @@ class TransportUnsafeTest extends Test:
                     })
                 loopEcho()
             }.safe.get
+            _    <- Scope.ensure(Sync.defer(listener.close()))
             conn <- transport.connect("127.0.0.1", listener.port).safe.get
+            _    <- Scope.ensure(Sync.defer(conn.close()))
             // Write and read one byte at a time to ensure ordering
             results <- Kyo.foreach(0 until n) { i =>
                 conn.outbound.safe.put(Span.from(Array[Byte](i.toByte))).andThen {
@@ -108,7 +119,9 @@ class TransportUnsafeTest extends Test:
         val transport = NetPlatform.transport
         for
             listener <- transport.listen("127.0.0.1", 0, 128)(_ => ()).safe.get
+            _        <- Scope.ensure(Sync.defer(listener.close()))
             conn     <- transport.connect("127.0.0.1", listener.port).safe.get
+            _        <- Scope.ensure(Sync.defer(conn.close()))
             fiber <- Fiber.init {
                 Abort.run[Closed](conn.inbound.safe.take).unit
             }

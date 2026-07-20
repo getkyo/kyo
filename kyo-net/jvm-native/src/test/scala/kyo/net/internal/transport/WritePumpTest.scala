@@ -613,12 +613,17 @@ class WritePumpTest extends Test:
                 val channel = Channel.Unsafe.init[Span[Byte]](16)
                 val closed  = scala.collection.mutable.ListBuffer[String]()
                 val state   = AtomicRef.Unsafe.init[WriteState](WriteState.Idle)
+                // Sampled inside the teardown callback, so it records exactly how many writes had been issued when teardown won. The contract
+                // is "no write AFTER teardown", not "exactly one write ever": the injected close races a genuine writable event, and when the
+                // writable wins the pump legitimately resumes its captured tail once before tearing down.
+                val writesAtTeardown = new java.util.concurrent.atomic.AtomicInteger(-1)
                 val pump = new WritePump(
                     handle,
                     spy,
                     channel,
                     () =>
                         closed += "closed"
+                        discard(writesAtTeardown.compareAndSet(-1, spy.writeCalls.get()))
                         closedLatch.completeDiscard(Result.succeed(()))
                     ,
                     state
@@ -639,14 +644,21 @@ class WritePumpTest extends Test:
                         state.get() == WriteState.TornDown,
                         s"the pump must not be resurrected after teardown won, state was ${state.get()}"
                     )
-                    assert(
-                        spy.writeCalls.get() == 1,
-                        s"no further write may be issued for the undeliverable captured tail after teardown won, got ${spy.writeCalls.get()} write calls"
-                    )
-                    spy.close()
-                    // closeHandle closed clientFd; only peerFd remains to close.
-                    discard(sock.close(peerFd))
-                    succeed
+                    // A survival window, not a settle: a resurrection issues its write shortly AFTER teardown, so the count must be given a
+                    // chance to move before it is read as final.
+                    Async.sleep(50.millis).andThen {
+                        val atTeardown = writesAtTeardown.get()
+                        val now        = spy.writeCalls.get()
+                        assert(
+                            now == atTeardown,
+                            s"no write may be issued for the undeliverable captured tail after teardown won: the pump had issued " +
+                                s"$atTeardown write(s) when teardown ran and $now afterwards, so it resurrected"
+                        )
+                        spy.close()
+                        // closeHandle closed clientFd; only peerFd remains to close.
+                        discard(sock.close(peerFd))
+                        succeed
+                    }
                 }
             }
         }
