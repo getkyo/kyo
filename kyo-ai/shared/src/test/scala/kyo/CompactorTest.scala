@@ -759,8 +759,18 @@ class CompactorTest extends kyo.test.Test[Any]:
             LLM.run {
                 AI.initWith { ai =>
                     ai.setContext(ctx).andThen(c.render(ai, ctx)).map { v1 =>
-                        c.render(ai, ctx).map { v2 =>
-                            assert(v1.messages == v2.messages, "two fast-path views are byte-identical")
+                        val ref = LLM.internal.AIRef(ai)
+                        // land background results (vectors/verdicts) directly into the cell between the two
+                        // renders: the next render reads them off the cell WITHOUT touching renderings, so the
+                        // fast-path view stays byte-identical.
+                        c.cell.get.map { d =>
+                            val landed = d.get(ref).getOrElse(CompactorState.empty).copy(
+                                vectors = Dict[Int, Embedding]((0, Embedding(Span(1.0f), "m", 1))),
+                                verdicts = Dict[Int, Verdict]((0, Verdict.Stale))
+                            )
+                            c.cell.set(d.update(ref, landed))
+                        }.andThen(c.render(ai, ctx)).map { v2 =>
+                            assert(v1.messages == v2.messages, "landing background results never mutates the view bytes")
                             assert(v1.messages == ctx.messages, "fast-path view equals the transcript")
                         }
                     }
@@ -886,19 +896,6 @@ class CompactorTest extends kyo.test.Test[Any]:
                     }
                 }
             }
-        }
-    }
-
-    "stash does not change view bytes" in {
-        Compactor.init.map { c =>
-            val st = CompactorState.empty.copy(
-                vectors = Dict[Int, Embedding]((0, Embedding(Span(1.0f), "m", 1))),
-                verdicts = Dict[Int, Verdict]((0, Verdict.Stale))
-            )
-            val ctx    = ctxOf(um("a"), um("b"))
-            val before = c.project(ctx, st)
-            val after  = c.project(ctx, c.stash(st)) // the real stash, called directly
-            assert(before.messages == after.messages, "stashing landed results never mutates the view bytes")
         }
     }
 

@@ -33,10 +33,10 @@ final class Compactor private (
     import Compactor.internal.*
 
     /** The mechanism seam: consulted by `LLM.eval`/`streamAgainst` between the context read and
-      * `enrichedContext`. Runs the synchronous model-free steps (group, queue embeddings, stash
-      * landed results, occupancy check), then either the fast path (emit current renderings
-      * unchanged) or a deterministic update, forking all model work in the background. Returns the
-      * projected view; the forced path aborts with `AIContextOverflowException` rather than send an
+      * `enrichedContext`. Runs the synchronous model-free steps (group, queue embeddings,
+      * occupancy check), then either the fast path (emit current renderings unchanged) or a
+      * deterministic update, forking all model work in the background. Returns the projected
+      * view; the forced path aborts with `AIContextOverflowException` rather than send an
       * over-limit request. Never mutates the transcript.
       */
     private[kyo] def render(ai: AI, transcript: Context)(using
@@ -47,11 +47,11 @@ final class Compactor private (
         AI.config.map { active =>
             val window = active.modelMaxTokens
             stateFor(ai, transcript).map { state =>
-                // group + queue embeddings for new units, then stash landed background results WITHOUT
+                // group + queue embeddings for new units; `state` already carries any background
+                // results landed since the last render (surfaced by stateFor's cell read) WITHOUT
                 // touching renderings (view byte-stable at this step).
-                val units   = group(transcript, state.book)
-                val stashed = stash(state)
-                queueEmbeddings(ai, transcript, units, stashed).map { afterQueue =>
+                val units = group(transcript, state.book)
+                queueEmbeddings(ai, transcript, units, state).map { afterQueue =>
                     val e        = effectiveLength(config, window)
                     val occupied = viewTokens(project(transcript, afterQueue), afterQueue.book)
                     if occupied < (config.updateTriggerFraction * e) then
@@ -893,12 +893,6 @@ final class Compactor private (
             current.copy(renderings = state.renderings, book = current.book.copy(seen = transcript.messages.size))
         )
     end commit
-
-    private[kyo] def stash(state: CompactorState): CompactorState =
-        // Landed background results (vectors/verdicts/prepared) are read into `state` by `stateFor`'s
-        // cell read and surface at the next render; this pass keeps the state, so no rendering changes
-        // and the emitted view stays byte-identical at this step.
-        state
 
     private[kyo] def viewTokens(view: Context, book: Book): Int =
         // Char-based estimate scaled by the calibrated ratio. "bytes"/"tokensPerByte" throughout this file

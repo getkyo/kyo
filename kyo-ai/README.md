@@ -45,7 +45,7 @@ Three types frame the whole module. They differ by what each adds along a single
 - **`AI` is a conversation that remembers.** You mint an instance with `AI.init`; every `ai.gen` on that instance accumulates into its own history, so a later turn sees the earlier ones. Memory lasts for one `LLM.run`. Reach for it when one call needs to know what an earlier call said.
 - **`Agent` is a persistent, addressable entity.** It lives behind an actor, holds its conversation across many `ask` calls, and processes one input at a time. Reach for it when the conversation must outlive a single `run` and you want a long-lived thing to send inputs to.
 
-The sections below climb that ladder: one-shot `gen` first, then remembering instances, then agents, with the generation-shaping surface (tools, prompts, thoughts, modes) layered in between.
+The sections below climb that ladder: one-shot `gen` first, then remembering instances, then agents, with the generation-shaping surface (tools, prompts, thoughts, modes, and a compactor) layered in between.
 
 ## One-shot generation
 
@@ -133,7 +133,7 @@ def researcherAndCritic =
 
 A tool is a typed function the model may invoke mid-generation: the model decides to call it, the runtime decodes the arguments into your input type, runs your function, and feeds the result back so generation can continue. `Tool.init` builds one from an input type, a name, a description, and a run function; the output type is inferred (`factLookup` above is one).
 
-`AI.enable` (scoped) and `ai.enable` (instance) register one or more enablements (tools, prompts, thoughts, modes, in any mix) over a computation; inside that scope, a `gen` exposes them. You never write the call loop: the eval loop surfaces the tool definition, detects the call, decodes the arguments with the tool's own `Schema`, runs your function, appends the result, and re-queries until the model produces the final answer.
+`AI.enable` (scoped) and `ai.enable` (instance) register one or more enablements (tools, prompts, thoughts, modes, and a compactor, in any mix) over a computation; inside that scope, a `gen` exposes them. You never write the call loop: the eval loop surfaces the tool definition, detects the call, decodes the arguments with the tool's own `Schema`, runs your function, appends the result, and re-queries until the model produces the final answer.
 
 ```scala
 def withFacts(q: Question) =
@@ -141,6 +141,8 @@ def withFacts(q: Question) =
         AI.gen[Answer](q)
     }
 ```
+
+`Tool.init` also takes two optional parameters that matter only when a compactor is enabled: `kind` (`Tool.Kind.Read` or `Tool.Kind.Write`, default `Read`) and `compactionKey` (`In => Maybe[String]`, default keyless). A tool that supplies a `compactionKey` opts into key-based supersession: a later unit that reuses the same key supersedes an earlier one (see Automatic context compaction, below). Neither parameter affects a tool's behavior when no compactor is enabled.
 
 `Tool.aggregate` combines several tools into one, and `Tool.empty` is the no-tool aggregate, useful as a default.
 
@@ -251,7 +253,7 @@ def colderHere(q: Question) =
 
 ### Composing binders
 
-When two or more enablements apply to one generation, pass them to a single `AI.enable`: it takes any mix of tools, prompts, thoughts, and modes as varargs (or a `Seq`), applied in argument order, rather than nesting `enable` blocks.
+When two or more enablements apply to one generation, pass them to a single `AI.enable`: it takes any mix of tools, prompts, thoughts, modes, and a compactor as varargs (or a `Seq`), applied in argument order, rather than nesting `enable` blocks.
 
 ```scala
 def fullyShaped(q: Question) =
@@ -375,6 +377,53 @@ def branchAndRestore(ai: AI): String < LLM =
 
 An `AISession` holds code (tool runners, effectful prompts, modes), so it is in-memory only and not serializable across runs. The serializable slice is `session.context`, the conversation history (`AI.Context derives Schema`). To persist a conversation across runs, store `session.context` and reseed a fresh instance's history from it.
 
+## Automatic context compaction
+
+Where `forget`, `fresh`, and `snapshot` (above) give you manual control over a conversation's state, a `Compactor` manages a conversation's SIZE automatically. A conversation's raw transcript is the complete, immutable record: every message ever sent or received, kept forever. Left unchecked, that transcript grows without bound, and a long session eventually cannot fit inside the model's context window at all, or fits so tightly that a stale message crowds out the tail the model actually needs. A `Compactor` addresses this automatically. Enable one, and the model instead sees a bounded, projected VIEW of the transcript, recomputed at one seam shared by `gen` and `stream`. The full transcript is never edited or discarded; only the view the model reads is bounded.
+
+A compactor is default-off: with none enabled, a generation is byte-identical to today. Enable it exactly like any other enablement, by building one with `Compactor.init` (an effectful step, `Compactor < Sync`, because it allocates the per-instance state cell) and passing it to `AI.enable` / `ai.enable`.
+
+```scala
+def keptBounded(ai: AI): String < (Sync & LLM) =
+    Compactor.init.map { compactor =>
+        ai.enable(compactor).map(_.gen[String]("Continue the investigation."))
+    }
+```
+
+The scoped form `AI.enable(compactor) { ... }` layers a compactor over a computation the same way it layers a tool or a prompt.
+
+> **Note:** unlike an `AI` instance, a `Compactor` is safe to build once and reuse across many `LLM.run` calls and many `AI` instances: its per-instance state is keyed by a weak reference and is swept as instances are garbage collected.
+
+Compaction is consulted at one seam between the context read and request assembly, on both the `gen` and `stream` paths. Below an occupancy trigger fraction, nothing changes: the fast path emits the current view unchanged, and the request stays cache-warm. Once occupancy crosses the trigger fraction, a soft update ladder runs in ascending-score order (compress, then elide or mask, then summarize, each gated by a cache break-even check for a deep edit), targeting a lower occupancy fraction, the hysteresis band between target and trigger.
+
+Once occupancy crosses a hard window fraction, a deterministic forced path takes over: it omits the least-live non-root units with no model calls at all. If even the unshrinkable roots (the system head, the first and latest user turn, any unresolved tool-call pair, and the recent tail) cannot fit, `render` aborts with `AIContextOverflowException` rather than send an over-limit request to the provider.
+
+The projected view is byte-identical between updates, so the provider's prompt cache survives across turns that do not trigger an update. An update pays cache invalidation once, from its edit point onward, never for the whole view.
+
+A demoted region is never simply lost: a `recall(id)` tool is auto-registered per calling instance (never shared across instances or sessions, since unit ids are transcript-local indices that collide across sessions) and returns a demoted region's full original content verbatim, as a fresh tool result. This is a tool the caller did not register: enabling a compactor silently adds `recall` to every generation in scope, so a reader inventorying their own tool list should expect it to appear.
+
+A tool can also opt into compaction-aware supersession by supplying `kind` and `compactionKey` to `Tool.init` (covered above, in Tools and the automatic loop): a later unit that reuses the same key supersedes an earlier one, except a read that follows a write, which never supersedes the write.
+
+```scala
+case class FileArg(path: String) derives Schema
+
+val readFile =
+    Tool.init[FileArg]("read", kind = Tool.Kind.Read, compactionKey = (a: FileArg) => Present(a.path))(a => s"contents of ${a.path}")
+
+val writeFile =
+    Tool.init[FileArg]("write", kind = Tool.Kind.Write, compactionKey = (a: FileArg) => Present(a.path))(a => s"wrote ${a.path}")
+```
+
+> **Caution:** `compactionKey` strings share one namespace across every registered tool, not a namespace per tool. Two unrelated tools that happen to emit the same key string will supersede each other's units. Pick keys that are unique across the whole tool set, for example by prefixing the key with the tool's own name.
+
+Deriving semantic edges between units needs an embeddings call. `Config.embedder(config)` pairs a different provider config for that step, and the default (`Absent`) embeds through the chat config's own provider. A provider with no embeddings endpoint is not a hard failure: the compactor tries once, catches `AIEmbeddingUnsupportedException`, logs a warning, and never retries that provider again for the run, so semantic edges are simply skipped rather than raised as an error. The call itself is `Completion.embed`, typed with an `Abort[HttpException | AIGenException]` row; its default implementation raises that same exception, and only the OpenAI-compatible backend overrides it, so a real embeddings endpoint today means the OpenAI and Gemini providers specifically. Each embedding it returns is a `kyo.ai.Embedding`: a `vector` tagged with the `modelName` and `dim` of the space that produced it. `Embedding.cosine` compares two embeddings and returns `Absent`, not a throw or a meaningless number, when their `(modelName, dim)` do not match, so a caller can never silently compare vectors across spaces. The background judge and summarizer default to the active chat provider's cheap tier (`Provider.small`, for example `AI.Config.Anthropic.small`), or `Compactor.Config.judge` for a wholesale override.
+
+> **Caution:** with a compactor enabled, unit content is sent to the embedding provider (`Config.embedder`, or the chat provider itself when absent), and ambiguous-band content is sent to the judge model. With no compactor enabled, nothing changes. Leaving `embedder` absent alongside a same-provider `small` keeps that data within the provider already chosen for the conversation.
+
+This pairs naturally with `Agent`: a long-lived agent's conversation grows across every `ask`, which makes it the prime candidate for automatic compaction.
+
+`Compactor.Config`'s user-relevant knobs are `windowFraction`, `effectiveCap`, `updateTriggerFraction` / `updateTargetFraction` (the hysteresis band; target must sit below trigger), `hardWindowFraction`, `tailTurns` / `tailTokens`, `bandSize`, and `judge`. The remaining fields tune the internal ranking and graph algorithm ("affect ranking quality, not correctness", per the source doc) and are documented on `Compactor.Config` itself.
+
 ## Configuration and providers
 
 `AI.Config` is an immutable, copy-on-write settings record naming the provider, model, and runtime knobs (temperature, seed, timeout, retry schedule, iteration cap). Every builder returns a modified copy.
@@ -387,6 +436,8 @@ val openAiConfig =
 ```
 
 The module ships nine providers: Anthropic, OpenAI, DeepSeek, Gemini, Groq, Baseten, OpenRouter, Claude Code, and Codex, each available as `AI.Config.Anthropic`, `AI.Config.OpenAI`, and so on, and as `AI.Config.Provider.all`. `AI.Config.default` first honors the provider override flag `kyo.ai.provider` (environment variable `KYO_AI_PROVIDER`), then probes provider markers and keys in order, preferring `CLAUDE_CODE`, then `CODEX`, then API provider keys such as `ANTHROPIC_API_KEY` and `OPENAI_API_KEY`. Supported override values are `claude-code`, `codex`, `anthropic`, `openai`, `deepseek`, `gemini`, `groq`, `baseten`, and `openrouter`. Each provider exposes a pure catalog `.default` you refine with builders. `AI.Config.init` builds a config for an API-key provider while reading its API key and org from system properties then the environment.
+
+Each provider also exposes a `.small` catalog entry (its cheap tier), and a config can be paired with a different provider via `.embedder(...)` for the embeddings step; both exist for the automatic context compaction feature (above) and are rarely set directly otherwise.
 
 ```scala
 def initConfig: AI.Config < Sync =
@@ -412,7 +463,7 @@ kyo-ai gen backend=Claude Code model=sonnet messages=3 tools=1 thoughts=0 forceR
 
 The runnable demos at the end of this README print the resolved provider and model so a forked run can be checked directly.
 
-The error model is principled and typed. A generation's failures ride `run`'s residual as `Abort[AIGenException]`, a sealed hierarchy whose leaves name the specific failure: a transport error is an `AITransportException` (wrapping the kyo-http `HttpException`), eval-loop exhaustion an `AIEvalExhaustedException`, an invalid thought name an `AIInvalidThoughtException`, an undecodable reply an `AIDecodeException`, a missing API key an `AIMissingApiKeyException`. Streaming failures are typed in the stream's own row as `Abort[AIStreamException]`: a malformed delta is an `AIStreamDeltaException`, a stream that ends without a decodable value an `AIStreamIncompleteException`. The super-types track operations, the leaves track failures, and a failure shared by both operations (a missing key, a transport error) belongs to both. Misuse stays off the rows: using an `AI` outside the `LLM.run` that created it panics with `AICrossRunException`.
+The error model is principled and typed. A generation's failures ride `run`'s residual as `Abort[AIGenException]`, a sealed hierarchy whose leaves name the specific failure: a transport error is an `AITransportException` (wrapping the kyo-http `HttpException`), eval-loop exhaustion an `AIEvalExhaustedException`, an invalid thought name an `AIInvalidThoughtException`, an undecodable reply an `AIDecodeException`, a missing API key an `AIMissingApiKeyException`, a compactor unable to fit even its unshrinkable content under the hard window an `AIContextOverflowException`, a provider with no embeddings endpoint an `AIEmbeddingUnsupportedException`. Streaming failures are typed in the stream's own row as `Abort[AIStreamException]`: a malformed delta is an `AIStreamDeltaException`, a stream that ends without a decodable value an `AIStreamIncompleteException`. The super-types track operations, the leaves track failures, and a failure shared by both operations (a missing key, a transport error) belongs to both. Misuse stays off the rows: using an `AI` outside the `LLM.run` that created it panics with `AICrossRunException`.
 
 ## Conversation data types
 
@@ -490,7 +541,9 @@ The categories removed wholesale: JSON-schema authoring and the parse-and-valida
 
 ## How it works
 
-`LLM` is a custom `ArrowEffect` whose operations carry data: a program typed `A < LLM` is a tree of virtual operations with no `Async` in its row, reading and appending to per-instance conversation histories held in one threaded `State`. The single operation that reaches the world is `Gen`, whose handler runs the eval loop; that is where `Async` and `Abort[AIGenException]` enter, riding out on `run`'s residual. The completion call is wrapped meter, then retry, then timeout, and four backend adapters sit behind `AI.Config.Provider`: an OpenAI-compatible HTTP adapter shared by six providers, an Anthropic HTTP adapter, plus Claude Code and Codex command harness adapters. The eval boundary emits debug logs through `kyo.Log` naming the selected backend, model, message count, tool count, and streaming mode. For the operation GADT, the state-threading handler, and the asymmetric `Isolate` that backs parallel branches, see `kyo-ai/shared/src/main/scala/kyo/LLM.scala` and CONTRIBUTING.md.
+`LLM` is a custom `ArrowEffect` whose operations carry data: a program typed `A < LLM` is a tree of virtual operations with no `Async` in its row, reading and appending to per-instance conversation histories held in one threaded `State`. The single operation that reaches the world is `Gen`, whose handler runs the eval loop; that is where `Async` and `Abort[AIGenException]` enter, riding out on `run`'s residual. When a compactor is enabled (either on the scope or the instance, instance winning), it is consulted at one seam between the context read and request assembly, on both the `gen` and `stream` paths, returning the bounded view sent to the provider; the transcript held in `State` is never mutated by this seam. The completion call is wrapped meter, then retry, then timeout, and four backend adapters sit behind `AI.Config.Provider`: an OpenAI-compatible HTTP adapter shared by six providers, an Anthropic HTTP adapter, plus Claude Code and Codex command harness adapters. Each adapter implements the shared `Completion` contract; its `apply` returns a `Completion.Reply`, the reply messages plus an optional `Completion.Usage` (input, output, and cached token counts, `Absent` when a provider does not report them). The eval boundary emits debug logs through `kyo.Log` naming the selected backend, model, message count, tool count, and streaming mode. For the operation GADT, the state-threading handler, and the asymmetric `Isolate` that backs parallel branches, see `kyo-ai/shared/src/main/scala/kyo/LLM.scala` and CONTRIBUTING.md.
+
+The compaction design is validated by a replay harness that scores the real `Compactor.render` path against a dumb keep-the-tail-plus-one-summary baseline over six synthetic sessions on three deterministic metrics (task success, token cost, re-fetch rate); see `CompactorReplayHarness.scala` / `CompactorReplayTest.scala`.
 
 ## Demos
 
