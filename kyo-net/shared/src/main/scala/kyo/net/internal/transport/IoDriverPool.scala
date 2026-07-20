@@ -12,15 +12,6 @@ final private[kyo] class IoDriverPool[Handle] private (
     private val counter: AtomicLong.Unsafe
 ):
 
-    // Unsafe: created at construction with no ambient AllowUnsafe; the danger bridge builds it here and its accesses run under the caller's
-    // AllowUnsafe.
-    private val closedFlag = AtomicBoolean.Unsafe.init(false)(using AllowUnsafe.embrace.danger)
-
-    // Each driver's terminal-teardown signal, as returned by its own start(). Retained rather than discarded so close() can hand back a real
-    // "the fds are gone" fiber instead of a bare request. Written once by start() before the pool is handed to a transport, and only read
-    // afterwards, so a plain field is sufficient: the publication happens-before any close() a caller can reach.
-    @volatile private var doneFibers: Array[Fiber.Unsafe[Unit, Any]] = null
-
     /** Number of drivers in the pool. */
     private[kyo] def size: Int = drivers.length
 
@@ -42,91 +33,33 @@ final private[kyo] class IoDriverPool[Handle] private (
       * are closed and the failure is rethrown (all-or-nothing).
       */
     def start()(using AllowUnsafe, Frame): Unit =
-        val started = new Array[Fiber.Unsafe[Unit, Any]](drivers.length)
         @tailrec def loop(i: Int): Unit =
             if i < drivers.length then
-                try started(i) = drivers(i).start()
+                try discard(drivers(i).start())
                 catch
                     case ex: Throwable if NonFatal(ex) =>
-                        // All-or-nothing: a partially-started pool is never handed to the transport. Close the already-started
-                        // subset (close() skips Absent slots and is CAS-guarded) and rethrow, so the transport build fails atomically
-                        // rather than running fewer drivers than ioPoolSize requested. Guarded on NonFatal: on a fatal/control
-                        // throwable the process is dying, so the subset-close is moot; let the fatal propagate uncaught.
-                        // Publish only the prefix that actually started: the remaining slots are still null, and handing those to the
-                        // close path would NPE while it chained completions, masking the real start failure being rethrown here.
-                        doneFibers = started.take(i)
-                        discard(close())
+                        // All-or-nothing: a partially-started pool is never handed to a transport. Tear the already-started prefix down and
+                        // rethrow, so the build fails atomically rather than running fewer drivers than ioPoolSize requested. This is the ONE
+                        // place a driver is closed from outside its own terminal exit: a transport is process-lifetime and never shuts down, so
+                        // a pool that was successfully handed over is never torn down. Guarded on NonFatal: on a fatal throwable the process is
+                        // dying and the rollback is moot, so let it propagate uncaught.
+                        rollback(i)
                         throw ex
                 end try
                 loop(i + 1)
         loop(0)
-        // Publish only after every driver started, so close() either sees the complete set or (on the failure path above) the
-        // subset assigned there. Each entry completes when that driver's loop has finished its terminal teardown, meaning after its
-        // poller fd is closed and its scratch freed. That is what makes the close below a real release signal rather than just a
-        // request.
-        doneFibers = started
     end start
 
-    /** Close all drivers.
-      *
-      * Idempotent via AtomicBoolean guard. Each driver's close() is also independently CAS-guarded, so calling it here is safe even if a
-      * driver was already closed directly.
-      *
-      * Does NOT interrupt each driver's event-loop fiber: every driver's own `close()` is responsible for bringing its loop down (NIO closes
-      * its selector directly, which aborts a blocked `select()`; the posix io_uring/poller drivers wake their loop and let it observe the
-      * close signal on its own carrier). For io_uring and the poller that self-teardown is deferred to the loop's own carrier (their pending-op
-      * bookkeeping is carrier-confined and cannot be swept from here), so an unconditional fiber interrupt issued right after signaling close
-      * could abort the loop before it reaches that deferred teardown, permanently stranding a handle whose close was mid-flight: exactly
-      * the fd leak an unconditional interrupt would cause. Trust each driver's own close() contract instead of racing it.
+    /** Close the first `startedCount` drivers after a failed start. Each driver's own close is CAS-guarded, and the pool is discarded
+      * immediately afterwards, so this neither needs nor waits for a teardown signal.
       */
-    def close()(using AllowUnsafe, Frame): Fiber.Unsafe[Unit, Any] =
-        if closedFlag.compareAndSet(false, true) then
-            @tailrec def closeLoop(i: Int): Unit =
-                if i < drivers.length then
-                    drivers(i).close()
-                    closeLoop(i + 1)
-            closeLoop(0)
-        end if
-        awaitTornDown()
-    end close
-
-    /** A fiber completing once every started driver has finished its terminal teardown, so the pool's poller/ring fds are released and its
-      * scratch freed.
-      *
-      * This is what gives [[close]] backpressure. Each driver's `start()` hands back exactly this signal and the pool retains it; a caller
-      * that awaits the returned fiber knows the descriptors are gone, while one that does not must `discard` it explicitly. Without the
-      * await, `close()` only REQUESTS teardown: the driver's terminal hop is a scheduled activation, so the fds outlive the call, and a
-      * caller that closes one transport and immediately opens another transiently holds both.
-      *
-      * Completes immediately when the pool never started (no driver is running, and `close()` on a never-started driver releases its scratch
-      * directly), and is safe to call repeatedly: it only observes the retained promises, never mutates them.
-      *
-      * Never blocks: completion is chained through `onComplete`, so awaiting it suspends the calling fiber and frees its carrier for the
-      * driver's own terminal activation to run on.
-      */
-    private def awaitTornDown()(using AllowUnsafe, Frame): Fiber.Unsafe[Unit, Any] =
-        // Every entry is non-null: start() publishes either the full set or, on its failure path, only the prefix that actually started.
-        // That trim matters: handing this loop a half-filled array would NPE here and mask the start failure being rethrown.
-        val fibers  = doneFibers
-        val promise = Promise.Unsafe.init[Unit, Any]()
-        if (fibers eq null) || fibers.isEmpty then promise.completeDiscard(Result.succeed(()))
-        else
-            val remaining = AtomicInt.Unsafe.init(fibers.length)
-            var i         = 0
-            while i < fibers.length do
-                // Ignore each driver's own outcome: what this pool needs to observe is only that the loop FINISHED, not how.
-                //
-                // Whether finishing also released the driver's fds is the driver's own contract, and it is NOT uniform today.
-                // Every driver routes a crashed cycle through the same terminal exit as a clean one, so the poller fd and scratch, the
-                // io_uring ring and wake eventfd, and the selector are all released whichever way the loop ends. That is what lets this
-                // promise mean "torn down" rather than merely "stopped running": a crash completes it with the resources already released.
-                // Each driver's *CrashContainmentTest pins its half.
-                fibers(i).onComplete(_ => if remaining.decrementAndGet() == 0 then promise.completeDiscard(Result.succeed(())))
-                i += 1
-            end while
-        end if
-        promise.asInstanceOf[Fiber.Unsafe[Unit, Any]]
-    end awaitTornDown
+    private def rollback(startedCount: Int)(using AllowUnsafe, Frame): Unit =
+        @tailrec def loop(i: Int): Unit =
+            if i < startedCount then
+                discard(drivers(i).close())
+                loop(i + 1)
+        loop(0)
+    end rollback
 
 end IoDriverPool
 

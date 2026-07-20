@@ -24,9 +24,8 @@ object NetPlatform:
       * Differing settings are not a reason to build another: every field of [[NetConfig]] applies to one connection, one socket, or one
       * operation, so callers pass their own config to each [[Transport]] operation and still share this instance.
       *
-      * This transport is never closed: it belongs to the process, and closing it would take every co-tenant's connections down. Components must
-      * not call `close()` on it; they close their own listeners and connections, which is what actually reclaims their resources. Use
-      * [[ownedTransport]] when a caller genuinely needs an isolated instance it controls.
+      * This transport is never closed: it belongs to the process, and closing it would take every co-tenant's connections down. It has no `close()`: the only
+      * things a component owns are its listeners and connections, and closing those is what reclaims its resources.
       */
     lazy val transport: Transport =
         import AllowUnsafe.embrace.danger
@@ -34,12 +33,4 @@ object NetPlatform:
         kyo.net.internal.NetPlatformTransport.configuredProcessLifetime()
     end transport
 
-    /** A private transport the caller owns and MUST `close()`.
-      *
-      * The escape hatch from [[transport]]'s sharing, for a caller that needs ISOLATION: a test asserting transport-level behavior, or a
-      * component that must be able to tear its own I/O fabric down. It takes no settings because there are none to take: every field of
-      * [[NetConfig]] is passed to the operation it applies to, so wanting different settings is never a reason to reach for this.
-      */
-    def ownedTransport()(using AllowUnsafe, Frame): Transport =
-        kyo.net.internal.NetPlatformTransport.configured()
 end NetPlatform

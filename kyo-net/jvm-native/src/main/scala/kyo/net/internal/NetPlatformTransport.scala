@@ -9,13 +9,10 @@ import kyo.net.internal.backend.IoBackendPlatform
   * differs. Each leaf `NetPlatformTransport` object extends this base, so the lazy `transport` and the `configured` builder live once.
   */
 private[kyo] trait NetPlatformTransportBase:
-    /** Build a fresh transport with a custom config (the platform-default backend, honoring `-Dkyo.net.backend`). Caller owns its lifecycle. */
-    def configured()(using AllowUnsafe, Frame): Transport =
-        IoBackendPlatform.transport()
-
-    /** Build the one process-shared transport, marked as such (see [[ProcessSharedTransport]]). Used for [[kyo.net.NetPlatform.transport]],
-      * which every client and server shares and which is never closed for the process lifetime, so its idle carriers must carry the
-      * leak-check-allowlisted `processSharedTransport` frame rather than trip the stranded-op / fiber-leak gate.
+    /** Build the one process-shared transport, marked as such (see [[ProcessSharedTransport]]). This is the ONLY transport builder: a
+      * transport is process-lifetime and never closed, so [[kyo.net.NetPlatform.transport]] is the single instance every client and server
+      * shares. Its idle carriers therefore carry the leak-check-allowlisted `processSharedTransport` frame rather than trip the stranded-op /
+      * fiber-leak gate.
       */
     def configuredProcessLifetime()(using AllowUnsafe, Frame): Transport =
         ProcessSharedTransport.whileBuilding(IoBackendPlatform.transport())

@@ -66,16 +66,6 @@ final private[kyo] class NioTransport private (
         IoDriverPool.init(Array[IoDriver[NioHandle]](driver))
     end pool
 
-    /** Every connection this transport opened (client connect, accepted server, or STARTTLS upgrade), keyed by its handle. A connection removes
-      * itself when its handle is torn down (via the `onClose` wired at creation); `close()` closes whatever is still registered before the driver
-      * shuts down, so a connection whose ordinary close never completed (its peer FIN never arrived, its handler never closed it) is reclaimed
-      * instead of leaking its fd. Mirrors PosixTransport's connection registry. The shared process transport never calls `close()`, so its
-      * registry only ever shrinks as connections close; an owned transport (per test, per kyo-http config) clears it at `close()`.
-      */
-    // Concurrent-collection audit: a raw ConcurrentHashMap tracking open connections, added on the connect/accept carrier and iterated on the
-    // transport-close carrier without suspension. kyo has no concurrent map its effect collections can back here; retained as a documented exception.
-    private val connections = new java.util.concurrent.ConcurrentHashMap[NioHandle, Connection[NioHandle]]()
-
     /** In-flight accept-side TLS handshakes, keyed by the promise that carries the handshake's outcome and valued by the listener that accepted
       * the connection.
       *
@@ -139,9 +129,6 @@ final private[kyo] class NioTransport private (
         end if
     end trackAcceptHandshake
 
-    /** Build a connection over `handle` and register it in [[connections]], wiring its `onClose` so it self-removes when its handle is torn
-      * down. Used for every connection so `close()` can reclaim any that did not close on their own.
-      */
     /** Apply the caller's socket buffer sizes to a channel, the NIO counterpart of the posix `applySocketBuffers`.
       *
       * `sendSupported` distinguishes the two channel kinds, because Java does: a `SocketChannel` (TCP and Unix alike) supports both
@@ -159,10 +146,7 @@ final private[kyo] class NioTransport private (
     end applySocketBuffers
 
     private def initTracked(handle: NioHandle, channelCapacity: Int)(using AllowUnsafe, Frame): Connection[NioHandle] =
-        val conn = Connection.init(handle, driver, channelCapacity, () => discard(connections.remove(handle)))
-        discard(connections.put(handle, conn))
-        conn
-    end initTracked
+        Connection.init(handle, driver, channelCapacity)
 
     /** The NIO floor terminates TLS inline with the JDK SSLEngine, so it can serve only the "jdk" implementation. A connection pinning any
       * other [[NetTlsConfig.tlsProvider]] fails closed (see `startTlsHandshake`). The cross-backend test matrix reads this to skip non-jdk
@@ -1367,28 +1351,6 @@ final private[kyo] class NioTransport private (
         // needs this erased-boundary cast. Safe: the promise completes only with the NetException/NetListener values above.
         promise.asInstanceOf[Fiber.Unsafe[NetListener, Abort[NetException]]]
     end listenUnix
-
-    def close()(using AllowUnsafe, Frame): Fiber.Unsafe[Unit, Any] =
-        // Close every still-open connection first, while the driver is alive, so each connection's fd is reclaimed instead of being stranded when
-        // the pool tears down; a connection whose ordinary close never ran (peer FIN never arrived, handler never closed it) would otherwise leak.
-        // forceCloseIfUpgrading additionally covers a connection stuck Upgrading (ordinary close() is a no-op there by design, deferring to the
-        // in-flight TLS upgrade's own success/failure cleanup): at shutdown nothing will ever complete that upgrade, so without the force-close a
-        // peer that disconnects mid-handshake leaks the fd until the upgrade's own (asynchronous, unbounded-by-this-call) failure path happens to
-        // run (see Connection.forceCloseIfUpgrading's scaladoc; the posix transport hits the identical gap).
-        connections.values().forEach { c =>
-            c.close()
-            c.forceCloseIfUpgrading()
-        }
-        connections.clear()
-        // Each c.close() above cancels its channel's SelectionKey and calls channel.close(), but on JDK 11+ the actual fd close (kill()) is
-        // deferred until the selector deregisters the cancelled key on its own next select() pass (see NioIoDriver.wakeup's scaladoc). The
-        // driver's select() call is indefinite (no timeout), so an otherwise-idle selector (this transport's last connection just closed, nothing
-        // else pending) never runs that pass on its own and every fd closed above leaks in CLOSE_WAIT past this call returning. NioListener.close
-        // already wakes the selector for the identical reason on a listener close; connection close here had no equivalent nudge.
-        driver.wakeup()
-        // The pool's fiber is this transport's release signal: it completes once the driver has torn down and its fds are gone.
-        pool.close()
-    end close
 
     /** Upgrade a plaintext [[Connection]] to TLS after STARTTLS-style pre-handshake bytes have been exchanged.
       *

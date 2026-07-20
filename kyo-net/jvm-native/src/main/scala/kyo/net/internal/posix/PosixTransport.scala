@@ -102,45 +102,18 @@ final private[net] class PosixTransport private[posix] (
       */
     // Concurrent-collection audit: a raw ConcurrentHashMap-backed key-set tracking the open listeners so close() can wind them all down.
     // kyo has no concurrent-set/map type, and its effect-based collections cannot back this set, which is added to on each listen carrier and
-    // iterated on the transport-close carrier without suspension. Retained as a documented no-equivalent exception.
+    // read without suspension. Retained as a documented no-equivalent exception.
     private val listeners = java.util.concurrent.ConcurrentHashMap.newKeySet[PosixListener]()
 
-    /** Every connection this transport opened (client connect, accepted server, or STARTTLS upgrade), keyed by handle id. A connection removes
-      * itself when its handle is torn down (via the `onClose` wired at creation); `close()` closes whatever is still registered before the pool
-      * shuts down, so a connection whose ordinary close never completed (its peer FIN never arrived, its handler never closed it) is reclaimed
-      * while the driver's reap loop is still alive instead of leaking its fd. The shared process transport never calls `close()`, so its registry
-      * only ever shrinks as connections close; an owned transport (per test, per kyo-http config) clears it at `close()`.
-      */
-    // Concurrent-collection audit: a raw ConcurrentHashMap tracking open connections, added on each connect/accept carrier and iterated on the
-    // transport-close carrier without suspension. Same no-Kyo-equivalent rationale as `listeners` above. Retained as a documented exception.
-    private val connections = new java.util.concurrent.ConcurrentHashMap[Long, InternalConnection[PosixHandle]]()
-
-    /** Build a connection over `handle`/`driver` and register it in [[connections]], wiring its `onClose` so it self-removes when its handle is
-      * torn down. Used for every connection whose fd this transport must reclaim at `close()` (connect, accept, STARTTLS upgrade); the untracked
-      * [[openWith]] stays for stdio, whose fds are process-owned and must not be closed by the transport.
-      *
-      * Called exactly once per handle's lifetime (a STARTTLS upgrade reuses the same handle/id, it does not call this again).
-      */
-    private def openTracked(handle: PosixHandle, driver: IoDriver[PosixHandle], channelCapacity: Int)(using
-        AllowUnsafe,
-        Frame
-    ): InternalConnection[PosixHandle] =
-        handle.driver = driver
-        val conn = InternalConnection.init(handle, driver, channelCapacity, () => discard(connections.remove(handle.id.packed)))
-        discard(connections.put(handle.id.packed, conn))
-        conn
-    end openTracked
-
     /** In-flight handshake fd/engine-teardown obligations (accept-side server TLS, connect-side client TLS, and STARTTLS upgrade), keyed by an
-      * opaque per-handshake token. A handshake in flight has no [[Connection]] yet, so it is invisible to the [[connections]] registry `close()`
-      * sweeps above: the driver-level fd-close fix (`PollerIoDriver`/`IoUringDriver`'s terminal sweep) only guarantees a submitted `closeHandle`
-      * obligation is discharged, it does not make a still-handshaking connection's OWN teardown thunk run at all when the transport shuts down
-      * mid-handshake. Entered by [[registerHandshake]] before `driveHandshake` starts; each value is a thunk that races the handshake's own
-      * exactly-once outcome gate and discharges only if it wins, so `close()`'s synchronous sweep can never double-free a handshake that
-      * completes at the same moment it runs. Removed by [[unregisterHandshake]] once the outcome is known, so the never-closed shared process
-      * transport does not accumulate one entry per handshake forever.
+      * opaque per-handshake token. A handshake in flight has no [[Connection]] yet, so nothing else knows its fd and engine exist: the
+      * driver-level fd-close fix (`PollerIoDriver`/`IoUringDriver`'s terminal sweep) only guarantees a submitted `closeHandle` obligation is
+      * discharged, it does not make a still-handshaking connection's OWN teardown thunk run. Entered by [[registerHandshake]] before
+      * `driveHandshake` starts; each value is a thunk that races the handshake's own exactly-once outcome gate and discharges only if it wins,
+      * so a listener-close discharge can never double-free a handshake that completes at the same moment. Removed by [[unregisterHandshake]]
+      * once the outcome is known, so this process-lifetime transport does not accumulate one entry per handshake forever.
       */
-    // Concurrent-collection audit: same no-Kyo-equivalent rationale as `listeners`/`connections` above.
+    // Concurrent-collection audit: same no-Kyo-equivalent rationale as `listeners` above.
     private val pendingHandshakes   = new java.util.concurrent.ConcurrentHashMap[Long, PosixTransport.PendingHandshake]()
     private val pendingHandshakeSeq = new java.util.concurrent.atomic.AtomicLong(0)
 
@@ -171,8 +144,7 @@ final private[net] class PosixTransport private[posix] (
       * win before proceeding, exactly like the accept-side deadline's guard.
       *
       * `private[posix]` (not `private`) so a discriminating test (PosixTransportShutdownReclaimTest) can drive this and
-      * [[unregisterHandshake]] directly, registering a handshake obligation AFTER `close()`'s own one-shot [[sweepPendingHandshakes]] has
-      * already run, to prove the driver-level closed-recheck (not this registry's sweep) is what reclaims a handshake that races past it.
+      * [[unregisterHandshake]] directly.
       */
     private[posix] def registerHandshake(teardown: () => Unit)(using AllowUnsafe): (Long, () => Boolean) =
         val settled           = AtomicBoolean.Unsafe.init(false)
@@ -186,8 +158,8 @@ final private[net] class PosixTransport private[posix] (
         discard(pendingHandshakes.remove(token))
 
     /** Discharge ONE registered handshake teardown obligation by token, removing its entry as it runs. The single-entry form of
-      * [[sweepPendingHandshakes]], running the identical exactly-once thunk, so a discharge racing the handshake's real outcome is a safe no-op
-      * for whichever loses.
+      * [[dischargeListenerHandshakes]], running the identical exactly-once thunk, so a discharge racing the handshake's real outcome is a safe
+      * no-op for whichever loses.
       *
       * Used for a handshake whose own outcome promise settled without ANY of its three outcomes having run: the caller interrupted the upgrade it
       * was awaiting, or the plaintext connection it detached was closed underneath it. Both leave the handshake parked forever on a read nothing
@@ -202,8 +174,8 @@ final private[net] class PosixTransport private[posix] (
     /** Discharge every still-registered handshake obligation owned by `listener`, removing each entry as it runs.
       *
       * Called when a listener closes, which is the reclamation point that actually happens for a server: the transport-wide
-      * [[sweepPendingHandshakes]] below runs only from `close()`, and the process-shared transport is never closed, so without this a handshake
-      * still in flight when its server shut down would hold its fd and engine for the life of the process. A peer that completes the TCP accept
+      * transport is process-lifetime and never closed, so a listener closing is the ONLY reclamation point: without this, a handshake still in
+      * flight when its server shut down would hold its fd and engine for the life of the process. A peer that completes the TCP accept
       * and then stalls reaches exactly that state whenever no deadline is armed, which is the default for a kyo-http server.
       *
       * Only this listener's obligations are touched: a client connect or a STARTTLS upgrade registers with no owner, and another listener's
@@ -219,19 +191,6 @@ final private[net] class PosixTransport private[posix] (
                 entry.getValue.discharge()
         end while
     end dischargeListenerHandshakes
-
-    /** Discharge every still-registered handshake teardown, removing each entry as it runs. Called by `close()` before `pool.close()`, so a
-      * handshake stalled forever (its peer stopped mid-flight, no deadline armed) is reclaimed instead of leaking its fd/engine past shutdown;
-      * a handshake that is concurrently finishing loses the race for its own thunk's `disarm()` call and this is then a safe no-op for it.
-      */
-    private def sweepPendingHandshakes()(using AllowUnsafe): Unit =
-        val it = pendingHandshakes.values().iterator()
-        while it.hasNext do
-            val pending = it.next()
-            it.remove()
-            pending.discharge()
-        end while
-    end sweepPendingHandshakes
 
     /** The number of accept loops still running (in `scheduleNextAccept` or `acceptAll`). Drops to 0 once every closed listener's loop has exited. */
     private[posix] def activeAcceptLoops(using AllowUnsafe): Long = acceptLoopsActive.get()
@@ -773,7 +732,7 @@ final private[net] class PosixTransport private[posix] (
         promise: IOPromise[NetException, Connection],
         channelCapacity: Int
     )(using AllowUnsafe, Frame): Unit =
-        val connection = openTracked(handle, driver, channelCapacity)
+        val connection = openWith(handle, driver, channelCapacity)
         // The upgradeFn closure is where this connection's capacity persists: a later STARTTLS builds its replacement connection with the
         // capacity the originating connect asked for, with no config stored on the connection itself.
         connection.upgradeFn = Present { (cfg, frame) =>
@@ -1131,7 +1090,7 @@ final private[net] class PosixTransport private[posix] (
             handle.driver = driver
             tls match
                 case Absent =>
-                    spawnHandler(openTracked(handle, driver, config.channelCapacity), driver, handler, config.channelCapacity)
+                    spawnHandler(openWith(handle, driver, config.channelCapacity), driver, handler, config.channelCapacity)
                 case Present(cfg) =>
                     val engine =
                         try buildEngine(cfg, "", isServer = true)
@@ -1210,7 +1169,7 @@ final private[net] class PosixTransport private[posix] (
                             if disarm() then
                                 unregisterHandshake(handshakeTokenRef.get())
                                 handle.tls = Present(engine)
-                                spawnHandler(openTracked(handle, driver, config.channelCapacity), driver, handler, config.channelCapacity),
+                                spawnHandler(openWith(handle, driver, config.channelCapacity), driver, handler, config.channelCapacity),
                         onFailed = cause =>
                             if disarm() then
                                 unregisterHandshake(handshakeTokenRef.get())
@@ -1311,32 +1270,6 @@ final private[net] class PosixTransport private[posix] (
             Log.live.unsafe.info(s"PosixTransport accepted connection closed before start; handler not spawned")
         end if
     end spawnHandler
-
-    /** Shut the transport down: close every still-open connection, then every live listener (so the driver completes each pending accept promise
-      * with a Closed failure, causing the accept loop to decrement `acceptLoopsActive` and stop scheduling further accepts), and then the driver
-      * pool. Connections are closed FIRST, while the pool's reap loops are still alive, so each connection's deferred fd close completes (the FIN
-      * goes out, the fd is reclaimed) instead of being stranded when the pool tears down; a connection whose ordinary close never ran (its peer
-      * FIN never arrived, its handler never closed it) would otherwise leak its fd past the pool teardown. Without closing the listeners before
-      * the pool, their accept loops would keep arming the driver for new accept events after the pool is gone.
-      *
-      * `forceCloseIfUpgrading` runs alongside `close()` for every connection: ordinary `close()` is a no-op while a connection is `Upgrading`
-      * (its fd is owned by the in-flight TLS upgrade, which normally does its own success/failure cleanup), but at transport shutdown nothing
-      * will ever complete that upgrade. Without the force-close, a connection whose upgrade never finished (its peer disconnected mid-handshake,
-      * e.g. a verifying client rejecting the peer's identity before ever sending a ClientHello) leaks its fd: the upgrade's own failure path
-      * DOES eventually free it, but only once the driver's reap loop gets a scheduler turn to run the async teardown `pool.close()` queues below,
-      * which is not bounded by the time this call returns (an intermittent CLOSE_WAIT leak under a fast-completing test's leak check).
-      */
-    def close()(using AllowUnsafe, Frame): Fiber.Unsafe[Unit, Any] =
-        connections.values().forEach { c =>
-            c.close()
-            c.forceCloseIfUpgrading()
-        }
-        connections.clear()
-        listeners.forEach(l => l.close())
-        sweepPendingHandshakes()
-        // The pool's fiber is this transport's release signal: it completes once every driver has torn down and its fds are gone.
-        pool.close()
-    end close
 
     // ---------------------------------------------------------------------------------------------------------------------------------------
     // Low-level socket helpers
@@ -1751,15 +1684,7 @@ final private[net] class PosixTransport private[posix] (
                                     // upgrading=false while tls is still Absent (which would route a reaping recv to the raw plainReadComplete path).
                                     // Volatile-write ordering: a reaper that sees upgrading=false also sees tls=Present, so it takes the TLS branch.
                                     handle.upgrading = false
-                                    // Track the upgraded connection under handle.id, replacing the now-detached plaintext entry on the same handle so
-                                    // close() reclaims the TLS fd (detachForUpgrade left the plaintext connection registered: it keeps the fd open).
-                                    val upgraded = InternalConnection.init(
-                                        handle,
-                                        handle.driver,
-                                        channelCapacity,
-                                        () => discard(connections.remove(handle.id.packed))
-                                    )
-                                    discard(connections.put(handle.id.packed, upgraded))
+                                    val upgraded = InternalConnection.init(handle, handle.driver, channelCapacity)
                                     // Wire the cert-hash and re-upgrade functions on the upgraded connection, exactly as completeConnect /
                                     // spawnHandler do for a directly-connected or accepted connection. Without this the TLS connection
                                     // produced by STARTTLS could not report its RFC 5929 channel-binding hash (certHashFn stays null ->

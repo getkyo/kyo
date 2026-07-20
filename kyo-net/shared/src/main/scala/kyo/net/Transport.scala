@@ -109,20 +109,6 @@ abstract class Transport:
         handler: Connection => Unit
     )(using AllowUnsafe, Frame): Fiber.Unsafe[Listener, Abort[NetException]]
 
-    /** Shut the transport down: close every connection and listener, then the driver pool. Idempotent.
-      *
-      * The returned fiber completes once every driver has finished tearing down, meaning the poller/ring descriptors are closed and their
-      * scratch freed. Await it to get backpressure; `discard` it only when the caller genuinely does not need the descriptors released before
-      * it proceeds.
-      *
-      * The distinction matters because driver teardown is a scheduled activation, not part of this call: closing signals each driver and
-      * returns, so without awaiting, a caller that closes one transport and immediately builds another transiently holds both pools' fds.
-      * Repeated across a workload that creates transports in a loop, that lag accumulates into descriptor and port-reuse pressure.
-      *
-      * Never blocks a thread: awaiting suspends the calling fiber, which frees its carrier so a driver's terminal activation can run on it.
-      */
-    def close()(using AllowUnsafe, Frame): Fiber.Unsafe[Unit, Any]
-
     /** Upgrade a plaintext connection to TLS after pre-handshake bytes have been exchanged (STARTTLS-style).
       *
       * Implemented on every platform: JVM (NIO and the posix transport), Native (the posix transport), and JS (Node TLS). The returned fiber

@@ -799,11 +799,6 @@ final private[kyo] class JsTransport private (
         // needs this erased-boundary cast. Safe: the promise completes only with the NetException/NetListener values above.
         promise.asInstanceOf[Fiber.Unsafe[NetListener, Abort[NetException]]]
     end listenUnix
-
-    def close()(using AllowUnsafe, Frame): Fiber.Unsafe[Unit, Any] =
-        // The pool's fiber is this transport's release signal: it completes once every driver has torn down.
-        pool.close()
-
     def upgradeToTls(
         conn: NetConnection,
         tls: kyo.net.NetTlsConfig,

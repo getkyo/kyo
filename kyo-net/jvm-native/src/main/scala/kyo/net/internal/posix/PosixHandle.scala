@@ -191,6 +191,14 @@ final private[net] class PosixHandle private (
       */
     @volatile var fdCloseSink: Maybe[() => Unit] = Absent
 
+    /** Disarms this connect's TCP-phase deadline, set while the connect is in flight and cleared the moment the TCP phase ends.
+      *
+      * A connect-phase-only slot, like `connectTarget`. `Transport.connectTls` documents two phases with separate deadlines, so the connect
+      * timer must stop owning the connection once the TCP phase is established; otherwise it keeps running through the TLS handshake and a
+      * pure handshake stall surfaces as a connect timeout. `Absent` for a plain connect once completed, and for every accepted connection.
+      */
+    @volatile var connectDeadlineDisarm: Maybe[() => Unit] = Absent
+
     /** Deliver plaintext to whichever [[kyo.net.Connection]] CURRENTLY owns this handle. `PosixTransport` installs this at every point a
       * connection's `inbound` channel becomes the active one for the handle (connect, accept, and a STARTTLS upgrade's `onFinished`, where it
       * is re-pointed from the pre-upgrade connection's channel to the post-upgrade one before `upgraded.start()` runs). The driver uses it to
