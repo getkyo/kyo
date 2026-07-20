@@ -64,7 +64,7 @@ object Tool:
                 summon[Schema[Out]],
                 frame,
                 kind,
-                compactionKey.asInstanceOf[Any => Maybe[String]]
+                compactionKey
             ))
 
     /** Combines tools into one. */
@@ -77,6 +77,19 @@ object Tool:
 
     private[kyo] object internal:
 
+        /** The outcome of decoding a tool call's arguments and running the tool.
+          *
+          * `DecodeFailed` tags a failure to decode the caller's JSON arguments into the tool's input
+          * type: the model supplied arguments that do not match the schema, so `handle` answers with a
+          * schema-repair message. `Ran` carries the result of the tool's own run body, whether it
+          * succeeded or failed with a thrown value; a failure originating inside user run code routes to
+          * the generic tool-failure message and is never mistaken for malformed arguments, even when the
+          * run body itself fails with a `DecodeException`.
+          */
+        enum RunOutcome:
+            case DecodeFailed(error: Throwable)
+            case Ran(result: Result[Throwable, String])
+
         case class Info[In, Out, -S](
             name: String,
             description: String,
@@ -86,12 +99,32 @@ object Tool:
             outputSchema: Schema[Out],
             createdAt: Frame,
             kind: Tool.Kind = Tool.Kind.Read,
-            compactionKey: Any => Maybe[String] = (_: Any) => Absent
-        )
+            compactionKey: In => Maybe[String] = (_: In) => Absent
+        ):
+            // Existential-closure decoders: each method closes over this Info's own In/Out with the
+            // captured inputSchema/outputSchema, so callers decode/encode/run with NO Schema[Any] cast.
+            def compactionKeyFor(arguments: String)(using Frame): Maybe[String] =
+                Json.decode[In](arguments)(using summon, inputSchema, summon) match
+                    case Result.Success(in) => compactionKey(in)
+                    case _                  => Absent
+
+            def inputJsonSchema: Json.JsonSchema = Json.jsonSchema(using inputSchema)
+
+            def decodeAndRun(arguments: String)(using Frame): RunOutcome < (LLM & S) =
+                Json.decode[In](arguments)(using summon, inputSchema, summon) match
+                    case Result.Success(in) =>
+                        // Contain ANY throw (not just NonFatal): run is user code; its failure must
+                        // surface as a tool message, never escape the eval loop.
+                        Abort.run[Throwable](run(in).map(out => Json.encode(out)(using outputSchema, summon)))
+                            .map(RunOutcome.Ran(_))
+                    case Result.Failure(e) => RunOutcome.DecodeFailed(e)
+                    case Result.Panic(e)   => RunOutcome.DecodeFailed(e)
+        end Info
 
         def infos(using Frame): Chunk[Info[?, ?, LLM]] < LLM =
-            // cast: State.tools holds Tool[Any]; re-widen to the LLM-erased Info the eval loop consumes.
-            LLM.env.map(_.tools.asInstanceOf[Chunk[Tool[LLM]]].flatMap(_.infos))
+            // State.tools holds Tool[Any]; Tool is contravariant, so Tool[Any] <: Tool[LLM] and .infos
+            // flattens directly with no recast.
+            LLM.env.map(_.tools.flatMap(_.infos))
 
         // The result tool's definition: the model calls "result_tool" with its structured result, and the
         // eval loop extracts the call's arguments directly (no capturing run, no ref). The run is a no-op,
@@ -127,35 +160,8 @@ object Tool:
                     case Present(tool) =>
                         val processingMessage = ToolMessage(call.id, s"Processing tool call: ${tool.name}")
                         ai.updateContext(_.add(processingMessage)).andThen {
-                            // cast: tool is an existential Info[?, ?, LLM]; its captured inputSchema decodes the call
-                            // arguments to that tool's own In, erased to Any here and fed straight to its own run.
-                            Json.decode[Any](call.arguments)(using summon, tool.inputSchema.asInstanceOf[Schema[Any]], summon) match
-                                case Result.Success(decoded) =>
-                                    // Contain ANY throw (not just NonFatal): tool.run is user code; its
-                                    // failure must surface as a tool message, never escape the eval loop.
-                                    Abort.run[Throwable](
-                                        // cast: bridge the existential tool's run/outputSchema to the Any-erased decoded
-                                        // input; In/Out are the same erased type the inputSchema produced, so the run is total.
-                                        tool.run.asInstanceOf[Any => Any < (LLM)](decoded).map(out =>
-                                            Json.encode(out)(using tool.outputSchema.asInstanceOf[Schema[Any]], summon)
-                                        )
-                                    ).map {
-                                        case Result.Success(out) => out
-                                        case error =>
-                                            p"""
-                                                Tool '${tool.name}' failed:
-                                                ${error}
-                                                Call ID: ${call.id.id}
-                                            """
-                                    }.map { out =>
-                                        ai.updateContext { ctx =>
-                                            ctx.copy(messages = ctx.messages.map {
-                                                case `processingMessage` => ToolMessage(call.id, out)
-                                                case other               => other
-                                            })
-                                        }
-                                    }
-                                case error =>
+                            tool.decodeAndRun(call.arguments).map {
+                                case RunOutcome.DecodeFailed(error) =>
                                     ai.updateContext { ctx =>
                                         ctx.copy(messages =
                                             ctx.messages
@@ -172,6 +178,26 @@ object Tool:
                                                 s"sure your tool calls won't produce the same error message. Do not omit required fields. Strictly follow the tool schema."
                                         )
                                     }
+                                case RunOutcome.Ran(Result.Success(out)) =>
+                                    ai.updateContext { ctx =>
+                                        ctx.copy(messages = ctx.messages.map {
+                                            case `processingMessage` => ToolMessage(call.id, out)
+                                            case other               => other
+                                        })
+                                    }
+                                case RunOutcome.Ran(failure) =>
+                                    val text = p"""
+                                        Tool '${tool.name}' failed:
+                                        ${failure}
+                                        Call ID: ${call.id.id}
+                                    """
+                                    ai.updateContext { ctx =>
+                                        ctx.copy(messages = ctx.messages.map {
+                                            case `processingMessage` => ToolMessage(call.id, text)
+                                            case other               => other
+                                        })
+                                    }
+                            }
                         }
             }
 

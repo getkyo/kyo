@@ -126,6 +126,79 @@ class ToolTest extends kyo.test.Test[Any]:
         }
     }
 
+    "a run body failing with a DecodeException routes to the generic failure message, not schema repair" in {
+        val callId = CallId("run-decode-fail-id")
+        val call   = Call(callId, "self-parsing", "7")
+        val tool = Tool.init[Int]("self-parsing") { (_: Int) =>
+            (throw MissingFieldException(Seq("inner"), "field")): Unit
+        }
+        val toolInfo = tool.infos.head.asInstanceOf[Tool.internal.Info[?, ?, LLM]]
+        LLM.run(
+            AI.init.map { ai =>
+                ai.updateContext(
+                    _.assistantMessage("", Chunk(call))
+                ).andThen(
+                    Tool.internal.handle(ai, Chunk(toolInfo), Chunk(call))
+                ).andThen(
+                    ai.context.map(identity)
+                )
+            }
+        ).map { ctx =>
+            val msgs = ctx.messages.toList
+            val toolMsg = msgs.collectFirst {
+                case ToolMessage(cid, content) if cid == callId => content
+            }
+            val hasRepairMsg = msgs.exists {
+                case SystemMessage(content) => content.contains("carefully review its schema")
+                case _                      => false
+            }
+            assert(
+                toolMsg.exists(_.contains("Tool 'self-parsing' failed")),
+                s"a run-body DecodeException must produce the generic tool-failure message, got: $toolMsg"
+            )
+            assert(
+                !hasRepairMsg,
+                "a run-body DecodeException must NOT trigger the schema-repair corrective message"
+            )
+        }
+    }
+
+    "a malformed-arguments decode failure routes to the schema-repair message, not the generic failure" in {
+        val callId   = CallId("arg-decode-fail-id")
+        val call     = Call(callId, "adder", "not-json{{{")
+        val tool     = Tool.init[Int]("adder")(n => n + 1)
+        val toolInfo = tool.infos.head.asInstanceOf[Tool.internal.Info[?, ?, LLM]]
+        LLM.run(
+            AI.init.map { ai =>
+                ai.updateContext(
+                    _.assistantMessage("", Chunk(call))
+                ).andThen(
+                    Tool.internal.handle(ai, Chunk(toolInfo), Chunk(call))
+                ).andThen(
+                    ai.context.map(identity)
+                )
+            }
+        ).map { ctx =>
+            val msgs = ctx.messages.toList
+            val hasRepairMsg = msgs.exists {
+                case SystemMessage(content) => content.contains("carefully review its schema")
+                case _                      => false
+            }
+            val hasGenericFailure = msgs.exists {
+                case ToolMessage(_, content) => content.contains("Tool 'adder' failed")
+                case _                       => false
+            }
+            assert(
+                hasRepairMsg,
+                "a malformed-arguments decode failure must inject the schema-repair corrective message"
+            )
+            assert(
+                !hasGenericFailure,
+                "a malformed-arguments decode failure must NOT produce the generic tool-failure message"
+            )
+        }
+    }
+
     "a tool whose input has a Map field produces the additionalProperties schema" in {
         case class Lookup(table: Map[String, Int]) derives Schema
         val tool   = Tool.init[Lookup]("lookup", "")(_ => ())
@@ -176,7 +249,7 @@ class ToolTest extends kyo.test.Test[Any]:
 
     "Tool.init defaults: kind Read, compactionKey keyless" in {
         val tool = Tool.init[Int]("t")(_ => 1)
-        val info = tool.infos.head
+        val info = tool.infos.head.asInstanceOf[Tool.internal.Info[Int, Int, Any]]
         assert(info.kind == Tool.Kind.Read)
         assert(info.compactionKey(42) == Absent, s"a keyless default must yield Absent, got: ${info.compactionKey(42)}")
     }
@@ -184,7 +257,7 @@ class ToolTest extends kyo.test.Test[Any]:
     "Tool.init custom write key surfaces on Info" in {
         case class FileArg(path: String) derives Schema
         val tool = Tool.init[FileArg]("edit", kind = Tool.Kind.Write, compactionKey = (i: FileArg) => Present(i.path))(_ => ())
-        val info = tool.infos.head
+        val info = tool.infos.head.asInstanceOf[Tool.internal.Info[FileArg, Unit, Any]]
         assert(info.kind == Tool.Kind.Write)
         assert(
             info.compactionKey(FileArg("/a")) == Present("/a"),
@@ -202,7 +275,7 @@ class ToolTest extends kyo.test.Test[Any]:
         val callId     = CallId("legacy-id")
         val call       = Call(callId, "legacy", "5")
         val legacyTool = Tool.init[Int]("legacy", "desc")(n => n + 1)
-        val legacyInfo = legacyTool.infos.head.asInstanceOf[Tool.internal.Info[?, ?, LLM]]
+        val legacyInfo = legacyTool.infos.head.asInstanceOf[Tool.internal.Info[Int, Int, LLM]]
         LLM.run(
             AI.init.map { ai =>
                 Tool.internal.handle(ai, Chunk(legacyInfo), Chunk(call))

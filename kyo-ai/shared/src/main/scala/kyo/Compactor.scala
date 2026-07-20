@@ -252,14 +252,18 @@ final class Compactor private (
                         case Present(_) => found
                         case Absent =>
                             byName.get(call.function) match
-                                case None => Absent
+                                case None       => Absent
                                 case Some(info) =>
-                                    Json.decode[Any](call.arguments)(using summon, info.inputSchema.asInstanceOf[Schema[Any]], summon) match
+                                    // cast: info is an existential Info[?, ?, LLM]; its captured inputSchema decodes the call
+                                    // arguments to that tool's own In, erased to Any here and fed straight to its own compactionKey.
+                                    val anyInfo = info.asInstanceOf[Tool.internal.Info[Any, Any, LLM]]
+                                    Json.decode[Any](call.arguments)(using summon, anyInfo.inputSchema, summon) match
                                         case Result.Success(in) =>
-                                            info.compactionKey(in) match
+                                            anyInfo.compactionKey(in) match
                                                 case Present(k) => Present((k, info.kind))
                                                 case Absent     => Absent
                                         case _ => Absent
+                                    end match
                 }
                 keyed match
                     case Present(kk) => acc.update(u.id, kk)

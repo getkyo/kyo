@@ -196,53 +196,56 @@ private[completion] object ClaudeCodeCompletion extends HarnessCompletion("Claud
         meter: Meter,
         tool: Tool.internal.Info[?, ?, LLM]
     )(using Frame): McpHandler[?, ?, ?] =
-        given Schema[Any] = tool.inputSchema.asInstanceOf[Schema[Any]]
-        McpHandler.toolRaw[Any](tool.name, tool.description) { input =>
-            Abort.run[Closed] {
-                meter.run {
-                    stateRef.get.map { state =>
-                        Abort.run[Throwable] {
-                            val run = tool.run.asInstanceOf[Any => Any < LLM](input)
-                            LLM.runWith(state)(run) { (next, out) =>
-                                (next, out)
+        // Skolem-opens the existential Info[?, ?, LLM] by matching it against its own case class
+        // shape; in/out bind fresh type variables so every Schema below is the concrete Schema[in]/
+        // Schema[out] info itself carries, with no cast anywhere in the handler body.
+        tool match
+            case info: Tool.internal.Info[in, out, LLM] =>
+                given Schema[in] = info.inputSchema
+                McpHandler.toolRaw[in](info.name, info.description) { input =>
+                    Abort.run[Closed] {
+                        meter.run {
+                            stateRef.get.map { state =>
+                                Abort.run[Throwable] {
+                                    LLM.runWith(state)(info.run(input)) { (next, out) =>
+                                        (next, out)
+                                    }
+                                }.map {
+                                    case Result.Success((next, out)) =>
+                                        val text       = Json.encode(out)(using info.outputSchema, summon[Frame])
+                                        val structured = Structure.encode(out)(using info.outputSchema)
+                                        val arguments  = Structure.encode(input)(using info.inputSchema)
+                                        stateRef.set(next).andThen(executedTools.getAndUpdate(_.append(ExecutedTool(
+                                            info.name,
+                                            arguments,
+                                            text
+                                        ))).unit).andThen(
+                                            McpHandler.ToolOutcome.okWith(
+                                                content = Chunk(McpContent.text(text)),
+                                                structuredContent = Present(structured)
+                                            )
+                                        )
+                                    case Result.Failure(ex) =>
+                                        val text      = toolError(info.name, ex.toString)
+                                        val arguments = Structure.encode(input)(using info.inputSchema)
+                                        executedTools.getAndUpdate(_.append(ExecutedTool(info.name, arguments, text))).unit.andThen(
+                                            McpHandler.ToolOutcome.error(text)
+                                        )
+                                    case Result.Panic(ex) =>
+                                        val text      = toolError(info.name, ex.toString)
+                                        val arguments = Structure.encode(input)(using info.inputSchema)
+                                        executedTools.getAndUpdate(_.append(ExecutedTool(info.name, arguments, text))).unit.andThen(
+                                            McpHandler.ToolOutcome.error(text)
+                                        )
+                                }
                             }
-                        }.map {
-                            case Result.Success((next, out)) =>
-                                val outputSchema = tool.outputSchema.asInstanceOf[Schema[Any]]
-                                val text         = Json.encode[Any](out)(using outputSchema, summon[Frame])
-                                val structured   = Structure.encode[Any](out)(using outputSchema)
-                                val arguments    = Structure.encode[Any](input)(using tool.inputSchema.asInstanceOf[Schema[Any]])
-                                stateRef.set(next).andThen(executedTools.getAndUpdate(_.append(ExecutedTool(
-                                    tool.name,
-                                    arguments,
-                                    text
-                                ))).unit).andThen(
-                                    McpHandler.ToolOutcome.okWith(
-                                        content = Chunk(McpContent.text(text)),
-                                        structuredContent = Present(structured)
-                                    )
-                                )
-                            case Result.Failure(ex) =>
-                                val text      = toolError(tool.name, ex.toString)
-                                val arguments = Structure.encode[Any](input)(using tool.inputSchema.asInstanceOf[Schema[Any]])
-                                executedTools.getAndUpdate(_.append(ExecutedTool(tool.name, arguments, text))).unit.andThen(
-                                    McpHandler.ToolOutcome.error(text)
-                                )
-                            case Result.Panic(ex) =>
-                                val text      = toolError(tool.name, ex.toString)
-                                val arguments = Structure.encode[Any](input)(using tool.inputSchema.asInstanceOf[Schema[Any]])
-                                executedTools.getAndUpdate(_.append(ExecutedTool(tool.name, arguments, text))).unit.andThen(
-                                    McpHandler.ToolOutcome.error(text)
-                                )
                         }
+                    }.map {
+                        case Result.Success(outcome) => outcome
+                        case Result.Failure(ex)      => McpHandler.ToolOutcome.error(toolError(info.name, ex.toString))
+                        case Result.Panic(ex)        => McpHandler.ToolOutcome.error(toolError(info.name, ex.toString))
                     }
                 }
-            }.map {
-                case Result.Success(outcome) => outcome
-                case Result.Failure(ex)      => McpHandler.ToolOutcome.error(toolError(tool.name, ex.toString))
-                case Result.Panic(ex)        => McpHandler.ToolOutcome.error(toolError(tool.name, ex.toString))
-            }
-        }
     end mcpToolHandler
 
     private def toolError(name: String, detail: String): String =

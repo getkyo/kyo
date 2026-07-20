@@ -442,7 +442,7 @@ private[completion] object CodexCompletion extends HarnessCompletion("Codex"):
                     if hasDynamicMap(schema) then stringifiedResultSchema(schema)
                     else appServerCompatible(schema)
                 else
-                    val schema = appServerSchema(Json.jsonSchema(using tool.inputSchema.asInstanceOf[Schema[Any]]))
+                    val schema = appServerSchema(tool.inputJsonSchema)
                     if hasDynamicMap(schema) then stringifiedJsonSchema(schema)
                     else schema
             )
@@ -542,7 +542,7 @@ private[completion] object CodexCompletion extends HarnessCompletion("Codex"):
             HarnessTool(
                 tool.name,
                 tool.description,
-                appServerSchema(Json.jsonSchema(using tool.inputSchema.asInstanceOf[Schema[Any]]))
+                appServerSchema(tool.inputJsonSchema)
             )
         }
         val instruction =

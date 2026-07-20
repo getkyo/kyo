@@ -52,7 +52,7 @@ object Mode:
             Frame
         ): Maybe[A] < (LLM & Async & Abort[AIGenException]) =
             LLM.env.map { e =>
-                val modes = e.mode.asInstanceOf[Chunk[Mode[LLM]]]
+                val modes: Chunk[Mode[LLM]] = e.mode
                 def loop(modes: Chunk[Mode[LLM]]): Maybe[A] < (LLM & Async & Abort[AIGenException]) =
                     if modes.isEmpty then gen
                     else modes.head(ai, loop(modes.tail))
