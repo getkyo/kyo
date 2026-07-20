@@ -212,7 +212,7 @@ class HandshakeEngineFreeTest extends Test:
                     closeRaw(shim, peerFd)
                     val handle = PosixHandle.socket(clientFd, PosixHandle.DefaultReadBufferSize, Absent)
                     val plaintext =
-                        transport.openWith(handle, transportDriver(transport), kyo.net.NetConfig.DefaultChannelCapacity)
+                        transport.openWith(handle, transportDriver(transport), transportConfig.channelCapacity)
                     plaintext.start()
                     Abort.run[NetException | Closed](transport.upgradeToTls(
                         plaintext,
@@ -247,7 +247,7 @@ class HandshakeEngineFreeTest extends Test:
                                 closeRaw(shim, pFd)
                                 val h = PosixHandle.socket(cFd, PosixHandle.DefaultReadBufferSize, Absent)
                                 val pc =
-                                    transport.openWith(h, transportDriver(transport), kyo.net.NetConfig.DefaultChannelCapacity)
+                                    transport.openWith(h, transportDriver(transport), transportConfig.channelCapacity)
                                 pc.start()
                                 Abort.run[NetException | Closed](transport.upgradeToTls(
                                     pc,

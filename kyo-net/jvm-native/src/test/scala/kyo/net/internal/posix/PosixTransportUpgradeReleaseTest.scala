@@ -133,7 +133,7 @@ class PosixTransportUpgradeReleaseTest extends Test:
                 PosixTestSockets.loopbackPair().map { case (client, accepted) =>
                     Sync.ensure(Sync.defer(discard(sock.close(accepted)))) {
                         val handle    = PosixHandle.socket(client, PosixHandle.DefaultReadBufferSize, Absent)
-                        val plaintext = transport.openWith(handle, driver, kyo.net.NetConfig.DefaultChannelCapacity)
+                        val plaintext = transport.openWith(handle, driver, transportConfig.channelCapacity)
                         assert(plaintext.start(), "the plaintext connection must start")
                         // The ReadPump's first recv is now armed (or arming); wait for the SQE to be genuinely kernel-owned.
                         awaitCondition(5.seconds)(handle.recvInFlight).map { armed =>
@@ -203,7 +203,7 @@ class PosixTransportUpgradeReleaseTest extends Test:
                     PosixTestSockets.loopbackPair().map { case (client, accepted) =>
                         Sync.ensure(Sync.defer(discard(sock.close(accepted)))) {
                             val handle    = PosixHandle.socket(client, PosixHandle.DefaultReadBufferSize, Absent)
-                            val plaintext = transport.openWith(handle, driver, kyo.net.NetConfig.DefaultChannelCapacity)
+                            val plaintext = transport.openWith(handle, driver, transportConfig.channelCapacity)
                             assert(plaintext.start(), "the plaintext connection must start")
                             awaitCondition(5.seconds)(handle.recvInFlight).map { armed =>
                                 assert(armed, "the pump's recv SQE never became kernel-owned (a hang, not the release hazard under test)")
@@ -277,7 +277,7 @@ class PosixTransportUpgradeReleaseTest extends Test:
                 PosixTestSockets.loopbackPair().map { case (client, accepted) =>
                     Sync.ensure(Sync.defer(discard(sock.close(accepted)))) {
                         val handle    = PosixHandle.socket(client, PosixHandle.DefaultReadBufferSize, Absent)
-                        val plaintext = transport.openWith(handle, driver, kyo.net.NetConfig.DefaultChannelCapacity)
+                        val plaintext = transport.openWith(handle, driver, cfg.channelCapacity)
                         assert(plaintext.start(), "the plaintext connection must start")
                         awaitCondition(5.seconds)(handle.recvInFlight).map { armed =>
                             assert(armed, "the pump's first recv never became kernel-owned")
@@ -375,7 +375,7 @@ class PosixTransportUpgradeReleaseTest extends Test:
                 PosixTestSockets.loopbackPair().map { case (client, accepted) =>
                     Sync.ensure(Sync.defer(discard(sock.close(accepted)))) {
                         val handle    = PosixHandle.socket(client, PosixHandle.DefaultReadBufferSize, Absent)
-                        val plaintext = transport.openWith(handle, driver, kyo.net.NetConfig.DefaultChannelCapacity)
+                        val plaintext = transport.openWith(handle, driver, transportConfig.channelCapacity)
                         assert(plaintext.start(), "the plaintext connection must start")
                         // The engine completes its handshake immediately, and its certSha256 (called by onFinished's wireUpgraded, after
                         // the outcome gate is won and before the success completion) closes the plaintext connection: the close routes to

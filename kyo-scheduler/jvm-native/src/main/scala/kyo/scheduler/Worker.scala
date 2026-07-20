@@ -376,8 +376,7 @@ abstract private class Worker(
 
     private def runTask(task: Task): Task.Result = {
         currentTask = task
-        val start  = clock.currentMillis()
-        val rearms = task.rearmCount()
+        val start = clock.currentMillis()
         taskStartMs = start
         try
             task.run(start, clock, Long.MaxValue)
@@ -392,13 +391,7 @@ abstract private class Worker(
             taskStartMs = 0
             Thread.interrupted() // clear stale interrupt flag before next task
             interruptLock.set(false)
-            // Bill the run only to a task this carrier still owns. A task that re-armed itself inside run
-            // (Task.rearm) chose its own priority and handed the successor to the scheduler before run
-            // returned, so by now it can already be queued on, or running under, another carrier: adding
-            // this run's wall-clock would overwrite the priority it chose and mutate a task that is no
-            // longer ours. The count is sampled before the run, so a re-arm anywhere inside it is caught.
-            if (task.rearmCount() == rearms)
-                task.addRuntime((clock.currentMillis() - start).asInstanceOf[Int])
+            task.addRuntime((clock.currentMillis() - start).asInstanceOf[Int])
         }
     }
 
