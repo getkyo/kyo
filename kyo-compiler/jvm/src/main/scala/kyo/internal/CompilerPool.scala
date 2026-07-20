@@ -179,21 +179,6 @@ private[kyo] object CompilerPool:
                 .publicationUnblockTimeoutNs(java.util.concurrent.TimeUnit.SECONDS.toNanos(40))
         )
 
-    /** An aeron client context for `aeronDir` whose error handler logs instead of aeron's default, which terminates the whole JVM
-      * (System.exit) on fatal client errors such as a driver timeout. Client errors surface as log entries plus closed-client failures on
-      * the affected operations, which the transport layer maps to typed CompilerException failures. The driver-liveness timeout matches
-      * [[launchDriver]].
-      */
-    private[kyo] def clientContext(aeronDir: String)(using frame: Frame): io.aeron.Aeron.Context =
-        new io.aeron.Aeron.Context()
-            .aeronDirectoryName(aeronDir)
-            .driverTimeoutMs(30000)
-            .errorHandler { t =>
-                import AllowUnsafe.embrace.danger
-                // Unsafe: invoked on aeron's conductor thread, outside any kyo effect.
-                Log.live.unsafe.error("aeron client error", t)
-            }
-
     /** Opens a pool: allocates the global compile-cap Meter, the one shared embedded MediaDriver,
       * and the close-on-evict instance cache (the finalizer closes every evicted instance and
       * force-kills every evicted worker). Scope-managed.
