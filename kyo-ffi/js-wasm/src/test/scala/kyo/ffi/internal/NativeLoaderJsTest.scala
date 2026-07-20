@@ -95,10 +95,12 @@ class NativeLoaderJsTest extends Test:
         assert(NativeLoader.resolveSystemLib("crypto", "darwin") == None)
     }
 
-    "jsResolve('c') resolves libc to the process default scope (null), not the unloadable bare name 'c'" in {
+    "jsResolve('c') resolves libc to a loadable system resolution, not the unloadable bare name 'c'" in {
         // Before the fix this returned the bare id "c", which koffi.load cannot dlopen on Linux glibc
-        // (the loadable SONAME is libc.so.6). It now resolves to null → RTLD_DEFAULT.
-        assert(NativeLoader.jsResolve("c") == null)
+        // (the loadable SONAME is libc.so.6). POSIX hosts resolve to null (RTLD_DEFAULT); a Windows
+        // host resolves to the universal CRT.
+        val expected = if kyo.internal.Platform.isWindows then "ucrtbase.dll" else null
+        assert(NativeLoader.jsResolve("c") == expected)
     }
 
     "jsResolve env-var override still wins over system-library resolution for 'c'" in {
