@@ -894,6 +894,15 @@ final private[kyo] class NioIoDriver private (@volatile private[net] var selecto
             // reassertPendingInterest() call below is the liveness backstop for lost interest bits: any armed op
             // whose bit was cleared by a cross-carrier race is re-asserted on this cycle. This mirrors the
             // epoll/kqueue poller's indefinite kevent + wake.
+            // Hand off everything this carrier is holding BEFORE parking in the wait below. The park pins this worker for the whole
+            // duration of the wait, and a task sitting in its local queue cannot run while it is pinned: nothing else frees a parked
+            // worker's queue, since a steal is opportunistic and preemption is deliberately withheld from a worker whose task is
+            // parked in a syscall rather than burning a time slice. That deadlocks outright when the queued task is what would
+            // produce the event this wait is about to block on. flush() re-schedules those tasks onto other workers (it excludes
+            // this one) and is a no-op off a worker thread. It cannot close the window on its own, since a task can still land
+            // here after the flush and before the wait returns; Worker.checkAvailability drains that residue once the blocking
+            // monitor flags this worker.
+            Scheduler.get.flush()
             val n = selector.select()
             // Post-select re-check: clear the pending flag now that select() has returned.
             discard(wakeupPending.compareAndSet(true, false))

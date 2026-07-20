@@ -526,6 +526,15 @@ final private[net] class PollerIoDriver private[posix] (
                 // Indefinite park; the wake event returns it early. The production epoll/kqueue backends run the @Ffi.blocking wait inline,
                 // so THIS carrier is the one parked in epoll_wait/kevent for its duration and the fiber comes back already complete. A
                 // decorating backend may instead hand back a genuinely pending fiber, which the Absent arm below carries.
+                // Hand off everything this carrier is holding BEFORE parking in the wait below. The park pins this worker for the whole
+                // duration of the wait, and a task sitting in its local queue cannot run while it is pinned: nothing else frees a parked
+                // worker's queue, since a steal is opportunistic and preemption is deliberately withheld from a worker whose task is
+                // parked in a syscall rather than burning a time slice. That deadlocks outright when the queued task is what would
+                // produce the event this wait is about to block on. flush() re-schedules those tasks onto other workers (it excludes
+                // this one) and is a no-op off a worker thread. It cannot close the window on its own, since a task can still land
+                // here after the flush and before the wait returns; Worker.checkAvailability drains that residue once the blocking
+                // monitor flags this worker.
+                Scheduler.get.flush()
                 val waitFiber = backend.poll(pollerFd, timeoutMs = -1, clBuf, clN, pollScratch)
                 val self      = task
                 waitFiber.poll() match
