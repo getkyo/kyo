@@ -345,8 +345,8 @@ class LLMTest extends kyo.test.Test[Any]:
     "an Async tool body compiles and runs in the eval loop (no Isolate required)" in {
         TestCompletionServer.run { server =>
             val config = serverConfig(server.baseUrl)
-            // Regression: Tool.init no longer requires Isolate[S, LLM, S]. Async has no such Isolate, so before
-            // this an async tool body would not compile. The body does real async work; its result feeds back.
+            // Tool.init does not require Isolate[S, LLM, S]. Async has no such Isolate, so an async tool
+            // body must compile and run without one. The body does real async work; its result feeds back.
             val asyncDoubler: Tool[Async] =
                 Tool.init[Int][Int, Async]("async_double", "doubles its input asynchronously")(n => Async.delay(1.millis)(n * 2))
             val turn1 =

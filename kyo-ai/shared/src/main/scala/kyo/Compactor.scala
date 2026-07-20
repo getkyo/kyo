@@ -11,7 +11,7 @@ import scala.annotation.tailrec
   *
   * Enable it like any enablement, `Compactor.init.map(ai.enable(_))`, which sets one
   * `Maybe[Compactor]` field on the env and registers a `recall` tool. With none enabled a
-  * generation is byte-identical to today (default-off). When enabled, `LLM.eval` /
+  * generation is byte-identical to the default-off path. When enabled, `LLM.eval` /
   * `streamAgainst` consult it at one seam between the context read and request assembly: it
   * returns a bounded, projected VIEW of the transcript (never mutating `AISession.context`).
   * The view is byte-identical between updates so the provider prompt cache survives; an
@@ -723,8 +723,8 @@ final class Compactor private (
                         )))
                             .map(result => landVerdicts(ai, ids, result))
                 // Clear the judge inflight ids on EVERY outcome (success, transport/decode failure, missing
-                // key): only success used to release them, so any failure left the band permanently in
-                // flight, monotonically poisoning every later band. The guard restores them regardless.
+                // key), not only on success: a band left in flight after a failure would stay stuck and
+                // poison every later band. The guard restores them regardless.
                 val judgeGuarded: Unit < (LLM & Async) =
                     Abort.run[HttpException | AIGenException](judgeWork).map(_ => clearInflight(ai, ids))
                 val summaryWork: Unit < (LLM & Async & Abort[HttpException | AIGenException]) =

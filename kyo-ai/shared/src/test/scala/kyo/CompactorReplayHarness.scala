@@ -23,7 +23,7 @@ object CompactorReplayHarness:
     // ---- go/no-go value types (harness-local; NOT the compaction judge's Compactor.internal.Verdict) ----
 
     /** The two-valued go/no-go outcome. Go ships the full design; NoGo routes the design's
-      * ship-baseline-plus-recall escape hatch to L0.
+      * ship-baseline-plus-recall escape hatch to a human decision.
       */
     enum GoNoGo derives CanEqual:
         case Go, NoGo

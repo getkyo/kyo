@@ -637,8 +637,8 @@ class CompactorTest extends kyo.test.Test[Any]:
 
     "an intermediate User boundary splits a run even with no vectors" in {
         Compactor.init(_.copy(tailTurns = 1)).map { c =>
-            // A run of demotable units with an intermediate UserMessage (not the campaign's first or last user,
-            // so not itself a root): the run splits around that user boundary rather than staying contiguous.
+            // A run of demotable units with an intermediate UserMessage (not the transcript's first or last user
+            // message, so not itself a root): the run splits around that user boundary rather than staying contiguous.
             val ctx   = ctxOf(sm("s"), um("first"), am("a0"), am("a1"), um("mid"), am("b0"), am("b1"), um("latest"))
             val units = c.group(ctx, book0)
             val runs  = c.summaryCandidates(units, ctx, CompactorState.empty)

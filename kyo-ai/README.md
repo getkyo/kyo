@@ -381,7 +381,7 @@ An `AISession` holds code (tool runners, effectful prompts, modes), so it is in-
 
 Where `forget`, `fresh`, and `snapshot` (above) give you manual control over a conversation's state, a `Compactor` manages a conversation's SIZE automatically. A conversation's raw transcript is the complete, immutable record: every message ever sent or received, kept forever. Left unchecked, that transcript grows without bound, and a long session eventually cannot fit inside the model's context window at all, or fits so tightly that a stale message crowds out the tail the model actually needs. A `Compactor` addresses this automatically. Enable one, and the model instead sees a bounded, projected VIEW of the transcript, recomputed at one seam shared by `gen` and `stream`. The full transcript is never edited or discarded; only the view the model reads is bounded.
 
-A compactor is default-off: with none enabled, a generation is byte-identical to today. Enable it exactly like any other enablement, by building one with `Compactor.init` (an effectful step, `Compactor < Sync`, because it allocates the per-instance state cell) and passing it to `AI.enable` / `ai.enable`.
+A compactor is default-off: with none enabled, a generation is byte-identical to one with no compactor. Enable it exactly like any other enablement, by building one with `Compactor.init` (an effectful step, `Compactor < Sync`, because it allocates the per-instance state cell) and passing it to `AI.enable` / `ai.enable`.
 
 ```scala
 def keptBounded(ai: AI): String < (Sync & LLM) =
