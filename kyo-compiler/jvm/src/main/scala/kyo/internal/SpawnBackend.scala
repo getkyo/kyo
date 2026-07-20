@@ -51,6 +51,21 @@ final private[kyo] class SpawnBackend(
             .handle(Abort.run[Timeout])
             .unit
             .andThen(process.destroyForcibly)
+            .andThen(awaitWorkerExit)
+
+    /** Confirms the worker is dead before close returns. Windows completes the exit wait slightly
+      * before `isAlive` flips false, so the wait alone is not proof of death; a closed backend must
+      * never leave a worker alive holding the shared aeron medium files, so liveness is polled
+      * (bounded) after the exit wait.
+      */
+    private def awaitWorkerExit(using Frame): Unit < Async =
+        def poll(attempts: Int): Unit < Async =
+            process.isAlive.map { alive =>
+                if !alive || attempts <= 0 then ()
+                else Async.sleep(10.millis).andThen(poll(attempts - 1))
+            }
+        process.waitFor(SpawnBackend.closeTimeout).andThen(poll(100))
+    end awaitWorkerExit
 
 end SpawnBackend
 
