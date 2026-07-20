@@ -27,11 +27,11 @@ class RolloutEnvTest extends AnyFreeSpec {
         }
 
         "a StaticFlag rollout expression selects the choice matching the process.env topology path" in {
-            js.Dynamic.global.process.env.updateDynamic("KYO_ROLLOUTENVTESTFLAGS_MODE")("on@prod;off")
+            js.Dynamic.global.process.env.updateDynamic("KYO_ROLLOUTENVTESTFLAGS_MODE")("rollout:on@prod;off")
 
             val flag = RolloutEnvTestFlags.mode
             assert(flag.source == Flag.Source.EnvironmentVariable)
-            assert(flag.initialExpression == "on@prod;off")
+            assert(flag.initialExpression == "rollout:on@prod;off")
             // With an empty path the `prod` selector cannot match and the terminal choice `off` wins.
             assert(flag() == "on")
         }
