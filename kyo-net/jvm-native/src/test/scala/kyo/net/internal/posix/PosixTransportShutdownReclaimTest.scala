@@ -50,6 +50,10 @@ class PosixTransportShutdownReclaimTest extends Test:
     "PosixTransport registerHandshake races its OWNING LISTENER's close sweep" - {
         "a handshake registered after its listener already swept is discharged by the insertion recheck, exactly once" in {
             PosixTestSockets.assumePoller()
+            // Gate BEFORE any socket is opened. This leaf builds a real engine below (TlsRealEngines.singleEngine), which cancels the
+            // leaf where BoringSSL is not staged; reaching that point with the loopback pair already open cancels out of the leaf with
+            // both descriptors still held and nothing left to close them, leaking the pair for the process lifetime.
+            TlsRealEngines.assumeBoringSslReady()
             val spy       = RecordingSocketBindings(Ffi.load[SocketBindings])
             val real      = PollerBackend.default()
             val pollerFd  = real.create()
@@ -102,6 +106,14 @@ class PosixTransportShutdownReclaimTest extends Test:
                 // Exactly once: the gate is spent, so the handshake's own outcome callback finds it lost and does not tear down twice.
                 assert(!disarm(), "the discharge must have won the exactly-once gate, leaving nothing for a later outcome to double-free")
                 assert(engine.freeCount.get() == 1, s"the engine must be freed exactly once, got ${engine.freeCount.get()}")
+                // The FD half of the same obligation. The discharge exists to reclaim the fd AND the engine, but only the engine was
+                // pinned above, so an accepted fd that is shut down (or never touched) but never closed passed this leaf while leaking
+                // the descriptor for the process lifetime. Assert the close syscall itself, through the spy that records it.
+                assert(
+                    spy.closeCounts.getOrDefault(accepted, 0) == 1,
+                    s"the discharge must close the accepted fd exactly once, got ${spy.closeCounts.getOrDefault(accepted, 0)} " +
+                        s"(closeCounts=${spy.closeCounts})"
+                )
                 driver.close()
                 // Await the driver's terminal teardown before the leaf ends, or its poll carrier is still parked in kevent when the
                 // end-of-run leak check samples the scheduler.
