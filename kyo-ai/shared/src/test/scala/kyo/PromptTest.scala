@@ -54,7 +54,7 @@ class PromptTest extends kyo.test.Test[Any]:
                 Prompt.internal.enrichedContext(Context.empty.add(UserMessage("hello", Absent)), Chunk.empty)
             )
         ).map { ctx =>
-            val msgs = ctx.messages.toList
+            val msgs = ctx.raw.toList
             assert(msgs.size == 3)
             assert(msgs(0).isInstanceOf[SystemMessage])
             assert(msgs(0).content == "instruction")
@@ -72,7 +72,7 @@ class PromptTest extends kyo.test.Test[Any]:
                 Prompt.internal.enrichedContext(Context.empty, Chunk.empty)
             )
         ).map { ctx =>
-            val sysMsgs = ctx.messages.toList.collect { case m: SystemMessage => m }
+            val sysMsgs = ctx.raw.toList.collect { case m: SystemMessage => m }
             assert(sysMsgs.size == 2)
             assert(sysMsgs(0).content == "A")
             assert(sysMsgs(1).content == "B")

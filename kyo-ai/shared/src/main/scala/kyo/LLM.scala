@@ -214,8 +214,21 @@ object LLM:
                     // when no compactor is effective (Absent).
                     LLM.session(target).map { session =>
                         LLM.env.map { scopeEnv =>
-                            val effective = session.env.compactor.orElse(scopeEnv.compactor)
-                            effective.map(_.render(target, targetContext)).getOrElse(Kyo.lift(targetContext))
+                            val effective: Maybe[Compactor[LLM]] = session.env.compactor.orElse(scopeEnv.compactor)
+                            effective match
+                                case Present(c) =>
+                                    val budget   = config.effectiveCompactionBudget
+                                    val trigger  = math.max(config.compactionLowWatermark, config.compactionHighWatermark)
+                                    val occupied = targetContext.compacted.foldLeft(0)((n, m) => n + config.tokenizer.count(m))
+                                    if occupied >= (trigger * budget) then
+                                        c.render(targetContext).map { rebuilt =>
+                                            val updated = targetContext.copy(compacted = rebuilt)
+                                            target.setContext(updated).andThen(updated)
+                                        }
+                                    else Kyo.lift(targetContext)
+                                    end if
+                                case Absent => Kyo.lift(targetContext)
+                            end match
                         }
                     }
                         .map(Prompt.internal.enrichedContext(_, toolInfos))
@@ -229,7 +242,7 @@ object LLM:
                             val completion   = config.provider.completion
                             Log.debug(
                                 s"kyo-ai stream backend=${config.provider.name} model=${config.modelName} " +
-                                    s"mode=${if stringMode then "prefix" else "elements"} messages=${context.messages.size} tools=${toolInfos.size}"
+                                    s"mode=${if stringMode then "prefix" else "elements"} messages=${context.compacted.size} tools=${toolInfos.size}"
                             ).andThen(completion.streamFragments(config, context, resultSchema, toolInfos)).map { fragments =>
                                 Stream[A, Async & Scope & Abort[AIStreamException]] {
                                     if stringMode then consumePrefixFragments(fragments, schema)
@@ -521,19 +534,32 @@ object LLM:
             // serving many instances resolves each recall against its own state (never another session's).
             // Excluded when forcing the result, matching the user tools.
             recallInfos = if forceResult then Chunk.empty
-            else env.compactor.map(c => Compactor.internal.recallTool(c, ai).infos).getOrElse(Chunk.empty)
+            else env.compactor.map(c => c.tools(ai).flatMap(_.infos)).getOrElse(Chunk.empty)
             resultTool   = Tool.internal.resultToolInfo
             allTools     = tools ++ recallInfos ++ resultTool.infos
             resultSchema = Thought.internal.resultJson(thoughts, Json.jsonSchema[A])
             ctx <- ai.context
-            // Compaction seam: consult env.compactor between the context read and enrichedContext.
-            // Absent -> view is ctx (byte-unchanged); Present -> the projected view. No new Op; the
-            // transcript slot is never shrunk (ai.context is untouched).
-            view    <- env.compactor.map(_.render(ai, ctx)).getOrElse(Kyo.lift(ctx))
+            // Compaction seam: the framework owns byte-stability. Below the occupancy trigger re-serve
+            // ctx unchanged (NO render); at/above it call render(ctx), install the rebuilt compacted
+            // list via ctx.copy(compacted = rebuilt), write it back via setContext, and send it. raw is
+            // never shrunk and never installed wholesale. Absent -> ctx unchanged.
+            view <- (env.compactor: Maybe[Compactor[LLM]]) match
+                case Present(c) =>
+                    val budget   = config.effectiveCompactionBudget
+                    val trigger  = math.max(config.compactionLowWatermark, config.compactionHighWatermark)
+                    val occupied = ctx.compacted.foldLeft(0)((n, m) => n + config.tokenizer.count(m))
+                    if occupied >= (trigger * budget) then
+                        c.render(ctx).map { rebuilt =>
+                            val updated = ctx.copy(compacted = rebuilt)
+                            ai.setContext(updated).andThen(updated)
+                        }
+                    else Kyo.lift(ctx)
+                    end if
+                case Absent => Kyo.lift(ctx)
             context <- Prompt.internal.enrichedContext(view, allTools)
             _ <- Log.debug(
                 s"kyo-ai gen backend=${config.provider.name} model=${config.modelName} " +
-                    s"messages=${context.messages.size} tools=${allTools.size} thoughts=${thoughts.size} forceResult=$forceResult"
+                    s"messages=${context.compacted.size} tools=${allTools.size} thoughts=${thoughts.size} forceResult=$forceResult"
             )
             completion <-
                 HttpClient.withConfig(_.timeout(config.timeout)) {
@@ -551,17 +577,13 @@ object LLM:
                     }
                 }
             messages = completion.messages
-            // Usage calibration: feed the completed request's provider-reported usage back to the
-            // compactor's estimator (book.tokensPerByte). calibrate sizes the enriched request itself; a
-            // no-op when no compactor is enabled or usage Absent.
-            _ <- env.compactor.map(_.calibrate(ai, completion.usage, context)).getOrElse(Kyo.unit)
             _ <- Log.debug(
                 s"kyo-ai gen backend=${config.provider.name} returned messages=${messages.size} " +
                     s"toolCalls=${messages.collect { case msg: AssistantMessage => msg.calls.size }.sum}"
             )
             _ <- ai.updateContext(ctx => messages.foldLeft(ctx)(_.add(_)))
             calls            = messages.collect { case msg: AssistantMessage => msg.calls }.flatten
-            completedCallIds = messages.collect { case ToolMessage(callId, _) => callId }
+            completedCallIds = messages.collect { case ToolMessage(callId, _, _, _, _) => callId }
             _ <- Tool.internal.handle(ai, allTools, calls.filterNot(call => completedCallIds.contains(call.id)))
             // Extract the model's structured result directly from its result_tool call (no capturing run).
             raw = calls.filter(_.function == Completion.resultToolName).headMaybe

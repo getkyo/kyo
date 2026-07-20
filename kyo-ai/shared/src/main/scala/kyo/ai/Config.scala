@@ -28,7 +28,12 @@ final case class Config private (
     timeout: Duration = 2.minutes,
     maxIterations: Int = 5,
     retrySchedule: Schedule = Schedule.repeat(10),
-    embedder: Maybe[Config] = Absent
+    embedder: Maybe[Config] = Absent,
+    compactionBudget: Maybe[Int] = Absent,
+    compactionHighWatermark: Double = 0.7,
+    compactionLowWatermark: Double = 0.45,
+    compactionHardLimit: Double = 0.9,
+    tokenizer: Compactor.Tokenizer = Compactor.Tokenizer.default
 ):
     def apiUrl(url: String): Config                    = copy(apiUrl = url)
     def apiKey(key: String): Config                    = copy(apiKey = Present(key))
@@ -41,23 +46,51 @@ final case class Config private (
     def maxIterations(max: Int): Config                = copy(maxIterations = max)
     def retrySchedule(retrySchedule: Schedule): Config = copy(retrySchedule = retrySchedule)
 
-    /** Pairs a different provider config for embeddings. When a compactor is enabled, its embedding
-      * step resolves `embedder.getOrElse(this)` and embeds through THAT provider's completion, so
-      * `Absent` embeds with the chat config itself. `Completion.embed` does not read this field; the
-      * resolution lives in the compactor.
+    /** Pins the token budget the compacted view must fit within, scaled per model window when
+      * unset (default min(modelMaxTokens/2, 48000), read at render time via
+      * effectiveCompactionBudget). Floors at 1. The escape hatch for other mechanics is the
+      * Compactor trait.
+      */
+    def compactionBudget(tokens: Int): Config = copy(compactionBudget = Present(tokens.max(1)))
+
+    /** Occupancy fraction of the effective budget at/above which the seam triggers a boundary
+      * render. Clamped to [0, 1]; the read site guards low/high ordering (the trigger is always
+      * max(compactionLowWatermark, compactionHighWatermark)).
+      */
+    def compactionHighWatermark(fraction: Double): Config =
+        copy(compactionHighWatermark = fraction.max(0.0).min(1.0))
+
+    /** Occupancy fraction of the effective budget a boundary render targets. Clamped to [0, 1];
+      * the read site guards low/high ordering (the target is always
+      * min(compactionLowWatermark, compactionHighWatermark)).
+      */
+    def compactionLowWatermark(fraction: Double): Config =
+        copy(compactionLowWatermark = fraction.max(0.0).min(1.0))
+
+    /** Fraction of the ACTUAL model window above which the forced path aborts rather than send.
+      * Clamped to [0, 1] so this can never disable the forced-path guard.
+      */
+    def compactionHardLimit(fraction: Double): Config =
+        copy(compactionHardLimit = fraction.max(0.0).min(1.0))
+
+    /** The pluggable token accountant used for occupancy (default Compactor.Tokenizer.default). */
+    def tokenizer(tokenizer: Compactor.Tokenizer): Config = copy(tokenizer = tokenizer)
+
+    /** The effective compaction budget: the user-pinned value if compactionBudget is Present,
+      * else derived from the ACTIVE modelMaxTokens, so a copy-based model switch (Config#model)
+      * re-derives it automatically rather than going stale.
+      */
+    private[kyo] def effectiveCompactionBudget: Int =
+        compactionBudget.getOrElse(math.min(modelMaxTokens / 2, 48000))
+
+    /** Pairs a different provider config for embeddings. `Completion.embed` does not read this field;
+      * a caller that embeds resolves `embedder.getOrElse(this)` itself and embeds through THAT
+      * provider's completion, so `Absent` embeds with the chat config itself.
       */
     def embedder(config: Config): Config = copy(embedder = Present(config))
 
     // Internal Maybe form for cross-run seed derivation, where the prior seed may be Absent.
     private[kyo] def seed(seed: Maybe[Int]): Config = copy(seed = seed)
-
-    /** Adopts another config's model identity (name and token cap) while keeping this config's transport
-      * (provider, credentials, apiUrl). The compactor resolves its cheap-tier judge/summarizer onto the
-      * active chat config through this, so the background call inherits the live credentials and endpoint
-      * rather than the credential-less catalog literal.
-      */
-    private[kyo] def modelFrom(model: Config): Config =
-        copy(modelName = model.modelName, modelMaxTokens = model.modelMaxTokens)
 
     def model(provider: Config.Provider, modelName: String, modelMaxTokens: Int): Config =
         copy(
@@ -124,9 +157,9 @@ object Config:
         val orgKey: String = keyName + "_ORG"
         def default: Config
 
-        /** The provider's cheap-tier catalog entry, selected by the compactor's judge/summarizer.
-          * Concrete with a `= default` fallback: a `Provider` subclass that does not override it
-          * runs on `default`; the nine built-in catalogs override it with their cheap entry.
+        /** The provider's cheap-tier catalog entry. Concrete with a `= default` fallback: a
+          * `Provider` subclass that does not override it runs on `default`; the nine built-in catalogs
+          * override it with their cheap entry.
           */
         def small: Config = default
     end Provider

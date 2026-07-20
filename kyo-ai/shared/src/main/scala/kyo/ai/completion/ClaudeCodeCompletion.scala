@@ -99,7 +99,7 @@ private[completion] object ClaudeCodeCompletion extends HarnessCompletion("Claud
                     (input, prompt) <- turnInput(context)
                     schema = Structure.encode(resultSchema)
                     _ <- Log.debug(
-                        s"kyo-ai Claude Code mode=result messages=${context.messages.size} tools=${tools.map(_.name).mkString(",")}"
+                        s"kyo-ai Claude Code mode=result messages=${context.compacted.size} tools=${tools.map(_.name).mkString(",")}"
                     )
                     raw      <- runCli(config, context, schema, input, prompt, bridge)
                     executed <- bridge.map(_.executedTools.get).getOrElse(Kyo.lift(Chunk.empty))
@@ -340,7 +340,7 @@ private[completion] object ClaudeCodeCompletion extends HarnessCompletion("Claud
     end streamCommandArgs
 
     private def turnInput(context: Context)(using Frame): (String, Maybe[String]) < Abort[AIGenException] =
-        val messages = context.messages.filterNot(_.role == Role.System)
+        val messages = context.compacted.filterNot(_.role == Role.System)
         val input =
             messages.lastMaybe match
                 case Present(_: UserMessage) => messages
@@ -359,7 +359,7 @@ private[completion] object ClaudeCodeCompletion extends HarnessCompletion("Claud
                 Return only JSON matching this result envelope schema:
                 ${Json.encode(resultSchema)}
             """
-        (context.messages.collect { case SystemMessage(content) => content } :+ instruction).mkString("\n\n")
+        (context.compacted.collect { case SystemMessage(content, _, _, _) => content } :+ instruction).mkString("\n\n")
     end streamInstructions
 
     private def outputInstructions(context: Context, schema: Structure.Value, hasTools: Boolean)(using Frame): String =
@@ -379,7 +379,7 @@ private[completion] object ClaudeCodeCompletion extends HarnessCompletion("Claud
                     Return only JSON matching this result envelope schema:
                     ${Json.encode(schema)}
                 """
-        (context.messages.collect { case SystemMessage(content) => content } :+ instruction).mkString("\n\n")
+        (context.compacted.collect { case SystemMessage(content, _, _, _) => content } :+ instruction).mkString("\n\n")
     end outputInstructions
 
     private[kyo] def inputJsonLines(messages: Chunk[Message])(using Frame): String < Abort[AIGenException] =
@@ -392,7 +392,7 @@ private[completion] object ClaudeCodeCompletion extends HarnessCompletion("Claud
 
     private def inputEventsForMessage(message: Message)(using Frame): Chunk[InputEvent] < Abort[AIGenException] =
         message match
-            case AssistantMessage(_, calls) if calls.exists(_.function == Completion.resultToolName) =>
+            case AssistantMessage(_, calls, _, _, _) if calls.exists(_.function == Completion.resultToolName) =>
                 Kyo.foreach(calls.filter(_.function == Completion.resultToolName)) { call =>
                     InputEvent(
                         "assistant",
@@ -414,7 +414,7 @@ private[completion] object ClaudeCodeCompletion extends HarnessCompletion("Claud
                     if nonResult.calls.isEmpty then resultEvents
                     else inputEvent(nonResult).map(event => resultEvents.prepended(event))
                 }
-            case ToolMessage(callId, _) if callId.id == "harness-result" =>
+            case ToolMessage(callId, _, _, _, _) if callId.id == "harness-result" =>
                 Chunk.empty[InputEvent]
             case _ =>
                 inputEvent(message).map(Chunk(_))
@@ -422,9 +422,9 @@ private[completion] object ClaudeCodeCompletion extends HarnessCompletion("Claud
 
     private def inputEvent(message: Message)(using Frame): InputEvent < Abort[AIGenException] =
         message match
-            case SystemMessage(content) =>
+            case SystemMessage(content, _, _, _) =>
                 Abort.fail(AIDecodeException(s"Claude Code system message was not routed to system prompt: $content"))
-            case UserMessage(content, Present(image)) =>
+            case UserMessage(content, Present(image), _, _, _) =>
                 InputEvent(
                     "user",
                     InputMessage(
@@ -435,15 +435,15 @@ private[completion] object ClaudeCodeCompletion extends HarnessCompletion("Claud
                         )
                     )
                 )
-            case UserMessage(content, _) =>
+            case UserMessage(content, _, _, _, _) =>
                 InputEvent("user", InputMessage(Role.User.name, List(InputContent("text", text = Present(content)))))
-            case AssistantMessage(content, calls) =>
+            case AssistantMessage(content, calls, _, _, _) =>
                 Kyo.foreach(calls)(inputToolCall).map { callBlocks =>
                     val contentBlocks =
                         (if content.nonEmpty then List(InputContent("text", text = Present(content))) else Nil) ++ callBlocks.toList
                     InputEvent("assistant", InputMessage(Role.Assistant.name, contentBlocks))
                 }
-            case ToolMessage(callId, content) =>
+            case ToolMessage(callId, content, _, _, _) =>
                 InputEvent(
                     "user",
                     InputMessage(

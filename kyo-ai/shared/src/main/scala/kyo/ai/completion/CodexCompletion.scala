@@ -535,8 +535,8 @@ private[completion] object CodexCompletion extends HarnessCompletion("Codex"):
     )(using Frame): String =
         val userTools = tools.filterNot(_.name == Completion.resultToolName)
         val finishingToolResult = conversationMessages(context).lastMaybe.exists {
-            case ToolMessage(_, content) => isSuccessfulToolResult(content)
-            case _                       => false
+            case ToolMessage(_, content, _, _, _) => isSuccessfulToolResult(content)
+            case _                                => false
         }
         val toolSpecs = userTools.map { tool =>
             HarnessTool(
@@ -579,7 +579,7 @@ private[completion] object CodexCompletion extends HarnessCompletion("Codex"):
                     Do not rename, abbreviate, split, merge, or omit schema properties.
                     Use the native injected conversation history and current turn input.
                 """
-        (context.messages.collect { case SystemMessage(content) => content } :+ instruction).mkString("\n\n")
+        (context.compacted.collect { case SystemMessage(content, _, _, _) => content } :+ instruction).mkString("\n\n")
     end outputInstructions
 
     private def isSuccessfulToolResult(content: String): Boolean =
@@ -595,7 +595,7 @@ private[completion] object CodexCompletion extends HarnessCompletion("Codex"):
 
     private def turnInput(context: Context): Chunk[TurnInput] =
         conversationMessages(context).lastMaybe match
-            case Present(UserMessage(content, image)) =>
+            case Present(UserMessage(content, image, _, _, _)) =>
                 Chunk(TurnInput("text", text = Present(content))).concat(
                     image.map(img => Chunk(TurnInput("image", url = Present(s"data:image/jpeg;base64,${img.base64}")))).getOrElse(
                         Chunk.empty
@@ -607,19 +607,19 @@ private[completion] object CodexCompletion extends HarnessCompletion("Codex"):
     end turnInput
 
     private def conversationMessages(context: Context): Chunk[Message] =
-        context.messages.filterNot(_.role == Role.System)
+        context.compacted.filterNot(_.role == Role.System)
 
     private def modelOverride(config: Config): Maybe[String] =
         if config.modelName.isEmpty then Absent else Present(config.modelName)
 
     private[kyo] def historyItems(messages: Chunk[Message])(using Frame): Chunk[Structure.Value] < Abort[AIGenException] =
         Kyo.foreach(messages.filterNot(_.role == Role.System)) {
-            case UserMessage(content, image) =>
+            case UserMessage(content, image, _, _, _) =>
                 val blocks =
                     List(ContentItem("input_text", text = Present(content))) ++
                         image.toList.map(img => ContentItem("input_image", image_url = Present(s"data:image/jpeg;base64,${img.base64}")))
                 Chunk(Structure.encode(ResponseHistoryItem("message", role = Present("user"), content = Present(blocks))))
-            case AssistantMessage(content, calls) =>
+            case AssistantMessage(content, calls, _, _, _) =>
                 Kyo.foreach(calls) { call =>
                     Json.decode[Structure.Value](call.arguments) match
                         case Result.Success(_) =>
@@ -644,13 +644,13 @@ private[completion] object CodexCompletion extends HarnessCompletion("Codex"):
                         else Chunk.empty
                     textItem.concat(callItems)
                 }
-            case ToolMessage(callId, content) =>
+            case ToolMessage(callId, content, _, _, _) =>
                 Chunk(Structure.encode(ResponseHistoryItem(
                     "function_call_output",
                     call_id = Present(callId.id),
                     output = Present(content)
                 )))
-            case SystemMessage(_) =>
+            case SystemMessage(_, _, _, _) =>
                 Chunk.empty[Structure.Value]
         }.map(_.flattenChunk)
     end historyItems

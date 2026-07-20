@@ -47,7 +47,8 @@ object AI:
       */
     trait Enablement[-S]:
         // How this enablement layers itself onto the scope env (AI.enable) or one instance's session
-        // (ai.enable). private[kyo] so only the module's five kinds implement it; users compose, never extend.
+        // (ai.enable). private[kyo] so only the module's five kinds implement it; users compose, or
+        // implement a kind that is itself open (Compactor); the kind set is closed.
         private[kyo] def enableIn(env: AIEnv)(using Frame): AIEnv
         private[kyo] def enableIn(session: AISession)(using Frame): AISession
     end Enablement

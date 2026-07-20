@@ -15,7 +15,7 @@ case class AIEnv(
     tools: Chunk[Tool[Any]],
     thoughts: Chunk[Thought[Any]],
     mode: Chunk[Mode[Any]],
-    compactor: Maybe[Compactor] = Absent
+    compactor: Maybe[Compactor[Any]] = Absent
 ):
     /** Sets the config (`Present`), overriding any inherited one. */
     def config(config: Config): AIEnv = copy(config = Present(config))
@@ -23,7 +23,8 @@ case class AIEnv(
     /** Sets the compactor (`Present`). Single active policy, last-wins, not a pipeline: an instance
       * env holds `Absent` to inherit the scope compactor or `Present` to override it.
       */
-    def compactor(compactor: Compactor): AIEnv = copy(compactor = Present(compactor))
+    // Holds the erased Compactor[Any] carrier, mirroring Chunk[Mode[Any]]/Prompt[Any].
+    def compactor(compactor: Compactor[Any]): AIEnv = copy(compactor = Present(compactor))
 
     /** Transforms the config when one is set; a no-op while it is `Absent`. */
     def mapConfig(f: Config => Config): AIEnv = copy(config = config.map(f))

@@ -43,7 +43,7 @@ end HarnessCompletion
 private[completion] object HarnessCompletion:
 
     private[kyo] def resultInstructions(context: Context)(using Frame): String =
-        context.messages.collect { case SystemMessage(content) => content }.mkString("\n\n")
+        context.compacted.collect { case SystemMessage(content, _, _, _) => content }.mkString("\n\n")
     end resultInstructions
 
     private[kyo] def resultOutput(provider: String, raw: String)(using Frame): Chunk[Message] < Abort[AIGenException] =

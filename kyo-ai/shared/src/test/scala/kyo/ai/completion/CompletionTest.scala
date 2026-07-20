@@ -11,6 +11,14 @@ class CompletionTest extends kyo.test.Test[Any]:
     def keyedOpenAIConfig(baseUrl: String): Config =
         Config.OpenAI.default.apiKey("test-key").apiUrl(baseUrl)
 
+    "usage kept public; not consumed by compactor" in {
+        // Completion.Usage stays a public, user-readable type: a Reply carries it for user code. The
+        // compactor consumes no usage; render is model-free and never touches a Completion.Reply. Here
+        // assert the public shape is readable by user code.
+        val u = Completion.Usage(inputTokens = 120, outputTokens = 40, cachedInputTokens = Present(64))
+        assert(u.inputTokens == 120 && u.outputTokens == 40 && u.cachedInputTokens == Present(64), s"Usage is public and readable, got: $u")
+    }
+
     "missing API key aborts typed, never throws" in {
         val config = Config.OpenAI.default
         val ctx    = Context.empty

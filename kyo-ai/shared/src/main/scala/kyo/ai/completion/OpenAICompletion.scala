@@ -230,15 +230,15 @@ private[completion] object OpenAICompletion extends Completion:
         private def toEntry(msg: Message)(using Frame): MessageEntry =
             def text(s: String): Structure.Value = Structure.Value.Str(s)
             msg match
-                case UserMessage(content, Present(image)) =>
+                case UserMessage(content, Present(image), _, _, _) =>
                     val parts = List(
                         ContentPart("text", text = Present(content)),
                         ContentPart("image_url", image_url = Present(ImageUrl(s"data:image/jpeg;base64,${image.base64}")))
                     )
                     MessageEntry("user", Structure.encode(parts))
-                case UserMessage(content, _) =>
+                case UserMessage(content, _, _, _, _) =>
                     MessageEntry("user", text(content))
-                case AssistantMessage(content, calls) =>
+                case AssistantMessage(content, calls, _, _, _) =>
                     MessageEntry(
                         "assistant",
                         text(content),
@@ -246,9 +246,9 @@ private[completion] object OpenAICompletion extends Completion:
                             ToolCall(c.id.id, "function", FunctionCall(c.function, c.arguments))
                         ).toList)
                     )
-                case ToolMessage(callId, content) =>
+                case ToolMessage(callId, content, _, _, _) =>
                     MessageEntry("tool", text(content), tool_call_id = Present(callId.id))
-                case SystemMessage(content) =>
+                case SystemMessage(content, _, _, _) =>
                     MessageEntry("system", text(content))
             end match
         end toEntry
@@ -260,7 +260,7 @@ private[completion] object OpenAICompletion extends Completion:
                 tools: Chunk[Tool.internal.Info[?, ?, LLM]],
                 resultSchema: Maybe[JsonSchema]
             )(using Frame): Request =
-                val entries = ctx.messages.map(toEntry).toList
+                val entries = ctx.compacted.map(toEntry).toList
                 val toolDefs =
                     if tools.isEmpty then Absent
                     else

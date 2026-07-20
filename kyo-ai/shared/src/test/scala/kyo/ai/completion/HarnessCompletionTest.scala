@@ -18,7 +18,7 @@ class HarnessCompletionTest extends kyo.test.Test[Any]:
             .assistantMessage("calling", Chunk(Call(CallId("c1"), "lookup", """{"q":"kyo"}""")))
             .toolMessage(CallId("c1"), """{"answer":"Kyo"}""")
 
-        Abort.run[AIGenException](ClaudeCodeCompletion.inputJsonLines(ctx.messages)).map {
+        Abort.run[AIGenException](ClaudeCodeCompletion.inputJsonLines(ctx.raw)).map {
             case Result.Success(lines) =>
                 assert(lines.contains("\"role\":\"user\""), s"user role missing: $lines")
                 assert(lines.contains("\"role\":\"assistant\""), s"assistant role missing: $lines")
@@ -48,7 +48,7 @@ class HarnessCompletionTest extends kyo.test.Test[Any]:
                   |Call ID: c1""".stripMargin
             )
 
-        Abort.run[AIGenException](ClaudeCodeCompletion.inputJsonLines(ctx.messages)).map {
+        Abort.run[AIGenException](ClaudeCodeCompletion.inputJsonLines(ctx.raw)).map {
             case Result.Success(lines) =>
                 assert(lines.contains("\"type\":\"tool_result\""), s"tool_result block missing: $lines")
                 assert(lines.contains("\"tool_use_id\":\"c1\""), s"tool result id missing: $lines")
@@ -66,7 +66,7 @@ class HarnessCompletionTest extends kyo.test.Test[Any]:
             )
             .toolMessage(CallId("harness-result"), "{}")
 
-        Abort.run[AIGenException](ClaudeCodeCompletion.inputJsonLines(ctx.messages)).map {
+        Abort.run[AIGenException](ClaudeCodeCompletion.inputJsonLines(ctx.raw)).map {
             case Result.Success(lines) =>
                 assert(lines.contains("Kyo history record for one previous assistant result"), s"history record missing: $lines")
                 assert(lines.contains("status = ready"), s"status field missing: $lines")
@@ -86,7 +86,7 @@ class HarnessCompletionTest extends kyo.test.Test[Any]:
             .assistantMessage("calling", Chunk(Call(CallId("c1"), "lookup", """{"q":"kyo"}""")))
             .toolMessage(CallId("c1"), """{"answer":"Kyo"}""")
 
-        Abort.run[AIGenException](CodexCompletion.historyItems(ctx.messages)).map {
+        Abort.run[AIGenException](CodexCompletion.historyItems(ctx.raw)).map {
             case Result.Success(items) =>
                 val encoded = Json.encode(items.toList)
                 assert(encoded.contains("\"type\":\"message\""), s"message item missing: $encoded")

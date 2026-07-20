@@ -180,6 +180,56 @@ class ConfigTest extends kyo.test.Test[Any]:
         assert(Config.OpenAI.small.modelName != Config.OpenAI.default.modelName)
     }
 
+    "compaction config is exactly five fields on kyo.ai.Config; init takes nothing (INV-CMP-58)" in {
+        val cfg = Config.Anthropic.default
+            .compactionBudget(1000)
+            .compactionHighWatermark(0.7)
+            .compactionLowWatermark(0.45)
+            .compactionHardLimit(0.9)
+        assert(cfg.compactionBudget == Present(1000))
+        assert(cfg.compactionHighWatermark == 0.7)
+        assert(cfg.compactionLowWatermark == 0.45)
+        assert(cfg.compactionHardLimit == 0.9)
+        val d = Config.Anthropic.default
+        assert(d.compactionBudget == Absent, s"compactionBudget defaults Absent (Maybe[Int]), got: ${d.compactionBudget}")
+        assert(d.compactionHighWatermark == 0.7 && d.compactionLowWatermark == 0.45 && d.compactionHardLimit == 0.9)
+        assert(d.tokenizer eq Compactor.Tokenizer.default, "tokenizer defaults to Compactor.Tokenizer.default")
+        val c: Compactor[Any] = Compactor.init
+        assert(c eq Compactor.init, "Compactor.init takes no parameters and returns the shared default Compactor[Any]")
+    }
+
+    "effectiveCompactionBudget scales with modelMaxTokens; a copy-based model switch re-derives it; Present pins survive the switch (F7.1-r2)" in {
+        val base = Config.Anthropic.default.model(Config.Anthropic, "m", 200000)
+        assert(base.effectiveCompactionBudget == 48000, s"min(100000, 48000) = 48000, got: ${base.effectiveCompactionBudget}")
+        val big = base.model(Config.Anthropic, "m2", 1000000)
+        assert(
+            big.effectiveCompactionBudget == 48000,
+            s"re-derived from the ACTIVE modelMaxTokens: min(500000, 48000) = 48000, got: ${big.effectiveCompactionBudget}"
+        )
+        val small = base.model(Config.Anthropic, "m3", 60000)
+        assert(
+            small.effectiveCompactionBudget == 30000,
+            s"a small-window model reads min(30000, 48000) = 30000, got: ${small.effectiveCompactionBudget}"
+        )
+        val pinned = base.compactionBudget(5000)
+        assert(pinned.effectiveCompactionBudget == 5000, "a user-pinned budget is used verbatim before a switch")
+        assert(
+            pinned.model(Config.Anthropic, "m4", 1000000).effectiveCompactionBudget == 5000,
+            "a user-pinned budget is never overridden by a model switch"
+        )
+    }
+
+    "compaction builders clamp into [0,1]; compactionBudget floors at 1 (F6.2-r2)" in {
+        val c = Config.Anthropic.default
+        assert(c.compactionHighWatermark(1.3).compactionHighWatermark == 1.0)
+        assert(c.compactionLowWatermark(-0.2).compactionLowWatermark == 0.0)
+        assert(
+            c.compactionHardLimit(2.0).compactionHardLimit == 1.0,
+            "hardLimit clamps to 1.0 so it can never disable the forced-path guard"
+        )
+        assert(c.compactionBudget(-5).compactionBudget == Present(1), "compactionBudget floors at 1, never non-positive")
+    }
+
     private class TestUnsafeSystem(
         envVars: Map[String, String] = Map.empty,
         properties: Map[String, String] = Map.empty

@@ -47,7 +47,7 @@ class LLMTest extends kyo.test.Test[Any]:
 
     "run discharges LLM to Async leaving an Async value" in {
         LLM.run(
-            AI.initWith(ai => ai.systemMessage("hi").andThen(ai.context.map(_.messages.size)))
+            AI.initWith(ai => ai.systemMessage("hi").andThen(ai.context.map(_.raw.size)))
         ).map(result => assert(result == 1))
     }
 
@@ -57,7 +57,7 @@ class LLMTest extends kyo.test.Test[Any]:
                 ai.systemMessage("s")
                     .andThen(ai.userMessage("u"))
                     .andThen(ai.assistantMessage("a"))
-                    .andThen(ai.context.map(_.messages.map(_.role.name)))
+                    .andThen(ai.context.map(_.raw.map(_.role.name)))
             }
         ).map(roles => assert(roles == Chunk("system", "user", "assistant")))
     }
@@ -67,7 +67,7 @@ class LLMTest extends kyo.test.Test[Any]:
             AI.initWith { ai =>
                 ai.systemMessage("outer")
                     .andThen(AI.forget(ai.systemMessage("inner")))
-                    .andThen(ai.context.map(_.messages.map(_.content)))
+                    .andThen(ai.context.map(_.raw.map(_.content)))
             }
         ).map(contents => assert(contents == Chunk("outer")))
     }
@@ -210,7 +210,7 @@ class LLMTest extends kyo.test.Test[Any]:
                             },
                             AI.config.andThen(reachedInner.await)
                         ).andThen {
-                            ai.context.map(_.messages.map(_.content)).map { contents =>
+                            ai.context.map(_.raw.map(_.content)).map { contents =>
                                 assert(contents == Chunk("parent"), s"parent context must be unchanged after the interrupt, got: $contents")
                             }
                         }
@@ -490,7 +490,7 @@ class LLMTest extends kyo.test.Test[Any]:
                 ai.userMessage("hi").andThen(ai)
             }
         }.map { case (state, ai) =>
-            val msgs = state.contextOf(ai).messages
+            val msgs = state.contextOf(ai).raw
             assert(msgs == Chunk(UserMessage("hi", Absent)), s"expected exactly one userMessage, got: $msgs")
         }
     }
@@ -518,7 +518,7 @@ class LLMTest extends kyo.test.Test[Any]:
             }
         }.map { ctxs =>
             assert(ctxs.size == 3, s"expected 3 results from fill(3), got: ${ctxs.size}")
-            assert(ctxs.forall(_.messages.size == 1), s"each context should have 1 message, got: $ctxs")
+            assert(ctxs.forall(_.raw.size == 1), s"each context should have 1 message, got: $ctxs")
         }
     }
 
@@ -561,7 +561,7 @@ class LLMTest extends kyo.test.Test[Any]:
             }
         }.map { ctx =>
             val expected = Chunk(UserMessage("a", Absent), UserMessage("b", Absent))
-            assert(ctx.messages == expected, s"context should have two messages in order, got: ${ctx.messages}")
+            assert(ctx.raw == expected, s"context should have two messages in order, got: ${ctx.raw}")
         }
     }
 
@@ -638,7 +638,7 @@ class LLMTest extends kyo.test.Test[Any]:
                             // back in parent: read config (should still be 0.2) and shared context
                             AI.config.map { config =>
                                 shared.context.map { sharedCtx =>
-                                    (config.temperature, sharedCtx.messages.map(_.content))
+                                    (config.temperature, sharedCtx.raw.map(_.content))
                                 }
                             }
                         }
@@ -721,9 +721,9 @@ class LLMTest extends kyo.test.Test[Any]:
                 LLM.run(config) {
                     AI.init.map { ai =>
                         ai.userMessage("hello").andThen {
-                            ai.context.map(_.messages.size).map { before =>
+                            ai.context.map(_.raw.size).map { before =>
                                 ai.gen[String].andThen {
-                                    ai.context.map(_.messages.size).map { after =>
+                                    ai.context.map(_.raw.size).map { after =>
                                         assert(
                                             after >= before,
                                             s"the transcript slot never shrinks across the seam: before=$before after=$after"
@@ -742,47 +742,49 @@ class LLMTest extends kyo.test.Test[Any]:
         // The genLoop env-merge threads the compactor with instance-over-scope precedence
         // (session.env.compactor.orElse(scopeEnv.compactor)): a single active policy, last-wins, never a
         // pipeline. Read the scope and instance envs directly (no generation turn) and assert the precedence.
-        Compactor.init.map { scopeCompactor =>
-            Compactor.init.map { instanceCompactor =>
-                val withScope =
-                    LLM.run {
-                        AI.enable(scopeCompactor) {
-                            AI.init.map { withInstance =>
-                                withInstance.enable(instanceCompactor).andThen {
-                                    AI.init.map { bare =>
-                                        for
-                                            scopeEnv <- AI.env
-                                            instEnv  <- withInstance.snapshot.map(_.env)
-                                            bareEnv  <- bare.snapshot.map(_.env)
-                                        yield (scopeEnv.compactor, instEnv.compactor, bareEnv.compactor)
-                                    }
-                                }
+        // Two DISTINCT compactor instances (Compactor.init returns the shared Default singleton, so a
+        // precedence test needs its own instances to tell scope from instance by reference).
+        val scopeCompactor: Compactor[Any] = new Compactor[Any]:
+            def render(ctx: Context)(using Frame): Chunk[Message] < (LLM & Async & Abort[AIGenException]) = ctx.compacted
+        val instanceCompactor: Compactor[Any] = new Compactor[Any]:
+            def render(ctx: Context)(using Frame): Chunk[Message] < (LLM & Async & Abort[AIGenException]) = ctx.compacted
+        val withScope =
+            LLM.run {
+                AI.enable(scopeCompactor) {
+                    AI.init.map { withInstance =>
+                        withInstance.enable(instanceCompactor).andThen {
+                            AI.init.map { bare =>
+                                for
+                                    scopeEnv <- AI.env
+                                    instEnv  <- withInstance.snapshot.map(_.env)
+                                    bareEnv  <- bare.snapshot.map(_.env)
+                                yield (scopeEnv.compactor, instEnv.compactor, bareEnv.compactor)
                             }
                         }
                     }
-                val noScope =
-                    LLM.run {
-                        AI.init.map { bare =>
-                            for
-                                scopeEnv <- AI.env
-                                instEnv  <- bare.snapshot.map(_.env)
-                            yield (scopeEnv.compactor, instEnv.compactor)
-                        }
-                    }
-                withScope.map { case (scopeC, instC, bareC) =>
-                    assert(scopeC.exists(_ eq scopeCompactor), "scope env carries scopeCompactor")
-                    assert(instC.exists(_ eq instanceCompactor), "instance env carries instanceCompactor")
-                    assert(
-                        instC.orElse(scopeC).exists(_ eq instanceCompactor),
-                        "both present -> merge picks instanceCompactor (instance-over-scope)"
-                    )
-                    assert(bareC.isEmpty, "a bare instance holds Absent")
-                    assert(bareC.orElse(scopeC).exists(_ eq scopeCompactor), "only scope present -> merge picks scopeCompactor")
-                    noScope.map { case (nScopeC, nInstC) =>
-                        assert(nScopeC.isEmpty && nInstC.isEmpty, "neither present -> both Absent (byte-unchanged)")
-                        assert(nInstC.orElse(nScopeC).isEmpty, "neither present -> merged compactor stays Absent")
-                    }
                 }
+            }
+        val noScope =
+            LLM.run {
+                AI.init.map { bare =>
+                    for
+                        scopeEnv <- AI.env
+                        instEnv  <- bare.snapshot.map(_.env)
+                    yield (scopeEnv.compactor, instEnv.compactor)
+                }
+            }
+        withScope.map { case (scopeC, instC, bareC) =>
+            assert(scopeC.exists(_ eq scopeCompactor), "scope env carries scopeCompactor")
+            assert(instC.exists(_ eq instanceCompactor), "instance env carries instanceCompactor")
+            assert(
+                instC.orElse(scopeC).exists(_ eq instanceCompactor),
+                "both present -> merge picks instanceCompactor (instance-over-scope)"
+            )
+            assert(bareC.isEmpty, "a bare instance holds Absent")
+            assert(bareC.orElse(scopeC).exists(_ eq scopeCompactor), "only scope present -> merge picks scopeCompactor")
+            noScope.map { case (nScopeC, nInstC) =>
+                assert(nScopeC.isEmpty && nInstC.isEmpty, "neither present -> both Absent (byte-unchanged)")
+                assert(nInstC.orElse(nScopeC).isEmpty, "neither present -> merged compactor stays Absent")
             }
         }
     }
@@ -793,29 +795,29 @@ class LLMTest extends kyo.test.Test[Any]:
         // request is compacted, i.e. the INSTANCE compactor's rendering (instance-over-scope) reached the
         // wire, not merely that Maybe.orElse picks it in the test body.
         TestCompletionServer.run { server =>
-            val cfg = serverConfig(server.baseUrl)
-            // Enqueue several result bodies: the compactor's background embed/judge forks race the main gen
-            // for scripted responses off the shared queue, so the main completion needs one available whatever
-            // the arrival order. Feeding the forks a result body is harmless (they decode-fail and swallow).
-            Kyo.foreachDiscard(1 to 6)(_ => server.enqueueBody(resultToolBody("""{"resultValue":"done"}"""))).andThen {
-                Compactor.init(_.copy(effectiveCap = 100000, windowFraction = 1.0)).map { scopeC =>
-                    Compactor.init(_.copy(effectiveCap = 40, windowFraction = 1.0, tailTurns = 1)).map { instC =>
-                        LLM.run(cfg) {
-                            AI.enable(scopeC) {
-                                AI.init.map { ai =>
-                                    val ctx = ctxOf(sm("s"), um("first"), am("big " + ("x" * 400)), um("latest"))
-                                    ai.setContext(ctx).andThen(ai.enable(instC)).andThen(ai.gen[String]).andThen {
-                                        // The main gen request is the chat/completions request carrying the result tool
-                                        // (the judge fork's request does not); assert it carries the instance compactor's marker.
-                                        server.awaitCaptured(cap =>
-                                            cap.path == "v1/chat/completions" && cap.body.contains("result_tool")
-                                        ).map { mainReq =>
-                                            assert(
-                                                mainReq.body.contains("compacted region"),
-                                                s"the instance compactor's compaction reached the outbound gen request: ${mainReq.body}"
-                                            )
-                                        }
-                                    }
+            val cfg         = serverConfig(server.baseUrl).compactionBudget(1)
+            val scopeMarker = "SCOPE-COMPACTOR-MARKER"
+            val instMarker  = "INSTANCE-COMPACTOR-MARKER"
+            def tagging(tag: String): Compactor[Any] = new Compactor[Any]:
+                def render(ctx: Context)(using Frame): Chunk[Message] < (LLM & Async & Abort[AIGenException]) =
+                    Chunk(SystemMessage(tag))
+            server.enqueueBody(resultToolBody("""{"resultValue":"done"}""")).andThen {
+                LLM.run(cfg) {
+                    AI.enable(tagging(scopeMarker)) {
+                        AI.init.map { ai =>
+                            val ctx = ctxOf(sm("s"), um("first"), am("big " + ("x" * 400)), um("latest"))
+                            ai.setContext(ctx).andThen(ai.enable(tagging(instMarker))).andThen(ai.gen[String]).andThen {
+                                server.awaitCaptured(cap =>
+                                    cap.path == "v1/chat/completions" && cap.body.contains("result_tool")
+                                ).map { mainReq =>
+                                    assert(
+                                        mainReq.body.contains(instMarker),
+                                        s"the instance compactor's rendering reached the outbound gen request: ${mainReq.body}"
+                                    )
+                                    assert(
+                                        !mainReq.body.contains(scopeMarker),
+                                        s"the scope compactor's rendering must NOT reach the wire (instance-over-scope): ${mainReq.body}"
+                                    )
                                 }
                             }
                         }

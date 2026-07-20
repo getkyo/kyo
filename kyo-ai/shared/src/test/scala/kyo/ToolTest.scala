@@ -53,18 +53,18 @@ class ToolTest extends kyo.test.Test[Any]:
                 )
             }
         ).map { ctx =>
-            val msgs = ctx.messages.toList
+            val msgs = ctx.raw.toList
             val hasProcessingMsg = msgs.exists {
-                case ToolMessage(cid, content) => cid == callId && content.contains("Processing tool call")
-                case _                         => false
+                case ToolMessage(cid, content, _, _, _) => cid == callId && content.contains("Processing tool call")
+                case _                                  => false
             }
             val assistantHasCall = msgs.exists {
-                case AssistantMessage(_, calls) => calls.exists(_.id == callId)
-                case _                          => false
+                case AssistantMessage(_, calls, _, _, _) => calls.exists(_.id == callId)
+                case _                                   => false
             }
             val hasCorrectiveMsg = msgs.exists {
-                case SystemMessage(content) => content.contains("carefully review its schema")
-                case _                      => false
+                case SystemMessage(content, _, _, _) => content.contains("carefully review its schema")
+                case _                               => false
             }
             assert(!hasProcessingMsg, "processingMessage should be removed on decode failure")
             assert(!assistantHasCall, "call should be removed from assistant message on decode failure")
@@ -81,9 +81,9 @@ class ToolTest extends kyo.test.Test[Any]:
                     .andThen(ai.context.map(identity))
             }
         ).map { ctx =>
-            val found = ctx.messages.toList.exists {
-                case ToolMessage(cid, content) => cid == callId && content.contains("not found")
-                case _                         => false
+            val found = ctx.raw.toList.exists {
+                case ToolMessage(cid, content, _, _, _) => cid == callId && content.contains("not found")
+                case _                                  => false
             }
             assert(found)
         }
@@ -112,12 +112,12 @@ class ToolTest extends kyo.test.Test[Any]:
                     .andThen(ai.context.map(identity))
             }
         ).map { ctx =>
-            val msgs = ctx.messages.toList
+            val msgs = ctx.raw.toList
             val failMsg = msgs.collect {
-                case ToolMessage(cid, content) if cid == failCallId => content
+                case ToolMessage(cid, content, _, _, _) if cid == failCallId => content
             }
             val successMsg = msgs.collect {
-                case ToolMessage(cid, content) if cid == successCallId => content
+                case ToolMessage(cid, content, _, _, _) if cid == successCallId => content
             }
             assert(failMsg.nonEmpty, "failing call should have a tool message")
             assert(failMsg.head.contains("expected run failure") || failMsg.head.contains("failed"), "failure text should appear")
@@ -144,13 +144,13 @@ class ToolTest extends kyo.test.Test[Any]:
                 )
             }
         ).map { ctx =>
-            val msgs = ctx.messages.toList
+            val msgs = ctx.raw.toList
             val toolMsg = msgs.collectFirst {
-                case ToolMessage(cid, content) if cid == callId => content
+                case ToolMessage(cid, content, _, _, _) if cid == callId => content
             }
             val hasRepairMsg = msgs.exists {
-                case SystemMessage(content) => content.contains("carefully review its schema")
-                case _                      => false
+                case SystemMessage(content, _, _, _) => content.contains("carefully review its schema")
+                case _                               => false
             }
             assert(
                 toolMsg.exists(_.contains("Tool 'self-parsing' failed")),
@@ -179,14 +179,14 @@ class ToolTest extends kyo.test.Test[Any]:
                 )
             }
         ).map { ctx =>
-            val msgs = ctx.messages.toList
+            val msgs = ctx.raw.toList
             val hasRepairMsg = msgs.exists {
-                case SystemMessage(content) => content.contains("carefully review its schema")
-                case _                      => false
+                case SystemMessage(content, _, _, _) => content.contains("carefully review its schema")
+                case _                               => false
             }
             val hasGenericFailure = msgs.exists {
-                case ToolMessage(_, content) => content.contains("Tool 'adder' failed")
-                case _                       => false
+                case ToolMessage(_, content, _, _, _) => content.contains("Tool 'adder' failed")
+                case _                                => false
             }
             assert(
                 hasRepairMsg,
@@ -235,7 +235,7 @@ class ToolTest extends kyo.test.Test[Any]:
     "a tool's prompt and reminder render as TOOL / TOOL REMINDER blocks in the enriched context" in {
         val tool = Tool.init[Int]("locator", "finds things", prompt = Prompt.init("tool-guidance", "tool-reminder"))(_ => 0)
         LLM.run(Prompt.internal.enrichedContext(Context.empty, tool.infos)).map { ctx =>
-            val contents = ctx.messages.toList.map(_.content)
+            val contents = ctx.raw.toList.map(_.content)
             assert(
                 contents.exists(c => c.contains("TOOL: locator") && c.contains("tool-guidance")),
                 s"the tool's prompt block (with header + description) must reach the context, got: $contents"
@@ -282,8 +282,8 @@ class ToolTest extends kyo.test.Test[Any]:
                     .andThen(ai.context.map(identity))
             }
         ).map { ctx =>
-            val result = ctx.messages.toList.collectFirst {
-                case ToolMessage(cid, content) if cid == callId => content
+            val result = ctx.raw.toList.collectFirst {
+                case ToolMessage(cid, content, _, _, _) if cid == callId => content
             }
             assert(result == Some(Json.encode(6)), s"expected the legacy tool's encoded run result, got: $result")
             assert(legacyInfo.kind == Tool.Kind.Read, "a no-metadata call site must default kind to Read")

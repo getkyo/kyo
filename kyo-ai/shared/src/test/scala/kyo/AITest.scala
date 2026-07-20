@@ -46,7 +46,7 @@ class AITest extends kyo.test.Test[Any]:
                 ai.userMessage("x").andThen(ai.context)
             }
         }.map { ctx =>
-            assert(ctx.messages == Chunk(UserMessage("x", Absent)), s"context should contain exactly one UserMessage, got: ${ctx.messages}")
+            assert(ctx.raw == Chunk(UserMessage("x", Absent)), s"context should contain exactly one UserMessage, got: ${ctx.raw}")
         }
     }
 
@@ -64,8 +64,8 @@ class AITest extends kyo.test.Test[Any]:
                 }
             }
         }.map { case (aCtx, bCtx) =>
-            assert(aCtx.isEmpty, s"a's context should be empty when the message targets b explicitly, got: ${aCtx.messages}")
-            assert(bCtx.messages == Chunk(UserMessage("toB", Absent)), s"b's context should carry the message, got: ${bCtx.messages}")
+            assert(aCtx.isEmpty, s"a's context should be empty when the message targets b explicitly, got: ${aCtx.raw}")
+            assert(bCtx.raw == Chunk(UserMessage("toB", Absent)), s"b's context should carry the message, got: ${bCtx.raw}")
         }
     }
 
@@ -78,10 +78,10 @@ class AITest extends kyo.test.Test[Any]:
                     .andThen(ai.context)
             }
         }.map { ctx =>
-            assert(ctx.messages.size == 3, s"expected 3 messages, got: ${ctx.messages.size}")
-            assert(ctx.messages(0) == SystemMessage("s"), s"first should be SystemMessage(s), got: ${ctx.messages(0)}")
-            assert(ctx.messages(1) == UserMessage("u", Absent), s"second should be UserMessage(u), got: ${ctx.messages(1)}")
-            assert(ctx.messages(2) == AssistantMessage("a"), s"third should be AssistantMessage(a), got: ${ctx.messages(2)}")
+            assert(ctx.raw.size == 3, s"expected 3 messages, got: ${ctx.raw.size}")
+            assert(ctx.raw(0) == SystemMessage("s"), s"first should be SystemMessage(s), got: ${ctx.raw(0)}")
+            assert(ctx.raw(1) == UserMessage("u", Absent), s"second should be UserMessage(u), got: ${ctx.raw(1)}")
+            assert(ctx.raw(2) == AssistantMessage("a"), s"third should be AssistantMessage(a), got: ${ctx.raw(2)}")
         }
     }
 
@@ -93,8 +93,8 @@ class AITest extends kyo.test.Test[Any]:
             }
         }.map { ctx =>
             assert(
-                ctx.messages == Chunk(UserMessage("look", Present(img))),
-                s"context should carry the image message, got: ${ctx.messages}"
+                ctx.raw == Chunk(UserMessage("look", Present(img))),
+                s"context should carry the image message, got: ${ctx.raw}"
             )
         }
     }
@@ -130,7 +130,7 @@ class AITest extends kyo.test.Test[Any]:
                     .andThen(ai)
             }
         }.map { case (state, ai) =>
-            assert(state.contextOf(ai).messages == Chunk(UserMessage("new", Absent)), s"context: ${state.contextOf(ai).messages}")
+            assert(state.contextOf(ai).raw == Chunk(UserMessage("new", Absent)), s"context: ${state.contextOf(ai).raw}")
             assert(state.sessionOf(ai).env.tools.size == 1, "the enabled tool must survive a setContext")
         }
     }
@@ -145,10 +145,10 @@ class AITest extends kyo.test.Test[Any]:
                         for
                             c    <- ai.context
                             snap <- ai.snapshot
-                        yield (c.messages.size, snap.env.tools.size)
+                        yield (c.raw.size, snap.env.tools.size)
                     )
                     outer <- ai.context
-                yield (innerMsgs, innerTools, outer.messages.size)
+                yield (innerMsgs, innerTools, outer.raw.size)
             }
         }.map { case (innerMsgs, innerTools, outerMsgs) =>
             assert(innerMsgs == 0, s"inside fresh the history is blanked, got $innerMsgs")
@@ -168,10 +168,10 @@ class AITest extends kyo.test.Test[Any]:
                             for
                                 ac <- a.context
                                 bc <- b.context
-                            yield (ac.messages.size, bc.messages.size)
+                            yield (ac.raw.size, bc.raw.size)
                         )
                         aOuter <- a.context
-                    yield (aInner, bInner, aOuter.messages.size)
+                    yield (aInner, bInner, aOuter.raw.size)
                 }
             }
         }.map { case (aInner, bInner, aOuter) =>
@@ -189,7 +189,7 @@ class AITest extends kyo.test.Test[Any]:
                         _  <- AI.forget(a)(a.userMessage("a-write").andThen(b.userMessage("b-write")))
                         ac <- a.context
                         bc <- b.context
-                    yield (ac.messages.size, bc.messages.size)
+                    yield (ac.raw.size, bc.raw.size)
                 }
             }
         }.map { case (aSize, bSize) =>
@@ -213,7 +213,7 @@ class AITest extends kyo.test.Test[Any]:
                     for
                         ctx  <- restored.context
                         snap <- restored.snapshot
-                    yield (ctx.messages, snap.env.tools.size, snap.env.config)
+                    yield (ctx.raw, snap.env.tools.size, snap.env.config)
                 }
             }.map { case (messages, toolCount, config) =>
                 assert(messages == Chunk(UserMessage("turn-1", Absent)), s"recovered history: $messages")
@@ -234,8 +234,8 @@ class AITest extends kyo.test.Test[Any]:
             }
         }.map { ctx =>
             assert(
-                ctx.messages.size == 1,
-                s"binders scope the pure body without Gen dispatch; expected 1 message, got: ${ctx.messages.size}"
+                ctx.raw.size == 1,
+                s"binders scope the pure body without Gen dispatch; expected 1 message, got: ${ctx.raw.size}"
             )
         }
     }
@@ -325,7 +325,7 @@ class AITest extends kyo.test.Test[Any]:
                 }.andThen(ai)
             }
         }.map { case (state, ai) =>
-            val msgs = state.contextOf(ai).messages
+            val msgs = state.contextOf(ai).raw
             assert(msgs == Chunk(UserMessage("base", Absent)), s"forget should drop 'inside'; slot should retain 'base', got: $msgs")
             assert(msgs.size == 1, s"exactly one message ('base') should remain, got: ${msgs.size}")
         }
@@ -417,8 +417,8 @@ class AITest extends kyo.test.Test[Any]:
                     }).map { case (state, (researcher, critic, criticOut)) =>
                         assert(criticOut == "critique", s"the critic gen should yield its scripted result, got: $criticOut")
                         assert(state.instances.size == 2, s"exactly two instances should remain, got: ${state.instances.toMap.keys}")
-                        val researcherContents = state.contextOf(researcher).messages.map(_.content)
-                        val criticContents     = state.contextOf(critic).messages.map(_.content)
+                        val researcherContents = state.contextOf(researcher).raw.map(_.content)
+                        val criticContents     = state.contextOf(critic).raw.map(_.content)
                         assert(
                             researcherContents.exists(_.contains("investigate CRDTs")),
                             s"the researcher should retain its own user message, got: $researcherContents"

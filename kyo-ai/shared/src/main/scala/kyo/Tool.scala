@@ -163,15 +163,15 @@ object Tool:
                             tool.decodeAndRun(call.arguments).map {
                                 case RunOutcome.DecodeFailed(error) =>
                                     ai.updateContext { ctx =>
-                                        ctx.copy(messages =
-                                            ctx.messages
+                                        def repl(ms: Chunk[Message]) =
+                                            ms
                                                 .filterNot(_ == processingMessage)
                                                 .map {
                                                     case msg: AssistantMessage =>
                                                         msg.copy(calls = msg.calls.filterNot(_.id == call.id))
                                                     case other => other
                                                 }
-                                        ).systemMessage(
+                                        ctx.copy(raw = repl(ctx.raw), compacted = repl(ctx.compacted)).systemMessage(
                                             s"Before calling '${tool.name}', carefully review its schema and provide arguments that match the expected format. " +
                                                 s"Calling this tool is known to be difficult for LLMs and fail with the following error: $error. Make an extra effort " +
                                                 s"to ensure the correctness of the argument json by paying close attention to its schema and required fields and making " +
@@ -180,10 +180,11 @@ object Tool:
                                     }
                                 case RunOutcome.Ran(Result.Success(out)) =>
                                     ai.updateContext { ctx =>
-                                        ctx.copy(messages = ctx.messages.map {
+                                        def repl(ms: Chunk[Message]) = ms.map {
                                             case `processingMessage` => ToolMessage(call.id, out)
                                             case other               => other
-                                        })
+                                        }
+                                        ctx.copy(raw = repl(ctx.raw), compacted = repl(ctx.compacted))
                                     }
                                 case RunOutcome.Ran(failure) =>
                                     val text = p"""
@@ -192,10 +193,11 @@ object Tool:
                                         Call ID: ${call.id.id}
                                     """
                                     ai.updateContext { ctx =>
-                                        ctx.copy(messages = ctx.messages.map {
+                                        def repl(ms: Chunk[Message]) = ms.map {
                                             case `processingMessage` => ToolMessage(call.id, text)
                                             case other               => other
-                                        })
+                                        }
+                                        ctx.copy(raw = repl(ctx.raw), compacted = repl(ctx.compacted))
                                     }
                             }
                         }

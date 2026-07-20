@@ -136,8 +136,10 @@ object Prompt:
                     val allPromptMessages   = mainPromptMessages ++ toolPromptMessages
                     val allReminderMessages = mainReminderMessages ++ toolReminderMessages
                     val contextWithPrompts  = allPromptMessages.foldLeft(Context.empty)((ctx, msg) => ctx.systemMessage(msg))
-                    val mergedContext       = contextWithPrompts.merge(context)
-                    val finalContext        = allReminderMessages.foldLeft(mergedContext)((ctx, msg) => ctx.systemMessage(msg))
+                    // Build the request over context.compacted, what providers are sent: the
+                    // fork suffix appended to the prompt is the view, not raw.
+                    val mergedContext = Context(contextWithPrompts.compacted.concat(context.compacted))
+                    val finalContext  = allReminderMessages.foldLeft(mergedContext)((ctx, msg) => ctx.systemMessage(msg))
                     finalContext
                 end for
             }
