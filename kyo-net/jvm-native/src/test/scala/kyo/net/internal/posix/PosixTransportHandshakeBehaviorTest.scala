@@ -29,7 +29,7 @@ class PosixTransportHandshakeBehaviorTest extends Test:
 
     import AllowUnsafe.embrace.danger
 
-    private val transportConfig = kyo.net.TransportConfig.default
+    private val transportConfig = kyo.net.NetConfig.default
 
     private val serverTls = NetTlsConfig(
         certChainPath = Present(TlsTestCert.certPath),
@@ -53,11 +53,11 @@ class PosixTransportHandshakeBehaviorTest extends Test:
         if !(PosixConstants.isLinux || PosixConstants.isMacOrBsd) then
             cancel("PosixTransport tests need epoll (Linux) or kqueue (macOS/BSD)")
 
-    /** Build a transport over a fresh real poller driver, run `body`, then close the transport and the driver. No accept-loop drain is needed:
-      * with the poller (epoll/kqueue) the accept loop is readiness-driven and never parks in a blocking `accept`. `transport.close()` closes every
-      * listener, and `PosixListener.close()` (on the calling fiber) deregisters the accept interest via `driver.cancel`, which inline-completes the
-      * parked accept promise with `Closed`; that completion runs the accept loop's exit branch inline (`IOPromise.flush`), then the listener
-      * `shutdown`s + closes the listen fd, all synchronously.
+    /** Build a transport over a fresh real poller driver, run `body`, then close the driver (this transport is never closed, mirroring
+      * production). Each leaf closes its own listeners: with the poller (epoll/kqueue) the accept loop is readiness-driven and never parks in a
+      * blocking `accept`, so a listener's own `close()` (on the calling fiber) deregisters the accept interest via `driver.cancel`, which
+      * inline-completes the parked accept promise with `Closed`; that completion runs the accept loop's exit branch inline (`IOPromise.flush`),
+      * then the listener `shutdown`s + closes the listen fd, all synchronously.
       *
       * The driver's own poll-loop thread is a separate story: `driver.close()` only requests teardown (`submitEngineOp` + `triggerWake()`) and
       * returns immediately, without waiting for the poll-loop carrier to actually run it. Awaiting the driver's own exit fiber after `close()`
@@ -68,11 +68,13 @@ class PosixTransportHandshakeBehaviorTest extends Test:
     private def withTransport[A](body: PosixTransport => A < (Async & Abort[NetException | Closed] & Scope))(using
         Frame
     ): A < (Async & Abort[NetException | Closed] & Scope) =
-        val driver     = PollerIoDriver.init(transportConfig)
-        val transport  = TestTransports.forTesting(transportConfig, driver, Ffi.load[SocketBindings], backendIsEpoll = false)
+        val driver     = PollerIoDriver.init()
+        val transport  = TestTransports.forTesting(driver, Ffi.load[SocketBindings], backendIsEpoll = false)
         val driverDone = driver.start()
-        Abort.run[NetException | Closed](body(transport)).map { result =>
-            Sync.defer(transport.close()).andThen(Sync.defer(driver.close())).andThen(
+        // Scope.run resolves the body's own Scope.ensure finalizers (each leaf's listener/connection closes) BEFORE the driver
+        // teardown below runs, so a leaf never closes a handle after its owning driver is already gone.
+        Abort.run[NetException | Closed](Scope.run(body(transport))).map { result =>
+            Sync.defer(driver.close()).andThen(
                 Abort.run(driverDone.safe.get).unit
             ).andThen(Abort.get(result))
         }
@@ -99,7 +101,7 @@ class PosixTransportHandshakeBehaviorTest extends Test:
             withTransport { transport =>
                 for
                     handlerReady <- Channel.init[Unit](1)
-                    listener <- transport.listen("127.0.0.1", 0, 16, serverTls) { serverConn =>
+                    listener <- transport.listenTls("127.0.0.1", 0, 16, serverTls) { serverConn =>
                         discard(Sync.Unsafe.evalOrThrow {
                             Fiber.initUnscoped {
                                 Abort.run[Closed] {
@@ -114,7 +116,9 @@ class PosixTransportHandshakeBehaviorTest extends Test:
                             }
                         })
                     }.safe.get
-                    client <- transport.connect("127.0.0.1", listener.port, clientTls).safe.get
+                    _      <- Scope.ensure(Sync.defer(listener.close()))
+                    client <- transport.connectTls("127.0.0.1", listener.port, clientTls).safe.get
+                    _      <- Scope.ensure(Sync.defer(client.close()))
                     _      <- handlerReady.take
                     msg = "handshake-want-read-want-write-roundtrip".getBytes("UTF-8")
                     _      <- client.outbound.safe.put(Span.fromUnsafe(msg))
@@ -122,6 +126,7 @@ class PosixTransportHandshakeBehaviorTest extends Test:
                     certHash = client.serverCertificateHash
                 yield
                     client.close()
+                    listener.close()
                     assert(echoed.sameElements(msg), s"TLS round-trip mismatch: got '${new String(echoed, "UTF-8")}'")
                     certHash match
                         case Absent     => fail("client did not observe the server certificate hash after handshake")
@@ -142,7 +147,7 @@ class PosixTransportHandshakeBehaviorTest extends Test:
             withTransport { transport =>
                 for
                     ready <- Channel.init[Unit](1)
-                    listener <- transport.listen("127.0.0.1", 0, 16, serverTls) { serverConn =>
+                    listener <- transport.listenTls("127.0.0.1", 0, 16, serverTls) { serverConn =>
                         discard(Sync.Unsafe.evalOrThrow {
                             Fiber.initUnscoped {
                                 Abort.run[Closed] {
@@ -158,7 +163,9 @@ class PosixTransportHandshakeBehaviorTest extends Test:
                             }
                         })
                     }.safe.get
-                    client <- transport.connect("127.0.0.1", listener.port, clientTls).safe.get
+                    _      <- Scope.ensure(Sync.defer(listener.close()))
+                    client <- transport.connectTls("127.0.0.1", listener.port, clientTls).safe.get
+                    _      <- Scope.ensure(Sync.defer(client.close()))
                     _      <- ready.take
                     // A 128 KB payload: large enough to fill the loopback socket send buffer and trigger WriteResult.Partial / awaitWritable.
                     payload = Array.tabulate[Byte](128 * 1024)(i => (i & 0xff).toByte)
@@ -166,6 +173,7 @@ class PosixTransportHandshakeBehaviorTest extends Test:
                     echoed <- collect(client, payload.length)
                 yield
                     client.close()
+                    listener.close()
                     assert(echoed.sameElements(payload), s"large TLS round-trip mismatch at length ${echoed.length}")
             }
         }
@@ -185,8 +193,14 @@ class PosixTransportHandshakeBehaviorTest extends Test:
                         // Close without sending anything: the TLS client will receive a truncated handshake.
                         serverConn.close()
                     }.safe.get
-                    outcome <- Abort.run[NetException | Closed](transport.connect("127.0.0.1", listener.port, clientTls).safe.get)
-                yield assert(outcome.isFailure, s"expected Closed on TLS-to-plaintext handshake failure, got $outcome")
+                    _       <- Scope.ensure(Sync.defer(listener.close()))
+                    outcome <- Abort.run[NetException | Closed](transport.connectTls("127.0.0.1", listener.port, clientTls).safe.get)
+                yield
+                    // Defensive: the handshake is expected to fail; if a regression ever made it succeed, close the unexpected
+                    // client rather than leak it (the assert below fails the leaf regardless).
+                    outcome.foreach(_.close())
+                    listener.close()
+                    assert(outcome.isFailure, s"expected Closed on TLS-to-plaintext handshake failure, got $outcome")
             }
         }
 
@@ -218,10 +232,16 @@ class PosixTransportHandshakeBehaviorTest extends Test:
                             }
                         })
                     }.safe.get
+                    _ <- Scope.ensure(Sync.defer(listener.close()))
                     port = listener.port
-                    // Connect all N clients concurrently so they queue up before the accept loop drains.
+                    // Connect all N clients concurrently so they queue up before the accept loop drains. Each connection is registered with
+                    // Scope.ensure right after it is established so a later client's connect failure, or a failure in the send/echo phase
+                    // below, still closes every already-opened client instead of leaking whichever ones happened to connect first.
                     clients <- Async.fillIndexed(n, n) { _ =>
-                        transport.connect("127.0.0.1", port).safe.get
+                        for
+                            conn <- transport.connect("127.0.0.1", port).safe.get
+                            _    <- Scope.ensure(Sync.defer(conn.close()))
+                        yield conn
                     }
                     // Wait for all N handlers to start.
                     _ <- Kyo.foreach(0 until n)(_ => handlerCounter.take)
@@ -235,10 +255,12 @@ class PosixTransportHandshakeBehaviorTest extends Test:
                             }
                         }
                     }
-                yield assert(
-                    results.forall(identity),
-                    s"not all $n connections were accepted and round-tripped correctly"
-                )
+                yield
+                    listener.close()
+                    assert(
+                        results.forall(identity),
+                        s"not all $n connections were accepted and round-tripped correctly"
+                    )
             }
         }
 
@@ -275,20 +297,24 @@ class PosixTransportHandshakeBehaviorTest extends Test:
                                 }
                             })
                     }.safe.get
+                    _ <- Scope.ensure(Sync.defer(listener.close()))
                     port = listener.port
                     // First connection: triggers the handler throw; the connection will close.
                     firstClient <- transport.connect("127.0.0.1", port).safe.get
+                    _           <- Scope.ensure(Sync.defer(firstClient.close()))
                     // Wait for the first handler to actually crash (the latch it signals before throwing), so the second connect is gated on the
                     // real event rather than a guessed recovery delay.
                     _ <- firstThrew.take
                     // Second connection: the accept loop must still be running.
                     secondClient <- transport.connect("127.0.0.1", port).safe.get
+                    _            <- Scope.ensure(Sync.defer(secondClient.close()))
                     // Send something to the second handler so it reads from inbound and signals the latch.
                     _ <- secondClient.outbound.safe.put(Span.fromUnsafe(Array[Byte](1)))
                     _ <- secondHandled.take
                 yield
                     firstClient.close()
                     secondClient.close()
+                    listener.close()
                     assert(throwCount.get() >= 2, s"expected at least 2 handler invocations, got ${throwCount.get()}")
             }
         }
@@ -316,14 +342,17 @@ class PosixTransportHandshakeBehaviorTest extends Test:
                             }
                         })
                     }.safe.get
+                    _ <- Scope.ensure(Sync.defer(listener.close()))
                     // Connect using the numeric IP (goes through the resolveAndEncode fast path then onComplete -> connectImpl).
                     client <- transport.connect("127.0.0.1", listener.port).safe.get
+                    _      <- Scope.ensure(Sync.defer(client.close()))
                     _      <- ready.take
                     msg = "plaintext-resolve-and-connect".getBytes("UTF-8")
                     _      <- client.outbound.safe.put(Span.fromUnsafe(msg))
                     echoed <- collect(client, msg.length)
                 yield
                     client.close()
+                    listener.close()
                     assert(echoed.sameElements(msg), s"plaintext round-trip mismatch: got '${new String(echoed, "UTF-8")}'")
             }
         }

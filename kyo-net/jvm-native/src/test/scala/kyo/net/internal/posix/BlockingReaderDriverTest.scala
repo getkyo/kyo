@@ -27,7 +27,7 @@ class BlockingReaderDriverTest extends Test:
 
     import AllowUnsafe.embrace.danger
 
-    private val transportConfig = kyo.net.TransportConfig.default
+    private val transportConfig = kyo.net.NetConfig.default
 
     /** Drive a single `awaitRead` on `driver` for `handle` and await the deposited promise. */
     private def readVia(driver: BlockingReaderDriver, handle: PosixHandle)(using Frame): ReadOutcome < (Abort[Closed] & Async) =
@@ -48,7 +48,7 @@ class BlockingReaderDriverTest extends Test:
             // never invoked, so the wrapped real PollerIoDriver need not be started.
             val content    = Array[Byte](1, 2, 3, 4, 5, 6)
             val (fd, _)    = PosixTestSockets.tempFileFd(content)
-            val realDriver = PollerIoDriver.init(transportConfig) // unstarted; awaitRead path never delegates here
+            val realDriver = PollerIoDriver.init() // unstarted; awaitRead path never delegates here
             // init loads the real socket bindings; the blocking read(2) path reads the real temp file fd.
             val driver = BlockingReaderDriver.init(realDriver)
             // PosixHandle.socket(fd, PosixHandle.DefaultReadBufferSize, Absent) creates a handle with readFd == writeFd == fd; BlockingReaderDriver reads from readFd.
@@ -75,7 +75,7 @@ class BlockingReaderDriverTest extends Test:
             // The write() call is recorded by RecordingIoDriver (writeCalls.getAndIncrement()) then delegated to the real PollerIoDriver,
             // which writes to a real loopback socket so the peer receives the bytes. The test asserts writeCalls == 1 (the recorded
             // delegation) and that the real write returned Done.
-            val real = PollerIoDriver.init(transportConfig)
+            val real = PollerIoDriver.init()
             val spy  = new RecordingIoDriver(real)
             discard(spy.start())
             PosixTestSockets.loopbackPair().map { case (clientFd, peerFd) =>

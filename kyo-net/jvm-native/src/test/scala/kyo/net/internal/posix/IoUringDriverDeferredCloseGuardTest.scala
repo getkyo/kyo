@@ -40,7 +40,7 @@ class IoUringDriverDeferredCloseGuardTest extends Test:
         "keeps a racing PosixHandle.close caller deferred until the real close(fd) credit is installed, so it is never stranded" in {
             PosixTestSockets.assumeUring()
             given Frame   = Frame.internal
-            val depth     = math.max(256, kyo.net.TransportConfig.default.ioPoolSize * 64)
+            val depth     = math.max(256, kyo.net.ioPoolSize() * 64)
             val realUring = Ffi.load[IoUringBindings]
             val realRing  = Buffer.alloc[Byte](realUring.kyo_uring_sizeof().toInt)
             val rc        = realUring.io_uring_queue_init(depth, realRing, 0)
@@ -97,7 +97,7 @@ class IoUringDriverDeferredCloseGuardTest extends Test:
         "does not strand the deferred close when one handle is closeHandle'd twice while a recv is in flight (one guard hold per closeAfterDrain entry)" in {
             PosixTestSockets.assumeUring()
             given Frame   = Frame.internal
-            val depth     = math.max(256, kyo.net.TransportConfig.default.ioPoolSize * 64)
+            val depth     = math.max(256, kyo.net.ioPoolSize() * 64)
             val realUring = Ffi.load[IoUringBindings]
             val realRing  = Buffer.alloc[Byte](realUring.kyo_uring_sizeof().toInt)
             val rc        = realUring.io_uring_queue_init(depth, realRing, 0)

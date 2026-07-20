@@ -17,11 +17,14 @@ class TransportConnectDeadlineTest extends Test:
     "a stalled client TLS connect is bounded by Async.timeout" - eachBackendTls { (transport, _, clientTls) =>
         for
             listener <- transport.listen("127.0.0.1", 0, 128)(_ => ()).safe.get
-            outcome <- Abort.run[Closed | Timeout](
-                Async.timeout(1.second)(transport.connect("127.0.0.1", listener.port, clientTls).safe.get)
+            _        <- Scope.ensure(Sync.defer(listener.close()))
+            outcome <- Abort.run[NetException | Closed | Timeout](
+                Async.timeout(1.second)(transport.connectTls("127.0.0.1", listener.port, clientTls).safe.get)
             )
         yield
-            listener.close()
+            outcome match
+                case Result.Success(conn) => conn.close()
+                case _                    => ()
             assert(outcome.isFailure, s"a stalled client TLS connect must be boundable by Async.timeout (no hang), got $outcome")
         end for
     }

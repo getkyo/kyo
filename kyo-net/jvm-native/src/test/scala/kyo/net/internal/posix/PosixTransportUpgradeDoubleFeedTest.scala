@@ -93,7 +93,6 @@ class PosixTransportUpgradeDoubleFeedTest extends Test:
             val engine   = new RecordingFeedEngine
             val transport =
                 TestTransports.forTesting(
-                    kyo.net.TransportConfig.default.copy(channelCapacity = 1),
                     driver,
                     spy,
                     backendIsEpoll = false,
@@ -102,9 +101,11 @@ class PosixTransportUpgradeDoubleFeedTest extends Test:
             discard(driver.start())
             PosixTestSockets.loopbackPair().map { case (clientFd, peerFd) =>
                 // The peer end is a raw socket never owned by the transport (no InternalConnection wraps it): closed unconditionally here.
-                Sync.ensure(Sync.defer(discard(sock.close(peerFd)))) {
+                // The driver is closed last, as the io_uring leaf below does: this leaf started it, and a transport is process-lifetime,
+                // so nothing else ever reclaims its poller fd or stops its poll loop.
+                Sync.ensure(Sync.defer { discard(sock.close(peerFd)); driver.close() }) {
                     val handle    = PosixHandle.socket(clientFd, PosixHandle.DefaultReadBufferSize, Absent)
-                    val plaintext = transport.openWith(handle, driver)
+                    val plaintext = transport.openWith(handle, driver, channelCapacity = 1)
                     plaintext.start()
                     assert(sock.sendNow(peerFd, Buffer.fromArray[Byte](signal), signal.length.toLong, 0).value == signal.length.toLong)
                     awaitCondition(5.seconds)(plaintext.inbound.size().getOrElse(-1) == 1).map { landed =>
@@ -120,7 +121,7 @@ class PosixTransportUpgradeDoubleFeedTest extends Test:
                                 plaintext,
                                 NetTlsConfig(trustAll = true),
                                 1
-                            ).safe.get).andThen {
+                            ).safe.get).map { upgraded =>
                                 // The handshake completes after exactly two feeds (the signal, then the flight), which is what lets
                                 // .safe.get above return; give the salvage's (possibly asynchronous) delivery a moment to land in case the
                                 // bug's extra feed arrives AFTER completion (onFinished's post-FINISHED drain), then assert on the
@@ -130,6 +131,10 @@ class PosixTransportUpgradeDoubleFeedTest extends Test:
                                         countFlightFeeds(engine) == 1,
                                         s"the coalesced flight must reach the engine EXACTLY ONCE, was fed ${countFlightFeeds(engine)} times"
                                     )
+                                    // Close whatever the upgrade produced only after the assertion above: closing earlier could tear
+                                    // down the pumps the bug's (possibly asynchronous) extra feed relies on to ever arrive, defeating
+                                    // the race this leaf is reproducing.
+                                    upgraded.foreach(_.close())
                                 }
                             }
                         }
@@ -140,7 +145,7 @@ class PosixTransportUpgradeDoubleFeedTest extends Test:
 
         "io_uring: a channel-offer failure during detachForUpgrade must not deliver the coalesced flight to the engine twice" in {
             PosixTestSockets.assumeUring()
-            val depth = math.max(256, kyo.net.TransportConfig.default.ioPoolSize * 64)
+            val depth = math.max(256, kyo.net.ioPoolSize() * 64)
             val uring = Ffi.load[IoUringBindings]
             val ring  = Buffer.alloc[Byte](uring.kyo_uring_sizeof().toInt)
             val rc    = uring.io_uring_queue_init(depth, ring, 0)
@@ -153,7 +158,6 @@ class PosixTransportUpgradeDoubleFeedTest extends Test:
                 val sockets = Ffi.load[SocketBindings]
                 val engine  = new RecordingFeedEngine
                 val transport = TestTransports.forTesting(
-                    kyo.net.TransportConfig.default.copy(channelCapacity = 1),
                     driver,
                     sockets,
                     backendIsEpoll = false,
@@ -162,7 +166,7 @@ class PosixTransportUpgradeDoubleFeedTest extends Test:
                 PosixTestSockets.loopbackPair().map { case (clientFd, peerFd) =>
                     Sync.ensure(Sync.defer(discard(sockets.close(peerFd)))) {
                         val handle    = PosixHandle.socket(clientFd, PosixHandle.DefaultReadBufferSize, Absent)
-                        val plaintext = transport.openWith(handle, driver)
+                        val plaintext = transport.openWith(handle, driver, channelCapacity = 1)
                         plaintext.start()
                         assert(sockets.sendNow(
                             peerFd,
@@ -186,12 +190,15 @@ class PosixTransportUpgradeDoubleFeedTest extends Test:
                                     plaintext,
                                     NetTlsConfig(trustAll = true),
                                     1
-                                ).safe.get).andThen {
+                                ).safe.get).map { upgraded =>
                                     awaitCondition(2.seconds)(countFlightFeeds(engine) >= 1).andThen {
                                         assert(
                                             countFlightFeeds(engine) == 1,
                                             s"the coalesced flight must reach the engine EXACTLY ONCE, was fed ${countFlightFeeds(engine)} times"
                                         )
+                                        // Close whatever the upgrade produced only after the assertion above: see the poller leaf's
+                                        // identical comment for why this must not run any earlier.
+                                        upgraded.foreach(_.close())
                                     }
                                 }
                             }
@@ -213,7 +220,7 @@ class PosixTransportUpgradeDoubleFeedTest extends Test:
             val driver   = TestDrivers.forBackend(backend, pollerFd, spy)
             discard(driver.start())
             PosixTestSockets.loopbackPair().map { case (client, accepted) =>
-                Sync.ensure(Sync.defer { discard(sock.close(client)); discard(sock.close(accepted)) }) {
+                Sync.ensure(Sync.defer { discard(sock.close(client)); discard(sock.close(accepted)); driver.close() }) {
                     val handle = PosixHandle.socket(accepted, PosixHandle.DefaultReadBufferSize, Absent)
                     handle.driver = driver
                     handle.upgrading = true
@@ -241,7 +248,7 @@ class PosixTransportUpgradeDoubleFeedTest extends Test:
             val driver   = TestDrivers.forBackend(backend, pollerFd, spy)
             discard(driver.start())
             PosixTestSockets.loopbackPair().map { case (client, accepted) =>
-                Sync.ensure(Sync.defer { discard(sock.close(client)); discard(sock.close(accepted)) }) {
+                Sync.ensure(Sync.defer { discard(sock.close(client)); discard(sock.close(accepted)); driver.close() }) {
                     val handle = PosixHandle.socket(accepted, PosixHandle.DefaultReadBufferSize, Absent)
                     handle.driver = driver
                     handle.upgrading = true

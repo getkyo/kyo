@@ -40,8 +40,8 @@ import kyo.*
   *   TLS settings applied to HTTPS connections made by this client. See [[HttpTlsConfig]]. Per-request TLS overrides can be set via
   *   `HttpClientConfig` on [[HttpClient.init]].
   * @param transportConfig
-  *   Transport-level tuning applied to connections this client opens (connect/handshake timeouts, buffer sizes). See
-  *   [[HttpTransportConfig]].
+  *   Transport-level tuning applied to connections this client opens: the per-connection buffer sizes, the parser's header cap, and the TLS
+  *   handshake deadline. The TCP connect deadline is not there, it is this config's own `connectTimeout`. See [[HttpTransportConfig]].
   * @param maxResponseLength
   *   Hard cap, in bytes, on a BUFFERED response body the client accumulates in memory. A server (malicious or buggy) that streams an
   *   unbounded chunked or connection-close-framed body, or declares an enormous `Content-Length`, would otherwise grow the client's buffer

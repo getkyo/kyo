@@ -30,6 +30,10 @@ class PollerIoDriverTerminalCloseTest extends Test:
             val backend  = RecordingPollerBackend(real)
             val driver   = TestDrivers.forBackend(backend, pollerFd, spy)
             discard(driver.start())
+            // Gate BEFORE any socket exists. TlsRealEngines.singleEngine below requires BoringSSL and cancels without it; cancelling from
+            // there would leave the loopback pair already open and unreclaimed, one leaked pair per leaf, visible only on a host that
+            // stages OpenSSL but not BoringSSL.
+            TlsRealEngines.assumeBoringSslReady()
             PosixTestSockets.loopbackPair().map { case (client, accepted) =>
                 val handle    = PosixHandle.socket(accepted, PosixHandle.DefaultReadBufferSize, Absent)
                 val rawEngine = TlsRealEngines.singleEngine(isServer = true)
@@ -60,6 +64,10 @@ class PollerIoDriverTerminalCloseTest extends Test:
             val backend  = RecordingPollerBackend(real)
             val driver   = TestDrivers.forBackend(backend, pollerFd, spy)
             discard(driver.start())
+            // Gate BEFORE any socket exists. TlsRealEngines.singleEngine below requires BoringSSL and cancels without it; cancelling from
+            // there would leave the loopback pair already open and unreclaimed, one leaked pair per leaf, visible only on a host that
+            // stages OpenSSL but not BoringSSL.
+            TlsRealEngines.assumeBoringSslReady()
             PosixTestSockets.loopbackPair().map { case (client, accepted) =>
                 val handle    = PosixHandle.socket(accepted, PosixHandle.DefaultReadBufferSize, Absent)
                 val rawEngine = TlsRealEngines.singleEngine(isServer = true)

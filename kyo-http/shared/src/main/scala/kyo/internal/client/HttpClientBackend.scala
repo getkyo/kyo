@@ -51,8 +51,13 @@ final private[kyo] class HttpClientBackend private (
             case e: kyo.net.NetDnsResolutionException  => HttpDnsResolutionException(e.host, e)
             case e: kyo.net.NetUnixConnectException    => HttpUnixConnectException(e.path, e)
             case e: kyo.net.NetConnectTimeoutException => HttpConnectTimeoutException(e.host, e.port, e.timeout)
-            case e: kyo.net.NetConnectException        => HttpConnectException(e.host, e.port, e)
-            case other                                 => HttpConnectException(eh, ep, other)
+            // Both deadlines a connection can miss surface as the typed timeout, not the generic connect failure: a caller's retry policy
+            // branches on timeout-ness, and folding these into HttpConnectException would drop both that and the duration that elapsed. The
+            // Unix leaf carries a path rather than a host:port, displayed the same way `hostPort` renders one.
+            case e: kyo.net.NetUnixConnectTimeoutException  => HttpConnectTimeoutException(s"unix:${e.path}", 0, e.timeout)
+            case e: kyo.net.NetTlsHandshakeTimeoutException => HttpConnectTimeoutException(e.host, e.port, e.timeout)
+            case e: kyo.net.NetConnectException             => HttpConnectException(e.host, e.port, e)
+            case other                                      => HttpConnectException(eh, ep, other)
     end transportConnectFailure
 
     def connect(url: HttpUrl, connectTimeout: Duration, tlsConfig: HttpTlsConfig)(using
@@ -63,10 +68,12 @@ final private[kyo] class HttpClientBackend private (
         val effectiveTls =
             if tlsConfig == HttpTlsConfig.default then defaultTlsConfig
             else tlsConfig
+        val netConfig = NetConfigTranslation.toNetConfig(transportConfig)
         val connectFiber = (url.unixSocket, url.ssl) match
-            case (Present(path), _) => transport.connectUnix(path)
-            case (_, true)          => NetConfigTranslation.connectTls(transport, url.host, url.port, effectiveTls)
-            case _                  => transport.connect(url.host, url.port)
+            case (Present(path), _) => transport.connectUnix(path, connectTimeout, netConfig)
+            case (_, true) =>
+                NetConfigTranslation.connectTls(transport, url.host, url.port, effectiveTls, connectTimeout, transportConfig)
+            case _ => transport.connect(url.host, url.port, connectTimeout, netConfig)
         val resultPromise = Promise.Unsafe.init[HttpConnection, Abort[HttpException]]()
         // Cast to IOPromise to get Result[NetException, transport.Connection] directly (no `< S` wrapper).
         // Fiber.Unsafe is an opaque wrapper over IOPromise - at runtime they are the same object.
@@ -646,21 +653,24 @@ final private[kyo] class HttpClientBackend private (
         val ssl      = url.ssl
         val (eh, ep) = hostPort(url)
 
+        val netConfig = NetConfigTranslation.toNetConfig(transportConfig)
         val connectFiber = Sync.Unsafe.defer {
             (url.unixSocket, ssl) match
-                case (Present(path), _) => transport.connectUnix(path)
-                case (_, true)          => NetConfigTranslation.connectTls(transport, host, port, defaultTlsConfig)
-                case _                  => transport.connect(host, port)
+                case (Present(path), _) => transport.connectUnix(path, connectTimeout, netConfig)
+                case (_, true) =>
+                    NetConfigTranslation.connectTls(transport, host, port, defaultTlsConfig, connectTimeout, transportConfig)
+                case _ => transport.connect(host, port, connectTimeout, netConfig)
         }
+        // One deadline, one owner. The connect operations above already take connectTimeout and produce the typed leaf for whichever phase
+        // actually missed it (NetConnectTimeoutException, NetUnixConnectTimeoutException, or NetTlsHandshakeTimeoutException). An outer
+        // Async.timeout on the same value raced that timer, so a stalled connect surfaced HttpConnectTimeoutException or the mapped transport
+        // failure nondeterministically. It is also wrong for TLS: Transport.connectTls bounds the TCP phase with connectTimeout and the
+        // handshake with NetTlsConfig.handshakeTimeout, worst case their sum, so an outer connectTimeout timer would preempt the handshake
+        // deadline that is supposed to bound phase two.
         val connect: kyo.net.Connection < (Async & Abort[kyo.net.NetException]) = connectFiber.map(_.safe.get)
-        val timed: kyo.net.Connection < (Async & Abort[kyo.net.NetException | Timeout]) =
-            if connectTimeout == Duration.Infinity then connect
-            else Async.timeout(connectTimeout)(connect)
-        Abort.runWith[kyo.net.NetException | Timeout](timed) {
+        Abort.runWith[kyo.net.NetException](connect) {
             case Result.Success(connection) =>
                 runWsSessionWith(connection, url, headers, config, clientFilter, autoFilters)(f)
-            case Result.Failure(_: Timeout) =>
-                Abort.fail(HttpConnectTimeoutException(eh, ep, connectTimeout))
             case Result.Failure(netEx: kyo.net.NetException) =>
                 Abort.fail(transportConnectFailure(netEx, eh, ep))
             case Result.Panic(t) => throw t
@@ -696,21 +706,24 @@ final private[kyo] class HttpClientBackend private (
         unsendableField(url.pathWithQuery, hostHeaderValue, headers) match
             case Present(ex) => Abort.fail(ex)
             case Absent =>
+                val netConfig = NetConfigTranslation.toNetConfig(transportConfig)
                 val connectFiber = Sync.Unsafe.defer {
                     (url.unixSocket, ssl) match
-                        case (Present(path), _) => transport.connectUnix(path)
-                        case (_, true)          => NetConfigTranslation.connectTls(transport, host, port, defaultTlsConfig)
-                        case _                  => transport.connect(host, port)
+                        case (Present(path), _) => transport.connectUnix(path, connectTimeout, netConfig)
+                        case (_, true) =>
+                            NetConfigTranslation.connectTls(transport, host, port, defaultTlsConfig, connectTimeout, transportConfig)
+                        case _ => transport.connect(host, port, connectTimeout, netConfig)
                 }
+                // One deadline, one owner. The connect operations above already take connectTimeout and produce the typed leaf for whichever phase
+                // actually missed it (NetConnectTimeoutException, NetUnixConnectTimeoutException, or NetTlsHandshakeTimeoutException). An outer
+                // Async.timeout on the same value raced that timer, so a stalled connect surfaced HttpConnectTimeoutException or the mapped transport
+                // failure nondeterministically. It is also wrong for TLS: Transport.connectTls bounds the TCP phase with connectTimeout and the
+                // handshake with NetTlsConfig.handshakeTimeout, worst case their sum, so an outer connectTimeout timer would preempt the handshake
+                // deadline that is supposed to bound phase two.
                 val connect: kyo.net.Connection < (Async & Abort[kyo.net.NetException]) = connectFiber.map(_.safe.get)
-                val timed: kyo.net.Connection < (Async & Abort[kyo.net.NetException | Timeout]) =
-                    if connectTimeout == Duration.Infinity then connect
-                    else Async.timeout(connectTimeout)(connect)
-                Abort.runWith[kyo.net.NetException | Timeout](timed) {
+                Abort.runWith[kyo.net.NetException](connect) {
                     case Result.Success(connection) =>
                         setupRawConnection(connection, url, method, body, headers, hostHeaderValue)
-                    case Result.Failure(_: Timeout) =>
-                        Abort.fail(HttpConnectTimeoutException(eh, ep, connectTimeout))
                     case Result.Failure(netEx: kyo.net.NetException) =>
                         Abort.fail(transportConnectFailure(netEx, eh, ep))
                     case Result.Panic(t) => throw t
@@ -1194,8 +1207,9 @@ final private[kyo] class HttpClientBackend private (
         discard(pool.close())
         val closePromise = Promise.Unsafe.init[Unit, Any]()
         registry.closeAll(conn => closeUnsafe(conn, gracePeriod))
-        // Release the transport this client owns.
-        transport.close()
+        // The transport is NOT closed here. It is process-shared across every client and server using the same settings, so closing it would
+        // take every co-tenant's connections down with this client. This client's resources are its pool and its tracked connections, both
+        // closed above; the transport outlives it by design.
         closePromise.completeDiscard(Result.succeed(()))
         closePromise
     end closeFiber

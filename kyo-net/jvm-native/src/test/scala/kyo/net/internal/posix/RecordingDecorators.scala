@@ -603,6 +603,8 @@ final class RecordingPollerBackend(real: PollerBackend) extends PollerBackend:
         AllowUnsafe,
         Frame
     ): Fiber.Unsafe[Int, Any] =
+        if throwOnPoll.compareAndSet(true, false) then
+            throw new RuntimeException("injected poll failure (crash-containment guard)")
         lastPollTimeoutMs = timeoutMs.toLong
         pollEventsBufs.add(scratch.eventsBuffer)
         pollFdsArrays.add(scratch.fds)
@@ -674,6 +676,12 @@ final class RecordingPollerBackend(real: PollerBackend) extends PollerBackend:
     // One-shot callback fired at the START of wake() (after wakeInFlight is incremented, before delegating to real), so a test can hold the wake
     // mid-flight and drive a concurrent close into the wake-fd guard. null means none set; CAS to null before firing so it fires exactly once.
     @volatile var onWakeEnter: () => Unit = null
+
+    // When true, the next poll() throws instead of delegating. CAS to false on use so it fires exactly once. The authorized injection for the
+    // crash-containment guard: a driver cycle must contain a Throwable from anywhere in its body, run its terminal teardown, and complete its
+    // done-fiber as a panic, rather than dying silently and leaving close() to hang.
+    val throwOnPoll: java.util.concurrent.atomic.AtomicBoolean =
+        new java.util.concurrent.atomic.AtomicBoolean(false)
 
     // When true, the next registerWake returns false (forced failure) without calling real. CAS to false on use so it fires once.
     val forceRegisterWakeFail: java.util.concurrent.atomic.AtomicBoolean =
@@ -922,7 +930,7 @@ final class RecordingIoDriver(real: IoDriver[PosixHandle]) extends IoDriver[Posi
     // Count of closeHandle() calls.
     val closeHandleCalls: AtomicInteger = new AtomicInteger(0)
 
-    // Count of close() calls (pool close path: IoDriverPool.close() calls driver.close(), not closeHandle).
+    // Count of close() calls (the driver's own shutdown, not closeHandle).
     val closeCalls: AtomicInteger = new AtomicInteger(0)
 
     // Callbacks fired after the corresponding call is recorded and before delegating to the real driver. They let a test record the order
@@ -971,8 +979,15 @@ final class RecordingIoDriver(real: IoDriver[PosixHandle]) extends IoDriver[Posi
         end if
     end awaitWritable
 
+    // When true, awaitConnect swallows the call: it neither submits nor completes the promise. Reproduces the transport's own asynchronous
+    // path stalling with the connect still pending, which is what the connect deadline actually bounds (the OS connect itself always settles
+    // promptly). The in-repo stall classes with this exact shape are an op stranded on the engine queue, a submission parked on a full SQ,
+    // and a driver carrier that never gets scheduled.
+    @volatile var stallConnect: Boolean = false
+
     def awaitConnect(handle: PosixHandle, promise: Promise.Unsafe[Unit, Abort[Closed]])(using AllowUnsafe, Frame): Unit =
-        real.awaitConnect(handle, promise)
+        if stallConnect then ()
+        else real.awaitConnect(handle, promise)
 
     def awaitAccept(handle: PosixHandle, promise: Promise.Unsafe[Int, Abort[Closed]])(using AllowUnsafe, Frame): Unit =
         real.awaitAccept(handle, promise)

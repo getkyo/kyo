@@ -97,7 +97,7 @@ class PollerIoDriverHalfCloseTest extends Test:
     "PollerIoDriver orderly half-close" - {
         "buffered bytes are delivered in full before EOF on a peer half-close, never as a Closed failure" in {
             assumePoller()
-            val driver = PollerIoDriver.init(kyo.net.TransportConfig.default)
+            val driver = PollerIoDriver.init()
             discard(driver.start())
             Sync.ensure(Sync.defer(driver.close())) {
                 PosixTestSockets.loopbackPair().map { case (client, accepted) =>

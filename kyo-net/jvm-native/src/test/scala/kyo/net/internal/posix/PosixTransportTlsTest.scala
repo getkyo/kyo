@@ -22,7 +22,7 @@ class PosixTransportTlsTest extends Test:
 
     import AllowUnsafe.embrace.danger
 
-    private val transportConfig = kyo.net.TransportConfig.default
+    private val transportConfig = kyo.net.NetConfig.default
 
     private val serverTls = NetTlsConfig(
         certChainPath = Present(TlsTestCert.certPath),
@@ -42,10 +42,10 @@ class PosixTransportTlsTest extends Test:
         if !tlsAvailable then cancel("No TLS provider staged for this host")
     end assumeReady
 
-    /** Build a transport over a fresh real poller driver, run `body`, then close the transport and the driver. `transport.close()` tears the
-      * accept loop down synchronously: with the poller (epoll/kqueue) the accept loop never parks in a blocking `accept`, it is
-      * readiness-driven, so closing every listener deregisters the accept interest via `driver.cancel`, which inline-completes the parked
-      * accept promise with `Closed` and runs the accept loop's exit branch (`IOPromise.flush`) before `transport.close()` returns.
+    /** Build a transport over a fresh real poller driver, run `body`, then close the driver (this transport is never closed, mirroring
+      * production). Each leaf closes its own listeners: with the poller (epoll/kqueue) the accept loop never parks in a blocking `accept`, it is
+      * readiness-driven, so a listener's own `close()` deregisters the accept interest via `driver.cancel`, which inline-completes the parked
+      * accept promise with `Closed` and runs the accept loop's exit branch (`IOPromise.flush`) synchronously.
       *
       * The driver's own poll-loop thread is a separate story: `driver.close()` only requests teardown (`submitEngineOp` + `triggerWake()`)
       * and returns immediately, without waiting for the poll-loop carrier to actually run it. Awaiting the driver's own exit fiber after
@@ -56,11 +56,13 @@ class PosixTransportTlsTest extends Test:
     private def withTransport[A](body: PosixTransport => A < (Async & Abort[NetException | Closed] & Scope))(using
         Frame
     ): A < (Async & Abort[NetException | Closed] & Scope) =
-        val driver     = PollerIoDriver.init(transportConfig)
-        val transport  = TestTransports.forTesting(transportConfig, driver, Ffi.load[SocketBindings], backendIsEpoll = false)
+        val driver     = PollerIoDriver.init()
+        val transport  = TestTransports.forTesting(driver, Ffi.load[SocketBindings], backendIsEpoll = false)
         val driverDone = driver.start()
-        Abort.run[NetException | Closed](body(transport)).map { result =>
-            Sync.defer(transport.close()).andThen(Sync.defer(driver.close())).andThen(
+        // Scope.run resolves the body's own Scope.ensure finalizers (each leaf's listener/connection closes) BEFORE the driver
+        // teardown below runs, so a leaf never closes a handle after its owning driver is already gone.
+        Abort.run[NetException | Closed](Scope.run(body(transport))).map { result =>
+            Sync.defer(driver.close()).andThen(
                 Abort.run(driverDone.safe.get).unit
             ).andThen(Abort.get(result))
         }
@@ -102,7 +104,7 @@ class PosixTransportTlsTest extends Test:
             withTransport { transport =>
                 for
                     accepted <- Channel.init[Unit](1)
-                    listener <- transport.listen("127.0.0.1", 0, 16, serverTls) { serverConn =>
+                    listener <- transport.listenTls("127.0.0.1", 0, 16, serverTls) { serverConn =>
                         // TLS echo handler: the handshake already completed before this runs; echo each decrypted chunk back encrypted.
                         discard(Sync.Unsafe.evalOrThrow {
                             Fiber.initUnscoped {
@@ -118,7 +120,9 @@ class PosixTransportTlsTest extends Test:
                             }
                         })
                     }.safe.get
-                    client <- transport.connect("127.0.0.1", listener.port, clientTls).safe.get
+                    _      <- Scope.ensure(Sync.defer(listener.close()))
+                    client <- transport.connectTls("127.0.0.1", listener.port, clientTls).safe.get
+                    _      <- Scope.ensure(Sync.defer(client.close()))
                     message = "posix-tls-encrypted-roundtrip".getBytes("UTF-8")
                     _      <- client.outbound.safe.put(Span.fromUnsafe(message))
                     _      <- accepted.take
@@ -126,6 +130,7 @@ class PosixTransportTlsTest extends Test:
                     certHash = client.serverCertificateHash
                 yield
                     client.close()
+                    listener.close()
                     assert(echoed.sameElements(message), s"TLS echo mismatch: got '${new String(echoed, "UTF-8")}'")
                     val hashBytes = certHash match
                         case Present(h) => h.toArray
@@ -142,7 +147,10 @@ class PosixTransportTlsTest extends Test:
             assumeReady()
             withTransport { transport =>
                 deadPort().map { port =>
-                    Abort.run[NetException | Closed](transport.connect("127.0.0.1", port, clientTls).safe.get).map { outcome =>
+                    Abort.run[NetException | Closed](transport.connectTls("127.0.0.1", port, clientTls).safe.get).map { outcome =>
+                        // Defensive: connect is expected to fail against a dead port; if a regression ever made it succeed,
+                        // close the unexpected connection rather than leak it.
+                        outcome.foreach(_.close())
                         assert(outcome.isFailure, s"expected Closed connecting TLS to dead port $port, got $outcome")
                     }
                 }

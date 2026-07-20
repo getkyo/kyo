@@ -10,9 +10,16 @@ import kyo.*
   * implementation is reached through [[kyo.net.NetPlatform.transport]]; this abstract is the surface those implementations share, so a caller
   * writes against one API regardless of which floor the host runs.
   *
-  *   - `connect` / `connectUnix`: open a client connection (optionally TLS) to a TCP host or a Unix socket path.
-  *   - `listen` / `listenUnix`: bind a [[Listener]] and run a handler per accepted connection (optionally terminating TLS).
+  *   - `connect` / `connectTls` / `connectUnix`: open a client connection to a TCP host or a Unix socket path.
+  *   - `listen` / `listenTls` / `listenUnix`: bind a [[Listener]] and run a handler per accepted connection.
   *   - `upgradeToTls`: turn an already-open plaintext connection into a TLS one (STARTTLS-style), where the platform supports it.
+  *
+  * Settings travel with the call, never with the transport. A transport is a multiplexer rather than a per-caller object: one instance carries
+  * many listeners and many connections, spread round-robin across its drivers, and each driver costs a poller or ring descriptor plus a
+  * carrier waiting on it, so callers wanting different buffer sizes or deadlines share one I/O fabric instead of each building their own. A
+  * transport therefore takes no configuration at construction at all; the one process-wide setting, the driver count, is the
+  * `kyo.net.ioPoolSize` flag. Each setting sits where it applies: [[NetConfig]] shapes the connection and socket an operation produces, the
+  * `connectTimeout` parameter bounds a connect, and [[NetTlsConfig.handshakeTimeout]] bounds a handshake.
   *
   * WARNING: Low-level API meant for integrations, libraries, and performance-sensitive code. Every operation returns a `Fiber.Unsafe` and
   * requires an `AllowUnsafe`; see AllowUnsafe for the safety contract. The caller owns the lifecycle of every connection and listener it opens.
@@ -21,24 +28,60 @@ import kyo.*
   *   [[kyo.net.NetPlatform.transport]] for the platform-default instance.
   */
 abstract class Transport:
-    /** Connect to a remote TCP host. Returns a fiber that completes with an open connection. The caller owns the connection lifecycle. */
-    def connect(host: String, port: Int)(using AllowUnsafe, Frame): Fiber.Unsafe[Connection, Abort[NetException]]
+    /** Connect to a remote TCP host. Returns a fiber that completes with an open connection. The caller owns the connection lifecycle.
+      *
+      * @param connectTimeout
+      *   Deadline for the OS to deliver a connect outcome (connected or refused). When finite the transport arms a `Clock`-driven deadline as
+      *   the connect is issued and fails with [[NetConnectTimeoutException]] on expiry; `Duration.Infinity` arms none. Must be positive or
+      *   `Duration.Infinity`.
+      */
+    def connect(
+        host: String,
+        port: Int,
+        connectTimeout: Duration = Transport.DefaultConnectTimeout,
+        config: NetConfig = NetConfig.default
+    )(using AllowUnsafe, Frame): Fiber.Unsafe[Connection, Abort[NetException]]
 
-    /** Connect to a remote TCP host with TLS. Returns a fiber that completes with an open encrypted connection. */
-    def connect(host: String, port: Int, tls: NetTlsConfig)(using AllowUnsafe, Frame): Fiber.Unsafe[Connection, Abort[NetException]]
+    /** Connect to a remote TCP host and complete a client TLS handshake before the connection is handed back.
+      *
+      * `connectTimeout` bounds the TCP phase and [[NetTlsConfig.handshakeTimeout]] bounds the handshake phase, so the worst case before this
+      * fails is their sum.
+      */
+    def connectTls(
+        host: String,
+        port: Int,
+        tls: NetTlsConfig,
+        connectTimeout: Duration = Transport.DefaultConnectTimeout,
+        config: NetConfig = NetConfig.default
+    )(using AllowUnsafe, Frame): Fiber.Unsafe[Connection, Abort[NetException]]
 
-    /** Connect to a Unix domain socket. Returns a fiber that completes with an open connection. */
-    def connectUnix(path: String)(using AllowUnsafe, Frame): Fiber.Unsafe[Connection, Abort[NetException]]
+    /** Connect to a Unix domain socket. */
+    def connectUnix(
+        path: String,
+        connectTimeout: Duration = Transport.DefaultConnectTimeout,
+        config: NetConfig = NetConfig.default
+    )(using AllowUnsafe, Frame): Fiber.Unsafe[Connection, Abort[NetException]]
 
     /** Open a connection over process stdin (fd 0, read) and stdout (fd 1, write). Returns a fiber that completes with the open connection,
       * or aborts [[NetStdioAlreadyOpenException]] when a stdio connection is already open (fds 0/1 are process-global).
       *
+      * Takes the two connection-shape values rather than a whole [[NetConfig]] because the rest cannot act here: fds 0/1 are inherited already
+      * open, so there is no socket to set buffer options on and no connect or handshake to bound. `readChunkSize` acts only where the transport
+      * owns its read buffer, which is the posix and NIO backends; the Node backend sizes its own chunks, so it accepts the value and has
+      * nothing to apply it to, exactly as [[NetConfig.readChunkSize]] describes for ordinary connections.
+      *
       * Every shipped backend supports stdio: the PosixHandle-backed transport, the JVM NIO floor, and the Node-stream transport.
       * [[NetStdioUnsupportedException]] remains the contract for a transport with no byte stream to fd 0/1 (e.g. an in-memory transport).
       */
-    def stdio()(using AllowUnsafe, Frame): Fiber.Unsafe[Connection, Abort[NetException]]
+    def stdio(
+        channelCapacity: Int = NetConfig.DefaultChannelCapacity,
+        readChunkSize: Int = NetConfig.DefaultReadChunkSize
+    )(using AllowUnsafe, Frame): Fiber.Unsafe[Connection, Abort[NetException]]
 
     /** Listen for incoming TCP connections.
+      *
+      * `config` applies to the listen socket and to every connection this listener accepts: an accepted connection inherits the listener's
+      * buffer sizes, since the accepting caller is the one that knows what its server needs.
       *
       * @param host
       *   Bind address (e.g., "0.0.0.0" for all interfaces)
@@ -52,22 +95,21 @@ abstract class Transport:
       * @return
       *   Fiber that completes with Listener once bound
       */
-    def listen(host: String, port: Int, backlog: Int)(
+    def listen(host: String, port: Int, backlog: Int, config: NetConfig = NetConfig.default)(
         handler: Connection => Unit
     )(using AllowUnsafe, Frame): Fiber.Unsafe[Listener, Abort[NetException]]
 
-    /** Listen for incoming TLS connections. Each accepted connection completes a TLS handshake before the handler is invoked. */
-    def listen(host: String, port: Int, backlog: Int, tls: NetTlsConfig)(
+    /** Listen for incoming TLS connections. Each accepted connection completes a server TLS handshake, bounded by
+      * [[NetTlsConfig.handshakeTimeout]], before the handler is invoked.
+      */
+    def listenTls(host: String, port: Int, backlog: Int, tls: NetTlsConfig, config: NetConfig = NetConfig.default)(
         handler: Connection => Unit
     )(using AllowUnsafe, Frame): Fiber.Unsafe[Listener, Abort[NetException]]
 
     /** Listen on a Unix domain socket. */
-    def listenUnix(path: String, backlog: Int)(
+    def listenUnix(path: String, backlog: Int, config: NetConfig = NetConfig.default)(
         handler: Connection => Unit
     )(using AllowUnsafe, Frame): Fiber.Unsafe[Listener, Abort[NetException]]
-
-    /** Shutdown the transport. Closes the driver pool and all resources. Synchronous, idempotent. */
-    def close()(using AllowUnsafe, Frame): Unit
 
     /** Upgrade a plaintext connection to TLS after pre-handshake bytes have been exchanged (STARTTLS-style).
       *
@@ -89,6 +131,22 @@ abstract class Transport:
       * evolves with the transport rather than being duplicated as a fixed table in the tests.
       */
     private[net] def supportedTlsProviders: Set[String]
+end Transport
+
+object Transport:
+    /** Default deadline for a connect to complete, applied by the connect operations when the caller passes none. */
+    val DefaultConnectTimeout: Duration = 30.seconds
+
+    /** Enforce the `connectTimeout` contract at an operation's entry.
+      *
+      * The connect deadline is a loose parameter rather than a [[NetConfig]] field, so no case-class `require` guards it; each implementation
+      * calls this on entry instead, keeping one message and one rule across the three transports.
+      */
+    private[net] def checkConnectTimeout(connectTimeout: Duration): Unit =
+        require(
+            connectTimeout > Duration.Zero || connectTimeout == Duration.Infinity,
+            s"connectTimeout must be positive or Infinity: $connectTimeout"
+        )
 end Transport
 
 /** A bound server socket returned by [[Transport.listen]] / [[Transport.listenUnix]], accepting connections and dispatching each to the handler

@@ -65,7 +65,7 @@ class IoUringOrphanHandshakeRecvRoutingTest extends Test:
             PosixTestSockets.assumeUring()
             TlsRealEngines.assumeTlsReady()
             given Frame = Frame.internal
-            val depth   = math.max(256, kyo.net.TransportConfig.default.ioPoolSize * 64)
+            val depth   = math.max(256, kyo.net.ioPoolSize() * 64)
             val uring   = Ffi.load[IoUringBindings]
             val ring    = Buffer.alloc[Byte](uring.kyo_uring_sizeof().toInt)
             val rc      = uring.io_uring_queue_init(depth, ring, 0)
@@ -75,6 +75,10 @@ class IoUringOrphanHandshakeRecvRoutingTest extends Test:
             val driver = TestDrivers.forBindings(uring, ring)
             discard(driver.start())
             Sync.ensure(Sync.defer(driver.close())) {
+                // Gate BEFORE any socket exists. TlsRealEngines.singleEngine below requires BoringSSL and cancels without it; cancelling from
+                // there would leave the loopback pair already open and unreclaimed, one leaked pair per leaf, visible only on a host that
+                // stages OpenSSL but not BoringSSL.
+                TlsRealEngines.assumeBoringSslReady()
                 PosixTestSockets.loopbackPair().map { case (client, accepted) =>
                     val serverEngine = TlsRealEngines.singleEngine(isServer = true)
                     Sync.ensure(Sync.defer(serverEngine.free())) {

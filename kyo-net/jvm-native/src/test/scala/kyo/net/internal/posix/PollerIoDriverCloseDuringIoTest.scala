@@ -47,6 +47,7 @@ class PollerIoDriverCloseDuringIoTest extends Test:
                     closeCountAtSendTime.set(spy.closeCounts.getOrDefault(accepted, 0))
                 val result = driver.write(handle, Span.fromUnsafe(Array[Byte](1, 2)), 0)
                 discard(sock.close(client))
+                driver.close()
                 assert(
                     closeCountAtSendTime.get() == 0,
                     s"the real close(fd) must not run while the write's send syscall is still in flight, was ${closeCountAtSendTime.get()}"
@@ -96,6 +97,7 @@ class PollerIoDriverCloseDuringIoTest extends Test:
                     // Await the deferred real close actually running (asynchronously, on the poll-loop carrier), not a fixed sleep.
                     spy.closed(accepted).safe.get.map { _ =>
                         discard(sock.close(client))
+                        driver.close()
                         assert(
                             closeCountAtRecvTime.get() == 0,
                             s"the real close(fd) must not run while the read dispatch's recv syscall is still in flight, was ${closeCountAtRecvTime.get()}"

@@ -14,7 +14,7 @@ import kyo.net.internal.transport.WriteResult
   *
   * The driver-selection matrix leaves use a real temp file fd (for S_IFREG) or a real socket fd (for non-regular-file types) and real
   * `Ffi.load[SocketBindings].fstat`. The no-close leaf uses `RecordingSocketBindings` over real bindings. The stdio CAS test and the
-  * selection-matrix leaves use a real `PollerIoDriver.init(transportConfig)`: the CAS test never invokes the driver (only the `stdioClaimed` CAS is
+  * selection-matrix leaves use a real `PollerIoDriver.init()`: the CAS test never invokes the driver (only the `stdioClaimed` CAS is
   * exercised), and the selection predicate is a pure function over `.label` + `backendIsEpoll` + real fstat, so no driver behavior is
   * invoked.
   *
@@ -27,7 +27,7 @@ class PosixTransportTest extends Test:
 
     import AllowUnsafe.embrace.danger
 
-    private val transportConfig = kyo.net.TransportConfig.default
+    private val transportConfig = kyo.net.NetConfig.default
 
     private def assumePoller(): Unit =
         if !(PosixConstants.isLinux || PosixConstants.isMacOrBsd) then
@@ -44,8 +44,8 @@ class PosixTransportTest extends Test:
     private def transportForRegularFile(backendIsEpoll: Boolean): (PosixTransport, Int, PollerIoDriver) =
         val (tempFd, _) = PosixTestSockets.tempFileFd(Array.empty[Byte])
         val realSockets = Ffi.load[SocketBindings]
-        val driver      = PollerIoDriver.init(transportConfig)
-        val transport   = TestTransports.forTesting(transportConfig, driver, realSockets, backendIsEpoll)
+        val driver      = PollerIoDriver.init()
+        val transport   = TestTransports.forTesting(driver, realSockets, backendIsEpoll)
         (transport, tempFd, driver)
     end transportForRegularFile
 
@@ -54,8 +54,8 @@ class PosixTransportTest extends Test:
       */
     private def transportForSocket(backendIsEpoll: Boolean): (PosixTransport, Int, PollerIoDriver) =
         val socketFd  = sock.socket(PosixConstants.AF_INET, PosixConstants.SOCK_STREAM, 0).value
-        val driver    = PollerIoDriver.init(transportConfig)
-        val transport = TestTransports.forTesting(transportConfig, driver, Ffi.load[SocketBindings], backendIsEpoll)
+        val driver    = PollerIoDriver.init()
+        val transport = TestTransports.forTesting(driver, Ffi.load[SocketBindings], backendIsEpoll)
         (transport, socketFd, driver)
     end transportForSocket
 
@@ -71,8 +71,8 @@ class PosixTransportTest extends Test:
         "a second concurrent stdio aborts NetStdioAlreadyOpenException (the stdioClaimed CAS)" in {
             // Use a transport with a real PollerIoDriver (unstarted; no driver method is invoked here).
             // The test exercises the stdioClaimed CAS, not fstat.
-            val driver    = PollerIoDriver.init(transportConfig)
-            val transport = TestTransports.forTesting(transportConfig, driver, Ffi.load[SocketBindings], backendIsEpoll = false)
+            val driver    = PollerIoDriver.init()
+            val transport = TestTransports.forTesting(driver, Ffi.load[SocketBindings], backendIsEpoll = false)
             transport.stdio().safe.use { first =>
                 Sync.Unsafe.defer(first.close()).andThen {
                     Abort.run[NetException](transport.stdio().safe.get).map { result =>
@@ -89,21 +89,38 @@ class PosixTransportTest extends Test:
 
         "the connection it builds round-trips bytes through its pumps (the stdio Connection contract)" in {
             assumePoller()
-            val driver = PollerIoDriver.init(transportConfig)
+            val driver = PollerIoDriver.init()
             discard(driver.start())
-            val transport = TestTransports.forTesting(transportConfig, driver, Ffi.load[SocketBindings], backendIsEpoll = false)
+            val transport = TestTransports.forTesting(driver, Ffi.load[SocketBindings], backendIsEpoll = false)
+            // Scope.run resolves writer/reader's own Scope.ensure finalizers BEFORE the Sync.ensure driver.close() above runs.
             Sync.ensure(Sync.defer(driver.close())) {
-                loopbackPair().map { case (client, accepted) =>
-                    val writer = transport.openWith(PosixHandle.socket(client, PosixHandle.DefaultReadBufferSize, Absent), driver)
-                    val reader = transport.openWith(PosixHandle.socket(accepted, PosixHandle.DefaultReadBufferSize, Absent), driver)
-                    writer.start()
-                    reader.start()
-                    val payload = Span.fromUnsafe(Array.tabulate[Byte](12)(i => (i + 1).toByte))
-                    writer.outbound.safe.put(payload).andThen {
-                        reader.inbound.safe.take.map { got =>
-                            writer.close()
-                            reader.close()
-                            assert(got.toArray.toList == payload.toArray.toList, s"round-trip got ${got.toArray.toList}")
+                Scope.run {
+                    loopbackPair().map { case (client, accepted) =>
+                        val writer =
+                            transport.openWith(
+                                PosixHandle.socket(client, PosixHandle.DefaultReadBufferSize, Absent),
+                                driver,
+                                kyo.net.NetConfig.DefaultChannelCapacity
+                            )
+                        val reader =
+                            transport.openWith(
+                                PosixHandle.socket(accepted, PosixHandle.DefaultReadBufferSize, Absent),
+                                driver,
+                                kyo.net.NetConfig.DefaultChannelCapacity
+                            )
+                        writer.start()
+                        reader.start()
+                        Scope.ensure(Sync.defer(writer.close())).andThen {
+                            Scope.ensure(Sync.defer(reader.close())).andThen {
+                                val payload = Span.fromUnsafe(Array.tabulate[Byte](12)(i => (i + 1).toByte))
+                                writer.outbound.safe.put(payload).andThen {
+                                    reader.inbound.safe.take.map { got =>
+                                        writer.close()
+                                        reader.close()
+                                        assert(got.toArray.toList == payload.toArray.toList, s"round-trip got ${got.toArray.toList}")
+                                    }
+                                }
+                            }
                         }
                     }
                 }
@@ -164,10 +181,10 @@ class PosixTransportTest extends Test:
         // PollerIoDriver, relabeled "IoUringDriver", exercises this label branch; every behavioral method still delegates to the real driver.
         "regular-file stdin under a non-poller driver label does NOT fall back" in {
             val (tempFd, _) = PosixTestSockets.tempFileFd(Array.empty[Byte])
-            val driver      = PollerIoDriver.init(transportConfig)
+            val driver      = PollerIoDriver.init()
             val spy         = new RecordingIoDriver(driver)
             spy.labelOverride = Present("IoUringDriver")
-            val transport = TestTransports.forTesting(transportConfig, spy, Ffi.load[SocketBindings], backendIsEpoll = true)
+            val transport = TestTransports.forTesting(spy, Ffi.load[SocketBindings], backendIsEpoll = true)
             try
                 assert(transport.pollable(tempFd), "a regular file under a non-PollerIoDriver label must stay pollable")
                 val selected = transport.selectDriver(tempFd)
@@ -186,9 +203,9 @@ class PosixTransportTest extends Test:
             // A real socket fd has S_IFSOCK mode, not S_IFREG. isRegularFile returns false, so pollable returns true on any backend.
             val sockets = sock
 
-            val epollDriver = PollerIoDriver.init(transportConfig)
+            val epollDriver = PollerIoDriver.init()
             val socketFd1   = sockets.socket(PosixConstants.AF_INET, PosixConstants.SOCK_STREAM, 0).value
-            val pipeEpoll   = TestTransports.forTesting(transportConfig, epollDriver, Ffi.load[SocketBindings], backendIsEpoll = true)
+            val pipeEpoll   = TestTransports.forTesting(epollDriver, Ffi.load[SocketBindings], backendIsEpoll = true)
             try
                 assert(pipeEpoll.pollable(socketFd1), "socket fd (non-regular) must be pollable under epoll")
                 assert(pipeEpoll.selectDriver(socketFd1).label == "PollerIoDriver", "socket must not fall back under epoll")
@@ -197,9 +214,9 @@ class PosixTransportTest extends Test:
                 epollDriver.close()
             end try
 
-            val kqueueDriver = PollerIoDriver.init(transportConfig)
+            val kqueueDriver = PollerIoDriver.init()
             val socketFd2    = sockets.socket(PosixConstants.AF_INET, PosixConstants.SOCK_STREAM, 0).value
-            val kqueueEpoll  = TestTransports.forTesting(transportConfig, kqueueDriver, Ffi.load[SocketBindings], backendIsEpoll = false)
+            val kqueueEpoll  = TestTransports.forTesting(kqueueDriver, Ffi.load[SocketBindings], backendIsEpoll = false)
             try
                 assert(kqueueEpoll.pollable(socketFd2), "socket fd must be pollable under kqueue")
                 assert(kqueueEpoll.selectDriver(socketFd2).label == "PollerIoDriver", "socket must not fall back under kqueue")
@@ -243,5 +260,51 @@ class PosixTransportTest extends Test:
             }
         }
     end loopbackPair
+
+    // readChunkSize seeds the handle's read buffer at connect time (PosixHandle.socket), and the handle carries it for the rest of the
+    // connection's life. Two connects on ONE transport asking for different sizes must produce handles with different buffers; a
+    // construction-captured or dropped value would give both the same. Read before any traffic, since the buffer adapts once reads start.
+    "readChunkSize is per connection, not per transport" in {
+        assumePoller()
+        val driver    = PollerIoDriver.init()
+        val pool      = kyo.net.internal.transport.IoDriverPool.init(Array[IoDriver[PosixHandle]](driver))
+        val transport = PosixTransport.init(pool)
+        pool.start()
+        def bufferOf(conn: kyo.net.Connection): Int =
+            conn.asInstanceOf[kyo.net.internal.transport.Connection[PosixHandle]].handle.readBufferSize
+        Abort.run[NetException | Closed] {
+            Scope.run {
+                transport.listen("127.0.0.1", 0, 4)(_ => ()).safe.get.map { listener =>
+                    Scope.ensure(Sync.defer(listener.close())).andThen {
+                        transport.connect("127.0.0.1", listener.port, config = kyo.net.NetConfig(readChunkSize = 1024)).safe.get.map {
+                            small =>
+                                Scope.ensure(Sync.defer(small.close())).andThen {
+                                    transport.connect(
+                                        "127.0.0.1",
+                                        listener.port,
+                                        config = kyo.net.NetConfig(readChunkSize = 65536)
+                                    ).safe.get.map { large =>
+                                        Scope.ensure(Sync.defer(large.close())).andThen {
+                                            Sync.defer {
+                                                val smallBuffer = bufferOf(small)
+                                                val largeBuffer = bufferOf(large)
+                                                small.close()
+                                                large.close()
+                                                listener.close()
+                                                assert(smallBuffer == 1024, s"the connection that asked for 1024 got $smallBuffer")
+                                                assert(largeBuffer == 65536, s"the connection that asked for 65536 got $largeBuffer")
+                                                succeed
+                                            }
+                                        }
+                                    }
+                                }
+                        }
+                    }
+                }
+            }
+        }.map { result =>
+            Sync.defer(driver.close()).andThen(Abort.get(result))
+        }
+    }
 
 end PosixTransportTest

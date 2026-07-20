@@ -11,13 +11,13 @@ import kyo.net.internal.transport.WriteResult
   *
   * A raw write appends its bytes to the handle's pending tail and submits a send SQE on the reap carrier ([[IoUringDriver.writeRaw]] ->
   * `flushRaw`). When `kyo_uring_get_sqe` returns Absent (the submission queue is full) `flushRaw` has nothing in flight to re-drive the send, so
-  * it parks the handle in `stalledRaw` and leaves the bytes in the tail rather than dropping them or busy-retrying. The reap loop re-flushes
+  * it parks the handle in `stalledSends` and leaves the bytes in the tail rather than dropping them or busy-retrying. The reap loop re-flushes
   * every stalled handle once per turn, after `flushSubmits` and the wait free the SQ slots, so a transient SQ-full BACKPRESSURES the write (the
   * bytes wait in the tail) and then the send goes out when a slot frees. The bytes are never lost and the writer never spins.
   *
   * The leaf forces the SQ-full structurally on a real depth-1 ring (exactly one SQE) with the reap loop running: a latch (the test releases it,
   * not a sleep) pins the reap carrier so a filler read, the raw write, and a peer read all drain in ONE pass before the wait submits anything.
-  * The filler read consumes the one SQE; the raw write's `flushRaw` then sees `get_sqe` return Absent and parks in `stalledRaw`; the peer read
+  * The filler read consumes the one SQE; the raw write's `flushRaw` then sees `get_sqe` return Absent and parks in `stalledSends`; the peer read
   * parks too. Releasing the latch lets the reap loop re-flush the parked send and re-arm the parked read over the next turns. The invariant is
   * proven end to end: the peer read delivers exactly the written payload, so the SQ-full write was parked and re-flushed, never dropped.
   *
@@ -58,7 +58,7 @@ class IoUringRawWriteSqFullTest extends Test:
             PosixTestSockets.assumeUring()
             // Depth-1 real ring, reap loop running. Pin the reap carrier with a latch (released by the test, not a sleep) so the filler read, the
             // raw write, and the peer read all enqueue and drain in ONE pass before the wait submits anything: the filler read consumes the one SQE,
-            // the raw write's flushRaw then sees get_sqe Absent and parks in stalledRaw (the bytes stay in the tail), and the peer read parks too.
+            // the raw write's flushRaw then sees get_sqe Absent and parks in stalledSends (the bytes stay in the tail), and the peer read parks too.
             // Releasing the latch lets the reap loop re-flush the parked send and re-arm the parked read each turn. The peer read delivering the exact
             // payload proves the SQ-full write was parked and re-flushed, never dropped and never busy-retried.
             withRecordingDriver(1) { (drv, _) =>

@@ -1,6 +1,7 @@
 package kyo.net
 
 import kyo.*
+import kyo.net.internal.JsListener
 import kyo.net.internal.JsTransport
 import scala.scalajs.js as sjs
 
@@ -124,7 +125,7 @@ class JsTransportTlsTest extends Test:
         for
             serverAndPort <- startPinnedTlsServer("TLSv1.2")
             (server, port) = serverAndPort
-            result <- Abort.run[NetException](transport.connect("127.0.0.1", port, clientTls13).safe.get)
+            result <- Abort.run[NetException](transport.connectTls("127.0.0.1", port, clientTls13).safe.get)
         yield
             discard(server.close())
             assert(result.isFailure, s"a TLS1.3-only client must be rejected by a TLS1.2-only server, got: $result")
@@ -144,8 +145,11 @@ class JsTransportTlsTest extends Test:
         for
             serverAndPort <- startPinnedTlsServer("TLSv1.3")
             (server, port) = serverAndPort
-            result <- Abort.run[NetException](transport.connect("127.0.0.1", port, clientTls13).safe.get)
+            result <- Abort.run[NetException](transport.connectTls("127.0.0.1", port, clientTls13).safe.get)
         yield
+            // This handshake succeeds, so the result carries a live connection. Node's server.close() only stops accepting and never
+            // releases an established socket, so closing the connection here is the only thing that reclaims either end.
+            result.foreach(_.close())
             discard(server.close())
             assert(result.isSuccess, s"a TLS1.3 client against a TLS1.3 server must succeed, got: $result")
         end for
@@ -162,7 +166,7 @@ class JsTransportTlsTest extends Test:
             maxVersion = NetTlsConfig.Version.TLS12
         )
         for
-            listener <- transport.listen("127.0.0.1", 0, 128, serverTls12) { serverConn =>
+            listener <- transport.listenTls("127.0.0.1", 0, 128, serverTls12) { serverConn =>
                 // Drain so a successful handshake does not leave the socket hanging; ignore failures.
                 discard(Sync.Unsafe.evalOrThrow {
                     Fiber.initUnscoped {
@@ -193,7 +197,7 @@ class JsTransportTlsTest extends Test:
             trustAll = false
         )
         for
-            listener <- transport.listen("127.0.0.1", 0, 128, serverTls) { serverConn =>
+            listener <- transport.listenTls("127.0.0.1", 0, 128, serverTls) { serverConn =>
                 discard(Sync.Unsafe.evalOrThrow {
                     Fiber.initUnscoped {
                         Abort.run[Closed](serverConn.inbound.safe.take.unit).unit
@@ -201,7 +205,7 @@ class JsTransportTlsTest extends Test:
                 })
             }.safe.get
             port = listener.port
-            result <- Abort.run[NetException](transport.connect("", port, verifyingClient).safe.get)
+            result <- Abort.run[NetException](transport.connectTls("", port, verifyingClient).safe.get)
         yield
             listener.close()
             assert(result.isFailure, s"a verifying client with an empty host must fail closed, got: $result")
@@ -226,7 +230,7 @@ class JsTransportTlsTest extends Test:
             // Listen on "localhost" (not 127.0.0.1): the verifying client must connect by NAME for hostname verification, and Node resolves
             // "localhost" to ::1 first on some hosts (verbatim DNS result order). Binding and connecting through the same name makes both
             // sides share one resolution, so the leaf does not depend on which address family the host lists first.
-            listener <- transport.listen("localhost", 0, 128, serverTls) { serverConn =>
+            listener <- transport.listenTls("localhost", 0, 128, serverTls) { serverConn =>
                 discard(Sync.Unsafe.evalOrThrow {
                     Fiber.initUnscoped {
                         Abort.run[Closed](serverConn.inbound.safe.take.unit).unit
@@ -234,8 +238,12 @@ class JsTransportTlsTest extends Test:
                 })
             }.safe.get
             port = listener.port
-            result <- Abort.run[NetException](transport.connect("localhost", port, verifyingClient).safe.get)
+            result <- Abort.run[NetException](transport.connectTls("localhost", port, verifyingClient).safe.get)
         yield
+            // This handshake succeeds, so the result carries a live connection. A listener close only reclaims sockets still mid-handshake,
+            // never one already handed to the accept handler, so closing the client here is what releases both ends (its FIN tears down the
+            // accepted side).
+            result.foreach(_.close())
             listener.close()
             assert(result.isSuccess, s"a verifying client with a matching host must connect, got: $result")
         end for
@@ -269,9 +277,9 @@ class JsTransportTlsTest extends Test:
         // would never fire, hanging the test (the symptom of the unreaped stall).
         import AllowUnsafe.embrace.danger
         val transport =
-            JsTransport.init(poolSize = 1, channelCapacity = 4, connectTimeout = Duration.Infinity, handshakeTimeout = 150.millis)
+            JsTransport.init(poolSize = 1)
         for
-            listener <- transport.listen("127.0.0.1", 0, 128, serverTlsMaterial) { _ => () }.safe.get
+            listener <- transport.listenTls("127.0.0.1", 0, 128, serverTlsMaterial.copy(handshakeTimeout = 150.millis)) { _ => () }.safe.get
             port                    = listener.port
             (reaped, destroyClient) = stalledRawClient(port)
             wasReaped <- reaped
@@ -287,10 +295,10 @@ class JsTransportTlsTest extends Test:
         // normally (echo round-trip), proving the deadline timer is disarmed on a successful handshake and does not reap a healthy connection.
         import AllowUnsafe.embrace.danger
         val transport =
-            JsTransport.init(poolSize = 1, channelCapacity = 4, connectTimeout = Duration.Infinity, handshakeTimeout = 2.seconds)
+            JsTransport.init(poolSize = 1)
         val clientTls = NetTlsConfig(trustAll = true, sniHostname = Present("localhost"))
         for
-            listener <- transport.listen("127.0.0.1", 0, 128, serverTlsMaterial) { serverConn =>
+            listener <- transport.listenTls("127.0.0.1", 0, 128, serverTlsMaterial.copy(handshakeTimeout = 2.seconds)) { serverConn =>
                 discard(Sync.Unsafe.evalOrThrow {
                     Fiber.initUnscoped {
                         Abort.run[Closed](serverConn.inbound.safe.take.map(chunk => serverConn.outbound.safe.put(chunk))).unit
@@ -298,7 +306,7 @@ class JsTransportTlsTest extends Test:
                 })
             }.safe.get
             port = listener.port
-            client <- transport.connect("127.0.0.1", port, clientTls).safe.get
+            client <- transport.connectTls("127.0.0.1", port, clientTls).safe.get
             _      <- client.outbound.safe.put(Span.from("ping".getBytes("UTF-8")))
             echo   <- client.inbound.safe.take
         yield
@@ -316,9 +324,11 @@ class JsTransportTlsTest extends Test:
         // observation window (an Async suspension, not a thread block) is the no-reap ceiling; with Infinity the client's "close" must not fire.
         import AllowUnsafe.embrace.danger
         val transport =
-            JsTransport.init(poolSize = 1, channelCapacity = 4, connectTimeout = Duration.Infinity, handshakeTimeout = Duration.Infinity)
+            JsTransport.init(poolSize = 1)
         for
-            listener <- transport.listen("127.0.0.1", 0, 128, serverTlsMaterial) { _ => () }.safe.get
+            listener <- transport.listenTls("127.0.0.1", 0, 128, serverTlsMaterial.copy(handshakeTimeout = Duration.Infinity)) { _ =>
+                ()
+            }.safe.get
             port                    = listener.port
             (reaped, destroyClient) = stalledRawClient(port)
             // Race the reap signal against a bounded window: if the window wins, the stall was NOT reaped (the expected Infinity behavior).
@@ -327,6 +337,34 @@ class JsTransportTlsTest extends Test:
             destroyClient()
             listener.close()
             assert(!outcome, "a stalled handshake must not be reaped when handshakeTimeout is Infinity")
+        end for
+    }
+
+    // Same leak the posix and NIO backends had: a socket whose TLS handshake never completed never becomes a connection this transport knows
+    // about, and Node's server.close() stops accepting without releasing it, so nothing reclaimed it and the process-shared transport is never
+    // closed. Removing the tracking makes this leaf fail with a timeout, which is the leak: the peer stays connected to a socket nobody owns.
+    //
+    // Pinned with handshakeTimeout = Infinity so no deadline can do the reclaiming instead, and the peer is held open across the assertion,
+    // since closing it would end the handshake by itself and the leaf would stop testing the discharge.
+    "closing a listener releases accepted sockets whose handshake never settled" in {
+        val transport = JsTransport.init(poolSize = 1)
+        val unbounded = serverTlsMaterial.copy(handshakeTimeout = Duration.Infinity)
+        for
+            listener <- transport.listenTls("127.0.0.1", 0, 128, unbounded) { _ => () }.safe.get
+            client   <- transport.connect("127.0.0.1", listener.port).safe.get
+            // Barrier: the client's connect resolving proves only that IT saw the TCP handshake. Node's server-side "connection" event can
+            // fire afterwards, in the same libuv turn, so closing here without waiting could sweep an empty list and let the leaf pass on
+            // server.close() dropping a backlogged connection instead, whether or not the reclaim works at all.
+            _ <- assertEventually(Sync.defer(listener.asInstanceOf[JsListener].pendingAcceptHandshakeCount > 0))
+            _ <- Sync.defer(listener.close())
+            // The discharge must have emptied the registry, not merely stopped accepting.
+            _       <- assertEventually(Sync.defer(listener.asInstanceOf[JsListener].pendingAcceptHandshakeCount == 0))
+            outcome <- Abort.run[Timeout](Async.timeout(3.seconds)(Abort.run[Closed](client.inbound.safe.take)))
+            _       <- Sync.defer(client.close())
+        yield assert(
+            outcome.isSuccess,
+            s"closing the listener must destroy its unsettled accepted socket, got $outcome"
+        )
         end for
     }
 

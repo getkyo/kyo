@@ -33,25 +33,31 @@ class TransportPlaintextConcurrentTest extends Test:
 
     "many concurrent plaintext connections on one transport all echo" - eachBackend { transport =>
         echoServer(transport).map { listener =>
-            Async.fillIndexed(concurrency, concurrency) { i =>
-                val msg = s"plaintext-concurrent-$i".getBytes("UTF-8")
-                Abort.run[NetException | Closed](
-                    transport.connect("127.0.0.1", listener.port).safe.get.flatMap { conn =>
-                        conn.outbound.safe.put(Span.fromUnsafe(msg)).andThen {
-                            collectToLen(conn, msg.length).map { echoed =>
-                                conn.close()
-                                java.util.Arrays.equals(echoed.take(msg.length), msg)
+            // Guards the listener if fillIndexed itself were to fail outside the per-connection Abort.run below.
+            Scope.ensure(Sync.defer(listener.close())).andThen {
+                Async.fillIndexed(concurrency, concurrency) { i =>
+                    val msg = s"plaintext-concurrent-$i".getBytes("UTF-8")
+                    Abort.run[NetException | Closed](
+                        transport.connect("127.0.0.1", listener.port).safe.get.flatMap { conn =>
+                            // Guards this connection if the put/collect below fails: only the success path below closes it explicitly.
+                            Scope.ensure(Sync.defer(conn.close())).andThen {
+                                conn.outbound.safe.put(Span.fromUnsafe(msg)).andThen {
+                                    collectToLen(conn, msg.length).map { echoed =>
+                                        conn.close()
+                                        java.util.Arrays.equals(echoed.take(msg.length), msg)
+                                    }
+                                }
                             }
                         }
+                    ).map {
+                        case Result.Success(ok) => ok
+                        case _                  => false
                     }
-                ).map {
-                    case Result.Success(ok) => ok
-                    case _                  => false
+                }.map { results =>
+                    listener.close()
+                    val failed = results.count(ok => !ok)
+                    assert(failed == 0, s"$failed of $concurrency concurrent plaintext echoes failed")
                 }
-            }.map { results =>
-                listener.close()
-                val failed = results.count(ok => !ok)
-                assert(failed == 0, s"$failed of $concurrency concurrent plaintext echoes failed")
             }
         }
     }

@@ -2,8 +2,8 @@ package kyo.net.internal.backend
 
 import kyo.*
 import kyo.net.NetBackendUnavailableException
+import kyo.net.NetConfig
 import kyo.net.Test
-import kyo.net.TransportConfig
 import kyo.net.internal.posix.PosixConstants
 import kyo.net.internal.posix.PosixTransport
 
@@ -22,14 +22,14 @@ class JvmPosixBackendSelectionTest extends Test:
     import AllowUnsafe.embrace.danger
     given Frame = Frame.internal
 
-    private val transportConfig = TransportConfig.default
+    private val transportConfig = NetConfig.default
 
     /** Drive a real loopback echo through `transport`: listen on an ephemeral port whose handler echoes one inbound chunk, connect, write the
       * payload, and read the echoed bytes back. Returns the bytes received by the client.
       */
     private def echoRoundTrip(transport: kyo.net.Transport, payload: Array[Byte])(using
         Frame
-    ): Array[Byte] < (Async & Abort[kyo.net.NetException | Closed]) =
+    ): Array[Byte] < (Async & Abort[kyo.net.NetException | Closed] & Scope) =
         for
             listener <- transport.listen("127.0.0.1", 0, 128) { serverConn =>
                 discard(Sync.Unsafe.evalOrThrow {
@@ -40,8 +40,10 @@ class JvmPosixBackendSelectionTest extends Test:
                     }
                 })
             }.safe.get
+            _ <- Scope.ensure(Sync.defer(listener.close()))
             port = listener.port
             conn     <- transport.connect("127.0.0.1", port).safe.get
+            _        <- Scope.ensure(Sync.defer(conn.close()))
             _        <- conn.outbound.safe.put(Span.from(payload))
             received <- conn.inbound.safe.take
         yield
@@ -70,8 +72,11 @@ class JvmPosixBackendSelectionTest extends Test:
                     cancel("no posix backend on this host; selection round-trip needs epoll/kqueue/io_uring")
                 end if
         end match
-        // The built production transport must use a PosixTransport (the unified posix path), not NioTransport.
-        val unsafe = IoBackendPlatform.transport(transportConfig)
+        // The built production transport must use a PosixTransport (the unified posix path), not NioTransport. This leaf's premise is that a
+        // posix backend WINS selection, so a run that forces the nio floor (KYO_NET_ONLY=nio or -Dkyo.net.backend=nio, the cell-isolation and
+        // forced-backend CI legs) has deliberately removed the thing under test; cancel rather than report a failure the run itself caused.
+        if IoBackendPlatform.selected.name == "nio" then cancel("nio is forced; this leaf asserts posix wins selection")
+        val unsafe = IoBackendPlatform.transport()
         assert(unsafe.isInstanceOf[PosixTransport], s"production transport is ${unsafe.getClass.getSimpleName}, expected PosixTransport")
         val payload = "posix-echo".getBytes
         echoRoundTrip(unsafe, payload).map { got =>
@@ -94,7 +99,7 @@ class JvmPosixBackendSelectionTest extends Test:
         ).getOrThrow
         assert(forced.name == "nio", s"forced selected=${forced.name}")
         // The forced floor must build the NioTransport, not a PosixTransport, and that floor must round-trip as production.
-        val unsafe = forced.build(transportConfig)
+        val unsafe = forced.build()
         assert(!unsafe.isInstanceOf[PosixTransport], "forced-nio transport is a PosixTransport, expected NioTransport")
         val payload = "nio-floor-echo".getBytes
         echoRoundTrip(unsafe, payload).map { got =>

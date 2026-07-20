@@ -1,10 +1,10 @@
 package kyo.net.internal
 
 import kyo.*
+import kyo.net.NetConfig
 import kyo.net.NetPlatform
 import kyo.net.NetTlsConfig
 import kyo.net.Test
-import kyo.net.TransportConfig
 import kyo.net.internal.posix.PosixConstants
 
 /** The TLS handshake terminates on jvm-native posix backends.
@@ -47,7 +47,7 @@ class PosixTransportHandshakeLivenessTest extends Test:
             "responsive: real TLS handshake completes and both connections are open" in {
                 assumeTlsAndPoller()
                 given Frame = Frame.internal
-                TlsRealEngines.realTlsLoopback(TransportConfig.default) { (clientConn, serverConn) =>
+                TlsRealEngines.realTlsLoopback(NetConfig.default) { (clientConn, serverConn) =>
                     assert(clientConn.isOpen, "client connection must be open after handshake Done")
                     assert(serverConn.isOpen, "server connection must be open after handshake Done")
                     succeed
@@ -67,28 +67,28 @@ class PosixTransportHandshakeLivenessTest extends Test:
                     privateKeyPath = Present(TlsTestCert.keyPath)
                 )
                 // Short deadline: a client that stalls the TLS handshake must be reaped within 150ms.
-                val transport = NetPlatform.transport(TransportConfig.default.copy(handshakeTimeout = 150.millis))
-                transport.listen("127.0.0.1", 0, 16, serverTls) { _ => () }.safe.get.map { listener =>
-                    // Plain TCP connect (no TLS): the client completes the TCP handshake but never
-                    // sends a ClientHello. The server driveHandshake stays in WantRead until teardown.
-                    transport.connect("127.0.0.1", listener.port).safe.get.map { client =>
-                        Abort.run[Timeout](Async.timeout(5.seconds)(Abort.run[Closed](client.inbound.safe.take))).map {
-                            outcome =>
-                                client.close()
-                                listener.close()
-                                transport.close()
-                                // Reap: inbound ends with an empty EOF span or a Closed abort.
-                                // Timeout (the 5s window expired with no reap) is the regression symptom.
-                                val reaped = outcome match
-                                    case Result.Success(Result.Success(span)) => span.isEmpty
-                                    case Result.Success(Result.Failure(_))    => true
-                                    case _                                    => false
-                                assert(
-                                    reaped,
-                                    s"stalled: deadline must reap the handshake within 5s (handshakeTimeout=150ms), got $outcome"
-                                )
+                val transport = NetPlatform.transport
+                transport.listenTls("127.0.0.1", 0, 16, serverTls.copy(handshakeTimeout = 150.millis)) { _ => () }.safe.get.map {
+                    listener =>
+                        // Plain TCP connect (no TLS): the client completes the TCP handshake but never
+                        // sends a ClientHello. The server driveHandshake stays in WantRead until teardown.
+                        transport.connect("127.0.0.1", listener.port).safe.get.map { client =>
+                            Abort.run[Timeout](Async.timeout(5.seconds)(Abort.run[Closed](client.inbound.safe.take))).map {
+                                outcome =>
+                                    client.close()
+                                    listener.close()
+                                    // Reap: inbound ends with an empty EOF span or a Closed abort.
+                                    // Timeout (the 5s window expired with no reap) is the regression symptom.
+                                    val reaped = outcome match
+                                        case Result.Success(Result.Success(span)) => span.isEmpty
+                                        case Result.Success(Result.Failure(_))    => true
+                                        case _                                    => false
+                                    assert(
+                                        reaped,
+                                        s"stalled: deadline must reap the handshake within 5s (handshakeTimeout=150ms), got $outcome"
+                                    )
+                            }
                         }
-                    }
                 }
             }
         }

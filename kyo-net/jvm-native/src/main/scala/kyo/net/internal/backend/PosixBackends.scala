@@ -3,7 +3,6 @@ package kyo.net.internal.backend
 import kyo.*
 import kyo.ffi.Ffi
 import kyo.net.Transport
-import kyo.net.TransportConfig
 import kyo.net.internal.posix.EpollBindings
 import kyo.net.internal.posix.IoUringBindings
 import kyo.net.internal.posix.IoUringDriver
@@ -40,8 +39,8 @@ private[net] object EpollBackend extends PosixIoBackend:
             else false
             end if
         }
-    def createDriver(config: TransportConfig)(using AllowUnsafe, Frame): IoDriver[PosixHandle] =
-        PollerIoDriver.init(config)
+    def createDriver()(using AllowUnsafe, Frame): IoDriver[PosixHandle] =
+        PollerIoDriver.init()
 end EpollBackend
 
 private[net] object KqueueBackend extends PosixIoBackend:
@@ -57,8 +56,8 @@ private[net] object KqueueBackend extends PosixIoBackend:
             else false
             end if
         }
-    def createDriver(config: TransportConfig)(using AllowUnsafe, Frame): IoDriver[PosixHandle] =
-        PollerIoDriver.init(config)
+    def createDriver()(using AllowUnsafe, Frame): IoDriver[PosixHandle] =
+        PollerIoDriver.init()
 end KqueueBackend
 
 /** io_uring backend (Linux >= 5.6 only, priority 30 so it is preferred over epoll when available). `isAvailable` runs the real
@@ -71,11 +70,11 @@ private[net] object IoUringBackend extends PosixIoBackend:
     def isAvailable(using AllowUnsafe): Boolean =
         // Probe at the production queue depth (the same max(256, ioPoolSize * 64) IoUringDriver.init builds), not a fixed 256, so a sandbox that
         // initializes a small ring but rejects the production-depth ring is reported unavailable here rather than selected and failing at build.
-        val depth = math.max(256, TransportConfig.default.ioPoolSize * 64)
+        val depth = math.max(256, kyo.net.ioPoolSize() * 64)
         PosixConstants.isLinux && probe(Ffi.load[IoUringBindings].kyo_uring_probe_available(depth))
     end isAvailable
-    def createDriver(config: TransportConfig)(using AllowUnsafe, Frame): IoDriver[PosixHandle] =
-        IoUringDriver.init(config)
+    def createDriver()(using AllowUnsafe, Frame): IoDriver[PosixHandle] =
+        IoUringDriver.init()
 end IoUringBackend
 
 /** Run a capability probe, returning `false` (never throwing) if the syscall is unavailable: on a non-host OS the kyo-ffi binding for the
@@ -94,7 +93,7 @@ private[net] trait Entry:
     def name: String
     def priority: Int
     def isAvailable(using AllowUnsafe): Boolean
-    def build(config: TransportConfig)(using AllowUnsafe, Frame): Transport
+    def build()(using AllowUnsafe, Frame): Transport
 end Entry
 
 /** A registry entry over a posix backend: `build` constructs the unified driver, starts its event loop, and wires it into `PosixTransport.init`
@@ -104,15 +103,15 @@ final private[net] class PosixEntry(backend: PosixIoBackend) extends Entry:
     def name                                    = backend.name
     def priority                                = backend.priority
     def isAvailable(using AllowUnsafe): Boolean = backend.isAvailable
-    def build(config: TransportConfig)(using AllowUnsafe, Frame): Transport =
+    def build()(using AllowUnsafe, Frame): Transport =
         // Build ioPoolSize independent drivers, wrap them in the pool, and start them all-or-nothing. Each driver owns its own poller/io_uring fd
         // and carrier fiber; pool.next() distributes new connections round-robin across the drivers, and each connection is then bound to one
         // driver for its lifetime, so per-handle single-driver ownership holds downstream. Both JVM and Native run the scheduler over real OS
         // threads, so each driver's poll loop parks its own carrier thread and ioPoolSize drivers give real cross-core parallelism.
-        val n       = math.max(1, config.ioPoolSize)
-        val drivers = Array.fill(n)(backend.createDriver(config))
+        val n       = kyo.net.ioPoolSize()
+        val drivers = Array.fill(n)(backend.createDriver())
         val pool    = IoDriverPool.init(drivers)
         pool.start() // all-or-nothing: on any driver-start failure this closes the started subset and rethrows.
-        PosixTransport.init(config, pool)
+        PosixTransport.init(pool)
     end build
 end PosixEntry

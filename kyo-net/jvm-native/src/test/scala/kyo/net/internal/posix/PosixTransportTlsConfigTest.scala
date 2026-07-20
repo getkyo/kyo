@@ -32,7 +32,7 @@ class PosixTransportTlsConfigTest extends Test:
 
     import AllowUnsafe.embrace.danger
 
-    private val transportConfig = kyo.net.TransportConfig.default
+    private val transportConfig = kyo.net.NetConfig.default
 
     private val serverTls = NetTlsConfig(
         certChainPath = Present(TlsTestCert.certPath),
@@ -52,7 +52,8 @@ class PosixTransportTlsConfigTest extends Test:
         if !tlsAvailable then cancel("No TLS provider staged for this host")
     end assumeReady
 
-    /** Mirrors [[PosixTransportTlsTest.withTransport]]: a fresh real poller driver + transport, closed after `body` completes.
+    /** Mirrors [[PosixTransportTlsTest.withTransport]]: a fresh real poller driver + transport, the driver closed after `body` completes (this
+      * transport is never closed, mirroring production).
       *
       * Awaits the driver's own poll-loop-exit fiber after `close()` (rather than discarding it) so the underlying thread and listener
       * socket are provably gone before this computation completes: `close()` itself only requests teardown (`submitEngineOp` +
@@ -64,11 +65,13 @@ class PosixTransportTlsConfigTest extends Test:
     private def withTransport[A](buildEngine: PosixTransport.TlsEngineFactory)(
         body: PosixTransport => A < (Async & Abort[NetException | Closed] & Scope)
     )(using Frame): A < (Async & Abort[NetException | Closed] & Scope) =
-        val driver     = PollerIoDriver.init(transportConfig)
-        val transport  = TestTransports.forTesting(transportConfig, driver, Ffi.load[SocketBindings], backendIsEpoll = false, buildEngine)
+        val driver     = PollerIoDriver.init()
+        val transport  = TestTransports.forTesting(driver, Ffi.load[SocketBindings], backendIsEpoll = false, buildEngine)
         val driverDone = driver.start()
-        Abort.run[NetException | Closed](body(transport)).map { result =>
-            Sync.defer(transport.close()).andThen(Sync.defer(driver.close())).andThen(
+        // Scope.run resolves the body's own Scope.ensure finalizers (each leaf's listener/connection closes) BEFORE the driver
+        // teardown below runs, so a leaf never closes a handle after its owning driver is already gone.
+        Abort.run[NetException | Closed](Scope.run(body(transport))).map { result =>
+            Sync.defer(driver.close()).andThen(
                 Abort.run(driverDone.safe.get).unit
             ).andThen(Abort.get(result))
         }
@@ -82,27 +85,36 @@ class PosixTransportTlsConfigTest extends Test:
                 throw NetTlsConfigException("synthetic accept-side engine construction failure (test)")
             else TlsProviderPlatform.engine(cfg, host, isServer)
         } { transport =>
-            transport.listen("127.0.0.1", 0, 16, serverTls)(_ => ()).safe.get.map { listener =>
-                Abort.run[NetException | Closed](transport.connect("127.0.0.1", listener.port, verifyingClientTls).safe.get).map {
-                    firstOutcome =>
-                        serverEngineThrows.set(false)
-                        Abort.run[NetException | Closed](transport.connect("127.0.0.1", listener.port, verifyingClientTls).safe.get).map {
-                            secondOutcome =>
-                                listener.close()
-                                assert(
-                                    firstOutcome.isFailure,
-                                    s"the first connection must fail, not hang, when the accept-side engine build throws, got $firstOutcome"
-                                )
-                                secondOutcome match
-                                    case Result.Success(conn) =>
-                                        discard(conn.close())
-                                        succeed
-                                    case other =>
-                                        fail(
-                                            s"the accept loop must still serve a second connection after the first connection's engine setup failed, got $other"
-                                        )
-                                end match
-                        }
+            transport.listenTls("127.0.0.1", 0, 16, serverTls)(_ => ()).safe.get.map { listener =>
+                Scope.ensure(Sync.defer(listener.close())).andThen {
+                    Abort.run[NetException | Closed](transport.connectTls("127.0.0.1", listener.port, verifyingClientTls).safe.get).map {
+                        firstOutcome =>
+                            serverEngineThrows.set(false)
+                            Abort.run[NetException | Closed](transport.connectTls(
+                                "127.0.0.1",
+                                listener.port,
+                                verifyingClientTls
+                            ).safe.get).map {
+                                secondOutcome =>
+                                    listener.close()
+                                    // Defensive: the first connection is expected to fail (the accept-side engine build throws); if a
+                                    // regression ever let it through, close it here rather than leak it.
+                                    firstOutcome.foreach(_.close())
+                                    assert(
+                                        firstOutcome.isFailure,
+                                        s"the first connection must fail, not hang, when the accept-side engine build throws, got $firstOutcome"
+                                    )
+                                    secondOutcome match
+                                        case Result.Success(conn) =>
+                                            discard(conn.close())
+                                            succeed
+                                        case other =>
+                                            fail(
+                                                s"the accept loop must still serve a second connection after the first connection's engine setup failed, got $other"
+                                            )
+                                    end match
+                            }
+                    }
                 }
             }
         }
@@ -120,13 +132,18 @@ class PosixTransportTlsConfigTest extends Test:
                 )
             else TlsProviderPlatform.engine(cfg, host, isServer)
         } { transport =>
-            transport.listen("127.0.0.1", 0, 16, serverTls)(_ => ()).safe.get.map { listener =>
-                Abort.run[NetException | Closed](transport.connect("127.0.0.1", listener.port, verifyingClientTls).safe.get).map {
-                    outcome =>
-                        listener.close()
-                        outcome match
-                            case Result.Failure(_: NetTlsConfigException) => succeed
-                            case other                                    => fail(s"expected a NetTlsConfigException failure, got $other")
+            transport.listenTls("127.0.0.1", 0, 16, serverTls)(_ => ()).safe.get.map { listener =>
+                Scope.ensure(Sync.defer(listener.close())).andThen {
+                    Abort.run[NetException | Closed](transport.connectTls("127.0.0.1", listener.port, verifyingClientTls).safe.get).map {
+                        outcome =>
+                            listener.close()
+                            // Defensive: connect is expected to fail with NetTlsConfigException; if a regression ever let a real
+                            // connection through, close it here rather than leak it (the assert below fails the leaf regardless).
+                            outcome.foreach(_.close())
+                            outcome match
+                                case Result.Failure(_: NetTlsConfigException) => succeed
+                                case other => fail(s"expected a NetTlsConfigException failure, got $other")
+                    }
                 }
             }
         }

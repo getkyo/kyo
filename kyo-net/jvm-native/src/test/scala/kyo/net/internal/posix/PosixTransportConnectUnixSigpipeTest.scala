@@ -34,7 +34,7 @@ class PosixTransportConnectUnixSigpipeTest extends Test:
 
     import AllowUnsafe.embrace.danger
 
-    private val transportConfig = kyo.net.TransportConfig.default
+    private val transportConfig = kyo.net.NetConfig.default
 
     private def assumeKqueue(): Unit =
         if !PosixConstants.isMacOrBsd then
@@ -101,19 +101,25 @@ class PosixTransportConnectUnixSigpipeTest extends Test:
             // A unique short path under /tmp (well under the 108-byte sun_path limit). nanoTime gives uniqueness without java.util.UUID.
             val path      = s"/tmp/kyo-net-sigpipe-${java.lang.System.nanoTime()}.sock"
             val spy       = new OptRecordingSockets(Ffi.load[SocketBindings])
-            val driver    = PollerIoDriver.init(transportConfig)
-            val transport = TestTransports.forTesting(transportConfig, driver, spy, backendIsEpoll = false)
+            val driver    = PollerIoDriver.init()
+            val transport = TestTransports.forTesting(driver, spy, backendIsEpoll = false)
             discard(driver.start())
-            Abort.run[Closed] {
+            // Sync.ensure (not the previous Abort.run[Closed](...).map { ... driver.close() ... } shape): listenUnix/connectUnix actually
+            // raise Abort[NetException], which Abort.run[Closed] never catches (only a literal Closed), so a NetException short-circuited
+            // straight past that trailing .map and its driver.close() too. Sync.ensure runs regardless of how this block ends.
+            Sync.ensure(Sync.defer(driver.close())) {
                 for
-                    _      <- transport.listenUnix(path, 16)(_ => ()).safe.get
+                    listener <- transport.listenUnix(path, 16)(_ => ()).safe.get
+                    // Registered as soon as each resource is up: connectUnix (or the inline assert below) can fail before a trailing close
+                    // would ever run, which would otherwise leak the listener and/or the client connection.
+                    _      <- Scope.ensure(Sync.defer(listener.close()))
                     client <- transport.connectUnix(path).safe.get
+                    _      <- Scope.ensure(Sync.defer(client.close()))
                 yield
                     // The connectUnix client fd is the LAST fd handed to connect (the listen path never calls connect). Record it before
                     // teardown so the assertion targets exactly that socket.
                     val connectFd = client.asInstanceOf[kyo.net.internal.transport.Connection[PosixHandle]].handle.readFd
-                    client.close()
-                    val calls = scala.jdk.CollectionConverters.IteratorHasAsScala(spy.setsockoptCalls.iterator()).asScala.toList
+                    val calls     = scala.jdk.CollectionConverters.IteratorHasAsScala(spy.setsockoptCalls.iterator()).asScala.toList
                     assert(
                         calls.contains((connectFd, PosixConstants.SOL_SOCKET, PosixConstants.SO_NOSIGPIPE)),
                         s"connectUnix client fd $connectFd was never opted out of SIGPIPE via setsockopt(SOL_SOCKET, SO_NOSIGPIPE) on macOS. " +
@@ -121,8 +127,6 @@ class PosixTransportConnectUnixSigpipeTest extends Test:
                             "passes nodelay=false, so a send to a peer-closed UDS raises SIGPIPE (process kill on Native; masked on the JVM)."
                     )
                 end for
-            }.map { result =>
-                Sync.defer(transport.close()).andThen(Sync.defer(driver.close())).andThen(Abort.get(result))
             }
         }
     }

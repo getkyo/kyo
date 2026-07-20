@@ -26,7 +26,7 @@ class RecordingDecoratorsTest extends Test:
         PosixTestSockets.assumePoller().andThen {
             val recording = new RecordingSocketBindings(sock)
             PosixTestSockets.loopbackPair(recording).map { case (client, accepted) =>
-                val driver = PollerIoDriver.init(kyo.net.TransportConfig.default)
+                val driver = PollerIoDriver.init()
                 discard(driver.start())
                 Sync.ensure(Sync.defer(driver.close())) {
                     val clientH   = PosixHandle.socket(client, PosixHandle.DefaultReadBufferSize, Absent)
@@ -49,6 +49,8 @@ class RecordingDecoratorsTest extends Test:
                             // (The server fd was closed inside loopbackPair by the recording spy.)
                             assert(!recording.closeCounts.isEmpty, "no close was recorded despite loopbackPair closing the server fd")
                         case other =>
+                            driver.closeHandle(clientH)
+                            driver.closeHandle(acceptedH)
                             fail(s"expected ReadOutcome.Bytes but got $other")
                     }
                 }

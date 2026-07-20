@@ -155,6 +155,16 @@ private[net] object KqueuePollerBackend extends PollerBackend:
     ): Int =
         kqData match
             case Present(data) =>
+                // The changelist batches changes until the next poll submits them, but it has a hard capacity of MaxEvents slots: it is an
+                // optimization, not an unbounded accumulator. A single drain that produces more changes than that encodes past the buffer and
+                // aborts the cycle with IndexOutOfBounds, taking the driver down with it. Two ways to get there, both reachable under load:
+                // many fds re-arming in one cycle, and terminalTeardown's drain, which has no following poll to flush the batch at all.
+                // Submitting the full batch here and starting a fresh one costs an extra kevent under load instead of losing the driver.
+                // Passing changelistBuf as the eventlist with nevents = 0 is the same no-read idiom used by changeNow above.
+                if data.nChanges >= MaxEvents then
+                    discard(kq.keventNow(pollerFd, data.changelistBuf, data.nChanges, data.changelistBuf, 0, ZeroTimeout))
+                    data.nChanges = 0
+                end if
                 val slot = data.nChanges
                 KEvent.encodeChange(data.changelistBuf, slot, fd, filter, flags, udata)
                 data.nChanges = slot + 1

@@ -109,7 +109,7 @@ class PosixHandleAdaptiveBufferTest extends Test:
             assumePoller()
             // A small seed so a modest payload fills it repeatedly and triggers the grow, then assert the post-grow read is byte-identical.
             val seed   = 512
-            val driver = PollerIoDriver.init(kyo.net.TransportConfig.default)
+            val driver = PollerIoDriver.init()
             discard(driver.start())
             Sync.ensure(Sync.defer(driver.close())) {
                 PosixTestSockets.loopbackPair().map { case (client, accepted) =>

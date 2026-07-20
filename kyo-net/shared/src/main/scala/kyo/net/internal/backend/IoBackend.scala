@@ -2,7 +2,6 @@ package kyo.net.internal.backend
 
 import kyo.*
 import kyo.net.NetBackendUnavailableException
-import kyo.net.TransportConfig
 import kyo.net.internal.transport.IoDriver
 import scala.annotation.tailrec
 
@@ -29,7 +28,7 @@ private[net] trait IoBackend:
     def isAvailable(using AllowUnsafe): Boolean
 
     /** Build the completion-contract driver this backend produces. Called once selection wins. */
-    def createDriver(config: TransportConfig)(using AllowUnsafe, Frame): IoDriver[Handle]
+    def createDriver()(using AllowUnsafe, Frame): IoDriver[Handle]
 
 end IoBackend
 

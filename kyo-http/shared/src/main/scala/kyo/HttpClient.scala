@@ -45,15 +45,13 @@ opaque type HttpClient = HttpClientBackend
 
 object HttpClient:
 
-    // Bootstrap boundary: lazy val requires eager evaluation of the suspended pool init. The shared default client owns its own transport,
-    // distinct from the process-global `NetPlatform.transport` singleton, so a `HttpClient.use(_.close)` on this client cannot close that
-    // shared transport for the whole process. But like the singleton this client is never closed (it lives for the process), so its transport
-    // is built through the process-lifetime path: its idle keep-alive carriers are allowlisted by the fiber-leak / stranded-op gate rather than
-    // reported as a leaked owned transport.
+    // Bootstrap boundary: lazy val requires eager evaluation of the suspended pool init. Uses the process-shared transport for its config,
+    // like every other client and server: a transport multiplexes many listeners and connections, so one instance per distinct config serves
+    // the whole process. Closing a client never closes that transport (see closeFiber), so this client's lifetime is irrelevant to it.
     private lazy val defaultClient: HttpClient =
         import AllowUnsafe.embrace.danger
         given Frame   = Frame.internal
-        val transport = kyo.net.NetPlatform.processLifetimeTransport(NetConfigTranslation.toNetTransportConfig(HttpTransportConfig.default))
+        val transport = kyo.net.NetPlatform.transport
         initUnsafe(transport, 100, 60.seconds)
     end defaultClient
 
@@ -167,8 +165,9 @@ object HttpClient:
       * `HttpClient.let(client) { ... }` to make it the active client for a block of code.
       *
       * `transportConfig` tunes the byte transport and HTTP parser for this client (buffer sizes, channel capacity, the HTTP header limit).
-      * It is a construction-time setting because the connection pool and its transport are built once and shared across all requests; a
-      * per-request override could not rebuild a pooled transport. The client builds and owns its transport, closing it on shutdown.
+      * It is a construction-time setting because the connection pool is built once and shared across all requests; a per-request override could not
+      * rebuild a pooled transport. The transport itself is process-shared across every client and server using the same settings, so closing a
+      * client closes its pool and connections but never the transport.
       */
     def init(
         maxConnectionsPerHost: Int = 100,
@@ -195,7 +194,7 @@ object HttpClient:
         require(maxConnectionsPerHost > 0, s"maxConnectionsPerHost must be positive: $maxConnectionsPerHost")
         require(idleConnectionTimeout > Duration.Zero, s"idleConnectionTimeout must be positive: $idleConnectionTimeout")
         Sync.Unsafe.defer {
-            val transport = kyo.net.NetPlatform.transport(NetConfigTranslation.toNetTransportConfig(transportConfig))
+            val transport = kyo.net.NetPlatform.transport
             initUnsafe(transport, maxConnectionsPerHost, idleConnectionTimeout, defaultTlsConfig, transportConfig)
         }
     end initUnscoped

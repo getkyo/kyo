@@ -133,18 +133,16 @@ object HttpServer:
             if serverFilter eq HttpFilter.noop then allHandlers
             else allHandlers.map(h => HttpHandler.withFilter(h, serverFilter))
         Sync.Unsafe.defer {
-            val transport   = kyo.net.NetPlatform.transport(NetConfigTranslation.toNetTransportConfig(config.transportConfig))
+            val transport   = kyo.net.NetPlatform.transport
             val listenFiber = Unsafe.init(transport, config, filteredHandlers)
             Abort.run[NetException](listenFiber.safe.get).map {
                 case Result.Success(server) => server.safe
                 case Result.Failure(netEx) =>
-                    transport.close()
                     val bindTarget = config.unixSocket match
                         case Present(path) => path
                         case Absent        => config.host
                     Abort.fail(HttpBindException(bindTarget, config.port, new java.io.IOException(netEx.getMessage)))
                 case Result.Panic(t) =>
-                    transport.close()
                     throw t
             }
         }
@@ -236,21 +234,32 @@ object HttpServer:
                 )
                 end if
             end tracked
+            val netConfig = NetConfigTranslation.toNetConfig(config.transportConfig)
             val listenFiber = (config.unixSocket, config.tls) match
                 case (Present(path), _) =>
-                    transport.listenUnix(path, config.backlog)(tracked)
+                    transport.listenUnix(path, config.backlog, netConfig)(tracked)
                 case (Absent, Present(tls)) =>
-                    NetConfigTranslation.listenTls(transport, config.host, config.port, config.backlog, tls)(tracked)
+                    NetConfigTranslation.listenTls(
+                        transport,
+                        config.host,
+                        config.port,
+                        config.backlog,
+                        tls,
+                        config.transportConfig
+                    )(tracked)
                 case _ =>
-                    transport.listen(config.host, config.port, config.backlog)(tracked)
+                    transport.listen(config.host, config.port, config.backlog, netConfig)(tracked)
             listenFiber.map(listener => new ListenerUnsafe(listener, transport, registry))
         end init
     end Unsafe
 
     // --- Private implementations ---
 
-    /** Unsafe implementation wrapping a Listener from Transport, plus the registry of accepted connections it owns. The server owns its
-      * transport, so closing the server also closes that transport to release its driver/pool.
+    /** Unsafe implementation wrapping a Listener from Transport, plus the registry of accepted connections it owns.
+      *
+      * The server does NOT own its transport: one transport is shared by every client and server in the process, so closing the server closes
+      * its listener, which releases the bound port, and its accepted connections, and leaves the transport alone. Closing it would take every
+      * co-tenant's connections down.
       */
     final private class ListenerUnsafe(
         listener: kyo.net.Listener,
@@ -276,8 +285,9 @@ object HttpServer:
 
             def forceCloseAndComplete(): Unit =
                 registry.closeAll(_.close())
-                // Release the transport this server owns after the accepted connections are closed so its driver/pool is freed.
-                transport.close()
+                // The transport is NOT closed here. It is process-shared across every client and server using the same settings, so closing it
+                // would take every co-tenant's connections down with this server. What this server owns is its listener (closed above, which
+                // releases the bound port) and its accepted connections (closed just above), and those are what shutting it down must reclaim.
                 discard(closedPromise.completeDiscard(Result.succeed(())))
             end forceCloseAndComplete
 

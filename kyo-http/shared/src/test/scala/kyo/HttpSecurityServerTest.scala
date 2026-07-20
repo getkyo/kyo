@@ -121,7 +121,7 @@ class HttpSecurityServerTest extends BaseHttpTest:
     "handshake-stall DoS defenses" - {
 
         // The cross-backend reap mechanism itself (including Native) is covered by kyo-net's TransportHandshakeTimeoutTest
-        // via the public NetPlatform.transport(config) factory; this test covers the kyo-http wiring:
+        // via the public NetPlatform.transport singleton; this test covers the kyo-http wiring:
         // HttpServerConfig.transportConfig.handshakeTimeout reaching an owned per-config transport whose finite deadline
         // reaps a stalled accept handshake.
 

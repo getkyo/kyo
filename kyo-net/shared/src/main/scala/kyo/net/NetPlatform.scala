@@ -14,23 +14,23 @@ import kyo.*
   * (io_uring/epoll/kqueue/nio on the JVM); see `IoBackendPlatform`.
   */
 object NetPlatform:
-    /** The default transport for the current platform, built with `TransportConfig.default` and shared for the lifetime of the process. */
+    /** The transport for the current platform, built once and shared for the lifetime of the process.
+      *
+      * There is exactly one, and it serves every caller. A transport is a multiplexer rather than a per-caller object: one instance already
+      * carries many listeners and many connections, spread round-robin across its drivers, and each driver costs a poller or ring descriptor
+      * plus a carrier waiting on it. Building a private one per client and per server would multiply the machine's I/O fabric by the number of
+      * components instead of by the work they do.
+      *
+      * Differing settings are not a reason to build another: every field of [[NetConfig]] applies to one connection, one socket, or one
+      * operation, so callers pass their own config to each [[Transport]] operation and still share this instance.
+      *
+      * This transport is never closed: it belongs to the process, and closing it would take every co-tenant's connections down. It has no `close()`: the only
+      * things a component owns are its listeners and connections, and closing those is what reclaims its resources.
+      */
     lazy val transport: Transport =
-        kyo.net.internal.NetPlatformTransport.transport
+        import AllowUnsafe.embrace.danger
+        given Frame = Frame.internal
+        kyo.net.internal.NetPlatformTransport.configuredProcessLifetime()
+    end transport
 
-    /** A transport built with a custom [[TransportConfig]] (for example a finite server `handshakeTimeout` for slowloris protection, or a larger
-      * `channelCapacity`). It selects the same platform-default backend as [[transport]] (honoring `-Dkyo.net.backend`) but applies the given
-      * configuration. Unlike the process-global [[transport]], the returned transport owns its resources and the caller MUST `close()` it.
-      */
-    def transport(config: TransportConfig)(using AllowUnsafe, Frame): Transport =
-        kyo.net.internal.NetPlatformTransport.configured(config)
-
-    /** A per-config transport marked as a process-lifetime transport (never closed by design), for the process-wide default HTTP client. Like
-      * the owned `transport(config)` it builds and owns its own driver pool, distinct from the [[transport]] singleton, so closing the default
-      * client cannot close that shared singleton. But because this transport is itself never closed (it lives for the process, like the
-      * singleton), its idle carriers are allowlisted by the fiber-leak / stranded-op gate rather than reported as a leaked owned transport (see
-      * `kyo.net.internal.ProcessSharedTransport`). Internal: only the lazy, never-closed default client uses it.
-      */
-    private[kyo] def processLifetimeTransport(config: TransportConfig)(using AllowUnsafe, Frame): Transport =
-        kyo.net.internal.NetPlatformTransport.configuredProcessLifetime(config)
 end NetPlatform

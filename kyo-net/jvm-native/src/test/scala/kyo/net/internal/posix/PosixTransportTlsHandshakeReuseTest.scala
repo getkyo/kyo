@@ -24,7 +24,7 @@ class PosixTransportTlsHandshakeReuseTest extends Test:
 
     import AllowUnsafe.embrace.danger
 
-    private val transportConfig = kyo.net.TransportConfig.default
+    private val transportConfig = kyo.net.NetConfig.default
 
     private val serverTls = NetTlsConfig(
         certChainPath = Present(TlsTestCert.certPath),
@@ -44,7 +44,8 @@ class PosixTransportTlsHandshakeReuseTest extends Test:
         if !tlsAvailable then cancel("No TLS provider staged for this host")
     end assumeTlsReady
 
-    /** Build a transport over a fresh real poller driver, run `body`, then close the transport and the driver.
+    /** Build a transport over a fresh real poller driver, run `body`, then close the driver (this transport is never closed, mirroring
+      * production).
       *
       * Awaits the driver's own poll-loop-exit fiber after `close()` (rather than discarding it) so the underlying thread and listener socket
       * are provably gone before this computation completes: `close()` itself only requests teardown (`submitEngineOp` + `triggerWake()`) and
@@ -55,11 +56,13 @@ class PosixTransportTlsHandshakeReuseTest extends Test:
     private def withTransport[A](body: PosixTransport => A < (Async & Abort[NetException | Closed] & Scope))(using
         Frame
     ): A < (Async & Abort[NetException | Closed] & Scope) =
-        val driver     = PollerIoDriver.init(transportConfig)
-        val transport  = TestTransports.forTesting(transportConfig, driver, Ffi.load[SocketBindings], backendIsEpoll = false)
+        val driver     = PollerIoDriver.init()
+        val transport  = TestTransports.forTesting(driver, Ffi.load[SocketBindings], backendIsEpoll = false)
         val driverDone = driver.start()
-        Abort.run[NetException | Closed](body(transport)).map { result =>
-            Sync.defer(transport.close()).andThen(Sync.defer(driver.close())).andThen(
+        // Scope.run resolves the body's own Scope.ensure finalizers (each leaf's listener/connection closes) BEFORE the driver
+        // teardown below runs, so a leaf never closes a handle after its owning driver is already gone.
+        Abort.run[NetException | Closed](Scope.run(body(transport))).map { result =>
+            Sync.defer(driver.close()).andThen(
                 Abort.run(driverDone.safe.get).unit
             ).andThen(Abort.get(result))
         }
@@ -78,7 +81,7 @@ class PosixTransportTlsHandshakeReuseTest extends Test:
             withTransport { transport =>
                 for
                     ready <- Channel.init[Unit](1)
-                    listener <- transport.listen("127.0.0.1", 0, 16, serverTls) { serverConn =>
+                    listener <- transport.listenTls("127.0.0.1", 0, 16, serverTls) { serverConn =>
                         discard(Sync.Unsafe.evalOrThrow {
                             Fiber.initUnscoped {
                                 Abort.run[Closed] {
@@ -94,15 +97,18 @@ class PosixTransportTlsHandshakeReuseTest extends Test:
                             }
                         })
                     }.safe.get
+                    _ <- Scope.ensure(Sync.defer(listener.close()))
                     // The handshake runs to completion over multiple read-ciphertext parks (the per-handshake promise path); the round-trip proves
                     // it completed correctly.
-                    client <- transport.connect("127.0.0.1", listener.port, clientTls).safe.get
+                    client <- transport.connectTls("127.0.0.1", listener.port, clientTls).safe.get
+                    _      <- Scope.ensure(Sync.defer(client.close()))
                     _      <- ready.take
                     msg = "handshake-reuse-roundtrip".getBytes("UTF-8")
                     _      <- client.outbound.safe.put(Span.fromUnsafe(msg))
                     echoed <- collect(client, msg.length)
                 yield
                     client.close()
+                    listener.close()
                     assert(echoed.sameElements(msg), s"TLS handshake round-trip mismatch: got '${new String(echoed, "UTF-8")}'")
             }
         }
@@ -123,12 +129,15 @@ class PosixTransportTlsHandshakeReuseTest extends Test:
                             }
                         })
                     }.safe.get
+                    _ <- Scope.ensure(Sync.defer(listener.close()))
                     // Run the TLS connect in a fiber so we can interrupt it while its handshake is parked awaiting the (never-coming) ServerHello.
-                    fiber  <- Fiber.init(Abort.run[kyo.net.NetException](transport.connect("127.0.0.1", listener.port, clientTls).safe.get))
+                    fiber <-
+                        Fiber.init(Abort.run[kyo.net.NetException](transport.connectTls("127.0.0.1", listener.port, clientTls).safe.get))
                     _      <- accepted.take // the server has accepted the TCP connection; the client handshake is now in flight / parked
                     done   <- fiber.interrupt
                     result <- fiber.getResult
                 yield
+                    listener.close()
                     // The interrupt is honored (it won the race with the never-completing handshake).
                     assert(done, "fiber.interrupt returned false: the parked handshake fiber was not interrupted")
                     // The fiber unwound to a terminal result (no strand / no hang): a Panic(interrupt) or a typed Failure, never a Success of a

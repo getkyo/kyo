@@ -2,10 +2,10 @@ package kyo.net.internal.posix
 
 import kyo.*
 import kyo.ffi.Ffi
+import kyo.net.NetConfig
 import kyo.net.NetException
 import kyo.net.NetTlsConfig
 import kyo.net.Test
-import kyo.net.TransportConfig
 import kyo.net.internal.TlsRealEngines
 import kyo.net.internal.TlsTestCert
 
@@ -32,13 +32,14 @@ class PosixTransportHandshakeAlertTest extends Test:
 
     import AllowUnsafe.embrace.danger
 
-    private val transportConfig = TransportConfig.default
+    private val transportConfig = NetConfig.default
 
     private def assumePollerReady(): Unit =
         if !(PosixConstants.isLinux || PosixConstants.isMacOrBsd) then
             cancel("PosixTransport TLS handshake tests need epoll (Linux) or kqueue (macOS/BSD)")
 
-    /** Build a transport over a fresh real poller driver, run `body`, then close the transport and the driver.
+    /** Build a transport over a fresh real poller driver, run `body`, then close the driver (this transport is never closed, mirroring
+      * production). Each leaf closes its own listener.
       *
       * Awaits the driver's own poll-loop-exit fiber after `close()` (rather than discarding it) so the underlying thread and listener socket
       * are provably gone before this computation completes: `close()` itself only requests teardown (`submitEngineOp` + `triggerWake()`) and
@@ -49,11 +50,11 @@ class PosixTransportHandshakeAlertTest extends Test:
     private def withTransport[A](body: PosixTransport => A < (Async & Abort[NetException | Closed] & Scope))(using
         Frame
     ): A < (Async & Abort[NetException | Closed] & Scope) =
-        val driver     = PollerIoDriver.init(transportConfig)
-        val transport  = TestTransports.forTesting(transportConfig, driver, Ffi.load[SocketBindings], backendIsEpoll = false)
+        val driver     = PollerIoDriver.init()
+        val transport  = TestTransports.forTesting(driver, Ffi.load[SocketBindings], backendIsEpoll = false)
         val driverDone = driver.start()
         Abort.run[NetException | Closed](body(transport)).map { result =>
-            Sync.defer(transport.close()).andThen(Sync.defer(driver.close())).andThen(
+            Sync.defer(driver.close()).andThen(
                 Abort.run(driverDone.safe.get).unit
             ).andThen(Abort.get(result))
         }
@@ -79,12 +80,22 @@ class PosixTransportHandshakeAlertTest extends Test:
                 import NetTlsConfig.Version.*
                 // Server accepts only TLS 1.3; the client offers only TLS 1.2, so the server's real engine rejects the ClientHello, queues a
                 // protocol_version fatal alert, and the accept handshake fails on the fatal (`-2`) arm.
-                transport.listen("127.0.0.1", 0, 16, serverTls(TLS13, TLS13)) { _ => () }.safe.get.map { listener =>
-                    Abort.run[NetException | Closed](transport.connect("127.0.0.1", listener.port, clientTls(TLS12, TLS12)).safe.get).map {
+                transport.listenTls("127.0.0.1", 0, 16, serverTls(TLS13, TLS13)) { _ => () }.safe.get.map { listener =>
+                    Abort.run[NetException | Closed](transport.connectTls(
+                        "127.0.0.1",
+                        listener.port,
+                        clientTls(TLS12, TLS12)
+                    ).safe.get).map {
                         outcome =>
+                            listener.close()
                             val message = outcome match
-                                case Result.Failure(e) => e.getMessage
-                                case other             => fail(s"expected the version-mismatch handshake to fail, got $other")
+                                case Result.Failure(e)    => e.getMessage
+                                case Result.Success(conn) =>
+                                    // Not expected (the whole leaf asserts this handshake fails), but if it ever does succeed the returned
+                                    // connection must still be closed rather than leaked.
+                                    conn.close()
+                                    fail(s"expected the version-mismatch handshake to fail, got $outcome")
+                                case other => fail(s"expected the version-mismatch handshake to fail, got $other")
                             // The server drains + sends its fatal alert before close; the client's engine consumes it and the connect fails with the
                             // engine-level handshake failure (a NetTlsHandshakeException, "TLS handshake with <host>:<port> failed[: <cause>]"). A
                             // bare-close server would instead make the client read a bare EOF mid-handshake, with the failure cause "peer closed during
@@ -107,7 +118,7 @@ class PosixTransportHandshakeAlertTest extends Test:
             TlsRealEngines.assumeTlsReady()
             import NetTlsConfig.Version.*
             withTransport { transport =>
-                transport.listen("127.0.0.1", 0, 16, serverTls(TLS12, TLS13)) { serverConn =>
+                transport.listenTls("127.0.0.1", 0, 16, serverTls(TLS12, TLS13)) { serverConn =>
                     discard(Sync.Unsafe.evalOrThrow {
                         Fiber.initUnscoped {
                             Abort.run[Closed] {
@@ -120,18 +131,23 @@ class PosixTransportHandshakeAlertTest extends Test:
                         }
                     })
                 }.safe.get.map { listener =>
-                    transport.connect("127.0.0.1", listener.port, clientTls(TLS12, TLS13)).safe.get.map { client =>
-                        val message = "version-overlap-roundtrip".getBytes("UTF-8")
-                        client.outbound.safe.put(Span.fromUnsafe(message)).andThen {
-                            Loop(Array.emptyByteArray) { acc =>
-                                if acc.length >= message.length then Loop.done(acc)
-                                else client.inbound.safe.take.map(chunk => Loop.continue(acc ++ chunk.toArray))
-                            }.map { echoed =>
-                                client.close()
-                                assert(
-                                    echoed.sameElements(message),
-                                    s"matching-version handshake must complete and round-trip, got '${new String(echoed, "UTF-8")}'"
-                                )
+                    // Registered as soon as each resource is up: outbound.put/inbound.take below can abort with Closed before reaching the
+                    // trailing client.close()/listener.close() that used to be the only cleanup, which would leak both.
+                    Scope.ensure(Sync.defer(listener.close())).andThen {
+                        transport.connectTls("127.0.0.1", listener.port, clientTls(TLS12, TLS13)).safe.get.map { client =>
+                            Scope.ensure(Sync.defer(client.close())).andThen {
+                                val message = "version-overlap-roundtrip".getBytes("UTF-8")
+                                client.outbound.safe.put(Span.fromUnsafe(message)).andThen {
+                                    Loop(Array.emptyByteArray) { acc =>
+                                        if acc.length >= message.length then Loop.done(acc)
+                                        else client.inbound.safe.take.map(chunk => Loop.continue(acc ++ chunk.toArray))
+                                    }.map { echoed =>
+                                        assert(
+                                            echoed.sameElements(message),
+                                            s"matching-version handshake must complete and round-trip, got '${new String(echoed, "UTF-8")}'"
+                                        )
+                                    }
+                                }
                             }
                         }
                     }

@@ -21,7 +21,7 @@ class TransportTlsConnectConcurrentTest extends Test:
 
     "many concurrent connect-time TLS connections on one transport all echo" - eachBackendTls { (transport, serverTls, clientTls) =>
         val cli = clientTls.copy(sniHostname = Present("localhost"))
-        transport.listen("127.0.0.1", 0, 256, serverTls) { serverConn =>
+        transport.listenTls("127.0.0.1", 0, 256, serverTls) { serverConn =>
             discard(Sync.Unsafe.evalOrThrow {
                 Fiber.initUnscoped {
                     Abort.run[Closed] {
@@ -32,25 +32,34 @@ class TransportTlsConnectConcurrentTest extends Test:
                 }
             })
         }.safe.get.map { listener =>
-            Async.fillIndexed(concurrency, concurrency) { i =>
-                val msg = s"tls-connect-concurrent-$i".getBytes("UTF-8")
-                Abort.run[Closed](
-                    transport.connect("127.0.0.1", listener.port, cli).safe.get.flatMap { conn =>
-                        conn.outbound.safe.put(Span.fromUnsafe(msg)).andThen {
-                            collectToLen(conn, msg.length).map { echoed =>
-                                conn.close()
-                                java.util.Arrays.equals(echoed.take(msg.length), msg)
+            Scope.ensure(Sync.defer(listener.close())).andThen {
+                Async.fillIndexed(concurrency, concurrency) { i =>
+                    val msg = s"tls-connect-concurrent-$i".getBytes("UTF-8")
+                    Abort.run[Closed](
+                        // Scope.run: closes conn as soon as THIS task finishes (success or failure), rather than only on the
+                        // success continuation as the bare trailing conn.close() below did, which skipped the close whenever
+                        // the put/collect step failed. Deferring 128-way to the leaf's own Scope would also hold every
+                        // concurrent connection open simultaneously until the whole leaf ends, so each task gets its own.
+                        Scope.run(
+                            transport.connectTls("127.0.0.1", listener.port, cli).safe.get.flatMap { conn =>
+                                Scope.ensure(Sync.defer(conn.close())).andThen {
+                                    conn.outbound.safe.put(Span.fromUnsafe(msg)).andThen {
+                                        collectToLen(conn, msg.length).map { echoed =>
+                                            java.util.Arrays.equals(echoed.take(msg.length), msg)
+                                        }
+                                    }
+                                }
                             }
-                        }
+                        )
+                    ).map {
+                        case Result.Success(ok) => ok
+                        case _                  => false
                     }
-                ).map {
-                    case Result.Success(ok) => ok
-                    case _                  => false
+                }.map { results =>
+                    listener.close()
+                    val failed = results.count(ok => !ok)
+                    assert(failed == 0, s"$failed of $concurrency concurrent connect-time TLS echoes failed")
                 }
-            }.map { results =>
-                listener.close()
-                val failed = results.count(ok => !ok)
-                assert(failed == 0, s"$failed of $concurrency concurrent connect-time TLS echoes failed")
             }
         }
     }

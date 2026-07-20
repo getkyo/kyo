@@ -37,7 +37,9 @@ class TransportUnixSocketTest extends Test:
                         }
                     })
                 }.safe.get
+                _      <- Scope.ensure(Sync.defer(listener.close()))
                 client <- transport.connectUnix(path).safe.get
+                _      <- Scope.ensure(Sync.defer(client.close()))
                 message = "kyo-uds-roundtrip".getBytes("UTF-8")
                 _ <- client.outbound.safe.put(Span.fromUnsafe(message))
                 _ <- accepted.take
@@ -52,6 +54,32 @@ class TransportUnixSocketTest extends Test:
                 assert(listener.address == NetAddress.Unix(path), s"unexpected Unix address ${listener.address}")
                 assert(echoed.sameElements(message), s"UDS echo mismatch: got '${new String(echoed, "UTF-8")}'")
             end for
+        }
+    }
+
+    "the connect deadline applies to Unix sockets" - {
+
+        // The deadline previously skipped Unix connects entirely: the arm was guarded on `port >= 0`, so connectUnix accepted a connectTimeout
+        // and ignored it. Removing that guard is what this leaf protects, and it protects the dangerous direction: a timer that now runs for
+        // every Unix connect must not fire on one that connects normally. A misfire here would break every Unix connection rather than only the
+        // parked ones, so this runs on every platform.
+        "a finite deadline does not disturb a Unix connect that completes" in {
+            val transport = NetPlatform.transport
+            val path      = s"/tmp/kyo-uds-deadline-${java.lang.System.nanoTime()}.sock"
+            transport.listenUnix(path, 16)(_ => ()).safe.get.map { listener =>
+                Scope.ensure(Sync.defer(listener.close())).andThen {
+                    Abort.run[NetException | Closed](transport.connectUnix(path, 5.seconds).safe.get).map { outcome =>
+                        listener.close()
+                        outcome match
+                            case Result.Success(conn) =>
+                                conn.close()
+                                succeed
+                            case other =>
+                                assert(false, s"a Unix connect with a generous finite deadline must succeed, got $other")
+                        end match
+                    }
+                }
+            }
         }
     }
 

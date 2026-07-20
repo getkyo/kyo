@@ -3,9 +3,9 @@ package kyo.net.internal
 import kyo.*
 import kyo.ffi.Ffi
 import kyo.net.Connection
+import kyo.net.NetConfig
 import kyo.net.NetException
 import kyo.net.NetTlsConfig
-import kyo.net.TransportConfig
 import kyo.net.internal.posix.PollerIoDriver
 import kyo.net.internal.posix.PosixConstants
 import kyo.net.internal.posix.PosixHandle
@@ -103,6 +103,17 @@ object TlsRealEngines:
       * tests) can drive a single real native free without a competing finally that would double-free the native session. The server role uses the
       * cert/key config so it can complete a real handshake (via [[TlsEngineLoopback.handshake]]); the client role uses `trustAll`.
       */
+    /** Cancel unless BoringSSL is staged, for a leaf that will build its engine with [[singleEngine]].
+      *
+      * Exists so such a leaf can gate BEFORE it allocates sockets. singleEngine itself cancels when BoringSSL is missing, and a leaf that has
+      * already opened a loopback pair by then leaks it: the cancel unwinds past the cleanup. That is only reachable on a host staging exactly
+      * one of the two providers, which is why it survived a general sweep. [[assumeTlsReady]] is NOT a substitute: it accepts OpenSSL too.
+      */
+    def assumeBoringSslReady()(using Frame): Unit =
+        if !boringSslAvailable() then
+            throw new kyo.test.TestCancelled("BoringSSL not staged for this host")
+    end assumeBoringSslReady
+
     def singleEngine(isServer: Boolean)(using Frame, AllowUnsafe): TlsEngine =
         if !boringSslAvailable() then
             throw new kyo.test.TestCancelled("BoringSSL not staged for this host")
@@ -130,42 +141,43 @@ object TlsRealEngines:
       *
       * Creates a fresh PollerIoDriver and
       * PosixTransport, listens on an ephemeral port with the test cert, connects from the client side with trustAll, completes the TLS
-      * handshake, then hands both connections to `f`. The transport and driver are closed when `f` returns.
+      * handshake, then hands both connections to `f`. The driver is closed when `f` returns (this transport is never closed, mirroring
+      * production). The listener and both connections are registered with [[Scope.ensure]] as soon as each is acquired, so every one of
+      * them is closed even if a later acquisition step or `f` itself aborts (the driver's own teardown only fails pending I/O
+      * promises, it never closes an idle handle's fd).
       *
       * Anti-flakiness: connect and listen use real Fiber.Unsafe latches (Fiber.initUnscoped) completing on the real kernel accept; no sleep.
       */
-    def realTlsLoopback[A, S](config: TransportConfig)(
+    def realTlsLoopback[A, S](config: NetConfig)(
         f: (Connection, Connection) => A < S
     )(using Frame): A < (S & Async & Abort[NetException | Closed]) =
         import AllowUnsafe.embrace.danger
-        val driver    = PollerIoDriver.init(config)
+        val driver    = PollerIoDriver.init()
         val pool      = IoDriverPool.init(Array[IoDriver[PosixHandle]](driver))
-        val transport = PosixTransport.init(config, pool)
+        val transport = PosixTransport.init(pool)
         discard(driver.start())
         val serverTls = serverConfig
         val clientTls = clientConfig
         Abort.run[NetException | Closed] {
-            val acceptedCh = Channel.Unsafe.init[Connection](1)
-            val listenerF =
-                transport.listen("127.0.0.1", 0, 16, serverTls) { serverConn =>
-                    discard(acceptedCh.putFiber(serverConn))
-                }.safe
-            for
-                listener   <- listenerF.get
-                clientConn <- transport.connect("127.0.0.1", listener.port, clientTls).safe.get
-                serverConn <- acceptedCh.takeFiber().safe.get
-                result     <- f(clientConn, serverConn)
-            yield
-                clientConn.close()
-                serverConn.close()
-                listener.close()
-                result
-            end for
+            Scope.run {
+                val acceptedCh = Channel.Unsafe.init[Connection](1)
+                val listenerF =
+                    transport.listenTls("127.0.0.1", 0, 16, serverTls) { serverConn =>
+                        discard(acceptedCh.putFiber(serverConn))
+                    }.safe
+                for
+                    listener   <- listenerF.get
+                    _          <- Scope.ensure(Sync.defer(listener.close()))
+                    clientConn <- transport.connectTls("127.0.0.1", listener.port, clientTls).safe.get
+                    _          <- Scope.ensure(Sync.defer(clientConn.close()))
+                    serverConn <- acceptedCh.takeFiber().safe.get
+                    _          <- Scope.ensure(Sync.defer(serverConn.close()))
+                    result     <- f(clientConn, serverConn)
+                yield result
+                end for
+            }
         }.map { r =>
-            Sync.defer {
-                transport.close()
-                driver.close()
-            }.andThen(Abort.get(r))
+            Sync.defer(driver.close()).andThen(Abort.get(r))
         }
     end realTlsLoopback
 

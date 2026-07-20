@@ -4,11 +4,11 @@ import kyo.*
 import kyo.ffi.Ffi
 import kyo.net.Connection
 import kyo.net.Listener
+import kyo.net.NetConfig
 import kyo.net.NetException
 import kyo.net.NetTlsConfig
 import kyo.net.Test
 import kyo.net.TlsTestCertShared
-import kyo.net.TransportConfig
 import kyo.net.internal.TlsRealEngines
 
 // Regression guard for the io_uring STARTTLS multi-record upgrade stall: a TOCTOU race in the upgrade-byte handoff between the handshake-driving
@@ -22,7 +22,7 @@ class IoUringMutualTlsStressTest extends Test:
 
     import AllowUnsafe.embrace.danger
 
-    private val tcfg = TransportConfig.default
+    private val tcfg = NetConfig.default
 
     private val upgradeRequest: Span[Byte] = Span.from(Array[Byte]('U'))
     private val upgradeReady: Span[Byte]   = Span.from(Array[Byte]('R'))
@@ -50,11 +50,26 @@ class IoUringMutualTlsStressTest extends Test:
                     discard(Sync.Unsafe.evalOrThrow {
                         Fiber.initUnscoped {
                             Abort.run[NetException | Closed] {
-                                serverConn.inbound.safe.take.flatMap { _ =>
-                                    serverConn.outbound.safe.put(upgradeReady).andThen {
-                                        transport.upgradeToTls(serverConn, serverTls, 16).safe.get.flatMap { tlsConn =>
-                                            Loop.foreach {
-                                                tlsConn.inbound.safe.take.flatMap(d => tlsConn.outbound.safe.put(d).andThen(Loop.continue))
+                                // Sync.ensure (not Scope, which this detached fiber has no structured lifetime to hang off) guarantees
+                                // serverConn.close() runs however this handler ends: an early take/put failure closes the still-plaintext
+                                // connection directly; once the upgrade below has detached it, close() routes to abandoning the upgrade
+                                // instead (Connection.close's documented Upgrading behavior), which is a harmless no-op once the upgrade has
+                                // already completed on its own. Without this, a connection whose peer never signals (or whose upgrade never
+                                // completes) is a fd this handler never closes at all.
+                                Sync.ensure(Sync.defer(serverConn.close())) {
+                                    serverConn.inbound.safe.take.flatMap { _ =>
+                                        serverConn.outbound.safe.put(upgradeReady).andThen {
+                                            transport.upgradeToTls(serverConn, serverTls, 16).safe.get.flatMap { tlsConn =>
+                                                // Same guarantee for the post-upgrade connection: its echo loop's normal termination IS a
+                                                // Closed abort (the peer disconnects), so a plain trailing close after Loop.foreach would
+                                                // never run; ensure closes it exactly once whichever way the loop ends.
+                                                Sync.ensure(Sync.defer(tlsConn.close())) {
+                                                    Loop.foreach {
+                                                        tlsConn.inbound.safe.take.flatMap(d =>
+                                                            tlsConn.outbound.safe.put(d).andThen(Loop.continue)
+                                                        )
+                                                    }
+                                                }
                                             }
                                         }
                                     }
@@ -77,23 +92,33 @@ class IoUringMutualTlsStressTest extends Test:
                 tag: String
             ): Unit < (Async & Abort[NetException | Closed]) =
                 val stage = new java.util.concurrent.atomic.AtomicReference[String]("init")
+                // Both connections are wrapped in Sync.ensure (not Scope.ensure: this runs inside Async.foreach under Async.timeout, and
+                // Sync.ensure's underlying Safepoint finalizer fires on interruption too, which is exactly the path a stalled upgrade takes
+                // when the 8s timeout below fires). Without it, a put/take failure before the upgrade, or the timeout itself firing mid-upgrade
+                // (the very race this leaf reproduces), would abandon conn/tlsConn with no closer ever reached.
                 val attempt: Array[Byte] < (Async & Abort[NetException | Closed]) =
                     for
-                        _       <- Sync.defer(stage.set("connect"))
-                        conn    <- transport.connect("127.0.0.1", port).safe.get
-                        _       <- Sync.defer(stage.set("put-signal"))
-                        _       <- conn.outbound.safe.put(upgradeRequest)
-                        _       <- Sync.defer(stage.set("await-ready"))
-                        _       <- conn.inbound.safe.take
-                        _       <- Sync.defer(stage.set("upgrade"))
-                        tlsConn <- transport.upgradeToTls(conn, clientTls, 16).safe.get
-                        _       <- Sync.defer(stage.set("put-payload"))
-                        _       <- tlsConn.outbound.safe.put(Span.fromUnsafe(payload))
-                        _       <- Sync.defer(stage.set("collect"))
-                        echoed  <- collectN(tlsConn, payload.length)
-                    yield
-                        tlsConn.close()
-                        echoed
+                        _    <- Sync.defer(stage.set("connect"))
+                        conn <- transport.connect("127.0.0.1", port).safe.get
+                        echoed <- Sync.ensure(Sync.defer(conn.close())) {
+                            for
+                                _       <- Sync.defer(stage.set("put-signal"))
+                                _       <- conn.outbound.safe.put(upgradeRequest)
+                                _       <- Sync.defer(stage.set("await-ready"))
+                                _       <- conn.inbound.safe.take
+                                _       <- Sync.defer(stage.set("upgrade"))
+                                tlsConn <- transport.upgradeToTls(conn, clientTls, 16).safe.get
+                                echoed <- Sync.ensure(Sync.defer(tlsConn.close())) {
+                                    for
+                                        _      <- Sync.defer(stage.set("put-payload"))
+                                        _      <- tlsConn.outbound.safe.put(Span.fromUnsafe(payload))
+                                        _      <- Sync.defer(stage.set("collect"))
+                                        echoed <- collectN(tlsConn, payload.length)
+                                    yield echoed
+                                }
+                            yield echoed
+                        }
+                    yield echoed
                 val outcome: Result[NetException | Closed | Timeout, Array[Byte]] < Async =
                     Abort.run[NetException | Closed | Timeout](Async.timeout(8.seconds)(attempt))
                 outcome.map {
@@ -110,19 +135,22 @@ class IoUringMutualTlsStressTest extends Test:
             end oneUpgrade
 
             def oneGroup(g: Int): Unit < (Async & Abort[NetException | Closed]) =
-                val driver    = IoUringDriver.init(tcfg)
-                val transport = TestTransports.forTesting(tcfg, driver, Ffi.load[SocketBindings], backendIsEpoll = false)
+                val driver    = IoUringDriver.init()
+                val transport = TestTransports.forTesting(driver, Ffi.load[SocketBindings], backendIsEpoll = false)
                 discard(driver.start())
-                startTlsEchoServer(transport).map { listener =>
-                    Loop(0) { round =>
-                        if round >= rounds then Loop.done(())
-                        else
-                            Async.foreach(0 until width)(j => oneUpgrade(transport, listener.port, s"g$g-r$round-$j"))
-                                .map(_ => Loop.continue(round + 1))
-                    }.map { _ =>
-                        listener.close()
-                        transport.close()
-                        driver.close()
+                // Sync.ensure guarantees the driver (and, once acquired, the listener) is torn down however the round loop ends: a
+                // byte-mismatch assertion inside a round's oneUpgrade throws past Async.foreach with no Abort to catch it, which would
+                // otherwise skip the trailing listener.close()/driver.close() below entirely.
+                Sync.ensure(Sync.defer(driver.close())) {
+                    startTlsEchoServer(transport).map { listener =>
+                        Sync.ensure(Sync.defer(listener.close())) {
+                            Loop(0) { round =>
+                                if round >= rounds then Loop.done(())
+                                else
+                                    Async.foreach(0 until width)(j => oneUpgrade(transport, listener.port, s"g$g-r$round-$j"))
+                                        .map(_ => Loop.continue(round + 1))
+                            }
+                        }
                     }
                 }
             end oneGroup

@@ -30,7 +30,7 @@ class TransportMutualTlsTest extends Test:
 
     /** Listen with a clientAuth=Required server whose accepted connections echo their inbound stream. */
     private def echoListener(transport: Transport, tls: NetTlsConfig)(using Frame): Listener < (Async & Abort[NetException]) =
-        transport.listen("127.0.0.1", 0, 16, tls) { serverConn =>
+        transport.listenTls("127.0.0.1", 0, 16, tls) { serverConn =>
             discard(Sync.Unsafe.evalOrThrow {
                 Fiber.initUnscoped {
                     Abort.run[Closed] {
@@ -49,11 +49,16 @@ class TransportMutualTlsTest extends Test:
             // The client trusts the server but presents no certificate of its own; the cell pin is preserved on clientTls.
             echoListener(transport, serverMtls(serverTls)).map { listener =>
                 val message = "kyo-mtls-reject".getBytes("UTF-8")
-                val connectAndEcho: Array[Byte] < (Async & Abort[NetException | Closed]) =
-                    transport.connect("127.0.0.1", listener.port, clientTls).safe.get.map { client =>
-                        client.outbound.safe.put(Span.fromUnsafe(message)).andThen(collect(client, message.length))
+                // Under TLS 1.3 `connectTls` can succeed even for a certless client (the server only validates the client cert on first use), so
+                // `client` is a real live connection here regardless of how the round-trip below turns out; Scope.ensure guarantees it is closed
+                // whether the put/collect succeeds, fails Closed, or the round-trip is still pending when Async.timeout fires.
+                val connectAndEcho: Array[Byte] < (Async & Abort[NetException | Closed] & Scope) =
+                    transport.connectTls("127.0.0.1", listener.port, clientTls).safe.get.map { client =>
+                        Scope.ensure(Sync.defer(client.close())).andThen {
+                            client.outbound.safe.put(Span.fromUnsafe(message)).andThen(collect(client, message.length))
+                        }
                     }
-                val outcome: Result[NetException | Closed | Timeout, Array[Byte]] < Async =
+                val outcome: Result[NetException | Closed | Timeout, Array[Byte]] < (Async & Scope) =
                     Abort.run[NetException | Closed | Timeout](Async.timeout(5.seconds)(connectAndEcho))
                 outcome.map { outcome =>
                     listener.close()
@@ -74,11 +79,15 @@ class TransportMutualTlsTest extends Test:
                 // concurrently on a constrained runner it can take several seconds, so this inner bound is generous. It is only a hang-guard: a
                 // true deadlock still fails well within the suite's 60s leaf budget. Mirrors kyo.net.Test's generous-ceiling rationale; 5s was too
                 // tight for the cold/loaded gate and produced spurious timeouts on every cell at once.
-                val connectAndEcho: (Connection, Array[Byte]) < (Async & Abort[NetException | Closed]) =
-                    transport.connect("127.0.0.1", listener.port, clientWithCert).safe.get.map { client =>
-                        client.outbound.safe.put(Span.fromUnsafe(message)).andThen(collect(client, message.length)).map(client -> _)
+                // Scope.ensure guarantees `client` is closed even if the put/collect below aborts before the tuple (and its trailing
+                // client.close() in the success match arm) is ever produced.
+                val connectAndEcho: (Connection, Array[Byte]) < (Async & Abort[NetException | Closed] & Scope) =
+                    transport.connectTls("127.0.0.1", listener.port, clientWithCert).safe.get.map { client =>
+                        Scope.ensure(Sync.defer(client.close())).andThen {
+                            client.outbound.safe.put(Span.fromUnsafe(message)).andThen(collect(client, message.length)).map(client -> _)
+                        }
                     }
-                val outcome: Result[NetException | Closed | Timeout, (Connection, Array[Byte])] < Async =
+                val outcome: Result[NetException | Closed | Timeout, (Connection, Array[Byte])] < (Async & Scope) =
                     Abort.run[NetException | Closed | Timeout](Async.timeout(30.seconds)(connectAndEcho))
                 outcome.map { outcome =>
                     listener.close()

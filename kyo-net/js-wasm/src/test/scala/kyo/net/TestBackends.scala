@@ -24,8 +24,26 @@ object TestBackends:
     final case class Entry(
         name: String,
         isAvailable: Boolean,
-        build: (TransportConfig, Frame) => Transport
-    )
+        private val make: Frame => Transport
+    ):
+        // One transport per backend, built on first use and never torn down, mirroring production: a transport is process-lifetime, so the
+        // harness holds one per backend for the run rather than building and discarding one per leaf. Cells share it exactly as every client
+        // and server in a process shares NetPlatform.transport; per-connection settings travel with each operation, so sharing costs a cell
+        // nothing. Synchronized because leaves can run concurrently and this must construct exactly once per backend.
+        private var built: Maybe[Transport] = Absent
+
+        def transport(using frame: Frame): Transport =
+            synchronized {
+                built match
+                    case Present(t) => t
+                    case Absent =>
+                        val t = make(frame)
+                        built = Present(t)
+                        t
+                end match
+            }
+        end transport
+    end Entry
 
     /** Every registered backend on this host (the single Node backend). The harness registers one leaf per entry and cancels the leaves whose
       * `isAvailable` is false; Node is always available, so its leaf always runs.
@@ -36,13 +54,7 @@ object TestBackends:
             Entry(
                 name = backend.name,
                 isAvailable = backend.isAvailable,
-                build = (config, frame) =>
-                    JsTransport.init(
-                        poolSize = 1,
-                        channelCapacity = config.channelCapacity,
-                        connectTimeout = config.connectTimeout,
-                        handshakeTimeout = config.handshakeTimeout
-                    )(using summon[AllowUnsafe], frame)
+                make = frame => JsTransport.init(poolSize = 1)(using summon[AllowUnsafe], frame)
             )
         }
     end all

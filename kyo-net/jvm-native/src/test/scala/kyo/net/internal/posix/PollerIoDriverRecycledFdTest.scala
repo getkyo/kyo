@@ -9,7 +9,7 @@ import kyo.net.internal.transport.ReadOutcome
 /** No driver operation ever uses a freed fd: the two inherited recycled-fd defects, each driven white-box over a real driver.
   *
   *   - io_uring: a recv parked in `stalledSubmits` on a full submission queue must be failed Closed when the handle closes, NOT
-  *     re-armed on the now-closed fd. If `closeNow` cleared only `stalledRaw`, the reap loop would re-arm the parked recv on the closed fd
+  *     re-armed on the now-closed fd. If `closeNow` cleared only `stalledSends`, the reap loop would re-arm the parked recv on the closed fd
   *     (an EBADF, or a recv on the fd's recycled successor). `closeNow` drains `stalledSubmits` for the handle before the fd close.
   *   - poller: a stale `OpDeregister` whose fd was closed and recycled into a NEW handle must not evict the new handle's
   *     registration. An unconditional deregister would remove the fd's map entries and kernel filter regardless of owner. Each removal is gated on

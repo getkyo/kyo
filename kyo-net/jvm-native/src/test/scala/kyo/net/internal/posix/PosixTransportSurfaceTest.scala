@@ -21,36 +21,34 @@ class PosixTransportSurfaceTest extends Test:
 
     import AllowUnsafe.embrace.danger
 
-    private val transportConfig = kyo.net.TransportConfig.default
+    private val transportConfig = kyo.net.NetConfig.default
 
     private def assumePoller(): Unit =
         if !(PosixConstants.isLinux || PosixConstants.isMacOrBsd) then
             cancel("PosixTransport TCP/UDS surface needs epoll (Linux) or kqueue (macOS/BSD)")
 
-    /** Build a transport over a fresh real poller driver, run `body`, then close the transport and the driver. No accept-loop drain is needed:
-      * with the poller (epoll/kqueue) the accept loop is readiness-driven and never parks in a blocking `accept`. `transport.close()` closes every
-      * listener, and `PosixListener.close()` (on the calling fiber) deregisters the accept interest via `driver.cancel`, which inline-completes the
-      * parked accept promise with `Closed`; that completion runs the accept loop's exit branch inline (`IOPromise.flush`), then the listener
-      * `shutdown`s + closes the listen fd, all synchronously.
+    /** Build a transport over a fresh real poller driver, run `body`, then close the driver. Each leaf closes its own listeners (this transport is
+      * never closed, mirroring production: a transport is process-lifetime). No accept-loop drain is needed: with the poller (epoll/kqueue) the
+      * accept loop is readiness-driven and never parks in a blocking `accept`.
       *
-      * The driver's own poll-loop thread is a separate story from the listener fd closing synchronously above: `driver.close()` only requests
-      * teardown (`submitEngineOp` + `triggerWake()`) and returns immediately, without waiting for the poll-loop carrier to actually run it.
-      * Awaiting the driver's own exit fiber after `close()` (rather than discarding it) makes the underlying thread provably gone before this
-      * computation completes, closing the window where, under kyo-test's concurrent leaf scheduling, a not-yet-fully-torn-down
+      * The driver's own poll-loop thread is a separate story from a listener fd closing synchronously via its own `close()`: `driver.close()`
+      * only requests teardown (`submitEngineOp` + `triggerWake()`) and returns immediately, without waiting for the poll-loop carrier to
+      * actually run it. Awaiting the driver's own exit fiber after `close()` (rather than discarding it) makes the underlying thread provably
+      * gone before this computation completes, closing the window where, under kyo-test's concurrent leaf scheduling, a not-yet-fully-torn-down
       * driver from an earlier leaf could still be alive when the next leaf's own transport starts, letting a connection meant for the new
       * leaf's listener land on the stale one instead.
       */
     private def withTransport[A](body: PosixTransport => A < (Async & Abort[NetException | Closed] & Scope))(using
         Frame
     ): A < (Async & Abort[NetException | Closed] & Scope) =
-        val driver     = PollerIoDriver.init(transportConfig)
-        val transport  = TestTransports.forTesting(transportConfig, driver, Ffi.load[SocketBindings], backendIsEpoll = false)
+        val driver     = PollerIoDriver.init()
+        val transport  = TestTransports.forTesting(driver, Ffi.load[SocketBindings], backendIsEpoll = false)
         val driverDone = driver.start()
-        // Run the body, then ALWAYS close the transport and driver and await the driver's exit fiber, re-raising the body's outcome.
-        // transport.close() tears the readiness-driven accept loops down synchronously (see the scaladoc); the exit-fiber await is what
-        // proves the driver's own poll-loop thread has actually stopped, not just the listener fd.
-        Abort.run[NetException | Closed](body(transport)).map { result =>
-            Sync.defer(transport.close()).andThen(Sync.defer(driver.close())).andThen(
+        // Scope.run resolves the body's own Scope.ensure finalizers (each leaf's listener/connection closes) BEFORE the driver
+        // teardown below runs, so a leaf never closes a handle after its owning driver is already gone.
+        // Run the body, then ALWAYS close the driver and await its exit fiber, re-raising the body's outcome.
+        Abort.run[NetException | Closed](Scope.run(body(transport))).map { result =>
+            Sync.defer(driver.close()).andThen(
                 Abort.run(driverDone.safe.get).unit
             ).andThen(Abort.get(result))
         }
@@ -66,6 +64,14 @@ class PosixTransportSurfaceTest extends Test:
             if acc.length >= target then Loop.done(acc)
             else conn.inbound.safe.take.map(chunk => Loop.continue(acc ++ chunk.toArray))
         }
+
+    /** Registers a Scope.ensure close for a captured accepted-side connection, if one was actually captured. Guards the accepted
+      * connection handed to a listen handler even on a path that fails before the leaf's own trailing close() runs.
+      */
+    private def ensureClosed(maybeConn: Maybe[Connection])(using Frame): Unit < (Scope & Sync) =
+        maybeConn match
+            case Present(c) => Scope.ensure(Sync.defer(c.close()))
+            case Absent     => Scope.ensure(Sync.defer(()))
 
     /** Bind a plain socket to an ephemeral loopback port, then close it, returning the now free (no-listener) port. Done with raw
       * [[SocketBindings]] (not a transport listener) so no blocking-accept loop is ever parked here: connecting to this port must be refused.
@@ -116,12 +122,15 @@ class PosixTransportSurfaceTest extends Test:
                             }
                         })
                     }.safe.get
+                    _ <- Scope.ensure(Sync.defer(listener.close()))
                     port = listener.port
                     client <- transport.connect("127.0.0.1", port).safe.get
+                    _      <- Scope.ensure(Sync.defer(client.close()))
                     message = "posix-tcp-echo-roundtrip".getBytes("UTF-8")
                     _         <- client.outbound.safe.put(Span.fromUnsafe(message))
                     _         <- accepted.take
                     serverOpt <- Sync.Unsafe.defer(serverConnRef.get)
+                    _         <- ensureClosed(serverOpt)
                     echoed    <- collect(client, message.length)
                 yield
                     val clientFd = fdOf(client)
@@ -130,6 +139,7 @@ class PosixTransportSurfaceTest extends Test:
                         case Absent     => fail("server connection was never captured")
                     client.close()
                     serverOpt.foreach(_.close())
+                    listener.close()
                     assert(port > 0, s"ephemeral port not resolved: $port")
                     assert(echoed.sameElements(message), s"echo mismatch: got '${new String(echoed, "UTF-8")}'")
                     assert(clientFd >= 0, s"client fd not a real fd: $clientFd")
@@ -154,17 +164,21 @@ class PosixTransportSurfaceTest extends Test:
                             }
                         })
                     }.safe.get
+                    _      <- Scope.ensure(Sync.defer(listener.close()))
                     client <- transport.connect("127.0.0.1", listener.port).safe.get
+                    _      <- Scope.ensure(Sync.defer(client.close()))
                     _      <- accepted.take
                     server <- Sync.Unsafe.defer(serverConnRef.get).map {
                         case Present(c) => c
                         case Absent     => fail("server connection was never captured")
                     }
+                    _ <- Scope.ensure(Sync.defer(server.close()))
                     // Close the client end; the server's pending inbound read must surface Closed once the peer-close EOF tears it down.
                     _       <- Sync.Unsafe.defer(client.close())
                     outcome <- Abort.run[Closed](server.inbound.safe.take)
                 yield
                     server.close()
+                    listener.close()
                     assert(outcome.isFailure, s"expected Closed on the accepted connection after the client closed, got $outcome")
                 end for
             }
@@ -175,6 +189,7 @@ class PosixTransportSurfaceTest extends Test:
             withTransport { transport =>
                 transport.listen("127.0.0.1", 0, 16)(_ => ()).safe.get.map { listener =>
                     val addr = listener.address
+                    listener.close()
                     assert(addr == NetAddress.Tcp("127.0.0.1", listener.port), s"unexpected address $addr")
                 }
             }
@@ -186,6 +201,9 @@ class PosixTransportSurfaceTest extends Test:
                 // A port nothing listens on (a plain socket bound then closed, no accept loop), so the connect must be refused.
                 deadPort().map { port =>
                     Abort.run[NetException | Closed](transport.connect("127.0.0.1", port).safe.get).map { outcome =>
+                        // Defensive: connect is expected to fail against a dead port, but if a regression ever made it succeed,
+                        // closing the unexpected connection here still avoids leaking it (the assert below fails the leaf regardless).
+                        outcome.foreach(_.close())
                         assert(outcome.isFailure, s"expected Closed connecting to dead port $port, got $outcome")
                     }
                 }
@@ -216,13 +234,16 @@ class PosixTransportSurfaceTest extends Test:
                             }
                         })
                     }.safe.get
+                    _      <- Scope.ensure(Sync.defer(listener.close()))
                     client <- transport.connect("localhost", listener.port).safe.get
+                    _      <- Scope.ensure(Sync.defer(client.close()))
                     message = "posix-localhost-roundtrip".getBytes("UTF-8")
                     _      <- client.outbound.safe.put(Span.fromUnsafe(message))
                     _      <- accepted.take
                     echoed <- collect(client, message.length)
                 yield
                     client.close()
+                    listener.close()
                     assert(echoed.sameElements(message), s"localhost echo mismatch: got '${new String(echoed, "UTF-8")}'")
                 end for
             }
@@ -251,13 +272,16 @@ class PosixTransportSurfaceTest extends Test:
                             }
                         })
                     }.safe.get
+                    _      <- Scope.ensure(Sync.defer(listener.close()))
                     client <- transport.connect("127.0.0.1", listener.port).safe.get
+                    _      <- Scope.ensure(Sync.defer(client.close()))
                     message = "posix-numeric-roundtrip".getBytes("UTF-8")
                     _      <- client.outbound.safe.put(Span.fromUnsafe(message))
                     _      <- accepted.take
                     echoed <- collect(client, message.length)
                 yield
                     client.close()
+                    listener.close()
                     assert(echoed.sameElements(message), s"numeric echo mismatch: got '${new String(echoed, "UTF-8")}'")
                 end for
             }
@@ -278,6 +302,8 @@ class PosixTransportSurfaceTest extends Test:
                 Abort.run[NetException | Closed | Timeout](
                     Async.timeout(10.seconds)(transport.connect("kyo-net-unresolvable-host.invalid", 80).safe.get)
                 ).map { outcome =>
+                    // Defensive: see the dead-port leaf above for why an unexpected success is still closed here.
+                    outcome.foreach(_.close())
                     assert(outcome.isFailure, s"expected a clean failure connecting to an unresolvable host, got $outcome")
                 }
             }
@@ -312,11 +338,14 @@ class PosixTransportSurfaceTest extends Test:
                             }
                         })
                     }.safe.get
+                    _      <- Scope.ensure(Sync.defer(listener.close()))
                     client <- transport.connectUnix(path).safe.get
+                    _      <- Scope.ensure(Sync.defer(client.close()))
                     message = "posix-uds-echo-roundtrip".getBytes("UTF-8")
                     _         <- client.outbound.safe.put(Span.fromUnsafe(message))
                     _         <- accepted.take
                     serverOpt <- Sync.Unsafe.defer(serverConnRef.get)
+                    _         <- ensureClosed(serverOpt)
                     echoed    <- collect(client, message.length)
                 yield
                     val clientFd = fdOf(client)
@@ -325,6 +354,7 @@ class PosixTransportSurfaceTest extends Test:
                         case Absent     => fail("server connection was never captured")
                     client.close()
                     serverOpt.foreach(_.close())
+                    listener.close()
                     assert(listener.port == -1, s"Unix listener port must be -1, got ${listener.port}")
                     assert(listener.address == NetAddress.Unix(path), s"unexpected Unix address ${listener.address}")
                     assert(echoed.sameElements(message), s"UDS echo mismatch: got '${new String(echoed, "UTF-8")}'")

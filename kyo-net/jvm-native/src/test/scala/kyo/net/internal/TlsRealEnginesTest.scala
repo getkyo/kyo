@@ -34,7 +34,7 @@ class TlsRealEnginesTest extends Test:
 
     "realTlsLoopback: real TLS handshake over a real loopback socket succeeds" in {
         TlsRealEngines.assumeTlsReady().andThen {
-            TlsRealEngines.realTlsLoopback(kyo.net.TransportConfig.default) { (clientConn, serverConn) =>
+            TlsRealEngines.realTlsLoopback(kyo.net.NetConfig.default) { (clientConn, serverConn) =>
                 // Connections are established with a full TLS handshake; just verify both ends are open.
                 assert(clientConn.isOpen, "client connection is not open after TLS handshake")
                 assert(serverConn.isOpen, "server connection is not open after TLS handshake")

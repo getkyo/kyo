@@ -34,24 +34,60 @@ class TransportConnectTimeoutProducedTest extends Test:
         // A finite, short connectTimeout arms the transport's internal connect-deadline. The connect to the black hole never completes, so the
         // deadline always wins; the produced leaf is the typed NetConnectTimeoutException, NOT the generic NetConnectException.
         val timeout   = 200.millis
-        val transport = NetPlatform.transport(TransportConfig.default.copy(connectTimeout = timeout))
+        val transport = NetPlatform.transport
         Abort.run[NetException | Closed | Timeout](
             // A generous survival window: if the deadline were NOT armed (the regression) the connect would hang and this would time out, failing
             // the assertion below rather than hanging the suite. With the deadline armed, the connect fails well within the window.
-            Async.timeout(5.seconds)(transport.connect(blackHoleHost, blackHolePort).safe.get)
+            Async.timeout(5.seconds)(transport.connect(blackHoleHost, blackHolePort, timeout).safe.get)
         ).map { outcome =>
-            transport.close()
             outcome match
                 case Result.Failure(e: NetConnectTimeoutException) =>
                     assert(
                         e.host == blackHoleHost && e.port == blackHolePort && e.timeout == timeout,
                         s"expected NetConnectTimeoutException($blackHoleHost, $blackHolePort, $timeout), got $e"
                     )
+                case Result.Success(conn) =>
+                    conn.close()
+                    assert(
+                        false,
+                        s"expected the internal connect-deadline to produce NetConnectTimeoutException($blackHoleHost, $blackHolePort, $timeout), " +
+                            s"got a successful connect to a black-hole address"
+                    )
                 case other =>
                     assert(
                         false,
                         s"expected the internal connect-deadline to produce NetConnectTimeoutException($blackHoleHost, $blackHolePort, $timeout), " +
                             s"got $other (a Timeout means no deadline was armed; a NetConnectException means an OS-close beat the deadline)"
+                    )
+            end match
+        }
+    }
+
+    // The same guard for a TLS connect. connectTimeout bounds the TCP phase whether or not the connection goes on to handshake, so a TLS connect
+    // to a black hole must produce the same typed leaf at the same deadline. The NIO floor armed the deadline only on its plaintext connect
+    // path, so a connectTls there parked until the caller's own timeout with no transport-level bound at all.
+    "a TLS connect that does not complete its TCP phase by the deadline fails with NetConnectTimeoutException".notNative in {
+        given Frame   = Frame.internal
+        val timeout   = 200.millis
+        val transport = NetPlatform.transport
+        val tls       = NetTlsConfig(trustAll = true, sniHostname = Present("localhost"))
+        Abort.run[NetException | Closed | Timeout](
+            Async.timeout(5.seconds)(transport.connectTls(blackHoleHost, blackHolePort, tls, timeout).safe.get)
+        ).map { outcome =>
+            outcome match
+                case Result.Failure(e: NetConnectTimeoutException) =>
+                    assert(e.timeout == timeout, s"expected the TLS connect's own $timeout deadline, got ${e.timeout}")
+                case Result.Success(conn) =>
+                    conn.close()
+                    assert(
+                        false,
+                        s"expected NetConnectTimeoutException($timeout) from the TLS connect deadline, got a successful connect to a black-hole address"
+                    )
+                case other =>
+                    assert(
+                        false,
+                        s"expected NetConnectTimeoutException($timeout) from the TLS connect deadline, got $other " +
+                            "(a Timeout means the TLS connect path armed no deadline)"
                     )
             end match
         }

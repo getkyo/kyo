@@ -1095,4 +1095,25 @@ class NioIoDriverTest extends Test:
         end try
     }
 
+    // kyo-net must never create a thread: a driver's loop belongs on scheduler carriers, not on one this driver owns. This asserts the
+    // observable consequence rather than the source, so it stays honest if the loop is ever restructured again. Anchored on the loop's own
+    // thread name rather than on "no new threads at all", which would be flaky against the scheduler growing its own pool.
+    //
+    // Deterministic: the old implementation spawned its thread synchronously inside start(), so this fails immediately against it, and passes
+    // structurally once the loop is a task chain.
+    "start creates no thread of its own" in {
+        val driver = kyo.net.internal.backend.NioBackend.createDriver()
+        discard(driver.start())
+        Sync.defer {
+            import scala.jdk.CollectionConverters.*
+            val loopThreads = Thread.getAllStackTraces.keySet.asScala.map(_.getName).filter(_.contains("select-loop")).toList
+            discard(driver.close())
+            assert(
+                loopThreads.isEmpty,
+                s"the select loop must run on scheduler carriers, found dedicated thread(s): ${loopThreads.mkString(", ")}"
+            )
+            succeed
+        }
+    }
+
 end NioIoDriverTest

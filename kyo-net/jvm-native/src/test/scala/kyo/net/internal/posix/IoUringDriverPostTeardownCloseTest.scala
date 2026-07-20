@@ -25,7 +25,7 @@ class IoUringDriverPostTeardownCloseTest extends Test:
 
         "closeHandle for a TLS handle after teardownRing runs closeNow inline, with no ring touch" in {
             PosixTestSockets.assumeUring()
-            val depth     = math.max(256, kyo.net.TransportConfig.default.ioPoolSize * 64)
+            val depth     = math.max(256, kyo.net.ioPoolSize() * 64)
             val realUring = Ffi.load[IoUringBindings]
             val realRing  = Buffer.alloc[Byte](realUring.kyo_uring_sizeof().toInt)
             val rc        = realUring.io_uring_queue_init(depth, realRing, 0)
@@ -37,6 +37,10 @@ class IoUringDriverPostTeardownCloseTest extends Test:
             val driver    = TestDrivers.forBindings(recording, realRing, spy)
             // No driver.start(): with no reap carrier, close() tears the ring down synchronously (teardownDone becomes true within this call).
             driver.close()
+            // Gate BEFORE any socket exists. TlsRealEngines.singleEngine below requires BoringSSL and cancels without it; cancelling from
+            // there would leave the loopback pair already open and unreclaimed, one leaked pair per leaf, visible only on a host that
+            // stages OpenSSL but not BoringSSL.
+            TlsRealEngines.assumeBoringSslReady()
             PosixTestSockets.loopbackPair().map { case (client, accepted) =>
                 val handle    = PosixHandle.socket(accepted, PosixHandle.DefaultReadBufferSize, Absent)
                 val rawEngine = TlsRealEngines.singleEngine(isServer = true)

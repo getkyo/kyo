@@ -12,6 +12,9 @@ import javax.net.ssl.SSLEngineResult
 import kyo.*
 import kyo.net.internal.transport.*
 import kyo.net.internal.util.*
+import kyo.scheduler.InternalClock
+import kyo.scheduler.Scheduler
+import kyo.scheduler.Task
 import scala.annotation.tailrec
 import scala.jdk.CollectionConverters.*
 
@@ -120,41 +123,91 @@ final private[kyo] class NioIoDriver private (@volatile private[net] var selecto
     end opsToString
 
     def start()(using AllowUnsafe, Frame): Fiber.Unsafe[Unit, Any] =
-        // The NIO selector loop runs on a DEDICATED daemon thread, NOT a kyo scheduler carrier. `selector.select()` is a blocking JVM syscall and
-        // the loop also drives jdk SSLEngine handshakes inline (CPU-bound), so running it on a carrier PINS that carrier with a non-preemptible,
-        // non-suspending task: the scheduler cannot reclaim it, and a fiber continuation completed inline from the loop (a ReadPump byte delivery
-        // that wakes a parked take) can be routed back onto the pinned carrier by the scheduler's fallback and STRAND there, hanging the connection
-        // under CPU contention (few carriers). A dedicated thread keeps the loop off the carrier pool entirely: every fiber the loop completes is
-        // scheduled through the external-submit path (Worker.current() == null) onto a real carrier, so nothing strands. The thread is a daemon, so
-        // it never blocks a clean JVM exit and is exempt from the non-daemon-thread leak check; it exits when close() sets closedFlag and closes the
-        // selector (which unblocks an in-flight indefinite select() via ClosedSelectorException). The returned
-        // Fiber.Unsafe completes when the loop thread exits.
+        // The selector loop runs on scheduler carriers, one select cycle per activation, never on a thread this driver owns.
+        //
+        // The shape matters as much as the absence of the thread. A `while` loop on a carrier has no fiber safepoints, so the scheduler cannot
+        // preempt it, and a continuation this loop completes inline (a ReadPump byte delivery waking a parked take) can be routed back onto the
+        // pinned carrier and strand there. Running exactly ONE cycle per activation returns the carrier so it can run the completions the cycle
+        // just produced, and the next wait re-arms onto a different carrier via `scheduleExcludingCurrent`.
+        //
+        // The indefinite `selector.select()` parks its carrier, which is legitimate here: the scheduler COMPENSATES for a parked carrier
+        // (BlockingMonitor observes flat user CPU and marks the worker blocked, after which its queue is drained back and no new work is routed
+        // to it) but never RESCUES it, so parking is only correct when the driver owns an unconditional wake path. This one does:
+        // `selector.wakeup()` returns the park for every interest change, and `selector.close()` aborts an in-flight select with
+        // ClosedSelectorException, which ends the chain through the terminal exit below.
         val donePromise = Promise.Unsafe.init[Unit, Any]()
-        val thread =
-            new Thread(
-                () =>
-                    try
-                        @tailrec def loop(): Unit =
-                            if !closedFlag.get() && pollOnce() then loop()
-                        loop()
-                        if closedFlag.get() then Log.live.unsafe.debug(s"$label event loop exited cleanly")
-                        else Log.live.unsafe.warn(s"$label event loop exited unexpectedly")
-                        donePromise.completeDiscard(Result.succeed(()))
-                    catch
-                        case t: Throwable =>
-                            if !closedFlag.get() then Log.live.unsafe.error(s"$label event loop crashed", t)
-                            donePromise.completeDiscard(Result.panic(t))
-                ,
-                s"$label-select-loop"
-            )
-        thread.setDaemon(true)
-        thread.start()
+        Scheduler.get.schedule(newPollTask(donePromise, kyo.net.internal.ProcessSharedTransport.isBuilding))
         // Fiber.Unsafe[A, S] is an opaque alias over IOPromiseBase[Any, A < (Async & S)] (kyo.Fiber.scala), structurally different from this
         // plainly-constructed Promise.Unsafe[Unit, Any], even though both erase to the same runtime object; the alias is transparent only
         // inside kyo.Fiber's own defining scope, so exposing donePromise as the locked IoDriver.start return needs this erased-boundary cast.
-        // Safe: the promise completes only with the Unit-success/panic values the select-loop thread sets above.
+        // Safe: the promise completes only with the Unit-success/panic values the cycle chain sets below.
         donePromise.asInstanceOf[Fiber.Unsafe[Unit, Any]]
     end start
+
+    /** The ONE task this driver reuses for every cycle, built here so it captures `AllowUnsafe` and `Frame`: `Task.run` supplies neither, and
+      * building it once means no task or closure is allocated per cycle.
+      */
+    private def newPollTask(donePromise: Promise.Unsafe[Unit, Any], processShared: Boolean)(using AllowUnsafe, Frame): Task =
+        new Task:
+            def run(startMillis: Long, clock: InternalClock, deadline: Long): Task.Result =
+                if processShared then processSharedTransportCycle(this, donePromise)
+                else runCycle(this, donePromise)
+
+    /** Named frame marking a cycle of a process-lifetime transport, whose idle parked carrier is expected to sit armed forever. The end-of-run
+      * stranded-op and fiber-leak gates allowlist it by this name, so it must stay on the call path of every such cycle.
+      */
+    private def processSharedTransportCycle(task: Task, donePromise: Promise.Unsafe[Unit, Any])(using AllowUnsafe, Frame): Task.Result =
+        runCycle(task, donePromise)
+
+    /** One select cycle, then either re-arm or exit. `pollOnce()` is unchanged and is already exactly one cycle: it selects, drains pending
+      * registrations and upgrade arms, reasserts interest, and dispatches, returning false only when the selector has been closed.
+      */
+    private def runCycle(task: Task, donePromise: Promise.Unsafe[Unit, Any])(using AllowUnsafe, Frame): Task.Result =
+        try
+            if closedFlag.get() then terminal(donePromise, Result.succeed(()))
+            else if pollOnce() then reArm(task)
+            else terminal(donePromise, Result.succeed(()))
+            Task.Done
+        catch
+            // Containment is mandatory, not defensive: a Throwable escaping `run` goes to the worker's uncaught handler, which returns Done, and
+            // the chain is simply gone with every pending promise parked and the selector open. Routing it to the terminal exit below is what
+            // makes a crashed loop release its selector.
+            case t: Throwable =>
+                if !closedFlag.get() then Log.live.unsafe.error(s"$label select cycle crashed", t)
+                terminal(donePromise, Result.panic(t))
+                Task.Done
+        end try
+    end runCycle
+
+    /** Re-arm the next cycle onto a DIFFERENT carrier, so the one that just ran the cycle is free to run the continuations it produced.
+      *
+      * The runtime reset plus a single unit is a RE-BASE, not the key the task ends up with: Worker.runTask bills the cycle's wall-clock after this
+      * returns, so the chain enters its next queue at `1 + this cycle's park in select`. The reset keeps that per-cycle rather than letting it
+      * accumulate over the driver's life, which is what wraps the key into the preempt bit and stops readiness entirely.
+      *
+      * Sorting behind queued work is the intended tradeoff, not starvation: `pollOnce` already dispatched this cycle's ready keys before the re-arm,
+      * so the key governs only when the next `select` begins. See PollerIoDriver.reArm for the full rationale and for the measured reason the park
+      * must NOT be exempted from billing.
+      */
+    private def reArm(task: Task): Unit =
+        task.resetRuntime()
+        task.addRuntime(1)
+        Scheduler.get.scheduleExcludingCurrent(task)
+    end reArm
+
+    /** The single exit for every path: an owner close, a selector closed underneath the loop, and a crashed cycle.
+      *
+      * Calling `close()` here is what closes the crashed-loop leak: previously a crash completed the done-promise with the selector still open
+      * and every pending promise parked forever. `close()` is CAS-guarded and everything it touches is safe from any carrier, so it is a no-op
+      * after an owner close and the full teardown after a crash. The done-promise therefore means the same thing on every path: the loop has
+      * finished AND its selector is released.
+      */
+    private def terminal(donePromise: Promise.Unsafe[Unit, Any], result: Result[Nothing, Unit < Any])(using AllowUnsafe, Frame): Unit =
+        if closedFlag.get() then Log.live.unsafe.debug(s"$label event loop exited cleanly")
+        else Log.live.unsafe.warn(s"$label event loop exited unexpectedly")
+        close()
+        donePromise.completeDiscard(result)
+    end terminal
 
     def awaitRead(handle: NioHandle, promise: Promise.Unsafe[ReadOutcome, Abort[Closed]])(using AllowUnsafe, Frame): Unit =
         // Check for buffered TLS data before registering with selector.
@@ -846,6 +899,15 @@ final private[kyo] class NioIoDriver private (@volatile private[net] var selecto
             // reassertPendingInterest() call below is the liveness backstop for lost interest bits: any armed op
             // whose bit was cleared by a cross-carrier race is re-asserted on this cycle. This mirrors the
             // epoll/kqueue poller's indefinite kevent + wake.
+            // Hand off everything this carrier is holding BEFORE parking in the wait below. The park pins this worker for the whole
+            // duration of the wait, and a task sitting in its local queue cannot run while it is pinned: nothing else frees a parked
+            // worker's queue, since a steal is opportunistic and preemption is deliberately withheld from a worker whose task is
+            // parked in a syscall rather than burning a time slice. That deadlocks outright when the queued task is what would
+            // produce the event this wait is about to block on. flush() re-schedules those tasks onto other workers (it excludes
+            // this one) and is a no-op off a worker thread. It cannot close the window on its own, since a task can still land
+            // here after the flush and before the wait returns; Worker.checkAvailability drains that residue once the blocking
+            // monitor flags this worker.
+            Scheduler.get.flush()
             val n = selector.select()
             // Post-select re-check: clear the pending flag now that select() has returned.
             discard(wakeupPending.compareAndSet(true, false))
@@ -1469,4 +1531,13 @@ private[kyo] object NioIoDriver:
     /** Factory for `NioIoDriver`. Opens a fresh `Selector` for each driver instance. */
     def init()(using AllowUnsafe): NioIoDriver =
         new NioIoDriver(Selector.open())
+
+    /** Build a driver over a caller-supplied selector.
+      *
+      * `private[net]` for the crash-containment test, which needs a selector whose `select()` throws: the constructor is class-private, and the
+      * contract under test is that a Throwable escaping a select cycle still reaches the terminal exit and closes the selector, which cannot be
+      * provoked through a real one.
+      */
+    private[net] def forSelector(selector: Selector)(using AllowUnsafe): NioIoDriver =
+        new NioIoDriver(selector)
 end NioIoDriver

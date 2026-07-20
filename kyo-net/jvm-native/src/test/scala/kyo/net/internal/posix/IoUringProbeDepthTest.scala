@@ -4,12 +4,12 @@ import java.util.concurrent.atomic.AtomicInteger
 import kyo.*
 import kyo.ffi.Buffer
 import kyo.ffi.Ffi
+import kyo.net.NetConfig
 import kyo.net.Test
-import kyo.net.TransportConfig
 
 /** The io_uring availability probe is invoked at the production queue depth `max(256, ioPoolSize * 64)`, not a fixed 256.
   *
-  * `IoUringBackend.isAvailable` computes `depth = max(256, TransportConfig.default.ioPoolSize * 64)` and passes it to
+  * `IoUringBackend.isAvailable` computes `depth = max(256, kyo.net.ioPoolSize() * 64)` and passes it to
   * `kyo_uring_probe_available(depth)`, so the probe exercises the same ring size the driver actually builds. The deterministic local unit
   * asserted here is the depth-threading: a capturing `IoUringBindings` records the depth argument, and invoking the probe through it with the
   * backend's formula records exactly that value. A probe that took no depth (signature
@@ -75,7 +75,7 @@ class IoUringProbeDepthTest extends Test:
         def kyo_uring_get_features(ring: Buffer[Byte])(using AllowUnsafe): Int = 0
     end CapturingBindings
 
-    private def productionDepth: Int = math.max(256, TransportConfig.default.ioPoolSize * 64)
+    private def productionDepth: Int = math.max(256, kyo.net.ioPoolSize() * 64)
 
     "the probe is invoked with the production depth max(256, ioPoolSize*64), not the hardcoded 256" in {
         val bindings = new CapturingBindings
@@ -85,15 +85,15 @@ class IoUringProbeDepthTest extends Test:
         assert(bindings.lastDepth.get() == depth, s"probe received ${bindings.lastDepth.get()}, expected the production depth $depth")
     }
 
-    "the production depth exceeds a fixed 256 whenever ioPoolSize*64 does" in {
-        // The computed depth matters precisely when it is larger than a fixed 256; assert the formula crosses 256 for a config that
-        // warrants it (a host with >= 4 io pool slots yields 4*64 = 256+, and the default sizes ioPoolSize to processors/2). A capturing probe
-        // records that larger value, which a fixed-256 probe could never use.
-        val cfg   = TransportConfig.default.copy(ioPoolSize = 8)
-        val depth = math.max(256, cfg.ioPoolSize * 64)
-        assert(depth == 512, s"expected ioPoolSize=8 to yield depth 512, got $depth")
+    "the depth formula scales past a fixed 256 once the pool is wide enough" in {
+        // The computed depth matters precisely when it exceeds a fixed 256. Pool width is a process-global flag rather than a per-transport
+        // config field, so drive the formula directly for representative widths instead of building a transport to carry one: a pool of 8
+        // must yield 512, a value a hardcoded 256 probe could never use, while a narrow pool still floors at 256.
+        def depthFor(poolSize: Int): Int = math.max(256, poolSize * 64)
+        assert(depthFor(8) == 512, s"expected 512 for a pool of 8, got ${depthFor(8)}")
+        assert(depthFor(1) == 256, s"a narrow pool must floor at 256, got ${depthFor(1)}")
         val bindings = new CapturingBindings
-        discard(bindings.kyo_uring_probe_available(depth))
+        discard(bindings.kyo_uring_probe_available(depthFor(8)))
         assert(bindings.lastDepth.get() == 512)
     }
 

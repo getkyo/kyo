@@ -3,10 +3,10 @@ package kyo.net.internal.posix
 import java.util.Collections
 import java.util.IdentityHashMap
 import kyo.*
+import kyo.net.NetConfig
 import kyo.net.NetException
 import kyo.net.Test
 import kyo.net.TestBackends
-import kyo.net.TransportConfig
 import kyo.net.internal.transport.IoDriver
 import kyo.net.internal.transport.IoDriverPool
 
@@ -29,17 +29,21 @@ class PosixTransportMultiDriverTest extends Test:
         PosixTestSockets.assumePoller()
         ()
 
-    /** Build a real transport backed by `n` real PollerIoDriver instances, start the pool, run `body`, then close the transport. */
+    /** Build a real transport backed by `n` real PollerIoDriver instances, start the pool, run `body`, then close each driver.
+      *
+      * Scope.run resolves the body's own Scope.ensure finalizers (each leaf's listener/connection closes) BEFORE the drivers below
+      * are torn down, so a leaf never closes a handle after its owning driver is already gone.
+      */
     private def withNDriverTransport[A](n: Int)(body: PosixTransport => A < (Async & Abort[NetException | Closed] & Scope))(using
         Frame
     ): A < (Async & Abort[NetException | Closed] & Scope) =
         val drivers: Array[IoDriver[PosixHandle]] =
-            Array.fill(n)(PollerIoDriver.init(TransportConfig.default).asInstanceOf[IoDriver[PosixHandle]])
+            Array.fill(n)(PollerIoDriver.init().asInstanceOf[IoDriver[PosixHandle]])
         val pool      = IoDriverPool.init(drivers)
-        val transport = PosixTransport.init(TransportConfig.default, pool)
+        val transport = PosixTransport.init(pool)
         pool.start()
-        Abort.run[NetException | Closed](body(transport)).map { result =>
-            Sync.defer(transport.close()).andThen(Abort.get(result))
+        Abort.run[NetException | Closed](Scope.run(body(transport))).map { result =>
+            Sync.defer(drivers.foreach(_.close())).andThen(Abort.get(result))
         }
     end withNDriverTransport
 
@@ -59,36 +63,45 @@ class PosixTransportMultiDriverTest extends Test:
         val M = N * 2
         // Capture pool drivers for identity comparison: the handle's .driver must be one of these.
         val driverArray: Array[IoDriver[PosixHandle]] =
-            Array.fill(N)(PollerIoDriver.init(TransportConfig.default).asInstanceOf[IoDriver[PosixHandle]])
+            Array.fill(N)(PollerIoDriver.init().asInstanceOf[IoDriver[PosixHandle]])
         val pool      = IoDriverPool.init(driverArray)
-        val transport = PosixTransport.init(TransportConfig.default, pool)
+        val transport = PosixTransport.init(pool)
         pool.start()
         val poolDriverSet = Collections.newSetFromMap(new IdentityHashMap[IoDriver[PosixHandle], java.lang.Boolean]())
         driverArray.foreach(d => discard(poolDriverSet.add(d)))
 
-        Abort.run[NetException | Closed] {
-            transport.listen("127.0.0.1", 0, M + 4)(_ => ()).safe.get.map { listener =>
-                val port = listener.port
-                Kyo.foreach(0 until M) { _ =>
-                    transport.connect("127.0.0.1", port).safe.get.map { client =>
-                        val handle = client.asInstanceOf[kyo.net.internal.transport.Connection[PosixHandle]].handle
-                        val d      = handle.driver
-                        // Each handle must have a non-null driver assigned at bind time (connectImpl).
-                        assert(d ne null, "handle.driver must be non-null after connect")
-                        // The assigned driver must be one of the N real pool drivers (reference identity).
-                        assert(
-                            poolDriverSet.contains(d),
-                            s"handle.driver must be a pool driver, got $d which is not in pool drivers ${driverArray.mkString("[", ", ", "]")}"
-                        )
-                        client.close()
+        // Scope.run wraps only the connect/listen phase, not the driver-closing map below, so every listener/connection Scope.ensure
+        // finalizer runs (in success, typed-failure, and panic cases alike) while the drivers backing them are still alive, before
+        // the drivers themselves are torn down.
+        Scope.run {
+            Abort.run[NetException | Closed] {
+                transport.listen("127.0.0.1", 0, M + 4)(_ => ()).safe.get.map { listener =>
+                    Scope.ensure(Sync.defer(listener.close())).andThen {
+                        val port = listener.port
+                        Kyo.foreach(0 until M) { _ =>
+                            transport.connect("127.0.0.1", port).safe.get.map { client =>
+                                Scope.ensure(Sync.defer(client.close())).andThen {
+                                    val handle = client.asInstanceOf[kyo.net.internal.transport.Connection[PosixHandle]].handle
+                                    val d      = handle.driver
+                                    // Each handle must have a non-null driver assigned at bind time (connectImpl).
+                                    assert(d ne null, "handle.driver must be non-null after connect")
+                                    // The assigned driver must be one of the N real pool drivers (reference identity).
+                                    assert(
+                                        poolDriverSet.contains(d),
+                                        s"handle.driver must be a pool driver, got $d which is not in pool drivers ${driverArray.mkString("[", ", ", "]")}"
+                                    )
+                                    client.close()
+                                }
+                            }
+                        }.map { _ =>
+                            listener.close()
+                            succeed
+                        }
                     }
-                }.map { _ =>
-                    listener.close()
-                    succeed
                 }
             }
         }.map { result =>
-            Sync.defer(transport.close()).andThen(Abort.get(result))
+            Sync.defer(driverArray.foreach(_.close())).andThen(Abort.get(result))
         }
     }
 
@@ -120,38 +133,46 @@ class PosixTransportMultiDriverTest extends Test:
                 val releaseLatches = Array.fill(M)(Channel.Unsafe.init[Unit](1))
 
                 transport.listen("127.0.0.1", 0, M + 8)(_ => ()).safe.get.map { listener =>
-                    val port = listener.port
-                    // Spawn M concurrent client fibers via Kyo.foreach so all fibers are collected as Chunk[Fiber[...]].
-                    // Each fiber holds its connection open until the orchestrator releases it.
-                    Kyo.foreach(0 until M) { i =>
-                        Fiber.initUnscoped {
-                            val connected: Unit < (Async & Abort[NetException | Closed]) =
-                                transport.connect("127.0.0.1", port).safe.get.map { client =>
-                                    val handle = client.asInstanceOf[kyo.net.internal.transport.Connection[PosixHandle]].handle
-                                    discard(driversSeen.add(handle.driver))
-                                    // Signal registration (non-blocking since capacity is M).
-                                    registeredCh.safe.put(()).andThen {
-                                        // Block until the orchestrator releases this connection.
-                                        releaseLatches(i).safe.take.andThen {
-                                            Sync.defer(client.close())
+                    Scope.ensure(Sync.defer(listener.close())).andThen {
+                        val port = listener.port
+                        // Spawn M concurrent client fibers via Kyo.foreach so all fibers are collected as Chunk[Fiber[...]].
+                        // Each fiber holds its connection open until the orchestrator releases it.
+                        Kyo.foreach(0 until M) { i =>
+                            Fiber.initUnscoped {
+                                val connected: Unit < (Async & Abort[NetException | Closed]) =
+                                    transport.connect("127.0.0.1", port).safe.get.map { client =>
+                                        val handle = client.asInstanceOf[kyo.net.internal.transport.Connection[PosixHandle]].handle
+                                        discard(driversSeen.add(handle.driver))
+                                        // Fiber.initUnscoped's body cannot carry Scope (no Isolate crosses the fork boundary), so this
+                                        // connection's close is guaranteed the same way the outer withNDriverTransport/withTransport
+                                        // helpers guarantee their own driver cleanup: Abort.run catches success, typed failure, and panic
+                                        // alike, and the post-run map always runs client.close() before re-raising.
+                                        Abort.run[NetException | Closed] {
+                                            // Signal registration (non-blocking since capacity is M).
+                                            registeredCh.safe.put(()).andThen {
+                                                // Block until the orchestrator releases this connection.
+                                                releaseLatches(i).safe.take
+                                            }
+                                        }.map { result =>
+                                            Sync.defer(client.close()).andThen(Abort.get(result))
+                                        }
+                                    }
+                                connected
+                            }
+                        }.map { connFibers =>
+                            // Wait for all M fibers to register their drivers (all M in-flight simultaneously).
+                            val released: Int < (Async & Abort[NetException | Closed]) =
+                                Kyo.foreach(0 until M)(_ => registeredCh.safe.take).andThen {
+                                    // Release all M connections simultaneously.
+                                    Kyo.foreach(0 until M)(i => releaseLatches(i).safe.put(())).andThen {
+                                        Kyo.foreach(connFibers)(_.get).map { _ =>
+                                            listener.close()
+                                            driversSeen.size()
                                         }
                                     }
                                 }
-                            connected
+                            released
                         }
-                    }.map { connFibers =>
-                        // Wait for all M fibers to register their drivers (all M in-flight simultaneously).
-                        val released: Int < (Async & Abort[NetException | Closed]) =
-                            Kyo.foreach(0 until M)(_ => registeredCh.safe.take).andThen {
-                                // Release all M connections simultaneously.
-                                Kyo.foreach(0 until M)(i => releaseLatches(i).safe.put(())).andThen {
-                                    Kyo.foreach(connFibers)(_.get).map { _ =>
-                                        listener.close()
-                                        driversSeen.size()
-                                    }
-                                }
-                            }
-                        released
                     }
                 }
             }
@@ -171,37 +192,6 @@ class PosixTransportMultiDriverTest extends Test:
         }
     end exercisesRealParallelismBody
 
-    // --- poolCloseLeaksNothing ---
-    // After transport.close() (which calls pool.close()), all N real driver fibers are interrupted and a second close() is idempotent.
-    // Anti-flakiness: close() is synchronous wrt the CAS guard; no sleep.
-    "poolCloseLeaksNothing" in {
-        assumePoller()
-        val N = 3
-        val drivers: Array[IoDriver[PosixHandle]] =
-            Array.fill(N)(PollerIoDriver.init(TransportConfig.default).asInstanceOf[IoDriver[PosixHandle]])
-        val pool      = IoDriverPool.init(drivers)
-        val transport = PosixTransport.init(TransportConfig.default, pool)
-        pool.start()
-
-        // Open one real connection so the accept loop is live, then close everything.
-        Abort.run[NetException | Closed] {
-            transport.listen("127.0.0.1", 0, 4)(_ => ()).safe.get.map { listener =>
-                transport.connect("127.0.0.1", listener.port).safe.get.map { conn =>
-                    conn.close()
-                    listener.close()
-                }
-            }
-        }.map { _ =>
-            Sync.defer {
-                // First close: stops all N driver fibers and releases their resources.
-                transport.close()
-                // Second close: must be idempotent and not throw (AtomicBoolean CAS in pool.close is the guard).
-                transport.close()
-                succeed
-            }
-        }
-    }
-
     // --- poolSizeMatchesIoPoolSize ---
     // The production registry build path sizes the pool at max(1, ioPoolSize) drivers on every platform: both JVM and Native run each driver's
     // poll loop on its own OS thread, so ioPoolSize drivers give real cross-core parallelism on both. With the default ioPoolSize > 1 on any
@@ -216,19 +206,16 @@ class PosixTransportMultiDriverTest extends Test:
             case None =>
                 Sync.defer(cancel("no posix backend selected/available on this host (pool-size check is posix-only)"))
             case Some(entry) =>
-                Sync.defer(entry.build(TransportConfig.default, summon[Frame])).map { transport =>
-                    // A posix backend entry always builds a PosixTransport; the cast reaches its pool to count drivers.
-                    val posix    = transport.asInstanceOf[PosixTransport]
-                    val expected = math.max(1, TransportConfig.default.ioPoolSize)
-                    Sync.defer {
-                        try
-                            assert(
-                                posix.pool.size == expected,
-                                s"pool size must be $expected (max(1, ioPoolSize)), got ${posix.pool.size}"
-                            )
-                            succeed
-                        finally transport.close()
-                    }
+                Sync.defer {
+                    // A posix backend entry always builds a PosixTransport; the cast reaches its pool to count drivers. The entry's transport
+                    // is process-lifetime and shared (mirroring NetPlatform.transport), so this reads it without closing it.
+                    val posix    = entry.transport.asInstanceOf[PosixTransport]
+                    val expected = math.max(1, kyo.net.ioPoolSize())
+                    assert(
+                        posix.pool.size == expected,
+                        s"pool size must be $expected (max(1, ioPoolSize)), got ${posix.pool.size}"
+                    )
+                    succeed
                 }
         end match
     }

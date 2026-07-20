@@ -165,7 +165,7 @@ end KqueuePollData
 
 /** Per-driver reused poll scratch, allocated once at driver init and closed when the driver closes.
   *
-  * Ownership: `eventsBuffer`, `fds`, and `flags` are owned exclusively by the poll loop carrier (used only during `pollLoop` and
+  * Ownership: `eventsBuffer`, `fds`, and `flags` are owned exclusively by the poll loop carrier (used only during the poll cycle and
   * `drainReady`, which run on the same poll-loop fiber). `armBuf` is owned exclusively by the change worker (used only during
   * `drainChanges` and `dispatchCmd`, which run on the single change-worker fiber). The two workers never share a scratch slot.
   * `kqueueData` is `Present` on kqueue hosts and `Absent` on epoll hosts; when present its buffers follow the same ownership as the

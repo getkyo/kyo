@@ -65,22 +65,23 @@ class TransportConcurrentEchoTest extends Test:
             })
         for
             listener <- transport.listen("127.0.0.1", 0, 128)(serverHandler).safe.get
+            _        <- Scope.ensure(Sync.defer(listener.close()))
             port = listener.port
             results <- Async.fillIndexed(connections, connections) { connId =>
                 transport.connect("127.0.0.1", port).safe.get.map { conn =>
-                    Channel.init[Unit](window).map { permits =>
-                        Kyo.foreach(0 until window)(_ => permits.put(())).andThen {
-                            driveConnection(conn, connId, permits).map { ok =>
-                                conn.close()
-                                ok
+                    Scope.ensure(Sync.defer(conn.close())).andThen {
+                        Channel.init[Unit](window).map { permits =>
+                            Kyo.foreach(0 until window)(_ => permits.put(())).andThen {
+                                driveConnection(conn, connId, permits).map { ok =>
+                                    conn.close()
+                                    ok
+                                }
                             }
                         }
                     }
                 }
             }
-        yield
-            listener.close()
-            assert(results.forall(identity), "a plaintext connection's echo did not match byte for byte under concurrency")
+        yield assert(results.forall(identity), "a plaintext connection's echo did not match byte for byte under concurrency")
         end for
     }
 

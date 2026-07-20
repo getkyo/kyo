@@ -45,7 +45,7 @@ abstract class Test extends kyo.test.Test[Any]:
       *
       * Env filtering follows kyo-browser's visible-cancel style, not kyo-pod's silent filter-at-registration: a leaf is registered for EVERY
       * registered backend, and the unavailable ones `cancel(...)` rather than vanishing, so a backend that should be available but probes false
-      * stays visible as a canceled leaf instead of hiding a probe regression. The built transport is closed via [[Scope.ensure]], so it is
+      * stays visible as a canceled leaf instead of hiding a probe regression. The backend's transport is process-lifetime, so it is
       * released regardless of how the scenario completes.
       */
     def eachBackend(scenario: Transport => (kyo.test.AssertScope ?=> Unit < (Async & Abort[NetException | Closed] & Scope)))(using
@@ -96,7 +96,7 @@ abstract class Test extends kyo.test.Test[Any]:
       * `jdk` inline; JS only `node`) and CANCELS when it cannot, so the valid-combination knowledge lives in production and evolves with the
       * transports rather than as a fixed table in the tests. A cell also cancels when its backend is unavailable on the host, or when the
       * provider's library is not staged ([[TlsProvider.isAvailable]]) -- so an absent BoringSSL bundle shows up as canceled cells, not failures.
-      * Transport lifecycle matches [[eachBackend]] (visible cancel, [[Scope.ensure]] close); the cert is written cross-platform through
+      * Transport lifecycle matches [[eachBackend]] (visible cancel, one process-lifetime transport per backend); the cert is written cross-platform through
       * [[TlsTestCertShared.writePems]].
       */
     def eachBackendTls(
@@ -106,7 +106,7 @@ abstract class Test extends kyo.test.Test[Any]:
             NetTlsConfig
         ) => (kyo.test.AssertScope ?=> Unit < (Async & Abort[NetException | Closed] & Scope))
     )(using Frame): Unit =
-        eachBackendTls(TransportConfig.default)(scenario)
+        eachBackendTls(NetConfig.default)(scenario)
 
     /** Like [[eachBackendTls]] but cancels (with the returned reason) the one (backend, provider) cell `skipCell` maps to `Present`, while every
       * other cell still runs. Pins a documented PENDING reason on a single genuinely-broken (backend, provider) cell without dropping the passing
@@ -119,13 +119,14 @@ abstract class Test extends kyo.test.Test[Any]:
             NetTlsConfig
         ) => (kyo.test.AssertScope ?=> Unit < (Async & Abort[NetException | Closed] & Scope))
     )(skipCell: (String, String) => Maybe[String])(using Frame): Unit =
-        tlsLeaves(TransportConfig.default)(skipCell)(scenario)
+        tlsLeaves(NetConfig.default)(skipCell)(scenario)
 
-    /** As [[eachBackendTls]], but builds each cell's transport with `config` instead of `TransportConfig.default`, so a config-driven behavior
-      * (e.g. a finite `handshakeTimeout`) is asserted across the same backend x TLS-impl matrix. The cell's provider pin and lifecycle handling
-      * are identical to the no-config form.
+    /** As [[eachBackendTls]], but passes `config` to each cell's operations instead of `NetConfig.default`, so a config-driven behavior
+      * (e.g. a non-default `readChunkSize` or an explicit `soRcvBuf`) is asserted across the same backend x TLS-impl matrix. A handshake
+      * deadline is NOT one of these: it rides `NetTlsConfig.handshakeTimeout`, which the cell's own TLS configs carry. The cell's provider pin
+      * and lifecycle handling are identical to the no-config form.
       */
-    def eachBackendTls(config: TransportConfig)(
+    def eachBackendTls(config: NetConfig)(
         scenario: (
             Transport,
             NetTlsConfig,
@@ -134,7 +135,7 @@ abstract class Test extends kyo.test.Test[Any]:
     )(using Frame): Unit =
         tlsLeaves(config)((_, _) => Absent)(scenario)
 
-    private def tlsLeaves(config: TransportConfig)(skipCell: (String, String) => Maybe[String])(
+    private def tlsLeaves(config: NetConfig)(skipCell: (String, String) => Maybe[String])(
         scenario: (
             Transport,
             NetTlsConfig,
@@ -162,12 +163,11 @@ abstract class Test extends kyo.test.Test[Any]:
                             // Build the cell's transport eagerly so its TLS capability can be queried for a clean, visible cancel BEFORE the scenario
                             // runs (the same eager-cancel placement the availability checks above use). An unsupported cell closes the just-built
                             // transport and cancels rather than running a mislabeled handshake on a substituted implementation.
-                            val transport = entry.build(config, summon[Frame])
+                            val transport = entry.transport
                             if !transport.supportedTlsProviders.contains(provider.name) then
-                                transport.close()
                                 cancel(s"backend ${entry.name} does not drive TLS impl ${provider.name}")
                             else
-                                Scope.ensure(Sync.defer(transport.close())).andThen {
+                                Sync.defer(()).andThen {
                                     TlsTestCertShared.writePems.map { case (certPath, keyPath) =>
                                         val serverTls = NetTlsConfig(
                                             certChainPath = Present(certPath),
@@ -184,16 +184,16 @@ abstract class Test extends kyo.test.Test[Any]:
         end for
     end tlsLeaves
 
-    /** Build the entry's transport with `TransportConfig.default`, register a [[Scope.ensure]] that closes it on scope exit, and run
-      * `scenario` against it. The close runs whether the scenario succeeds, fails, or aborts, so no backend leaks its driver pool.
+    /** Run `scenario` against this backend's transport.
+      *
+      * The transport is the entry's process-lifetime instance, built on first use and shared by every leaf for that backend, exactly as
+      * production shares [[kyo.net.NetPlatform.transport]]. There is no close: a transport lives for the process. A leaf reclaims what it
+      * actually owns, its listeners and connections.
       */
     private def withTransport(entry: TestBackends.Entry)(
         scenario: Transport => (kyo.test.AssertScope ?=> Unit < (Async & Abort[NetException | Closed] & Scope))
     )(using frame: Frame, as: kyo.test.AssertScope): Unit < (Async & Abort[NetException | Closed] & Scope) =
-        import AllowUnsafe.embrace.danger
-        Sync.defer(entry.build(TransportConfig.default, frame)).map { transport =>
-            Scope.ensure(Sync.defer(transport.close())).andThen(scenario(transport))
-        }
+        Sync.defer(entry.transport).map(transport => scenario(transport))
     end withTransport
 
 end Test

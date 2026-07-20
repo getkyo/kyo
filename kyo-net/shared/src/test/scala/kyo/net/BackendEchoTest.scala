@@ -43,7 +43,9 @@ class BackendEchoTest extends Test:
     "plaintext echo round-trips a message" - eachBackend { transport =>
         for
             listener <- transport.listen("127.0.0.1", 0, 128)(echo).safe.get
+            _        <- Scope.ensure(Sync.defer(listener.close()))
             conn     <- transport.connect("127.0.0.1", listener.port).safe.get
+            _        <- Scope.ensure(Sync.defer(conn.close()))
             message = "kyo-backend-echo-pilot".getBytes("UTF-8")
             _      <- conn.outbound.safe.put(Span.fromUnsafe(message))
             echoed <- collect(conn, message.length)
@@ -70,34 +72,37 @@ class BackendEchoTest extends Test:
             val total     = chunkSize * chunkN
             for
                 listener <- transport.listen("127.0.0.1", 0, 128)(echo).safe.get
+                _        <- Scope.ensure(Sync.defer(listener.close()))
                 _ <- Async.foreach(0 until conns, conns) { c =>
-                    val body: Unit < (Async & Abort[NetException | Closed]) =
+                    val body: Unit < (Async & Abort[NetException | Closed] & Scope) =
                         transport.connect("127.0.0.1", listener.port).safe.get.map { conn =>
-                            val payload = Array.tabulate[Byte](total)(i => ((c * 131 + i) % 251).toByte)
-                            val writer = Async.foreach(payload.grouped(chunkSize).toSeq, 1) { ch =>
-                                conn.outbound.safe.put(Span.fromUnsafe(ch))
-                            }.unit
-                            val reader = collect(conn, total)
-                            Async.zip(writer, reader).map { case (_, echoed) =>
-                                conn.close()
-                                assert(
-                                    echoed.sameElements(payload),
-                                    s"conn $c full-duplex echo mismatch: ${echoed.length}/$total bytes round-tripped"
-                                )
+                            Scope.ensure(Sync.defer(conn.close())).andThen {
+                                val payload = Array.tabulate[Byte](total)(i => ((c * 131 + i) % 251).toByte)
+                                val writer = Async.foreach(payload.grouped(chunkSize).toSeq, 1) { ch =>
+                                    conn.outbound.safe.put(Span.fromUnsafe(ch))
+                                }.unit
+                                val reader = collect(conn, total)
+                                Async.zip(writer, reader).map { case (_, echoed) =>
+                                    conn.close()
+                                    assert(
+                                        echoed.sameElements(payload),
+                                        s"conn $c full-duplex echo mismatch: ${echoed.length}/$total bytes round-tripped"
+                                    )
+                                }
                             }
                         }
                     body
                 }
-            yield
-                listener.close()
-                succeed
+            yield succeed
             end for
     }
 
     "TLS echo round-trips a message" - eachBackendTls { (transport, serverTls, clientTls) =>
         for
-            listener <- transport.listen("127.0.0.1", 0, 16, serverTls)(echo).safe.get
-            conn     <- transport.connect("127.0.0.1", listener.port, clientTls).safe.get
+            listener <- transport.listenTls("127.0.0.1", 0, 16, serverTls)(echo).safe.get
+            _        <- Scope.ensure(Sync.defer(listener.close()))
+            conn     <- transport.connectTls("127.0.0.1", listener.port, clientTls).safe.get
+            _        <- Scope.ensure(Sync.defer(conn.close()))
             message = "kyo-backend-tls-echo-pilot".getBytes("UTF-8")
             _      <- conn.outbound.safe.put(Span.fromUnsafe(message))
             echoed <- collect(conn, message.length)
@@ -124,28 +129,29 @@ class BackendEchoTest extends Test:
             val perConn   = 64 * 1024
             val chunkSize = 4 * 1024
             for
-                listener <- transport.listen("127.0.0.1", 0, 64, serverTls)(echo).safe.get
+                listener <- transport.listenTls("127.0.0.1", 0, 64, serverTls)(echo).safe.get
+                _        <- Scope.ensure(Sync.defer(listener.close()))
                 _ <- Async.foreach(0 until conns, conns) { c =>
-                    val body: Unit < (Async & Abort[NetException | Closed]) =
-                        transport.connect("127.0.0.1", listener.port, clientTls).safe.get.map { conn =>
-                            val payload = Array.tabulate[Byte](perConn)(i => ((c * 131 + i) % 251).toByte)
-                            val writer = Async.foreach(payload.grouped(chunkSize).toSeq, 1) { ch =>
-                                conn.outbound.safe.put(Span.fromUnsafe(ch))
-                            }.unit
-                            val reader = collect(conn, perConn)
-                            Async.zip(writer, reader).map { case (_, echoed) =>
-                                conn.close()
-                                assert(
-                                    echoed.sameElements(payload),
-                                    s"conn $c TLS bulk mismatch: ${echoed.length}/$perConn bytes round-tripped"
-                                )
+                    val body: Unit < (Async & Abort[NetException | Closed] & Scope) =
+                        transport.connectTls("127.0.0.1", listener.port, clientTls).safe.get.map { conn =>
+                            Scope.ensure(Sync.defer(conn.close())).andThen {
+                                val payload = Array.tabulate[Byte](perConn)(i => ((c * 131 + i) % 251).toByte)
+                                val writer = Async.foreach(payload.grouped(chunkSize).toSeq, 1) { ch =>
+                                    conn.outbound.safe.put(Span.fromUnsafe(ch))
+                                }.unit
+                                val reader = collect(conn, perConn)
+                                Async.zip(writer, reader).map { case (_, echoed) =>
+                                    conn.close()
+                                    assert(
+                                        echoed.sameElements(payload),
+                                        s"conn $c TLS bulk mismatch: ${echoed.length}/$perConn bytes round-tripped"
+                                    )
+                                }
                             }
                         }
                     body
                 }
-            yield
-                listener.close()
-                succeed
+            yield succeed
             end for
     }
 

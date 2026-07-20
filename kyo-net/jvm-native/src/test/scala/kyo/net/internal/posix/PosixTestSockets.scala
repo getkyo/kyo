@@ -3,7 +3,7 @@ package kyo.net.internal.posix
 import kyo.*
 import kyo.ffi.Buffer
 import kyo.ffi.Ffi
-import kyo.net.TransportConfig
+import kyo.net.NetConfig
 import kyo.net.internal.transport.IoDriver
 import kyo.net.internal.transport.ReadOutcome
 
@@ -386,7 +386,7 @@ object PosixTestSockets:
       * `--privileged` container flag does not lift this cgroup limit (it only relaxes seccomp); the gate must probe at the same depth the
       * driver will use so that "gate passes" iff "driver init succeeds".
       */
-    def assumeUring(config: TransportConfig = TransportConfig.default)(using Frame): Unit < Any =
+    def assumeUring()(using Frame): Unit < Any =
         if !PosixConstants.isLinux then
             throw new kyo.test.TestCancelled("io_uring is Linux-only")
         else
@@ -394,7 +394,7 @@ object PosixTestSockets:
             val available =
                 try
                     val uring = Ffi.load[IoUringBindings]
-                    val depth = math.max(256, config.ioPoolSize * 64)
+                    val depth = math.max(256, kyo.net.ioPoolSize() * 64)
                     val ring  = Buffer.alloc[Byte](uring.kyo_uring_sizeof().toInt)
                     val rc    = uring.io_uring_queue_init(depth, ring, 0)
                     // io_uring_queue_init returns 0 on success or -errno on failure and does NOT set the global errno

@@ -224,8 +224,22 @@ abstract private class Worker(
         // that frees them. Issuing doPreempt against a blocked task is pointless and, on Native, unsafe.
         val stalling  = !blocked && checkStalling(nowMs)
         val available = (st ne State.Stalled) && !blocked && !stalling
-        if (!available && (st eq State.Running) && state.compareAndSet(State.Running, State.Stalled))
-            drain()
+        if (!available) {
+            if ((st eq State.Running) && state.compareAndSet(State.Running, State.Stalled))
+                drain()
+            else if (blocked && !queue.isEmpty())
+                // Drain again for a worker that is ALREADY Stalled and still blocked. The transition drain above fires once,
+                // on the Running -> Stalled edge, but tasks keep arriving after it: Scheduler.schedule's random fallback
+                // ignores availability, and a worker can block at any point after a task was handed to it. Such a task is
+                // stranded, because nothing else frees a blocked worker's queue. Stealing is opportunistic (a thief must
+                // sample this worker while its own queue is empty) and preemption is not an option here: doPreempt is
+                // deliberately withheld from blocked workers, since their task is parked in a syscall rather than burning a
+                // time slice. So the queue sits until the syscall returns, which deadlocks outright when the blocked worker
+                // is an I/O driver parked in a poll and the stranded task is what would produce the event it waits for.
+                // Restricted to `blocked`: a Stalled worker that is merely CPU-bound does receive doPreempt, and run() then
+                // polls its own queue, so draining it here would move work that its owner is about to pick up anyway.
+                drain()
+        }
         available
     }
 

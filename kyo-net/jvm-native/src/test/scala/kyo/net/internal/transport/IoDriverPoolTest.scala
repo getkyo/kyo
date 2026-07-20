@@ -7,31 +7,32 @@ import kyo.net.internal.posix.PollerIoDriver
 import kyo.net.internal.posix.PosixHandle
 import kyo.net.internal.posix.PosixTestSockets
 import kyo.net.internal.posix.RecordingIoDriver
-import scala.collection.mutable
 
 /** Tests for IoDriverPool over real PollerIoDriver instances wrapped in RecordingIoDriver.
   *
-  * The pool tests exercise the pool's lifecycle (next(), start(), close(), idempotent close, close order) without exercising real I/O paths.
-  * Each PollerIoDriver is unstarted (init does not call start()) except where start() is explicitly tested.
+  * The pool tests exercise the pool's lifecycle (next(), start(), including the all-or-nothing start rollback) without exercising real I/O
+  * paths. The pool itself has no close(): it is process-lifetime once handed to a transport, so each leaf below closes its own driver spies
+  * directly for cleanup rather than through the pool. Each PollerIoDriver is unstarted (init does not call start()) except where start() is
+  * explicitly tested.
   *
   * Gate: assumePoller() cancels where no epoll (Linux) or kqueue (macOS/BSD) is available.
   *
-  * Each PollerIoDriver is wrapped in a `RecordingIoDriver` to observe lifecycle calls (start count, close count, close order).
+  * Each PollerIoDriver is wrapped in a `RecordingIoDriver` to observe lifecycle calls (start count, close count).
   */
 class IoDriverPoolTest extends Test:
 
     import AllowUnsafe.embrace.danger
     given Frame = Frame.internal
 
-    private val transportConfig = kyo.net.TransportConfig.default
+    private val transportConfig = kyo.net.NetConfig.default
 
     private def assumePoller(): Unit =
         PosixTestSockets.assumePoller()
         ()
 
-    /** Build n unstarted RecordingIoDriver instances over real PollerIoDriver.init(transportConfig). */
+    /** Build n unstarted RecordingIoDriver instances over real PollerIoDriver.init(). */
     private def mkSpies(n: Int): Array[RecordingIoDriver] =
-        Array.fill(n)(new RecordingIoDriver(PollerIoDriver.init(transportConfig)))
+        Array.fill(n)(new RecordingIoDriver(PollerIoDriver.init()))
 
     "init with single driver: next returns that driver" in {
         assumePoller()
@@ -118,7 +119,7 @@ class IoDriverPoolTest extends Test:
         // Each real driver's start() was delegated through spy; the real poll loop is running.
         // We cannot check a startCount on RecordingIoDriver (it delegates start to real),
         // but we can verify close works cleanly afterward.
-        pool.close()
+        spies.foreach(_.close())
         succeed
     }
 
@@ -134,50 +135,11 @@ class IoDriverPoolTest extends Test:
         assert(thrown.getMessage.contains("throwOnStart"), s"expected throwOnStart message, got: ${thrown.getMessage}")
         // Driver 0 (already started) must have been closed by the all-or-nothing cleanup.
         assert(rawSpies(0).closeCalls.get() >= 1, "driver 0 must be closed by the all-or-nothing cleanup")
-        succeed
-    }
-
-    "close is idempotent: second close skips driver close calls" in {
-        assumePoller()
-        val rawSpies                            = mkSpies(2)
-        val spies: Array[IoDriver[PosixHandle]] = rawSpies.asInstanceOf[Array[IoDriver[PosixHandle]]]
-        val pool                                = IoDriverPool.init(spies)
-        pool.start()
-        pool.close()
-        pool.close()
-        // Each driver's close() must be called exactly once (AtomicBoolean CAS on pool + real driver CAS).
-        // closeCalls counts the pool's driver.close() invocations via the RecordingIoDriver.
-        val allClosedOnce = rawSpies.forall(d => d.closeCalls.get() == 1)
-        assert(allClosedOnce, s"each driver must be closed exactly once, got ${rawSpies.map(_.closeCalls.get()).toList}")
-        succeed
-    }
-
-    "close closes every driver in order" in {
-        assumePoller()
-        val closeOrder = mutable.ListBuffer[Int]()
-        val rawSpies = Array.tabulate(2) { i =>
-            val spy = new RecordingIoDriver(PollerIoDriver.init(transportConfig))
-            spy.onClose = () => closeOrder += i
-            spy
-        }
-        val spies: Array[IoDriver[PosixHandle]] = rawSpies.asInstanceOf[Array[IoDriver[PosixHandle]]]
-        val pool                                = IoDriverPool.init(spies)
-        pool.start()
-        pool.close()
-
-        assert(rawSpies(0).closeCalls.get() == 1, "driver 0 must be closed exactly once")
-        assert(rawSpies(1).closeCalls.get() == 1, "driver 1 must be closed exactly once")
-        // Driver close order: 0 then 1 (sequential closeLoop in IoDriverPool).
-        assert(closeOrder.toList == List(0, 1), s"driver close order must be sequential, got $closeOrder")
-        succeed
-    }
-
-    "close is safe when the pool was never started" in {
-        assumePoller()
-        val spies: Array[IoDriver[PosixHandle]] = mkSpies(3).asInstanceOf[Array[IoDriver[PosixHandle]]]
-        val pool                                = IoDriverPool.init(spies)
-        // Do NOT call pool.start(); close() must still close every driver without throwing.
-        pool.close()
+        // IoDriverPool.rollback only closes the already-started prefix (driver 0 here). Driver 1 (threw on start) and driver 2 (never
+        // reached) each still hold a live pollerFd from PollerIoDriver.init(), which allocates the poller fd before start() is ever
+        // called; close them here so the test does not leak either real fd.
+        rawSpies(1).close()
+        rawSpies(2).close()
         succeed
     }
 

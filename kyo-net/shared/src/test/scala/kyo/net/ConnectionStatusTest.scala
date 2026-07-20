@@ -26,14 +26,16 @@ class ConnectionStatusTest extends Test:
         (transport, serverTls, clientTls) =>
             for
                 serverConnCh <- Channel.init[Connection](1)
-                listener <- transport.listen("127.0.0.1", 0, 16, serverTls) { serverConn =>
+                listener <- transport.listenTls("127.0.0.1", 0, 16, serverTls) { serverConn =>
                     discard(Sync.Unsafe.evalOrThrow {
                         Fiber.initUnscoped {
                             Abort.run[Closed](serverConnCh.put(serverConn)).map(_ => ())
                         }
                     })
                 }.safe.get
-                client     <- transport.connect("127.0.0.1", listener.port, clientTls).safe.get
+                _          <- Scope.ensure(Sync.defer(listener.close()))
+                client     <- transport.connectTls("127.0.0.1", listener.port, clientTls).safe.get
+                _          <- Scope.ensure(Sync.defer(client.close()))
                 serverConn <- serverConnCh.take
                 _ = serverConn.close() // sends TLS close_notify then TCP FIN
                 _ <- drainInbound(client)
@@ -68,14 +70,16 @@ class ConnectionStatusTest extends Test:
         (transport, serverTls, clientTls) =>
             for
                 serverConnCh <- Channel.init[Connection](1)
-                listener <- transport.listen("127.0.0.1", 0, 16, serverTls) { serverConn =>
+                listener <- transport.listenTls("127.0.0.1", 0, 16, serverTls) { serverConn =>
                     discard(Sync.Unsafe.evalOrThrow {
                         Fiber.initUnscoped {
                             Abort.run[Closed](serverConnCh.put(serverConn)).map(_ => ())
                         }
                     })
                 }.safe.get
-                client     <- transport.connect("127.0.0.1", listener.port, clientTls).safe.get
+                _          <- Scope.ensure(Sync.defer(listener.close()))
+                client     <- transport.connectTls("127.0.0.1", listener.port, clientTls).safe.get
+                _          <- Scope.ensure(Sync.defer(client.close()))
                 serverConn <- serverConnCh.take
                 _ = client.close() // local close before any server-initiated close
             yield

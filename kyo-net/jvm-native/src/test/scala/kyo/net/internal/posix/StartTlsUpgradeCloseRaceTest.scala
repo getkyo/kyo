@@ -41,7 +41,7 @@ class StartTlsUpgradeCloseRaceTest extends Test:
 
     import AllowUnsafe.embrace.danger
 
-    private val transportConfig = kyo.net.TransportConfig.default
+    private val transportConfig = kyo.net.NetConfig.default
 
     private val serverTls = NetTlsConfig(
         certChainPath = Present(TlsTestCert.certPath),
@@ -88,7 +88,7 @@ class StartTlsUpgradeCloseRaceTest extends Test:
                             if fd == serverFd then recvSignal.completeDiscard(Result.succeed(()))
                         val driver     = TestDrivers.forBackend(backend, pollerFd, spy)
                         val driverDone = driver.start()
-                        val transport  = TestTransports.forTesting(transportConfig, driver, spy, backendIsEpoll = false)
+                        val transport  = TestTransports.forTesting(driver, spy, backendIsEpoll = false)
                         // Close the driver and the (never-upgraded) client fd at iteration end so fds do not leak across the 40 runs, then
                         // await the driver's own poll-loop-exit fiber (not discarding it): close() only requests teardown and returns
                         // immediately, without waiting for the poll-loop carrier to actually run it and release the fds it still holds.
@@ -99,7 +99,7 @@ class StartTlsUpgradeCloseRaceTest extends Test:
                         // numbers, misrouting an event.
                         Sync.ensure(Sync.defer { driver.close(); discard(real.close(clientFd)) }) {
                             val serverHandle = PosixHandle.socket(serverFd, PosixHandle.DefaultReadBufferSize, Absent)
-                            val serverPlain  = transport.openWith(serverHandle, driver)
+                            val serverPlain  = transport.openWith(serverHandle, driver, kyo.net.NetConfig.DefaultChannelCapacity)
                             serverPlain.start()
 
                             // Kick the SERVER upgrade. detachForUpgrade runs synchronously inside upgradeRole, the engine is built, and the

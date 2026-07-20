@@ -49,6 +49,38 @@ class KqueuePollerBackendTest extends Test:
             }
         }
 
+        "a change batch larger than the changelist capacity flushes instead of overrunning the buffer" in {
+            assumeKqueue()
+            val backend  = PollerBackend.default()
+            val pollerFd = backend.create()
+            assert(pollerFd >= 0, s"kqueue create failed: $pollerFd")
+            val scratch = backend.newPollScratch()
+            PosixTestSockets.loopbackPair().map { case (client, accepted) =>
+                // The changelist batches interest changes until the next poll submits them, but it holds only MaxEvents slots. A single drain
+                // that produces more than that used to encode past the buffer and fail the cycle with IndexOutOfBoundsException, which the
+                // driver's containment then turned into a torn-down driver and stalled I/O. Two ways to reach it, both under ordinary load:
+                // many fds re-arming in one cycle, and terminalTeardown's drain, which has no following poll to flush the batch at all.
+                val batched = backend.MaxEvents * 3
+                (0 until batched).foreach(_ => discard(backend.registerRead(pollerFd, accepted, accepted.toLong, scratch)))
+                val kq = scratch.kqueueData.get
+                assert(
+                    kq.nChanges <= backend.MaxEvents,
+                    s"the changelist must never hold more than ${backend.MaxEvents} entries, got ${kq.nChanges}"
+                )
+                // The registrations still took effect across the flushes: make the fd readable and confirm it fires.
+                assert(sock.sendNow(client, Buffer.fromArray[Byte](Array[Byte](7)), 1L, 0).value == 1L)
+                backend.poll(pollerFd, 1000, kq.changelistBuf, kq.nChanges, scratch).safe.get.map { n =>
+                    val firedFds = (0 until n).map(scratch.fds(_)).toList
+                    scratch.close()
+                    discard(sock.close(client))
+                    discard(sock.close(accepted))
+                    backend.close(pollerFd)
+                    assert(n >= 1, s"expected the registered fd to fire after an oversized change batch, got $n events")
+                    assert(firedFds.contains(accepted), s"expected poll to report $accepted as ready, got $firedFds")
+                }
+            }
+        }
+
         "a registered read interest does not fire while the fd has nothing to read" in {
             assumeKqueue()
             val backend  = PollerBackend.default()

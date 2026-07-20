@@ -12,10 +12,6 @@ final private[kyo] class IoDriverPool[Handle] private (
     private val counter: AtomicLong.Unsafe
 ):
 
-    // Unsafe: created at construction with no ambient AllowUnsafe; the danger bridge builds it here and its accesses run under the caller's
-    // AllowUnsafe.
-    private val closedFlag = AtomicBoolean.Unsafe.init(false)(using AllowUnsafe.embrace.danger)
-
     /** Number of drivers in the pool. */
     private[kyo] def size: Int = drivers.length
 
@@ -42,37 +38,36 @@ final private[kyo] class IoDriverPool[Handle] private (
                 try discard(drivers(i).start())
                 catch
                     case ex: Throwable if NonFatal(ex) =>
-                        // All-or-nothing: a partially-started pool is never handed to the transport. Close the already-started
-                        // subset (close() skips Absent slots and is CAS-guarded) and rethrow, so the transport build fails atomically
-                        // rather than running fewer drivers than ioPoolSize requested. Guarded on NonFatal: on a fatal/control
-                        // throwable the process is dying, so the subset-close is moot; let the fatal propagate uncaught.
-                        close()
+                        // All-or-nothing: a partially-started pool is never handed to a transport. Tear EVERY driver down and rethrow, so
+                        // the build fails atomically rather than running fewer drivers than ioPoolSize requested, and so no driver is left
+                        // holding the descriptor it allocated at construction. This is the ONE
+                        // place a driver is closed from outside its own terminal exit: a transport is process-lifetime and never shuts down, so
+                        // a pool that was successfully handed over is never torn down. Guarded on NonFatal: on a fatal throwable the process is
+                        // dying and the rollback is moot, so let it propagate uncaught.
+                        rollback()
                         throw ex
                 end try
                 loop(i + 1)
         loop(0)
     end start
 
-    /** Close all drivers.
+    /** Close EVERY driver in the pool after a failed start.
       *
-      * Idempotent via AtomicBoolean guard. Each driver's close() is also independently CAS-guarded, so calling it here is safe even if a
-      * driver was already closed directly.
+      * Not just the started prefix: a driver allocates its poller, ring or selector descriptor in its CONSTRUCTOR, so by the time `start()`
+      * is called every driver in the array already holds one. Closing only the drivers that started would leak the descriptor of the one
+      * whose `start()` threw, plus every driver after it, for the life of the process. Closing a never-started driver is well defined on all
+      * three backends: it tears down synchronously, since there is no loop carrier to defer to.
       *
-      * Does NOT interrupt each driver's event-loop fiber: every driver's own `close()` is responsible for bringing its loop down (NIO closes
-      * its selector directly, which aborts a blocked `select()`; the posix io_uring/poller drivers wake their loop and let it observe the
-      * close signal on its own carrier). For io_uring and the poller that self-teardown is deferred to the loop's own carrier (their pending-op
-      * bookkeeping is carrier-confined and cannot be swept from here), so an unconditional fiber interrupt issued right after signaling close
-      * could abort the loop before it reaches that deferred teardown, permanently stranding a handle whose close was mid-flight: exactly
-      * the fd leak an unconditional interrupt would cause. Trust each driver's own close() contract instead of racing it.
+      * Each driver's own close is CAS-guarded, so closing the started prefix a second time is a no-op, and the pool is discarded immediately
+      * afterwards, so this neither needs nor waits for a teardown signal.
       */
-    def close()(using AllowUnsafe, Frame): Unit =
-        if closedFlag.compareAndSet(false, true) then
-            @tailrec def closeLoop(i: Int): Unit =
-                if i < drivers.length then
-                    drivers(i).close()
-                    closeLoop(i + 1)
-            closeLoop(0)
-    end close
+    private def rollback()(using AllowUnsafe, Frame): Unit =
+        @tailrec def loop(i: Int): Unit =
+            if i < drivers.length then
+                discard(drivers(i).close())
+                loop(i + 1)
+        loop(0)
+    end rollback
 
 end IoDriverPool
 

@@ -46,14 +46,9 @@ class NioTransportTlsCloseReasonTest extends Test:
       */
     private lazy val clientTls: NetTlsConfig = NetTlsConfig(trustAll = true)
 
-    /** Build an inline NIO transport directly (forces the NioTransport path; see suite scaladoc). Caller must close it. */
+    /** Build an inline NIO transport directly (forces the NioTransport path; see suite scaladoc). Process-lifetime: never closed. */
     private def mkTransport()(using Frame): NioTransport =
-        NioTransport.init(
-            channelCapacity = 8,
-            readBufferSize = NioHandle.DefaultReadBufferSize,
-            connectTimeout = Duration.Infinity,
-            handshakeTimeout = Duration.Infinity
-        )
+        NioTransport.init()
 
     /** How the controlled raw-JSSE server peer ends the connection after the handshake. */
     private enum ServerClose derives CanEqual:
@@ -76,7 +71,6 @@ class NioTransportTlsCloseReasonTest extends Test:
         given Frame   = Frame.internal
         val transport = mkTransport()
         runStatusScenario(transport, ServerClose.CleanCloseNotify).map { reason =>
-            transport.close()
             assert(
                 reason == NetConnection.Status.CleanClose,
                 "SECURITY: inline NIO TLS connection did not report an orderly close after the peer sent a close_notify before the FIN " +
@@ -93,7 +87,6 @@ class NioTransportTlsCloseReasonTest extends Test:
         given Frame   = Frame.internal
         val transport = mkTransport()
         runStatusScenario(transport, ServerClose.BareFin).map { reason =>
-            transport.close()
             assert(
                 reason == NetConnection.Status.Truncated,
                 "SECURITY: inline NIO TLS connection did not report a truncation after the peer's bare FIN with no close_notify " +
@@ -118,7 +111,7 @@ class NioTransportTlsCloseReasonTest extends Test:
             serverReady <- Channel.init[Int](1)
             _ = startRawJsseServer(serverReady, closeMode)
             port   <- serverReady.take
-            client <- transport.connect("127.0.0.1", port, clientTls).safe.get
+            client <- transport.connectTls("127.0.0.1", port, clientTls).safe.get
             _      <- drainUntilEnd(client)
         yield
             val reason = client.status

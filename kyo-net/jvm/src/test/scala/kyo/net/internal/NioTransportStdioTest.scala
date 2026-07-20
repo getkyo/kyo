@@ -16,14 +16,9 @@ class NioTransportStdioTest extends Test:
 
     import AllowUnsafe.embrace.danger
 
-    /** Create a transport using the standard factory. Starts its own event loop driver. Caller must call close(). */
+    /** Create a transport using the standard factory. Starts its own event loop driver. Process-lifetime: never closed. */
     def mkTransport()(using Frame): NioTransport =
-        NioTransport.init(
-            channelCapacity = 8,
-            readBufferSize = NioHandle.DefaultReadBufferSize,
-            connectTimeout = Duration.Infinity,
-            handshakeTimeout = Duration.Infinity
-        )
+        NioTransport.init()
 
     /** Returns whether `pattern` occurs as a contiguous slice of `haystack`. */
     private def containsSlice(haystack: Array[Byte], pattern: Array[Byte]): Boolean =
@@ -73,7 +68,6 @@ class NioTransportStdioTest extends Test:
             catch case _: java.io.IOException => ()
             java.lang.System.setIn(savedIn)
             java.lang.System.setOut(savedOut)
-            transport.close()
         end restore
 
         // Take from the connection's inbound channel until `target` bytes accumulated (a pipe read may split the message across reads).

@@ -31,7 +31,7 @@ class PollerIoDriverFdMapTest extends Test:
 
         "concurrent register + deregister across many fds keeps every read correct (single-writer confinement)" in {
             assumePoller()
-            val driver = PollerIoDriver.init(kyo.net.TransportConfig.default)
+            val driver = PollerIoDriver.init()
             discard(driver.start())
             Sync.ensure(Sync.defer(driver.close())) {
                 val n = 12

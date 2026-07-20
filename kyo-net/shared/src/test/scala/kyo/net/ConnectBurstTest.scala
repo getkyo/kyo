@@ -29,17 +29,19 @@ class ConnectBurstTest extends Test:
         }.safe.get
 
     /** Fire `size` simultaneous connects (latch-gated) to `port`, each writing one byte and reading the echo, and assert every one succeeds. */
-    private def burst(transport: Transport, port: Int, size: Int)(using Frame, kyo.test.AssertScope): Unit < Async =
+    private def burst(transport: Transport, port: Int, size: Int)(using Frame, kyo.test.AssertScope): Unit < (Async & Scope) =
         Latch.init(1).map { latch =>
             Kyo.foreach(0 until size) { i =>
                 Fiber.initUnscoped {
                     latch.await.andThen {
                         Abort.run[NetException | Closed] {
                             transport.connect("127.0.0.1", port).safe.get.map { conn =>
-                                val msg = Span.from(Array[Byte]((i & 0x7f).toByte))
-                                conn.outbound.safe.put(msg).andThen(conn.inbound.safe.take).map { echo =>
-                                    conn.close()
-                                    echo.toArray.toList
+                                Scope.ensure(Sync.defer(conn.close())).andThen {
+                                    val msg = Span.from(Array[Byte]((i & 0x7f).toByte))
+                                    conn.outbound.safe.put(msg).andThen(conn.inbound.safe.take).map { echo =>
+                                        conn.close()
+                                        echo.toArray.toList
+                                    }
                                 }
                             }
                         }
@@ -60,6 +62,7 @@ class ConnectBurstTest extends Test:
             val transport = NetPlatform.transport
             for
                 listener <- echoListener(transport)
+                _        <- Scope.ensure(Sync.defer(listener.close()))
                 port = listener.port
                 _ <- Loop.repeat(8)(burst(transport, port, 16).unit)
             yield

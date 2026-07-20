@@ -24,7 +24,7 @@ class WritePumpTest extends Test:
     import AllowUnsafe.embrace.danger
     given Frame = Frame.internal
 
-    private val transportConfig = kyo.net.TransportConfig.default
+    private val transportConfig = kyo.net.NetConfig.default
     private val sock            = Ffi.load[SocketBindings]
 
     private def assumePoller(): Unit =
@@ -44,7 +44,7 @@ class WritePumpTest extends Test:
             assumePoller()
             val N      = 16
             val logger = new RecordingLog(Log.live.unsafe)
-            val real   = PollerIoDriver.init(transportConfig)
+            val real   = PollerIoDriver.init()
             val spy    = new RecordingIoDriver(real)
             discard(spy.start())
             PosixTestSockets.loopbackPair().map { case (clientFd, peerFd) =>
@@ -99,7 +99,7 @@ class WritePumpTest extends Test:
         // (Promise latch on awaitRead completion). No sleep.
         "a single Done write delivers all bytes to the peer (real driver)" in {
             assumePoller()
-            val real = PollerIoDriver.init(transportConfig)
+            val real = PollerIoDriver.init()
             val spy  = new RecordingIoDriver(real)
             discard(spy.start())
             PosixTestSockets.loopbackPair().map { case (clientFd, peerFd) =>
@@ -143,7 +143,7 @@ class WritePumpTest extends Test:
         // drainPeer unblocks the retry (Promise latch on real awaitRead). No sleep.
         "a partial write awaits writable and retries the remainder (real backpressure)" in {
             assumePoller()
-            val real = PollerIoDriver.init(transportConfig)
+            val real = PollerIoDriver.init()
             val spy  = new RecordingIoDriver(real)
             discard(spy.start())
             PosixTestSockets.smallBufferedPair(4096, 4096).map { case (clientFd, peerFd) =>
@@ -194,7 +194,7 @@ class WritePumpTest extends Test:
         // closedLatch latches the teardown.
         "a writable-wait failure tears down the pump (handle closed while awaiting writable)" in {
             assumePoller()
-            val real        = PollerIoDriver.init(transportConfig)
+            val real        = PollerIoDriver.init()
             val spy         = new RecordingIoDriver(real)
             val closedLatch = Promise.Unsafe.init[Unit, Any]()
             discard(spy.start())
@@ -239,7 +239,7 @@ class WritePumpTest extends Test:
         // (PollerIoDriverTest partial-write leaf), not a timing wait.
         "a write Error tears down the pump (real ECONNRESET)" in {
             assumePoller()
-            val real        = PollerIoDriver.init(transportConfig)
+            val real        = PollerIoDriver.init()
             val spy         = new RecordingIoDriver(real)
             val closedLatch = Promise.Unsafe.init[Unit, Any]()
             discard(spy.start())
@@ -291,7 +291,7 @@ class WritePumpTest extends Test:
         // via reuseTake completion. Failure(Closed) arm tears down immediately.
         "channel close during a take tears down (Failure(Closed))" in {
             assumePoller()
-            val real = PollerIoDriver.init(transportConfig)
+            val real = PollerIoDriver.init()
             val spy  = new RecordingIoDriver(real)
             discard(spy.start())
             PosixTestSockets.loopbackPair().map { case (clientFd, peerFd) =>
@@ -324,7 +324,7 @@ class WritePumpTest extends Test:
         // The reuseTake fires Failure(Closed) synchronously; closeFn fires immediately.
         "empty span write is treated as Done immediately" in {
             assumePoller()
-            val real = PollerIoDriver.init(transportConfig)
+            val real = PollerIoDriver.init()
             val spy  = new RecordingIoDriver(real)
             discard(spy.start())
             PosixTestSockets.loopbackPair().map { case (clientFd, peerFd) =>
@@ -355,7 +355,7 @@ class WritePumpTest extends Test:
         // on the test thread via reuseTake. No async between offers.
         "multiple sequential writes proceed correctly" in {
             assumePoller()
-            val real = PollerIoDriver.init(transportConfig)
+            val real = PollerIoDriver.init()
             val spy  = new RecordingIoDriver(real)
             discard(spy.start())
             PosixTestSockets.loopbackPair().map { case (clientFd, peerFd) =>
@@ -403,7 +403,7 @@ class WritePumpTest extends Test:
         // closedLatch is the real-event latch on teardown; the burst is the flood-until-error idiom, not a timing wait.
         "write error after retry also triggers teardown" in {
             assumePoller()
-            val real        = PollerIoDriver.init(transportConfig)
+            val real        = PollerIoDriver.init()
             val spy         = new RecordingIoDriver(real)
             val closedLatch = Promise.Unsafe.init[Unit, Any]()
             discard(spy.start())
@@ -457,7 +457,7 @@ class WritePumpTest extends Test:
         // No sleep. The same Span reference must be re-presented at an advancing offset (no Span.drop allocation).
         "a partial write re-presents the same span at an advancing offset, byte-conserving (real backpressure)" in {
             assumePoller()
-            val real = PollerIoDriver.init(transportConfig)
+            val real = PollerIoDriver.init()
             val spy  = new RecordingIoDriver(real)
             discard(spy.start())
             PosixTestSockets.smallBufferedPair(4096, 4096).map { case (clientFd, peerFd) =>
@@ -517,7 +517,7 @@ class WritePumpTest extends Test:
         // process it (the guard skips the write). drainPeer latches on real read events.
         "channel buffering during awaitingWritable: second span queued, not consumed until writable" in {
             assumePoller()
-            val real = PollerIoDriver.init(transportConfig)
+            val real = PollerIoDriver.init()
             val spy  = new RecordingIoDriver(real)
             discard(spy.start())
             PosixTestSockets.smallBufferedPair(4096, 4096).map { case (clientFd, peerFd) =>
@@ -567,7 +567,7 @@ class WritePumpTest extends Test:
         // the peer: a graceful close never loses the parked-partial tail.
         "a graceful local close delivers the full parked-partial tail (no bytes dropped)" in {
             assumePoller()
-            val real = PollerIoDriver.init(transportConfig)
+            val real = PollerIoDriver.init()
             val spy  = new RecordingIoDriver(real)
             discard(spy.start())
             PosixTestSockets.smallBufferedPair(2048, 2048).map { case (clientFd, peerFd) =>
@@ -604,7 +604,7 @@ class WritePumpTest extends Test:
         // at 1, state reads TornDown) are the load-bearing ones a CAS-retry regression would break.
         "an error teardown racing a partial write drops the tail without resurrection" in {
             assumePoller()
-            val real        = PollerIoDriver.init(transportConfig)
+            val real        = PollerIoDriver.init()
             val spy         = new RecordingIoDriver(real)
             val closedLatch = Promise.Unsafe.init[Unit, Any]()
             discard(spy.start())
@@ -613,12 +613,17 @@ class WritePumpTest extends Test:
                 val channel = Channel.Unsafe.init[Span[Byte]](16)
                 val closed  = scala.collection.mutable.ListBuffer[String]()
                 val state   = AtomicRef.Unsafe.init[WriteState](WriteState.Idle)
+                // Sampled inside the teardown callback, so it records exactly how many writes had been issued when teardown won. The contract
+                // is "no write AFTER teardown", not "exactly one write ever": the injected close races a genuine writable event, and when the
+                // writable wins the pump legitimately resumes its captured tail once before tearing down.
+                val writesAtTeardown = new java.util.concurrent.atomic.AtomicInteger(-1)
                 val pump = new WritePump(
                     handle,
                     spy,
                     channel,
                     () =>
                         closed += "closed"
+                        discard(writesAtTeardown.compareAndSet(-1, spy.writeCalls.get()))
                         closedLatch.completeDiscard(Result.succeed(()))
                     ,
                     state
@@ -639,14 +644,21 @@ class WritePumpTest extends Test:
                         state.get() == WriteState.TornDown,
                         s"the pump must not be resurrected after teardown won, state was ${state.get()}"
                     )
-                    assert(
-                        spy.writeCalls.get() == 1,
-                        s"no further write may be issued for the undeliverable captured tail after teardown won, got ${spy.writeCalls.get()} write calls"
-                    )
-                    spy.close()
-                    // closeHandle closed clientFd; only peerFd remains to close.
-                    discard(sock.close(peerFd))
-                    succeed
+                    // A survival window, not a settle: a resurrection issues its write shortly AFTER teardown, so the count must be given a
+                    // chance to move before it is read as final.
+                    Async.sleep(50.millis).andThen {
+                        val atTeardown = writesAtTeardown.get()
+                        val now        = spy.writeCalls.get()
+                        assert(
+                            now == atTeardown,
+                            s"no write may be issued for the undeliverable captured tail after teardown won: the pump had issued " +
+                                s"$atTeardown write(s) when teardown ran and $now afterwards, so it resurrected"
+                        )
+                        spy.close()
+                        // closeHandle closed clientFd; only peerFd remains to close.
+                        discard(sock.close(peerFd))
+                        succeed
+                    }
                 }
             }
         }

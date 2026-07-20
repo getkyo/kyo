@@ -139,31 +139,38 @@ class PosixTransportTlsConcurrentEchoTest extends Test:
             assumeReady()
             val transport = NetPlatform.transport
             for
-                listener <- transport.listen("127.0.0.1", 0, 128, serverTls) { serverConn =>
+                listener <- transport.listenTls("127.0.0.1", 0, 128, serverTls) { serverConn =>
                     echoLoop(serverConn)
                 }.safe.get
+                _ <- Scope.ensure(Sync.defer(listener.close()))
                 port = listener.port
                 // Many connections so the per-frame cert read races real, ongoing FIFO read/write engine ops on a freshly negotiated
                 // native engine. The cert read is folded into the reader loop: after each echoed frame is assembled and verified, the
                 // reader also calls serverCertificateHash and checks it equals the hash captured at handshake. This interleaves the
                 // cert read with live decrypt and races the concurrent encrypt (writer fiber) on the same engine, paced naturally by
                 // the echo. No extra fibers are spawned, so no scheduler starvation from a separate hammering probe loop.
+                //
+                // Each connection is registered with Scope.ensure right after connectTls succeeds: this drives 48 concurrent connections
+                // on the process-shared transport, and if any single one's driveConnection fails, Async.fillIndexed can cancel the rest
+                // before their own trailing conn.close() runs, which would otherwise leak every connection still mid-flight.
                 results <- Async.fillIndexed(connections, connections) { connId =>
-                    transport.connect("127.0.0.1", port, clientTls).safe.get.map { conn =>
-                        val expected = conn.serverCertificateHash match
-                            case Present(h) => h.toArray
-                            case Absent     => Array.emptyByteArray
-                        Channel.init[Unit](window).map { permits =>
-                            Kyo.foreach(0 until window)(_ => permits.put(())).andThen {
-                                // The cert read races live decrypt + concurrent encrypt on the same engine, per frame, for the whole
-                                // connection lifetime. On a native engine an unguarded cert read here would touch the same ssl the
-                                // FIFO engine ops mutate; the fix under test serializes those ops.
-                                driveConnection(conn, connId, permits, Present(expected)).map { ok =>
-                                    conn.close()
-                                    // After close the cache gate must report Absent (no engine touch): a Present here is the racy
-                                    // failure the closed-returns-Absent guard pins down, surfaced under live concurrency.
-                                    val closedAbsent = conn.serverCertificateHash.isEmpty
-                                    expected.nonEmpty && ok && closedAbsent
+                    transport.connectTls("127.0.0.1", port, clientTls).safe.get.map { conn =>
+                        Scope.ensure(Sync.defer(conn.close())).andThen {
+                            val expected = conn.serverCertificateHash match
+                                case Present(h) => h.toArray
+                                case Absent     => Array.emptyByteArray
+                            Channel.init[Unit](window).map { permits =>
+                                Kyo.foreach(0 until window)(_ => permits.put(())).andThen {
+                                    // The cert read races live decrypt + concurrent encrypt on the same engine, per frame, for the whole
+                                    // connection lifetime. On a native engine an unguarded cert read here would touch the same ssl the
+                                    // FIFO engine ops mutate; the fix under test serializes those ops.
+                                    driveConnection(conn, connId, permits, Present(expected)).map { ok =>
+                                        conn.close()
+                                        // After close the cache gate must report Absent (no engine touch): a Present here is the racy
+                                        // failure the closed-returns-Absent guard pins down, surfaced under live concurrency.
+                                        val closedAbsent = conn.serverCertificateHash.isEmpty
+                                        expected.nonEmpty && ok && closedAbsent
+                                    }
                                 }
                             }
                         }
@@ -182,17 +189,22 @@ class PosixTransportTlsConcurrentEchoTest extends Test:
             assumeReady()
             val transport = NetPlatform.transport
             for
-                listener <- transport.listen("127.0.0.1", 0, 128, serverTls) { serverConn =>
+                listener <- transport.listenTls("127.0.0.1", 0, 128, serverTls) { serverConn =>
                     echoLoop(serverConn)
                 }.safe.get
+                _ <- Scope.ensure(Sync.defer(listener.close()))
                 port = listener.port
+                // Same Scope.ensure guard as the leaf above: 48 concurrent connections on the process-shared transport, any one of
+                // which failing must not leak the others still mid-flight.
                 results <- Async.fillIndexed(connections, connections) { connId =>
-                    transport.connect("127.0.0.1", port, clientTls).safe.get.map { conn =>
-                        Channel.init[Unit](window).map { permits =>
-                            Kyo.foreach(0 until window)(_ => permits.put(())).andThen {
-                                driveConnection(conn, connId, permits, Absent).map { ok =>
-                                    conn.close()
-                                    ok
+                    transport.connectTls("127.0.0.1", port, clientTls).safe.get.map { conn =>
+                        Scope.ensure(Sync.defer(conn.close())).andThen {
+                            Channel.init[Unit](window).map { permits =>
+                                Kyo.foreach(0 until window)(_ => permits.put(())).andThen {
+                                    driveConnection(conn, connId, permits, Absent).map { ok =>
+                                        conn.close()
+                                        ok
+                                    }
                                 }
                             }
                         }

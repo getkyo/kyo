@@ -61,6 +61,12 @@ final case class NetUnixConnectException(path: String, cause: String | Throwable
 final case class NetConnectTimeoutException(host: String, port: Int, timeout: Duration)(using Frame)
     extends NetConnectionException(s"connect to $host:$port timed out after $timeout")
 
+/** A connect to the Unix-domain socket at `path` did not complete within `timeout`. A Unix socket has no port, so it carries the path where
+  * [[NetConnectTimeoutException]] carries host and port, mirroring the [[NetUnixConnectException]] / [[NetConnectException]] pairing.
+  */
+final case class NetUnixConnectTimeoutException(path: String, timeout: Duration)(using Frame)
+    extends NetConnectionException(s"connect to Unix socket '$path' timed out after $timeout")
+
 /** Binding/listening on `host:port` (or the bind step of a Unix listener) failed (address already in use, permission denied, ...). */
 final case class NetBindException(host: String, port: Int, cause: String | Throwable = "")(using Frame)
     extends NetConnectionException(s"bind/listen on $host:$port failed${NetException.suffix(cause)}", cause)
@@ -105,6 +111,15 @@ sealed abstract class NetTlsException(message: String, cause: String | Throwable
 final case class NetTlsHandshakeException(host: String, port: Int, cause: String | Throwable = "")(using Frame)
     extends NetTlsException(s"TLS handshake with $host:$port failed${NetException.suffix(cause)}", cause)
 
+/** The TLS handshake with `host:port` did not complete within `timeout`, so the connection was reaped and its fd and engine released.
+  *
+  * Reaches a caller from the two roles that have one waiting: a client `connectTls`, carrying the host and port it connected to, and a STARTTLS
+  * `upgradeToTls`, where `port` is `-1` because an upgrade has no fresh connect port. A connection accepted by a `listenTls` has no caller
+  * promise to fail, since it was never handed out, so its deadline reaps the fd and engine and logs the reap rather than surfacing this.
+  */
+final case class NetTlsHandshakeTimeoutException(host: String, port: Int, timeout: Duration)(using Frame)
+    extends NetTlsException(s"TLS handshake with $host:$port timed out after $timeout")
+
 /** The pinned or forced TLS provider is not available on this transport (an unregistered id, or one whose capability probe failed). */
 final case class NetTlsProviderUnavailableException(provider: String, cause: String | Throwable = "")(using Frame)
     extends NetTlsException(s"TLS provider '$provider' is not available${NetException.suffix(cause)}", cause)
@@ -118,6 +133,14 @@ final case class NetTlsConfigException(cause: String | Throwable = "")(using Fra
 /** The transport/connection does not support the requested operation. Recover the whole family with `Abort.recover[NetCapabilityException]`. */
 sealed abstract class NetCapabilityException(message: String, cause: String | Throwable = "")(using Frame)
     extends NetException(message, cause)
+
+/** The socket option named by `option` (`SO_RCVBUF` or `SO_SNDBUF`) cannot be honored by this transport, so the operation fails rather than
+  * proceeding with a setting the caller asked for and would not get. Node exposes no socket-buffer API (its `socket.bufferSize` reports bytes
+  * queued for writing and sets nothing), so the JS transport reports this for a `Present` [[NetConfig.soRcvBuf]] or [[NetConfig.soSndBuf]].
+  * Follows the same config-truthfulness rule as a pinned TLS provider the transport cannot supply: fail closed, never substitute silently.
+  */
+final case class NetSocketOptionUnsupportedException(option: String)(using Frame)
+    extends NetCapabilityException(s"socket option $option is not supported by this transport")
 
 /** No usable I/O backend: a forced backend named by `backend` is unavailable, or (`Absent`) no backend is available on this host. */
 final case class NetBackendUnavailableException(backend: Maybe[String], cause: String | Throwable = "")(using Frame)
