@@ -1171,7 +1171,7 @@ final private[net] class IoUringDriver private[posix] (
     // engine FIFO's at-most-one-op-at-a-time guarantee holds through the terminal window, and so teardownRing never frees ring/handle
     // state while another carrier is mid-execution of a drained op.
     // Unsafe: body field created with no ambient AllowUnsafe; the danger bridge builds it here and its accesses run under the caller's
-    // AllowUnsafe (mirrors IoDriverPool.closedFlag).
+    // AllowUnsafe (the same danger-bridge pattern the pool uses for its own flags).
     private val lateDrainClaim = AtomicBoolean.Unsafe.init(false)(using AllowUnsafe.embrace.danger)
 
     // The carrier thread currently holding lateDrainClaim, or null. Read by submitEngineOp's offer-then-recheck to detect a RE-ENTRANT
@@ -1605,7 +1605,7 @@ final private[net] class IoUringDriver private[posix] (
       * submitEngineOp either lands in this drain or runs its own under the shared claim. Then drainAfterReapExit, which fails every still-queued
       * op through the driver-closed rejection rather than dropping it, and fires the single-owner ring teardown.
       *
-      * Routing the CRASH path through here is the fix for the leak IoDriverPool.awaitTornDown documents: previously a crashed loop completed the
+      * Routing the CRASH path through here is what makes a crashed loop release the ring: previously it completed the
       * done-promise with the ring, cqePtr and wake eventfd still held.
       */
     private def terminal(donePromise: Promise.Unsafe[Unit, Any], result: Result[Nothing, Unit < Any])(using AllowUnsafe, Frame): Unit =

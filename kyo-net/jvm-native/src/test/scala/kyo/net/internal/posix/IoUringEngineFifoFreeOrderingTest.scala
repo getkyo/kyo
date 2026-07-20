@@ -57,7 +57,7 @@ class IoUringEngineFifoFreeOrderingTest extends Test:
             throw Closed("RecordingIoUringBindings", summon[Frame], s"queue_init failed: rc=$rc")
         val recording = RecordingIoUringBindings(realUring, realRing)
         val driver    = TestDrivers.forBindings(recording, realRing)
-        // The io_uring engine FIFO drains only on the reap carrier (submitEngineOp enqueues; drainEngineOps runs from reapLoop), so the reap loop
+        // The io_uring engine FIFO drains only on the reap carrier (submitEngineOp enqueues; drainEngineOps runs from runCycle), so the reap loop
         // MUST run for an enqueued engine op to execute. The ring has no registered fds (pure engine ops), so the reap loop only bounded-waits and
         // drains the engine queue each cycle; close() signals it to exit.
         discard(driver.start())

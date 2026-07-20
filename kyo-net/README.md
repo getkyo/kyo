@@ -190,7 +190,7 @@ def serve(tls: NetTlsConfig)(handler: Connection => Unit): Listener < (Async & A
     )(handler).safe.get
 ```
 
-`NetPlatform.transport` is shared and must NOT be closed: closing it would take every co-tenant's connections down. Close your own connections and listeners instead, which is what actually reclaims their resources. `NetPlatform.ownedTransport()` hands back an isolated instance the caller owns and MUST `close()`, for a test asserting transport-level behavior or a component that must tear its own I/O fabric down. It takes no settings, because wanting different settings is never a reason to reach for it.
+`NetPlatform.transport` is the transport. It is process-lifetime and has no `close()`: one instance serves every client and server, and the things a component owns are its listeners and its connections, which is what closing actually reclaims. Differing settings are not a reason to want a second one, since every `NetConfig` field applies to a single connection or operation and travels with the call.
 
 `connectTimeout` (default `30.seconds`) bounds a connect: if the OS delivers no outcome, connected or refused, within the deadline, the connect fails with `NetConnectTimeoutException`. `NetTlsConfig.handshakeTimeout` (default `30.seconds`) bounds a TLS handshake and reaps a connection that stalls mid-handshake, a slowloris guard (CWE-400). Both accept a positive `Duration` or `Duration.Infinity`, and on a `connectTls` they bound successive phases, so the worst case before it fails is their sum. The one process-wide setting is the driver count, the `kyo.net.ioPoolSize` flag.
 

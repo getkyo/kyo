@@ -3,9 +3,9 @@ package kyo.net
 import kyo.*
 
 /** Transport-level deterministic stress guard for the connect-deadline lost-wakeup on the
-  * `NetPlatform.ownedTransport(...).connect` path.
+  * `NetPlatform.transport.connect` path.
   *
-  * Drives the FULL public connect path (`NetPlatform.ownedTransport(...).connect`), which arms the `Clock`-driven connect deadline
+  * Drives the FULL public connect path (`NetPlatform.transport.connect`), which arms the `Clock`-driven connect deadline
   * (`config.connectTimeout`) racing the OS connect's write-readiness.
   * Connects run SEQUENTIALLY (a `Loop`, not a concurrency storm) against one real plaintext listener
   * that accepts and immediately closes; the connect deadline is a tight `config.connectTimeout`. Every connect MUST

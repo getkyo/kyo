@@ -19,7 +19,7 @@ import scala.jdk.CollectionConverters.*
   * flakily. These leaves pin the invariant directly and the SAME body runs against BOTH drivers ([[PollerIoDriver]] over a real epoll/kqueue
   * backend and [[IoUringDriver]] over a real io_uring ring), so the io_uring engine FIFO, which carries identical machinery yet had ZERO engine
   * coverage, is exercised too. Both drivers drain their engine FIFO the same way: the FIFO is drained ONLY on the always-running loop carrier
-  * (submitEngineOp enqueues; the poller's drainEngineOps runs from drainFifos on the poll loop, the io_uring's from reapLoop), so both arms start
+  * (submitEngineOp enqueues; the poller's drainEngineOps runs from drainFifos on the poll loop, the io_uring's from runCycle), so both arms start
   * their loop (it bounded-waits ~100ms on the idle fd/ring, draining the engine queue each cycle) for an enqueued engine op to execute. On a host
   * where the production-depth ring cannot init the io_uring arm is omitted and the backend-independent invariant is still asserted on the poller arm.
   *
@@ -101,7 +101,7 @@ class EngineFifoSingleOwnerTest extends Test:
             else
                 val recording = RecordingIoUringBindings(realUring, realRing)
                 val uring     = TestDrivers.forBindings(recording, realRing)
-                // The io_uring engine FIFO drains only on the reap carrier (submitEngineOp enqueues; drainEngineOps runs from reapLoop), so the
+                // The io_uring engine FIFO drains only on the reap carrier (submitEngineOp enqueues; drainEngineOps runs from runCycle), so the
                 // reap loop MUST run for an enqueued engine op to execute. It bounded-waits (~100ms) on an idle ring with no registered fds, draining
                 // the engine queue each cycle; close() signals it to exit. (The poller arm above starts its poll loop for the same reason: both
                 // drivers now drain the engine FIFO only on their always-running loop carrier.)

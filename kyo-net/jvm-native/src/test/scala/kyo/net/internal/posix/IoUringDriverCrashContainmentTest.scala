@@ -9,7 +9,7 @@ import kyo.net.Test
   * The reap loop runs as a scheduler task, one cycle per activation, each re-arming the next before returning. A `Throwable` escaping a cycle
   * would therefore end the chain outright: the worker hands an escaping exception to its uncaught handler and returns Done, so nothing re-arms.
   * The driver would be silently dead with the ring, cqePtr and wake eventfd still held, every pending operation parked forever, and its
-  * done-fiber never completed. `IoDriverPool.awaitTornDown` then waits on a promise nothing will complete.
+  * done-fiber never completed. Nothing would ever complete its done-promise.
   *
   * The cycle catches `Throwable` rather than only `NonFatal` (a silently dead driver is worse than a rethrow) and routes it to the same terminal
   * exit the closed path uses, which runs the teardown. This pins BOTH halves: the done-fiber completes as a panic AND the ring is released. The
@@ -41,7 +41,7 @@ class IoUringDriverCrashContainmentTest extends Test:
                     s"a Throwable escaping a reap cycle must complete the done-fiber as a panic, got: $result"
                 )
                 // The teardown proof. A crash previously completed the promise with the ring still held, which is the leak
-                // IoDriverPool.awaitTornDown documented; routing the crash through the terminal exit is what closes it.
+                // documented for this driver; routing the crash through the terminal exit is what closes it.
                 assert(
                     stub.queueExitCount.get() == 1,
                     s"the terminal exit must release the ring exactly once after a crashed cycle, " +

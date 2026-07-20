@@ -1241,7 +1241,7 @@ final private[net] class PosixTransport private[posix] (
       *     timer never fires.
       *   - When the listener's `handshakeTimeout` is `Duration.Infinity`, NO timer is armed, but the returned `disarm` is still a fresh one-shot gate
       *     (its own `AtomicBoolean` CAS), not a constant `true`: [[registerHandshake]] hands this SAME `disarm` to `close()`'s
-      *     [[sweepPendingHandshakes]], which can call it concurrently with the handshake's own outcome callback even though no deadline timer
+      *     [[dischargeListenerHandshakes]], which can call it concurrently with the handshake's own outcome callback even though no deadline timer
       *     is racing it. A constant-`true` gate would let both callers win at once: the sweep frees the engine (`teardown()`) while the
       *     handshake's own `onFinished` wires that SAME freed engine into `handle.tls` and spawns the handler, a use-after-free with no
       *     deadline involved at all. The one-shot gate keeps the exactly-once contract [[registerHandshake]]'s doc promises regardless of
@@ -1656,7 +1656,7 @@ final private[net] class PosixTransport private[posix] (
                         // so a timeout, a losing race arm, or an enclosing abort settles it), and the plaintext connection's close() routing
                         // through the `upgradeAbandon` thunk armed above. Both leave the handshake parked on a read nothing will ever complete,
                         // holding a detached fd that no other closer can reach: the connection's own closeFn cannot take an Upgrading fd, and
-                        // sweepPendingHandshakes only runs from a transport close() the process-shared transport never makes. So the fd would stay
+                        // a transport-wide sweep no longer exists, and this transport is process-lifetime anyway. So the fd would stay
                         // open forever and, once the peer FINs, sit in CLOSE_WAIT with no shutdown. Discharging the registered obligation runs the
                         // identical release the shutdown sweep would.
                         //

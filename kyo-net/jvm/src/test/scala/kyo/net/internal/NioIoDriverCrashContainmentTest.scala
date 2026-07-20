@@ -51,7 +51,7 @@ class NioIoDriverCrashContainmentTest extends Test:
                     s"a Throwable escaping a select cycle must complete the done-fiber as a panic, got: $result"
                 )
                 // The teardown proof. A crash previously completed the promise with the selector still open, which is the leak
-                // IoDriverPool.awaitTornDown documented for this driver; routing the crash through the terminal exit is what closes it.
+                // documented for this driver; routing the crash through the terminal exit is what closes it.
                 assert(
                     selector.closed.get(),
                     "the terminal exit must close the selector even when the cycle crashed, or a crashed driver leaks it"
