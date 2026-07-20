@@ -332,4 +332,27 @@ class JsTransportTlsTest extends Test:
         end for
     }
 
+    // Same leak the posix and NIO backends had: a socket whose TLS handshake never completed never becomes a connection this transport knows
+    // about, and Node's server.close() stops accepting without releasing it, so nothing reclaimed it and the process-shared transport is never
+    // closed. Removing the tracking makes this leaf fail with a timeout, which is the leak: the peer stays connected to a socket nobody owns.
+    //
+    // Pinned with handshakeTimeout = Infinity so no deadline can do the reclaiming instead, and the peer is held open across the assertion,
+    // since closing it would end the handshake by itself and the leaf would stop testing the discharge.
+    "closing a listener releases accepted sockets whose handshake never settled" in {
+        val transport = JsTransport.init(poolSize = 1)
+        val unbounded = serverTlsMaterial.copy(handshakeTimeout = Duration.Infinity)
+        for
+            listener <- transport.listenTls("127.0.0.1", 0, 128, unbounded) { _ => () }.safe.get
+            client   <- transport.connect("127.0.0.1", listener.port).safe.get
+            _        <- Sync.defer(listener.close())
+            outcome  <- Abort.run[Timeout](Async.timeout(3.seconds)(Abort.run[Closed](client.inbound.safe.take)))
+            _        <- Sync.defer(client.close())
+            _        <- Sync.defer(discard(transport.close()))
+        yield assert(
+            outcome.isSuccess,
+            s"closing the listener must destroy its unsettled accepted socket, got $outcome"
+        )
+        end for
+    }
+
 end JsTransportTlsTest

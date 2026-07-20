@@ -216,7 +216,18 @@ final private[kyo] class JsTransport private (
         // Infinity arms no timer (no handshake deadline).
         armServerHandshakeDeadlines(server, tls.handshakeTimeout)
         // TLS servers emit "secureConnection" after handshake (not "connection" which fires on raw TCP)
-        listenServer(server, host, port, backlog, tcpNoDelay = false, connectionEvent = "secureConnection", handler, config)
+        val dischargeHandshakes = trackAcceptHandshakes(server)
+        listenServer(
+            server,
+            host,
+            port,
+            backlog,
+            tcpNoDelay = false,
+            connectionEvent = "secureConnection",
+            handler,
+            config,
+            onClose = Present(dischargeHandshakes)
+        )
     end listenTls
 
     // -- shared helpers --
@@ -271,6 +282,41 @@ final private[kyo] class JsTransport private (
       * on the macrotask scheduler, so a settled guard is what makes it skip the destroy. Called only on the TLS `listen` path and only when
       * `tls.handshakeTimeout` is finite; `Duration.Infinity` arms nothing.
       */
+    /** Track every socket a TLS listener accepts until its handshake settles, and hand back the thunk that reclaims the stragglers.
+      *
+      * A socket whose TLS handshake never completed never becomes a connection this transport knows about, and Node's `server.close()` does not
+      * release it, so without this a peer that completes the TCP accept and then sends no ClientHello holds its socket for the life of the
+      * process, since the process-shared transport is never closed.
+      *
+      * Registered unconditionally, unlike the deadline arms, because the leak is worst exactly when no deadline is armed. The settled marker is
+      * the one [[armServerHandshakeDeadlines]] already uses, so a socket the deadline destroyed is not destroyed twice.
+      */
+    private def trackAcceptHandshakes(server: js.Dynamic)(using AllowUnsafe, Frame): () => Unit =
+        // JS is single-threaded, so a plain mutable buffer needs no synchronization: every mutation runs on the Node event loop.
+        val inFlight = scala.collection.mutable.ListBuffer.empty[js.Dynamic]
+        def settle(rawSocket: js.Dynamic): Unit =
+            if !js.isUndefined(rawSocket) && rawSocket != null then discard(inFlight.subtractOne(rawSocket))
+        discard(server.on("connection", { (rawSocket: js.Dynamic) => discard(inFlight.append(rawSocket)) }: js.Function1[js.Dynamic, Unit]))
+        discard(server.on(
+            "secureConnection",
+            { (tlsSocket: js.Dynamic) => settle(tlsSocket.selectDynamic("_parent")) }: js.Function1[js.Dynamic, Unit]
+        ))
+        discard(server.on(
+            "tlsClientError",
+            { (_: js.Dynamic, tlsSocket: js.Dynamic) =>
+                if !js.isUndefined(tlsSocket) && tlsSocket != null then settle(tlsSocket.selectDynamic("_parent"))
+            }: js.Function2[js.Dynamic, js.Dynamic, Unit]
+        ))
+        () =>
+            inFlight.foreach { rawSocket =>
+                // Skip one the deadline already claimed and destroyed; the marker is shared with armServerHandshakeDeadlines.
+                if js.isUndefined(rawSocket.selectDynamic(handshakeSettledProp)) then
+                    rawSocket.updateDynamic(handshakeSettledProp)(true)
+                    discard(rawSocket.destroy())
+            }
+            inFlight.clear()
+    end trackAcceptHandshakes
+
     private def armServerHandshakeDeadlines(server: js.Dynamic, handshakeTimeout: Duration)(using AllowUnsafe, Frame): Unit =
         if handshakeTimeout.isFinite then
             // Claim the per-socket guard. Returns true the first time for a given socket, false thereafter, so exactly one of (deadline, handshake
@@ -467,7 +513,8 @@ final private[kyo] class JsTransport private (
         tcpNoDelay: Boolean,
         connectionEvent: String,
         handler: NetConnection => Unit,
-        config: kyo.net.NetConfig
+        config: kyo.net.NetConfig,
+        onClose: Maybe[() => Unit] = Absent
     )(using AllowUnsafe, Frame): Fiber.Unsafe[NetListener, Abort[NetException]] =
         val promise = new IOPromise[NetException, NetListener]
         rejectUnsupportedBuffers(config) match
@@ -478,6 +525,7 @@ final private[kyo] class JsTransport private (
             case Absent => ()
         end match
         val listener = new JsListener(server, NetAddress.Tcp(host, port))
+        onClose.foreach(listener.onClose)
 
         discard(server.on(
             connectionEvent,
@@ -1048,6 +1096,13 @@ final private class JsListener(
     private val server: js.Dynamic,
     private var _address: NetAddress
 ) extends NetListener:
+
+    /** Extra teardown the transport attaches, currently reclaiming the accepted sockets whose TLS handshake never settled. Written once at
+      * listen time, before the listener is handed out, and read on the closing call; the Node event loop is single-threaded.
+      */
+    private var onCloseHook: Maybe[() => Unit] = Absent
+
+    private[internal] def onClose(f: () => Unit): Unit = onCloseHook = Present(f)
     // JS is single-threaded, but closed flag uses atomic for consistency with other listeners
     // Unsafe: created at construction with no ambient AllowUnsafe; the danger bridge builds it here and its accesses run under the caller's
     // AllowUnsafe.
@@ -1075,6 +1130,9 @@ final private class JsListener(
 
     def close()(using AllowUnsafe, Frame): Unit =
         if closedFlag.compareAndSet(false, true) then
+            // Reclaim the accepted sockets still mid-handshake first: server.close() stops accepting but does not release them, and nothing else
+            // knows about a socket that never became a connection.
+            onCloseHook.foreach(_())
             discard(server.close())
         end if
     end close
