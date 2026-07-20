@@ -21,9 +21,6 @@ import scala.concurrent.duration.Duration
   *   Target load level - load must meet this for increases
   * @param stepExp
   *   Controls how quickly consecutive adjustments escalate
-  * @param calibrationProbes
-  *   Number of idle probes measured once at startup to establish the platform's probe noise floor; when the floor exceeds the configured
-  *   jitter thresholds, the effective thresholds are raised above it (see Regulator.calibrate). 0 disables calibration.
   */
 case class Config(
     collectWindow: Int,
@@ -32,6 +29,5 @@ case class Config(
     jitterUpperThreshold: Double,
     jitterLowerThreshold: Double,
     loadAvgTarget: Double,
-    stepExp: Double,
-    calibrationProbes: Int = 0
+    stepExp: Double
 )

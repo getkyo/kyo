@@ -37,39 +37,6 @@ class ConcurrencyTest extends AnyFreeSpec with NonImplicitAssertions {
         assert(updates.isEmpty)
     }
 
-    "calibration raises the grow threshold above a noisy platform floor" in new Context {
-        loadAvg = 0.9
-        // dev lands at 0.9M: inside the configured (0.8M, 1.0M) dead band, so the
-        // regulator holds forever even though load exceeds the target.
-        jitter = 1800000
-
-        timer.advanceAndRun(regulateInterval)
-        assert(updates.isEmpty)
-
-        // A platform floor at the observed jitter re-anchors the band (grow below 1.8M).
-        concurrency.calibrate(900000)
-        timer.advanceAndRun(regulateInterval)
-        assert(updates == List(1))
-    }
-
-    "calibration below the configured thresholds keeps the configured behavior" in new Context {
-        loadAvg = 0.9
-        jitter = jitterLowerThreshold // dev = 0.4M: below the configured grow threshold
-
-        concurrency.calibrate(100000) // quiet platform: configured values stay in force
-        timer.advanceAndRun(regulateInterval * 2)
-        assert(updates == List(1, 2))
-    }
-
-    "calibration is capped so extreme startup noise cannot disable regulation" in new Context {
-        loadAvg = 0.9
-        jitter = 30000000 // dev = 15M: above even the 10x-capped shrink threshold
-
-        concurrency.calibrate(1e12)
-        timer.advanceAndRun(regulateInterval)
-        assert(updates == List(-1))
-    }
-
     "probe jitter stays below regulator threshold with real sleep" in {
         try {
             val timer           = InternalTimer(kyo.scheduler.TestExecutors.scheduled)
