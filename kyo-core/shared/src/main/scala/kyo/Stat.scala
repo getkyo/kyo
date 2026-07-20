@@ -174,9 +174,24 @@ end Stat
 
 object Stat:
 
+    /** The single `TraceExporter` construction shared by the trace path and the eager class-init scan.
+      *
+      * Service-loader discovery constructs every classpath-present `ExporterFactory` (and, for a factory
+      * that starts a background collector, activates it) exactly once. Both the `traceExporter` Local
+      * default and `eagerExporterScan` read THIS lazy val, so the exporters are constructed once for the
+      * object's lifetime: a second construction would start a second background export loop against the same
+      * process-global registry, splitting every destructive counter/histogram read between two loops.
+      * Discovery is the per-factory-isolated variant, so one throwing provider is skipped rather than
+      * failing this class initializer.
+      */
+    // Unsafe: read at class-init and on first trace use, before any effect handler exists to supply
+    // AllowUnsafe; TraceExporter.getIsolated is a plain value read with no Sync context available here.
+    private[Stat] lazy val scannedExporter: TraceExporter =
+        import AllowUnsafe.embrace.danger
+        TraceExporter.getIsolated
+
     private[Stat] val traceExporter =
-        given AllowUnsafe = AllowUnsafe.embrace.danger
-        Local.init[TraceExporter](TraceExporter.get)
+        Local.init[TraceExporter](scannedExporter)
 
     /** Listen to traces using a custom exporter.
       * @param exporter
@@ -192,6 +207,19 @@ object Stat:
         }
 
     private[kyo] val kyoScope = initScope("kyo")
+
+    /** Forces service-loader discovery of every classpath-present `ExporterFactory` at class
+      * initialization, so a metrics-only app that never opens a trace still constructs each factory.
+      * A factory whose construction starts a background collector (host-metrics sampling) activates
+      * on classpath presence alone. Forcing `scannedExporter` (the one shared construction) here means
+      * the factories are constructed exactly once, whether the app traces or not. Must remain the last
+      * `val` in this object: a discovered factory constructor runs inside this class initializer and must
+      * not observe a later, not-yet-initialized field.
+      */
+    private[kyo] val eagerExporterScan: Unit =
+        val _ = scannedExporter
+        ()
+    end eagerExporterScan
 
     /** Initialize a new Stat instance with a custom scope.
       * @param first

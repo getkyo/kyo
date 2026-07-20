@@ -74,10 +74,31 @@ sched_snapshot() {
     { [ -n "$SCHED_FILE" ] && [ -r "$SCHED_FILE" ]; } && cat "$SCHED_FILE" 2>/dev/null
 }
 
-log "started interval=${INTERVAL}s src=$MON_SRC sched=${SCHED_FILE:-none}"
+# Per-process attribution: total RSS and process count aggregated by command name, top 3 by RSS,
+# e.g. "top=[java:11216M/2 clang:1834M/4 node:912M/1]". Host-level numbers alone cannot answer
+# "whose memory is it" when a link or test phase overcommits the box. Best-effort: skipped where
+# ps is unavailable (minimal containers).
+proc_top() {
+    command -v ps >/dev/null 2>&1 || return 0
+    local rows
+    rows=$(ps axo rss=,comm= 2>/dev/null | awk '
+        {
+            rss = $1; $1 = ""; cmd = substr($0, 2)
+            sub(/.*\//, "", cmd); gsub(/ /, "_", cmd)
+            if (cmd != "" && rss + 0 > 0) { r[cmd] += rss; n[cmd]++ }
+        }
+        END { for (c in r) printf "%d %s %d\n", r[c], c, n[c] }' \
+        | sort -rn | head -3 \
+        | awk '{ printf "%s%s:%dM/%d", sep, $2, $1 / 1024, $3; sep = " " }')
+    [ -n "$rows" ] && printf 'top=[%s]' "$rows"
+}
+
+ncpu=$( (command -v nproc >/dev/null 2>&1 && nproc) || sysctl -n hw.ncpu 2>/dev/null || echo '?')
+log "started interval=${INTERVAL}s src=$MON_SRC cores=$ncpu sched=${SCHED_FILE:-none}"
 while true; do
     os="$(os_headline)"
+    top="$(proc_top)"
     sc="$(sched_snapshot)"
-    echo "[ci-mon $(date -u +%H:%M:%S)]${os:+ $os}${sc:+ $sc}"
+    echo "[ci-mon $(date -u +%H:%M:%S)]${os:+ $os}${top:+ $top}${sc:+ $sc}"
     sleep "$INTERVAL"
 done

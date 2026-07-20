@@ -53,6 +53,7 @@ case class HistogramDataPoint(
     bucketCounts: Seq[String],
     min: Double,
     max: Double,
+    sum: Double,
     attributes: Seq[KeyValue] = Seq.empty
 ) derives Schema
 

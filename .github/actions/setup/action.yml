@@ -41,6 +41,28 @@ runs:
         key: kyo-browser-${{ inputs.os }}-${{ hashFiles('kyo-browser/shared/src/main/scala/kyo/Browser.scala', 'kyo-browser/shared/src/main/scala/kyo/internal/ChromeDownloader.scala') }}
         restore-keys: kyo-browser-${{ inputs.os }}-
 
+    - name: Add supplementary swap (Linux)
+      if: ${{ contains(inputs.os, 'linux') }}
+      shell: bash
+      run: |
+        # The Native link phase can overcommit the 16GB runner (a large sbt driver heap plus
+        # forked clang jobs), and the stock runner swap has been observed fully exhausted right
+        # before kernel OOM kills. Extra swap turns a marginal overcommit into slowdown instead
+        # of a SIGKILL. Best-effort: a runner that cannot host the file keeps its stock swap.
+        for dir in /mnt "${RUNNER_TEMP:-/tmp}"; do
+          swapfile="$dir/kyo-swapfile"
+          if sudo fallocate -l 8G "$swapfile" 2>/dev/null \
+             && sudo chmod 600 "$swapfile" \
+             && sudo mkswap "$swapfile" >/dev/null 2>&1 \
+             && sudo swapon "$swapfile" 2>/dev/null; then
+            echo "supplementary swap active at $swapfile"
+            free -m | awk 'NR==1 || /Swap/'
+            exit 0
+          fi
+          sudo rm -f "$swapfile" 2>/dev/null || true
+        done
+        echo "warning: could not add supplementary swap; continuing with stock swap only"
+
     - name: Install native dependencies (Linux)
       if: ${{ inputs.target == 'Native' && contains(inputs.os, 'linux') }}
       uses: nick-fields/retry@v4
