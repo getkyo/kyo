@@ -602,18 +602,26 @@ final private[net] class PollerIoDriver private[posix] (
         reArm(task)
     end dispatchAndContinue
 
-    /** Re-arm the next wait, preferring a carrier other than this one, and reset the task's scheduling priority to that of freshly submitted work.
+    /** Re-arm the next wait, preferring a carrier other than this one, and re-base the task's scheduling priority.
       *
-      * Worker.runTask bills wall-clock time to a task's runtime, and the poll parks inside that measurement, so a task reused for the driver's whole
-      * life would accumulate its entire idle time as if it were CPU time: it would sort last in every queue and eventually wrap into the preempt
-      * bit. Charging each cycle's own park instead is no better, and is what an earlier revision did: a long idle park produced a large key, which
-      * starved the poll under load and stopped readiness entirely (kyo-http's concurrency and connection-pool suites hung). Park duration is simply
-      * not a measure of scheduling debt; if anything a long park means the poll is now the most urgent work, not the least.
+      * The reset plus a single unit is a RE-BASE, not the key the task ends up with. Worker.runTask bills the run's wall-clock in a finally that
+      * runs after this returns, and the poll parks inside that measurement, so the task enters its next queue at `1 + this cycle's park`. What the
+      * reset buys is that the park is re-based every cycle instead of accumulating over the driver's whole life, which is what an earlier revision
+      * did until the lifetime sum wrapped into the preempt bit and stopped readiness entirely (kyo-http's concurrency and connection-pool suites
+      * hung). Keep the reset for that reason; it is not, and cannot be, a way to make the poll land at `Task.State.init`.
       *
-      * Resetting to the fresh-task value (runtime 1, `Task.State.init`) makes the poll compete on equal terms with newly submitted work: never
-      * starved, and never jumped to the head of a queue ahead of work already waiting, which resetting to 0 alone would do. The ordering worry
-      * about running ahead of the completions this cycle produced does not apply in the normal case anyway: those completions land on the carrier
-      * that produced them, while `scheduleExcludingCurrent` places the poll on a different one, so they are not competing in the same queue.
+      * The resulting key sorts the next wait behind work already queued. That is the intended tradeoff rather than the starvation it looks like:
+      * the events this cycle harvested were already dispatched by drainReady above, BEFORE this point, so the key governs only when the next park
+      * begins, never the delivery of anything already in hand. A poll that jumped the queue would park the carrier it landed on ahead of work that
+      * is ready to run, and a parked carrier serves nobody. Sorting behind means the next wait starts when a carrier has nothing better to do,
+      * which is what a task that parks its carrier should do. It also self-tunes: a long park means a quiet period and produces a large key, while
+      * flowing readiness keeps parks short and the key low.
+      *
+      * Do not "fix" this by exempting the park from the carrier's billing. That was tried and measured: with the park exempt the loop holds runtime
+      * 1 for the life of the process, permanently outranks every fiber that has accumulated any runtime, and parks carriers ahead of their queues.
+      * On Linux, under real CPU contention, PosixTransportTlsConcurrentEchoTest and TransportTlsConnectConcurrentTest went from seconds to hanging.
+      * Billing the cycle minus the park, or billing CPU instead of wall-clock, lands in the same place: this task's true CPU cost is near zero, so
+      * any accurate-cost key puts it at the head, which is precisely where it must not be.
       */
     private def reArm(task: Task): Unit =
         task.resetRuntime()

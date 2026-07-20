@@ -1584,8 +1584,13 @@ final private[net] class IoUringDriver private[posix] (
 
     /** Re-arm the next turn onto a DIFFERENT carrier, so the one that just ran the turn is free to run the completions it produced.
       *
-      * The runtime reset plus a single unit mirrors a freshly submitted task: the wall-clock a turn spends parked is billed to the task, and
-      * carrying it forward would make the chain look long-running and starve it against genuinely short tasks.
+      * The runtime reset plus a single unit is a RE-BASE, not the key the task ends up with: Worker.runTask bills the turn's wall-clock after this
+      * returns, so the chain enters its next queue at `1 + this turn's park in the fused submit-and-wait`. The reset keeps that per-turn rather than
+      * letting it accumulate over the driver's life, which is what wraps the key into the preempt bit and stops readiness entirely.
+      *
+      * Sorting behind queued work is the intended tradeoff, not starvation: `drainReady` already reaped and dispatched this turn's completions before
+      * the re-arm, so the key governs only when the next wait begins. See PollerIoDriver.reArm for the full rationale and for the measured reason the
+      * park must NOT be exempted from billing.
       */
     private def reArm(task: Task): Unit =
         task.resetRuntime()

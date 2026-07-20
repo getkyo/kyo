@@ -181,8 +181,13 @@ final private[kyo] class NioIoDriver private (@volatile private[net] var selecto
 
     /** Re-arm the next cycle onto a DIFFERENT carrier, so the one that just ran the cycle is free to run the continuations it produced.
       *
-      * The runtime reset plus a single unit mirrors a freshly submitted task: the wall-clock a cycle spends parked in `select` is billed to the
-      * task, and carrying it forward would make the chain look long-running and starve it against genuinely short tasks.
+      * The runtime reset plus a single unit is a RE-BASE, not the key the task ends up with: Worker.runTask bills the cycle's wall-clock after this
+      * returns, so the chain enters its next queue at `1 + this cycle's park in select`. The reset keeps that per-cycle rather than letting it
+      * accumulate over the driver's life, which is what wraps the key into the preempt bit and stops readiness entirely.
+      *
+      * Sorting behind queued work is the intended tradeoff, not starvation: `pollOnce` already dispatched this cycle's ready keys before the re-arm,
+      * so the key governs only when the next `select` begins. See PollerIoDriver.reArm for the full rationale and for the measured reason the park
+      * must NOT be exempted from billing.
       */
     private def reArm(task: Task): Unit =
         task.resetRuntime()
