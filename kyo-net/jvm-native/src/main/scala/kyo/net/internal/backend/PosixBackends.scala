@@ -2,7 +2,6 @@ package kyo.net.internal.backend
 
 import kyo.*
 import kyo.ffi.Ffi
-import kyo.net.NetConfig
 import kyo.net.Transport
 import kyo.net.internal.posix.EpollBindings
 import kyo.net.internal.posix.IoUringBindings

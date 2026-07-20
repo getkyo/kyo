@@ -1,7 +1,6 @@
 package kyo.net.internal
 
 import kyo.*
-import kyo.net.NetConfig
 import kyo.net.Transport
 
 /** JS platform bootstrap. Lazily initializes a single-driver `JsTransport` (pool size 1, since JS is single-threaded). */

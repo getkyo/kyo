@@ -323,7 +323,7 @@ final private[net] class PollerIoDriver private[posix] (
         wakeArmed.set(true)
         // Every driver registers a diagnostics snapshot of its poll loop, not just the process-shared singleton's: the stranded-op
         // post-suite gate (kyo-test's runner) needs a probe for every driver a suite builds, and most of kyo-net's own suites build
-        // their own per-config transport rather than using the singleton. Held in diagRegistration and closed from close() so a
+        // their own owned transport rather than using the shared one. Held in diagRegistration and closed from close() so a
         // per-test driver's entry does not accumulate in the process-global registry for the rest of the run.
         //
         // The registered name carries a `processSharedTransport` marker for a by-design process-lifetime transport (the shared singleton

@@ -2,7 +2,6 @@ package kyo.net.internal.backend
 
 import kyo.*
 import kyo.net.NetBackendUnavailableException
-import kyo.net.NetConfig
 import kyo.net.Transport
 
 /** Native `registered` list and selection entry point.

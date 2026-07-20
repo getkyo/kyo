@@ -2,7 +2,6 @@ package kyo.net.internal.backend
 
 import kyo.*
 import kyo.net.NetBackendUnavailableException
-import kyo.net.NetConfig
 import kyo.net.Transport
 import kyo.net.internal.NioTransport
 import kyo.net.internal.posix.PosixTransport

@@ -255,8 +255,11 @@ object HttpServer:
 
     // --- Private implementations ---
 
-    /** Unsafe implementation wrapping a Listener from Transport, plus the registry of accepted connections it owns. The server owns its
-      * transport, so closing the server also closes that transport to release its driver/pool.
+    /** Unsafe implementation wrapping a Listener from Transport, plus the registry of accepted connections it owns.
+      *
+      * The server does NOT own its transport: one transport is shared by every client and server in the process, so closing the server closes
+      * its listener, which releases the bound port, and its accepted connections, and leaves the transport alone. Closing it would take every
+      * co-tenant's connections down.
       */
     final private class ListenerUnsafe(
         listener: kyo.net.Listener,

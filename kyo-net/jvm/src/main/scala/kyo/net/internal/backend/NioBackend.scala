@@ -2,7 +2,6 @@ package kyo.net.internal.backend
 
 import java.nio.channels.spi.SelectorProvider
 import kyo.*
-import kyo.net.NetConfig
 import kyo.net.internal.NioHandle
 import kyo.net.internal.NioIoDriver
 import kyo.net.internal.transport.IoDriver

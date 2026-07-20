@@ -4,7 +4,7 @@ package kyo.net.internal
   * that construction runs through a distinctly named wrapper frame.
   *
   * There are two such transports: the `NetPlatform.transport` singleton (shared across every client and server in the process) and the default
-  * HTTP client's own transport (built via `NetPlatform.processLifetimeTransport`; a distinct pool the default client owns but never closes).
+  * clients and servers in the process, and which nothing closes.
   * Each blocks head-of-line in the OS poll call for the JVM's lifetime, so at a test fork's end it shows up as a busy scheduler fiber with an
   * idle kept-alive connection parked. That is expected infrastructure, not a leak. The kyo-test end-of-run fiber-leak and stranded-op checks
   * allowlist the wrapper frame this marker produces (`processSharedTransport`), which appears only on these process-lifetime transports'
@@ -14,7 +14,7 @@ package kyo.net.internal
   * The flag is a build-scoped thread-local: `whileBuilding` sets it around a process-lifetime transport's construction, and each driver's
   * `start()` reads it on the same (construction) thread when it decides which carrier body to spawn. The carrier body then runs on a scheduler
   * worker, but the decision is made before the spawn, so the worker's stack carries the chosen frame. Only the process-lifetime construction
-  * paths set the flag; every owned per-config construction a caller will close reads `false` and uses the plain carrier.
+  * path sets the flag; an owned transport, which its caller is expected to close, reads `false` and uses the plain carrier.
   */
 private[net] object ProcessSharedTransport:
 

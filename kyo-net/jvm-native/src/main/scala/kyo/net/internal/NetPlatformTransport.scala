@@ -1,7 +1,6 @@
 package kyo.net.internal
 
 import kyo.*
-import kyo.net.NetConfig
 import kyo.net.Transport
 import kyo.net.internal.backend.IoBackendPlatform
 
