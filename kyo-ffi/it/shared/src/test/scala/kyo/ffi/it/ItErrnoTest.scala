@@ -15,8 +15,16 @@ import kyo.ffi.FfiErrno
   */
 class ItErrnoTest extends ItTestBase:
 
+    // errno capture across the foreign boundary requires both sides to read the same CRT's
+    // errno. The MinGW-built test library and the JVM's Panama capture share the UCRT, but
+    // koffi's prebuilt binary does not, so the captured codes diverge under Node on Windows.
+    private def assumeSharedErrnoDomain(): Unit =
+        if kyo.internal.Platform.isWindows && !kyo.internal.Platform.isJVM then
+            cancel("koffi and the test library read different CRT errno domains on Windows")
+
     "kyoItAlwaysFail (Outcome return)" - {
         "returns -1 with errorCode 22 (EINVAL)" in {
+            assumeSharedErrnoDomain()
             val b = Ffi.load[ItErrnoBindings]
             val r = b.kyoItAlwaysFail()
             assert(r.value == -1)
@@ -24,6 +32,7 @@ class ItErrnoTest extends ItTestBase:
         }
 
         "return value and errorCode are stable across repeated invocations" in {
+            assumeSharedErrnoDomain()
             val b          = Ffi.load[ItErrnoBindings]
             var i          = 0
             var last: Unit = succeed
@@ -37,6 +46,7 @@ class ItErrnoTest extends ItTestBase:
         }
 
         "paired invocations observe identical errorCode values" in {
+            assumeSharedErrnoDomain()
             val b  = Ffi.load[ItErrnoBindings]
             val r1 = b.kyoItAlwaysFail()
             val r2 = b.kyoItAlwaysFail()
@@ -46,11 +56,13 @@ class ItErrnoTest extends ItTestBase:
 
     "kyoItClearErrno (plain return, errno = 0)" - {
         "returns 1 without throwing" in {
+            assumeSharedErrnoDomain()
             val b = Ffi.load[ItErrnoBindings]
             assert(b.kyoItClearErrno() == 1)
         }
 
         "succeeds after a failing call (errno isolation per call)" in {
+            assumeSharedErrnoDomain()
             val b = Ffi.load[ItErrnoBindings]
             val r = b.kyoItAlwaysFail()
             assert(r.errorCode == 22)
@@ -59,6 +71,7 @@ class ItErrnoTest extends ItTestBase:
         }
 
         "second-to-last clearing followed by a failing call shows errorCode 22" in {
+            assumeSharedErrnoDomain()
             val b = Ffi.load[ItErrnoBindings]
             assert(b.kyoItClearErrno() == 1)
             val r = b.kyoItAlwaysFail()
