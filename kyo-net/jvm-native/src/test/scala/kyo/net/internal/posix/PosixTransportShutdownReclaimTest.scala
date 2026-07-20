@@ -227,6 +227,69 @@ class PosixTransportShutdownReclaimTest extends Test:
         }
     }
 
+    "PosixTransport registerHandshake races its OWNING LISTENER's close sweep" - {
+        "a handshake registered after its listener already swept is discharged by the insertion recheck, exactly once" in {
+            PosixTestSockets.assumePoller()
+            val spy       = RecordingSocketBindings(Ffi.load[SocketBindings])
+            val real      = PollerBackend.default()
+            val pollerFd  = real.create()
+            val backend   = RecordingPollerBackend(real)
+            val driver    = TestDrivers.forBackend(backend, pollerFd, spy)
+            val transport = TestTransports.forTesting(driver, spy, backendIsEpoll = false)
+            discard(driver.start())
+            // Captured BEFORE close(), per closeWake's documented contract: it notifies whatever promise is installed at the moment it runs,
+            // so installing one after close() races the driver's terminal exit and can never be notified.
+            val closeWakeDone = backend.closeWakeDone()
+            PosixTestSockets.loopbackPair().map { case (client, accepted) =>
+                // A listener that is ALREADY closed, standing in for one that closed inside handleAccepted's window: the accept-side
+                // registration happens on the driver carrier at the end of handleAccepted, and dischargeListenerHandshakes runs on the
+                // closing carrier, so a close anywhere in that window sweeps an empty map and this registration arrives afterwards.
+                val closedListener =
+                    new PosixListener(
+                        serverFd = -1,
+                        port = 0,
+                        host = "127.0.0.1",
+                        address = kyo.net.NetAddress.Tcp("127.0.0.1", 0),
+                        sockets = spy,
+                        registry = java.util.Collections.newSetFromMap(new java.util.concurrent.ConcurrentHashMap[
+                            PosixListener,
+                            java.lang.Boolean
+                        ]()),
+                        closedFlag = AtomicBoolean.Unsafe.init(true)
+                    )
+                val handle    = PosixHandle.socket(accepted, PosixHandle.DefaultReadBufferSize, Absent)
+                val rawEngine = TlsRealEngines.singleEngine(isServer = true)
+                val engine    = new RecordingTlsEngine(rawEngine)
+                val reaped    = AtomicBoolean.Unsafe.init(false)
+                val settled   = AtomicBoolean.Unsafe.init(false)
+                // Mirrors handleAccepted's own teardown shape: reap through the driver, then the raw fd shutdown and engine free.
+                def teardown(): Unit =
+                    reaped.set(true)
+                    driver.closeHandle(handle)
+                    if handle.claimFdClose() then discard(spy.shutdown(accepted, PosixConstants.SHUT_RDWR))
+                    engine.free()
+                end teardown
+                // The accept path's exactly-once gate, the same one armHandshakeDeadline builds.
+                def disarm(): Boolean = settled.compareAndSet(false, true)
+                // Without the insertion recheck this entry sits in pendingHandshakes with nothing that would ever discharge it: the
+                // listener's sweep has passed, a second close is a CAS no-op, and the transport-wide sweep never runs on a shared transport.
+                discard(transport.registerHandshake(Present(closedListener), () => disarm(), () => teardown()))
+                discard(spy.close(client))
+                assert(
+                    reaped.get(),
+                    "a handshake registered after its listener's sweep must be discharged by the insertion recheck, or its fd and engine leak for the process lifetime"
+                )
+                // Exactly once: the gate is spent, so the handshake's own outcome callback finds it lost and does not tear down twice.
+                assert(!disarm(), "the discharge must have won the exactly-once gate, leaving nothing for a later outcome to double-free")
+                assert(engine.freeCount.get() == 1, s"the engine must be freed exactly once, got ${engine.freeCount.get()}")
+                transport.close()
+                // Await the driver's terminal teardown before the leaf ends, or its poll carrier is still parked in kevent when the
+                // end-of-run leak check samples the scheduler.
+                closeWakeDone.safe.get.map(_ => succeed)
+            }
+        }
+    }
+
     "PosixTransport registerHandshake races transport.close()'s one-shot sweep" - {
         "a handshake registered after close() has already swept discharges via the driver's own closed-recheck, exactly once" in {
             PosixTestSockets.assumePoller()

@@ -149,9 +149,19 @@ final private[net] class PosixTransport private[posix] (
       * handshake outcome (or the deadline) never discharges twice. Returns the token [[unregisterHandshake]] needs once the winning side
       * is known.
       */
-    private def registerHandshake(owner: Maybe[PosixListener], disarm: () => Boolean, teardown: () => Unit)(using AllowUnsafe): Long =
+    private[posix] def registerHandshake(owner: Maybe[PosixListener], disarm: () => Boolean, teardown: () => Unit)(using
+        AllowUnsafe
+    ): Long =
         val token = pendingHandshakeSeq.incrementAndGet()
         discard(pendingHandshakes.put(token, PosixTransport.PendingHandshake(owner, () => if disarm() then teardown())))
+        // Insertion-after-sweep recheck. [[dischargeListenerHandshakes]] runs on the closing carrier and discharges only what is present at
+        // that instant, while this insertion runs on the driver carrier at the end of handleAccepted, a window that spans buildEngine (TLS
+        // context construction, cert file reads). A listener closing anywhere in that window leaves this entry with nothing that would ever
+        // discharge it: a second close() is a CAS no-op and the transport-wide sweep runs only from close(), which the process-shared
+        // transport never sees. The fd and engine would then be held for the life of the process, which is the default whenever no deadline
+        // is armed (kyo-http's accept side). Rechecking here is safe rather than a double-free risk: the stored thunk is the same
+        // exactly-once disarm-gated one the sweep runs, so if the sweep did observe this entry, whichever call loses the gate does nothing.
+        if owner.exists(_.isClosed) then dischargePendingHandshake(token)
         token
     end registerHandshake
 
@@ -655,7 +665,7 @@ final private[net] class PosixTransport private[posix] (
                             closeUnwiredHandle(handle, driver, connectPhase = false)
                             promise.completeDiscard(Result.fail(e))
                             return
-                // Register this in-flight client handshake so a transport `close()` racing it (no deadline exists on the connect path)
+                // Register this in-flight client handshake so a transport `close()` racing it (alongside the handshake deadline armed above)
                 // reclaims the fd/engine and fails `promise` instead of leaking them / hanging the caller past shutdown. `driveHandshake`
                 // guarantees exactly one of onFinished/onFailed/onPanic ever fires, so `handshakeDisarm` builds its own fresh gate (there is no
                 // pre-existing one to share, unlike the accept-side deadline). See [[pendingHandshakes]].

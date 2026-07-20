@@ -5,11 +5,13 @@ import java.net.StandardProtocolFamily
 import java.nio.ByteBuffer
 import java.nio.channels.SocketChannel
 import kyo.*
+import kyo.net.NetConnectionClosedException
 import kyo.net.NetException
 import kyo.net.NetTlsConfig
 import kyo.net.Test
 import kyo.net.internal.TlsTestCert
 import kyo.net.internal.transport.*
+import kyo.scheduler.IOPromise
 
 class NioTransportTest extends Test:
 
@@ -521,6 +523,43 @@ class NioTransportTest extends Test:
                             }
                         }
                     }
+                }
+            }
+        }.map { result =>
+            Sync.defer(discard(transport.close())).andThen(Abort.get(result))
+        }
+    }
+
+    // The companion to the leaf above, for the window it cannot reach. The registration runs on the selector carrier while
+    // dischargeListenerHandshakes runs on the closing carrier, so a listener can close AFTER the accept loop's `!listener.isClosed` guard and
+    // BEFORE the handshake is tracked. That entry would then survive every reclaim path: the sweep has passed, a second close is a CAS no-op,
+    // and the transport-wide sweep never runs on the process-shared transport. Driven through the production function directly, since the
+    // interleaving cannot be forced through the public surface.
+    "a handshake tracked after its listener already closed is reclaimed at registration" in {
+        val transport = NioTransport.init()
+        val unbounded = serverTlsConfig.copy(handshakeTimeout = Duration.Infinity)
+        Abort.run[NetException | Closed] {
+            transport.listenTls("127.0.0.1", 0, 16, unbounded)(_ => ()).safe.get.map { listener =>
+                Sync.defer {
+                    listener.close()
+                    val connPromise = new IOPromise[NetException, Connection[NioHandle]]
+                    val reclaimed   = transport.trackAcceptHandshake(listener.asInstanceOf[NioListener], connPromise)
+                    assert(
+                        reclaimed,
+                        "a handshake tracked after its listener closed must be reclaimed at registration, or its channel and handle are held for the process lifetime"
+                    )
+                    assert(
+                        transport.pendingAcceptHandshakeCount == 0,
+                        s"the reclaimed entry must not stay in the registry, count=${transport.pendingAcceptHandshakeCount}"
+                    )
+                    connPromise.poll() match
+                        case Present(Result.Failure(_: NetConnectionClosedException)) =>
+                            succeed
+                        case other =>
+                            fail(
+                                s"the reclaim must fail the handshake promise so its teardown arm reaps the handle and channel, got $other"
+                            )
+                    end match
                 }
             }
         }.map { result =>
