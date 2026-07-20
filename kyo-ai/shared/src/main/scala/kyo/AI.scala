@@ -102,7 +102,7 @@ object AI:
     def stream[A: Schema](using Frame, Tag[Emit[Chunk[A]]]): Stream[A, Async & Scope & Abort[AIStreamException]] < LLM =
         init.map(ai => ai.stream[A])
 
-    /** Reads the current scope `AIEnv`: the active config plus the scope's enablements (prompt, tools, thoughts, modes). */
+    /** Reads the current scope `AIEnv`: the active config plus the scope's enablements (prompt, tools, thoughts, modes, compactor). */
     def env(using Frame): AIEnv < LLM = LLM.env
 
     /** Reads the active config. The active env (the scope env, or the scope merged with an instance during a
@@ -118,9 +118,9 @@ object AI:
     def withConfig[A, S](config: Config)(v: A < (LLM & S))(using Frame): A < (LLM & S) =
         withConfig(_ => config)(v)
 
-    /** Layers enablements (tools, prompts, thoughts, modes, in any mix) over a scoped computation, on top of
-      * the scope's current enablements. Each enablement's capability `S` rides the row, unified across the
-      * varargs to their intersection, so the requirements stay visible until discharged at the run boundary.
+    /** Layers enablements (tools, prompts, thoughts, modes, compactors, in any mix) over a scoped computation,
+      * on top of the scope's current enablements. Each enablement's capability `S` rides the row, unified across
+      * the varargs to their intersection, so the requirements stay visible until discharged at the run boundary.
       */
     def enable[A, S](enablements: Enablement[S]*)(v: A < S)(using Frame): A < (S & LLM) =
         if enablements.isEmpty then v
@@ -221,10 +221,10 @@ object AI:
         def updateContext(f: Context => Context)(using Frame): Unit < LLM =
             ai.context.map(c => ai.setContext(f(c)))
 
-        /** Layers enablements (tools, prompts, thoughts, modes, in any mix) onto this instance, on top of the
-          * scope's enablements. Each enablement's capability `S` rides the row, unified across the varargs to
-          * their intersection, so a tool/prompt/thought/mode needing more than `LLM` keeps that requirement
-          * visible at this instance's generations.
+        /** Layers enablements (tools, prompts, thoughts, modes, compactors, in any mix) onto this instance, on
+          * top of the scope's enablements. Each enablement's capability `S` rides the row, unified across the
+          * varargs to their intersection, so a tool/prompt/thought/mode/compactor needing more than `LLM` keeps
+          * that requirement visible at this instance's generations.
           */
         def enable[S](enablements: Enablement[S]*)(using Frame): AI < (S & LLM) =
             AI.updateSession(ai)(s => enablements.foldLeft(s)((acc, e) => e.enableIn(acc)))

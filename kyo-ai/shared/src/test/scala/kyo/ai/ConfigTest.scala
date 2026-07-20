@@ -180,7 +180,7 @@ class ConfigTest extends kyo.test.Test[Any]:
         assert(Config.OpenAI.small.modelName != Config.OpenAI.default.modelName)
     }
 
-    "compaction config is exactly five fields on kyo.ai.Config; init takes nothing (INV-CMP-58)" in {
+    "compaction config is exactly five fields on kyo.ai.Config; init takes nothing" in {
         val cfg = Config.Anthropic.default
             .compactionBudget(1000)
             .compactionHighWatermark(0.7)
@@ -198,7 +198,7 @@ class ConfigTest extends kyo.test.Test[Any]:
         assert(c eq Compactor.init, "Compactor.init takes no parameters and returns the shared default Compactor[Any]")
     }
 
-    "effectiveCompactionBudget scales with modelMaxTokens; a copy-based model switch re-derives it; Present pins survive the switch (F7.1-r2)" in {
+    "effectiveCompactionBudget scales with modelMaxTokens; a copy-based model switch re-derives it; Present pins survive the switch" in {
         val base = Config.Anthropic.default.model(Config.Anthropic, "m", 200000)
         assert(base.effectiveCompactionBudget == 48000, s"min(100000, 48000) = 48000, got: ${base.effectiveCompactionBudget}")
         val big = base.model(Config.Anthropic, "m2", 1000000)
@@ -219,7 +219,7 @@ class ConfigTest extends kyo.test.Test[Any]:
         )
     }
 
-    "compaction builders clamp into [0,1]; compactionBudget floors at 1 (F6.2-r2)" in {
+    "compaction builders clamp into [0,1]; compactionBudget floors at 1" in {
         val c = Config.Anthropic.default
         assert(c.compactionHighWatermark(1.3).compactionHighWatermark == 1.0)
         assert(c.compactionLowWatermark(-0.2).compactionLowWatermark == 0.0)

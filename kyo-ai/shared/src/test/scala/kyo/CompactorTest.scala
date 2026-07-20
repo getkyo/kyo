@@ -19,7 +19,7 @@ class CompactorTest extends kyo.test.Test[Any]:
     def eps(a: Double, b: Double, tol: Double = 1e-9): Boolean = math.abs(a - b) < tol
 
     /** A config pointing the OpenAI backend at nothing (render is model-free), with the compaction knobs. */
-    def cfg(budget: Int, window: Int = 128000, low: Double = 0.45, high: Double = 0.7, hard: Double = 0.9): Config =
+    def serverConfig(budget: Int, window: Int = 128000, low: Double = 0.45, high: Double = 0.7, hard: Double = 0.9): Config =
         Config.OpenAI.default.apiKey("k").model(Config.OpenAI, "m", window)
             .compactionBudget(budget)
             .compactionLowWatermark(low)
@@ -45,18 +45,18 @@ class CompactorTest extends kyo.test.Test[Any]:
     // from the edit point is small). fillerChars stays below elisionThreshold so a demoted unit masks to a
     // short marker (a big token saving), not an elision. 12 tiny tail turns keep the big units out of the
     // tailTurns=10 window.
-    def demotableCtx(fillerChars: Int = 1500, turns: Int = 6): Context =
+    def demotableContext(fillerChars: Int = 1500, turns: Int = 6): Context =
         val head = Chunk[Message](sm("system prompt"), um("the first task"))
         val body = Chunk.from((0 until turns).map(i => am(s"region $i " + ("x" * fillerChars))))
         val tail = Chunk.from((0 until 12).map(i => am(s"t$i")))
         Context(head.concat(body).concat(tail).append(um("the latest user question")))
-    end demotableCtx
+    end demotableContext
 
     // ==== contract ====
 
     "raw immutable across render" in {
-        val ctx = demotableCtx(400, 16)
-        renderWith(ctx, cfg(1)).map { rebuilt =>
+        val ctx = demotableContext(400, 16)
+        renderWith(ctx, serverConfig(1)).map { rebuilt =>
             val applied = ctx.copy(compacted = rebuilt)
             assert(applied.raw == ctx.raw, "render never mutates raw; the caller-applied Context keeps raw byte-identical")
             assert(applied.raw.size == ctx.raw.size)
@@ -66,9 +66,9 @@ class CompactorTest extends kyo.test.Test[Any]:
     }
 
     "render pure; two instances agree; returns only rebuilt compacted, raw absent from output" in {
-        val ctx = demotableCtx(400, 16)
-        renderWith(ctx, cfg(1)).map { a =>
-            renderWith(ctx, cfg(1)).map { b =>
+        val ctx = demotableContext(400, 16)
+        renderWith(ctx, serverConfig(1)).map { a =>
+            renderWith(ctx, serverConfig(1)).map { b =>
                 assert(a == b, "two renders of the same Context produce byte-identical rebuilt Chunk[Message]")
             }
         }
@@ -77,10 +77,10 @@ class CompactorTest extends kyo.test.Test[Any]:
     "state is only raw+compacted; region bookkeeping derived at boundary" in {
         // A fresh render given only (raw, compacted) reproduces identical levels: run render, feed its output
         // back as compacted, render again with the SAME raw -> identical decision (no external state).
-        val ctx = demotableCtx(400, 16)
-        renderWith(ctx, cfg(1)).map { first =>
+        val ctx = demotableContext(400, 16)
+        renderWith(ctx, serverConfig(1)).map { first =>
             val next = ctx.copy(compacted = first)
-            renderWith(next, cfg(1)).map { second =>
+            renderWith(next, serverConfig(1)).map { second =>
                 assert(first == second, "levels are re-derived from (raw, compacted) alone, deterministically")
             }
         }
@@ -114,7 +114,7 @@ class CompactorTest extends kyo.test.Test[Any]:
         val u0    = units.filter(_.id == 0).head
         assert(u0.unresolved, "an assistant unit with an unanswered call id is unresolved (pinned)")
         // and it renders verbatim even under maximum pressure.
-        renderWith(ctxOf(sm("s"), am("do " + ("x" * 400), call("c1", "f", "{}")), um("u")), cfg(1)).map { view =>
+        renderWith(ctxOf(sm("s"), am("do " + ("x" * 400), call("c1", "f", "{}")), um("u")), serverConfig(1)).map { view =>
             assert(view.exists(_.content.contains("do ")), "the unresolved unit is never demoted")
         }
     }
@@ -270,7 +270,7 @@ class CompactorTest extends kyo.test.Test[Any]:
             am("open call " + ("x" * 400), call("c9", "f", "{}")),
             um("LATEST-USER-ROOT")
         ))
-        renderWith(ctx, cfg(1)).map { view =>
+        renderWith(ctx, serverConfig(1)).map { view =>
             val text = view.map(_.content).mkString(" ")
             assert(text.contains("SYSTEM-ROOT"), "system root verbatim")
             assert(text.contains("FIRST-USER-ROOT"), "first user root verbatim")
@@ -282,9 +282,9 @@ class CompactorTest extends kyo.test.Test[Any]:
     // ==== cut / occupancy ====
 
     "budget sets cut; demotion set definition" in {
-        val ctx = demotableCtx(400, 16)
-        renderWith(ctx, cfg(1)).map { tight =>
-            renderWith(ctx, cfg(10000000)).map { loose =>
+        val ctx = demotableContext(400, 16)
+        renderWith(ctx, serverConfig(1)).map { tight =>
+            renderWith(ctx, serverConfig(10000000)).map { loose =>
                 assert(
                     contentLen(tight) < contentLen(ctx.raw),
                     s"a tiny budget demotes middle units (view content shrinks): ${contentLen(tight)} vs ${contentLen(ctx.raw)}"
@@ -297,7 +297,7 @@ class CompactorTest extends kyo.test.Test[Any]:
     "no band; no judge in default" in {
         // render over an over-budget Context makes ZERO model calls (it completes with no server); the demotion
         // set is the ascending-score walk, not a judge verdict. Proven by render completing model-free.
-        renderWith(demotableCtx(400, 16), cfg(1)).map { view =>
+        renderWith(demotableContext(400, 16), serverConfig(1)).map { view =>
             assert(view.nonEmpty, "the demotion set is purely the ascending-score walk (no cheap-tier judge model)")
         }
     }
@@ -315,29 +315,29 @@ class CompactorTest extends kyo.test.Test[Any]:
         // The default over-counts; a custom exact tokenizer is used when plugged.
         val exact = new Compactor.Tokenizer:
             def count(message: Message): Int = 1
-        val ctx = demotableCtx(400, 16)
-        renderWith(ctx, cfg(1000000).tokenizer(exact)).map { view =>
+        val ctx = demotableContext(400, 16)
+        renderWith(ctx, serverConfig(1000000).tokenizer(exact)).map { view =>
             // With every message counted as 1 token and a large budget, nothing needs demotion.
             assert(view == ctx.raw, "the plugged tokenizer drives occupancy (all-1 counts stay under budget)")
         }
     }
 
     "occupancy gate branches" in {
-        val ctx = demotableCtx(400, 16)
+        val ctx = demotableContext(400, 16)
         // below target (huge budget): view == raw (no demotion)
-        renderWith(ctx, cfg(10000000)).map { under =>
+        renderWith(ctx, serverConfig(10000000)).map { under =>
             // over target (tiny budget, ample window): demotion, no forced abort
-            renderWith(ctx, cfg(1, window = 128000)).map { over =>
+            renderWith(ctx, serverConfig(1, window = 128000)).map { over =>
                 assert(under == ctx.raw, "below the target the view is the transcript unchanged")
                 assert(contentLen(over) < contentLen(ctx.raw), "at/above the target the view is compacted to the low watermark")
             }
         }
     }
 
-    "swapped low/high watermark guarded at the read site; trigger always >= target (F6.2-r2)" in {
+    "swapped low/high watermark guarded at the read site; trigger always >= target" in {
         // With low=0.8, high=0.3 (swapped), render's target reads min(0.8,0.3)=0.3 and the seam's trigger reads
         // max(0.8,0.3)=0.8; the trigger is never below the target regardless of builder order.
-        val c       = cfg(1000, low = 0.8, high = 0.3)
+        val c       = serverConfig(1000, low = 0.8, high = 0.3)
         val target  = math.min(c.compactionLowWatermark, c.compactionHighWatermark)
         val trigger = math.max(c.compactionLowWatermark, c.compactionHighWatermark)
         assert(eps(target, 0.3) && eps(trigger, 0.8), "target = min, trigger = max")
@@ -347,8 +347,8 @@ class CompactorTest extends kyo.test.Test[Any]:
     // ==== project / ladder ====
 
     "project total; per-unit render" in {
-        val ctx = demotableCtx(400, 16)
-        renderWith(ctx, cfg(1)).map { view =>
+        val ctx = demotableContext(400, 16)
+        renderWith(ctx, serverConfig(1)).map { view =>
             // every demoted unit collapses to exactly one entry; no unit is emitted twice. The view length is
             // bounded by the number of units and never exceeds raw.
             assert(view.size <= ctx.raw.size, "project collapses demoted units, never expands")
@@ -357,7 +357,7 @@ class CompactorTest extends kyo.test.Test[Any]:
     }
 
     "markers provider-legal; carry recall id" in {
-        renderWith(demotableCtx(400, 16), cfg(1)).map { view =>
+        renderWith(demotableContext(400, 16), serverConfig(1)).map { view =>
             val markers = view.filter(_.content.contains("compacted region"))
             assert(markers.nonEmpty, "demoted units become synthetic markers")
             assert(markers.forall(_.isInstanceOf[SystemMessage]), "markers are plain SystemMessages (provider-legal)")
@@ -385,7 +385,7 @@ class CompactorTest extends kyo.test.Test[Any]:
     "omitted marker-only, recoverable" in {
         // Under maximum pressure a demotable unit reaches Omitted (a bare recall-recoverable marker); the ladder
         // never jumps Verbatim -> Omitted outside the forced path (the cut deepens Reduced -> Omitted).
-        renderWith(demotableCtx(4000, 16), cfg(1)).map { view =>
+        renderWith(demotableContext(4000, 16), serverConfig(1)).map { view =>
             val omitted = view.filter(_.content.contains("omitted"))
             assert(omitted.nonEmpty, "a heavily-pressured unit reaches an Omitted marker")
             assert(omitted.forall(_.content.contains("recall(")), "the Omitted marker is recall-recoverable")
@@ -406,7 +406,7 @@ class CompactorTest extends kyo.test.Test[Any]:
                 .concat(fillers)
                 .append(um("latest question"))
         )
-        renderWith(ctx, cfg(1)).map { view =>
+        renderWith(ctx, serverConfig(1)).map { view =>
             val repeat = view.filter(_.origin.exists(_.start == 4)).headMaybe
             val near   = view.filter(_.origin.exists(_.start == 3)).headMaybe
             assert(
@@ -429,7 +429,35 @@ class CompactorTest extends kyo.test.Test[Any]:
             // A genuine same-type byte-identical repeat DOES fold to the earlier unit id.
             val sameRaw = Chunk[Message](am("REPEAT ME"), am("x"), am("REPEAT ME"))
             val sameDup = Default.duplicateTargets(Default.group(sameRaw), sameRaw)
-            assert(sameDup.get(2) == Some(0), s"a same-type byte-identical repeat folds to the earlier unit id, got: $sameDup")
+            assert(sameDup.get(2) == Present(0), s"a same-type byte-identical repeat folds to the earlier unit id, got: $sameDup")
+
+            // recall tail-copy fold (origin identity, the path coreEq cannot reach): a REAL recall exchange
+            // (an assistant `recall` call fused with its answering tool result, carrying a provider-unique
+            // CallId) whose target region is still present folds to a Reference to that region.
+            val recallRaw = Chunk[Message](
+                am("REGION ZERO PAYLOAD"),                              // index 0 -> unit 0 (the region)
+                um("unrelated"),                                        // index 1
+                am("recalling", call("rc7", "recall", """{"id":0}""")), // index 2 (assistant recall, distinct CallId rc7)
+                tm("rc7", "REGION ZERO PAYLOAD")                        // index 3 -> fused into unit 2
+            )
+            val recallUnits = Default.group(recallRaw)
+            val recallDup   = Default.duplicateTargets(recallUnits, recallRaw)
+            assert(
+                recallDup.get(2) == Present(0),
+                s"a recall exchange targeting region 0 folds to a Reference to region 0 (origin identity), got: $recallDup"
+            )
+            // coreEq alone NEVER folds the recall copy (different shape + provider-unique CallId), which is
+            // exactly why the origin-based path exists: the false claim was that coreEq's fold reaches it.
+            assert(
+                !Default.unitCoreEq(recallUnits.filter(_.id == 0).head, recallUnits.filter(_.id == 2).head, recallRaw),
+                "the recall exchange is NOT core-equal to the region it reproduces (the fold is origin-based, not coreEq)"
+            )
+            // a recall whose target region is absent never folds.
+            val danglingRaw = Chunk[Message](am("x"), am("recalling", call("rc8", "recall", """{"id":999}""")), tm("rc8", "y"))
+            assert(
+                Default.duplicateTargets(Default.group(danglingRaw), danglingRaw).get(1).isEmpty,
+                "a recall to an absent region never folds"
+            )
         }
     }
 
@@ -438,8 +466,8 @@ class CompactorTest extends kyo.test.Test[Any]:
     "forced omit-only + overflow abort; doubt renders more" in {
         // (1) large budget (no normal demotion) + small window (a small hard limit): the forced path omits
         // least-live non-root units until the view fits under the hard window.
-        val fits = demotableCtx(400, 30)
-        renderWith(fits, cfg(10000000, window = 3000, hard = 0.9)).map { view =>
+        val fits = demotableContext(400, 30)
+        renderWith(fits, serverConfig(10000000, window = 3000, hard = 0.9)).map { view =>
             assert(
                 contentLen(view) < contentLen(fits.raw),
                 "the forced path omits least-live non-root units until it fits under the hard window"
@@ -447,7 +475,7 @@ class CompactorTest extends kyo.test.Test[Any]:
         }.andThen {
             // (2) overflow: roots alone exceed the hard window -> Abort (never send over-limit).
             val overflow = Context(Chunk[Message](sm("SYS " + ("x" * 5000))))
-            Abort.run[AIGenException](LLM.run(cfg(1, window = 100, hard = 0.9))(Compactor.init.render(overflow))).map { r =>
+            Abort.run[AIGenException](LLM.run(serverConfig(1, window = 100, hard = 0.9))(Compactor.init.render(overflow))).map { r =>
                 assert(r.isFailure, s"an unfittable request Aborts AIContextOverflowException rather than sending, got: $r")
             }
         }
@@ -456,8 +484,8 @@ class CompactorTest extends kyo.test.Test[Any]:
     // ==== recall ====
 
     "recall typed decode; tail-only; instance-bound" in {
-        val ctx = demotableCtx(400, 16)
-        LLM.run(cfg(1)) {
+        val ctx = demotableContext(400, 16)
+        LLM.run(serverConfig(1)) {
             AI.init.map { ai =>
                 ai.setContext(ctx).andThen {
                     val info = Default.recallTool(ai).infos.head
@@ -497,7 +525,7 @@ class CompactorTest extends kyo.test.Test[Any]:
     }
 
     "recall keyless; no supersession" in {
-        LLM.run(cfg(1)) {
+        LLM.run(serverConfig(1)) {
             AI.init.map { ai =>
                 val info = Default.recallTool(ai).infos.head
                 assert(info.kind == Tool.Kind.Read, "the recall tool is kind=Read")
@@ -511,7 +539,7 @@ class CompactorTest extends kyo.test.Test[Any]:
 
     "relevance recall hint-only default" in {
         // With no opt-in, render never auto-re-injects a demoted region: the demoted unit stays a marker.
-        renderWith(demotableCtx(400, 16), cfg(1)).map { view =>
+        renderWith(demotableContext(400, 16), serverConfig(1)).map { view =>
             assert(
                 view.exists(_.content.contains("compacted region")),
                 "demoted regions stay markers (recall is hint-only, not auto re-injected)"
@@ -523,16 +551,16 @@ class CompactorTest extends kyo.test.Test[Any]:
 
     "default render model-free, synchronous" in {
         // render completes with no completion server configured, proving zero model/HTTP calls on its path.
-        renderWith(demotableCtx(400, 16), cfg(1)).map { view =>
+        renderWith(demotableContext(400, 16), serverConfig(1)).map { view =>
             assert(view.nonEmpty, "render is fully synchronous and model-free")
         }
     }
 
     "total determinism golden" in {
-        val ctx = demotableCtx(400, 16)
-        renderWith(ctx, cfg(1)).map { a =>
-            renderWith(ctx, cfg(1)).map { b =>
-                renderWith(ctx, cfg(1)).map { c =>
+        val ctx = demotableContext(400, 16)
+        renderWith(ctx, serverConfig(1)).map { a =>
+            renderWith(ctx, serverConfig(1)).map { b =>
+                renderWith(ctx, serverConfig(1)).map { c =>
                     assert(a == b && b == c, "repeated renders of the identical (raw, compacted, config) are byte-identical")
                 }
             }
@@ -544,7 +572,7 @@ class CompactorTest extends kyo.test.Test[Any]:
     "origin absent on raw appends; set with start==unit id on synthetic entries" in {
         val appended = Context.empty.add(um("u")).add(am("a")).raw
         assert(appended.forall(_.origin.isEmpty), "an ordinarily-appended message carries Absent origin")
-        renderWith(demotableCtx(400, 16), cfg(1)).map { view =>
+        renderWith(demotableContext(400, 16), serverConfig(1)).map { view =>
             val markers = view.filter(_.origin.isDefined)
             assert(markers.nonEmpty, "synthetic markers carry Present(origin)")
             assert(
@@ -556,8 +584,8 @@ class CompactorTest extends kyo.test.Test[Any]:
 
     "origin lookup replaces positional matching; recall id->origin->raw slice" in {
         // recall resolves id -> the unit's raw content, typed end to end (via group over raw, keyed by unit id).
-        val ctx = demotableCtx(400, 16)
-        LLM.run(cfg(1)) {
+        val ctx = demotableContext(400, 16)
+        LLM.run(serverConfig(1)) {
             AI.init.map { ai =>
                 ai.setContext(ctx).andThen {
                     Default.recallTool(ai).infos.head.decodeAndRun("""{"id":2}""").map { r =>
@@ -579,6 +607,67 @@ class CompactorTest extends kyo.test.Test[Any]:
     "recallArgId typed-decodes an object-shaped argument, Absent on malformed" in {
         assert(Default.recallArgId("""{"id":7}""") == Present(7), "a valid object-shaped arg decodes to its id")
         assert(Default.recallArgId("garbage").isEmpty, "a malformed arg decodes to Absent, never a throw")
+    }
+
+    // ==== promotion (anti-thrash window) ====
+
+    "origin.since preserved across re-render; cross-boundary recalls promote" in {
+        // A single demotable region (unit 0). Three successive boundaries are driven directly through the
+        // internal derivation (project -> demotedOrigins -> promotionSet), the exact path render threads.
+        // The bug was: renderMarker re-stamped origin.since to the current boundary on every re-render,
+        // resetting the anti-thrash window, so a unit recalled once per window never promoted.
+        def recallAm(cid: String): AssistantMessage = am("recall", call(cid, "recall", """{"id":0}"""))
+        val region0                                 = am("REGION ZERO " + ("x" * 40))
+        val demOm                                   = Dict[Int, Level]((0, Level.Omitted))
+
+        // Boundary 1: raw = [region0, q1]; unit 0 demoted at since = raw.size = 2 (first demotion, no prior levels).
+        val rawB1  = Chunk[Message](region0, um("q1"))
+        val projB1 = Default.project(rawB1, Default.group(rawB1), demOm, rawB1.size, Dict.empty)
+        val origB1 = Default.demotedOrigins(projB1)
+        assert(origB1.get(0).map(_.since) == Present(2), s"first demotion stamps since = raw.size at B1 (2), got ${origB1.get(0)}")
+
+        // Boundary 2: raw grew (one recall of region 0 at index 2, then q2). Unit 0 stays demoted; the
+        // re-render must PRESERVE the original since = 2, never re-stamp it to raw.size = 4.
+        val rawB2  = rawB1.append(recallAm("r1")).append(um("q2"))
+        val projB2 = Default.project(rawB2, Default.group(rawB2), demOm, rawB2.size, origB1)
+        val origB2 = Default.demotedOrigins(projB2)
+        assert(
+            origB2.get(0).map(_.since) == Present(2),
+            s"re-render preserves the original since (2), never re-stamps to raw.size=4, got ${origB2.get(0)}"
+        )
+
+        // Boundary 3: a second recall of region 0. With the preserved window (since = 2) BOTH recalls count
+        // (index 2 and index 4) so promotion fires; the buggy re-stamp (since = 4) would count only one.
+        val rawB3   = rawB2.append(recallAm("r2")).append(um("q3"))
+        val unitsB3 = Default.group(rawB3)
+        assert(Default.refetchCount(0, rawB3, 2) == 2, "two recalls fall in the preserved since-2 window")
+        assert(Default.refetchCount(0, rawB3, 4) == 1, "only one recall falls in the buggy re-stamped since-4 window")
+        assert(
+            Default.promotionSet(unitsB3, rawB3, origB2) == Set(0),
+            "with the preserved window, two cross-boundary recalls PROMOTE region 0"
+        )
+
+        // Negative: recalled once only -> NEVER promoted.
+        val rawOne = rawB1.append(recallAm("r1")).append(um("q2"))
+        assert(
+            Default.promotionSet(Default.group(rawOne), rawOne, origB1).isEmpty,
+            "a unit recalled fewer than refetchThreshold times is NEVER promoted"
+        )
+    }
+
+    // ==== tokenizer image accounting ====
+
+    "conservative tokenizer counts images (over-count bias holds for vision content)" in {
+        val text   = UserMessage("hello world", Absent)
+        val vision = UserMessage("hello world", Present(Image.fromBase64("QUJD")))
+        assert(
+            ConservativeTokenizer.count(vision) == ConservativeTokenizer.count(text) + ConservativeTokenizer.imageSurcharge,
+            "a user-message image adds a fixed conservative token surcharge"
+        )
+        assert(
+            ConservativeTokenizer.count(vision) > ConservativeTokenizer.count(text),
+            "an image contributes non-zero tokens so occupancy never under-reads vision content"
+        )
     }
 
 end CompactorTest

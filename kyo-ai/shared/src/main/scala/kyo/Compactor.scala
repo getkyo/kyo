@@ -6,7 +6,10 @@ import kyo.ai.Context.*
 import scala.annotation.tailrec
 
 /** Automatic context compaction as a swappable `AI.Enablement`: keeps what the model SEES small
-  * and high-signal while `Context.raw` stays the complete, immutable transcript.
+  * and high-signal while `Context.raw` stays the complete transcript that compaction never rewrites
+  * (render rebuilds only `compacted`; a Compactor never touches `raw`). Tool dispatch reconciles the
+  * transient "Processing tool call" placeholder in the tail of BOTH lists symmetrically; no other path
+  * rewrites `raw`.
   *
   * `Compactor` is a pure trait carrying the enablement family's `[-S]` capability parameter (like
   * `Tool`/`Thought`/`Mode`). Enable the default with `ai.enable(Compactor.init)`; implement the
@@ -84,6 +87,8 @@ object Compactor:
         val tailTurns: Int              = 10
         val tailTokens: Int             = 12000
 
+        // Verbatim is level 0 (NOT demoted): it never enters a demotions Dict, so project's marker
+        // path only ever sees Reduced or Omitted. Reduced and Omitted are the two demoted levels.
         enum Level derives CanEqual:
             case Verbatim, Reduced, Omitted
 
@@ -108,16 +113,23 @@ object Compactor:
         final case class Recall(id: Int) derives Schema, CanEqual
 
         /** The conservative default tokenizer: ~1 token per 3 chars rounded up plus a small
-          * per-message envelope, biased to OVER-count so occupancy never under-reads the provider.
+          * per-message envelope, biased to OVER-count so occupancy never under-reads the provider. A
+          * user-message image contributes a fixed conservative surcharge (providers bill vision content
+          * at roughly 1-2k tokens per image), so an image-heavy conversation never under-reads occupancy.
           */
         object ConservativeTokenizer extends Tokenizer:
+            // A fixed per-image surcharge on the conservative side of what providers bill for vision content.
+            val imageSurcharge: Int = 2000
             def count(message: Message): Int =
                 val chars = message match
                     case AssistantMessage(c, calls, _, _, _) => c.length + calls.foldLeft(0)((n, x) => n + x.arguments.length)
                     case ToolMessage(_, c, _, _, _)          => c.length
                     case UserMessage(c, _, _, _, _)          => c.length
                     case SystemMessage(c, _, _, _)           => c.length
-                (chars + 2) / 3 + 4
+                val images = message match
+                    case UserMessage(_, image, _, _, _) => if image.isDefined then imageSurcharge else 0
+                    case _                              => 0
+                (chars + 2) / 3 + 4 + images
             end count
         end ConservativeTokenizer
 
@@ -137,7 +149,7 @@ object Compactor:
                     val target    = math.min(config.compactionLowWatermark, config.compactionHighWatermark)
                     val low       = (target * budget).toInt
                     val hard      = (config.compactionHardLimit * window).toInt
-                    val units     = group(ctx.raw)
+                    val units     = group(ctx.raw, tokenizer)
                     superKeys(units, ctx.raw).map { keys =>
                         val superseded = supersession(units, keys)
                         val graph      = deriveGraph(units, ctx.raw, superseded)
@@ -148,12 +160,12 @@ object Compactor:
                         val prevLevels = demotedOrigins(ctx.compacted)
                         val promoted   = promotionSet(units, ctx.raw, prevLevels)
                         val since      = ctx.raw.size
-                        val demotions  = cut(ctx, units, scores, referrers, rootSet, promoted, tokenizer, low, since)
-                        val view       = project(ctx.raw, units, demotions, since)
+                        val demotions  = cut(ctx, units, scores, referrers, rootSet, promoted, tokenizer, low, since, prevLevels)
+                        val view       = project(ctx.raw, units, demotions, since, prevLevels)
                         if viewTokens(view, tokenizer) <= hard then view
                         else
-                            val forcedDem  = forced(ctx.raw, units, scores, referrers, rootSet, tokenizer, hard, since)
-                            val forcedView = project(ctx.raw, units, forcedDem, since)
+                            val forcedDem  = forced(ctx.raw, units, scores, referrers, rootSet, tokenizer, hard, since, prevLevels)
+                            val forcedView = project(ctx.raw, units, forcedDem, since, prevLevels)
                             if viewTokens(forcedView, tokenizer) > hard then
                                 Abort.fail(AIContextOverflowException(viewTokens(forcedView, tokenizer), window))
                             else forcedView
@@ -165,7 +177,10 @@ object Compactor:
             override def tools(ai: AI)(using Frame): Chunk[Tool[LLM]] = Chunk(recallTool(ai))
 
             // ---- grouping (fuse assistant + answering tool messages into units over raw) ----
-            def group(raw: Chunk[Message]): Chunk[Segment] =
+            // Segment.tokens uses the ACTIVE tokenizer (config.tokenizer at render) so tail-window
+            // selection accounts on the same model the cut and occupancy do; defaults to the
+            // conservative estimator for callers (recall) that never read Segment.tokens.
+            def group(raw: Chunk[Message], tokenizer: Tokenizer = ConservativeTokenizer): Chunk[Segment] =
                 val (byId, _) =
                     raw.zipWithIndex.foldLeft((Map.empty[Int, Building], Dict.empty[String, Int])) {
                         case ((units, owner), (msg, i)) =>
@@ -186,12 +201,12 @@ object Compactor:
                                     (units.updated(i, Building(i, Chunk(i), Set.empty)), owner)
                     }
                 Chunk.from(byId.values.toList.sortBy(_.id).map { b =>
-                    val toks = b.indices.foldLeft(0)((n, idx) => n + ConservativeTokenizer.count(raw(idx)))
+                    val toks = b.indices.foldLeft(0)((n, idx) => n + tokenizer.count(raw(idx)))
                     Segment(b.id, b.indices, b.open.nonEmpty, toks)
                 })
             end group
 
-            // ---- key supersession (typed compactionKey via the Phase-02 Info closure, no cast) ----
+            // ---- key supersession (typed compactionKey via the Info closure, no cast) ----
             def superKeys(units: Chunk[Segment], raw: Chunk[Message])(using Frame): Dict[Int, (String, Tool.Kind)] < LLM =
                 Tool.internal.infos.map { infos =>
                     val byName = infos.foldLeft(Dict.empty[String, Tool.internal.Info[?, ?, LLM]])((m, i) => m.update(i.name, i))
@@ -399,14 +414,15 @@ object Compactor:
                 promoted: Set[Int],
                 tokenizer: Tokenizer,
                 low: Int,
-                since: Int
-            ): Dict[Int, Level] =
+                since: Int,
+                prevLevels: Dict[Int, Context.Origin]
+            )(using Frame): Dict[Int, Level] =
                 val candidates =
                     units.toList
                         .filter(u => !rootSet.contains(u.id) && !u.unresolved && !promoted.contains(u.id))
                         .sortBy(u => scores.get(u.id).getOrElse(0.0))
                 @tailrec def demote(rem: List[Segment], dem: Dict[Int, Level]): Dict[Int, Level] =
-                    if viewTokens(project(ctx.raw, units, dem, since), tokenizer) <= low then dem
+                    if viewTokens(project(ctx.raw, units, dem, since, prevLevels), tokenizer) <= low then dem
                     else
                         rem match
                             case Nil => dem
@@ -415,13 +431,13 @@ object Compactor:
                                 if coPinned then demote(rest, dem)
                                 else
                                     val proposed = dem.update(u.id, Level.Reduced)
-                                    if cacheGatePasses(ctx, units, dem, proposed, tokenizer, since) then demote(rest, proposed)
+                                    if cacheGatePasses(ctx, units, dem, proposed, tokenizer, since, prevLevels) then demote(rest, proposed)
                                     else demote(rest, dem)
                                 end if
                 // second pass: deepen Reduced -> Omitted under remaining pressure (never Verbatim -> Omitted)
                 val reduced = demote(candidates, Dict.empty)
                 @tailrec def deepen(rem: List[Segment], dem: Dict[Int, Level]): Dict[Int, Level] =
-                    if viewTokens(project(ctx.raw, units, dem, since), tokenizer) <= low then dem
+                    if viewTokens(project(ctx.raw, units, dem, since, prevLevels), tokenizer) <= low then dem
                     else
                         rem match
                             case Nil => dem
@@ -440,10 +456,11 @@ object Compactor:
                 cur: Dict[Int, Level],
                 proposed: Dict[Int, Level],
                 tokenizer: Tokenizer,
-                since: Int
-            ): Boolean =
-                val before = project(ctx.raw, units, cur, since)
-                val after  = project(ctx.raw, units, proposed, since)
+                since: Int,
+                prevLevels: Dict[Int, Context.Origin]
+            )(using Frame): Boolean =
+                val before = project(ctx.raw, units, cur, since, prevLevels)
+                val after  = project(ctx.raw, units, proposed, since, prevLevels)
                 val saved  = math.max(0, viewTokens(before, tokenizer) - viewTokens(after, tokenizer))
                 val editAt = before.zip(after).takeWhile((a, b) => Context.coreEq(a, b)).size
                 val lCut   = after.drop(editAt).foldLeft(0)((n, m) => n + tokenizer.count(m))
@@ -459,14 +476,15 @@ object Compactor:
                 rootSet: Set[Int],
                 tokenizer: Tokenizer,
                 hard: Int,
-                since: Int
-            ): Dict[Int, Level] =
+                since: Int,
+                prevLevels: Dict[Int, Context.Origin]
+            )(using Frame): Dict[Int, Level] =
                 val candidates =
                     units.toList
                         .filter(u => !rootSet.contains(u.id) && !u.unresolved)
                         .sortBy(u => scores.get(u.id).getOrElse(0.0))
                 @tailrec def omit(rem: List[Segment], dem: Dict[Int, Level]): Dict[Int, Level] =
-                    if viewTokens(project(raw, units, dem, since), tokenizer) <= hard then dem
+                    if viewTokens(project(raw, units, dem, since, prevLevels), tokenizer) <= hard then dem
                     else
                         rem match
                             case Nil => dem
@@ -486,20 +504,61 @@ object Compactor:
                 a.indices.size == b.indices.size &&
                     a.indices.zip(b.indices).forall((ia, ib) => Context.coreEq(raw(ia), raw(ib)))
 
-            // A byte-identical repeat of an earlier unit maps to that earlier unit's id, so a demoted
-            // repeat renders as a Reference pointer (Reduced-Reference) rather than a second copy. A
-            // near-duplicate is not core-field equal, so it never folds (it routes through key supersession
-            // instead). This is also the fold that collapses a promoted region's recall tail-copies.
-            def duplicateTargets(units: Chunk[Segment], raw: Chunk[Message]): Map[Int, Int] =
-                units.toList.sortBy(_.id).foldLeft((Map.empty[Int, Int], List.empty[Segment])) {
-                    case ((dt, seen), u) =>
-                        seen.find(prev => unitCoreEq(prev, u, raw)) match
-                            case Some(prev) => (dt.updated(u.id, prev.id), seen :+ u)
-                            case None       => (dt, seen :+ u)
-                }._1
+            // TWO fold paths map a demoted unit to a Reference pointer (Reduced-Reference) rather than a
+            // second copy:
+            //   (a) coreEq: a byte-identical repeat of an earlier unit (same content/role/image/calls/callId)
+            //       maps to that earlier unit's id. A near-duplicate is not core-field equal, so it never folds
+            //       here (it routes through key supersession instead).
+            //   (b) recall identity: a recall exchange (an assistant `recall` call fused with its answering tool
+            //       result) whose target region is still present maps to that region's id. This is the path coreEq
+            //       CANNOT reach: a recall tail-copy carries a provider-unique CallId and a different message shape
+            //       than the region it reproduces, so it is never core-equal to that region. Folding a demoted
+            //       recall tail-copy reclaims the bytes a promoted region's recalls would otherwise duplicate.
+            def duplicateTargets(units: Chunk[Segment], raw: Chunk[Message])(using Frame): Dict[Int, Int] =
+                val ordered = units.toList.sortBy(_.id)
+                val present = ordered.iterator.map(_.id).toSet
+                val (coreDup, _) =
+                    ordered.foldLeft((Dict.empty[Int, Int], Chunk.empty[Segment])) {
+                        case ((dt, seen), u) =>
+                            seen.filter(prev => unitCoreEq(prev, u, raw)).headMaybe match
+                                case Present(prev) => (dt.update(u.id, prev.id), seen.append(u))
+                                case Absent        => (dt, seen.append(u))
+                    }
+                ordered.foldLeft(coreDup) { (dt, u) =>
+                    if dt.contains(u.id) then dt
+                    else
+                        recallTarget(u, raw) match
+                            case Present(target) if target != u.id && present.contains(target) => dt.update(u.id, target)
+                            case _                                                             => dt
+                }
+            end duplicateTargets
+
+            // The region id a recall exchange unit points at (its first `recall` call's decoded target),
+            // Absent for a non-recall unit. This is the origin identity the recall tail-copy fold keys on,
+            // decoded through the SAME typed Recall schema recall registers (no regex).
+            def recallTarget(u: Segment, raw: Chunk[Message])(using Frame): Maybe[Int] =
+                u.indices.foldLeft(Absent: Maybe[Int]) { (found, idx) =>
+                    found match
+                        case Present(_) => found
+                        case Absent =>
+                            raw(idx) match
+                                case AssistantMessage(_, calls, _, _, _) =>
+                                    calls.foldLeft(Absent: Maybe[Int]) { (f, c) =>
+                                        f match
+                                            case Present(_) => f
+                                            case Absent     => if c.function == "recall" then recallArgId(c.arguments) else Absent
+                                    }
+                                case _ => Absent
+                }
 
             // ---- project: build the view; a demoted unit becomes ONE synthetic entry carrying origin ----
-            def project(raw: Chunk[Message], units: Chunk[Segment], demotions: Dict[Int, Level], since: Int): Chunk[Message] =
+            def project(
+                raw: Chunk[Message],
+                units: Chunk[Segment],
+                demotions: Dict[Int, Level],
+                since: Int,
+                prevLevels: Dict[Int, Context.Origin]
+            )(using Frame): Chunk[Message] =
                 if demotions.isEmpty then raw
                 else
                     val ordered = units.toList.sortBy(_.id)
@@ -516,7 +575,7 @@ object Compactor:
                                         if emitted.contains(uid) then (acc, emitted)
                                         else
                                             val u      = byId(uid)
-                                            val marker = renderMarker(u, raw, level, since, dupTarget)
+                                            val marker = renderMarker(u, raw, level, since, dupTarget, prevLevels)
                                             (acc.append(marker), emitted + uid)
                                 end match
                         }
@@ -525,33 +584,45 @@ object Compactor:
 
             // A synthetic SystemMessage standing for a demoted unit, assembled MECHANICALLY (no
             // model-generated text) and carrying Present(origin) so recall + level derivation are typed.
-            // A byte-identical repeat renders as a Reference pointer to the earlier unit's id (the
-            // Reduced-Reference sub-mechanism); every other demoted unit uses Reduced-Elide/Mask or Omit.
-            def renderMarker(u: Segment, raw: Chunk[Message], level: Level, since: Int, dupTarget: Map[Int, Int]): Message =
-                val endExcl = u.indices.lastOption.map(_ + 1).getOrElse(u.id + 1)
-                val origin  = Present(Context.Origin(u.id, endExcl, since))
-                val bytes   = u.indices.foldLeft(0)((n, idx) => n + raw(idx).content.length)
+            // A byte-identical repeat (or a recall tail-copy) renders as a Reference pointer to the earlier
+            // unit's id (the Reduced-Reference sub-mechanism); every other demoted unit uses Reduced-Elide/Mask
+            // or Omit. origin.since is PRESERVED across re-renders for a unit already demoted at an earlier
+            // boundary (prevLevels carries it): re-stamping it to the current boundary would reset the
+            // anti-thrash promotion window every render, so a unit recalled once per window would never
+            // promote. A newly-demoted unit stamps the current boundary's `since`.
+            def renderMarker(
+                u: Segment,
+                raw: Chunk[Message],
+                level: Level,
+                since: Int,
+                dupTarget: Dict[Int, Int],
+                prevLevels: Dict[Int, Context.Origin]
+            ): Message =
+                val endExcl     = u.indices.lastOption.map(_ + 1).getOrElse(u.id + 1)
+                val originSince = prevLevels.get(u.id).map(_.since).getOrElse(since)
+                val origin      = Present(Context.Origin(u.id, endExcl, originSince))
+                val bytes       = u.indices.foldLeft(0)((n, idx) => n + raw(idx).content.length)
                 dupTarget.get(u.id) match
-                    case Some(target) =>
+                    case Present(target) =>
                         SystemMessage(
                             s"[compacted region ${u.id}: identical to region $target; call recall(${u.id}) to restore]",
                             origin = origin
                         )
-                    case None =>
+                    case Absent =>
+                        // Only Reduced and Omitted reach here (Verbatim = not demoted, never in a demotions Dict).
                         level match
-                            case Level.Verbatim => raw(u.indices.head)
-                            case Level.Reduced =>
+                            case Level.Omitted =>
+                                SystemMessage(
+                                    s"[compacted region ${u.id}: $bytes bytes omitted; call recall(${u.id}) to restore]",
+                                    origin = origin
+                                )
+                            case Level.Reduced | Level.Verbatim =>
                                 val content = unitContent(u, raw)
                                 val body = elide(
                                     content,
                                     elisionThreshold
                                 ).getOrElse(s"[compacted region ${u.id}: $bytes bytes reduced; call recall(${u.id}) to restore]")
                                 SystemMessage(body, origin = origin)
-                            case Level.Omitted =>
-                                SystemMessage(
-                                    s"[compacted region ${u.id}: $bytes bytes omitted; call recall(${u.id}) to restore]",
-                                    origin = origin
-                                )
                         end match
                 end match
             end renderMarker

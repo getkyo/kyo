@@ -34,7 +34,7 @@ class ContextTest extends kyo.test.Test[Any]:
         assert(Role.Tool.name == "tool")
     }
 
-    "two fields raw+compacted; no Maybe; compacted starts == raw; single-arg factory (INV-CMP-49)" in {
+    "two fields raw+compacted; no Maybe; compacted starts == raw; single-arg factory" in {
         val chunk = Chunk[Message](SystemMessage("s"), um("u"))
         val ctx   = Context(chunk)
         assert(ctx.raw == chunk, s"raw should equal the given chunk, got: ${ctx.raw}")
@@ -45,7 +45,7 @@ class ContextTest extends kyo.test.Test[Any]:
         assert(o.start == 1 && o.end == 3 && o.since == 7)
     }
 
-    "add appends to both lists; builders delegate; Context carries no compaction logic (INV-CMP-50)" in {
+    "add appends to both lists; builders delegate; Context carries no compaction logic" in {
         val ctx = Context.empty.add(SystemMessage("m1")).userMessage("u").toolMessage(CallId("c"), "t")
         assert(ctx.raw.size == 3, s"raw should hold three messages, got: ${ctx.raw}")
         assert(ctx.raw == ctx.compacted, "add appends to BOTH lists, never one")
@@ -69,7 +69,7 @@ class ContextTest extends kyo.test.Test[Any]:
         assert(!Context.empty.add(um("x")).isEmpty)
     }
 
-    "merge appends fork suffix to both; receiver compacted prefix kept; uncompacted stays compacted==raw (INV-CMP-52)" in {
+    "merge appends fork suffix to both; receiver compacted prefix kept; uncompacted stays compacted==raw" in {
         val base = Context.empty.add(um("a")).add(um("b"))
         // A receiver whose compacted was rewritten to a shorter frozen view.
         val receiver = base.copy(compacted = Chunk[Message](SystemMessage("[frozen view]")))
@@ -102,7 +102,7 @@ class ContextTest extends kyo.test.Test[Any]:
         assert(selfMerged.raw == p.raw, s"merge of identical contexts should not duplicate, got: ${selfMerged.raw}")
     }
 
-    "core-field comparison ignores enrichment fields (INV-CMP-57)" in {
+    "core-field comparison ignores enrichment fields" in {
         // Two messages identical on content/role but differing solely on enrichment compare as the same
         // under coreEq (merge/dedup/cache-gate path), while full-record == treats them as different.
         val emb  = Embedding(Span(1.0f, 0.0f), "m", 2)
@@ -120,7 +120,7 @@ class ContextTest extends kyo.test.Test[Any]:
         assert(merged.raw.map(_.content) == Chunk("same", "next"), s"enrichment-only diff is common prefix, got: ${merged.raw}")
     }
 
-    "embedding/summary/origin default Absent on every ordinarily-added message (INV-CMP-54/55)" in {
+    "embedding/summary/origin default Absent on every ordinarily-added message" in {
         val ctx = Context.empty.add(SystemMessage("s")).userMessage("u").assistantMessage("a").toolMessage(CallId("c"), "t")
         assert(
             ctx.raw.forall(m => m.embedding.isEmpty && m.summary.isEmpty && m.origin.isEmpty),
@@ -128,7 +128,7 @@ class ContextTest extends kyo.test.Test[Any]:
         )
     }
 
-    "Context Schema round-trips every message type, including image, tool calls, and enrichment fields (INV-CMP-53)" in {
+    "Context Schema round-trips every message type, including image, tool calls, and enrichment fields" in {
         // The serializable slice behind ai.snapshot/AI.recover: a Schema regression here silently corrupts
         // cross-run persistence. Exercise one of every variant PLUS Present embedding/summary/origin, and a
         // divergent compacted (a synthetic marker) so BOTH lists are checked.

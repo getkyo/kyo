@@ -3,8 +3,8 @@ package kyo
 import kyo.ai.Config
 
 /** The generation environment: a config plus the enablements layered for a scope or instance (prompt, tools,
-  * thoughts, modes). The scope's active env is threaded in `LLM.State`, read via `AI.env` / `AI.config` and
-  * scoped via `AI.withConfig` and the `enable` methods; each `AI.Session` carries one as its instance env.
+  * thoughts, modes, compactor). The scope's active env is threaded in `LLM.State`, read via `AI.env` / `AI.config`
+  * and scoped via `AI.withConfig` and the `enable` methods; each `AI.Session` carries one as its instance env.
   *
   * `config` is `Maybe[Config]`: the scope env always holds `Present` (set at `LLM.run`), while an instance env
   * holds `Absent` to inherit the scope config or `Present` to override it.

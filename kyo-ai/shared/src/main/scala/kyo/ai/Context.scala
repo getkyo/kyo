@@ -3,10 +3,13 @@ package kyo.ai
 import Context.*
 import kyo.*
 
-/** raw is the append-only full transcript (never rewritten/truncated); compacted is exactly what
-  * providers are sent. They start identical (structural sharing) and diverge only at the first
-  * boundary render, which the Compactor performs; Context interprets neither list. add appends to
-  * BOTH (the pairing invariant); every builder delegates to add.
+/** raw is the full transcript; compacted is exactly what providers are sent. They start identical
+  * (structural sharing) and diverge only at the first boundary render, which the Compactor performs;
+  * Context interprets neither list. add appends to BOTH (the pairing invariant); every builder
+  * delegates to add. raw is append-only under compaction (a Compactor rebuilds only compacted and can
+  * never touch raw), with ONE sanctioned exception: tool dispatch reconciles the transient "Processing
+  * tool call" placeholder in the tail of BOTH lists symmetrically (replacing it with the result, or
+  * removing it and the failing call on a decode failure); no other path rewrites raw.
   */
 case class Context(raw: Chunk[Message], compacted: Chunk[Message]) derives CanEqual, Schema:
 

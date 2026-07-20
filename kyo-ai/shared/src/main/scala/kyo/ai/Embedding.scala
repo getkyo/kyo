@@ -4,13 +4,15 @@ import kyo.*
 
 /** A single embedding vector tagged with the space that produced it.
   *
-  * `Embedding` is the element type `Completion.embed` returns and the input to the
-  * compactor's semantic-edge derivation. `modelName` and `dim` tag the embedding space:
-  * two embeddings are comparable (a cosine similarity is meaningful) only when both
-  * fields match, because a vector produced by one model lives in a different space
-  * from another model's. The compactor treats a `(modelName, dim)` mismatch as no edge
-  * rather than comparing across spaces, so the space is a runtime-negotiated fact,
-  * not a static type parameter.
+  * `Embedding` is the element type `Completion.embed` returns. `modelName` and `dim` tag
+  * the embedding space: two embeddings are comparable (a cosine similarity is meaningful)
+  * only when both fields match, because a vector produced by one model lives in a
+  * different space from another model's. `cosine` treats a `(modelName, dim)` mismatch as
+  * no comparable result rather than comparing across spaces, so the space is a
+  * runtime-negotiated fact, not a static type parameter. The shipped `Compactor` never
+  * calls `Completion.embed` and never reads a message's `embedding` field; `Embedding` is
+  * a value type available for a pluggable embedding enrichment mechanism, such as a
+  * richer, user-authored `Compactor`, to populate and use directly.
   *
   * @param vector
   *   the dense float vector; `Span[Float]` keeps the cosine hot path allocation-free

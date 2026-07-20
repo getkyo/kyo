@@ -133,8 +133,9 @@ object LLM:
                         case op: Op.Stream[C] @unchecked =>
                             // Stream interpretation: the SSE projection is itself an LLM computation (it reads
                             // config and assembles the result-tool/context), so a nested runWith against the live
-                            // state discharges those LLM ops; the projection is read-only (no instance Context
-                            // write-back), so the threaded state passes through unchanged. The op carries the
+                            // state discharges those LLM ops. At an update boundary the projection writes the
+                            // rendered compacted list back through the compaction seam (setContext), so the
+                            // threaded state carries that update out (Loop.continue(s, ...)). The op carries the
                             // element-emit Tag captured at the suspend site (the handler's C is abstract, so the
                             // Tag cannot be re-derived here).
                             runWith(state)(streamAgainst(op.target, op.schema)(using summon[Frame], op.emitTag))((s, c) => (s, c))
@@ -190,67 +191,61 @@ object LLM:
         Tag[Emit[Chunk[A]]]
     ): Stream[A, Async & Scope & Abort[AIStreamException]] < (LLM & Async & Abort[AIGenException]) =
         given Schema[A] = schema
-        AI.config.map { config =>
-            if config.provider.usesApiKey && config.apiKey.isEmpty then
-                Abort.fail[AIGenException](AIMissingApiKeyException(config.modelName))
-            else
-                // assemble the streaming request with the result_tool in every request:
-                // resultToolInfo supplies the tool definition; enrichedContext includes its prompt and
-                // the tool definition in the request body.
-                val toolInfos = Tool.internal.resultToolInfo.infos
-                // Two streaming modes, inferred from A. A String result streams incrementally: each emitted
-                // element is the next decoded text chunk. Any other type streams object by object: the model
-                // returns an array of A and each element is emitted once it is complete (never a half-filled A).
-                // A bare partial scalar has no meaning, so only String takes the incremental text path;
-                // everything else, scalars included, takes the complete-element path.
-                val stringMode = schema.structure match
-                    case Structure.Type.Primitive(Structure.PrimitiveKind.String, _) => true
-                    case _                                                           => false
-                context(target).map { targetContext =>
-                    // Compaction seam for the stream path: consult the effective compactor between the
-                    // context read and enrichedContext, resolved the SAME way genLoop resolves it for gen
-                    // (the target instance's own enablement over the scope's, instance-over-scope), so an
-                    // `ai.enable(compactor)` is honored on the stream path, not only on gen. Byte-unchanged
-                    // when no compactor is effective (Absent).
-                    LLM.session(target).map { session =>
-                        LLM.env.map { scopeEnv =>
-                            val effective: Maybe[Compactor[LLM]] = session.env.compactor.orElse(scopeEnv.compactor)
-                            effective match
-                                case Present(c) =>
-                                    val budget   = config.effectiveCompactionBudget
-                                    val trigger  = math.max(config.compactionLowWatermark, config.compactionHighWatermark)
-                                    val occupied = targetContext.compacted.foldLeft(0)((n, m) => n + config.tokenizer.count(m))
-                                    if occupied >= (trigger * budget) then
-                                        c.render(targetContext).map { rebuilt =>
-                                            val updated = targetContext.copy(compacted = rebuilt)
-                                            target.setContext(updated).andThen(updated)
+        // Resolve config, the compactor, and tool metadata the SAME way genLoop resolves them for gen
+        // (instance-over-scope), so `ai.stream` compacts identically to `ai.gen` for a named instance: the
+        // merged env means render's occupancy/config read and its superKeys (Tool.internal.infos) see the
+        // instance's overrides. Prompt/thoughts/modes stay scope-only (the stream path sends only the result
+        // tool and never loops them), unchanged from before.
+        LLM.session(target).map { session =>
+            LLM.updateEnv(scopeEnv =>
+                scopeEnv
+                    .copy(config = session.env.config.orElse(scopeEnv.config))
+                    .copy(compactor = session.env.compactor.orElse(scopeEnv.compactor))
+                    .addTools(session.env.tools)
+            ) {
+                AI.config.map { config =>
+                    if config.provider.usesApiKey && config.apiKey.isEmpty then
+                        Abort.fail[AIGenException](AIMissingApiKeyException(config.modelName))
+                    else
+                        // assemble the streaming request with the result_tool in every request:
+                        // resultToolInfo supplies the tool definition; enrichedContext includes its prompt and
+                        // the tool definition in the request body.
+                        val toolInfos = Tool.internal.resultToolInfo.infos
+                        // Two streaming modes, inferred from A. A String result streams incrementally: each emitted
+                        // element is the next decoded text chunk. Any other type streams object by object: the model
+                        // returns an array of A and each element is emitted once it is complete (never a half-filled A).
+                        // A bare partial scalar has no meaning, so only String takes the incremental text path;
+                        // everything else, scalars included, takes the complete-element path.
+                        val stringMode = schema.structure match
+                            case Structure.Type.Primitive(Structure.PrimitiveKind.String, _) => true
+                            case _                                                           => false
+                        context(target).map { targetContext =>
+                            // Compaction seam for the stream path, shared with gen via renderView: below the
+                            // occupancy trigger re-serve the context unchanged, at/above it render + install the
+                            // rebuilt compacted list. The compactor is read from the merged env (instance-over-scope).
+                            LLM.env.map(e => renderView(target, targetContext, config, e.compactor))
+                                .map(Prompt.internal.enrichedContext(_, toolInfos))
+                                .map { context =>
+                                    // Wrap in the {resultValue: A} object envelope (an array of A in element mode); a bare
+                                    // non-object schema is rejected by the providers, which require an object tool schema. The
+                                    // array schema is derived through kyo-schema's chunk Schema, not hand-built.
+                                    val resultValueSchema =
+                                        if stringMode then Json.jsonSchema[A] else Json.jsonSchema(using Schema.chunkSchema(using schema))
+                                    val resultSchema = Thought.internal.resultJson(Chunk.empty, resultValueSchema)
+                                    val completion   = config.provider.completion
+                                    Log.debug(
+                                        s"kyo-ai stream backend=${config.provider.name} model=${config.modelName} " +
+                                            s"mode=${if stringMode then "prefix" else "elements"} messages=${context.compacted.size} tools=${toolInfos.size}"
+                                    ).andThen(completion.streamFragments(config, context, resultSchema, toolInfos)).map { fragments =>
+                                        Stream[A, Async & Scope & Abort[AIStreamException]] {
+                                            if stringMode then consumePrefixFragments(fragments, schema)
+                                            else consumeElementFragments(fragments, schema)
                                         }
-                                    else Kyo.lift(targetContext)
-                                    end if
-                                case Absent => Kyo.lift(targetContext)
-                            end match
-                        }
-                    }
-                        .map(Prompt.internal.enrichedContext(_, toolInfos))
-                        .map { context =>
-                            // Wrap in the {resultValue: A} object envelope (an array of A in element mode); a bare
-                            // non-object schema is rejected by the providers, which require an object tool schema. The
-                            // array schema is derived through kyo-schema's chunk Schema, not hand-built.
-                            val resultValueSchema =
-                                if stringMode then Json.jsonSchema[A] else Json.jsonSchema(using Schema.chunkSchema(using schema))
-                            val resultSchema = Thought.internal.resultJson(Chunk.empty, resultValueSchema)
-                            val completion   = config.provider.completion
-                            Log.debug(
-                                s"kyo-ai stream backend=${config.provider.name} model=${config.modelName} " +
-                                    s"mode=${if stringMode then "prefix" else "elements"} messages=${context.compacted.size} tools=${toolInfos.size}"
-                            ).andThen(completion.streamFragments(config, context, resultSchema, toolInfos)).map { fragments =>
-                                Stream[A, Async & Scope & Abort[AIStreamException]] {
-                                    if stringMode then consumePrefixFragments(fragments, schema)
-                                    else consumeElementFragments(fragments, schema)
+                                    }
                                 }
-                            }
                         }
                 }
+            }
         }
     end streamAgainst
 
@@ -481,6 +476,30 @@ object LLM:
             ai.setContext(merged)
         }
 
+    // The compaction seam shared by eval (gen) and streamAgainst (stream): below the occupancy trigger the
+    // context is re-served unchanged (NO render), so the provider prompt cache survives; at/above it the
+    // compactor renders, the rebuilt compacted list is installed via ctx.copy(compacted = rebuilt) and written
+    // back via setContext, and the updated Context is returned. raw is never shrunk. Absent compactor leaves
+    // ctx unchanged. Both callers pass the compactor, config, and tool metadata resolved instance-over-scope,
+    // so a named instance compacts identically on ai.gen and ai.stream.
+    private def renderView(ai: AI, ctx: Context, config: Config, compactor: Maybe[Compactor[LLM]])(using
+        Frame
+    ): Context < (LLM & Async & Abort[AIGenException]) =
+        compactor match
+            case Present(c) =>
+                val budget   = config.effectiveCompactionBudget
+                val trigger  = math.max(config.compactionLowWatermark, config.compactionHighWatermark)
+                val occupied = ctx.compacted.foldLeft(0)((n, m) => n + config.tokenizer.count(m))
+                if occupied >= (trigger * budget) then
+                    c.render(ctx).map { rebuilt =>
+                        val updated = ctx.copy(compacted = rebuilt)
+                        ai.setContext(updated).andThen(updated)
+                    }
+                else Kyo.lift(ctx)
+                end if
+            case Absent => Kyo.lift(ctx)
+    end renderView
+
     private def genLoop[A](ai: AI, schema: Schema[A])(using Frame): A < (LLM & Async & Abort[AIGenException]) =
         given Schema[A] = schema
         // The instance's own enablements (added via ai.enable) are layered onto the scope env for the
@@ -539,23 +558,10 @@ object LLM:
             allTools     = tools ++ recallInfos ++ resultTool.infos
             resultSchema = Thought.internal.resultJson(thoughts, Json.jsonSchema[A])
             ctx <- ai.context
-            // Compaction seam: the framework owns byte-stability. Below the occupancy trigger re-serve
-            // ctx unchanged (NO render); at/above it call render(ctx), install the rebuilt compacted
-            // list via ctx.copy(compacted = rebuilt), write it back via setContext, and send it. raw is
-            // never shrunk and never installed wholesale. Absent -> ctx unchanged.
-            view <- (env.compactor: Maybe[Compactor[LLM]]) match
-                case Present(c) =>
-                    val budget   = config.effectiveCompactionBudget
-                    val trigger  = math.max(config.compactionLowWatermark, config.compactionHighWatermark)
-                    val occupied = ctx.compacted.foldLeft(0)((n, m) => n + config.tokenizer.count(m))
-                    if occupied >= (trigger * budget) then
-                        c.render(ctx).map { rebuilt =>
-                            val updated = ctx.copy(compacted = rebuilt)
-                            ai.setContext(updated).andThen(updated)
-                        }
-                    else Kyo.lift(ctx)
-                    end if
-                case Absent => Kyo.lift(ctx)
+            // Compaction seam (shared with streamAgainst via renderView): the framework owns byte-stability.
+            // Below the occupancy trigger re-serve ctx unchanged (NO render); at/above it render + install the
+            // rebuilt compacted list, write it back via setContext, and send it. raw is never shrunk.
+            view    <- renderView(ai, ctx, config, env.compactor)
             context <- Prompt.internal.enrichedContext(view, allTools)
             _ <- Log.debug(
                 s"kyo-ai gen backend=${config.provider.name} model=${config.modelName} " +

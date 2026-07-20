@@ -381,20 +381,18 @@ An `AISession` holds code (tool runners, effectful prompts, modes), so it is in-
 
 Where `forget`, `fresh`, and `snapshot` (above) give you manual control over a conversation's state, a `Compactor` manages a conversation's SIZE automatically. A conversation's raw transcript is the complete, immutable record: every message ever sent or received, kept forever. Left unchecked, that transcript grows without bound, and a long session eventually cannot fit inside the model's context window at all, or fits so tightly that a stale message crowds out the tail the model actually needs. A `Compactor` addresses this automatically. Enable one, and the model instead sees a bounded, projected VIEW of the transcript, recomputed at one seam shared by `gen` and `stream`. The full transcript is never edited or discarded; only the view the model reads is bounded.
 
-A compactor is default-off: with none enabled, a generation is byte-identical to one with no compactor. Enable it exactly like any other enablement, by building one with `Compactor.init` (an effectful step, `Compactor < Sync`, because it allocates the per-instance state cell) and passing it to `AI.enable` / `ai.enable`.
+A compactor is default-off: with none enabled, a generation is byte-identical to one with no compactor. Enable it exactly like any other enablement: `Compactor.init` is a plain, side-effect-free value, not `< Sync`, so there is no `.map` and no extra effect row, just `AI.enable(Compactor.init)(v)` or `ai.enable(Compactor.init)`.
 
 ```scala
-def keptBounded(ai: AI): String < (Sync & LLM) =
-    Compactor.init.map { compactor =>
-        ai.enable(compactor).map(_.gen[String]("Continue the investigation."))
-    }
+def keptBounded(ai: AI): String < LLM =
+    ai.enable(Compactor.init).map(_.gen[String]("Continue the investigation."))
 ```
 
-The scoped form `AI.enable(compactor) { ... }` layers a compactor over a computation the same way it layers a tool or a prompt.
+The scoped form `AI.enable(Compactor.init) { ... }` layers a compactor over a computation the same way it layers a tool or a prompt.
 
-> **Note:** unlike an `AI` instance, a `Compactor` is safe to build once and reuse across many `LLM.run` calls and many `AI` instances: its per-instance state is keyed by a weak reference and is swept as instances are garbage collected.
+> **Note:** `Compactor.init` returns the same stateless shared instance on every call, so it is safe to reuse across many `LLM.run` calls and many `AI` instances by construction. Which units are currently demoted, and since when, is re-derived from the conversation's two lists at every render, never cached in a separate structure.
 
-Compaction is consulted at one seam between the context read and request assembly, on both the `gen` and `stream` paths. Below an occupancy trigger fraction, nothing changes: the fast path emits the current view unchanged, and the request stays cache-warm. Once occupancy crosses the trigger fraction, a soft update ladder runs in ascending-score order (compress, then elide or mask, then summarize, each gated by a cache break-even check for a deep edit), targeting a lower occupancy fraction, the hysteresis band between target and trigger.
+Compaction is consulted at one seam between the context read and request assembly, on both the `gen` and `stream` paths. Below an occupancy trigger fraction, nothing changes: the fast path emits the current view unchanged, and the request stays cache-warm. Once occupancy crosses the trigger fraction, a two-pass cut runs: candidates are demoted to a reduced form in ascending relevance order until the view fits a lower target occupancy (the hysteresis band between target and trigger), each demotion gated by a cache break-even check; a second pass then deepens standing reduced units further under continued pressure, never demoting an unreduced unit directly to the deepest level. A reduced unit under a size threshold renders as a short, mechanically assembled marker; above it, as elided head/tail content.
 
 Once occupancy crosses a hard window fraction, a deterministic forced path takes over: it omits the least-live non-root units with no model calls at all. If even the unshrinkable roots (the system head, the first and latest user turn, any unresolved tool-call pair, and the recent tail) cannot fit, `render` aborts with `AIContextOverflowException` rather than send an over-limit request to the provider.
 
@@ -416,13 +414,11 @@ val writeFile =
 
 > **Caution:** `compactionKey` strings share one namespace across every registered tool, not a namespace per tool. Two unrelated tools that happen to emit the same key string will supersede each other's units. Pick keys that are unique across the whole tool set, for example by prefixing the key with the tool's own name.
 
-Deriving semantic edges between units needs an embeddings call. `Config.embedder(config)` pairs a different provider config for that step, and the default (`Absent`) embeds through the chat config's own provider. A provider with no embeddings endpoint is not a hard failure: the compactor tries once, catches `AIEmbeddingUnsupportedException`, logs a warning, and never retries that provider again for the run, so semantic edges are simply skipped rather than raised as an error. The call itself is `Completion.embed`, typed with an `Abort[HttpException | AIGenException]` row; its default implementation raises that same exception, and only the OpenAI-compatible backend overrides it, so a real embeddings endpoint today means the OpenAI and Gemini providers specifically. Each embedding it returns is a `kyo.ai.Embedding`: a `vector` tagged with the `modelName` and `dim` of the space that produced it. `Embedding.cosine` compares two embeddings and returns `Absent`, not a throw or a meaningless number, when their `(modelName, dim)` do not match, so a caller can never silently compare vectors across spaces. The background judge and summarizer default to the active chat provider's cheap tier (`Provider.small`, for example `AI.Config.Anthropic.small`), or `Compactor.Config.judge` for a wholesale override.
-
-> **Caution:** with a compactor enabled, unit content is sent to the embedding provider (`Config.embedder`, or the chat provider itself when absent), and ambiguous-band content is sent to the judge model. With no compactor enabled, nothing changes. Leaving `embedder` absent alongside a same-provider `small` keeps that data within the provider already chosen for the conversation.
+The shipped compactor builds its ranking graph structurally, from message adjacency and identifier references, with no embeddings call anywhere in it. `Completion.embed` and `Config.embedder` are a separate, general-purpose embeddings surface with no caller inside kyo-ai today: `Config.embedder(config)` pairs a different provider config for an embeddings call, and the result is a `kyo.ai.Embedding` (a vector tagged with the `modelName` and `dim` of the space that produced it, compared safely via `Embedding.cosine`). Both remain available for a richer, user-authored `Compactor` to use directly, mirroring the `embedding` and `summary` enrichment fields already present on `Message` itself, which the shipped default never populates or reads.
 
 This pairs naturally with `Agent`: a long-lived agent's conversation grows across every `ask`, which makes it the prime candidate for automatic compaction.
 
-`Compactor.Config`'s user-relevant knobs are `windowFraction`, `effectiveCap`, `updateTriggerFraction` / `updateTargetFraction` (the hysteresis band; target must sit below trigger), `hardWindowFraction`, `tailTurns` / `tailTokens`, `bandSize`, and `judge`. The remaining fields tune the internal ranking and graph algorithm ("affect ranking quality, not correctness", per the source doc) and are documented on `Compactor.Config` itself.
+Tuning lives entirely on the ambient `kyo.ai.Config`, five fields: `compactionBudget(Int)` pins the token budget the compacted view must fit within (unset, it derives `min(modelMaxTokens / 2, 48000)` from the active model); `compactionHighWatermark(Double)` / `compactionLowWatermark(Double)` are the hysteresis pair, both clamped to `[0, 1]` (the render trigger is always the max of the two, the cut's target always the min); `compactionHardLimit(Double)` is the fraction of the actual model window above which the forced path aborts rather than send, also clamped to `[0, 1]` so it can never be built away; and `tokenizer(Compactor.Tokenizer)` is the pluggable token accountant, defaulting to a deliberately over-counting character-based estimator with a per-image surcharge. The remaining ranking and graph constants (edge weights, seed shares, the elision threshold) are private constants of the default compactor, documented at their point of use in source, never public config.
 
 ## Configuration and providers
 
@@ -437,7 +433,7 @@ val openAiConfig =
 
 The module ships nine providers: Anthropic, OpenAI, DeepSeek, Gemini, Groq, Baseten, OpenRouter, Claude Code, and Codex, each available as `AI.Config.Anthropic`, `AI.Config.OpenAI`, and so on, and as `AI.Config.Provider.all`. `AI.Config.default` first honors the provider override flag `kyo.ai.provider` (environment variable `KYO_AI_PROVIDER`), then probes provider markers and keys in order, preferring `CLAUDE_CODE`, then `CODEX`, then API provider keys such as `ANTHROPIC_API_KEY` and `OPENAI_API_KEY`. Supported override values are `claude-code`, `codex`, `anthropic`, `openai`, `deepseek`, `gemini`, `groq`, `baseten`, and `openrouter`. Each provider exposes a pure catalog `.default` you refine with builders. `AI.Config.init` builds a config for an API-key provider while reading its API key and org from system properties then the environment.
 
-Each provider also exposes a `.small` catalog entry (its cheap tier), and a config can be paired with a different provider via `.embedder(...)` for the embeddings step; both exist for the automatic context compaction feature (above) and are rarely set directly otherwise.
+Each provider also exposes a `.small` catalog entry, its cheap tier, generally useful for cost-sensitive sub-generations. A config can also be paired with a different provider via `.embedder(...)` for `Completion.embed`, a general embeddings call; it currently has no caller inside kyo-ai and exists as a hook for external or future use.
 
 ```scala
 def initConfig: AI.Config < Sync =
@@ -467,7 +463,7 @@ The error model is principled and typed. A generation's failures ride `run`'s re
 
 ## Conversation data types
 
-`AI.Context` is the conversation history: an ordered `Chunk` of typed `Message` values, immutable, with builders that append and return a new `AI.Context`. It is what the per-instance histories are made of, and it `derives Schema`, so it can be persisted.
+`AI.Context` is the conversation history: an immutable pair of `Chunk[Message]` lists, `raw` and `compacted`, with builders that append and return a new `AI.Context`. `raw` is the complete, append-only transcript; `compacted` is the bounded view actually sent to the model, recomputed by a `Compactor` when one is enabled (see Automatic context compaction, above). The two lists are identical whenever no compactor is active. `AI.Context` is what the per-instance histories are made of, and it `derives Schema`, so it can be persisted.
 
 ```scala
 val transcript =
