@@ -174,7 +174,7 @@ def apply[A: Schema](ai: AI, gen: Maybe[A] < (LLM & Async & Abort[AIGenException
 
 ## The `Compactor` mechanism
 
-`Compactor` is automatic context compaction, wired in as a fifth `AI.Enablement`: enable it (`Compactor.init.map(ai.enable(_))` or scope-wide via `AI.enable`), and `LLM.eval` / `streamAgainst` consult it at one seam between the context read and request assembly, returning a bounded, projected VIEW of the transcript the model actually sees ([`Compactor.scala:9-24`]). With no compactor enabled, a generation is byte-identical to today: default-off ([`Compactor.scala:14`], [`LLMTest.scala:674-716`]).
+`Compactor` is automatic context compaction, wired in as a fifth `AI.Enablement`: enable it (`Compactor.init.map(ai.enable(_))` or scope-wide via `AI.enable`), and `LLM.eval` / `streamAgainst` consult it at one seam between the context read and request assembly, returning a bounded, projected VIEW of the transcript the model actually sees ([`Compactor.scala:9-24`]). With no compactor enabled, the seam is a no-op and the assembled request bytes are unchanged: default-off ([`Compactor.scala:14`], [`LLMTest.scala:674-716`]).
 
 ### Immutable transcript, projected view
 
