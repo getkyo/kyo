@@ -490,4 +490,42 @@ class NioTransportTest extends Test:
         }
     }
 
+    // A connection accepted by listenTls but whose handshake has not completed has no Connection yet, so it is invisible to the registry
+    // transport close sweeps. Before this was tracked, nothing reclaimed it: a listener close tore down only the accept and the server channel,
+    // and the process-shared transport is never closed at all, so a peer that completed the TCP accept and then stalled held its channel and
+    // handle until the process exited.
+    //
+    // Pinned with NO deadline armed (handshakeTimeout = Infinity, what a kyo-http server ships), so the listener close is the only thing that
+    // can reclaim it; with a finite deadline the timer would eventually do it and this would pass either way. The stalled peer is held OPEN
+    // across the assertion for the same reason: closing it would end the handshake by itself and the leaf would stop testing the discharge.
+    "closing a listener reclaims the handshakes it accepted" in {
+        val transport = NioTransport.init()
+        val unbounded = serverTlsConfig.copy(handshakeTimeout = Duration.Infinity)
+        Abort.run[NetException | Closed] {
+            transport.listenTls("127.0.0.1", 0, 16, unbounded)(_ => ()).safe.get.map { listener =>
+                // A plaintext client: it completes the TCP accept and never sends a ClientHello, so the server handshake registers and parks.
+                transport.connect("127.0.0.1", listener.port).safe.get.map { client =>
+                    // Barrier: wait until the handshake has actually registered. Without it this races the accept and could close a listener
+                    // with nothing to discharge, passing for the wrong reason.
+                    assertEventually(Sync.defer(transport.pendingAcceptHandshakeCount > 0)).map { _ =>
+                        listener.close()
+                        assertEventually(Sync.defer(transport.pendingAcceptHandshakeCount == 0)).map { _ =>
+                            // The discharge fails the handshake promise, whose existing teardown arm reaps the handle and closes the channel,
+                            // which this still-connected client observes as its inbound terminating.
+                            Abort.run[Timeout](Async.timeout(3.seconds)(Abort.run[Closed](client.inbound.safe.take))).map { outcome =>
+                                client.close()
+                                assert(
+                                    outcome.isSuccess,
+                                    s"the listener close must release its stalled handshake's channel, got $outcome"
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }.map { result =>
+            Sync.defer(discard(transport.close())).andThen(Abort.get(result))
+        }
+    }
+
 end NioTransportTest

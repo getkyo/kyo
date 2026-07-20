@@ -76,6 +76,44 @@ final private[kyo] class NioTransport private (
     // transport-close carrier without suspension. kyo has no concurrent map its effect collections can back here; retained as a documented exception.
     private val connections = new java.util.concurrent.ConcurrentHashMap[NioHandle, Connection[NioHandle]]()
 
+    /** In-flight accept-side TLS handshakes, keyed by the promise that carries the handshake's outcome and valued by the listener that accepted
+      * the connection.
+      *
+      * A connection whose handshake has not completed has no [[Connection]] yet, so it is invisible to the [[connections]] registry that
+      * `close()` sweeps: nothing else knows the channel and handle exist. Without this, a peer that completed the TCP accept and then stalled
+      * held its channel and handle until the process exited, since a listener close tears down only its accept and its own server channel, and
+      * the process-shared transport is never closed at all.
+      *
+      * Discharging an entry means failing its promise, which runs the teardown arm the handshake already installs, so there is one teardown path
+      * rather than two. Entries remove themselves when the handshake settles.
+      */
+    // Concurrent-collection audit: a raw ConcurrentHashMap, added on an accept carrier and iterated on the carrier closing a listener without
+    // suspension, matching the rationale on `connections` above. Retained as a documented exception.
+    private val pendingAcceptHandshakes =
+        new java.util.concurrent.ConcurrentHashMap[IOPromise[NetException, Connection[NioHandle]], NioListener]()
+
+    /** How many accept-side handshakes are in flight right now.
+      *
+      * `private[internal]` purely so a discriminating test can wait until a handshake has actually registered before closing the listener: with
+      * no such barrier a test races the accept, may close a listener with nothing yet to discharge, and then passes for the wrong reason.
+      */
+    private[internal] def pendingAcceptHandshakeCount: Int = pendingAcceptHandshakes.size
+
+    /** Fail every in-flight accept handshake this listener owns, so its channel and handle are reclaimed when the server shuts down.
+      *
+      * Only this listener's entries are touched: a client connect or a STARTTLS upgrade never registers here, and another listener's accepted
+      * handshakes stay under their own key. Failing a promise that is concurrently settling is a no-op, since it completes at most once.
+      */
+    private def dischargeListenerHandshakes(listener: NioListener)(using AllowUnsafe, Frame): Unit =
+        val it = pendingAcceptHandshakes.entrySet().iterator()
+        while it.hasNext do
+            val entry = it.next()
+            if entry.getValue eq listener then
+                it.remove()
+                entry.getKey.completeDiscard(Result.fail(NetConnectionClosedException(Operation.Handshake)))
+        end while
+    end dischargeListenerHandshakes
+
     /** Build a connection over `handle` and register it in [[connections]], wiring its `onClose` so it self-removes when its handle is torn
       * down. Used for every connection so `close()` can reclaim any that did not close on their own.
       */
@@ -1044,6 +1082,8 @@ final private[kyo] class NioTransport private (
                 Log.live.unsafe.debug(s"NioTransport TLS listen $host:$actualPort")
 
                 val listener = new NioListener(serverChannel, actualPort, actualHost, driver, NetAddress.Tcp(actualHost, actualPort))
+                // Only the TLS listen path can have in-flight handshakes; a plaintext accept becomes a tracked Connection immediately.
+                listener.onClose(() => dischargeListenerHandshakes(listener))
                 startTlsAcceptLoop(serverChannel, handler, listener, tls, config)
                 promise.completeDiscard(Result.succeed(listener))
             end if
@@ -1102,7 +1142,11 @@ final private[kyo] class NioTransport private (
 
                     // Create a per-connection promise for the TLS handshake result
                     val connPromise = new IOPromise[NetException, Connection[NioHandle]]
+                    // Track it while it is in flight so a listener close can reclaim it; the handshake has no Connection yet, so nothing else
+                    // knows this channel and handle exist.
+                    discard(pendingAcceptHandshakes.put(connPromise, listener))
                     connPromise.onComplete { result =>
+                        discard(pendingAcceptHandshakes.remove(connPromise))
                         result match
                             case Result.Success(connection) =>
                                 // Handshake complete: spawn the handler in its own carrier fiber. Fire-and-forget.
@@ -1126,6 +1170,7 @@ final private[kyo] class NioTransport private (
                                 driver.closeHandle(handle)
                                 try clientChannel.close()
                                 catch case _: IOException => ()
+                        end match
                     }
 
                     startTlsHandshake(
@@ -1621,6 +1666,13 @@ final private class NioListener(
     private val driver: NioIoDriver,
     val address: NetAddress
 ) extends NetListener:
+
+    /** Extra teardown the transport attaches, currently reclaiming the in-flight handshakes this listener accepted. Written once at listen time,
+      * before the listener is handed out, and read on the closing carrier.
+      */
+    @volatile private var onCloseHook: Maybe[() => Unit] = Absent
+
+    private[internal] def onClose(f: () => Unit): Unit = onCloseHook = Present(f)
     // Unsafe: created at construction with no ambient AllowUnsafe; the danger bridge builds it here and its accesses run under the caller's
     // AllowUnsafe.
     private val closedFlag = AtomicBoolean.Unsafe.init(false)(using AllowUnsafe.embrace.danger)
@@ -1629,6 +1681,9 @@ final private class NioListener(
 
     def close()(using AllowUnsafe, Frame): Unit =
         if closedFlag.compareAndSet(false, true) then
+            // Reclaim the handshakes this listener accepted before the accept teardown: they own channels and handles this close is the only
+            // remaining chance to release, since the transport itself may never be closed.
+            onCloseHook.foreach(_())
             driver.cleanupAccept(serverChannel)
             try serverChannel.close()
             catch case _: IOException => ()
