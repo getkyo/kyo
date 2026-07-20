@@ -117,10 +117,10 @@ final private[kyo] class IoDriverPool[Handle] private (
                 // Ignore each driver's own outcome: what this pool needs to observe is only that the loop FINISHED, not how.
                 //
                 // Whether finishing also released the driver's fds is the driver's own contract, and it is NOT uniform today.
-                // PollerIoDriver routes a crashed cycle through the same terminal exit as a clean one, so its poller fd and scratch are
-                // released either way. IoUringDriver and NioIoDriver instead complete this promise straight from their thread wrapper
-                // without running their teardown, so a crashed loop there leaks its ring/selector. That gap is the drivers', not the
-                // pool's; converting them to the single-terminal-exit shape closes it.
+                // Every driver routes a crashed cycle through the same terminal exit as a clean one, so the poller fd and scratch, the
+                // io_uring ring and wake eventfd, and the selector are all released whichever way the loop ends. That is what lets this
+                // promise mean "torn down" rather than merely "stopped running": a crash completes it with the resources already released.
+                // Each driver's *CrashContainmentTest pins its half.
                 fibers(i).onComplete(_ => if remaining.decrementAndGet() == 0 then promise.completeDiscard(Result.succeed(())))
                 i += 1
             end while

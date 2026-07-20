@@ -27,12 +27,13 @@ import kyo.scheduler.Task
   *
   * #### Reap loop
   *
-  * The reap loop runs on a dedicated daemon Thread started by `start()`. Each cycle uses `kyo_uring_submit_and_wait_timeout`
-  * to flush accumulated SQEs AND wait for the next CQE in a single `io_uring_enter` syscall (indefinite when the wake eventfd multishot
-  * is armed; bounded to `ReapTimeoutNs` during the re-arm-retry window), then drains every already-ready CQE with `kyo_uring_peek_cqe`.
-  * On JVM/Native the wait fiber completes synchronously and the loop continues via the `while` body without growing the stack. On JS the
-  * wait fiber is genuinely pending; the loop exits the `while`, registers an `onComplete` callback, and re-enters via a fresh
-  * `Fiber.Unsafe.init` on the next event-loop tick. A timeout or transient rc is a normal empty turn, not an error.
+  * The reap loop runs on kyo scheduler carriers, never on a thread this driver owns: one reusable `Task` performs exactly ONE cycle per
+  * activation and re-arms the next before returning, so the carrier is released between cycles. Each cycle uses
+  * `kyo_uring_submit_and_wait_timeout` to flush accumulated SQEs AND wait for the next CQE in a single `io_uring_enter` syscall (indefinite
+  * when the wake eventfd multishot is armed; bounded to `ReapTimeoutNs` during the re-arm-retry window), then drains every already-ready CQE
+  * with `kyo_uring_peek_cqe`. Whether the wait fiber completes inline (JVM/Native) or is genuinely pending (JS), the successor is the same
+  * re-arm, so neither platform grows the stack. A timeout or transient rc is a normal empty turn, not an error. Every exit, including a
+  * crashed cycle, routes through one terminal that tears the ring down and completes the done-fiber.
   *
   * #### UAF-safe close
   *
@@ -1310,16 +1311,9 @@ final private[net] class IoUringDriver private[posix] (
         end if
     end teardownRing
 
-    // The reap loop runs on a DEDICATED daemon thread, NOT a kyo scheduler carrier. It is a non-preemptible, non-suspending loop (a plain while
-    // over the @Ffi.blocking submit-and-wait, which on JVM/Native completes inline), so on a carrier it PINS that carrier: the scheduler's
-    // doPreempt cannot reclaim a loop with no fiber safepoints, and under CPU contention a fiber continuation completed inline from the loop (a
-    // ReadPump byte delivery waking a parked take) can be routed back onto the pinned carrier by the scheduler's fallback and STRAND there, hanging
-    // the connection. A dedicated thread keeps the loop off the carrier pool, so every fiber it completes is scheduled (Worker.current() == null)
-    // onto a real carrier and nothing strands. The thread is a daemon, so it never blocks a clean JVM exit and is exempt from the non-daemon-thread
-    // leak check; it exits when close() sets closedFlag and wakes the reap. (JS/WASM use a separate driver and are unaffected.)
     def start()(using AllowUnsafe, Frame): Fiber.Unsafe[Unit, Any] =
-        // Mark BEFORE spawning the loop: a close() racing start observes started=true and defers teardown to the reap loop, which (once
-        // spawned) sees closedFlag set, runs zero iterations, and tears the ring down itself. started.set happens-before the spawn.
+        // Mark BEFORE scheduling the loop: a close() racing start observes started=true and defers teardown to the reap loop, which (once
+        // it runs) sees closedFlag set, runs zero cycles, and tears the ring down itself. started.set happens-before the schedule.
         started.set(true)
         // Every driver registers a diagnostics snapshot of its reap loop, not just the process-shared singleton's: the stranded-op
         // post-suite gate (kyo-test's runner) needs a probe for every driver a suite builds, and most of kyo-net's own suites build

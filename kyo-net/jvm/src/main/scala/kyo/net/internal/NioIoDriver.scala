@@ -1517,4 +1517,13 @@ private[kyo] object NioIoDriver:
     /** Factory for `NioIoDriver`. Opens a fresh `Selector` for each driver instance. */
     def init()(using AllowUnsafe): NioIoDriver =
         new NioIoDriver(Selector.open())
+
+    /** Build a driver over a caller-supplied selector.
+      *
+      * `private[net]` for the crash-containment test, which needs a selector whose `select()` throws: the constructor is class-private, and the
+      * contract under test is that a Throwable escaping a select cycle still reaches the terminal exit and closes the selector, which cannot be
+      * provoked through a real one.
+      */
+    private[net] def forSelector(selector: Selector)(using AllowUnsafe): NioIoDriver =
+        new NioIoDriver(selector)
 end NioIoDriver
