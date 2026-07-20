@@ -97,6 +97,11 @@ class CloseDuringBackpressuredFlushTest extends Test:
             if kyo.internal.Platform.isJS then Sync.defer(succeed)
             else
                 TlsRealEngines.assumeTlsReady()
+                // Gate on BoringSSL specifically, BEFORE any socket exists. assumeTlsReady accepts OpenSSL too, but every leaf here builds its
+                // engine with TlsRealEngines.singleEngine, which requires BoringSSL and cancels without it. Cancelling from there instead left
+                // the loopback pair already created and unreclaimed, one leaked pair per leaf, which is only visible on a host that has OpenSSL
+                // but not BoringSSL.
+                if !TlsRealEngines.boringSslAvailable() then cancel("BoringSSL not staged for this host")
                 PosixTestSockets.assumePoller()
                 // The peer NEVER reads, so the 600 KB write encrypts and fills the real send buffer (EAGAIN with bytes pending) and the flush parks
                 // armed on writability that can never fire: the close lands deterministically while the flush is parked. No hook here.
@@ -164,6 +169,11 @@ class CloseDuringBackpressuredFlushTest extends Test:
             if kyo.internal.Platform.isJS then Sync.defer(succeed)
             else
                 TlsRealEngines.assumeTlsReady()
+                // Gate on BoringSSL specifically, BEFORE any socket exists. assumeTlsReady accepts OpenSSL too, but every leaf here builds its
+                // engine with TlsRealEngines.singleEngine, which requires BoringSSL and cancels without it. Cancelling from there instead left
+                // the loopback pair already created and unreclaimed, one leaked pair per leaf, which is only visible on a host that has OpenSSL
+                // but not BoringSSL.
+                if !TlsRealEngines.boringSslAvailable() then cancel("BoringSSL not staged for this host")
                 PosixTestSockets.assumePoller()
                 // The close hook is installed only AFTER the initial write's flush has EAGAINed and armed writability, so the initial flush's
                 // sends do not fire it. The spy's onSend fires BEFORE the real send delegate (while beginWrite is held) on the first send of the
@@ -239,6 +249,11 @@ class CloseDuringBackpressuredFlushTest extends Test:
             if kyo.internal.Platform.isJS then Sync.defer(succeed)
             else
                 TlsRealEngines.assumeTlsReady()
+                // Gate on BoringSSL specifically, BEFORE any socket exists. assumeTlsReady accepts OpenSSL too, but every leaf here builds its
+                // engine with TlsRealEngines.singleEngine, which requires BoringSSL and cancels without it. Cancelling from there instead left
+                // the loopback pair already created and unreclaimed, one leaked pair per leaf, which is only visible on a host that has OpenSSL
+                // but not BoringSSL.
+                if !TlsRealEngines.boringSslAvailable() then cancel("BoringSSL not staged for this host")
                 PosixTestSockets.assumePoller()
                 // 10 independent close-vs-writable races, each one fully reproducing the interleaving (the race fires on every iteration, it is not
                 // rare). The 600 KB payload over the 4096-byte send buffer is what RELIABLY parks the flush: the engine encrypts the whole plaintext
