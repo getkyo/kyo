@@ -2,7 +2,6 @@ package kyo
 
 import kyo.*
 import kyo.HttpTlsConfig
-import kyo.net.NetAddress
 
 class HttpServerUnixTest extends BaseHttpTest with internal.UnixSocketTestHelperImpl:
 
@@ -67,7 +66,7 @@ class HttpServerUnixTest extends BaseHttpTest with internal.UnixSocketTestHelper
                 val config  = HttpServerConfig.default.unixSocket(sockPath)
                 Sync.ensure(Sync.defer(cleanupSocket(sockPath))) {
                     HttpServer.init(config)(handler).map { server =>
-                        assert(server.address == NetAddress.Unix(sockPath))
+                        assert(server.address == HttpAddress.Unix(sockPath))
                         assert(server.port == -1)
                         assert(server.host == "localhost")
                     }
