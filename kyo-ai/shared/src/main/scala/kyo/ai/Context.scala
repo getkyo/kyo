@@ -67,7 +67,7 @@ object Context:
       */
     def apply(messages: Chunk[Message]): Context = Context(messages, messages)
 
-    /** CORE-field equality: content/role/image/calls/callId only, ignoring embedding/summary/origin,
+    /** CORE-field equality: content/role/image/calls/callId only, ignoring embedding/tokens/origin,
       * so two content-identical messages differing solely in enrichment state compare as the same.
       * INTERNAL: used by the default Compactor and Context.merge for deduplication; a custom
       * Compactor is not obligated to honor it, so this is not a lock symbol.
@@ -95,14 +95,15 @@ object Context:
     case class Call(id: CallId, function: String, arguments: String) derives Schema, CanEqual
 
     /** A conversation message, tagged with its role. Each leaf carries three trailing defaulted
-      * enrichment fields (embedding/summary/origin): once-computed facts the shipped default never
-      * populates or reads, living on the message value that owns them with no separate cache structure.
-      * origin is set only on a synthetic entry a Compactor builds to stand for a raw range.
+      * enrichment fields (embedding/tokens/origin): once-computed facts living on the message value that
+      * owns them with no separate cache structure. `tokens` is the real token count the compaction seam
+      * stamps once per message; `embedding` is the vector the seam stamps at a boundary when an embedding
+      * is configured; `origin` is set only on a synthetic entry a Compactor builds to stand for a raw range.
       */
     sealed trait Message(val role: Role) derives CanEqual, Schema:
         def content: String
         def embedding: Maybe[Embedding]
-        def summary: Maybe[String]
+        def tokens: Maybe[Int]
         def origin: Maybe[Context.Origin]
     end Message
 
@@ -110,7 +111,7 @@ object Context:
     case class SystemMessage(
         content: String,
         embedding: Maybe[Embedding] = Absent,
-        summary: Maybe[String] = Absent,
+        tokens: Maybe[Int] = Absent,
         origin: Maybe[Context.Origin] = Absent
     ) extends Message(Role.System)
 
@@ -119,7 +120,7 @@ object Context:
         content: String,
         image: Maybe[Image],
         embedding: Maybe[Embedding] = Absent,
-        summary: Maybe[String] = Absent,
+        tokens: Maybe[Int] = Absent,
         origin: Maybe[Context.Origin] = Absent
     ) extends Message(Role.User)
 
@@ -128,7 +129,7 @@ object Context:
         content: String,
         calls: Chunk[Call] = Chunk.empty,
         embedding: Maybe[Embedding] = Absent,
-        summary: Maybe[String] = Absent,
+        tokens: Maybe[Int] = Absent,
         origin: Maybe[Context.Origin] = Absent
     ) extends Message(Role.Assistant)
 
@@ -137,7 +138,7 @@ object Context:
         callId: CallId,
         content: String,
         embedding: Maybe[Embedding] = Absent,
-        summary: Maybe[String] = Absent,
+        tokens: Maybe[Int] = Absent,
         origin: Maybe[Context.Origin] = Absent
     ) extends Message(Role.Tool)
 

@@ -107,8 +107,8 @@ class ContextTest extends kyo.test.Test[Any]:
         // under coreEq (merge/dedup/cache-gate path), while full-record == treats them as different.
         val emb  = Embedding(Span(1.0f, 0.0f), "m", 2)
         val bare = um("same")
-        val rich = UserMessage("same", Absent, embedding = Present(emb), summary = Present("s"), origin = Present(Origin(0, 1, 0)))
-        assert(Context.coreEq(bare, rich), "coreEq ignores embedding/summary/origin")
+        val rich = UserMessage("same", Absent, embedding = Present(emb), tokens = Present(7), origin = Present(Origin(0, 1, 0)))
+        assert(Context.coreEq(bare, rich), "coreEq ignores embedding/tokens/origin")
         assert(bare != rich, "full-record == is NOT the comparison coreEq uses (enrichment differs)")
         // A genuine core difference is not equal under coreEq.
         assert(!Context.coreEq(bare, um("other")))
@@ -120,24 +120,24 @@ class ContextTest extends kyo.test.Test[Any]:
         assert(merged.raw.map(_.content) == Chunk("same", "next"), s"enrichment-only diff is common prefix, got: ${merged.raw}")
     }
 
-    "embedding/summary/origin default Absent on every ordinarily-added message" in {
+    "embedding/tokens/origin default Absent on every ordinarily-added message" in {
         val ctx = Context.empty.add(SystemMessage("s")).userMessage("u").assistantMessage("a").toolMessage(CallId("c"), "t")
         assert(
-            ctx.raw.forall(m => m.embedding.isEmpty && m.summary.isEmpty && m.origin.isEmpty),
+            ctx.raw.forall(m => m.embedding.isEmpty && m.tokens.isEmpty && m.origin.isEmpty),
             "every appended message defaults to Absent enrichment"
         )
     }
 
     "Context Schema round-trips every message type, including image, tool calls, and enrichment fields" in {
         // The serializable slice behind ai.snapshot/AI.recover: a Schema regression here silently corrupts
-        // cross-run persistence. Exercise one of every variant PLUS Present embedding/summary/origin, and a
+        // cross-run persistence. Exercise one of every variant PLUS Present embedding/tokens/origin, and a
         // divergent compacted (a synthetic marker) so BOTH lists are checked.
         val emb    = Embedding(Span(1.0f, 2.0f), "m", 2)
         val marker = SystemMessage("[compacted region 0: 12 bytes omitted]", origin = Present(Origin(0, 2, 4)))
         val ctx = Context(Chunk[Message](
             SystemMessage("sys"),
             UserMessage("look", Present(Image.fromBase64("SGVsbG8=")), embedding = Present(emb)),
-            AssistantMessage("thinking", Chunk(Call(CallId("c1"), "fn", """{"x":1}""")), summary = Present("did a thing")),
+            AssistantMessage("thinking", Chunk(Call(CallId("c1"), "fn", """{"x":1}""")), tokens = Present(42)),
             ToolMessage(CallId("c1"), "tool-out")
         )).copy(compacted = Chunk[Message](marker))
         Json.decode[Context](Json.encode(ctx)) match
@@ -155,7 +155,7 @@ class ContextTest extends kyo.test.Test[Any]:
                         )
                     case Absent => assert(false, "embedding should be Present after the round-trip")
                 end match
-                assert(decoded.raw(2).summary == Present("did a thing"), "summary round-trips")
+                assert(decoded.raw(2).tokens == Present(42), "tokens round-trips")
             case other => assert(false, s"Context decode failed: $other")
         end match
     }
@@ -168,6 +168,47 @@ class ContextTest extends kyo.test.Test[Any]:
         val msg1: Message = SystemMessage("test")
         val msg2: Message = SystemMessage("test")
         assert(msg1 == msg2)
+    }
+
+    "every Message leaf defaults tokens Absent and no longer has summary" in {
+        val sm = SystemMessage("s")
+        val um = UserMessage("u", Absent)
+        val am = AssistantMessage("a")
+        val tm = ToolMessage(CallId("c"), "t")
+        assert(
+            sm.tokens == Absent && um.tokens == Absent && am.tokens == Absent && tm.tokens == Absent,
+            "every leaf defaults tokens to Absent when only its required fields are given"
+        )
+    }
+
+    "the sealed trait exposes def tokens: Maybe[Int]" in {
+        val msg: Message       = SystemMessage("s")
+        val tokens: Maybe[Int] = msg.tokens
+        assert(tokens == Absent, "the trait accessor type-checks as Maybe[Int] and returns Absent by default")
+    }
+
+    "coreEq ignores the tokens field" in {
+        val a = SystemMessage("x")
+        val b = SystemMessage("x", tokens = Present(7))
+        assert(Context.coreEq(a, b), "coreEq compares content/role only, so a tokens-only difference compares equal")
+    }
+
+    "tokens survives a copy and Schema round-trip" in {
+        val msg: AssistantMessage = AssistantMessage("thinking", tokens = Present(42))
+        val copied                = msg.copy()
+        assert(copied.tokens == Present(42), "copy preserves the stamped tokens field")
+        Json.decode[Message](Json.encode(copied: Message)) match
+            case Result.Success(decoded) => assert(decoded.tokens == Present(42), "tokens round-trips through Schema encode/decode")
+            case other                   => assert(false, s"Message decode failed: $other")
+        end match
+    }
+
+    "Context still has exactly two fields (raw, compacted)" in {
+        val ctx = Context.empty
+        ctx match
+            case Context(raw, compacted) =>
+                assert(raw == ctx.raw && compacted == ctx.compacted, "Context has exactly the raw and compacted fields, no third")
+        end match
     }
 
 end ContextTest
