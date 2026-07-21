@@ -1,6 +1,5 @@
 package kyo
 
-import kyo.Sql.render
 import kyo.SqlAst.*
 
 /** Static-SQL coverage for [[SqlAst.Nested]] (G-Probe-7).
@@ -58,7 +57,7 @@ class SqlStaticNestedTest extends Test:
         assert(r.sql.postgres.contains("$1"))
         assert(r.sql.mysql.contains("?"))
         assert(r.params.size == 1)
-        val bv: BoundValue[?] = r.params.head
+        val bv: SqlSchema.BoundValue[?] = r.params.head
         // Narrow CanEqual scope to this single assertion (per audit W-3).
         given CanEqual[Any, Any] = CanEqual.derived
         assert((bv.value: Any) == 18)

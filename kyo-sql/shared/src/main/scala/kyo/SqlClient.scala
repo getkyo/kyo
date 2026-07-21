@@ -3,6 +3,7 @@ package kyo
 import kyo.*
 import kyo.Log
 import kyo.SqlSchema
+import kyo.SqlSchema.BoundValue
 import kyo.internal.SqlRender
 import kyo.internal.TransactionContext
 import kyo.internal.client.MySqlClientBackend
@@ -919,7 +920,7 @@ object SqlClient:
         /** Returns the [[SqlBackend]] discriminator for this client.
           *
           * Derived from the URL's driver tag at runtime. Used by the `.run` / `.runDynamic` extension methods on `Query` / `Action` to pick
-          * the right rendered SQL string from a [[BackendSql]] and to summon the right [[BoundValue]] dispatch.
+          * the right rendered SQL string from a [[SqlStatic.BackendSql]] and to summon the right [[BoundValue]] dispatch.
           */
         private[kyo] def sqlBackend: SqlBackend =
             self.url.address.driver match

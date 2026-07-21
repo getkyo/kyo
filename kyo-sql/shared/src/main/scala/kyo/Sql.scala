@@ -1,6 +1,7 @@
 package kyo
 
 import kyo.SqlAst.*
+import kyo.SqlSchema.BoundValue
 
 /** Sql, top-level entry points for the redesigned DSL. All AST types and the DSL methods on `Term`/`Column`/`Query`/etc. live in
   * [[kyo.SqlAst]] (typically `import kyo.SqlAst.*` to bring them into scope).
@@ -111,17 +112,12 @@ object Sql:
     /** Raw SQL fragment (escape hatch). */
     inline def raw[A](inline sql: String): Term[A] = RawSql(sql)
 
-    /** Renders any DSL AST node, query, action (INSERT/UPDATE/DELETE), term, or raw fragment, into a [[RenderedSql]] (the SQL text and
-      * the runtime bind values) for the given backend.
-      *
-      * Use for debugging, logging, migration scripts, or any caller that needs to inspect the SQL alongside its parameters without
+    /** Public projection of the SQL renderer's output, the SQL text and the runtime bind values produced from any [[SqlAst.SqlAst]] node
+      * ([[SqlAst.Query]], [[SqlAst.Action]], [[SqlAst.Term]], [[SqlAst.Fragment]]). Obtained via [[SqlAst.SqlAst.render]]; used for
+      * logging, debugging, migration scripts, or any caller that needs to inspect the rendered SQL alongside its parameters without
       * executing it.
       */
-    extension [A](self: SqlAst.SqlAst[A])
-        def render(backend: SqlBackend)(using frame: Frame): RenderedSql =
-            val r = kyo.internal.SqlRender.render(self, backend, frame)
-            RenderedSql(r.sql, r.params)
-    end extension
+    final case class Rendered(sql: String, params: Chunk[BoundValue[?]])
 
 end Sql
 

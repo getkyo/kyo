@@ -1,6 +1,5 @@
 package kyo
 
-import kyo.Sql.render
 import kyo.SqlAst.*
 
 /** SqlGroupedViewTest, Leaf coverage for eager `groupBy` view materialization.

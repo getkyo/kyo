@@ -263,7 +263,7 @@ class SqlEndToEndTest extends Test:
                                   |  SELECT cte.n + 1 FROM cte WHERE cte.n < $1
                                   |)
                                   |SELECT n FROM cte""".stripMargin,
-                                Chunk(BoundValue(5L, summon[SqlSchema[Long]]))
+                                Chunk(SqlSchema.BoundValue(5L, summon[SqlSchema[Long]]))
                             )
                             .map { rows =>
                                 assert(rows.size == 5, s"Expected 5 rows from recursive CTE, got: ${rows.size}")
@@ -287,9 +287,9 @@ class SqlEndToEndTest extends Test:
                             .executeBoundQuery[Long](
                                 "WITH vals (n) AS (SELECT ? UNION ALL SELECT ? UNION ALL SELECT ?) SELECT n FROM vals",
                                 Chunk(
-                                    BoundValue(1L, summon[SqlSchema[Long]]),
-                                    BoundValue(2L, summon[SqlSchema[Long]]),
-                                    BoundValue(3L, summon[SqlSchema[Long]])
+                                    SqlSchema.BoundValue(1L, summon[SqlSchema[Long]]),
+                                    SqlSchema.BoundValue(2L, summon[SqlSchema[Long]]),
+                                    SqlSchema.BoundValue(3L, summon[SqlSchema[Long]])
                                 )
                             )
                             .map { rows =>

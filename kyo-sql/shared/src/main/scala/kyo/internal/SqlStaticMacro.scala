@@ -1,11 +1,10 @@
 package kyo.internal
 
-import kyo.BackendSql
-import kyo.BoundValue
 import kyo.Chunk
 import kyo.SqlAst
 import kyo.SqlBackend
 import kyo.SqlSchema
+import kyo.SqlSchema.BoundValue
 import kyo.SqlStatic
 import scala.quoted.*
 
@@ -136,7 +135,7 @@ private[kyo] object SqlStaticMacro:
 
         '{
             SqlStatic.Rendered(
-                BackendSql($pgSql, $mySql),
+                SqlStatic.BackendSql($pgSql, $mySql),
                 $params
             )
         }

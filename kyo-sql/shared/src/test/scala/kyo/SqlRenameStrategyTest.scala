@@ -1,6 +1,5 @@
 package kyo
 
-import kyo.Sql.render
 import kyo.SqlAst.*
 
 /** Tests that verify all three [[kyo.internal.SqlNameResolver]] resolution paths -- [[NamingStrategy]], table-name override via

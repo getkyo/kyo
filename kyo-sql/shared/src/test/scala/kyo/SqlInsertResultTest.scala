@@ -1,6 +1,5 @@
 package kyo
 
-import kyo.Sql.render
 import kyo.SqlAst.*
 import scala.compiletime.testing.typeChecks
 

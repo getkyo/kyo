@@ -1,7 +1,5 @@
 package kyo
 
-import kyo.Sql.render
-
 /** Backend gate tests for [[SqlAst.Lateral]] rendering (G-Parity-3).
   *
   * Verifies that:

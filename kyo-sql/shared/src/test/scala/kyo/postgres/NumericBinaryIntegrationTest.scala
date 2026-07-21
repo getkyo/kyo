@@ -6,7 +6,7 @@ import kyo.internal.postgres.types.* // given PostgresDecoder[BigDecimal] for co
 
 /** Integration test verifying that the NUMERIC round-trip works correctly against a real PostgreSQL server.
   *
-  * Uses the Postgres extended-protocol via `SqlClient.query` and `SqlClient.execute`. Parameters are sent using `BoundValue` +
+  * Uses the Postgres extended-protocol via `SqlClient.query` and `SqlClient.execute`. Parameters are sent using `SqlSchema.BoundValue` +
   * `SqlSchema[BigDecimal]` (text-format NUMERIC). Results are received in binary format and decoded via `SqlRow.columnDecoded[BigDecimal]`.
   *
   * The random-round-trip test uses a fixed seed for determinism.

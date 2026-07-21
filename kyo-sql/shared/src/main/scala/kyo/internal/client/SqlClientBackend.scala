@@ -3,6 +3,7 @@ package kyo.internal.client
 import java.util.concurrent.ConcurrentHashMap
 import kyo.*
 import kyo.SqlMetrics
+import kyo.SqlSchema.BoundValue
 import kyo.internal.client.ConnectionPool
 import kyo.internal.mysql.BoundMysqlParam
 import kyo.internal.mysql.MysqlConnection

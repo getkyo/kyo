@@ -1,9 +1,9 @@
 package kyo.internal
 
-import kyo.BoundValue
 import kyo.Chunk
 import kyo.Maybe
 import kyo.SqlSchema
+import kyo.SqlSchema.BoundValue
 import scala.quoted.*
 
 /** Compile-time helpers for the Sql DSL entry points. */

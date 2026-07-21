@@ -1,12 +1,11 @@
 package kyo
 
-import kyo.Sql.render
 import kyo.SqlAst.*
 
 /** Static-SQL coverage for [[SqlAst.ValuesFrom]] (G-Probe-6).
   *
   * Verifies that `ValuesFrom` nodes lift through [[SqlStatic.staticSql]] at compile time. Each leaf asserts the compiled SQL strings for
-  * both backends. The `ValuesFrom.rows` field is `Chunk[Chunk[BoundValue[?]]]`, pure data that `FromExpr.derived` lifts with zero
+  * both backends. The `ValuesFrom.rows` field is `Chunk[Chunk[SqlSchema.BoundValue[?]]]`, pure data that `FromExpr.derived` lifts with zero
   * reflection.
   *
   * Note: `staticSql` requires the query to be written inline, storing it in a `val` introduces a local binding that `q.value` cannot

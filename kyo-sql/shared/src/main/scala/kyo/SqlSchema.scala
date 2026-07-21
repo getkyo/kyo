@@ -1535,6 +1535,52 @@ object SqlSchema:
                     ))
             end match
         end readMysql
+
+        /** Returns a new [[SqlSchema]] with the given [[NamingStrategy]] attached.
+          *
+          * The strategy is stored on the [[SqlSchema.State]] wrapper. Phase 3 macros read it via [[SqlSchema.readNamingStrategy]] to
+          * convert Scala field names to SQL column names at expansion time. Transforms compose: calling `.withNaming` after
+          * `.withTableName` preserves the table-name override and vice versa.
+          *
+          * @param strategy
+          *   the naming convention to attach (e.g. `NamingStrategy.snakeCase`)
+          */
+        transparent inline def withNaming(strategy: NamingStrategy): SqlSchema[A] =
+            SqlSchema.applyNamingStrategy(self, strategy)
+
+        /** Returns a new [[SqlSchema]] with the given SQL table name attached.
+          *
+          * The name is stored on the [[SqlSchema.State]] wrapper. Phase 3 macros read it via [[SqlSchema.readTableNameOverride]] and emit
+          * it as the table name literal rather than deriving from the Scala type name. Transforms compose: calling `.withTableName` after
+          * `.withNaming` preserves the naming strategy and vice versa.
+          *
+          * @param name
+          *   the SQL table name to use (e.g. `"countries"`)
+          */
+        transparent inline def withTableName(inline name: String): SqlSchema[A] =
+            SqlSchema.applyTableNameOverride(self, name)
+
+        /** Returns a new [[SqlSchema]] with a single field renamed for SQL output.
+          *
+          * Appends `(from, to)` to the schema's `renamedFields` list on the [[SqlSchema.State]] wrapper. The rename is consulted at
+          * `Column`-construction time by `resolveSqlName` (via [[kyo.internal.SqlNameResolver.columnName]]): the Scala field named `from`
+          * will be emitted in rendered SQL as `to`. Composable: calling `.rename` multiple times accumulates all pairs in order.
+          *
+          * @param from
+          *   the Scala field name to match
+          * @param to
+          *   the SQL column name to emit in its place
+          */
+        transparent inline def rename(inline from: String, inline to: String): SqlSchema[A] =
+            SqlSchema.applyRenamedField(self, from, to)
+
+        /** Reads the [[NamingStrategy]] attached to this schema. Returns [[Maybe.Absent]] when no strategy has been set. */
+        private[kyo] def namingStrategy: Maybe[NamingStrategy] =
+            SqlSchema.readNamingStrategy(self)
+
+        /** Reads the SQL table name override attached to this schema. Returns [[Maybe.Absent]] when no override has been set. */
+        private[kyo] def tableNameOverride: Maybe[String] =
+            SqlSchema.readTableNameOverride(self)
     end extension
 
     given fromExprSqlSchema[A: scala.quoted.Type](using scala.quoted.Quotes): scala.quoted.FromExpr[SqlSchema[A]] =
@@ -1601,10 +1647,9 @@ object SqlSchema:
                 '{ java.time.LocalTime.of($h, $m, $s, $n) }
             end apply
 
-    // --- State accessors for SqlSchemaTransforms and macro-side extractors ---
-    // These are private[kyo] so SqlSchemaTransforms.scala and SqlSchemaInfo (both in the kyo* packages)
-    // can call them. Every naming override lives on the SqlSchema wrapper's State; the underlying
-    // Schema stays untouched.
+    // --- State accessors for the transform extensions above and macro-side extractors ---
+    // These are private[kyo] so [[SqlSchemaInfo]] (in the kyo.internal package) can call them.
+    // Every naming override lives on the SqlSchema wrapper's State; the underlying Schema stays untouched.
 
     private[kyo] def applyNamingStrategy[A](s: SqlSchema[A], strategy: NamingStrategy): SqlSchema[A] =
         s.copy(namingStrategy = Maybe(strategy))
@@ -1636,5 +1681,16 @@ object SqlSchema:
       */
     private[kyo] def boundSchemaEqRef[A](bv: BoundValue[?], other: SqlSchema[A]): Boolean =
         bv.schema.asInstanceOf[AnyRef] eq other.asInstanceOf[AnyRef]
+
+    /** A bind value paired with its [[SqlSchema]] for backend encoding.
+      *
+      * The construction site is type-checked: `SqlSchema.BoundValue[A](v: A, s: SqlSchema[A])` enforces that the value and schema refer
+      * to the same type `A`. At storage positions the type parameter is hidden via `SqlSchema.BoundValue[?]`; the backend recovers the
+      * encoder by pattern-matching the schema's concrete type.
+      *
+      * @tparam A
+      *   the type of the bound value; must have a [[SqlSchema]] instance
+      */
+    final case class BoundValue[A](value: A, schema: SqlSchema[A])
 
 end SqlSchema

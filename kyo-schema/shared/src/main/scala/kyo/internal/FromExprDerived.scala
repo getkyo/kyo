@@ -369,8 +369,10 @@ object FromExprDerived:
         val isSpecial =
             isPrimitive[A] || isMaybe(tpe) || isChunk(tpe) || isField(tpe) || isTilde(tpe) ||
                 isSqlSchema(tpe) || isRecord(tpe) || isColumnProjection(tpe)
+        // A `case object` carries both `Case` and `Module` flags. Route it to `deriveSingleton` rather than
+        // `deriveProduct` (the latter walks case-field mirrors, which yield no useful matcher for a singleton).
         val isProductOrSum =
-            !isSpecial && sym.isClassDef &&
+            !isSpecial && sym.isClassDef && !sym.flags.is(Flags.Module) &&
                 (sym.flags.is(Flags.Sealed) || sym.flags.is(Flags.Enum) || sym.flags.is(Flags.Case))
 
         if isProductOrSum then
@@ -537,22 +539,12 @@ object FromExprDerived:
             case AppliedType(_, List(rawInner)) =>
                 // Phase G.5: saturate a plain case-class element's free params / wildcards (see `deriveChunk`).
                 val rawInnerDealiased = rawInner.dealias
-                // Identify the element constructor by its type symbol's `fullName`, robust for wildcard
-                // applications (`Column[?, ?]`) where the `.show`-based `isColumnProjection` string check
-                // is unreliable. Only a *plain* case-class element (no special / custom-given arm) needs
-                // saturation; the special arms handle their own wildcards.
-                val elemSymName =
-                    try rawInnerDealiased.typeSymbol.fullName
-                    catch case _: Throwable => ""
-                val isCustomGivenElem =
-                    elemSymName == "kyo.SqlAst.Column" || elemSymName == "kyo.SqlAst.GroupedColumn" ||
-                        elemSymName == "kyo.SqlAst.UngroupedView" || elemSymName == "kyo.SqlAst.Cast" ||
-                        elemSymName == "kyo.Record"
+                // A *plain* case-class element (no special / custom-given arm) needs saturation before its
+                // FromExpr is derived; the special arms handle their own wildcards.
                 val isPlainCaseElem =
                     !isMaybe(rawInnerDealiased) && !isChunk(rawInnerDealiased) && !isField(rawInnerDealiased) &&
                         !isTilde(rawInnerDealiased) && !isSqlSchema(rawInnerDealiased) &&
                         !isRecord(rawInnerDealiased) && !isColumnProjection(rawInnerDealiased) &&
-                        !isCustomGivenElem &&
                         rawInnerDealiased.typeSymbol.isClassDef && rawInnerDealiased.typeSymbol.flags.is(Flags.Case)
                 val inner = if isPlainCaseElem then applyAnyToFreeParams(rawInner) else rawInner
                 inner.asType match
@@ -1074,8 +1066,10 @@ object FromExprDerived:
         val isSpecial =
             isPrimitive[A] || isMaybe(tpe) || isChunk(tpe) || isField(tpe) || isTilde(tpe) ||
                 isSqlSchema(tpe) || isRecord(tpe) || isColumnProjection(tpe)
+        // A `case object` carries both `Case` and `Module` flags. Route it to `deriveSingleton` rather than
+        // `deriveProduct` (the latter walks case-field mirrors, which yield no useful matcher for a singleton).
         val isProductOrSum =
-            !isSpecial && sym.isClassDef &&
+            !isSpecial && sym.isClassDef && !sym.flags.is(Flags.Module) &&
                 (sym.flags.is(Flags.Sealed) || sym.flags.is(Flags.Enum) || sym.flags.is(Flags.Case))
 
         if isProductOrSum then
@@ -1541,25 +1535,56 @@ object FromExprDerived:
     end isRecord
 
     private def isSqlSchema(using q: Quotes)(tpe: q.reflect.TypeRepr): Boolean =
-        import q.reflect.*
-        // Match on the full type-name prefix because SqlSchema is an opaque type alias
-        // defined in kyo-sql, not kyo-schema. We cannot import kyo.SqlSchema here.
-        tpe.show.startsWith("kyo.SqlSchema")
-    end isSqlSchema
+        symbolMatches(tpe, sqlSchemaTypeSym)
 
     /** True for the AST `Term` leaves that need a custom `FromExpr` (in kyo-sql's `ColumnFromExpr`) rather than the generic product walker.
       * `Column` / `GroupedColumn` / `UngroupedView` arise from `Record` field projections (`selectDynamic` chains); `Cast` carries a
       * `sqlTypeName` argument that is a method call on a `SqlSchema` given, not a string literal. The product walker handles none of these.
-      * Matched by name prefix because the types live in kyo-sql (`object SqlAst`), which kyo-schema cannot import.
       */
     private def isColumnProjection(using q: Quotes)(tpe: q.reflect.TypeRepr): Boolean =
+        columnProjectionTypeSyms.exists(t => symbolMatches(tpe, t))
+
+    /** The SqlSchema opaque-type symbol resolved at macro-expansion time. kyo-schema cannot statically
+      * import `kyo.SqlSchema` (kyo-sql depends on kyo-schema, not the other way). `Symbol.requiredModule`
+      * finds the companion `object SqlSchema`; the opaque type of the same source name lives as a type
+      * member of the same enclosing owner (the synthesized `$package$` module). Returns `Symbol.noSymbol`
+      * when kyo-sql is not on the classpath; `symbolMatches` short-circuits to `false` in that case.
+      */
+    private def sqlSchemaTypeSym(using q: Quotes): q.reflect.Symbol =
         import q.reflect.*
-        val s = tpe.dealias.show
-        s.startsWith("kyo.SqlAst.Column[") ||
-        s.startsWith("kyo.SqlAst.GroupedColumn[") ||
-        s.startsWith("kyo.SqlAst.UngroupedView[") ||
-        s.startsWith("kyo.SqlAst.Cast[")
-    end isColumnProjection
+        try
+            val mod = Symbol.requiredModule("kyo.SqlSchema")
+            if !mod.exists then Symbol.noSymbol else mod.maybeOwner.typeMember("SqlSchema")
+        catch case _: Throwable => Symbol.noSymbol
+        end try
+    end sqlSchemaTypeSym
+
+    /** The `Column` / `GroupedColumn` / `UngroupedView` / `Cast` type-member symbols of `object kyo.SqlAst`, resolved at macro-expansion
+      * time; empty when kyo-sql is not on the classpath.
+      */
+    private def columnProjectionTypeSyms(using q: Quotes): List[q.reflect.Symbol] =
+        import q.reflect.*
+        val sqlAst =
+            try Symbol.requiredModule("kyo.SqlAst")
+            catch case _: Throwable => Symbol.noSymbol
+        if !sqlAst.exists then Nil
+        else List("Column", "GroupedColumn", "UngroupedView", "Cast").map(sqlAst.typeMember)
+    end columnProjectionTypeSyms
+
+    /** True when `tpe`'s head-constructor type symbol matches `target`. Guards against `NoSymbol == NoSymbol` false-positives: union /
+      * intersection types have no class symbol, and stubbed lookups also resolve to `NoSymbol`; both must fail this check.
+      */
+    private def symbolMatches(using q: Quotes)(tpe: q.reflect.TypeRepr, target: q.reflect.Symbol): Boolean =
+        import q.reflect.*
+        given CanEqual[Symbol, Symbol] = CanEqual.derived
+        if !target.exists then false
+        else
+            val tsym = tpe.dealias match
+                case AppliedType(c, _) => c.typeSymbol
+                case other             => other.typeSymbol
+            tsym.exists && tsym == target
+        end if
+    end symbolMatches
 
     /** Production-path arm for `Column` / `GroupedColumn` / `UngroupedView`: delegates to the `given FromExpr` summoned at the macro
       * use-site (`ColumnFromExpr.fromExprColumn` etc., when imported in kyo-sql). Mirrors `deriveSqlSchema` / `deriveRecord`.
@@ -1699,22 +1724,12 @@ object FromExprDerived:
                 // type matches `A`; the element matcher is erased to `FromExpr[Any]`, so the
                 // saturated/unsaturated distinction is phantom.
                 val rawInnerDealiased = rawInner.dealias
-                // Identify the element constructor by its type symbol's `fullName`, robust for wildcard
-                // applications (`Column[?, ?]`) where the `.show`-based `isColumnProjection` string check
-                // is unreliable. Only a *plain* case-class element (no special / custom-given arm) needs
-                // saturation; the special arms handle their own wildcards.
-                val elemSymName =
-                    try rawInnerDealiased.typeSymbol.fullName
-                    catch case _: Throwable => ""
-                val isCustomGivenElem =
-                    elemSymName == "kyo.SqlAst.Column" || elemSymName == "kyo.SqlAst.GroupedColumn" ||
-                        elemSymName == "kyo.SqlAst.UngroupedView" || elemSymName == "kyo.SqlAst.Cast" ||
-                        elemSymName == "kyo.Record"
+                // A *plain* case-class element (no special / custom-given arm) needs saturation before its
+                // FromExpr is derived; the special arms handle their own wildcards.
                 val isPlainCaseElem =
                     !isMaybe(rawInnerDealiased) && !isChunk(rawInnerDealiased) && !isField(rawInnerDealiased) &&
                         !isTilde(rawInnerDealiased) && !isSqlSchema(rawInnerDealiased) &&
                         !isRecord(rawInnerDealiased) && !isColumnProjection(rawInnerDealiased) &&
-                        !isCustomGivenElem &&
                         rawInnerDealiased.typeSymbol.isClassDef && rawInnerDealiased.typeSymbol.flags.is(Flags.Case)
                 val saturatedInner = if isPlainCaseElem then applyAnyToFreeParams(rawInner) else rawInner
                 rawInner.asType match
@@ -2073,7 +2088,10 @@ object FromExprDerived:
         import q.reflect.*
         given CanEqual[Symbol, Symbol] = CanEqual.derived
         val sym                        = tpe.typeSymbol
-        val moduleSym                  = if sym.flags.is(Flags.Module) then sym else sym.companionModule
+        // `Ref(...)` needs a TERM symbol. For a singleton type `Empty.type`, `tpe.typeSymbol` returns the
+        // module CLASS (`Empty$`) even though `Flags.Module` is set on both val and class. Prefer the
+        // term-side symbol: use `sym` directly when it is already a term, else its companion module val.
+        val moduleSym = if sym.isTerm then sym else sym.companionModule
         val singletonRef: Expr[A] =
             if moduleSym != Symbol.noSymbol then
                 Ref(moduleSym).asExprOf[A]
@@ -2100,7 +2118,12 @@ object FromExprDerived:
                             catch case _: Throwable => ""
                         symName == expectedName ||
                         symName == expectedName + "$" ||
-                        symName.stripSuffix("$") == expectedName
+                        symName.stripSuffix("$") == expectedName ||
+                        // `case object` at the call site: the call-site term symbol is the module VAL
+                        // (`kyo.pkg.Empty`), but `expectedName` came from `TypeRepr.of[Empty.type].typeSymbol.fullName`
+                        // which resolves to the module CLASS (`kyo.pkg.Empty$`). Adding `"$"` to the term name
+                        // recovers the module-class name so the match succeeds.
+                        symName + "$" == expectedName
                     end matchesName
                     def go(term: Term): Option[A] =
                         term match

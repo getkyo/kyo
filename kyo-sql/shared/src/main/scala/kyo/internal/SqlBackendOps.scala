@@ -6,6 +6,7 @@ import kyo.SqlClient
 import kyo.SqlException
 import kyo.SqlRow
 import kyo.SqlSchema
+import kyo.SqlSchema.BoundValue
 import kyo.internal.mysql.BoundMysqlParam
 import kyo.internal.postgres.BoundParam
 

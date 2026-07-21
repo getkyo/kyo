@@ -182,8 +182,8 @@ def shape(client: kyo.SqlClient)(using kyo.Frame): kyo.Chunk[NoSchema2] < (kyo.A
     //   #LK-10  Same inline def q rendered through let(pgClient) vs let(mysqlClient), assert two
     //           backend-flavoured strings (lockstep enforcement)
     //   #TX-11  .run inside transaction { ... } uses the bound connection
-    //   #SR-13  .runStatic on a select with a literal carries the schema correctly via BoundValue[?]
-    //   #BC-14  .runDynamic does not allocate a BackendSql (bytecode inspection, doc-level)
+    //   #SR-13  .runStatic on a select with a literal carries the schema correctly via SqlSchema.BoundValue[?]
+    //   #BC-14  .runDynamic does not allocate a SqlStatic.BackendSql (bytecode inspection, doc-level)
     //
     // These leaves require a container harness (PG + MySQL test containers) plus, for SR-13,
     // the static FromExpr reducer. See the prep doc for the full mapping.
@@ -193,6 +193,6 @@ def shape(client: kyo.SqlClient)(using kyo.Frame): kyo.Chunk[NoSchema2] < (kyo.A
     "Lockstep: same inline def emits PG flavor under let(pgClient) and MySQL flavor under let(mysqlClient)".ignore("pending") - {}
     "transaction { Q.run } participates in the bound transaction (txLocal carries the connection)".ignore("pending") - {}
     "runStatic on a select with a literal carries the schema correctly".ignore("pending") - {}
-    "runDynamic does not allocate a BackendSql (bytecode inspection)".ignore("pending") - {}
+    "runDynamic does not allocate a SqlStatic.BackendSql (bytecode inspection)".ignore("pending") - {}
 
 end SqlRunTest

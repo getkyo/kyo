@@ -1,6 +1,5 @@
 package kyo
 
-import kyo.Sql.render
 import kyo.SqlAst.*
 
 /** Backend-specific renderer translation tests.
@@ -29,7 +28,7 @@ class SqlRenderTest extends Test:
     /** User table, used for OnConflict leaves (11-14). */
     case class User(id: Long, name: String) derives Schema
 
-    // --- CanEqual widening, needed to compare BoundValue existentials ---
+    // --- CanEqual widening, needed to compare SqlSchema.BoundValue existentials ---
     given CanEqual[Any, Any] = CanEqual.derived
 
     // --- Leaves 1-4, ILike / NotILike ---

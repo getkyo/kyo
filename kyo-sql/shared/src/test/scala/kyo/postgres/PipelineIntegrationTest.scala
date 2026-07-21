@@ -392,9 +392,9 @@ class PipelineIntegrationTest extends kyo.Test:
     "SqlPipelineBuilder execute(sql) and execute(sql, params) both compile" in {
         val builder = new SqlPipelineBuilder
         builder.execute("SELECT 1")
-        builder.execute("SELECT $1", Seq.empty[BoundValue[?]])
+        builder.execute("SELECT $1", Seq.empty[SqlSchema.BoundValue[?]])
         builder.query("SELECT 2")
-        builder.query("SELECT $1", Seq.empty[BoundValue[?]])
+        builder.query("SELECT $1", Seq.empty[SqlSchema.BoundValue[?]])
         val stmts = builder.drainStmts()
         assert(stmts.size == 4)
         succeed

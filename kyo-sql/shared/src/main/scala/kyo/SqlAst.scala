@@ -1,6 +1,7 @@
 package kyo
 
 import kyo.Record.~
+import kyo.SqlSchema.BoundValue
 import kyo.internal.dsl.WindowSpecBuilder
 import scala.annotation.targetName
 import scala.compiletime.summonFrom
@@ -32,7 +33,17 @@ object SqlAst:
     // --- SqlAst, unified root ---
 
     /** Root of the SQL AST hierarchy. Every node, expressions, queries, mutations, raw fragments, is a `SqlAst[A]`. */
-    sealed trait SqlAst[A]
+    sealed trait SqlAst[A]:
+
+        /** Renders this AST node into a [[Sql.Rendered]] (the SQL text and the runtime bind values) for the given backend.
+          *
+          * Use for debugging, logging, migration scripts, or any caller that needs to inspect the SQL alongside its parameters without
+          * executing it.
+          */
+        final def render(backend: SqlBackend)(using frame: Frame): Sql.Rendered =
+            val r = kyo.internal.SqlRender.render(this, backend, frame)
+            Sql.Rendered(r.sql, r.params)
+    end SqlAst
 
     // --- Executable, marker for AST nodes that can be run via SqlClient ---
 

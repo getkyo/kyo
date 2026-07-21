@@ -1,5 +1,6 @@
 package kyo
 
+import kyo.SqlSchema.BoundValue
 import kyo.internal.client.SqlClientBackend
 
 /** Accumulates pipeline statements for execution via [[SqlClient.pipeline]].

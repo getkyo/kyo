@@ -1,7 +1,6 @@
 package kyo.mysql
 
 import kyo.*
-import kyo.Sql.render
 import kyo.SqlAst.*
 import kyo.internal.SqlSharedContainers
 import kyo.internal.SqlSharedContainers.Backend

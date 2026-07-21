@@ -1,6 +1,5 @@
 package kyo
 
-import kyo.Sql.render
 import kyo.SqlAst.*
 
 /** Tests for user-specified RETURNING clauses on INSERT, UPDATE, and DELETE.

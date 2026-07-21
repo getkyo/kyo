@@ -25,7 +25,38 @@ final case class SqlUrl(
     address: SqlAddress,
     password: String,
     options: SqlUrl.Options
-) derives CanEqual
+) derives CanEqual:
+
+    /** Converts this [[SqlUrl]] into a [[SqlClientConfig]] by mapping the `sslmode` and `sslrootcert` query parameters to TLS
+      * configuration via [[kyo.internal.tls.TlsContext.build]].
+      *
+      * Mapping rules (delegated to [[kyo.internal.tls.TlsContext.build]]):
+      *   - `sslmode=disable` or absent → `tls = Absent`
+      *   - `sslmode=allow` or `sslmode=prefer` → `tls = Absent` (opportunistic upgrade handled at the backend layer)
+      *   - `sslmode=require` → `tls = Present(NetTlsConfig(trustAll = true))` (TLS required, no cert-chain or hostname check)
+      *   - `sslmode=verify-ca` → requires `sslrootcert`; fails with [[SqlException.Connection]] if absent
+      *   - `sslmode=verify-full` → requires `sslrootcert`; fails with [[SqlException.Connection]] if absent
+      *
+      * `sslrootcert` is also stored in [[SqlClientConfig.caCertPath]] for programmatic use.
+      *
+      * All other config fields use [[SqlClientConfig.default]].
+      */
+    def toClientConfig(using Frame): SqlClientConfig < Abort[SqlException.Connection] =
+        val caCertPath = options.sslrootcert
+        val tlsMode: TlsMode = options.sslmode match
+            case Present(SqlUrl.SslMode.Disable)    => TlsMode.Disable
+            case Present(SqlUrl.SslMode.Allow)      => TlsMode.Allow
+            case Present(SqlUrl.SslMode.Prefer)     => TlsMode.Prefer
+            case Present(SqlUrl.SslMode.Require)    => TlsMode.Require
+            case Present(SqlUrl.SslMode.VerifyCa)   => TlsMode.VerifyCa
+            case Present(SqlUrl.SslMode.VerifyFull) => TlsMode.VerifyFull
+            case Absent                             => TlsMode.Disable
+        TlsContext.build(tlsMode, caCertPath).map { tls =>
+            SqlClientConfig.default.copy(tls = tls, caCertPath = caCertPath, tlsMode = tlsMode)
+        }
+    end toClientConfig
+
+end SqlUrl
 
 object SqlUrl:
 
@@ -62,37 +93,6 @@ object SqlUrl:
     object Options:
         val default: Options = Options(Absent, Absent, Absent, Absent, Absent, Map.empty)
     end Options
-
-    /** Converts a [[SqlUrl]] into a [[SqlClientConfig]] by mapping the `sslmode` and `sslrootcert` query parameters to TLS configuration
-      * via [[kyo.internal.tls.TlsContext.build]].
-      *
-      * Mapping rules (delegated to [[kyo.internal.tls.TlsContext.build]]):
-      *   - `sslmode=disable` or absent → `tls = Absent`
-      *   - `sslmode=allow` or `sslmode=prefer` → `tls = Absent` (opportunistic upgrade handled at the backend layer)
-      *   - `sslmode=require` → `tls = Present(NetTlsConfig(trustAll = true))` (TLS required, no cert-chain or hostname check)
-      *   - `sslmode=verify-ca` → requires `sslrootcert`; fails with [[SqlException.Connection]] if absent
-      *   - `sslmode=verify-full` → requires `sslrootcert`; fails with [[SqlException.Connection]] if absent
-      *
-      * `sslrootcert` is also stored in [[SqlClientConfig.caCertPath]] for programmatic use.
-      *
-      * All other config fields use [[SqlClientConfig.default]].
-      */
-    extension (url: SqlUrl)
-        def toClientConfig(using Frame): SqlClientConfig < Abort[SqlException.Connection] =
-            val caCertPath = url.options.sslrootcert
-            val tlsMode: TlsMode = url.options.sslmode match
-                case Present(SslMode.Disable)    => TlsMode.Disable
-                case Present(SslMode.Allow)      => TlsMode.Allow
-                case Present(SslMode.Prefer)     => TlsMode.Prefer
-                case Present(SslMode.Require)    => TlsMode.Require
-                case Present(SslMode.VerifyCa)   => TlsMode.VerifyCa
-                case Present(SslMode.VerifyFull) => TlsMode.VerifyFull
-                case Absent                      => TlsMode.Disable
-            TlsContext.build(tlsMode, caCertPath).map { tls =>
-                SqlClientConfig.default.copy(tls = tls, caCertPath = caCertPath, tlsMode = tlsMode)
-            }
-        end toClientConfig
-    end extension
 
     /** Parses a URL string into a [[SqlUrl]].
       *

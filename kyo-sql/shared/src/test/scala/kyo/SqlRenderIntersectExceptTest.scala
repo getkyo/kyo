@@ -1,7 +1,5 @@
 package kyo
 
-import kyo.Sql.render
-
 /** Backend gate tests for [[SqlAst.SetOp]] INTERSECT/EXCEPT rendering (G-Parity-5).
   *
   * Verifies that:

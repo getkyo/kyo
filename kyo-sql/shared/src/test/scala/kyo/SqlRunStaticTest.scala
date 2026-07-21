@@ -23,7 +23,7 @@ class SqlRunStaticTest extends Test:
     inline given personSqlSchema: SqlSchema[Person] = SqlSchema.derived
     inline given userSqlSchema: SqlSchema[User]     = SqlSchema.derived
 
-    // ── Leaf A, runStatic on a fully-static select compiles to a BackendSql splice ──
+    // ── Leaf A, runStatic on a fully-static select compiles to a SqlStatic.BackendSql splice ──
 
     "Query.runStatic on a static select compiles (static fast-path wired)" in {
         // Phase 7: the macro now delegates to SqlStaticMacro.impl which renders both backends at

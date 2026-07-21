@@ -2,6 +2,7 @@ package kyo.internal
 
 import kyo.*
 import kyo.SqlAst.*
+import kyo.SqlSchema.BoundValue
 
 /** Walks the [[kyo.SqlAst]] tree to produce a SQL string with positional bind placeholders, plus the ordered bind values.
   *
@@ -15,10 +16,6 @@ import kyo.SqlAst.*
   * carry already-materialised payloads; the renderer never materialises a `Record[F]` view itself.
   */
 object SqlRender:
-
-    /** Re-export of [[kyo.BoundValue]] for the historic call-site (`SqlRender.BoundValue(...)`). */
-    type BoundValue[A] = kyo.BoundValue[A]
-    val BoundValue: kyo.BoundValue.type = kyo.BoundValue
 
     /** Bundles a macro-time bind value with its `SqlSchema`, captured in lockstep by the renderer when it processes a `Literal[A]` or
       * `Fragment.Bind[A]` node.

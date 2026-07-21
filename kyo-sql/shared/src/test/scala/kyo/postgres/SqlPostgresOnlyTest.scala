@@ -1,7 +1,6 @@
 package kyo.postgres
 
 import kyo.*
-import kyo.Sql.render
 import kyo.SqlAst.*
 import kyo.internal.SqlSharedContainers
 import kyo.internal.SqlSharedContainers.Backend

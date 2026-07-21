@@ -1,11 +1,10 @@
 package kyo
 
-import kyo.Sql.render
 import kyo.internal.RecordFromExpr.given
 
 class SqlStaticTest extends Test:
 
-    // `BoundValue`'s existential `?#A` value/schema fields can't satisfy strict-equality CanEqual derivation,
+    // `SqlSchema.BoundValue`'s existential `?#A` value/schema fields can't satisfy strict-equality CanEqual derivation,
     // so the tests compare via `.equals` after widening to `Any`. The given below restores `==` between Any values
     // for tests only.
     given CanEqual[Any, Any] = CanEqual.derived
@@ -50,7 +49,7 @@ class SqlStaticTest extends Test:
         assert(r.sql.postgres == """SELECT "p"."name" FROM "person" "p" WHERE ("p"."age" >= $1)""")
         assert(r.sql.mysql == "SELECT `p`.`name` FROM `person` `p` WHERE (`p`.`age` >= ?)")
         assert(r.params.size == 1)
-        val bv: kyo.BoundValue[?] = r.params.head
+        val bv: kyo.SqlSchema.BoundValue[?] = r.params.head
         assert((bv.value: Any) == 18)
         { val ok = SqlSchema.boundSchemaEqRef(bv, summon[SqlSchema[Int]]); assert(ok) }
     }
@@ -66,8 +65,8 @@ class SqlStaticTest extends Test:
             r.sql.mysql == "SELECT `p`.`id`, `p`.`name`, `p`.`age`, `p`.`deptId` FROM `person` `p` WHERE ((`p`.`age` >= ?) AND (`p`.`name` <> ?))"
         )
         assert(r.params.size == 2)
-        val bv0: kyo.BoundValue[?] = r.params(0)
-        val bv1: kyo.BoundValue[?] = r.params(1)
+        val bv0: kyo.SqlSchema.BoundValue[?] = r.params(0)
+        val bv1: kyo.SqlSchema.BoundValue[?] = r.params(1)
         assert((bv0.value: Any) == 18)
         { val ok = SqlSchema.boundSchemaEqRef(bv0, summon[SqlSchema[Int]]); assert(ok) }
         assert((bv1.value: Any) == "")
@@ -109,7 +108,7 @@ class SqlStaticTest extends Test:
             r.sql.mysql == "SELECT `p`.`id`, `p`.`name`, `p`.`age`, `p`.`deptId` FROM `person` `p` WHERE (`p`.`age` >= ?) ORDER BY `p`.`age` DESC LIMIT 10"
         )
         assert(r.params.size == 1)
-        val bv: kyo.BoundValue[?] = r.params.head
+        val bv: kyo.SqlSchema.BoundValue[?] = r.params.head
         assert((bv.value: Any) == 18)
         { val ok = SqlSchema.boundSchemaEqRef(bv, summon[SqlSchema[Int]]); assert(ok) }
     }
@@ -132,7 +131,7 @@ class SqlStaticTest extends Test:
             Sql.from[Person]("p").where(c => c.p.age >= 18)
         )
         assert(r.params.size == 1)
-        val bv: kyo.BoundValue[?] = r.params.head
+        val bv: kyo.SqlSchema.BoundValue[?] = r.params.head
         assert((bv.value: Any) == 18)
         { val ok = SqlSchema.boundSchemaEqRef(bv, summon[SqlSchema[Int]]); assert(ok) }
     }
@@ -142,7 +141,7 @@ class SqlStaticTest extends Test:
             Sql.from[Person]("p").where(c => c.p.name == "alice")
         )
         assert(r.params.size == 1)
-        val bv: kyo.BoundValue[?] = r.params.head
+        val bv: kyo.SqlSchema.BoundValue[?] = r.params.head
         assert((bv.value: Any) == "alice")
         { val ok = SqlSchema.boundSchemaEqRef(bv, summon[SqlSchema[String]]); assert(ok) }
     }
@@ -150,8 +149,8 @@ class SqlStaticTest extends Test:
     "bind-free query renders an empty Chunk" in {
         val r = SqlStatic.staticSql(Sql.from[Person]("p"))
         assert(r.params.isEmpty)
-        // type assertion: Rendered.params is Chunk[BoundValue[?]], not List[Any]
-        val typed: Chunk[BoundValue[?]] = r.params
+        // type assertion: Rendered.params is Chunk[SqlSchema.BoundValue[?]], not List[Any]
+        val typed: Chunk[SqlSchema.BoundValue[?]] = r.params
         assert(typed.isEmpty)
     }
 
@@ -160,8 +159,8 @@ class SqlStaticTest extends Test:
             Sql.from[Person]("p").where(c => c.p.age >= 18 && c.p.name != "")
         )
         assert(r.params.size == 2)
-        val bv0: kyo.BoundValue[?] = r.params(0)
-        val bv1: kyo.BoundValue[?] = r.params(1)
+        val bv0: kyo.SqlSchema.BoundValue[?] = r.params(0)
+        val bv1: kyo.SqlSchema.BoundValue[?] = r.params(1)
         assert((bv0.value: Any) == 18)
         { val ok = SqlSchema.boundSchemaEqRef(bv0, summon[SqlSchema[Int]]); assert(ok) }
         assert((bv1.value: Any) == "")
@@ -175,25 +174,25 @@ class SqlStaticTest extends Test:
         )
         val runtimeR = Sql.from[Person]("p").where(c => c.p.age >= 18).render(SqlBackend.Postgres)
         assert(staticR.params.size == runtimeR.params.size)
-        val sBv: kyo.BoundValue[?] = staticR.params.head
-        val rBv: kyo.BoundValue[?] = runtimeR.params.head
-        val schemasEq              = sBv.schema.asInstanceOf[AnyRef] eq rBv.schema.asInstanceOf[AnyRef]
+        val sBv: kyo.SqlSchema.BoundValue[?] = staticR.params.head
+        val rBv: kyo.SqlSchema.BoundValue[?] = runtimeR.params.head
+        val schemasEq                        = sBv.schema.asInstanceOf[AnyRef] eq rBv.schema.asInstanceOf[AnyRef]
         assert(schemasEq)
         assert((sBv.value: Any) == (rBv.value: Any))
     }
 
     "schema is the same instance returned by summon[SqlSchema[Int]]" in {
-        val r                     = SqlStatic.staticSql(Sql.from[Person]("p").where(c => c.p.age >= 18))
-        val bv: kyo.BoundValue[?] = r.params.head
-        val expected              = summon[SqlSchema[Int]]
+        val r                               = SqlStatic.staticSql(Sql.from[Person]("p").where(c => c.p.age >= 18))
+        val bv: kyo.SqlSchema.BoundValue[?] = r.params.head
+        val expected                        = summon[SqlSchema[Int]]
         { val ok = SqlSchema.boundSchemaEqRef(bv, expected); assert(ok) }
     }
 
-    "Chunk round-trip, value equality and schema identity for each BoundValue" in {
+    "Chunk round-trip, value equality and schema identity for each SqlSchema.BoundValue" in {
         val r = SqlStatic.staticSql(
             Sql.from[Person]("p").where(c => c.p.age >= 18 && c.p.name != "")
         )
-        val params: Chunk[BoundValue[?]] = Chunk.from(r.params)
+        val params: Chunk[SqlSchema.BoundValue[?]] = Chunk.from(r.params)
         assert(params.size == 2)
         val bv0 = params(0)
         val bv1 = params(1)
@@ -259,13 +258,13 @@ class SqlStaticTest extends Test:
         assert(kyo.internal.SqlRender.quoteIdent("a`b", SqlBackend.Mysql) == "`a``b`")
     }
 
-    "BackendSql.forBackend(Postgres) returns the postgres string" in {
-        val bs = BackendSql("PG_SQL", "MY_SQL")
+    "SqlStatic.BackendSql.forBackend(Postgres) returns the postgres string" in {
+        val bs = SqlStatic.BackendSql("PG_SQL", "MY_SQL")
         assert(bs.forBackend(SqlBackend.Postgres) == "PG_SQL")
     }
 
-    "BackendSql.forBackend(Mysql) returns the mysql string" in {
-        val bs = BackendSql("PG_SQL", "MY_SQL")
+    "SqlStatic.BackendSql.forBackend(Mysql) returns the mysql string" in {
+        val bs = SqlStatic.BackendSql("PG_SQL", "MY_SQL")
         assert(bs.forBackend(SqlBackend.Mysql) == "MY_SQL")
     }
 
@@ -285,8 +284,8 @@ class SqlStaticTest extends Test:
         assert(staticR.sql.mysql == runtimeR.sql)
     }
 
-    "BackendSql.toString round-trips both strings without truncation" in {
-        val bs = BackendSql("""SELECT "a"."b" FROM "t"""", "SELECT `a`.`b` FROM `t`")
+    "SqlStatic.BackendSql.toString round-trips both strings without truncation" in {
+        val bs = SqlStatic.BackendSql("""SELECT "a"."b" FROM "t"""", "SELECT `a`.`b` FROM `t`")
         val s  = bs.toString
         assert(s.contains("""SELECT "a"."b" FROM "t""""))
         assert(s.contains("SELECT `a`.`b` FROM `t`"))
@@ -301,28 +300,28 @@ class SqlStaticTest extends Test:
 
     // --- where age == 30 + select name ---
 
-    "where(age == 30).select(name) emits correct SQL and one Int BoundValue" in {
+    "where(age == 30).select(name) emits correct SQL and one Int SqlSchema.BoundValue" in {
         val r = SqlStatic.staticSql(
             Sql.from[Person]("p").where(c => c.p.age == 30).select(c => c.p.name)
         )
         assert(r.sql.postgres == """SELECT "p"."name" FROM "person" "p" WHERE ("p"."age" = $1)""")
         assert(r.sql.mysql == "SELECT `p`.`name` FROM `person` `p` WHERE (`p`.`age` = ?)")
         assert(r.params.size == 1)
-        val bv: kyo.BoundValue[?] = r.params.head
+        val bv: kyo.SqlSchema.BoundValue[?] = r.params.head
         assert((bv.value: Any) == 30)
         { val ok = SqlSchema.boundSchemaEqRef(bv, summon[SqlSchema[Int]]); assert(ok) }
     }
 
     // --- where name == "Alice" + select id ---
 
-    "where(name == \"Alice\").select(id) emits correct SQL and one String BoundValue" in {
+    "where(name == \"Alice\").select(id) emits correct SQL and one String SqlSchema.BoundValue" in {
         val r = SqlStatic.staticSql(
             Sql.from[Person]("p").where(c => c.p.name == "Alice").select(c => c.p.id)
         )
         assert(r.sql.postgres == """SELECT "p"."id" FROM "person" "p" WHERE ("p"."name" = $1)""")
         assert(r.sql.mysql == "SELECT `p`.`id` FROM `person` `p` WHERE (`p`.`name` = ?)")
         assert(r.params.size == 1)
-        val bv: kyo.BoundValue[?] = r.params.head
+        val bv: kyo.SqlSchema.BoundValue[?] = r.params.head
         assert((bv.value: Any) == "Alice")
         { val ok = SqlSchema.boundSchemaEqRef(bv, summon[SqlSchema[String]]); assert(ok) }
     }
@@ -336,8 +335,8 @@ class SqlStaticTest extends Test:
         assert(r.sql.postgres == """SELECT "p"."name" FROM "person" "p" WHERE ("p"."age" BETWEEN $1 AND $2)""")
         assert(r.sql.mysql == "SELECT `p`.`name` FROM `person` `p` WHERE (`p`.`age` BETWEEN ? AND ?)")
         assert(r.params.size == 2)
-        val bv0: kyo.BoundValue[?] = r.params(0)
-        val bv1: kyo.BoundValue[?] = r.params(1)
+        val bv0: kyo.SqlSchema.BoundValue[?] = r.params(0)
+        val bv1: kyo.SqlSchema.BoundValue[?] = r.params(1)
         assert((bv0.value: Any) == 18)
         { val ok = SqlSchema.boundSchemaEqRef(bv0, summon[SqlSchema[Int]]); assert(ok) }
         assert((bv1.value: Any) == 65)
@@ -422,7 +421,7 @@ class SqlStaticTest extends Test:
             r.sql.mysql == "SELECT * FROM (SELECT `p`.`id`, `p`.`name`, `p`.`age`, `p`.`deptId` FROM `person` `p` WHERE (`p`.`age` > ?)) AS sub GROUP BY `p`.`age`"
         )
         assert(r.params.size == 1)
-        val bv: kyo.BoundValue[?] = r.params.head
+        val bv: kyo.SqlSchema.BoundValue[?] = r.params.head
         assert((bv.value: Any) == 18)
         // Static-path lockstep: the static macro and the runtime renderer emit byte-identical SQL.
         val rt = Sql.from[Person]("p").where(c => c.p.age > 18).groupBy(c => c.p.age).render(SqlBackend.Postgres)
@@ -482,8 +481,8 @@ class SqlStaticTest extends Test:
 
     // Int bind param.
     "Int bind param produces params(0).value == 42 + SqlSchema[Int]" in {
-        val r                     = SqlStatic.staticSql(Sql.from[Person]("p").where(c => c.p.age == 42))
-        val bv: kyo.BoundValue[?] = r.params.head
+        val r                               = SqlStatic.staticSql(Sql.from[Person]("p").where(c => c.p.age == 42))
+        val bv: kyo.SqlSchema.BoundValue[?] = r.params.head
         assert(r.params.size == 1)
         assert((bv.value: Any) == 42)
         { val ok = SqlSchema.boundSchemaEqRef(bv, summon[SqlSchema[Int]]); assert(ok) }
@@ -491,8 +490,8 @@ class SqlStaticTest extends Test:
 
     // String bind param.
     "String bind param produces params(0).value == \"Alice\" + SqlSchema[String]" in {
-        val r                     = SqlStatic.staticSql(Sql.from[Person]("p").where(c => c.p.name == "Alice"))
-        val bv: kyo.BoundValue[?] = r.params.head
+        val r                               = SqlStatic.staticSql(Sql.from[Person]("p").where(c => c.p.name == "Alice"))
+        val bv: kyo.SqlSchema.BoundValue[?] = r.params.head
         assert(r.params.size == 1)
         assert((bv.value: Any) == "Alice")
         { val ok = SqlSchema.boundSchemaEqRef(bv, summon[SqlSchema[String]]); assert(ok) }
@@ -500,8 +499,8 @@ class SqlStaticTest extends Test:
 
     // Long bind param.
     "Long bind param produces params(0).value == 99L + SqlSchema[Long]" in {
-        val r                     = SqlStatic.staticSql(Sql.from[Person]("p").where(c => c.p.id == 99L))
-        val bv: kyo.BoundValue[?] = r.params.head
+        val r                               = SqlStatic.staticSql(Sql.from[Person]("p").where(c => c.p.id == 99L))
+        val bv: kyo.SqlSchema.BoundValue[?] = r.params.head
         assert(r.params.size == 1)
         assert((bv.value: Any) == 99L)
         { val ok = SqlSchema.boundSchemaEqRef(bv, summon[SqlSchema[Long]]); assert(ok) }
@@ -601,14 +600,14 @@ class SqlStaticTest extends Test:
     // INSERT static rendering.
     //
     // `Insert.Values[T, F]` stores rows as decomposed pure data,
-    // `Chunk[Chunk[BoundValue[?]]]` (outer = rows, inner = one `BoundValue` per column in declaration
+    // `Chunk[Chunk[SqlSchema.BoundValue[?]]]` (outer = rows, inner = one `SqlSchema.BoundValue` per column in declaration
     // order). The `Sql.insert[Person].values(Person(...))` builder eagerly decomposes each row `T` into
-    // its per-field `BoundValue`s via the `SqlMacros.rowValues[T]` macro (field value + summoned
-    // `SqlSchema`). The AST node now carries only `Chunk` / `BoundValue` / `SqlSchema`, all pure data
+    // its per-field `SqlSchema.BoundValue`s via the `SqlMacros.rowValues[T]` macro (field value + summoned
+    // `SqlSchema`). The AST node now carries only `Chunk` / `SqlSchema.BoundValue` / `SqlSchema`, all pure data
     // that `FromExpr.derived` lifts with zero reflection, so `staticSql` of an INSERT works without ever
     // reflectively reconstructing the (co-compiled) `Person` row class.
     //
-    // The renderer (`SqlRender.insertValues` → `renderDecomposedRows`) emits each cell's `BoundValue.value`
+    // The renderer (`SqlRender.insertValues` → `renderDecomposedRows`) emits each cell's `SqlSchema.BoundValue.value`
     // as an inline literal, byte-identical to the prior `productIterator` walk, so the static SQL matches
     // the runtime renderer exactly. Bind params stay empty for a literal-VALUES INSERT (same as before).
     "staticSql of an INSERT statement renders correct INSERT SQL" in {

@@ -1,6 +1,5 @@
 package kyo
 
-import kyo.Sql.render
 import kyo.internal.mysql.MysqlBufferWriter
 import kyo.internal.mysql.types.MysqlEncoder
 import kyo.internal.postgres.BoundParam

@@ -1,6 +1,5 @@
 package kyo
 
-import kyo.Sql.render
 import kyo.SqlAst.*
 
 /** Static-SQL coverage for [[SqlAst.Lateral]] (G-Probe-5).
@@ -67,7 +66,7 @@ class SqlStaticLateralTest extends Test:
         assert(r.sql.mysql.contains("LATERAL"))
         assert(r.sql.mysql.contains("?"))
         assert(r.params.size == 1)
-        val bv: BoundValue[?] = r.params.head
+        val bv: SqlSchema.BoundValue[?] = r.params.head
         // Narrow CanEqual scope to this single assertion (per audit W-3): widening at class level
         // would silently relax `==` semantics for every leaf in the suite.
         given CanEqual[Any, Any] = CanEqual.derived

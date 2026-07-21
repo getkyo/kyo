@@ -1,6 +1,5 @@
 package kyo
 
-import kyo.Sql.render
 import kyo.SqlAst.*
 
 /** SqlRenderGroupByRollupTest, Backend rendering of GROUP BY ROLLUP (G-Parity-18).

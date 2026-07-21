@@ -1,7 +1,5 @@
 package kyo
 
-import kyo.Sql.render
-
 /** Backend gate tests for [[SqlAst.WithRecursive]] rendering (G-Parity-4).
   *
   * Verifies that:

@@ -7,8 +7,8 @@ case class Country(code: String, name: String)
 object Country:
     given SqlSchema[Country] = SqlSchema.derived
 
-/** Tests for [[SqlSchemaTransforms]] -- the `.withNaming` and `.withTableName` extension methods on [[SqlSchema]], and the
-  * `SqlSchema.naming` companion accessor.
+/** Tests for the `.withNaming`, `.withTableName`, and `.rename` transforms on [[SqlSchema]], plus the `SqlSchema.naming` companion
+  * accessor.
   */
 class SqlSchemaTransformsTest extends Test:
 
