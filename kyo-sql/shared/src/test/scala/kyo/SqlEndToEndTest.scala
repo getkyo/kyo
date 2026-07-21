@@ -16,7 +16,7 @@ import kyo.internal.SqlSharedContainers.Backend
   * packet.
   *
   * Note on .runStatic: the static reducer lands the FromExpr reducer. All live assertions use .run (runtime renderer fallback) or
-  * .runDynamic. Static rendering correctness is verified separately via SqlStatic.staticSql in SqlStaticTest and SqlRenderTest.
+  * .runDynamic. Runtime rendering correctness is verified separately via .renderPostgres / .renderMysql in the SqlAst*RenderTest suites.
   */
 class SqlEndToEndTest extends Test:
 

@@ -23,11 +23,11 @@ class SqlRunStaticTest extends Test:
     inline given personSqlSchema: SqlSchema[Person] = SqlSchema.derived
     inline given userSqlSchema: SqlSchema[User]     = SqlSchema.derived
 
-    // ── Leaf A, runStatic on a fully-static select compiles to a SqlStatic.BackendSql splice ──
+    // ── Leaf A, runStatic on a fully-static select compiles to a kyo.internal.SqlBackendSql splice ──
 
     "Query.runStatic on a static select compiles (static fast-path wired)" in {
         // Phase 7: the macro now delegates to SqlStaticMacro.impl which renders both backends at
-        // compile time and emits an Expr[SqlStatic.Rendered]. The splice below should compile cleanly.
+        // compile time and emits an Expr[kyo.internal.SqlRendered]. The splice below should compile cleanly.
         def shape(using Frame): Chunk[String] < (Async & Abort[SqlException] & Scope) =
             Sql.from[Person]("p").select(c => c.p.name).runStatic
         succeed
@@ -85,12 +85,12 @@ class SqlRunStaticTest extends Test:
         )
         assert(errors.nonEmpty, "expected a compile error for runStatic on a non-liftable Update")
         // Phase 7 audit W-1: tighten beyond bare `errors.nonEmpty`. The macro must carry the
-        // `staticSql`/`statically render` diagnostic from SqlStaticMacro.impl's report.errorAndAbort,
-        // not silently fail with an unrelated message. The exact wording is in
-        // SqlStaticMacro.scala:29-32 ("staticSql: cannot statically render this query").
+        // `.runStatic` / `cannot be folded` diagnostic from SqlStaticMacro.impl's report.errorAndAbort,
+        // not silently fail with an unrelated message. The exact wording is in SqlStaticMacro.scala's
+        // .impl error branches (".runStatic: query cannot be folded at compile time ...").
         val message = errors.map(_.message).mkString(" ")
         assert(
-            message.contains("staticSql") || message.contains("statically render"),
+            message.contains(".runStatic") || message.contains("cannot be folded"),
             s"expected the SqlStaticMacro.impl diagnostic in the error message; got: $message"
         )
     }

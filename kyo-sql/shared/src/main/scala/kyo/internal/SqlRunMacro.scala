@@ -16,7 +16,7 @@ import scala.quoted.*
   *   1. Try to lift the AST `Expr[Executable[?]]` to a compile-time constant by probing `q.value` with the `FromExpr` givens brought into
   *      scope by [[ColumnFromExpr]] / [[RecordFromExpr]].
   *   2. On success (`.run`) or unconditionally (`.runStatic`): call [[SqlStaticMacro.impl]] which renders both backends at macro-expansion
-  *      time and returns an `Expr[SqlStatic.Rendered]`. Splice the result into a `SqlClient.use` block.
+  *      time and returns an `Expr[SqlRendered]`. Splice the result into a `SqlClient.use` block.
   *   3. On failure (`.run` only): emit the runtime-render fallback (existing behaviour).
   */
 object SqlRunMacro:
@@ -73,7 +73,7 @@ object SqlRunMacro:
             )
         )
         // Delegate to SqlStaticMacro.impl, it calls report.errorAndAbort with the precise position+message when the AST is not liftable.
-        val rendered: Expr[SqlStatic.Rendered] = SqlStaticMacro.impl(widenStatement(q))
+        val rendered: Expr[SqlRendered] = SqlStaticMacro.impl(widenStatement(q))
         '{
             SqlClient.use { client =>
                 val r = $rendered
@@ -110,7 +110,7 @@ object SqlRunMacro:
         Quotes
     )
         : Expr[InsertResult < (Async & Abort[SqlException] & Scope)] =
-        val rendered: Expr[SqlStatic.Rendered] = SqlStaticMacro.impl(widenStatement(ins))
+        val rendered: Expr[SqlRendered] = SqlStaticMacro.impl(widenStatement(ins))
         '{
             SqlClient.use { client =>
                 val r = $rendered
@@ -147,7 +147,7 @@ object SqlRunMacro:
         Quotes
     )
         : Expr[Long < (Async & Abort[SqlException] & Scope)] =
-        val rendered: Expr[SqlStatic.Rendered] = SqlStaticMacro.impl(widenStatement(upd))
+        val rendered: Expr[SqlRendered] = SqlStaticMacro.impl(widenStatement(upd))
         '{
             SqlClient.use { client =>
                 val r = $rendered
@@ -184,7 +184,7 @@ object SqlRunMacro:
         Quotes
     )
         : Expr[Long < (Async & Abort[SqlException] & Scope)] =
-        val rendered: Expr[SqlStatic.Rendered] = SqlStaticMacro.impl(widenStatement(del))
+        val rendered: Expr[SqlRendered] = SqlStaticMacro.impl(widenStatement(del))
         '{
             SqlClient.use { client =>
                 val r = $rendered

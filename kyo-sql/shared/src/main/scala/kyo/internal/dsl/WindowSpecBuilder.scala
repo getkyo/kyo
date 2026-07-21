@@ -12,9 +12,9 @@ import scala.annotation.targetName
   * varargs tree which the `FromExpr[Chunk[A]]` derivation recognises; `.copy(...)` and `Chunk.from(keys)` produce runtime method calls that
   * the macro cannot reduce.
   *
-  * ===Static-SQL (staticSql) note===
+  * ===Static-SQL note===
   *
-  * The builder chain `Sql.windowSpec.partitionBy(x).rowNumber` lifts cleanly through [[kyo.SqlStatic.staticSql]] (Phase 9b fix to
+  * The builder chain `Sql.windowSpec.partitionBy(x).rowNumber` lifts cleanly through the compile-time `.runStatic` path (Phase 9b fix to
   * `resolveBindings`'s Select-of-construction fold, the previous limitation requiring an explicit `WindowSpec(...)` constructor at static
   * call sites is gone).
   *

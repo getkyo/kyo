@@ -350,8 +350,7 @@ object RecordFromExpr:
 
         // --- generic utilities ---
 
-        /** Strips common TASTy wrappers: `Inlined`, `Block`, `Typed`, `asInstanceOf`, substitution evidence, and Ident bindings. Adapted
-          * from the proven `R.unwrap` in `SqlStatic.scala`.
+        /** Strips common TASTy wrappers: `Inlined`, `Block`, `Typed`, `asInstanceOf`, substitution evidence, and Ident bindings.
           */
         @tailrec
         private def unwrap(t: Term): Term =

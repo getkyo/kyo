@@ -8,8 +8,9 @@ import kyo.SqlAst.*
   * (PG native, MySQL LEFT/RIGHT UNION synthesis); OnConflict DoNothing (PG `ON CONFLICT DO NOTHING`, MySQL `INSERT IGNORE INTO`);
   * OnConflict DoUpdate (PG `ON CONFLICT … DO UPDATE`, MySQL `ON DUPLICATE KEY UPDATE`).
   *
-  * Each leaf asserts byte-equality of the rendered SQL. Static-path cross-checks (SqlStatic.staticSql) are included for ILike, Concat, and
-  * OnConflict leaves where the query shape is liftable.
+  * Each leaf asserts byte-equality of the rendered SQL for one or both backends. Static-path cross-checks
+  * ([[SqlStaticProbe]].render) are included for ILike, Concat, and OnConflict leaves where the query shape is liftable: they assert
+  * that the compile-time renderer (used by `.run` / `.runStatic`) produces byte-identical SQL to the runtime renderer.
   */
 class SqlRenderTest extends Test:
 
@@ -73,12 +74,12 @@ class SqlRenderTest extends Test:
         assert((r.params.head.value: Any) == "ada%")
     }
 
-    // Static-path cross-check for ILike: static macro == runtime renderer byte-for-byte.
-    "ILike staticSql matches SqlRender.render byte-for-byte" in {
+    // Static-path cross-check for ILike: compile-time render == runtime render byte-for-byte.
+    "ILike compile-time render matches runtime render byte-for-byte" in {
         val rt  = Sql.from[NameRow]("n").where(c => c.n.name.ilike("ada%")).renderPostgres
-        val rs  = SqlStatic.staticSql(Sql.from[NameRow]("n").where(c => c.n.name.ilike("ada%")))
+        val rs  = SqlStaticProbe.render(Sql.from[NameRow]("n").where(c => c.n.name.ilike("ada%")))
         val rtm = Sql.from[NameRow]("n").where(c => c.n.name.ilike("ada%")).renderMysql
-        val rsm = SqlStatic.staticSql(Sql.from[NameRow]("n").where(c => c.n.name.ilike("ada%")))
+        val rsm = SqlStaticProbe.render(Sql.from[NameRow]("n").where(c => c.n.name.ilike("ada%")))
         assert(rs.sql.postgres == rt.sql)
         assert(rsm.sql.mysql == rtm.sql)
     }
@@ -127,12 +128,12 @@ class SqlRenderTest extends Test:
         assert((r.params.head.value: Any) == "-")
     }
 
-    // Static-path cross-check for Concat: staticSql renders byte-identical SQL to the runtime renderer.
-    "Concat staticSql matches SqlRender.render byte-for-byte" in {
+    // Static-path cross-check for Concat: compile-time render == runtime render byte-for-byte.
+    "Concat compile-time render matches runtime render byte-for-byte" in {
         val rt  = Sql.from[FullName]("f").select(c => c.f.first ++ c.f.last).renderPostgres
-        val rs  = SqlStatic.staticSql(Sql.from[FullName]("f").select(c => c.f.first ++ c.f.last))
+        val rs  = SqlStaticProbe.render(Sql.from[FullName]("f").select(c => c.f.first ++ c.f.last))
         val rtm = Sql.from[FullName]("f").select(c => c.f.first ++ c.f.last).renderMysql
-        val rsm = SqlStatic.staticSql(Sql.from[FullName]("f").select(c => c.f.first ++ c.f.last))
+        val rsm = SqlStaticProbe.render(Sql.from[FullName]("f").select(c => c.f.first ++ c.f.last))
         assert(rs.sql.postgres == rt.sql)
         assert(rsm.sql.mysql == rtm.sql)
     }
@@ -177,12 +178,12 @@ class SqlRenderTest extends Test:
         assert(r.params.isEmpty)
     }
 
-    // Static-path cross-check for OnConflict DoNothing: static macro == runtime renderer byte-for-byte.
-    "OnConflict DoNothing staticSql matches SqlRender.render byte-for-byte" in {
+    // Static-path cross-check for OnConflict DoNothing: compile-time render == runtime render byte-for-byte.
+    "OnConflict DoNothing compile-time render matches runtime render byte-for-byte" in {
         val rt  = Sql.insert[User].values(User(1L, "Alice")).onConflictDoNothing().renderPostgres
-        val rs  = SqlStatic.staticSql(Sql.insert[User].values(User(1L, "Alice")).onConflictDoNothing())
+        val rs  = SqlStaticProbe.render(Sql.insert[User].values(User(1L, "Alice")).onConflictDoNothing())
         val rtm = Sql.insert[User].values(User(1L, "Alice")).onConflictDoNothing().renderMysql
-        val rsm = SqlStatic.staticSql(Sql.insert[User].values(User(1L, "Alice")).onConflictDoNothing())
+        val rsm = SqlStaticProbe.render(Sql.insert[User].values(User(1L, "Alice")).onConflictDoNothing())
         assert(rs.sql.postgres == rt.sql)
         assert(rsm.sql.mysql == rtm.sql)
     }
@@ -209,16 +210,16 @@ class SqlRenderTest extends Test:
         assert(r.params.isEmpty)
     }
 
-    // Static-path cross-check for OnConflict DoUpdate: static macro == runtime renderer byte-for-byte.
-    "OnConflict DoUpdate staticSql matches SqlRender.render byte-for-byte" in {
+    // Static-path cross-check for OnConflict DoUpdate: compile-time render == runtime render byte-for-byte.
+    "OnConflict DoUpdate compile-time render matches runtime render byte-for-byte" in {
         val rt = Sql.insert[User].values(User(1L, "Alice")).onConflictDoUpdate(_.name)(c => c.name := Excluded(c.name))
             .renderPostgres
-        val rs = SqlStatic.staticSql(
+        val rs = SqlStaticProbe.render(
             Sql.insert[User].values(User(1L, "Alice")).onConflictDoUpdate(_.name)(c => c.name := Excluded(c.name))
         )
         val rtm = Sql.insert[User].values(User(1L, "Alice")).onConflictDoUpdate(_.name)(c => c.name := Excluded(c.name))
             .renderMysql
-        val rsm = SqlStatic.staticSql(
+        val rsm = SqlStaticProbe.render(
             Sql.insert[User].values(User(1L, "Alice")).onConflictDoUpdate(_.name)(c => c.name := Excluded(c.name))
         )
         assert(rs.sql.postgres == rt.sql)

@@ -44,7 +44,7 @@ class SqlRunTest extends Test:
 
     // ── Leaf 3, runStatic succeeds on a fully-static AST ──────────────────────
     //
-    // Phase 7 wired runStatic to SqlStaticMacro.impl. A fully-reducible inline query now compiles
+    // Phase 7 wired runStatic to the SqlStaticMacro compile-time path. A fully-reducible inline query now compiles
     // successfully. The old "macro always rejects" assertion is replaced with:
     //  (a) positive: a static single-column select compiles and has the right effect row.
     //  (b) negative: runStatic on a non-literal `val` query still fails (non-inline, not reducible).
@@ -183,7 +183,7 @@ def shape(client: kyo.SqlClient)(using kyo.Frame): kyo.Chunk[NoSchema2] < (kyo.A
     //           backend-flavoured strings (lockstep enforcement)
     //   #TX-11  .run inside transaction { ... } uses the bound connection
     //   #SR-13  .runStatic on a select with a literal carries the schema correctly via SqlSchema.BoundValue[?]
-    //   #BC-14  .runDynamic does not allocate a SqlStatic.BackendSql (bytecode inspection, doc-level)
+    //   #BC-14  .runDynamic does not allocate a kyo.internal.SqlBackendSql (bytecode inspection, doc-level)
     //
     // These leaves require a container harness (PG + MySQL test containers) plus, for SR-13,
     // the static FromExpr reducer. See the prep doc for the full mapping.
@@ -193,6 +193,6 @@ def shape(client: kyo.SqlClient)(using kyo.Frame): kyo.Chunk[NoSchema2] < (kyo.A
     "Lockstep: same inline def emits PG flavor under let(pgClient) and MySQL flavor under let(mysqlClient)".ignore("pending") - {}
     "transaction { Q.run } participates in the bound transaction (txLocal carries the connection)".ignore("pending") - {}
     "runStatic on a select with a literal carries the schema correctly".ignore("pending") - {}
-    "runDynamic does not allocate a SqlStatic.BackendSql (bytecode inspection)".ignore("pending") - {}
+    "runDynamic does not allocate a kyo.internal.SqlBackendSql (bytecode inspection)".ignore("pending") - {}
 
 end SqlRunTest

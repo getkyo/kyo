@@ -4,13 +4,12 @@ import kyo.Chunk
 import kyo.SqlAst
 import kyo.SqlSchema
 import kyo.SqlSchema.BoundValue
-import kyo.SqlStatic
 import kyo.internal.SqlBackend
 import scala.quoted.*
 
 private[kyo] object SqlStaticMacro:
 
-    def impl(q: Expr[SqlAst.Executable[?]])(using Quotes): Expr[SqlStatic.Rendered] =
+    def impl(q: Expr[SqlAst.Executable[?]])(using Quotes): Expr[SqlRendered] =
         import quotes.reflect.*
         liftAst(q) match
             case Some(ast) => renderLifted(ast, q)
@@ -20,14 +19,14 @@ private[kyo] object SqlStaticMacro:
                 val emitted = emitOpaqueCauses(q.asTerm)
                 if emitted > 0 then
                     report.errorAndAbort(
-                        ".runStatic / staticSql: query cannot be folded at compile time " +
+                        ".runStatic: query cannot be folded at compile time " +
                             "(see the specific errors above). Use .run for opportunistic static folding " +
                             "with runtime fallback, or .runDynamic to skip static folding entirely.",
                         q.asTerm.pos
                     )
                 else
                     report.errorAndAbort(
-                        ".runStatic / staticSql: query cannot be folded at compile time. " +
+                        ".runStatic: query cannot be folded at compile time. " +
                             "Ensure all SqlSchema instances are declared as `inline given` " +
                             "and all DSL fragments are inline-constructed. " +
                             "Use .run for opportunistic static folding with runtime fallback.",
@@ -72,7 +71,7 @@ private[kyo] object SqlStaticMacro:
                                             case other                      => other.show
                                     case _ => "?"
                             val msg =
-                                s".runStatic / staticSql: SqlSchema[$schemaTypeShown] cannot be folded at compile time " +
+                                s".runStatic: SqlSchema[$schemaTypeShown] cannot be folded at compile time " +
                                     s"for resolving the $methodLabel. " +
                                     s"Declare it as `inline given SqlSchema[$schemaTypeShown] = ...` " +
                                     "(plain `given` definitions have invisible bodies in the Scala 3 macro API). " +
@@ -95,7 +94,7 @@ private[kyo] object SqlStaticMacro:
       * and the render happen in a single pass and the result is returned. Saves a full AST walk per static call site at compile time
       * (PHASE-7 audit W-3).
       */
-    def tryImpl(q: Expr[SqlAst.Executable[?]])(using Quotes): Option[Expr[SqlStatic.Rendered]] =
+    def tryImpl(q: Expr[SqlAst.Executable[?]])(using Quotes): Option[Expr[SqlRendered]] =
         liftAst(q).map(ast => renderLifted(ast, q))
 
     /** Single FromExpr-driven lift of the full Executable AST. Returns `None` when the AST cannot be lifted (dynamic schema, non-inline
@@ -108,10 +107,10 @@ private[kyo] object SqlStaticMacro:
         q.value
     end liftAst
 
-    /** Renders a pre-lifted AST for both backends and lifts the result back to an `Expr[SqlStatic.Rendered]`. `posExpr` is only used to
-      * anchor the `report.errorAndAbort` for the cross-backend bind-count divergence check.
+    /** Renders a pre-lifted AST for both backends and lifts the result back to an `Expr[SqlRendered]`. `posExpr` is only used to anchor
+      * the `report.errorAndAbort` for the cross-backend bind-count divergence check.
       */
-    private def renderLifted(ast: SqlAst.Executable[?], posExpr: Expr[?])(using Quotes): Expr[SqlStatic.Rendered] =
+    private def renderLifted(ast: SqlAst.Executable[?], posExpr: Expr[?])(using Quotes): Expr[SqlRendered] =
         import quotes.reflect.*
 
         // Render the lifted AST for both backends at compile time. SqlRender.render is a pure function,
@@ -122,7 +121,7 @@ private[kyo] object SqlStaticMacro:
         // Defensive check: bind param count must agree across backends.
         if pgRendered.binds.size != myRendered.binds.size then
             report.errorAndAbort(
-                s"staticSql: backend divergence, " +
+                s"static SQL render: backend divergence, " +
                     s"Postgres produced ${pgRendered.binds.size} binds, " +
                     s"MySQL produced ${myRendered.binds.size}",
                 posExpr.asTerm.pos
@@ -134,8 +133,8 @@ private[kyo] object SqlStaticMacro:
         val params: Expr[Chunk[BoundValue[?]]] = liftParams(pgRendered)
 
         '{
-            SqlStatic.Rendered(
-                SqlStatic.BackendSql($pgSql, $mySql),
+            SqlRendered(
+                SqlBackendSql($pgSql, $mySql),
                 $params
             )
         }
@@ -163,7 +162,7 @@ private[kyo] object SqlStaticMacro:
             val schemaExpr: Expr[SqlSchema[T]] =
                 Expr.summon[SqlSchema[T]].getOrElse {
                     report.errorAndAbort(
-                        s"staticSql: cannot summon SqlSchema[${Type.show[T]}] for a bound value. " +
+                        s"static SQL render: cannot summon SqlSchema[${Type.show[T]}] for a bound value. " +
                             "Use a stable given definition (not a local val)."
                     )
                 }
@@ -203,7 +202,7 @@ private[kyo] object SqlStaticMacro:
                 bound[kyo.Span[Byte]](Expr(v: kyo.Span[Byte]))
             case other =>
                 report.errorAndAbort(
-                    s"staticSql: no ToExpr available for bind value of runtime type ${other.getClass.getName}. " +
+                    s"static SQL render: no ToExpr available for bind value of runtime type ${other.getClass.getName}. " +
                         "Add a ToExpr instance to object SqlSchema and a dispatch arm to SqlStaticMacro.liftOne."
                 )
         end match

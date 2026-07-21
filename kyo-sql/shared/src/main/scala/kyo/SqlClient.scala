@@ -193,7 +193,7 @@ sealed abstract class SqlClient:
     /** Returns the [[kyo.internal.SqlBackend]] discriminator for this client.
       *
       * Derived from the URL's driver tag at runtime. Used by the `.run` / `.runDynamic` extension methods on `Query` / `Action` to pick
-      * the right rendered SQL string from a [[SqlStatic.BackendSql]] and to summon the right [[BoundValue]] dispatch.
+      * the right rendered SQL string from a [[kyo.internal.SqlBackendSql]] and to summon the right [[BoundValue]] dispatch.
       */
     private[kyo] def sqlBackend: SqlBackend =
         self.url.address.driver match
