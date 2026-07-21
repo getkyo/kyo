@@ -697,86 +697,107 @@ object SqlSchema:
                     bug(s"SqlSchema[Chunk[String]] cannot read from ${r.getClass}")
     )
 
-    /** `JsonText` schema: Postgres uses the native binary `jsonb` wire codec (OID 3802, version byte 0x01 + UTF-8 text); MySQL uses the
-      * native `TYPE_JSON` (0xf5) wire path. Element shape is the caller's responsibility (use [[kyo.Json.encode]] to produce well-formed
-      * JSON text before wrapping).
+    /** `Structure.Value` schema: Postgres uses the native binary `jsonb` wire codec (OID 3802, version byte 0x01 + UTF-8 text); MySQL uses
+      * the native `TYPE_JSON` (0xf5) wire path. On write, [[kyo.Json.encode]] serialises the [[Structure.Value]] to JSON text; on read,
+      * [[kyo.Json.decode]] parses the column payload back into a [[Structure.Value]]. `Structure.Value` variants that lack a direct JSON
+      * counterpart (`Bytes`, `Instant`, `Duration`, `MapEntries` with non-string keys) inherit the representation chosen by
+      * [[kyo.Json]]'s Structure serializer.
       */
-    given jsonTextSchema: SqlSchema[JsonText] = SqlSchema.of[JsonText](
+    given structureValueSchema: SqlSchema[Structure.Value] = SqlSchema.of[Structure.Value](
         write = (v, w) =>
             w match
                 case pw: PostgresParamWriter =>
-                    val buf = new kyo.internal.postgres.PostgresBufferWriter()
-                    kyo.internal.postgres.types.PostgresEncoder.jsonbBinary.write(v.value, buf)
+                    given kyo.Frame = pw.frame
+                    val jsonText    = kyo.Json.encode[Structure.Value](v)
+                    val buf         = new kyo.internal.postgres.PostgresBufferWriter()
+                    kyo.internal.postgres.types.PostgresEncoder.jsonbBinary.write(jsonText, buf)
                     pw.custom("jsonb", buf.toSpan, kyo.internal.postgres.types.Format.Binary)
                 case mw: MysqlParamWriter =>
+                    given kyo.Frame = mw.frame
+                    val jsonText    = kyo.Json.encode[Structure.Value](v)
                     mw.custom(
                         "json",
-                        Span.from(v.value.getBytes(java.nio.charset.StandardCharsets.UTF_8)),
+                        Span.from(jsonText.getBytes(java.nio.charset.StandardCharsets.UTF_8)),
                         kyo.internal.postgres.types.Format.Binary
                     )
                 case _ =>
-                    bug(s"SqlSchema[JsonText] cannot write to ${w.getClass}")
+                    bug(s"SqlSchema[Structure.Value] cannot write to ${w.getClass}")
         ,
         read = r =>
             r match
                 case pr: PostgresRowReader =>
                     val bytes = pr.custom("jsonb")
-                    JsonText(kyo.internal.postgres.types.PostgresDecoder.jsonDecoder.read(
+                    val jsonText = kyo.internal.postgres.types.PostgresDecoder.jsonDecoder.read(
                         kyo.internal.postgres.types.Format.Binary,
                         bytes
-                    )(using pr.frame))
+                    )(using pr.frame)
+                    decodeStructureValue(jsonText, pr.frame)
                 case mr: MysqlRowReader =>
-                    JsonText(mr.string())
+                    decodeStructureValue(mr.string(), mr.frame)
                 case _ =>
-                    bug(s"SqlSchema[JsonText] cannot read from ${r.getClass}")
+                    bug(s"SqlSchema[Structure.Value] cannot read from ${r.getClass}")
     )
 
-    /** `Chunk[JsonText]` schema: Postgres uses the native binary `jsonb[]` wire codec (OID 3807) with per-element `jsonb` payloads; MySQL
-      * falls back to a JSON array of strings encoded via [[kyo.Json]] (each element is a raw JSON-text string).
-      *
-      * Use this schema for `jsonb[]` columns. For arrays of typed values, encode each element with [[kyo.Json.encode]] first and wrap the
-      * resulting string in [[JsonText]].
+    /** `Chunk[Structure.Value]` schema: Postgres uses the native binary `jsonb[]` wire codec (OID 3807) with per-element `jsonb`
+      * payloads; MySQL stores the array as a JSON array of documents. Both paths delegate to [[kyo.Json]] for element
+      * encoding/decoding.
       */
-    given chunkJsonTextSchema: SqlSchema[Chunk[JsonText]] = SqlSchema.of[Chunk[JsonText]](
+    given chunkStructureValueSchema: SqlSchema[Chunk[Structure.Value]] = SqlSchema.of[Chunk[Structure.Value]](
         write = (v, w) =>
             w match
                 case pw: PostgresParamWriter =>
-                    val buf = new kyo.internal.postgres.PostgresBufferWriter()
-                    kyo.internal.postgres.types.PostgresEncoder.jsonbArrayBinary.write(v.map(_.value), buf)
+                    given kyo.Frame  = pw.frame
+                    val jsonElements = v.map(kyo.Json.encode[Structure.Value])
+                    val buf          = new kyo.internal.postgres.PostgresBufferWriter()
+                    kyo.internal.postgres.types.PostgresEncoder.jsonbArrayBinary.write(jsonElements, buf)
                     pw.custom("_jsonb", buf.toSpan, kyo.internal.postgres.types.Format.Binary)
                 case mw: MysqlParamWriter =>
-                    // Pass the plain Schema explicitly so implicit search doesn't resolve back to chunkStringSchema
-                    // (an SQL-only schema) and re-enter the bug guard inside SqlSchema.of.
-                    given kyo.Frame             = mw.frame
-                    given Schema[Chunk[String]] = Schema.chunkSchema(using Schema.stringSchema)
-                    mw.string(kyo.Json.encode[Chunk[String]](v.map(_.value)))
+                    given kyo.Frame = mw.frame
+                    mw.string(kyo.Json.encode[Chunk[Structure.Value]](v))
                 case _ =>
-                    bug(s"SqlSchema[Chunk[JsonText]] cannot write to ${w.getClass}")
+                    bug(s"SqlSchema[Chunk[Structure.Value]] cannot write to ${w.getClass}")
         ,
         read = r =>
             r match
                 case pr: PostgresRowReader =>
                     val bytes = pr.custom("_jsonb")
-                    kyo.internal.postgres.types.PostgresDecoder.jsonbArray.read(
+                    val elements = kyo.internal.postgres.types.PostgresDecoder.jsonbArray.read(
                         kyo.internal.postgres.types.Format.Binary,
                         bytes
-                    )(using pr.frame).map(JsonText.apply)
+                    )(using pr.frame)
+                    elements.map(txt => decodeStructureValue(txt, pr.frame))
                 case mr: MysqlRowReader =>
-                    given kyo.Frame             = mr.frame
-                    given Schema[Chunk[String]] = Schema.chunkSchema(using Schema.stringSchema)
-                    kyo.Json.decode[Chunk[String]](mr.string()) match
-                        case kyo.Result.Success(c) => c.map(JsonText.apply)
+                    given kyo.Frame = mr.frame
+                    kyo.Json.decode[Chunk[Structure.Value]](mr.string()) match
+                        case kyo.Result.Success(c) => c
                         case kyo.Result.Failure(e) =>
                             throw SqlException.Decode(
-                                s"Chunk[JsonText] JSON decode failed: ${e.getMessage}",
+                                s"Chunk[Structure.Value] JSON decode failed: ${e.getMessage}",
                                 Maybe.Absent,
                                 mr.frame
                             )
                         case kyo.Result.Panic(t) => throw t
                     end match
                 case _ =>
-                    bug(s"SqlSchema[Chunk[JsonText]] cannot read from ${r.getClass}")
+                    bug(s"SqlSchema[Chunk[Structure.Value]] cannot read from ${r.getClass}")
     )
+
+    /** Parses JSON text into a [[Structure.Value]] or throws a positioned [[SqlException.Decode]] on failure. Factored out because both
+      * scalar and array reads share the same parse-or-fail path.
+      */
+    private def decodeStructureValue(jsonText: String, frame: Frame): Structure.Value =
+        given Frame = frame
+        kyo.Json.decode[Structure.Value](jsonText) match
+            case kyo.Result.Success(v) => v
+            case kyo.Result.Failure(e) =>
+                throw SqlException.Decode(
+                    s"Structure.Value JSON decode failed: ${e.getMessage}",
+                    Maybe.Absent,
+                    frame
+                )
+            case kyo.Result.Panic(t) => throw t
+        end match
+    end decodeStructureValue
 
     /** UUID schema: Postgres uses the native 16-byte binary UUID wire codec (OID 2950); MySQL falls back to text (36-char canonical). */
     given SqlSchema[java.util.UUID] = SqlSchema.of[java.util.UUID](

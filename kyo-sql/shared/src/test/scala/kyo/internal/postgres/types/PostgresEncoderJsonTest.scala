@@ -10,7 +10,7 @@ import kyo.internal.postgres.PostgresBufferWriter
   *   - JSON text: OID 114, raw UTF-8 JSON text.
   *
   * These are pure codec tests on in-memory byte buffers, no schema layer, no database container. Schema-layer JSON tests (the
-  * [[kyo.JsonText]] / [[kyo.SqlSchema]] surface) live in `kyo/SqlSchemaJsonTest.scala`.
+  * [[kyo.Structure.Value]] / [[kyo.SqlSchema]] surface) live in `kyo/SqlSchemaStructureValueTest.scala`.
   */
 class PostgresEncoderJsonTest extends kyo.Test:
 
