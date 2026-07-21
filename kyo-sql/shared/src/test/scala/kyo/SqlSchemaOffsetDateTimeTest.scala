@@ -13,7 +13,7 @@ import kyo.internal.postgres.types.PostgresEncoder
   *
   * All tests are pure (no database container required). They exercise the schema via in-memory byte buffers.
   *
-  * Design note — offset loss on round-trip: `timestamptz` stores only the UTC instant; the original UTC-offset is dropped on the wire.
+  * Design note, offset loss on round-trip: `timestamptz` stores only the UTC instant; the original UTC-offset is dropped on the wire.
   * Decoding always yields `+00:00`. Tests assert this behaviour explicitly (it is the documented design choice, not a bug).
   */
 class SqlSchemaOffsetDateTimeTest extends Test:
@@ -36,7 +36,7 @@ class SqlSchemaOffsetDateTimeTest extends Test:
     end mysqlRow
 
     /** Encodes a `kyo.Instant` for use in a synthetic PG `timestamptz` row, driving every byte through the public
-      * [[SqlSchema.writePostgres]] + [[BoundParam.encoded]] surface — no test-side reach into internal encoders.
+      * [[SqlSchema.writePostgres]] + [[BoundParam.encoded]] surface, no test-side reach into internal encoders.
       */
     private def pgTimestamptzBytes(instant: kyo.Instant)(using kyo.test.AssertScope): Span[Byte] =
         summon[SqlSchema[kyo.Instant]].writePostgres(instant).head.encoded match
@@ -63,7 +63,7 @@ class SqlSchemaOffsetDateTimeTest extends Test:
 
     // ── encode: OffsetDateTime encodes via timestamptz ─────────────────────────
 
-    "OffsetDateTime encodes via timestamptz — writePostgres produces OID 1184 Binary param" in {
+    "OffsetDateTime encodes via timestamptz, writePostgres produces OID 1184 Binary param" in {
         val odt    = java.time.OffsetDateTime.of(2024, 6, 15, 10, 30, 0, 0, java.time.ZoneOffset.ofHours(5))
         val params = summon[SqlSchema[java.time.OffsetDateTime]].writePostgres(odt)
         assert(params.size == 1)
@@ -95,7 +95,7 @@ class SqlSchemaOffsetDateTimeTest extends Test:
 
     // ── decode: OffsetDateTime decodes as UTC (offset loss documented) ──────────
 
-    "OffsetDateTime decodes as UTC offset (original offset is lost — documented)" in {
+    "OffsetDateTime decodes as UTC offset (original offset is lost, documented)" in {
         // Encode a UTC instant directly, then decode via readPostgres.
         // No matter what offset the original ODT had, the decoded result must be +00:00.
         val original = java.time.OffsetDateTime.of(2024, 6, 15, 10, 30, 0, 0, java.time.ZoneOffset.ofHours(5))
@@ -129,7 +129,7 @@ class SqlSchemaOffsetDateTimeTest extends Test:
 
     // ── round-trip with UTC normalisation ────────────────────────────────────
 
-    "OffsetDateTime round-trips with UTC normalization — UTC+0 is preserved exactly" in {
+    "OffsetDateTime round-trips with UTC normalization, UTC+0 is preserved exactly" in {
         // An ODT already at UTC survives the round-trip byte-for-byte (no offset to lose).
         val original = java.time.OffsetDateTime.of(2024, 3, 14, 15, 9, 26, 535_000_000, java.time.ZoneOffset.UTC)
         val instant  = kyo.Instant.fromJava(original.toInstant)
@@ -215,7 +215,7 @@ class SqlSchemaOffsetDateTimeTest extends Test:
     }
 
     /** Builds an SqlRow from the wire bytes produced by `writePostgres` on the same schema. Drives every byte through the public
-      * [[SqlSchema.writePostgres]] + [[BoundParam.encoded]] surface — no test-side reach into internal encoders.
+      * [[SqlSchema.writePostgres]] + [[BoundParam.encoded]] surface, no test-side reach into internal encoders.
       */
     private def synthRowFromWrite(
         schema: SqlSchema[java.time.OffsetDateTime],

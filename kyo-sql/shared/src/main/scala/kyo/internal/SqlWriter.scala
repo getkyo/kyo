@@ -11,7 +11,7 @@ import kyo.internal.postgres.types.Format
   * representation (e.g. PostGIS geometry, hstore, pgvector). Concrete backend implementations (PostgresParamWriter, MysqlParamWriter) fill
   * in both the standard primitive methods and the custom escape.
   *
-  * IMPORTANT: all abstract methods inherited from [[kyo.Codec.Writer]] are synchronous — they return plain `Unit`, not `Unit < Abort`.
+  * IMPORTANT: all abstract methods inherited from [[kyo.Codec.Writer]] are synchronous, they return plain `Unit`, not `Unit < Abort`.
   * Unsupported encode operations are signalled by throwing [[kyo.SqlException.Unsupported]], which is [[kyo.KyoException]]-derived and is
   * caught at the kyo-schema encode boundary. The constructor `frame` field supplies the [[kyo.Frame]] used when constructing those
   * exceptions.

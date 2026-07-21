@@ -8,9 +8,9 @@ import kyo.internal.mysql.MysqlBufferWriter
   *
   * Wire: 0x16 | UTF-8 SQL bytes (no NUL terminator)
   *
-  * The 0x16 byte is the COM_STMT_PREPARE command code. The SQL follows immediately — the packet length header supplies the overall length.
+  * The 0x16 byte is the COM_STMT_PREPARE command code. The SQL follows immediately, the packet length header supplies the overall length.
   *
-  * Reference: MySQL Internals — COM_STMT_PREPARE
+  * Reference: MySQL Internals, COM_STMT_PREPARE
   */
 object ComStmtPrepareMarshaller extends Marshaller[ComStmtPrepare]:
 

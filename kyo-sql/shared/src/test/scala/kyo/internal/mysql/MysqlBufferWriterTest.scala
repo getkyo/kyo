@@ -12,7 +12,7 @@ import kyo.Test
   */
 class MysqlBufferWriterTest extends Test:
 
-    // MysqlBufferWriter writeUInt16LE 256 = [0,1] — little-endian (NOT big-endian [1,0])
+    // MysqlBufferWriter writeUInt16LE 256 = [0,1], little-endian (NOT big-endian [1,0])
     "MysqlBufferWriter writeUInt16LE 256 produces [0,1]" in {
         val buf = new MysqlBufferWriter
         buf.writeUInt16LE(256)
@@ -22,7 +22,7 @@ class MysqlBufferWriterTest extends Test:
         assert(span(1) == 1.toByte)
     }
 
-    // MysqlBufferWriter writeLengthEncodedInt 42 — 1-byte [42]
+    // MysqlBufferWriter writeLengthEncodedInt 42, 1-byte [42]
     "MysqlBufferWriter writeLengthEncodedInt 42 produces single byte" in {
         val buf = new MysqlBufferWriter
         buf.writeLenencInt(42L)
@@ -31,7 +31,7 @@ class MysqlBufferWriterTest extends Test:
         assert(span(0) == 42.toByte)
     }
 
-    // MysqlBufferWriter writeLengthEncodedInt 300 — [0xFC, 44, 1] (300 = 256 + 44)
+    // MysqlBufferWriter writeLengthEncodedInt 300, [0xFC, 44, 1] (300 = 256 + 44)
     "MysqlBufferWriter writeLengthEncodedInt 300 produces [0xFC, 44, 1]" in {
         val buf = new MysqlBufferWriter
         buf.writeLenencInt(300L)
@@ -42,7 +42,7 @@ class MysqlBufferWriterTest extends Test:
         assert(span(2) == 1.toByte)  // 300 >> 8 = 1
     }
 
-    // MysqlBufferWriter writeLengthEncodedString "hi" — [2, 104, 105]
+    // MysqlBufferWriter writeLengthEncodedString "hi", [2, 104, 105]
     "MysqlBufferWriter writeLengthEncodedString 'hi' produces [2, 104, 105]" in {
         val buf = new MysqlBufferWriter
         buf.writeLenencString("hi")

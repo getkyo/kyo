@@ -92,7 +92,7 @@ class CopyIntegrationTest extends kyo.Test:
                         val data = spanStream(csvRows(1, n))
                         client.copyIn("COPY copy_t1 (id, val) FROM STDIN WITH (FORMAT CSV)", data).flatMap { affected =>
                             assert(affected == n.toLong)
-                            // Verify reusability — probe connection with a trivial query.
+                            // Verify reusability, probe connection with a trivial query.
                             client.query("SELECT 1").map { rows =>
                                 assert(rows.nonEmpty)
                             }
@@ -186,7 +186,7 @@ class CopyIntegrationTest extends kyo.Test:
                 Async.timeout(60.seconds) {
                     // Use a single-column INTEGER table for binary format.
                     // PostgreSQL binary COPY: global header (11 bytes) + per-row: Int16(numCols) Int32(colLen) bytes... + Int16(-1) trailer.
-                    // Reference: PostgreSQL COPY manual — binary format description.
+                    // Reference: PostgreSQL COPY manual, binary format description.
                     client.executeRaw("CREATE TABLE copy_t4 (id INTEGER)").flatMap { _ =>
                         // Build binary COPY data for 5 integers.
                         val values = Chunk(10, 20, 30, 40, 50)
@@ -253,9 +253,9 @@ class CopyIntegrationTest extends kyo.Test:
                             }.flatMap { r =>
                                 // `r` is Result[SqlException, Result[Timeout, Unit]].
                                 // Acceptable outcomes:
-                                //   - Success(Success(_))   — completed before the 1ms timeout
-                                //   - Success(Failure(_))   — timeout fired, no SqlException surfaced
-                                //   - Failure(_)            — SqlException.Connection (cleanup path)
+                                //   - Success(Success(_))  , completed before the 1ms timeout
+                                //   - Success(Failure(_))  , timeout fired, no SqlException surfaced
+                                //   - Failure(_)           , SqlException.Connection (cleanup path)
                                 // What is NOT acceptable: Panic from an unexpected throw.
                                 r match
                                     case Result.Panic(t) =>
@@ -299,7 +299,7 @@ class CopyIntegrationTest extends kyo.Test:
         Scope.run {
             withPg { client =>
                 Async.timeout(60.seconds) {
-                    // Table with a PRIMARY KEY on id — duplicate will cause a unique_violation.
+                    // Table with a PRIMARY KEY on id, duplicate will cause a unique_violation.
                     client.executeRaw("CREATE TABLE copy_t7 (id INT PRIMARY KEY, val TEXT)").flatMap { _ =>
                         // Pre-insert id=5 so a duplicate in COPY will fail.
                         client.executeRaw("INSERT INTO copy_t7 VALUES (5, 'existing')").flatMap { _ =>
@@ -446,7 +446,7 @@ class CopyIntegrationTest extends kyo.Test:
                     client.executeRaw("CREATE TABLE copy_t10 (id INT, val TEXT)").flatMap { _ =>
                         // Run COPY FROM inside a transaction, then deliberately roll it back.
                         // client.copyIn is transaction-aware (Phase 19a): inside client.transaction,
-                        // it uses the bound connection — same physical connection as the BEGIN.
+                        // it uses the bound connection, same physical connection as the BEGIN.
                         // Abort.fail("deliberate rollback") causes the transaction to roll back.
                         val data = spanStream(csvRows(1, n))
                         Abort.run[SqlException | String] {
@@ -460,8 +460,8 @@ class CopyIntegrationTest extends kyo.Test:
                             case Result.Failure(_: String) =>
                                 // Transaction rolled back (deliberate Abort.fail triggered rollback).
                                 // Cross-connection visibility check: client.query acquires a fresh
-                                // pool connection — a different physical connection from the rolled-back
-                                // transaction — exercising actual cross-connection visibility of the ROLLBACK.
+                                // pool connection, a different physical connection from the rolled-back
+                                // transaction, exercising actual cross-connection visibility of the ROLLBACK.
                                 // Uses columnDecoded[Long] because client.query uses the extended
                                 // protocol (binary format); text-oriented decodeStr would fail.
                                 client.query("SELECT COUNT(*) FROM copy_t10").flatMap { rows =>

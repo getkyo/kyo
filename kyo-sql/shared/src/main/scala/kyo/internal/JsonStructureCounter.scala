@@ -4,7 +4,7 @@ package kyo.internal
   *
   * Used by both the PG `jsonb`/`json` and MySQL `JSON` row-reader paths to honour the [[kyo.Codec.Reader.mapStart]] and
   * [[kyo.Codec.Reader.arrayStart]] contracts, which return the structural element count. [[kyo.internal.JsonReader]] returns `-1` for
-  * non-empty collections — these helpers walk the JSON text once to surface a real count without re-parsing the body.
+  * non-empty collections, these helpers walk the JSON text once to surface a real count without re-parsing the body.
   *
   * The walkers track nesting depth and string state so commas and colons inside nested arrays/objects or inside string literals are not
   * counted as top-level separators. Escape handling honours the JSON grammar (`\"`, `\\`, etc. consume the next character without ending a
@@ -44,7 +44,7 @@ object JsonStructureCounter:
                     case '"'       => inStr = true
                     case '{' | '[' => depth += 1
                     case '}' | ']' =>
-                        if depth == 0 then i = len - 1 // break — hit closing '}'
+                        if depth == 0 then i = len - 1 // break, hit closing '}'
                         else depth -= 1
                     case ':' if depth == 0 => count += 1
                     case _                 => ()
@@ -84,7 +84,7 @@ object JsonStructureCounter:
                     case '"'       => inStr = true
                     case '{' | '[' => depth += 1
                     case '}' | ']' =>
-                        if depth == 0 then i = len - 1 // break — hit closing ']'
+                        if depth == 0 then i = len - 1 // break, hit closing ']'
                         else depth -= 1
                     case ',' if depth == 0 => count += 1
                     case _                 => ()

@@ -14,7 +14,7 @@ import kyo.SqlException
   * `RowMetadata` trait if both backends need to share a public `Row` API.
   *
   * WARNING: `MysqlRow.columns` is `Chunk[ColumnDefinition41]`, not the `Chunk[FieldDescription]` exposed by [[kyo.SqlRow.fields]]. Code
-  * that bridges [[MysqlRow]] to [[kyo.SqlRow]] (e.g. inside [[kyo.SqlClient]]) must convert column definitions explicitly — do not pass
+  * that bridges [[MysqlRow]] to [[kyo.SqlRow]] (e.g. inside [[kyo.SqlClient]]) must convert column definitions explicitly, do not pass
   * `columns` where `fields` is expected.
   *
   * @param values

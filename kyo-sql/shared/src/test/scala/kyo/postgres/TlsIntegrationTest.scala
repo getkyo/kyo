@@ -8,7 +8,7 @@ import kyo.net.NetTlsConfig
 /** Integration tests for Postgres TLS upgrade via SSLRequest handshake.
   *
   * Tests cover:
-  *   1. Full TLS connection — SELECT 1 succeeds through TLS.
+  *   1. Full TLS connection, SELECT 1 succeeds through TLS.
   *   2. Multi-row query through TLS.
   *   3. drainToReadyForQuery still works through TLS (error recovery).
   *   4. SCRAM-SHA-256 auth works over TLS.
@@ -16,7 +16,7 @@ import kyo.net.NetTlsConfig
   *   6. SCRAM-SHA-256-PLUS handshake via SqlClient.init with TLS config succeeds.
   *
   * The TLS fixture generates a self-signed cert on the host via `openssl`, mounts it into a Postgres container, and starts Postgres with
-  * SSL enabled via an entrypoint wrapper script — no ALTER SYSTEM, no container restart.
+  * SSL enabled via an entrypoint wrapper script, no ALTER SYSTEM, no container restart.
   */
 class TlsIntegrationTest extends kyo.Test:
 
@@ -128,7 +128,7 @@ class TlsIntegrationTest extends kyo.Test:
             )
         )
 
-    "TLS connection — SELECT 1 returns correct row".tagged("kyo.OwnContainer") in {
+    "TLS connection, SELECT 1 returns correct row".tagged("kyo.OwnContainer") in {
         Scope.run {
             withPostgresTls() { (host, port, user, password, db, tlsConfig) =>
                 initTlsClient(host, port, user, password, db, tlsConfig).flatMap { client =>
@@ -145,7 +145,7 @@ class TlsIntegrationTest extends kyo.Test:
         }
     }
 
-    "TLS connection — multi-row query SELECT generate_series(1,10) returns 10 rows".tagged("kyo.OwnContainer") in {
+    "TLS connection, multi-row query SELECT generate_series(1,10) returns 10 rows".tagged("kyo.OwnContainer") in {
         Scope.run {
             withPostgresTls() { (host, port, user, password, db, tlsConfig) =>
                 initTlsClient(host, port, user, password, db, tlsConfig).flatMap { client =>
@@ -157,7 +157,7 @@ class TlsIntegrationTest extends kyo.Test:
         }
     }
 
-    "TLS connection — error recovery: bad SQL followed by valid query works".tagged("kyo.OwnContainer") in {
+    "TLS connection, error recovery: bad SQL followed by valid query works".tagged("kyo.OwnContainer") in {
         Scope.run {
             withPostgresTls() { (host, port, user, password, db, tlsConfig) =>
                 initTlsClient(host, port, user, password, db, tlsConfig).flatMap { client =>
@@ -175,7 +175,7 @@ class TlsIntegrationTest extends kyo.Test:
         }
     }
 
-    "TLS connection — connect with Present(tls) to non-TLS Postgres raises SqlException.Connection".tagged("kyo.OwnContainer") in {
+    "TLS connection, connect with Present(tls) to non-TLS Postgres raises SqlException.Connection".tagged("kyo.OwnContainer") in {
         Scope.run {
             // Start a standard (non-TLS) Postgres and try to connect with TLS required.
             ContainerPredef.Postgres.initWith(ContainerPredef.Postgres.Config.default) { pg =>
@@ -205,7 +205,7 @@ class TlsIntegrationTest extends kyo.Test:
         }
     }
 
-    "TLS connection — SCRAM-SHA-256 auth works over TLS".tagged("kyo.OwnContainer") in {
+    "TLS connection, SCRAM-SHA-256 auth works over TLS".tagged("kyo.OwnContainer") in {
         Scope.run {
             // postgres:16-alpine uses scram-sha-256 by default; explicitly set to confirm.
             withPostgresTls(extraEnv = Map("POSTGRES_HOST_AUTH_METHOD" -> "scram-sha-256")) {

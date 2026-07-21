@@ -10,7 +10,7 @@ import kyo.internal.mysql.auth.NativePassword
   */
 class NativePasswordTest extends kyo.Test:
 
-    "NativePassword hash known vector — password='secret', scramble=20 zero bytes" in {
+    "NativePassword hash known vector, password='secret', scramble=20 zero bytes" in {
         // Expected: 8e7e678b27f70747e65fb2b381214427b0fced48
         // Computed: step1=sha1("secret"), step2=sha1(step1), step3=sha1(zeros20++step2), result=step1 XOR step3
         val scramble = Span.from(Array.fill[Byte](20)(0))
@@ -40,7 +40,7 @@ class NativePasswordTest extends kyo.Test:
         assert(result.toArray.sameElements(expected))
     }
 
-    "NativePassword hash known vector — password='root', scramble=bytes(0..19)" in {
+    "NativePassword hash known vector, password='root', scramble=bytes(0..19)" in {
         // Expected: 180d6d4732d2984043b7ce347748445924d1f493
         val scramble = Span.from(Array.tabulate[Byte](20)(i => i.toByte))
         val result   = NativePassword.computeResponse("root", scramble)

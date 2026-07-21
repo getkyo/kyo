@@ -56,7 +56,7 @@ class SqlClientStreamSlotTest extends Test:
         )
     )
 
-    /** Completes trust-auth then hangs — the connection stays open so the slot owner's Scope can be verified. */
+    /** Completes trust-auth then hangs, the connection stays open so the slot owner's Scope can be verified. */
     private def pgHandshakeThenHang(conn: Connection)(using Frame): Unit < Async =
         Abort.run[Closed](conn.inbound.safe.take).andThen {
             Abort.run[Closed](conn.outbound.safe.put(pgAuthOkBytes)).andThen {
@@ -103,7 +103,7 @@ class SqlClientStreamSlotTest extends Test:
                     // First query: times out waiting for a server response (not pool-exhaustion).
                     Abort.run[SqlException](SqlClient.let(client)(client.query("SELECT 1"))).flatMap {
                         firstResult =>
-                            // Second query: must also be able to acquire the slot — slot was returned.
+                            // Second query: must also be able to acquire the slot, slot was returned.
                             Abort.run[SqlException](SqlClient.let(client)(client.query("SELECT 1"))).map {
                                 secondResult =>
                                     firstResult match
@@ -118,7 +118,7 @@ class SqlClientStreamSlotTest extends Test:
                                         case Result.Failure(e) =>
                                             assert(
                                                 !isPoolExhausted(e),
-                                                "Slot was leaked after stream success — second acquire hit pool-exhaustion"
+                                                "Slot was leaked after stream success, second acquire hit pool-exhaustion"
                                             )
                                         case Result.Success(_) => succeed
                                         case Result.Panic(t)   => succeed

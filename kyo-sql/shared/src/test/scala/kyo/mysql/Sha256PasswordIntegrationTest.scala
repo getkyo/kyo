@@ -7,7 +7,7 @@ import kyo.net.NetTlsConfig
 /** Integration test for MySQL sha256_password auth plugin.
   *
   * sha256_password is the legacy RSA-auth plugin used by some MySQL 5.7 / 8.0 installations. Unlike caching_sha2_password there is no
-  * fast-path cache — every connection either encrypts the password with the server's RSA public key (non-TLS) or sends cleartext over TLS.
+  * fast-path cache, every connection either encrypts the password with the server's RSA public key (non-TLS) or sends cleartext over TLS.
   *
   * Container strategy:
   *   - A fresh MySQL 8.0 container is started with default settings.
@@ -88,7 +88,7 @@ class Sha256PasswordIntegrationTest extends kyo.Test:
     "TLS path skips RSA encryption for sha256_password (cleartext NUL-terminated)".tagged("kyo.OwnContainer") in {
         Scope.run {
             withSha256User(Maybe.Present(NetTlsConfig(trustAll = true))) { (host, port, user, pass, db) =>
-                // Connect with TLS (trustAll): sends cleartext NUL-terminated password in HandshakeResponse41 — no RSA involved.
+                // Connect with TLS (trustAll): sends cleartext NUL-terminated password in HandshakeResponse41, no RSA involved.
                 SqlClient.initMy(
                     s"mysql://$user:$pass@$host:$port/$db",
                     SqlClientConfig.default.copy(

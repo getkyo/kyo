@@ -22,7 +22,7 @@ import kyo.internal.postgres.types.Format
   *   1. Statements are executed strictly sequentially on the same connection (in-transaction or from the pool).
   *   2. Per-statement `Abort[SqlException]` is caught with `Abort.run`; a failure is recorded and the next statement proceeds.
   *   3. Connection-level errors (socket closed, panic) re-raise and abort the entire pipeline.
-  *   4. Returns a `Chunk[SqlStatementResult]` — one entry per input statement, in submission order.
+  *   4. Returns a `Chunk[SqlStatementResult]`, one entry per input statement, in submission order.
   *
   * ==Transaction context==
   *
@@ -43,7 +43,7 @@ object MysqlPipelineExchange:
       * [[SqlStatementResult.Failure]] without aborting subsequent statements. Connection-level panics re-raise.
       *
       * @param conn
-      *   the active [[MysqlConnection]] (must NOT be used concurrently — caller ensures serial access)
+      *   the active [[MysqlConnection]] (must NOT be used concurrently, caller ensures serial access)
       * @param stmts
       *   the pipeline statements in submission order
       * @return

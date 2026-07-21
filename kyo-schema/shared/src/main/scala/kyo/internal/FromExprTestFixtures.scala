@@ -20,7 +20,7 @@ private[kyo] object FromExprTestFixtures:
     enum Color:
         case Red, Green, Blue
 
-    // Mutually-recursive ADT — exercises the FromExpr recursion guard (Phase F.5) independent of kyo-sql.
+    // Mutually-recursive ADT, exercises the FromExpr recursion guard (Phase F.5) independent of kyo-sql.
     // `Tree` ↔ `Forest` form a 2-type SCC: `Branch.children: Forest`, `Forest.trees: Chunk[Tree]`.
     sealed trait Tree
     case class Leaf(value: Int)         extends Tree

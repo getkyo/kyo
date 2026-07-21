@@ -13,7 +13,7 @@ import kyo.internal.postgres.types.Format
   * Sequence per query:
   *   1. Look up `sql` in the per-connection prepared-statement cache.
   *   2. On cache miss:
-  *      - Send `Parse(stmtName, sql, paramOids=[])` — server infers parameter types.
+  *      - Send `Parse(stmtName, sql, paramOids=[])`, server infers parameter types.
   *      - Send `Describe('S', stmtName)` to learn `ParameterDescription` and `RowDescription`.
   *      - Send `Sync`.
   *      - Read: `ParseComplete`, `ParameterDescription`, `RowDescription | NoData`, `ReadyForQuery`.
@@ -87,10 +87,10 @@ object ExtendedQueryExchange:
         val stmtName = s"s_$key"
         stmtCache.get(key).flatMap {
             case Present(stmt) =>
-                // Cache hit — return immediately.
+                // Cache hit, return immediately.
                 stmt
             case Absent =>
-                // Cache miss — parse + describe, then cache.
+                // Cache miss, parse + describe, then cache.
                 parseAndDescribe(channel, stmtName, sql, paramOids, pid, onParameterStatus, onNotification).flatMap { stmt =>
                     stmtCache.add(key, stmt).andThen(stmt)
                 }
@@ -180,7 +180,7 @@ object ExtendedQueryExchange:
                         case Absent               => Absent
                         case Present(Absent)      => Absent
                         case Present(Present(rd)) => Present(rd)
-                    // Request binary format for all result columns — the registered decoders all support
+                    // Request binary format for all result columns, the registered decoders all support
                     // binary encoding, which is more compact and avoids text-parsing overhead.
                     val resultFmts = rdMaybe match
                         case Absent => Chunk.empty[Short]

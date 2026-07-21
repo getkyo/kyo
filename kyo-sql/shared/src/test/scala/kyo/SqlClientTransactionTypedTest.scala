@@ -5,7 +5,7 @@ package kyo
   * Verifies the type-level claim that an `Abort[E]` raised inside a `transactionTyped[E]` body propagates as a typed `E` failure on the
   * return effect row, rather than being collapsed to `Result.Panic` as the default [[SqlClient.transaction]] does.
   *
-  * No live connection is exercised — these leaves prove the API surface compiles with the intended effect row. Live-rollback tests for the
+  * No live connection is exercised, these leaves prove the API surface compiles with the intended effect row. Live-rollback tests for the
   * typed-error path are container-gated and live in [[SqlEndToEndTest]] (deferred under #514).
   */
 class SqlClientTransactionTypedTest extends Test:

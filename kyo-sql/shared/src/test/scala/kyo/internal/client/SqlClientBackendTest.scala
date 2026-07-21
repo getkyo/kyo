@@ -8,7 +8,7 @@ import kyo.Test
   * Verifies that the predicate correctly classifies each protocol-fatal / non-fatal exception category. These leaves exercise an internal
   * method (`private[kyo]`) and therefore live in `kyo.internal.client` rather than the public test package.
   *
-  * All leaves are unit tests — no container, no network, no Scope required.
+  * All leaves are unit tests, no container, no network, no Scope required.
   */
 class SqlClientBackendTest extends kyo.Test:
 
@@ -19,18 +19,18 @@ class SqlClientBackendTest extends kyo.Test:
         val decodeError = SqlException.Decode("column 0: expected Int32 but got NUL", Absent, summon[Frame])
         assert(
             SqlClientBackend.isProtocolFatal(decodeError),
-            "isProtocolFatal(Decode) must be true — Decode means wire desync, connection is poisoned"
+            "isProtocolFatal(Decode) must be true, Decode means wire desync, connection is poisoned"
         )
     }
 
     "stream raising user-level Unsupported returns connection to pool" in {
         // SqlException.Unsupported signals that an operation is not supported by the
-        // backend implementation — the TCP wire is perfectly intact. The connection must
+        // backend implementation, the TCP wire is perfectly intact. The connection must
         // be returned to the pool, not discarded.
         val unsupportedError = SqlException.Unsupported("arrayStart not supported by this reader", summon[Frame])
         assert(
             !SqlClientBackend.isProtocolFatal(unsupportedError),
-            "isProtocolFatal(Unsupported) must be false — Unsupported does not poison the connection"
+            "isProtocolFatal(Unsupported) must be false, Unsupported does not poison the connection"
         )
     }
 
@@ -53,7 +53,7 @@ class SqlClientBackendTest extends kyo.Test:
         )
         assert(
             SqlClientBackend.isProtocolFatal(serverError),
-            "isProtocolFatal(Server sqlState=08006) must be true — SQLSTATE class 08 = connection exception"
+            "isProtocolFatal(Server sqlState=08006) must be true, SQLSTATE class 08 = connection exception"
         )
     }
 

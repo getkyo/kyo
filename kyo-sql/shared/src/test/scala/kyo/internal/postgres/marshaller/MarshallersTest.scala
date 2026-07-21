@@ -2,7 +2,7 @@ package kyo.internal.postgres.marshaller
 
 import kyo.Test
 
-/** Unit tests for [[Marshallers]] — verifies that [[Marshallers.default]] exposes every marshaller singleton at its correct field.
+/** Unit tests for [[Marshallers]], verifies that [[Marshallers.default]] exposes every marshaller singleton at its correct field.
   *
   * Guards against regressions in the explicit-construction path (e.g., removing default params changes which singleton is wired).
   */

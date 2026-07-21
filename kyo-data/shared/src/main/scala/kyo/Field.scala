@@ -22,7 +22,7 @@ case class Field[Name <: String, Value](
     /** Extracts this field's value from a record. Requires evidence that `F` contains `Name ~ Value`.
       *
       * Only typechecks when `Name` is a String singleton (`Name <: String & Singleton`), because `~` requires its left parameter to be a
-      * singleton. Fields whose `Name` is the un-narrowed `String` type — typically constructed at runtime from a `String` value — can't use
+      * singleton. Fields whose `Name` is the un-narrowed `String` type, typically constructed at runtime from a `String` value, can't use
       * this accessor; use `Record.toDict(name)` directly on the underlying `Dict`.
       */
     def get[F, N <: Name & String & scala.Singleton](record: Record[F])(using F <:< (N ~ Value)): Value =

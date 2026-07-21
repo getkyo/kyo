@@ -12,7 +12,7 @@ import kyo.internal.postgres.StartupMessage
   */
 class StartupMessageMarshallerTest extends kyo.Test:
 
-    "PostgresChannel send StartupMessage bytes on wire — typeless framing" in {
+    "PostgresChannel send StartupMessage bytes on wire, typeless framing" in {
         // Unit test: use the marshaller directly and inspect output bytes.
         val msg = StartupMessage(Chunk(("user", "alice"), ("database", "mydb")))
         val buf = new PostgresBufferWriter

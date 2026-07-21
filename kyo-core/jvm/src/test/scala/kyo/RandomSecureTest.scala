@@ -28,8 +28,8 @@ class RandomSecureTest extends Test:
             }
         }
 
-        // Leaf 4: Unsafe.secure — nextBytes returns full-entropy bytes (at least one non-zero in 32 bytes)
-        "Random.Unsafe.secure — nextBytes fills with at least one non-zero byte" in run {
+        // Leaf 4: Unsafe.secure, nextBytes returns full-entropy bytes (at least one non-zero in 32 bytes)
+        "Random.Unsafe.secure, nextBytes fills with at least one non-zero byte" in run {
             Sync.defer {
                 import AllowUnsafe.embrace.danger
                 val bytes = Random.Unsafe.secure.nextBytes(32)

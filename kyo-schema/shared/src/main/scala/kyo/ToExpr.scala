@@ -1,6 +1,6 @@
 package kyo
 
-/** Kyo's ToExpr typeclass — opaque wrapper around `scala.quoted.ToExpr`. See [[FromExpr]]. */
+/** Kyo's ToExpr typeclass, opaque wrapper around `scala.quoted.ToExpr`. See [[FromExpr]]. */
 opaque type ToExpr[A] <: scala.quoted.ToExpr[A] = scala.quoted.ToExpr[A]
 
 object ToExpr:

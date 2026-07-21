@@ -9,7 +9,7 @@ import kyo.net.NetPlatform
   *
   * Each test verifies that the slot channel token is returned to the pool on every exit edge of the slot-held body: success, `Abort`
   * failure, `Panic`, and fiber cancellation. The assertion strategy is structural: after one abnormal-exit, a subsequent acquire must
-  * succeed — i.e. the slot was returned. A pool with `maxConnections=1` and `acquireTimeout=500ms` gives a clear signal: if the slot was
+  * succeed, i.e. the slot was returned. A pool with `maxConnections=1` and `acquireTimeout=500ms` gives a clear signal: if the slot was
   * leaked the second acquire would fail with "Timed out waiting … for a connection"; if the slot was returned, the second acquire fails for
   * a different reason (query-level failure) or succeeds outright.
   *
@@ -77,7 +77,7 @@ class SqlClientPoolSlotLeakTest extends Test:
     private def pgHandshakeThenHang(conn: Connection)(using Frame): Unit < Async =
         Abort.run[Closed](conn.inbound.safe.take).andThen {
             Abort.run[Closed](conn.outbound.safe.put(pgAuthOkBytes)).andThen {
-                // Hang forever — the client body will be interrupted from outside.
+                // Hang forever, the client body will be interrupted from outside.
                 Async.sleep(Duration.Infinity)
             }
         }
@@ -116,7 +116,7 @@ class SqlClientPoolSlotLeakTest extends Test:
     // ── withSlot returns the connection on body success ───────────────────────
 
     "withSlot returns the connection on body success" in {
-        // Fake server: complete handshake twice (two sequential acquires) — the second acquire
+        // Fake server: complete handshake twice (two sequential acquires), the second acquire
         // is a regression check that the slot is returned after a successful body.
         // Since the fake server never sends query responses, both queries will timeout;
         // but both must be able to ACQUIRE the slot (not hit pool-exhaustion).
@@ -151,7 +151,7 @@ class SqlClientPoolSlotLeakTest extends Test:
                                         case Result.Failure(e) =>
                                             assert(
                                                 !isPoolExhausted(e),
-                                                "Slot was leaked after body success — second acquire hit pool-exhaustion"
+                                                "Slot was leaked after body success, second acquire hit pool-exhaustion"
                                             )
                                         case Result.Success(_) => succeed
                                         case Result.Panic(t)   => succeed // any non-exhaustion outcome is fine
@@ -165,7 +165,7 @@ class SqlClientPoolSlotLeakTest extends Test:
     // ── withSlot returns the connection on body Abort ─────────────────────────
 
     "withSlot returns the connection on body Abort" in {
-        // Fake server: closes immediately after handshake — the query body aborts with
+        // Fake server: closes immediately after handshake, the query body aborts with
         // SqlException.Connection (EOF on the wire). The slot must be returned so the
         // second acquire can proceed.
         kyo.internal.FakeServer.listenPort { conn =>
@@ -198,7 +198,7 @@ class SqlClientPoolSlotLeakTest extends Test:
                                         case Result.Failure(e) =>
                                             assert(
                                                 !isPoolExhausted(e),
-                                                "Slot was leaked after body Abort — second acquire hit pool-exhaustion"
+                                                "Slot was leaked after body Abort, second acquire hit pool-exhaustion"
                                             )
                                         case Result.Success(_) => succeed
                                         case Result.Panic(t)   => succeed
@@ -230,7 +230,7 @@ class SqlClientPoolSlotLeakTest extends Test:
                 Abort.run[Closed](slotCh.take).flatMap { _ =>
                     val panicBody: Unit < Sync =
                         Sync.defer { throw new RuntimeException("test panic for G-Leak-1") }
-                    // Wrap with Sync.ensure — the cleanup must run even on Panic.
+                    // Wrap with Sync.ensure, the cleanup must run even on Panic.
                     // Wrap the whole thing in Abort.run[Throwable] to catch the rethrown exception.
                     Abort.run[Throwable](
                         Sync.ensure(Sync.Unsafe.defer {
@@ -240,9 +240,9 @@ class SqlClientPoolSlotLeakTest extends Test:
                         // After the panic the slot must have been re-offered.
                         Abort.run[Closed](slotCh.poll).map {
                             case Result.Success(Present(())) =>
-                                succeed // slot was returned — G-Leak-1 fix verified
+                                succeed // slot was returned, G-Leak-1 fix verified
                             case Result.Success(Absent) =>
-                                fail("Slot was NOT returned after body Panic — G-Leak-1 regression")
+                                fail("Slot was NOT returned after body Panic, G-Leak-1 regression")
                             case Result.Failure(_) =>
                                 fail("slotCh.poll failed with Closed unexpectedly")
                             case Result.Panic(t) =>
@@ -293,13 +293,13 @@ class SqlClientPoolSlotLeakTest extends Test:
                                 // Interrupt the query fiber while the slot is held.
                                 queryFiber.interrupt.flatMap { interrupted =>
                                     assert(interrupted, "Expected query fiber to be interrupted")
-                                    // Now attempt a second acquire — the slot must have been returned
+                                    // Now attempt a second acquire, the slot must have been returned
                                     // by Sync.ensure even though the fiber was cancelled.
                                     // The fake server still hangs, so we wrap the second query in a
                                     // short Async.timeout: if the slot was NOT returned the acquire
                                     // itself times out in 500ms (pool-exhaustion); if the slot WAS
                                     // returned, the acquire succeeds but the query hangs and the outer
-                                    // Async.timeout fires in 1s — either way we don't hang forever.
+                                    // Async.timeout fires in 1s, either way we don't hang forever.
                                     Abort.run[SqlException](
                                         Async.timeoutWithError(
                                             1.second,
@@ -315,7 +315,7 @@ class SqlClientPoolSlotLeakTest extends Test:
                                             case Result.Failure(e) =>
                                                 assert(
                                                     !isPoolExhausted(e),
-                                                    "Slot was leaked after fiber cancellation — second acquire hit pool-exhaustion"
+                                                    "Slot was leaked after fiber cancellation, second acquire hit pool-exhaustion"
                                                 )
                                             case Result.Success(_) => succeed
                                             case Result.Panic(t)   => succeed

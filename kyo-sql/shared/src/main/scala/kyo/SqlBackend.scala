@@ -58,10 +58,10 @@ object SqlBackend:
             serverVersion >= (8, 0, 31)
     end Mysql
 
-    /** Runtime singleton tag for PostgreSQL — used in non-phantom positions. */
+    /** Runtime singleton tag for PostgreSQL, used in non-phantom positions. */
     case object Postgres extends Postgres
 
-    /** Runtime singleton tag for MySQL — assumes server version `(8, 4, 0)`.
+    /** Runtime singleton tag for MySQL, assumes server version `(8, 4, 0)`.
       *
       * This object also acts as a factory: use `SqlBackend.Mysql.versioned(major, minor, patch)` to obtain a backend targeting a specific
       * MySQL server version for feature gating (e.g. disabling `LATERAL` on MySQL 5.7, or disabling `WITH RECURSIVE` on MySQL 5.7).

@@ -9,7 +9,7 @@ import kyo.SqlAst.*
   *   - **Postgres** uses `$1`, `$2`, … for placeholders and `"…"` for identifier quoting.
   *   - **MySQL** uses `?` for placeholders (un-numbered) and `` `…` `` for identifier quoting.
   *
-  * The renderer's pattern matches over the sealed [[SqlAst]] families are closed — every new node forces an explicit case here.
+  * The renderer's pattern matches over the sealed [[SqlAst]] families are closed, every new node forces an explicit case here.
   *
   * Post-Phase-6.5: the AST is pure data. [[GroupBy.view]] / [[GroupBy.havingTerm]] / [[Projection.Resolved]] / [[OrderingSpecs.Resolved]]
   * carry already-materialised payloads; the renderer never materialises a `Record[F]` view itself.
@@ -31,7 +31,7 @@ object SqlRender:
 
     /** Result of rendering a statement or query.
       *
-      * `params` is the runtime JDBC bind list. `binds` is macro-only metadata captured in lockstep with `params` — the static-SQL macro
+      * `params` is the runtime JDBC bind list. `binds` is macro-only metadata captured in lockstep with `params`, the static-SQL macro
       * lifts each `RenderedBind` to an `Expr[BoundValue[?]]`.
       */
     final case class Rendered private[kyo] (
@@ -40,7 +40,7 @@ object SqlRender:
         binds: Chunk[RenderedBind[?]]
     )
 
-    /** Unified render entry point — accepts any [[SqlAst.SqlAst]] node (queries, actions, terms, fragments). */
+    /** Unified render entry point, accepts any [[SqlAst.SqlAst]] node (queries, actions, terms, fragments). */
     def render(ast: SqlAst.SqlAst[?], backend: SqlBackend): Rendered =
         val s = new State(backend, Maybe.empty)
         s.dispatch(ast)
@@ -108,7 +108,7 @@ object SqlRender:
     // (Table-name extraction is now carried by the `tableName` field on `Table` / `Insert` / `Update` / `Delete`, derived from the
     // case class label at construction time.)
 
-    /** Mutable rendering accumulator. Not thread-safe — one instance per render call.
+    /** Mutable rendering accumulator. Not thread-safe, one instance per render call.
       *
       * @param backend
       *   the target SQL backend; drives all backend-specific rendering forks.
@@ -191,14 +191,14 @@ object SqlRender:
 
         /** Emits the `SELECT` clause for a single-table implicit-projection (`SELECT *`-shaped) query.
           *
-          * Instead of a literal `*`, the renderer emits the source's columns explicitly, in `Schema`-field-declaration order — supplied by
+          * Instead of a literal `*`, the renderer emits the source's columns explicitly, in `Schema`-field-declaration order, supplied by
           * the `From` node's `columnNames` (computed at construction by `SqlMacros.columnNames[T]`, which walks `caseFields`). This
           * guarantees the n-th projected column is always the n-th Schema field, so the positional row decoder
           * (`PostgresRowReader`/`MysqlRowReader`) is safe even when a table's physical DDL column order diverges from the case-class field
           * order. A literal `*` would surface columns in DDL order and silently mis-decode such tables.
           *
           * `columnNames` is the reliable order source: the `columns` `Record`'s `Dict` does not preserve declaration order. Falls back to a
-          * literal `*` only when `columnNames` is empty (a zero-field row — which the prior renderer also rendered as `*`).
+          * literal `*` only when `columnNames` is empty (a zero-field row, which the prior renderer also rendered as `*`).
           */
         private def appendSelectStar(alias: String, columnNames: Chunk[String]): Unit =
             append("SELECT ")
@@ -426,7 +426,7 @@ object SqlRender:
                                 append(" ON ")
                                 term(j.predicate)
                             case _: SqlBackend.Mysql =>
-                                // MySQL has no FULL OUTER JOIN — synthesize via LEFT JOIN UNION RIGHT JOIN.
+                                // MySQL has no FULL OUTER JOIN, synthesize via LEFT JOIN UNION RIGHT JOIN.
                                 fromSource(j.left)
                                 append(" LEFT JOIN ")
                                 fromSource(j.right)
@@ -600,7 +600,7 @@ object SqlRender:
                         joinWith(" || ")(cn.parts)(term)
                         append(")")
                     case _: SqlBackend.Mysql =>
-                        // MySQL uses CONCAT(a, b, …) — flatten any nested Concat nodes.
+                        // MySQL uses CONCAT(a, b, …), flatten any nested Concat nodes.
                         append("CONCAT(")
                         joinWith(", ")(flatConcatParts(cn))(term)
                         append(")")
@@ -835,7 +835,7 @@ object SqlRender:
                 case fs: Insert.FromSelect[?, ?, ?] => insertFromSelect(fs)
             end match
             i.onConflict.foreach(onConflict)
-            // Emit RETURNING clause — user-specified columns take priority over autoKey.
+            // Emit RETURNING clause, user-specified columns take priority over autoKey.
             // MySQL does not support RETURNING; the driver reads last_insert_id from the OK packet instead.
             i.returning match
                 case Maybe.Present(cols) =>
@@ -897,7 +897,7 @@ object SqlRender:
                         else
                             append(" ON CONFLICT DO NOTHING")
                     case _: SqlBackend.Mysql =>
-                        // MySQL DoNothing is expressed via INSERT IGNORE INTO in the header — nothing here.
+                        // MySQL DoNothing is expressed via INSERT IGNORE INTO in the header, nothing here.
                         ()
             case du: Insert.OnConflict.DoUpdate[?] =>
                 backend match
@@ -915,7 +915,7 @@ object SqlRender:
                         // MySQL: ON DUPLICATE KEY UPDATE set-list.  Target columns are ignored.
                         // Excluded references are rendered as VALUES(col) via the Excluded term handler.
                         // MySQL does not support a WHERE clause on ON DUPLICATE KEY UPDATE.
-                        // Silently dropping the predicate would produce wrong updates — raise a typed error instead.
+                        // Silently dropping the predicate would produce wrong updates, raise a typed error instead.
                         if du.where.isDefined then
                             frameOpt match
                                 case Maybe.Present(f) =>

@@ -5,7 +5,7 @@ import kyo.internal.SqlSharedContainers
 
 /** Integration tests for [[PipelineExchange]] internal instrumentation.
   *
-  * These tests exercise `PipelineExchange.writeCount` — a `private[kyo]` atomic counter incremented once per successful TCP batch write in
+  * These tests exercise `PipelineExchange.writeCount`, a `private[kyo]` atomic counter incremented once per successful TCP batch write in
   * `PipelineExchange.run`. The counter is inaccessible from `kyo.postgres.*` (different package), so these leaves live in
   * `kyo.internal.postgres.exchange` where `private[kyo]` grants access.
   */

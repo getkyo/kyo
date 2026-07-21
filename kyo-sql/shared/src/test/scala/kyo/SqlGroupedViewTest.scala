@@ -3,7 +3,7 @@ package kyo
 import kyo.Sql.render
 import kyo.SqlAst.*
 
-/** SqlGroupedViewTest — Leaf coverage for eager `groupBy` view materialization.
+/** SqlGroupedViewTest, Leaf coverage for eager `groupBy` view materialization.
   *
   * Eight focused leaves that exercise the eager groupBy view invariants:
   *   1. bare `groupBy(...).select(view.key)` byte-identical SQL
@@ -21,13 +21,13 @@ class SqlGroupedViewTest extends Test:
 
     val people = Sql.from[Person]("p")
 
-    "leaf 1 — bare groupBy(deptId).select(view.deptId) renders byte-identical SQL" in {
+    "leaf 1, bare groupBy(deptId).select(view.deptId) renders byte-identical SQL" in {
         val q = people.groupBy(_.p.deptId).select(view => view.deptId)
         val r = q.render(SqlBackend.Postgres)
         assert(r.sql == """SELECT "p"."deptId" FROM "person" "p" GROUP BY "p"."deptId"""")
     }
 
-    "leaf 2 — groupBy.having renders HAVING clause with one bind" in {
+    "leaf 2, groupBy.having renders HAVING clause with one bind" in {
         val q = people.groupBy(_.p.deptId).having(view => view.deptId.count > 5)
         val r = q.render(SqlBackend.Postgres)
         assert(
@@ -36,13 +36,13 @@ class SqlGroupedViewTest extends Test:
         assert(r.params.size == 1)
     }
 
-    "leaf 3 — groupBy.orderBy.limit renders ORDER BY DESC + LIMIT" in {
+    "leaf 3, groupBy.orderBy.limit renders ORDER BY DESC + LIMIT" in {
         val q = people.groupBy(_.p.deptId).orderBy(view => view.deptId.desc).limit(10)
         val r = q.render(SqlBackend.Postgres)
         assert(r.sql == """SELECT * FROM "person" "p" GROUP BY "p"."deptId" ORDER BY "p"."deptId" DESC LIMIT 10""")
     }
 
-    "leaf 4 — groupBy.select(view.age.sum) renders SELECT SUM" in {
+    "leaf 4, groupBy.select(view.age.sum) renders SELECT SUM" in {
         val q = people.groupBy(_.p.deptId).select(view => view.age.sum)
         val r = q.render(SqlBackend.Postgres)
         assert(
@@ -50,7 +50,7 @@ class SqlGroupedViewTest extends Test:
         )
     }
 
-    "leaf 5 — AST GroupBy carries view: Record[F] after groupBy" in {
+    "leaf 5, AST GroupBy carries view: Record[F] after groupBy" in {
         val g = people.groupBy(_.p.deptId)
         assert(g.productElementNames.contains("view"))
         g.productElement(g.productElementNames.indexOf("view")) match
@@ -64,7 +64,7 @@ class SqlGroupedViewTest extends Test:
         end match
     }
 
-    "leaf 7 — end-to-end groupBy + having + tuple select renders correctly" in {
+    "leaf 7, end-to-end groupBy + having + tuple select renders correctly" in {
         val q = people.groupBy(_.p.deptId)
             .having(view => view.deptId.count > 3)
             .select(view => (view.deptId, view.age.avg))
@@ -75,7 +75,7 @@ class SqlGroupedViewTest extends Test:
         assert(r.params.size == 1)
     }
 
-    "leaf 8 — regression sanity (canonical SqlTest groupBy case)" in {
+    "leaf 8, regression sanity (canonical SqlTest groupBy case)" in {
         // Mirrors SqlTest.scala 'group by single column with having + select' verbatim.
         val q = people.groupBy(c => c.p.deptId)
             .having(view => view.deptId.count > 5)
@@ -95,7 +95,7 @@ class SqlGroupedViewTest extends Test:
 
     "FromExpr.derived[GroupBy] lifts a statically-known GroupBy" in {
         // `ColumnFromExpr.given` is required so the projection-shaped grouping key (`_.p.deptId`) lifts
-        // to a real `Column` — without it the `selectDynamic` projection chain does not reconstruct.
+        // to a real `Column`, without it the `selectDynamic` projection chain does not reconstruct.
         import kyo.internal.ColumnFromExpr.given
         import kyo.internal.RecordFromExpr.given
         assert(SqlLiftHarness.matched[GroupBy[Person, ?]](Sql.from[Person]("p").groupBy(_.p.deptId)))

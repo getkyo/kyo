@@ -8,7 +8,7 @@ package kyo.internal.auth
   *   - HMAC-SHA-256 (RFC 2104)
   *   - PBKDF2-HMAC-SHA-256 (RFC 2898 §5.2)
   *
-  * RSA-OAEP (needed for CachingSha2 full-auth over non-TLS) is NOT implemented here. That path throws UnsupportedOperationException — see
+  * RSA-OAEP (needed for CachingSha2 full-auth over non-TLS) is NOT implemented here. That path throws UnsupportedOperationException, see
   * CachingSha2.scala.
   *
   * These implementations are correct but not constant-time. They are acceptable for kyo-sql because:

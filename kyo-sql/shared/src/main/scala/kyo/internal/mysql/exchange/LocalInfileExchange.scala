@@ -7,7 +7,7 @@ import kyo.internal.mysql.*
 /** Handles a MySQL `LOCAL_INFILE_REQUEST` packet by streaming user-supplied bytes to the server.
   *
   * The MySQL LOCAL INFILE protocol sequence (after a COM_QUERY for LOAD DATA LOCAL INFILE):
-  *   1. Server sends a LOCAL_INFILE_REQUEST packet: 0xFB followed by the filename the server would like (we ignore it — the caller supplies
+  *   1. Server sends a LOCAL_INFILE_REQUEST packet: 0xFB followed by the filename the server would like (we ignore it, the caller supplies
   *      the data).
   *   2. Client sends the file contents split into `LOCAL_INFILE_DATA` packets (plain data payloads, each up to [[MysqlPacket.MaxPayload]]
   *      bytes).
@@ -15,9 +15,9 @@ import kyo.internal.mysql.*
   *   4. Server responds with an `OK_PACKET` carrying the affected-row count.
   *
   * Each `LOCAL_INFILE_DATA` packet is a raw MySQL packet (4-byte header + payload) with no command byte prefix. The sequence ID must
-  * continue from where the initial COM_QUERY exchange left off — we do NOT call `channel.resetSeq()` here.
+  * continue from where the initial COM_QUERY exchange left off, we do NOT call `channel.resetSeq()` here.
   *
-  * Reference: MySQL Internals Manual — LOAD DATA LOCAL INFILE; CLIENT_LOCAL_FILES capability flag.
+  * Reference: MySQL Internals Manual, LOAD DATA LOCAL INFILE; CLIENT_LOCAL_FILES capability flag.
   */
 private[mysql] object LocalInfileExchange:
 
@@ -37,7 +37,7 @@ private[mysql] object LocalInfileExchange:
       *
       * Race-condition fix: a [[Latch]] is registered in the channel before the upload begins. Any subsequent channel operation (e.g. a
       * follow-up SELECT) will block in [[MysqlChannel.checkCorrupted]] until the cleanup fiber releases the latch, guaranteeing that the
-      * caller sees either a clean connection (outcome a) or `"unusable"` (outcome b) — never stale protocol bytes from an in-flight cleanup
+      * caller sees either a clean connection (outcome a) or `"unusable"` (outcome b), never stale protocol bytes from an in-flight cleanup
       * (outcome c / "Got packets out of order").
       *
       * @param channel
@@ -68,7 +68,7 @@ private[mysql] object LocalInfileExchange:
                         //
                         //   * "Cancellation-like": Failure(_: Timeout) (Async.timeout fired) or any
                         //     Panic (fiber interrupt, OOM, etc.).  These can fire at ARBITRARY points
-                        //     in the upload — including the gap between the OS-level completion of one
+                        //     in the upload, including the gap between the OS-level completion of one
                         //     packet's write and the server-side acknowledgement of full packet receipt.
                         //     The cleanup's empty-terminator + OK round-trip can syntactically succeed
                         //     while the server's MySQL command state is still mid-stream from its
@@ -82,7 +82,7 @@ private[mysql] object LocalInfileExchange:
                         //
                         //   * "Typed stream Failure" (e.g. Abort.fail(UserError) from a user-supplied
                         //     stream): these only fire when `data.fold` pulls a chunk and the upstream
-                        //     yields Failure.  They are deterministic chunk-boundary events — by
+                        //     yields Failure.  They are deterministic chunk-boundary events, by
                         //     construction no write is in flight and the server has fully processed
                         //     all bytes the client has committed to send.  The empty terminator is a
                         //     genuine end-of-upload signal here, and the server's OK is the genuine
@@ -107,7 +107,7 @@ private[mysql] object LocalInfileExchange:
                                         case Result.Success(_) =>
                                             // Cleanup round-trip syntactically succeeded.  For
                                             // cancellation-like failures this success cannot be trusted
-                                            // (see classification above) — mark the channel corrupted
+                                            // (see classification above), mark the channel corrupted
                                             // so the next caller fails fast with "unusable" instead of
                                             // observing a desynchronised protocol stream (e.g.
                                             // "Got packets out of order" on a follow-up query).
@@ -138,7 +138,7 @@ private[mysql] object LocalInfileExchange:
                         }
                     case Maybe.Absent =>
                         // Normal success exit: terminator was already sent on the success path below.
-                        // Release the latch immediately — no corruption, no cleanup needed.
+                        // Release the latch immediately, no corruption, no cleanup needed.
                         channel.endCleanup().andThen(latch.release)
                 }.andThen {
                     // Use chunk-level fold to avoid per-byte Kyo monadic overhead.
@@ -184,7 +184,7 @@ private[mysql] object LocalInfileExchange:
       * Used both on the normal success path and in the error-path cleanup:
       *   - On the success path: the cleanup latch is registered on this channel for the entire duration of the upload, so calling
       *     [[MysqlChannel.readRawPayload]] (which calls `checkCorrupted`, which awaits the latch) would deadlock. The skip-check variant
-      *     reads directly from the TCP stream — safe because we are the sole user of the channel during the upload.
+      *     reads directly from the TCP stream, safe because we are the sole user of the channel during the upload.
       *   - On the error-path cleanup: [[MysqlChannel.markCorrupted]] may have already been set to block concurrent callers, but we still
       *     need to drain the server's OK/ERR response so the TCP stream is in a known state before the connection is discarded.
       *
@@ -238,7 +238,7 @@ private[mysql] object LocalInfileExchange:
 
     /** Writes a raw MySQL packet with `payload` as the data (no command byte prefix).
       *
-      * LOCAL_INFILE_DATA packets are framed as standard MySQL packets but carry raw file bytes — there is no command byte prefix unlike
+      * LOCAL_INFILE_DATA packets are framed as standard MySQL packets but carry raw file bytes, there is no command byte prefix unlike
       * COM_QUERY or other frontend messages. Advances the channel sequence ID by the number of frames written.
       */
     private[exchange] def sendRawPayload(channel: MysqlChannel, payload: Span[Byte])(using Frame): Unit < (Async & Abort[SqlException]) =

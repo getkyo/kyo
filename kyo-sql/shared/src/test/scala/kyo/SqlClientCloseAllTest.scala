@@ -19,7 +19,7 @@ class SqlClientCloseAllTest extends Test:
 
     // ── Fake Postgres server helpers ──────────────────────────────────────────
 
-    /** AuthenticationOk + BackendKeyData + ReadyForQuery — the minimal trust-auth response that lets `pgConnect` succeed. */
+    /** AuthenticationOk + BackendKeyData + ReadyForQuery, the minimal trust-auth response that lets `pgConnect` succeed. */
     private val pgAuthOkBytes: Span[Byte] = Span.from(
         Array[Byte](
             // AuthenticationOk: type='R', length=8, authType=0
@@ -102,11 +102,11 @@ class SqlClientCloseAllTest extends Test:
                     // Verify the pool is live before closeAll.
                     client.isClosed.flatMap { before =>
                         assert(!before, "isClosed should be false before close")
-                        // closeAll with zero grace period — skips the poll loop and goes directly
+                        // closeAll with zero grace period, skips the poll loop and goes directly
                         // to step 3 (the synchronous drain).
                         client.close(Duration.Zero).flatMap { _ =>
                             client.isClosed.map { after =>
-                                assert(after, "isClosed should be true after closeAll — drain ran to completion")
+                                assert(after, "isClosed should be true after closeAll, drain ran to completion")
                             }
                         }
                     }
@@ -125,8 +125,8 @@ class SqlClientCloseAllTest extends Test:
         //   2. Interrupt the fiber while it is in the grace-period poll loop (Step 2).
         //   3. Observe that isClosed is set (Step 1 ran) and the client cannot be used.
         //
-        // The key invariant is that once Step 1 (pool.close()) succeeds — which sets the
-        // closed flag synchronously — the idle connections have already been drained from
+        // The key invariant is that once Step 1 (pool.close()) succeeds, which sets the
+        // closed flag synchronously, the idle connections have already been drained from
         // the pool's ring. Step 3's synchronous loop then closes them without any
         // suspension point where an interrupt could land. Even if Step 2's poll is
         // interrupted, any subsequent call to close() is a no-op (isClosed guard), so the
@@ -151,7 +151,7 @@ class SqlClientCloseAllTest extends Test:
                         // Signal that the pool is warmed up.
                         warmedUp.release.andThen {
                             // Start closeAll with a long grace period in a background fiber.
-                            // The grace period poll loop yields repeatedly — the fiber can be
+                            // The grace period poll loop yields repeatedly, the fiber can be
                             // interrupted while it is sleeping in that poll loop.
                             Fiber.initUnscoped(client.close(60.seconds)).flatMap { closeFiber =>
                                 // Wait briefly for the fiber to enter the poll loop.

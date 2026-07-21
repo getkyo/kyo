@@ -98,7 +98,7 @@ class HttpClientBackendTest extends kyo.BaseHttpTest:
     // 5. Connect fail-safe: transport error wrapped as HttpConnectException
     // ---------------------------------------------------------------------------
     "connect fail-safe: transport error wrapped as HttpConnectException" in {
-        // Port 1 is not listening — connection refused
+        // Port 1 is not listening, connection refused
         val url = HttpUrl(Present("http"), "localhost", 1, "/", Absent)
         Abort.run[HttpException](
             client.connectWith(url, 5.seconds, HttpTlsConfig.default) { conn =>
@@ -113,7 +113,7 @@ class HttpClientBackendTest extends kyo.BaseHttpTest:
     }
 
     // ---------------------------------------------------------------------------
-    // 6. Send buffered response with Content-Length — full body read
+    // 6. Send buffered response with Content-Length, full body read
     // ---------------------------------------------------------------------------
     "send buffered response with Content-Length" in {
         val route = HttpRoute.getRaw("hello").response(_.bodyText)
@@ -129,7 +129,7 @@ class HttpClientBackendTest extends kyo.BaseHttpTest:
     }
 
     // ---------------------------------------------------------------------------
-    // 7. Send buffered response with chunked encoding — chunked body decoded
+    // 7. Send buffered response with chunked encoding, chunked body decoded
     // ---------------------------------------------------------------------------
     "send buffered response with chunked encoding" in {
         val route = HttpRoute.getRaw("chunked").response(_.bodyText)
@@ -164,9 +164,9 @@ class HttpClientBackendTest extends kyo.BaseHttpTest:
     }
 
     // ---------------------------------------------------------------------------
-    // 9. Send buffered response to HEAD request — no body
+    // 9. Send buffered response to HEAD request, no body
     // ---------------------------------------------------------------------------
-    "send buffered response to HEAD request — no body" in {
+    "send buffered response to HEAD request, no body" in {
         val getRoute = HttpRoute.getRaw("ping").response(_.bodyText)
         val ep       = getRoute.handler(_ => HttpResponse.ok("pong"))
         // HEAD uses same path as GET but expects no body in response
@@ -199,7 +199,7 @@ class HttpClientBackendTest extends kyo.BaseHttpTest:
     }
 
     // ---------------------------------------------------------------------------
-    // 11. Send buffered response with all body in header chunk — fast path
+    // 11. Send buffered response with all body in header chunk, fast path
     // ---------------------------------------------------------------------------
     "send buffered response with all body bytes in header chunk (fast path)" in {
         val body  = "fast-path-body"
@@ -216,7 +216,7 @@ class HttpClientBackendTest extends kyo.BaseHttpTest:
     }
 
     // ---------------------------------------------------------------------------
-    // 12. Send buffered response with 0 Content-Length — empty body
+    // 12. Send buffered response with 0 Content-Length, empty body
     // ---------------------------------------------------------------------------
     "send buffered response with 0 Content-Length returns empty body" in {
         val route = HttpRoute.getRaw("nocontent").response(_.bodyText)
@@ -232,9 +232,9 @@ class HttpClientBackendTest extends kyo.BaseHttpTest:
     }
 
     // ---------------------------------------------------------------------------
-    // 13. Send streaming response — body stream constructed
+    // 13. Send streaming response, body stream constructed
     // ---------------------------------------------------------------------------
-    "send streaming response — body stream constructed" in {
+    "send streaming response, body stream constructed" in {
         val route = HttpRoute.getRaw("stream").response(_.bodyStream)
         val ep = route.handler { _ =>
             val chunks = Stream.init(Seq(
@@ -267,7 +267,7 @@ class HttpClientBackendTest extends kyo.BaseHttpTest:
     }
 
     // ---------------------------------------------------------------------------
-    // 14. Send streaming detects remaining bytes — partial body in header chunk
+    // 14. Send streaming detects remaining bytes, partial body in header chunk
     // ---------------------------------------------------------------------------
     "send streaming response with initial bytes in header chunk" in {
         val body  = "x" * 1000 // large enough to likely span multiple reads
@@ -298,7 +298,7 @@ class HttpClientBackendTest extends kyo.BaseHttpTest:
     }
 
     // ---------------------------------------------------------------------------
-    // 15. Redirect request with new Host header — different host → Host recomputed
+    // 15. Redirect request with new Host header, different host → Host recomputed
     // ---------------------------------------------------------------------------
     "redirect request recomputes Host header on new location" in {
         val targetRoute = HttpRoute.getRaw("target").response(_.bodyText)
@@ -323,7 +323,7 @@ class HttpClientBackendTest extends kyo.BaseHttpTest:
     }
 
     // ---------------------------------------------------------------------------
-    // 16. Default Host header (no explicit port) — host without :port
+    // 16. Default Host header (no explicit port), host without :port
     // ---------------------------------------------------------------------------
     "default Host header omits port for http on port 80" in {
         // HttpConnection.hostHeaderValue should be just "localhost" not "localhost:80"
@@ -334,7 +334,7 @@ class HttpClientBackendTest extends kyo.BaseHttpTest:
         }
         Scope.run {
             withServer(ep) { url =>
-                // url.port is assigned by the OS, not 80 — but connection on port 80 omits port
+                // url.port is assigned by the OS, not 80, but connection on port 80 omits port
                 // The hostHeaderValue on the connection is pre-computed: "host" or "host:port"
                 // Verify via test that Host header is set (value depends on actual port)
                 directSend(url, route, HttpRequest.getRaw(HttpUrl.fromUri("/host-check"))).map { resp =>
@@ -348,7 +348,7 @@ class HttpClientBackendTest extends kyo.BaseHttpTest:
     }
 
     // ---------------------------------------------------------------------------
-    // 17. Non-default Host header (explicit port) — host:8080
+    // 17. Non-default Host header (explicit port), host:8080
     // ---------------------------------------------------------------------------
     "non-default Host header includes port" in {
         val route = HttpRoute.getRaw("host").response(_.bodyText)
@@ -374,7 +374,7 @@ class HttpClientBackendTest extends kyo.BaseHttpTest:
     // 18. readLoopUnsafe accumulates bytes until contentLength
     // ---------------------------------------------------------------------------
     "readLoopUnsafe accumulates body across multiple reads (large body)" in {
-        val largeBody = "A" * (64 * 1024) // 64KB — forces multiple network reads
+        val largeBody = "A" * (64 * 1024) // 64KB, forces multiple network reads
         val route     = HttpRoute.getRaw("large").response(_.bodyText)
         val ep        = route.handler(_ => HttpResponse.ok(largeBody))
         Scope.run {
@@ -389,14 +389,14 @@ class HttpClientBackendTest extends kyo.BaseHttpTest:
     }
 
     // ---------------------------------------------------------------------------
-    // 19. readLoopUnsafe handles EOF — premature connection close → error
+    // 19. readLoopUnsafe handles EOF, premature connection close → error
     // ---------------------------------------------------------------------------
     "connection closed during body read results in HttpConnectionClosedException" in {
         // Integration test: server sends partial body then closes connection
         // A handler that sends 5 bytes but claims Content-Length: 100
         val route = HttpRoute.getRaw("partial").response(_.bodyText)
         val ep = route.handler { _ =>
-            // Return a short body — the client expects more bytes based on Content-Length
+            // Return a short body, the client expects more bytes based on Content-Length
             HttpResponse.ok("short")
         }
         Scope.run {
@@ -427,7 +427,7 @@ class HttpClientBackendTest extends kyo.BaseHttpTest:
     }
 
     // ---------------------------------------------------------------------------
-    // 20. decodeAndComplete calls RouteUtil.decodeBufferedResponse — decoder invoked
+    // 20. decodeAndComplete calls RouteUtil.decodeBufferedResponse, decoder invoked
     // ---------------------------------------------------------------------------
     "decodeAndComplete invokes response decoder (JSON body)" in {
         case class Msg(value: String) derives Schema, CanEqual
@@ -444,7 +444,7 @@ class HttpClientBackendTest extends kyo.BaseHttpTest:
     }
 
     // ---------------------------------------------------------------------------
-    // 21. Send with onRelease callback on success — callback called with Absent
+    // 21. Send with onRelease callback on success, callback called with Absent
     // ---------------------------------------------------------------------------
     "sendWith onRelease callback called on success" in {
         val route                                          = HttpRoute.getRaw("ok").response(_.bodyText)
@@ -474,7 +474,7 @@ class HttpClientBackendTest extends kyo.BaseHttpTest:
     }
 
     // ---------------------------------------------------------------------------
-    // 22. Send with onRelease callback on error — callback called with Present(error)
+    // 22. Send with onRelease callback on error, callback called with Present(error)
     // ---------------------------------------------------------------------------
     "sendWith onRelease callback called on error" in {
         val route = HttpRoute.getRaw("ok").response(_.bodyText)
@@ -565,7 +565,7 @@ class HttpClientBackendTest extends kyo.BaseHttpTest:
                 HttpClient.withConfig(HttpClientConfig(timeout = Duration.Infinity)) {
                     HttpClient.initUnscoped(maxConnectionsPerHost = 2).map { hc =>
                         val request = HttpRequest.getRaw(HttpUrl(url.scheme, url.host, url.port, "/ping", Absent))
-                        // Make 5 sequential requests — pool should reuse connections
+                        // Make 5 sequential requests, pool should reuse connections
                         Kyo.foreach(1 to 5) { _ =>
                             hc.sendWith(route, request)(identity)
                         }.map { responses =>

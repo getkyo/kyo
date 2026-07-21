@@ -33,11 +33,11 @@ import kyo.internal.postgres.*
   *
   * Both directions use the [[PostgresChannel.beginCleanup]] / [[PostgresChannel.endCleanup]] / [[PostgresChannel.markCorrupted]] pattern
   * (mirrored from [[kyo.internal.mysql.exchange.LocalInfileExchange]]) plus [[Async.mask]] with a bounded 5-second budget so that the
-  * cleanup cannot be interrupted and callers see either a clean connection or "unusable" — never stale protocol bytes.
+  * cleanup cannot be interrupted and callers see either a clean connection or "unusable", never stale protocol bytes.
   */
 private[postgres] object CopyExchange:
 
-    /** Maximum bytes per [[CopyData]] packet sent to the server (64 KB — a practical sweet-spot well under the 1 GB theoretical max). */
+    /** Maximum bytes per [[CopyData]] packet sent to the server (64 KB, a practical sweet-spot well under the 1 GB theoretical max). */
     private val MaxChunkBytes: Int = 64 * 1024
 
     // --- copyIn ---
@@ -112,7 +112,7 @@ private[postgres] object CopyExchange:
                     // ALL channel operations here bypass checkCorrupted() via sendSkipCheck / receiveSkipCheck.
                     // Rationale: beginCleanup(latch) has already registered the latch on the channel.
                     // channel.send / channel.receive both call checkCorrupted(), which would block waiting
-                    // for the latch we hold — deadlock.  We are the sole reader/writer during a COPY op,
+                    // for the latch we hold, deadlock.  We are the sole reader/writer during a COPY op,
                     // so the skip-check variants are safe.
 
                     // 1. Send the COPY SQL as a simple Query.
@@ -168,7 +168,7 @@ private[postgres] object CopyExchange:
                     // On normal success (CopyDone received): drain CommandComplete + ReadyForQuery was already done.
                     Scope.ensure {
                         case Maybe.Present(_) =>
-                            // Error / early cancellation path — uninterruptible cleanup with configured budget.
+                            // Error / early cancellation path, uninterruptible cleanup with configured budget.
                             Async.mask {
                                 Abort.run[Timeout](
                                     Async.timeout(cleanupTimeout) {
@@ -207,7 +207,7 @@ private[postgres] object CopyExchange:
                         // ALL channel operations here bypass checkCorrupted() via sendSkipCheck / receiveSkipCheck.
                         // Rationale: beginCleanup(latch) has already registered the latch on the channel.
                         // channel.send / channel.receive both call checkCorrupted(), which would block waiting
-                        // for the latch we hold — deadlock.  We are the sole reader/writer during a COPY op,
+                        // for the latch we hold, deadlock.  We are the sole reader/writer during a COPY op,
                         // so the skip-check variants are safe.
 
                         // 1. Send the COPY SQL as a simple Query.

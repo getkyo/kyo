@@ -2,13 +2,13 @@
 
 Pure-Scala async database driver fully integrated with the [Kyo](https://github.com/getkyo/kyo) effect system.
 
-kyo-sql speaks directly to the PostgreSQL and MySQL wire protocols — no JDBC, no third-party driver, no thread
+kyo-sql speaks directly to the PostgreSQL and MySQL wire protocols, no JDBC, no third-party driver, no thread
 blocking. All I/O runs through `kyo-net`'s async transport layer, which means every query, every row, every
 notification arrives in a Kyo fiber with structured cancellation and backpressure.
 
 ## Status
 
-### PostgreSQL — feature-complete
+### PostgreSQL, feature-complete
 
 - Connect: SCRAM-SHA-256 / MD5 / plaintext password auth
 - TLS: `SSLRequest` upgrade; `sslmode=require/verify-ca/verify-full` all enforce TLS (v1 treats them identically; strict cert-check differences are v2)
@@ -20,7 +20,7 @@ notification arrives in a Kyo fiber with structured cancellation and backpressur
 - `LISTEN`/`NOTIFY` asynchronous notifications over a dedicated connection
 - Query cancellation via a fresh sidecar TCP connection and `CancelRequest`
 
-### MySQL — feature-complete
+### MySQL, feature-complete
 
 - Connect: `native_password` and `caching_sha2_password` (fast-auth + RSA-OAEP full-auth)
 - TLS: `CLIENT_SSL` handshake upgrade
@@ -34,11 +34,11 @@ notification arrives in a Kyo fiber with structured cancellation and backpressur
 
 JVM is the supported runtime today. The `kyo-sqlJS` and `kyo-sqlNative` artefacts compile but the auth code
 paths (SCRAM-SHA-256, MD5, caching_sha2_password RSA-OAEP) depend on JDK crypto (`javax.crypto`), so they
-will not run on JS or Native without cross-platform crypto support — that is follow-up work.
+will not run on JS or Native without cross-platform crypto support, that is follow-up work.
 
 ---
 
-## Quickstart — PostgreSQL
+## Quickstart, PostgreSQL
 
 ```scala
 import kyo.*
@@ -66,7 +66,7 @@ KyoApp.run:
 
 ---
 
-## Quickstart — MySQL
+## Quickstart, MySQL
 
 ```scala
 import kyo.*
@@ -121,7 +121,7 @@ mysql://user:password@host:port/database[?options]
 ```
 
 MySQL uses the same option keys as PostgreSQL. Auth plugin (native_password vs caching_sha2_password) is
-negotiated automatically with the server — you do not need to configure it.
+negotiated automatically with the server, you do not need to configure it.
 
 ---
 
@@ -131,7 +131,7 @@ kyo-sql offers three layers. Use whichever fits the task.
 
 ### 1. Typed DSL
 
-Derives schema from a case class. Fully typed — column names and types are checked at compile time.
+Derives schema from a case class. Fully typed, column names and types are checked at compile time.
 
 ```scala
 import kyo.*
@@ -151,22 +151,22 @@ client.query(q)  // : Chunk[Row] < (Async & Abort[SqlException])
 ```
 
 Supported combinators:
-- `.where(pred)` — appends a WHERE clause
-- `.select(cols*)` — projects columns; defaults to SELECT *
-- `.join[B]("table", "alias").on(cond)` — INNER JOIN
-- `.leftJoin[B]("table", "alias").on(cond)` — LEFT JOIN
-- `.orderBy(cols*)` — ORDER BY with `.asc` / `.desc`
-- `.groupBy(cols*)` — GROUP BY
-- `.having(pred)` — HAVING (requires `groupBy` first)
-- `.limit(n)` / `.offset(n)` — LIMIT / OFFSET
-- `.distinct` — SELECT DISTINCT
+- `.where(pred)`, appends a WHERE clause
+- `.select(cols*)`, projects columns; defaults to SELECT *
+- `.join[B]("table", "alias").on(cond)`, INNER JOIN
+- `.leftJoin[B]("table", "alias").on(cond)`, LEFT JOIN
+- `.orderBy(cols*)`, ORDER BY with `.asc` / `.desc`
+- `.groupBy(cols*)`, GROUP BY
+- `.having(pred)`, HAVING (requires `groupBy` first)
+- `.limit(n)` / `.offset(n)`, LIMIT / OFFSET
+- `.distinct`, SELECT DISTINCT
 
 Aggregate functions: `count(expr)`, `sum(expr)`, `avg(expr)`, `min(expr)`, `max(expr)`, `countAll`.
 
 ### 2. `sql"..."` interpolator
 
 A compile-time macro that tracks the types of all interpolated values. Values of the default scalar types
-(Int, Long, String, Boolean, BigDecimal, etc.) are erased at compile time — no encoder lookup needed at runtime.
+(Int, Long, String, Boolean, BigDecimal, etc.) are erased at compile time, no encoder lookup needed at runtime.
 Values of custom types generate a compile-time error if no encoder is in scope.
 
 ```scala
@@ -216,10 +216,10 @@ client.executeDdl(ddl)
 When you write `sql"... ${expr} ..."`, the macro inspects the type of `expr` at compile time:
 
 - **Default type** (`Int`, `Long`, `String`, `Boolean`, `BigDecimal`, `Span[Byte]`, `kyo.Instant`,
-  `java.time.LocalDate`, `java.time.LocalDateTime`) — erased to `Default.Value`; no backend-specific
+  `java.time.LocalDate`, `java.time.LocalDateTime`), erased to `Default.Value`; no backend-specific
   encoder is needed; same fragment works for both Postgres and MySQL.
 
-- **Custom type** — enters the `Custom` union of the `Fragment` type. The execute macro summons a
+- **Custom type** enters the `Custom` union of the `Fragment` type. The execute macro summons a
   backend-specific encoder at the call site. If no encoder is found, the macro fails at compile time
   with the missing type and the source position of the `${...}` lift.
 
@@ -467,11 +467,11 @@ All failures surface as `Abort[SqlException]`. The hierarchy:
 Abort.run[SqlException](client.query(sql"SELECT 1")).flatMap {
   case Result.Success(rows)                                => println(s"Got ${rows.size} rows")
   case Result.Failure(e: SqlException.Server) if e.sqlState == "23505" =>
-    println("Unique-violation — duplicate key")
+    println("Unique-violation, duplicate key")
   case Result.Failure(e) =>
     println(s"Query failed: ${e.getMessage}")
   case Result.Panic(t) =>
-    // Unexpected runtime exception — always log these
+    // Unexpected runtime exception, always log these
     java.lang.System.err.println(s"Panic: ${t.getMessage}")
 }
 ```
@@ -512,9 +512,9 @@ position is missing.
   that cannot acquire a connection immediately suspend and are resumed in order as connections are released.
 
 Reference design documents (in `kyo-sql/`):
-- `DESIGN-SYNTHESIS.md` — authoritative design decisions and trade-offs
-- `RESEARCH-PROTOCOLS.md` — PostgreSQL and MySQL wire-protocol reference
-- `RESEARCH-NDBC-LESSONS.md` — lessons from studying the ndbc driver
+- `DESIGN-SYNTHESIS.md`, authoritative design decisions and trade-offs
+- `RESEARCH-PROTOCOLS.md`, PostgreSQL and MySQL wire-protocol reference
+- `RESEARCH-NDBC-LESSONS.md`, lessons from studying the ndbc driver
 
 ---
 
@@ -535,7 +535,7 @@ Reference design documents (in `kyo-sql/`):
 
 ## Troubleshooting
 
-### `SqlException.Connection: pool exhausted — no connection available within 5 seconds`
+### `SqlException.Connection: pool exhausted, no connection available within 5 seconds`
 
 The pool is saturated. Options:
 - Increase `maxConnections`.

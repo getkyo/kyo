@@ -50,7 +50,7 @@ object TestStatus:
     given SqlSchema[TestStatus] = SqlSchema.derived
 end TestStatus
 
-/** Unit tests for [[SqlSchema]] — typeclass existence, field metadata, write, and read round-trips.
+/** Unit tests for [[SqlSchema]], typeclass existence, field metadata, write, and read round-trips.
   *
   * All tests are pure (no container needed): they exercise [[SqlSchema]] extensions directly using in-memory byte buffers and mock
   * [[SqlRow]] instances. Container-based tests live in the integration test suite.
@@ -60,7 +60,7 @@ class SqlSchemaTest extends Test:
     // --- Helpers ---
 
     /** Encodes a value via [[SqlSchema.writePostgres]] and extracts the wire bytes from the single resulting [[BoundParam]] using its
-      * public [[BoundParam.encoded]] accessor — no test-side reach into internal encoders.
+      * public [[BoundParam.encoded]] accessor, no test-side reach into internal encoders.
       */
     private def encode[A](value: A)(using s: SqlSchema[A], as: kyo.test.AssertScope): Span[Byte] =
         val params = s.writePostgres(value)
@@ -80,7 +80,7 @@ class SqlSchemaTest extends Test:
     end binaryRow
 
     /** Encodes a value via [[SqlSchema.writeMysql]] and extracts the wire bytes from the single resulting [[BoundMysqlParam]] using its
-      * public [[BoundMysqlParam.encoded]] accessor — no test-side reach into internal encoders.
+      * public [[BoundMysqlParam.encoded]] accessor, no test-side reach into internal encoders.
       */
     private def encodeMySQL[A](value: A)(using s: SqlSchema[A], as: kyo.test.AssertScope): Span[Byte] =
         val params = s.writeMysql(value)
@@ -232,7 +232,7 @@ class SqlSchemaTest extends Test:
     // --- 12. readPostgres failure surfaces as Abort[SqlException.Decode] ---
 
     "readPostgres failure surfaces as Abort[SqlException.Decode]" in {
-        // Feed a 3-byte payload where Long expects exactly 8 bytes — will throw inside serializeRead.
+        // Feed a 3-byte payload where Long expects exactly 8 bytes, will throw inside serializeRead.
         val badBytes = Span.from(Array[Byte](0x01, 0x02, 0x03))
         val row      = binaryRow("val" -> badBytes)
         val result   = Abort.run[SqlException.Decode](summon[SqlSchema[Long]].readPostgres(row)).eval
@@ -246,7 +246,7 @@ class SqlSchemaTest extends Test:
     "nullable writePostgres for Maybe.Absent produces a null BoundParam" in {
         val params = summon[SqlSchema[Maybe[Long]]].writePostgres(Maybe.Absent)
         assert(params.size == 1)
-        // Absent encodes as null — the value inside the BoundParam is Absent.
+        // Absent encodes as null, the value inside the BoundParam is Absent.
         assert(params(0).value == Maybe.Absent)
         succeed
     }
@@ -450,7 +450,7 @@ class SqlSchemaTest extends Test:
         succeed
     }
 
-    // --- sqlTypeName — SQL-canonical type names for primitive schemas ---
+    // --- sqlTypeName, SQL-canonical type names for primitive schemas ---
 
     "sqlTypeName for Int is INTEGER" in {
         assert(summon[SqlSchema[Int]].sqlTypeName == "INTEGER")
@@ -464,7 +464,7 @@ class SqlSchemaTest extends Test:
 
     "SqlRow.columnAs[String] compiles and decodes with single-clause (using Frame, SqlDecoder[String])" in {
         // Compile-time proof: the merged `using` clause resolves without a named binder.
-        // `columnAs` is called with no explicit `using` — Frame and SqlDecoder[String] are both summonable.
+        // `columnAs` is called with no explicit `using`, Frame and SqlDecoder[String] are both summonable.
         val bytes  = Span.from("hello".getBytes(java.nio.charset.StandardCharsets.UTF_8))
         val row    = new SqlRow(Chunk(Maybe.Present(bytes)), Chunk.empty, kyo.internal.postgres.types.Format.Text)
         val result = Abort.run[SqlException.Decode](row.columnAs[String](0)).eval
@@ -484,7 +484,7 @@ class SqlSchemaTest extends Test:
         val result   = Abort.run[SqlException.Decode](summon[SqlSchema[Long]].readPostgres(row)).eval
         result match
             case Result.Failure(e) =>
-                // SqlException.Decode extends SqlException — verify the is-a relationship
+                // SqlException.Decode extends SqlException, verify the is-a relationship
                 // that makes the Abort.recover widening correct.
                 assert(e.isInstanceOf[SqlException])
                 succeed
@@ -493,7 +493,7 @@ class SqlSchemaTest extends Test:
     }
 
     "readMysql decode failure is a SqlException (decodeStream error-remapping widening contract)" in {
-        // Same contract via readMysql — covers the decodeStream path.
+        // Same contract via readMysql, covers the decodeStream path.
         val badBytes = Span.from(Array[Byte](0x01, 0x02, 0x03))
         val row      = mysqlBinaryRow("val" -> badBytes)
         val result   = Abort.run[SqlException.Decode](summon[SqlSchema[Long]].readMysql(row)).eval
@@ -621,14 +621,14 @@ class SqlSchemaTest extends Test:
         end match
     }
 
-    // --- 24b. Scala 3 enum (TestStatus) — same string-discriminator path ---
+    // --- 24b. Scala 3 enum (TestStatus), same string-discriminator path ---
 
     "SqlSchema.derived[TestStatus] round-trips all three enum cases (write→read via public BoundParam.encoded)" in {
         val s = summon[SqlSchema[TestStatus]]
         Seq(TestStatus.Pending, TestStatus.Active, TestStatus.Cancelled).foreach { v =>
             val params = s.writePostgres(v)
             assert(params.size == 1)
-            // Drive bytes through the public BoundParam.encoded surface — no test-side reach into typed value internals.
+            // Drive bytes through the public BoundParam.encoded surface, no test-side reach into typed value internals.
             val bytes = params(0).encoded match
                 case Maybe.Present(b) => b
                 case Maybe.Absent     => fail(s"writePostgres($v) produced a NULL param")
@@ -642,7 +642,7 @@ class SqlSchemaTest extends Test:
         succeed
     }
 
-    // --- 24c. Sealed trait with case-class variants (TestEvent) — JSON-encoded path ---
+    // --- 24c. Sealed trait with case-class variants (TestEvent), JSON-encoded path ---
 
     "SqlSchema.derived[TestEvent] reports fieldCount 1 (single jsonb column)" in {
         assert(summon[SqlSchema[TestEvent]].fieldCount == 1)
@@ -714,7 +714,7 @@ class SqlSchemaTest extends Test:
 
     // ---- Replace-semantic tests for Sql.windowSpec.partitionBy (Phase 10 + audit W-5) ----
     //
-    // Driven through the user-facing `Sql.windowSpec` DSL — Terms come from `select(c => ...)`
+    // Driven through the user-facing `Sql.windowSpec` DSL, Terms come from `select(c => ...)`
     // accessors, so the LHS is pure DSL. The byte-exact PG SQL on the RHS proves the replace
     // semantic (second `partitionBy` discards the first): a "wrong" append semantic would emit
     // `PARTITION BY "p"."deptId", "p"."age"` instead of just `PARTITION BY "p"."age"`.

@@ -81,7 +81,7 @@ object SqlClient:
 
     /** Fiber-local active transaction context.
       *
-      * [[Absent]] when outside a `transaction { ... }` block. [[Present]] when inside one — queries detect this and use the bound
+      * [[Absent]] when outside a `transaction { ... }` block. [[Present]] when inside one, queries detect this and use the bound
       * connection directly instead of acquiring from the pool.
       */
     private val txLocal: Local[Maybe[TransactionContext]] =
@@ -180,7 +180,7 @@ object SqlClient:
       *
       * Warmup runs before `f` is called. The client is closed when `f` returns (success, failure, or panic).
       *
-      * Effect set: `Async & Abort[SqlException] & S` — no `Scope` in the set.
+      * Effect set: `Async & Abort[SqlException] & S`, no `Scope` in the set.
       *
       * @tparam B
       *   the result type of `f`
@@ -199,7 +199,7 @@ object SqlClient:
     /** Creates a Postgres [[PgSqlClient]] with custom config and bracket semantics: no [[Scope]] required, close guaranteed via
       * `Sync.ensure`.
       *
-      * Effect set: `Async & Abort[SqlException] & S` — no `Scope` in the set.
+      * Effect set: `Async & Abort[SqlException] & S`, no `Scope` in the set.
       *
       * @tparam B
       *   the result type of `f`
@@ -233,7 +233,7 @@ object SqlClient:
                                 val warmN  = mergedConfig.minConnections.min(mergedConfig.maxConnections)
                                 // client.close is Async, not Sync, so we cannot use Sync.ensure here.
                                 // Instead, Scope.run discharges the Scope effect inline so it does not
-                                // appear in the return type — bracket semantics without leaking Scope.
+                                // appear in the return type, bracket semantics without leaking Scope.
                                 Scope.run(
                                     Scope.ensure(client.close).andThen(
                                         b.warmUp(url.address, url.password, warmN, mergedConfig).andThen(f(client))
@@ -399,7 +399,7 @@ object SqlClient:
 
     /** Creates a MySQL [[SqlClient]] with bracket semantics: no [[Scope]] required, close guaranteed via `Sync.ensure`.
       *
-      * Effect set: `Async & Abort[SqlException] & S` — no `Scope` in the set.
+      * Effect set: `Async & Abort[SqlException] & S`, no `Scope` in the set.
       *
       * @tparam B
       *   the result type of `f`
@@ -418,7 +418,7 @@ object SqlClient:
     /** Creates a MySQL [[MySqlSqlClient]] with custom config and bracket semantics: no [[Scope]] required, close guaranteed via
       * `Sync.ensure`.
       *
-      * Effect set: `Async & Abort[SqlException] & S` — no `Scope` in the set.
+      * Effect set: `Async & Abort[SqlException] & S`, no `Scope` in the set.
       *
       * @tparam B
       *   the result type of `f`
@@ -543,7 +543,7 @@ object SqlClient:
       * Effect row widens to `Abort[SqlException]` so callers carrying that effect row (`.run` / `.runDynamic`) compose without an extra
       * `Abort.fold`/`Abort.run` layer. The Absent branch raises a typed `SqlException.Connection`; the Present branch is fully transparent.
       *
-      * IMPORTANT: Fails at runtime with [[SqlException.Connection]] if no client is active in the current fiber — wrap the computation in
+      * IMPORTANT: Fails at runtime with [[SqlException.Connection]] if no client is active in the current fiber, wrap the computation in
       * [[SqlClient.let]] first.
       *
       * @tparam A
@@ -558,7 +558,7 @@ object SqlClient:
             maybeClient match
                 case Absent =>
                     Abort.fail(SqlException.Connection(
-                        "No SqlClient active — wrap the computation in SqlClient.let(client) { ... }",
+                        "No SqlClient active, wrap the computation in SqlClient.let(client) { ... }",
                         summon[Frame]
                     ))
                 case Present(client) =>
@@ -623,7 +623,7 @@ object SqlClient:
                 maybeClient match
                     case Absent =>
                         Abort.fail(SqlException.Connection(
-                            "No SqlClient active — wrap the computation in SqlClient.let(client) { ... }",
+                            "No SqlClient active, wrap the computation in SqlClient.let(client) { ... }",
                             summon[Frame]
                         ))
                     case Present(c) =>
@@ -648,7 +648,7 @@ object SqlClient:
             maybeClient match
                 case Absent =>
                     Abort.fail(SqlException.Connection(
-                        "No SqlClient active — wrap the computation in SqlClient.let(client) { ... }",
+                        "No SqlClient active, wrap the computation in SqlClient.let(client) { ... }",
                         summon[Frame]
                     ))
                 case Present(client) if client.url.address.driver == "postgres" =>
@@ -676,7 +676,7 @@ object SqlClient:
             maybeClient match
                 case Absent =>
                     Abort.fail(SqlException.Connection(
-                        "No SqlClient active — wrap the computation in SqlClient.let(client) { ... }",
+                        "No SqlClient active, wrap the computation in SqlClient.let(client) { ... }",
                         summon[Frame]
                     ))
                 case Present(client) if client.url.address.driver == "mysql" =>
@@ -727,7 +727,7 @@ object SqlClient:
                 // tlsMode comes from URL; programmatic config override is not supported.
                 tlsMode = urlConfig.tlsMode,
                 typeNames = config.typeNames,
-                // Phase 23 lifecycle fields — pass through from user config.
+                // Phase 23 lifecycle fields, pass through from user config.
                 maxLifetime = config.maxLifetime,
                 connectionTestQuery = config.connectionTestQuery,
                 connectionInitSql = config.connectionInitSql,
@@ -874,7 +874,7 @@ object SqlClient:
             Stream[SqlRow, Async & Abort[SqlException] & Scope](
                 txLocal.use {
                     case Present(ctx: TransactionContext.Pg) =>
-                        // Inside a transaction: use the bound connection. Do NOT release it — the
+                        // Inside a transaction: use the bound connection. Do NOT release it, the
                         // transaction holds the connection for the full transaction lifetime.
                         ctx.connection.streamQuery(rendered.sql, rendered.params.flatMap(SqlClientBackend.boundToPostgres), batchSize).emit
                     case Present(_: TransactionContext.My) =>
@@ -930,7 +930,7 @@ object SqlClient:
 
         /** Runs a Postgres query with pre-converted `BoundParam` params. Used by [[kyo.internal.SqlBackendOps.postgres]].
           *
-          * Threads [[txLocal]] so transaction-bound connections are reused. `private[kyo]` — callers must already hold `BoundParam`-typed
+          * Threads [[txLocal]] so transaction-bound connections are reused. `private[kyo]`, callers must already hold `BoundParam`-typed
           * params (i.e. be inside the `kyo.internal` DSL pipeline).
           */
         private[kyo] def executePgQuery(sql: String, params: Chunk[BoundParam[?]])(using
@@ -1020,13 +1020,13 @@ object SqlClient:
           *
           * ==Error types==
           * This method can abort with any [[SqlException]] subtype:
-          *   - [[SqlException.Connection]] — pool exhausted, TCP failure, or acquire timeout before the query was sent.
-          *   - [[SqlException.Request]] — SQL serialization or parameter encoding failure before the query was sent.
-          *   - [[SqlException.Server]] — the database rejected the query and returned an error response.
-          *   - [[SqlException.Decode]] — the query succeeded but a returned column value could not be converted to the target Scala type.
+          *   - [[SqlException.Connection]], pool exhausted, TCP failure, or acquire timeout before the query was sent.
+          *   - [[SqlException.Request]], SQL serialization or parameter encoding failure before the query was sent.
+          *   - [[SqlException.Server]], the database rejected the query and returned an error response.
+          *   - [[SqlException.Decode]], the query succeeded but a returned column value could not be converted to the target Scala type.
           *     Each row is decoded independently; a `Decode` failure on one row aborts the entire `Chunk` result. Check the [[SqlSchema]]
           *     derivation or widen the column type to diagnose.
-          *   - [[SqlException.Unsupported]] — the [[SqlSchema]] decoder called a structural read operation (array, map) that the backend
+          *   - [[SqlException.Unsupported]], the [[SqlSchema]] decoder called a structural read operation (array, map) that the backend
           *     does not yet implement. Re-derive the schema without the unsupported structural type, or supply a custom decoder via
           *     [[SqlSchema.withDecoder]].
           *
@@ -1150,7 +1150,7 @@ object SqlClient:
           *
           * The canonical close variant. Marks the pool as closed (preventing new connection acquisitions) and then waits up to
           * `gracePeriod` for any in-flight queries to return their connections. After the grace period, any remaining connections are
-          * force-closed. Idempotent — a second call is a no-op.
+          * force-closed. Idempotent, a second call is a no-op.
           *
           * @param gracePeriod
           *   maximum time to wait for in-flight queries to complete; `Duration.Zero` forces an immediate close
@@ -1164,13 +1164,13 @@ object SqlClient:
           */
         def close(gracePeriod: Duration)(using Frame): Unit < Async =
             self.closedRef.compareAndSet(false, true).flatMap {
-                case false => () // already closed — idempotent no-op
+                case false => () // already closed, idempotent no-op
                 case true  => self.backend.closeAll(gracePeriod)
             }
 
         /** Releases all pooled connections using the config's `closeGrace` duration (default 30 seconds).
           *
-          * Delegates to `close(config.closeGrace)`. Idempotent — a second call is a no-op.
+          * Delegates to `close(config.closeGrace)`. Idempotent, a second call is a no-op.
           */
         def close(using Frame): Unit < Async =
             self.close(self.config.closeGrace)
@@ -1191,7 +1191,7 @@ object SqlClient:
 
         /** Returns the [[kyo.SqlMetrics]] instance used by this client.
           *
-          * Use for observability tooling and testing. The returned instance is the same one instrumented by the backend — counters and
+          * Use for observability tooling and testing. The returned instance is the same one instrumented by the backend, counters and
           * histograms reflect the real operation history of this client.
           */
         def metrics: kyo.SqlMetrics =
@@ -1245,7 +1245,7 @@ object SqlClient:
           *   - Inner success → `RELEASE SAVEPOINT sp_<uuid>`
           *   - Inner failure → `ROLLBACK TO SAVEPOINT sp_<uuid>` (outer transaction continues)
           *
-          * The inner call does NOT acquire a new connection — it reuses the outer's.
+          * The inner call does NOT acquire a new connection, it reuses the outer's.
           *
           * WARNING: The `isolation` parameter is silently ignored on nested transactions; PostgreSQL and MySQL do not support per-savepoint
           * isolation levels.
@@ -1542,14 +1542,14 @@ object SqlClient:
           * `transactionTyped[MyError]{ ... Abort.fail(myErr) ... }` and downstream handlers see the original `MyError` value rather than a
           * panic-wrapped string.
           *
-          * Rollback semantics are unchanged — any [[SqlException]] OR `E` failure rolls back; only [[Result.Success]] commits.
+          * Rollback semantics are unchanged, any [[SqlException]] OR `E` failure rolls back; only [[Result.Success]] commits.
           *
           * @tparam E
           *   the additional typed error type to preserve through the transaction boundary
           * @tparam A
           *   the body's success type
           * @tparam S
-          *   the body's residual effect row (must NOT already contain Abort[SqlException] or Abort[E] — those are appended here)
+          *   the body's residual effect row (must NOT already contain Abort[SqlException] or Abort[E], those are appended here)
           */
         def transactionTyped[E, A, S](
             body: A < (S & Abort[E])
@@ -1659,7 +1659,7 @@ object SqlClient:
           * releases the connection back to the pool. Returns `Unit` on success; raises `Abort[SqlException]` on connection, protocol, or
           * server error.
           *
-          * Cheaper than `SELECT 1` — MySQL bypasses the SQL parser entirely; Postgres skips parse/plan.
+          * Cheaper than `SELECT 1`, MySQL bypasses the SQL parser entirely; Postgres skips parse/plan.
           */
         def ping(using Frame): Unit < (Async & Abort[SqlException]) =
             local.use { (_, config) =>
@@ -1676,7 +1676,7 @@ object SqlClient:
 
         /** Convenience wrapper over [[ping]] that returns `true` when the probe succeeds and `false` when it raises a [[SqlException]].
           *
-          * Distinct from [[SqlClient.isClosed]] (a local close-flag predicate) — `isAlive` reaches the server.
+          * Distinct from [[SqlClient.isClosed]] (a local close-flag predicate), `isAlive` reaches the server.
           */
         def isAlive(using Frame): Boolean < (Async & Abort[SqlException]) =
             Abort.run[SqlException](self.ping).map(_.isSuccess)
@@ -1684,8 +1684,8 @@ object SqlClient:
         /** Explicitly scrubs per-session state (variables, prepared statements, temp tables, listeners, transactions) on a freshly acquired
           * connection.
           *
-          *   - MySQL: sends `COM_RESET_CONNECTION` — protocol-native, no SQL round-trip.
-          *   - Postgres: runs `DISCARD ALL` — clears prepared statements, session variables, temp tables, listeners, and any open
+          *   - MySQL: sends `COM_RESET_CONNECTION`, protocol-native, no SQL round-trip.
+          *   - Postgres: runs `DISCARD ALL`, clears prepared statements, session variables, temp tables, listeners, and any open
           *     transaction.
           *
           * Distinct from pool-recycle resets controlled by `SqlClientConfig.resetOnRelease`; `reset` operates explicitly on the current
@@ -1720,7 +1720,7 @@ object SqlClient:
           * success, 0 on timeout, or NULL on error. If the result is not 1, [[SqlException.Request]] is raised and no lock is held. On
           * success, `SELECT RELEASE_LOCK('key')` is registered as a [[Scope.ensure]] finaliser.
           *
-          * The lock is always released when the enclosing [[Scope]] exits — whether by success, `Abort`, or panic.
+          * The lock is always released when the enclosing [[Scope]] exits, whether by success, `Abort`, or panic.
           *
           * @param key
           *   numeric lock identifier; used directly as the `bigint` argument to `pg_advisory_lock` on PG, and as the string `key.toString`
@@ -1761,7 +1761,7 @@ object SqlClient:
                         }
                     }
                 case _ =>
-                    // PostgreSQL — session-scoped, always blocks until acquired
+                    // PostgreSQL, session-scoped, always blocks until acquired
                     self.executeRaw(s"SELECT pg_advisory_lock($key)").andThen {
                         Scope.ensure(self.executeRaw(s"SELECT pg_advisory_unlock($key)").unit)
                     }
@@ -1774,7 +1774,7 @@ object SqlClient:
           *     autocommit=1`. The prior value is restored via a matching `SET` when the enclosing [[Scope]] exits.
           *   - **PostgreSQL**: does not have a server-side `autocommit` variable. PostgreSQL is always in autocommit mode at the SQL layer
           *     (each statement is its own transaction unless wrapped in an explicit `BEGIN`/`COMMIT`). `withAutoCommit` on PG is therefore
-          *     a client-side no-op — the call succeeds without emitting any SQL, and the [[Scope.ensure]] restore is also a no-op. For
+          *     a client-side no-op, the call succeeds without emitting any SQL, and the [[Scope.ensure]] restore is also a no-op. For
           *     explicit transaction control on PG, use `transaction { ... }` instead.
           *
           * Prefer `transaction(...)` blocks for ACID work; use `withAutoCommit(false)` only when you need MySQL-style implicit-transaction
@@ -1795,7 +1795,7 @@ object SqlClient:
                     }
                 case _ =>
                     // PostgreSQL has no server-side autocommit GUC. Issuing SET AUTOCOMMIT is invalid
-                    // (error 42704). PG is always autocommit at the protocol layer — the only way to
+                    // (error 42704). PG is always autocommit at the protocol layer, the only way to
                     // opt out is an explicit BEGIN/COMMIT, which the transaction(...) API handles.
                     // withAutoCommit is a no-op on PG: no SQL is emitted, and the Scope.ensure is empty.
                     Scope.ensure(())
@@ -1901,7 +1901,7 @@ object SqlClient:
         /** Acquires a pooled Postgres connection, starts `sql`, and returns the [[SqlCancelHandle.Pg]] together with a [[Fiber]] that
           * resolves to the query rows.
           *
-          * No-parameter overload — delegates to the parameterised form with [[Seq.empty]].
+          * No-parameter overload, delegates to the parameterised form with [[Seq.empty]].
           */
         @scala.annotation.targetName("cancellableQueryFiberPg0")
         def cancellableQueryFiber(sql: String)(using
@@ -1912,8 +1912,8 @@ object SqlClient:
         /** Acquires a pooled Postgres connection, starts `sql`, and returns the [[SqlCancelHandle.Pg]] together with a [[Fiber]] that
           * resolves to the query rows.
           *
-          * Unlike [[cancellableQuery]] — which returns `(handle, rows)` as part of the suspended computation result and therefore only
-          * yields the handle AFTER the query completes — this overload completes the outer computation as soon as the connection has been
+          * Unlike [[cancellableQuery]], which returns `(handle, rows)` as part of the suspended computation result and therefore only
+          * yields the handle AFTER the query completes, this overload completes the outer computation as soon as the connection has been
           * acquired and the cancel handle is materialised. The eventual rows are carried by the returned [[Fiber]]. A separate cancelling
           * fiber can read the handle immediately and call [[cancel]] while the query is still in flight.
           *
@@ -1954,7 +1954,7 @@ object SqlClient:
                                     (rows: Chunk[SqlRow] < (Async & Abort[SqlException]))
                                 case Result.Failure(e) =>
                                     // The body never reached the success-path complete; surface the failure on the promise
-                                    // so the outer `handlePromise.get` does not block forever. Idempotent — if the success
+                                    // so the outer `handlePromise.get` does not block forever. Idempotent, if the success
                                     // path already completed, `complete` returns false and the failure propagates only via
                                     // `Abort.fail` to the fiber result.
                                     handlePromise.complete(Result.fail(e)).andThen(Abort.fail[SqlException](e))
@@ -1982,13 +1982,13 @@ object SqlClient:
 
         /** Executes `sql` via the Postgres simple-query protocol and returns the rows.
           *
-          * Unlike [[query]], this DOES NOT prepare the statement — the query is sent via the Simple Query message (no parse/bind/execute
+          * Unlike [[query]], this DOES NOT prepare the statement, the query is sent via the Simple Query message (no parse/bind/execute
           * round-trip, no entry in pg_prepared_statements).
           *
           * Use this for one-off SQL where you don't want to pay the prepared-statement cache cost or have the query appear in server-side
           * statement metadata.
           *
-          * SQL must be parameterless — passing `?` placeholders is invalid for the simple query protocol. Use [[query]] with [[BoundValue]]
+          * SQL must be parameterless, passing `?` placeholders is invalid for the simple query protocol. Use [[query]] with [[BoundValue]]
           * params for parameterised queries.
           */
         def simpleQuery(sql: String)(using Frame): Chunk[SqlRow] < (Async & Abort[SqlException]) =
@@ -2060,7 +2060,7 @@ object SqlClient:
         /** Acquires a pooled MySQL connection, starts `sql`, and returns the [[SqlCancelHandle.My]] together with a [[Fiber]] that resolves
           * to the query rows.
           *
-          * No-parameter overload — delegates to the parameterised form with [[Seq.empty]].
+          * No-parameter overload, delegates to the parameterised form with [[Seq.empty]].
           */
         @scala.annotation.targetName("cancellableQueryFiberMy0")
         def cancellableQueryFiber(sql: String)(using
@@ -2071,8 +2071,8 @@ object SqlClient:
         /** Acquires a pooled MySQL connection, starts `executable`, and returns the [[SqlCancelHandle.My]] together with a [[Fiber]] that
           * resolves to the query rows.
           *
-          * Unlike [[cancellableQuery]] — which returns `(handle, rows)` as part of the suspended computation result and therefore only
-          * yields the handle AFTER the query completes — this overload completes the outer computation as soon as the connection has been
+          * Unlike [[cancellableQuery]], which returns `(handle, rows)` as part of the suspended computation result and therefore only
+          * yields the handle AFTER the query completes, this overload completes the outer computation as soon as the connection has been
           * acquired and the cancel handle is materialised. The eventual rows are carried by the returned [[Fiber]]. A separate cancelling
           * fiber can read the handle immediately and call [[cancel]] (which sends `KILL QUERY <connectionId>`) while the query is still in
           * flight.
@@ -2136,7 +2136,7 @@ object SqlClient:
 
         /** Executes a `LOAD DATA LOCAL INFILE` statement, streaming `data` bytes to the server.
           *
-          * The caller supplies the byte stream — use `Stream.from(span)` for in-memory data, `Path.readBytes` for file-backed data, or any
+          * The caller supplies the byte stream, use `Stream.from(span)` for in-memory data, `Path.readBytes` for file-backed data, or any
           * other `Stream[Byte, S]` source. The server's filename in the `LOCAL INFILE` SQL is arbitrary; kyo-sql ignores what the server
           * echoes back and always uploads `data` unconditionally.
           *
@@ -2164,11 +2164,11 @@ object SqlClient:
       *   - double-quoted identifiers (`"..."`), with `""` escape recognised,
       *   - line comments (`-- … <newline>`),
       *   - block comments (`/* … */`),
-      *   - dollar-quoted strings (`$$…$$` or `$tag$…$tag$`) — the entire body is copied verbatim.
+      *   - dollar-quoted strings (`$$…$$` or `$tag$…$tag$`), the entire body is copied verbatim.
       *
       * If the input contains no `?` characters, the input is returned unchanged.
       */
-    // Performance carve-out: 5 vars + 4 while loops — CONTRIBUTING §Scala Conventions permits
+    // Performance carve-out: 5 vars + 4 while loops, CONTRIBUTING §Scala Conventions permits
     // mutable state in performance-critical private[kyo] internals encapsulated behind a pure interface.
     // translatePlaceholders is pure String => String on the query hot path.
     private[kyo] def translatePlaceholders(sql: String): String =
@@ -2197,7 +2197,7 @@ object SqlClient:
                 val c = sql.charAt(i)
                 c match
                     case '\'' =>
-                        // Single-quoted string literal — copy verbatim, handling doubled '' as escape.
+                        // Single-quoted string literal, copy verbatim, handling doubled '' as escape.
                         val _ = sb.append(c)
                         i += 1
                         var done = false
@@ -2215,7 +2215,7 @@ object SqlClient:
                             end if
                         end while
                     case '"' =>
-                        // Double-quoted identifier — copy verbatim, handling doubled "" as escape.
+                        // Double-quoted identifier, copy verbatim, handling doubled "" as escape.
                         val _ = sb.append(c)
                         i += 1
                         var done = false
@@ -2233,7 +2233,7 @@ object SqlClient:
                             end if
                         end while
                     case '-' if i + 1 < n && sql.charAt(i + 1) == '-' =>
-                        // Line comment — copy through end-of-line.
+                        // Line comment, copy through end-of-line.
                         while i < n && sql.charAt(i) != '\n' do
                             val _ = sb.append(sql.charAt(i))
                             i += 1
@@ -2241,7 +2241,7 @@ object SqlClient:
                             val _ = sb.append('\n')
                             i += 1
                     case '/' if i + 1 < n && sql.charAt(i + 1) == '*' =>
-                        // Block comment — copy through closing */.
+                        // Block comment, copy through closing */.
                         val _ = sb.append("/*")
                         i += 2
                         var done = false
@@ -2256,7 +2256,7 @@ object SqlClient:
                             end if
                         end while
                     case '$' =>
-                        // Dollar-quoted string: `$tag$body$tag$` — copy entire span verbatim.
+                        // Dollar-quoted string: `$tag$body$tag$`, copy entire span verbatim.
                         matchDollarTag(i) match
                             case Present((tag, bodyStart)) =>
                                 // Emit the opening tag.
@@ -2275,13 +2275,13 @@ object SqlClient:
                                     end if
                                 end while
                                 if !done then
-                                    // Unclosed dollar-quoted string — emit remainder verbatim.
+                                    // Unclosed dollar-quoted string, emit remainder verbatim.
                                     val _ = sb.append(sql.substring(bodyStart, n))
                                     j = n
                                 end if
                                 i = j
                             case Absent =>
-                                // Bare '$' — not a valid dollar-tag opener; emit as-is.
+                                // Bare '$', not a valid dollar-tag opener; emit as-is.
                                 val _ = sb.append(c)
                                 i += 1
                     case '?' =>

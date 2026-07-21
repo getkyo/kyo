@@ -28,7 +28,7 @@ final class SqlMetrics(metricsEnabled: Boolean, metricsScope: Maybe[String]):
                 Stat.initScope(parts(0), parts.drop(1)*)
             end if
         else
-            // Dummy stat — never used, but avoids null.
+            // Dummy stat, never used, but avoids null.
             Stat.initScope("__noop__")
 
     // --- Counters ---

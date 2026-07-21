@@ -6,9 +6,9 @@ import kyo.SqlAst.*
   *
   * Three extension methods are added to every `Query[A]` / `Insert[T, F]` / `Update[T, F]` / `Delete[T, F]`:
   *
-  *   - `.run` — try the static-emission path first; fall back to the runtime renderer if the AST cannot be reduced at compile time.
-  *   - `.runStatic` — require the static-emission path; produce a compile error if the AST cannot be reduced at compile time.
-  *   - `.runDynamic` — skip the static path entirely; always use the runtime renderer. Non-inline.
+  *   - `.run`, try the static-emission path first; fall back to the runtime renderer if the AST cannot be reduced at compile time.
+  *   - `.runStatic`, require the static-emission path; produce a compile error if the AST cannot be reduced at compile time.
+  *   - `.runDynamic`, skip the static path entirely; always use the runtime renderer. Non-inline.
   *
   * The static path is implemented in [[kyo.SqlStatic]]; the `FromExpr`-based AST reduction lives in [[kyo.internal.SqlRunMacro]]. `.run`
   * falls back to the runtime renderer when the AST cannot be fully reduced at compile time. `.runStatic` requires full compile-time
@@ -31,9 +31,9 @@ extension [A](inline q: Query[A])
       *
       * ==Error types==
       * Aborts with [[SqlException]] (any subtype). The two most common decode-time variants:
-      *   - [[SqlException.Decode]] — a column value could not be converted to the target Scala type. Check the [[SqlSchema]] derivation for
+      *   - [[SqlException.Decode]], a column value could not be converted to the target Scala type. Check the [[SqlSchema]] derivation for
       *     `A`, ensure nullable columns use `Maybe[T]`, and confirm the database schema matches the query result.
-      *   - [[SqlException.Unsupported]] — the [[SqlSchema]] decoder called a structural read operation (array element, map entry) that the
+      *   - [[SqlException.Unsupported]], the [[SqlSchema]] decoder called a structural read operation (array element, map entry) that the
       *     backend does not yet implement. Re-derive the schema without the unsupported structural type, or supply a custom decoder via
       *     [[SqlSchema.withDecoder]].
       *
@@ -64,8 +64,8 @@ extension [A](q: Query[A])
       *
       * ==Error types==
       * Same as [[run]]: aborts with [[SqlException]]. Decode-time variants:
-      *   - [[SqlException.Decode]] — column value could not be converted to the target Scala type.
-      *   - [[SqlException.Unsupported]] — structural read operation not implemented by this backend.
+      *   - [[SqlException.Decode]], column value could not be converted to the target Scala type.
+      *   - [[SqlException.Unsupported]], structural read operation not implemented by this backend.
       *
       * @tparam A
       *   the decoded row element type

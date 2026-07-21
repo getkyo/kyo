@@ -18,9 +18,9 @@ import kyo.internal.auth.RsaOaep
   * The XOR-with-scramble step is identical to `caching_sha2_password`'s RSA full-auth path (see `sha2_password.cc` in MySQL 8.0 source).
   *
   * References:
-  *   - MySQL Internals Manual — SHA-256 Pluggable Authentication
-  *   - MySQL 8.0 source: `sql/auth/sha2_password.cc` — `Sha2_plain_context_handler::authenticate`
-  *   - go-sql-driver/mysql auth.go — sha256PasswordPlugin
+  *   - MySQL Internals Manual, SHA-256 Pluggable Authentication
+  *   - MySQL 8.0 source: `sql/auth/sha2_password.cc`, `Sha2_plain_context_handler::authenticate`
+  *   - go-sql-driver/mysql auth.go, sha256PasswordPlugin
   *   - mysql-connector-python sha256_password plugin
   */
 private[mysql] object Sha256Password:
@@ -30,7 +30,7 @@ private[mysql] object Sha256Password:
 
     /** Computes the RSA-OAEP encrypted full-auth response for non-TLS connections.
       *
-      * The plaintext is NUL-terminated and XOR'd with the scramble (cycling) before RSA-OAEP encryption — identical to
+      * The plaintext is NUL-terminated and XOR'd with the scramble (cycling) before RSA-OAEP encryption, identical to
       * `caching_sha2_password`'s full-auth path. The server decrypts and re-applies the XOR to recover the password.
       *
       * @param password
@@ -53,7 +53,7 @@ private[mysql] object Sha256Password:
         val plaintext = new Array[Byte](passwordBytes.length + 1)
         java.lang.System.arraycopy(passwordBytes, 0, plaintext, 0, passwordBytes.length)
         plaintext(passwordBytes.length) = 0.toByte
-        // XOR with scramble (cycling over the scramble bytes) — matches caching_sha2_password RSA full-auth.
+        // XOR with scramble (cycling over the scramble bytes), matches caching_sha2_password RSA full-auth.
         val scrambleLen = scrambleArr.length
         if scrambleLen > 0 then
             var i = 0

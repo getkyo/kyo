@@ -58,9 +58,9 @@ object SqlSchema:
       * For sum types (sealed traits, Scala 3 enums): the schema occupies a single SQL column. Two strategies are auto-selected at derive
       * time based on the variants' shape:
       *
-      *   - **String discriminator** — when every variant is a singleton (case object / no-arg enum case). The column holds the variant
+      *   - **String discriminator** when every variant is a singleton (case object / no-arg enum case). The column holds the variant
       *     label as `TEXT` on PostgreSQL and MySQL. Smallest storage, queryable with standard `=` / `IN` predicates.
-      *   - **JSON encoding** — when any variant carries data fields. The column holds the [[kyo.Json]]-encoded value as `jsonb` on
+      *   - **JSON encoding** when any variant carries data fields. The column holds the [[kyo.Json]]-encoded value as `jsonb` on
       *     PostgreSQL and `JSON` on MySQL. Handles arbitrary variant shapes uniformly.
       *
       * Invoke as `given SqlSchema[Foo] = SqlSchema.derived` in the companion object. Recursive sum types and sum types with case-class
@@ -277,7 +277,7 @@ object SqlSchema:
         // Schema.init expects (A, Codec.Writer) => Unit. SqlWriter IS-A Codec.Writer, but
         // function types are contravariant in parameters: (A, SqlWriter) => Unit is a supertype,
         // not a subtype, of (A, Codec.Writer) => Unit. We bridge with a wrapper lambda that
-        // pattern-matches (the match always succeeds — only SqlWriter instances reach this path).
+        // pattern-matches (the match always succeeds, only SqlWriter instances reach this path).
         wrap(Schema.init[A](
             writeFn = (v, w) =>
                 w match
@@ -310,7 +310,7 @@ object SqlSchema:
     given SqlSchema[kyo.Instant] = wrap(Schema.kyoInstantSchema)
 
     /** java.time.Duration → PG INTERVAL (binary 16-byte struct, µs/days/months) or MySQL TIME. Delegates to [[Schema.durationSchema]],
-      * which calls `writer.duration(v)` — `PostgresParamWriter.duration` lands an `intervalBinary` BoundParam; `MysqlParamWriter.duration`
+      * which calls `writer.duration(v)`, `PostgresParamWriter.duration` lands an `intervalBinary` BoundParam; `MysqlParamWriter.duration`
       * lands an `intervalTime` BoundMysqlParam.
       */
     given SqlSchema[java.time.Duration] = wrap(Schema.durationSchema)
@@ -379,7 +379,7 @@ object SqlSchema:
       * by 4 bytes of negated UTC-offset seconds. MySQL has no native timetz type; falls back to ISO-8601 text via OffsetTime.toString /
       * OffsetTime.parse.
       *
-      * Design note — offset preservation: unlike `timestamptz`, which normalises to UTC and loses the original offset on round-trip,
+      * Design note, offset preservation: unlike `timestamptz`, which normalises to UTC and loses the original offset on round-trip,
       * `timetz` encodes the offset in the wire payload. PostgreSQL preserves the original offset faithfully, so a round-trip returns the
       * exact same OffsetTime (local time + offset).
       */
@@ -412,7 +412,7 @@ object SqlSchema:
     /** Period schema: Postgres uses the native INTERVAL binary wire codec (OID 1186) encoding only months and days (microseconds=0); MySQL
       * falls back to ISO-8601 text via Period.toString / Period.parse.
       *
-      * Design note — months field: Period.toTotalMonths accounts for both the years and months fields (years * 12 + months). On decode the
+      * Design note, months field: Period.toTotalMonths accounts for both the years and months fields (years * 12 + months). On decode the
       * months field is passed directly to Period.of(0, months, days).normalized() which reconstructs years and months correctly.
       */
     given SqlSchema[java.time.Period] = SqlSchema.of[java.time.Period](
@@ -443,7 +443,7 @@ object SqlSchema:
 
     /** OffsetDateTime schema: encodes via the `timestamptz` / `DATETIME` instant wire path.
       *
-      * Design note — offset loss on round-trip: PostgreSQL `timestamptz` (OID 1184) stores the value normalised to UTC; the original
+      * Design note, offset loss on round-trip: PostgreSQL `timestamptz` (OID 1184) stores the value normalised to UTC; the original
       * UTC-offset carried by the `OffsetDateTime` is NOT persisted on the wire. On decode the instant is reconstructed with
       * `ZoneOffset.UTC`, so a round-trip always yields `+00:00` regardless of the original offset. This is the documented, intentional
       * behaviour: the offset is application-level metadata and must be stored separately if preservation is required.
@@ -460,7 +460,7 @@ object SqlSchema:
 
     /** ZonedDateTime schema: encodes via the `timestamptz` / `DATETIME` instant wire path.
       *
-      * Design note — zone loss on round-trip: PostgreSQL `timestamptz` (OID 1184) stores the value normalised to UTC; the original IANA
+      * Design note, zone loss on round-trip: PostgreSQL `timestamptz` (OID 1184) stores the value normalised to UTC; the original IANA
       * zone ID carried by the `ZonedDateTime` is NOT persisted on the wire. On decode the instant is reconstructed using `ZoneOffset.UTC`,
       * so a round-trip always yields a UTC-zoned value regardless of the original zone. This is the documented, intentional behaviour: the
       * zone ID is application-level metadata and must be stored separately if preservation is required.
@@ -478,8 +478,8 @@ object SqlSchema:
     /** Two-column [[SqlSchema]] for [[java.time.OffsetDateTime]] that preserves the original UTC offset across round-trip.
       *
       * Columns (in declaration order):
-      *   1. `instant` — `timestamptz` (PG) / `DATETIME` (MySQL) — the value's instant
-      *   2. `offset_seconds` — `INTEGER` — `OffsetDateTime#getOffset.getTotalSeconds` (range ±18*3600)
+      *   1. `instant`, `timestamptz` (PG) / `DATETIME` (MySQL), the value's instant
+      *   2. `offset_seconds`, `INTEGER`, `OffsetDateTime#getOffset.getTotalSeconds` (range ±18*3600)
       *
       * Opt-in alternative to the default single-column `given SqlSchema[OffsetDateTime]` (which discards the offset on round-trip per
       * PostgreSQL `timestamptz` semantics). To enable, shadow the given in a local scope:
@@ -503,8 +503,8 @@ object SqlSchema:
     /** Two-column [[SqlSchema]] for [[java.time.ZonedDateTime]] that preserves the original IANA zone across round-trip.
       *
       * Columns (in declaration order):
-      *   1. `instant` — `timestamptz` (PG) / `DATETIME` (MySQL) — the value's instant
-      *   2. `zone_id` — `TEXT` — `ZonedDateTime#getZone.getId` (IANA zone ID, e.g. "Europe/Paris")
+      *   1. `instant`, `timestamptz` (PG) / `DATETIME` (MySQL), the value's instant
+      *   2. `zone_id`, `TEXT`, `ZonedDateTime#getZone.getId` (IANA zone ID, e.g. "Europe/Paris")
       *
       * Opt-in alternative to the default single-column `given SqlSchema[ZonedDateTime]` (which discards the zone on round-trip per
       * PostgreSQL `timestamptz` semantics). To enable, shadow the given in a local scope:
@@ -541,10 +541,10 @@ object SqlSchema:
       *
       * Occupies a single TEXT column on both Postgres and MySQL.
       *
-      * Design note — DNS resolution caveat: [[java.net.URL#equals]] and [[java.net.URL#hashCode]] may perform DNS resolution. Use `URI`
+      * Design note, DNS resolution caveat: [[java.net.URL#equals]] and [[java.net.URL#hashCode]] may perform DNS resolution. Use `URI`
       * instead of `URL` when that behaviour is undesirable. The string round-trip is always byte-identical regardless of DNS resolution.
       *
-      * Design note — deprecation: [[java.net.URL]] (String) constructor is deprecated since JDK 20. Decoding goes via
+      * Design note, deprecation: [[java.net.URL]] (String) constructor is deprecated since JDK 20. Decoding goes via
       * `URI.create(s).toURL()` to avoid the deprecated constructor and to validate the URI syntax first.
       */
     given SqlSchema[java.net.URL] = SqlSchema.of[java.net.URL](
@@ -604,7 +604,7 @@ object SqlSchema:
     )
 
     /** `Chunk[Int]` schema: Postgres uses the native binary `int4[]` array wire codec (OID 1007); MySQL falls back to a JSON array encoded
-      * / decoded via [[kyo.Json]] (which honours quoting, escaping, and DoS limits — the old hand-rolled `StringBuilder` path was buggy for
+      * / decoded via [[kyo.Json]] (which honours quoting, escaping, and DoS limits, the old hand-rolled `StringBuilder` path was buggy for
       * values requiring escaping and is replaced per Phase 16 audit W-2).
       */
     given chunkIntSchema: SqlSchema[Chunk[Int]] = SqlSchema.of[Chunk[Int]](
@@ -651,7 +651,7 @@ object SqlSchema:
     )
 
     /** `Chunk[String]` schema: Postgres uses the native binary `text[]` array wire codec (OID 1009); MySQL falls back to a JSON array
-      * encoded / decoded via [[kyo.Json]] (handles quoting, escaping, and Unicode correctly — the old hand-rolled `StringBuilder` /
+      * encoded / decoded via [[kyo.Json]] (handles quoting, escaping, and Unicode correctly, the old hand-rolled `StringBuilder` /
       * `split(",")` path was buggy for any element containing `,`, `"`, or `\` and is replaced per Phase 16 audit W-2).
       */
     given chunkStringSchema: SqlSchema[Chunk[String]] = SqlSchema.of[Chunk[String]](
@@ -817,7 +817,7 @@ object SqlSchema:
     //
     // The tuple bodies unwrap each `SqlSchema[X]` context bound to a local `given Schema[X] = summon[SqlSchema[X]].schema`
     // so `Schema.tupleNSchema` / `Schema.derived[TupleN]` can find them. This local unwrap is deliberately kept out of the
-    // enclosing implicit scope — a package-level `given [A](using SqlSchema[A]): Schema[A]` would otherwise be an ambient
+    // enclosing implicit scope, a package-level `given [A](using SqlSchema[A]): Schema[A]` would otherwise be an ambient
     // fallback for every `Schema[X]` lookup, forcing every failed summon to detour through the SqlSchema path and derailing
     // unrelated macros (e.g. kyo-test's AssertMacro) that summon `Schema[X]` for local types.
 
@@ -1485,7 +1485,7 @@ object SqlSchema:
           */
         def readPostgres(row: SqlRow)(using Frame): A < Abort[SqlException.Decode] =
             val reader = PostgresRowReader(row)
-            // serializeRead throws a JVM exception directly on failure — use Result.catching,
+            // serializeRead throws a JVM exception directly on failure, use Result.catching,
             // not Abort.run, to intercept the throw before converting to Abort.
             (Result.catching[Throwable](self.schema.serializeRead(reader)): Result[Throwable, A]) match
                 case Result.Success(a) => a
@@ -1514,7 +1514,7 @@ object SqlSchema:
           */
         def readMysql(row: SqlRow)(using Frame): A < Abort[SqlException.Decode] =
             val reader = MysqlRowReader(row)
-            // serializeRead throws a JVM exception directly on failure — use Result.catching,
+            // serializeRead throws a JVM exception directly on failure, use Result.catching,
             // not Abort.run, to intercept the throw before converting to Abort.
             (Result.catching[Throwable](self.schema.serializeRead(reader)): Result[Throwable, A]) match
                 case Result.Success(a) => a
@@ -1540,7 +1540,7 @@ object SqlSchema:
     given fromExprSqlSchema[A: scala.quoted.Type](using scala.quoted.Quotes): scala.quoted.FromExpr[SqlSchema[A]] =
         new scala.quoted.FromExpr[SqlSchema[A]]:
             def unapply(x: scala.quoted.Expr[SqlSchema[A]])(using qctx: scala.quoted.Quotes): Option[SqlSchema[A]] =
-                // Resolve the schema from the supplied expression `x` — it is the actual `SqlSchema[…]`
+                // Resolve the schema from the supplied expression `x`, it is the actual `SqlSchema[…]`
                 // given reference at the use site. Re-summoning `SqlSchema[A]` fails when `A` was
                 // saturated to `Any` by the recursion guard (a `Literal[Any]` field reached via the
                 // `Term` sum), so resolve `x` directly via JVM reflection on its stable given symbol.

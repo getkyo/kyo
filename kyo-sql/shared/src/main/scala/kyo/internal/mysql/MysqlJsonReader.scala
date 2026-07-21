@@ -16,7 +16,7 @@ import kyo.internal.JsonStructureCounter
   * prefix is stripped before these bytes reach the row reader). This object extracts the JSON element or entry count from the top-level
   * value and creates a [[JsonReader]] for further parsing.
   *
-  * Array columns: `[…]` — element count is returned by [[openArray]]. Object (map) columns: `{…}` — entry count is returned by [[openMap]].
+  * Array columns: `[…]`, element count is returned by [[openArray]]. Object (map) columns: `{…}`, entry count is returned by [[openMap]].
   *
   * The [[JsonReader]] returned from [[openArray]] / [[openMap]] is then stored as the active sub-reader in
   * [[kyo.internal.mysql.MysqlRowReader]] and drives subsequent primitive reads until [[Codec.Reader.arrayEnd]] or [[Codec.Reader.mapEnd]]
@@ -31,7 +31,7 @@ object MysqlJsonReader:
       * @param readerFrame
       *   frame from the enclosing row reader for error reporting
       * @return
-      *   `(jsonReader, elementCount)` — `jsonReader` is positioned at the start of the array (i.e., past the opening `[`), ready for
+      *   `(jsonReader, elementCount)`, `jsonReader` is positioned at the start of the array (i.e., past the opening `[`), ready for
       *   element reads; `elementCount` is the size of the array.
       * @throws SqlException.Decode
       *   if the bytes do not represent a JSON array
@@ -63,7 +63,7 @@ object MysqlJsonReader:
       * @param readerFrame
       *   frame from the enclosing row reader for error reporting
       * @return
-      *   `(jsonReader, entryCount)` — `jsonReader` is positioned past the opening `{`, ready for entry reads; `entryCount` is the number of
+      *   `(jsonReader, entryCount)`, `jsonReader` is positioned past the opening `{`, ready for entry reads; `entryCount` is the number of
       *   key/value pairs.
       * @throws SqlException.Decode
       *   if the bytes do not represent a JSON object

@@ -9,8 +9,8 @@ import kyo.net.NetPlatform
 
 /** Unit tests for kyo.Log integration in SqlClient.
   *
-  * All tests are shared/cross-platform. Tests 1–5 use a minimal fake Postgres server (TCP listener + Postgres wire-protocol responses).
-  * Tests 6–10 are purely in-process with no network I/O.
+  * All tests are shared/cross-platform. Tests 1-5 use a minimal fake Postgres server (TCP listener + Postgres wire-protocol responses).
+  * Tests 6-10 are purely in-process with no network I/O.
   *
   * The test log sink is SYNCHRONOUS (CopyOnWriteArrayList) to avoid race conditions.
   *
@@ -67,7 +67,7 @@ class SqlClientLogTest extends Test:
 
     // ── Postgres wire-protocol helpers ────────────────────────────────────────
 
-    /** Minimal Postgres startup response bytes (trust auth — no password required).
+    /** Minimal Postgres startup response bytes (trust auth, no password required).
       *
       * Byte layout:
       *   - AuthenticationOk: `R` + Int32(8) + Int32(0)
@@ -401,7 +401,7 @@ class SqlClientLogTest extends Test:
                             SqlClient.init(url, logTestConfig(maxConns = 2, acquireTimeout = 5.seconds))
                         ).flatMap {
                             case Result.Success(client) =>
-                                // Run a full transaction — the fake server responds to BEGIN, SELECT 1, and COMMIT
+                                // Run a full transaction, the fake server responds to BEGIN, SELECT 1, and COMMIT
                                 // with CommandComplete+ReadyForQuery so the transaction completes normally.
                                 // Use timeoutWithError so the timeout maps to SqlException, kept within Abort.run[SqlException].
                                 Abort.run[SqlException](
@@ -489,7 +489,7 @@ class SqlClientLogTest extends Test:
                 Channel.initUnscoped[Unit](1).flatMap { ch =>
                     // Fill the channel with the one available slot.
                     Abort.run[Closed](ch.offer(())).flatMap { _ =>
-                        // Claim the only slot — pool is now exhausted (channel is empty).
+                        // Claim the only slot, pool is now exhausted (channel is empty).
                         Abort.run[Closed](ch.take).flatMap { _ =>
                             // Simulate the pool acquire timeout: attempt take on the exhausted
                             // channel with a very short deadline. This mirrors withSlot's logic.
@@ -512,7 +512,7 @@ class SqlClientLogTest extends Test:
                                     }
                                 )
                             ).flatMap { timeoutResult =>
-                                // Log the timeout — we only care that the log fires; discard the error.
+                                // Log the timeout, we only care that the log fires; discard the error.
                                 timeoutResult match
                                     case Result.Failure(SqlException.Connection(msg, _)) if msg.startsWith("Timed out") =>
                                         Log.warn(s"kyo.sql: pool acquire timeout after $acquireTimeout poolSize=$maxConnections")
@@ -542,7 +542,7 @@ class SqlClientLogTest extends Test:
             override def level: Log.Level = Log.Level.error
 
         Log.let(Log(silentSink)) {
-            // Call debug and warn — they should be filtered by the sink's level.
+            // Call debug and warn, they should be filtered by the sink's level.
             Log.debug("kyo.sql: opened connection id=1 host=localhost port=5432 tls=false").andThen(
                 Log.warn("kyo.sql: retrying after connection failure attempt=1 schedule=test")
             )

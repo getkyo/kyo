@@ -9,8 +9,8 @@ import kyo.net.NetTlsConfig
   * still active to request cancellation.
   *
   * There are two concrete variants:
-  *   - [[CancelHandle.Pg]] — PostgreSQL cancel via a fresh `CancelRequest` TCP connection (no auth required).
-  *   - [[CancelHandle.My]] — MySQL cancel via `KILL QUERY <connectionId>` on a pooled connection.
+  *   - [[CancelHandle.Pg]], PostgreSQL cancel via a fresh `CancelRequest` TCP connection (no auth required).
+  *   - [[CancelHandle.My]], MySQL cancel via `KILL QUERY <connectionId>` on a pooled connection.
   *
   * Both variants carry the `address` field for network connectivity.
   */

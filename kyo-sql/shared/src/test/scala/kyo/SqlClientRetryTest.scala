@@ -6,7 +6,7 @@ import kyo.Test
 /** Unit tests for retry policy via kyo.Retry + kyo.Schedule.
   *
   * All tests are in-process (no Docker). They use an AtomicInt attempt counter and a fake effectful operation that fails N times then
-  * succeeds. No wall-clock assertions are present — correctness is verified via attempt counts only.
+  * succeeds. No wall-clock assertions are present, correctness is verified via attempt counts only.
   *
   * Test count: 9 shared unit tests (target: 9 shared + 1 JVM integration).
   */
@@ -50,7 +50,7 @@ class SqlClientRetryTest extends Test:
 
     // ── connection-level error triggers retry ─────────────────────────────────
 
-    "connection-level error triggers retry — fails twice then succeeds, 3 total attempts" in {
+    "connection-level error triggers retry, fails twice then succeeds, 3 total attempts" in {
         // Schedule: 2 retries (zero delay for speed), total 3 attempts.
         val schedule = Schedule.fixed(Duration.Zero).take(2)
         withCounter() { counter =>
@@ -66,7 +66,7 @@ class SqlClientRetryTest extends Test:
 
     // ── server-level error does NOT retry ────────────────────────────────────
 
-    "server-level error does NOT retry — attempt count is 1" in {
+    "server-level error does NOT retry, attempt count is 1" in {
         val schedule = Schedule.fixed(Duration.Zero).take(3)
         withCounter() { counter =>
             Abort.run[SqlException](
@@ -85,7 +85,7 @@ class SqlClientRetryTest extends Test:
 
     // ── schedule exhaustion raises original exception ─────────────────────────
 
-    "schedule exhaustion raises original exception — 2 retries, server fails 3 times, final result is Connection failure" in {
+    "schedule exhaustion raises original exception, 2 retries, server fails 3 times, final result is Connection failure" in {
         val schedule = Schedule.fixed(Duration.Zero).take(2)
         withCounter() { counter =>
             // Fails all 3 attempts (initial + 2 retries); schedule is exhausted.
@@ -107,7 +107,7 @@ class SqlClientRetryTest extends Test:
 
     // ── custom schedule honored ───────────────────────────────────────────────
 
-    "custom schedule honored — fixed(Duration.Zero).take(2) produces exactly 3 total attempts" in {
+    "custom schedule honored, fixed(Duration.Zero).take(2) produces exactly 3 total attempts" in {
         // Use Duration.Zero to keep the test fast; the assertion is on count, not wall-clock.
         val schedule = Schedule.fixed(Duration.Zero).take(2)
         withCounter() { counter =>
@@ -121,7 +121,7 @@ class SqlClientRetryTest extends Test:
 
     // ── default schedule (5 retries) ──────────────────────────────────────────
 
-    "default schedule produces 5 retries — exponential schedule take(5) yields 6 total attempts" in {
+    "default schedule produces 5 retries, exponential schedule take(5) yields 6 total attempts" in {
         // Use Duration.Zero delays to keep the test fast.
         val schedule = Schedule.fixed(Duration.Zero).take(5)
         withCounter() { counter =>
@@ -137,9 +137,9 @@ class SqlClientRetryTest extends Test:
         }
     }
 
-    // ── Absent schedule — no retry at all ────────────────────────────────────
+    // ── Absent schedule, no retry at all ────────────────────────────────────
 
-    "Absent retrySchedule produces 0 retries — connection error propagates immediately" in {
+    "Absent retrySchedule produces 0 retries, connection error propagates immediately" in {
         // Verify that when retrySchedule = Absent, a SqlException.Connection is NOT retried.
         // We simulate retryWith(Absent) semantics directly: no Retry wrapper.
         withCounter() { counter =>
@@ -165,7 +165,7 @@ class SqlClientRetryTest extends Test:
                 )
             )
         ).flatMap { f =>
-            // Interrupt immediately — the fiber should be in the first Async.delay backoff.
+            // Interrupt immediately, the fiber should be in the first Async.delay backoff.
             f.interrupt.map { interrupted =>
                 // interrupt returns true if the fiber was successfully interrupted.
                 assert(interrupted)
@@ -175,7 +175,7 @@ class SqlClientRetryTest extends Test:
 
     // ── failed connection released to pool before retry attempt ───────────────
 
-    "failed connection released to pool before retry attempt — attempt counter increments correctly" in {
+    "failed connection released to pool before retry attempt, attempt counter increments correctly" in {
         // This test uses the attempt counter as a proxy: if the counter reaches 3, then
         // the retry loop correctly released the "failed connection" and re-entered the operation
         // on each subsequent attempt (pool eviction + re-acquire is transparent to this layer).
@@ -193,7 +193,7 @@ class SqlClientRetryTest extends Test:
 
     // ── 10 concurrent fibers retrying do not deadlock ─────────────────────────
 
-    "10 concurrent fibers retrying do not deadlock — all complete within timeout" in {
+    "10 concurrent fibers retrying do not deadlock, all complete within timeout" in {
         // Each fiber: fails once then succeeds (1 retry). 10 fibers concurrently.
         // Use Duration.Zero delays so the test is fast.
         val schedule = Schedule.fixed(Duration.Zero).take(2)
@@ -214,7 +214,7 @@ class SqlClientRetryTest extends Test:
 
     // ── retry exhaustion preserves original SqlException ──────────────────────
 
-    "retry exhaustion preserves original SqlException — attempt counter confirms N attempts made" in {
+    "retry exhaustion preserves original SqlException, attempt counter confirms N attempts made" in {
         // Re-scoped per C6 resolution: assert the counter (N attempts made) rather than
         // checking a retryCount field on the exception (which doesn't exist and isn't in the plan).
         val schedule = Schedule.fixed(Duration.Zero).take(2)

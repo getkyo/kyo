@@ -25,7 +25,7 @@ import kyo.internal.postgres.types.Format
   *   2. Encodes all Bind/Execute/Sync triples into a single [[PostgresBufferWriter]] and writes them in one `conn.write`.
   *   3. Reads back one block of `BindComplete`/`DataRow*`/`CommandComplete|EmptyQueryResponse`/`ReadyForQuery` per statement. A
   *      per-statement `ErrorResponse`/`ReadyForQuery` pair is caught and recorded as a [[Result.Failure]] for that slot.
-  *   4. Returns a `Chunk[SqlStatementResult]` — one entry per input statement.
+  *   4. Returns a `Chunk[SqlStatementResult]`, one entry per input statement.
   */
 object PipelineExchange:
 
@@ -37,7 +37,7 @@ object PipelineExchange:
       * Visibility: `private[kyo]` so that test code in `kyo.sql.*` can read and reset the counter while keeping it out of the public API.
       *
       * Implementation note: backed by a raw `java.util.concurrent.atomic.AtomicInteger` (a JDK thread-safe type). This is test-only
-      * instrumentation and does NOT breach the kyo-sql safe-only policy — it is a JDK atomic, not a Kyo `.Unsafe` API or `AllowUnsafe`
+      * instrumentation and does NOT breach the kyo-sql safe-only policy, it is a JDK atomic, not a Kyo `.Unsafe` API or `AllowUnsafe`
       * bypass.
       */
     private[kyo] val writeCount = new java.util.concurrent.atomic.AtomicInteger(0)
@@ -53,7 +53,7 @@ object PipelineExchange:
       * @param channel
       *   the active [[PostgresChannel]]
       * @param stmts
-      *   the pipeline statements (already prepared — no Parse/Describe)
+      *   the pipeline statements (already prepared, no Parse/Describe)
       * @param onParameterStatus
       *   callback for `ParameterStatus` messages
       * @param onNotification
@@ -163,7 +163,7 @@ object PipelineExchange:
 
     /** Reads the response for a single pipelined statement (up to and including `ReadyForQuery`).
       *
-      * Always returns a [[SqlStatementResult]] — never raises [[Abort[SqlException]]] for per-statement errors. Connection-level errors
+      * Always returns a [[SqlStatementResult]], never raises [[Abort[SqlException]]] for per-statement errors. Connection-level errors
       * (e.g. closed TCP socket) are re-raised.
       */
     private def readOneStatementResult(
@@ -229,7 +229,7 @@ object PipelineExchange:
                     loop(bindSeen, acc, failed)
 
                 case other =>
-                    // Connection-level error — re-raise (not a per-statement error).
+                    // Connection-level error, re-raise (not a per-statement error).
                     Abort.fail(SqlException.Connection(s"Unexpected message during pipeline Execute: $other", summon[Frame]))
             }
 
@@ -239,7 +239,7 @@ object PipelineExchange:
     private def drainToReadyForQuery(channel: PostgresChannel)(using Frame): Unit < (Async & Abort[SqlException]) =
         channel.receive.flatMap {
             case _: ReadyForQuery => ()
-            case ErrorResponse(_) => drainToReadyForQuery(channel) // error in error recovery — keep draining
+            case ErrorResponse(_) => drainToReadyForQuery(channel) // error in error recovery, keep draining
             case _                => drainToReadyForQuery(channel)
         }
 

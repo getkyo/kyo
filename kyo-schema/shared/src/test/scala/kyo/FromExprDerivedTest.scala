@@ -7,7 +7,7 @@ import kyo.internal.FromExprTestFixtures
   *
   * The harness `LiftHarness.lift[A]` takes an inline expression, derives a `scala.quoted.FromExpr[A]` via `kyo.FromExpr.derived`, applies
   * its `unapply` to the inline expression at the splice site, and emits the result back as runtime data. Because we cannot generically
-  * `ToExpr`-lift arbitrary `A` values back into the splice, the harness reconstructs the lifted value using `LiftedRepr` — a typed wrapper
+  * `ToExpr`-lift arbitrary `A` values back into the splice, the harness reconstructs the lifted value using `LiftedRepr`, a typed wrapper
   * that captures the `Option[A]` via its toString so tests can assert against the original value's `toString`.
   *
   * For primitive types we can lift back via stdlib `ToExpr`. For case classes we delegate to `liftValueExpr` which builds a `New` tree.
@@ -85,7 +85,7 @@ class FromExprDerivedTest extends Test:
     }
 
     "FromExpr[Record[...]] is a placeholder (returns None)" in {
-        // Record lifting is intentionally a placeholder in Phase 6.6 — Phase 7's static-SQL consumer
+        // Record lifting is intentionally a placeholder in Phase 6.6, Phase 7's static-SQL consumer
         // lifts Record contents via per-field FromExprs at the AST site, not via this generic derivation.
         assert(!LiftHarness.matched[Record["k" ~ Int]](Record.empty.asInstanceOf[Record["k" ~ Int]]))
     }
@@ -110,7 +110,7 @@ class FromExprDerivedTest extends Test:
     "Schema.derived for a case class round-trips JSON (regression golden)" in {
         // Phase F upgrade (plan leaf 6): replace smoke-compile with byte-for-byte golden.
         // Confirms that the deriveRecord summon-first enhancement does NOT regress Schema.derived
-        // for ordinary product types — deriveRecord is only reached for Record[F] fields, not Pair.
+        // for ordinary product types, deriveRecord is only reached for Record[F] fields, not Pair.
         given schema: Schema[FromExprTestFixtures.Pair] = Schema.derived
         val original                                    = FromExprTestFixtures.Pair(1, "x")
         val encoded                                     = Json.encode(original)

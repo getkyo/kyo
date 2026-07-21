@@ -16,7 +16,7 @@ import kyo.internal.mysql.Unmarshaller
   *
   * The 0x0C byte indicates the fixed-length field that follows is always 12 bytes.
   *
-  * Reference: MySQL Internals — Protocol::ColumnDefinition41
+  * Reference: MySQL Internals, Protocol::ColumnDefinition41
   */
 object ColumnDefinition41Unmarshaller extends Unmarshaller[ColumnDefinition41]:
 

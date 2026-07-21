@@ -13,21 +13,21 @@ class SqlRenderLateralTest extends Test:
 
     case class Department(id: Long, name: String) derives Schema
 
-    // Leaf 1 — Postgres always emits LATERAL (no version gate).
+    // Leaf 1, Postgres always emits LATERAL (no version gate).
     "LATERAL on Postgres emits LATERAL keyword" in {
         val q = Sql.lateral[Department]("d", Sql.from[Department]("dept"))
         val r = q.render(SqlBackend.Postgres)
         assert(r.sql.contains("LATERAL"))
     }
 
-    // Leaf 2 — MySQL default (8.4.0) emits LATERAL keyword (supportsLateral = true).
+    // Leaf 2, MySQL default (8.4.0) emits LATERAL keyword (supportsLateral = true).
     "LATERAL on MySQL 8.4.0 (default) emits LATERAL keyword" in {
         val q = Sql.lateral[Department]("d", Sql.from[Department]("dept"))
         val r = q.render(SqlBackend.Mysql)
         assert(r.sql.contains("LATERAL"))
     }
 
-    // Leaf 3 — MySQL 8.0.14 (the first version that supports LATERAL) emits LATERAL keyword.
+    // Leaf 3, MySQL 8.0.14 (the first version that supports LATERAL) emits LATERAL keyword.
     "LATERAL on MySQL 8.0.14+ emits LATERAL keyword" in {
         val q       = Sql.lateral[Department]("d", Sql.from[Department]("dept"))
         val backend = SqlBackend.Mysql.versioned((8, 0, 14))
@@ -35,7 +35,7 @@ class SqlRenderLateralTest extends Test:
         assert(r.sql.contains("LATERAL"))
     }
 
-    // Leaf 4 — MySQL 8.0.13 (one patch before LATERAL support) raises Unsupported.
+    // Leaf 4, MySQL 8.0.13 (one patch before LATERAL support) raises Unsupported.
     "LATERAL on MySQL 8.0.13 raises SqlException.Unsupported" in {
         val q       = Sql.lateral[Department]("d", Sql.from[Department]("dept"))
         val backend = SqlBackend.Mysql.versioned((8, 0, 13))
@@ -45,7 +45,7 @@ class SqlRenderLateralTest extends Test:
         assert(ex.getMessage.contains("LATERAL requires MySQL 8.0.14"))
     }
 
-    // Leaf 5 — MySQL 5.7.x raises Unsupported with the server version in the message.
+    // Leaf 5, MySQL 5.7.x raises Unsupported with the server version in the message.
     "LATERAL on MySQL 5.7 raises SqlException.Unsupported" in {
         val q       = Sql.lateral[Department]("d", Sql.from[Department]("dept"))
         val backend = SqlBackend.Mysql.versioned((5, 7, 44))
@@ -56,19 +56,19 @@ class SqlRenderLateralTest extends Test:
         assert(ex.getMessage.contains("5.7.44"))
     }
 
-    // Leaf 6 — supportsLateral boundary: exactly (8, 0, 14) returns true.
+    // Leaf 6, supportsLateral boundary: exactly (8, 0, 14) returns true.
     "SqlBackend.Mysql.versioned(8, 0, 14).supportsLateral is true" in {
         val backend = SqlBackend.Mysql.versioned((8, 0, 14))
         assert(backend.supportsLateral)
     }
 
-    // Leaf 7 — supportsLateral boundary: (8, 0, 13) returns false.
+    // Leaf 7, supportsLateral boundary: (8, 0, 13) returns false.
     "SqlBackend.Mysql.versioned(8, 0, 13).supportsLateral is false" in {
         val backend = SqlBackend.Mysql.versioned((8, 0, 13))
         assert(!backend.supportsLateral)
     }
 
-    // Leaf 8 — supportsLateral: the default Mysql singleton (8.4.0) returns true.
+    // Leaf 8, supportsLateral: the default Mysql singleton (8.4.0) returns true.
     "SqlBackend.Mysql.supportsLateral is true for the default singleton" in {
         assert(SqlBackend.Mysql.supportsLateral)
     }

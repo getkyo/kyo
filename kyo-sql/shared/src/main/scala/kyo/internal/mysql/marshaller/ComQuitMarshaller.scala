@@ -10,7 +10,7 @@ import kyo.internal.mysql.MysqlBufferWriter
   *
   * No server response is expected; the server closes the TCP connection.
   *
-  * Reference: MySQL Internals — COM_QUIT
+  * Reference: MySQL Internals, COM_QUIT
   */
 object ComQuitMarshaller extends Marshaller[ComQuit.type]:
 

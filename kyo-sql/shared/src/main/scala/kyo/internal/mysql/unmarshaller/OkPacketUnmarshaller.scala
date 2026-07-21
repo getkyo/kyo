@@ -18,7 +18,7 @@ import kyo.internal.mysql.Unmarshaller
   * The reader is positioned AFTER the first byte (0x00 or 0xFE), which the [[GenericResponseUnmarshaller]] has already consumed for
   * dispatch.
   *
-  * Reference: MySQL Internals — Protocol::OK_Packet
+  * Reference: MySQL Internals, Protocol::OK_Packet
   *
   * Note: SERVER_SESSION_STATE_CHANGED = 0x4000 in statusFlags.
   */

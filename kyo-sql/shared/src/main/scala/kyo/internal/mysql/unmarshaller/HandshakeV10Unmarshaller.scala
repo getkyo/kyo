@@ -6,7 +6,7 @@ import kyo.internal.mysql.HandshakeV10
 import kyo.internal.mysql.MysqlBufferReader
 import kyo.internal.mysql.Unmarshaller
 
-/** Unmarshaller for [[HandshakeV10]] — the initial server greeting.
+/** Unmarshaller for [[HandshakeV10]], the initial server greeting.
   *
   * Wire: uint8(protocolVersion) | NUL-string(serverVersion) | LE uint32(threadId)
   *         | bytes[8](authPluginDataPart1) | 0x00(filler)
@@ -19,7 +19,7 @@ import kyo.internal.mysql.Unmarshaller
   *
   * Standard combined auth data for caching_sha2_password is 20 bytes: 8 from part1 + 12 from part2.
   *
-  * Reference: MySQL Internals — Protocol::Handshake
+  * Reference: MySQL Internals, Protocol::Handshake
   */
 object HandshakeV10Unmarshaller extends Unmarshaller[HandshakeV10]:
 

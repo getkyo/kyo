@@ -7,7 +7,7 @@ import scala.compiletime.testing.typeChecks
 /** Verifies the AST/renderer/decoder pieces of the `InsertResult` surface.
   *
   * Renderer and wire-decoder tests run in unit mode (no container). Container-integration tests are marked `pending` because the test tree
-  * currently has no container harness — they will be filled in once kyo-sql gains an integration-test fixture for live PG + MySQL servers.
+  * currently has no container harness, they will be filled in once kyo-sql gains an integration-test fixture for live PG + MySQL servers.
   */
 class SqlInsertResultTest extends Test:
 
@@ -73,7 +73,7 @@ class SqlInsertResultTest extends Test:
         // Phase 40 added .returning via UpdateReturningBuilder / DeleteReturningBuilder rather
         // than directly on Update/Delete. The chain in the previous typeCheck doesn't compile
         // because .where returns Update, and Update lacks a .returning method. The actual API
-        // is `Sql.update[T].set(...).returning(...).where(...)` — order matters.
+        // is `Sql.update[T].set(...).returning(...).where(...)`, order matters.
         assert(!typeChecks("""Sql.update[Account].set(_.name := "x").where(_.id == 1L).returning(_.id)"""))
     }
 
@@ -139,7 +139,7 @@ class SqlInsertResultTest extends Test:
 
     "GeneratedKey.NoAutoKey and Unavailable are distinguishable" in {
         assert(GeneratedKey.NoAutoKey != GeneratedKey.Unavailable)
-        // The split is the reason this enum exists — both used to collapse to Maybe.Absent under the
+        // The split is the reason this enum exists, both used to collapse to Maybe.Absent under the
         // legacy API, hiding the root cause from callers.
         succeed
     }

@@ -8,7 +8,7 @@ import kyo.net.StubConnection
 /** Unit tests for [[MysqlChannel]] atomic-state operations and seqId invariants.
   *
   * Tests run against a stub [[kyo.net.Connection]] because they exercise only the in-memory atomic fields ([[_corrupted]],
-  * [[_cleanupLatch]]) and the single-fiber seqId state — not the actual wire protocol.
+  * [[_cleanupLatch]]) and the single-fiber seqId state, not the actual wire protocol.
   */
 class MysqlChannelTest extends Test:
 

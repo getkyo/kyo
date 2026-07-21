@@ -9,7 +9,7 @@ class AccumulatedBufferTest extends Test:
     "AccumulatedBuffer peek does not consume bytes" in {
         val buf = new AccumulatedBuffer
         buf.append(Span.from(Array[Byte](1, 2, 3, 4, 5)))
-        // Peek 3 bytes — available count must remain 5 afterwards.
+        // Peek 3 bytes, available count must remain 5 afterwards.
         val peeked = buf.peek(3)
         assert(peeked.size == 3)
         assert(peeked(0) == 1.toByte)

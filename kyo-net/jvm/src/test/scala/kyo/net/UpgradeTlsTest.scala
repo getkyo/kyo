@@ -4,14 +4,14 @@ import java.io.File
 import java.security.KeyStore
 import kyo.*
 
-/** Tests for Connection.upgradeToTls — STARTTLS-style post-connect TLS upgrade (JVM only).
+/** Tests for Connection.upgradeToTls, STARTTLS-style post-connect TLS upgrade (JVM only).
   *
   * These tests simulate a full STARTTLS handshake using two sides of a loopback TCP connection:
   *   - The server side accepts a plaintext connection, waits for a 1-byte upgrade signal ('U'), then upgrades to TLS.
   *   - The client side connects plaintext, sends the upgrade signal, then calls upgradeToTls.
   *   - After upgrade, both sides communicate over encrypted TLS.
   *
-  * Certificates are generated via keytool (ships with every JDK) — no external tools or BouncyCastle required.
+  * Certificates are generated via keytool (ships with every JDK), no external tools or BouncyCastle required.
   */
 class UpgradeTlsTest extends Test:
 
@@ -146,7 +146,7 @@ class UpgradeTlsTest extends Test:
 
     "upgradeToTls - large payload round-trip across TLS records" in run {
         val transport   = NetPlatform.transport
-        val payloadSize = 32768 // 32KB — spans at least two TLS records (max record size is ~16KB)
+        val payloadSize = 32768 // 32KB, spans at least two TLS records (max record size is ~16KB)
 
         // Collect exactly `target` bytes by repeatedly taking from a TLS connection's inbound channel.
         def collectBytes(conn: Connection, target: Int): Span[Byte] < (Async & Abort[Closed]) =

@@ -8,8 +8,8 @@ import scala.compiletime.testing.typeCheckErrors
   * Most container-integration leaves are marked `pending` until a container harness is available. The non-pending leaves verify the
   * macro/shape surface in-place:
   *
-  *   - method availability (leaves 1, 4-6 — compilation of typed `def shape(...)` bodies)
-  *   - `runStatic` failing at compile time (leaf 3 — `typeCheckErrors`)
+  *   - method availability (leaves 1, 4-6, compilation of typed `def shape(...)` bodies)
+  *   - `runStatic` failing at compile time (leaf 3, `typeCheckErrors`)
   *   - `.run` outside a `let` block fails with `SqlException.Connection` (leaf 7)
   *   - `SqlClient.use` returns `Abort[SqlException]` and does not panic (leaf 8)
   */
@@ -24,16 +24,16 @@ class SqlRunTest extends Test:
     inline given personSqlSchema: SqlSchema[Person] = SqlSchema.derived
     inline given userSqlSchema: SqlSchema[User]     = SqlSchema.derived
 
-    // ── Leaf 1 — .run available on Query[A] with the right effect row ──────────
+    // ── Leaf 1, .run available on Query[A] with the right effect row ──────────
 
     "Query.run compiles and has effect row Async & Abort[SqlException] & Scope" in {
-        // Test by direct typed reference — the assertion is the compilation itself.
+        // Test by direct typed reference, the assertion is the compilation itself.
         def shape(using Frame): Chunk[String] < (Async & Abort[SqlException] & Scope) =
             Sql.from[Person]("p").select(c => c.p.name).run
         succeed
     }
 
-    // ── Leaf 2 — runDynamic works on a non-inline val Query ─────────────────────
+    // ── Leaf 2, runDynamic works on a non-inline val Query ─────────────────────
 
     "Query.runDynamic compiles on a non-inline val" in {
         def shape(using Frame): Chunk[String] < (Async & Abort[SqlException] & Scope) =
@@ -42,7 +42,7 @@ class SqlRunTest extends Test:
         succeed
     }
 
-    // ── Leaf 3 — runStatic succeeds on a fully-static AST ──────────────────────
+    // ── Leaf 3, runStatic succeeds on a fully-static AST ──────────────────────
     //
     // Phase 7 wired runStatic to SqlStaticMacro.impl. A fully-reducible inline query now compiles
     // successfully. The old "macro always rejects" assertion is replaced with:
@@ -68,7 +68,7 @@ class SqlRunTest extends Test:
         assert(errors.nonEmpty)
     }
 
-    // ── Leaf 4 — .run on Insert returns InsertResult ────────────────────────────
+    // ── Leaf 4, .run on Insert returns InsertResult ────────────────────────────
 
     "Insert.run returns InsertResult" in {
         def shape(using Frame): InsertResult < (Async & Abort[SqlException] & Scope) =
@@ -76,7 +76,7 @@ class SqlRunTest extends Test:
         succeed
     }
 
-    // ── Leaf 5 — .run on Update returns Long ────────────────────────────────────
+    // ── Leaf 5, .run on Update returns Long ────────────────────────────────────
 
     "Update.run returns Long" in {
         def shape(using Frame): Long < (Async & Abort[SqlException] & Scope) =
@@ -84,7 +84,7 @@ class SqlRunTest extends Test:
         succeed
     }
 
-    // ── Leaf 6 — .run on Delete returns Long ────────────────────────────────────
+    // ── Leaf 6, .run on Delete returns Long ────────────────────────────────────
 
     "Delete.run returns Long" in {
         def shape(using Frame): Long < (Async & Abort[SqlException] & Scope) =
@@ -100,7 +100,7 @@ class SqlRunTest extends Test:
             """def shape(using kyo.Frame): Long < (kyo.Async & kyo.Abort[kyo.SqlException] & kyo.Scope) =
   kyo.Sql.insert[User].values(User(0L, "ada@example.com")).run"""
         )
-        // Type mismatch (InsertResult vs Long) — must produce at least one error.
+        // Type mismatch (InsertResult vs Long), must produce at least one error.
         assert(errs.nonEmpty)
     }
 
@@ -112,7 +112,7 @@ class SqlRunTest extends Test:
         assert(errs.nonEmpty)
     }
 
-    // ── Leaf 7 — runDynamic reads the client from SqlClient.use correctly ──────
+    // ── Leaf 7, runDynamic reads the client from SqlClient.use correctly ──────
 
     "runDynamic surfaces SqlException.Connection when no client is active" in {
         val q = Sql.from[Person]("p").select(c => c.p.name)
@@ -122,7 +122,7 @@ class SqlRunTest extends Test:
         }
     }
 
-    // ── Leaf 8 — SqlClient.use returns Abort.fail (not IllegalStateException) ──
+    // ── Leaf 8, SqlClient.use returns Abort.fail (not IllegalStateException) ──
 
     "SqlClient.use returns Abort.fail(SqlException.Connection) when no client active" in {
         Abort.run[SqlException](SqlClient.use(c => c.address)).map {
@@ -131,7 +131,7 @@ class SqlRunTest extends Test:
         }
     }
 
-    // ── Leaf 9 — executeBoundQuery decodes via Schema (compile-time shape) ─────
+    // ── Leaf 9, executeBoundQuery decodes via Schema (compile-time shape) ─────
 
     "SqlClient.executeBoundQuery requires a SqlSchema and returns Chunk[A]" in {
         // executeBoundQuery is `private[kyo]` so we can reference it directly from this in-package test.
@@ -150,7 +150,7 @@ def shape(client: kyo.SqlClient)(using kyo.Frame): kyo.Chunk[NoSchema2] < (kyo.A
         assert(errs.nonEmpty)
     }
 
-    // ── Leaf 10 — every Statement subtype exposes all three extension methods ─
+    // ── Leaf 10, every Statement subtype exposes all three extension methods ─
 
     "Query / Insert / Update / Delete each have all three extension methods" in {
         // Compile-time presence check via direct method calls. Frame is provided as a `using` parameter
@@ -174,16 +174,16 @@ def shape(client: kyo.SqlClient)(using kyo.Frame): kyo.Chunk[NoSchema2] < (kyo.A
         succeed
     }
 
-    // ── Container-integration leaves (deferred — require live container) ───────
+    // ── Container-integration leaves (deferred, require live container) ───────
     //
     // The plan calls for live-container assertions:
     //   #PG-1   Sql.from[Person]("p").select(c => c.p.name).run on PG container → Chunk[String]
     //   #MY-2   Same on MySQL container                                          → Chunk[String]
-    //   #LK-10  Same inline def q rendered through let(pgClient) vs let(mysqlClient) — assert two
+    //   #LK-10  Same inline def q rendered through let(pgClient) vs let(mysqlClient), assert two
     //           backend-flavoured strings (lockstep enforcement)
     //   #TX-11  .run inside transaction { ... } uses the bound connection
     //   #SR-13  .runStatic on a select with a literal carries the schema correctly via BoundValue[?]
-    //   #BC-14  .runDynamic does not allocate a BackendSql (bytecode inspection — doc-level)
+    //   #BC-14  .runDynamic does not allocate a BackendSql (bytecode inspection, doc-level)
     //
     // These leaves require a container harness (PG + MySQL test containers) plus, for SR-13,
     // the static FromExpr reducer. See the prep doc for the full mapping.

@@ -40,7 +40,7 @@ class TestNamingConventionTest extends kyo.Test:
       *
       * sbt sets `user.dir` to the per-project baseDirectory when forking. Depending on which sub-project runs, this may be the repo root,
       * `kyo-sql/`, or `kyo-sql/{jvm,native,js}`. Handles all three layouts. Falls back to `.` when the property is unavailable (e.g. JS
-      * runtime), in which case the test will fail loudly during walk if the directory does not exist — that surfaces a real environment
+      * runtime), in which case the test will fail loudly during walk if the directory does not exist, that surfaces a real environment
       * problem rather than silently passing.
       */
     private def findKyoSqlRoot(using Frame): Path < Sync =
@@ -50,7 +50,7 @@ class TestNamingConventionTest extends kyo.Test:
             val parts   = dir.parts
             val last    = parts.lastOption
             val parent  = parts.dropRight(1).lastOption
-            // Case 1: running from kyo-sql/<platform> — kyo-sql root is the parent.
+            // Case 1: running from kyo-sql/<platform>, kyo-sql root is the parent.
             if last.exists(p => p == "jvm" || p == "native" || p == "js") && parent.contains("kyo-sql") then
                 dir.parent.getOrElse(dir)
             // Case 2: already at kyo-sql/.
@@ -115,7 +115,7 @@ class TestNamingConventionTest extends kyo.Test:
             yield
                 if testFiles.isEmpty then
                     fail(
-                        s"No *Test.scala files found under $sqlRoot — path discovery may have failed. " +
+                        s"No *Test.scala files found under $sqlRoot, path discovery may have failed. " +
                             s"working directory: $sqlRoot"
                     )
                 else

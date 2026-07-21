@@ -4,7 +4,7 @@ import kyo.Test
 
 class SqlAddressTest extends Test:
 
-    // SqlAddress equality — two identical instances are equal (used as pool key)
+    // SqlAddress equality, two identical instances are equal (used as pool key)
     "SqlAddress equality" in {
         val a1 = SqlAddress("postgres", "localhost", 5432, "mydb", "alice")
         val a2 = SqlAddress("postgres", "localhost", 5432, "mydb", "alice")

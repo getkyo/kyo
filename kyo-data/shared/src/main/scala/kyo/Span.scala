@@ -1274,7 +1274,7 @@ object Span:
         /** Compares two `Span[Byte]` values for equality in constant time.
           *
           * Unlike `is`, which short-circuits on the first mismatch, this method always iterates over every byte using an XOR-OR
-          * accumulator. This prevents timing side-channels that would otherwise reveal the position of the first differing byte — critical
+          * accumulator. This prevents timing side-channels that would otherwise reveal the position of the first differing byte, critical
           * for cryptographic MAC / signature verification (e.g., SCRAM ServerSignature).
           *
           * @param other

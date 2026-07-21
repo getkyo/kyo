@@ -10,7 +10,7 @@ import kyo.internal.mysql.MysqlBufferWriter
   *
   * The server responds with an OK packet. Session state is reset without re-handshaking.
   *
-  * Reference: MySQL Internals — COM_RESET_CONNECTION
+  * Reference: MySQL Internals, COM_RESET_CONNECTION
   */
 object ComResetConnectionMarshaller extends Marshaller[ComResetConnection.type]:
 

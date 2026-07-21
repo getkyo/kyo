@@ -1,6 +1,6 @@
 package kyo
 
-/** Kyo's FromExpr typeclass — a distinct typeclass (opaque around `scala.quoted.FromExpr`) so the derivation macro can nest summons
+/** Kyo's FromExpr typeclass, a distinct typeclass (opaque around `scala.quoted.FromExpr`) so the derivation macro can nest summons
   * unambiguously: `Expr.summon[kyo.FromExpr[T]]` triggers user-provided kyo instances or recursive derivation, never the stdlib's
   * primitive `FromExpr` accidentally.
   *

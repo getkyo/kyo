@@ -4,7 +4,7 @@ import kyo.*
 import kyo.SqlException
 import kyo.internal.postgres.PostgresBufferWriter
 
-/** Unit tests for PostgresEncoder and PostgresDecoder — round-trips per type per format.
+/** Unit tests for PostgresEncoder and PostgresDecoder, round-trips per type per format.
   *
   * Encode a value, decode the bytes back, assert equality. Covers all primitive SqlSchema types.
   */

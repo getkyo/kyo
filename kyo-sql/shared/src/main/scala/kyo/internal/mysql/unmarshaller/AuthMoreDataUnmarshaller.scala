@@ -17,7 +17,7 @@ import kyo.internal.mysql.Unmarshaller
   *   - 0x04 = full auth required (client must respond with encrypted or plaintext password)
   *   - other = raw RSA public key bytes or other plugin-specific data
   *
-  * Reference: MySQL Internals — caching_sha2_password Authentication
+  * Reference: MySQL Internals, caching_sha2_password Authentication
   */
 object AuthMoreDataUnmarshaller extends Unmarshaller[AuthMoreData]:
 

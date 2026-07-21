@@ -23,7 +23,7 @@ class SqlRunStaticTest extends Test:
     inline given personSqlSchema: SqlSchema[Person] = SqlSchema.derived
     inline given userSqlSchema: SqlSchema[User]     = SqlSchema.derived
 
-    // ── Leaf A — runStatic on a fully-static select compiles to a BackendSql splice ──
+    // ── Leaf A, runStatic on a fully-static select compiles to a BackendSql splice ──
 
     "Query.runStatic on a static select compiles (static fast-path wired)" in {
         // Phase 7: the macro now delegates to SqlStaticMacro.impl which renders both backends at
@@ -42,7 +42,7 @@ class SqlRunStaticTest extends Test:
         succeed
     }
 
-    // ── Leaf B — runStatic on a window function now compiles (Phase 8 adds FromExpr for WindowSpec)
+    // ── Leaf B, runStatic on a window function now compiles (Phase 8 adds FromExpr for WindowSpec)
     //
     // WindowSpecBuilder.partitionBy now uses explicit `new WindowSpecBuilder(...)` constructors
     // (Phase 8 fix) and `FromExpr` givens for WindowSpec / WindowFrame / FrameBound /
@@ -56,7 +56,7 @@ class SqlRunStaticTest extends Test:
         succeed
     }
 
-    // ── Leaf C — .run on a static query succeeds (isStaticallyReducible probe) ────
+    // ── Leaf C, .run on a static query succeeds (isStaticallyReducible probe) ────
 
     "Query.run on a static select compiles (static fast-path probe fires)" in {
         def shape(using Frame): Chunk[Person] < (Async & Abort[SqlException] & Scope) =
@@ -64,7 +64,7 @@ class SqlRunStaticTest extends Test:
         succeed
     }
 
-    // ── Leaf D — Insert.runStatic compiles for a static AST ───────────────────────
+    // ── Leaf D, Insert.runStatic compiles for a static AST ───────────────────────
 
     "Insert.runStatic compiles for a static AST" in {
         def shape(using Frame): InsertResult < (Async & Abort[SqlException] & Scope) =
@@ -72,10 +72,10 @@ class SqlRunStaticTest extends Test:
         succeed
     }
 
-    // ── Leaf E — Update.runStatic fails at compile time (sets lambda not liftable) ─
+    // ── Leaf E, Update.runStatic fails at compile time (sets lambda not liftable) ─
     //
     // `UpdateBuilder.set(inline specs: ...)` applies each spec lambda via `specs.map(_(columns))`
-    // which produces a runtime `Chunk` — not reducible by `FromExpr.derived`. Phase 7 wires
+    // which produces a runtime `Chunk`, not reducible by `FromExpr.derived`. Phase 7 wires
     // runStatic to report.errorAndAbort when the AST is not liftable.
 
     "Update.runStatic fails at compile time (set lambda is not statically liftable)" in {
@@ -95,7 +95,7 @@ class SqlRunStaticTest extends Test:
         )
     }
 
-    // ── Leaf F — Delete.runStatic compiles for a static AST ───────────────────────
+    // ── Leaf F, Delete.runStatic compiles for a static AST ───────────────────────
 
     "Delete.runStatic compiles for a static AST" in {
         def shape(using Frame): Long < (Async & Abort[SqlException] & Scope) =
@@ -103,7 +103,7 @@ class SqlRunStaticTest extends Test:
         succeed
     }
 
-    // ── Leaf G — .run on Insert, Update, Delete compiles ─────────────────────────
+    // ── Leaf G, .run on Insert, Update, Delete compiles ─────────────────────────
     // Insert.run uses the static fast-path (Insert AST is liftable).
     // Update.run / Delete.run fall back to runtime (sets lambda not liftable for Update;
     // Delete is liftable and uses the static path).

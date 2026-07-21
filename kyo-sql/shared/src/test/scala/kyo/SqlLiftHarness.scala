@@ -7,7 +7,7 @@ import scala.quoted.*
   * Mirrors `kyo.LiftHarness` in kyo-schema but lives in kyo-sql test sources, satisfying the Scala 3 rule that a macro definition and its
   * use site must reside in separate compilation units.
   *
-  * Delegates directly to `kyo.internal.FromExprDerived.applyMatchedImpl` / `applyReprImpl` — the same entry points used by `LiftHarness`.
+  * Delegates directly to `kyo.internal.FromExprDerived.applyMatchedImpl` / `applyReprImpl`, the same entry points used by `LiftHarness`.
   * The separation (kyo-schema defines the macro, kyo-sql defines this thin wrapper) is necessary because kyo-sql test sources cannot access
   * kyo-schema test sources (no `test->test` dependency).
   */

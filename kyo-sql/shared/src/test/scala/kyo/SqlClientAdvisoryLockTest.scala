@@ -10,8 +10,8 @@ import kyo.internal.SqlSharedContainers.Backend
   * advisory lock's [[Scope.ensure]] release finaliser always fires before the assertion executes.
   *
   * Tests:
-  *   1. advisoryLock on PG — lock is held while scope is active, released on scope exit.
-  *   2. advisoryLock on MySQL — GET_LOCK succeeds; RELEASE_LOCK fires on scope exit.
+  *   1. advisoryLock on PG, lock is held while scope is active, released on scope exit.
+  *   2. advisoryLock on MySQL, GET_LOCK succeeds; RELEASE_LOCK fires on scope exit.
   *   3. PG: concurrent second client cannot acquire the same session lock while held (pg_try_advisory_lock returns false).
   *   4. MySQL: concurrent second client times out (timeout = 0s) while first client holds the lock.
   */
@@ -27,7 +27,7 @@ class SqlClientAdvisoryLockTest extends kyo.Test:
     private def myUrl(ctx: SqlSharedContainers.SchemaCtx): String =
         s"mysql://${ctx.username}:${ctx.password}@${ctx.host}:${ctx.port}/${ctx.database}"
 
-    // ── Leaf 1: PG — lock released on Scope exit ──────────────────────────
+    // ── Leaf 1: PG, lock released on Scope exit ──────────────────────────
 
     "advisoryLock on PG is released when the enclosing Scope exits" in {
         Scope.run {
@@ -38,7 +38,7 @@ class SqlClientAdvisoryLockTest extends kyo.Test:
                         // Acquire the lock in a nested scope; the scope exits before we probe.
                         Scope.run {
                             client.advisoryLock(key)
-                            // while scope is active the lock is held — no assertion needed here
+                            // while scope is active the lock is held, no assertion needed here
                         }.andThen {
                             // After the scope exits the lock must have been released.
                             // pg_try_advisory_lock returns true if we can acquire it (i.e. it is free).
@@ -63,7 +63,7 @@ class SqlClientAdvisoryLockTest extends kyo.Test:
         }
     }
 
-    // ── Leaf 2: MySQL — GET_LOCK acquired; RELEASE_LOCK fires on Scope exit ──
+    // ── Leaf 2: MySQL, GET_LOCK acquired; RELEASE_LOCK fires on Scope exit ──
 
     "advisoryLock on MySQL is released when the enclosing Scope exits" in {
         Scope.run {
@@ -95,7 +95,7 @@ class SqlClientAdvisoryLockTest extends kyo.Test:
         }
     }
 
-    // ── Leaf 3: PG — pg_try_advisory_lock returns false while lock is held ──
+    // ── Leaf 3: PG, pg_try_advisory_lock returns false while lock is held ──
 
     "PG: concurrent advisoryLock blocks a second pg_try_advisory_lock on the same key" in {
         Scope.run {
@@ -112,7 +112,7 @@ class SqlClientAdvisoryLockTest extends kyo.Test:
                                     SqlClient.let(innerClient) {
                                         innerClient.query(s"SELECT pg_try_advisory_lock($key)").flatMap { rows =>
                                             assert(rows.size == 1)
-                                            // Typed decode via Phase 19b row.decode[T] — handles both binary
+                                            // Typed decode via Phase 19b row.decode[T], handles both binary
                                             // (extended protocol via client.query) and text format for Boolean.
                                             rows(0).decode[Boolean](0).map { acquired =>
                                                 assert(
@@ -131,7 +131,7 @@ class SqlClientAdvisoryLockTest extends kyo.Test:
         }
     }
 
-    // ── Leaf 4: MySQL — GET_LOCK with timeout=0 fails while lock is held ──
+    // ── Leaf 4: MySQL, GET_LOCK with timeout=0 fails while lock is held ──
 
     "MySQL: GET_LOCK with timeout=0 returns 0 while another connection holds the lock" in {
         Scope.run {

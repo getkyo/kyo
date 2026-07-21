@@ -17,7 +17,7 @@ import kyo.net.NetTlsConfig
   *     negotiator)
   *   - [[TlsMode.Prefer]] → `Present(NetTlsConfig(trustAll = true))` (TLS config available for opportunistic upgrade; decision made by
   *     negotiator)
-  *   - [[TlsMode.Require]] → `Present(NetTlsConfig(trustAll = true))` (TLS mandatory; no cert-chain or hostname check — `require` only
+  *   - [[TlsMode.Require]] → `Present(NetTlsConfig(trustAll = true))` (TLS mandatory; no cert-chain or hostname check, `require` only
   *     mandates encryption per PG/MySQL spec)
   *   - [[TlsMode.VerifyCa]] → requires `caCertPath`; `Present(NetTlsConfig(caCertPath = Present(path), hostnameVerification = false))`.
   *     Fails with [[SqlException.Connection]] when `caCertPath` is [[Absent]].
@@ -35,11 +35,11 @@ object TlsContext:
                 Absent
             case TlsMode.Allow | TlsMode.Prefer =>
                 // Opportunistic TLS: provide a permissive TLS config; the TlsNegotiator decides whether to upgrade.
-                // trustAll=true because allow/prefer are not certificate-validating modes — the server's cert is accepted as-is.
+                // trustAll=true because allow/prefer are not certificate-validating modes, the server's cert is accepted as-is.
                 Present(NetTlsConfig(trustAll = true))
             case TlsMode.Require =>
                 // TLS required; accept ANY server cert (no chain validation, no hostname check).
-                // Per PG/MySQL spec, `require` only mandates encryption — it does NOT validate the
+                // Per PG/MySQL spec, `require` only mandates encryption, it does NOT validate the
                 // server's certificate. Use trustAll=true so self-signed or unknown-CA certs work.
                 // Validation modes are `verify-ca` (chain only) and `verify-full` (chain + hostname).
                 Present(NetTlsConfig(trustAll = true))

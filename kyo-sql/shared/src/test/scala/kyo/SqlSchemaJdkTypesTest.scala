@@ -7,7 +7,7 @@ import kyo.internal.postgres.types.Format
 import kyo.internal.postgres.types.PostgresEncoder
 
 /** Unit tests for [[SqlSchema]] JDK string-round-trip types: `java.net.URI`, `java.net.URL`, `java.util.Locale`, `java.util.Currency`
-  * (Phase 22 — G-Codec-JDK-7, G-Codec-JDK-8, G-Codec-JDK-11, G-Codec-JDK-13).
+  * (Phase 22, G-Codec-JDK-7, G-Codec-JDK-8, G-Codec-JDK-11, G-Codec-JDK-13).
   *
   * All tests are pure (no database container required). They exercise the schemas via in-memory byte buffers and mock [[SqlRow]] instances.
   */
@@ -94,7 +94,7 @@ class SqlSchemaJdkTypesTest extends Test:
     }
 
     "URI decode from invalid string raises Abort[SqlException.Decode]" in {
-        // Space characters are illegal in a URI — URI.create will throw IllegalArgumentException.
+        // Space characters are illegal in a URI, URI.create will throw IllegalArgumentException.
         val row    = pgStringRow("not a valid uri with spaces here")
         val result = Abort.run[SqlException.Decode](summon[SqlSchema[java.net.URI]].readPostgres(row)).eval
         result match
@@ -150,7 +150,7 @@ class SqlSchemaJdkTypesTest extends Test:
     }
 
     "URL decode from invalid string raises Abort[SqlException.Decode]" in {
-        // "not-a-url" has no scheme — URI.create succeeds but toURL throws MalformedURLException.
+        // "not-a-url" has no scheme, URI.create succeeds but toURL throws MalformedURLException.
         val row    = pgStringRow("not-a-url")
         val result = Abort.run[SqlException.Decode](summon[SqlSchema[java.net.URL]].readPostgres(row)).eval
         result match
@@ -273,7 +273,7 @@ class SqlSchemaJdkTypesTest extends Test:
     }
 
     "Currency decode from invalid code raises Abort[SqlException.Decode]" in {
-        // "NOTACURRENCY" is not a valid ISO 4217 code — Currency.getInstance throws IllegalArgumentException.
+        // "NOTACURRENCY" is not a valid ISO 4217 code, Currency.getInstance throws IllegalArgumentException.
         val row    = pgStringRow("NOTACURRENCY")
         val result = Abort.run[SqlException.Decode](summon[SqlSchema[java.util.Currency]].readPostgres(row)).eval
         result match

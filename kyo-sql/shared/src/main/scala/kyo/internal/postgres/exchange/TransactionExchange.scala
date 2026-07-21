@@ -10,7 +10,7 @@ import kyo.internal.postgres.*
   * Every command here sends a [[Query]] message and waits for [[ReadyForQuery]] (via [[SimpleQueryExchange.run]]). No data rows are
   * expected; only [[CommandComplete]] and [[ReadyForQuery]] are normal.
   *
-  * These are NOT parameterised — transaction SQL is never user-supplied — so the simple-query protocol is safe and correct here.
+  * These are NOT parameterised, transaction SQL is never user-supplied, so the simple-query protocol is safe and correct here.
   */
 object TransactionExchange:
 
@@ -66,7 +66,7 @@ object TransactionExchange:
 
     /** Sends a single-statement command via the simple-query protocol and discards the result. */
     private def simpleCommand(channel: PostgresChannel, sql: String, pid: Long)(using Frame): Unit < (Async & Abort[SqlException]) =
-        // SimpleQueryExchange.run reads ReadyForQuery internally — no extra drain needed.
+        // SimpleQueryExchange.run reads ReadyForQuery internally, no extra drain needed.
         SimpleQueryExchange.run(channel, sql, pid, (_, _) => (), _ => ()).unit
 
 end TransactionExchange

@@ -39,7 +39,7 @@ private[kyo] object MysqlCancelExchange:
             val deprecateEof = (caps & kyo.internal.mysql.Capabilities.CLIENT_DEPRECATE_EOF) != 0L
             SimpleQueryExchange.run(cancelConn.channel, s"KILL QUERY $targetConnectionId", deprecateEof, Maybe.Absent).flatMap {
                 case (_, _) =>
-                    // OK response — kill delivered (or query already done and server said OK anyway).
+                    // OK response, kill delivered (or query already done and server said OK anyway).
                     ()
             }
         }

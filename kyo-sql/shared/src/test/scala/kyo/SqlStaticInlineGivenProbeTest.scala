@@ -4,7 +4,7 @@ import scala.compiletime.testing.typeCheckErrors
 
 /** Documents the static-SQL contract for `inline given SqlSchema[T]`:
   *
-  *   - Plain `SqlSchema.derived` (no overrides applied): folds under `staticSql` — see leaf 1.
+  *   - Plain `SqlSchema.derived` (no overrides applied): folds under `staticSql`, see leaf 1.
   *   - With override transforms (`.withNaming` / `.withTableName` / `.rename`): does NOT fold per-column `sqlName` under `staticSql`.
   *     [[kyo.internal.SqlStaticMacro.emitOpaqueCauses]] produces a positioned error directing the user to `.run`/`.render`.
   *

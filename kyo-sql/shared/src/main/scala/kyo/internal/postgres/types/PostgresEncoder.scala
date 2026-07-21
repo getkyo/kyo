@@ -18,7 +18,7 @@ trait PostgresEncoder[A]:
     /** The wire format (Text or Binary) used for encoding. */
     def format: Format
 
-    /** Writes the value into `buf`. The buffer is pre-positioned; the encoder must not write a length prefix — that is added by the Bind
+    /** Writes the value into `buf`. The buffer is pre-positioned; the encoder must not write a length prefix, that is added by the Bind
       * marshaller.
       */
     def write(value: A, buf: PostgresBufferWriter): Unit
@@ -52,7 +52,7 @@ object PostgresEncoder:
     // Array OIDs
     val OID_INT4_ARRAY  = 1007 // _int4 (int4[])
     val OID_TEXT_ARRAY  = 1009 // _text (text[])
-    val OID_JSONB_ARRAY = 3807 // _jsonb (jsonb[]) — codec deferred to Phase 17 follow-up (see GAP-FIX/PLAN.md #502)
+    val OID_JSONB_ARRAY = 3807 // _jsonb (jsonb[]), codec deferred to Phase 17 follow-up (see GAP-FIX/PLAN.md #502)
 
     // PG inet/cidr address family constants (pgsql/include/utils/inet.h).
     private val PGSQL_AF_INET  = 2.toByte // IPv4
@@ -153,7 +153,7 @@ object PostgresEncoder:
 
     /** Encodes [[BigDecimal]] as PostgreSQL's text NUMERIC format.
       *
-      * NB: do NOT use `value.underlying().toPlainString` — Scala Native's javalib has a bug where the integer digits are zeroed out.
+      * NB: do NOT use `value.underlying().toPlainString`, Scala Native's javalib has a bug where the integer digits are zeroed out.
       * `value.toString` (scala.math.BigDecimal) is correct on every platform.
       */
     val numericText: PostgresEncoder[BigDecimal] = new PostgresEncoder[BigDecimal]:
@@ -173,7 +173,7 @@ object PostgresEncoder:
       *   Int16  digits[]   -- each digit in [0..9999], most-significant first
       * }}}
       *
-      * UInt16 values (sign, dscale) are written via `writeInt16(x.toShort)` — the bit pattern is identical; unsigned interpretation is the
+      * UInt16 values (sign, dscale) are written via `writeInt16(x.toShort)`, the bit pattern is identical; unsigned interpretation is the
       * caller's responsibility when reading.
       *
       * Note: dscale is truncated to Int16 range (max 32767). Values exceeding this are beyond PG's practical NUMERIC precision limit.
@@ -253,7 +253,7 @@ object PostgresEncoder:
         def write(value: String, buf: PostgresBufferWriter): Unit =
             buf.writeBytes(value.getBytes(StandardCharsets.UTF_8))
 
-    // --- JSON (OID 114) — bare UTF-8 text ---
+    // --- JSON (OID 114), bare UTF-8 text ---
     // PostgreSQL json wire format (text mode): raw UTF-8 JSON string with no prefix.
 
     val jsonText: PostgresEncoder[String] = new PostgresEncoder[String]:
@@ -262,7 +262,7 @@ object PostgresEncoder:
         def write(value: String, buf: PostgresBufferWriter): Unit =
             buf.writeBytes(value.getBytes(StandardCharsets.UTF_8))
 
-    // --- JSONB (OID 3802) — version byte 0x01 + UTF-8 text (binary format) ---
+    // --- JSONB (OID 3802), version byte 0x01 + UTF-8 text (binary format) ---
     // PostgreSQL jsonb binary wire format: 1-byte version prefix (0x01) followed by raw UTF-8 JSON text.
 
     val jsonbBinary: PostgresEncoder[String] = new PostgresEncoder[String]:
@@ -296,7 +296,7 @@ object PostgresEncoder:
             buf.writeBytes(sb.toString.getBytes(StandardCharsets.UTF_8))
         end write
 
-    // --- Timestamptz — kyo.Instant ---
+    // --- Timestamptz, kyo.Instant ---
     // Uses kyo.Instant (preferred over java.time.Instant per STEERING rules).
     // Wire: 8-byte int64 microseconds since PostgreSQL epoch (2000-01-01 00:00:00 UTC).
 
@@ -311,7 +311,7 @@ object PostgresEncoder:
             buf.writeInt32((pgMicros & 0xffffffffL).toInt)
         end write
 
-    // --- Date — java.time.LocalDate ---
+    // --- Date, java.time.LocalDate ---
     // No Kyo equivalent for LocalDate (date without time zone); java.time.LocalDate is used.
     // Wire: 4-byte int32 days since PostgreSQL epoch (2000-01-01).
 
@@ -324,7 +324,7 @@ object PostgresEncoder:
             buf.writeInt32(days.toInt)
         end write
 
-    // --- Timestamp (no tz) — java.time.LocalDateTime ---
+    // --- Timestamp (no tz), java.time.LocalDateTime ---
     // No Kyo equivalent for LocalDateTime (datetime without time zone); java.time.LocalDateTime is used.
     // Wire: 8-byte int64 microseconds since PostgreSQL epoch (2000-01-01 00:00:00).
 
@@ -339,7 +339,7 @@ object PostgresEncoder:
             buf.writeInt32((pgMicros & 0xffffffffL).toInt)
         end write
 
-    // --- Time — java.time.LocalTime ---
+    // --- Time, java.time.LocalTime ---
     // No Kyo equivalent for LocalTime (time without date/zone); java.time.LocalTime is used.
     // Wire: 8-byte int64 microseconds since midnight.
 
@@ -352,7 +352,7 @@ object PostgresEncoder:
             buf.writeInt32((micros & 0xffffffffL).toInt)
         end write
 
-    // --- Timetz — java.time.OffsetTime ---
+    // --- Timetz, java.time.OffsetTime ---
     // Wire: 12-byte big-endian struct: Int64 microseconds-of-day, Int32 offset_seconds (negated relative to UTC).
     // PG wire convention: the offset field stores the *negated* total seconds of the ZoneOffset so that
     // a UTC-05:00 value is stored as +18000 (positive = west of UTC). java.time.ZoneOffset.getTotalSeconds
@@ -369,7 +369,7 @@ object PostgresEncoder:
             buf.writeInt32(offsetSeconds)
         end write
 
-    // --- Timestamptz text — kyo.Instant ---
+    // --- Timestamptz text, kyo.Instant ---
     // Text format: "YYYY-MM-DD HH:MM:SS.ffffff+00" (canonical UTC offset, matching PG timestamptz output).
 
     val timestamptzText: PostgresEncoder[kyo.Instant] = new PostgresEncoder[kyo.Instant]:
@@ -378,12 +378,12 @@ object PostgresEncoder:
         def write(value: kyo.Instant, buf: PostgresBufferWriter): Unit =
             val jInstant = value.toJava
             val odt      = jInstant.atOffset(java.time.ZoneOffset.UTC)
-            // Format: "YYYY-MM-DD HH:MM:SS.ffffff+00" — space separator, explicit UTC offset.
+            // Format: "YYYY-MM-DD HH:MM:SS.ffffff+00", space separator, explicit UTC offset.
             val formatted = odt.format(java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSSSSS+00"))
             buf.writeBytes(formatted.getBytes(StandardCharsets.UTF_8))
         end write
 
-    // --- Date text — java.time.LocalDate ---
+    // --- Date text, java.time.LocalDate ---
     // Text format: "YYYY-MM-DD"
 
     val dateText: PostgresEncoder[java.time.LocalDate] = new PostgresEncoder[java.time.LocalDate]:
@@ -392,31 +392,31 @@ object PostgresEncoder:
         def write(value: java.time.LocalDate, buf: PostgresBufferWriter): Unit =
             buf.writeBytes(value.toString.getBytes(StandardCharsets.UTF_8))
 
-    // --- Timestamp text — java.time.LocalDateTime ---
+    // --- Timestamp text, java.time.LocalDateTime ---
     // Text format: "YYYY-MM-DD HH:MM:SS.SSS"
 
     val timestampText: PostgresEncoder[java.time.LocalDateTime] = new PostgresEncoder[java.time.LocalDateTime]:
         def oid: Int = OID_TIMESTAMP
         def format   = Format.Text
         def write(value: java.time.LocalDateTime, buf: PostgresBufferWriter): Unit =
-            // Format: "YYYY-MM-DD HH:MM:SS.SSSSSS" — space separator, matching PG text output.
+            // Format: "YYYY-MM-DD HH:MM:SS.SSSSSS", space separator, matching PG text output.
             val formatted = value.format(java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSSSSS"))
             buf.writeBytes(formatted.getBytes(StandardCharsets.UTF_8))
         end write
 
-    // --- Time text — java.time.LocalTime ---
+    // --- Time text, java.time.LocalTime ---
     // Text format: "HH:MM:SS.SSS"
 
     val timeText: PostgresEncoder[java.time.LocalTime] = new PostgresEncoder[java.time.LocalTime]:
         def oid: Int = OID_TIME
         def format   = Format.Text
         def write(value: java.time.LocalTime, buf: PostgresBufferWriter): Unit =
-            // Format: "HH:MM:SS.SSSSSS" — microsecond precision, matching PG text output.
+            // Format: "HH:MM:SS.SSSSSS", microsecond precision, matching PG text output.
             val formatted = value.format(java.time.format.DateTimeFormatter.ofPattern("HH:mm:ss.SSSSSS"))
             buf.writeBytes(formatted.getBytes(StandardCharsets.UTF_8))
         end write
 
-    // --- INTERVAL — java.time.Duration ---
+    // --- INTERVAL, java.time.Duration ---
     // Wire: 16-byte big-endian struct: Int64 microseconds, Int32 days (always 0), Int32 months (always 0).
     // java.time.Duration carries no calendar-day or month/year component; both are encoded as zero.
     // On encode overflow (seconds × 1_000_000L exceeds Int64), an ArithmeticException from
@@ -435,9 +435,9 @@ object PostgresEncoder:
             buf.writeInt32(0) // months = 0
         end write
 
-    // --- INTERVAL — java.time.Period ---
+    // --- INTERVAL, java.time.Period ---
     // Wire: 16-byte big-endian struct: Int64 microseconds (always 0), Int32 days, Int32 months.
-    // java.time.Period carries only years/months/days — no time component; microseconds is always 0.
+    // java.time.Period carries only years/months/days, no time component; microseconds is always 0.
     // months = period.toTotalMonths (years * 12 + months field); days = period.getDays.
 
     val intervalPeriodBinary: PostgresEncoder[java.time.Period] = new PostgresEncoder[java.time.Period]:
@@ -527,7 +527,7 @@ object PostgresEncoder:
         end write
 
     // --- UUID ---
-    // Wire: 16 bytes big-endian — mostSignificantBits (Int64) followed by leastSignificantBits (Int64).
+    // Wire: 16 bytes big-endian, mostSignificantBits (Int64) followed by leastSignificantBits (Int64).
 
     val uuidBinary: PostgresEncoder[java.util.UUID] = new PostgresEncoder[java.util.UUID]:
         def oid: Int = OID_UUID

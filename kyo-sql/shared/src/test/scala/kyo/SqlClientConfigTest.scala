@@ -17,7 +17,7 @@ class SqlClientConfigTest extends Test:
         assert(SqlClientConfig.default.maxConnections == 10)
     }
 
-    "SqlClientConfig retrySchedule is Absent by default — opt-in retries" in {
+    "SqlClientConfig retrySchedule is Absent by default, opt-in retries" in {
         assert(SqlClientConfig.default.retrySchedule == Absent)
     }
 
@@ -85,14 +85,14 @@ class SqlClientConfigTest extends Test:
             Abort.run[SqlException](Scope.run(SqlClient.init(url, SqlClientConfig.default))).map { r2 =>
                 (r1, r2) match
                     case (Result.Failure(_), Result.Failure(_)) =>
-                        // Both failed with SqlException — same observable behaviour. Test passes.
+                        // Both failed with SqlException, same observable behaviour. Test passes.
                         succeed
                     case (Result.Success(_), Result.Success(_)) =>
-                        // Both unexpectedly succeeded — same observable behaviour.
+                        // Both unexpectedly succeeded, same observable behaviour.
                         // This should not happen (no DB), but is still equivalent.
                         succeed
                     case (left, right) =>
-                        // The two overloads produced different outcomes — they are NOT equivalent.
+                        // The two overloads produced different outcomes, they are NOT equivalent.
                         fail(
                             s"SqlClient.init(url) and SqlClient.init(url, SqlClientConfig.default) behaved differently:\n" +
                                 s"  zeroConfig    = $left\n" +

@@ -8,7 +8,7 @@ import kyo.internal.postgres.types.EncodingRegistry
 /** Empirical probe for the privileges granted by [[ContainerPredef.Postgres]] and [[ContainerPredef.MySQL]] default configurations.
   *
   * Probes whether the configured default user can `CREATE DATABASE`, whether the root user (MySQL) can, and whether a fresh connection can
-  * authenticate to a freshly-created database with and without an explicit `GRANT`. Each probe always succeeds at the test level — its sole
+  * authenticate to a freshly-created database with and without an explicit `GRANT`. Each probe always succeeds at the test level, its sole
   * purpose is to log the outcome (success, or the captured [[SqlException]] message/SQLSTATE/error code) to stderr so the results can be
   * copied into `kyo-sql/PHASE-0-PRIVILEGE-CHECK.md`.
   *
@@ -27,21 +27,21 @@ class PrivilegeProbeIntegrationTest extends kyo.Test:
         t match
             case s: SqlException.Server =>
                 val code = s.extra.getOrElse("code", "")
-                s"FAILURE — SqlException.Server[sqlState=${s.sqlState}, code=$code, message=${s.message}]"
+                s"FAILURE, SqlException.Server[sqlState=${s.sqlState}, code=$code, message=${s.message}]"
             case s: SqlException.Connection =>
-                s"FAILURE — SqlException.Connection[message=${s.message}]"
+                s"FAILURE, SqlException.Connection[message=${s.message}]"
             case s: SqlException.Request =>
-                s"FAILURE — SqlException.Request[message=${s.message}]"
+                s"FAILURE, SqlException.Request[message=${s.message}]"
             case s: SqlException.Decode =>
-                s"FAILURE — SqlException.Decode[message=${s.message}]"
+                s"FAILURE, SqlException.Decode[message=${s.message}]"
             case other =>
-                s"FAILURE — ${other.getClass.getSimpleName}[message=${other.getMessage}]"
+                s"FAILURE, ${other.getClass.getSimpleName}[message=${other.getMessage}]"
 
     private def describeResult(label: String, result: Result[Any, Any]): String =
         result match
-            case Result.Success(v)            => s"SUCCESS — value=$v"
+            case Result.Success(v)            => s"SUCCESS, value=$v"
             case Result.Failure(e: Throwable) => describeFailure(label, e)
-            case Result.Failure(other)        => s"FAILURE — non-throwable error=$other"
+            case Result.Failure(other)        => s"FAILURE, non-throwable error=$other"
             case Result.Panic(t)              => describeFailure(label, t) + " (panic)"
 
     private def runAndLog[A](label: String)(eff: A < (Async & Abort[SqlException])): Unit < (Async & Sync) =
@@ -152,7 +152,7 @@ class PrivilegeProbeIntegrationTest extends kyo.Test:
             _ <- Async.timeout(180.seconds) {
                 Scope.run {
                     // We need the mysql_native_password plugin so the test user (using non-default auth) can connect at all
-                    // — the rest of kyo-sql tests use the same flag (see SqlDbTest.scala:280).
+                    // , the rest of kyo-sql tests use the same flag (see SqlDbTest.scala:280).
                     val myContainerConfig = ContainerPredef.MySQL.buildContainerConfig(myConfig)
                         .command("--default-authentication-plugin=mysql_native_password")
                     Container.initWith(myContainerConfig) { myContainer =>

@@ -10,7 +10,7 @@ import kyo.internal.mysql.MysqlBufferWriter
   *
   * Sent during caching_sha2_password full-auth when the server issues AuthMoreData(0x04).
   *
-  * Reference: MySQL Internals — caching_sha2_password Authentication
+  * Reference: MySQL Internals, caching_sha2_password Authentication
   */
 object AuthMoreDataMarshaller extends Marshaller[AuthMoreDataResponse]:
 

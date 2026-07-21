@@ -72,7 +72,7 @@ object SqlRunMacro:
                 q.asTerm.pos
             )
         )
-        // Delegate to SqlStaticMacro.impl — it calls report.errorAndAbort with the precise position+message when the AST is not liftable.
+        // Delegate to SqlStaticMacro.impl, it calls report.errorAndAbort with the precise position+message when the AST is not liftable.
         val rendered: Expr[SqlStatic.Rendered] = SqlStaticMacro.impl(widenStatement(q))
         '{
             SqlClient.use { client =>

@@ -8,13 +8,13 @@ import scala.quoted.*
 /** Custom `FromExpr` instances for AST `Term` leaves that arise from `Record` field projections rather than direct case-class construction.
   *
   * `FromExpr.derived` reconstructs values by walking constructor `Apply` trees. A column reference written as `c.p.age` in DSL code does
-  * NOT expand to a `Column.apply(...)` constructor — it expands to a `selectDynamic` projection chain which, after inlining, is a nested
+  * NOT expand to a `Column.apply(...)` constructor, it expands to a `selectDynamic` projection chain which, after inlining, is a nested
   * `Dict.apply(<record>.inline$dict, "key")` chain. The derived product/sum walker has no arm for that shape, so every WHERE / SELECT /
   * JOIN / groupBy query that references a column fails to lift (worse: the projection-shaped term silently mis-matches a zero-arg AST case
   * class such as `Default()`).
   *
   * `fromExprColumn` ports the deleted `SqlStaticMacro.R.RecordColumnAccess` extractor: it collects the literal key segments of the
-  * projection chain. A column reference `c.<alias>.<name>` collects two keys — the outer is the table alias, the inner is the column name —
+  * projection chain. A column reference `c.<alias>.<name>` collects two keys, the outer is the table alias, the inner is the column name,
   * directly yielding `Column(alias, name)`. No `Record` reconstruction is needed because the keys ARE the alias / name. The plain
   * `Column.apply(...)` constructor shape is handled too.
   *
@@ -23,21 +23,21 @@ import scala.quoted.*
   * synthetic `GroupTerm.inline$underlying` accessor (emitted by `view.<name>.count` etc.) unwraps the projected `GroupedColumn` /
   * `UngroupedView` to its underlying `Column`.
   *
-  * Placement in kyo-sql lets this file reference `Column`, `GroupedColumn`, `UngroupedView` directly — zero reflection.
+  * Placement in kyo-sql lets this file reference `Column`, `GroupedColumn`, `UngroupedView` directly, zero reflection.
   *
   * Summon reachability: these givens are NOT in any companion's implicit scope. Call sites that invoke `FromExpr.derived` for AST nodes
   * carrying column terms MUST import them via `import kyo.internal.ColumnFromExpr.given`.
   */
 object ColumnFromExpr:
 
-    /** `FromExpr[Column[?, ?]]` — recognises both the `Column.apply` constructor and the `selectDynamic` projection chain. */
+    /** `FromExpr[Column[?, ?]]`, recognises both the `Column.apply` constructor and the `selectDynamic` projection chain. */
     given fromExprColumn[N <: String & Singleton, V]: scala.quoted.FromExpr[Column[N, V]] with
         def unapply(x: Expr[Column[N, V]])(using q: Quotes): Option[Column[N, V]] =
             // `Column` is phantom in `N` / `V` at runtime; the walker produces `Column[String, Any]`.
             MacroSupport.narrowOption(new Walk[q.type].column(x))
     end fromExprColumn
 
-    /** `FromExpr[GroupedColumn[?, ?]]` — a grouped column projected out of the post-`groupBy` view Record. */
+    /** `FromExpr[GroupedColumn[?, ?]]`, a grouped column projected out of the post-`groupBy` view Record. */
     given fromExprGroupedColumn[N <: String & Singleton, V]: scala.quoted.FromExpr[GroupedColumn[N, V]] with
         def unapply(x: Expr[GroupedColumn[N, V]])(using q: Quotes): Option[GroupedColumn[N, V]] =
             // `GroupedColumn` is phantom in `N` / `V` at runtime.
@@ -46,7 +46,7 @@ object ColumnFromExpr:
             })
     end fromExprGroupedColumn
 
-    /** `FromExpr[UngroupedView[?]]` — a non-key column projected out of the post-`groupBy` view Record. */
+    /** `FromExpr[UngroupedView[?]]`, a non-key column projected out of the post-`groupBy` view Record. */
     given fromExprUngroupedView[V]: scala.quoted.FromExpr[UngroupedView[V]] with
         def unapply(x: Expr[UngroupedView[V]])(using q: Quotes): Option[UngroupedView[V]] =
             // `UngroupedView` is phantom in `V` at runtime.
@@ -55,7 +55,7 @@ object ColumnFromExpr:
             })
     end fromExprUngroupedView
 
-    /** `FromExpr[FrameBound]` — lifts all five `FrameBound` variants.
+    /** `FromExpr[FrameBound]`, lifts all five `FrameBound` variants.
       *
       * `FrameBound` is a sealed trait with case objects (`UnboundedPreceding`, `UnboundedFollowing`, `CurrentRow`) and case classes
       * (`Preceding(Term[Int])`, `Following(Term[Int])`). The `unapply` delegates to a freshly derived `FromExpr[FrameBound]` built at
@@ -68,7 +68,7 @@ object ColumnFromExpr:
             kyo.FromExpr.derived[FrameBound].unapply(x)
     end fromExprFrameBound
 
-    /** `FromExpr[WindowFrame]` — lifts `WindowFrame(kind, start, end)`.
+    /** `FromExpr[WindowFrame]`, lifts `WindowFrame(kind, start, end)`.
       *
       * Derives at macro-expansion time so that `fromExprFrameBound` (defined above) is in scope, ensuring `FrameBound`-typed fields lift
       * correctly. `kyo.SqlSchema.given` is needed because `Term[?]` subtypes carry `SqlSchema` fields.
@@ -79,7 +79,7 @@ object ColumnFromExpr:
             kyo.FromExpr.derived[WindowFrame].unapply(x)
     end fromExprWindowFrame
 
-    /** `FromExpr[WindowSpec]` — lifts `WindowSpec(partitionBy, orderBy, frame)`.
+    /** `FromExpr[WindowSpec]`, lifts `WindowSpec(partitionBy, orderBy, frame)`.
       *
       * `partitionBy: Chunk[Term[?]]` and `orderBy: Chunk[OrderSpec]` lift via the Chunk derivation; `frame: Maybe[WindowFrame]` lifts via
       * `fromExprWindowFrame` (above). Column projection trees inside the partition / order fields lift via `fromExprColumn`.
@@ -90,7 +90,7 @@ object ColumnFromExpr:
             kyo.FromExpr.derived[WindowSpec].unapply(x)
     end fromExprWindowSpec
 
-    /** `FromExpr[WindowSpecBuilder]` — lifts `new WindowSpecBuilder(partitions, orderings, frameOpt)` constructor applies.
+    /** `FromExpr[WindowSpecBuilder]`, lifts `new WindowSpecBuilder(partitions, orderings, frameOpt)` constructor applies.
       *
       * After the Phase 8 fix to `WindowSpecBuilder`'s builder methods (explicit `new WindowSpecBuilder(...)` constructors replacing
       * `.copy(...)` with `Chunk.from` / `:+`), the inlined call-site trees are plain constructor Apply nodes that `kyo.FromExpr.derived`'s
@@ -102,7 +102,7 @@ object ColumnFromExpr:
             kyo.FromExpr.derived[WindowSpecBuilder].unapply(x)
     end fromExprWindowSpecBuilder
 
-    /** `FromExpr[Cast[?, ?]]` — `Column.cast[B]` expands to `Cast(expr, summon[SqlSchema[B]].sqlTypeName)`; the `sqlTypeName` argument is a
+    /** `FromExpr[Cast[?, ?]]`, `Column.cast[B]` expands to `Cast(expr, summon[SqlSchema[B]].sqlTypeName)`; the `sqlTypeName` argument is a
       * method call on a `SqlSchema` given, NOT a string literal, so the stdlib `FromExpr[String]` cannot lift it. This given resolves the
       * `SqlSchema` reference and re-invokes `sqlTypeName` at macro-expansion time.
       */
@@ -125,7 +125,7 @@ object ColumnFromExpr:
         def column(x: Expr[?]): Option[Column[?, ?]] =
             val t = unwrap(kyo.internal.FromExprDerived.resolveBindings(x.asTerm))
             t match
-                // `Column[N, V](alias, name, sqlName)` — direct constructor (three-arg form after Phase 3).
+                // `Column[N, V](alias, name, sqlName)`, direct constructor (three-arg form after Phase 3).
                 case Apply(TypeApply(Select(qual, "apply"), _), List(aliasE, nameE, sqlNameE))
                     if qual.symbol.name == "Column" || qual.symbol.name == "Column$" =>
                     for
@@ -140,14 +140,14 @@ object ColumnFromExpr:
                         name    <- strLit(nameE)
                         sqlName <- strLit(sqlNameE)
                     yield Column[String & scala.Singleton, Any](alias, name.asInstanceOf[String & scala.Singleton], sqlName)
-                // `new Column[N, V](alias, name, sqlName)` — constructor form.
+                // `new Column[N, V](alias, name, sqlName)`, constructor form.
                 case Apply(TypeApply(Select(New(_), "<init>"), _), List(aliasE, nameE, sqlNameE)) =>
                     for
                         alias   <- strLit(aliasE)
                         name    <- strLit(nameE)
                         sqlName <- strLit(sqlNameE)
                     yield Column[String & scala.Singleton, Any](alias, name.asInstanceOf[String & scala.Singleton], sqlName)
-                // `<groupTerm>.kyo$SqlAst$GroupTerm$$inline$underlying` — the synthetic accessor emitted
+                // `<groupTerm>.kyo$SqlAst$GroupTerm$$inline$underlying`, the synthetic accessor emitted
                 // by `view.<name>.sum/avg/min/max/count`; the receiver is a GroupedColumn / UngroupedView
                 // projected out of the post-`groupBy` view. Unwrap it to its underlying `Column`.
                 case Select(recv, accessor) if accessor.endsWith("inline$underlying") || accessor == "underlying" =>
@@ -156,14 +156,14 @@ object ColumnFromExpr:
                         case UngroupedView(c) => c
                         case c: Column[?, ?]  => c
                     }
-                // `<record>.<alias>.<name>` projection — go through Record reconstruction so the stored
+                // `<record>.<alias>.<name>` projection, go through Record reconstruction so the stored
                 // `sqlName` field (which may differ from `name` when naming transforms are applied) is
                 // recovered correctly. Fall back to `Column(alias, name, name)` only when Record
                 // reconstruction fails (no transform applied, sqlName == name is safe).
                 //
                 // A single-key projection `<record>.<name>` arises from the INSERT-columns Record, which
                 // is flat (`buildRowColumns` produces `Record[name ~ Column]` directly, no alias wrapper)
-                // — its values ARE `Column`s, so the bottom Record is reconstructed and indexed by the
+                // , its values ARE `Column`s, so the bottom Record is reconstructed and indexed by the
                 // collected key to recover the `Column` value.
                 case other =>
                     projectionKeys(other) match
@@ -203,13 +203,13 @@ object ColumnFromExpr:
             for
                 inner    <- summon[scala.quoted.FromExpr[SqlAst.Term[?]]].unapply(exprE.asExprOf[SqlAst.Term[?]])
                 typeName <- sqlTypeNameOf(typeNameE)
-            // `Cast` is phantom in `A`; the lifted `inner` is a `Term[?]` — refine to `Term[Any]`.
+            // `Cast` is phantom in `A`; the lifted `inner` is a `Term[?]`, refine to `Term[Any]`.
             // Safe: SqlAst.Term is phantom in its type parameter; Term[?] and Term[Any] are the same class.
             yield Cast[Any, Any](MacroSupport.narrowPhantom[SqlAst.Term[Any]](inner), typeName)
             end for
         end buildCast
 
-        /** Resolves the `String` value of a `<schema>.sqlTypeName` term — `<schema>` is a stable `SqlSchema` given; the `sqlTypeName`
+        /** Resolves the `String` value of a `<schema>.sqlTypeName` term, `<schema>` is a stable `SqlSchema` given; the `sqlTypeName`
           * extension is re-invoked at macro-expansion time. Also accepts a direct string literal.
           */
         private def sqlTypeNameOf(t: Term): Option[String] =
@@ -231,7 +231,7 @@ object ColumnFromExpr:
         // --- Grouped view ---
 
         /** Reconstructs a `GroupedColumn` / `UngroupedView` projected out of the post-`groupBy` view Record. The view is FLAT
-          * (`buildGroupedView` unwraps the source's alias wrapper), so `view.<name>` is a single-key projection — the view `Record` must be
+          * (`buildGroupedView` unwraps the source's alias wrapper), so `view.<name>` is a single-key projection, the view `Record` must be
           * reconstructed to recover the wrapped value (and its source alias).
           */
         def groupTermValue(x: Expr[?]): Option[Any] =
@@ -242,7 +242,7 @@ object ColumnFromExpr:
           */
         private def projectedValue(t: Term): Option[Any] =
             unwrap(t) match
-                // `<groupTerm>.kyo$SqlAst$GroupTerm$$inline$underlying` — receiver is a GroupedColumn / UngroupedView.
+                // `<groupTerm>.kyo$SqlAst$GroupTerm$$inline$underlying`, receiver is a GroupedColumn / UngroupedView.
                 case Select(recv, accessor) if accessor.endsWith("inline$underlying") || accessor == "underlying" =>
                     projectedValue(recv).collect {
                         case GroupedColumn(c) => c
@@ -300,7 +300,7 @@ object ColumnFromExpr:
         // --- Generic utilities ---
 
         // `resolveBindings` has already substituted every `val` binding, so any `Inlined` / `Block`
-        // statement list is dead — strip the wrapper regardless of its (now-unused) bindings.
+        // statement list is dead, strip the wrapper regardless of its (now-unused) bindings.
         @tailrec
         private def unwrap(t: Term): Term =
             t match

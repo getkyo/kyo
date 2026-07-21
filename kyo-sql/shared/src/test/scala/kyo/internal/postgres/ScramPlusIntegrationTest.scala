@@ -22,11 +22,11 @@ import kyo.net.NetTlsConfig
   *     test class. Orphan reaping is handled by the sbt `Test / testOptions` setup task that removes containers labelled
   *     `kyo-sql-singleton` between test invocations.
   *   - SSL is enabled AFTER startup via `ALTER SYSTEM SET ssl = on` (and ssl_cert_file/ssl_key_file) followed by `pg_reload_conf()`. These
-  *     settings have context='sighup' in PG 16, so SIGHUP suffices — no restart needed (which would kill PID 1 in Docker).
+  *     settings have context='sighup' in PG 16, so SIGHUP suffices, no restart needed (which would kill PID 1 in Docker).
   *   - The default postgres:16-alpine pg_hba.conf already requires scram-sha-256 for host connections; over TLS, the server offers both
   *     SCRAM-SHA-256 and SCRAM-SHA-256-PLUS in the AuthenticationSASL message.
   *   - `awaitSslReady` probe confirms TLS is actually active before any leaf runs.
-  *   - Leaf 2 uses `ContainerPredef.Postgres` (no TLS needed — plaintext SCRAM-SHA-256).
+  *   - Leaf 2 uses `ContainerPredef.Postgres` (no TLS needed, plaintext SCRAM-SHA-256).
   */
 class ScramPlusIntegrationTest extends kyo.Test:
 
@@ -187,11 +187,11 @@ class ScramPlusIntegrationTest extends kyo.Test:
                             // ERRCODE_INVALID_PASSWORD (28P01). See PG src/backend/libpq/auth-scram.c.
                             assert(
                                 e.sqlState == "28000",
-                                s"Expected SQLSTATE 28000 (invalid_authorization_specification — PG raises this for SCRAM SASL failures) for MITM cert hash mismatch, got: ${e.sqlState} — ${e.message}"
+                                s"Expected SQLSTATE 28000 (invalid_authorization_specification, PG raises this for SCRAM SASL failures) for MITM cert hash mismatch, got: ${e.sqlState}, ${e.message}"
                             )
                         case Result.Success(_) =>
                             fail(
-                                "Expected authentication failure with wrong cert hash, but connection succeeded — SCRAM-PLUS channel binding check is broken!"
+                                "Expected authentication failure with wrong cert hash, but connection succeeded, SCRAM-PLUS channel binding check is broken!"
                             )
                         case Result.Failure(other) =>
                             fail(s"Expected SqlException.Server(28000) for wrong cert hash, got: $other")
@@ -260,7 +260,7 @@ class ScramPlusIntegrationTest extends kyo.Test:
         Scope.run {
             Async.timeout(60.seconds) {
                 // TLS PG offers both SCRAM-SHA-256 and SCRAM-SHA-256-PLUS.
-                // We connect with TLS but override cert hash to Absent — client picks non-PLUS.
+                // We connect with TLS but override cert hash to Absent, client picks non-PLUS.
                 // Server must accept non-PLUS even though PLUS is offered.
                 withPostgresTls { (host, port, user, password, db, tlsConfig) =>
                     val forceAbsent: Maybe[Maybe[Span[Byte]]] = Present(Absent)
@@ -357,7 +357,7 @@ class ScramPlusIntegrationTest extends kyo.Test:
                                         val v = new String(rows(0).column(0).get.toArray, StandardCharsets.UTF_8)
                                         assert(
                                             v == "99",
-                                            s"Follow-up SCRAM-PLUS connection failed — state leaked from failed auth attempt: $v"
+                                            s"Follow-up SCRAM-PLUS connection failed, state leaked from failed auth attempt: $v"
                                         )
                                     }
                                 }
@@ -436,8 +436,8 @@ object ScramPlusIntegrationTest:
       *   2. Start a postgres:16-alpine container with the cert directory bind-mounted at /etc/ssl-pg.
       *   3. Wait for awaitHealthy (the health check fires against the fully-started PG via psql).
       *   4. Copy certs into /tmp and chmod/chown them for the postgres user.
-      *   5. ALTER SYSTEM SET ssl/ssl_cert_file/ssl_key_file (separate psql -c per ALTER — they cannot share a transaction block).
-      *   6. SELECT pg_reload_conf() — sighup-context settings activate without restart.
+      *   5. ALTER SYSTEM SET ssl/ssl_cert_file/ssl_key_file (separate psql -c per ALTER, they cannot share a transaction block).
+      *   6. SELECT pg_reload_conf(), sighup-context settings activate without restart.
       *   7. Probe `awaitSslReady` until PG responds 'S' to SSLRequest.
       *
       * The container is left running for the JVM lifetime; orphan reaping is handled by the sbt setup task via the `kyo-sql-singleton`

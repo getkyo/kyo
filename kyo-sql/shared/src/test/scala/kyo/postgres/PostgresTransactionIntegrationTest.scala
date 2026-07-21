@@ -4,11 +4,11 @@ import kyo.*
 import kyo.internal.SqlSharedContainers
 import kyo.internal.SqlSharedContainers.Backend
 
-/** Container-gated integration tests for the PostgreSQL transaction surface — fills the integration coverage gap left in #514 by Phases 69
+/** Container-gated integration tests for the PostgreSQL transaction surface, fills the integration coverage gap left in #514 by Phases 69
   * (isolation level coverage), 70 (READ ONLY transactions), and 71 (savepoints / nested transactions).
   *
   * Each test wraps a fresh schema and asserts the transaction executes end-to-end with the requested isolation / read-only / nesting
-  * configuration. Gated on Docker availability via [[SqlSharedContainers]] — local runs without Docker abort at container init; CI is the
+  * configuration. Gated on Docker availability via [[SqlSharedContainers]], local runs without Docker abort at container init; CI is the
   * source of truth.
   */
 class PostgresTransactionIntegrationTest extends Test:
@@ -156,7 +156,7 @@ class PostgresTransactionIntegrationTest extends Test:
                             _ <- client.transaction {
                                 for
                                     _ <- client.executeRaw("INSERT INTO person VALUES (1, 'outer', 40)")
-                                    // Inner transaction fails — savepoint rolls back to the outer state, outer continues.
+                                    // Inner transaction fails, savepoint rolls back to the outer state, outer continues.
                                     innerAttempt <- Abort.run[SqlException](
                                         client.transaction {
                                             for
@@ -170,7 +170,7 @@ class PostgresTransactionIntegrationTest extends Test:
                             }
                             rows <- Sql.from[Person]("p").run
                         yield
-                            // After the savepoint rollback, only the outer INSERT (id=1) survives — the inner one (id=2) was undone.
+                            // After the savepoint rollback, only the outer INSERT (id=1) survives, the inner one (id=2) was undone.
                             assert(rows.exists(_.id == 1L), s"outer row should survive savepoint rollback, got $rows")
                             assert(!rows.exists(_.id == 2L), s"inner row should NOT survive, got $rows")
                     }

@@ -14,11 +14,11 @@ import kyo.internal.postgres.types.PostgresEncoder
 
 /** Unit tests for [[EncodingRegistry.register]] and [[EncodingRegistry.registerCustom]].
   *
-  * All tests are pure in-memory — no database container required.
+  * All tests are pure in-memory, no database container required.
   */
 class EncodingRegistryRegisterTest extends Test:
 
-    // Custom OID outside the standard range — avoids colliding with builtins.
+    // Custom OID outside the standard range, avoids colliding with builtins.
     private val CUSTOM_OID = 99001
 
     // A minimal custom encoder for String that uses String format.
@@ -98,7 +98,7 @@ class EncodingRegistryRegisterTest extends Test:
     "lookup falls back to builtin when no custom registration exists" in {
         val registry = EncodingRegistry.builtin.register(CUSTOM_OID, customPgEncoder, customPgDecoder)
 
-        // OID_BOOL = 16 is a builtin OID — must still be reachable via the builtin fallback.
+        // OID_BOOL = 16 is a builtin OID, must still be reachable via the builtin fallback.
         val boolEnc = registry.encoderByOid(PostgresEncoder.OID_BOOL, Format.Binary)
         boolEnc match
             case Present(_) => succeed

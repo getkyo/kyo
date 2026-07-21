@@ -28,7 +28,7 @@ private class MessageReaderTestLogSink extends Log.Unsafe:
     def captured: Chunk[(Log.Level, String)] = Chunk.from(entries.toArray(Array.empty[(Log.Level, String)]))
 end MessageReaderTestLogSink
 
-/** Unit tests for [[MessageReader]] — message decoding paths including error recovery.
+/** Unit tests for [[MessageReader]], message decoding paths including error recovery.
   *
   * Tests use controlled byte payloads delivered via in-process [[StubConnection]] to trigger specific code paths inside [[MessageReader]].
   */
@@ -49,7 +49,7 @@ class MessageReaderTest extends Test:
             0x00,
             0x00,
             0x00,
-            0x05,      // Int32(5) — length includes itself, body = 1 byte
+            0x05,      // Int32(5), length includes itself, body = 1 byte
             'I'.toByte // status: 'I' = idle
         ))
         val reader        = new MessageReader()
@@ -75,7 +75,7 @@ class MessageReaderTest extends Test:
             0x00,
             0x00,
             0x00,
-            0x08, // Int32(8) — length field (4 bytes) + body (4 bytes)
+            0x08, // Int32(8), length field (4 bytes) + body (4 bytes)
             0x00,
             0x00,
             0x00,

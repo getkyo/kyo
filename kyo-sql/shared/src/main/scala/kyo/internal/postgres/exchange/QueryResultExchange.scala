@@ -15,15 +15,15 @@ final case class QueryResult(
 /** Accumulates a single Postgres query result set from the wire.
   *
   * Reads:
-  *   - (Optional) [[RowDescription]] — column metadata; Absent for non-SELECT statements.
-  *   - 0..N [[DataRow]] messages — row data.
-  *   - [[CommandComplete]] or [[EmptyQueryResponse]] — marks end of result set.
+  *   - (Optional) [[RowDescription]], column metadata; Absent for non-SELECT statements.
+  *   - 0..N [[DataRow]] messages, row data.
+  *   - [[CommandComplete]] or [[EmptyQueryResponse]], marks end of result set.
   *
   * Mid-stream messages handled:
-  *   - [[ParameterStatus]] — updates the parameters map via callback.
-  *   - [[NoticeResponse]] — logged and discarded.
-  *   - [[NotificationResponse]] — enqueued to the notifications channel.
-  *   - [[ErrorResponse]] — converted to [[SqlException.Server]] and raised via [[Abort]].
+  *   - [[ParameterStatus]], updates the parameters map via callback.
+  *   - [[NoticeResponse]], logged and discarded.
+  *   - [[NotificationResponse]], enqueued to the notifications channel.
+  *   - [[ErrorResponse]], converted to [[SqlException.Server]] and raised via [[Abort]].
   *
   * Does NOT read the trailing [[ReadyForQuery]]; that is the caller's responsibility (via [[BarrierGuard]]).
   */

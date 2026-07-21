@@ -22,7 +22,7 @@ class ScramIntegrationTest extends kyo.Test:
             )
         }
 
-    "StartupExchange succeeds with SCRAM-SHA-256 server — connect completes without error".tagged("kyo.OwnContainer") in {
+    "StartupExchange succeeds with SCRAM-SHA-256 server, connect completes without error".tagged("kyo.OwnContainer") in {
         Scope.run {
             // Default postgres:16 uses scram-sha-256; no authMethod override needed.
             ContainerPredef.Postgres.initWith(ContainerPredef.Postgres.Config.default) { pg =>
@@ -59,7 +59,7 @@ class ScramIntegrationTest extends kyo.Test:
         }
     }
 
-    "StartupExchange SCRAM server signature verified — no error after successful SCRAM".tagged("kyo.OwnContainer") in {
+    "StartupExchange SCRAM server signature verified, no error after successful SCRAM".tagged("kyo.OwnContainer") in {
         Scope.run {
             ContainerPredef.Postgres.initWith(ContainerPredef.Postgres.Config.default) { pg =>
                 // If server signature verification fails, connect raises SqlException.Connection.
@@ -71,7 +71,7 @@ class ScramIntegrationTest extends kyo.Test:
         }
     }
 
-    "StartupExchange SCRAM populates ParameterStatus — server_version present after SCRAM connect".tagged("kyo.OwnContainer") in {
+    "StartupExchange SCRAM populates ParameterStatus, server_version present after SCRAM connect".tagged("kyo.OwnContainer") in {
         Scope.run {
             ContainerPredef.Postgres.initWith(ContainerPredef.Postgres.Config.default) { pg =>
                 initScramClient(pg).flatMap { client =>
@@ -101,7 +101,7 @@ class ScramIntegrationTest extends kyo.Test:
         }
     }
 
-    "StartupExchange trust auth still works after SCRAM addition — regression".tagged("kyo.OwnContainer") in {
+    "StartupExchange trust auth still works after SCRAM addition, regression".tagged("kyo.OwnContainer") in {
         Scope.run {
             // Verify cleartext (password) auth still works after adding SCRAM support.
             val regPredefConfig = ContainerPredef.Postgres.Config.default.password("regpw")
@@ -121,7 +121,7 @@ class ScramIntegrationTest extends kyo.Test:
         }
     }
 
-    "StartupExchange SCRAM stores BackendKeyData — processId > 0 after SCRAM connect".tagged("kyo.OwnContainer") in {
+    "StartupExchange SCRAM stores BackendKeyData, processId > 0 after SCRAM connect".tagged("kyo.OwnContainer") in {
         Scope.run {
             ContainerPredef.Postgres.initWith(ContainerPredef.Postgres.Config.default) { pg =>
                 initScramClient(pg).flatMap { client =>

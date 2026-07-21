@@ -109,7 +109,7 @@ class MysqlParamWriterTest extends Test:
         for v <- values do
             val param = singleParam(_.float(v))
             assert(param.mysqlType == MysqlEncoder.TYPE_FLOAT, s"mysqlType mismatch for $v: got 0x${param.mysqlType.toHexString}")
-            // Compare Span[Byte] only — NaN != NaN in IEEE 754, but bit patterns are deterministic.
+            // Compare Span[Byte] only, NaN != NaN in IEEE 754, but bit patterns are deterministic.
             assertBytesMatch(param.encoded, encode(v, MysqlEncoder.floatEncoder), s"float $v")
         end for
         succeed
@@ -295,7 +295,7 @@ class MysqlParamWriterTest extends Test:
     }
 
     "duration encoding raises Decode on day-count overflow" in {
-        // Duration with more than Int.MaxValue days — construct via ofSeconds.
+        // Duration with more than Int.MaxValue days, construct via ofSeconds.
         // Goes through MysqlParamWriter.duration() which catches ArithmeticException and wraps as SqlException.Decode.
         val hugeSeconds = (Int.MaxValue.toLong + 1L) * 86400L
         val value       = java.time.Duration.ofSeconds(hugeSeconds)

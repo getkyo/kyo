@@ -29,7 +29,7 @@ import kyo.internal.mysql.unmarshaller.ColumnDefinition41Unmarshaller
   * entry is evicted, [[MysqlConnection.drainPendingCloses]] sends `ComStmtClose` before the next request, releasing the server-side
   * statement.
   *
-  * Reference: MySQL Internals — Prepared Statements Protocol
+  * Reference: MySQL Internals, Prepared Statements Protocol
   */
 private[mysql] object ExtendedQueryExchange:
 
@@ -230,7 +230,7 @@ private[mysql] object ExtendedQueryExchange:
 
     /** Sends COM_STMT_EXECUTE and reads the binary result set.
       *
-      * Returns `(rows, affectedRows, lastInsertId)` — the two longs are populated from the OK packet for DML statements and left as `0` for
+      * Returns `(rows, affectedRows, lastInsertId)`, the two longs are populated from the OK packet for DML statements and left as `0` for
       * result-set responses.
       */
     private def executeStmt(
@@ -256,7 +256,7 @@ private[mysql] object ExtendedQueryExchange:
             channel.readRawPayload.flatMap { firstPayload =>
                 val firstByte = firstPayload(0) & 0xff
                 if firstByte == 0x00 || (firstByte == 0xfe && firstPayload.size >= 7) then
-                    // OkPacket (no result set — DML statement).
+                    // OkPacket (no result set, DML statement).
                     val reader = MysqlBufferReader(firstPayload.slice(1, firstPayload.size))
                     Abort.run[SqlException.Decode](channel.unmarshallers.okPacket.read(reader)).flatMap {
                         case Result.Success(ok) => (Chunk.empty[MysqlRow], ok.affectedRows, ok.lastInsertId)
@@ -329,7 +329,7 @@ private[mysql] object ExtendedQueryExchange:
                 // But 0x00 + len>=7 could be a binary row header. Check more carefully:
                 // Binary row: 0x00 | null-bitmap | values. The 0x00 is the packet header for rows.
                 // OK terminator: 0x00 | lenenc(affectedRows=0) | lenenc(lastInsertId=0) | uint16(statusFlags) | uint16(warnings)
-                // — minimum 7 bytes. So 0x00 + size>=7 can be EITHER a row or an OK. We need
+                // , minimum 7 bytes. So 0x00 + size>=7 can be EITHER a row or an OK. We need
                 // to check the CLIENT_DEPRECATE_EOF OK more carefully: it's the packet where first byte is
                 // 0xFE (not 0x00). So 0x00 here is always a binary row.
                 val unmarshaller = BinaryResultsetRowUnmarshaller(colTypes.size, colTypes)

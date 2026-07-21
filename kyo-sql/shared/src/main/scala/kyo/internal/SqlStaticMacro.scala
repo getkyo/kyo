@@ -41,7 +41,7 @@ private[kyo] object SqlStaticMacro:
     /** Walks the query expression and emits a positioned `report.error` for every sub-expression that prevented static folding. Returns the
       * number of errors emitted so the caller can decide whether to follow up with a generic message.
       *
-      * Currently identifies runtime `SqlNameResolver.tableName` / `columnName` calls — these come from the [[SqlMacros]] fallback path when
+      * Currently identifies runtime `SqlNameResolver.tableName` / `columnName` calls, these come from the [[SqlMacros]] fallback path when
       * a `SqlSchema[T]` is summoned but its construction isn't statically extractable (the schema is a plain `given` rather than
       * `inline given`). Each error names the schema's element type and suggests `inline given` plus the per-run-mode alternatives.
       */
@@ -115,7 +115,7 @@ private[kyo] object SqlStaticMacro:
     private def renderLifted(ast: SqlAst.Executable[?], posExpr: Expr[?])(using Quotes): Expr[SqlStatic.Rendered] =
         import quotes.reflect.*
 
-        // Render the lifted AST for both backends at compile time. SqlRender.render is a pure function —
+        // Render the lifted AST for both backends at compile time. SqlRender.render is a pure function,
         // safe to call during macro expansion.
         val pgRendered = kyo.internal.SqlRender.render(ast, SqlBackend.Postgres)
         val myRendered = kyo.internal.SqlRender.render(ast, SqlBackend.Mysql)
@@ -123,7 +123,7 @@ private[kyo] object SqlStaticMacro:
         // Defensive check: bind param count must agree across backends.
         if pgRendered.binds.size != myRendered.binds.size then
             report.errorAndAbort(
-                s"staticSql: backend divergence — " +
+                s"staticSql: backend divergence, " +
                     s"Postgres produced ${pgRendered.binds.size} binds, " +
                     s"MySQL produced ${myRendered.binds.size}",
                 posExpr.asTerm.pos

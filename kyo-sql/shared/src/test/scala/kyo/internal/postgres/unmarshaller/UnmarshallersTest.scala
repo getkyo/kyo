@@ -2,7 +2,7 @@ package kyo.internal.postgres.unmarshaller
 
 import kyo.Test
 
-/** Unit tests for [[Unmarshallers]] — verifies that [[Unmarshallers.default]] exposes every unmarshaller singleton at its correct field.
+/** Unit tests for [[Unmarshallers]], verifies that [[Unmarshallers.default]] exposes every unmarshaller singleton at its correct field.
   *
   * Guards against regressions in the explicit-construction path (e.g., removing default params changes which singleton is wired).
   */

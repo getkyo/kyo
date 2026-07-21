@@ -256,10 +256,10 @@ class PipelineIntegrationTest extends kyo.Test:
                         }
                     }.map { cancelResult =>
                         // Expect a Timeout failure (cancelled before 20s). isSuccess means the pipeline
-                        // somehow finished before 300ms — that is also fine (proves reusability still works).
+                        // somehow finished before 300ms, that is also fine (proves reusability still works).
                         assert(
                             cancelResult.isFailure,
-                            s"Expected timeout (cancellation MUST fire — pipeline is 20s, timeout is 300ms), got: $cancelResult"
+                            s"Expected timeout (cancellation MUST fire, pipeline is 20s, timeout is 300ms), got: $cancelResult"
                         )
                     }.andThen {
                         // Follow-up via the SAME pool (same SqlClient, same pool slot).
@@ -312,7 +312,7 @@ class PipelineIntegrationTest extends kyo.Test:
                             client.pipeline { p =>
                                 p.execute("INSERT INTO pip_mixed (id, val) VALUES (1, 'a')") // success
                                 p.execute("INSERT INTO pip_mixed (id, val) VALUES (2, 'b')") // success
-                                p.execute("INSERT INTO pip_mixed (id, val) VALUES (3, 'c')") // error — dup key
+                                p.execute("INSERT INTO pip_mixed (id, val) VALUES (3, 'c')") // error, dup key
                                 p.execute("INSERT INTO pip_mixed (id, val) VALUES (4, 'd')") // success
                                 p.execute("INSERT INTO pip_mixed (id, val) VALUES (5, 'e')") // success
                             }.map { results =>
@@ -357,7 +357,7 @@ class PipelineIntegrationTest extends kyo.Test:
                             assert(firstResults.size == 3, s"Expected 3 results from first pipeline, got ${firstResults.size}")
                             firstResults.foreach(r => assert(isSuccess(r), s"First pipeline result failed: $r"))
 
-                            // Second pipeline on a separate table — reuses the same prepared statements.
+                            // Second pipeline on a separate table, reuses the same prepared statements.
                             client.executeRaw("CREATE TABLE pip_prep2 (id INT PRIMARY KEY, val TEXT)").andThen {
                                 client.pipeline { p =>
                                     p.execute("INSERT INTO pip_prep2 (id, val) VALUES (10, 'a')")
@@ -386,8 +386,8 @@ class PipelineIntegrationTest extends kyo.Test:
     }
 
     // Verify that both SqlPipelineBuilder.execute overloads compile:
-    //   execute(sql)          — no-params form delegates to execute(sql, Chunk.empty)
-    //   execute(sql, params)  — explicit-params canonical form
+    //   execute(sql)         , no-params form delegates to execute(sql, Chunk.empty)
+    //   execute(sql, params) , explicit-params canonical form
     // No integration call is needed; the test exercises the API surface itself.
     "SqlPipelineBuilder execute(sql) and execute(sql, params) both compile" in {
         val builder = new SqlPipelineBuilder

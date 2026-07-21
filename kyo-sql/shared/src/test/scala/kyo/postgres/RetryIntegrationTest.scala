@@ -46,7 +46,7 @@ class RetryIntegrationTest extends kyo.Test:
       *
       * Why pause/unpause and not stop/start: Docker Desktop on macOS reassigns the host port when a container is restarted, so the
       * SqlClient's cached URL would point at a dead port forever. `pause` keeps the container/port mapping intact while suspending the
-      * postgres process — new connections succeed at the kernel TCP level but the server never responds to startup, exercising the same
+      * postgres process, new connections succeed at the kernel TCP level but the server never responds to startup, exercising the same
       * `acquireTimeout`-bounded `pgConnect` path that the production fix protects against.
       */
     "Container.pause then unpause mid-query: Retry bridges the downtime and produces >= 1 retry".tagged("kyo.OwnContainer") in {
@@ -72,7 +72,7 @@ class RetryIntegrationTest extends kyo.Test:
                         withPgClient(url, config) { client =>
                             // Warm up: confirms the server is up and connectable.
                             client.query("SELECT 1").flatMap { _ =>
-                                // Pause the container — new TCP connections will succeed at the kernel proxy
+                                // Pause the container, new TCP connections will succeed at the kernel proxy
                                 // but the server never responds to StartupExchange, so each connect attempt
                                 // hits acquireTimeout and aborts with SqlException.Connection.
                                 Abort.run[ContainerException](pg.container.pause).flatMap {
@@ -99,7 +99,7 @@ class RetryIntegrationTest extends kyo.Test:
                                         }
                                 }
                             }.andThen {
-                                // Probe connection reusability after the retry storm — confirms the pool
+                                // Probe connection reusability after the retry storm, confirms the pool
                                 // recovers fully and a fresh connect+query succeeds against the live server.
                                 client.query("SELECT 7").map { rows =>
                                     assert(rows.nonEmpty, "probe query SELECT 7 returned no rows")

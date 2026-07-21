@@ -5,7 +5,7 @@ import kyo.*
 /** Tests for Connection.upgradeToTls on the Scala Native transport.
   *
   * Uses a loopback TCP pair where both client and server run in-process. Certificates are generated via the `openssl` CLI (available on
-  * Linux/macOS CI runners and developer machines) — no containers or external infrastructure required.
+  * Linux/macOS CI runners and developer machines), no containers or external infrastructure required.
   *
   * The TLS upgrade flow mirrors Postgres SSLRequest: client sends a 1-byte upgrade signal ('U'), the server reads it and upgrades to TLS,
   * then the client upgrades too. After that, both sides communicate over encrypted TLS on the original socket.
@@ -164,7 +164,7 @@ class ConnectionUpgradeTlsTest extends Test:
         Scope.run {
             for
                 listener <- transport.listen("127.0.0.1", 0) { serverConn =>
-                    // Server does NOT upgrade — reads the signal byte, closes the connection,
+                    // Server does NOT upgrade, reads the signal byte, closes the connection,
                     // so the client's TLS handshake sees EOF and fails.
                     Abort.run[Closed] {
                         serverConn.inbound.take.andThen {
@@ -175,7 +175,7 @@ class ConnectionUpgradeTlsTest extends Test:
                 port = listener.port
                 result <- transport.connect("127.0.0.1", port).map { plainConn =>
                     plainConn.write(Span.from(Array[Byte]('U'))).andThen {
-                        // Client tries to upgrade against a non-TLS server — the TLS handshake must fail
+                        // Client tries to upgrade against a non-TLS server, the TLS handshake must fail
                         Abort.run[Closed] {
                             plainConn.upgradeToTls(clientTrustAll)
                         }.map { outcome =>
@@ -205,7 +205,7 @@ class ConnectionUpgradeTlsTest extends Test:
                 port = listener.port
                 result <- transport.connect("127.0.0.1", port).map { plainConn =>
                     plainConn.write(Span.from(Array[Byte]('U'))).andThen {
-                        // Cert has SAN=DNS:localhost; client checks hostname "localhost" — must succeed
+                        // Cert has SAN=DNS:localhost; client checks hostname "localhost", must succeed
                         Abort.run[Closed] {
                             plainConn.upgradeToTls(clientVerifyHostname).flatMap { tlsConn =>
                                 tlsConn.write(Span.from("verify-ok".getBytes)).andThen {
@@ -249,7 +249,7 @@ class ConnectionUpgradeTlsTest extends Test:
                 port = listener.port
                 result <- transport.connect("127.0.0.1", port).map { plainConn =>
                     plainConn.write(Span.from(Array[Byte]('U'))).andThen {
-                        // OpenSSL verifies hostname "localhost" against SAN=DNS:wrong-host.example.com — must fail
+                        // OpenSSL verifies hostname "localhost" against SAN=DNS:wrong-host.example.com, must fail
                         Abort.run[Closed] {
                             plainConn.upgradeToTls(clientCheckingHostname)
                         }.map { outcome =>

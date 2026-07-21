@@ -32,7 +32,7 @@ class TypeRegistryTest extends Test:
         assert(reg.lookup("missing") == Absent)
     }
 
-    "TypeRegistry is a plain Map — standard Map operations work" in {
+    "TypeRegistry is a plain Map, standard Map operations work" in {
         val reg = TypeRegistry(Map("int4" -> 23, "text" -> 25))
         assert(reg.keySet == Set("int4", "text"))
         assert(reg.values.toSet == Set(23, 25))

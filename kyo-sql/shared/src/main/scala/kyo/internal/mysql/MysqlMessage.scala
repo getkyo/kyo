@@ -10,7 +10,7 @@ import kyo.Span
 // Each message starts with a 1-byte command code (except HandshakeResponse41 and
 // SslRequest, which are sent during the connection phase with no command byte).
 //
-// Reference: MySQL Internals Manual — Connection Phase Packets + Text Protocol
+// Reference: MySQL Internals Manual, Connection Phase Packets + Text Protocol
 
 /** Base trait for all messages sent from the client to the server. */
 sealed trait FrontendMessage derives CanEqual
@@ -20,7 +20,7 @@ sealed trait FrontendMessage derives CanEqual
   * Wire (protocol 4.1): LE uint32(capabilities) | LE uint32(maxPacketSize) | uint8(charset) | filler[23]
   *   | NUL-string(username) | lenenc-bytes(authResponse) | NUL-string(database)? | NUL-string(authPlugin)?
   *
-  * Reference: MySQL Internals — Protocol::HandshakeResponse41
+  * Reference: MySQL Internals, Protocol::HandshakeResponse41
   *
   * @param capabilities
   *   combined capability flags (see [[Capabilities]])
@@ -47,13 +47,13 @@ final case class HandshakeResponse41(
     authPlugin: Maybe[String]
 ) extends FrontendMessage
 
-/** SSL/TLS upgrade request — a short HandshakeResponse41 without auth fields.
+/** SSL/TLS upgrade request, a short HandshakeResponse41 without auth fields.
   *
   * Wire: LE uint32(capabilities) | LE uint32(maxPacketSize) | uint8(charset) | filler[23]
   *
   * After this is sent the client wraps the socket in TLS and then sends a full [[HandshakeResponse41]].
   *
-  * Reference: MySQL Internals — Protocol::SSLRequest
+  * Reference: MySQL Internals, Protocol::SSLRequest
   *
   * @param capabilities
   *   capability flags (must include CLIENT_SSL)
@@ -68,25 +68,25 @@ final case class SslRequest(
     charset: Int
 ) extends FrontendMessage
 
-/** Auth-switch response — raw bytes sent by the client during an auth plugin switch round.
+/** Auth-switch response, raw bytes sent by the client during an auth plugin switch round.
   *
   * Wire: raw bytes (the auth plugin response)
   *
-  * Reference: MySQL Internals — Protocol::AuthSwitchResponse
+  * Reference: MySQL Internals, Protocol::AuthSwitchResponse
   *
   * @param data
   *   the plugin response bytes
   */
 final case class AuthSwitchResponse(data: Span[Byte]) extends FrontendMessage
 
-/** Auth-more-data response (client side) — raw bytes sent during caching_sha2_password full-auth.
+/** Auth-more-data response (client side), raw bytes sent during caching_sha2_password full-auth.
   *
   * Used when the server sends AuthMoreData with status 0x04 (full auth required), indicating the client should send its password RSA-OAEP
   * encrypted (or plaintext over TLS).
   *
   * Wire: raw bytes (encrypted or plaintext password)
   *
-  * Reference: MySQL Internals — caching_sha2_password Authentication
+  * Reference: MySQL Internals, caching_sha2_password Authentication
   *
   * @param data
   *   the auth continuation bytes
@@ -97,7 +97,7 @@ final case class AuthMoreDataResponse(data: Span[Byte]) extends FrontendMessage
   *
   * Wire: 0x03 | UTF-8 SQL bytes
   *
-  * Reference: MySQL Internals — COM_QUERY
+  * Reference: MySQL Internals, COM_QUERY
   *
   * @param sql
   *   the SQL text to execute
@@ -108,7 +108,7 @@ final case class ComQuery(sql: String) extends FrontendMessage
   *
   * Wire: 0x16 | UTF-8 SQL bytes
   *
-  * Reference: MySQL Internals — COM_STMT_PREPARE
+  * Reference: MySQL Internals, COM_STMT_PREPARE
   *
   * @param sql
   *   the parameterized SQL text (using `?` placeholders)
@@ -122,7 +122,7 @@ final case class ComStmtPrepare(sql: String) extends FrontendMessage
   *         | [uint16(paramType) uint8(unsigned)]* (when newParamsBound=1)
   *         | param-values*
   *
-  * Reference: MySQL Internals — COM_STMT_EXECUTE
+  * Reference: MySQL Internals, COM_STMT_EXECUTE
   *
   * @param stmtId
   *   the statement ID returned by [[StmtPrepareOk]]
@@ -149,7 +149,7 @@ final case class ComStmtExecute(
   *
   * No response is expected.
   *
-  * Reference: MySQL Internals — COM_STMT_CLOSE
+  * Reference: MySQL Internals, COM_STMT_CLOSE
   *
   * @param stmtId
   *   the statement ID to close
@@ -162,7 +162,7 @@ final case class ComStmtClose(stmtId: Int) extends FrontendMessage
   *
   * Server responds with OK.
   *
-  * Reference: MySQL Internals — COM_STMT_RESET
+  * Reference: MySQL Internals, COM_STMT_RESET
   *
   * @param stmtId
   *   the statement ID to reset
@@ -175,7 +175,7 @@ final case class ComStmtReset(stmtId: Int) extends FrontendMessage
   *
   * Server responds with OK.
   *
-  * Reference: MySQL Internals — COM_RESET_CONNECTION
+  * Reference: MySQL Internals, COM_RESET_CONNECTION
   */
 case object ComResetConnection extends FrontendMessage
 
@@ -185,7 +185,7 @@ case object ComResetConnection extends FrontendMessage
   *
   * Server responds with OK.
   *
-  * Reference: MySQL Internals — COM_PING
+  * Reference: MySQL Internals, COM_PING
   */
 case object ComPing extends FrontendMessage
 
@@ -195,7 +195,7 @@ case object ComPing extends FrontendMessage
   *
   * No response is expected; the server closes the TCP connection.
   *
-  * Reference: MySQL Internals — COM_QUIT
+  * Reference: MySQL Internals, COM_QUIT
   */
 case object ComQuit extends FrontendMessage
 
@@ -212,7 +212,7 @@ case object ComQuit extends FrontendMessage
 // When CLIENT_DEPRECATE_EOF is negotiated (kyo-sql default), EOF packets are replaced
 // by OK packets everywhere (first byte 0x00 or 0xFE with len>=7).
 //
-// Reference: MySQL Internals Manual — Generic Response Packets + Result Set Packets
+// Reference: MySQL Internals Manual, Generic Response Packets + Result Set Packets
 
 /** Base trait for all messages sent from the server to the client. */
 sealed trait BackendMessage derives CanEqual
@@ -228,7 +228,7 @@ sealed trait BackendMessage derives CanEqual
   *
   * The full 4-byte capability flags are assembled as: capFlagsLow | (capFlagsHigh << 16)
   *
-  * Reference: MySQL Internals — Protocol::Handshake
+  * Reference: MySQL Internals, Protocol::Handshake
   *
   * @param protocolVersion
   *   always 10 for MySQL 8.x
@@ -265,7 +265,7 @@ final case class HandshakeV10(
   * Wire: 0x00 | lenenc-int(affectedRows) | lenenc-int(lastInsertId) | LE uint16(statusFlags)
   *         | LE uint16(warnings) | string<EOF>(info)?
   *
-  * Reference: MySQL Internals — Protocol::OK_Packet
+  * Reference: MySQL Internals, Protocol::OK_Packet
   *
   * @param affectedRows
   *   number of rows affected by the command
@@ -295,7 +295,7 @@ final case class OkPacket(
   *
   * Wire: 0xFF | LE uint16(errorCode) | '#' | bytes[5](sqlState) | string<EOF>(errorMessage)
   *
-  * Reference: MySQL Internals — Protocol::ERR_Packet
+  * Reference: MySQL Internals, Protocol::ERR_Packet
   *
   * @param errorCode
   *   MySQL error code (e.g. 1045 = ER_ACCESS_DENIED_ERROR)
@@ -319,7 +319,7 @@ final case class ErrPacket(
   *
   * Wire: 0xFE | LE uint16(warnings) | LE uint16(statusFlags)
   *
-  * Reference: MySQL Internals — Protocol::EOF_Packet
+  * Reference: MySQL Internals, Protocol::EOF_Packet
   *
   * @param warnings
   *   number of warnings
@@ -328,7 +328,7 @@ final case class ErrPacket(
   */
 final case class EofPacket(warnings: Short, statusFlags: Short) extends BackendMessage
 
-/** Auth-switch request from the server — switch to a different auth plugin.
+/** Auth-switch request from the server, switch to a different auth plugin.
   *
   * First byte 0xFE in an auth context, followed by a NUL-terminated plugin name and raw auth data.
   *
@@ -336,7 +336,7 @@ final case class EofPacket(warnings: Short, statusFlags: Short) extends BackendM
   *
   * Wire: 0xFE | NUL-string(pluginName) | bytes<EOF>(pluginData)
   *
-  * Reference: MySQL Internals — Protocol::AuthSwitchRequest
+  * Reference: MySQL Internals, Protocol::AuthSwitchRequest
   *
   * @param pluginName
   *   the requested plugin (e.g. "caching_sha2_password")
@@ -355,7 +355,7 @@ final case class AuthSwitchRequest(pluginName: String, pluginData: Span[Byte]) e
   *
   * Wire: 0x01 | bytes<EOF>(data)
   *
-  * Reference: MySQL Internals — caching_sha2_password Authentication
+  * Reference: MySQL Internals, caching_sha2_password Authentication
   *
   * @param data
   *   the auth continuation bytes from the server
@@ -371,7 +371,7 @@ final case class AuthMoreData(data: Span[Byte]) extends BackendMessage
   *   | LE uint16(charset) | LE uint32(columnLength) | uint8(columnType) | LE uint16(flags)
   *   | uint8(decimals) | 0x00 0x00 (filler)
   *
-  * Reference: MySQL Internals — Protocol::ColumnDefinition41
+  * Reference: MySQL Internals, Protocol::ColumnDefinition41
   *
   * @param catalog
   *   catalog name (always "def" in MySQL 8.x)
@@ -416,7 +416,7 @@ final case class ColumnDefinition41(
   *
   * Each column value is either a length-encoded string (even for numeric types, which are ASCII-rendered) or 0xFB for NULL.
   *
-  * Reference: MySQL Internals — Text Resultset Row
+  * Reference: MySQL Internals, Text Resultset Row
   *
   * @param values
   *   one entry per column; [[Maybe.Absent]] represents SQL NULL (0xFB marker)
@@ -430,7 +430,7 @@ final case class ResultsetRow(values: Chunk[Maybe[Span[Byte]]]) extends BackendM
   * The null-bitmap has a 2-bit offset: bit position for column N is bit (N+2) of the bitmap. The bitmap is followed by the binary-encoded
   * column values for non-null columns in column order.
   *
-  * Reference: MySQL Internals — Binary Resultset Row
+  * Reference: MySQL Internals, Binary Resultset Row
   *
   * @param nullBitmap
   *   the raw null-bitmap bytes (2-bit offset already accounted for; caller checks bit (N+2))
@@ -450,7 +450,7 @@ final case class BinaryResultsetRow(
   * After this packet, the server sends `numParams` ColumnDefinition41 packets (if numParams > 0), then an EOF/OK, then `numColumns`
   * ColumnDefinition41 packets (if numColumns > 0), then another EOF/OK.
   *
-  * Reference: MySQL Internals — COM_STMT_PREPARE_OK
+  * Reference: MySQL Internals, COM_STMT_PREPARE_OK
   *
   * @param stmtId
   *   the server-assigned statement ID

@@ -14,14 +14,14 @@ import kyo.net.NetTlsConfig
   * SslRequest advertises a different (smaller) capability set, MySQL's state machine is misconfigured and authentication fails with error
   * 1251 ("Client does not support authentication protocol requested by server").
   *
-  * Protocol sequence (MySQL Internals — Connection Phase / SSL):
-  *   1. Read HandshakeV10 from server (done by caller — passed in via `serverCaps`).
-  *   2. Pre-compute full client capabilities (caller responsibility) — same value used here and in HandshakeResponse41.
+  * Protocol sequence (MySQL Internals, Connection Phase / SSL):
+  *   1. Read HandshakeV10 from server (done by caller, passed in via `serverCaps`).
+  *   2. Pre-compute full client capabilities (caller responsibility), same value used here and in HandshakeResponse41.
   *   3. Send [[SslRequest]] carrying those capabilities at seqId=1 (right after the server's HandshakeV10 at seqId=0).
-  *   4. Call [[kyo.net.Connection.upgradeToTls]] on the underlying socket — no additional bytes are exchanged; TLS handshake follows.
+  *   4. Call [[kyo.net.Connection.upgradeToTls]] on the underlying socket, no additional bytes are exchanged; TLS handshake follows.
   *   5. Return a new [[MysqlChannel]] wrapping the TLS connection, with seqId=2 ready for HandshakeResponse41.
   *
-  * Reference: MySQL Internals — Protocol::SSLRequest
+  * Reference: MySQL Internals, Protocol::SSLRequest
   */
 private[mysql] object InitTlsExchange:
 
@@ -40,9 +40,9 @@ private[mysql] object InitTlsExchange:
       *   before the TLS handshake. If SslRequest omits flags like CLIENT_PLUGIN_AUTH that HandshakeResponse41 later includes, MySQL raises
       *   error 1251 ("Client does not support authentication protocol requested by server").
       * @param host
-      *   server hostname — for error messages
+      *   server hostname, for error messages
       * @param port
-      *   server port — for error messages
+      *   server port, for error messages
       * @param tls
       *   the [[NetTlsConfig]] to use for the TLS handshake
       * @return
@@ -70,7 +70,7 @@ private[mysql] object InitTlsExchange:
                 maxPacket = MaxPacketSize,
                 charset = Charset
             )
-            // Send SslRequest using the existing channel (seqId=1 — after the server's HandshakeV10 seqId=0).
+            // Send SslRequest using the existing channel (seqId=1, after the server's HandshakeV10 seqId=0).
             channel.send(sslRequest)(using channel.marshallers.sslRequest).flatMap { _ =>
                 // Inject the connect host into sniHostname when the caller left it empty so that JDK's
                 // hostname verifier and JS's Node TLS have a reference identity to check the server

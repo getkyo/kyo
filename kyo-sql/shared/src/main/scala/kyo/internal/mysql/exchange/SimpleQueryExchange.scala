@@ -8,9 +8,9 @@ import kyo.internal.mysql.*
   *
   * The MySQL text protocol response to COM_QUERY is:
   *   - First byte 0x00: [[OkPacket]] (no result set; returns affectedRows + lastInsertId)
-  *   - First byte 0xFE + len >= 7: [[OkPacket]] (CLIENT_DEPRECATE_EOF form — no result set)
+  *   - First byte 0xFE + len >= 7: [[OkPacket]] (CLIENT_DEPRECATE_EOF form, no result set)
   *   - First byte 0xFF: [[ErrPacket]] (server error)
-  *   - First byte 0xFB: LOCAL INFILE request — routed to [[LocalInfileExchange]] via [[runLocalInfile]]
+  *   - First byte 0xFB: LOCAL INFILE request, routed to [[LocalInfileExchange]] via [[runLocalInfile]]
   *   - Otherwise: lenenc-int column count, then result set (N column defs + rows + terminator)
   *
   * When CLIENT_DEPRECATE_EOF is negotiated (the kyo-sql default), the server may send an OK packet with first byte 0xFE when the payload
@@ -19,14 +19,14 @@ import kyo.internal.mysql.*
   *
   * The sequence ID is reset to 0 before sending, as each COM_QUERY is a new command boundary.
   *
-  * Reference: MySQL Internals — Text Protocol / COM_QUERY, Generic Response Packets
+  * Reference: MySQL Internals, Text Protocol / COM_QUERY, Generic Response Packets
   */
 private[mysql] object SimpleQueryExchange:
 
     /** Executes a text-protocol query and returns all rows.
       *
       * @return
-      *   `(rows, affectedRows)` — rows is empty if the query produced no result set; affectedRows is 0 for SELECT statements
+      *   `(rows, affectedRows)`, rows is empty if the query produced no result set; affectedRows is 0 for SELECT statements
       */
     def run(
         channel: MysqlChannel,
@@ -69,7 +69,7 @@ private[mysql] object SimpleQueryExchange:
                             Abort.fail(SqlException.Connection(s"ERR decode panic: ${t.getMessage}", summon[Frame]))
                     }
                 else if firstByte == 0xfb then
-                    // LOCAL INFILE request received for a regular query — use loadLocalInfile API instead.
+                    // LOCAL INFILE request received for a regular query, use loadLocalInfile API instead.
                     Abort.fail(SqlException.Request(
                         "Server sent a LOCAL INFILE request. Use SqlClient.loadLocalInfile or MysqlConnection.loadLocalInfile instead of a plain query.",
                         Present(sql),
@@ -106,7 +106,7 @@ private[mysql] object SimpleQueryExchange:
       * it, the server rejects LOAD DATA LOCAL INFILE outright rather than sending the 0xFB request.
       *
       * @param sql
-      *   a `LOAD DATA LOCAL INFILE 'filename' INTO TABLE ...` statement; the filename is arbitrary — the server echoes it back in the
+      *   a `LOAD DATA LOCAL INFILE 'filename' INTO TABLE ...` statement; the filename is arbitrary, the server echoes it back in the
       *   LOCAL_INFILE_REQUEST but kyo-sql ignores it and uploads `data` unconditionally.
       * @param data
       *   the byte stream to upload; caller supplies this (in-memory, [[Path.readBytes]], etc.)

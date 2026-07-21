@@ -62,12 +62,12 @@ final class PostgresRowReader(row: SqlRow)(using Frame) extends SqlReader(summon
         column.getOrElse(throw SqlException.Decode(s"column ${idx - 1} is NULL", Absent, frame))
     end nextBytes
 
-    // --- Nil check — peek without advancing ---
+    // --- Nil check, peek without advancing ---
 
     override def isNil(): Boolean =
         pgArrayReaderOrNull match
             case null => ()
-            case _    => return false // inside array — element nil check deferred
+            case _    => return false // inside array, element nil check deferred
         jsonSubReaderOrNull match
             case null => row.column(idx).isEmpty
             case sub  => sub.isNil()
@@ -302,7 +302,7 @@ final class PostgresRowReader(row: SqlRow)(using Frame) extends SqlReader(summon
     override def lastFieldName(): String =
         if idx < row.fields.size then row.fields(idx).name else s"<column $idx>"
 
-    // --- Structural reads — array, map, and captureValue ---
+    // --- Structural reads, array, map, and captureValue ---
 
     /** Reads the current column as a PostgreSQL binary array and returns its element count.
       *

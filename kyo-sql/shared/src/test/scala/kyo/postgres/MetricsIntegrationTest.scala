@@ -11,7 +11,7 @@ import kyo.internal.SqlSharedContainers
   *
   * Test discipline:
   *   - Wrapped in `Async.timeout(60.seconds)`.
-  *   - No wall-clock assertions — only counter/histogram count comparisons.
+  *   - No wall-clock assertions, only counter/histogram count comparisons.
   *   - Connection reusability probed after the main assertion before container teardown.
   */
 class MetricsIntegrationTest extends kyo.Test:

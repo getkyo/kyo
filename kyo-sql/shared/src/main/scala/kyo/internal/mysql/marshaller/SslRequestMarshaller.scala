@@ -11,7 +11,7 @@ import kyo.internal.mysql.SslRequest
   * This is a short form of HandshakeResponse41 sent before TLS is established. After the server accepts this, the client wraps the socket
   * in TLS and then sends a full HandshakeResponse41.
   *
-  * Reference: MySQL Internals — Protocol::SSLRequest
+  * Reference: MySQL Internals, Protocol::SSLRequest
   */
 object SslRequestMarshaller extends Marshaller[SslRequest]:
 

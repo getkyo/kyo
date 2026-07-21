@@ -5,7 +5,7 @@ import kyo.SqlException
 import kyo.Test
 import kyo.internal.mysql.MysqlBufferReader
 
-/** Unit tests for [[OkPacketUnmarshaller]] — the MySQL OK-packet wire decoder.
+/** Unit tests for [[OkPacketUnmarshaller]], the MySQL OK-packet wire decoder.
   *
   * This file lives under `kyo/internal/` because it directly exercises the unmarshaller and buffer-reader internals: it constructs a
   * `MysqlBufferReader` from a hand-written fixture byte sequence and asserts the decoded [[OkPacket]] field values. The public `SqlClient`

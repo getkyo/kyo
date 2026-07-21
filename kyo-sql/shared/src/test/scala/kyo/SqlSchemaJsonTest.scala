@@ -10,8 +10,8 @@ import kyo.internal.postgres.types.PostgresEncoder
   * [[kyo.SqlSchema]][String] mapping (which targets PG `text` / MySQL `VARCHAR`).
   *
   * Codec-layer JSON tests live in:
-  *   - `kyo/internal/postgres/types/PostgresEncoderJsonTest.scala` — PG JSONB binary + JSON text encoders/decoders
-  *   - `kyo/internal/mysql/types/MysqlEncoderJsonTest.scala` — MySQL JSON encoder + decoder
+  *   - `kyo/internal/postgres/types/PostgresEncoderJsonTest.scala`, PG JSONB binary + JSON text encoders/decoders
+  *   - `kyo/internal/mysql/types/MysqlEncoderJsonTest.scala`, MySQL JSON encoder + decoder
   */
 class SqlSchemaJsonTest extends Test:
 

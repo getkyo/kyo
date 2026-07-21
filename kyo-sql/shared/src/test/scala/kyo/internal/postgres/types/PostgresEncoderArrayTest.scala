@@ -99,7 +99,7 @@ class PostgresEncoderArrayTest extends kyo.Test:
     // ── decode raises Decode on truncated bytes ──────────────────────────────
 
     "array decode raises SqlException.Decode on truncated bytes" in {
-        // Supply only 4 bytes — far too short for the 12-byte minimum header. The decoder must surface
+        // Supply only 4 bytes, far too short for the 12-byte minimum header. The decoder must surface
         // the truncation as a typed `SqlException.Decode`, NOT as a NullPointerException / ArrayIndex
         // / similar reflection-layer panic. Per Phase 16 audit W-1, the previous assertion
         // (`result.isFailure || result.isPanic`) passed on any throwable and did not discriminate.

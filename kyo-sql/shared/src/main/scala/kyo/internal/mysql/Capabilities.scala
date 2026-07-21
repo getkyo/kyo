@@ -5,9 +5,9 @@ package kyo.internal.mysql
   * These bit flags are exchanged in the HandshakeV10 / HandshakeResponse41 packets. The server advertises what it supports; the client
   * picks a subset and echoes it back. The intersection governs the rest of the session.
   *
-  * Reference: MySQL Internals Manual — Capability Flags (§14.1.3.1)
+  * Reference: MySQL Internals Manual, Capability Flags (§14.1.3.1)
   *
-  * Note: [[CLIENT_DEPRECATE_EOF]] is the modern default — when negotiated, EOF packets are replaced by OK packets everywhere, eliminating
+  * Note: [[CLIENT_DEPRECATE_EOF]] is the modern default, when negotiated, EOF packets are replaced by OK packets everywhere, eliminating
   * the 0xFE ambiguity for payloads >= 9 bytes. kyo-sql always negotiates this flag.
   */
 object Capabilities:

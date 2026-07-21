@@ -220,13 +220,13 @@ private[kyo] object RsaOaep:
         em
     end emeOaepEncode
 
-    /** OS2IP — octet string to non-negative integer (big-endian unsigned). */
+    /** OS2IP, octet string to non-negative integer (big-endian unsigned). */
     private def os2ip(bytes: Array[Byte]): BigInt = BigInt(1, bytes)
 
     /** RSA encryption primitive: c = m^e mod n. */
     private def rsaep(key: RsaPublicKey, m: BigInt): BigInt = m.modPow(key.exponent, key.modulus)
 
-    /** I2OSP — integer to octet string of exactly `xLen` bytes (big-endian, zero-padded on the left). */
+    /** I2OSP, integer to octet string of exactly `xLen` bytes (big-endian, zero-padded on the left). */
     private def i2osp(x: BigInt, xLen: Int): Array[Byte] =
         val raw      = x.toByteArray // signed two's-complement, may have leading 0x00
         val stripped = if raw.length > 0 && raw(0) == 0 then java.util.Arrays.copyOfRange(raw, 1, raw.length) else raw

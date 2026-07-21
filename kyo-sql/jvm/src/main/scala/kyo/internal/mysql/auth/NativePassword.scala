@@ -10,7 +10,7 @@ import kyo.Span
   * Note: SHA-1 is used here solely because the MySQL wire protocol specifies it for mysql_native_password. This is NOT a recommendation to
   * use SHA-1 for new password hashing schemes.
   *
-  * Reference: MySQL Internals Manual — mysql_native_password Authentication
+  * Reference: MySQL Internals Manual, mysql_native_password Authentication
   */
 object NativePassword:
 
@@ -48,7 +48,7 @@ object NativePassword:
         end if
     end computeResponse
 
-    /** Computes SHA-1 of the given bytes. JDK MessageDigest is allowed for crypto primitives — see STEERING.md.
+    /** Computes SHA-1 of the given bytes. JDK MessageDigest is allowed for crypto primitives, see STEERING.md.
       */
     private def sha1(input: Array[Byte]): Array[Byte] =
         val md = MessageDigest.getInstance("SHA-1")

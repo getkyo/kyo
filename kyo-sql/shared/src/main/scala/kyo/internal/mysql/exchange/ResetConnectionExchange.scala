@@ -10,7 +10,7 @@ import kyo.internal.mysql.*
   * advisory locks, last-insert-id) without re-running the authentication handshake. It is the cheapest way to return a connection to a
   * neutral state after use.
   *
-  * Reference: MySQL Internals — `COM_RESET_CONNECTION`
+  * Reference: MySQL Internals, `COM_RESET_CONNECTION`
   */
 private[mysql] object ResetConnectionExchange:
 

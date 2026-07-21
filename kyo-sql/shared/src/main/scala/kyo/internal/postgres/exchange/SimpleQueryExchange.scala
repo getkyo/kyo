@@ -11,7 +11,7 @@ import kyo.internal.postgres.*
   *   1. Send [[Query]] message containing the SQL text.
   *   2. Delegate to [[QueryResultExchange]] for each result set (multi-statement SQL produces one result set per statement).
   *   3. Accumulate all rows across all result sets.
-  *   4. Read [[ReadyForQuery]] — via [[BarrierGuard]] in the caller.
+  *   4. Read [[ReadyForQuery]], via [[BarrierGuard]] in the caller.
   *
   * The simple-query protocol is used exclusively for `executeRaw` (multi-statement scripts) and for the initial health-check query. Normal
   * `query`/`execute` calls use the Extended Protocol.
@@ -52,7 +52,7 @@ object SimpleQueryExchange:
                 (rows, affected)
 
             case RowDescription(fields) =>
-                // Start of a SELECT-like result set — collect rows then continue.
+                // Start of a SELECT-like result set, collect rows then continue.
                 collectDataRows(channel, sql, pid, fields, rows, affected, onParameterStatus, onNotification)
 
             case CommandComplete(tag) =>
@@ -76,7 +76,7 @@ object SimpleQueryExchange:
                 collectAllResults(channel, sql, pid, rows, affected, onParameterStatus, onNotification)
 
             case ErrorResponse(fields) =>
-                // Drain to ReadyForQuery before raising — the server always sends RFQ after an error.
+                // Drain to ReadyForQuery before raising, the server always sends RFQ after an error.
                 drainToReadyForQuery(channel).andThen(Abort.fail(QueryResultExchange.mkServerError(fields, Present(sql), 0, Present(pid))))
 
             case other =>
@@ -127,7 +127,7 @@ object SimpleQueryExchange:
                 collectDataRows(channel, sql, pid, fields, acc, affected, onParameterStatus, onNotification)
 
             case ErrorResponse(fields) =>
-                // Drain to ReadyForQuery before raising — the server always sends RFQ after an error.
+                // Drain to ReadyForQuery before raising, the server always sends RFQ after an error.
                 drainToReadyForQuery(channel).andThen(Abort.fail(QueryResultExchange.mkServerError(fields, Present(sql), 0, Present(pid))))
 
             case other =>

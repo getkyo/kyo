@@ -74,7 +74,7 @@ private[kyo] object CancelExchange:
         val buf = new PostgresBufferWriter
         CancelRequestMarshaller.write(CancelRequest(processId, secretKey), buf)
         Abort.run[Closed](conn.outbound.safe.put(buf.toSpan)).flatMap {
-            case Result.Success(_) | Result.Failure(_) => () // Failure = server closed — acceptable for cancel
+            case Result.Success(_) | Result.Failure(_) => () // Failure = server closed, acceptable for cancel
             case Result.Panic(t) =>
                 Log.error(s"[kyo-sql] CancelExchange: write panic: ${t.getMessage}").andThen(
                     Abort.fail(SqlException.Connection(s"Cancel write panic: ${t.getMessage}", summon[Frame]))

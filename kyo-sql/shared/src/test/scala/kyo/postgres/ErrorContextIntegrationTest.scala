@@ -69,7 +69,7 @@ class ErrorContextIntegrationTest extends kyo.Test:
                                     e.paramCount == 0,
                                     s"Expected paramCount == 0 for simple query, got: ${e.paramCount}"
                                 )
-                                // connectionId should be Present — PG always sends BackendKeyData with processId
+                                // connectionId should be Present, PG always sends BackendKeyData with processId
                                 assert(
                                     e.connectionId.isDefined,
                                     s"Expected connectionId to be Present, got: ${e.connectionId}"
@@ -80,7 +80,7 @@ class ErrorContextIntegrationTest extends kyo.Test:
                                     fileName.contains("ErrorContextIntegrationTest"),
                                     s"Expected frame to contain 'ErrorContextIntegrationTest', got: $fileName"
                                 )
-                                // Connection reusability probe — run a trivial query on the same client.
+                                // Connection reusability probe, run a trivial query on the same client.
                                 client.query("SELECT 1").map { rows =>
                                     assert(rows.nonEmpty, "Probe query after error assertion returned no rows")
                                 }

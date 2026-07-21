@@ -11,13 +11,13 @@ import kyo.internal.postgres.PostgresBufferReader
 /** Wire-format unit test for [[AuthenticationUnmarshaller]].
   *
   * Verifies that the unmarshaller correctly decodes the AuthenticationOk variant from a 4-byte body (Int32(0)). The reader receives the
-  * message body only — the type byte ('R') and 4-byte length field have already been consumed by the protocol dispatcher.
+  * message body only, the type byte ('R') and 4-byte length field have already been consumed by the protocol dispatcher.
   */
 class AuthenticationUnmarshallerTest extends kyo.Test:
 
-    "PostgresChannel receive decodes AuthenticationOk from bytes — mock channel" in {
+    "PostgresChannel receive decodes AuthenticationOk from bytes, mock channel" in {
         // Wire bytes for AuthenticationOk: 'R' | Int32(8) | Int32(0)
-        // The unmarshaller receives only the body — after the type byte and 4-byte length field.
+        // The unmarshaller receives only the body, after the type byte and 4-byte length field.
         // Body = Int32(0) = the auth type code for Ok.
         val body   = Array[Byte](0, 0, 0, 0)
         val reader = new PostgresBufferReader(Span.from(body))

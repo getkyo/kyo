@@ -24,7 +24,7 @@ class CachingSha2Test extends kyo.Test:
 
     // ─── Fast-path response ──────────────────────────────────────────────────────
 
-    "CachingSha2 fastPathHash known vector — password='test', 20-byte scramble all 0x01" in {
+    "CachingSha2 fastPathHash known vector, password='test', 20-byte scramble all 0x01" in {
         // Python-verified: see class-level scaladoc for computation steps.
         val scramble = Span.from(Array.fill[Byte](20)(0x01.toByte))
         val result   = CachingSha2.computeFastResponse("test", scramble)

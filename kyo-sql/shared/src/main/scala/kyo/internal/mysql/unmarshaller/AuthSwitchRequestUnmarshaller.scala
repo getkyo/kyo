@@ -17,7 +17,7 @@ import kyo.internal.mysql.Unmarshaller
   *
   * The auth data typically ends with a NUL byte per the MySQL protocol; the trailing NUL is included in pluginData.
   *
-  * Reference: MySQL Internals — Protocol::AuthSwitchRequest
+  * Reference: MySQL Internals, Protocol::AuthSwitchRequest
   */
 object AuthSwitchRequestUnmarshaller extends Unmarshaller[AuthSwitchRequest]:
 

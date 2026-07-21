@@ -5,7 +5,7 @@ import kyo.SqlAst
 import kyo.SqlSchema
 import scala.quoted.*
 
-/** Macro implementation of the `sql"..."` interpolator — builds a [[kyo.SqlAst.Fragment]] from a string interpolation, classifying each
+/** Macro implementation of the `sql"..."` interpolator, builds a [[kyo.SqlAst.Fragment]] from a string interpolation, classifying each
   * interpolated argument:
   *
   *   - If the argument is a `SqlAst.Term[?]` (Column, Query, Aggregate.Call, another Fragment, …) → emits `Fragment.Embed(arg)`, allowing

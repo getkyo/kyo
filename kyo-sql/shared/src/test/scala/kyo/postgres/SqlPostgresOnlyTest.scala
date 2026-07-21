@@ -118,7 +118,7 @@ class SqlPostgresOnlyTest extends Test:
                                 """CREATE TABLE person (id BIGINT PRIMARY KEY, name TEXT NOT NULL, age INT NOT NULL)"""
                             )
                             _ <- client.executeRaw("""INSERT INTO person VALUES (1, 'alice', 30)""")
-                            // Insert duplicate with ON CONFLICT DO NOTHING — should not error or change data
+                            // Insert duplicate with ON CONFLICT DO NOTHING, should not error or change data
                             result <- Sql
                                 .insert[Person]
                                 .values(Person(1L, "alice-duplicate", 99))
@@ -192,7 +192,7 @@ class SqlPostgresOnlyTest extends Test:
                                 s"Expected FULL OUTER JOIN in PG SQL, got: ${rendered.sql}"
                             )
                             // Execute against live PG and verify the closure: person ids {1,3} FULL OUTER
-                            // JOIN dept ids {1,2} on id yields 3 rows — (1,1) matched, (3,·) and (·,2)
+                            // JOIN dept ids {1,2} on id yields 3 rows, (1,1) matched, (3,·) and (·,2)
                             // unmatched. We count rows so NULL-side columns need no nullable decoding.
                             counts <- client.executeBoundQuery[Long](
                                 """SELECT COUNT(*) FROM "person" "p" FULL OUTER JOIN "dept" "d" ON ("p"."id" = "d"."id")""",

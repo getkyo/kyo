@@ -8,7 +8,7 @@ import kyo.Test
 /** Unit tests for [[kyo.internal.mysql.exchange.InitTlsExchange]] error-surface.
   *
   * These tests do not require a MySQL container. They verify that a failed TLS upgrade surfaces a
-  * [[SqlException.Connection.TlsHandshakeFailed]] whose message is built directly from the original [[kyo.Closed]] cause — not wrapped in
+  * [[SqlException.Connection.TlsHandshakeFailed]] whose message is built directly from the original [[kyo.Closed]] cause, not wrapped in
   * an intermediate `RuntimeException`.
   */
 class InitTlsExchangeTest extends Test:
@@ -18,7 +18,7 @@ class InitTlsExchangeTest extends Test:
     // We test the factory method directly because the effectful run() requires a live channel.
 
     "TlsHandshakeFailed built from Closed carries closed message without RuntimeException wrapping" in {
-        // Create a Closed instance — simulates what upgradeToTls returns on failure.
+        // Create a Closed instance, simulates what upgradeToTls returns on failure.
         val closed = new Closed("test-resource", summon[Frame], "simulated TLS failure")
 
         val host = "db.example.com"

@@ -17,7 +17,7 @@ import kyo.internal.mysql.*
   * Subsequent DML and the explicit `COMMIT` / `ROLLBACK` from the framework will still be sent, but they will operate on a new implicit
   * transaction.
   *
-  * This is a MySQL/InnoDB limitation. kyo-sql does NOT attempt to detect implicit commits — it is the caller's responsibility to avoid DDL
+  * This is a MySQL/InnoDB limitation. kyo-sql does NOT attempt to detect implicit commits, it is the caller's responsibility to avoid DDL
   * inside transactions if true atomicity is required.
   *
   * Reference: dev.mysql.com/doc/refman/8.0/en/implicit-commit.html

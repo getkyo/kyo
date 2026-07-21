@@ -11,12 +11,12 @@ import kyo.net.NetTlsConfig
   *
   * These leaves exercise internal `PostgresConnection` members (`processId`, `secretKey`, `cancel`, `simpleQuery`) and
   * `CancelExchange.cancel` directly. They live here because `private[kyo]` grants access to all `kyo.*` sub-packages, and promoting these
-  * internals to a public API is not warranted — they test the wire-protocol cancel mechanism, not a user-facing feature.
+  * internals to a public API is not warranted, they test the wire-protocol cancel mechanism, not a user-facing feature.
   *
   * Tests:
-  *   1. cancel interrupts a slow query — pg_sleep(10) aborts with SQLSTATE 57014.
-  *   2. cancel after query completes is a no-op — no error from cancel itself.
-  *   3. cancel with wrong secretKey is silently rejected — connection remains usable.
+  *   1. cancel interrupts a slow query, pg_sleep(10) aborts with SQLSTATE 57014.
+  *   2. cancel after query completes is a no-op, no error from cancel itself.
+  *   3. cancel with wrong secretKey is silently rejected, connection remains usable.
   */
 class CancelExchangeTest extends kyo.Test:
 
@@ -44,7 +44,7 @@ class CancelExchangeTest extends kyo.Test:
                 Scope.ensure(Abort.run(conn.terminate).unit).andThen(f(conn))
             }
 
-    "cancel interrupts a slow query — pg_sleep(10) aborts with SQLSTATE 57014".tagged("kyo.OwnContainer") in {
+    "cancel interrupts a slow query, pg_sleep(10) aborts with SQLSTATE 57014".tagged("kyo.OwnContainer") in {
         Scope.run {
             SqlSharedContainers.withFreshSchema(SqlSharedContainers.Backend.Postgres) { ctx =>
                 withConn(ctx) { queryConn =>
@@ -80,14 +80,14 @@ class CancelExchangeTest extends kyo.Test:
         }
     }
 
-    "cancel after query completes is a no-op — no error from cancel itself".tagged("kyo.OwnContainer") in {
+    "cancel after query completes is a no-op, no error from cancel itself".tagged("kyo.OwnContainer") in {
         Scope.run {
             SqlSharedContainers.withFreshSchema(SqlSharedContainers.Backend.Postgres) { ctx =>
                 withConn(ctx) { conn =>
                     val address = SqlAddress("postgres", ctx.host, ctx.port, ctx.database, ctx.username)
                     // Run a fast query to completion.
                     conn.simpleQuery("SELECT 1").andThen {
-                        // Cancel should be silently ignored — the query already finished.
+                        // Cancel should be silently ignored, the query already finished.
                         Abort.run[SqlException](conn.cancel(address, Absent)).map {
                             case Result.Success(_) =>
                                 succeed // expected: no error
@@ -102,14 +102,14 @@ class CancelExchangeTest extends kyo.Test:
         }
     }
 
-    "cancel with wrong secretKey is silently rejected — connection remains usable".tagged("kyo.OwnContainer") in {
+    "cancel with wrong secretKey is silently rejected, connection remains usable".tagged("kyo.OwnContainer") in {
         Scope.run {
             SqlSharedContainers.withFreshSchema(SqlSharedContainers.Backend.Postgres) { ctx =>
                 withConn(ctx) { conn =>
                     val address = SqlAddress("postgres", ctx.host, ctx.port, ctx.database, ctx.username)
                     // Send a cancel with a deliberately wrong secret key (wrong key, same PID).
                     val wrongHandle = SqlCancelHandle.Pg(address, Absent, conn.processId, conn.secretKey ^ 0xdeadbeef)
-                    // Issue cancel using the wrong handle — server ignores it silently.
+                    // Issue cancel using the wrong handle, server ignores it silently.
                     Abort.run[SqlException](CancelExchange.cancel(
                         wrongHandle.address,
                         wrongHandle.tls,

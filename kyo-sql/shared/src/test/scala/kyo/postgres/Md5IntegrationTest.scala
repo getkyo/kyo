@@ -31,7 +31,7 @@ class Md5IntegrationTest extends kyo.Test:
         }
     end initWithMd5
 
-    "StartupExchange succeeds with MD5 server — connect completes without error".tagged("kyo.OwnContainer") in {
+    "StartupExchange succeeds with MD5 server, connect completes without error".tagged("kyo.OwnContainer") in {
         Scope.run {
             initWithMd5() { pg =>
                 initMd5Client(pg).flatMap { client =>

@@ -29,7 +29,7 @@ import kyo.internal.mysql.Unmarshaller
   *
   * The `totalPayloadLength` parameter must be the total length of the packet payload (including the first 0xFE byte).
   *
-  * Reference: MySQL Internals — Generic Response Packets
+  * Reference: MySQL Internals, Generic Response Packets
   */
 object GenericResponseUnmarshaller:
 

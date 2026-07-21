@@ -95,9 +95,9 @@ class SqlClientCloseTest extends Test:
         }
     }
 
-    // ── close called twice does not throw — second is a no-op ─────────────────
+    // ── close called twice does not throw, second is a no-op ─────────────────
 
-    "close called twice does not throw — second is no-op" in {
+    "close called twice does not throw, second is no-op" in {
         kyo.internal.FakeServer.listenPort { conn =>
             pgTrustHandler(conn)
         }.flatMap { listener =>

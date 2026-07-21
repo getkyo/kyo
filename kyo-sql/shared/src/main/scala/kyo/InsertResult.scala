@@ -21,11 +21,11 @@ final case class InsertResult(affectedRows: Long, generatedKey: GeneratedKey) de
   * The previous `Maybe[Long]` field overloaded two distinct meanings (no auto-key column vs server reported zero); this sum makes the
   * distinction explicit so callers can dispatch on the root cause rather than only "present/absent".
   *
-  *   - [[GeneratedKey.Value]] — backend reported a non-zero generated id. On Postgres the renderer emitted `RETURNING <pk>` for an auto-key
+  *   - [[GeneratedKey.Value]], backend reported a non-zero generated id. On Postgres the renderer emitted `RETURNING <pk>` for an auto-key
   *     column and decoded the DataRow's id; on MySQL the OK packet's `lastInsertId` field was non-zero.
-  *   - [[GeneratedKey.NoAutoKey]] — the target table has no auto-incrementing column, so no id was requested. Postgres: no `RETURNING` was
+  *   - [[GeneratedKey.NoAutoKey]], the target table has no auto-incrementing column, so no id was requested. Postgres: no `RETURNING` was
   *     added; MySQL: schema declared no AUTO_INCREMENT.
-  *   - [[GeneratedKey.Unavailable]] — the schema does have an auto-key column but the backend did not surface a value. Currently this
+  *   - [[GeneratedKey.Unavailable]], the schema does have an auto-key column but the backend did not surface a value. Currently this
   *     surfaces only on MySQL when `last_insert_id == 0` despite an AUTO_INCREMENT column (e.g. when the user supplied an explicit non-zero
   *     value for the auto column, suppressing the auto-increment generation).
   */

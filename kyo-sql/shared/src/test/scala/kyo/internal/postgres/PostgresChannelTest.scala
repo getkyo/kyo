@@ -57,7 +57,7 @@ class PostgresChannelTest extends Test:
                                                     sendFiber.done.flatMap { doneBeforeRelease =>
                                                         // Clear the latch ref so checkCorrupted proceeds after await.
                                                         channel.endCleanup().flatMap { _ =>
-                                                            // Release the latch — the blocked send should now complete.
+                                                            // Release the latch, the blocked send should now complete.
                                                             blockingLatch.release.flatMap { _ =>
                                                                 sendFiber.get.map { result =>
                                                                     assert(

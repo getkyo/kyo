@@ -21,7 +21,7 @@ import kyo.internal.postgres.types.Format
   *
   * For Schema-derived case class reads, the object-iteration protocol (`objectStart`, `hasNextField`, `fieldParse`, `matchField`,
   * `objectEnd`) is implemented positionally: fields are consumed in the order they appear in the row, matched by column index. The
-  * `nameBytes` argument to `matchField` is ignored — the n-th Schema field maps to the n-th result column regardless of column name.
+  * `nameBytes` argument to `matchField` is ignored, the n-th Schema field maps to the n-th result column regardless of column name.
   *
   * Arrays and maps are decoded by reading the column's JSON bytes and delegating to a [[kyo.internal.JsonReader]] sub-reader. MySQL has no
   * native array type; arrays and maps are stored as TYPE_JSON columns containing `[…]` and `{…}` JSON values respectively.
@@ -47,7 +47,7 @@ final class MysqlRowReader(row: SqlRow)(using Frame) extends SqlReader(summon[Fr
         column.getOrElse(throw SqlException.Decode(s"column ${idx - 1} is NULL", Absent, frame))
     end nextBytes
 
-    // --- Inline little-endian readers — direct span access, mirrors MysqlBufferReader primitives ---
+    // --- Inline little-endian readers, direct span access, mirrors MysqlBufferReader primitives ---
 
     private def readInt4LE(bytes: Span[Byte]): Int =
         if bytes.size < 4 then throw SqlException.Decode(s"LONG: expected 4 bytes, got ${bytes.size}", Absent, frame)
@@ -101,7 +101,7 @@ final class MysqlRowReader(row: SqlRow)(using Frame) extends SqlReader(summon[Fr
       *
       * Layout (MySQL protocol §14.7.4):
       *   - 0 bytes → zero datetime (represented as 0001-01-01T00:00:00)
-      *   - 4 bytes → date only: year(2 LE) | month(1) | day(1) — time defaults to midnight
+      *   - 4 bytes → date only: year(2 LE) | month(1) | day(1), time defaults to midnight
       *   - 7 bytes → date + time: year(2 LE) | month(1) | day(1) | hour(1) | min(1) | sec(1)
       *   - 11 bytes → date + time + micros: above + micros(4 LE)
       *
@@ -168,7 +168,7 @@ final class MysqlRowReader(row: SqlRow)(using Frame) extends SqlReader(summon[Fr
         end match
     end decodeDatetimeBody
 
-    // --- Nil check — peek without advancing ---
+    // --- Nil check, peek without advancing ---
 
     override def isNil(): Boolean =
         jsonSubReader match
@@ -351,7 +351,7 @@ final class MysqlRowReader(row: SqlRow)(using Frame) extends SqlReader(summon[Fr
     override def lastFieldName(): String =
         if idx < row.fields.size then row.fields(idx).name else s"<column $idx>"
 
-    // --- Structural reads — array, map, and captureValue ---
+    // --- Structural reads, array, map, and captureValue ---
 
     /** Reads the current column as a JSON array and returns its element count.
       *

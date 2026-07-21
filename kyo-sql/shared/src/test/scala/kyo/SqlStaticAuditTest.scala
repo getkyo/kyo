@@ -7,24 +7,24 @@ import scala.compiletime.testing.typeChecks
   *
   * Each leaf below corresponds to one scenario from the inventory in `STATIC-AUDIT-INVENTORY.md`. The leaf either:
   *
-  *   - **POSITIVE** — uses `typeChecks` to assert the static fold succeeds, OR
-  *   - **NEGATIVE** — uses `typeCheckErrors` to capture the compile error and asserts the message text quality.
+  *   - **POSITIVE** uses `typeChecks` to assert the static fold succeeds, OR
+  *   - **NEGATIVE** uses `typeCheckErrors` to capture the compile error and asserts the message text quality.
   *
   * The goal is to lock down the static contract: every case where `.runStatic` should fold MUST fold, and every case where it should reject
   * the input MUST produce a positioned error that names the offending construct and suggests a fix.
   *
   * Classification key (mirrored in `STATIC-AUDIT-CLASSIFY.md`):
-  *   - SILENT — currently accepts wrong input and produces wrong SQL (BUG, must be fixed)
-  *   - GENERIC — errors but message doesn't identify the offending construct (must improve message)
-  *   - GOOD — positioned error names the construct AND suggests a fix
+  *   - SILENT, currently accepts wrong input and produces wrong SQL (BUG, must be fixed)
+  *   - GENERIC, errors but message doesn't identify the offending construct (must improve message)
+  *   - GOOD, positioned error names the construct AND suggests a fix
   */
 class SqlStaticAuditTest extends Test:
 
     // -----------------------------------------------------------------------
-    // Scenario A — Plain `given SqlSchema[T]` with `.runStatic` for the table.
+    // Scenario A, Plain `given SqlSchema[T]` with `.runStatic` for the table.
     // EXPECTED: NEGATIVE-GOOD. The Phase 3 walker reports an `inline given` fix.
     // -----------------------------------------------------------------------
-    "A — plain given for the table type produces a positioned 'inline given' error" in {
+    "A, plain given for the table type produces a positioned 'inline given' error" in {
         val errors = typeCheckErrors(
             """
             import kyo.*
@@ -43,10 +43,10 @@ class SqlStaticAuditTest extends Test:
     }
 
     // -----------------------------------------------------------------------
-    // Scenario B — Inline given for the table type with `.runStatic`.
+    // Scenario B, Inline given for the table type with `.runStatic`.
     // EXPECTED: POSITIVE. Folds successfully.
     // -----------------------------------------------------------------------
-    "B — inline given for the table type folds successfully under .runStatic" in {
+    "B, inline given for the table type folds successfully under .runStatic" in {
         val ok = typeChecks(
             """
             import kyo.*
@@ -60,7 +60,7 @@ class SqlStaticAuditTest extends Test:
     }
 
     // -----------------------------------------------------------------------
-    // Scenario C — Inline given with .withNaming(snakeCase) for the table type.
+    // Scenario C, Inline given with .withNaming(snakeCase) for the table type.
     // EXPECTED: NEGATIVE-GOOD. Per the design documented on
     // `SqlStaticInlineGivenProbeTest`: any override chain (.withNaming /
     // .withTableName / .rename) can't fold per-column `sqlName` under
@@ -91,12 +91,12 @@ class SqlStaticAuditTest extends Test:
     }
 
     // -----------------------------------------------------------------------
-    // Scenario D — Non-inline `def` source under `.runStatic`.
+    // Scenario D, Non-inline `def` source under `.runStatic`.
     // EXPECTED INITIAL: NEGATIVE-GENERIC. The current walker only detects
     //   SqlNameResolver-driven opacity, not opaque def references.
     // GAP: needs walker extension to recognise this.
     // -----------------------------------------------------------------------
-    "D — non-inline def source under .runStatic produces SOME compile error" in {
+    "D, non-inline def source under .runStatic produces SOME compile error" in {
         val errors = typeCheckErrors(
             """
             import kyo.*
@@ -141,13 +141,13 @@ class SqlStaticAuditTest extends Test:
     }
 
     // -----------------------------------------------------------------------
-    // Scenario F — Custom NamingStrategy (not snakeCase / identity) under
+    // Scenario F, Custom NamingStrategy (not snakeCase / identity) under
     //   `.runStatic` via FromExpr[NamingStrategy].
     // EXPECTED: NEGATIVE-GENERIC initially. The FromExpr only matches the
     //   two known strategies; a custom one would fail to lift.
     // GAP: error message should name the unsupported NamingStrategy variant.
     // -----------------------------------------------------------------------
-    "F — custom NamingStrategy via inline given under .runStatic produces a compile error" in {
+    "F, custom NamingStrategy via inline given under .runStatic produces a compile error" in {
         val errors = typeCheckErrors(
             """
             import kyo.*
@@ -164,11 +164,11 @@ class SqlStaticAuditTest extends Test:
     }
 
     // -----------------------------------------------------------------------
-    // Scenario G — Plain given for the table type used with .run (NOT .runStatic).
-    // EXPECTED: POSITIVE. .run is opportunistic — it MUST accept plain given
+    // Scenario G, Plain given for the table type used with .run (NOT .runStatic).
+    // EXPECTED: POSITIVE. .run is opportunistic, it MUST accept plain given
     //   and fall back to the runtime renderer.
     // -----------------------------------------------------------------------
-    "G — plain given for the table type compiles cleanly under .run" in {
+    "G, plain given for the table type compiles cleanly under .run" in {
         val ok = typeChecks(
             """
             import kyo.*
@@ -184,7 +184,7 @@ class SqlStaticAuditTest extends Test:
     }
 
     // -----------------------------------------------------------------------
-    // Scenario H — Inline def for the source under .runStatic.
+    // Scenario H, Inline def for the source under .runStatic.
     // EXPECTED: POSITIVE. The inliner can see through inline def.
     //
     // The source uses `Sql.from[T](alias)` on its own (no `.select` chain). The
@@ -195,7 +195,7 @@ class SqlStaticAuditTest extends Test:
     // audits. The DSL entry `Sql.from` alone is unambiguous and still exercises
     // the inline-def-through-fold path.
     // -----------------------------------------------------------------------
-    "H — inline def source under .runStatic folds successfully" in {
+    "H, inline def source under .runStatic folds successfully" in {
         val errors = typeCheckErrors(
             """
             import kyo.*
@@ -213,20 +213,20 @@ class SqlStaticAuditTest extends Test:
     }
 
     // -----------------------------------------------------------------------
-    // Scenario I — `derives Schema` ONLY (no explicit SqlSchema) under .runStatic.
+    // Scenario I, `derives Schema` ONLY (no explicit SqlSchema) under .runStatic.
     // EXPECTED: POSITIVE. `derives Schema` produces `given Schema[T]`, not
     //   `given SqlSchema[T]`. The macro's `Expr.summon[SqlSchema[T]]` returns
     //   None, the empty-fallback branch emits constants, and the static fold
-    //   succeeds. This is *provably safe* — there's no way for the user to have
+    //   succeeds. This is *provably safe* there's no way for the user to have
     //   applied overrides via a `Schema` instance, so "empty info" is correct.
     // -----------------------------------------------------------------------
-    "I — derives Schema alone (no explicit SqlSchema) folds successfully under .runStatic" in {
+    "I, derives Schema alone (no explicit SqlSchema) folds successfully under .runStatic" in {
         val ok = typeChecks(
             """
             import kyo.*
             import kyo.SqlAst.*
             case class AuditUserI(id: Long, name: String) derives Schema
-            // No explicit `given SqlSchema[AuditUserI]` — the macro will summon None
+            // No explicit `given SqlSchema[AuditUserI]`, the macro will summon None
             // and fall back to verbatim Scala identifier names.
             SqlStatic.staticSql(Sql.from[AuditUserI]("u").select(c => c.u.name))
             """

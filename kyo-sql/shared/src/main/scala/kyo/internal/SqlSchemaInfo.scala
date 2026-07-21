@@ -29,7 +29,7 @@ import scala.quoted.*
   * recursively.
   *
   * With plain `given SqlSchema[T] = ...`, the Scala 3 macro API exposes only a reference to a `final lazy val given_SqlSchema_T:
-  * SqlSchema[T]` — the construction RHS is not visible (`sym.tree.rhs` returns `None`). In that case [[extract]] returns `None`, and the
+  * SqlSchema[T]`, the construction RHS is not visible (`sym.tree.rhs` returns `None`). In that case [[extract]] returns `None`, and the
   * caller emits runtime [[SqlNameResolver]] calls. The dynamic execution paths (`.run` opportunistic / `.runDynamic`) work correctly; only
   * `.runStatic` fails to fold, and the static-SQL macro should report a positioned error pointing the user at `inline given`.
   */
@@ -55,12 +55,12 @@ object SqlSchemaInfo:
         given FromExpr[NamingStrategy] = NamingStrategyFromExpr.given_FromExpr_NamingStrategy
 
         /** True if the expression is a reference (`Ident` or `Select`) to a non-`inline` `val` / `lazy val` / `def` definition. A plain
-          * (non-inline) `given` is summoned as such a reference — the macro sees the symbol but not the construction body. Returning early
+          * (non-inline) `given` is summoned as such a reference, the macro sees the symbol but not the construction body. Returning early
           * here forces the caller to emit runtime code rather than risk silently producing wrong SQL for an override-bearing schema whose
           * body is invisible. `.runStatic` later reports a positioned error pointing the user at `inline given`; `.run` falls back
           * transparently to the runtime renderer.
           *
-          * An `inline given` is summoned as a reference to an `inline`-flagged definition, but the body IS available via the inliner — the
+          * An `inline given` is summoned as a reference to an `inline`-flagged definition, but the body IS available via the inliner, the
           * macro's downstream pattern matching can see the construction once Scala 3 inlines it. So inline-flagged symbols are NOT treated
           * as opaque here.
           */
@@ -74,7 +74,7 @@ object SqlSchemaInfo:
             end match
         end isOpaqueReference
 
-        /** True if the expression's source mentions any of the override-applying methods. The string check is a fast pre-filter — when no
+        /** True if the expression's source mentions any of the override-applying methods. The string check is a fast pre-filter, when no
           * override method appears anywhere in the expression, the schema is plain and we can return [[empty]] without further work.
           */
         def hasOverrides(expr: Expr[SqlSchema[T]]): Boolean =

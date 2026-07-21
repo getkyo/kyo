@@ -17,7 +17,7 @@ import kyo.Span
   * the last. If the payload is an exact multiple of 0xFFFFFF bytes, a final empty packet (length=0) MUST be sent so the receiver knows
   * there is no more data.
   *
-  * Reference: MySQL Internals Manual — MySQL Packets
+  * Reference: MySQL Internals Manual, MySQL Packets
   */
 object MysqlPacket:
 
@@ -50,7 +50,7 @@ object MysqlPacket:
             var result     = Chunk.empty[Span[Byte]]
             var offset     = 0
             var currentSeq = seq & 0xff
-            // Performance: while loop for split-packet framing — encapsulated, CONTRIBUTING permits this.
+            // Performance: while loop for split-packet framing, encapsulated, CONTRIBUTING permits this.
             while offset < total do
                 val chunkLen = math.min(MaxPayload, total - offset)
                 val slice    = payload.slice(offset, offset + chunkLen)
@@ -82,7 +82,7 @@ object MysqlPacket:
         var firstSeq      = -1
         var done          = false
 
-        // Performance: while loop for packet reassembly — encapsulated, CONTRIBUTING permits this.
+        // Performance: while loop for packet reassembly, encapsulated, CONTRIBUTING permits this.
         while !done do
             if buf.available < HeaderSize then
                 // Not enough bytes for a header
@@ -96,7 +96,7 @@ object MysqlPacket:
                     // Not enough bytes for the full packet
                     done = true
                 else
-                    // Consume the header (discard header bytes — we already decoded them via peek)
+                    // Consume the header (discard header bytes, we already decoded them via peek)
                     val _            = buf.consume(HeaderSize)
                     val payloadSlice = buf.consume(payloadLen)
                     if firstSeq == -1 then firstSeq = seqId
@@ -114,7 +114,7 @@ object MysqlPacket:
             val totalLen = payloadChunks.foldLeft(0)(_ + _.size)
             val combined = new Array[Byte](totalLen)
             var offset   = 0
-            // Performance: arraycopy loop for chunk concatenation — unavoidable for multi-packet reassembly.
+            // Performance: arraycopy loop for chunk concatenation, unavoidable for multi-packet reassembly.
             payloadChunks.foreach { chunk =>
                 val arr = chunk.toArray
                 java.lang.System.arraycopy(arr, 0, combined, offset, arr.length)

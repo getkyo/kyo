@@ -18,14 +18,14 @@ import kyo.net.NetTlsConfig
 /** An active PostgreSQL connection with per-connection state.
   *
   * Wraps a [[PostgresChannel]] (which wraps the underlying [[kyo.net.Connection]]) and holds:
-  *   - [[parameters]] — server parameters received during startup and via in-session `ParameterStatus` messages (e.g. `server_version`,
+  *   - [[parameters]], server parameters received during startup and via in-session `ParameterStatus` messages (e.g. `server_version`,
   *     `client_encoding`).
-  *   - [[processId]] / [[secretKey]] — from [[BackendKeyData]], used to issue a [[CancelRequest]] on a separate connection.
-  *   - [[transactionStatus]] — last-seen [[ReadyForQuery]] status byte (`'I'`/`'T'`/`'E'`).
-  *   - [[notifications]] — a bounded [[Channel]] into which async [[NotificationResponse]] messages are deposited.
-  *   - [[preparedStmts]] — per-connection LRU cache of server-side prepared statements, keyed by SQL hash.
+  *   - [[processId]] / [[secretKey]], from [[BackendKeyData]], used to issue a [[CancelRequest]] on a separate connection.
+  *   - [[transactionStatus]], last-seen [[ReadyForQuery]] status byte (`'I'`/`'T'`/`'E'`).
+  *   - [[notifications]], a bounded [[Channel]] into which async [[NotificationResponse]] messages are deposited.
+  *   - [[preparedStmts]], per-connection LRU cache of server-side prepared statements, keyed by SQL hash.
   *
-  * All public methods are safe (no [[AllowUnsafe]]). A single [[PostgresConnection]] must NOT be used concurrently — the caller is
+  * All public methods are safe (no [[AllowUnsafe]]). A single [[PostgresConnection]] must NOT be used concurrently, the caller is
   * responsible for ensuring serial access (the connection pool enforces this via acquire/release semantics).
   */
 final class PostgresConnection(
@@ -92,7 +92,7 @@ final class PostgresConnection(
       * calls.
       *
       * Note: [[SimpleQueryExchange.run]] already reads ReadyForQuery internally (it continues until RFQ), so we do NOT wrap it with
-      * BarrierGuard here — the exchange itself acts as the barrier.
+      * BarrierGuard here, the exchange itself acts as the barrier.
       */
     def simpleQuery(sql: String)(using Frame): Chunk[SqlRow] < (Async & Abort[SqlException]) =
         SimpleQueryExchange.run(channel, sql, processId.toLong, updateParam, sendNotification).map { case (rows, _) => rows }
@@ -106,7 +106,7 @@ final class PostgresConnection(
 
     /** Sends a minimal empty simple-query (`;`) and waits for the server's [[ReadyForQuery]].
       *
-      * Postgres has no dedicated PING command; an empty simple-query is the cheapest round-trip — the server replies with
+      * Postgres has no dedicated PING command; an empty simple-query is the cheapest round-trip, the server replies with
       * [[EmptyQueryResponse]] followed by [[ReadyForQuery]], confirming the wire is live without parsing or planning any SQL.
       */
     def ping(using frame: Frame): Unit < (Async & Abort[SqlException]) =
@@ -137,7 +137,7 @@ final class PostgresConnection(
     /** Streams rows from a parameterised query using the Postgres portal protocol.
       *
       * Uses the per-connection prepared-statement cache (shared with [[extendedQuery]]). Binds a named portal and repeatedly calls
-      * `Execute(batchSize)` until `CommandComplete` — emitting one [[kyo.Chunk]] of [[kyo.SqlRow]] per `Execute` response.
+      * `Execute(batchSize)` until `CommandComplete`, emitting one [[kyo.Chunk]] of [[kyo.SqlRow]] per `Execute` response.
       *
       * The portal is guaranteed to be closed (and the connection left in `ReadyForQuery` state) on every exit path: normal completion,
       * [[SqlException]] abort, or fiber interruption.
@@ -190,7 +190,7 @@ final class PostgresConnection(
     /** Runs an extended INSERT and returns an [[InsertResult]].
       *
       * When `sql` ends with a `RETURNING` clause (auto-emitted by `SqlRender` for tables with an auto-key column), this issues a query and
-      * decodes the single-column response as a `Long` — the generated key. The `affectedRows` count equals the number of rows returned.
+      * decodes the single-column response as a `Long`, the generated key. The `affectedRows` count equals the number of rows returned.
       * When `sql` carries no `RETURNING` (target table has no auto-key column), this falls through to `extendedExecute` and reports
       * `InsertResult(affected, GeneratedKey.NoAutoKey)`.
       *
@@ -303,7 +303,7 @@ final class PostgresConnection(
     /** Reads the next [[BackendMessage]] from the underlying TCP connection.
       *
       * Intended for use by the notification pump in [[kyo.internal.client.SqlClientBackend]]: a dedicated listener connection has no active
-      * exchange, so the caller must drive the read loop manually. Other callers must NOT call this while an exchange is in progress —
+      * exchange, so the caller must drive the read loop manually. Other callers must NOT call this while an exchange is in progress,
       * concurrent reads from the same connection violate the protocol framing.
       */
     def receive(using Frame): BackendMessage < (Async & Abort[SqlException]) =
@@ -313,7 +313,7 @@ final class PostgresConnection(
 
     /** Sends a [[CancelRequest]] on a fresh TCP connection to the same server.
       *
-      * Opens a brand-new connection (does NOT acquire from the pool — that would risk deadlocking on the very connection being cancelled).
+      * Opens a brand-new connection (does NOT acquire from the pool, that would risk deadlocking on the very connection being cancelled).
       * The server matches by `(processId, secretKey)` and cancels the running query, causing it to fail with SQLSTATE `57014`.
       *
       * @param address
@@ -519,11 +519,11 @@ object PostgresConnection:
     /** Like [[connect]] but injects `certHashOverride` into the SCRAM startup, bypassing the real TLS cert hash.
       *
       * `certHashOverride` semantics:
-      *   - `Absent` — no override; use the real TLS cert hash from the connection (same as [[connect]]).
-      *   - `Present(Absent)` — force Absent: client refuses PLUS even when TLS is active and cert is known.
-      *   - `Present(Present(hash))` — inject `hash`: client uses PLUS with this fabricated hash (MITM simulation).
+      *   - `Absent`, no override; use the real TLS cert hash from the connection (same as [[connect]]).
+      *   - `Present(Absent)`, force Absent: client refuses PLUS even when TLS is active and cert is known.
+      *   - `Present(Present(hash))`, inject `hash`: client uses PLUS with this fabricated hash (MITM simulation).
       *
-      * `mechanismCapture` — when `Present(ref)`, the selected SASL mechanism name ("SCRAM-SHA-256" or "SCRAM-SHA-256-PLUS") is stored in
+      * `mechanismCapture`, when `Present(ref)`, the selected SASL mechanism name ("SCRAM-SHA-256" or "SCRAM-SHA-256-PLUS") is stored in
       * `ref` before the `SASLInitialResponse` is sent. Used by tests to verify the on-wire mechanism selection.
       *
       * Used by SCRAM-SHA-256-PLUS integration tests. Not exposed publicly.

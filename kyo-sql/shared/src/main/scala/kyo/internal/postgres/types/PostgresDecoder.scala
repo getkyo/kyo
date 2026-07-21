@@ -17,7 +17,7 @@ import kyo.internal.postgres.PostgresArrayReader
   *
   * Throw contract: `read` throws `SqlException.Decode` directly for:
   *   - the NaN / +Infinity / -Infinity NUMERIC cases (the NUMERIC wire protocol has no Scala representation for these);
-  *   - the INTERVAL wire-format cases with non-zero `months` or `days` components (Duration has no calendar-arithmetic representation —
+  *   - the INTERVAL wire-format cases with non-zero `months` or `days` components (Duration has no calendar-arithmetic representation,
   *     callers needing `java.time.Period` semantics should use a different schema);
   *   - INTERVAL text-format parses that PG renders in `'1 year 2 mons 00:01:02'` verbose form (months token unsupported);
   *   - UUID binary buffers whose length is not exactly 16 bytes.
@@ -244,7 +244,7 @@ object PostgresDecoder:
                     bytes
                 end if
 
-    // --- Timestamptz — kyo.Instant ---
+    // --- Timestamptz, kyo.Instant ---
     // Uses kyo.Instant (preferred over java.time.Instant per STEERING rules).
 
     val timestamptz: PostgresDecoder[kyo.Instant] = new PostgresDecoder[kyo.Instant]:
@@ -265,7 +265,7 @@ object PostgresDecoder:
                 val fixedIso = if iso.matches(".*[+-]\\d{2}$") then iso + ":00" else iso
                 kyo.Instant.fromJava(java.time.OffsetDateTime.parse(fixedIso).toInstant)
 
-    // --- Date — java.time.LocalDate ---
+    // --- Date, java.time.LocalDate ---
     // No Kyo equivalent for LocalDate; java.time.LocalDate is used.
 
     val date: PostgresDecoder[java.time.LocalDate] = new PostgresDecoder[java.time.LocalDate]:
@@ -278,7 +278,7 @@ object PostgresDecoder:
             case Format.Text =>
                 java.time.LocalDate.parse(text(bytes))
 
-    // --- Timestamp (no tz) — java.time.LocalDateTime ---
+    // --- Timestamp (no tz), java.time.LocalDateTime ---
     // No Kyo equivalent for LocalDateTime; java.time.LocalDateTime is used.
 
     val timestamp: PostgresDecoder[java.time.LocalDateTime] = new PostgresDecoder[java.time.LocalDateTime]:
@@ -294,7 +294,7 @@ object PostgresDecoder:
                 val s = text(bytes).replace(" ", "T")
                 java.time.LocalDateTime.parse(s)
 
-    // --- Time — java.time.LocalTime ---
+    // --- Time, java.time.LocalTime ---
     // No Kyo equivalent for LocalTime; java.time.LocalTime is used.
 
     val time: PostgresDecoder[java.time.LocalTime] = new PostgresDecoder[java.time.LocalTime]:
@@ -306,7 +306,7 @@ object PostgresDecoder:
             case Format.Text =>
                 java.time.LocalTime.parse(text(bytes))
 
-    // --- Timetz — java.time.OffsetTime ---
+    // --- Timetz, java.time.OffsetTime ---
     // Wire: 12-byte big-endian struct: Int64 microseconds-of-day, Int32 offset_seconds (negated).
     // PG wire convention: the offset field is the *negated* total seconds of the ZoneOffset so that
     // a UTC-05:00 value is stored as +18000.  We negate the wire value to recover the Java offset.
@@ -324,9 +324,9 @@ object PostgresDecoder:
             case Format.Text =>
                 java.time.OffsetTime.parse(text(bytes))
 
-    // --- INTERVAL — java.time.Duration ---
+    // --- INTERVAL, java.time.Duration ---
     // Wire: 16-byte big-endian struct: Int64 microseconds, Int32 days, Int32 months.
-    // Months != 0 or days != 0 raise SqlException.Decode — java.time.Duration cannot represent
+    // Months != 0 or days != 0 raise SqlException.Decode, java.time.Duration cannot represent
     // calendar-relative components without data loss (e.g. DST-sensitive calendar days).
     // Text format: try ISO-8601 parse (java.time.Duration.parse); PG verbose format with
     // months/years raises SqlException.Decode directing the caller to cast to ISO-formatted text.
@@ -340,14 +340,14 @@ object PostgresDecoder:
                 val months = readBigEndianInt(bytes, 12)
                 if months != 0 then
                     throw SqlException.Decode(
-                        s"INTERVAL months field is non-zero (value=$months); java.time.Duration cannot represent calendar months — use java.time.Period",
+                        s"INTERVAL months field is non-zero (value=$months); java.time.Duration cannot represent calendar months, use java.time.Period",
                         Maybe.Absent,
                         frame
                     )
                 end if
                 if days != 0 then
                     throw SqlException.Decode(
-                        s"INTERVAL days field is non-zero (value=$days); java.time.Duration cannot represent calendar days — use java.time.Period for year/month/day components",
+                        s"INTERVAL days field is non-zero (value=$days); java.time.Duration cannot represent calendar days, use java.time.Period for year/month/day components",
                         Maybe.Absent,
                         frame
                     )
@@ -362,7 +362,7 @@ object PostgresDecoder:
                 catch
                     case _: java.time.format.DateTimeParseException =>
                         // PG verbose INTERVAL text (e.g. "01:30:00" or "1 year 2 mons 00:01:02").
-                        // Attempt to parse hh:mm:ss as a fallback (no months/days — those would be
+                        // Attempt to parse hh:mm:ss as a fallback (no months/days, those would be
                         // data-losing for Duration). If the text does not match hh:mm:ss, raise a
                         // typed error suggesting the caller cast to ISO format.
                         val hhmmss = """^(-?)(\d+):(\d{2}):(\d{2})(?:\.(\d+))?$""".r
@@ -388,9 +388,9 @@ object PostgresDecoder:
                         end match
                 end try
 
-    // --- INTERVAL — java.time.Period ---
+    // --- INTERVAL, java.time.Period ---
     // Wire: 16-byte big-endian struct: Int64 microseconds, Int32 days, Int32 months.
-    // Period has no time component — microseconds must be zero; non-zero raises SqlException.Decode.
+    // Period has no time component, microseconds must be zero; non-zero raises SqlException.Decode.
     // Text format: attempt ISO-8601 period parse (e.g. "P1Y6M15D"); raises SqlException.Decode
     // for values that cannot be parsed as a Period or that carry a time component.
 
@@ -403,7 +403,7 @@ object PostgresDecoder:
                 val months = readBigEndianInt(bytes, 12)
                 if micros != 0L then
                     throw SqlException.Decode(
-                        s"INTERVAL microseconds field is non-zero (value=$micros); java.time.Period cannot represent sub-day time components — use java.time.Duration",
+                        s"INTERVAL microseconds field is non-zero (value=$micros); java.time.Period cannot represent sub-day time components, use java.time.Duration",
                         Maybe.Absent,
                         frame
                     )
@@ -463,7 +463,7 @@ object PostgresDecoder:
                         java.net.InetAddress.getByName(addrPart)
                     end if
 
-    // Shared binary-format decoder used by both `inet` and `cidr` — same wire layout
+    // Shared binary-format decoder used by both `inet` and `cidr`, same wire layout
     // (`family + prefix_bits + is_cidr + addr_len + addr_bytes`); the `is_cidr` byte is not surfaced
     // to the caller because `java.net.InetAddress` cannot carry that distinction.
     private def decodeInetOrCidr(typeName: String, format: Format, bytes: Span[Byte])(using frame: Frame): java.net.InetAddress =
@@ -575,7 +575,7 @@ object PostgresDecoder:
         end read
 
     /** Decodes a PostgreSQL `jsonb[]` (OID 3807) column from binary wire format into a [[Chunk[String]]]. Each element is decoded by
-      * [[jsonDecoder]] — the 1-byte JSONB version prefix (0x01) is stripped and the remainder returned as a UTF-8 JSON-text string.
+      * [[jsonDecoder]], the 1-byte JSONB version prefix (0x01) is stripped and the remainder returned as a UTF-8 JSON-text string.
       */
     val jsonbArray: PostgresDecoder[Chunk[String]] = new PostgresDecoder[Chunk[String]]:
         def oids = Set(PostgresEncoder.OID_JSONB_ARRAY)

@@ -74,7 +74,7 @@ class SqlStaticTest extends Test:
         { val ok = SqlSchema.boundSchemaEqRef(bv1, summon[SqlSchema[String]]); assert(ok) }
     }
 
-    "pure case-class construction — no DSL builders / lambdas at all" in {
+    "pure case-class construction, no DSL builders / lambdas at all" in {
         import kyo.SqlAst.*
         val r = SqlStatic.staticSql(
             Select[Person, String](
@@ -189,7 +189,7 @@ class SqlStaticTest extends Test:
         { val ok = SqlSchema.boundSchemaEqRef(bv, expected); assert(ok) }
     }
 
-    "Chunk round-trip — value equality and schema identity for each BoundValue" in {
+    "Chunk round-trip, value equality and schema identity for each BoundValue" in {
         val r = SqlStatic.staticSql(
             Sql.from[Person]("p").where(c => c.p.age >= 18 && c.p.name != "")
         )
@@ -372,7 +372,7 @@ class SqlStaticTest extends Test:
 
     // --- fromExprSqlSchema[LocalDate] finds given for LocalDate ---
 
-    "fromExprSqlSchema[LocalDate].unapply returns Some — named top-level given is found" in {
+    "fromExprSqlSchema[LocalDate].unapply returns Some, named top-level given is found" in {
         assert(SqlLiftHarness.matched[SqlSchema[java.time.LocalDate]](summon[SqlSchema[java.time.LocalDate]]))
     }
 
@@ -380,7 +380,7 @@ class SqlStaticTest extends Test:
 
     "bare Table via Sql.from emits SELECT * SQL (Record[F] columns field lifts)" in {
         // Verifies that FromExpr.derived[Table[Person, F]] works with RecordFromExpr.fromExprRecord in scope.
-        // The static macro renders the bare Table correctly — regression guard.
+        // The static macro renders the bare Table correctly, regression guard.
         val r = SqlStatic.staticSql(Sql.from[Person]("p"))
         assert(r.sql.postgres == """SELECT "p"."id", "p"."name", "p"."age", "p"."deptId" FROM "person" "p"""")
         assert(r.sql.mysql == "SELECT `p`.`id`, `p`.`name`, `p`.`age`, `p`.`deptId` FROM `person` `p`")
@@ -441,7 +441,7 @@ class SqlStaticTest extends Test:
         // The reconstructed `Table`'s `columns` Record (lifted via `RecordFromExpr.fromExprRecord`)
         // is `buildColumns`-shaped: an alias-keyed wrapper (`"p"`) around the inner column record
         // carrying exactly Person's fields. This proves the `buildColumns` TASTy walk + per-column
-        // closure beta-reduction reconstruct a structurally-correct Record — not a non-None placeholder.
+        // closure beta-reduction reconstruct a structurally-correct Record, not a non-None placeholder.
         val names = SqlLiftHarness.recordFieldNames[SqlAst.Table[Person, ?]](Sql.from[Person]("p"))
         assert(names == "p;age,deptId,id,name")
     }
@@ -452,7 +452,7 @@ class SqlStaticTest extends Test:
         // The `q.value`-based macro lifts `view.age.count` (an
         // `Aggregate.Count` whose argument is the `GroupTerm.inline$underlying` accessor on a
         // projected `GroupedColumn`) via `ColumnFromExpr`. A `SELECT` over a `Where`-sourced GroupBy
-        // is rendered flat by `SqlRender` (the canonical renderer the macro delegates to) — the
+        // is rendered flat by `SqlRender` (the canonical renderer the macro delegates to), the
         // `WHERE` is reused inline, not subquery-wrapped.
         val r = SqlStatic.staticSql(
             Sql.from[Person]("p").where(c => c.p.age > 18)
@@ -472,7 +472,7 @@ class SqlStaticTest extends Test:
     // --- Static bind-value round-trip leaves ---
 
     // Full regression: every static query renders byte-identical to SqlRender.render.
-    "regression — static SQL is byte-identical to SqlRender.render for the same AST" in {
+    "regression, static SQL is byte-identical to SqlRender.render for the same AST" in {
         val r  = SqlStatic.staticSql(Sql.from[Person]("p").where(c => c.p.age >= 18).select(c => c.p.name))
         val rp = Sql.from[Person]("p").where(c => c.p.age >= 18).select(c => c.p.name).render(SqlBackend.Postgres)
         val rm = Sql.from[Person]("p").where(c => c.p.age >= 18).select(c => c.p.name).render(SqlBackend.Mysql)
@@ -533,7 +533,7 @@ class SqlStaticTest extends Test:
     // dotty macro with `java.lang.AssertionError: TypeBounds(Nothing, FromJavaObject)` in
     // `TagMacro.deriveImpl` (reproduced: `case class Reminder(id: Long, at: LocalDateTime) derives
     // Schema` + `Sql.from[Reminder]` → that AssertionError, with no `staticSql` involved). This is a
-    // genuine pre-existing `kyo.Tag` bug specific to `LocalDateTime` — `LocalDate`, `LocalTime`,
+    // genuine pre-existing `kyo.Tag` bug specific to `LocalDateTime`, `LocalDate`, `LocalTime`,
     // `Span[Byte]`, and `kyo.Instant` columns (leaves 5, 7, 8, 9) all compile fine. `LocalDateTime`'s
     // parent interface `ChronoLocalDateTime<LocalDate>` carries a type argument the Tag macro's
     // parent walk mishandles. `Sql.literal` only needs `SqlSchema[LocalDateTime]` (which exists),
@@ -600,16 +600,16 @@ class SqlStaticTest extends Test:
 
     // INSERT static rendering.
     //
-    // `Insert.Values[T, F]` stores rows as decomposed pure data —
+    // `Insert.Values[T, F]` stores rows as decomposed pure data,
     // `Chunk[Chunk[BoundValue[?]]]` (outer = rows, inner = one `BoundValue` per column in declaration
     // order). The `Sql.insert[Person].values(Person(...))` builder eagerly decomposes each row `T` into
     // its per-field `BoundValue`s via the `SqlMacros.rowValues[T]` macro (field value + summoned
-    // `SqlSchema`). The AST node now carries only `Chunk` / `BoundValue` / `SqlSchema` — all pure data
+    // `SqlSchema`). The AST node now carries only `Chunk` / `BoundValue` / `SqlSchema`, all pure data
     // that `FromExpr.derived` lifts with zero reflection, so `staticSql` of an INSERT works without ever
     // reflectively reconstructing the (co-compiled) `Person` row class.
     //
     // The renderer (`SqlRender.insertValues` → `renderDecomposedRows`) emits each cell's `BoundValue.value`
-    // as an inline literal — byte-identical to the prior `productIterator` walk, so the static SQL matches
+    // as an inline literal, byte-identical to the prior `productIterator` walk, so the static SQL matches
     // the runtime renderer exactly. Bind params stay empty for a literal-VALUES INSERT (same as before).
     "staticSql of an INSERT statement renders correct INSERT SQL" in {
         val r = SqlStatic.staticSql(Sql.insert[Person].values(Person(0L, "Alice", 30, 1L)))

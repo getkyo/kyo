@@ -16,7 +16,7 @@ class SqlBackendTest extends Test:
         assert(evidence != null)
     }
 
-    "SqlClient has no type parameter — bracketed form is a compile error" in {
+    "SqlClient has no type parameter, bracketed form is a compile error" in {
         // The phantom `[B <: SqlBackend]` type param is gone. Writing `SqlClient[SqlBackend.Postgres]`
         // must no longer compile; typeCheckErrors captures that statically.
         val errors = compiletime.testing.typeCheckErrors("val x: SqlClient[SqlBackend.Postgres] = ???")

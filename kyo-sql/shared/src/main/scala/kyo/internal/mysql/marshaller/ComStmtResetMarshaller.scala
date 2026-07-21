@@ -10,7 +10,7 @@ import kyo.internal.mysql.MysqlBufferWriter
   *
   * The server responds with an OK or ERR packet.
   *
-  * Reference: MySQL Internals — COM_STMT_RESET
+  * Reference: MySQL Internals, COM_STMT_RESET
   */
 object ComStmtResetMarshaller extends Marshaller[ComStmtReset]:
 

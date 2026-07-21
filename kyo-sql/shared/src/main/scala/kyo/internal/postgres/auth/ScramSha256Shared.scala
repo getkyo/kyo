@@ -7,7 +7,7 @@ import kyo.Span
 /** Pure-Scala SCRAM-SHA-256 / SCRAM-SHA-256-PLUS implementation using only pure-Scala crypto (no javax.crypto).
   *
   * This class exists so that on JVM we can test byte-identical output between the pure-Scala path and the javax.crypto path (ScramSha256 on
-  * JVM). On JVM, ScramSha256 is shadowed by the jvm/ override which uses javax.crypto — this class is never shadowed.
+  * JVM). On JVM, ScramSha256 is shadowed by the jvm/ override which uses javax.crypto, this class is never shadowed.
   *
   * Only used by tests (cross-platform parity leaf). Production code uses ScramSha256.
   *
@@ -104,7 +104,7 @@ final private[kyo] class ScramSha256Shared(username: String, clientNonce: String
         val padded = new Array[Byte](total)
         java.lang.System.arraycopy(input, 0, padded, 0, msgLen)
         padded(msgLen) = 0x80.toByte
-        // Performance: while/var crypto loop — encapsulated pure-Scala block function; CONTRIBUTING permits this.
+        // Performance: while/var crypto loop, encapsulated pure-Scala block function; CONTRIBUTING permits this.
         var shift = 56
         var idx   = total - 8
         while shift >= 0 do
@@ -165,7 +165,7 @@ final private[kyo] class ScramSha256Shared(username: String, clientNonce: String
         val pk = new Array[Byte](HMAC_BLOCK)
         java.lang.System.arraycopy(nk, 0, pk, 0, nk.length)
         val ipad = new Array[Byte](HMAC_BLOCK); val opad = new Array[Byte](HMAC_BLOCK)
-        // Performance: while/var crypto loop — encapsulated pure-Scala block function; CONTRIBUTING permits this.
+        // Performance: while/var crypto loop, encapsulated pure-Scala block function; CONTRIBUTING permits this.
         var i = 0
         while i < HMAC_BLOCK do
             ipad(i) = (pk(i) ^ 0x36).toByte; opad(i) = (pk(i) ^ 0x5c).toByte; i += 1
@@ -189,7 +189,7 @@ final private[kyo] class ScramSha256Shared(username: String, clientNonce: String
         val result = new Array[Byte](keyLength)
         var pos    = 0
         var block  = 1
-        // Performance: while/var crypto loop — encapsulated pure-Scala block function; CONTRIBUTING permits this.
+        // Performance: while/var crypto loop, encapsulated pure-Scala block function; CONTRIBUTING permits this.
         while block <= blocks do
             val saltBlock = new Array[Byte](salt.length + 4)
             java.lang.System.arraycopy(salt, 0, saltBlock, 0, salt.length)

@@ -19,7 +19,7 @@ import scala.annotation.tailrec
 
 /** Server dispatch using the unsafe parser-driven architecture.
   *
-  * Bridges from parser callback (unsafe) to handler invocation (safe Kyo fibers). One instance per server is used as a static entry point —
+  * Bridges from parser callback (unsafe) to handler invocation (safe Kyo fibers). One instance per server is used as a static entry point,
   * per-connection state lives in the closures passed to Http1Parser and Http1StreamContext, not in this object.
   *
   * The parser calls `onRequestParsed` synchronously in the event-loop callback (unsafe context). Routing and validation happen immediately,
@@ -139,7 +139,7 @@ private[kyo] object UnsafeServerDispatch:
                 fiber.onComplete { result =>
                     result match
                         case Result.Success(_) =>
-                            // Timer fired — connection has been idle too long, close it. Route through the
+                            // Timer fired, connection has been idle too long, close it. Route through the
                             // connection's close when connection-backed: `conn.close()` runs closeFn's win
                             // branch, which completes `onClosing` synchronously (so a request racing the idle
                             // expiry with a handler parked on a foreign await is still interrupted), reclaims
@@ -174,7 +174,7 @@ private[kyo] object UnsafeServerDispatch:
             builder,
             maxHeaderSize = config.transportConfig.maxHeaderSize,
             onRequestParsed = (request, bodySpan) =>
-                // Cancel idle timer — a request has arrived
+                // Cancel idle timer, a request has arrived
                 cancelIdleTimer()
 
                 // Host header validation (RFC 9110 section 7.2):
@@ -334,7 +334,7 @@ private[kyo] object UnsafeServerDispatch:
     /** Dispatch a HttpWebSocket upgrade in a new fiber.
       *
       * Creates a ChannelBackedStream from the connection's channels, sends the 101 Switching Protocols response via
-      * WebSocketCodec.acceptUpgrade, then runs the HttpWebSocket session. The HTTP parser is NOT restarted — HttpWebSocket is terminal for
+      * WebSocketCodec.acceptUpgrade, then runs the HttpWebSocket session. The HTTP parser is NOT restarted, HttpWebSocket is terminal for
       * the connection.
       */
     private def dispatchWebSocket(
@@ -407,7 +407,7 @@ private[kyo] object UnsafeServerDispatch:
                         }.map { readFiber =>
                             Fiber.initUnscoped {
                                 // Monitor: on read EOF (peer close), close inbound and complete peerClosedPromise so
-                                // ws.onPeerClose fires. Outbound is intentionally NOT closed here — applications that
+                                // ws.onPeerClose fires. Outbound is intentionally NOT closed here, applications that
                                 // want the sender fiber to exit promptly on peer close compose ws.onPeerClose into
                                 // their own race (see HttpWebSocket.onPeerClose docs).
                                 readFiber.getResult.map { result =>

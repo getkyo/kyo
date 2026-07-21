@@ -6,7 +6,7 @@ import kyo.SqlAst.*
   * [[WindowFrame]], [[FrameBound]], and [[WindowSpecBuilder]].
   *
   * Every leaf calls [[SqlStatic.staticSql]] and asserts the compiled SQL strings for both backends. All queries must reduce at compile time
-  * — if any leaf fails to lift the macro will emit a compile error, not a runtime failure.
+  * if any leaf fails to lift the macro will emit a compile error, not a runtime failure.
   */
 class SqlStaticWindowTest extends Test:
 
@@ -14,7 +14,7 @@ class SqlStaticWindowTest extends Test:
 
     inline given personSqlSchema: SqlSchema[Person] = SqlSchema.derived
 
-    // ── Leaf 1 — ROW_NUMBER() OVER () (no PARTITION, no ORDER) ───────────────
+    // ── Leaf 1, ROW_NUMBER() OVER () (no PARTITION, no ORDER) ───────────────
 
     "rowNumber over empty spec lifts to ROW_NUMBER() OVER ()" in {
         val r = SqlStatic.staticSql(
@@ -39,7 +39,7 @@ class SqlStaticWindowTest extends Test:
         assert(r.sql.mysql.contains("ROW_NUMBER() OVER ()"))
     }
 
-    // ── Leaf 2 — RANK() with partitionBy + orderBy ────────────────────────────
+    // ── Leaf 2, RANK() with partitionBy + orderBy ────────────────────────────
 
     "rank over partitionBy(deptId).orderBy(age.asc) lifts correctly" in {
         val r = SqlStatic.staticSql(
@@ -97,7 +97,7 @@ class SqlStaticWindowTest extends Test:
         assert(r.sql.mysql.contains("CUME_DIST() OVER ("))
     }
 
-    // ── Leaf 3 — Window frames ─────────────────────────────────────────────────
+    // ── Leaf 3, Window frames ─────────────────────────────────────────────────
 
     "frameRange(unboundedPreceding, currentRow) emits RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW" in {
         val r = SqlStatic.staticSql(
@@ -169,7 +169,7 @@ class SqlStaticWindowTest extends Test:
         assert(r.sql.mysql.contains("GROUPS BETWEEN CURRENT ROW AND UNBOUNDED FOLLOWING"))
     }
 
-    // ── Leaf 4 — lead / lag with offset ───────────────────────────────────────
+    // ── Leaf 4, lead / lag with offset ───────────────────────────────────────
 
     "lead(expr, offset=1) lifts to LEAD(col, 1)" in {
         val r = SqlStatic.staticSql(
@@ -226,7 +226,7 @@ class SqlStaticWindowTest extends Test:
         assert(r.sql.mysql.contains("NTH_VALUE("))
     }
 
-    // ── Leaf 5 — Window aggregate (sum(col) OVER (...)) ───────────────────────
+    // ── Leaf 5, Window aggregate (sum(col) OVER (...)) ───────────────────────
 
     "SUM aggregate over partitionBy+orderBy renders complete static SQL" in {
         val r = SqlStatic.staticSql(
@@ -277,7 +277,7 @@ class SqlStaticWindowTest extends Test:
         assert(r.params.isEmpty)
     }
 
-    // ── partitionBy semantics — replace (not append) ──────────────────────────
+    // ── partitionBy semantics, replace (not append) ──────────────────────────
     //
     // `WindowSpecBuilder.partitionBy(key)` uses `new WindowSpecBuilder(Chunk(key), orderings, frameOpt)`
     // which REPLACES the partition list rather than appending. This is the post-Phase-8 semantic.
@@ -287,7 +287,7 @@ class SqlStaticWindowTest extends Test:
     // constructor calls (which are fully liftable) rather than chained builder calls (which produce
     // field-access selects on intermediate constructors that are not reducible by `FromExpr.derived`).
 
-    "single-element partitionBy — one PARTITION BY column in output" in {
+    "single-element partitionBy, one PARTITION BY column in output" in {
         // Equivalent to: Sql.windowSpec.partitionBy(c.p.deptId).rowNumber
         // The builder replaces the partition list with Chunk(key) (not append); we verify the
         // resulting WindowSpec with a single-element Chunk renders exactly one PARTITION BY column.
@@ -299,7 +299,7 @@ class SqlStaticWindowTest extends Test:
             )
         )
         assert(r.sql.postgres.contains("""PARTITION BY "p"."deptId""""))
-        // Confirm only one column in PARTITION BY — no second comma-separated column
+        // Confirm only one column in PARTITION BY, no second comma-separated column
         assert(!r.sql.postgres.contains("""PARTITION BY "p"."deptId", """))
         assert(r.sql.mysql.contains("PARTITION BY `p`.`deptId`"))
         assert(!r.sql.mysql.contains("PARTITION BY `p`.`deptId`, "))
@@ -318,13 +318,13 @@ class SqlStaticWindowTest extends Test:
         assert(r.sql.mysql.contains("PARTITION BY `p`.`deptId`, `p`.`age`"))
     }
 
-    // ── Leaf 6 — builder chain end-to-end: Sql.windowSpec.partitionBy(x).rowNumber ──────────────
+    // ── Leaf 6, builder chain end-to-end: Sql.windowSpec.partitionBy(x).rowNumber ──────────────
     //
     // PENDING (Phase 10 blocker): the builder chain `Sql.windowSpec.partitionBy(c.p.deptId).rowNumber`
     // does NOT lift through `staticSql`. The `resolveBindings` fixpoint in `FromExprDerived` is designed
     // to fold `Select(<case-class-constructor>, fieldName)` to the matching constructor argument, which
     // should reduce intermediate `WindowSpecBuilder` field accesses (`<wsb>.orderings`, `<wsb>.frameOpt`)
-    // to `Chunk.empty` / `Maybe.empty`. Empirically this reduction does not happen — the macro still sees
+    // to `Chunk.empty` / `Maybe.empty`. Empirically this reduction does not happen, the macro still sees
     // an opaque tree and aborts. Diagnosis requires `-Xprint:inliner` output to inspect the exact tree
     // shape after inline expansion. Until that root cause is identified, the chain-end-to-end leaves are
     // `pending`.

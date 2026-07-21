@@ -14,10 +14,10 @@ import kyo.net.StubConnection
   */
 class MysqlConnectionTest extends kyo.Test:
 
-    // 3 minute per-test timeout — MySQL may be slow on first run.
+    // 3 minute per-test timeout, MySQL may be slow on first run.
     override def timeout: Duration = 3.minutes
 
-    "HandshakeExchange succeeds with mysql_native_password — container connect completes" in {
+    "HandshakeExchange succeeds with mysql_native_password, container connect completes" in {
         Scope.run {
             SqlSharedContainers.withFreshSchema(SqlSharedContainers.Backend.MySQL) { ctx =>
                 MysqlConnection
@@ -150,7 +150,7 @@ class MysqlConnectionTest extends kyo.Test:
         }
     }
 
-    "simpleQuery CLIENT_DEPRECATE_EOF path — MySQL 8 default, no intermediate EOF" in {
+    "simpleQuery CLIENT_DEPRECATE_EOF path, MySQL 8 default, no intermediate EOF" in {
         // MySQL 8.0 negotiates CLIENT_DEPRECATE_EOF by default.
         // This test verifies we correctly parse result sets without intermediate EOF packets.
         Scope.run {
@@ -276,7 +276,7 @@ class MysqlConnectionTest extends kyo.Test:
         }
     }
 
-    "MysqlConnection sequential queries — 3 queries in sequence, no state corruption" in {
+    "MysqlConnection sequential queries, 3 queries in sequence, no state corruption" in {
         Scope.run {
             SqlSharedContainers.withFreshSchema(SqlSharedContainers.Backend.MySQL) { ctx =>
                 MysqlConnection
@@ -309,7 +309,7 @@ class MysqlConnectionTest extends kyo.Test:
         }
     }
 
-    "ping works — ComPing receives OkPacket" in {
+    "ping works, ComPing receives OkPacket" in {
         Scope.run {
             SqlSharedContainers.withFreshSchema(SqlSharedContainers.Backend.MySQL) { ctx =>
                 MysqlConnection
@@ -447,7 +447,7 @@ class MysqlConnectionTest extends kyo.Test:
         }
     }
 
-    "HandshakeExchange AuthSwitchRequest handled — server switches to native_password" in {
+    "HandshakeExchange AuthSwitchRequest handled, server switches to native_password" in {
         // Our container uses --default-authentication-plugin=mysql_native_password so the
         // normal path is taken; the code also handles AuthSwitchRequest if the server requests it.
         Scope.run {
@@ -529,7 +529,7 @@ class MysqlConnectionTest extends kyo.Test:
 
     // --- pendingCloses queue bounding (G9.18) ---
 
-    "pendingCloses queue stays bounded under load — max size never exceeds limit" in {
+    "pendingCloses queue stays bounded under load, max size never exceeds limit" in {
         val limit = 4
         stubMysqlConnectionWithLimit(limit).flatMap { conn =>
             val totalAdds = limit + 4
@@ -547,7 +547,7 @@ class MysqlConnectionTest extends kyo.Test:
         }
     }
 
-    "pendingCloses flush — drainPendingCloses clears all queued ids" in {
+    "pendingCloses flush, drainPendingCloses clears all queued ids" in {
         val limit = 4
         stubMysqlConnectionWithLimit(limit).flatMap { conn =>
             // Pre-populate the queue with `limit` IDs.
@@ -558,7 +558,7 @@ class MysqlConnectionTest extends kyo.Test:
                     // drainPendingCloses atomically swaps out all IDs and sends COM_STMT_CLOSE for each.
                     // The StubConnection outbound channel accepts bytes but returns no MySQL OK packets,
                     // so drainPendingCloses will fail trying to write if the channel is closed. We wrap
-                    // in Abort.run to tolerate any network error from the stub — the queue must be empty.
+                    // in Abort.run to tolerate any network error from the stub, the queue must be empty.
                     Abort.run[SqlException](conn.drainPendingCloses).flatMap { _ =>
                         conn.pendingCloses.get.map { after =>
                             assert(after.isEmpty, s"Queue not empty after drain: $after")

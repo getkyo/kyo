@@ -5,13 +5,13 @@ package kyo.internal.client
   * Populated at connection startup by querying `pg_type` for each name declared in [[kyo.SqlClientConfig.typeNames]]. Empty when no custom
   * types are configured, or on the MySQL backend which has no equivalent runtime type-name resolution path.
   *
-  * This is a plain type alias — callers may use `Map[String, Int]` literals directly.
+  * This is a plain type alias, callers may use `Map[String, Int]` literals directly.
   */
 type TypeRegistry = Map[String, Int]
 
 object TypeRegistry:
 
-    /** An empty registry — no custom types configured. */
+    /** An empty registry, no custom types configured. */
     val empty: TypeRegistry = Map.empty
 
     /** Constructs a [[TypeRegistry]] from an existing map. */

@@ -88,7 +88,7 @@ class MysqlPacketTest extends Test:
         assert((packets(1)(3) & 0xff) == 1) // second packet seq=1
     }
 
-    // Round-trip for exact MaxPayload (16777215 bytes) — single packet, no trailing empty
+    // Round-trip for exact MaxPayload (16777215 bytes), single packet, no trailing empty
     "MysqlPacket write then read round-trip for exact 16MB-1 payload" in {
         val payload = makePayload(MysqlPacket.MaxPayload)
         val packets = MysqlPacket.writeOne(payload, seq = 0)
@@ -146,7 +146,7 @@ class MysqlPacketTest extends Test:
     // readOne returns Absent when buffer has partial header (< 4 bytes)
     "MysqlPacket readOne returns Absent when buffer has partial header" in {
         val buf = new AccumulatedBuffer
-        buf.append(Span.from(Array[Byte](5, 0, 0))) // only 3 bytes — incomplete header
+        buf.append(Span.from(Array[Byte](5, 0, 0))) // only 3 bytes, incomplete header
         val result = MysqlPacket.readOne(buf)
         assert(result == Maybe.Absent)
     }

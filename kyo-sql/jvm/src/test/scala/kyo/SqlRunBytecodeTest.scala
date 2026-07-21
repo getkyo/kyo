@@ -25,7 +25,7 @@ private object SqlRunBytecodeRuntimeFallbackHolder:
     given SqlSchema[SqlRunBytecodeUser] = SqlSchema.derived
 
     // `Update.set(...)` carries a lambda whose body is not statically liftable, so
-    // `isStaticallyReducible` returns false and `.run`'s splice takes the runtime fallback —
+    // `isStaticallyReducible` returns false and `.run`'s splice takes the runtime fallback,
     // which calls `kyo.internal.SqlRender.render(...)` directly. That Methodref lands in this
     // holder's constant pool, giving the substring scan a positive signal.
     def runRuntime(using Frame): Long < (Async & Abort[SqlException] & Scope) =
@@ -42,14 +42,14 @@ end SqlRunBytecodeRuntimeFallbackHolder
   *
   * This test isolates each path in its own holder class so the class file's constant pool reflects only that path's referenced classes,
   * then scans the raw bytes for the UTF-8 sequence `SqlRender`. UTF-8 entries in the JVM class file format store identifier strings as
-  * length-prefixed raw bytes — a substring scan is sufficient to confirm presence or absence.
+  * length-prefixed raw bytes, a substring scan is sufficient to confirm presence or absence.
   *
   * JVM-only: class files exist only on the JVM. JS / Native runtimes have separate representations; the same wiring is verified there by
   * the compile-time `runStatic` leaves in `SqlRunStaticTest`.
   */
 class SqlRunBytecodeTest extends Test:
 
-    // Two top-level holders defined below the test class — see file-level scaladoc for why the
+    // Two top-level holders defined below the test class, see file-level scaladoc for why the
     // holders must NOT be nested objects (closure-hoisting would push lambda bodies into the
     // enclosing class, polluting the substring scan with both paths' constants).
 
@@ -91,7 +91,7 @@ class SqlRunBytecodeTest extends Test:
         val bytes = classFileBytes(SqlRunBytecodeStaticFastPathHolder.getClass)
         assert(
             !containsUtf8(bytes, "kyo/internal/SqlRender"),
-            "static fast-path holder unexpectedly references kyo/internal/SqlRender — the macro is emitting the runtime fallback instead of the compile-time splice"
+            "static fast-path holder unexpectedly references kyo/internal/SqlRender, the macro is emitting the runtime fallback instead of the compile-time splice"
         )
     }
 
@@ -101,7 +101,7 @@ class SqlRunBytecodeTest extends Test:
         val bytes = classFileBytes(SqlRunBytecodeRuntimeFallbackHolder.getClass)
         assert(
             containsUtf8(bytes, "kyo/internal/SqlRender"),
-            "runtime fallback holder unexpectedly does NOT reference kyo/internal/SqlRender — the substring-scan check has no signal"
+            "runtime fallback holder unexpectedly does NOT reference kyo/internal/SqlRender, the substring-scan check has no signal"
         )
     }
 

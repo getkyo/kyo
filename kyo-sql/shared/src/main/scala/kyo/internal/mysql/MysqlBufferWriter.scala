@@ -11,7 +11,7 @@ import kyo.net.internal.util.GrowableByteBuffer
   *
   * All multi-byte integers are written in little-endian order as required by the MySQL protocol.
   *
-  * Reference: MySQL Internals — Connection Phase Packets and Text Protocol
+  * Reference: MySQL Internals, Connection Phase Packets and Text Protocol
   */
 final class MysqlBufferWriter:
     private val buf = new GrowableByteBuffer

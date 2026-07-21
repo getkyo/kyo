@@ -12,10 +12,10 @@ import scala.quoted.*
   *   - Else: error.
   *
   * For each component (union variant, sealed-trait variant, case-class field), the macro:
-  *   1. Tries `Expr.summon[kyo.FromExpr[T]]` at macro time — uses a user-provided kyo instance (shim, custom given, recursive derivation).
-  *   2. Falls back to `Expr.summon[scala.quoted.FromExpr[T]]` — picks up stdlib's primitive instances (`IntFromExpr`, `StringFromExpr`,
+  *   1. Tries `Expr.summon[kyo.FromExpr[T]]` at macro time, uses a user-provided kyo instance (shim, custom given, recursive derivation).
+  *   2. Falls back to `Expr.summon[scala.quoted.FromExpr[T]]`, picks up stdlib's primitive instances (`IntFromExpr`, `StringFromExpr`,
   *      etc.) wrapped via `kyo.FromExpr.fromStd`.
-  *   3. Falls back to `derivedImpl[T]` — recursive structural derivation.
+  *   3. Falls back to `derivedImpl[T]`, recursive structural derivation.
   */
 private[kyo] object FromExprMirrorMacro:
 

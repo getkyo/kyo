@@ -10,7 +10,7 @@ import kyo.internal.mysql.MysqlBufferWriter
   * MySQL binary protocol: parameter values are sent as raw bytes in the payload of [[ComStmtExecute]]. The (mysqlType, unsigned) pair is
   * sent in the type descriptor list when `newParamsBound=1`.
   *
-  * Reference: MySQL Internals — Binary Protocol Value (§14.7.4)
+  * Reference: MySQL Internals, Binary Protocol Value (§14.7.4)
   *
   * @tparam A
   *   the Scala type this encoder handles
@@ -107,7 +107,7 @@ object MysqlEncoder:
     val bigDecimalEncoder: MysqlEncoder[BigDecimal] = new MysqlEncoder[BigDecimal]:
         def mysqlType: Int = TYPE_NEWDECIMAL
         def write(value: BigDecimal, buf: MysqlBufferWriter): Unit =
-            // Use Scala BigDecimal.toString, NOT value.underlying().toPlainString — Scala Native's
+            // Use Scala BigDecimal.toString, NOT value.underlying().toPlainString, Scala Native's
             // javalib zeros the integer digits in toPlainString. See PostgresEncoder.numericText.
             val bytes = value.toString.getBytes(StandardCharsets.UTF_8)
             buf.writeLenencInt(bytes.length.toLong)

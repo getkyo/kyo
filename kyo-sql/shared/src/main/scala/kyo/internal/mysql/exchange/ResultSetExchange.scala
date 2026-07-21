@@ -18,7 +18,7 @@ import kyo.internal.mysql.unmarshaller.ResultsetRowUnmarshaller
   *
   * Returns a [[Chunk[MysqlRow]]] with one entry per data row.
   *
-  * Reference: MySQL Internals — Text Resultset
+  * Reference: MySQL Internals, Text Resultset
   */
 private[mysql] object ResultSetExchange:
 
@@ -100,7 +100,7 @@ private[mysql] object ResultSetExchange:
                         Abort.fail(SqlException.Connection(s"ERR decode panic: ${t.getMessage}", summon[Frame]))
                 }
             else
-                // Row packet — decode as ResultsetRow
+                // Row packet, decode as ResultsetRow
                 val reader          = MysqlBufferReader(payload)
                 val rowUnmarshaller = ResultsetRowUnmarshaller(columnDefs.size)
                 Abort.run[SqlException.Decode](rowUnmarshaller.read(reader)).flatMap {

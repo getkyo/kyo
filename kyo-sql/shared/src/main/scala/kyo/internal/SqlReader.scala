@@ -10,7 +10,7 @@ import kyo.Span
   * representation (e.g. PostGIS geometry, hstore, pgvector). Concrete backend implementations (PostgresRowReader, MysqlRowReader) fill in
   * both the standard primitive methods and the custom escape.
   *
-  * IMPORTANT: all abstract methods inherited from [[kyo.Codec.Reader]] are synchronous — they return plain `A`, not `A < Abort`. Decode
+  * IMPORTANT: all abstract methods inherited from [[kyo.Codec.Reader]] are synchronous, they return plain `A`, not `A < Abort`. Decode
   * failures are signalled by throwing [[kyo.SqlException.Decode]]; unsupported operations are signalled by throwing
   * [[kyo.SqlException.Unsupported]]. Both are [[kyo.KyoException]]-derived and are caught at the kyo-schema decode boundary. The
   * constructor `frame` field supplies the [[kyo.Frame]] used when constructing those exceptions.

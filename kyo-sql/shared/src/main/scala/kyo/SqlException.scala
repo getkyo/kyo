@@ -10,13 +10,13 @@ import scala.annotation.nowarn
 /** Sealed hierarchy of errors produced by kyo-sql operations.
   *
   * Five variants cover every failure category:
-  *   - [[SqlException.Connection]] — transport/pool-level failures (connect refused, pool exhausted, timeout acquiring a connection)
-  *   - [[SqlException.Request]] — client-side request preparation errors (bad SQL, missing encoder, serialization failure)
-  *   - [[SqlException.Server]] — error response received from the database server (carries full PG ErrorResponse / MySQL ERR fields)
-  *   - [[SqlException.Decode]] — row-level decoding failure after data was received successfully
-  *   - [[SqlException.Unsupported]] — operation not supported by this backend's SqlReader/SqlWriter implementation
+  *   - [[SqlException.Connection]], transport/pool-level failures (connect refused, pool exhausted, timeout acquiring a connection)
+  *   - [[SqlException.Request]], client-side request preparation errors (bad SQL, missing encoder, serialization failure)
+  *   - [[SqlException.Server]], error response received from the database server (carries full PG ErrorResponse / MySQL ERR fields)
+  *   - [[SqlException.Decode]], row-level decoding failure after data was received successfully
+  *   - [[SqlException.Unsupported]], operation not supported by this backend's SqlReader/SqlWriter implementation
   *
-  * ==Decode vs Unsupported — the key distinction==
+  * ==Decode vs Unsupported, the key distinction==
   *
   * These two variants are easy to confuse. The rule of thumb:
   *
@@ -35,11 +35,11 @@ import scala.annotation.nowarn
   *
   * {{{
   * query.run.map(rows => ???).pipe(Abort.recover[SqlException] {
-  *   case e: SqlException.Decode      => // schema mismatch — check SqlSchema derivation
-  *   case e: SqlException.Unsupported => // missing structural support — widen or customise schema
+  *   case e: SqlException.Decode      => // schema mismatch, check SqlSchema derivation
+  *   case e: SqlException.Unsupported => // missing structural support, widen or customise schema
   *   case e: SqlException.Server      => // database rejected the query
-  *   case e: SqlException.Connection  => // pool/transport failure — retry or surface to the caller
-  *   case e: SqlException.Request     => // bad SQL or missing encoder — programming error
+  *   case e: SqlException.Connection  => // pool/transport failure, retry or surface to the caller
+  *   case e: SqlException.Request     => // bad SQL or missing encoder, programming error
   * })
   * }}}
   */
@@ -50,7 +50,7 @@ object SqlException:
 
     given Render[SqlException] = Render.from(_.getMessage)
 
-    // --- Connection — transport or connection-pool failure ---
+    // --- Connection, transport or connection-pool failure ---
 
     /** Transport or connection-pool failure.
       *
@@ -68,7 +68,7 @@ object SqlException:
 
     object Connection:
 
-        /** Server responded 'N' to SSLRequest — it does not support TLS. */
+        /** Server responded 'N' to SSLRequest, it does not support TLS. */
         def TlsNotSupported(host: String, port: Int)(using frame: Frame): Connection =
             Connection(s"Server at $host:$port does not support TLS (responded 'N' to SSLRequest)", frame)
 
@@ -78,7 +78,7 @@ object SqlException:
 
     end Connection
 
-    // --- Request — client-side request failure ---
+    // --- Request, client-side request failure ---
 
     /** Client-side request failure.
       *
@@ -100,7 +100,7 @@ object SqlException:
                 sqlText.fold("")(s => s"\n  SQL: $s")
         )(using frame) derives CanEqual
 
-    // --- Server — error response from the database ---
+    // --- Server, error response from the database ---
 
     /** Error response received from the database server.
       *
@@ -159,7 +159,7 @@ object SqlException:
             Server(sqlState, severity, message, Absent, Absent, Absent, Map.empty, Absent, 0, Absent, frame)
     end Server
 
-    // --- Decode — row-decoding failure ---
+    // --- Decode, row-decoding failure ---
 
     /** Row-level decoding failure: the server returned data, but the driver could not convert a column's wire value to the expected Scala
       * type.
@@ -176,9 +176,9 @@ object SqlException:
       *   - A custom decoder supplied via [[SqlSchema.withDecoder]] threw an exception.
       *
       * ==What the user should do==
-      *   1. Inspect `message` — it includes the column name or zero-based column index when available.
+      *   1. Inspect `message`, it includes the column name or zero-based column index when available.
       *   2. Verify that the [[SqlSchema]] derivation for the result type matches the actual database schema.
-      *   3. For nullable columns, wrap the field type in `Maybe[T]` (or `Option[T]` — both are supported).
+      *   3. For nullable columns, wrap the field type in `Maybe[T]` (or `Option[T]`, both are supported).
       *   4. For non-standard types, supply a custom decoder via [[SqlSchema.withDecoder]] or widen the field to `String` / `Span[Byte]` to
       *      capture the raw wire value for further diagnosis.
       *
@@ -201,13 +201,13 @@ object SqlException:
                 sqlText.fold("")(s => s"\n  SQL: $s")
         )(using frame) derives CanEqual
 
-    // --- Unsupported — operation not supported by this backend ---
+    // --- Unsupported, operation not supported by this backend ---
 
     /** A structural read or write operation is not implemented by this backend's [[kyo.internal.SqlReader]] / [[kyo.internal.SqlWriter]].
       *
       * ==Who throws it==
       * The kyo-sql '''driver'''. Raised by the synchronous `SqlReader` / `SqlWriter` implementations (e.g. `PostgresRowReader`,
-      * `MysqlRowReader`) when a schema-derived decoder calls a structural method — `arrayStart`, `arrayElement`, `mapStart`, `mapEntry` —
+      * `MysqlRowReader`) when a schema-derived decoder calls a structural method, `arrayStart`, `arrayElement`, `mapStart`, `mapEntry`,
       * that the backend does not yet implement for a particular wire format or type combination.
       *
       * ==When it is thrown==
@@ -215,12 +215,12 @@ object SqlException:
       * types, nested record, hstore, JSONB object) and the backend does not provide a matching codec path.
       *
       * ==What the user should do==
-      *   1. Inspect `message` — it identifies the operation and, where possible, the column type.
+      *   1. Inspect `message`, it identifies the operation and, where possible, the column type.
       *   2. Simplify the result type: flatten nested structures or decode complex columns as `String` / `Span[Byte]` and parse them
       *      manually.
       *   3. Supply a fully custom column decoder via [[SqlSchema.withDecoder]] that handles the wire format directly, bypassing the
       *      structural codec path.
-      *   4. If the backend should support this operation, file a kyo-sql issue — `Unsupported` on a standard type is a driver bug.
+      *   4. If the backend should support this operation, file a kyo-sql issue, `Unsupported` on a standard type is a driver bug.
       *
       * Contrast with [[SqlException.Decode]]: `Unsupported` means the structural operation itself is missing; `Decode` means the operation
       * exists but the wire value could not be converted to the target type.

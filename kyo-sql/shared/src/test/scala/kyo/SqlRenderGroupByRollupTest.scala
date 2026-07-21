@@ -3,7 +3,7 @@ package kyo
 import kyo.Sql.render
 import kyo.SqlAst.*
 
-/** SqlRenderGroupByRollupTest — Backend rendering of GROUP BY ROLLUP (G-Parity-18).
+/** SqlRenderGroupByRollupTest, Backend rendering of GROUP BY ROLLUP (G-Parity-18).
   *
   * Two leaves verifying that `groupByRollup` emits the correct backend-specific SQL:
   *   1. Postgres: `GROUP BY ROLLUP (a, b)` wrapped syntax.
@@ -17,7 +17,7 @@ class SqlRenderGroupByRollupTest extends Test:
 
     given CanEqual[Any, Any] = CanEqual.derived
 
-    // Leaf 1: groupByRollup on Postgres — emits GROUP BY ROLLUP (a, b).
+    // Leaf 1: groupByRollup on Postgres, emits GROUP BY ROLLUP (a, b).
     "GROUP BY ROLLUP renders as GROUP BY ROLLUP (a, b) on PG" in {
         val q = sales.groupByRollup(c => (c.s.region, c.s.product))
         val r = q.render(SqlBackend.Postgres)
@@ -27,7 +27,7 @@ class SqlRenderGroupByRollupTest extends Test:
         assert(!r.sql.contains("WITH ROLLUP"))
     }
 
-    // Leaf 2: groupByRollup on MySQL — emits GROUP BY a, b WITH ROLLUP.
+    // Leaf 2: groupByRollup on MySQL, emits GROUP BY a, b WITH ROLLUP.
     "GROUP BY ROLLUP lowers to GROUP BY a, b WITH ROLLUP on MySQL" in {
         val q = sales.groupByRollup(c => (c.s.region, c.s.product))
         val r = q.render(SqlBackend.Mysql)

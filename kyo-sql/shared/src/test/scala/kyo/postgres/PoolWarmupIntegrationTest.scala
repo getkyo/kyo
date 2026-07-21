@@ -11,7 +11,7 @@ import kyo.internal.SqlSharedContainers
   *
   * Test discipline:
   *   - Wrapped in `Async.timeout(60.seconds)`.
-  *   - No `Async.sleep` for synchronization — connections are observed via `pg_stat_activity` after `init` returns.
+  *   - No `Async.sleep` for synchronization, connections are observed via `pg_stat_activity` after `init` returns.
   *   - After the warm-up count assertion, one probe query verifies connection reusability before container teardown.
   */
 class PoolWarmupIntegrationTest extends kyo.Test:

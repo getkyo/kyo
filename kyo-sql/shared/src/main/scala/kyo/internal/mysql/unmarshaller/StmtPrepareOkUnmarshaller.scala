@@ -18,7 +18,7 @@ import kyo.internal.mysql.Unmarshaller
   *   - `numColumns` ColumnDefinition41 packets (if numColumns > 0)
   *   - An EOF/OK packet terminator
   *
-  * Reference: MySQL Internals — COM_STMT_PREPARE_OK
+  * Reference: MySQL Internals, COM_STMT_PREPARE_OK
   */
 object StmtPrepareOkUnmarshaller extends Unmarshaller[StmtPrepareOk]:
 
@@ -26,7 +26,7 @@ object StmtPrepareOkUnmarshaller extends Unmarshaller[StmtPrepareOk]:
         buf.readUInt32LE().flatMap { stmtIdLong =>
             buf.readUInt16LE().flatMap { numColumnsInt =>
                 buf.readUInt16LE().flatMap { numParamsInt =>
-                    // reserved byte (0x00) — discard
+                    // reserved byte (0x00), discard
                     buf.readByte().flatMap { _ =>
                         buf.readUInt16LE().map { warningsInt =>
                             StmtPrepareOk(stmtIdLong.toInt, numColumnsInt.toShort, numParamsInt.toShort, warningsInt.toShort)

@@ -10,7 +10,7 @@ import kyo.internal.postgres.types.PostgresEncoder
   *
   * All tests are pure (no database container required). They exercise the schema via in-memory byte buffers.
   *
-  * Wire layout: `(µs: Int64, days: Int32, months: Int32)` — for Period, µs is always 0, months = period.toTotalMonths, days =
+  * Wire layout: `(µs: Int64, days: Int32, months: Int32)`, for Period, µs is always 0, months = period.toTotalMonths, days =
   * period.getDays.
   */
 class SqlSchemaPeriodTest extends Test:
@@ -27,7 +27,7 @@ class SqlSchemaPeriodTest extends Test:
     end pgRow
 
     /** Encodes a Period for use in a synthetic PG `INTERVAL` row, driving every byte through the public [[SqlSchema.writePostgres]] +
-      * [[BoundParam.encoded]] surface — no test-side reach into internal encoders.
+      * [[BoundParam.encoded]] surface, no test-side reach into internal encoders.
       */
     private def pgPeriodBytes(period: java.time.Period)(using kyo.test.AssertScope): Span[Byte] =
         summon[SqlSchema[java.time.Period]].writePostgres(period).head.encoded match
@@ -73,7 +73,7 @@ class SqlSchemaPeriodTest extends Test:
 
     // ── encode: wire layout verification ──────────────────────────────────────
 
-    "Period encodes as INTERVAL with months and days — OID 1186 Binary" in {
+    "Period encodes as INTERVAL with months and days, OID 1186 Binary" in {
         val period = java.time.Period.of(1, 6, 15)
         val params = summon[SqlSchema[java.time.Period]].writePostgres(period)
         assert(params.size == 1)
@@ -152,7 +152,7 @@ class SqlSchemaPeriodTest extends Test:
         val arr = new Array[Byte](16)
         // Write micros = 1 at offset 0 (big-endian Int64): last byte = 1
         arr(7) = 1.toByte
-        // months = 0, days = 0 — the non-zero µs alone must trigger the error
+        // months = 0, days = 0, the non-zero µs alone must trigger the error
         val bytes  = Span.from(arr)
         val row    = pgRow("p" -> bytes)
         val result = Abort.run[SqlException.Decode](summon[SqlSchema[java.time.Period]].readPostgres(row)).eval
@@ -164,7 +164,7 @@ class SqlSchemaPeriodTest extends Test:
 
     // ── round-trip ────────────────────────────────────────────────────────────
 
-    "Period round-trips — Period.of(1, 6, 15)" in {
+    "Period round-trips, Period.of(1, 6, 15)" in {
         val original = java.time.Period.of(1, 6, 15)
         val bytes    = pgPeriodBytes(original)
         val row      = pgRow("p" -> bytes)
@@ -177,7 +177,7 @@ class SqlSchemaPeriodTest extends Test:
         end match
     }
 
-    "Period round-trips — negative period" in {
+    "Period round-trips, negative period" in {
         val original = java.time.Period.of(-2, -5, -20)
         val bytes    = pgPeriodBytes(original)
         val row      = pgRow("p" -> bytes)
@@ -190,7 +190,7 @@ class SqlSchemaPeriodTest extends Test:
         end match
     }
 
-    "Period round-trips — only months" in {
+    "Period round-trips, only months" in {
         val original = java.time.Period.ofMonths(13)
         val bytes    = pgPeriodBytes(original)
         val row      = pgRow("p" -> bytes)
@@ -203,7 +203,7 @@ class SqlSchemaPeriodTest extends Test:
         end match
     }
 
-    "Period round-trips — only days" in {
+    "Period round-trips, only days" in {
         val original = java.time.Period.ofDays(5)
         val bytes    = pgPeriodBytes(original)
         val row      = pgRow("p" -> bytes)

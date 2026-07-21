@@ -12,7 +12,7 @@ import kyo.Span
 
 /** Pure SCRAM-SHA-256 / SCRAM-SHA-256-PLUS (RFC 7677 / RFC 5802) implementation using javax.crypto (JVM only).
   *
-  * Handles one full SCRAM exchange for a single connection. All crypto operations are pure JDK compute — no I/O, no Kyo effects.
+  * Handles one full SCRAM exchange for a single connection. All crypto operations are pure JDK compute, no I/O, no Kyo effects.
   *
   * Usage:
   *   1. Construct with `username`, a pre-generated `clientNonce` (base64, from `kyo.Random.nextBytes(24)`), and optionally a
@@ -20,11 +20,11 @@ import kyo.Span
   *   2. Call `clientFinalMessage(serverFirst, password)` after receiving the server's first message.
   *   3. Call `verifyServerSignature(serverFinal)` after receiving the server's final message.
   *
-  * Channel binding (RFC 5929 tls-server-end-point): when `channelBinding = Present(certHash)`, the GS2 header switches from `"n,,"` to
-  * `"p=tls-server-end-point,,"` and the `c=` attribute in client-final-message base64-encodes `gs2Header || certHash` instead of just the
+  * Channel binding (RFC 5929 tls-server-end-point): when `channelBinding = Present(certHash)`, the GS2 header switches from `"n,"` to
+  * `"p=tls-server-end-point,"` and the `c=` attribute in client-final-message base64-encodes `gs2Header || certHash` instead of just the
   * gs2Header.
   *
-  * Produces output byte-identical to [[kyo.internal.postgres.auth.ScramSha256Shared]] for the same inputs — the two implementations are
+  * Produces output byte-identical to [[kyo.internal.postgres.auth.ScramSha256Shared]] for the same inputs, the two implementations are
   * independent but verified to be equivalent by the cross-platform parity test in `ScramSha256ParityTest`.
   *
   * Reference: RFC 7677 §3 test vectors, RFC 5802 §5

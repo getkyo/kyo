@@ -39,7 +39,7 @@ final class PostgresChannel(
     /** Registers a cleanup latch that blocks subsequent channel operations until the COPY cleanup finishes.
       *
       * Called by [[exchange.CopyExchange]] at the very start of a COPY operation. Ensures callers see either a clean channel or "unusable"
-      * — never stale protocol bytes from an in-flight cleanup.
+      * never stale protocol bytes from an in-flight cleanup.
       */
     private[postgres] def beginCleanup(latch: Latch)(using Frame): Unit < Sync = _cleanupLatch.set(Maybe.Present(latch))
 
@@ -53,7 +53,7 @@ final class PostgresChannel(
       *
       * Used exclusively by [[exchange.CopyExchange]] on both the happy path and cleanup code. The cleanup latch is registered for the
       * duration of the COPY operation, so [[receive]] (which calls [[checkCorrupted]]) would deadlock waiting for the latch we hold. This
-      * variant reads directly from the TCP stream — safe because [[exchange.CopyExchange]] is the sole reader during a COPY op.
+      * variant reads directly from the TCP stream, safe because [[exchange.CopyExchange]] is the sole reader during a COPY op.
       */
     private[postgres] def receiveSkipCheck(using Frame): BackendMessage < (Async & Abort[SqlException]) =
         reader.readOne(conn, unmarshallers)
@@ -61,7 +61,7 @@ final class PostgresChannel(
     /** Serialises `msg` and writes it to the connection without checking the corruption/cleanup-latch guard.
       *
       * Used exclusively by [[exchange.CopyExchange]] on the happy path. The cleanup latch is registered for the duration of the COPY
-      * operation, so [[send]] (which calls [[checkCorrupted]]) would deadlock. This variant marshals and writes directly — safe because
+      * operation, so [[send]] (which calls [[checkCorrupted]]) would deadlock. This variant marshals and writes directly, safe because
       * [[exchange.CopyExchange]] is the sole writer during a COPY op.
       */
     private[postgres] def sendSkipCheck[T <: FrontendMessage](msg: T)(using

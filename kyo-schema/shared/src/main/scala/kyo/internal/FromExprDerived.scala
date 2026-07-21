@@ -1,4 +1,4 @@
-// Phase E Cleanup 3 — cast budget:
+// Phase E Cleanup 3, cast budget:
 // - Primitive-lookup: collapsed from 9 per-type casts to 1 boundary cast in summonPrimitiveFromExpr.
 // - buildDirect invariance-dodge: eliminated by changing buildMaybe/Chunk/Field/Tilde return types to FromExpr[A].
 // - Genuinely unavoidable reflection-seam casts:
@@ -6,7 +6,7 @@
 //     * Class.forName / ctor.newInstance / field.get / method.invoke: return Object at JVM boundary.
 //     * Quoted-list invariance: List[Any] ↔ List[FromExpr[Any]] at splice boundaries.
 //
-// Phase F.5 recursion guard — all added casts are the SAME `FromExpr`-invariance category as the
+// Phase F.5 recursion guard, all added casts are the SAME `FromExpr`-invariance category as the
 // existing "Quoted-list invariance" / "type variable mismatch" channel above (no new category):
 //   * deriveFor cycle arm + deriveRecursive return: `Ref(fe$k).asExpr` carries the singleton type
 //     `fe$k.type`; the emitted `lazy val` is typed `FromExpr[<type-ctor>[Any]]`. `FromExpr` is
@@ -14,21 +14,21 @@
 //     controlled cast. The matcher logic is phantom in `A` (every `unapply` walks `Term` trees
 //     structurally; `A` is load-bearing only in `instantiate[A]`'s final cast).
 //   * deriveMaybe/deriveChunk/deriveTilde erase the inner FromExpr to `FromExpr[Any]` (so a
-//     recursion-guard sibling `lazy val` typed at the saturated form splices in) — same erasure
+//     recursion-guard sibling `lazy val` typed at the saturated form splices in), same erasure
 //     channel as deriveProduct's `fieldFEs: List[FromExpr[Any]]`; the matcher result is widened
 //     back to the field type at the `Option` boundary.
 //   * deriveOr's branch list and buildDirect's union arm: `List(...).asInstanceOf[List[FromExpr[A]]]`
-//     — identical to deriveSum's existing childFEs cast.
+//    , identical to deriveSum's existing childFEs cast.
 //   * The `buildDirect` test-path guard (DirectCtx / LazyFromExpr): the cycle map
 //     `DirectCtx.inProgress` is keyed by `String`, so its values are `LazyFromExpr[?]`; the
 //     re-encounter arm narrows the retrieved placeholder back to `FromExpr[A]`. `LazyFromExpr[A]` is
 //     itself a typed `FromExpr[A]` whose `delegate` field is `FromExpr[A]`; `delegate` is a plain
-//     `var` — macro-expansion-local single-threaded state, not concurrent shared state, so
+//     `var`, macro-expansion-local single-threaded state, not concurrent shared state, so
 //     feedback_atomic_not_var (which targets concurrent mutable state) does not apply.
 //   * `anyConstantFromExpr` (the `FromExpr[Any]` for `Any`-positioned AST leaves) is cast to
-//     `FromExpr[A]` where `A =:= Any` is established structurally — a no-op refinement.
+//     `FromExpr[A]` where `A =:= Any` is established structurally, a no-op refinement.
 //   `DeriveCtx` / `DirectCtx` themselves are STRONGLY typed (parameterised on the singleton `Q`);
-//   the ctx fields hold real `q.reflect.Ref` / `q.reflect.ValDef` — zero `Any` fields, zero casts
+//   the ctx fields hold real `q.reflect.Ref` / `q.reflect.ValDef`, zero `Any` fields, zero casts
 //   on ctx contents.
 //   These are not violations of feedback_no_casts; the JVM erases generics at reflection call sites.
 package kyo.internal
@@ -42,29 +42,29 @@ import scala.quoted.*
   *
   * Emits a `scala.quoted.FromExpr[A]` instance that knows how to read values of type `A` out of quoted expressions. The derivation handles:
   *
-  *   - Primitive types (`Int`, `Long`, `String`, `Boolean`, `Double`, `Float`, `Char`, `Byte`, `Short`) — delegates to the stdlib
+  *   - Primitive types (`Int`, `Long`, `String`, `Boolean`, `Double`, `Float`, `Char`, `Byte`, `Short`), delegates to the stdlib
   *     `FromExpr` instances by summoning them at the use site.
-  *   - `Maybe[A]` — matches `Maybe.empty`, `Absent`, `Maybe(...)`, `Present(...)` (via runtime reflection on the term tree).
-  *   - `Chunk[A]` — matches `Chunk.empty`, `Chunk(args*)` (via runtime reflection on the term tree).
-  *   - `Field[N, V]` — matches a `Field.apply(...)` call and reconstructs the field from the lifted name + summoned `Tag[V]`.
-  *   - `N ~ V` (tilde-tagged value, a phantom type) — delegates to `FromExpr[V]`.
-  *   - `SqlSchema[A]` — delegates to the `given FromExpr[SqlSchema[A]]` in `object SqlSchema` (kyo-sql), located via `Expr.summon`.
-  *   - `Record[F]` — emits a placeholder FromExpr (Record construction sites need backend-specific lifting).
-  *   - Case classes — emits a FromExpr that walks the constructor tree and lifts each argument via a recursively derived FromExpr.
-  *   - Sealed traits / enums — emits a FromExpr that tries each child case in turn.
+  *   - `Maybe[A]`, matches `Maybe.empty`, `Absent`, `Maybe(...)`, `Present(...)` (via runtime reflection on the term tree).
+  *   - `Chunk[A]`, matches `Chunk.empty`, `Chunk(args*)` (via runtime reflection on the term tree).
+  *   - `Field[N, V]`, matches a `Field.apply(...)` call and reconstructs the field from the lifted name + summoned `Tag[V]`.
+  *   - `N ~ V` (tilde-tagged value, a phantom type), delegates to `FromExpr[V]`.
+  *   - `SqlSchema[A]`, delegates to the `given FromExpr[SqlSchema[A]]` in `object SqlSchema` (kyo-sql), located via `Expr.summon`.
+  *   - `Record[F]`, emits a placeholder FromExpr (Record construction sites need backend-specific lifting).
+  *   - Case classes, emits a FromExpr that walks the constructor tree and lifts each argument via a recursively derived FromExpr.
+  *   - Sealed traits / enums, emits a FromExpr that tries each child case in turn.
   *
   * Implementation strategy: rather than use Scala's quoted pattern matching (which suffers from type-capture issues when the inner type
   * variable is reused across quote boundaries), this macro emits FromExpr instances whose `unapply` methods walk the `Term` tree directly
   * via `quotes.reflect.*`. This sidesteps the `t` vs `t²` capture problems entirely and gives us a stable runtime shape.
   *
-  * This macro is intentionally **independent** of `FocusMacro` — it duplicates the Mirror-walk pattern instead of refactoring the 1500-line
+  * This macro is intentionally **independent** of `FocusMacro`, it duplicates the Mirror-walk pattern instead of refactoring the 1500-line
   * `FocusMacro.derivedImpl` (Phase 6.6 prep doc flagged that refactor as too risky for one phase; the shared helper can be extracted
   * later).
   */
 object FromExprDerived:
 
     // ---------------------------------------------------------------------
-    // Phase F.5 — recursive-ADT derivation guard
+    // Phase F.5, recursive-ADT derivation guard
     // ---------------------------------------------------------------------
 
     /** Per-`FromExpr.derived` accumulator that breaks recursive-ADT derivation cycles (`Query` ↔ `Term`).
@@ -72,7 +72,7 @@ object FromExprDerived:
       * Created once by `derivedImpl`, threaded through every `deriveFor` call. Not thread-shared: one instance per macro expansion.
       *
       * Strongly typed on the singleton `Quotes` instance `Q` (the proven `SqlStaticMacro.R` pattern, see `SqlStatic.scala`) so `refs` /
-      * `bindings` hold real `q.reflect.Ref` / `q.reflect.ValDef` — no `Any` fields, no `asInstanceOf` on the ctx contents.
+      * `bindings` hold real `q.reflect.Ref` / `q.reflect.ValDef`, no `Any` fields, no `asInstanceOf` on the ctx contents.
       */
     final private class DeriveCtx[Q <: Quotes & Singleton](using val q: Q):
         import q.reflect.*
@@ -98,7 +98,7 @@ object FromExprDerived:
             case other             => other.typeSymbol.fullName
     end cycleKey
 
-    /** Phase F.5 — saturates a type so it has no free type parameters / wildcards: applies `Any` to every parameter of an unapplied type
+    /** Phase F.5, saturates a type so it has no free type parameters / wildcards: applies `Any` to every parameter of an unapplied type
       * constructor, and replaces wildcard / abstract-parameter arguments of an applied type with `Any`.
       *
       * The recursion guard reaches AST nodes (`Literal[A]`, `ValuesFrom[T, F]`, …) at unapplied or wildcard positions when the parent
@@ -111,7 +111,7 @@ object FromExprDerived:
         given CanEqual[q.reflect.Symbol, q.reflect.Symbol] = CanEqual.derived
         val anyTpe                                         = TypeRepr.of[Any]
         // Non-concrete = a free type parameter / abstract type member / wildcard-bounds. Type *aliases*
-        // (`Predef.String`) and applied / structural types are concrete — only `isAbstractType` (or a
+        // (`Predef.String`) and applied / structural types are concrete, only `isAbstractType` (or a
         // raw `TypeBounds`) marks a position the recursion guard must collapse to `Any`. (Checking
         // `isClassDef` here wrongly rejected `Predef.String`, an alias, collapsing `SqlSchema[String]`
         // to `SqlSchema[Any]`.)
@@ -137,7 +137,7 @@ object FromExprDerived:
                     case _                                          => anyTpe
             if hi =:= anyTpe || !isConcrete(hi) then anyTpe else hi
         end saturate
-        // A class's OWN declared type parameters — `typeMembers` also surfaces inherited type members
+        // A class's OWN declared type parameters, `typeMembers` also surfaces inherited type members
         // (e.g. `String <: Comparable[T]` exposes `T`), which must NOT be treated as the class's params.
         def ownTypeParams(sym: Symbol): List[Symbol] =
             sym.typeMembers.filter(m => m.isTypeParam && m.owner == sym)
@@ -145,7 +145,7 @@ object FromExprDerived:
         // wildcard `?` is `TypeBounds(Nothing, Any)` and carries no knowledge of `c`'s declared parameter
         // bound, so `saturate` alone would collapse `SetSpec[?, ?]`'s `N <: String` to `Any`. Fall back to
         // the constructor parameter's own declared upper bound when it is narrower and concrete (keeping
-        // `SetSpec[String, Any]`, `Column[String, Any]` — well-bounded).
+        // `SetSpec[String, Any]`, `Column[String, Any]`, well-bounded).
         def saturateArg(c: TypeRepr, idx: Int, a: TypeRepr): TypeRepr =
             val direct = saturate(a)
             if !(direct =:= anyTpe) then direct
@@ -170,7 +170,7 @@ object FromExprDerived:
         end match
     end applyAnyToFreeParams
 
-    /** Per-`buildDirect` accumulator — the test-path twin of `DeriveCtx`. Holds runtime `FromExpr` values (not `Expr`s), so it does not
+    /** Per-`buildDirect` accumulator, the test-path twin of `DeriveCtx`. Holds runtime `FromExpr` values (not `Expr`s), so it does not
       * need a `Quotes` type parameter.
       */
     final private class DirectCtx:
@@ -180,7 +180,7 @@ object FromExprDerived:
 
     /** A `FromExpr` whose delegate is filled in after construction, closing value-level recursion in the `buildDirect` test path.
       * `delegate` starts as a fail-soft `None`-returning instance and is replaced with the real one immediately after the recursive build
-      * completes — macro-expansion-local single-threaded state.
+      * completes, macro-expansion-local single-threaded state.
       */
     final private class LazyFromExpr[A] extends scala.quoted.FromExpr[A]:
         var delegate: scala.quoted.FromExpr[A] =
@@ -189,7 +189,7 @@ object FromExprDerived:
         def unapply(x: Expr[A])(using Quotes): Option[A] = delegate.unapply(x)
     end LazyFromExpr
 
-    /** Phase F.5 / Phase G — `FromExpr[Any]` for `Any`-positioned AST leaves (`Literal[Any].value`). An arbitrary `Any` is not liftable,
+    /** Phase F.5 / Phase G, `FromExpr[Any]` for `Any`-positioned AST leaves (`Literal[Any].value`). An arbitrary `Any` is not liftable,
       * but at a concrete static-query call site such a leaf is either a compile-time constant literal or one of the SQL bind-value types
       * (`java.time.LocalDate` / `LocalDateTime` / `LocalTime`, `kyo.Instant`, `kyo.Span[Byte]`) constructed by a known factory call. This
       * matches both shapes and reconstructs the value. Public so the emitted production-path quote can reference it.
@@ -261,7 +261,7 @@ object FromExprDerived:
                                     else None
                                 case _ => None
                         else if endsWith(name, "Span.from") && args.length == 1 then
-                            // `Span.from(Array(b*))` — `calleeOf` peels the `Array.apply` chain (including
+                            // `Span.from(Array(b*))`, `calleeOf` peels the `Array.apply` chain (including
                             // its implicit `ClassTag` argument list) down to the innermost vararg list.
                             unwrap(args(0)) match
                                 case arrApp @ Apply(_, _) =>
@@ -293,14 +293,14 @@ object FromExprDerived:
         val ctx: DeriveCtx[q.type] = new DeriveCtx[q.type]
         val rootExpr               = deriveFor[A, q.type](ctx)
         if ctx.bindings.isEmpty then
-            rootExpr // no recursive type encountered — unchanged single-quote path
+            rootExpr // no recursive type encountered, unchanged single-quote path
         else
             Block(ctx.bindings.toList, rootExpr.asTerm).asExprOf[scala.quoted.FromExpr[A]]
         end if
     end derivedImpl
 
     /** Test-only: applies the derived FromExpr to a captured `Expr[A]` at macro-expansion time and returns the lifted `Option[A]` as a
-      * literal expression. This sidesteps the production path's `Expr[FromExpr[A]]` packaging — useful for unit testing the matcher logic.
+      * literal expression. This sidesteps the production path's `Expr[FromExpr[A]]` packaging, useful for unit testing the matcher logic.
       *
       * Implementation: we emit the FromExpr's code via `derivedImpl`, then wrap a `scala.quoted.staging`-style compile-time evaluation
       * using `Expr.summon` on the already-derived given. Because that's brittle, we instead emit a self-contained `unapply` call inside a
@@ -308,7 +308,7 @@ object FromExprDerived:
       *
       * Concretely: the test macro emits `{ val fe: FromExpr[A] = $derived ; fe.unapply(reifiedExpr).isDefined }`. The trick is we have to
       * re-quote the captured `Expr[A]` into a literal `Expr[Expr[A]]` so it's available at the runtime of the test. We do this by lifting
-      * the value (which is itself a code tree) into a quoted expression of an expression — i.e., a nested quote.
+      * the value (which is itself a code tree) into a quoted expression of an expression, i.e., a nested quote.
       */
     def applyMatchedImpl[A: Type](value: Expr[A])(using q: Quotes): Expr[Boolean] =
         // Build the FromExpr as a plain Scala value at macro-expansion time (no Expr wrapping), then apply its unapply against the
@@ -327,11 +327,11 @@ object FromExprDerived:
         Expr(result.toString)
     end applyReprImpl
 
-    /** Test-only: lifts a value via its derived `FromExpr`, then — when the reconstruction yields a value carrying a `kyo.Record`
-      * (directly, or as a product field, e.g. `Table.columns`) — emits that record's field names. Nested records (e.g. the alias-keyed
+    /** Test-only: lifts a value via its derived `FromExpr`, then, when the reconstruction yields a value carrying a `kyo.Record`
+      * (directly, or as a product field, e.g. `Table.columns`), emits that record's field names. Nested records (e.g. the alias-keyed
       * wrapper a `buildColumns` record carries) are flattened: each level's sorted keys are joined by `;`. Emits `"<none>"` when `unapply`
       * returns `None` and `"<no-record>"` when the reconstruction has no `Record`. Lets a test assert the *structure* of a reconstructed
-      * `Record` — its `toString` is an opaque identity hash.
+      * `Record`, its `toString` is an opaque identity hash.
       */
     def applyRecordFieldNamesImpl[A: Type](value: Expr[A])(using q: Quotes): Expr[String] =
         val directFE: scala.quoted.FromExpr[A] = buildDirect[A](new DirectCtx)
@@ -365,7 +365,7 @@ object FromExprDerived:
         val tpe = TypeRepr.of[A].dealias
         val sym = tpe.typeSymbol
         // Phase F.5: as in `deriveFor`, the cycle guard must NOT intercept `Maybe` / `Chunk` (themselves
-        // `sealed`) — they have dedicated arms. Check the special-type predicates first.
+        // `sealed`), they have dedicated arms. Check the special-type predicates first.
         val isSpecial =
             isPrimitive[A] || isMaybe(tpe) || isChunk(tpe) || isField(tpe) || isTilde(tpe) ||
                 isSqlSchema(tpe) || isRecord(tpe) || isColumnProjection(tpe)
@@ -392,12 +392,12 @@ object FromExprDerived:
                     placeholder
             end match
         else if isPrimitive[A] then
-            // Summon stdlib FromExpr[A] via Expr.summon. This requires us to evaluate the summoned Expr — but stdlib FromExprs are
+            // Summon stdlib FromExpr[A] via Expr.summon. This requires us to evaluate the summoned Expr, but stdlib FromExprs are
             // `given` instances, so `Expr.summon` returns the actual instance reference wrapped in Expr. We can extract via .value if
             // the instance is a stable identifier; otherwise we fall back to summoning the stdlib FromExpr directly via TypeRepr lookup.
             summonPrimitiveFromExpr[A]
         else if tpe =:= TypeRepr.of[Any] then
-            // Phase F.5: `Any`-positioned AST leaves — lift compile-time constant literals (see deriveFor).
+            // Phase F.5: `Any`-positioned AST leaves, lift compile-time constant literals (see deriveFor).
             anyConstantFromExpr.asInstanceOf[scala.quoted.FromExpr[A]]
         else if isMaybe(tpe) then
             buildMaybe[A](ctx, tpe)
@@ -412,7 +412,7 @@ object FromExprDerived:
         else if isColumnProjection(tpe) then
             buildSummonedFromExpr[A]
         else if isRecord(tpe) then
-            // Phase F.5: the test path mirrors `deriveRecord` — summon a `given FromExpr[Record[F]]`
+            // Phase F.5: the test path mirrors `deriveRecord`, summon a `given FromExpr[Record[F]]`
             // (e.g. kyo-sql's `RecordFromExpr.fromExprRecord`, when imported at the macro use-site) and
             // delegate to it. `applyMatchedImpl` / `applyReprImpl` invoke this `unapply` at macro-
             // expansion time, so `Expr.summon` resolves against the use-site implicit scope; the
@@ -427,7 +427,7 @@ object FromExprDerived:
         else
             tpe match
                 case OrType(left, right) =>
-                    // Phase F.5: union-typed AST field — try each branch in turn (see deriveOr).
+                    // Phase F.5: union-typed AST field, try each branch in turn (see deriveOr).
                     val leftFE = applyAnyToFreeParams(left).asType match
                         case '[l] => buildDirect[l](ctx).asInstanceOf[scala.quoted.FromExpr[A]]
                     val rightFE = applyAnyToFreeParams(right).asType match
@@ -437,7 +437,7 @@ object FromExprDerived:
                             leftFE.unapply(x).orElse(rightFE.unapply(x))
                 case AndType(_, _) =>
                     // The singleton-narrowing introduced `String & Singleton` (and similar) at field
-                    // sites — the `Singleton` half is a phantom marker with no runtime content. Strip
+                    // sites, the `Singleton` half is a phantom marker with no runtime content. Strip
                     // phantom marker traits from the AndType and recurse on the substantive operand.
                     // FromExpr is invariant, so the recursion cast at the outer boundary is sound.
                     def stripPhantom(t: TypeRepr): TypeRepr =
@@ -537,7 +537,7 @@ object FromExprDerived:
             case AppliedType(_, List(rawInner)) =>
                 // Phase G.5: saturate a plain case-class element's free params / wildcards (see `deriveChunk`).
                 val rawInnerDealiased = rawInner.dealias
-                // Identify the element constructor by its type symbol's `fullName` — robust for wildcard
+                // Identify the element constructor by its type symbol's `fullName`, robust for wildcard
                 // applications (`Column[?, ?]`) where the `.show`-based `isColumnProjection` string check
                 // is unreliable. Only a *plain* case-class element (no special / custom-given arm) needs
                 // saturation; the special arms handle their own wildcards.
@@ -562,7 +562,7 @@ object FromExprDerived:
                             def unapply(x: Expr[Chunk[t]])(using qctx: Quotes): Option[Chunk[t]] =
                                 import qctx.reflect.*
                                 given CanEqual[String, String] = CanEqual.derived
-                                // `resolveBindings` substituted block-local `val`s — descend past any `Block`.
+                                // `resolveBindings` substituted block-local `val`s, descend past any `Block`.
                                 def unwrap(t: Term): Term =
                                     t match
                                         case Inlined(_, _, inner) => unwrap(inner)
@@ -594,7 +594,7 @@ object FromExprDerived:
                                 val norm                                         = sname.replace("$package", "").replace("$", "")
                                 if endsWith(norm, "Chunk.empty") then Some(Chunk.empty[t])
                                 else
-                                    // Phase H.5 — also handles `<varargs>.map(<closure>)` (see `deriveChunk`):
+                                    // Phase H.5, also handles `<varargs>.map(<closure>)` (see `deriveChunk`):
                                     // beta-reduces the `.map` closure against each `Repeated` element.
                                     def extractElems(t: Term): Option[List[Term]] =
                                         unwrap(t) match
@@ -613,7 +613,7 @@ object FromExprDerived:
                                                     )
                                                 })
                                             case _ => None
-                                    // `<ev>.toChunk(arg)` — `arg` is a `TupleN.apply(e*)` or a single value.
+                                    // `<ev>.toChunk(arg)`, `arg` is a `TupleN.apply(e*)` or a single value.
                                     def tupleOrSingle(t: Term): List[Term] =
                                         def isTuple(c: Term): Boolean =
                                             val n =
@@ -768,7 +768,7 @@ object FromExprDerived:
                     t match
                         case Inlined(_, _, inner) => unwrap(inner)
                         // `resolveBindings` already substituted block-local `val`s into `inner`, so the
-                        // statements are dead — descend past any `Block`, not only the empty form.
+                        // statements are dead, descend past any `Block`, not only the empty form.
                         case Block(_, inner) => unwrap(inner)
                         case Typed(inner, _) => unwrap(inner)
                         case other           => other
@@ -777,7 +777,7 @@ object FromExprDerived:
                         case Apply(fun, args)  => collectArgs(fun, args ::: acc)
                         case TypeApply(fun, _) => collectArgs(fun, acc)
                         case head              => Some((head, acc))
-                // The constructor head must name THIS case class — otherwise a 0-arg case class
+                // The constructor head must name THIS case class, otherwise a 0-arg case class
                 // (`Default()`) would match any term reducing to a non-`Apply` head, and an n-arg
                 // case class would match any unrelated n-arg `Apply`.
                 def headMatches(head: Term): Boolean =
@@ -848,30 +848,30 @@ object FromExprDerived:
     end binaryNameCandidates
 
     /** Resolves the runtime value of an `Expr[A]` that is a reference to a stable `given` definition (a `given val` / `given def` on a
-      * module — e.g. `kyo.SqlSchema.given_SqlSchema_Int`). Walks `x` to its symbol, splits the fully-qualified name into owner module +
+      * module, e.g. `kyo.SqlSchema.given_SqlSchema_Int`). Walks `x` to its symbol, splits the fully-qualified name into owner module +
       * member, and retrieves the value by JVM reflection on the owner's `MODULE$`. Returns `None` when `x` is not such a stable reference
       * or reflection fails.
       *
-      * Public so kyo-sql's `SqlSchema.fromExprSqlSchema` can delegate here — it must resolve a `SqlSchema[…]` term directly from the
+      * Public so kyo-sql's `SqlSchema.fromExprSqlSchema` can delegate here, it must resolve a `SqlSchema[…]` term directly from the
       * supplied expression rather than re-summoning `SqlSchema[A]`, which fails when `A` was saturated to `Any` by the recursion guard.
       *
       * ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────── WHY
-      * REFLECTION IS UNAVOIDABLE HERE. At macro-expansion time we hold an `Expr[A]` that *is* a reference to a `given` — but we need its
+      * REFLECTION IS UNAVOIDABLE HERE. At macro-expansion time we hold an `Expr[A]` that *is* a reference to a `given`, but we need its
       * concrete *runtime value* (a `SqlSchema[…]` instance), not the tree. The two non-reflective options both fail:
       *
-      *   1. `Expr.summon[A]` / `FromExpr[A].unapply` — fails by construction: `A` is frequently `Any` (the recursion guard saturates a free
+      *   1. `Expr.summon[A]` / `FromExpr[A].unapply`, fails by construction: `A` is frequently `Any` (the recursion guard saturates a free
       *      type parameter to `Any` when it lifts a `Literal[Any]` field reached through the `Term` sum), and there is no `FromExpr[Any]`.
       *      A primitive `FromExpr` cannot lift a `SqlSchema` object regardless.
-      *   2. `Ref(symbol).asExpr` re-quotation — only rebuilds the *tree*; evaluating that tree to a value still needs a `FromExpr`, so it
+      *   2. `Ref(symbol).asExpr` re-quotation, only rebuilds the *tree*; evaluating that tree to a value still needs a `FromExpr`, so it
       *      is circular.
       *
       * The `given` being referenced lives in an already-compiled dependency (e.g. `kyo-sql`) that is on the classpath when this macro
-      * expands in a downstream module, so `Class.forName` + `MODULE$` reflection genuinely *can* recover the object — it is the only
+      * expands in a downstream module, so `Class.forName` + `MODULE$` reflection genuinely *can* recover the object, it is the only
       * mechanism that does. The cost is fragility: it depends on Scala 3's binary-naming scheme for module-level `given`s, which is not a
       * stable contract.
       *
-      * FAILS CLOSED. Every failure path — symbol unavailable, name not a dotted owner.member, no matching class on the classpath, no
-      * `MODULE$`, no accessor method, or any reflection exception — returns `None`. `None` is the documented `FromExpr.unapply` "not
+      * FAILS CLOSED. Every failure path, symbol unavailable, name not a dotted owner.member, no matching class on the classpath, no
+      * `MODULE$`, no accessor method, or any reflection exception, returns `None`. `None` is the documented `FromExpr.unapply` "not
       * statically liftable" signal; the static-SQL macro converts it into a clear `report.errorAndAbort`. There is no path on which a
       * reflection failure produces a wrong value: a miss is always `None`, never a mis-resolved instance.
       * ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
@@ -1060,7 +1060,7 @@ object FromExprDerived:
 
     private def deriveFor[A: Type, Q <: Quotes & Singleton](ctx: DeriveCtx[Q]): Expr[scala.quoted.FromExpr[A]] =
         // Use `ctx.q` as the single Quotes instance so `ctx.refs` / `ctx.bindings` (typed in `ctx.q.reflect`)
-        // align path-dependently with every reflection value built here — no cross-Quotes cast.
+        // align path-dependently with every reflection value built here, no cross-Quotes cast.
         given q: ctx.q.type = ctx.q
         import q.reflect.*
 
@@ -1068,7 +1068,7 @@ object FromExprDerived:
         val sym = tpe.typeSymbol
         // Phase F.5: the cycle guard applies ONLY to case classes / sealed / enum class-defs that are
         // genuine AST product/sum nodes. `Maybe` / `Chunk` are themselves `sealed`, but they have
-        // dedicated derivation arms (`deriveMaybe` / `deriveChunk`) and are NOT cycle keys — their
+        // dedicated derivation arms (`deriveMaybe` / `deriveChunk`) and are NOT cycle keys, their
         // *contents* re-enter `deriveFor` through those arms. So the special-type predicates must be
         // checked first; the guard never intercepts them.
         val isSpecial =
@@ -1086,9 +1086,9 @@ object FromExprDerived:
             val key = cycleKey(tpe)
             ctx.refs.get(key) match
                 case Some(selfRef) =>
-                    // Cycle: this type is already being derived — emit a reference to its lazy val.
+                    // Cycle: this type is already being derived, emit a reference to its lazy val.
                     // `ctx.q` IS `q` (DeriveCtx is parameterised on the singleton `Q`), so `selfRef`
-                    // is a `q.reflect.Ref` — no cross-Quotes cast. The single budgeted phantom cast:
+                    // is a `q.reflect.Ref`, no cross-Quotes cast. The single budgeted phantom cast:
                     // `Ref(fe$k)` has the singleton type `fe$k.type` (a subtype of the lazy val's
                     // declared `FromExpr[<ctor>[Any]]`), and `A` may be `<ctor>[T]`. `asExprOf` would
                     // reject the singleton↔invariant-`FromExpr` mismatch, so `asExpr` + a cast. The
@@ -1125,14 +1125,14 @@ object FromExprDerived:
         else if tpe.typeSymbol.flags.is(Flags.Module) then
             deriveSingleton[A](tpe)
         else if tpe.typeSymbol.flags.is(Flags.Enum) then
-            // Enum case without parameters (singleton case) — treat as a singleton.
+            // Enum case without parameters (singleton case), treat as a singleton.
             deriveSingleton[A](tpe)
         else
             tpe match
                 case OrType(left, right) =>
                     // Phase F.5: a union-typed AST field (`Windowed.inner: Aggregate.Call[A] |
                     // WindowFunction[A]`). Derive each branch and emit a `FromExpr` that tries them
-                    // in turn — same shape as `deriveSum`.
+                    // in turn, same shape as `deriveSum`.
                     deriveOr[A, Q](ctx, left, right)
                 case _ =>
                     Expr.summon[scala.quoted.FromExpr[A]].getOrElse(
@@ -1144,7 +1144,7 @@ object FromExprDerived:
         end if
     end deriveFor
 
-    /** Phase F.5 — derives a `FromExpr` for a union type `L | R`: tries the `FromExpr[L]` matcher, then the `FromExpr[R]` matcher.
+    /** Phase F.5, derives a `FromExpr` for a union type `L | R`: tries the `FromExpr[L]` matcher, then the `FromExpr[R]` matcher.
       */
     private def deriveOr[A: Type, Q <: Quotes & Singleton](
         ctx: DeriveCtx[Q],
@@ -1167,7 +1167,7 @@ object FromExprDerived:
         }
     end deriveOr
 
-    /** Phase F.5 — closes a recursion cycle. On first encounter of a recursive product/sum type, reserves a `lazy val` symbol, registers
+    /** Phase F.5, closes a recursion cycle. On first encounter of a recursive product/sum type, reserves a `lazy val` symbol, registers
       * its `Ref` (so mutually-recursive re-entry resolves to it), builds the body normally, then stashes the `ValDef`. The top-level
       * `derivedImpl` assembles all reserved `lazy val`s into one `Block`.
       */
@@ -1184,12 +1184,12 @@ object FromExprDerived:
         // 2. Register its Ref BEFORE building the body so nested deriveFor[A] (mutual recursion) resolves here.
         val selfRef = Ref(lazySym)
         ctx.refs.update(key, selfRef)
-        // 3. Build the body — the normal product/sum derivation. Recursive deriveFor calls inside now hit
+        // 3. Build the body, the normal product/sum derivation. Recursive deriveFor calls inside now hit
         //    ctx.refs and return selfRef (or a sibling's ref).
         val bodyExpr: Expr[scala.quoted.FromExpr[A]] =
             if tpeR.typeSymbol.flags.is(Flags.Case) then deriveProduct[A, Q](ctx, tpeR)
             else deriveSum[A, Q](ctx, tpeR)
-        // 4. Emit the ValDef. `changeOwner` is applied defensively — the quoted `new FromExpr` body is built
+        // 4. Emit the ValDef. `changeOwner` is applied defensively, the quoted `new FromExpr` body is built
         //    under the splice owner, not `lazySym`; ValDef construction needs the body owned by `lazySym`.
         val valDef = ValDef(lazySym, Some(bodyExpr.asTerm.changeOwner(lazySym)))
         ctx.bindings += valDef
@@ -1199,8 +1199,8 @@ object FromExprDerived:
         selfRef.asExpr.asInstanceOf[Expr[scala.quoted.FromExpr[A]]]
     end deriveRecursive
 
-    /** Phase H.5 — beta-reduces an application to a fixpoint. `Term.betaReduce` reduces one application redex per call, but it does so by
-      * emitting a `Block` of `val` bindings (one per parameter) rather than substituting the arguments — so the reduced body still
+    /** Phase H.5, beta-reduces an application to a fixpoint. `Term.betaReduce` reduces one application redex per call, but it does so by
+      * emitting a `Block` of `val` bindings (one per parameter) rather than substituting the arguments, so the reduced body still
       * references the parameter `val`s, and a redex captured behind such a binding (the nested `(_(columns))(_.name)` form the DSL's
       * `specs.map(_(columns))` produces) is not reduced further. Each iteration therefore first runs `resolveBindings` to inline those
       * `val` bindings, exposing the next redex, then `betaReduce`s it. Iterates (bounded) until no further redex appears. Public so emitted
@@ -1238,7 +1238,7 @@ object FromExprDerived:
         loop(term, 16)
     end betaReduceFully
 
-    /** Phase F.5 — deeply resolves block-local `val` bindings in a term tree.
+    /** Phase F.5, deeply resolves block-local `val` bindings in a term tree.
       *
       * Inline-expanded DSL constructors (`groupBy(...)`, `select(...)`, …) emit a `Block` whose statements bind intermediate `val`s that
       * the constructor `Apply` references by `Ident`. The `FromExpr` matchers walk `Apply` argument trees structurally, so an unresolved
@@ -1250,7 +1250,7 @@ object FromExprDerived:
         import q.reflect.*
         given CanEqual[Symbol, Symbol] = CanEqual.derived
         val bindings                   = scala.collection.mutable.Map.empty[Symbol, Term]
-        // Pass 1 — collect every `val sym = rhs` binding anywhere in the tree.
+        // Pass 1, collect every `val sym = rhs` binding anywhere in the tree.
         // Visited-set on Tree identity: an inline-heavy input can share subtrees referentially
         // (the same closure body reached via multiple Inlined wrappers). Without this, the
         // TreeTraverser walks each shared subtree once per pointer, which compounds across
@@ -1271,8 +1271,8 @@ object FromExprDerived:
         collector.traverseTree(root)(Symbol.spliceOwner)
         given CanEqual[String, String] = CanEqual.derived
         // Strips wrappers that may sit between a `Select` and the case-class `Apply` it targets.
-        // `Block` / `Inlined` statement lists are dead by the time `asConstruction` runs — the
-        // substituter has already inlined every `val` binding — so they are stripped regardless of
+        // `Block` / `Inlined` statement lists are dead by the time `asConstruction` runs, the
+        // substituter has already inlined every `val` binding, so they are stripped regardless of
         // their (now-unused) statement lists.
         def peel(t: Term): Term =
             t match
@@ -1297,7 +1297,7 @@ object FromExprDerived:
                 case _                          => None
             end match
         end asConstruction
-        // Pass 2 — substitute `Ident` references to bound symbols with their rhs, AND fold
+        // Pass 2, substitute `Ident` references to bound symbols with their rhs, AND fold
         // `Select(<case-class-apply>, caseField)` to the matching constructor argument, both to a
         // fixpoint. The case-field fold lets a column-projection receiver (`Table.apply(cols, …)
         // .columns`) resolve to the `buildColumns` expansion directly so `RecordFromExpr` / the
@@ -1310,7 +1310,7 @@ object FromExprDerived:
         // Two memo layers: identMemo caches per-binding-symbol substituted rhs (avoids
         // recomputation when the same Ident is referenced from N sites). termMemo caches per-input-
         // Term substitution result (preserves referential sharing in the output, so the next
-        // iteration's collector — which is now visited-set guarded — walks the shared subtree once).
+        // iteration's collector, which is now visited-set guarded, walks the shared subtree once).
         val identMemo = scala.collection.mutable.Map.empty[Symbol, Term]
         val termMemo  = new java.util.IdentityHashMap[Term, Term]()
         val Fuel      = 1000000
@@ -1330,7 +1330,7 @@ object FromExprDerived:
                     case id: Ident if bindings.contains(id.symbol) =>
                         identMemo.getOrElseUpdate(id.symbol, transformTerm(bindings(id.symbol))(owner))
                     // `<ev>.substituteCo[F](x)` / `substituteContra` from `=:=` evidence is a pure
-                    // identity coercion — strip it so field matchers see the wrapped term directly.
+                    // identity coercion, strip it so field matchers see the wrapped term directly.
                     case Apply(TypeApply(Select(_, "substituteCo" | "substituteContra"), _), List(inner)) =>
                         transformTerm(inner)(owner)
                     case sel @ Select(receiver, fieldName) =>
@@ -1338,7 +1338,7 @@ object FromExprDerived:
                         // Peel `Inlined` / `Block` / `Typed` wrappers off the resolved receiver before
                         // checking if it is a case-class constructor application. `inline def` bodies
                         // emit `Inlined(...)` wrappers around `<self>.field` Selects whose receiver,
-                        // after binding substitution, is a case-class apply wrapped in `Inlined(...)` —
+                        // after binding substitution, is a case-class apply wrapped in `Inlined(...)`,
                         // `asConstruction` already peels via `peel`, but the un-peeled wrapper would
                         // otherwise prevent the case-flag check (`caseSym.flags.is(Flags.Case)`) from
                         // seeing the right symbol. Peeling once here also enables further Select-folds
@@ -1348,10 +1348,10 @@ object FromExprDerived:
                         // Case-field fold. The original guard only checked the head symbol
                         // (`caseSym.flags.is(Case)` / `caseSym.companionClass.flags.is(Case)`), which
                         // fails when the head names an `export` / re-export alias (e.g. `kyo.SqlAst`
-                        // re-exports `WindowSpecBuilder` from `kyo.internal.dsl` — the alias's
+                        // re-exports `WindowSpecBuilder` from `kyo.internal.dsl`, the alias's
                         // `companionClass` is `NoSymbol`). The added arm accepts the fold when the
                         // field accessor's owner IS a case class AND the construction's arg count
-                        // matches that class's caseFields count — a conservative shape check that
+                        // matches that class's caseFields count, a conservative shape check that
                         // ensures we're indexing the right arg list even when the head symbol is
                         // an alias rather than the case-class companion directly.
                         //
@@ -1395,9 +1395,9 @@ object FromExprDerived:
         substituter.transformTerm(root)(Symbol.spliceOwner)
     end resolveBindings
 
-    /** Phase F.5 — `buildDirect` test-path counterpart of `deriveRecord`. Builds a `FromExpr[A]` whose `unapply` summons a
+    /** Phase F.5, `buildDirect` test-path counterpart of `deriveRecord`. Builds a `FromExpr[A]` whose `unapply` summons a
       * `given FromExpr[A]` at the macro use-site (e.g. `RecordFromExpr.fromExprRecord` imported in a kyo-sql test) and delegates to it. The
-      * summoned given is retrieved by JVM reflection on its defining module — the same seam `buildSqlSchema` uses for `SqlSchema` givens.
+      * summoned given is retrieved by JVM reflection on its defining module, the same seam `buildSqlSchema` uses for `SqlSchema` givens.
       * Returns `None` when no given is in implicit scope, preserving the pre-Phase-F `Record` placeholder behaviour.
       */
     private def buildSummonedFromExpr[A: Type](using q: Quotes): scala.quoted.FromExpr[A] =
@@ -1598,7 +1598,7 @@ object FromExprDerived:
     private def buildSqlSchema[A: Type](using q: Quotes)(tpe: q.reflect.TypeRepr): scala.quoted.FromExpr[A] =
         new scala.quoted.FromExpr[A]:
             def unapply(x: Expr[A])(using qctx: Quotes): Option[A] =
-                // Resolve the schema from the supplied expression `x` itself — it is the actual
+                // Resolve the schema from the supplied expression `x` itself, it is the actual
                 // `SqlSchema[…]` reference (e.g. `given_SqlSchema_Int`). Re-summoning `SqlSchema[A]`
                 // fails when `A` was saturated to `Any` (a `Literal[Any]` field reached via the
                 // `Term` sum), so we use `x` directly.
@@ -1691,15 +1691,15 @@ object FromExprDerived:
                 // Phase G.5: derive a *case-class* element's `FromExpr` against the SATURATED element type.
                 // A sealed element (`Term[?]`) is cycle-keyed regardless of its phantom arg, and special
                 // elements (`Column[?,?]`, `Record[?]`, `SqlSchema[?]`) are served by wildcard-keyed custom
-                // givens — saturating those to `[Any,…]` would make `Expr.summon` miss the given. A plain
+                // givens, saturating those to `[Any,…]` would make `Expr.summon` miss the given. A plain
                 // case-class element reached at a wildcard (`BoundValue[?]`), however, would have
                 // `deriveProduct` read `memberType(field)` against the wildcard and resolve an abstract type
-                // member (`BoundValue.A`) for which no `FromExpr` exists — so it alone needs saturation. The
+                // member (`BoundValue.A`) for which no `FromExpr` exists, so it alone needs saturation. The
                 // outer `FromExpr[Chunk[t]]` keeps the ORIGINAL element type (`t = rawInner`) so the result
                 // type matches `A`; the element matcher is erased to `FromExpr[Any]`, so the
                 // saturated/unsaturated distinction is phantom.
                 val rawInnerDealiased = rawInner.dealias
-                // Identify the element constructor by its type symbol's `fullName` — robust for wildcard
+                // Identify the element constructor by its type symbol's `fullName`, robust for wildcard
                 // applications (`Column[?, ?]`) where the `.show`-based `isColumnProjection` string check
                 // is unreliable. Only a *plain* case-class element (no special / custom-given arm) needs
                 // saturation; the special arms handle their own wildcards.
@@ -1734,7 +1734,7 @@ object FromExprDerived:
                                 def unapply(x: Expr[Chunk[t]])(using qctx: Quotes): Option[Chunk[t]] =
                                     import qctx.reflect.*
                                     given CanEqual[String, String] = CanEqual.derived
-                                    // `resolveBindings` substituted block-local `val`s — descend past any `Block`.
+                                    // `resolveBindings` substituted block-local `val`s, descend past any `Block`.
                                     def unwrap(t: Term): Term =
                                         t match
                                             case Inlined(_, _, inner) => unwrap(inner)
@@ -1755,7 +1755,7 @@ object FromExprDerived:
                                         catch
                                             case _: Throwable => ""
                                     // `Chunk.apply` is inherited from `IterableFactory`, so the callee
-                                    // symbol's `fullName` is `scala.collection.IterableFactory.apply` — not
+                                    // symbol's `fullName` is `scala.collection.IterableFactory.apply`, not
                                     // `kyo.Chunk.apply`. Recognise the `Chunk` module by the `Select`
                                     // qualifier as well, mirroring the test-path `buildChunk`.
                                     def isChunkRef(t: Term): Boolean =
@@ -1772,16 +1772,16 @@ object FromExprDerived:
                                     if endsWith(norm, "Chunk.empty") then
                                         Some(Chunk.empty[t])
                                     else
-                                        // Chunk.apply(varargs) / Chunk.from(varargs) — the args term is a single
+                                        // Chunk.apply(varargs) / Chunk.from(varargs), the args term is a single
                                         // Typed(Repeated(...), _) or Repeated(elems, _), possibly wrapped in `Inlined`
                                         // when it arrives through an inline def (e.g. `InsertBuilder.values`).
                                         //
-                                        // Phase H.5 — also handles `<varargs>.map(<closure>)`: the DSL's INSERT
+                                        // Phase H.5, also handles `<varargs>.map(<closure>)`: the DSL's INSERT
                                         // `ON CONFLICT` / `overriding` builders write `Chunk.from(specs.map(_(columns)))`,
                                         // where `specs` is a varargs `Repeated`. A runtime `Seq.map` over closures is not
                                         // pure data, so the elements are recovered by beta-reducing the `.map` closure
                                         // against each `Repeated` element at this (already fully-typed) macro-expansion
-                                        // point — `Term.betaReduce` reduces the captured-closure application to the
+                                        // point, `Term.betaReduce` reduces the captured-closure application to the
                                         // underlying projection / `SetSpec` tree.
                                         def extractElems(t: Term): Option[List[Term]] =
                                             unwrap(t) match
@@ -1800,7 +1800,7 @@ object FromExprDerived:
                                                         )
                                                     })
                                                 case other => None
-                                        // `<ev>.toChunk(arg)` — `arg` is a `TupleN.apply(e*)` or a single value.
+                                        // `<ev>.toChunk(arg)`, `arg` is a `TupleN.apply(e*)` or a single value.
                                         def tupleOrSingle(t: Term): List[Term] =
                                             def isTuple(c: Term): Boolean =
                                                 val n =
@@ -1820,7 +1820,7 @@ object FromExprDerived:
                                                     if isChunkRef(fun) &&
                                                         (endsWith(norm, "Chunk.apply") ||
                                                             endsWith(norm, "IterableFactory.apply") ||
-                                                            // `Chunk.from(varargs)` — produced by inline-def varargs forwarding
+                                                            // `Chunk.from(varargs)`, produced by inline-def varargs forwarding
                                                             // such as `InsertBuilder.values(rows: T*)` → `Chunk.from(rows)`.
                                                             endsWith(norm, "Chunk.from")) =>
                                                     extractElems(reps)
@@ -1929,7 +1929,7 @@ object FromExprDerived:
 
     private def deriveRecord[A: Type](using q: Quotes)(tpe: q.reflect.TypeRepr): Expr[scala.quoted.FromExpr[A]] =
         // Prefer a given `FromExpr[A]` already in scope at the macro use-site (e.g. `RecordFromExpr.fromExprRecord`
-        // imported in kyo-sql). Falls back to a `None`-returning placeholder when no given is found — preserving the
+        // imported in kyo-sql). Falls back to a `None`-returning placeholder when no given is found, preserving the
         // pre-Phase-F behaviour for contexts that do not import the kyo-sql given.
         Expr.summon[scala.quoted.FromExpr[A]].getOrElse('{
             new scala.quoted.FromExpr[A]:
@@ -1951,7 +1951,7 @@ object FromExprDerived:
         val sym    = tpe.typeSymbol
         val fields = sym.caseFields
 
-        // Build the field-FromExprs list as an Expr[List[Any]] to dodge FromExpr's invariance — we cast back to FromExpr[Any] at use site.
+        // Build the field-FromExprs list as an Expr[List[Any]] to dodge FromExpr's invariance, we cast back to FromExpr[Any] at use site.
         val fieldFromExprs: List[Expr[Any]] =
             fields.map { field =>
                 // Phase F.5: saturate any free parameter / wildcard in the field type with `Any` so a
@@ -1983,7 +1983,7 @@ object FromExprDerived:
                     def unwrap(t: Term): Term =
                         t match
                             case Inlined(_, _, inner) => unwrap(inner)
-                            // `resolveBindings` substituted block-local `val`s — descend past any `Block`.
+                            // `resolveBindings` substituted block-local `val`s, descend past any `Block`.
                             case Block(_, inner) => unwrap(inner)
                             case Typed(inner, _) => unwrap(inner)
                             case other           => other
@@ -1995,7 +1995,7 @@ object FromExprDerived:
                             case Apply(fun, args)  => collectArgs(fun, args ::: acc)
                             case TypeApply(fun, _) => collectArgs(fun, acc)
                             case head              => Some((head, acc))
-                    // The constructor head must name THIS case class — otherwise a 0-arg case class
+                    // The constructor head must name THIS case class, otherwise a 0-arg case class
                     // (`Default()`) matches any non-`Apply` head and an n-arg case class matches any
                     // unrelated n-arg `Apply`.
                     def headMatches(head: Term): Boolean =
@@ -2045,7 +2045,7 @@ object FromExprDerived:
                 // Phase F.5: a child case class / module may carry its own type arguments (e.g.
                 // `Literal[A]`, `ValuesFrom[T, F]`, `WindowFunction.RowNumber extends
                 // WindowFunction[Long]`) that differ from the parent's. Derive each child at its own
-                // saturated type — never at the parent's `A` — so `deriveSingleton` / `deriveFor`
+                // saturated type, never at the parent's `A`, so `deriveSingleton` / `deriveFor`
                 // produce a well-typed `Ref`. Saturate free parameters with `Any`.
                 applyAnyToFreeParams(child.typeRef).asType match
                     case '[t] =>

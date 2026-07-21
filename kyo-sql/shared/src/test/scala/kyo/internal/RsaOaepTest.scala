@@ -5,7 +5,7 @@ import kyo.SqlException
 import kyo.internal.auth.RsaOaep
 import kyo.internal.auth.RsaOaep.RsaPublicKey
 
-/** Unit tests for [[RsaOaep]] — pure-Scala RSA-OAEP implementation.
+/** Unit tests for [[RsaOaep]], pure-Scala RSA-OAEP implementation.
   *
   * All 11 test leaves are implemented as positive assertions. Tests cover:
   *   - OAEP-encode output length (leaf 1)
@@ -69,7 +69,7 @@ FwIDAQAB
 
     // ─── Leaf 1: OAEP-encode length ─────────────────────────────────────────────
 
-    "RsaOaep OAEP-encode of a known message has correct length — 256 bytes for 2048-bit key" in {
+    "RsaOaep OAEP-encode of a known message has correct length, 256 bytes for 2048-bit key" in {
         // k=256 bytes for 2048-bit modulus. encrypt() returns a Span of exactly k bytes.
         val plaintext = Span.from("hello".getBytes(java.nio.charset.StandardCharsets.UTF_8))
         Random.withSeed(42) {
@@ -140,7 +140,7 @@ FwIDAQAB
     // ─── Leaf 6: ASN.1 BER decoder rejects malformed structure ──────────────────
 
     "RsaOaep ASN.1 BER decoder rejects truncated DER (malformed structure)" in {
-        // Provide a truncated DER — just a SEQUENCE tag with no length/content.
+        // Provide a truncated DER, just a SEQUENCE tag with no length/content.
         val truncated = Array[Byte](0x30.toByte)
         Abort.run[SqlException.Request](RsaOaep.parseDerSpki(truncated)).map {
             case Result.Failure(_: SqlException.Request) =>
@@ -152,7 +152,7 @@ FwIDAQAB
 
     // ─── Leaf 7: MGF1 with SHA-1 matches known-answer test vector ────────────────
 
-    "RsaOaep MGF1 with SHA-1 produces RFC-verified output — two known-answer vectors" in {
+    "RsaOaep MGF1 with SHA-1 produces RFC-verified output, two known-answer vectors" in {
         // Vector 1: MGF1(seed=00 00 00 00, maskLen=20)
         // SHA-1(00 00 00 00 || 00 00 00 00) = 05fe405753166f125559e7c9ac558654f107c7e9
         // Verified independently with Python hashlib.
@@ -213,7 +213,7 @@ FwIDAQAB
         val plaintext = Span.from("test".getBytes(java.nio.charset.StandardCharsets.UTF_8))
         RsaOaep.encrypt(testPubPem, plaintext, Random.secure).flatMap { ct1 =>
             RsaOaep.encrypt(testPubPem, plaintext, Random.secure).map { ct2 =>
-                // OAEP uses a random seed — same plaintext must yield distinct ciphertext.
+                // OAEP uses a random seed, same plaintext must yield distinct ciphertext.
                 assert(!ct1.toArray.sameElements(ct2.toArray))
             }
         }

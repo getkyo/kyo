@@ -12,9 +12,9 @@ import kyo.*
   * constraint before calling [[encode]].
   *
   * References:
-  *   - MySQL Internals Manual — Cleartext Plugin Authentication
+  *   - MySQL Internals Manual, Cleartext Plugin Authentication
   *   - MySQL 8.0 source: `libmysql/authentication_win/handshake.cc`
-  *   - go-sql-driver/mysql auth.go — clearPasswordPlugin
+  *   - go-sql-driver/mysql auth.go, clearPasswordPlugin
   */
 private[mysql] object ClearPassword:
 

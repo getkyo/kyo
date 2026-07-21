@@ -62,7 +62,7 @@ end EncodingRegistry
 
 object EncodingRegistry:
 
-    /** Reference equality for [[EncodingRegistry]] — registries are compared by identity, not by content. */
+    /** Reference equality for [[EncodingRegistry]], registries are compared by identity, not by content. */
     given CanEqual[EncodingRegistry, EncodingRegistry] = CanEqual.canEqualAny
 
     /** An empty registry with no encoders or decoders registered. Useful as a base for building a custom-only registry in tests. */

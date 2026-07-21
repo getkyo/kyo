@@ -14,39 +14,39 @@ import kyo.SqlException
   * Contains the full protocol state machine: `clientFirstMessage`, `clientFinalMessage`, `verifyServerSignature`, `parseServerFirst`,
   * `xor`, `b64encode`/`b64decode`, and all message-construction helpers. The only platform-specific bits are the three crypto primitives
   * exposed as `protected def`s that each concrete subclass overrides:
-  *   - [[hmacSha256]] — HMAC-SHA-256
-  *   - [[sha256]] — SHA-256 hash
-  *   - [[pbkdf2HmacSha256]] — PBKDF2-HMAC-SHA-256
+  *   - [[hmacSha256]], HMAC-SHA-256
+  *   - [[sha256]], SHA-256 hash
+  *   - [[pbkdf2HmacSha256]], PBKDF2-HMAC-SHA-256
   *
   * Approach: full `abstract class ScramSha256Base` extraction. The abstract crypto methods add one virtual dispatch per call (immaterial
   * versus network latency) and make the crypto override points explicit and auditable.
   *
   * Subclasses:
-  *   - `shared/auth/ScramSha256` — Scala Native; overrides crypto with [[kyo.internal.auth.PureHash]].
-  *   - `jvm/auth/ScramSha256` — JVM; overrides crypto with `javax.crypto`.
-  *   - [[ScramSha256Shared]] — test-parity only; overrides crypto with inlined pure-Scala (PureHash is excluded from JVM classpath).
+  *   - `shared/auth/ScramSha256`, Scala Native; overrides crypto with [[kyo.internal.auth.PureHash]].
+  *   - `jvm/auth/ScramSha256`, JVM; overrides crypto with `javax.crypto`.
+  *   - [[ScramSha256Shared]], test-parity only; overrides crypto with inlined pure-Scala (PureHash is excluded from JVM classpath).
   */
 abstract class ScramSha256Base(username: String, clientNonce: String, channelBinding: Maybe[Span[Byte]]):
 
-    // GS2 header: "p=tls-server-end-point,," for PLUS, "n,," for non-PLUS.
+    // GS2 header: "p=tls-server-end-point," for PLUS, "n," for non-PLUS.
     private val gs2Header: String = channelBinding match
-        case Present(_) => "p=tls-server-end-point,,"
-        case Absent     => "n,,"
+        case Present(_) => "p=tls-server-end-point,"
+        case Absent     => "n,"
 
     // The c= value is base64(gs2Header_bytes ++ cbData).
-    // For non-PLUS: cbData = empty, so c= is base64("n,,").
+    // For non-PLUS: cbData = empty, so c= is base64("n,").
     // For PLUS: cbData = certHash bytes.
     private val cBindingValue: String = channelBinding match
         case Present(certHash) =>
             val gs2Bytes = gs2Header.getBytes(java.nio.charset.StandardCharsets.UTF_8)
-            // Span.from: Array[Byte] escape — required for crypto primitive APIs
+            // Span.from: Array[Byte] escape, required for crypto primitive APIs
             val hashBytes = certHash.toArray // Span.from boundary: crypto bridge
             val combined  = new Array[Byte](gs2Bytes.length + hashBytes.length)
             java.lang.System.arraycopy(gs2Bytes, 0, combined, 0, gs2Bytes.length)
             java.lang.System.arraycopy(hashBytes, 0, combined, gs2Bytes.length, hashBytes.length)
             b64encode(combined)
         case Absent =>
-            // base64("n,,") = "biws"
+            // base64("n,") = "biws"
             b64encode(gs2Header.getBytes(java.nio.charset.StandardCharsets.UTF_8))
 
     /** The client-first-message-bare (without GS2 header). */
@@ -154,7 +154,7 @@ abstract class ScramSha256Base(username: String, clientNonce: String, channelBin
 
     private def xor(a: Array[Byte], b: Array[Byte]): Array[Byte] =
         val result = new Array[Byte](a.length)
-        // Performance: while/var crypto loop — encapsulated pure-Scala block function; CONTRIBUTING permits this.
+        // Performance: while/var crypto loop, encapsulated pure-Scala block function; CONTRIBUTING permits this.
         var i = 0
         while i < a.length do
             result(i) = (a(i) ^ b(i)).toByte

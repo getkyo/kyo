@@ -7,10 +7,10 @@ import kyo.internal.mysql.MysqlBufferReader
 
 /** Decodes a MySQL binary-protocol column value from raw [[Span[Byte]]] into a Scala type.
   *
-  * The raw bytes come from [[BinaryResultsetRow.values]] — already sliced from the packet by [[BinaryResultsetRowUnmarshaller]] — and
+  * The raw bytes come from [[BinaryResultsetRow.values]], already sliced from the packet by [[BinaryResultsetRowUnmarshaller]], and
   * represent the binary-encoded value for a single non-null column.
   *
-  * Reference: MySQL Internals — Binary Protocol Value (§14.7.4)
+  * Reference: MySQL Internals, Binary Protocol Value (§14.7.4)
   *
   * @tparam A
   *   the Scala type this decoder produces
@@ -78,7 +78,7 @@ object MysqlDecoder:
                 val b = MysqlBufferReader(bytes)
                 b.readUInt64LE().map(bits => java.lang.Double.longBitsToDouble(bits))
 
-    // --- BigDecimal (NEWDECIMAL — lenenc-string already decoded) ---
+    // --- BigDecimal (NEWDECIMAL, lenenc-string already decoded) ---
     // When this decoder is called the raw bytes are already the UTF-8 text of the decimal.
 
     val bigDecimalDecoder: MysqlDecoder[BigDecimal] = new MysqlDecoder[BigDecimal]:
@@ -97,14 +97,14 @@ object MysqlDecoder:
         def decode(bytes: Span[Byte])(using kyo.Frame): String < kyo.Abort[SqlException.Decode] =
             new String(bytes.toArray, StandardCharsets.UTF_8)
 
-    // --- JSON (TYPE_JSON = 0xf5) — UTF-8 text payload ---
+    // --- JSON (TYPE_JSON = 0xf5), UTF-8 text payload ---
     // MySQL sends JSON column values as length-encoded string payloads (raw UTF-8 JSON text).
     // The length prefix is stripped by BinaryResultsetRowUnmarshaller before reaching this decoder.
     //
     // Production-read note (Phase 17 audit W-2): `MysqlRowReader.string()` decodes TYPE_JSON columns
     // through its generic `readUtf8String(nextBytes())` path; the byte output is byte-identical to
     // this singleton (both `new String(bytes.toArray, UTF_8)` from the same lenenc-stripped span).
-    // The singleton is therefore test-asserted only — it pins the contract that JSON columns surface
+    // The singleton is therefore test-asserted only, it pins the contract that JSON columns surface
     // as raw UTF-8 strings without further parsing, so any future production refactor that switches
     // away from `string()` (e.g. routes JSON through a typed-codec map) starts from this declared
     // shape rather than inferring it from `string()`'s implementation.
@@ -154,11 +154,11 @@ object MysqlDecoder:
     //   len=11 → date + time + microseconds: above + micros(4 LE)
     //
     // IMPORTANT: When this decoder is called by ExtendedQueryExchange, the bytes have already had
-    // the length prefix stripped by BinaryResultsetRowUnmarshaller.readColumnValue — so `bytes`
+    // the length prefix stripped by BinaryResultsetRowUnmarshaller.readColumnValue, so `bytes`
     // contains only the struct body (not the length byte).
     // However, the length byte IS still present when we read from the variable-length path in
     // readColumnValue (it calls readLenencInt then readBytes(len), giving us just the body).
-    // For DATE/TIME/DATETIME/TIMESTAMP, the length byte encodes the variant — we need it.
+    // For DATE/TIME/DATETIME/TIMESTAMP, the length byte encodes the variant, we need it.
     // BinaryResultsetRowUnmarshaller's readColumnValue for these types reads the lenenc-string
     // path (first byte = lenenc-int length, rest = content). So bytes here = raw struct body.
     // The "length byte" (0, 4, 7, 11) was consumed by readLenencInt; what we get is the rest.

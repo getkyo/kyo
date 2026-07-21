@@ -19,7 +19,7 @@ import kyo.net.Connection
   *
   * ==Single-fiber invariant for seqId==
   *
-  * [[seqId]] is a plain `var` intentionally — it is single-fiber mutable state whose correctness depends on the connection pool's guarantee
+  * [[seqId]] is a plain `var` intentionally, it is single-fiber mutable state whose correctness depends on the connection pool's guarantee
   * that each [[MysqlChannel]] is accessed from at most one fiber at a time. [[resetSeq]], [[setSeq]], [[advanceSeq]], and the inline
   * mutations in [[send]]/[[readPayload]] are therefore safe without synchronisation. Do NOT add atomics or locking here; the invariant is
   * maintained by the pool layer, not by the channel.
@@ -32,7 +32,7 @@ final class MysqlChannel(
     private val _cleanupLatch: AtomicRef[Maybe[Latch]]
 ):
     // Per-command sequence ID (0-255, wraps). Reset to 0 at the start of each new command.
-    // Single-fiber state — see class scaladoc for the invariant.
+    // Single-fiber state, see class scaladoc for the invariant.
     private var seqId: Int = 0
 
     // Accumulation buffer for raw TCP bytes received from the server.
@@ -41,27 +41,27 @@ final class MysqlChannel(
     /** Returns the current sequence ID (for testing). */
     def currentSeq: Int = seqId
 
-    /** Resets the sequence ID to 0 — call at the start of each new command boundary. */
+    /** Resets the sequence ID to 0, call at the start of each new command boundary. */
     def resetSeq(): Unit = seqId = 0
 
-    /** Sets the sequence ID to a specific value — used when cloning the channel across a TLS upgrade to preserve continuity. */
+    /** Sets the sequence ID to a specific value, used when cloning the channel across a TLS upgrade to preserve continuity. */
     private[mysql] def setSeq(v: Int): Unit = seqId = v
 
-    /** Advances the sequence ID by `n` — used by [[exchange.LocalInfileExchange]] when writing raw LOCAL_INFILE_DATA packets. */
+    /** Advances the sequence ID by `n`, used by [[exchange.LocalInfileExchange]] when writing raw LOCAL_INFILE_DATA packets. */
     private[mysql] def advanceSeq(n: Int): Unit = seqId = (seqId + n) & 0xff
 
     /** Marks the channel as corrupted after a failed [[exchange.LocalInfileExchange]] cleanup attempt.
       *
       * Once corrupted, all subsequent send/receive operations on this channel fail immediately with [[SqlException.Connection]]. The
       * channel must be discarded (closed and not returned to any pool). Called by [[exchange.LocalInfileExchange]] when the error-path
-      * cleanup (empty terminator + drain) itself fails — meaning the TCP stream framing is irrecoverably broken.
+      * cleanup (empty terminator + drain) itself fails, meaning the TCP stream framing is irrecoverably broken.
       */
     private[mysql] def markCorrupted()(using Frame): Unit < Sync = _corrupted.set(true)
 
     /** Registers a cleanup latch that blocks subsequent channel operations until cleanup finishes.
       *
       * Called by [[exchange.LocalInfileExchange]] at the very start of the upload, before any bytes are sent. This ensures that any
-      * concurrent operation arriving after a cancellation sees either a clean channel or "unusable" — never stale protocol bytes.
+      * concurrent operation arriving after a cancellation sees either a clean channel or "unusable", never stale protocol bytes.
       */
     private[mysql] def beginCleanup(latch: Latch)(using Frame): Unit < Sync = _cleanupLatch.set(Maybe.Present(latch))
 
@@ -114,7 +114,7 @@ final class MysqlChannel(
                 val packets = MysqlPacket.writeOne(payload, seqId)
                 // Advance seqId by the number of packets written (each packet increments seq by 1)
                 seqId = (seqId + packets.size) & 0xff
-                // Fast path: single packet (>99% of sends) — use it directly, no copy
+                // Fast path: single packet (>99% of sends), use it directly, no copy
                 if packets.size == 1 then
                     packets(0)
                 else
@@ -175,7 +175,7 @@ final class MysqlChannel(
         }
     end receiveHandshake
 
-    /** Reads the next complete logical payload (reassembling split packets) — exposed for result-set parsers that need raw byte access. */
+    /** Reads the next complete logical payload (reassembling split packets), exposed for result-set parsers that need raw byte access. */
     def readRawPayload(using Frame): Span[Byte] < (Async & Abort[SqlException]) =
         checkCorrupted().andThen(readPayload)
 

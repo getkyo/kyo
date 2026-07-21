@@ -20,7 +20,7 @@ import kyo.internal.mysql.MysqlBufferWriter
   * NULL bitmap layout: bit (N) of the null-bitmap (0-indexed) corresponds to parameter N.
   * Unlike the binary result-set row null-bitmap, there is NO 2-bit offset for parameters.
   *
-  * Reference: MySQL Internals — COM_STMT_EXECUTE
+  * Reference: MySQL Internals, COM_STMT_EXECUTE
   */
 object ComStmtExecuteMarshaller extends Marshaller[ComStmtExecute]:
 

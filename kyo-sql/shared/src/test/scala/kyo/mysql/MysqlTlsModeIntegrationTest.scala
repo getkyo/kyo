@@ -7,7 +7,7 @@ import kyo.OwnContainer
   *
   * Container groups:
   *   - Leaf 1 uses `ContainerPredef.MySQL.Config.default.cmd(Chunk("--skip-ssl", "--default-authentication-plugin=mysql_native_password"))`
-  *     — a per-leaf MySQL container with TLS disabled. SSL is disabled at the mysqld level so the server advertises no CLIENT_SSL
+  * a per-leaf MySQL container with TLS disabled. SSL is disabled at the mysqld level so the server advertises no CLIENT_SSL
   *     capability: prefer falls back to plaintext, and allow stays on plaintext. The
   *     `--default-authentication-plugin=mysql_native_password` flag is required alongside `--skip-ssl` so the health-check client and
   *     kyo-sql client can authenticate over plaintext without TLS or RSA key exchange (caching_sha2_password, the MySQL 8.0 default, cannot
@@ -22,12 +22,12 @@ import kyo.OwnContainer
   *     invocations.
   *
   * Test leaves:
-  *   1. `sslmode=allow connects plaintext when server permits plaintext` — plain container (`--skip-ssl
+  *   1. `sslmode=allow connects plaintext when server permits plaintext`, plain container (`--skip-ssl
   *      --default-authentication-plugin=mysql_native_password`); allow stays plaintext.
-  *   2. `sslmode=allow upgrades to TLS when server requires TLS` — per-leaf container with `--require-secure-transport=ON`; plaintext
+  *   2. `sslmode=allow upgrades to TLS when server requires TLS`, per-leaf container with `--require-secure-transport=ON`; plaintext
   *      attempt fails with error 3159; allow retries with TLS; Ssl_cipher is non-empty proving TLS is active.
-  *   3. `sslmode=prefer connects with TLS when server supports TLS` — TLS container; prefer negotiates CLIENT_SSL; connection succeeds.
-  *   4. `sslmode=prefer falls back to plaintext when server refuses TLS` — plain container (`--skip-ssl
+  *   3. `sslmode=prefer connects with TLS when server supports TLS`, TLS container; prefer negotiates CLIENT_SSL; connection succeeds.
+  *   4. `sslmode=prefer falls back to plaintext when server refuses TLS`, plain container (`--skip-ssl
   *      --default-authentication-plugin=mysql_native_password`); no CLIENT_SSL; plaintext fallback.
   */
 class MysqlTlsModeIntegrationTest extends kyo.Test:
@@ -107,7 +107,7 @@ class MysqlTlsModeIntegrationTest extends kyo.Test:
                                         rows(0).column(1).fold("")(b => new String(b.toArray, java.nio.charset.StandardCharsets.UTF_8))
                                     assert(
                                         cipher.nonEmpty,
-                                        s"Ssl_cipher must be non-empty when sslmode=allow upgrades to TLS (got empty — connection is plaintext)"
+                                        s"Ssl_cipher must be non-empty when sslmode=allow upgrades to TLS (got empty, connection is plaintext)"
                                     )
                                 }
                             }
@@ -191,14 +191,14 @@ class MysqlTlsModeIntegrationTest extends kyo.Test:
                 Scope.run {
                     SqlClient.initMy(url).flatMap { client =>
                         SqlClient.let(client) {
-                            // Verify the connection is active and serving queries — not just opened.
+                            // Verify the connection is active and serving queries, not just opened.
                             client.query("SHOW SESSION STATUS LIKE 'Ssl_cipher'").flatMap { rows =>
                                 val cipher = rows.headMaybe.fold("") { row =>
                                     row.column(1).fold("")(b => new String(b.toArray, java.nio.charset.StandardCharsets.UTF_8))
                                 }
                                 assert(
                                     cipher.nonEmpty,
-                                    s"sslmode=require must establish a TLS connection (Ssl_cipher was empty — connection is plaintext)"
+                                    s"sslmode=require must establish a TLS connection (Ssl_cipher was empty, connection is plaintext)"
                                 )
                                 client.query("SELECT 'require_ok'").map { rows2 =>
                                     assert(rows2.size == 1, "sslmode=require should complete a query after TLS handshake")
@@ -226,7 +226,7 @@ class MysqlTlsModeIntegrationTest extends kyo.Test:
     // used here because the client needs the exact CA PEM that signed the server cert, and the
     // auto-generated certs are written inside the container's ephemeral filesystem with no host-accessible
     // path. Implementing this leaf requires the same openssl + bind-mount infrastructure used by
-    // TlsModeIntegrationTest (Postgres) — cert generation with `openssl req -new -x509`, a bind-mount
+    // TlsModeIntegrationTest (Postgres), cert generation with `openssl req -new -x509`, a bind-mount
     // at `/etc/mysql/ssl`, and mysqld flags `--ssl-cert=... --ssl-key=... --ssl-ca=...`. Until that
     // infrastructure is wired for MySQL containers, this leaf is marked pending.
 
@@ -234,11 +234,11 @@ class MysqlTlsModeIntegrationTest extends kyo.Test:
 
     // ── Leaf 7: sslmode=verify-full rejects hostname mismatch on MySQL ────────
     // Positive TLS upgrade with full chain verification; client connects via an IP address while the
-    // server cert has CN=localhost — hostname mismatch must cause TlsException before handshake.
+    // server cert has CN=localhost, hostname mismatch must cause TlsException before handshake.
     // MysqlNegotiator dispatches VerifyFull → preferFallback=false; NetTlsConfig carries caCertPath +
     // hostnameVerification=true.
     //
-    // Blocker: same as Leaf 6 — requires a MySQL container started with --ssl-cert / --ssl-key /
+    // Blocker: same as Leaf 6, requires a MySQL container started with --ssl-cert / --ssl-key /
     // --ssl-ca pointing at an openssl-generated cert with CN=localhost, and the CA PEM accessible on the
     // host filesystem. Marked pending until the MySQL cert-container infrastructure is in place.
 
@@ -300,7 +300,7 @@ object MysqlTlsModeIntegrationTest:
                 }
         }
 
-    /** Starts a plain `mysql:8.0` container — auto-generated certs make CLIENT_SSL available out of the box. The container is left running
+    /** Starts a plain `mysql:8.0` container, auto-generated certs make CLIENT_SSL available out of the box. The container is left running
       * for the JVM's lifetime; orphan reaping is handled by the sbt setup task via the `kyo-sql-singleton` label.
       */
     private def initTlsContainer(using Frame): TlsCtx < (Async & Abort[ContainerException]) =

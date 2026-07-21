@@ -20,22 +20,22 @@ import kyo.net.NetAddress
 /** Sealed orchestration layer for kyo-sql: retry → timeout → pool → connect+execute.
   *
   * Two concrete implementations:
-  *   - [[SqlClientBackend.Pg]] — backed by a [[ConnectionPool[NetAddress, PostgresConnection]]], uses the Postgres extended protocol.
-  *   - [[SqlClientBackend.My]] — backed by a [[ConnectionPool[NetAddress, MysqlConnection]]], uses the MySQL binary prepared-statement protocol.
+  *   - [[SqlClientBackend.Pg]], backed by a [[ConnectionPool[NetAddress, PostgresConnection]]], uses the Postgres extended protocol.
+  *   - [[SqlClientBackend.My]], backed by a [[ConnectionPool[NetAddress, MysqlConnection]]], uses the MySQL binary prepared-statement protocol.
   *
   * All public methods accept a `SqlClientConfig` (sourced from the fiber-local in `SqlClient`) and apply the four-layer chain (retry → pool
   * → connect+execute → timeout) to execute a single query or statement.
   *
   * Both variants expose an identical surface:
-  *   - `query` / `execute` / `executeRaw` / `streamQuery` — SQL operations
-  *   - `cancel` / `cancelMysql` — query cancellation (backend-specific)
-  *   - `withConnection` — PG-only: acquire a connection and run `f` (used by transaction)
-  *   - `withMysqlConnection` — MySQL-only: acquire a MySQL connection and run `f` (used by transaction)
-  *   - `closeAll` — drain and close the pool
+  *   - `query` / `execute` / `executeRaw` / `streamQuery`, SQL operations
+  *   - `cancel` / `cancelMysql`, query cancellation (backend-specific)
+  *   - `withConnection`, PG-only: acquire a connection and run `f` (used by transaction)
+  *   - `withMysqlConnection`, MySQL-only: acquire a MySQL connection and run `f` (used by transaction)
+  *   - `closeAll`, drain and close the pool
   *
   * ==Unsafe usage==
   *
-  * `ConnectionPool`'s `poll`, `release`, `discard`, `tryReserve`, `unreserve`, and `close` all require `AllowUnsafe` — they operate on a
+  * `ConnectionPool`'s `poll`, `release`, `discard`, `tryReserve`, `unreserve`, and `close` all require `AllowUnsafe`, they operate on a
   * lock-free Vyukov ring buffer that does CAS directly on atomic longs. Each call site carries a `// Unsafe:` justification comment as
   * required by STEERING.md. The `isAlive` and `discard` callbacks passed to `ConnectionPool.init` are invoked by the pool while inside an
   * `AllowUnsafe` context, outside of any Kyo fiber suspension. Running `conn.isOpen` / `conn.close` there requires evaluating a `< Sync`
@@ -46,7 +46,7 @@ sealed trait SqlClientBackend:
 
     val clientFrame: Frame
 
-    /** Metrics instance — no-op when `metricsEnabled = false` in the config. */
+    /** Metrics instance, no-op when `metricsEnabled = false` in the config. */
     val metrics: SqlMetrics
 
     // --- Abstract operations exposed to SqlClient ---
@@ -245,7 +245,7 @@ sealed trait SqlClientBackend:
         config: SqlClientConfig
     )(using Frame): Stream[SqlNotification, Async & Abort[SqlException] & Scope]
 
-    /** MySQL savepoint helpers — delegated to [[MysqlConnection]]. */
+    /** MySQL savepoint helpers, delegated to [[MysqlConnection]]. */
     def mysqlSavepointTransaction(conn: MysqlConnection, name: String)(using Frame): Unit < (Async & Abort[SqlException])
     def mysqlReleaseSavepoint(conn: MysqlConnection, name: String)(using Frame): Unit < (Async & Abort[SqlException])
     def mysqlRollbackToSavepoint(conn: MysqlConnection, name: String)(using Frame): Unit < (Async & Abort[SqlException])
@@ -266,7 +266,7 @@ sealed trait SqlClientBackend:
       *
       * If `n == 0`, returns immediately without opening any connection. If `n > 0`, opens exactly `n` connections concurrently via
       * `Async.fill`. Each opened connection is immediately released to the pool (available for the first user query). Any connection
-      * failure aborts the warm-up and propagates the typed [[SqlException]] as-is — callers that pattern-match on specific subclasses (e.g.
+      * failure aborts the warm-up and propagates the typed [[SqlException]] as-is, callers that pattern-match on specific subclasses (e.g.
       * [[SqlException.Server]] for auth/permission failures) see the original exception, not a blanket [[SqlException.Connection]] wrap.
       * Non-SqlException transport errors are wrapped as [[SqlException.Connection]].
       *
@@ -410,7 +410,7 @@ sealed trait SqlClientBackend:
             case Result.Failure(e)  => Abort.fail(e)
             case Result.Panic(t)    => Abort.error(Result.Panic(t))
             case Result.Success(()) =>
-                // Per-attempt slot release — wrapped in Sync.ensure so the slot is
+                // Per-attempt slot release, wrapped in Sync.ensure so the slot is
                 // returned on every exit edge (success, Abort, Panic, fiber interrupt).
                 // The inner Abort.run[SqlException] preserves the Log.error path for
                 // SqlException.Server before re-raising.
@@ -529,7 +529,7 @@ final class PgSqlClientBackend private[client] (
     )(using Frame): Stream[SqlRow, Async & Abort[SqlException] & Scope] =
         streamQuery(address, password, sql, params.flatMap(bv => SqlClientBackend.boundToPostgres(bv)), batchSize, config)
 
-    // --- MySQL operations — not supported on PG backend ---
+    // --- MySQL operations, not supported on PG backend ---
 
     def queryMysql(
         address: SqlAddress,
@@ -589,7 +589,7 @@ final class PgSqlClientBackend private[client] (
                     case Present(conn) =>
                         releaseOnExitS[A, S](netKey, conn)(f(conn))
                     case Absent =>
-                        // Per-attempt in-flight slot release — see acquireAndRun for the rationale.
+                        // Per-attempt in-flight slot release, see acquireAndRun for the rationale.
                         // Keeps `withConnection` safe under user-level retry wrappers.
                         Abort.run[SqlException](connectAndRunS[A, S](address, password, netKey, config)(f)).flatMap { result =>
                             Sync.Unsafe.defer(poolUnreserve(netKey)).andThen {
@@ -689,7 +689,7 @@ final class PgSqlClientBackend private[client] (
     def mysqlRollbackToSavepoint(conn: MysqlConnection, name: String)(using Frame): Unit < (Async & Abort[SqlException]) =
         conn.rollbackToSavepointTransaction(name)
 
-    // --- loadLocalInfileMysql — not supported on PG backend ---
+    // --- loadLocalInfileMysql, not supported on PG backend ---
 
     def loadLocalInfileMysql[S](
         address: SqlAddress,
@@ -721,7 +721,7 @@ final class PgSqlClientBackend private[client] (
                     case Result.Failure(e: SqlException) =>
                         // Preserve the typed exception: callers' try/catch on specific subclasses (e.g., SqlException.Server
                         // for auth/permission failures) must see the original class, not a blanket Connection wrap.
-                        // Non-SqlException transport errors are not reachable here — Abort.run[SqlException] only captures
+                        // Non-SqlException transport errors are not reachable here, Abort.run[SqlException] only captures
                         // SqlException failures; anything else becomes a Result.Panic.
                         e
                     case Result.Panic(t) =>
@@ -730,14 +730,14 @@ final class PgSqlClientBackend private[client] (
                 }
                 firstFailure match
                     case None =>
-                        // All connections succeeded — release them to the idle pool.
+                        // All connections succeeded, release them to the idle pool.
                         Sync.Unsafe.defer {
                             successes.foreach { conn =>
                                 poolRelease(netKey, conn)
                             }
                         }
                     case Some(e) =>
-                        // At least one connection failed — close the successful ones to avoid fd leaks,
+                        // At least one connection failed, close the successful ones to avoid fd leaks,
                         // then propagate the error.
                         // Unsafe: conn.close is Unit < Sync; evalOrThrow is safe here.
                         Sync.Unsafe.defer {
@@ -752,7 +752,7 @@ final class PgSqlClientBackend private[client] (
 
     def closeAll(gracePeriod: Duration)(using Frame): Unit < Async =
         // Step 1: Mark the pool as closed and drain idle connections.
-        // pool.close() sets closed=true so tryReserve returns false — no new connections are established.
+        // pool.close() sets closed=true so tryReserve returns false, no new connections are established.
         // Slot channels are kept open during the grace period so in-flight connections can offer slots back.
         // Unsafe: pool.close() is a lock-free drain; requires AllowUnsafe.
         // STEERING case 2: cleanup on shutdown path.
@@ -781,7 +781,7 @@ final class PgSqlClientBackend private[client] (
                                 chanSnapshots.forall { ch =>
                                     Sync.Unsafe.evalOrThrow(Abort.run[Closed](ch.size)) match
                                         case Result.Success(sz) => sz >= ch.capacity
-                                        case _                  => true // channel already closed — treat as drained
+                                        case _                  => true // channel already closed, treat as drained
                                 }
                             }
                         end allDrained
@@ -905,10 +905,10 @@ final class PgSqlClientBackend private[client] (
             case Present(conn) =>
                 metrics.recordAcquire.andThen(releaseOnExit(netKey, conn)(timedF(conn)))
             case Absent =>
-                // Per-attempt in-flight slot release — same per-attempt issue as `withSlot`.
+                // Per-attempt in-flight slot release, same per-attempt issue as `withSlot`.
                 //
                 // Under `Retry`, the body is re-evaluated per attempt. A `Sync.ensure(poolUnreserve)`
-                // finalizer registered against the outer computation does NOT fire per-attempt — only
+                // finalizer registered against the outer computation does NOT fire per-attempt, only
                 // on the outermost completion / cancellation. After N failed connect attempts,
                 // `inFlight` reaches `maxConnections`, `poolTryReserve` permanently returns false,
                 // and the next `spinAcquire` enters an unbounded tight CPU spin (poll Absent → tryReserve
@@ -938,7 +938,7 @@ final class PgSqlClientBackend private[client] (
     end spinAcquire
 
     // Slot release is owned by the OUTER `withSlot` wrapper at poolWith / withConnection /
-    // acquireStreamConn — it fires unconditionally on flow exit. The connection-lifecycle release
+    // acquireStreamConn, it fires unconditionally on flow exit. The connection-lifecycle release
     // here only handles pool return/discard. Don't re-offer the slot here or you'll double-release
     // and over-fill the slot channel beyond maxConnections.
     private def releaseOnExit[A](netKey: NetAddress, conn: PostgresConnection)(
@@ -1031,7 +1031,7 @@ final class PgSqlClientBackend private[client] (
         // STEERING case 2: bridging to kyo-net ConnectionPool.
         Sync.Unsafe.defer(getOrCreateSlotChanUnsafe(address, config.maxConnections)).flatMap { slotCh =>
             // Take slot then register slot release in Scope.ensure BEFORE attempting connect.
-            // If pgConnect fails, the surrounding Scope still closes and releases the slot —
+            // If pgConnect fails, the surrounding Scope still closes and releases the slot,
             // preventing the leak that caused dead-pool deadlock under server restart.
             Abort.run[SqlException](takeSlotForStream(slotCh, config)).flatMap {
                 case Result.Failure(e @ SqlException.Connection(msg, _)) if msg.startsWith("Timed out") =>
@@ -1086,11 +1086,11 @@ final class PgSqlClientBackend private[client] (
     )(using Frame): PostgresConnection < (Async & Abort[SqlException] & Scope) =
         // Unsafe: pool ops (spinAcquire, poolRelease, poolUnreserve, poolDiscard) require AllowUnsafe; Scope.ensure callback runs outside fiber suspension.
         // STEERING case 2: bridging to kyo-net ConnectionPool and cleanup path from Scope.ensure.
-        // Slot release is owned by the OUTER Scope.ensure in acquireStreamConn — the per-conn
+        // Slot release is owned by the OUTER Scope.ensure in acquireStreamConn, the per-conn
         // Scope.ensure here only handles connection lifecycle.
         // G-Leak-3 fix: on stream abort we check whether the error is protocol-fatal.
         // Protocol-fatal errors (Connection, Decode, Server with sqlState 08*/25*) leave the wire
-        // desynchronised — returning such a connection to the pool would corrupt the next borrower.
+        // desynchronised, returning such a connection to the pool would corrupt the next borrower.
         // Non-fatal errors (Unsupported, Request, Server with other states) leave the wire intact.
         Sync.Unsafe.defer(spinAcquire(netKey)).flatMap {
             case Present(conn) =>
@@ -1104,7 +1104,7 @@ final class PgSqlClientBackend private[client] (
                             case Present(Result.Failure(e: SqlException)) if SqlClientBackend.isProtocolFatal(e) =>
                                 poolDiscard(conn)
                             case Present(_: Result.Panic) =>
-                                // Wire state is unknown after a panic — the cleanup callback can't
+                                // Wire state is unknown after a panic, the cleanup callback can't
                                 // determine whether the connection still holds a half-consumed query
                                 // response. Returning it to the pool would corrupt the next borrower.
                                 poolDiscard(conn)
@@ -1125,7 +1125,7 @@ final class PgSqlClientBackend private[client] (
                                     case Present(Result.Failure(e: SqlException)) if SqlClientBackend.isProtocolFatal(e) =>
                                         poolDiscard(conn)
                                     case Present(_: Result.Panic) =>
-                                        // Wire state is unknown after a panic — discard rather than release.
+                                        // Wire state is unknown after a panic, discard rather than release.
                                         poolDiscard(conn)
                                     case _ =>
                                         poolRelease(netKey, conn)
@@ -1209,7 +1209,7 @@ final class PgSqlClientBackend private[client] (
                 val missing = typeNames -- foundMap.keySet
                 if missing.nonEmpty then
                     Abort.fail(SqlException.Connection(
-                        s"type(s) ${missing.mkString(", ")} not found in pg_type — verify the extension is installed",
+                        s"type(s) ${missing.mkString(", ")} not found in pg_type, verify the extension is installed",
                         summon[Frame]
                     ))
                 else
@@ -1243,7 +1243,7 @@ final class PgSqlClientBackend private[client] (
                             encodingRegistry = config.encodingRegistry
                         )
                     case Absent =>
-                        // No TLS config available — fall back to plain connect.
+                        // No TLS config available, fall back to plain connect.
                         PostgresConnection.connect(
                             address.host,
                             address.port,
@@ -1273,7 +1273,7 @@ final class PgSqlClientBackend private[client] (
                     case Result.Success(conn) =>
                         conn
                     case Result.Failure(e) if pgIsSslRequired(e) =>
-                        // Server requires SSL — reconnect with TLS.
+                        // Server requires SSL, reconnect with TLS.
                         config.tls match
                             case Present(tlsConfig) =>
                                 val neg = TlsNegotiator.postgres(TlsMode.Allow, tlsConfig, address.host, address.port)
@@ -1318,9 +1318,9 @@ final class PgSqlClientBackend private[client] (
       * (M) from the ErrorResponse prepended with "Authentication failed: ".
       *
       * Observed message patterns (locale-sensitive; matched by substring):
-      *   - `"no pg_hba.conf entry for host ..., no encryption"` — postgres:16-alpine when only hostssl rules exist
-      *   - `"no pg_hba.conf entry for host ..., SSL off"` — older PG versions
-      *   - `"SSL connection is required"` — ALTER ROLE ... REQUIRE SSL
+      *   - `"no pg_hba.conf entry for host ..., no encryption"`, postgres:16-alpine when only hostssl rules exist
+      *   - `"no pg_hba.conf entry for host ..., SSL off"`, older PG versions
+      *   - `"SSL connection is required"`, ALTER ROLE ... REQUIRE SSL
       *
       * NOTE: matching on message text is fragile to internationalization. There is no cleaner programmatic signal in the wire protocol
       * because StartupExchange wraps all ErrorResponse messages as Connection exceptions, losing the SQLSTATE field.
@@ -1438,7 +1438,7 @@ final class MySqlClientBackend private[client] (
         // The params chunk must be empty for this path to work correctly.
         if params.nonEmpty then
             Abort.fail(SqlException.Connection(
-                "MySQL SqlClient.query with BoundParam is not supported — use SqlClient.queryMysqlFrag with BoundMysqlParam.",
+                "MySQL SqlClient.query with BoundParam is not supported, use SqlClient.queryMysqlFrag with BoundMysqlParam.",
                 summon[Frame]
             ))
         else
@@ -1455,7 +1455,7 @@ final class MySqlClientBackend private[client] (
     )(using Frame): Long < (Async & Abort[SqlException]) =
         if params.nonEmpty then
             Abort.fail(SqlException.Connection(
-                "MySQL SqlClient.execute with BoundParam is not supported — use SqlClient.executeMysqlFrag with BoundMysqlParam.",
+                "MySQL SqlClient.execute with BoundParam is not supported, use SqlClient.executeMysqlFrag with BoundMysqlParam.",
                 summon[Frame]
             ))
         else
@@ -1482,7 +1482,7 @@ final class MySqlClientBackend private[client] (
         if params.nonEmpty then
             Stream[SqlRow, Async & Abort[SqlException] & Scope](
                 Abort.fail(SqlException.Connection(
-                    "MySQL SqlClient.streamQuery with BoundParam is not supported — use SqlClient.streamQueryMysqlFrag with BoundMysqlParam.",
+                    "MySQL SqlClient.streamQuery with BoundParam is not supported, use SqlClient.streamQueryMysqlFrag with BoundMysqlParam.",
                     summon[Frame]
                 ))
             )
@@ -1611,7 +1611,7 @@ final class MySqlClientBackend private[client] (
                             releaseOnExitS[A, S](netKey, conn, connId)(f(conn))
                         }
                     case Absent =>
-                        // Per-attempt in-flight slot release — see acquireAndRun for the rationale.
+                        // Per-attempt in-flight slot release, see acquireAndRun for the rationale.
                         // Keeps `withMysqlConnection` safe under user-level retry wrappers.
                         Abort.run[SqlException](connectAndRunS[A, S](address, password, netKey, config)(f)).flatMap { result =>
                             Sync.Unsafe.defer(poolUnreserve(netKey)).andThen {
@@ -1771,7 +1771,7 @@ final class MySqlClientBackend private[client] (
                     case Result.Failure(e: SqlException) =>
                         // Preserve the typed exception: callers' try/catch on specific subclasses (e.g., SqlException.Server
                         // for auth/permission failures) must see the original class, not a blanket Connection wrap.
-                        // Non-SqlException transport errors are not reachable here — Abort.run[SqlException] only captures
+                        // Non-SqlException transport errors are not reachable here, Abort.run[SqlException] only captures
                         // SqlException failures; anything else becomes a Result.Panic.
                         e
                     case Result.Panic(t) =>
@@ -1780,14 +1780,14 @@ final class MySqlClientBackend private[client] (
                 }
                 firstFailure match
                     case None =>
-                        // All connections succeeded — release them to the idle pool.
+                        // All connections succeeded, release them to the idle pool.
                         Sync.Unsafe.defer {
                             successes.foreach { conn =>
                                 poolRelease(netKey, conn)
                             }
                         }
                     case Some(e) =>
-                        // At least one connection failed — close the successful ones to avoid fd leaks,
+                        // At least one connection failed, close the successful ones to avoid fd leaks,
                         // then propagate the error.
                         // Unsafe: conn.closeNow is Unit < Sync; evalOrThrow is safe here.
                         Sync.Unsafe.defer {
@@ -1802,7 +1802,7 @@ final class MySqlClientBackend private[client] (
 
     def closeAll(gracePeriod: Duration)(using Frame): Unit < Async =
         // Step 1: Mark the pool as closed and drain idle connections.
-        // pool.close() sets closed=true so tryReserve returns false — no new connections are established.
+        // pool.close() sets closed=true so tryReserve returns false, no new connections are established.
         // Slot channels are kept open during the grace period so in-flight connections can offer slots back.
         // Unsafe: pool.close() is a lock-free drain; requires AllowUnsafe.
         // STEERING case 2: cleanup on shutdown path.
@@ -1831,7 +1831,7 @@ final class MySqlClientBackend private[client] (
                                 chanSnapshots.forall { ch =>
                                     Sync.Unsafe.evalOrThrow(Abort.run[Closed](ch.size)) match
                                         case Result.Success(sz) => sz >= ch.capacity
-                                        case _                  => true // channel already closed — treat as drained
+                                        case _                  => true // channel already closed, treat as drained
                                 }
                             }
                         end allDrained
@@ -1856,7 +1856,7 @@ final class MySqlClientBackend private[client] (
                     // Synchronous force-close (cannot be interrupted) for the idle conns.
                     // Replaces Kyo.foreach so that a fiber interrupt mid-drain cannot leave
                     // connections un-closed (G-Leak-5). quit() is skipped on the shutdown
-                    // path — closeNow (TCP teardown) is sufficient; the server detects EOF.
+                    // path, closeNow (TCP teardown) is sufficient; the server detects EOF.
                     idleConns.foreach { conn =>
                         discard(Sync.Unsafe.evalOrThrow(conn.closeNow))
                     }
@@ -1956,7 +1956,7 @@ final class MySqlClientBackend private[client] (
                     metrics.recordAcquire.andThen(releaseOnExit(netKey, conn, connId)(timedF(conn)))
                 }
             case Absent =>
-                // Per-attempt in-flight slot release — see PgSqlClientBackend.acquireAndRun for the rationale.
+                // Per-attempt in-flight slot release, see PgSqlClientBackend.acquireAndRun for the rationale.
                 // `Sync.ensure(poolUnreserve)` only fires on the outermost completion, so under `Retry` the
                 // `inFlight` counter would saturate at `maxConnections` and `spinAcquire` would enter an
                 // unbounded CPU spin (poll Absent → tryReserve false → recurse).
@@ -1980,7 +1980,7 @@ final class MySqlClientBackend private[client] (
                 else spinAcquire(netKey)
 
     // Slot release is owned by the OUTER `withSlot`/Scope.ensure wrapper at poolWith /
-    // withMysqlConnection / acquireStreamConn — it fires unconditionally on flow exit.
+    // withMysqlConnection / acquireStreamConn, it fires unconditionally on flow exit.
     // The connection-lifecycle release here only handles pool return/discard. Don't re-offer
     // the slot here or you'll double-release and over-fill the slot channel beyond maxConnections.
     private def releaseOnExit[A](netKey: NetAddress, conn: MysqlConnection, connId: Long)(
@@ -2073,7 +2073,7 @@ final class MySqlClientBackend private[client] (
         // STEERING case 2: bridging to kyo-net ConnectionPool.
         Sync.Unsafe.defer(getOrCreateSlotChanUnsafe(address, config.maxConnections)).flatMap { slotCh =>
             // Take slot then register slot release in Scope.ensure BEFORE attempting connect.
-            // If myConnect fails, the surrounding Scope still closes and releases the slot —
+            // If myConnect fails, the surrounding Scope still closes and releases the slot,
             // preventing the leak that caused dead-pool deadlock under server restart.
             Abort.run[SqlException](takeSlotForStream(slotCh, config)).flatMap {
                 case Result.Failure(e @ SqlException.Connection(msg, _)) if msg.startsWith("Timed out") =>
@@ -2128,11 +2128,11 @@ final class MySqlClientBackend private[client] (
     )(using Frame): MysqlConnection < (Async & Abort[SqlException] & Scope) =
         // Unsafe: pool ops (spinAcquire, poolRelease, poolUnreserve, poolDiscard) require AllowUnsafe; Scope.ensure callback runs outside fiber suspension.
         // STEERING case 2: bridging to kyo-net ConnectionPool and cleanup path from Scope.ensure.
-        // Slot release is owned by the OUTER Scope.ensure in acquireStreamConn — the per-conn
+        // Slot release is owned by the OUTER Scope.ensure in acquireStreamConn, the per-conn
         // Scope.ensure here only handles connection lifecycle.
         // G-Leak-3 fix: on stream abort we check whether the error is protocol-fatal.
         // Protocol-fatal errors (Connection, Decode, Server with sqlState 08*/25*) leave the wire
-        // desynchronised — returning such a connection to the pool would corrupt the next borrower.
+        // desynchronised, returning such a connection to the pool would corrupt the next borrower.
         // Non-fatal errors (Unsupported, Request, Server with other states) leave the wire intact.
         Sync.Unsafe.defer(spinAcquire(netKey)).flatMap {
             case Present(conn) =>
@@ -2146,7 +2146,7 @@ final class MySqlClientBackend private[client] (
                             case Present(Result.Failure(e: SqlException)) if SqlClientBackend.isProtocolFatal(e) =>
                                 poolDiscard(conn)
                             case Present(_: Result.Panic) =>
-                                // Wire state is unknown after a panic — discard rather than release.
+                                // Wire state is unknown after a panic, discard rather than release.
                                 poolDiscard(conn)
                             case _ =>
                                 poolRelease(netKey, conn)
@@ -2165,7 +2165,7 @@ final class MySqlClientBackend private[client] (
                                     case Present(Result.Failure(e: SqlException)) if SqlClientBackend.isProtocolFatal(e) =>
                                         poolDiscard(conn)
                                     case Present(_: Result.Panic) =>
-                                        // Wire state is unknown after a panic — discard rather than release.
+                                        // Wire state is unknown after a panic, discard rather than release.
                                         poolDiscard(conn)
                                     case _ =>
                                         poolRelease(netKey, conn)
@@ -2251,7 +2251,7 @@ final class MySqlClientBackend private[client] (
                     case Result.Success(conn) =>
                         conn
                     case Result.Failure(e) if myIsSslRequired(e) =>
-                        // Server requires SSL — reconnect with TLS using prefer-fallback mode so if the reconnect
+                        // Server requires SSL, reconnect with TLS using prefer-fallback mode so if the reconnect
                         // server also doesn't advertise CLIENT_SSL, we get a clean error rather than infinite loop.
                         config.tls match
                             case Present(_) =>
@@ -2314,15 +2314,15 @@ object SqlClientBackend:
     /** Returns true if the exception indicates the connection is protocol-poisoned and must be discarded rather than returned to the pool.
       *
       * Protocol-fatal categories:
-      *   - [[SqlException.Connection]] — transport-level failure; the socket is already unusable.
-      *   - [[SqlException.Decode]] — wire-format desync; the framing is out of sync with the server.
-      *   - [[SqlException.Server]] with SQLSTATE class `08` (connection exception) or `25` (invalid transaction state) — the server
+      *   - [[SqlException.Connection]], transport-level failure; the socket is already unusable.
+      *   - [[SqlException.Decode]], wire-format desync; the framing is out of sync with the server.
+      *   - [[SqlException.Server]] with SQLSTATE class `08` (connection exception) or `25` (invalid transaction state), the server
       *     terminated or invalidated the connection at the protocol level.
       *
       * Non-fatal categories (connection is still healthy):
-      *   - [[SqlException.Unsupported]] — an operation not supported by this backend; the wire is fine.
-      *   - [[SqlException.Request]] — a client-side encoding error; the wire is fine.
-      *   - [[SqlException.Server]] with other SQLSTATE classes — a query-level error; the wire is fine.
+      *   - [[SqlException.Unsupported]], an operation not supported by this backend; the wire is fine.
+      *   - [[SqlException.Request]], a client-side encoding error; the wire is fine.
+      *   - [[SqlException.Server]] with other SQLSTATE classes, a query-level error; the wire is fine.
       */
     private[kyo] def isProtocolFatal(e: SqlException): Boolean =
         e match
@@ -2359,10 +2359,10 @@ object SqlClientBackend:
         bv match
             case b: BoundValue[a] => b.schema.writeMysql(b.value)
 
-    // Phase 56 audit (#512) — caching encoder dispatch per-SqlSchema does not apply to the current
+    // Phase 56 audit (#512), caching encoder dispatch per-SqlSchema does not apply to the current
     // implementation. `writePostgres` / `writeMysql` allocate a fresh PostgresParamWriter /
     // MysqlParamWriter per call and invoke the Schema's closed-over `writeFn` lambda. The lambda
-    // itself is allocated ONCE at schema construction (Schema.init) and reused across calls — there
+    // itself is allocated ONCE at schema construction (Schema.init) and reused across calls, there
     // is no per-call encoder-lookup walk. Inside the param writer, each primitive method (`int`,
     // `string`, ...) appends a BoundParam wrapping a statically-referenced encoder constant
     // (`PostgresEncoder.int4Binary`, etc.); no Map lookup, no field-by-field dispatch.
@@ -2450,7 +2450,7 @@ object SqlClientBackend:
             // Unsafe: discard is called from pool eviction path (non-Kyo context, AllowUnsafe in scope).
             // STEERING case 2: cleanup callback invoked outside any fiber suspension.
             // Note: conn.quit() has Async in its effect type and cannot be evaluated synchronously here.
-            // We close the TCP socket directly via closeNow, which is sufficient — the server detects the EOF.
+            // We close the TCP socket directly via closeNow, which is sufficient, the server detects the EOF.
             // Log.live.unsafe.error routes through kyo.Log instead of raw stderr.
             discard = conn =>
                 try discard(Sync.Unsafe.evalOrThrow(conn.closeNow))

@@ -12,7 +12,7 @@ import kyo.internal.mysql.unmarshaller.BinaryResultsetRowUnmarshaller
   *
   * Protocol sequence:
   *   1. Prepare statement (or use cached one from [[ExtendedQueryExchange.prepareStmt]]).
-  *   2. Send [[ComStmtExecute]] (flags=0 — no cursor).
+  *   2. Send [[ComStmtExecute]] (flags=0, no cursor).
   *   3. Read column-count packet + column definitions.
   *   4. For each [[BinaryResultsetRow]] packet: decode and emit.
   *   5. On OK/EOF terminator: close stream.
@@ -27,7 +27,7 @@ import kyo.internal.mysql.unmarshaller.BinaryResultsetRowUnmarshaller
   * ensures the server-side prepared statement is cleaned up. The cached [[MysqlPreparedStmt]] entry remains in the cache; server-side
   * cleanup for cache-evicted entries is handled by [[MysqlConnection.drainPendingCloses]] at the next request boundary.
   *
-  * Reference: MySQL Internals — Prepared Statements, Binary Protocol
+  * Reference: MySQL Internals, Prepared Statements, Binary Protocol
   */
 private[mysql] object StreamQueryExchange:
 
@@ -53,7 +53,7 @@ private[mysql] object StreamQueryExchange:
                             // ERR packet
                             readErrAndFail(firstPayload, Present(sql), params.size, connectionId)
                         else if firstByte == 0x00 && firstPayload.size >= 7 then
-                            // OK packet (DML — no result set). Empty stream.
+                            // OK packet (DML, no result set). Empty stream.
                             ()
                         else
                             // Result set: firstPayload carries the lenenc-int column count.
@@ -73,11 +73,11 @@ private[mysql] object StreamQueryExchange:
                                                 val cleanupEffect: Unit < (Async & Abort[SqlException]) =
                                                     terminatorSeen.get.flatMap { done =>
                                                         if done then
-                                                            // Result set fully consumed — channel is clean. Just close the statement.
+                                                            // Result set fully consumed, channel is clean. Just close the statement.
                                                             channel.resetSeq()
                                                             channel.send(ComStmtClose(stmt.stmtId))(using channel.marshallers.comStmtClose)
                                                         else
-                                                            // Stream was terminated early — drain remaining result packets first,
+                                                            // Stream was terminated early, drain remaining result packets first,
                                                             // then send COM_STMT_CLOSE so the connection is ready for the next command.
                                                             drainResultSet(channel, colTypes, deprecateEof).flatMap { _ =>
                                                                 channel.resetSeq()
@@ -131,7 +131,7 @@ private[mysql] object StreamQueryExchange:
         channel.readRawPayload.flatMap { payload =>
             val firstByte = payload(0) & 0xff
             if firstByte == 0xfe && payload.size < 9 then
-                // EOF / OK terminator — end of stream. Mark done so cleanup skips drain.
+                // EOF / OK terminator, end of stream. Mark done so cleanup skips drain.
                 terminatorSeen.set(true)
             else if firstByte == 0xff then
                 readErrAndFail(payload, sqlText, paramCount, connectionId)
@@ -180,16 +180,16 @@ private[mysql] object StreamQueryExchange:
         channel.readRawPayload.flatMap { payload =>
             val firstByte = payload(0) & 0xff
             if firstByte == 0xfe && payload.size < 9 then
-                // EOF / OK terminator — drain complete.
+                // EOF / OK terminator, drain complete.
                 ()
             else if firstByte == 0xff then
-                // ERR packet during drain — ignore and consider drain done.
+                // ERR packet during drain, ignore and consider drain done.
                 ()
             else if firstByte == 0x00 then
-                // Binary result row — discard and continue draining.
+                // Binary result row, discard and continue draining.
                 drainResultSet(channel, colTypes, deprecateEof)
             else
-                // Unexpected packet type during drain — stop and let the next command deal with it.
+                // Unexpected packet type during drain, stop and let the next command deal with it.
                 (
             )
             end if

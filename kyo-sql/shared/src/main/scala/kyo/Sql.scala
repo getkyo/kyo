@@ -2,10 +2,10 @@ package kyo
 
 import kyo.SqlAst.*
 
-/** Sql — top-level entry points for the redesigned DSL. All AST types and the DSL methods on `Term`/`Column`/`Query`/etc. live in
+/** Sql, top-level entry points for the redesigned DSL. All AST types and the DSL methods on `Term`/`Column`/`Query`/etc. live in
   * [[kyo.SqlAst]] (typically `import kyo.SqlAst.*` to bring them into scope).
   *
-  * The `Sql.*` namespace deliberately exposes only what the user types to *start* a query / statement — `from`, `nested`, `lateral`,
+  * The `Sql.*` namespace deliberately exposes only what the user types to *start* a query / statement, `from`, `nested`, `lateral`,
   * `values`, `insert`, `update`, `delete`, `commonTable(s)(Recursive)`, `when`, `windowSpec`, plus the escape hatches `default` / `call` /
   * `raw`.
   */
@@ -19,7 +19,7 @@ object Sql:
     /** Use an existing query as a source with new column aliases. */
     inline def nested[T]: NestedBuilder[T] = new NestedBuilder[T]
 
-    /** Lateral subquery — its WHERE clause may reference columns from the surrounding FROM. */
+    /** Lateral subquery, its WHERE clause may reference columns from the surrounding FROM. */
     inline def lateral[T]: LateralBuilder[T] = new LateralBuilder[T]
 
     /** `VALUES (…), (…), …` constructor that produces a query of `T`. */
@@ -27,7 +27,7 @@ object Sql:
 
     // --- INSERT / UPDATE / DELETE entry points ---
 
-    /** INSERT entry point — table name derived from `T`'s case-class label, column names from [[Fields]] (declaration order).
+    /** INSERT entry point, table name derived from `T`'s case-class label, column names from [[Fields]] (declaration order).
       *
       * Auto-key detection: if `T`'s first declared field is `Long`-typed, that field is treated as the auto-incrementing primary key. The
       * PG renderer auto-appends `RETURNING <pk>`; the MySQL driver reads `last_insert_id` from the OK packet. Future work: a `@PrimaryKey`
@@ -56,7 +56,7 @@ object Sql:
 
     // --- CTE (WITH) entry points ---
 
-    /** Define a CTE — feed into [[commonTables]] to bind it. */
+    /** Define a CTE, feed into [[commonTables]] to bind it. */
     inline def commonTable[B](inline name: String, inline query: Query[B]): CommonTable[B] = CommonTable(name, query)
 
     /** `WITH cte1, cte2, … body`. */
@@ -81,10 +81,10 @@ object Sql:
 
     // --- Escape hatches ---
 
-    /** `DEFAULT` keyword for INSERT — `_.id := Sql.default` overrides a value with the column's default. */
+    /** `DEFAULT` keyword for INSERT, `_.id := Sql.default` overrides a value with the column's default. */
     inline def default[A]: Term[A] = Default()
 
-    /** Generic SQL function call (escape hatch). Args must be `Term[?]`s — wrap raw values via `Sql.literal(v)`. */
+    /** Generic SQL function call (escape hatch). Args must be `Term[?]`s, wrap raw values via `Sql.literal(v)`. */
     inline def call[A](inline name: String, inline args: Term[?]*): Term[A] =
         FunctionCall(name, Chunk.from(args))
 
@@ -111,7 +111,7 @@ object Sql:
     /** Raw SQL fragment (escape hatch). */
     inline def raw[A](inline sql: String): Term[A] = RawSql(sql)
 
-    /** Renders any DSL AST node — query, action (INSERT/UPDATE/DELETE), term, or raw fragment — into a [[RenderedSql]] (the SQL text and
+    /** Renders any DSL AST node, query, action (INSERT/UPDATE/DELETE), term, or raw fragment, into a [[RenderedSql]] (the SQL text and
       * the runtime bind values) for the given backend.
       *
       * Use for debugging, logging, migration scripts, or any caller that needs to inspect the SQL alongside its parameters without
@@ -125,7 +125,7 @@ object Sql:
 
 end Sql
 
-/** Top-level `sql"..."` interpolator — builds a composable [[kyo.SqlAst.Fragment]] from a string interpolation. Interpolated arguments are
+/** Top-level `sql"..."` interpolator, builds a composable [[kyo.SqlAst.Fragment]] from a string interpolation. Interpolated arguments are
   * classified at compile time: subtypes of `Term[?]` are embedded inline (allowing column / sub-query references), and other types are
   * bound as parameters via their `SqlSchema[A]`.
   */

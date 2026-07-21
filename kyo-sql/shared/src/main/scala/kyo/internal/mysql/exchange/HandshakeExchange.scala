@@ -51,7 +51,7 @@ final case class HandshakeResult(
   *   8. `mysql_clear_password`: sends NUL-terminated cleartext password; refuses to authenticate without TLS.
   *   9. Returns [[HandshakeResult]] on success.
   *
-  * Sequence IDs during the handshake are sequential (server=0, client=1, server=2, ...) — do NOT call `resetSeq` between steps.
+  * Sequence IDs during the handshake are sequential (server=0, client=1, server=2, ...), do NOT call `resetSeq` between steps.
   */
 private[mysql] object HandshakeExchange:
 
@@ -90,7 +90,7 @@ private[mysql] object HandshakeExchange:
       * @param preferFallback
       *   if `true`, enables `sslmode=prefer` behaviour: attempt TLS upgrade if server advertises CLIENT_SSL, but fall back to plaintext if
       *   it does not (instead of failing). When `false` (the default), TLS is required if `tls` is [[Maybe.Present]] and the server does
-      *   not advertise CLIENT_SSL — [[InitTlsExchange]] will fail with [[SqlException.Connection]].
+      *   not advertise CLIENT_SSL, [[InitTlsExchange]] will fail with [[SqlException.Connection]].
       */
     def run(
         channel: MysqlChannel,
@@ -120,10 +120,10 @@ private[mysql] object HandshakeExchange:
                 case Maybe.Present(tlsConfig) if serverHasSsl =>
                     InitTlsExchange.run(channel, serverCaps, clientCaps, host, port, tlsConfig)
                 case Maybe.Present(_) if preferFallback =>
-                    // sslmode=prefer: server doesn't advertise CLIENT_SSL — fall back to plaintext.
+                    // sslmode=prefer: server doesn't advertise CLIENT_SSL, fall back to plaintext.
                     channel
                 case Maybe.Present(_) =>
-                    // sslmode=require/verify-*: TLS requested but server doesn't advertise CLIENT_SSL — fail.
+                    // sslmode=require/verify-*: TLS requested but server doesn't advertise CLIENT_SSL, fail.
                     InitTlsExchange.run(channel, serverCaps, clientCaps, host, port, NetTlsConfig())
                 case Maybe.Absent =>
                     channel
@@ -164,7 +164,7 @@ private[mysql] object HandshakeExchange:
                                 handleCachingSha2MoreData(activeChannel, data, password, scramble, handshake, clientCaps, tlsActive)
 
                             case AuthMoreData(data) if pluginName == "sha256_password" =>
-                                // sha256_password: server sent AuthMoreData (PEM public key) — XOR with scramble, encrypt, send.
+                                // sha256_password: server sent AuthMoreData (PEM public key), XOR with scramble, encrypt, send.
                                 handleSha256MoreData(activeChannel, data, password, scramble, handshake, clientCaps)
 
                             case AuthSwitchRequest(newPlugin, newScramble) =>
@@ -326,7 +326,7 @@ private[mysql] object HandshakeExchange:
         handshake: HandshakeV10,
         clientCaps: Long
     )(using Frame): HandshakeResult < (Async & Abort[SqlException]) =
-        // Server sent the PEM public key in AuthMoreData — XOR with scramble, encrypt, and reply.
+        // Server sent the PEM public key in AuthMoreData, XOR with scramble, encrypt, and reply.
         val encryptedEffect: Span[Byte] < (Sync & Abort[SqlException]) = password match
             case Maybe.Present(pw) => Sha256Password.computeEncryptedResponse(pw, scramble, data)
             case Maybe.Absent      => Span.from(Array(0.toByte))
@@ -453,7 +453,7 @@ private[mysql] object HandshakeExchange:
                 performSha256Auth(channel, password, newScramble, handshake, clientCaps, tlsActive)
 
             case "mysql_clear_password" =>
-                // mysql_clear_password MUST NOT be used without TLS — password would be sent in plaintext.
+                // mysql_clear_password MUST NOT be used without TLS, password would be sent in plaintext.
                 if !tlsActive then
                     Abort.fail(SqlException.Connection(
                         "mysql_clear_password requires TLS to avoid sending the password in plaintext",
@@ -500,7 +500,7 @@ private[mysql] object HandshakeExchange:
                 // Client then RSA-OAEP encrypts the NUL-terminated password and sends the ciphertext.
                 Span.empty[Byte]
             case "mysql_clear_password" =>
-                // mysql_clear_password MUST NOT be used without TLS — password would be sent in plaintext.
+                // mysql_clear_password MUST NOT be used without TLS, password would be sent in plaintext.
                 if !tlsActive then
                     Abort.fail(SqlException.Connection(
                         "mysql_clear_password requires TLS to avoid sending the password in plaintext",

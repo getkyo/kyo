@@ -6,7 +6,7 @@ import kyo.internal.SqlSharedContainers
 /** Integration tests verifying that evicted prepared statements are closed server-side via `Close 'S' <name>`.
   *
   * Each test runs against a fresh schema in the per-fork-JVM shared Postgres container (via [[SqlSharedContainers.withFreshSchema]]). Each
-  * test verifies server-side statement counts via the `pg_prepared_statements` view, which is session-local — so a fresh connection always
+  * test verifies server-side statement counts via the `pg_prepared_statements` view, which is session-local, so a fresh connection always
   * starts with zero prepared statements.
   *
   * Test strategy: set `preparedStmtCacheSize=2`, execute 10 queries with distinct SQL strings so each occupies a different cache slot.
@@ -87,7 +87,7 @@ class PreparedStmtEvictionIntegrationTest extends kyo.Test:
             Scope.run {
                 SqlSharedContainers.withFreshSchema(SqlSharedContainers.Backend.Postgres) { ctx =>
                     // Open connection A, execute queries to populate the prepared-statement cache, then close it.
-                    // PG drops all session-local prepared statements when the session ends — pg_prepared_statements
+                    // PG drops all session-local prepared statements when the session ends, pg_prepared_statements
                     // is session-scoped, so a second connection (B) always starts with an empty view of its own
                     // prepared statements. We verify that B sees zero statements after A closes, confirming that
                     // there is no server-side leak from A's session.
@@ -103,10 +103,10 @@ class PreparedStmtEvictionIntegrationTest extends kyo.Test:
                         ).andThen(serverStmtCount(clientA)).flatMap { countA =>
                             // Connection A must hold exactly cacheSize statements before close.
                             assert(countA == 3, s"Expected 3 server-side prepared statements on conn A before close, got $countA")
-                            // Now open connection B *while A is still open*, then close A via scope exit.
+                            // Now open connection B *while A is still open* then close A via scope exit.
                             // pg_prepared_statements is session-local: B sees only its own statements (zero at start).
                             withSmallCacheClient(ctx, cacheSize = 3) { clientB =>
-                                // B has just connected and run no extended queries — its statement count must be 0.
+                                // B has just connected and run no extended queries, its statement count must be 0.
                                 serverStmtCount(clientB).map { countB =>
                                     assert(countB == 0, s"Expected 0 server-side prepared statements on fresh conn B, got $countB")
                                 }

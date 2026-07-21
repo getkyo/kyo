@@ -56,7 +56,7 @@ class PostgresConnectionTest extends kyo.Test:
                 Scope.ensure(Abort.run(conn.terminate).unit).andThen(f(conn))
             }
 
-    "StartupExchange succeeds with trust auth — connect + startup returns ReadyForQuery" in {
+    "StartupExchange succeeds with trust auth, connect + startup returns ReadyForQuery" in {
         Scope.run {
             SqlSharedContainers.withFreshSchema(SqlSharedContainers.Backend.Postgres) { ctx =>
                 withConn(ctx) { conn =>
@@ -66,7 +66,7 @@ class PostgresConnectionTest extends kyo.Test:
         }
     }
 
-    "StartupExchange populates ParameterStatus map — server_version present after connect" in {
+    "StartupExchange populates ParameterStatus map, server_version present after connect" in {
         Scope.run {
             SqlSharedContainers.withFreshSchema(SqlSharedContainers.Backend.Postgres) { ctx =>
                 withConn(ctx) { conn =>
@@ -79,7 +79,7 @@ class PostgresConnectionTest extends kyo.Test:
         }
     }
 
-    "StartupExchange stores BackendKeyData — processId non-zero after startup" in {
+    "StartupExchange stores BackendKeyData, processId non-zero after startup" in {
         Scope.run {
             SqlSharedContainers.withFreshSchema(SqlSharedContainers.Backend.Postgres) { ctx =>
                 withConn(ctx) { conn =>
@@ -92,7 +92,7 @@ class PostgresConnectionTest extends kyo.Test:
         }
     }
 
-    "StartupExchange fails on wrong password — raises SqlException.Connection" in {
+    "StartupExchange fails on wrong password, raises SqlException.Connection" in {
         Scope.run {
             SqlSharedContainers.withFreshSchema(SqlSharedContainers.Backend.Postgres) { ctx =>
                 Abort.run[SqlException] {
@@ -136,7 +136,7 @@ class PostgresConnectionTest extends kyo.Test:
         }
     }
 
-    "SimpleQueryExchange SELECT with multiple columns — column names match RowDescription" in {
+    "SimpleQueryExchange SELECT with multiple columns, column names match RowDescription" in {
         Scope.run {
             SqlSharedContainers.withFreshSchema(SqlSharedContainers.Backend.Postgres) { ctx =>
                 withConn(ctx) { conn =>
@@ -156,7 +156,7 @@ class PostgresConnectionTest extends kyo.Test:
         }
     }
 
-    "SimpleQueryExchange empty result set — WHERE false returns no rows" in {
+    "SimpleQueryExchange empty result set, WHERE false returns no rows" in {
         Scope.run {
             SqlSharedContainers.withFreshSchema(SqlSharedContainers.Backend.Postgres) { ctx =>
                 withConn(ctx) { conn =>
@@ -168,7 +168,7 @@ class PostgresConnectionTest extends kyo.Test:
         }
     }
 
-    "QueryResultExchange maps column by position — column(0) returns first value" in {
+    "QueryResultExchange maps column by position, column(0) returns first value" in {
         Scope.run {
             SqlSharedContainers.withFreshSchema(SqlSharedContainers.Backend.Postgres) { ctx =>
                 withConn(ctx) { conn =>
@@ -185,7 +185,7 @@ class PostgresConnectionTest extends kyo.Test:
         }
     }
 
-    "Row.column(name) — column lookup by field name" in {
+    "Row.column(name), column lookup by field name" in {
         Scope.run {
             SqlSharedContainers.withFreshSchema(SqlSharedContainers.Backend.Postgres) { ctx =>
                 withConn(ctx) { conn =>
@@ -202,7 +202,7 @@ class PostgresConnectionTest extends kyo.Test:
         }
     }
 
-    "Row.column(index) — column(0) returns first column" in {
+    "Row.column(index), column(0) returns first column" in {
         Scope.run {
             SqlSharedContainers.withFreshSchema(SqlSharedContainers.Backend.Postgres) { ctx =>
                 withConn(ctx) { conn =>
@@ -217,7 +217,7 @@ class PostgresConnectionTest extends kyo.Test:
         }
     }
 
-    "SimpleQueryExchange error mid-stream — server error raises SqlException.Server with sqlState" in {
+    "SimpleQueryExchange error mid-stream, server error raises SqlException.Server with sqlState" in {
         Scope.run {
             SqlSharedContainers.withFreshSchema(SqlSharedContainers.Backend.Postgres) { ctx =>
                 withConn(ctx) { conn =>
@@ -233,7 +233,7 @@ class PostgresConnectionTest extends kyo.Test:
         }
     }
 
-    "BarrierGuard drains to ReadyForQuery on error — subsequent query succeeds after error" in {
+    "BarrierGuard drains to ReadyForQuery on error, subsequent query succeeds after error" in {
         Scope.run {
             SqlSharedContainers.withFreshSchema(SqlSharedContainers.Backend.Postgres) { ctx =>
                 withConn(ctx) { conn =>
@@ -244,7 +244,7 @@ class PostgresConnectionTest extends kyo.Test:
                         _ = err match
                             case Result.Failure(SqlException.Server(_, _, _, _, _, _, _, _, _, _, _)) => ()
                             case other => fail(s"Expected server error, got $other")
-                        // Second: run a normal query — must succeed (proves barrier drained RFQ).
+                        // Second: run a normal query, must succeed (proves barrier drained RFQ).
                         rows <- conn.simpleQuery("SELECT 42")
                     yield
                         assert(rows.size == 1)
@@ -255,7 +255,7 @@ class PostgresConnectionTest extends kyo.Test:
         }
     }
 
-    "BarrierGuard preserves original error — drain succeeds and original error is re-raised" in {
+    "BarrierGuard preserves original error, drain succeeds and original error is re-raised" in {
         Scope.run {
             SqlSharedContainers.withFreshSchema(SqlSharedContainers.Backend.Postgres) { ctx =>
                 withConn(ctx) { conn =>
@@ -268,7 +268,7 @@ class PostgresConnectionTest extends kyo.Test:
         }
     }
 
-    "TerminatorExchange sends Terminate and closes — isOpen returns false after terminate" in {
+    "TerminatorExchange sends Terminate and closes, isOpen returns false after terminate" in {
         Scope.run {
             SqlSharedContainers.withFreshSchema(SqlSharedContainers.Backend.Postgres) { ctx =>
                 // Open the connection without auto-terminate scope
@@ -297,7 +297,7 @@ class PostgresConnectionTest extends kyo.Test:
         }
     }
 
-    "PostgresConnection.connect fails on wrong host — SqlException.Connection raised" in {
+    "PostgresConnection.connect fails on wrong host, SqlException.Connection raised" in {
         Scope.run {
             Abort.run[SqlException] {
                 PostgresConnection
@@ -310,7 +310,7 @@ class PostgresConnectionTest extends kyo.Test:
         }
     }
 
-    "Multiple sequential queries on same connection — no state corruption" in {
+    "Multiple sequential queries on same connection, no state corruption" in {
         Scope.run {
             SqlSharedContainers.withFreshSchema(SqlSharedContainers.Backend.Postgres) { ctx =>
                 withConn(ctx) { conn =>
@@ -358,7 +358,7 @@ class PostgresConnectionTest extends kyo.Test:
         }
     }
 
-    "SimpleQueryExchange handles multi-statement SQL — returns rows from all statements" in {
+    "SimpleQueryExchange handles multi-statement SQL, returns rows from all statements" in {
         Scope.run {
             SqlSharedContainers.withFreshSchema(SqlSharedContainers.Backend.Postgres) { ctx =>
                 withConn(ctx) { conn =>
@@ -374,11 +374,11 @@ class PostgresConnectionTest extends kyo.Test:
         }
     }
 
-    "PostgresChannel NoticeResponse does not block main exchange — query completes normally" in {
+    "PostgresChannel NoticeResponse does not block main exchange, query completes normally" in {
         Scope.run {
             SqlSharedContainers.withFreshSchema(SqlSharedContainers.Backend.Postgres) { ctx =>
                 withConn(ctx) { conn =>
-                    // RAISE NOTICE generates a NoticeResponse — the exchange must handle it gracefully.
+                    // RAISE NOTICE generates a NoticeResponse, the exchange must handle it gracefully.
                     conn.simpleQuery("DO $$ BEGIN RAISE NOTICE 'hello from test'; END $$;").map { rows =>
                         // DO block returns no rows
                         assert(rows.isEmpty)
@@ -431,7 +431,7 @@ class PostgresConnectionTest extends kyo.Test:
     /** Verifies that [[PostgresConnection.onConnectPanic]] logs an error with the label and returns a [[SqlException.Connection]] whose
       * message contains the throwable's message.
       *
-      * Calls the real production helper directly — no network I/O. Installs a capturing [[Log]] via [[Log.let]] to assert that the log
+      * Calls the real production helper directly, no network I/O. Installs a capturing [[Log]] via [[Log.let]] to assert that the log
       * entry was emitted at error level with the expected module prefix and label.
       */
     "PostgresConnection onConnectPanic logs error with label and returns SqlException.Connection" in {

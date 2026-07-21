@@ -2,7 +2,7 @@ package kyo.internal.postgres.types
 
 import kyo.*
 
-/** Tests for EncodingRegistry — lookup by OID + format. */
+/** Tests for EncodingRegistry, lookup by OID + format. */
 class EncodingRegistryTest extends kyo.Test:
 
     val registry = EncodingRegistry.builtin

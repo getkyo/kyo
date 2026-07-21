@@ -82,7 +82,7 @@ object StartupExchange:
 
             case Authentication(AuthenticationKind.SASL(mechanisms)) =>
                 // Select SCRAM-SHA-256-PLUS when the server offers it AND the connection has a known TLS cert hash.
-                // Use the SAFE `serverCertificateHash` (returns Maybe[Span[Byte]] < Sync) — no AllowUnsafe.
+                // Use the SAFE `serverCertificateHash` (returns Maybe[Span[Byte]] < Sync), no AllowUnsafe.
                 // certHashOverride (if Present) takes precedence over the real cert hash; used in tests to inject a synthetic hash.
                 if mechanisms.contains("SCRAM-SHA-256") || mechanisms.contains("SCRAM-SHA-256-PLUS") then
                     // certHashOverride semantics:
@@ -123,7 +123,7 @@ object StartupExchange:
         channelBinding: Maybe[Span[Byte]],
         mechanismCapture: Maybe[AtomicRef[String]]
     )(using Frame): Unit < (Async & Abort[SqlException]) =
-        // Generate client nonce using kyo.Random.secure — 24 random bytes, base64-encoded.
+        // Generate client nonce using kyo.Random.secure, 24 random bytes, base64-encoded.
         Random.secure.nextBytes(24).flatMap { nonceBytes =>
             val clientNonce = ScramSha256.encodeNonce(Span.from(nonceBytes.toArray))
             val scram       = new ScramSha256(user, clientNonce, channelBinding)

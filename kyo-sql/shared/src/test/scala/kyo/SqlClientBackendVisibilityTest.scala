@@ -6,8 +6,8 @@ import scala.compiletime.testing.typeCheckErrors
   *
   * Verifies that:
   *   1. External code cannot directly instantiate [[kyo.internal.client.PgSqlClientBackend]] or [[kyo.internal.client.MySqlClientBackend]]
-  *      — their constructors are `private[client]`.
-  *   2. The static SQL macro path (and any `inline` accessor in [[SqlClient]]) still compiles on JS — the trait, classes, and companion
+  * their constructors are `private[client]`.
+  *   2. The static SQL macro path (and any `inline` accessor in [[SqlClient]]) still compiles on JS, the trait, classes, and companion
   *      object themselves remain public so the inline expansion does not generate a synthetic package-token accessor.
   */
 class SqlClientBackendVisibilityTest extends Test:
@@ -23,7 +23,7 @@ import kyo.SqlMetrics
 import kyo.internal.client.ConnectionPool
 import kyo.internal.postgres.PostgresConnection
 import kyo.internal.tls.TlsMode
-// Attempt direct construction — must be rejected
+// Attempt direct construction, must be rejected
 val _ = new PgSqlClientBackend(
     null.asInstanceOf[ConnectionPool[kyo.net.NetAddress, PostgresConnection]],
     new ConcurrentHashMap(),
@@ -48,7 +48,7 @@ import java.util.concurrent.ConcurrentHashMap
 import kyo.SqlMetrics
 import kyo.internal.client.ConnectionPool
 import kyo.internal.mysql.MysqlConnection
-// Attempt direct construction — must be rejected
+// Attempt direct construction, must be rejected
 val _ = new MySqlClientBackend(
     null.asInstanceOf[ConnectionPool[kyo.net.NetAddress, MysqlConnection]],
     new ConcurrentHashMap(),

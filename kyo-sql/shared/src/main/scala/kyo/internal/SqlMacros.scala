@@ -92,7 +92,7 @@ object SqlMacros:
       * otherwise `Maybe.empty`.
       *
       * Computing this at macro expansion (rather than via a runtime `if` on `Fields[T]`) keeps `Insert.autoKey` a pure constructor of
-      * constant data — `FromExpr.derived` lifts `Maybe(<lit>)` / `Maybe.empty`, but cannot lift an `If` tree.
+      * constant data, `FromExpr.derived` lifts `Maybe(<lit>)` / `Maybe.empty`, but cannot lift an `If` tree.
       */
     inline def autoKey[T]: Maybe[String] = ${ autoKeyImpl[T] }
 
@@ -108,7 +108,7 @@ object SqlMacros:
       * `BoundValue` pairing a field value with its `SqlSchema`, in case-class declaration order.
       *
       * Storing the rows in this decomposed form (rather than as raw `T` instances) keeps the `Insert.Values` / `ValuesFrom` AST nodes pure
-      * data — `Chunk`, `BoundValue`, `SqlSchema` all lift via `FromExpr`, so `FromExpr.derived` reconstructs them with zero reflection. A
+      * data, `Chunk`, `BoundValue`, `SqlSchema` all lift via `FromExpr`, so `FromExpr.derived` reconstructs them with zero reflection. A
       * raw `Chunk[T]` would force `FromExprDerived.instantiate` to reflectively `Class.forName` a row class co-compiled with the
       * `staticSql` call site, which does not exist at macro-expansion time.
       *
@@ -140,7 +140,7 @@ object SqlMacros:
                                 )
                         end match
                 end match
-            // Emit `Chunk(cell*)` (varargs) — not `Chunk.from(List(...))`. `FromExpr.derived`'s Chunk matcher
+            // Emit `Chunk(cell*)` (varargs), not `Chunk.from(List(...))`. `FromExpr.derived`'s Chunk matcher
             // recognises the `Chunk.apply` / `Chunk.from` varargs `Repeated` shape; a `List.apply` argument is
             // not lifted, so the decomposed `Insert.Values` would otherwise fail to lift.
             '{ Chunk(${ Varargs(cells) }*) }

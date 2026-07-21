@@ -6,7 +6,7 @@ import kyo.Test
 /** Unit tests for G-Leak-4: `cancelMysql` sidecar socket closed on every exit edge.
   *
   * Strategy: the `cancelMysql` fix wraps the sidecar lifecycle in `Scope.run { Scope.acquireRelease(connect)(_.closeNow) }`. These tests
-  * verify that the Kyo structural property holds — `closeNow` is called on every exit edge (cancelTimeout fires, fiber interrupt) — without
+  * verify that the Kyo structural property holds, `closeNow` is called on every exit edge (cancelTimeout fires, fiber interrupt), without
   * requiring a live MySQL server.
   *
   * A fake "connection" is represented by an `AtomicBoolean` (`closed` flag). The acquire step sets `closed = false`; the release step
@@ -51,7 +51,7 @@ class MysqlCancelLeakTest extends Test:
                 )(doCancel)
 
             Abort.run[SqlException](Scope.run(timed)).flatMap { _ =>
-                // Give the Scope cleanup a moment to run — it fires asynchronously after the
+                // Give the Scope cleanup a moment to run, it fires asynchronously after the
                 // timeout interrupt propagates through Scope's ensure callbacks.
                 Async.sleep(100.millis).andThen {
                     closed.get.map { wasClosed =>

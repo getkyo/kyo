@@ -11,7 +11,7 @@ import kyo.internal.postgres.types.PostgresEncoder
 
 /** Tests for the PostgreSQL INTERVAL binary wire codec for java.time.Duration.
   *
-  * Tests use explicit byte arrays (constructed from the known wire format) to verify both the encoder and decoder in isolation — no live
+  * Tests use explicit byte arrays (constructed from the known wire format) to verify both the encoder and decoder in isolation, no live
   * database required.
   */
 class PostgresEncoderIntervalTest extends Test:
@@ -176,7 +176,7 @@ class PostgresEncoderIntervalTest extends Test:
             java.time.Duration.ofMinutes(90),
             java.time.Duration.ofSeconds(3661, 500_000_000L), // 1h 1m 1s + 500ms
             // PLAN leaf 1 representative: multi-day Duration. Round-trips cleanly via µs
-            // because `java.time.Duration` encodes everything as microseconds — the wire-format
+            // because `java.time.Duration` encodes everything as microseconds, the wire-format
             // `days != 0` raise only fires when the SERVER emits a days component, not when the
             // Duration spans multiple calendar days client-side.
             java.time.Duration.ofDays(1).plusHours(2),
@@ -192,7 +192,7 @@ class PostgresEncoderIntervalTest extends Test:
     }
 
     "INTERVAL round-trip: multi-day Duration.ofDays(1).plusHours(2) decodes to 26 hours" in {
-        // Plan leaf 1 (PHASE-2-AUDIT W-1) — explicit `1.day + 2.hours → toHours == 26`.
+        // Plan leaf 1 (PHASE-2-AUDIT W-1), explicit `1.day + 2.hours → toHours == 26`.
         val v       = java.time.Duration.ofDays(1).plusHours(2)
         val encoded = encode(v, PostgresEncoder.intervalBinary)
         val decoded = PostgresDecoder.interval.read(Format.Binary, encoded)

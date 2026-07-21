@@ -5,7 +5,7 @@ import scala.scalajs.js
 
 /** Tests for Connection.upgradeToTls on the JS (Node.js) transport.
   *
-  * Uses a loopback TCP pair where both client and server run in-process. Certificates are embedded as string constants — no subprocess or
+  * Uses a loopback TCP pair where both client and server run in-process. Certificates are embedded as string constants, no subprocess or
   * filesystem dependency required for cert generation.
   *
   * The upgrade protocol used in these tests adds one round-trip before the TLS handshake:
@@ -14,7 +14,7 @@ import scala.scalajs.js
   *   3. Client receives 'R', then calls upgradeToTls and sends the TLS ClientHello.
   *
   * This mirrors how Postgres STARTTLS works (SSLRequest → 'S' acknowledgment → TLS). It ensures the server has completed its side of the
-  * upgrade before the client initiates the TLS handshake — necessary because Node.js sends the ClientHello synchronously when tls.connect
+  * upgrade before the client initiates the TLS handshake, necessary because Node.js sends the ClientHello synchronously when tls.connect
   * is called, leaving no event-loop tick for the server to upgrade first.
   *
   * Server-side TLS uses PEM content written to temp files via Node.js `fs.writeFileSync`. The client CA cert is also written to a temp file
@@ -141,7 +141,7 @@ Q9tsIulo26Tkvg3Xkhq+I5Y=
         path
     end writeTempPem
 
-    // Temp file paths — written once lazily and reused across tests.
+    // Temp file paths, written once lazily and reused across tests.
     private lazy val localhostCertPath: String = writeTempPem(localhostCertPem, "kyo-js-tls-localhost-cert.pem")
     private lazy val localhostKeyPath: String  = writeTempPem(localhostKeyPem, "kyo-js-tls-localhost-key.pem")
     private lazy val wrongCertPath: String     = writeTempPem(wrongCertPem, "kyo-js-tls-wrong-cert.pem")
@@ -250,7 +250,7 @@ Q9tsIulo26Tkvg3Xkhq+I5Y=
         Scope.run {
             for
                 listener <- transport.listen("127.0.0.1", 0) { serverConn =>
-                    // Server sends ready signal but does NOT upgrade to TLS — closes the connection.
+                    // Server sends ready signal but does NOT upgrade to TLS, closes the connection.
                     // The client's TLS handshake sees EOF and must fail.
                     Abort.run[Closed](serverAckAndClose(serverConn)).unit
                 }
@@ -280,7 +280,7 @@ Q9tsIulo26Tkvg3Xkhq+I5Y=
                 }
                 port = listener.port
                 result <- transport.connect("127.0.0.1", port).map { plainConn =>
-                    // Cert has SAN=DNS:localhost; client SNI="localhost" — must succeed.
+                    // Cert has SAN=DNS:localhost; client SNI="localhost", must succeed.
                     Abort.run[Closed] {
                         clientRequestUpgradeAndWait(plainConn, clientVerifyHostname).flatMap { tlsConn =>
                             tlsConn.write(Span.from("verify-ok".getBytes)).andThen {
@@ -322,7 +322,7 @@ Q9tsIulo26Tkvg3Xkhq+I5Y=
                 result <- transport.connect("127.0.0.1", port).map { plainConn =>
                     plainConn.write(upgradeRequest).andThen {
                         plainConn.inbound.take.flatMap { _ =>
-                            // Node.js verifies hostname "localhost" against SAN=DNS:wrong-host.example.com — must fail.
+                            // Node.js verifies hostname "localhost" against SAN=DNS:wrong-host.example.com, must fail.
                             Abort.run[Closed] {
                                 plainConn.upgradeToTls(clientCheckingHostname)
                             }.map { outcome =>

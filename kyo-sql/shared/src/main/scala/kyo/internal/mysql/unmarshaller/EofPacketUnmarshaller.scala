@@ -16,7 +16,7 @@ import kyo.internal.mysql.Unmarshaller
   * The reader is positioned AFTER the first byte (0xFE), which the [[GenericResponseUnmarshaller]] has already consumed for dispatch. The
   * caller must have already determined that the payload length is < 9 bytes (distinguishing from OK 0xFE).
   *
-  * Reference: MySQL Internals — Protocol::EOF_Packet
+  * Reference: MySQL Internals, Protocol::EOF_Packet
   */
 object EofPacketUnmarshaller extends Unmarshaller[EofPacket]:
 

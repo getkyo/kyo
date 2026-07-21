@@ -15,7 +15,7 @@ import kyo.net.NetTlsConfig
   * Container strategy:
   *   - A fresh MySQL 8.0 container is started with `--enable-cleartext-plugin`.
   *   - Root connects and runs `ALTER USER 'test'@'%' IDENTIFIED WITH mysql_clear_password BY 'test'` to switch the test user.
-  *   - TLS leaf: client connects with [[NetTlsConfig]](trustAll=true); sends NUL-terminated cleartext password — auth succeeds.
+  *   - TLS leaf: client connects with [[NetTlsConfig]](trustAll=true); sends NUL-terminated cleartext password, auth succeeds.
   *   - Non-TLS leaf: client connects without TLS; [[HandshakeExchange]] raises [[SqlException.Connection]] before sending any password
   *     bytes, because `mysql_clear_password` without TLS would expose the password.
   *
@@ -76,20 +76,20 @@ class ClearPasswordIntegrationTest extends kyo.Test:
 
     // ─── Leaf 1: cleartext auth over TLS succeeds ────────────────────────────
     //
-    // PENDING — Stock mysql:8.0 does not ship `mysql_clear_password.so`; the server cannot
+    // PENDING, Stock mysql:8.0 does not ship `mysql_clear_password.so`; the server cannot
     // accept `IDENTIFIED WITH mysql_clear_password`, so the user-switch step fails before the
     // client can exercise its cleartext-over-TLS handshake. Validating this client capability
     // requires a custom MySQL image (e.g. Percona Server with the LDAP-simple plugin loaded,
     // or a vanilla MySQL with `--plugin-load=cleartext_plugin.so` after building the plugin).
     // Keep the leaf NAME + body so the scenario remains documented; the kyo-sql MySQL client
-    // does implement the `mysql_clear_password` protocol — it's the container fixture that
+    // does implement the `mysql_clear_password` protocol, it's the container fixture that
     // can't model the server side without an additional plugin install.
 
     "cleartext auth over TLS succeeds".ignore("pending") - {}
 
     // ─── Leaf 2: cleartext auth without TLS raises Connection error ───────────
     //
-    // PENDING — Same root as Leaf 1: stock mysql:8.0 cannot load `mysql_clear_password.so`,
+    // PENDING, Same root as Leaf 1: stock mysql:8.0 cannot load `mysql_clear_password.so`,
     // so the user-switch step fails (HY000: Plugin 'mysql_clear_password' is not loaded)
     // before the kyo-sql client gets a chance to refuse the connection over plaintext.
     // The CLIENT-side TLS-required guard IS implemented (and tested at the unit-test layer

@@ -7,11 +7,11 @@ import kyo.stats.internal.Summary
 
 /** Unit tests for metrics via kyo.Stat.
   *
-  * All tests are in-process (no Docker). They exercise `SqlMetrics` directly — creating instances, calling instrumented methods, and
+  * All tests are in-process (no Docker). They exercise `SqlMetrics` directly, creating instances, calling instrumented methods, and
   * asserting counter/histogram state. No wall-clock assertions are present.
   *
   * Key constraints:
-  *   - `Counter.get` uses `sumThenReset` (destructive read) — only call once per assertion.
+  *   - `Counter.get` uses `sumThenReset` (destructive read), only call once per assertion.
   *   - Histogram `summary()` is non-destructive and can be read multiple times.
   *   - Use `Latch` for fiber synchronisation (no `Async.sleep`).
   *
@@ -129,7 +129,7 @@ class SqlMetricsTest extends Test:
                     m.recordRelease.andThen {
                         m.recordDiscard.andThen {
                             m.recordRetry.andThen {
-                                // All counters should return 0 (noop — nothing was recorded).
+                                // All counters should return 0 (noop, nothing was recorded).
                                 m.queriesExecuted.get.flatMap { qe =>
                                     m.queriesFailed.get.flatMap { qf =>
                                         m.connectionsAcquired.get.flatMap { ca =>

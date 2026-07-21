@@ -11,7 +11,7 @@ object StubConnection:
     /** Creates an in-memory [[Connection]] suitable for unit tests that exercise channel state.
       *
       * Both `inbound` and `outbound` are backed by real `Channel.Unsafe[Span[Byte]]` instances with a large capacity so that `put` never
-      * blocks during tests. `AllowUnsafe.embrace.danger` is narrowly scoped here — test code only.
+      * blocks during tests. `AllowUnsafe.embrace.danger` is narrowly scoped here, test code only.
       */
     def apply()(using Frame): Connection =
         import AllowUnsafe.embrace.danger

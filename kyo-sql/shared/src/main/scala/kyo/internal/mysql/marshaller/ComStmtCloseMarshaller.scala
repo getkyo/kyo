@@ -10,7 +10,7 @@ import kyo.internal.mysql.MysqlBufferWriter
   *
   * No server response is expected; the server silently frees the statement.
   *
-  * Reference: MySQL Internals — COM_STMT_CLOSE
+  * Reference: MySQL Internals, COM_STMT_CLOSE
   */
 object ComStmtCloseMarshaller extends Marshaller[ComStmtClose]:
 

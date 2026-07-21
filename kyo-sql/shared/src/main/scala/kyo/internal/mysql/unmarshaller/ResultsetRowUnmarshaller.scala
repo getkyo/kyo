@@ -6,9 +6,9 @@ import kyo.internal.mysql.MysqlBufferReader
 import kyo.internal.mysql.ResultsetRow
 import kyo.internal.mysql.Unmarshaller
 
-/** Unmarshaller for [[ResultsetRow]] — text-protocol result set rows.
+/** Unmarshaller for [[ResultsetRow]], text-protocol result set rows.
   *
-  * Wire: [lenenc-string(value) | 0xFB(NULL)]* — one per column
+  * Wire: [lenenc-string(value) | 0xFB(NULL)]* one per column
   *
   * Each column value is either a length-encoded string (numeric values are ASCII-rendered) or the byte 0xFB meaning SQL NULL.
   *
@@ -17,7 +17,7 @@ import kyo.internal.mysql.Unmarshaller
   * @param numColumns
   *   the number of columns in the result set
   *
-  * Reference: MySQL Internals — Text Resultset Row
+  * Reference: MySQL Internals, Text Resultset Row
   */
 final class ResultsetRowUnmarshaller(numColumns: Int) extends Unmarshaller[ResultsetRow]:
 
@@ -46,7 +46,7 @@ final class ResultsetRowUnmarshaller(numColumns: Int) extends Unmarshaller[Resul
                             case 0xfc          => buf.readUInt16LE().map(_.toLong)
                             case 0xfd          => buf.readUInt24LE().map(_.toLong)
                             case 0xfe          => buf.readUInt64LE()
-                            case _             => -1L // 0xff — sentinel
+                            case _             => -1L // 0xff, sentinel
                         lenEffect.flatMap { len =>
                             buf.readBytes(len.toInt).flatMap { strBytes =>
                                 b += Maybe.Present(strBytes)

@@ -6,7 +6,7 @@ import kyo.internal.mysql.BinaryResultsetRow
 import kyo.internal.mysql.MysqlBufferReader
 import kyo.internal.mysql.Unmarshaller
 
-/** Unmarshaller for [[BinaryResultsetRow]] — binary-protocol result set rows (from COM_STMT_EXECUTE).
+/** Unmarshaller for [[BinaryResultsetRow]], binary-protocol result set rows (from COM_STMT_EXECUTE).
   *
   * Wire: 0x00 (packet header byte) | null-bitmap[ceil((numCols+7+2)/8) bytes] | [column-values]*
   *
@@ -22,13 +22,13 @@ import kyo.internal.mysql.Unmarshaller
   * @param columnTypes
   *   column MySQL type codes (used to determine how many bytes to read per non-null value)
   *
-  * Reference: MySQL Internals — Binary Resultset Row
+  * Reference: MySQL Internals, Binary Resultset Row
   */
 final class BinaryResultsetRowUnmarshaller(numColumns: Int, columnTypes: Chunk[Int])
     extends Unmarshaller[BinaryResultsetRow]:
 
     def read(buf: MysqlBufferReader)(using Frame): BinaryResultsetRow < Abort[SqlException.Decode] =
-        // null-bitmap length: ceil((numColumns + 2 + 7) / 8) — the +2 is the historical offset
+        // null-bitmap length: ceil((numColumns + 2 + 7) / 8), the +2 is the historical offset
         val bitmapLen = (numColumns + 2 + 7) / 8
         buf.readBytes(bitmapLen).flatMap { nullBitmap =>
             readColumns(buf, nullBitmap).map { values =>
@@ -65,10 +65,10 @@ final class BinaryResultsetRowUnmarshaller(numColumns: Int, columnTypes: Chunk[I
 
     /** Reads a binary-encoded column value based on MySQL column type.
       *
-      * Type code reference (MySQL Internals — Column Type):
+      * Type code reference (MySQL Internals, Column Type):
       *   - 0x01 TINY: 1 byte
       *   - 0x02 SHORT, 0x0D YEAR: 2 bytes
-      *   - 0x03 LONG, 0x09 INT24, 0x07 TIMESTAMP (date), 0x0A DATE, 0x0B TIME, 0x0C DATETIME: variable — but for simplicity, LONG=4,
+      *   - 0x03 LONG, 0x09 INT24, 0x07 TIMESTAMP (date), 0x0A DATE, 0x0B TIME, 0x0C DATETIME: variable, but for simplicity, LONG=4,
       *     DATE/TIME=lenenc
       *   - 0x05 DOUBLE, 0x08 LONGLONG: 8 bytes
       *   - 0x04 FLOAT: 4 bytes

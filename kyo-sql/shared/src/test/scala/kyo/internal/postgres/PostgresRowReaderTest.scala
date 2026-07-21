@@ -233,7 +233,7 @@ class PostgresRowReaderTest extends Test:
             new PostgresRowReader(row)
         end makeReader
         val r = makeReader()
-        // frame is not null — that's the minimal contract; Frame equality is not specified.
+        // frame is not null, that's the minimal contract; Frame equality is not specified.
         assert(r.frame != null)
         succeed
     }
@@ -258,7 +258,7 @@ class PostgresRowReaderTest extends Test:
         val row = binaryRow(encode(99, PostgresEncoder.int4Binary))
         val r   = reader(row)
         assert(r.isNil() == false)
-        // Cursor was not advanced — value is still readable.
+        // Cursor was not advanced, value is still readable.
         assert(r.int() == 99)
     }
 

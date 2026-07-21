@@ -36,7 +36,7 @@ import kyo.internal.postgres.types.Format
   *
   * Postgres named portals persist until the end of the current transaction. In autocommit mode (no explicit BEGIN/COMMIT), `Sync` acts as
   * an implicit transaction boundary and destroys all open portals. To allow resuming a named portal across multiple `Execute` calls, we use
-  * `Flush` between batches — `Flush` forces the server to emit pending output without committing the implicit transaction. `Sync` is sent
+  * `Flush` between batches, `Flush` forces the server to emit pending output without committing the implicit transaction. `Sync` is sent
   * only once, after the final `Close`, to return the connection to the ReadyForQuery state.
   *
   * ==Cleanup discipline==
@@ -131,7 +131,7 @@ private[postgres] object StreamQueryExchange:
         val closeM = channel.marshallers.close
         val syncM  = channel.marshallers.sync
         for
-            // Close the portal (may already be gone after CommandComplete — the server gracefully handles this).
+            // Close the portal (may already be gone after CommandComplete, the server gracefully handles this).
             _ <- channel.send(Close('P'.toByte, portalName))(using closeM)
             // Sync: ends the extended-query pipeline and returns the connection to ReadyForQuery.
             _ <- channel.send(kyo.internal.postgres.Sync)(using syncM)
@@ -168,7 +168,7 @@ private[postgres] object StreamQueryExchange:
         for
             _ <- channel.send(bindMsg)(using bindM)
             _ <- channel.send(Execute(portalName, batchSize))(using executeM)
-            // Flush (not Sync) — preserves the portal for subsequent Execute calls.
+            // Flush (not Sync), preserves the portal for subsequent Execute calls.
             _ <- channel.send(kyo.internal.postgres.Flush)(using flushM)
         yield ()
         end for
@@ -224,7 +224,7 @@ private[postgres] object StreamQueryExchange:
 
                 case ErrorResponse(errFields) =>
                     // Error during Bind/Execute. Drain to ReadyForQuery is NOT needed here because we haven't
-                    // sent Sync yet — the server doesn't send ReadyForQuery in response to a Flush-only pipeline.
+                    // sent Sync yet, the server doesn't send ReadyForQuery in response to a Flush-only pipeline.
                     // However, we still need to drain any remaining messages before the error is propagated.
                     // The Scope.ensure finalizer will send Close + Sync + drain.
                     Abort.fail(QueryResultExchange.mkServerError(errFields, Absent, 0, Present(pid)))
@@ -283,10 +283,10 @@ private[postgres] object StreamQueryExchange:
 
     /** Result of reading one Execute batch. */
     private enum BatchResult:
-        /** PortalSuspended — more rows are available; caller should re-Execute. */
+        /** PortalSuspended, more rows are available; caller should re-Execute. */
         case Suspended(rows: Chunk[SqlRow])
 
-        /** CommandComplete or EmptyQueryResponse — stream is exhausted. */
+        /** CommandComplete or EmptyQueryResponse, stream is exhausted. */
         case Complete(rows: Chunk[SqlRow])
     end BatchResult
 

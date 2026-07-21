@@ -16,7 +16,7 @@ import kyo.internal.postgres.types.PostgresEncoder
   * writer produces identical bytes. This ensures the parity invariant is checked without hardcoded byte-array snapshots.
   *
   * Tests 12 and 13 (LocalDate, LocalDateTime) verify the wire format of the underlying encoders directly, since `Codec.Writer` has no
-  * `localDate()`/`localDateTime()` abstract methods — those types are handled by the schema layer above the writer.
+  * `localDate()`/`localDateTime()` abstract methods, those types are handled by the schema layer above the writer.
   */
 class PostgresParamWriterTest extends Test:
 
@@ -126,7 +126,7 @@ class PostgresParamWriterTest extends Test:
             val param = singleParam(_.float(v))
             assert(param.oid == PostgresEncoder.OID_FLOAT4, s"OID mismatch for $v")
             assert(param.format == Format.Binary, s"format mismatch for $v")
-            // Compare Span[Byte] only — NaN != NaN in IEEE 754, but bit patterns are deterministic.
+            // Compare Span[Byte] only, NaN != NaN in IEEE 754, but bit patterns are deterministic.
             assertBytesMatch(param.encoded, encode(v, PostgresEncoder.float4Binary), s"float $v")
         end for
         succeed

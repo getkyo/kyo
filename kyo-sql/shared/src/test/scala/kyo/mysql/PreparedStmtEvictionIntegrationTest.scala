@@ -54,7 +54,7 @@ class PreparedStmtEvictionIntegrationTest extends kyo.Test:
                         }
                     }
                 case Result.Failure(_) =>
-                    // performance_schema unavailable — can't verify.
+                    // performance_schema unavailable, can't verify.
                     -1L
                 case Result.Panic(t) =>
                     scala.Console.err.println(s"[kyo-sql] serverStmtCount panic: ${t.getMessage}")
@@ -95,7 +95,7 @@ class PreparedStmtEvictionIntegrationTest extends kyo.Test:
                             if count >= 0 then
                                 assert(count == 2, s"Expected exactly 2 server-side prepared statements (cacheSize=2), got $count")
                             else
-                                // performance_schema unavailable — pass.
+                                // performance_schema unavailable, pass.
                                 succeed
                             end if
                         }

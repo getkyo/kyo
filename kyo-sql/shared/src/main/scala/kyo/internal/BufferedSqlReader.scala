@@ -17,7 +17,7 @@ import kyo.internal.postgres.types.PostgresDecoder
   * MySQL little-endian protocol.
   *
   * Structural reads (arrayStart, mapStart) raise [[SqlException.Decode]] because nested structural reads through captureValue are not
-  * supported — the captured value is always a flat scalar column.
+  * supported, the captured value is always a flat scalar column.
   *
   * @param rawBytes
   *   the buffered wire bytes for the column
@@ -166,7 +166,7 @@ final class BufferedSqlReader(
 
     override def skip(): Unit = ()
 
-    // --- Field-iteration protocol — not applicable to a buffered scalar ---
+    // --- Field-iteration protocol, not applicable to a buffered scalar ---
 
     override def objectStart(): Int = 0
     override def objectEnd(): Unit  = ()
@@ -181,7 +181,7 @@ final class BufferedSqlReader(
 
     override def captureValue(): Codec.Reader = this
 
-    // --- Structural reads — not supported through captureValue ---
+    // --- Structural reads, not supported through captureValue ---
 
     private def structuralUnsupported(method: String): Nothing =
         throw SqlException.Decode(

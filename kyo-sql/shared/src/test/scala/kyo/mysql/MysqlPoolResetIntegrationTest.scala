@@ -8,7 +8,7 @@ import kyo.internal.SqlSharedContainers
   * Tests:
   *   1. Without reset, a session variable set in one use persists to the next borrower (proves the leak).
   *   2. With resetConnection(), a session variable set in one use is cleared for the next borrower.
-  *   3. resetConnection does not close the connection — the connection remains usable after reset.
+  *   3. resetConnection does not close the connection, the connection remains usable after reset.
   *
   * Each test runs against a fresh schema in the per-fork-JVM shared MySQL container (via [[SqlSharedContainers.withFreshSchema]]).
   */
@@ -89,7 +89,7 @@ class MysqlPoolResetIntegrationTest extends kyo.Test:
 
     // ── connection is usable after resetConnection ────────────────────────────
 
-    "connection remains usable after COM_RESET_CONNECTION — subsequent queries succeed" in {
+    "connection remains usable after COM_RESET_CONNECTION, subsequent queries succeed" in {
         Scope.run {
             SqlSharedContainers.withFreshSchema(SqlSharedContainers.Backend.MySQL) { ctx =>
                 withMyClient(ctx) { client =>

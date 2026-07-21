@@ -97,7 +97,7 @@ int kyo_tcp_connect(const char *host, int port, int *out_pending) {
     if (rc == 0) return fd;           /* connected immediately */
     if (errno == EINPROGRESS) {
         *out_pending = 1;
-        return fd;                    /* async — wait for writability */
+        return fd;                    /* async, wait for writability */
     }
     close(fd);
     return -1;
@@ -203,7 +203,7 @@ int kyo_unix_connect(const char *path, int *out_pending) {
     if (rc == 0) return fd;           /* connected immediately */
     if (errno == EINPROGRESS) {
         *out_pending = 1;
-        return fd;                    /* async — wait for writability */
+        return fd;                    /* async, wait for writability */
     }
     close(fd);
     return -1;
@@ -375,7 +375,7 @@ int kyo_epoll_wait_timeout(int epfd, int *out_fds, int *out_events, int max_even
 /* ── Stubs for cross-compilation ──────────────────────── */
 
 #ifndef __linux__
-/* Epoll stubs for macOS — never called at runtime (auto-detection picks kqueue). */
+/* Epoll stubs for macOS, never called at runtime (auto-detection picks kqueue). */
 int kyo_epoll_create(void) { return -1; }
 int kyo_epoll_register(int epfd, int fd, int mode) { return -1; }
 int kyo_epoll_deregister(int epfd, int fd) { return -1; }
@@ -384,7 +384,7 @@ int kyo_epoll_wait_timeout(int epfd, int *out_fds, int *out_events, int max_even
 #endif
 
 #ifndef __APPLE__
-/* Kqueue stubs for Linux — never called at runtime (auto-detection picks epoll). */
+/* Kqueue stubs for Linux, never called at runtime (auto-detection picks epoll). */
 int kyo_kqueue_create(void) { return -1; }
 int kyo_kqueue_register(int kq, int fd, int filter) { return -1; }
 int kyo_kqueue_wait_nonblock(int kq, int *out_fds, int *out_filters, int max_events) { return 0; }

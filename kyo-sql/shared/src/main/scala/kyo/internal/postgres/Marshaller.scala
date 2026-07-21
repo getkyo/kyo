@@ -5,7 +5,7 @@ package kyo.internal.postgres
   * One instance per Frontend message type. Implementations are pure functions: they do not perform I/O and carry no mutable state.
   *
   * The [[write]] method is called once per message; callers are responsible for flushing the buffer afterward. No state is accumulated
-  * between calls — each invocation is independent.
+  * between calls, each invocation is independent.
   *
   * @tparam T
   *   the Frontend message type this marshaller handles

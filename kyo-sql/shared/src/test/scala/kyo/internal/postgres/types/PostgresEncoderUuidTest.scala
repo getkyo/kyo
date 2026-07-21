@@ -10,7 +10,7 @@ import kyo.internal.postgres.PostgresBufferWriter
 
 /** Unit tests for the PG UUID binary codec (OID 2950).
   *
-  * Wire format: 16 bytes big-endian — mostSignificantBits (Int64) followed by leastSignificantBits (Int64).
+  * Wire format: 16 bytes big-endian, mostSignificantBits (Int64) followed by leastSignificantBits (Int64).
   */
 class PostgresEncoderUuidTest extends kyo.Test:
 
@@ -160,7 +160,7 @@ class PostgresEncoderUuidTest extends kyo.Test:
         }
     }
 
-    // ── Schema.derived[CaseClassWithUuid] — structural gap exposure ──────────
+    // ── Schema.derived[CaseClassWithUuid], structural gap exposure ──────────
     //
     // `kyo.internal.SerializationMacro` hardcodes a string-based UUID arm at compile time
     // (`writer.string(value.toString)` / `UUID.fromString(reader.string())`), which means

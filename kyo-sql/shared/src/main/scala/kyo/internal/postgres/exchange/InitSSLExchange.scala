@@ -9,7 +9,7 @@ import kyo.net.NetTlsConfig
 /** Sends the Postgres SSLRequest pre-startup packet and upgrades the connection to TLS if the server accepts.
   *
   * Protocol (§55.2.10 of the PG docs):
-  *   1. Client sends SSLRequest: 8 bytes total — Int32(8) length | Int32(80877103) magic.
+  *   1. Client sends SSLRequest: 8 bytes total, Int32(8) length | Int32(80877103) magic.
   *   2. Server replies with a single byte: 'S' (SSL supported) or 'N' (not supported). No other bytes follow before the TLS handshake.
   *   3. On 'S': call conn.upgradeToTls(tls) on the same socket, returning a new TLS-wrapped Connection.
   *   4. On 'N': behaviour depends on mode:
@@ -29,9 +29,9 @@ private[internal] object InitSSLExchange:
       * @param conn
       *   plaintext [[Connection]] (must be freshly opened; StartupMessage must NOT have been sent yet)
       * @param host
-      *   server hostname — used only in error messages
+      *   server hostname, used only in error messages
       * @param port
-      *   server port — used only in error messages
+      *   server port, used only in error messages
       * @param tls
       *   TLS configuration to pass to [[Connection.upgradeToTls]]
       * @return
@@ -129,7 +129,7 @@ private[internal] object InitSSLExchange:
                     val responseByte = span(0)
                     responseByte match
                         case 'S' =>
-                            // Server accepts TLS — upgrade the connection.
+                            // Server accepts TLS, upgrade the connection.
                             // Inject the server hostname into sniHostname (if not already set) so that
                             // NioTransport.upgradeToTls can apply HTTPS endpoint identification when
                             // hostnameVerification is enabled. Without this, upgradeToTls receives an

@@ -235,7 +235,7 @@ class RoundTripTest extends Test:
         ).eval
         result match
             case Result.Success(ldt) =>
-                // Zero-date (0-length struct) decodes to LocalDateTime.of(0, 1, 1, 0, 0, 0) —
+                // Zero-date (0-length struct) decodes to LocalDateTime.of(0, 1, 1, 0, 0, 0),
                 // year 0 in proleptic Gregorian (= 1 BCE). We verify it's a zero-time date.
                 assert(ldt.getYear == 0, s"Expected year 0 for zero-date, got ${ldt.getYear}")
                 assert(ldt.getMonthValue == 1)
@@ -317,7 +317,7 @@ class RoundTripTest extends Test:
         assert(result.hint.isEmpty)
         assert(result.position.isEmpty)
         assert(result.extra == Map("code" -> "1064"))
-        // sqlText shorter than 4096 chars — not truncated
+        // sqlText shorter than 4096 chars, not truncated
         assert(result.sqlText == Maybe.Present("SELECT * FROM bad syntax"))
         assert(result.paramCount == 2)
         assert(result.connectionId == Maybe.Present(99L))

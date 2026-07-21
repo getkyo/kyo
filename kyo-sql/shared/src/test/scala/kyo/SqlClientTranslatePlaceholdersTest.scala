@@ -9,7 +9,7 @@ class SqlClientTranslatePlaceholdersTest extends Test:
 
     // --- Existing / baseline behaviour ---
 
-    "no question marks — input returned unchanged" in {
+    "no question marks, input returned unchanged" in {
         val sql = "SELECT * FROM t WHERE x = 1"
         assert(SqlClient.translatePlaceholders(sql) == sql)
     }
@@ -73,7 +73,7 @@ class SqlClientTranslatePlaceholdersTest extends Test:
     }
 
     "nested dollar-quoted tags with different names" in {
-        // $outer$ body contains an $inner$…$inner$ tag — both are plain text in PG dollar-quote semantics.
+        // $outer$ body contains an $inner$…$inner$ tag, both are plain text in PG dollar-quote semantics.
         // The outer tag ends at the first $outer$ match; $inner$…$inner$ is part of its body.
         val sql    = "SELECT $outer$hello $inner$ ? $inner$ world?$outer$ FROM t WHERE y = ?"
         val result = SqlClient.translatePlaceholders(sql)
@@ -93,7 +93,7 @@ class SqlClientTranslatePlaceholdersTest extends Test:
         assert(result == "DO $$ BEGIN RAISE NOTICE 'hello?'; END $$; UPDATE t SET x = $1 WHERE y = $2")
     }
 
-    "dollar-quoted empty tag ($$) with no question mark inside — input unchanged fast path skipped" in {
+    "dollar-quoted empty tag ($$) with no question mark inside, input unchanged fast path skipped" in {
         // Force the slow path: there IS a ? outside the dollar-quoted body.
         val sql    = "SELECT $$ literal $$ FROM t WHERE x = ?"
         val result = SqlClient.translatePlaceholders(sql)

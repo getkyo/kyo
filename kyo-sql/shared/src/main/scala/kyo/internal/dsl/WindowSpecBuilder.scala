@@ -15,7 +15,7 @@ import scala.annotation.targetName
   * ===Static-SQL (staticSql) note===
   *
   * The builder chain `Sql.windowSpec.partitionBy(x).rowNumber` lifts cleanly through [[kyo.SqlStatic.staticSql]] (Phase 9b fix to
-  * `resolveBindings`'s Select-of-construction fold — the previous limitation requiring an explicit `WindowSpec(...)` constructor at static
+  * `resolveBindings`'s Select-of-construction fold, the previous limitation requiring an explicit `WindowSpec(...)` constructor at static
   * call sites is gone).
   *
   * ===Replace semantics===
@@ -35,7 +35,7 @@ final case class WindowSpecBuilder(
     /** Replace the partition list with `Chunk(key)`.
       *
       * @note
-      *   replace semantic — calling `partitionBy(b)` after `partitionBy(a)` yields `partitions = Chunk(b)`, not `Chunk(a, b)`. Use
+      *   replace semantic, calling `partitionBy(b)` after `partitionBy(a)` yields `partitions = Chunk(b)`, not `Chunk(a, b)`. Use
       *   `partitionBy(a, b)` for multi-key partitions.
       */
     inline def partitionBy[N <: String & Singleton, V](inline key: Column[N, V]): WindowSpecBuilder =
@@ -44,7 +44,7 @@ final case class WindowSpecBuilder(
     /** Replace the partition list with `Chunk(keys*)`.
       *
       * @note
-      *   replace semantic — calling `partitionBy(b)` after `partitionBy(a)` yields `partitions = Chunk(b)`, not `Chunk(a, b)`.
+      *   replace semantic, calling `partitionBy(b)` after `partitionBy(a)` yields `partitions = Chunk(b)`, not `Chunk(a, b)`.
       */
     @targetName("partitionByVarargs")
     inline def partitionBy(inline keys: Term[?]*): WindowSpecBuilder =

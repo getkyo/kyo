@@ -14,13 +14,13 @@ import scala.deriving.Mirror
   *
   * Users typically `import kyo.SqlAst.*` to bring all types and the DSL methods on `Term` / `Column` / `Query` / etc. into scope.
   *
-  * Design — no `Kind` parameter; aggregate / window distinctions are encoded in the type structure:
+  * Design, no `Kind` parameter; aggregate / window distinctions are encoded in the type structure:
   *
-  *   - [[Term]] — any expression usable as a scalar.
-  *   - [[Column]] — table column reference. Aggregate methods (`.sum`, `.count`, `.avg`, …) produce a [[WindowAggregate]] (NOT a `Term`),
+  *   - [[Term]], any expression usable as a scalar.
+  *   - [[Column]], table column reference. Aggregate methods (`.sum`, `.count`, `.avg`, …) produce a [[WindowAggregate]] (NOT a `Term`),
   *     usable only via `.over(spec)`. This blocks `where(col.count > 5)` and `col.count.sum` at compile time.
-  *   - [[GroupTerm]] — post-groupBy ungrouped column. Only aggregate methods, all returning `Term[V]`.
-  *   - [[GroupedColumn]] — post-groupBy grouped column. Has the `Term[V]` surface AND aggregate methods returning `Term[V]`.
+  *   - [[GroupTerm]], post-groupBy ungrouped column. Only aggregate methods, all returning `Term[V]`.
+  *   - [[GroupedColumn]], post-groupBy grouped column. Has the `Term[V]` surface AND aggregate methods returning `Term[V]`.
   *   - Whole-table aggregates without GROUP BY use [[From.sum]] / [[From.count]] / etc., returning a `Query[V]` (a `Term[V]` via scalar
   *     subquery).
   */
@@ -29,21 +29,21 @@ object SqlAst:
     // Re-export the window-spec builder so `import kyo.SqlAst.*` keeps working.
     export kyo.internal.dsl.WindowSpecBuilder
 
-    // --- SqlAst — unified root ---
+    // --- SqlAst, unified root ---
 
-    /** Root of the SQL AST hierarchy. Every node — expressions, queries, mutations, raw fragments — is a `SqlAst[A]`. */
+    /** Root of the SQL AST hierarchy. Every node, expressions, queries, mutations, raw fragments, is a `SqlAst[A]`. */
     sealed trait SqlAst[A]
 
-    // --- Executable — marker for AST nodes that can be run via SqlClient ---
+    // --- Executable, marker for AST nodes that can be run via SqlClient ---
 
     /** Marker trait for AST nodes that can be executed via [[kyo.SqlClient]]: [[Query]] (DQL), [[Action]] (DML), and [[Fragment]] (raw
       * SQL).
       */
     sealed trait Executable[A] extends SqlAst[A]
 
-    // --- Term — the universal expression interface ---
+    // --- Term, the universal expression interface ---
 
-    /** Universal SQL expression interface. Every DSL value — column references, literals, function applications, and boolean combinators —
+    /** Universal SQL expression interface. Every DSL value, column references, literals, function applications, and boolean combinators,
       * is a `Term[A]`.
       *
       * Symbolic operators (`==`, `!=`, `<`, `<=`, `>`, `>=`, `+`, `-`, `*`, `/`, `%`, `&&`, `||`, `unary_!`, `++`) are defined on `Term` by
@@ -338,7 +338,7 @@ object SqlAst:
 
     final case class Literal[A](value: A, schema: SqlSchema[A]) extends Term[A]
 
-    /** A term carrying an explicit label. Created via `term.as("name")` — used by `groupBy` / `select` for labelled projections. The label
+    /** A term carrying an explicit label. Created via `term.as("name")`, used by `groupBy` / `select` for labelled projections. The label
       * is preserved by the renderer when it generates `expr AS "name"`; in non-projection contexts (WHERE, etc.) the label is irrelevant
       * and the inner term is rendered.
       */
@@ -439,7 +439,7 @@ object SqlAst:
         final case class Bind[A](value: A, schema: SqlSchema[A]) extends Part
         final case class Embed(term: Term[?])                    extends Part derives CanEqual
 
-        /** An empty fragment — identity for `++`. */
+        /** An empty fragment, identity for `++`. */
         def empty[A]: Fragment[A] = Fragment[A](Chunk.empty)
 
         /** A literal-text-only fragment (no binds, no embeds). */
@@ -453,7 +453,7 @@ object SqlAst:
         spec: WindowSpec
     ) extends Term[A] derives CanEqual
 
-    // --- Aggregates — sealed family of call nodes (Term[A]) ---
+    // --- Aggregates, sealed family of call nodes (Term[A]) ---
 
     object Aggregate:
         sealed abstract class Call[A]                                   extends Term[A]
@@ -464,13 +464,13 @@ object SqlAst:
         final case class Max[A](expr: Term[A])                          extends Call[A] derives CanEqual
     end Aggregate
 
-    // --- WindowAggregate — wraps an Aggregate.Call, only usable via .over(spec) ---
+    // --- WindowAggregate, wraps an Aggregate.Call, only usable via .over(spec) ---
 
     final case class WindowAggregate[A](inner: Aggregate.Call[A]) derives CanEqual:
         inline def over(inline spec: WindowSpec): Term[A]           = Windowed(inner, spec)
         inline def over(inline builder: WindowSpecBuilder): Term[A] = Windowed(inner, builder.build)
 
-    // --- WindowFunction — column-based and standalone window functions ---
+    // --- WindowFunction, column-based and standalone window functions ---
 
     sealed trait WindowFunction[A]:
         inline def over(inline spec: WindowSpec): Term[A]           = Windowed(this, spec)
@@ -533,21 +533,21 @@ object SqlAst:
         inline def following(inline n: Term[Int]): FrameBound = Following(n)
     end FrameBound
 
-    // --- Projection / OrderingSpecs — eager payloads ---
+    // --- Projection / OrderingSpecs, eager payloads ---
 
-    /** Payload for SELECT terms — resolved eagerly at AST construction time. */
+    /** Payload for SELECT terms, resolved eagerly at AST construction time. */
     sealed trait Projection
     object Projection:
         final case class Resolved(terms: Chunk[Term[?]]) extends Projection derives CanEqual
 
-    /** Payload for ORDER BY — resolved eagerly at AST construction time. */
+    /** Payload for ORDER BY, resolved eagerly at AST construction time. */
     sealed trait OrderingSpecs
     object OrderingSpecs:
         final case class Resolved(specs: Chunk[OrderSpec]) extends OrderingSpecs derives CanEqual
 
     // --- Action / Query / From hierarchy ---
 
-    /** DML super-type (INSERT / UPDATE / DELETE). Parallel sibling to [[Query]] — both extend [[Executable]] but are otherwise independent.
+    /** DML super-type (INSERT / UPDATE / DELETE). Parallel sibling to [[Query]], both extend [[Executable]] but are otherwise independent.
       * Replaces the former `Statement` super-type.
       */
     sealed abstract class Action[A] extends Executable[A]
@@ -690,7 +690,7 @@ object SqlAst:
     end From
 
     /** `columnNames` is `T`'s case-class field names in declaration order (from `SqlMacros.columnNames[T]`). The renderer emits these as
-      * the explicit `SELECT` projection for an implicit-projection (`SELECT *`-shaped) query — a literal `Chunk[String]` that lifts via
+      * the explicit `SELECT` projection for an implicit-projection (`SELECT *`-shaped) query, a literal `Chunk[String]` that lifts via
       * `FromExpr.derived` with zero reflection. It is the reliable Schema-field-order source: the `columns` `Record`'s `Dict` does not
       * preserve declaration order (it reverses for ≤8 fields and is hash-ordered above), so the renderer must not derive order from it.
       */
@@ -715,8 +715,8 @@ object SqlAst:
         columnNames: Chunk[String]
     ) extends From[T, F]
 
-    /** `(VALUES (…), (…)) AS alias` query source. `rows` is stored as decomposed pure data — outer `Chunk` = rows, inner `Chunk` = one
-      * [[kyo.BoundValue]] per column in declaration order — so the AST lifts via `FromExpr.derived` with zero reflection. The row type `T`
+    /** `(VALUES (…), (…)) AS alias` query source. `rows` is stored as decomposed pure data, outer `Chunk` = rows, inner `Chunk` = one
+      * [[kyo.BoundValue]] per column in declaration order, so the AST lifts via `FromExpr.derived` with zero reflection. The row type `T`
       * is retained for builder-side type-safety only.
       */
     final case class ValuesFrom[T, F](
@@ -857,11 +857,11 @@ object SqlAst:
         inline def limit(inline n: Int, inline offset: Int): Limit[T] = Limit(this, n, offset)
     end Where
 
-    /** GroupBy[T, F'] — F' is the post-groupBy record's F (grouped → `GroupedColumn`, ungrouped → `GroupTerm`).
+    /** GroupBy[T, F'], F' is the post-groupBy record's F (grouped → `GroupedColumn`, ungrouped → `GroupTerm`).
       *
       * The `view: Record[F]` is materialised eagerly at the `groupBy[…]` construction site (see [[internal.SqlGroupedView]]) so the chain
       * methods (`having` / `select` / `orderBy`) apply the user lambda inline and store the resulting `Term` / `OrderSpec` payloads. The
-      * AST is pure data — no lambdas in case-class field positions.
+      * AST is pure data, no lambdas in case-class field positions.
       */
     final case class GroupBy[T, F](
         source: Query[T],
@@ -888,7 +888,7 @@ object SqlAst:
     end GroupBy
 
     object GroupBy:
-        /** Grouping kind — controls how the renderer emits the GROUP BY clause.
+        /** Grouping kind, controls how the renderer emits the GROUP BY clause.
           *   - `Plain` → `GROUP BY a, b` (standard, all backends).
           *   - `Rollup` → `GROUP BY ROLLUP (a, b)` on Postgres; `GROUP BY a, b WITH ROLLUP` on MySQL.
           *   - `Cube` → `GROUP BY CUBE (a, b)` on Postgres; `GROUP BY a, b WITH CUBE` on MySQL (MySQL 8.0+).
@@ -904,7 +904,7 @@ object SqlAst:
         end Kind
     end GroupBy
 
-    /** Post-groupBy ungrouped field — only aggregate methods, all returning `Term[V]`. */
+    /** Post-groupBy ungrouped field, only aggregate methods, all returning `Term[V]`. */
     sealed trait GroupTerm[V]:
         private[kyo] def underlying: Column[?, V]
         final inline def sum(using SqlNumeric[V]): Term[V]         = Aggregate.Sum(underlying, distinct = false)
@@ -959,7 +959,7 @@ object SqlAst:
         inline def distinct: Select[A, B] = copy(isDistinct = true)
 
         /** Coerce the row type to a case class B' when the projected tuple matches B''s field types positionally. (Only meaningful for
-          * tuple-formed selects — `B` is the value-type tuple from `IsTupleOfTerms.Out`.)
+          * tuple-formed selects, `B` is the value-type tuple from `IsTupleOfTerms.Out`.)
           */
         inline def to[B2](using m: Mirror.ProductOf[B2] { type MirroredElemTypes = B & Tuple }): Select[A, B2] =
             Select[A, B2](sql, terms, isDistinct)
@@ -1010,7 +1010,7 @@ object SqlAst:
         sealed abstract class Source[T, F]
 
         /** `VALUES (…), (…)` rows for an INSERT, stored as decomposed pure data: outer `Chunk` = rows, inner `Chunk` = one
-          * [[kyo.BoundValue]] per column in declaration order. The row type `T` is retained for builder-side type-safety only — it is
+          * [[kyo.BoundValue]] per column in declaration order. The row type `T` is retained for builder-side type-safety only, it is
           * phantom at the node. Decomposing the rows (rather than storing raw `T` instances) keeps the AST pure data so `FromExpr.derived`
           * lifts it with zero reflection.
           */

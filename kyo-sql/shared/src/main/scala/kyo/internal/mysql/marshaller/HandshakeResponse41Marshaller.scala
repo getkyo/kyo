@@ -18,14 +18,14 @@ import kyo.internal.mysql.MysqlBufferWriter
   *
   * kyo-sql always sets CLIENT_PLUGIN_AUTH_LENENC_CLIENT_DATA so we use the lenenc form.
   *
-  * Reference: MySQL Internals — Protocol::HandshakeResponse41
+  * Reference: MySQL Internals, Protocol::HandshakeResponse41
   */
 object HandshakeResponse41Marshaller extends Marshaller[HandshakeResponse41]:
 
     private val Filler = new Array[Byte](23)
 
     def write(msg: HandshakeResponse41, buf: MysqlBufferWriter): Unit =
-        // Capability flags (4 bytes LE — only lower 32 bits used in older MySQL, MySQL 8+ extends to 4 bytes)
+        // Capability flags (4 bytes LE, only lower 32 bits used in older MySQL, MySQL 8+ extends to 4 bytes)
         buf.writeUInt32LE(msg.capabilities)
         // Max packet size (4 bytes LE)
         buf.writeUInt32LE(msg.maxPacket)

@@ -1,7 +1,7 @@
 /**
  * OpenSSL non-blocking TLS wrappers for Scala Native.
  *
- * Uses BIO_s_mem() for non-blocking operation — no file descriptors involved:
+ * Uses BIO_s_mem() for non-blocking operation, no file descriptors involved:
  *   - Caller writes ciphertext from TCP into rbio via kyo_tls_feed_input()
  *   - Caller reads ciphertext for TCP from wbio via kyo_tls_get_output()
  *   - SSL_read/SSL_write operate on plaintext; OpenSSL handles the TLS record layer

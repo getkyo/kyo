@@ -2,7 +2,7 @@ package kyo
 
 import kyo.Test
 
-/** Unit tests for [[SqlCancelHandle]] — structural hierarchy and pattern-match coverage. */
+/** Unit tests for [[SqlCancelHandle]], structural hierarchy and pattern-match coverage. */
 class SqlCancelHandleTest extends Test:
 
     "SqlCancelHandle.Pg pattern-matches correctly as sealed abstract class" in {

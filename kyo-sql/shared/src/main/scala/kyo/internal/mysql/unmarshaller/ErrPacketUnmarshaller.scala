@@ -15,13 +15,13 @@ import kyo.internal.mysql.Unmarshaller
   *
   * The '#' marker and SQLSTATE are present in protocol 4.1+ (CLIENT_PROTOCOL_41), which kyo-sql always negotiates.
   *
-  * Reference: MySQL Internals — Protocol::ERR_Packet
+  * Reference: MySQL Internals, Protocol::ERR_Packet
   */
 object ErrPacketUnmarshaller extends Unmarshaller[ErrPacket]:
 
     def read(buf: MysqlBufferReader)(using Frame): ErrPacket < Abort[SqlException.Decode] =
         buf.readUInt16LE().flatMap { errorCode =>
-            // '#' marker — consume and discard (0x23)
+            // '#' marker, consume and discard (0x23)
             buf.readByte().flatMap { marker =>
                 if marker != '#'.toByte then
                     Abort.fail(SqlException.Decode(

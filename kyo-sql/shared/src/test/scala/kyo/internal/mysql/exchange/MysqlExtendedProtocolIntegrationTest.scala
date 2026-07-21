@@ -190,16 +190,16 @@ class MysqlExtendedProtocolIntegrationTest extends kyo.Test:
 
     // ── stmtId cached in preparedStmts ────────────────────────────────────────
 
-    "ExtendedQueryExchange stmtId cached in preparedStmts — second call uses cache" in {
+    "ExtendedQueryExchange stmtId cached in preparedStmts, second call uses cache" in {
         Scope.run {
             SqlSharedContainers.withFreshSchema(SqlSharedContainers.Backend.MySQL) { ctx =>
                 withConn(ctx) { conn =>
                     val sql    = "SELECT ? AS n"
                     val params = Chunk(BoundMysqlParam(1, MysqlEncoder.intEncoder))
-                    // First call — prepares and caches.
+                    // First call, prepares and caches.
                     conn.extendedQuery(sql, params).flatMap { rows1 =>
                         assert(rows1.size == 1)
-                        // Second call — same SQL, should use the cached stmtId.
+                        // Second call, same SQL, should use the cached stmtId.
                         val params2 = Chunk(BoundMysqlParam(2, MysqlEncoder.intEncoder))
                         conn.extendedQuery(sql, params2).flatMap { rows2 =>
                             assert(rows2.size == 1)
@@ -218,16 +218,16 @@ class MysqlExtendedProtocolIntegrationTest extends kyo.Test:
     // (Verified indirectly: if COM_STMT_CLOSE is not sent, the server holds resources.
     //  After stream exhaustion + scope exit, the connection remains usable.)
 
-    "ExtendedQueryExchange streamQuery COM_STMT_CLOSE sent on scope exit — connection still usable" in {
+    "ExtendedQueryExchange streamQuery COM_STMT_CLOSE sent on scope exit, connection still usable" in {
         Scope.run {
             SqlSharedContainers.withFreshSchema(SqlSharedContainers.Backend.MySQL) { ctx =>
                 withConn(ctx) { conn =>
                     Scope.run {
-                        // Stream 5 rows — on scope exit, COM_STMT_CLOSE must be sent.
+                        // Stream 5 rows, on scope exit, COM_STMT_CLOSE must be sent.
                         val params = Chunk(BoundMysqlParam(5, MysqlEncoder.intEncoder))
                         conn.streamQuery("SELECT ? AS n", params, 64).run
                     }.flatMap { rows =>
-                        // After scope exit (COM_STMT_CLOSE sent), send another query — must succeed.
+                        // After scope exit (COM_STMT_CLOSE sent), send another query, must succeed.
                         conn.simpleQuery("SELECT 'still_alive'").map { rows2 =>
                             val str = new String(rows2(0).column(0).get.toArray, java.nio.charset.StandardCharsets.UTF_8)
                             assert(str == "still_alive")
@@ -238,7 +238,7 @@ class MysqlExtendedProtocolIntegrationTest extends kyo.Test:
         }
     }
 
-    // ── streamQuery with real table — rows returned lazily ───────────────────
+    // ── streamQuery with real table, rows returned lazily ───────────────────
 
     "StreamQueryExchange yields rows in order from a real table" in {
         Scope.run {
@@ -266,7 +266,7 @@ class MysqlExtendedProtocolIntegrationTest extends kyo.Test:
 
     // ── streamQuery early cancel sends COM_STMT_CLOSE ────────────────────────
 
-    "StreamQueryExchange early cancel (take) sends COM_STMT_CLOSE — connection still usable" in {
+    "StreamQueryExchange early cancel (take) sends COM_STMT_CLOSE, connection still usable" in {
         Scope.run {
             SqlSharedContainers.withFreshSchema(SqlSharedContainers.Backend.MySQL) { ctx =>
                 withConn(ctx) { conn =>

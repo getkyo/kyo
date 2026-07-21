@@ -10,8 +10,8 @@ import kyo.internal.SqlSharedContainers.Backend
   * Covers the full pipeline: DSL → AST → SqlRender → SqlClient.executeBound* → real DB → assertion.
   *
   * InsertResult contract (InsertResult.scala):
-  *   - affectedRows: Long — row count from CommandComplete / OK packet
-  *   - generatedKey: Maybe[Long] — Present when autoKey detected + DB reported one; Absent when no autoKey column or DB reports 0.
+  *   - affectedRows: Long, row count from CommandComplete / OK packet
+  *   - generatedKey: Maybe[Long], Present when autoKey detected + DB reported one; Absent when no autoKey column or DB reports 0.
   * Auto-key detection: case class whose FIRST field is Long-typed. PG: auto-appends RETURNING <pk>; MySQL: reads last_insert_id from OK
   * packet.
   *
@@ -198,7 +198,7 @@ class SqlEndToEndTest extends Test:
                             _ <- client.executeRaw(
                                 """INSERT INTO person VALUES (1, 'alice', 30), (2, 'bob', 30), (3, 'carol', 25)"""
                             )
-                            // GROUP BY age HAVING COUNT(*) >= 2 — DSL grouped view. COUNT(*) is int8/BIGINT
+                            // GROUP BY age HAVING COUNT(*) >= 2, DSL grouped view. COUNT(*) is int8/BIGINT
                             // on both engines, so it decodes as Long with no cast. Only age=30 (2 rows) qualifies.
                             rows <- Sql
                                 .from[Person]("p")
@@ -229,7 +229,7 @@ class SqlEndToEndTest extends Test:
                             _ <- client.executeRaw(
                                 "INSERT INTO person VALUES (1, 'alice', 30), (2, 'bob', 30), (3, 'carol', 25)"
                             )
-                            // GROUP BY age HAVING COUNT(*) >= 2 — DSL grouped view. COUNT(*) is BIGINT
+                            // GROUP BY age HAVING COUNT(*) >= 2, DSL grouped view. COUNT(*) is BIGINT
                             // on MySQL, so it decodes as Long with no cast. Only age=30 (2 rows) qualifies.
                             rows <- Sql
                                 .from[Person]("p")
@@ -302,11 +302,11 @@ class SqlEndToEndTest extends Test:
         }
     }
 
-    // ── Leaves 9–11: InsertResult ─────────────────────────────────────────────
+    // ── Leaves 9-11: InsertResult ─────────────────────────────────────────────
     //
     // InsertResult contract for auto-key INSERTs:
     //   - affectedRows: Long
-    //   - generatedKey: Maybe[Long] — Present when first field is Long AND DB reports a key.
+    //   - generatedKey: Maybe[Long], Present when first field is Long AND DB reports a key.
     //     PG auto-appends RETURNING <pk>; MySQL reads last_insert_id from OK packet.
 
     "Leaf 9: INSERT with auto-key returns InsertResult.generatedKey = Present on PG" in {
@@ -314,7 +314,7 @@ class SqlEndToEndTest extends Test:
             Async.timeout(120.seconds) {
                 SqlSharedContainers.withFreshSchema(Backend.Postgres) { ctx =>
                     withPgClient(ctx) { client =>
-                        // Person(id: Long, ...) — first field is Long → autoKey detection fires.
+                        // Person(id: Long, ...), first field is Long → autoKey detection fires.
                         // PG renderer auto-appends RETURNING "id". We insert with an explicit id so the
                         // RETURNING value is deterministic: Person(42L, ...) → generatedKey == Present(42L).
                         for
@@ -375,7 +375,7 @@ class SqlEndToEndTest extends Test:
             Async.timeout(120.seconds) {
                 SqlSharedContainers.withFreshSchema(Backend.Postgres) { ctx =>
                     withPgClient(ctx) { client =>
-                        // Tag(name: String) — first field is String → no auto-key detection.
+                        // Tag(name: String), first field is String → no auto-key detection.
                         for
                             _ <- client.executeRaw(
                                 """CREATE TABLE tag (name TEXT PRIMARY KEY)"""
@@ -491,7 +491,7 @@ class SqlEndToEndTest extends Test:
     }
 
     // ── Leaf 24: Transaction rollback leaves table unchanged (PG + MySQL) ──────
-    // Plan leaf 24 says "one leaf per backend, counted here as one leaf — split to two
+    // Plan leaf 24 says "one leaf per backend, counted here as one leaf, split to two
     // if the test runner reports them separately." We use two named leaves.
 
     "Leaf 24a: transaction rollback leaves table unchanged on PG" in {
@@ -503,7 +503,7 @@ class SqlEndToEndTest extends Test:
                             _ <- client.executeRaw(
                                 """CREATE TABLE person (id BIGINT PRIMARY KEY, name TEXT NOT NULL, age INT NOT NULL)"""
                             )
-                            // Run a transaction that inserts then aborts — should roll back.
+                            // Run a transaction that inserts then aborts, should roll back.
                             txResult <- Abort.run[SqlException](
                                 client.transaction {
                                     Sql.insert[Person]
@@ -519,7 +519,7 @@ class SqlEndToEndTest extends Test:
                                 }
                             )
                             _ = assert(txResult.isFailure, s"Expected transaction failure (rollback), got: $txResult")
-                            // Table must be empty — rollback removed the inserted row.
+                            // Table must be empty, rollback removed the inserted row.
                             rows <- Sql.from[Person]("p").run
                         yield assert(rows.isEmpty, s"Expected empty table after rollback, got: $rows")
                     }
@@ -646,7 +646,7 @@ class SqlEndToEndTest extends Test:
                 SqlSharedContainers.withFreshSchema(Backend.Postgres) { ctx =>
                     // use registers Sync.ensure(close); Scope is absent from the returned effect row.
                     // The body uses executeRaw which carries Abort[SqlException] (supertype);
-                    // the factory propagates that upward as-is — no Scope leak.
+                    // the factory propagates that upward as-is, no Scope leak.
                     SqlClient.use(pgUrl(ctx)) { client =>
                         SqlClient.let(client) {
                             client.executeRaw(
@@ -688,7 +688,7 @@ class SqlEndToEndTest extends Test:
             Async.timeout(120.seconds) {
                 SqlSharedContainers.withFreshSchema(Backend.Postgres) { ctx =>
                     for
-                        // Three independent clients — one per close variant.
+                        // Three independent clients, one per close variant.
                         // close(30.seconds) on an idle client must complete in < 5 seconds
                         // (grace period is "up to", not "exactly").
                         c1 <- SqlClient.initUnscoped(pgUrl(ctx))

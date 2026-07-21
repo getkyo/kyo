@@ -6,7 +6,7 @@ import kyo.SqlAst.*
 /** Tests for user-specified RETURNING clauses on INSERT, UPDATE, and DELETE.
   *
   * 4 leaves verifying the G-Parity-16 gap closure:
-  *   - INSERT.returning(id, created_at) renders on PG — both columns appear after RETURNING.
+  *   - INSERT.returning(id, created_at) renders on PG, both columns appear after RETURNING.
   *   - UPDATE.returning(version) renders on PG.
   *   - DELETE.returning(id) renders on PG.
   *   - RETURNING on MySQL raises SqlException.Unsupported.
@@ -19,7 +19,7 @@ class SqlReturningTest extends Test:
 
     given CanEqual[Any, Any] = CanEqual.derived
 
-    // Leaf 1: INSERT.returning(id, createdAt) on PG — both columns appear in RETURNING list.
+    // Leaf 1: INSERT.returning(id, createdAt) on PG, both columns appear in RETURNING list.
     "INSERT.returning(id, createdAt) emits both columns on PG" in {
         val s = Sql.insert[Event].values(Event(0L, "boot", "2024-01-01")).returning(_.id, _.createdAt)
         val r = s.render(SqlBackend.Postgres)
@@ -33,7 +33,7 @@ class SqlReturningTest extends Test:
         assert(afterReturning.contains(""""createdAt""""))
     }
 
-    // Leaf 2: UPDATE.returning(version) on PG — column appears after RETURNING.
+    // Leaf 2: UPDATE.returning(version) on PG, column appears after RETURNING.
     "UPDATE.returning(version) emits on PG" in {
         val s = Sql.update[Versioned].set(_.value := "x").returning(_.version).where(_.id == 1L)
         val r = s.render(SqlBackend.Postgres)
@@ -44,7 +44,7 @@ class SqlReturningTest extends Test:
         assert(afterReturning.contains(""""version""""))
     }
 
-    // Leaf 3: DELETE.returning(id) on PG — id appears after RETURNING.
+    // Leaf 3: DELETE.returning(id) on PG, id appears after RETURNING.
     "DELETE.returning(id) emits on PG" in {
         val s = Sql.delete[Event].returning(_.id).where(_.name == "boot")
         val r = s.render(SqlBackend.Postgres)

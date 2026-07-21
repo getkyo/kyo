@@ -6,7 +6,7 @@ import kyo.net.NetTlsConfig
 
 /** Integration tests for MySQL TLS upgrade (CLIENT_SSL mid-handshake).
   *
-  * Uses a vanilla `mysql:8.0` container — the image runs `mysqld` with `--auto-generate-certs=ON`, so a self-signed server certificate is
+  * Uses a vanilla `mysql:8.0` container, the image runs `mysqld` with `--auto-generate-certs=ON`, so a self-signed server certificate is
   * generated on first start and TLS is ready out of the box. No bind mounts, no `mysql_ssl_rsa_setup`, no container restart.
   *
   * All TLS assertions run inside a single test body so the container setup occurs only once per test run.
@@ -59,10 +59,10 @@ class MysqlTlsIntegrationTest extends kyo.Test:
             )
         )
 
-    "MySQL TLS — InitTlsExchange, caching_sha2, and sequential queries".tagged("kyo.OwnContainer") in {
+    "MySQL TLS, InitTlsExchange, caching_sha2, and sequential queries".tagged("kyo.OwnContainer") in {
         Scope.run {
             withTlsContainer { details =>
-                // ── Assertion 1: InitTlsExchange + handshake — isAlive=true after TLS upgrade ──
+                // ── Assertion 1: InitTlsExchange + handshake, isAlive=true after TLS upgrade ──
                 Scope.run {
                     openTlsClient(details).flatMap { client =>
                         client.isAlive.map { open => assert(open, "Expected isAlive=true after TLS handshake") }
@@ -87,7 +87,7 @@ class MysqlTlsIntegrationTest extends kyo.Test:
                                 }
                             }
                         }.flatMap { _ =>
-                            // ── Assertion 4: caching_sha2 cleartext password over TLS — server sends fast-path or full-auth (cleartext) ──
+                            // ── Assertion 4: caching_sha2 cleartext password over TLS, server sends fast-path or full-auth (cleartext) ──
                             Scope.run {
                                 openTlsClient(details).flatMap { client =>
                                     client.query("SELECT 'tls_csha2_ok'").map { rows =>

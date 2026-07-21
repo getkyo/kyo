@@ -58,7 +58,7 @@ class SqlClientPoolIsAliveTest extends Test:
         )
     )
 
-    /** CommandComplete("BEGIN") + ReadyForQuery — success response to any simple query.
+    /** CommandComplete("BEGIN") + ReadyForQuery, success response to any simple query.
       *
       * Wire layout: CommandComplete type='C', Int32(10) = 4+6, "BEGIN\0"; ReadyForQuery type='Z', Int32(5), 'I'. Using "BEGIN" as the
       * command tag (6 bytes with null) gives length 10, matching SqlClientLogTest's known-good bytes.
@@ -124,7 +124,7 @@ class SqlClientPoolIsAliveTest extends Test:
     private def pgDropAfterOneHandler(conn: Connection)(using Frame): Unit < Async =
         Abort.run[Closed](conn.inbound.safe.take).andThen {
             Abort.run[Closed](conn.outbound.safe.put(pgAuthOkBytes)).andThen {
-                // First subsequent message — respond normally (this is the user's first query).
+                // First subsequent message, respond normally (this is the user's first query).
                 Abort.run[Closed](conn.inbound.safe.take).flatMap {
                     case Result.Success(_) =>
                         Abort.run[Closed](conn.outbound.safe.put(pgSimpleOkBytes)).andThen {
@@ -188,7 +188,7 @@ class SqlClientPoolIsAliveTest extends Test:
     // ── isAlive falls back to driver probe when connectionTestQuery is Absent ─
 
     "isAlive falls back to driver probe when connectionTestQuery is Absent" in {
-        // When Absent, isAlive checks conn.isOpen only — no network round-trip.
+        // When Absent, isAlive checks conn.isOpen only, no network round-trip.
         // The server receives only the user's messages (no extra test-query message).
         // Two user calls → 2 messages total.
         Scope.run {
@@ -233,7 +233,7 @@ class SqlClientPoolIsAliveTest extends Test:
 
     "isAlive returns false on test query failure" in {
         // Fake server: startup OK + first user query OK, then drops the connection on the next message.
-        // With connectionTestQuery configured, isAlive sends the test query — server closes — isAlive=false —
+        // With connectionTestQuery configured, isAlive sends the test query, server closes, isAlive=false,
         // connection discarded. The second user call must either fail (no fresh connections available) or
         // succeed by opening a new connection to the fake server. Since the fake server closes connections
         // after the first query (one per TCP accept), the second user call will fail with SqlException.
@@ -256,8 +256,8 @@ class SqlClientPoolIsAliveTest extends Test:
                         ).flatMap {
                             case Result.Success(_) =>
                                 // Second call: pool returns the idle connection, isAlive fires test query,
-                                // server closes — isAlive=false — connection discarded. New connection
-                                // attempted — server now drops the second connection too → SqlException.
+                                // server closes, isAlive=false, connection discarded. New connection
+                                // attempted, server now drops the second connection too → SqlException.
                                 Abort.run[SqlException](
                                     SqlClient.let(client)(
                                         Async.timeout(5.seconds)(client.executeRaw("SELECT 1"))
@@ -269,8 +269,8 @@ class SqlClientPoolIsAliveTest extends Test:
                                         succeed
                                     case Result.Success(_) =>
                                         // Acceptable: a fresh connection was opened successfully (server may have
-                                        // handled a new connect). The important invariant — isAlive=false discarded
-                                        // the stale connection — is still satisfied.
+                                        // handled a new connect). The important invariant, isAlive=false discarded
+                                        // the stale connection, is still satisfied.
                                         succeed
                                     case Result.Panic(t) =>
                                         fail(s"Unexpected panic on second call: ${t.getMessage}")

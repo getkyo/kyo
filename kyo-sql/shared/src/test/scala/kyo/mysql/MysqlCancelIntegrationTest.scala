@@ -6,11 +6,11 @@ import kyo.internal.SqlSharedContainers
 /** Integration tests for MySQL query cancellation via KILL QUERY.
   *
   * Tests:
-  *   1. Cancel a long-running query (SELECT SLEEP(5)) — query aborts with ER_QUERY_INTERRUPTED / SQLSTATE 70100
-  *   2. Cancel an already-completed query — silent no-op (no error from cancelQuery itself)
-  *   3. cancellableQuery pattern — connectionId is exposed via handle.connectionId (SqlCancelHandle.My)
-  *   4. Cancel with wrong connectionId — no error (KILL QUERY of a non-existent thread is silently accepted)
-  *   5. Sequential queries after cancel — connection remains usable after KILL QUERY on cancel conn
+  *   1. Cancel a long-running query (SELECT SLEEP(5)), query aborts with ER_QUERY_INTERRUPTED / SQLSTATE 70100
+  *   2. Cancel an already-completed query, silent no-op (no error from cancelQuery itself)
+  *   3. cancellableQuery pattern, connectionId is exposed via handle.connectionId (SqlCancelHandle.My)
+  *   4. Cancel with wrong connectionId, no error (KILL QUERY of a non-existent thread is silently accepted)
+  *   5. Sequential queries after cancel, connection remains usable after KILL QUERY on cancel conn
   *
   * Each test runs against a fresh schema in the per-fork-JVM shared MySQL container (via [[SqlSharedContainers.withFreshSchema]]).
   */
@@ -32,7 +32,7 @@ class MysqlCancelIntegrationTest extends kyo.Test:
 
     // ── cancel a long-running query ───────────────────────────────────────────
 
-    "cancel interrupts SELECT SLEEP(5) — query aborts early (error or SLEEP returns 1)" in {
+    "cancel interrupts SELECT SLEEP(5), query aborts early (error or SLEEP returns 1)" in {
         Scope.run {
             SqlSharedContainers.withFreshSchema(SqlSharedContainers.Backend.MySQL) { ctx =>
                 initClient(ctx, maxConns = 2) { client =>
@@ -58,8 +58,8 @@ class MysqlCancelIntegrationTest extends kyo.Test:
                                         case Result.Failure(e) =>
                                             fail(s"Expected SqlException.Server, got: $e")
                                         case Result.Success(rows) =>
-                                            // SLEEP(5) returns 1 when interrupted by KILL QUERY — this is also a valid kill outcome.
-                                            // Typed decode via Phase 19b row.decode[T] — handles both binary
+                                            // SLEEP(5) returns 1 when interrupted by KILL QUERY, this is also a valid kill outcome.
+                                            // Typed decode via Phase 19b row.decode[T], handles both binary
                                             // (extended-protocol via cancellableQueryFiber) and text format.
                                             rows.headOption match
                                                 case None =>
@@ -84,7 +84,7 @@ class MysqlCancelIntegrationTest extends kyo.Test:
 
     // ── cancel an already-completed query (no-op) ─────────────────────────────
 
-    "cancel an already-completed query is a no-op — no error from cancelQuery" in {
+    "cancel an already-completed query is a no-op, no error from cancelQuery" in {
         Scope.run {
             SqlSharedContainers.withFreshSchema(SqlSharedContainers.Backend.MySQL) { ctx =>
                 initClient(ctx, maxConns = 2) { client =>
@@ -111,7 +111,7 @@ class MysqlCancelIntegrationTest extends kyo.Test:
 
     // ── connectionId is exposed for cancellation ──────────────────────────────
 
-    "cancellableQuery pattern — MysqlConnection.connectionId is positive and available before query" in {
+    "cancellableQuery pattern, MysqlConnection.connectionId is positive and available before query" in {
         Scope.run {
             SqlSharedContainers.withFreshSchema(SqlSharedContainers.Backend.MySQL) { ctx =>
                 initClient(ctx, maxConns = 1) { client =>
@@ -127,7 +127,7 @@ class MysqlCancelIntegrationTest extends kyo.Test:
 
     // ── kill with non-existent connectionId (no error) ───────────────────────
 
-    "cancel with non-existent connectionId — server accepts KILL QUERY gracefully" in {
+    "cancel with non-existent connectionId, server accepts KILL QUERY gracefully" in {
         Scope.run {
             SqlSharedContainers.withFreshSchema(SqlSharedContainers.Backend.MySQL) { ctx =>
                 initClient(ctx, maxConns = 1) { client =>
@@ -135,12 +135,12 @@ class MysqlCancelIntegrationTest extends kyo.Test:
                     val fakeConnectionId = 9999999L
                     // Construct a SqlCancelHandle.My pointing at a non-existent thread.
                     val fakeHandle = SqlCancelHandle.My(client.address, fakeConnectionId)
-                    // Path A: SqlClient.cancel with a fabricated handle — public KILL QUERY round-trip.
+                    // Path A: SqlClient.cancel with a fabricated handle, public KILL QUERY round-trip.
                     Abort.run[SqlException](client.cancel(fakeHandle)).map { _ => succeed }.andThen {
-                        // Path B: direct KILL QUERY via executeRaw — preserves the original second probe.
+                        // Path B: direct KILL QUERY via executeRaw, preserves the original second probe.
                         Abort.run[SqlException](client.executeRaw(s"KILL QUERY $fakeConnectionId")).map {
                             case Result.Success(_) =>
-                                succeed // no error — thread doesn't exist, MySQL says OK
+                                succeed // no error, thread doesn't exist, MySQL says OK
                             case Result.Failure(_: SqlException.Server) =>
                                 succeed // error 1094 (unknown thread) is also acceptable
                             case Result.Failure(e) =>

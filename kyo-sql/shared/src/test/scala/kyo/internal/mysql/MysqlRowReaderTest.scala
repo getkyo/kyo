@@ -15,7 +15,7 @@ import kyo.internal.postgres.types.Format
 
 /** Verifies that [[MysqlRowReader]] decodes raw binary wire bytes from a [[kyo.SqlRow]] into the correct Scala values.
   *
-  * Each test constructs a [[SqlRow]] whose column bytes mirror what [[BinaryResultsetRowUnmarshaller]] delivers — fixed-width LE integers
+  * Each test constructs a [[SqlRow]] whose column bytes mirror what [[BinaryResultsetRowUnmarshaller]] delivers, fixed-width LE integers
   * for numeric types, raw UTF-8 bytes for strings, and datetime struct bodies (length prefix already stripped) for temporal types. The
   * reader is then asserted to return the original Scala value, confirming byte-for-byte round-trip parity with the [[MysqlEncoder]] layer.
   *
@@ -150,7 +150,7 @@ class MysqlRowReaderTest extends Test:
             BigDecimal("0.00001")
         )
         for v <- values do
-            // Use v.toString (Scala BigDecimal), NOT v.underlying().toPlainString — see
+            // Use v.toString (Scala BigDecimal), NOT v.underlying().toPlainString, see
             // MysqlEncoder.bigDecimalEncoder / PostgresEncoder.numericText for the same workaround.
             val rawBytes = Span.from(v.toString.getBytes(StandardCharsets.UTF_8))
             val row      = singleColumnRow(rawBytes)
@@ -224,7 +224,7 @@ class MysqlRowReaderTest extends Test:
         val row = singleColumnRow(encodeRaw(99, MysqlEncoder.intEncoder))
         val r   = reader(row)
         assert(r.isNil() == false)
-        // Cursor was not advanced — value is still readable.
+        // Cursor was not advanced, value is still readable.
         assert(r.int() == 99)
     }
 
@@ -263,7 +263,7 @@ class MysqlRowReaderTest extends Test:
             new MysqlRowReader(row)
         end makeReader
         val r = makeReader()
-        // frame is not null — that's the minimal contract (Frame equality is not specified).
+        // frame is not null, that's the minimal contract (Frame equality is not specified).
         assert(r.frame != null)
         succeed
     }
@@ -271,7 +271,7 @@ class MysqlRowReaderTest extends Test:
     // ── Nested array/map methods throw UnsupportedOperationException ──────────
     // SQL rows are flat: nested arrays/maps/captures are not meaningful. The
     // case-class field-iteration protocol (objectStart/hasNextField/matchField/…)
-    // IS supported — see the next test.
+    // IS supported, see the next test.
 
     "arrayStart on a non-JSON column throws SqlException.Decode (not Unsupported)" in {
         val row = singleColumnRow(encodeRaw(0, MysqlEncoder.intEncoder))

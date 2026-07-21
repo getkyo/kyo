@@ -10,7 +10,7 @@ import kyo.internal.mysql.MysqlBufferWriter
   *
   * The server responds with an OK packet. Used as a connection keep-alive.
   *
-  * Reference: MySQL Internals — COM_PING
+  * Reference: MySQL Internals, COM_PING
   */
 object ComPingMarshaller extends Marshaller[ComPing.type]:
 

@@ -25,7 +25,7 @@ class MysqlEncoderTimeTest extends Test:
         buf.toSpan.toArray
     end encode
 
-    /** Decodes raw TIME struct body bytes using the duration decoder (no Abort context — throws on failure).
+    /** Decodes raw TIME struct body bytes using the duration decoder (no Abort context, throws on failure).
       *
       * The body is the TIME struct content delivered by BinaryResultsetRowUnmarshaller after stripping the MySQL length prefix byte.
       */

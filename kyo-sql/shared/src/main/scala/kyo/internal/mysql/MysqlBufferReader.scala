@@ -15,7 +15,7 @@ import kyo.SqlException
   * `readLenencInt`) perform a bounds check before any array access. On under-length input they return
   * `Abort.fail(SqlException.Decode(...))` rather than throwing an exception.
   *
-  * Reference: MySQL Internals — Connection Phase Packets and Text Protocol
+  * Reference: MySQL Internals, Connection Phase Packets and Text Protocol
   *
   * @param span
   *   the immutable byte span to read from
@@ -123,7 +123,7 @@ final class MysqlBufferReader(private val span: Span[Byte]):
       *   - First byte 0xFC (252): value is LE uint16 in the next 2 bytes (3 bytes total)
       *   - First byte 0xFD (253): value is LE uint24 in the next 3 bytes (4 bytes total)
       *   - First byte 0xFE (254): value is LE uint64 in the next 8 bytes (9 bytes total)
-      *   - First byte 0xFF (255): reserved for ERR packet sentinel — never appears as a valid lenenc int; represented as [[Maybe.Absent]]
+      *   - First byte 0xFF (255): reserved for ERR packet sentinel, never appears as a valid lenenc int; represented as [[Maybe.Absent]]
       *     to allow callers to distinguish the NULL marker from a numeric zero.
       *
       * @return
@@ -137,7 +137,7 @@ final class MysqlBufferReader(private val span: Span[Byte]):
                 case 0xfc          => readUInt16LE().map(v => Maybe.Present(v.toLong))
                 case 0xfd          => readUInt24LE().map(v => Maybe.Present(v.toLong))
                 case 0xfe          => readUInt64LE().map(Maybe.Present(_))
-                case _             => Maybe.Absent // 0xff — ERR-packet sentinel, not a valid lenenc int
+                case _             => Maybe.Absent // 0xff, ERR-packet sentinel, not a valid lenenc int
             end match
         }
     end readLenencInt
@@ -164,7 +164,7 @@ final class MysqlBufferReader(private val span: Span[Byte]):
     /** Reads a NUL-terminated string (C-string): bytes up to (not including) the 0x00 byte. Cursor advances past the NUL. */
     def readNulTerminatedString(): String =
         val start = pos
-        // Performance: while loop for NUL scan — encapsulated, CONTRIBUTING permits this.
+        // Performance: while loop for NUL scan, encapsulated, CONTRIBUTING permits this.
         while pos < span.size && span(pos) != 0.toByte do pos += 1
         val s = new String(span.slice(start, pos).toArray, StandardCharsets.UTF_8)
         if pos < span.size then pos += 1 // consume NUL

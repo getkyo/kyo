@@ -16,7 +16,7 @@ import kyo.net.NetTlsConfig
   * @param idleTimeout
   *   maximum time a pooled connection may remain idle before being closed and replaced
   * @param retrySchedule
-  *   retry policy for [[SqlException.Connection]] failures. [[Absent]] (the default) means no automatic retry — the error is propagated
+  *   retry policy for [[SqlException.Connection]] failures. [[Absent]] (the default) means no automatic retry, the error is propagated
   *   immediately. Supply a [[Schedule]] to enable retries; for example:
   *   {{{
   *   Schedule.exponentialBackoff(initial = 100.millis, factor = 2.0, maxBackoff = 5.seconds).take(5)
@@ -37,7 +37,7 @@ import kyo.net.NetTlsConfig
   *   maximum number of server-side prepared statements cached per connection. Each connection independently maintains a cache; the total
   *   server-side statement memory is bounded by `preparedStmtCacheSize × maxConnections`.
   * @param preparedStmtTtl
-  *   how long a cached prepared statement may remain unused before expiry. [[Duration.Infinity]] (the default) disables time-based expiry —
+  *   how long a cached prepared statement may remain unused before expiry. [[Duration.Infinity]] (the default) disables time-based expiry,
   *   entries are only evicted when the cache reaches capacity (CLOCK eviction).
   * @param minConnections
   *   minimum number of connections to open eagerly when the pool is initialised (warm-up). If greater than `maxConnections`, it is clamped
@@ -60,7 +60,7 @@ import kyo.net.NetTlsConfig
   *   duration and pool acquire wait time. Set to `false` to disable all metric instrumentation with zero overhead.
   * @param metricsScope
   *   custom metric scope prefix. [[Absent]] (the default) uses `"kyo.sql"` as the scope. Supply a [[Present]] value to override, e.g.
-  *   `Present("myapp.db")` — all eight metric names will be registered under that prefix.
+  *   `Present("myapp.db")`, all eight metric names will be registered under that prefix.
   * @param encodingRegistry
   *   custom encoding registry for PostgreSQL type codecs. Defaults to [[EncodingRegistry.builtin]], which covers all standard scalar types.
   *   Call [[EncodingRegistry.builtin.register]] to add custom OID-to-codec mappings on top of the builtin defaults:
@@ -143,7 +143,7 @@ object SqlClientConfig:
       *   - acquireTimeout: 5 seconds
       *   - queryTimeout: 30 seconds
       *   - idleTimeout: 10 minutes
-      *   - retrySchedule: Absent (no automatic retry — callers opt in via `retrySchedule = Present(schedule)`)
+      *   - retrySchedule: Absent (no automatic retry, callers opt in via `retrySchedule = Present(schedule)`)
       *   - tls: Absent (plaintext)
       *   - metricsEnabled: true (kyo.Stat metrics collected under scope `"kyo.sql"`)
       *   - metricsScope: Absent (uses default `"kyo.sql"`)

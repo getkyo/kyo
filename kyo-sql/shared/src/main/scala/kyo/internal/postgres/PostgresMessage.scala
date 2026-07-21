@@ -141,13 +141,13 @@ final case class Describe(target: Byte, name: String) extends FrontendMessage
   */
 final case class Execute(portalName: String, maxRows: Int) extends FrontendMessage
 
-/** Sync — marks end of an extended-query message group; server responds with [[ReadyForQuery]].
+/** Sync, marks end of an extended-query message group; server responds with [[ReadyForQuery]].
   *
   * Wire: 'S' | Int32(4)
   */
 case object Sync extends FrontendMessage
 
-/** Flush — forces the server to emit any pending output without ending the implicit transaction.
+/** Flush, forces the server to emit any pending output without ending the implicit transaction.
   *
   * Wire: 'H' | Int32(4)
   */
@@ -184,7 +184,7 @@ sealed trait BackendMessage derives CanEqual
 
 /** Discriminator for the `Authentication` message family.
   *
-  * All variants share the type byte `'R'` and are distinguished by an Int32 sub-type code at bytes 5–8.
+  * All variants share the type byte `'R'` and are distinguished by an Int32 sub-type code at bytes 5-8.
   */
 sealed trait AuthenticationKind derives CanEqual
 

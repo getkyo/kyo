@@ -137,12 +137,12 @@ class PostgresEncoderInetTest extends kyo.Test:
     // Before the Phase 9b SerializationMacro change, `Schema.derived[Row]` for a case class with an
     // `InetAddress` field failed because `isPrimitiveType` did not list InetAddress. The macro now
     // dispatches InetAddress to the `writer.string(v.getHostAddress)` / `InetAddress.getByName(reader.string())`
-    // primitive arms, parallel to UUID. The MySQL path is also exercised here — the string fallback
+    // primitive arms, parallel to UUID. The MySQL path is also exercised here, the string fallback
     // (`mw.string(v.getHostAddress)`) is what `SqlSchema[InetAddress]` writes against a MysqlParamWriter.
 
     "Schema.derived[CaseClassWithInet] writes the InetAddress field via the string primitive (PG)" in {
         // Wire a Schema[InetAddress] locally via the string primitive so `derives kyo.Schema` can find it
-        // when synthesising the Host schema — mirrors what SqlSchema[InetAddress] does under the hood.
+        // when synthesising the Host schema, mirrors what SqlSchema[InetAddress] does under the hood.
         given kyo.Schema[java.net.InetAddress] =
             kyo.Schema.stringSchema.transform(java.net.InetAddress.getByName)(_.getHostAddress)
         case class Host(name: String, addr: java.net.InetAddress) derives kyo.Schema
@@ -175,7 +175,7 @@ class PostgresEncoderInetTest extends kyo.Test:
         assert(params.size == 2)
         params(1).value match
             case kyo.Maybe.Present(s: String) =>
-                // IPv6 hostAddress for "2001:db8::42" is "2001:db8:0:0:0:0:0:42" — fits in VARCHAR(45).
+                // IPv6 hostAddress for "2001:db8::42" is "2001:db8:0:0:0:0:0:42", fits in VARCHAR(45).
                 assert(s.length <= 45, s"VARCHAR(45) constraint: address text must fit, got ${s.length} chars: $s")
                 assert(InetAddress.getByName(s).equals(value.addr), s"VARCHAR(45) string must round-trip to the same InetAddress")
             case other => fail(s"expected Present string for InetAddress field, got $other")

@@ -25,7 +25,7 @@ class HandshakeMessagesTest extends Test:
       *   | bytes[8](part1) | 0x00
       *   | LE uint16(capLow) | uint8(charset) | LE uint16(statusFlags) | LE uint16(capHigh)
       *   | uint8(authDataLen) | filler[10]
-      *   | bytes[max(13, authDataLen-8)](part2) — last byte is NUL
+      *   | bytes[max(13, authDataLen-8)](part2), last byte is NUL
       *   | NUL-str(authPluginName)
       */
     private def buildHandshakeV10(

@@ -9,7 +9,7 @@ import kyo.Test
   */
 class PostgresBufferWriterTest extends Test:
 
-    // BufferWriter writeInt32 big-endian — write 256, produced bytes are [0,0,1,0]
+    // BufferWriter writeInt32 big-endian, write 256, produced bytes are [0,0,1,0]
     "BufferWriter writeInt32 big-endian" in {
         val writer = new PostgresBufferWriter
         writer.writeInt32(256)
@@ -21,7 +21,7 @@ class PostgresBufferWriterTest extends Test:
         assert(span(3) == 0.toByte)
     }
 
-    // BufferWriter toSpan immutable — writes after toSpan don't affect returned Span
+    // BufferWriter toSpan immutable, writes after toSpan don't affect returned Span
     "BufferWriter toSpan immutable" in {
         val writer = new PostgresBufferWriter
         writer.writeInt32(1)

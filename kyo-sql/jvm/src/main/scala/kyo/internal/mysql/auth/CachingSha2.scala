@@ -20,8 +20,8 @@ import kyo.internal.auth.RsaOaep
   * serverPublicKey)
   *
   * References:
-  *   - MySQL Internals Manual — caching_sha2_password Authentication
-  *   - go-sql-driver/mysql auth.go — scrambleSHA256Password
+  *   - MySQL Internals Manual, caching_sha2_password Authentication
+  *   - go-sql-driver/mysql auth.go, scrambleSHA256Password
   *   - mysql-connector-python caching_sha2_password plugin
   */
 private[mysql] object CachingSha2:
@@ -130,7 +130,7 @@ private[mysql] object CachingSha2:
         kf.generatePublic(spec)
     end decodePemKey
 
-    /** Computes SHA-256 of the given bytes. JDK MessageDigest is allowed for crypto primitives — see STEERING.md. */
+    /** Computes SHA-256 of the given bytes. JDK MessageDigest is allowed for crypto primitives, see STEERING.md. */
     private def sha256(input: Array[Byte]): Array[Byte] =
         val md = MessageDigest.getInstance("SHA-256")
         md.digest(input)

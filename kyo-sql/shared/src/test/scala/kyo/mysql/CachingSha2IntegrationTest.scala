@@ -56,7 +56,7 @@ class CachingSha2IntegrationTest extends kyo.Test:
 
     // ── caching_sha2 fast-path (warm cache) ───────────────────────────────────
 
-    "HandshakeExchange caching_sha2 fast-path (cache hit) — second connection uses fast path".tagged("kyo.OwnContainer") in {
+    "HandshakeExchange caching_sha2 fast-path (cache hit), second connection uses fast path".tagged("kyo.OwnContainer") in {
         Scope.run {
             withCachingSha2Container { details =>
                 Scope.run {
@@ -79,7 +79,7 @@ class CachingSha2IntegrationTest extends kyo.Test:
 
     // ── caching_sha2 full-auth via RSA (no TLS, fresh container) ─────────────
 
-    "HandshakeExchange caching_sha2 full-auth via RSA (no TLS) — fresh container triggers full-auth path".tagged("kyo.OwnContainer") in {
+    "HandshakeExchange caching_sha2 full-auth via RSA (no TLS), fresh container triggers full-auth path".tagged("kyo.OwnContainer") in {
         Scope.run {
             withCachingSha2Container { details =>
                 Scope.run {
@@ -117,14 +117,14 @@ class CachingSha2IntegrationTest extends kyo.Test:
 
     // ── caching_sha2 full-auth populates cache for next connection ────────────
 
-    "HandshakeExchange caching_sha2 full-auth updates cache — second connect uses fast-path".tagged("kyo.OwnContainer") in {
+    "HandshakeExchange caching_sha2 full-auth updates cache, second connect uses fast-path".tagged("kyo.OwnContainer") in {
         Scope.run {
             withCachingSha2Container { details =>
                 Scope.run {
                     // First connection (full-auth): populates server's credential cache.
                     openClient(details).flatMap { client1 =>
                         client1.query("SELECT 1").flatMap { _ =>
-                            // Second connection: fast-path (0x03) — cache is now warm.
+                            // Second connection: fast-path (0x03), cache is now warm.
                             openClient(details).flatMap { client2 =>
                                 client2.isAlive.map { open => assert(open) }
                             }
@@ -167,7 +167,7 @@ class CachingSha2IntegrationTest extends kyo.Test:
 
     // ── fallback to native_password via AuthSwitchRequest ─────────────────────
 
-    "HandshakeExchange fallback to native_password via AuthSwitchRequest — native_password container".tagged("kyo.OwnContainer") in {
+    "HandshakeExchange fallback to native_password via AuthSwitchRequest, native_password container".tagged("kyo.OwnContainer") in {
         Scope.run {
             // This test uses a native_password container and verifies AuthSwitchRequest handling still works.
             val nativePredef = ContainerPredef.MySQL.Config.default
@@ -176,7 +176,7 @@ class CachingSha2IntegrationTest extends kyo.Test:
             Container.initWith(nativeConfig) { nativeContainer =>
                 val mysql = new ContainerPredef.MySQL(nativeContainer, nativePredef)
                 mysql.container.mappedPort(mysql.config.port).flatMap { port =>
-                    // Connect to native_password container — the server may send AuthSwitchRequest.
+                    // Connect to native_password container, the server may send AuthSwitchRequest.
                     SqlClient.initMy(
                         s"mysql://${mysql.username}:${mysql.password}@${mysql.container.host}:$port/${mysql.database}",
                         SqlClientConfig.default.copy(maxConnections = 1, minConnections = 1)
@@ -254,7 +254,7 @@ class CachingSha2IntegrationTest extends kyo.Test:
 
     // ── AuthSwitchRequest to caching_sha2 from initial plugin ────────────────
 
-    "HandshakeExchange AuthSwitchRequest to caching_sha2_password — handled by switch handler".tagged("kyo.OwnContainer") in {
+    "HandshakeExchange AuthSwitchRequest to caching_sha2_password, handled by switch handler".tagged("kyo.OwnContainer") in {
         // When server is configured with caching_sha2_password and client sends an initial native_password response,
         // the server issues AuthSwitchRequest to caching_sha2_password. Our handler re-runs fast-path with the new scramble.
         // This scenario is tested with the caching_sha2_password container.

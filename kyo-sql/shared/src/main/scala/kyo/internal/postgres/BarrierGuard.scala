@@ -40,7 +40,7 @@ object BarrierGuard:
 
     /** Drains the inbound channel, discarding all messages, until a [[ReadyForQuery]] is seen.
       *
-      * Any error during draining is logged and swallowed — we must not mask the original error from `body`.
+      * Any error during draining is logged and swallowed, we must not mask the original error from `body`.
       */
     private def drainToReadyForQuery(channel: PostgresChannel)(using Frame): Unit < Async =
         Abort.run[SqlException](drainLoop(channel)).flatMap {

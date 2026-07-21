@@ -12,7 +12,7 @@ import kyo.internal.postgres.Unmarshaller
   *
   * Field tags include 'S' severity, 'V' severity (localised), 'C' SQLSTATE, 'M' message, 'D' detail, 'H' hint, 'P' position, 'p' internal
   * position, 'q' internal query, 'W' where, 's' schema, 't' table, 'c' column, 'd' data type, 'n' constraint, 'F' file, 'L' line, 'R'
-  * routine. The list is terminated by a zero byte (not the field tag 0x00 — the tag 0x00 indicates end-of-fields).
+  * routine. The list is terminated by a zero byte (not the field tag 0x00, the tag 0x00 indicates end-of-fields).
   *
   * The reader covers the message body only (type byte and length already consumed).
   *

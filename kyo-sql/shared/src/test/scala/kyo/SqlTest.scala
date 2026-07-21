@@ -5,7 +5,7 @@ import kyo.SqlAst.*
 import scala.annotation.unused
 import scala.compiletime.testing.typeChecks
 
-/** SqlTest — verifies the Sql DSL by rendering each query to SQL and asserting on the rendered string and bind parameters.
+/** SqlTest, verifies the Sql DSL by rendering each query to SQL and asserting on the rendered string and bind parameters.
   *
   * Backend: Postgres (placeholders `$1`, `$2`, …, identifiers double-quoted). Negative tests at the bottom verify the type system rejects
   * invalid queries at compile time.
@@ -350,7 +350,7 @@ class SqlTest extends Test:
     // PHASE-10-AUDIT W-1 regression leaf:
     // Phase 10 moved `WindowSpecBuilder` from `SqlAst` to `kyo.internal.dsl`. This leaf re-renders a
     // `Sql.windowSpec.partitionBy(...).orderBy(...).rank` chain through the post-move builder and
-    // asserts byte-exact PG SQL — guarding against any renderer regression introduced by the move.
+    // asserts byte-exact PG SQL, guarding against any renderer regression introduced by the move.
     "Phase 10 regression: Sql.windowSpec builder renders byte-exact PG SQL after move out of SqlAst" in {
         val q = people.select(c =>
             (c.p.name, Sql.windowSpec.partitionBy(c.p.deptId).orderBy(c.p.age.asc).rank)
@@ -657,7 +657,7 @@ class SqlTest extends Test:
         assert(r.params.size == 1)
     }
 
-    // --- Negative tests — compile-time rejection of invalid queries ---
+    // --- Negative tests, compile-time rejection of invalid queries ---
 
     "rejects Sql.lit (no literal escape hatch in user-facing surface)" in {
         assert(!typeChecks("Sql.lit(42)"))

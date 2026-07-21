@@ -13,7 +13,7 @@ import kyo.net.NetTlsConfig
   *
   * Tests:
   *   1. cancellableQuery exposes a SqlCancelHandle with correct processId.
-  *   2. cancellableQuery via TLS — handle carries TLS config from the client.
+  *   2. cancellableQuery via TLS, handle carries TLS config from the client.
   *
   * Internal CancelExchange / PostgresConnection tests live in `kyo.internal.postgres.exchange.CancelExchangeTest`.
   */
@@ -114,7 +114,7 @@ class CancelIntegrationTest extends kyo.Test:
         }
     }
 
-    "cancellableQuery via TLS — handle carries TLS config from the client".tagged("kyo.OwnContainer") in {
+    "cancellableQuery via TLS, handle carries TLS config from the client".tagged("kyo.OwnContainer") in {
         Scope.run {
             withPostgresTls { (host, port, user, password, db, trustAllConfig) =>
                 val url = s"postgres://$user:$password@$host:$port/$db?sslmode=require"

@@ -13,7 +13,7 @@ import kyo.internal.postgres.types.PostgresEncoder
   *
   * All tests are pure (no database container required). They exercise the schema via in-memory byte buffers.
   *
-  * Design note — zone loss on round-trip: `timestamptz` stores only the UTC instant; the original IANA zone ID is dropped on the wire.
+  * Design note, zone loss on round-trip: `timestamptz` stores only the UTC instant; the original IANA zone ID is dropped on the wire.
   * Decoding always yields a UTC-zoned value. Tests assert this behaviour explicitly (it is the documented design choice, not a bug).
   */
 class SqlSchemaZonedDateTimeTest extends Test:
@@ -30,7 +30,7 @@ class SqlSchemaZonedDateTimeTest extends Test:
     end pgRow
 
     /** Encodes a `kyo.Instant` for use in a synthetic PG `timestamptz` row, driving every byte through the public
-      * [[SqlSchema.writePostgres]] + [[BoundParam.encoded]] surface — no test-side reach into internal encoders.
+      * [[SqlSchema.writePostgres]] + [[BoundParam.encoded]] surface, no test-side reach into internal encoders.
       */
     private def pgTimestamptzBytes(instant: kyo.Instant)(using kyo.test.AssertScope): Span[Byte] =
         summon[SqlSchema[kyo.Instant]].writePostgres(instant).head.encoded match
@@ -48,7 +48,7 @@ class SqlSchemaZonedDateTimeTest extends Test:
 
     // ── encode: ZonedDateTime encodes via timestamptz ──────────────────────────
 
-    "ZonedDateTime encodes via timestamptz — writePostgres produces OID 1184 Binary param" in {
+    "ZonedDateTime encodes via timestamptz, writePostgres produces OID 1184 Binary param" in {
         val zdt    = java.time.ZonedDateTime.of(2024, 6, 15, 10, 30, 0, 0, java.time.ZoneId.of("America/New_York"))
         val params = summon[SqlSchema[java.time.ZonedDateTime]].writePostgres(zdt)
         assert(params.size == 1)
@@ -80,7 +80,7 @@ class SqlSchemaZonedDateTimeTest extends Test:
 
     // ── decode: ZonedDateTime decodes with UTC zone (zone loss documented) ─────
 
-    "ZonedDateTime decodes with UTC zone (original zone lost — documented)" in {
+    "ZonedDateTime decodes with UTC zone (original zone lost, documented)" in {
         // Encode a UTC instant directly, then decode via readPostgres.
         // No matter what zone the original ZDT had, the decoded result must be UTC.
         val original = java.time.ZonedDateTime.of(2024, 6, 15, 10, 30, 0, 0, java.time.ZoneId.of("America/New_York"))
@@ -114,7 +114,7 @@ class SqlSchemaZonedDateTimeTest extends Test:
 
     // ── round-trip with UTC normalization ─────────────────────────────────────
 
-    "ZonedDateTime round-trips with UTC normalization — UTC zone is preserved exactly" in {
+    "ZonedDateTime round-trips with UTC normalization, UTC zone is preserved exactly" in {
         // A ZDT already at UTC survives the round-trip (no zone to lose).
         val original = java.time.ZonedDateTime.of(2024, 3, 14, 15, 9, 26, 535_000_000, java.time.ZoneOffset.UTC)
         val instant  = kyo.Instant.fromJava(original.toInstant)
@@ -199,7 +199,7 @@ class SqlSchemaZonedDateTimeTest extends Test:
         succeed
     }
 
-    /** Builds an SqlRow from the wire bytes produced by `writePostgres` on the same schema — every byte flows through the public
+    /** Builds an SqlRow from the wire bytes produced by `writePostgres` on the same schema, every byte flows through the public
       * [[SqlSchema.writePostgres]] + [[BoundParam.encoded]] surface; no test-side reach into internal encoders.
       */
     private def synthRowFromWrite(
@@ -265,7 +265,7 @@ object SqlSchemaZonedDateTimeRecord:
     given SqlSchema[SqlSchemaZonedDateTimeRecord] = SqlSchema.of[SqlSchemaZonedDateTimeRecord](
         write = (rec, w) =>
             w.long(rec.id)
-            // ZonedDateTime encodes via its Instant (zone ID is dropped on the wire — documented).
+            // ZonedDateTime encodes via its Instant (zone ID is dropped on the wire, documented).
             w.instant(rec.ts.toInstant)
         ,
         read = r =>

@@ -19,14 +19,14 @@ import kyo.net.NetTlsConfig
 /** An active MySQL connection with per-connection state.
   *
   * Wraps a [[MysqlChannel]] and holds the server metadata received during the handshake:
-  *   - `connectionId` — the server-assigned thread/connection ID
-  *   - `serverCapabilities` — negotiated capability flags
-  *   - `serverVersion` — server version string (e.g. "8.0.34")
-  *   - `charset` — negotiated charset number
-  *   - `statusFlags` — last-seen server status flags
-  *   - `preparedStmts` — per-connection LRU cache of server-side prepared statements
+  *   - `connectionId`, the server-assigned thread/connection ID
+  *   - `serverCapabilities`, negotiated capability flags
+  *   - `serverVersion`, server version string (e.g. "8.0.34")
+  *   - `charset`, negotiated charset number
+  *   - `statusFlags`, last-seen server status flags
+  *   - `preparedStmts`, per-connection LRU cache of server-side prepared statements
   *
-  * All public methods are safe. A single [[MysqlConnection]] must NOT be used concurrently — the caller ensures serial access.
+  * All public methods are safe. A single [[MysqlConnection]] must NOT be used concurrently, the caller ensures serial access.
   */
 final class MysqlConnection(
     private[mysql] val channel: MysqlChannel,
@@ -127,7 +127,7 @@ final class MysqlConnection(
       *
       * `generatedKey` is [[GeneratedKey.Value]]`(<lastInsertId>)` when the server reported a non-zero auto-increment value, and
       * [[GeneratedKey.Unavailable]] when `lastInsertId == 0` (MySQL's convention for "no auto-increment value generated for this statement"
-      * — applies even when the target schema does have an `AUTO_INCREMENT` column, e.g. when the caller supplied an explicit non-zero id).
+      * applies even when the target schema does have an `AUTO_INCREMENT` column, e.g. when the caller supplied an explicit non-zero id).
       * The pure-no-auto-column case ([[GeneratedKey.NoAutoKey]]) is emitted by the Postgres path only; MySQL cannot distinguish "no
       * AUTO_INCREMENT column" from "auto-increment suppressed" at the OK-packet level.
       */
@@ -146,7 +146,7 @@ final class MysqlConnection(
             }
         })
 
-    /** Streams rows from a parameterised query using per-row wire reads (approach 2 — no cursor).
+    /** Streams rows from a parameterised query using per-row wire reads (approach 2, no cursor).
       *
       * Prepares the statement (or uses a cached one), binds parameters via [[ComStmtExecute]] (flags=0, no cursor), then reads
       * [[BinaryResultsetRow]] packets one at a time from the wire, yielding each decoded [[MysqlRow]] into the stream. On stream completion
@@ -229,7 +229,7 @@ final class MysqlConnection(
     /** Begins a transaction.
       *
       * MySQL InnoDB DDL caveat: DDL statements (`CREATE TABLE`, `ALTER TABLE`, `DROP TABLE`, etc.) inside a transaction cause an implicit
-      * commit before and after the statement. This is a MySQL/InnoDB limitation — kyo-sql does not attempt to detect implicit commits.
+      * commit before and after the statement. This is a MySQL/InnoDB limitation, kyo-sql does not attempt to detect implicit commits.
       *
       * @param isolation
       *   optional isolation level; [[Absent]] uses the server default (`REPEATABLE READ` for InnoDB)
@@ -284,8 +284,8 @@ final class MysqlConnection(
 
     /** Cancels the query running on `this` connection by sending `KILL QUERY <connectionId>` on `cancelConn`.
       *
-      * `cancelConn` must be a **separate**, already-authenticated [[MysqlConnection]]. `cancelConn` is NOT closed or returned to any pool
-      * by this method — the caller is responsible for its lifecycle.
+      * `cancelConn` must be a **separate** already-authenticated [[MysqlConnection]]. `cancelConn` is NOT closed or returned to any pool
+      * by this method, the caller is responsible for its lifecycle.
       *
       * Returns `Unit` whether the query was running or had already completed (KILL is idempotent when the target is absent).
       *
@@ -328,9 +328,9 @@ final class MysqlConnection(
       * @param gracePeriod
       *   If `Duration.Zero`, the socket is closed immediately without sending `COM_QUIT`. If `> Duration.Zero`, `COM_QUIT` is sent and the
       *   implementation waits up to `gracePeriod` for the server's acknowledgement before forcing the socket closed. Quit-timeout errors
-      *   are swallowed — the socket is closed regardless. Diverges from PostgreSQL, which always issues a graceful `Terminate` message
+      *   are swallowed, the socket is closed regardless. Diverges from PostgreSQL, which always issues a graceful `Terminate` message
       *   before closing. Typical callers should pass a short duration (e.g. `30.seconds`) so in-flight queries have a chance to complete;
-      *   pass `Duration.Zero` only when an immediate hard close is required (e.g. pool eviction on error). This method does not throw — any
+      *   pass `Duration.Zero` only when an immediate hard close is required (e.g. pool eviction on error). This method does not throw, any
       *   `SqlException` raised by `COM_QUIT` is discarded before the socket close.
       */
     def close(gracePeriod: Duration)(using Frame): Unit < (Async & Abort[SqlException]) =
@@ -411,7 +411,7 @@ object MysqlConnection:
       * Sequence:
       *   1. Connect via [[NetPlatform.transport]].
       *   2. Build a plaintext [[MysqlChannel]].
-      *   3. Run [[HandshakeExchange]] — reads HandshakeV10, optionally upgrades to TLS, sends HandshakeResponse41, handles auth.
+      *   3. Run [[HandshakeExchange]], reads HandshakeV10, optionally upgrades to TLS, sends HandshakeResponse41, handles auth.
       *   4. Use the channel returned by [[HandshakeResult]] (may be TLS-wrapped).
       *   5. Populate per-connection state from [[HandshakeResult]].
       *   6. Return a [[MysqlConnection]].

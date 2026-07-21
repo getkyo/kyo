@@ -10,7 +10,7 @@ import kyo.internal.mysql.MysqlBufferWriter
   *
   * Sent by the client when the server requests an auth plugin switch via [[kyo.internal.mysql.AuthSwitchRequest]].
   *
-  * Reference: MySQL Internals — Protocol::AuthSwitchResponse
+  * Reference: MySQL Internals, Protocol::AuthSwitchResponse
   */
 object AuthSwitchResponseMarshaller extends Marshaller[AuthSwitchResponse]:
 

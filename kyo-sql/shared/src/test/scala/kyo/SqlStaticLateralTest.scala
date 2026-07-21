@@ -9,13 +9,13 @@ import kyo.SqlAst.*
   * backends. A compile-time failure (rather than a runtime assertion) would indicate a missing [[scala.quoted.FromExpr]] derivation for
   * `Lateral` or its fields.
   *
-  * Note: `staticSql` requires the query to be written inline — storing it in a `val` introduces a local binding that `q.value` cannot
+  * Note: `staticSql` requires the query to be written inline, storing it in a `val` introduces a local binding that `q.value` cannot
   * reduce through (same limitation as G-Probe-1). All byte-for-byte runtime parity checks duplicate the query expression.
   * STATIC-SQL-INLINE-ONLY: when editing any leaf below, keep both copies of the duplicated expression identical so drift cannot silently
   * weaken the parity check.
   *
   * Deviation from PHASE-9 PLAN.md (per audit W-5): the plan's snippet uses `Sql.lateral[Person]("lat", Sql.from[Department]("d"))` (Person
-  * bound to a Department source — illustrative cross-typing). That shape does not compile because the inner-source row type must align with
+  * bound to a Department source, illustrative cross-typing). That shape does not compile because the inner-source row type must align with
   * the LATERAL row type, so leaves here use `Sql.lateral[Department]("d", Sql.from[Department]("dept"))` etc.
   */
 class SqlStaticLateralTest extends Test:
@@ -23,7 +23,7 @@ class SqlStaticLateralTest extends Test:
     case class Person(id: Long, name: String, age: Int, deptId: Long) derives Schema
     case class Department(id: Long, name: String) derives Schema
 
-    // ── Leaf 1 — simple LATERAL subquery (Sql.lateral entry point) ───────────
+    // ── Leaf 1, simple LATERAL subquery (Sql.lateral entry point) ───────────
 
     "simple Lateral subquery lifts and emits LATERAL keyword" in {
         val r = SqlStatic.staticSql(
@@ -34,7 +34,7 @@ class SqlStaticLateralTest extends Test:
         assert(r.params.isEmpty)
     }
 
-    "simple Lateral — PG SELECT lists Department column names" in {
+    "simple Lateral, PG SELECT lists Department column names" in {
         val r = SqlStatic.staticSql(
             Sql.lateral[Department]("d", Sql.from[Department]("dept"))
         )
@@ -42,7 +42,7 @@ class SqlStaticLateralTest extends Test:
         assert(r.sql.postgres.contains(""""d"."name""""))
     }
 
-    "simple Lateral — MySQL SELECT lists Department column names" in {
+    "simple Lateral, MySQL SELECT lists Department column names" in {
         val r = SqlStatic.staticSql(
             Sql.lateral[Department]("d", Sql.from[Department]("dept"))
         )
@@ -50,13 +50,13 @@ class SqlStaticLateralTest extends Test:
         assert(r.sql.mysql.contains("`d`.`name`"))
     }
 
-    "simple Lateral — PG SQL matches SqlRender.render byte-for-byte" in {
+    "simple Lateral, PG SQL matches SqlRender.render byte-for-byte" in {
         val r  = SqlStatic.staticSql(Sql.lateral[Department]("d", Sql.from[Department]("dept")))
         val rt = Sql.lateral[Department]("d", Sql.from[Department]("dept")).render(SqlBackend.Postgres)
         assert(r.sql.postgres == rt.sql)
     }
 
-    // ── Leaf 2 — correlated LATERAL (inner query has a WHERE bound param) ────
+    // ── Leaf 2, correlated LATERAL (inner query has a WHERE bound param) ────
 
     "correlated Lateral with WHERE bind param lifts correctly" in {
         val r = SqlStatic.staticSql(
@@ -75,14 +75,14 @@ class SqlStaticLateralTest extends Test:
         { val ok = SqlSchema.boundSchemaEqRef(bv, summon[SqlSchema[Int]]); assert(ok) }
     }
 
-    "correlated Lateral — PG SQL matches SqlRender.render byte-for-byte" in {
+    "correlated Lateral, PG SQL matches SqlRender.render byte-for-byte" in {
         val r = SqlStatic.staticSql(Sql.lateral[Person]("lat", Sql.from[Person]("p").where(c => c.p.age >= 18)))
         val rt =
             Sql.lateral[Person]("lat", Sql.from[Person]("p").where(c => c.p.age >= 18)).render(SqlBackend.Postgres)
         assert(r.sql.postgres == rt.sql)
     }
 
-    // ── Leaf 3 — LATERAL with aggregate inner query ───────────────────────────
+    // ── Leaf 3, LATERAL with aggregate inner query ───────────────────────────
 
     "Lateral wrapping a GroupBy + aggregate inner query lifts and renders" in {
         val r = SqlStatic.staticSql(

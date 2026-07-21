@@ -20,7 +20,7 @@ class SqlClientPoolWarmupTest extends Test:
 
     // ── Fake Postgres server helpers ──────────────────────────────────────────
 
-    /** Minimal Postgres startup response bytes (trust auth — no password required).
+    /** Minimal Postgres startup response bytes (trust auth, no password required).
       *
       * Byte layout:
       *   - AuthenticationOk: `R` + Int32(8) + Int32(0)
@@ -65,7 +65,7 @@ class SqlClientPoolWarmupTest extends Test:
 
     /** Fake Postgres server connection handler that completes the trust-auth handshake.
       *
-      * Reads and discards the startup message (one `inbound.take` is sufficient — the Postgres client sends the full startup message in one
+      * Reads and discards the startup message (one `inbound.take` is sufficient, the Postgres client sends the full startup message in one
       * write). Then sends `AuthenticationOk + BackendKeyData + ReadyForQuery` so `pgConnect` considers the connection open.
       *
       * Calls `onAccept` just before reading the startup message (counted as an "in-progress" accept). Calls `onHandshakeDone` after the
@@ -77,7 +77,7 @@ class SqlClientPoolWarmupTest extends Test:
         onHandshakeDone: Unit < Async = ()
     )(using Frame): Unit < Async =
         onAccept.andThen {
-            // Read and discard the startup message — we don't parse it, just drain one chunk.
+            // Read and discard the startup message, we don't parse it, just drain one chunk.
             Abort.run[Closed](conn.inbound.safe.take).andThen {
                 Abort.run[Closed](conn.outbound.safe.put(pgAuthOkBytes)).andThen {
                     onHandshakeDone
@@ -124,7 +124,7 @@ class SqlClientPoolWarmupTest extends Test:
                                 assert(count == 3, s"Expected 3 connections opened, got $count")
                             }
                         case Result.Failure(e) =>
-                            // Warm-up may fail if startup handshake times out — count what arrived.
+                            // Warm-up may fail if startup handshake times out, count what arrived.
                             acceptCount.get.map { count =>
                                 assert(count == 3, s"Expected 3 accepts, got $count; init failure: $e")
                             }
@@ -253,7 +253,7 @@ class SqlClientPoolWarmupTest extends Test:
             // so the client's pgConnect will be suspended waiting for auth. The test cancels
             // the init fiber mid-warm-up and verifies the fiber was interrupted.
             //
-            // Synchronization: a Latch(3) gates the interrupt — we wait until all 3 warm-up
+            // Synchronization: a Latch(3) gates the interrupt, we wait until all 3 warm-up
             // connections have sent their startup message (server has read it) before interrupting,
             // ensuring the fiber is definitively blocked on auth response.
             Latch.initWith(3) { allStarted =>
@@ -261,7 +261,7 @@ class SqlClientPoolWarmupTest extends Test:
                     // Read startup message → release latch (signal "I am blocked") → hang forever.
                     Abort.run[Closed](conn.inbound.safe.take).andThen {
                         allStarted.release.andThen {
-                            // Never send a response — the warm-up hangs until cancelled.
+                            // Never send a response, the warm-up hangs until cancelled.
                             Async.sleep(Duration.Infinity)
                         }
                     }
@@ -296,7 +296,7 @@ class SqlClientPoolWarmupTest extends Test:
                 // Query handles: also complete trust-auth + ReadyForQuery.
                 // We count ALL accepts but then subtract 'minConnections' to get post-init opens.
                 // Use a short queryTimeout (200ms) so the query times out quickly against the fake server
-                // (which doesn't understand SQL) — the test only cares about the open-count assertion.
+                // (which doesn't understand SQL), the test only cares about the open-count assertion.
                 kyo.internal.FakeServer.listenPort { conn =>
                     openCount.incrementAndGet.unit.andThen(pgTrustHandler(conn))
                 }.flatMap { listener =>
@@ -315,7 +315,7 @@ class SqlClientPoolWarmupTest extends Test:
                         case Result.Success(client) =>
                             // Record opens after warm-up completed.
                             openCount.get.flatMap { openedDuringWarmup =>
-                                // Run one query — should NOT open a new connection.
+                                // Run one query, should NOT open a new connection.
                                 Abort.run[SqlException](SqlClient.let(client)(client.query("SELECT 1"))).flatMap { _ =>
                                     openCount.get.map { openedAfterQuery =>
                                         val newOpens = openedAfterQuery - openedDuringWarmup
@@ -338,7 +338,7 @@ class SqlClientPoolWarmupTest extends Test:
 
     // ── warm-up opens all connections concurrently ────────────────────────────
 
-    "warm-up issues all opens concurrently — fake server observes max-simultaneous-accept == minConnections" in {
+    "warm-up issues all opens concurrently, fake server observes max-simultaneous-accept == minConnections" in {
         Scope.run {
             val minConns = 3
             // Strategy: each handler increments a counter when it enters AND blocks at a latch.
@@ -443,19 +443,19 @@ class SqlClientPoolWarmupTest extends Test:
                         acceptCount.getAndIncrement.flatMap { n =>
                             if n < 2 then
                                 // Successful handshake: complete trust-auth, then wait for the client to close the socket.
-                                // When the client closes, inbound.take returns Result.Failure(Closed) — we release the latch.
+                                // When the client closes, inbound.take returns Result.Failure(Closed), we release the latch.
                                 Abort.run[Closed](conn.inbound.safe.take).andThen {
                                     Abort.run[Closed](conn.outbound.safe.put(pgAuthOkBytes)).andThen {
                                         // Block until client closes this connection.
                                         Abort.run[Closed](conn.inbound.safe.take).andThen {
                                             // Whether the read returned Success or Failure(Closed), both mean the
-                                            // client has closed or is about to close — release the latch.
+                                            // client has closed or is about to close, release the latch.
                                             clientClosedLatch.release
                                         }
                                     }
                                 }
                             else
-                                // Refuse: immediately close — 3rd+ connections fail with SqlException.Connection.
+                                // Refuse: immediately close, 3rd+ connections fail with SqlException.Connection.
                                 Sync.Unsafe.defer(conn.close())
                         }
                     }.flatMap { listener =>

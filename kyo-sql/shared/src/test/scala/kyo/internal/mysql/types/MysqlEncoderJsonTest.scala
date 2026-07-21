@@ -10,7 +10,7 @@ import kyo.internal.mysql.MysqlBufferWriter
   *   - Encoder writes a lenenc-int length prefix followed by raw UTF-8 JSON text (`writeLenencString`).
   *   - Decoder consumes raw UTF-8 bytes (the lenenc prefix is stripped by `BinaryResultsetRowUnmarshaller`).
   *
-  * These are pure codec tests on in-memory byte buffers — no schema layer, no database container. Schema-layer JSON tests (the
+  * These are pure codec tests on in-memory byte buffers, no schema layer, no database container. Schema-layer JSON tests (the
   * [[kyo.JsonText]] / [[kyo.SqlSchema]] surface) live in `kyo/SqlSchemaJsonTest.scala`.
   */
 class MysqlEncoderJsonTest extends kyo.Test:

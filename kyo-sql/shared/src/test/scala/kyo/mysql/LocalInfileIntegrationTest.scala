@@ -155,11 +155,11 @@ class LocalInfileIntegrationTest extends kyo.Test:
                             case Result.Failure(err: UploadError) =>
                                 assert(err.msg == "synthetic mid-transfer error", s"Expected UploadError, got: $err")
                             case Result.Success(Result.Failure(sqle)) =>
-                                // Server may reject the upload if it received no data — also acceptable.
+                                // Server may reject the upload if it received no data, also acceptable.
                                 // But a SqlException is not the primary expected outcome; the stream error is.
                                 assert(false, s"Expected UploadError to propagate, got SqlException: $sqle")
                             case Result.Success(Result.Success(_)) =>
-                                // If load succeeded, the stream error wasn't surfaced — fail the test.
+                                // If load succeeded, the stream error wasn't surfaced, fail the test.
                                 assert(false, "Expected stream error to propagate, but upload succeeded")
                             case Result.Success(Result.Panic(t)) =>
                                 Log.error(s"[test] Unexpected panic: ${t.getMessage}").andThen(
@@ -183,8 +183,8 @@ class LocalInfileIntegrationTest extends kyo.Test:
             Scope.run {
                 withMyClient { client =>
                     // Reference a non-existent column in the LOAD DATA column list.
-                    // MySQL resolves the column list at parse / validation time — before sending the
-                    // LOCAL_INFILE_REQUEST (0xFB) — so it returns an ERR packet immediately.
+                    // MySQL resolves the column list at parse / validation time, before sending the
+                    // LOCAL_INFILE_REQUEST (0xFB), so it returns an ERR packet immediately.
                     // This exercises the 0xFF branch in SimpleQueryExchange.runLocalInfile and
                     // surfaces a SqlException.Server with ER_BAD_FIELD_ERROR (error 1054).
                     withLoadTable(client) { tbl =>
@@ -195,7 +195,7 @@ class LocalInfileIntegrationTest extends kyo.Test:
                             client.loadLocalInfile(sql, csvStream(Seq("1,row,extra\n")))
                         ).flatMap {
                             case Result.Failure(e: SqlException.Server) =>
-                                // ER_BAD_FIELD_ERROR (1054) — unknown column reference.
+                                // ER_BAD_FIELD_ERROR (1054), unknown column reference.
                                 val code = e.extra.getOrElse("code", "")
                                 assert(
                                     code == "1054",
@@ -261,7 +261,7 @@ class LocalInfileIntegrationTest extends kyo.Test:
                         })
                         val sql =
                             s"LOAD DATA LOCAL INFILE 'inf.csv' INTO TABLE $tbl FIELDS TERMINATED BY ',' LINES TERMINATED BY '\\n' (id, name)"
-                        // Use a 2-second timeout — shorter than the infinite upload.
+                        // Use a 2-second timeout, shorter than the infinite upload.
                         // LocalInfileExchange.run registers a Scope.ensure that sends the empty terminator
                         // and drains the server response on any error exit, including Timeout cancellation.
                         // Scope.run inside MysqlConnection.loadLocalInfile discharges that finalizer before
@@ -272,7 +272,7 @@ class LocalInfileIntegrationTest extends kyo.Test:
                             )
                         )
                         uploadResult.flatMap { result =>
-                            // The upload must have timed out — Async.timeout(2.seconds) over an infinite stream
+                            // The upload must have timed out, Async.timeout(2.seconds) over an infinite stream
                             // MUST fire Timeout. Panic here would indicate a production bug.
                             val checkTimeout: Unit < (Sync & Async) =
                                 result match
@@ -302,7 +302,7 @@ class LocalInfileIntegrationTest extends kyo.Test:
                                 //       fails with SqlException.Server or SqlException.Connection (e.g.,
                                 //       "Got packets out of order", "Connection closed while reading", etc.).
                                 //
-                                // The ONLY banned outcome is a Panic — an unexpected exception indicates a
+                                // The ONLY banned outcome is a Panic, an unexpected exception indicates a
                                 // production bug. Any SqlException is an expected, honest failure.
                                 Abort.run[SqlException](client.query("SELECT 42")).flatMap {
                                     case Result.Success(rows) =>
@@ -317,7 +317,7 @@ class LocalInfileIntegrationTest extends kyo.Test:
                                     case Result.Failure(other) =>
                                         // Any other SqlException indicates the production code allowed observable protocol
                                         // corruption (race between Async.timeout interrupt and Scope.ensure cleanup). This
-                                        // is UNSAFE — the caller sees a confusing error from a known-broken state instead
+                                        // is UNSAFE, the caller sees a confusing error from a known-broken state instead
                                         // of either a clean connection or an explicit "unusable" signal.
                                         // Fix: ensure cleanup runs to completion before the cancellation propagates, OR
                                         // ensure markCorrupted always fires when cleanup is racing.

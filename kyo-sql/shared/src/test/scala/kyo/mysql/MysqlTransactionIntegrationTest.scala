@@ -6,16 +6,16 @@ import kyo.internal.SqlSharedContainers
 /** Integration tests for MySQL transactions.
   *
   * Tests:
-  *   1. commit persists data — row visible in a separate query after commit
-  *   2. rollback on Abort removes data — row not visible after Abort.fail
-  *   3. panic rolls back — unhandled throw causes rollback
-  *   4. nested SAVEPOINT on success releases savepoint — inner success issues RELEASE SAVEPOINT
-  *   5. nested SAVEPOINT on inner abort rolls back to savepoint — outer continues
-  *   6. nested SAVEPOINT on outer abort rolls back outer — full rollback
-  *   7. REPEATABLE READ isolation level accepted — SET TRANSACTION ISOLATION LEVEL REPEATABLE READ
-  *   8. SERIALIZABLE isolation level accepted — SET TRANSACTION ISOLATION LEVEL SERIALIZABLE
-  *   9. read-only rejects INSERT — SqlException.Server from the server
-  *   10. DDL implicit commit caveat — CREATE TABLE inside transaction commits, contradicting caller expectation
+  *   1. commit persists data, row visible in a separate query after commit
+  *   2. rollback on Abort removes data, row not visible after Abort.fail
+  *   3. panic rolls back, unhandled throw causes rollback
+  *   4. nested SAVEPOINT on success releases savepoint, inner success issues RELEASE SAVEPOINT
+  *   5. nested SAVEPOINT on inner abort rolls back to savepoint, outer continues
+  *   6. nested SAVEPOINT on outer abort rolls back outer, full rollback
+  *   7. REPEATABLE READ isolation level accepted, SET TRANSACTION ISOLATION LEVEL REPEATABLE READ
+  *   8. SERIALIZABLE isolation level accepted, SET TRANSACTION ISOLATION LEVEL SERIALIZABLE
+  *   9. read-only rejects INSERT, SqlException.Server from the server
+  *   10. DDL implicit commit caveat, CREATE TABLE inside transaction commits, contradicting caller expectation
   *
   * Each test runs against a fresh schema in the per-fork-JVM shared MySQL container (via [[SqlSharedContainers.withFreshSchema]]).
   */
@@ -46,7 +46,7 @@ class MysqlTransactionIntegrationTest extends kyo.Test:
 
     // ── commit persists data ───────────────────────────────────────────────────
 
-    "transaction commit persists data — row visible after COMMIT in separate query" in {
+    "transaction commit persists data, row visible after COMMIT in separate query" in {
         Scope.run {
             SqlSharedContainers.withFreshSchema(SqlSharedContainers.Backend.MySQL) { ctx =>
                 initClient(ctx) { client =>
@@ -68,7 +68,7 @@ class MysqlTransactionIntegrationTest extends kyo.Test:
 
     // ── rollback on Abort removes data ────────────────────────────────────────
 
-    "transaction rollback on Abort removes data — row NOT visible after rollback" in {
+    "transaction rollback on Abort removes data, row NOT visible after rollback" in {
         Scope.run {
             SqlSharedContainers.withFreshSchema(SqlSharedContainers.Backend.MySQL) { ctx =>
                 initClient(ctx) { client =>
@@ -96,7 +96,7 @@ class MysqlTransactionIntegrationTest extends kyo.Test:
 
     // ── panic rolls back ──────────────────────────────────────────────────────
 
-    "transaction rollback on panic — rollback called on failure path restores clean state" in {
+    "transaction rollback on panic, rollback called on failure path restores clean state" in {
         Scope.run {
             SqlSharedContainers.withFreshSchema(SqlSharedContainers.Backend.MySQL) { ctx =>
                 initClient(ctx) { client =>
@@ -127,7 +127,7 @@ class MysqlTransactionIntegrationTest extends kyo.Test:
 
     // ── nested savepoint: inner success releases savepoint ───────────────────
 
-    "nested SAVEPOINT on inner success releases savepoint — outer commits normally" in {
+    "nested SAVEPOINT on inner success releases savepoint, outer commits normally" in {
         Scope.run {
             SqlSharedContainers.withFreshSchema(SqlSharedContainers.Backend.MySQL) { ctx =>
                 initClient(ctx) { client =>
@@ -157,7 +157,7 @@ class MysqlTransactionIntegrationTest extends kyo.Test:
 
     // ── nested savepoint: inner abort rolls back to savepoint ────────────────
 
-    "nested SAVEPOINT on inner abort rolls back to savepoint — outer continues" in {
+    "nested SAVEPOINT on inner abort rolls back to savepoint, outer continues" in {
         Scope.run {
             SqlSharedContainers.withFreshSchema(SqlSharedContainers.Backend.MySQL) { ctx =>
                 initClient(ctx) { client =>
@@ -168,7 +168,7 @@ class MysqlTransactionIntegrationTest extends kyo.Test:
                         _ <- client.transaction {
                             for
                                 _ <- client.executeRaw(s"INSERT INTO $tableName VALUES (1)")
-                                // Inner savepoint — will be rolled back via Abort.fail.
+                                // Inner savepoint, will be rolled back via Abort.fail.
                                 _ <- Abort.run[SqlException] {
                                     client.transaction {
                                         client.executeRaw(s"INSERT INTO $tableName VALUES (2)").andThen(
@@ -192,7 +192,7 @@ class MysqlTransactionIntegrationTest extends kyo.Test:
 
     // ── full rollback on outer abort ──────────────────────────────────────────
 
-    "full rollback on outer abort — both inner and outer rows gone" in {
+    "full rollback on outer abort, both inner and outer rows gone" in {
         Scope.run {
             SqlSharedContainers.withFreshSchema(SqlSharedContainers.Backend.MySQL) { ctx =>
                 initClient(ctx) { client =>
@@ -229,7 +229,7 @@ class MysqlTransactionIntegrationTest extends kyo.Test:
 
     // ── REPEATABLE READ isolation level ───────────────────────────────────────
 
-    "REPEATABLE READ isolation level — SET TRANSACTION command accepted without error" in {
+    "REPEATABLE READ isolation level, SET TRANSACTION command accepted without error" in {
         // Verifies that beginTransaction(RepeatableRead) completes without raising SqlException.
         // The SET TRANSACTION ISOLATION LEVEL command is accepted by the server even if
         // @@transaction_isolation inside the transaction reflects the session default.
@@ -241,7 +241,7 @@ class MysqlTransactionIntegrationTest extends kyo.Test:
                             client.query("SELECT 1").unit
                         }
                     }.map {
-                        case Result.Success(_) => succeed // no error — SET TRANSACTION REPEATABLE READ accepted
+                        case Result.Success(_) => succeed // no error, SET TRANSACTION REPEATABLE READ accepted
                         case Result.Failure(e) => fail(s"Unexpected error for REPEATABLE READ: $e")
                         case Result.Panic(t)   => fail(s"Unexpected panic: ${t.getMessage}")
                     }
@@ -252,7 +252,7 @@ class MysqlTransactionIntegrationTest extends kyo.Test:
 
     // ── SERIALIZABLE isolation level ──────────────────────────────────────────
 
-    "SERIALIZABLE isolation level — SET TRANSACTION command accepted without error" in {
+    "SERIALIZABLE isolation level, SET TRANSACTION command accepted without error" in {
         // Verifies that beginTransaction(Serializable) completes without raising SqlException.
         // NOTE: @@transaction_isolation shows the SESSION default inside a transaction and
         // does NOT reflect a per-transaction SET TRANSACTION override in MySQL 8.x.
@@ -265,7 +265,7 @@ class MysqlTransactionIntegrationTest extends kyo.Test:
                             client.query("SELECT 1").unit
                         }
                     }.map {
-                        case Result.Success(_) => succeed // no error — SET TRANSACTION SERIALIZABLE accepted
+                        case Result.Success(_) => succeed // no error, SET TRANSACTION SERIALIZABLE accepted
                         case Result.Failure(e) => fail(s"Unexpected error for SERIALIZABLE: $e")
                         case Result.Panic(t)   => fail(s"Unexpected panic: ${t.getMessage}")
                     }
@@ -276,7 +276,7 @@ class MysqlTransactionIntegrationTest extends kyo.Test:
 
     // ── read-only transaction rejects INSERT ──────────────────────────────────
 
-    "read-only transaction rejects INSERT — SqlException.Server raised" in {
+    "read-only transaction rejects INSERT, SqlException.Server raised" in {
         Scope.run {
             SqlSharedContainers.withFreshSchema(SqlSharedContainers.Backend.MySQL) { ctx =>
                 initClient(ctx, maxConns = 1) { client =>
@@ -308,7 +308,7 @@ class MysqlTransactionIntegrationTest extends kyo.Test:
 
     // ── DDL implicit commit caveat ────────────────────────────────────────────
 
-    "DDL implicit commit caveat — CREATE TABLE inside transaction commits prior DML (MySQL InnoDB behavior)" in {
+    "DDL implicit commit caveat, CREATE TABLE inside transaction commits prior DML (MySQL InnoDB behavior)" in {
         // InnoDB performs an implicit COMMIT before DDL statements. This test documents that a
         // subsequent ROLLBACK does NOT undo the INSERT that was committed by the DDL implicit commit.
         Scope.run {
@@ -326,7 +326,7 @@ class MysqlTransactionIntegrationTest extends kyo.Test:
                                     _ <- client.executeRaw(s"INSERT INTO $dataTable VALUES (42)")
                                     // DDL causes implicit COMMIT of the INSERT above.
                                     _ <- client.executeRaw(s"CREATE TABLE $ddlTable (x INT)")
-                                    // Force outer rollback via synthetic abort — verifies the INSERT survives.
+                                    // Force outer rollback via synthetic abort, verifies the INSERT survives.
                                     _ <- Abort.fail(SqlException.Request("force rollback", kyo.Maybe.Absent, summon[Frame]))
                                 yield ()
                             }
@@ -336,7 +336,7 @@ class MysqlTransactionIntegrationTest extends kyo.Test:
                         _    <- client.executeRaw(s"DROP TABLE IF EXISTS $ddlTable")
                     yield
                         val count = rowsAsString(rows).headOption.getOrElse("0").toInt
-                        // The INSERT was committed by the DDL's implicit commit — ROLLBACK cannot undo it.
+                        // The INSERT was committed by the DDL's implicit commit, ROLLBACK cannot undo it.
                         assert(count == 1, s"Expected 1 row (DDL implicit commit preserved INSERT), got $count")
                     end for
                 }
