@@ -1219,6 +1219,13 @@ lazy val `kyo-http` =
         )
         .wasmSettings(`wasm-settings`)
 
+// One-off (NOT a sourceGenerator): regenerates the checked-in tiktoken rank tables from the
+// reference vocab under `kyo-ai/reference-vocab`. Run by hand via `sbt kyo-aiJVM/genTiktokenVocab`
+// when the reference vocabulary changes; the emitted O200kRanks.scala / Cl100kRanks.scala are
+// committed sources, not build-time sourceManaged artifacts.
+lazy val genTiktokenVocab =
+    taskKey[Seq[File]]("Regenerate the checked-in pure-Scala tiktoken rank tables (O200kRanks/Cl100kRanks).")
+
 lazy val `kyo-ai` =
     crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
         .crossType(CrossType.Full)
@@ -1226,7 +1233,13 @@ lazy val `kyo-ai` =
         .dependsOn(`kyo-core`, `kyo-schema`, `kyo-http`, `kyo-actor`, `kyo-jsonrpc`, `kyo-jsonrpc-http`, `kyo-mcp`)
         .withKyoTest
         .settings(`kyo-settings`)
-        .jvmSettings(mimaCheck(false))
+        .jvmSettings(
+            mimaCheck(false),
+            genTiktokenVocab := TiktokenVocabGen.generate(
+                (ThisBuild / baseDirectory).value / "kyo-ai" / "reference-vocab",
+                (ThisBuild / baseDirectory).value / "kyo-ai" / "shared" / "src" / "main" / "scala" / "kyo" / "ai"
+            )
+        )
         .jsSettings(
             `js-settings`,
             scalaJSLinkerConfig ~= { _.withModuleKind(ModuleKind.CommonJSModule) }
