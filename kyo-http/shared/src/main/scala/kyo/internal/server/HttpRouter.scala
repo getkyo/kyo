@@ -27,26 +27,7 @@ final private[kyo] class HttpRouter private (
 ):
     import HttpRouter.*
 
-    /** Find an endpoint matching the given method and path.
-      *
-      * Per RFC 9110 §9.3.2, HEAD is implicitly supported wherever GET is registered.
-      */
-    def find(method: HttpMethod, path: String): Result[FindError, RouteMatch] =
-        val methodIdx = HttpRouter.methodIndex(method)
-        if maxCaptures == 0 then
-            val nodeIdx = findNodeIndexNoCaptures(path)
-            resolveEndpoint(nodeIdx, methodIdx, emptyCaptures, 0)
-        else
-            val captureValues = new Array[String](maxCaptures)
-            val nodeAndCount  = findNodeIndex(path, captureValues)
-            val nodeIdx       = nodeAndCount >> 16
-            val captureCount  = nodeAndCount & 0xffff
-            resolveEndpoint(nodeIdx, methodIdx, captureValues, captureCount)
-        end if
-    end find
-
-    /** Find endpoint using ParsedRequest byte-level matching. Populates the reusable RouteLookup instead of allocating RouteMatch. Result
-      * is stored in the lookup object.
+    /** Find endpoint using ParsedRequest byte-level matching. Populates the reusable RouteLookup rather than allocating a match object; the result is stored in the lookup.
       */
     def findParsed(method: HttpMethod, request: ParsedRequest, lookup: RouteLookup): Result[FindError, Unit] =
         val methodIdx = HttpRouter.methodIndex(method)
@@ -117,28 +98,6 @@ final private[kyo] class HttpRouter private (
         end if
     end resolveParsedEndpoint
 
-    private def resolveEndpoint(
-        nodeIdx: Int,
-        methodIdx: Int,
-        captureValues: Array[String],
-        captureCount: Int
-    ): Result[FindError, RouteMatch] =
-        if nodeIdx < 0 then NotFoundResult
-        else
-            val node       = nodes(nodeIdx)
-            val handlerIdx = node.endpointIndices(methodIdx)
-            if handlerIdx >= 0 then Result.succeed(buildMatch(handlerIdx, captureValues, captureCount))
-            else if methodIdx == HeadMethodIdx then
-                val getIdx = node.endpointIndices(GetMethodIdx)
-                if getIdx >= 0 then Result.succeed(buildMatch(getIdx, captureValues, captureCount))
-                else methodNotAllowedResult(node)
-            else if methodIdx == OptionsMethodIdx && node.allowedMethods.nonEmpty then
-                Result.fail(FindError.Options(buildOptionsHeaders(node.allowedMethods)))
-            else methodNotAllowedResult(node)
-            end if
-        end if
-    end resolveEndpoint
-
     private def findFirstEndpoint(node: Node): Int =
         @tailrec def loop(i: Int): Int =
             if i >= MethodCount then -1
@@ -175,82 +134,6 @@ final private[kyo] class HttpRouter private (
         loop(0, 0)
     end maxCaptures
 
-    private val emptyCaptures: Array[String] = Array.empty[String]
-
-    private def buildMatch(endpointIdx: Int, captureValues: Array[String], captureCount: Int): RouteMatch =
-        val wireNames = captureWireNames(endpointIdx)
-        val captures =
-            if captureCount == 0 then Dict.empty[String, String]
-            else
-                val builder = DictBuilder.init[String, String]
-                @tailrec def loop(i: Int): Unit =
-                    if i < captureCount && i < wireNames.size then
-                        discard(builder.add(wireNames(i), captureValues(i)))
-                        loop(i + 1)
-                loop(0)
-                builder.result()
-        RouteMatch(
-            endpoints(endpointIdx),
-            captures,
-            streamingReqFlags(endpointIdx),
-            streamingRespFlags(endpointIdx)
-        )
-    end buildMatch
-
-    /** Trie walk with capture extraction. Returns packed (nodeIdx << 16 | captureCount). nodeIdx is -1 on miss. */
-    private def findNodeIndex(path: String, captureValues: Array[String]): Int =
-        val len = path.length
-
-        @tailrec def loop(nodeIdx: Int, pos: Int, captureCount: Int): Int =
-            val start = skipSlashes(path, pos, len)
-            if start >= len then (nodeIdx << 16) | captureCount
-            else
-                val segEnd = findSegmentEnd(path, start, len)
-                val node   = nodes(nodeIdx)
-
-                val literalIdx = binarySearchSegment(node.literalSegments, path, start, segEnd)
-                if literalIdx >= 0 then loop(node.literalIndices(literalIdx), segEnd, captureCount)
-                else if node.captureChild >= 0 then
-                    if captureCount < captureValues.length then
-                        captureValues(captureCount) = urlDecodeSegment(path, start, segEnd)
-                    end if
-                    loop(node.captureChild, segEnd, captureCount + 1)
-                else if node.restChild >= 0 then
-                    if captureCount < captureValues.length then
-                        captureValues(captureCount) = path.substring(start)
-                    end if
-                    (node.restChild << 16) | (captureCount + 1)
-                else -1 << 16
-                end if
-            end if
-        end loop
-
-        loop(0, 0, 0)
-    end findNodeIndex
-
-    /** Trie walk without capture extraction — avoids array allocation entirely. */
-    private def findNodeIndexNoCaptures(path: String): Int =
-        val len = path.length
-
-        @tailrec def loop(nodeIdx: Int, pos: Int): Int =
-            val start = skipSlashes(path, pos, len)
-            if start >= len then nodeIdx
-            else
-                val segEnd = findSegmentEnd(path, start, len)
-                val node   = nodes(nodeIdx)
-
-                val literalIdx = binarySearchSegment(node.literalSegments, path, start, segEnd)
-                if literalIdx >= 0 then loop(node.literalIndices(literalIdx), segEnd)
-                else if node.captureChild >= 0 then loop(node.captureChild, segEnd)
-                else if node.restChild >= 0 then node.restChild
-                else -1
-                end if
-            end if
-        end loop
-
-        loop(0, 0)
-    end findNodeIndexNoCaptures
-
     private def binarySearchSegment(
         segments: Span[String],
         path: String,
@@ -271,13 +154,6 @@ final private[kyo] class HttpRouter private (
 end HttpRouter
 
 private[kyo] object HttpRouter:
-
-    case class RouteMatch(
-        endpoint: HttpHandler[?, ?, ?],
-        pathCaptures: Dict[String, String],
-        isStreamingRequest: Boolean,
-        isStreamingResponse: Boolean
-    )
 
     enum FindError derives CanEqual:
         case MethodNotAllowed(allowedMethods: Set[HttpMethod])
@@ -546,10 +422,6 @@ private[kyo] object HttpRouter:
         if pos < len && path.charAt(pos) == '/' then skipSlashes(path, pos + 1, len)
         else pos
 
-    @tailrec private def findSegmentEnd(path: String, pos: Int, len: Int): Int =
-        if pos >= len || path.charAt(pos) == '/' then pos
-        else findSegmentEnd(path, pos + 1, len)
-
     private def compareSegment(segment: String, path: String, start: Int, end: Int): Int =
         val segLen  = segment.length
         val pathLen = end - start
@@ -564,17 +436,5 @@ private[kyo] object HttpRouter:
                 else loop(i + 1)
         loop(0)
     end compareSegment
-
-    /** URL-decode a path segment, avoiding allocation when no encoding is present. */
-    private def urlDecodeSegment(path: String, start: Int, end: Int): String =
-        // Fast check: if no '%' in the segment, substring is sufficient
-        @tailrec def hasPercent(i: Int): Boolean =
-            if i >= end then false
-            else if path.charAt(i) == '%' then true
-            else hasPercent(i + 1)
-        val raw = path.substring(start, end)
-        if hasPercent(start) then java.net.URLDecoder.decode(raw, "UTF-8")
-        else raw
-    end urlDecodeSegment
 
 end HttpRouter

@@ -100,6 +100,59 @@ final private[kyo] class ParsedRequestBuilder(using AllowUnsafe):
         segmentCount += 1
     end addPathSegment
 
+    /** Rewrites the stored path as "/" plus the surviving segments joined by "/".
+      *
+      * Called only when parsing actually resolved a dot segment, which is rare, so the ordinary request pays nothing: the path is stored
+      * once from the raw bytes and left alone. When resolution DID change the path, storing the raw form would leave the request routed on
+      * one path while reporting another: `pathAsString` reaches handlers and filters as `req.url.path`, so `/public/../admin/secret` would
+      * route to `admin/secret` while every log line and every filter decision read `/public/../admin/secret`. A recipient acting on one
+      * view while another recipient acts on the other is the same disagreement this parser refuses in message framing, so the two are kept
+      * in agreement here rather than left to whoever reads them.
+      *
+      * The segments are already stored in `rawBytes`; this appends a fresh joined copy and repoints the path at it, since the buffer is
+      * append-only and the segment offsets must stay valid.
+      */
+    def setPathFromSegments(): Unit =
+        val newOff = rawBytes.size
+        if segmentCount == 0 then rawBytes.writeByte('/'.toByte)
+        else
+            var i = 0
+            while i < segmentCount do
+                rawBytes.writeByte('/'.toByte)
+                val segOff = segOffsets(i * 2)
+                val segLen = segOffsets(i * 2 + 1)
+                rawBytes.writeBytes(rawBytes.array, segOff, segLen)
+                i += 1
+            end while
+        end if
+        pathOff = newOff
+        pathLen = rawBytes.size - newOff
+        pathSet = true
+    end setPathFromSegments
+
+    /** Drops the most recently added path segment, or does nothing when there is none.
+      *
+      * This is how a ".." segment is applied while the path is being parsed (RFC 3986 section 5.2.4 removes dot segments), so the router and
+      * every capture see the resolved path rather than one still carrying traversal. The segment's bytes stay in the raw buffer and are simply
+      * no longer addressed, which costs a few unreferenced bytes and keeps the append-only buffer append-only.
+      *
+      * A ".." with nothing left to drop is a no-op, per the same section: a path cannot be walked above its root.
+      */
+
+    def removeLastPathSegment(): Unit =
+        if segmentCount > 0 then
+            segOffsetCount -= 2
+            segmentCount -= 1
+
+    /** Whether the accumulated bytes have outgrown the 16-bit offsets the packed layout addresses them with.
+      *
+      * `build()` writes every path, segment and header offset as a two-byte field, so once the raw buffer passes 65535 bytes an offset
+      * wraps and a later read lands somewhere else entirely: a header name or value resolves to an arbitrary window of the buffer, which
+      * is request-supplied data at a request-influenced offset. The parser asks this before building and refuses the request instead,
+      * because a wrapped offset is not a degraded answer, it is a confidently wrong one.
+      */
+    def offsetsOverflowed: Boolean = rawBytes.size > 0xffff
+
     def addHeader(
         nameSrc: Array[Byte],
         nameOff: Int,

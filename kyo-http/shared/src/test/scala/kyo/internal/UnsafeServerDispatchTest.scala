@@ -636,7 +636,11 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
             }
         }
 
-        "413 response preserves keep-alive" in {
+        // A 413 declines an over-limit body it never reads. Reusing the connection would let those unconsumed body
+        // bytes be parsed as the next request (the unconsumed-body smuggling class, Undertow CVE-2020-10719, RFC 9112
+        // section 9.3), so the server answers Connection: close and tears the connection down rather than serve a
+        // pipelined follow-up. request2's bytes must NOT be served.
+        "413 response closes the connection instead of reusing it (RFC 9112 section 9.3)" in {
             val handler = HttpHandler.getText("hello")(_ => "world")
             val router  = HttpRouter(Seq(handler), Absent)
 
@@ -646,8 +650,8 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
 
             // First request: Content-Length exceeds limit (keep-alive is default in HTTP/1.1)
             val request1 = "POST /hello HTTP/1.1\r\nHost: localhost\r\nContent-Length: 100\r\n\r\n"
-            // Second request: valid GET (with Connection: close)
-            val request2 = "GET /hello HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n"
+            // A pipelined GET that must NOT be served, because the connection is torn down after the 413.
+            val request2 = "GET /hello HTTP/1.1\r\nHost: localhost\r\n\r\n"
             discard(inbound.offer(Span.fromUnsafe(request1.getBytes(StandardCharsets.US_ASCII))))
             discard(inbound.offer(Span.fromUnsafe(request2.getBytes(StandardCharsets.US_ASCII))))
 
@@ -655,10 +659,12 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
 
             collectResponseAsync(outbound).map { response1 =>
                 assert(response1.contains("HTTP/1.1 413 Payload Too Large"), s"First response expected 413, got: $response1")
-                collectResponseAsync(outbound).map { response2 =>
-                    assert(response2.contains("HTTP/1.1 200 OK"), s"Second response expected 200, got: $response2")
-                    assert(response2.contains("world"), s"Second response expected 'world', got: $response2")
-                }
+                assert(response1.contains("Connection: close"), s"413 must announce Connection: close, got: $response1")
+                // Nothing more is written: the pipelined request2 was not served.
+                val servedFollowUp = outbound.poll() match
+                    case Result.Success(Present(_)) => true
+                    case _                          => false
+                assert(!servedFollowUp, "the pipelined request after a 413 must not be served")
             }
         }
 
@@ -782,9 +788,8 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
         }
 
         "chunked body exceeding max returns 413" in {
-            // TODO: This test verifies that chunked bodies that accumulate beyond maxContentLength
-            // are rejected with 413. This requires chunked body accumulation checks which may not
-            // be implemented yet. The test documents the expected behavior.
+            // A chunked body on a buffered route is dechunked bounded by maxContentLength; a body decoding to more
+            // than the limit is answered 413, not buffered without limit (CWE-400, RFC 9112 section 6.1).
             val route = HttpRoute.postRaw("echo").request(_.bodyText).response(_.bodyText)
             val handler = route.handler { req =>
                 HttpResponse.ok(req.fields.body)
@@ -795,7 +800,7 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
             val inbound  = Channel.Unsafe.init[Span[Byte]](16)
             val outbound = Channel.Unsafe.init[Span[Byte]](16)
 
-            // Send a chunked request with body exceeding maxContentLength
+            // Send a chunked request whose decoded body (15 bytes) exceeds maxContentLength (10).
             // Chunk format: hex-size\r\ndata\r\n ... 0\r\n\r\n
             val chunk1 = "a\r\n0123456789\r\n" // 10 bytes (at limit)
             val chunk2 = "5\r\nABCDE\r\n"      // 5 more bytes (over limit)
@@ -806,15 +811,10 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
 
             UnsafeServerDispatch.serve(router, inbound, outbound, config)
 
-            // For now, the server may not enforce chunked body limits yet.
-            // This test documents the expectation that eventually it should return 413.
-            // Accept either 413 or 200 (if not yet implemented) — the test is informational.
             collectResponseAsync(outbound).map { response =>
-                // If chunked accumulation check is implemented, expect 413
-                // If not yet, 200 is acceptable (test documents future behavior)
                 assert(
-                    response.contains("413") || response.contains("200"),
-                    s"Expected either 413 (ideal) or 200 (acceptable), got: $response"
+                    response.contains("HTTP/1.1 413 Payload Too Large"),
+                    s"an over-limit chunked body on a buffered route must be 413'd, got: $response"
                 )
             }
         }

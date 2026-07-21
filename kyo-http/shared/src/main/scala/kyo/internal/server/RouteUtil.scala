@@ -470,6 +470,20 @@ private[kyo] object RouteUtil:
                                     discard(headerBuilder += encoded)
                                     cookieBuilder
                                 case HttpRoute.Field.Param.Location.Cookie =>
+                                    // The request-side mirror of Set-Cookie serialization, and the same grammar applies: RFC 6265
+                                    // section 4.2.1 makes "; " the separator BETWEEN cookie-pairs, so a value carrying one does not
+                                    // extend a cookie, it appends another. Concatenating unchecked would let a caller-supplied value
+                                    // add or overwrite cookies the caller never named, and a CR or LF would end the header outright.
+                                    // Refused rather than escaped for the reason the response side gives: the grammar defines no
+                                    // escape, so there is nothing to encode to that a server would decode back.
+                                    require(
+                                        HttpHeaders.isValidCookieName(wireName),
+                                        s"cookie name must be a token per RFC 6265 section 4.1.1; got: $wireName"
+                                    )
+                                    require(
+                                        HttpHeaders.isValidCookieValue(encoded),
+                                        s"cookie value must be cookie-octets per RFC 6265 section 4.1.1 (no controls, whitespace, ';', ',', '\"' or '\\\\'); got: $encoded"
+                                    )
                                     val cb = cookieBuilder.getOrElse(new StringBuilder)
                                     if cookieBuilder.nonEmpty then discard(cb.append("; "))
                                     discard(cb.append(wireName).append('=').append(encoded))
