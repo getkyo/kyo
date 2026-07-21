@@ -15,7 +15,7 @@ import kyo.internal.FromExprTestFixtures
   * Each test assertion is structured so that **passing means the FromExpr successfully unapplied the expression** AND **the lifted value
   * stringifies to the expected representation**. This avoids needing a full ToExpr round-trip for every Kyo data type.
   */
-class FromExprDerivedTest extends Test:
+class FromExprDerivedTest extends kyo.test.Test[Any]:
 
     given CanEqual[Any, Any] = CanEqual.derived
 

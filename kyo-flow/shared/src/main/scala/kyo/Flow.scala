@@ -713,7 +713,7 @@ object Flow:
       *     .otherwise(ctx => "instant", name = "default")
       * ```
       */
-    final class PartialDispatch[In, Out, Sf, Sc, N <: String, V] private[kyo] (
+    final class PartialDispatch[In, Out, Sf, Sc, N <: String & Singleton, V] private[kyo] (
         private[kyo] val flow: Flow[In, Out, Sf],
         private[kyo] val name: N,
         private[kyo] val branches: Chunk[internal.BranchData[Any, Any, Any]],
@@ -1157,13 +1157,13 @@ object Flow:
         final case class Init(name: String, meta: Meta)(using val frame: Frame)
             extends Flow[Any, Any, Any]
 
-        final case class Output[Ctx, CompCtx, N <: String, V, S](
+        final case class Output[Ctx, CompCtx, N <: String & Singleton, V, S](
             name: N & String,
             fn: Record[Ctx] => V < S,
             meta: Meta,
             compensate: Maybe[Record[CompCtx] => Unit < (Async & Abort[FlowException])]
         )(using val frame: Frame, val tag: Tag[V], val schema: Schema[V]) extends Flow[Any, N ~ V, S]:
-            private[kyo] def erased: Output[Any, Any, String, Any, Any] = this.asInstanceOf[Output[Any, Any, String, Any, Any]]
+            private[kyo] def erased: Output[Any, Any, Nothing, Any, Any] = this.asInstanceOf[Output[Any, Any, Nothing, Any, Any]]
         end Output
 
         final case class Step[Ctx, S](
@@ -1175,19 +1175,19 @@ object Flow:
             private[kyo] def erased: Step[Any, Any] = this.asInstanceOf[Step[Any, Any]]
         end Step
 
-        final case class Input[N <: String, V](name: N & String, meta: Meta)(
+        final case class Input[N <: String & Singleton, V](name: N & String, meta: Meta)(
             using
             val frame: Frame,
             val tag: Tag[V],
             val schema: Schema[V]
         ) extends Flow[N ~ V, N ~ V, Any]:
-            private[kyo] def erased: Input[String, Any] = this.asInstanceOf[Input[String, Any]]
+            private[kyo] def erased: Input[Nothing, Any] = this.asInstanceOf[Input[Nothing, Any]]
         end Input
 
         final case class Sleep(name: String, duration: Duration, meta: Meta)(using val frame: Frame)
             extends Flow[Any, Any, Any]
 
-        final case class Dispatch[Ctx, N <: String, V, S, Sb](
+        final case class Dispatch[Ctx, N <: String & Singleton, V, S, Sb](
             name: N & String,
             branches: Chunk[BranchData[Any, Any, Any]],
             defaultName: String,
@@ -1195,10 +1195,10 @@ object Flow:
             defaultFrame: Frame,
             meta: Meta
         )(using val frame: Frame, val tag: Tag[V], val schema: Schema[V]) extends Flow[Any, N ~ V, S & Sb]:
-            private[kyo] def erased: Dispatch[Any, String, Any, Any, Any] = this.asInstanceOf[Dispatch[Any, String, Any, Any, Any]]
+            private[kyo] def erased: Dispatch[Any, Nothing, Any, Any, Any] = this.asInstanceOf[Dispatch[Any, Nothing, Any, Any, Any]]
         end Dispatch
 
-        final case class LoopNode[Ctx, N <: String, State, V, S](
+        final case class LoopNode[Ctx, N <: String & Singleton, State, V, S](
             name: N & String,
             body: (State, Record[Ctx]) => Any < S, // returns Loop.Outcome[State, V] (erased at S boundary)
             initialState: State,
@@ -1206,17 +1206,17 @@ object Flow:
             meta: Meta
         )(using val frame: Frame, val tag: Tag[V], val schema: Schema[V], val stateTag: Tag[State], val stateSchema: Schema[State])
             extends Flow[Any, N ~ V, S]:
-            private[kyo] def erased: LoopNode[Any, String, Any, Any, Any] = this.asInstanceOf[LoopNode[Any, String, Any, Any, Any]]
+            private[kyo] def erased: LoopNode[Any, Nothing, Any, Any, Any] = this.asInstanceOf[LoopNode[Any, Nothing, Any, Any, Any]]
         end LoopNode
 
-        final case class ForEach[Ctx, N <: String, E, V, S](
+        final case class ForEach[Ctx, N <: String & Singleton, E, V, S](
             name: N & String,
             concurrency: Int,
             collection: Record[Ctx] => Seq[E] < S,
             body: E => V < S,
             meta: Meta
         )(using val frame: Frame, val tag: Tag[V], val schema: Schema[V]) extends Flow[Any, N ~ Chunk[V], S]:
-            private[kyo] def erased: ForEach[Any, String, Any, Any, Any] = this.asInstanceOf[ForEach[Any, String, Any, Any, Any]]
+            private[kyo] def erased: ForEach[Any, Nothing, Any, Any, Any] = this.asInstanceOf[ForEach[Any, Nothing, Any, Any, Any]]
         end ForEach
 
         final case class Race[In1, Out1, S1, In2, Out2, S2](
@@ -1227,13 +1227,14 @@ object Flow:
             private[kyo] def erased: Race[Any, Any, Any, Any, Any, Any] = this.asInstanceOf[Race[Any, Any, Any, Any, Any, Any]]
         end Race
 
-        final case class Subflow[In, Ctx, N <: String, In2, Out2, S](
+        final case class Subflow[In, Ctx, N <: String & Singleton, In2, Out2, S](
             name: N & String,
             childFlow: Flow[In2, Out2, ?],
             inputMapper: Record[Ctx] => Record[In2] < S,
             meta: Meta
         )(using val frame: Frame) extends Flow[In, Ctx & (N ~ Record[Out2]), S]:
-            private[kyo] def erased: Subflow[Any, Any, String, Any, Any, Any] = this.asInstanceOf[Subflow[Any, Any, String, Any, Any, Any]]
+            private[kyo] def erased: Subflow[Any, Any, Nothing, Any, Any, Any] =
+                this.asInstanceOf[Subflow[Any, Any, Nothing, Any, Any, Any]]
         end Subflow
 
         final case class AndThen[In1, Out1, In2, Out2, S1, S2](

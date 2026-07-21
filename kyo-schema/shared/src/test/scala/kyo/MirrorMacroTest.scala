@@ -2,7 +2,7 @@ package kyo
 
 import kyo.mirrorfix.*
 
-class MirrorMacroTest extends Test:
+class MirrorMacroTest extends kyo.test.Test[Any]:
 
     given CanEqual[Any, Any] = CanEqual.derived
 
