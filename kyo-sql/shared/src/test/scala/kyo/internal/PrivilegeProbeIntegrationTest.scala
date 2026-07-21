@@ -152,7 +152,7 @@ class PrivilegeProbeIntegrationTest extends kyo.Test:
             _ <- Async.timeout(180.seconds) {
                 Scope.run {
                     // We need the mysql_native_password plugin so the test user (using non-default auth) can connect at all
-                    // , the rest of kyo-sql tests use the same flag (see SqlDbTest.scala:280).
+                    // The rest of kyo-sql tests use the same flag (see SqlDbTest.scala:280).
                     val myContainerConfig = ContainerPredef.MySQL.buildContainerConfig(myConfig)
                         .command("--default-authentication-plugin=mysql_native_password")
                     Container.initWith(myContainerConfig) { myContainer =>

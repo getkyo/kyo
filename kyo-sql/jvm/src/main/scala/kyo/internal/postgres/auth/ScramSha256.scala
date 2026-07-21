@@ -20,8 +20,8 @@ import kyo.Span
   *   2. Call `clientFinalMessage(serverFirst, password)` after receiving the server's first message.
   *   3. Call `verifyServerSignature(serverFinal)` after receiving the server's final message.
   *
-  * Channel binding (RFC 5929 tls-server-end-point): when `channelBinding = Present(certHash)`, the GS2 header switches from `"n,"` to
-  * `"p=tls-server-end-point,"` and the `c=` attribute in client-final-message base64-encodes `gs2Header || certHash` instead of just the
+  * Channel binding (RFC 5929 tls-server-end-point): when `channelBinding = Present(certHash)`, the GS2 header switches from `"n,,"` to
+  * `"p=tls-server-end-point,,"` and the `c=` attribute in client-final-message base64-encodes `gs2Header || certHash` instead of just the
   * gs2Header.
   *
   * Produces output byte-identical to [[kyo.internal.postgres.auth.ScramSha256Shared]] for the same inputs, the two implementations are

@@ -18,7 +18,7 @@
 //     channel as deriveProduct's `fieldFEs: List[FromExpr[Any]]`; the matcher result is widened
 //     back to the field type at the `Option` boundary.
 //   * deriveOr's branch list and buildDirect's union arm: `List(...).asInstanceOf[List[FromExpr[A]]]`
-//    , identical to deriveSum's existing childFEs cast.
+//     identical to deriveSum's existing childFEs cast.
 //   * The `buildDirect` test-path guard (DirectCtx / LazyFromExpr): the cycle map
 //     `DirectCtx.inProgress` is keyed by `String`, so its values are `LazyFromExpr[?]`; the
 //     re-encounter arm narrows the retrieved placeholder back to `FromExpr[A]`. `LazyFromExpr[A]` is

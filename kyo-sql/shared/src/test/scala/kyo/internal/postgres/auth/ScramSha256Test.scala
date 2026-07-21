@@ -17,7 +17,7 @@ import kyo.SqlException
   *   - server nonce suffix = "%hvYDpWUa2RaTCAfuxFIlj)hNlF$k0"
   *   - salt (b64) = "W22ZaJ0SNY7soEsUEjb6gQ=="
   *   - iterations = 4096
-  *   - client-first = "n,n=user,r=rOprNGfwEbeRWgbNEkqO"
+  *   - client-first = "n,,n=user,r=rOprNGfwEbeRWgbNEkqO"
   *   - server-first = "r=rOprNGfwEbeRWgbNEkqO%hvYDpWUa2RaTCAfuxFIlj)hNlF$k0,s=W22ZaJ0SNY7soEsUEjb6gQ==,i=4096"
   *   - client-final = "c=biws,r=rOprNGfwEbeRWgbNEkqO%hvYDpWUa2RaTCAfuxFIlj)hNlF$k0,p=dHzbZapWIk4jUhN+Ute9ytag9zjfMHgsqmmiz7AndVQ="
   *   - server-final = "v=6rriTRBi23WpRR/wtup+mMhUZUn/dB5nLTJRsjl95G4="
@@ -46,13 +46,13 @@ class ScramSha256Test extends kyo.Test:
     "ScramSha256 clientFirstMessage format" in {
         val scram = new ScramSha256("alice", "someNonce123", Absent)
         val cfm   = scram.clientFirstMessage
-        assert(cfm.startsWith("n,n=alice,r=someNonce123"))
-        assert(cfm == "n,n=alice,r=someNonce123")
+        assert(cfm.startsWith("n,,n=alice,r=someNonce123"))
+        assert(cfm == "n,,n=alice,r=someNonce123")
     }
 
     "ScramSha256 RFC 7677 test vector client-first" in {
         val scram = new ScramSha256(rfcUsername, rfcClientNonce, Absent)
-        assert(scram.clientFirstMessage == s"n,n=$rfcUsername,r=$rfcClientNonce")
+        assert(scram.clientFirstMessage == s"n,,n=$rfcUsername,r=$rfcClientNonce")
     }
 
     "ScramSha256 RFC 7677 test vector client-proof byte-exact" in {
@@ -298,8 +298,8 @@ class ScramSha256Test extends kyo.Test:
                     // Base64-decode the c= attribute.
                     val decoded = Base64.getDecoder.decode(cAttr)
 
-                    // Expected gs2-header for SCRAM-PLUS: "p=tls-server-end-point,"
-                    val expectedGs2Header = "p=tls-server-end-point,".getBytes(StandardCharsets.UTF_8)
+                    // Expected gs2-header for SCRAM-PLUS: "p=tls-server-end-point,,"
+                    val expectedGs2Header = "p=tls-server-end-point,,".getBytes(StandardCharsets.UTF_8)
 
                     // Verify prefix == gs2-header bytes.
                     assert(
@@ -309,7 +309,7 @@ class ScramSha256Test extends kyo.Test:
                     val decodedPrefix = decoded.take(expectedGs2Header.length)
                     assert(
                         Span.from(decodedPrefix).constantTimeEquals(Span.from(expectedGs2Header)),
-                        s"c= prefix is not gs2-header. Expected 'p=tls-server-end-point,' bytes, got: '${new String(decodedPrefix)}'"
+                        s"c= prefix is not gs2-header. Expected 'p=tls-server-end-point,,' bytes, got: '${new String(decodedPrefix)}'"
                     )
 
                     // Verify suffix == cert hash bytes (32 bytes of 0xCC).

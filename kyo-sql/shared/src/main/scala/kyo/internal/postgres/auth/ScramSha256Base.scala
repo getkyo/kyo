@@ -28,13 +28,13 @@ import kyo.SqlException
   */
 abstract class ScramSha256Base(username: String, clientNonce: String, channelBinding: Maybe[Span[Byte]]):
 
-    // GS2 header: "p=tls-server-end-point," for PLUS, "n," for non-PLUS.
+    // GS2 header: "p=tls-server-end-point,," for PLUS, "n,," for non-PLUS.
     private val gs2Header: String = channelBinding match
-        case Present(_) => "p=tls-server-end-point,"
-        case Absent     => "n,"
+        case Present(_) => "p=tls-server-end-point,,"
+        case Absent     => "n,,"
 
     // The c= value is base64(gs2Header_bytes ++ cbData).
-    // For non-PLUS: cbData = empty, so c= is base64("n,").
+    // For non-PLUS: cbData = empty, so c= is base64("n,,").
     // For PLUS: cbData = certHash bytes.
     private val cBindingValue: String = channelBinding match
         case Present(certHash) =>
@@ -46,7 +46,7 @@ abstract class ScramSha256Base(username: String, clientNonce: String, channelBin
             java.lang.System.arraycopy(hashBytes, 0, combined, gs2Bytes.length, hashBytes.length)
             b64encode(combined)
         case Absent =>
-            // base64("n,") = "biws"
+            // base64("n,,") = "biws"
             b64encode(gs2Header.getBytes(java.nio.charset.StandardCharsets.UTF_8))
 
     /** The client-first-message-bare (without GS2 header). */

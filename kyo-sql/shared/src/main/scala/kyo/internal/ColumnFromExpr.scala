@@ -163,7 +163,7 @@ object ColumnFromExpr:
                 //
                 // A single-key projection `<record>.<name>` arises from the INSERT-columns Record, which
                 // is flat (`buildRowColumns` produces `Record[name ~ Column]` directly, no alias wrapper)
-                // , its values ARE `Column`s, so the bottom Record is reconstructed and indexed by the
+                // its values ARE `Column`s, so the bottom Record is reconstructed and indexed by the
                 // collected key to recover the `Column` value.
                 case other =>
                     projectionKeys(other) match
