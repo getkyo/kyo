@@ -492,7 +492,7 @@ object PostgresConnection:
       * When `negotiator` is [[Present]], it is called with the raw plaintext [[Connection]] (before startup) and may either upgrade it to
       * TLS or return it unchanged. The [[StartupExchange]] runs on the result.
       *
-      * This method exists so [[kyo.internal.client.PgSqlClientBackend]] can wire opportunistic TLS without changing the public [[connect]]
+      * This method exists so [[kyo.internal.client.PostgresSqlClientBackend]] can wire opportunistic TLS without changing the public [[connect]]
       * signature.
       *
       * @param host

@@ -14,7 +14,7 @@ class ScramIntegrationTest extends kyo.Test:
     // Helper: init a SqlClient via SCRAM and return it.
     private def initScramClient(
         pg: ContainerPredef.Postgres
-    )(using Frame): PgSqlClient < (Async & Scope & Abort[SqlException] & Abort[ContainerException]) =
+    )(using Frame): PostgresSqlClient < (Async & Scope & Abort[SqlException] & Abort[ContainerException]) =
         pg.container.mappedPort(pg.config.port).flatMap { port =>
             SqlClient.init(
                 s"postgres://${pg.username}:${pg.password}@${pg.container.host}:$port/${pg.database}",

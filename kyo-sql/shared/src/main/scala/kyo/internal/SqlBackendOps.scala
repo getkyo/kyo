@@ -69,13 +69,13 @@ object SqlBackendOps:
             Frame
         ): Chunk[SqlRow] < (Async & Abort[SqlException]) =
             // Use the backend directly with pre-converted BoundParam; bypasses the public BoundValue surface.
-            client.executePgQuery(sql, params)
+            client.executePostgresQuery(sql, params)
 
         def runExecute(client: SqlClient, sql: String, params: Chunk[BoundParam[?]])(using
             Frame
         ): Long < (Async & Abort[SqlException]) =
             // Use the backend directly with pre-converted BoundParam; bypasses the public BoundValue surface.
-            client.executePgUpdate(sql, params)
+            client.executePostgresUpdate(sql, params)
 
         def runStream(
             client: SqlClient,

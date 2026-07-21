@@ -9,8 +9,8 @@ import kyo.internal.postgres.PostgresConnection
   * `Local[Maybe[TransactionContext]]`. Nested `transaction` calls detect the active context and use SAVEPOINTs instead of a fresh `BEGIN`.
   *
   * There are two concrete variants:
-  *   - [[TransactionContext.Pg]], wraps a [[PostgresConnection]]
-  *   - [[TransactionContext.My]], wraps a [[MysqlConnection]]
+  *   - [[TransactionContext.Postgres]], wraps a [[PostgresConnection]]
+  *   - [[TransactionContext.Mysql]], wraps a [[MysqlConnection]]
   *
   * The sealed hierarchy lets [[kyo.sql.SqlClient.transaction]] dispatch to the correct exchange (Postgres or MySQL) without a runtime cast.
   */
@@ -25,14 +25,14 @@ end TransactionContext
 object TransactionContext:
 
     /** Transaction context for a [[PostgresConnection]]. */
-    final case class Pg(
+    final case class Postgres(
         connection: PostgresConnection,
         depth: Int,
         savepointStack: List[String]
     ) extends TransactionContext
 
     /** Transaction context for a [[MysqlConnection]]. */
-    final case class My(
+    final case class Mysql(
         connection: MysqlConnection,
         depth: Int,
         savepointStack: List[String]

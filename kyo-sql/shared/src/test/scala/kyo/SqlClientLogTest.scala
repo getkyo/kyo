@@ -485,7 +485,7 @@ class SqlClientLogTest extends Test:
         withLogCapture { sink =>
             Log.let(Log(sink)) {
                 // Create a semaphore-style Channel: capacity 1, pre-filled with one slot.
-                // This mirrors how PgSqlClientBackend initialises the pool semaphore.
+                // This mirrors how PostgresSqlClientBackend initialises the pool semaphore.
                 Channel.initUnscoped[Unit](1).flatMap { ch =>
                     // Fill the channel with the one available slot.
                     Abort.run[Closed](ch.offer(())).flatMap { _ =>

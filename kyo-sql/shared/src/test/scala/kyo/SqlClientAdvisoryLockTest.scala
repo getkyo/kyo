@@ -67,7 +67,7 @@ class SqlClientAdvisoryLockTest extends kyo.Test:
     "withAdvisoryLock on MySQL releases the lock when the body completes" in {
         Scope.run {
             SqlSharedContainers.withFreshSchema(Backend.MySQL) { ctx =>
-                SqlClient.initMy(myUrl(ctx)).flatMap { client =>
+                SqlClient.initMysql(myUrl(ctx)).flatMap { client =>
                     SqlClient.let(client) {
                         val key = 99L
                         client.withAdvisoryLock(key) {
@@ -128,11 +128,11 @@ class SqlClientAdvisoryLockTest extends kyo.Test:
     "withAdvisoryLock on MySQL blocks a concurrent GET_LOCK on the same key" in {
         Scope.run {
             SqlSharedContainers.withFreshSchema(Backend.MySQL) { ctx =>
-                SqlClient.initMy(myUrl(ctx)).flatMap { outerClient =>
+                SqlClient.initMysql(myUrl(ctx)).flatMap { outerClient =>
                     SqlClient.let(outerClient) {
                         val key = 1122334455L
                         outerClient.withAdvisoryLock(key) {
-                            SqlClient.initMy(myUrl(ctx)).flatMap { innerClient =>
+                            SqlClient.initMysql(myUrl(ctx)).flatMap { innerClient =>
                                 SqlClient.let(innerClient) {
                                     innerClient.query(s"SELECT CAST(GET_LOCK('$key', 0) AS CHAR)").flatMap { rows =>
                                         assert(rows.size == 1)

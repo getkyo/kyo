@@ -55,7 +55,7 @@ class CachingSha2IntegrationTest extends kyo.Test:
     private def openClient(
         details: ConnDetails
     )(using Frame): SqlClient < (Async & Scope & Abort[SqlException]) =
-        SqlClient.initMy(
+        SqlClient.initMysql(
             s"mysql://${details.user}:${details.password}@${details.host}:${details.port}/${details.db}",
             SqlConfig.default.copy(maxConnections = 1, minConnections = 1)
         )
@@ -108,7 +108,7 @@ class CachingSha2IntegrationTest extends kyo.Test:
             withCachingSha2Container { details =>
                 Abort.run[SqlException](
                     Scope.run {
-                        SqlClient.initMy(
+                        SqlClient.initMysql(
                             s"mysql://${details.user}:definitly_wrong_pw_xyz@${details.host}:${details.port}/${details.db}",
                             SqlConfig.default.copy(maxConnections = 1, minConnections = 1)
                         )
@@ -184,7 +184,7 @@ class CachingSha2IntegrationTest extends kyo.Test:
                 val mysql = new ContainerPredef.MySQL(nativeContainer, nativePredef)
                 mysql.container.mappedPort(mysql.config.port).flatMap { port =>
                     // Connect to native_password container, the server may send AuthSwitchRequest.
-                    SqlClient.initMy(
+                    SqlClient.initMysql(
                         s"mysql://${mysql.username}:${mysql.password}@${mysql.container.host}:$port/${mysql.database}",
                         SqlConfig.default.copy(maxConnections = 1, minConnections = 1)
                     ).flatMap { client =>

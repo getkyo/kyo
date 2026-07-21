@@ -50,7 +50,7 @@ class MysqlTlsIntegrationTest extends kyo.Test:
     private def openTlsClient(
         details: TlsConnDetails
     )(using Frame): SqlClient < (Async & Scope & Abort[SqlException]) =
-        SqlClient.initMy(
+        SqlClient.initMysql(
             s"mysql://${details.user}:${details.password}@${details.host}:${details.port}/${details.db}",
             SqlConfig.default.copy(
                 tls = Present(details.trustAllConfig),

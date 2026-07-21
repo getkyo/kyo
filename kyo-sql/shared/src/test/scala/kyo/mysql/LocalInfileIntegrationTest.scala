@@ -23,10 +23,10 @@ class LocalInfileIntegrationTest extends kyo.Test:
         s"mysql://${ctx.user}:${ctx.password}@${ctx.host}:${ctx.port}/${ctx.db}"
 
     private def withMyClient[A, S](
-        f: MySqlSqlClient => A < (S & Async & Abort[SqlException])
+        f: MysqlSqlClient => A < (S & Async & Abort[SqlException])
     )(using Frame): A < (S & Async & Scope & Abort[SqlException | ContainerException]) =
         withLocalInfileOn { ctx =>
-            SqlClient.initMyWith(
+            SqlClient.initMysqlWith(
                 myUrl(ctx),
                 SqlConfig.default.copy(maxConnections = 1, minConnections = 1)
             )(f)
@@ -342,7 +342,7 @@ class LocalInfileIntegrationTest extends kyo.Test:
         Async.timeout(120.seconds) {
             Scope.run {
                 withLocalInfileOff { ctx =>
-                    SqlClient.initMyWith(
+                    SqlClient.initMysqlWith(
                         myUrl(ctx),
                         SqlConfig.default.copy(maxConnections = 1, minConnections = 1)
                     ) { client =>

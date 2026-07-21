@@ -19,7 +19,7 @@ import kyo.net.NetTlsConfig
   *     back to plaintext if not.
   *
   * The `allow` mode reconnect path (plaintext first, then TLS on server refusal) is handled at the backend layer
-  * ([[kyo.internal.client.PgSqlClientBackend]] / [[kyo.internal.client.MySqlClientBackend]]) because the reconnect requires opening a fresh
+  * ([[kyo.internal.client.PostgresSqlClientBackend]] / [[kyo.internal.client.MysqlSqlClientBackend]]) because the reconnect requires opening a fresh
   * TCP connection, which is above this layer's scope.
   */
 sealed trait TlsNegotiator:

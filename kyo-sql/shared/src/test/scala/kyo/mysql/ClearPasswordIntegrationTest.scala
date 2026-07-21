@@ -50,7 +50,7 @@ class ClearPasswordIntegrationTest extends kyo.Test:
                 // Root connection: alter user plugin to mysql_clear_password.
                 val rootSetup =
                     Scope.run {
-                        SqlClient.initMy(
+                        SqlClient.initMysql(
                             s"mysql://root:${mysql.config.rootPassword}@$host:$port/mysql",
                             SqlConfig.default.copy(maxConnections = 1, minConnections = 1)
                         ).flatMap { root =>

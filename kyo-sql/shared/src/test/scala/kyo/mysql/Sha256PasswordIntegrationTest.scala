@@ -40,7 +40,7 @@ class Sha256PasswordIntegrationTest extends kyo.Test:
                 // Root connection: alter user plugin to sha256_password.
                 val rootSetup =
                     Scope.run {
-                        SqlClient.initMy(
+                        SqlClient.initMysql(
                             s"mysql://root:${mysql.config.rootPassword}@$host:$port/mysql",
                             SqlConfig.default.copy(maxConnections = 1, minConnections = 1)
                         ).flatMap { root =>
@@ -70,7 +70,7 @@ class Sha256PasswordIntegrationTest extends kyo.Test:
         Scope.run {
             withSha256User(Maybe.Absent) { (host, port, user, pass, db) =>
                 // Connect without TLS: HandshakeExchange sends empty auth → receives PEM key → XOR+RSA-OAEP encrypts → server decrypts.
-                SqlClient.initMy(
+                SqlClient.initMysql(
                     s"mysql://$user:$pass@$host:$port/$db",
                     SqlConfig.default.copy(maxConnections = 1, minConnections = 1)
                 ).flatMap { client =>
@@ -89,7 +89,7 @@ class Sha256PasswordIntegrationTest extends kyo.Test:
         Scope.run {
             withSha256User(Maybe.Present(NetTlsConfig(trustAll = true))) { (host, port, user, pass, db) =>
                 // Connect with TLS (trustAll): sends cleartext NUL-terminated password in HandshakeResponse41, no RSA involved.
-                SqlClient.initMy(
+                SqlClient.initMysql(
                     s"mysql://$user:$pass@$host:$port/$db",
                     SqlConfig.default.copy(
                         tls = Present(NetTlsConfig(trustAll = true)),

@@ -24,7 +24,7 @@ class MysqlPoolResetIntegrationTest extends kyo.Test:
     )(
         f: SqlClient => A < (S & Async & Abort[SqlException])
     )(using Frame): A < (S & Async & Scope & Abort[SqlException.Connection | SqlException]) =
-        SqlClient.initMyWith(
+        SqlClient.initMysqlWith(
             myUrl(ctx),
             SqlConfig.default.copy(
                 maxConnections = 1,

@@ -44,7 +44,7 @@ import kyo.net.NetTlsConfig
   *   entries are only evicted when the cache reaches capacity (CLOCK eviction).
   * @param minConnections
   *   minimum number of connections to open eagerly when the pool is initialised (warm-up). If greater than `maxConnections`, it is clamped
-  *   to `maxConnections`. When > 0, [[SqlClient.init]] and [[SqlClient.initMy]] open `min(minConnections, maxConnections)` connections
+  *   to `maxConnections`. When > 0, [[SqlClient.init]] and [[SqlClient.initMysql]] open `min(minConnections, maxConnections)` connections
   *   concurrently before returning the client, so the first user query is served from a pre-warmed pool without incurring connection
   *   establishment latency. Any connection failure during warm-up aborts `init` with [[SqlException.Connection]]. Default `0` (no warm-up).
   * @param resetOnRelease

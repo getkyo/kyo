@@ -25,7 +25,7 @@ class ErrorContextIntegrationTest extends kyo.Test:
         url: String,
         config: SqlConfig = SqlConfig.default
     )(f: SqlClient => A < (S & Async & Abort[SqlException]))(using Frame): A < (S & Async & Scope & Abort[SqlException]) =
-        Abort.run[SqlException.Connection](SqlClient.initMy(url, config)).flatMap {
+        Abort.run[SqlException.Connection](SqlClient.initMysql(url, config)).flatMap {
             case Result.Success(client) => SqlClient.let(client)(f(client))
             case Result.Failure(e)      => Abort.fail(e: SqlException)
             case Result.Panic(t) =>

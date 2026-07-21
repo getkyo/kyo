@@ -28,7 +28,7 @@ class CachingSha2FullAuthIntegrationTest extends kyo.Test:
             ContainerPredef.MySQL.initWith(ContainerPredef.MySQL.Config.default) { mysql =>
                 mysql.container.mappedPort(mysql.config.port).flatMap { port =>
                     // Connect without TLS: forces the RSA-OAEP encrypted full-auth path.
-                    SqlClient.initMy(
+                    SqlClient.initMysql(
                         s"mysql://${mysql.username}:${mysql.password}@${mysql.container.host}:$port/${mysql.database}",
                         SqlConfig.default.copy(maxConnections = 1, minConnections = 1)
                     ).flatMap { client =>

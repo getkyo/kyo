@@ -476,7 +476,7 @@ object MysqlConnection:
       * For `sslmode=allow`: connects plaintext first (tls=Absent); the caller is responsible for catching error 3159
       * (ER_SECURE_TRANSPORT_REQUIRED) and reconnecting with `tls=Present`.
       *
-      * This method exists so [[kyo.internal.client.MySqlClientBackend]] can wire opportunistic TLS without changing the public [[connect]]
+      * This method exists so [[kyo.internal.client.MysqlSqlClientBackend]] can wire opportunistic TLS without changing the public [[connect]]
       * signature.
       */
     private[internal] def connectWithMode(

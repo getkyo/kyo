@@ -8,8 +8,8 @@ import kyo.net.NetTlsConfig
 /** Integration tests for query cancellation via the public SqlClient API.
   *
   * These tests exercise the public cancellation surface:
-  *   - `SqlClient.cancellableQuery` returns a `SqlCancelHandle.Pg` carrying the backend's process ID, secret key, address, and TLS config.
-  *   - `client.cancel(handle: SqlCancelHandle.Pg)` opens a fresh out-of-band TCP connection to deliver the cancel request.
+  *   - `SqlClient.cancellableQuery` returns a `SqlCancelHandle.Postgres` carrying the backend's process ID, secret key, address, and TLS config.
+  *   - `client.cancel(handle: SqlCancelHandle.Postgres)` opens a fresh out-of-band TCP connection to deliver the cancel request.
   *
   * Tests:
   *   1. cancellableQuery exposes a SqlCancelHandle with correct processId.
@@ -103,10 +103,10 @@ class CancelIntegrationTest extends kyo.Test:
                 SqlClient.init(url).flatMap { client =>
                     SqlClient.let(client) {
                         client.cancellableQuery("SELECT 42").map {
-                            case (handle: SqlCancelHandle.Pg, rows) =>
+                            case (handle: SqlCancelHandle.Postgres, rows) =>
                                 assert(handle.processId > 0, s"Expected positive processId, got ${handle.processId}")
                                 assert(rows.size == 1, s"Expected 1 row, got ${rows.size}")
-                            case null => fail("Expected SqlCancelHandle.Pg for a Postgres client")
+                            case null => fail("Expected SqlCancelHandle.Postgres for a Postgres client")
                         }
                     }
                 }
@@ -122,12 +122,12 @@ class CancelIntegrationTest extends kyo.Test:
                     SqlClient.let(client) {
                         // Run a fast query over TLS and check that the returned SqlCancelHandle carries the TLS config.
                         client.cancellableQuery("SELECT 42").map {
-                            case (handle: SqlCancelHandle.Pg, rows) =>
+                            case (handle: SqlCancelHandle.Postgres, rows) =>
                                 assert(rows.size == 1, s"Expected 1 row, got ${rows.size}")
                                 assert(handle.processId > 0, s"Expected positive processId, got ${handle.processId}")
                                 // The handle's TLS config should be Present (since we configured TLS).
                                 assert(handle.tls.isDefined, "Expected Present tls in SqlCancelHandle for TLS client")
-                            case null => fail("Expected SqlCancelHandle.Pg for a Postgres client")
+                            case null => fail("Expected SqlCancelHandle.Postgres for a Postgres client")
                         }
                     }
                 }

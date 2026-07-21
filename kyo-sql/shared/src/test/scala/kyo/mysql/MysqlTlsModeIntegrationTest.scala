@@ -54,7 +54,7 @@ class MysqlTlsModeIntegrationTest extends kyo.Test:
                 mysql.container.mappedPort(mysql.config.port).flatMap { port =>
                     val url = s"mysql://${mysql.username}:${mysql.password}@${mysql.container.host}:$port/${mysql.database}?sslmode=allow"
                     Async.timeout(60.seconds) {
-                        SqlClient.initMy(url).flatMap { client =>
+                        SqlClient.initMysql(url).flatMap { client =>
                             SqlClient.let(client) {
                                 client.query("SELECT 1").map { rows =>
                                     assert(rows.size == 1, "sslmode=allow should connect plaintext when server has no TLS")
@@ -93,7 +93,7 @@ class MysqlTlsModeIntegrationTest extends kyo.Test:
                 mysql.container.mappedPort(mysql.config.port).flatMap { port =>
                     val url = s"mysql://${mysql.username}:${mysql.password}@${mysql.container.host}:$port/${mysql.database}?sslmode=allow"
                     Async.timeout(60.seconds) {
-                        SqlClient.initMy(url).flatMap { client =>
+                        SqlClient.initMysql(url).flatMap { client =>
                             SqlClient.let(client) {
                                 // The allow reconnect path fired and the connection is now over TLS.
                                 // Verify via SHOW SESSION STATUS LIKE 'Ssl_cipher': the cipher column
@@ -129,7 +129,7 @@ class MysqlTlsModeIntegrationTest extends kyo.Test:
             withTlsContainer { ctx =>
                 val url = s"mysql://${ctx.user}:${ctx.password}@${ctx.host}:${ctx.port}/${ctx.db}?sslmode=prefer"
                 Scope.run {
-                    SqlClient.initMy(url).flatMap { client =>
+                    SqlClient.initMysql(url).flatMap { client =>
                         SqlClient.let(client) {
                             // Verify connection succeeds and is reusable.
                             client.query("SELECT 'prefer_tls_ok'").map { rows =>
@@ -162,7 +162,7 @@ class MysqlTlsModeIntegrationTest extends kyo.Test:
                 mysql.container.mappedPort(mysql.config.port).flatMap { port =>
                     val url = s"mysql://${mysql.username}:${mysql.password}@${mysql.container.host}:$port/${mysql.database}?sslmode=prefer"
                     Async.timeout(60.seconds) {
-                        SqlClient.initMy(url).flatMap { client =>
+                        SqlClient.initMysql(url).flatMap { client =>
                             SqlClient.let(client) {
                                 // Connection must succeed via plaintext fallback when no CLIENT_SSL.
                                 client.query("SELECT 1").map { rows =>
@@ -189,7 +189,7 @@ class MysqlTlsModeIntegrationTest extends kyo.Test:
             withTlsContainer { ctx =>
                 val url = s"mysql://${ctx.user}:${ctx.password}@${ctx.host}:${ctx.port}/${ctx.db}?sslmode=require"
                 Scope.run {
-                    SqlClient.initMy(url).flatMap { client =>
+                    SqlClient.initMysql(url).flatMap { client =>
                         SqlClient.let(client) {
                             // Verify the connection is active and serving queries, not just opened.
                             client.query("SHOW SESSION STATUS LIKE 'Ssl_cipher'").flatMap { rows =>

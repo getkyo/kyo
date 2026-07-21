@@ -8,7 +8,7 @@ import kyo.internal.SqlSharedContainers
   * Tests:
   *   1. Cancel a long-running query (SELECT SLEEP(5)), query aborts with ER_QUERY_INTERRUPTED / SQLSTATE 70100
   *   2. Cancel an already-completed query, silent no-op (no error from cancelQuery itself)
-  *   3. cancellableQuery pattern, connectionId is exposed via handle.connectionId (SqlCancelHandle.My)
+  *   3. cancellableQuery pattern, connectionId is exposed via handle.connectionId (SqlCancelHandle.Mysql)
   *   4. Cancel with wrong connectionId, no error (KILL QUERY of a non-existent thread is silently accepted)
   *   5. Sequential queries after cancel, connection remains usable after KILL QUERY on cancel conn
   *
@@ -19,9 +19,9 @@ class MysqlCancelIntegrationTest extends kyo.Test:
     override def timeout: Duration = 3.minutes
 
     private def initClient[A, S](ctx: SqlSharedContainers.SchemaCtx, maxConns: Int = 2)(
-        f: MySqlSqlClient => A < (S & Async & Abort[SqlException])
+        f: MysqlSqlClient => A < (S & Async & Abort[SqlException])
     )(using Frame): A < (S & Async & Scope & Abort[SqlException]) =
-        SqlClient.initMyWith(
+        SqlClient.initMysqlWith(
             s"mysql://${ctx.username}:${ctx.password}@${ctx.host}:${ctx.port}/${ctx.database}",
             SqlConfig.default.copy(
                 maxConnections = maxConns,
@@ -39,7 +39,7 @@ class MysqlCancelIntegrationTest extends kyo.Test:
                     // Launch a slow query in a background fiber (wrapping in Abort.run so the fiber is Unit-typed).
                     (client.cancellableQueryFiber(
                         "SELECT SLEEP(5)"
-                    ): (SqlCancelHandle.My, Fiber[Chunk[SqlRow], Abort[SqlException]]) < (Async & Abort[SqlException])).flatMap {
+                    ): (SqlCancelHandle.Mysql, Fiber[Chunk[SqlRow], Abort[SqlException]]) < (Async & Abort[SqlException])).flatMap {
                         case (handle, slowFiber) =>
                             // Wait 200ms then issue KILL QUERY using the cancel handle.
                             Async.sleep(200.millis).andThen {
@@ -91,7 +91,7 @@ class MysqlCancelIntegrationTest extends kyo.Test:
                     // Complete a fast query to obtain a handle pointing at a known connection id.
                     (client.cancellableQuery(
                         sql"SELECT 1"
-                    ): (SqlCancelHandle.My, Chunk[SqlRow]) < (Async & Abort[SqlException])).flatMap { case (handle, _) =>
+                    ): (SqlCancelHandle.Mysql, Chunk[SqlRow]) < (Async & Abort[SqlException])).flatMap { case (handle, _) =>
                         // The handle's connection has long since been returned to the pool;
                         // KILL QUERY <connectionId> for that thread is a no-op on the server
                         // (the thread either no longer exists or has no active query).
@@ -117,7 +117,7 @@ class MysqlCancelIntegrationTest extends kyo.Test:
                 initClient(ctx, maxConns = 1) { client =>
                     (client.cancellableQuery(
                         sql"SELECT 1"
-                    ): (SqlCancelHandle.My, Chunk[SqlRow]) < (Async & Abort[SqlException])).map { case (handle, _) =>
+                    ): (SqlCancelHandle.Mysql, Chunk[SqlRow]) < (Async & Abort[SqlException])).map { case (handle, _) =>
                         assert(handle.connectionId > 0, s"Expected positive connectionId, got ${handle.connectionId}")
                     }
                 }
@@ -133,8 +133,8 @@ class MysqlCancelIntegrationTest extends kyo.Test:
                 initClient(ctx, maxConns = 1) { client =>
                     // Use a very large connectionId that is extremely unlikely to exist.
                     val fakeConnectionId = 9999999L
-                    // Construct a SqlCancelHandle.My pointing at a non-existent thread.
-                    val fakeHandle = SqlCancelHandle.My(client.address, fakeConnectionId)
+                    // Construct a SqlCancelHandle.Mysql pointing at a non-existent thread.
+                    val fakeHandle = SqlCancelHandle.Mysql(client.address, fakeConnectionId)
                     // Path A: SqlClient.cancel with a fabricated handle, public KILL QUERY round-trip.
                     Abort.run[SqlException](client.cancel(fakeHandle)).map { _ => succeed }.andThen {
                         // Path B: direct KILL QUERY via executeRaw, preserves the original second probe.
@@ -163,7 +163,7 @@ class MysqlCancelIntegrationTest extends kyo.Test:
                     // Kick off a slow query.
                     (client.cancellableQueryFiber(
                         "SELECT SLEEP(3)"
-                    ): (SqlCancelHandle.My, Fiber[Chunk[SqlRow], Abort[SqlException]]) < (Async & Abort[SqlException])).flatMap {
+                    ): (SqlCancelHandle.Mysql, Fiber[Chunk[SqlRow], Abort[SqlException]]) < (Async & Abort[SqlException])).flatMap {
                         case (handle, slowFiber) =>
                             Async.sleep(100.millis).andThen {
                                 // Cancel via handle.
