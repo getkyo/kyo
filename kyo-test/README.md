@@ -458,7 +458,7 @@ val doubleShrinks: Chunk[Double] = Shrink.double(2.7) // 2.0 (integral neighbor)
 
 ## Write meaningful tests: no-assertion enforcement
 
-A leaf that runs to completion having evaluated zero assertions is itself a bug: it proves nothing. kyo-test enforces this at run time. After a leaf body joins, the runner counts how many assertions it evaluated; a leaf that would otherwise pass with a count of zero is flipped to `Failed` with the message `leaf passed without evaluating any assertion`. The whole assert family counts: `assert`, `fail`, `intercept`, `assertEventually`, `typeCheck`, `assertSnapshot`, and a property `forAll`. `cancel` and `assume` do not count, because they steer the outcome rather than make a claim.
+A leaf that runs to completion having evaluated zero assertions is itself a bug: it proves nothing. kyo-test enforces this at run time. After a leaf body joins, the runner counts how many assertions it evaluated; a leaf that would otherwise pass with a count of zero is flipped to `Failed` with the message `leaf passed without evaluating any assertion`. The whole assert family counts: `assert`, `fail`, `intercept`, `assertEventually`, `typeCheck`, `assertSnapshot`, `assertSchemaSnapshot`, and a property `forAll`. `cancel` and `assume` do not count, because they steer the outcome rather than make a claim.
 
 This is a run-level setting, `failOnNoAssertion`, on by default. ScalaTest forced this at compile time through its `Assertion` return type; kyo-test cannot, because a leaf body is an effectful `Unit < (S & Async & Abort[Any] & Scope)`, so the check runs after the body completes.
 
@@ -508,6 +508,31 @@ end StatementSnapshotTest
 ```
 
 > **Caution:** the first run of `assertSnapshot` writes the proposed snapshot file and FAILS with `SnapshotNotFound`; the test passes only on a later run once you have reviewed the written file. To accept new or changed snapshots, run with `KYO_TEST_SNAPSHOT=update` in the environment (or override `snapshotUpdateMode` per suite). Snapshot names may not contain path separators, spaces, `.`, or `..`.
+
+### `assertSchemaSnapshot`: schema-based snapshots
+
+When a `Schema[A]` instance is in scope, reach for `assertSchemaSnapshot(actual, name)` instead. It renders `actual` through its `Schema[A]` using a `SnapshotCodec` (default `SnapshotCodec.Yaml`, a readable field-named format) and stores the result under `${snapshotDir}/${suite}/${name}.snap.yaml`, a distinct extension from `assertSnapshot`'s plain `.snap` so the two never collide on the same name.
+
+```scala
+import kyo.*
+import kyo.test.*
+import kyo.test.snapshot.*
+
+case class Statement(id: Int, balanceCents: Long, generatedAt: Long) derives Schema
+
+class SchemaStatementSnapshotTest extends SnapshotTest[Any]:
+    "monthly statement" in {
+        val statement = Statement(1, balanceCents = 12_300L, generatedAt = java.lang.System.currentTimeMillis())
+        assertSchemaSnapshot(statement, "monthly-schema", _.normalize(_.set(_.generatedAt)(0L)))
+    }
+end SchemaStatementSnapshotTest
+```
+
+The third argument builds a `SnapshotConfig[A]`, the single per-call customization point: `.normalize` scrubs non-deterministic fields (timestamps, ids) before both encoding and comparison, so a repeated run with a fresh timestamp still matches the stored snapshot. A suite that needs a different serialization format overrides the per-suite `snapshotCodec` hook (default `SnapshotCodec.Yaml`); the text presets are `Yaml`, `Json`, and `Ion`, the binary presets (stored as raw wire bytes) are `Protobuf`, `Bson`, `MsgPack`, and `IonBinary`, and `SnapshotCodec.Text`/`Binary` wrap any other kyo-schema `Codec`.
+
+> **Note:** the comparison is structural and format-tolerant: a hand-reformatted stored snapshot that still decodes to an equal value passes. A mismatch reports the changed field paths (dotted for a nested field, e.g. `b.y`) plus a unified text diff for text codecs. A stored snapshot that fails to decode at all (a genuine schema evolution) fails with `SnapshotSchemaEvolution` instead, distinct from a value mismatch.
+
+Reach for `assertSnapshot` when a `Render` instance is all you need (a quick, flat text snapshot); reach for `assertSchemaSnapshot` when you have a `Schema[A]` and want readable field-named output, field normalization, format-tolerant comparison, or schema-evolution detection.
 
 ## Running and selecting tests
 
