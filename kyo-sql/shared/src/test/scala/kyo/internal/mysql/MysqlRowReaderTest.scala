@@ -301,13 +301,15 @@ class MysqlRowReaderTest extends Test:
         assert(r.hasNextField(), "first field present")
         assert(r.lastFieldName() == "id", "first column name")
         r.fieldParse()
-        // matchField is positional: it accepts the next field regardless of the probed name.
-        assert(r.matchField("anything".getBytes(StandardCharsets.US_ASCII)), "matchField accepts position 0")
+        // matchField compares the probe against the current column's name (or `_<idx+1>` for tuple projections),
+        // so a wrong probe must not blanket-accept the position: only "id" or "_1" match column 0.
+        assert(!r.matchField("wrong".getBytes(StandardCharsets.US_ASCII)), "matchField rejects a name that does not match column 0")
+        assert(r.matchField("id".getBytes(StandardCharsets.US_ASCII)), "matchField accepts the current column's name at position 0")
         assert(r.int() == 7, "first column value decodes after match")
         assert(r.hasNextField(), "second field present")
         assert(r.lastFieldName() == "name", "second column name")
         r.fieldParse()
-        assert(r.matchField("_2".getBytes(StandardCharsets.US_ASCII)), "matchField accepts position 1")
+        assert(r.matchField("_2".getBytes(StandardCharsets.US_ASCII)), "matchField accepts the `_2` tuple-alias at position 1")
         assert(r.string() == "alice", "second column value decodes after match")
         assert(!r.hasNextField(), "no fields remain")
         // matchField is false once the cursor runs past the last column.
