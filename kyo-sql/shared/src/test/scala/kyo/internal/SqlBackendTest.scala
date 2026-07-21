@@ -1,25 +1,28 @@
-package kyo
+package kyo.internal
 
+import kyo.*
 import kyo.Test
 
 class SqlBackendTest extends Test:
 
-    "SqlBackend.Postgres is a subtype of SqlBackend" in {
+    "kyo.internal.SqlBackend.Postgres is a subtype of kyo.internal.SqlBackend" in {
         // Verify at compile time that the phantom hierarchy is correct.
-        // If SqlBackend.Postgres did not extend SqlBackend this would not compile.
-        val evidence: SqlBackend.Postgres <:< SqlBackend = summon[SqlBackend.Postgres <:< SqlBackend]
+        // If kyo.internal.SqlBackend.Postgres did not extend kyo.internal.SqlBackend this would not compile.
+        val evidence: kyo.internal.SqlBackend.Postgres <:< kyo.internal.SqlBackend =
+            summon[kyo.internal.SqlBackend.Postgres <:< kyo.internal.SqlBackend]
         assert(evidence != null)
     }
 
-    "SqlBackend.Mysql is a subtype of SqlBackend" in {
-        val evidence: SqlBackend.Mysql <:< SqlBackend = summon[SqlBackend.Mysql <:< SqlBackend]
+    "kyo.internal.SqlBackend.Mysql is a subtype of kyo.internal.SqlBackend" in {
+        val evidence: kyo.internal.SqlBackend.Mysql <:< kyo.internal.SqlBackend =
+            summon[kyo.internal.SqlBackend.Mysql <:< kyo.internal.SqlBackend]
         assert(evidence != null)
     }
 
     "SqlClient has no type parameter, bracketed form is a compile error" in {
-        // The phantom `[B <: SqlBackend]` type param is gone. Writing `SqlClient[SqlBackend.Postgres]`
+        // The phantom `[B <: kyo.internal.SqlBackend]` type param is gone. Writing `SqlClient[kyo.internal.SqlBackend.Postgres]`
         // must no longer compile; typeCheckErrors captures that statically.
-        val errors = compiletime.testing.typeCheckErrors("val x: SqlClient[SqlBackend.Postgres] = ???")
+        val errors = compiletime.testing.typeCheckErrors("val x: SqlClient[kyo.internal.SqlBackend.Postgres] = ???")
         assert(errors.nonEmpty)
     }
 
@@ -46,14 +49,14 @@ class SqlBackendTest extends Test:
         }
     }
 
-    "SqlBackend pattern-matches correctly as sealed abstract class" in {
+    "kyo.internal.SqlBackend pattern-matches correctly as sealed abstract class" in {
         // Verify that the exhaustive match still compiles and dispatches correctly
-        // after SqlBackend / Postgres / Mysql changed from sealed trait to sealed abstract class.
-        val pg: SqlBackend = SqlBackend.Postgres
-        val my: SqlBackend = SqlBackend.Mysql
-        def describe(b: SqlBackend): String = b match
-            case _: SqlBackend.Postgres => "postgres"
-            case _: SqlBackend.Mysql    => "mysql"
+        // after kyo.internal.SqlBackend / Postgres / Mysql changed from sealed trait to sealed abstract class.
+        val pg: kyo.internal.SqlBackend = kyo.internal.SqlBackend.Postgres
+        val my: kyo.internal.SqlBackend = kyo.internal.SqlBackend.Mysql
+        def describe(b: kyo.internal.SqlBackend): String = b match
+            case _: kyo.internal.SqlBackend.Postgres => "postgres"
+            case _: kyo.internal.SqlBackend.Mysql    => "mysql"
         assert(describe(pg) == "postgres")
         assert(describe(my) == "mysql")
         succeed

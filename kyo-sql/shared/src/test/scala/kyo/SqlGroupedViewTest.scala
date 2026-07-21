@@ -22,13 +22,13 @@ class SqlGroupedViewTest extends Test:
 
     "leaf 1, bare groupBy(deptId).select(view.deptId) renders byte-identical SQL" in {
         val q = people.groupBy(_.p.deptId).select(view => view.deptId)
-        val r = q.render(SqlBackend.Postgres)
+        val r = q.renderPostgres
         assert(r.sql == """SELECT "p"."deptId" FROM "person" "p" GROUP BY "p"."deptId"""")
     }
 
     "leaf 2, groupBy.having renders HAVING clause with one bind" in {
         val q = people.groupBy(_.p.deptId).having(view => view.deptId.count > 5)
-        val r = q.render(SqlBackend.Postgres)
+        val r = q.renderPostgres
         assert(
             r.sql == """SELECT * FROM "person" "p" GROUP BY "p"."deptId" HAVING (COUNT("p"."deptId") > $1)"""
         )
@@ -37,13 +37,13 @@ class SqlGroupedViewTest extends Test:
 
     "leaf 3, groupBy.orderBy.limit renders ORDER BY DESC + LIMIT" in {
         val q = people.groupBy(_.p.deptId).orderBy(view => view.deptId.desc).limit(10)
-        val r = q.render(SqlBackend.Postgres)
+        val r = q.renderPostgres
         assert(r.sql == """SELECT * FROM "person" "p" GROUP BY "p"."deptId" ORDER BY "p"."deptId" DESC LIMIT 10""")
     }
 
     "leaf 4, groupBy.select(view.age.sum) renders SELECT SUM" in {
         val q = people.groupBy(_.p.deptId).select(view => view.age.sum)
-        val r = q.render(SqlBackend.Postgres)
+        val r = q.renderPostgres
         assert(
             r.sql == """SELECT SUM("p"."age") FROM "person" "p" GROUP BY "p"."deptId""""
         )
@@ -67,7 +67,7 @@ class SqlGroupedViewTest extends Test:
         val q = people.groupBy(_.p.deptId)
             .having(view => view.deptId.count > 3)
             .select(view => (view.deptId, view.age.avg))
-        val r = q.render(SqlBackend.Postgres)
+        val r = q.renderPostgres
         assert(
             r.sql == """SELECT "p"."deptId", AVG("p"."age") FROM "person" "p" GROUP BY "p"."deptId" HAVING (COUNT("p"."deptId") > $1)"""
         )
@@ -79,7 +79,7 @@ class SqlGroupedViewTest extends Test:
         val q = people.groupBy(c => c.p.deptId)
             .having(view => view.deptId.count > 5)
             .select(view => (view.deptId, view.age.sum))
-        val r = q.render(SqlBackend.Postgres)
+        val r = q.renderPostgres
         assert(
             r.sql == """SELECT "p"."deptId", SUM("p"."age") FROM "person" "p" GROUP BY "p"."deptId" HAVING (COUNT("p"."deptId") > $1)"""
         )

@@ -2,10 +2,10 @@ package kyo.internal
 
 import kyo.Chunk
 import kyo.SqlAst
-import kyo.SqlBackend
 import kyo.SqlSchema
 import kyo.SqlSchema.BoundValue
 import kyo.SqlStatic
+import kyo.internal.SqlBackend
 import scala.quoted.*
 
 private[kyo] object SqlStaticMacro:

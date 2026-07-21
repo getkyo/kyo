@@ -26,18 +26,18 @@ class SqlRenameNoStrategyTest extends Test:
     // Leaf 1: SELECT column list uses renamed sqlName in rendered SQL.
     "rename userId->user_id: select renders renamed column name" in {
         val q = Sql.from[OrderRow]("o").select(c => c.o.userId)
-        val r = q.render(SqlBackend.Postgres)
+        val r = q.renderPostgres
         assert(r.sql == """SELECT "o"."user_id" FROM "orderrow" "o"""")
-        val rm = q.render(SqlBackend.Mysql)
+        val rm = q.renderMysql
         assert(rm.sql == "SELECT `o`.`user_id` FROM `orderrow` `o`")
     }
 
     // Leaf 2: WHERE predicate uses renamed sqlName in rendered SQL.
     "rename deptId->department_id, empName->employee_name: where renders renamed column names" in {
         val q = Sql.from[EmpRow]("e").where(c => c.e.deptId == 42L).select(c => c.e.empName)
-        val r = q.render(SqlBackend.Postgres)
+        val r = q.renderPostgres
         assert(r.sql == """SELECT "e"."employee_name" FROM "emprow" "e" WHERE ("e"."department_id" = $1)""")
-        val rm = q.render(SqlBackend.Mysql)
+        val rm = q.renderMysql
         assert(rm.sql == "SELECT `e`.`employee_name` FROM `emprow` `e` WHERE (`e`.`department_id` = ?)")
     }
 

@@ -85,7 +85,7 @@ class SqlPostgresOnlyTest extends Test:
                             // Verify the rendered SQL uses || for concat on PG
                             _ =
                                 val rendered = Sql.from[Person]("p").select(c => c.p.name ++ " rocks")
-                                    .render(SqlBackend.Postgres)
+                                    .renderPostgres
                                 assert(
                                     rendered.sql.contains("||"),
                                     s"Expected || in PG concat SQL, got: ${rendered.sql}"
@@ -185,7 +185,7 @@ class SqlPostgresOnlyTest extends Test:
                                 .fullOuterJoin(Sql.from[Dept]("d"))
                                 .on(j => j.p.id == j.d.id)
                                 .select(j => j.p.name)
-                                .render(SqlBackend.Postgres)
+                                .renderPostgres
                             _ = assert(
                                 rendered.sql.contains("FULL OUTER JOIN"),
                                 s"Expected FULL OUTER JOIN in PG SQL, got: ${rendered.sql}"

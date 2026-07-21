@@ -2,6 +2,7 @@ package kyo
 
 import kyo.SqlAst.*
 import kyo.SqlSchema.BoundValue
+import kyo.internal.SqlBackend
 import scala.quoted.*
 
 /** Static-SQL emitter: `SqlStatic.staticSql(q)` → `Rendered(sql, params)` produced as compile-time literals.

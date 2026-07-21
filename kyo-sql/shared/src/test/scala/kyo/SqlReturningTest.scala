@@ -21,7 +21,7 @@ class SqlReturningTest extends Test:
     // Leaf 1: INSERT.returning(id, createdAt) on PG, both columns appear in RETURNING list.
     "INSERT.returning(id, createdAt) emits both columns on PG" in {
         val s = Sql.insert[Event].values(Event(0L, "boot", "2024-01-01")).returning(_.id, _.createdAt)
-        val r = s.render(SqlBackend.Postgres)
+        val r = s.renderPostgres
         assert(r.sql.contains("RETURNING"))
         assert(r.sql.contains(""""id""""))
         assert(r.sql.contains(""""createdAt""""))
@@ -35,7 +35,7 @@ class SqlReturningTest extends Test:
     // Leaf 2: UPDATE.returning(version) on PG, column appears after RETURNING.
     "UPDATE.returning(version) emits on PG" in {
         val s = Sql.update[Versioned].set(_.value := "x").returning(_.version).where(_.id == 1L)
-        val r = s.render(SqlBackend.Postgres)
+        val r = s.renderPostgres
         assert(r.sql.contains("UPDATE"))
         assert(r.sql.contains("RETURNING"))
         val returningIdx   = r.sql.indexOf("RETURNING")
@@ -46,7 +46,7 @@ class SqlReturningTest extends Test:
     // Leaf 3: DELETE.returning(id) on PG, id appears after RETURNING.
     "DELETE.returning(id) emits on PG" in {
         val s = Sql.delete[Event].returning(_.id).where(_.name == "boot")
-        val r = s.render(SqlBackend.Postgres)
+        val r = s.renderPostgres
         assert(r.sql.startsWith("DELETE FROM"))
         assert(r.sql.contains("RETURNING"))
         val returningIdx   = r.sql.indexOf("RETURNING")
@@ -58,7 +58,7 @@ class SqlReturningTest extends Test:
     "RETURNING on MySQL raises Unsupported" in {
         val s = Sql.insert[Event].values(Event(0L, "boot", "2024-01-01")).returning(_.id)
         val ex = intercept[SqlException.Unsupported] {
-            s.render(SqlBackend.Mysql)
+            s.renderMysql
         }
         assert(ex.getMessage.contains("RETURNING"))
     }

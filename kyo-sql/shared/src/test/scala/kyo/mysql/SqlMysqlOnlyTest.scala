@@ -53,7 +53,7 @@ class SqlMysqlOnlyTest extends Test:
                             // Verify rendering uses LOWER(…) LIKE LOWER(…) on MySQL
                             _ =
                                 val rendered = Sql.from[Person]("p").where(c => c.p.name.ilike("alice%")).select(c => c.p.name)
-                                    .render(SqlBackend.Mysql)
+                                    .renderMysql
                                 assert(
                                     rendered.sql.contains("LOWER"),
                                     s"Expected LOWER in MySQL ilike SQL, got: ${rendered.sql}"
@@ -88,7 +88,7 @@ class SqlMysqlOnlyTest extends Test:
                             // Verify the rendered SQL uses CONCAT for concat on MySQL
                             _ =
                                 val rendered = Sql.from[Person]("p").select(c => c.p.name ++ " rocks")
-                                    .render(SqlBackend.Mysql)
+                                    .renderMysql
                                 assert(
                                     rendered.sql.contains("CONCAT"),
                                     s"Expected CONCAT in MySQL concat SQL, got: ${rendered.sql}"
@@ -123,7 +123,7 @@ class SqlMysqlOnlyTest extends Test:
                             // Verify the rendered SQL uses INSERT IGNORE on MySQL
                             _ =
                                 val rendered = Sql.insert[Person].values(Person(1L, "alice-dup", 99)).onConflictDoNothing()
-                                    .render(SqlBackend.Mysql)
+                                    .renderMysql
                                 assert(
                                     rendered.sql.contains("INSERT IGNORE"),
                                     s"Expected INSERT IGNORE in MySQL onConflictDoNothing SQL, got: ${rendered.sql}"
@@ -161,7 +161,7 @@ class SqlMysqlOnlyTest extends Test:
                                 val rendered = Sql.insert[Person]
                                     .values(Person(1L, "alice-upserted", 31))
                                     .onConflictDoUpdate(_.id)(c => c.age := SqlAst.Excluded(c.age))
-                                    .render(SqlBackend.Mysql)
+                                    .renderMysql
                                 assert(
                                     rendered.sql.contains("ON DUPLICATE KEY UPDATE"),
                                     s"Expected ON DUPLICATE KEY UPDATE in MySQL upsert SQL, got: ${rendered.sql}"

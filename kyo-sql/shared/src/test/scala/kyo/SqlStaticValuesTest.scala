@@ -40,7 +40,7 @@ class SqlStaticValuesTest extends Test:
 
     "single-row Sql.values, PG SQL matches SqlRender.render byte-for-byte" in {
         val r  = SqlStatic.staticSql(Sql.values[Point]("v", Point(1, 2)))
-        val rt = Sql.values[Point]("v", Point(1, 2)).render(SqlBackend.Postgres)
+        val rt = Sql.values[Point]("v", Point(1, 2)).renderPostgres
         assert(r.sql.postgres == rt.sql)
     }
 
@@ -62,7 +62,7 @@ class SqlStaticValuesTest extends Test:
 
     "multi-row Sql.values, MySQL SQL matches SqlRender.render byte-for-byte" in {
         val r  = SqlStatic.staticSql(Sql.values[Point]("v", Point(1, 2), Point(3, 4)))
-        val rt = Sql.values[Point]("v", Point(1, 2), Point(3, 4)).render(SqlBackend.Mysql)
+        val rt = Sql.values[Point]("v", Point(1, 2), Point(3, 4)).renderMysql
         assert(r.sql.mysql == rt.sql)
     }
 
@@ -81,7 +81,7 @@ class SqlStaticValuesTest extends Test:
 
     "Sql.values 4-column Person, PG SQL matches SqlRender.render byte-for-byte" in {
         val r  = SqlStatic.staticSql(Sql.values[Person]("pv", Person(0L, "Alice", 30, 1L)))
-        val rt = Sql.values[Person]("pv", Person(0L, "Alice", 30, 1L)).render(SqlBackend.Postgres)
+        val rt = Sql.values[Person]("pv", Person(0L, "Alice", 30, 1L)).renderPostgres
         assert(r.sql.postgres == rt.sql)
     }
 

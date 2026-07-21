@@ -720,7 +720,7 @@ class SqlSchemaTest extends Test:
 
     case class WSBPerson(id: Long, name: String, age: Int, deptId: Long) derives Schema
     given SqlSchema[WSBPerson]                            = SqlSchema.derived
-    private def renderPg(q: SqlAst.Executable[?]): String = q.render(SqlBackend.Postgres).sql
+    private def renderPg(q: SqlAst.Executable[?]): String = q.renderPostgres.sql
 
     "Sql.windowSpec.partitionBy single-Column replace: second partitionBy replaces first" in {
         val q = Sql.from[WSBPerson]("p").select(c =>

@@ -19,7 +19,7 @@ class SqlRenderGroupByRollupTest extends Test:
     // Leaf 1: groupByRollup on Postgres, emits GROUP BY ROLLUP (a, b).
     "GROUP BY ROLLUP renders as GROUP BY ROLLUP (a, b) on PG" in {
         val q = sales.groupByRollup(c => (c.s.region, c.s.product))
-        val r = q.render(SqlBackend.Postgres)
+        val r = q.renderPostgres
         assert(r.sql.contains("""GROUP BY ROLLUP ("""))
         assert(r.sql.contains(""""s"."region""""))
         assert(r.sql.contains(""""s"."product""""))
@@ -29,7 +29,7 @@ class SqlRenderGroupByRollupTest extends Test:
     // Leaf 2: groupByRollup on MySQL, emits GROUP BY a, b WITH ROLLUP.
     "GROUP BY ROLLUP lowers to GROUP BY a, b WITH ROLLUP on MySQL" in {
         val q = sales.groupByRollup(c => (c.s.region, c.s.product))
-        val r = q.render(SqlBackend.Mysql)
+        val r = q.renderMysql
         assert(r.sql.contains("GROUP BY"))
         assert(r.sql.contains("WITH ROLLUP"))
         assert(r.sql.contains("`s`.`region`"))
@@ -41,7 +41,7 @@ class SqlRenderGroupByRollupTest extends Test:
 
     "GROUP BY CUBE renders as GROUP BY CUBE (a, b) on PG" in {
         val q = sales.groupByCube(c => (c.s.region, c.s.product))
-        val r = q.render(SqlBackend.Postgres)
+        val r = q.renderPostgres
         assert(r.sql.contains("GROUP BY CUBE ("))
         assert(r.sql.contains(""""s"."region""""))
         assert(r.sql.contains(""""s"."product""""))
@@ -49,14 +49,14 @@ class SqlRenderGroupByRollupTest extends Test:
 
     "GROUP BY CUBE single column renders as GROUP BY CUBE (a) on PG" in {
         val q = sales.groupByCube(c => c.s.region)
-        val r = q.render(SqlBackend.Postgres)
+        val r = q.renderPostgres
         assert(r.sql.contains("GROUP BY CUBE ("))
         assert(r.sql.contains(""""s"."region""""))
     }
 
     "GROUP BY CUBE renders as GROUP BY CUBE (a, b) on MySQL (8.0+)" in {
         val q = sales.groupByCube(c => (c.s.region, c.s.product))
-        val r = q.render(SqlBackend.Mysql)
+        val r = q.renderMysql
         assert(r.sql.contains("GROUP BY CUBE ("))
         assert(r.sql.contains("`s`.`region`"))
         assert(r.sql.contains("`s`.`product`"))
@@ -72,7 +72,7 @@ class SqlRenderGroupByRollupTest extends Test:
                 Seq()
             )
         )
-        val r = q.render(SqlBackend.Postgres)
+        val r = q.renderPostgres
         assert(r.sql.contains("GROUP BY GROUPING SETS ("))
         assert(r.sql.contains("""("s"."region", "s"."product")"""))
         assert(r.sql.contains("""("s"."region")"""))
@@ -81,7 +81,7 @@ class SqlRenderGroupByRollupTest extends Test:
 
     "GROUP BY GROUPING SETS with single set renders as (a) on PG" in {
         val q = sales.groupByGroupingSets(c => Seq(Seq(c.s.region)))
-        val r = q.render(SqlBackend.Postgres)
+        val r = q.renderPostgres
         assert(r.sql.contains("GROUP BY GROUPING SETS ("))
         assert(r.sql.contains("""("s"."region")"""))
     }
@@ -94,7 +94,7 @@ class SqlRenderGroupByRollupTest extends Test:
                 Seq()
             )
         )
-        val r = q.render(SqlBackend.Mysql)
+        val r = q.renderMysql
         assert(r.sql.contains("GROUP BY GROUPING SETS ("))
         assert(r.sql.contains("(`s`.`region`)"))
         assert(r.sql.contains("(`s`.`product`)"))
@@ -103,7 +103,7 @@ class SqlRenderGroupByRollupTest extends Test:
 
     "GROUP BY GROUPING SETS empty-set-only emits just ()" in {
         val q = sales.groupByGroupingSets(_ => Seq(Seq()))
-        val r = q.render(SqlBackend.Postgres)
+        val r = q.renderPostgres
         assert(r.sql.contains("GROUP BY GROUPING SETS (()"))
     }
 

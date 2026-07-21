@@ -172,7 +172,7 @@ class SqlStaticTest extends Test:
         val staticR = SqlStatic.staticSql(
             Sql.from[Person]("p").where(c => c.p.age >= 18)
         )
-        val runtimeR = Sql.from[Person]("p").where(c => c.p.age >= 18).render(SqlBackend.Postgres)
+        val runtimeR = Sql.from[Person]("p").where(c => c.p.age >= 18).renderPostgres
         assert(staticR.params.size == runtimeR.params.size)
         val sBv: kyo.SqlSchema.BoundValue[?] = staticR.params.head
         val rBv: kyo.SqlSchema.BoundValue[?] = runtimeR.params.head
@@ -254,25 +254,25 @@ class SqlStaticTest extends Test:
         // string with an embedded `"` to pin parity; the static macro emits the same byte
         // sequence via its `q(...)` helper. Static path does not currently accept raw aliases
         // with embedded `"`, so this leaf tests the runtime helper that the macro mirrors.
-        assert(kyo.internal.SqlRender.quoteIdent("a\"b", SqlBackend.Postgres) == "\"a\"\"b\"")
-        assert(kyo.internal.SqlRender.quoteIdent("a`b", SqlBackend.Mysql) == "`a``b`")
+        assert(kyo.internal.SqlRender.quoteIdent("a\"b", kyo.internal.SqlBackend.Postgres) == "\"a\"\"b\"")
+        assert(kyo.internal.SqlRender.quoteIdent("a`b", kyo.internal.SqlBackend.Mysql) == "`a``b`")
     }
 
     "SqlStatic.BackendSql.forBackend(Postgres) returns the postgres string" in {
         val bs = SqlStatic.BackendSql("PG_SQL", "MY_SQL")
-        assert(bs.forBackend(SqlBackend.Postgres) == "PG_SQL")
+        assert(bs.forBackend(kyo.internal.SqlBackend.Postgres) == "PG_SQL")
     }
 
     "SqlStatic.BackendSql.forBackend(Mysql) returns the mysql string" in {
         val bs = SqlStatic.BackendSql("PG_SQL", "MY_SQL")
-        assert(bs.forBackend(SqlBackend.Mysql) == "MY_SQL")
+        assert(bs.forBackend(kyo.internal.SqlBackend.Mysql) == "MY_SQL")
     }
 
     "static PG SQL matches runtime SqlRender(Postgres) byte-for-byte" in {
         val staticR = SqlStatic.staticSql(
             Sql.from[Person]("p").where(c => c.p.age >= 18).select(c => c.p.name)
         )
-        val runtimeR = Sql.from[Person]("p").where(c => c.p.age >= 18).select(c => c.p.name).render(SqlBackend.Postgres)
+        val runtimeR = Sql.from[Person]("p").where(c => c.p.age >= 18).select(c => c.p.name).renderPostgres
         assert(staticR.sql.postgres == runtimeR.sql)
     }
 
@@ -280,7 +280,7 @@ class SqlStaticTest extends Test:
         val staticR = SqlStatic.staticSql(
             Sql.from[Person]("p").where(c => c.p.age >= 18).select(c => c.p.name)
         )
-        val runtimeR = Sql.from[Person]("p").where(c => c.p.age >= 18).select(c => c.p.name).render(SqlBackend.Mysql)
+        val runtimeR = Sql.from[Person]("p").where(c => c.p.age >= 18).select(c => c.p.name).renderMysql
         assert(staticR.sql.mysql == runtimeR.sql)
     }
 
@@ -291,9 +291,9 @@ class SqlStaticTest extends Test:
         assert(s.contains("SELECT `a`.`b` FROM `t`"))
     }
 
-    "staticSql signature has no `using SqlBackend`" in {
+    "staticSql signature has no `using kyo.internal.SqlBackend`" in {
         // Compile-time check: invoking staticSql without any using-clause must compile. Any
-        // future regression that re-adds `using SqlBackend` to the signature would fail this.
+        // future regression that re-adds `using kyo.internal.SqlBackend` to the signature would fail this.
         val _ = SqlStatic.staticSql(Sql.from[Person]("p"))
         succeed
     }
@@ -424,7 +424,7 @@ class SqlStaticTest extends Test:
         val bv: kyo.SqlSchema.BoundValue[?] = r.params.head
         assert((bv.value: Any) == 18)
         // Static-path lockstep: the static macro and the runtime renderer emit byte-identical SQL.
-        val rt = Sql.from[Person]("p").where(c => c.p.age > 18).groupBy(c => c.p.age).render(SqlBackend.Postgres)
+        val rt = Sql.from[Person]("p").where(c => c.p.age > 18).groupBy(c => c.p.age).renderPostgres
         assert(r.sql.postgres == rt.sql)
     }
 
@@ -464,7 +464,7 @@ class SqlStaticTest extends Test:
         assert(r.params.size == 1)
         val rt = Sql.from[Person]("p").where(c => c.p.age > 18)
             .groupBy(c => c.p.age).select(view => view.age.count)
-            .render(SqlBackend.Postgres)
+            .renderPostgres
         assert(r.sql.postgres == rt.sql)
     }
 
@@ -473,8 +473,8 @@ class SqlStaticTest extends Test:
     // Full regression: every static query renders byte-identical to SqlRender.render.
     "regression, static SQL is byte-identical to SqlRender.render for the same AST" in {
         val r  = SqlStatic.staticSql(Sql.from[Person]("p").where(c => c.p.age >= 18).select(c => c.p.name))
-        val rp = Sql.from[Person]("p").where(c => c.p.age >= 18).select(c => c.p.name).render(SqlBackend.Postgres)
-        val rm = Sql.from[Person]("p").where(c => c.p.age >= 18).select(c => c.p.name).render(SqlBackend.Mysql)
+        val rp = Sql.from[Person]("p").where(c => c.p.age >= 18).select(c => c.p.name).renderPostgres
+        val rm = Sql.from[Person]("p").where(c => c.p.age >= 18).select(c => c.p.name).renderMysql
         assert(r.sql.postgres == rp.sql)
         assert(r.sql.mysql == rm.sql)
     }
@@ -615,14 +615,14 @@ class SqlStaticTest extends Test:
         assert(r.sql.postgres == """INSERT INTO "person" ("id", "name", "age", "deptId") VALUES (0, 'Alice', 30, 1) RETURNING "id"""")
         assert(r.sql.mysql == "INSERT INTO `person` (`id`, `name`, `age`, `deptId`) VALUES (0, 'Alice', 30, 1)")
         assert(r.params.isEmpty)
-        val rt = Sql.insert[Person].values(Person(0L, "Alice", 30, 1L)).render(SqlBackend.Postgres)
+        val rt = Sql.insert[Person].values(Person(0L, "Alice", 30, 1L)).renderPostgres
         assert(r.sql.postgres == rt.sql)
     }
 
     // Cast node renders CAST(...) byte-identical to SqlRender.render.
     "Cast node renders CAST(\"p\".\"id\" AS TEXT) byte-identical to SqlRender" in {
         val r  = SqlStatic.staticSql(Sql.from[Person]("p").select(c => c.p.id.cast[String]))
-        val rt = Sql.from[Person]("p").select(c => c.p.id.cast[String]).render(SqlBackend.Postgres)
+        val rt = Sql.from[Person]("p").select(c => c.p.id.cast[String]).renderPostgres
         assert(r.sql.postgres == rt.sql)
         assert(r.sql.postgres.contains("""CAST("p"."id" AS TEXT)"""))
     }

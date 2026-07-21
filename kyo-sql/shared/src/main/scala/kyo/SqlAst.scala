@@ -35,13 +35,20 @@ object SqlAst:
     /** Root of the SQL AST hierarchy. Every node, expressions, queries, mutations, raw fragments, is a `SqlAst[A]`. */
     sealed trait SqlAst[A]:
 
-        /** Renders this AST node into a [[Sql.Rendered]] (the SQL text and the runtime bind values) for the given backend.
-          *
-          * Use for debugging, logging, migration scripts, or any caller that needs to inspect the SQL alongside its parameters without
-          * executing it.
+        /** Renders this AST node into a [[Sql.Rendered]] using PostgreSQL syntax (`$N` placeholders, `"…"` identifiers). Use for
+          * debugging, logging, or migration scripts without a live client. When a client is already in hand, prefer [[SqlClient.render]],
+          * which picks the client's own backend.
           */
-        final def render(backend: SqlBackend)(using frame: Frame): Sql.Rendered =
-            val r = kyo.internal.SqlRender.render(this, backend, frame)
+        final def renderPostgres(using frame: Frame): Sql.Rendered =
+            val r = kyo.internal.SqlRender.render(this, kyo.internal.SqlBackend.Postgres, frame)
+            Sql.Rendered(r.sql, r.params)
+
+        /** Renders this AST node into a [[Sql.Rendered]] using MySQL syntax (`?` placeholders, `` `…` `` identifiers), assuming the
+          * latest broadly-supported MySQL version (8.4.0). Use for debugging, logging, or migration scripts without a live client. When a
+          * client is already in hand, prefer [[SqlClient.render]], which picks the client's own backend.
+          */
+        final def renderMysql(using frame: Frame): Sql.Rendered =
+            val r = kyo.internal.SqlRender.render(this, kyo.internal.SqlBackend.Mysql, frame)
             Sql.Rendered(r.sql, r.params)
     end SqlAst
 

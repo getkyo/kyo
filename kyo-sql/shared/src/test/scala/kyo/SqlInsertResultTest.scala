@@ -14,8 +14,8 @@ class SqlInsertResultTest extends Test:
     case class Tag(name: String) derives Schema
     case class Stats(views: Int, label: String) derives Schema
 
-    private def pgSql(s: Executable[?]): String = s.render(SqlBackend.Postgres).sql
-    private def mySql(s: Executable[?]): String = s.render(SqlBackend.Mysql).sql
+    private def pgSql(s: Executable[?]): String = s.renderPostgres.sql
+    private def mySql(s: Executable[?]): String = s.renderMysql.sql
 
     // ── 1. PG renders RETURNING "id" for Long-headed case class ─────────────────
 

@@ -44,7 +44,7 @@ class SqlStaticNestedTest extends Test:
 
     "simple Nested, PG SQL matches SqlRender.render byte-for-byte" in {
         val r  = SqlStatic.staticSql(Sql.nested[Person]("sub", Sql.from[Person]("p")))
-        val rt = Sql.nested[Person]("sub", Sql.from[Person]("p")).render(SqlBackend.Postgres)
+        val rt = Sql.nested[Person]("sub", Sql.from[Person]("p")).renderPostgres
         assert(r.sql.postgres == rt.sql)
     }
 
@@ -67,7 +67,7 @@ class SqlStaticNestedTest extends Test:
     "Nested with inner WHERE, PG SQL matches SqlRender.render byte-for-byte" in {
         val r = SqlStatic.staticSql(Sql.nested[Person]("sub", Sql.from[Person]("p").where(c => c.p.age >= 18)))
         val rt =
-            Sql.nested[Person]("sub", Sql.from[Person]("p").where(c => c.p.age >= 18)).render(SqlBackend.Postgres)
+            Sql.nested[Person]("sub", Sql.from[Person]("p").where(c => c.p.age >= 18)).renderPostgres
         assert(r.sql.postgres == rt.sql)
     }
 
@@ -98,7 +98,7 @@ class SqlStaticNestedTest extends Test:
             .innerJoin(Sql.nested[Order]("sub", Sql.from[Order]("o")))
             .on(j => j.p.id == j.sub.userId)
             .select(j => (j.p.name, j.sub.id))
-            .render(SqlBackend.Postgres)
+            .renderPostgres
         assert(r.sql.postgres == rt.sql)
     }
 

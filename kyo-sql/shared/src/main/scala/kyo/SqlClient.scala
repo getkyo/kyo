@@ -4,6 +4,7 @@ import kyo.*
 import kyo.Log
 import kyo.SqlSchema
 import kyo.SqlSchema.BoundValue
+import kyo.internal.SqlBackend
 import kyo.internal.SqlRender
 import kyo.internal.TransactionContext
 import kyo.internal.client.MySqlClientBackend
@@ -189,7 +190,7 @@ sealed abstract class SqlClient:
                 }
         }
 
-    /** Returns the [[SqlBackend]] discriminator for this client.
+    /** Returns the [[kyo.internal.SqlBackend]] discriminator for this client.
       *
       * Derived from the URL's driver tag at runtime. Used by the `.run` / `.runDynamic` extension methods on `Query` / `Action` to pick
       * the right rendered SQL string from a [[SqlStatic.BackendSql]] and to summon the right [[BoundValue]] dispatch.
@@ -200,6 +201,14 @@ sealed abstract class SqlClient:
             case "mysql"    => SqlBackend.Mysql
             case other =>
                 bug(s"Unknown driver '$other' on active SqlClient")
+
+    /** Renders an AST node into a [[Sql.Rendered]] using this client's backend syntax. The client-driven counterpart to
+      * [[SqlAst.SqlAst.renderPostgres]] / [[SqlAst.SqlAst.renderMysql]]: use this when a client is already in hand and the caller wants
+      * the SQL text matching whatever engine the client talks to (logging, migration script emission, dry-run inspection).
+      */
+    def render(ast: SqlAst.SqlAst[?])(using frame: Frame): Sql.Rendered =
+        val r = kyo.internal.SqlRender.render(ast, self.sqlBackend, frame)
+        Sql.Rendered(r.sql, r.params)
 
     /** Runs a Postgres query with pre-converted `BoundParam` params. Used by [[kyo.internal.SqlBackendOps.postgres]].
       *

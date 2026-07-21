@@ -51,7 +51,7 @@ class SqlStaticLateralTest extends Test:
 
     "simple Lateral, PG SQL matches SqlRender.render byte-for-byte" in {
         val r  = SqlStatic.staticSql(Sql.lateral[Department]("d", Sql.from[Department]("dept")))
-        val rt = Sql.lateral[Department]("d", Sql.from[Department]("dept")).render(SqlBackend.Postgres)
+        val rt = Sql.lateral[Department]("d", Sql.from[Department]("dept")).renderPostgres
         assert(r.sql.postgres == rt.sql)
     }
 
@@ -77,7 +77,7 @@ class SqlStaticLateralTest extends Test:
     "correlated Lateral, PG SQL matches SqlRender.render byte-for-byte" in {
         val r = SqlStatic.staticSql(Sql.lateral[Person]("lat", Sql.from[Person]("p").where(c => c.p.age >= 18)))
         val rt =
-            Sql.lateral[Person]("lat", Sql.from[Person]("p").where(c => c.p.age >= 18)).render(SqlBackend.Postgres)
+            Sql.lateral[Person]("lat", Sql.from[Person]("p").where(c => c.p.age >= 18)).renderPostgres
         assert(r.sql.postgres == rt.sql)
     }
 

@@ -28,10 +28,10 @@ class SqlTest extends Test:
     val customers   = Sql.from[Customer]("c")
     val surveys     = Sql.from[Survey]("s")
 
-    def sqlOf(q: Query[?]): String      = q.render(SqlBackend.Postgres).sql
-    def sqlOf(s: Executable[?]): String = s.render(SqlBackend.Postgres).sql
-    def paramsOf(q: Query[?])           = q.render(SqlBackend.Postgres).params.size
-    def paramsOf(s: Executable[?])      = s.render(SqlBackend.Postgres).params.size
+    def sqlOf(q: Query[?]): String      = q.renderPostgres.sql
+    def sqlOf(s: Executable[?]): String = s.renderPostgres.sql
+    def paramsOf(q: Query[?])           = q.renderPostgres.params.size
+    def paramsOf(s: Executable[?])      = s.renderPostgres.params.size
 
     // --- SELECT ---
 
@@ -542,7 +542,7 @@ class SqlTest extends Test:
     "MySQL backend renders frag binds as ? placeholders" in {
         val cutoff = 18
         val q      = people.where(_ => sql"age > $cutoff".as[Boolean])
-        val r      = q.render(SqlBackend.Mysql)
+        val r      = q.renderMysql
         assert(r.sql == """SELECT `p`.`id`, `p`.`name`, `p`.`age`, `p`.`deptId` FROM `person` `p` WHERE age > ?""")
         assert(r.params.size == 1)
     }
@@ -651,7 +651,7 @@ class SqlTest extends Test:
     // --- MySQL backend ---
 
     "MySQL backend uses backticks and `?` placeholders" in {
-        val r = people.where(c => c.p.age >= 18).render(SqlBackend.Mysql)
+        val r = people.where(c => c.p.age >= 18).renderMysql
         assert(r.sql == """SELECT `p`.`id`, `p`.`name`, `p`.`age`, `p`.`deptId` FROM `person` `p` WHERE (`p`.`age` >= ?)""")
         assert(r.params.size == 1)
     }

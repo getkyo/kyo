@@ -37,7 +37,7 @@ class SqlRenderTest extends Test:
     "name.ilike renders on PG as '(\"name\" ILIKE $1)' with one String param" in {
         val nameCol = Column["name", String]("", "name", "name")
         val t       = nameCol.ilike("ada%")
-        val r       = t.render(SqlBackend.Postgres)
+        val r       = t.renderPostgres
         assert(r.sql == """("name" ILIKE $1)""")
         assert(r.params.size == 1)
         assert((r.params.head.value: Any) == "ada%")
@@ -47,7 +47,7 @@ class SqlRenderTest extends Test:
     "name.ilike renders on MySQL as 'LOWER(`name`) LIKE LOWER(?)' with one String param" in {
         val nameCol = Column["name", String]("", "name", "name")
         val t       = nameCol.ilike("ada%")
-        val r       = t.render(SqlBackend.Mysql)
+        val r       = t.renderMysql
         assert(r.sql == "LOWER(`name`) LIKE LOWER(?)")
         assert(r.params.size == 1)
         assert((r.params.head.value: Any) == "ada%")
@@ -57,7 +57,7 @@ class SqlRenderTest extends Test:
     "name.notIlike renders on PG as '(\"name\" NOT ILIKE $1)' with one String param" in {
         val nameCol = Column["name", String]("", "name", "name")
         val t       = nameCol.notIlike("ada%")
-        val r       = t.render(SqlBackend.Postgres)
+        val r       = t.renderPostgres
         assert(r.sql == """("name" NOT ILIKE $1)""")
         assert(r.params.size == 1)
         assert((r.params.head.value: Any) == "ada%")
@@ -67,7 +67,7 @@ class SqlRenderTest extends Test:
     "name.notIlike renders on MySQL as 'LOWER(`name`) NOT LIKE LOWER(?)' with one String param" in {
         val nameCol = Column["name", String]("", "name", "name")
         val t       = nameCol.notIlike("ada%")
-        val r       = t.render(SqlBackend.Mysql)
+        val r       = t.renderMysql
         assert(r.sql == "LOWER(`name`) NOT LIKE LOWER(?)")
         assert(r.params.size == 1)
         assert((r.params.head.value: Any) == "ada%")
@@ -75,9 +75,9 @@ class SqlRenderTest extends Test:
 
     // Static-path cross-check for ILike: static macro == runtime renderer byte-for-byte.
     "ILike staticSql matches SqlRender.render byte-for-byte" in {
-        val rt  = Sql.from[NameRow]("n").where(c => c.n.name.ilike("ada%")).render(SqlBackend.Postgres)
+        val rt  = Sql.from[NameRow]("n").where(c => c.n.name.ilike("ada%")).renderPostgres
         val rs  = SqlStatic.staticSql(Sql.from[NameRow]("n").where(c => c.n.name.ilike("ada%")))
-        val rtm = Sql.from[NameRow]("n").where(c => c.n.name.ilike("ada%")).render(SqlBackend.Mysql)
+        val rtm = Sql.from[NameRow]("n").where(c => c.n.name.ilike("ada%")).renderMysql
         val rsm = SqlStatic.staticSql(Sql.from[NameRow]("n").where(c => c.n.name.ilike("ada%")))
         assert(rs.sql.postgres == rt.sql)
         assert(rsm.sql.mysql == rtm.sql)
@@ -90,7 +90,7 @@ class SqlRenderTest extends Test:
         val firstCol = Column["first", String]("", "first", "first")
         val lastCol  = Column["last", String]("", "last", "last")
         val t        = firstCol ++ lastCol
-        val r        = t.render(SqlBackend.Postgres)
+        val r        = t.renderPostgres
         assert(r.sql == """("first" || "last")""")
         assert(r.params.isEmpty)
     }
@@ -100,7 +100,7 @@ class SqlRenderTest extends Test:
         val firstCol = Column["first", String]("", "first", "first")
         val lastCol  = Column["last", String]("", "last", "last")
         val t        = firstCol ++ lastCol
-        val r        = t.render(SqlBackend.Mysql)
+        val r        = t.renderMysql
         assert(r.sql == "CONCAT(`first`, `last`)")
         assert(r.params.isEmpty)
     }
@@ -110,7 +110,7 @@ class SqlRenderTest extends Test:
         val firstCol = Column["first", String]("", "first", "first")
         val lastCol  = Column["last", String]("", "last", "last")
         val t        = firstCol ++ "-" ++ lastCol
-        val r        = t.render(SqlBackend.Postgres)
+        val r        = t.renderPostgres
         assert(r.sql == """(("first" || $1) || "last")""")
         assert(r.params.size == 1)
         assert((r.params.head.value: Any) == "-")
@@ -121,7 +121,7 @@ class SqlRenderTest extends Test:
         val firstCol = Column["first", String]("", "first", "first")
         val lastCol  = Column["last", String]("", "last", "last")
         val t        = firstCol ++ "-" ++ lastCol
-        val r        = t.render(SqlBackend.Mysql)
+        val r        = t.renderMysql
         assert(r.sql == "CONCAT(`first`, ?, `last`)")
         assert(r.params.size == 1)
         assert((r.params.head.value: Any) == "-")
@@ -129,9 +129,9 @@ class SqlRenderTest extends Test:
 
     // Static-path cross-check for Concat: staticSql renders byte-identical SQL to the runtime renderer.
     "Concat staticSql matches SqlRender.render byte-for-byte" in {
-        val rt  = Sql.from[FullName]("f").select(c => c.f.first ++ c.f.last).render(SqlBackend.Postgres)
+        val rt  = Sql.from[FullName]("f").select(c => c.f.first ++ c.f.last).renderPostgres
         val rs  = SqlStatic.staticSql(Sql.from[FullName]("f").select(c => c.f.first ++ c.f.last))
-        val rtm = Sql.from[FullName]("f").select(c => c.f.first ++ c.f.last).render(SqlBackend.Mysql)
+        val rtm = Sql.from[FullName]("f").select(c => c.f.first ++ c.f.last).renderMysql
         val rsm = SqlStatic.staticSql(Sql.from[FullName]("f").select(c => c.f.first ++ c.f.last))
         assert(rs.sql.postgres == rt.sql)
         assert(rsm.sql.mysql == rtm.sql)
@@ -142,7 +142,7 @@ class SqlRenderTest extends Test:
     // Leaf 9: fullOuterJoin on Postgres, FULL OUTER JOIN keyword.
     "fullOuterJoin renders on PG as FULL OUTER JOIN" in {
         val q = Sql.from[TA]("a").fullOuterJoin(Sql.from[TB]("b")).on(j => j.a.id == j.b.id)
-        val r = q.render(SqlBackend.Postgres)
+        val r = q.renderPostgres
         assert(r.sql == """SELECT * FROM "ta" "a" FULL OUTER JOIN "tb" "b" ON ("a"."id" = "b"."id")""")
         assert(r.params.isEmpty)
     }
@@ -151,7 +151,7 @@ class SqlRenderTest extends Test:
     // Note: the UNION doubles the predicate, so MySQL bind count is 0 (no literal binds in this predicate).
     "fullOuterJoin renders on MySQL as LEFT JOIN UNION RIGHT JOIN synthesis" in {
         val q = Sql.from[TA]("a").fullOuterJoin(Sql.from[TB]("b")).on(j => j.a.id == j.b.id)
-        val r = q.render(SqlBackend.Mysql)
+        val r = q.renderMysql
         assert(
             r.sql == "SELECT * FROM `ta` `a` LEFT JOIN `tb` `b` ON (`a`.`id` = `b`.`id`) UNION SELECT * FROM `ta` `a` RIGHT JOIN `tb` `b` ON (`a`.`id` = `b`.`id`)"
         )
@@ -164,7 +164,7 @@ class SqlRenderTest extends Test:
     // Leaf 11: onConflictDoNothing (zero targets) on Postgres, ON CONFLICT DO NOTHING.
     "onConflictDoNothing (zero targets) renders on PG as 'ON CONFLICT DO NOTHING'" in {
         val s = Sql.insert[User].values(User(1L, "Alice")).onConflictDoNothing()
-        val r = s.render(SqlBackend.Postgres)
+        val r = s.renderPostgres
         assert(r.sql == """INSERT INTO "user" ("id", "name") VALUES (1, 'Alice') ON CONFLICT DO NOTHING RETURNING "id"""")
         assert(r.params.isEmpty)
     }
@@ -172,16 +172,16 @@ class SqlRenderTest extends Test:
     // Leaf 12: same insert on MySQL, INSERT IGNORE INTO, no ON CONFLICT clause.
     "onConflictDoNothing (zero targets) renders on MySQL as 'INSERT IGNORE INTO'" in {
         val s = Sql.insert[User].values(User(1L, "Alice")).onConflictDoNothing()
-        val r = s.render(SqlBackend.Mysql)
+        val r = s.renderMysql
         assert(r.sql == "INSERT IGNORE INTO `user` (`id`, `name`) VALUES (1, 'Alice')")
         assert(r.params.isEmpty)
     }
 
     // Static-path cross-check for OnConflict DoNothing: static macro == runtime renderer byte-for-byte.
     "OnConflict DoNothing staticSql matches SqlRender.render byte-for-byte" in {
-        val rt  = Sql.insert[User].values(User(1L, "Alice")).onConflictDoNothing().render(SqlBackend.Postgres)
+        val rt  = Sql.insert[User].values(User(1L, "Alice")).onConflictDoNothing().renderPostgres
         val rs  = SqlStatic.staticSql(Sql.insert[User].values(User(1L, "Alice")).onConflictDoNothing())
-        val rtm = Sql.insert[User].values(User(1L, "Alice")).onConflictDoNothing().render(SqlBackend.Mysql)
+        val rtm = Sql.insert[User].values(User(1L, "Alice")).onConflictDoNothing().renderMysql
         val rsm = SqlStatic.staticSql(Sql.insert[User].values(User(1L, "Alice")).onConflictDoNothing())
         assert(rs.sql.postgres == rt.sql)
         assert(rsm.sql.mysql == rtm.sql)
@@ -193,7 +193,7 @@ class SqlRenderTest extends Test:
     "onConflictDoUpdate renders on PG as 'ON CONFLICT (\"name\") DO UPDATE SET ... excluded.\"name\"'" in {
         val s = Sql.insert[User].values(User(1L, "Alice"))
             .onConflictDoUpdate(_.name)(c => c.name := Excluded(c.name))
-        val r = s.render(SqlBackend.Postgres)
+        val r = s.renderPostgres
         assert(
             r.sql == """INSERT INTO "user" ("id", "name") VALUES (1, 'Alice') ON CONFLICT ("name") DO UPDATE SET "name" = EXCLUDED."name" RETURNING "id""""
         )
@@ -204,7 +204,7 @@ class SqlRenderTest extends Test:
     "onConflictDoUpdate renders on MySQL as 'ON DUPLICATE KEY UPDATE `name` = VALUES(`name`)'" in {
         val s = Sql.insert[User].values(User(1L, "Alice"))
             .onConflictDoUpdate(_.name)(c => c.name := Excluded(c.name))
-        val r = s.render(SqlBackend.Mysql)
+        val r = s.renderMysql
         assert(r.sql == "INSERT INTO `user` (`id`, `name`) VALUES (1, 'Alice') ON DUPLICATE KEY UPDATE `name` = VALUES(`name`)")
         assert(r.params.isEmpty)
     }
@@ -212,12 +212,12 @@ class SqlRenderTest extends Test:
     // Static-path cross-check for OnConflict DoUpdate: static macro == runtime renderer byte-for-byte.
     "OnConflict DoUpdate staticSql matches SqlRender.render byte-for-byte" in {
         val rt = Sql.insert[User].values(User(1L, "Alice")).onConflictDoUpdate(_.name)(c => c.name := Excluded(c.name))
-            .render(SqlBackend.Postgres)
+            .renderPostgres
         val rs = SqlStatic.staticSql(
             Sql.insert[User].values(User(1L, "Alice")).onConflictDoUpdate(_.name)(c => c.name := Excluded(c.name))
         )
         val rtm = Sql.insert[User].values(User(1L, "Alice")).onConflictDoUpdate(_.name)(c => c.name := Excluded(c.name))
-            .render(SqlBackend.Mysql)
+            .renderMysql
         val rsm = SqlStatic.staticSql(
             Sql.insert[User].values(User(1L, "Alice")).onConflictDoUpdate(_.name)(c => c.name := Excluded(c.name))
         )
@@ -235,7 +235,7 @@ class SqlRenderTest extends Test:
         val s = Sql.insert[User].values(User(1L, "Alice"))
             .onConflictDoUpdate(_.name)
             .where(c => c.id > 0L)(c => c.name := Excluded(c.name))
-        val r = s.render(SqlBackend.Postgres)
+        val r = s.renderPostgres
         assert(r.sql.contains("WHERE"))
         assert(r.sql.contains("""ON CONFLICT ("name") DO UPDATE SET "name" = EXCLUDED."name" WHERE"""))
         assert(!r.sql.contains("ON DUPLICATE KEY UPDATE"))
@@ -247,7 +247,7 @@ class SqlRenderTest extends Test:
             .onConflictDoUpdate(_.name)
             .where(c => c.id > 0L)(c => c.name := Excluded(c.name))
         val ex = intercept[SqlException.Unsupported] {
-            s.render(SqlBackend.Mysql)
+            s.renderMysql
         }
         assert(ex.getMessage.contains("MySQL does not support a WHERE clause on ON DUPLICATE KEY UPDATE"))
         assert(ex.getMessage.contains("ON CONFLICT DO UPDATE WHERE on PG"))
@@ -261,35 +261,35 @@ class SqlRenderTest extends Test:
     // Leaf 17: DESC NULLS FIRST on Postgres, verbatim NULLS FIRST, no lowering.
     "ORDER BY score DESC NULLS FIRST renders verbatim on PG" in {
         val q = Sql.from[Sortable]("s").orderBy(c => c.s.score.descNullsFirst)
-        val r = q.render(SqlBackend.Postgres)
+        val r = q.renderPostgres
         assert(r.sql == """SELECT "s"."id", "s"."score" FROM "sortable" "s" ORDER BY "s"."score" DESC NULLS FIRST""")
     }
 
     // Leaf 18: DESC NULLS FIRST on MySQL, lowered to `IS NOT NULL, score DESC`.
     "ORDER BY score DESC NULLS FIRST lowers to IS NOT NULL, score DESC on MySQL" in {
         val q = Sql.from[Sortable]("s").orderBy(c => c.s.score.descNullsFirst)
-        val r = q.render(SqlBackend.Mysql)
+        val r = q.renderMysql
         assert(r.sql == "SELECT `s`.`id`, `s`.`score` FROM `sortable` `s` ORDER BY `s`.`score` IS NOT NULL, `s`.`score` DESC")
     }
 
     // Leaf 19: ASC NULLS LAST on MySQL, lowered to `IS NULL, score ASC`.
     "ORDER BY score ASC NULLS LAST lowers to IS NULL, score ASC on MySQL" in {
         val q = Sql.from[Sortable]("s").orderBy(c => c.s.score.ascNullsLast)
-        val r = q.render(SqlBackend.Mysql)
+        val r = q.renderMysql
         assert(r.sql == "SELECT `s`.`id`, `s`.`score` FROM `sortable` `s` ORDER BY `s`.`score` IS NULL, `s`.`score` ASC")
     }
 
     // Leaf 20: ASC NULLS FIRST on MySQL, unchanged (MySQL ASC default: NULLs first).
     "ORDER BY score ASC NULLS FIRST renders unchanged on MySQL (default)" in {
         val q = Sql.from[Sortable]("s").orderBy(c => c.s.score.ascNullsFirst)
-        val r = q.render(SqlBackend.Mysql)
+        val r = q.renderMysql
         assert(r.sql == "SELECT `s`.`id`, `s`.`score` FROM `sortable` `s` ORDER BY `s`.`score` ASC")
     }
 
     // Leaf 21: DESC NULLS LAST on MySQL, unchanged (MySQL DESC default: NULLs last).
     "ORDER BY score DESC NULLS LAST renders unchanged on MySQL (default)" in {
         val q = Sql.from[Sortable]("s").orderBy(c => c.s.score.descNullsLast)
-        val r = q.render(SqlBackend.Mysql)
+        val r = q.renderMysql
         assert(r.sql == "SELECT `s`.`id`, `s`.`score` FROM `sortable` `s` ORDER BY `s`.`score` DESC")
     }
 
