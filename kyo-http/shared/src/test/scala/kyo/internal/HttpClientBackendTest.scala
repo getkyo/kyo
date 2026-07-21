@@ -5,6 +5,7 @@ import kyo.*
 import kyo.internal.client.*
 import kyo.internal.http1.*
 import kyo.internal.util.*
+import kyo.net.NetTlsConfig
 
 /** Integration and unit tests for HttpClientBackend.
   *
@@ -35,7 +36,7 @@ class HttpClientBackendTest extends kyo.BaseHttpTest:
         route: HttpRoute[In, Out, ?],
         request: HttpRequest[In]
     )(using Frame): HttpResponse[Out] < (Async & Abort[HttpException]) =
-        client.connectWith(url, 30.seconds, HttpTlsConfig.default) { conn =>
+        client.connectWith(url, 30.seconds, NetTlsConfig.default) { conn =>
             Scope.run {
                 Scope.ensure(client.closeNow(conn)).andThen {
                     client.sendWith(conn, route, request)(identity)
@@ -79,7 +80,7 @@ class HttpClientBackendTest extends kyo.BaseHttpTest:
         val ep    = route.handler(_ => HttpResponse.ok("alive"))
         Scope.run {
             withServer(ep) { url =>
-                client.connectWith(url, 30.seconds, HttpTlsConfig.default) { conn =>
+                client.connectWith(url, 30.seconds, NetTlsConfig.default) { conn =>
                     Scope.run {
                         Scope.ensure(client.closeNow(conn)).andThen {
                             // Connection should have the right host and port
@@ -100,7 +101,7 @@ class HttpClientBackendTest extends kyo.BaseHttpTest:
         // Port 1 is not listening — connection refused
         val url = HttpUrl(Present("http"), "localhost", 1, "/", Absent)
         Abort.run[HttpException](
-            client.connectWith(url, 5.seconds, HttpTlsConfig.default) { conn =>
+            client.connectWith(url, 5.seconds, NetTlsConfig.default) { conn =>
                 Scope.run {
                     Scope.ensure(client.closeNow(conn)).unit
                 }
@@ -245,7 +246,7 @@ class HttpClientBackendTest extends kyo.BaseHttpTest:
         Scope.run {
             withServer(ep) { url =>
                 var called = false
-                client.connectWith(url, 30.seconds, HttpTlsConfig.default) { conn =>
+                client.connectWith(url, 30.seconds, NetTlsConfig.default) { conn =>
                     Scope.run {
                         Scope.ensure(client.closeNow(conn)).andThen {
                             client.sendWith(conn, route, HttpRequest.getRaw(HttpUrl.fromUri("/stream"))) { resp =>
@@ -278,7 +279,7 @@ class HttpClientBackendTest extends kyo.BaseHttpTest:
         Scope.run {
             withServer(ep) { url =>
                 var called = false
-                client.connectWith(url, 30.seconds, HttpTlsConfig.default) { conn =>
+                client.connectWith(url, 30.seconds, NetTlsConfig.default) { conn =>
                     Scope.run {
                         Scope.ensure(client.closeNow(conn)).andThen {
                             client.sendWith(conn, route, HttpRequest.getRaw(HttpUrl.fromUri("/bigstream"))) { resp =>
@@ -451,7 +452,7 @@ class HttpClientBackendTest extends kyo.BaseHttpTest:
         @volatile var releaseArg: Maybe[Result.Error[Any]] = Present(Result.Failure(new Exception("not called")))
         Scope.run {
             withServer(ep) { url =>
-                client.connectWith(url, 30.seconds, HttpTlsConfig.default) { conn =>
+                client.connectWith(url, 30.seconds, NetTlsConfig.default) { conn =>
                     Scope.run {
                         Scope.ensure(client.closeNow(conn)).andThen {
                             client.sendWith(
@@ -482,7 +483,7 @@ class HttpClientBackendTest extends kyo.BaseHttpTest:
             withServer(ep) { url =>
                 var releaseArg: Maybe[Result.Error[Any]] = Absent
                 Abort.run[HttpException](
-                    client.connectWith(url, 30.seconds, HttpTlsConfig.default) { conn =>
+                    client.connectWith(url, 30.seconds, NetTlsConfig.default) { conn =>
                         Scope.run {
                             Scope.ensure(client.closeNow(conn)).andThen {
                                 client.sendWith(
@@ -514,7 +515,7 @@ class HttpClientBackendTest extends kyo.BaseHttpTest:
         val ep    = route.handler(_ => HttpResponse.ok(""))
         Scope.run {
             withServer(ep) { url =>
-                client.connectWith(url, 30.seconds, HttpTlsConfig.default) { conn =>
+                client.connectWith(url, 30.seconds, NetTlsConfig.default) { conn =>
                     Scope.run {
                         client.isAlive(conn).map { alive =>
                             assert(alive, "Connection should be alive before close")
@@ -538,7 +539,7 @@ class HttpClientBackendTest extends kyo.BaseHttpTest:
         val ep    = route.handler(_ => HttpResponse.ok(""))
         Scope.run {
             withServer(ep) { url =>
-                client.connectWith(url, 30.seconds, HttpTlsConfig.default) { conn =>
+                client.connectWith(url, 30.seconds, NetTlsConfig.default) { conn =>
                     Scope.run {
                         // Close the connection
                         client.closeNow(conn).andThen {

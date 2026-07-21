@@ -28,7 +28,7 @@ final private[kyo] class HttpClientBackend private (
     transport: kyo.net.Transport,
     transportConfig: HttpTransportConfig,
     defaultTlsConfig: HttpTlsConfig,
-    private val pool: ConnectionPool[HttpConnection],
+    private val pool: ConnectionPool[HttpAddress, HttpConnection],
     private val registry: kyo.internal.ConnectionRegistry[HttpConnection],
     val maxConnectionsPerHost: Int,
     val clientFrame: Frame
@@ -1231,7 +1231,7 @@ private[kyo] object HttpClientBackend:
         transportConfig: HttpTransportConfig = HttpTransportConfig.default
     )(using AllowUnsafe, Frame): HttpClientBackend =
         val registry = new kyo.internal.ConnectionRegistry[HttpConnection]
-        val pool = ConnectionPool.init[HttpConnection](
+        val pool = ConnectionPool.init[HttpAddress, HttpConnection](
             maxConnsPerHost,
             idleConnectionTimeout,
             conn => conn.transport.isOpen,

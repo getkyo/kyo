@@ -284,6 +284,7 @@ lazy val kyoJVM: Project = project
         `kyo-aeron`.jvm,
         `kyo-compiler`.jvm,
         `kyo-schema`.jvm,
+        `kyo-sql`.jvm,
         `kyo-http`.jvm,
         `kyo-flow`.jvm,
         `kyo-ai`.jvm,
@@ -674,6 +675,20 @@ lazy val `kyo-schema` =
         .nativeSettings(`native-settings`)
         .jsSettings(`js-settings`, Test / scalaJSLinkerConfig ~= (_.withModuleKind(ModuleKind.CommonJSModule)))
         .wasmSettings(`wasm-settings`)
+
+lazy val `kyo-sql` =
+    crossProject(JVMPlatform)
+        .withoutSuffixFor(JVMPlatform)
+        .crossType(CrossType.Full)
+        .dependsOn(`kyo-core`)
+        .dependsOn(`kyo-schema`)
+        .dependsOn(`kyo-net`)
+        .dependsOn(`kyo-http`)
+        .dependsOn(`kyo-pod` % "test->compile")
+        .in(file("kyo-sql"))
+        .withKyoTest
+        .settings(`kyo-settings`)
+        .jvmSettings(mimaCheck(false))
 
 lazy val `kyo-core` =
     crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)

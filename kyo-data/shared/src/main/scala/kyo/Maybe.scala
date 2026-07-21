@@ -19,6 +19,14 @@ object Maybe:
     inline given [A, B](using inline ce: CanEqual[A, B]): CanEqual[Maybe[A], Maybe[B]] = CanEqual.derived
     implicit def toIterableOnce[A](v: Maybe[A]): IterableOnce[A]                       = v.iterator
 
+    // ConcreteTag for the opaque Maybe/Present chain: derive for the internal union and cast.
+    // Spell the internal repr explicitly because `ConcreteTag.apply[Maybe[A]]` would not dealias
+    // the opaque (the macro runs in a separate file outside the opaque's defining scope).
+    inline given [A](using ConcreteTag[A]): ConcreteTag[Maybe[A]] =
+        ConcreteTag.apply[Absent | Present[A]].asInstanceOf[ConcreteTag[Maybe[A]]]
+    inline given [A](using ConcreteTag[A]): ConcreteTag[Maybe.Present[A]] =
+        ConcreteTag.apply[A | PresentAbsent].asInstanceOf[ConcreteTag[Maybe.Present[A]]]
+
     given [A, MaybeA <: Maybe[A]](using ra: Render[A]): Render[MaybeA] with
         given CanEqual[Absent, MaybeA] = CanEqual.derived
         def asString(value: MaybeA): String = (value: Maybe[A]) match

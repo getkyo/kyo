@@ -101,6 +101,17 @@ class ConcreteTagTest extends kyo.test.Test[Any]:
                 assert(userIdTag.accepts(UserId("user123")))
                 assert(!userIdTag.accepts(123))
             }
+            "Maybe[Int] via companion-provided given" in {
+                val t = ConcreteTag[Maybe[Int]]
+                assert(t.accepts(Maybe(42)))
+                assert(t.accepts(Maybe.empty[Int]))
+                assert(!t.accepts("hi"))
+            }
+            "Maybe[String] via companion-provided given" in {
+                val t = ConcreteTag[Maybe[String]]
+                assert(t.accepts(Maybe("hi")))
+                assert(t.accepts(Maybe.empty[String]))
+            }
         }
     }
 

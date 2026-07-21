@@ -305,6 +305,57 @@ class TagTest extends kyo.test.Test[Any]:
         assert(tag =:= tag && tag <:< tag)
     }
 
+    // Regression: deriving a Tag for a type whose Java supertypes are *parameterized*
+    // crashed the macro. A Java wildcard `<?>` argument surfaces through `typeArgs`
+    // as a bare `TypeBounds(Nothing, FromJavaObject)`, which `TagMacro` did not
+    // handle, raising `AssertionError: TypeBounds(...)` inside the dotty compiler.
+    "Java parameterized supertypes (wildcard type args)" - {
+        "LocalDateTime derives without crashing" in {
+            val tag = Tag[java.time.LocalDateTime]
+            assert(tag.show.nonEmpty)
+            assert(tag =:= tag)
+            assert(tag <:< tag)
+        }
+
+        "OffsetDateTime derives without crashing" in {
+            val tag = Tag[java.time.OffsetDateTime]
+            assert(tag.show.nonEmpty)
+            assert(tag =:= tag && tag <:< tag)
+        }
+
+        "ZonedDateTime derives without crashing" in {
+            val tag = Tag[java.time.ZonedDateTime]
+            assert(tag.show.nonEmpty)
+            assert(tag =:= tag && tag <:< tag)
+        }
+
+        "LocalDate / LocalTime still derive (unparameterized supertypes)" in {
+            assert(Tag[java.time.LocalDate].show.nonEmpty)
+            assert(Tag[java.time.LocalTime].show.nonEmpty)
+        }
+
+        "distinct java.time tags are not equal" in {
+            assert(Tag[java.time.LocalDateTime] =!= Tag[java.time.LocalDate])
+            assert(Tag[java.time.LocalDateTime] =!= Tag[java.time.LocalTime])
+            assert(Tag[java.time.LocalDateTime] =!= Tag[java.time.OffsetDateTime])
+        }
+
+        "direct wildcard-parameterized Java type derives" in {
+            // java.lang.Class is declared as Class<T> with no wildcard; use a
+            // type whose own supertype list contains a parameterized interface.
+            val tag = Tag[java.util.concurrent.atomic.AtomicReference[String]]
+            assert(tag.show.nonEmpty)
+            assert(tag =:= tag)
+        }
+
+        "case class with a LocalDateTime field can summon its field Tag" in {
+            final case class HasTime(at: java.time.LocalDateTime, label: String)
+            val tag = Tag[HasTime]
+            assert(tag.show.nonEmpty)
+            assert(tag =:= tag && tag <:< tag)
+        }
+    }
+
     "type unions" - {
 
         "union subtype" - {

@@ -1270,6 +1270,32 @@ object Span:
 
     end extension
 
+    extension (self: Span[Byte])
+        /** Compares two `Span[Byte]` values for equality in constant time.
+          *
+          * Unlike `is`, which short-circuits on the first mismatch, this method always iterates over every byte using an XOR-OR
+          * accumulator. This prevents timing side-channels that would otherwise reveal the position of the first differing byte — critical
+          * for cryptographic MAC / signature verification (e.g., SCRAM ServerSignature).
+          *
+          * @param other
+          *   the Span to compare with
+          * @return
+          *   true if both spans have the same length and identical byte content, false otherwise
+          */
+        def constantTimeEquals(other: Span[Byte]): Boolean =
+            if self.length != other.length then false
+            else
+                var acc = 0
+                var i   = 0
+                while i < self.length do
+                    acc |= (self(i) ^ other(i))
+                    i += 1
+                end while
+                acc == 0
+            end if
+        end constantTimeEquals
+    end extension
+
     extension [B](x: B)
         inline def +:[A >: B: ClassTag](span: Span[A]): Span[A] =
             Span.prepend(span)(x)

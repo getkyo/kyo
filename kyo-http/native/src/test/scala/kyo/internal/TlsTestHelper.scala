@@ -1,6 +1,7 @@
 package kyo.internal
 
 import kyo.*
+import kyo.net.NetTlsConfig
 
 /** TLS certificates for tests — embedded as PEM literals to avoid ProcessBuilder on Scala Native.
   *
@@ -74,13 +75,13 @@ nExc1OKAJ9rzBEd8BEySPQ==
     end val
 
     /** Server TLS config with self-signed cert for localhost. */
-    lazy val serverTlsConfig: HttpTlsConfig = HttpTlsConfig(
+    lazy val serverTlsConfig: NetTlsConfig = NetTlsConfig(
         certChainPath = Present(certPath),
         privateKeyPath = Present(keyPath)
     )
 
     /** Client TLS config that trusts any certificate (for connecting to self-signed test servers). */
-    lazy val clientTlsConfig: HttpTlsConfig = HttpTlsConfig(
+    lazy val clientTlsConfig: NetTlsConfig = NetTlsConfig(
         trustAll = true
     )
 

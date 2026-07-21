@@ -103,9 +103,11 @@ object Random:
                     b.result()
                 end nextString
 
-                val bytes = Seq(0.toByte, 1.toByte).toIndexedSeq
                 def nextBytes(length: Int)(using AllowUnsafe) =
-                    nextValues(length, bytes)
+                    val arr = new Array[Byte](length)
+                    random.nextBytes(arr)
+                    arr.toSeq
+                end nextBytes
 
                 def shuffle[A](seq: Seq[A])(using AllowUnsafe) =
                     val buffer = scala.collection.mutable.ArrayBuffer.from(seq)
@@ -119,6 +121,12 @@ object Random:
                     shuffleLoop(buffer.size - 1)
                     buffer.toSeq
                 end shuffle
+
+        /** Cryptographically secure random source. JVM uses `java.security.SecureRandom` from the JDK. Native uses `/dev/urandom`. JS uses
+          * the Web Crypto API. Use this for SCRAM nonces, OAEP seeds, and any context where prediction resistance matters; for
+          * non-cryptographic randomness use `Random.live`.
+          */
+        def secure(using AllowUnsafe): Unsafe = Random.Unsafe(new java.security.SecureRandom)
 
     end Unsafe
 
@@ -155,6 +163,12 @@ object Random:
 
     /** A live instance of Random using the default java.util.Random. */
     val live = Random(Random.Unsafe(new java.util.Random))
+
+    /** Cryptographically secure random source. JVM uses `java.security.SecureRandom` from the JDK. Native uses `/dev/urandom`. JS uses the
+      * Web Crypto API. Use this for SCRAM nonces, OAEP seeds, and any context where prediction resistance matters; for non-cryptographic
+      * randomness use `Random.live`.
+      */
+    val secure: Random = Random(Random.Unsafe(new java.security.SecureRandom))
 
     private val local = Local.init(live)
 

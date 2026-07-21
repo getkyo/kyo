@@ -1,6 +1,7 @@
 package kyo
 
 import kyo.*
+import kyo.net.NetTlsConfig
 import scala.language.implicitConversions
 
 class HttpServerTest extends BaseHttpTest:
@@ -78,7 +79,7 @@ class HttpServerTest extends BaseHttpTest:
         route: HttpRoute[In, Out, ?],
         request: HttpRequest[In]
     )(using Frame): HttpResponse[Out] < (Async & Abort[HttpException]) =
-        client.connectWith(url, 30.seconds, HttpTlsConfig(trustAll = true)) { conn =>
+        client.connectWith(url, 30.seconds, NetTlsConfig(trustAll = true)) { conn =>
             Scope.run {
                 Scope.ensure(client.closeNow(conn)).andThen {
                     client.sendWith(conn, route, request)(identity)
@@ -805,7 +806,7 @@ class HttpServerTest extends BaseHttpTest:
             }
             runServer(ep) { url =>
                 var called = false
-                client.connectWith(url, 30.seconds, HttpTlsConfig(trustAll = true)) { conn =>
+                client.connectWith(url, 30.seconds, NetTlsConfig(trustAll = true)) { conn =>
                     Scope.run {
                         Scope.ensure(client.closeNow(conn)).andThen {
                             client.sendWith(conn, route, HttpRequest.getRaw(HttpUrl.fromUri("/stream"))) { resp =>
@@ -832,7 +833,7 @@ class HttpServerTest extends BaseHttpTest:
             }
             runServer(ep) { url =>
                 var called = false
-                client.connectWith(url, 30.seconds, HttpTlsConfig(trustAll = true)) { conn =>
+                client.connectWith(url, 30.seconds, NetTlsConfig(trustAll = true)) { conn =>
                     Scope.run {
                         Scope.ensure(client.closeNow(conn)).andThen {
                             client.sendWith(conn, route, HttpRequest.getRaw(HttpUrl.fromUri("/events"))) { resp =>
@@ -860,7 +861,7 @@ class HttpServerTest extends BaseHttpTest:
             }
             runServer(ep) { url =>
                 var called = false
-                client.connectWith(url, 30.seconds, HttpTlsConfig(trustAll = true)) { conn =>
+                client.connectWith(url, 30.seconds, NetTlsConfig(trustAll = true)) { conn =>
                     Scope.run {
                         Scope.ensure(client.closeNow(conn)).andThen {
                             client.sendWith(conn, route, HttpRequest.getRaw(HttpUrl.fromUri("/sse"))) { resp =>
@@ -892,7 +893,7 @@ class HttpServerTest extends BaseHttpTest:
                 }
             }
             runServer(ep) { url =>
-                client.connectWith(url, 30.seconds, HttpTlsConfig(trustAll = true)) { conn =>
+                client.connectWith(url, 30.seconds, NetTlsConfig(trustAll = true)) { conn =>
                     Scope.run {
                         Scope.ensure(client.closeNow(conn)).andThen {
                             val bodyStream: Stream[Span[Byte], Async] = Stream.init(Seq(
@@ -921,7 +922,7 @@ class HttpServerTest extends BaseHttpTest:
             }
             runServer(ep) { url =>
                 var called = false
-                client.connectWith(url, 30.seconds, HttpTlsConfig(trustAll = true)) { conn =>
+                client.connectWith(url, 30.seconds, NetTlsConfig(trustAll = true)) { conn =>
                     Scope.run {
                         Scope.ensure(client.closeNow(conn)).andThen {
                             client.sendWith(conn, route, HttpRequest.getRaw(HttpUrl.fromUri("/many"))) { resp =>
@@ -1146,7 +1147,7 @@ class HttpServerTest extends BaseHttpTest:
             val route = HttpRoute.getRaw("ping").response(_.bodyText)
             val ep    = route.handler(_ => HttpResponse.ok("pong"))
             runServer(ep) { url =>
-                client.connectWith(url, 30.seconds, HttpTlsConfig(trustAll = true)) { conn =>
+                client.connectWith(url, 30.seconds, NetTlsConfig(trustAll = true)) { conn =>
                     Scope.run {
                         Scope.ensure(client.closeNow(conn)).andThen {
                             Kyo.foreach(1 to 5) { i =>
@@ -1291,7 +1292,7 @@ class HttpServerTest extends BaseHttpTest:
                     fibers <- Kyo.foreach(0 until size) { i =>
                         Fiber.initUnscoped(
                             latch.await.andThen {
-                                client.connectWith(url, 30.seconds, HttpTlsConfig(trustAll = true)) { conn =>
+                                client.connectWith(url, 30.seconds, NetTlsConfig(trustAll = true)) { conn =>
                                     Scope.run {
                                         Scope.ensure(client.closeNow(conn)).andThen {
                                             client.sendWith(
@@ -1644,7 +1645,7 @@ class HttpServerTest extends BaseHttpTest:
             }
             runServer(ep) { url =>
                 var called = false
-                client.connectWith(url, 30.seconds, HttpTlsConfig(trustAll = true)) { conn =>
+                client.connectWith(url, 30.seconds, NetTlsConfig(trustAll = true)) { conn =>
                     Scope.run {
                         Scope.ensure(client.closeNow(conn)).andThen {
                             client.sendWith(conn, route, HttpRequest.getRaw(HttpUrl.fromUri("/sse"))) { resp =>
@@ -1676,7 +1677,7 @@ class HttpServerTest extends BaseHttpTest:
             val rawRoute = HttpRoute.getRaw("sse").response(_.bodyStream)
             runServer(ep) { url =>
                 var called = false
-                client.connectWith(url, 30.seconds, HttpTlsConfig(trustAll = true)) { conn =>
+                client.connectWith(url, 30.seconds, NetTlsConfig(trustAll = true)) { conn =>
                     Scope.run {
                         Scope.ensure(client.closeNow(conn)).andThen {
                             client.sendWith(conn, rawRoute, HttpRequest.getRaw(HttpUrl.fromUri("/sse"))) { resp =>
@@ -1957,7 +1958,7 @@ class HttpServerTest extends BaseHttpTest:
                     HttpResponse.ok.addField("body", infiniteStream)
                 }
                 withServer(ep) { url =>
-                    client.connectWith(url, 30.seconds, HttpTlsConfig(trustAll = true)) { conn =>
+                    client.connectWith(url, 30.seconds, NetTlsConfig(trustAll = true)) { conn =>
                         client.sendWith(conn, route, HttpRequest.getRaw(HttpUrl.fromUri("/infinite"))) { resp =>
                             assert(resp.status == HttpStatus.OK)
                             resp.fields.body.take(1).run.map { chunks =>
@@ -1992,7 +1993,7 @@ class HttpServerTest extends BaseHttpTest:
                     HttpResponse.ok.addField("body", hangStream)
                 }
                 withServer(ep) { url =>
-                    client.connectWith(url, 30.seconds, HttpTlsConfig(trustAll = true)) { conn =>
+                    client.connectWith(url, 30.seconds, NetTlsConfig(trustAll = true)) { conn =>
                         client.sendWith(conn, route, HttpRequest.getRaw(HttpUrl.fromUri("/hang"))) { resp =>
                             assert(resp.status == HttpStatus.OK)
                             // Read the first chunk, then disconnect
@@ -2019,7 +2020,7 @@ class HttpServerTest extends BaseHttpTest:
                 }
             }
             runServer(ep) { url =>
-                client.connectWith(url, 30.seconds, HttpTlsConfig(trustAll = true)) { conn =>
+                client.connectWith(url, 30.seconds, NetTlsConfig(trustAll = true)) { conn =>
                     Scope.run {
                         Scope.ensure(client.closeNow(conn)).andThen {
                             val bodyStream: Stream[Span[Byte], Async] = Stream[Span[Byte], Async] {
@@ -2071,7 +2072,7 @@ class HttpServerTest extends BaseHttpTest:
                     }
                 }
                 withServer(ep) { url =>
-                    client.connectWith(url, 30.seconds, HttpTlsConfig(trustAll = true)) { conn =>
+                    client.connectWith(url, 30.seconds, NetTlsConfig(trustAll = true)) { conn =>
                         Scope.run {
                             Scope.ensure(client.closeNow(conn)).andThen {
                                 val bodyStream: Stream[Span[Byte], Async] = Stream[Span[Byte], Async] {
@@ -2112,7 +2113,7 @@ class HttpServerTest extends BaseHttpTest:
                 HttpResponse.ok.addField("body", manyChunks)
             }
             runServer(ep) { url =>
-                client.connectWith(url, 30.seconds, HttpTlsConfig(trustAll = true)) { conn =>
+                client.connectWith(url, 30.seconds, NetTlsConfig(trustAll = true)) { conn =>
                     Scope.run {
                         Scope.ensure(client.closeNow(conn)).andThen {
                             client.sendWith(conn, route, HttpRequest.getRaw(HttpUrl.fromUri("/many-chunks"))) { resp =>
@@ -2141,7 +2142,7 @@ class HttpServerTest extends BaseHttpTest:
                 HttpResponse.ok.addField("body", failingStream)
             }
             runServer(ep) { url =>
-                client.connectWith(url, 30.seconds, HttpTlsConfig(trustAll = true)) { conn =>
+                client.connectWith(url, 30.seconds, NetTlsConfig(trustAll = true)) { conn =>
                     Scope.run {
                         Scope.ensure(client.closeNow(conn)).andThen {
                             client.sendWith(conn, route, HttpRequest.getRaw(HttpUrl.fromUri("/err-stream"))) { resp =>
@@ -2563,7 +2564,7 @@ class HttpServerTest extends BaseHttpTest:
             }
             var called = false
             withCorsServer(HttpServerConfig.Cors.allowAll, ep) { url =>
-                client.connectWith(url, 30.seconds, HttpTlsConfig(trustAll = true)) { conn =>
+                client.connectWith(url, 30.seconds, NetTlsConfig(trustAll = true)) { conn =>
                     Scope.run {
                         Scope.ensure(client.closeNow(conn)).andThen {
                             client.sendWith(conn, route, HttpRequest.getRaw(HttpUrl.fromUri("/cors-sse-get2"))) { resp =>
@@ -2665,7 +2666,7 @@ class HttpServerTest extends BaseHttpTest:
             }
             runServer(ep) { url =>
                 var called = false
-                client.connectWith(url, 30.seconds, HttpTlsConfig(trustAll = true)) { conn =>
+                client.connectWith(url, 30.seconds, NetTlsConfig(trustAll = true)) { conn =>
                     Scope.run {
                         Scope.ensure(client.closeNow(conn)).andThen {
                             client.sendWith(conn, route, HttpRequest.getRaw(HttpUrl.fromUri("/cors-sse-get"))) { resp =>
@@ -2736,7 +2737,7 @@ class HttpServerTest extends BaseHttpTest:
             val route = HttpRoute.getRaw("sse-repeat").response(_.bodySseJson[User])
             runServer(ep) { url =>
                 var called = false
-                client.connectWith(url, 30.seconds, HttpTlsConfig(trustAll = true)) { conn =>
+                client.connectWith(url, 30.seconds, NetTlsConfig(trustAll = true)) { conn =>
                     Scope.run {
                         Scope.ensure(client.closeNow(conn)).andThen {
                             client.sendWith(conn, route, HttpRequest.getRaw(HttpUrl.fromUri("/sse-repeat"))) { resp =>
@@ -2767,7 +2768,7 @@ class HttpServerTest extends BaseHttpTest:
             }
             runServer(ep) { url =>
                 var called = false
-                client.connectWith(url, 30.seconds, HttpTlsConfig(trustAll = true)) { conn =>
+                client.connectWith(url, 30.seconds, NetTlsConfig(trustAll = true)) { conn =>
                     Scope.run {
                         Scope.ensure(client.closeNow(conn)).andThen {
                             client.sendWith(conn, route, HttpRequest.getRaw(HttpUrl.fromUri("/sse-delayed"))) { resp =>
@@ -2804,7 +2805,7 @@ class HttpServerTest extends BaseHttpTest:
             }
             runServer(ep) { url =>
                 var called = false
-                client.connectWith(url, 30.seconds, HttpTlsConfig(trustAll = true)) { conn =>
+                client.connectWith(url, 30.seconds, NetTlsConfig(trustAll = true)) { conn =>
                     Scope.run {
                         Scope.ensure(client.closeNow(conn)).andThen {
                             client.sendWith(conn, route, HttpRequest.getRaw(HttpUrl.fromUri("/ndjson-repeat"))) { resp =>
@@ -2835,7 +2836,7 @@ class HttpServerTest extends BaseHttpTest:
             }
             runServer(ep) { url =>
                 var called = false
-                client.connectWith(url, 30.seconds, HttpTlsConfig(trustAll = true)) { conn =>
+                client.connectWith(url, 30.seconds, NetTlsConfig(trustAll = true)) { conn =>
                     Scope.run {
                         Scope.ensure(client.closeNow(conn)).andThen {
                             client.sendWith(conn, route, HttpRequest.getRaw(HttpUrl.fromUri("/ndjson-delayed"))) { resp =>
@@ -2861,7 +2862,7 @@ class HttpServerTest extends BaseHttpTest:
                 HttpResponse.ok.addField("body", events)
             }
             runServer(ep) { url =>
-                client.connectWith(url, 30.seconds, HttpTlsConfig(trustAll = true)) { conn =>
+                client.connectWith(url, 30.seconds, NetTlsConfig(trustAll = true)) { conn =>
                     Scope.run {
                         Scope.ensure(client.closeNow(conn)).andThen {
                             client.sendWith(conn, route, HttpRequest.getRaw(HttpUrl.fromUri("/sse-empty"))) { resp =>
@@ -2894,7 +2895,7 @@ class HttpServerTest extends BaseHttpTest:
             }
             runServer(ep) { url =>
                 var called = false
-                client.connectWith(url, 30.seconds, HttpTlsConfig(trustAll = true)) { conn =>
+                client.connectWith(url, 30.seconds, NetTlsConfig(trustAll = true)) { conn =>
                     Scope.run {
                         Scope.ensure(client.closeNow(conn)).andThen {
                             client.sendWith(conn, route, HttpRequest.getRaw(HttpUrl.fromUri("/sse-gaps"))) { resp =>
@@ -2927,7 +2928,7 @@ class HttpServerTest extends BaseHttpTest:
             }
             runServer(ep) { url =>
                 var called = false
-                client.connectWith(url, 30.seconds, HttpTlsConfig(trustAll = true)) { conn =>
+                client.connectWith(url, 30.seconds, NetTlsConfig(trustAll = true)) { conn =>
                     Scope.run {
                         Scope.ensure(client.closeNow(conn)).andThen {
                             client.sendWith(conn, route, HttpRequest.getRaw(HttpUrl.fromUri("/sse-map-delay"))) { resp =>
@@ -2956,7 +2957,7 @@ class HttpServerTest extends BaseHttpTest:
             val route = HttpRoute.getRaw("sse-delay-map").response(_.bodySseJson[User])
             runServer(ep) { url =>
                 var called = false
-                client.connectWith(url, 30.seconds, HttpTlsConfig(trustAll = true)) { conn =>
+                client.connectWith(url, 30.seconds, NetTlsConfig(trustAll = true)) { conn =>
                     Scope.run {
                         Scope.ensure(client.closeNow(conn)).andThen {
                             client.sendWith(conn, route, HttpRequest.getRaw(HttpUrl.fromUri("/sse-delay-map"))) { resp =>
@@ -2990,7 +2991,7 @@ class HttpServerTest extends BaseHttpTest:
             val route = HttpRoute.getRaw("ndjson-loop-delay").response(_.bodyNdjson[User])
             runServer(ep) { url =>
                 var called = false
-                client.connectWith(url, 30.seconds, HttpTlsConfig(trustAll = true)) { conn =>
+                client.connectWith(url, 30.seconds, NetTlsConfig(trustAll = true)) { conn =>
                     Scope.run {
                         Scope.ensure(client.closeNow(conn)).andThen {
                             client.sendWith(conn, route, HttpRequest.getRaw(HttpUrl.fromUri("/ndjson-loop-delay"))) { resp =>
@@ -3021,7 +3022,7 @@ class HttpServerTest extends BaseHttpTest:
             }
             runServer(ep) { url =>
                 var called = false
-                client.connectWith(url, 30.seconds, HttpTlsConfig(trustAll = true)) { conn =>
+                client.connectWith(url, 30.seconds, NetTlsConfig(trustAll = true)) { conn =>
                     Scope.run {
                         Scope.ensure(client.closeNow(conn)).andThen {
                             client.sendWith(conn, route, HttpRequest.getRaw(HttpUrl.fromUri("/sse-delay-first"))) { resp =>
@@ -3473,7 +3474,7 @@ class HttpServerTest extends BaseHttpTest:
             runServer(ep1) { url1 =>
                 withServer(ep2) { url2 =>
                     Async.zip(
-                        client.connectWith(url1, 30.seconds, HttpTlsConfig(trustAll = true)) { conn =>
+                        client.connectWith(url1, 30.seconds, NetTlsConfig(trustAll = true)) { conn =>
                             Scope.run {
                                 Scope.ensure(client.closeNow(conn)).andThen {
                                     client.sendWith(conn, route1, HttpRequest.getRaw(HttpUrl.fromUri("/stream1"))) { resp =>
@@ -3486,7 +3487,7 @@ class HttpServerTest extends BaseHttpTest:
                                 }
                             }
                         },
-                        client.connectWith(url2, 30.seconds, HttpTlsConfig(trustAll = true)) { conn =>
+                        client.connectWith(url2, 30.seconds, NetTlsConfig(trustAll = true)) { conn =>
                             Scope.run {
                                 Scope.ensure(client.closeNow(conn)).andThen {
                                     client.sendWith(conn, route2, HttpRequest.getRaw(HttpUrl.fromUri("/stream2"))) { resp =>
@@ -3638,7 +3639,7 @@ class HttpServerTest extends BaseHttpTest:
             }
             runServer(ep) { url =>
                 var called = false
-                client.connectWith(url, 30.seconds, HttpTlsConfig(trustAll = true)) { conn =>
+                client.connectWith(url, 30.seconds, NetTlsConfig(trustAll = true)) { conn =>
                     Scope.run {
                         Scope.ensure(client.closeNow(conn)).andThen {
                             client.sendWith(conn, route, HttpRequest.getRaw(HttpUrl.fromUri("/sse-empty"))) { resp =>
@@ -3699,7 +3700,7 @@ class HttpServerTest extends BaseHttpTest:
             val ep    = route.handler(_ => HttpResponse.ok("pong"))
             withServer(ep) { url =>
                 var called = false
-                client.connectWith(url, 30.seconds, HttpTlsConfig(trustAll = true)) { conn =>
+                client.connectWith(url, 30.seconds, NetTlsConfig(trustAll = true)) { conn =>
                     Scope.run {
                         Scope.ensure(client.closeNow(conn)).andThen {
                             // Send 3 requests on the same connection sequentially
@@ -3763,7 +3764,7 @@ class HttpServerTest extends BaseHttpTest:
             }
             withServer(ep) { url =>
                 var called = false
-                client.connectWith(url, 30.seconds, HttpTlsConfig(trustAll = true)) { conn =>
+                client.connectWith(url, 30.seconds, NetTlsConfig(trustAll = true)) { conn =>
                     Scope.run {
                         Scope.ensure(client.closeNow(conn)).andThen {
                             client.sendWith(conn, route, HttpRequest.getRaw(HttpUrl.fromUri("/pump-chunked"))) { resp =>

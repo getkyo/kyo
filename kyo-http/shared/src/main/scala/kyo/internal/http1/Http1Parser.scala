@@ -22,7 +22,7 @@ import scala.annotation.tailrec
 final private[kyo] class Http1Parser(
     inbound: Channel.Unsafe[Span[Byte]],
     builder: ParsedRequestBuilder,
-    // Configurable via HttpTransportConfig.maxHeaderSize when that type is introduced.
+    // Configurable via TransportConfig.maxHeaderSize.
     maxHeaderSize: Int = 65536,
     onRequestParsed: (ParsedRequest, Span[Byte]) => Unit = (_, _) => (),
     onClosed: () => Unit = () => ()

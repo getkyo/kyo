@@ -18,10 +18,10 @@ import scala.annotation.tailrec
   * All public methods are direct (no Kyo `< S` wrappers) and require AllowUnsafe. Health checks (isAlive) and eviction (discardConn) are
   * supplied as constructor parameters so the pool remains generic over connection type C.
   */
-final private[kyo] class ConnectionPool[C](
+final private[kyo] class ConnectionPool[K, C](
     maxConnectionsPerHost: Int,
     idleConnectionTimeoutNanos: Long,
-    pools: ConcurrentHashMap[HttpAddress, ConnectionPool.HostPool],
+    pools: ConcurrentHashMap[K, ConnectionPool.HostPool],
     isAlive: C => Boolean,
     discardConn: C => Unit
 ):
@@ -34,12 +34,12 @@ final private[kyo] class ConnectionPool[C](
     private[kyo] def isClosed(using AllowUnsafe): Boolean = closed
 
     /** Try to get a live idle connection for the given host. */
-    def poll(key: HttpAddress)(using AllowUnsafe): Maybe[C] =
+    def poll(key: K)(using AllowUnsafe): Maybe[C] =
         if closed then Maybe.empty
         else getPool(key).poll(idleConnectionTimeoutNanos, isAlive, discardConn)
 
     /** Return a connection to the idle pool. If the ring is full, discard it. */
-    def release(key: HttpAddress, conn: C)(using AllowUnsafe): Unit =
+    def release(key: K, conn: C)(using AllowUnsafe): Unit =
         if closed then discardConn(conn)
         else getPool(key).release(conn, discardConn)
 
@@ -48,12 +48,12 @@ final private[kyo] class ConnectionPool[C](
         discardConn(conn)
 
     /** Try to reserve an in-flight slot. Returns true if under the per-host limit. */
-    def tryReserve(key: HttpAddress)(using AllowUnsafe): Boolean =
+    def tryReserve(key: K)(using AllowUnsafe): Boolean =
         if closed then false
         else getPool(key).tryReserve()
 
     /** Release an in-flight slot. Always call this after tryReserve, on both success and failure paths. */
-    def unreserve(key: HttpAddress)(using AllowUnsafe): Unit =
+    def unreserve(key: K)(using AllowUnsafe): Unit =
         if !closed then getPool(key).unreserve()
 
     /** Close the pool. Returns idle connections for the caller to close. */
@@ -71,22 +71,22 @@ final private[kyo] class ConnectionPool[C](
     // Cached mapping function: computeIfAbsent reuses this one instance instead of allocating a fresh lambda on every getPool call, and getPool
     // runs on the hot path (poll/release/tryReserve/unreserve each call it). maxConnectionsPerHost is a fixed constructor param, so one instance
     // per pool suffices.
-    private val newHostPool: java.util.function.Function[HttpAddress, HostPool] =
+    private val newHostPool: java.util.function.Function[K, HostPool] =
         _ => new HostPool(maxConnectionsPerHost)
 
-    private def getPool(key: HttpAddress): HostPool =
+    private def getPool(key: K): HostPool =
         pools.computeIfAbsent(key, newHostPool)
 
 end ConnectionPool
 
 private[kyo] object ConnectionPool:
 
-    def init[C](
+    def init[K, C](
         maxConnectionsPerHost: Int,
         idleConnectionTimeout: Duration,
         isAlive: C => Boolean,
         discard: C => Unit
-    )(using AllowUnsafe): ConnectionPool[C] =
+    )(using AllowUnsafe): ConnectionPool[K, C] =
         require(maxConnectionsPerHost >= 2, s"maxConnectionsPerHost must be >= 2: $maxConnectionsPerHost")
         new ConnectionPool(
             maxConnectionsPerHost,

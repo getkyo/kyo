@@ -19,12 +19,20 @@ case class Field[Name <: String, Value](
     nested: List[Field[?, ?]] = Nil,
     default: Maybe[Value] = Maybe.empty
 ):
-    /** Extracts this field's value from a record. Requires evidence that `F` contains `Name ~ Value`. */
-    def get[F](record: Record[F])(using F <:< (Name ~ Value)): Value =
+    /** Extracts this field's value from a record. Requires evidence that `F` contains `Name ~ Value`.
+      *
+      * Only typechecks when `Name` is a String singleton (`Name <: String & Singleton`), because `~` requires its left parameter to be a
+      * singleton. Fields whose `Name` is the un-narrowed `String` type — typically constructed at runtime from a `String` value — can't use
+      * this accessor; use `Record.toDict(name)` directly on the underlying `Dict`.
+      */
+    def get[F, N <: Name & String & scala.Singleton](record: Record[F])(using F <:< (N ~ Value)): Value =
         record.toDict(name).asInstanceOf[Value]
 
-    /** Returns a new record with this field's value replaced. Requires evidence that `F` contains `Name ~ Value`. */
-    def set[F](record: Record[F], value: Value)(using F <:< (Name ~ Value)): Record[F] =
+    /** Returns a new record with this field's value replaced. Requires evidence that `F` contains `Name ~ Value`.
+      *
+      * Only typechecks when `Name` is a String singleton (see [[get]]).
+      */
+    def set[F, N <: Name & String & scala.Singleton](record: Record[F], value: Value)(using F <:< (N ~ Value)): Record[F] =
         Record.init(record.toDict.update(name, value.asInstanceOf[Any]))
 end Field
 

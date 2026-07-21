@@ -44,8 +44,8 @@ class ConnectionPoolConcurrencyTest extends BaseHttpTest:
       * and `discard` records every discarded id (into a thread-safe queue read after the parallel phase) so conservation can account for
       * full-ring drops. A `ConcurrentLinkedQueue` is used over a converter-backed set so the collector is portable to JS and Native.
       */
-    private def mkPool(capacity: Int, discarded: ConcurrentLinkedQueue[Int]): ConnectionPool[Int] =
-        ConnectionPool.init[Int](
+    private def mkPool(capacity: Int, discarded: ConcurrentLinkedQueue[Int]): ConnectionPool[String, Int] =
+        ConnectionPool.init[String, Int](
             capacity,
             Duration.Infinity,
             _ => true,

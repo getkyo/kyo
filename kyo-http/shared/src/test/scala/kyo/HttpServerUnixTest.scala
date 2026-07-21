@@ -1,6 +1,8 @@
 package kyo
 
 import kyo.*
+import kyo.net.NetAddress
+import kyo.net.NetTlsConfig
 
 class HttpServerUnixTest extends BaseHttpTest with internal.UnixSocketTestHelperImpl:
 
@@ -65,7 +67,7 @@ class HttpServerUnixTest extends BaseHttpTest with internal.UnixSocketTestHelper
                 val config  = HttpServerConfig.default.unixSocket(sockPath)
                 Sync.ensure(Sync.defer(cleanupSocket(sockPath))) {
                     HttpServer.init(config)(handler).map { server =>
-                        assert(server.address == HttpAddress.Unix(sockPath))
+                        assert(server.address == NetAddress.Unix(sockPath))
                         assert(server.port == -1)
                         assert(server.host == "localhost")
                     }
@@ -128,7 +130,7 @@ class HttpServerUnixTest extends BaseHttpTest with internal.UnixSocketTestHelper
                 HttpClient.init().map { httpClient =>
                     HttpClient.let(httpClient) {
                         val parsedUrl = HttpUrl.parse(url).getOrThrow
-                        client.connectWith(parsedUrl, 30.seconds, HttpTlsConfig(trustAll = true)) { conn =>
+                        client.connectWith(parsedUrl, 30.seconds, NetTlsConfig(trustAll = true)) { conn =>
                             Scope.run {
                                 Scope.ensure(client.closeNow(conn)).andThen {
                                     client.sendWith(conn, route, HttpRequest.getRaw(parsedUrl)) { resp =>
@@ -170,7 +172,7 @@ class HttpServerUnixTest extends BaseHttpTest with internal.UnixSocketTestHelper
                         ))
                         val request = HttpRequest.postRaw(parsedUrl)
                             .addField("body", bodyStream)
-                        client.connectWith(parsedUrl, 30.seconds, HttpTlsConfig(trustAll = true)) { conn =>
+                        client.connectWith(parsedUrl, 30.seconds, NetTlsConfig(trustAll = true)) { conn =>
                             Scope.run {
                                 Scope.ensure(client.closeNow(conn)).andThen {
                                     client.sendWith(conn, route, request) { resp =>
@@ -210,7 +212,7 @@ class HttpServerUnixTest extends BaseHttpTest with internal.UnixSocketTestHelper
                                 val bodyStream: Stream[Span[Byte], Async] = Stream.init(chunks)
                                 val request = HttpRequest.postRaw(parsedUrl)
                                     .addField("body", bodyStream)
-                                client.connectWith(parsedUrl, 30.seconds, HttpTlsConfig(trustAll = true)) { conn =>
+                                client.connectWith(parsedUrl, 30.seconds, NetTlsConfig(trustAll = true)) { conn =>
                                     Scope.run {
                                         Scope.ensure(client.closeNow(conn)).andThen {
                                             client.sendWith(conn, route, request) { resp =>
@@ -350,7 +352,7 @@ class HttpServerUnixTest extends BaseHttpTest with internal.UnixSocketTestHelper
                 HttpClient.init().map { httpClient =>
                     HttpClient.let(httpClient) {
                         val parsedUrl = HttpUrl.parse(url).getOrThrow
-                        client.connectWith(parsedUrl, 30.seconds, HttpTlsConfig(trustAll = true)) { conn =>
+                        client.connectWith(parsedUrl, 30.seconds, NetTlsConfig(trustAll = true)) { conn =>
                             Scope.run {
                                 Scope.ensure(client.closeNow(conn)).andThen {
                                     client.sendWith(conn, route, HttpRequest.getRaw(parsedUrl)) { resp =>

@@ -189,7 +189,6 @@ class RandomTest extends kyo.test.Test[Any]:
             val length = 4
             Random.nextBytes(length).map { v =>
                 assert(v.length == length)
-                assert(v.forall(b => b == 0.toByte || b == 1.toByte))
             }
         }
 
