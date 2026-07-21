@@ -1751,8 +1751,7 @@ final class MySqlClientBackend private[client] (
                     Maybe.Present(addr.db),
                     Maybe.Absent,
                     64,
-                    Duration.Infinity,
-                    256
+                    Duration.Infinity
                 )
             )(_.closeNow).flatMap {
                 sidecarConn =>
@@ -2323,8 +2322,7 @@ final class MySqlClientBackend private[client] (
                     config.tls,
                     TlsMode.Prefer,
                     config.preparedStmtCacheSize,
-                    config.preparedStmtTtl,
-                    config.pendingClosesLimit
+                    config.preparedStmtTtl
                 )
             case TlsMode.Allow =>
                 // allow: attempt plaintext first; if ER_SECURE_TRANSPORT_REQUIRED (3159), reconnect with TLS.
@@ -2337,8 +2335,7 @@ final class MySqlClientBackend private[client] (
                         Present(address.db),
                         Maybe.Absent,
                         config.preparedStmtCacheSize,
-                        config.preparedStmtTtl,
-                        config.pendingClosesLimit
+                        config.preparedStmtTtl
                     )
                 Abort.run[SqlException](plaintextAttempt).flatMap {
                     case Result.Success(conn) =>
@@ -2357,8 +2354,7 @@ final class MySqlClientBackend private[client] (
                                     config.tls,
                                     TlsMode.Require,
                                     config.preparedStmtCacheSize,
-                                    config.preparedStmtTtl,
-                                    config.pendingClosesLimit
+                                    config.preparedStmtTtl
                                 )
                             case Absent =>
                                 Abort.fail(e)
@@ -2378,8 +2374,7 @@ final class MySqlClientBackend private[client] (
                     Present(address.db),
                     config.tls,
                     config.preparedStmtCacheSize,
-                    config.preparedStmtTtl,
-                    config.pendingClosesLimit
+                    config.preparedStmtTtl
                 )
 
     /** Returns true when a [[SqlException]] indicates MySQL requires secure transport (ER_SECURE_TRANSPORT_REQUIRED, error code 3159).

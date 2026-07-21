@@ -480,11 +480,6 @@ class MysqlConnectionTest extends kyo.Test:
         MysqlConnection.withConnection(StubConnection())
     end stubMysqlConnection
 
-    // Helper: build a MysqlConnection over a StubConnection with a custom pendingClosesLimit.
-    private def stubMysqlConnectionWithLimit(limit: Int)(using Frame): MysqlConnection < Sync =
-        MysqlConnection.withConnectionAndLimit(StubConnection(), limit)
-    end stubMysqlConnectionWithLimit
-
     "closeNow closes the TCP connection immediately without quit" in {
         stubMysqlConnection.flatMap { conn =>
             conn.isOpen.flatMap { openBefore =>
@@ -527,34 +522,17 @@ class MysqlConnectionTest extends kyo.Test:
         }
     }
 
-    // --- pendingCloses queue bounding (G9.18) ---
-
-    "pendingCloses queue stays bounded under load, max size never exceeds limit" in {
-        val limit = 4
-        stubMysqlConnectionWithLimit(limit).flatMap { conn =>
-            val totalAdds = limit + 4
-            Kyo.foreach(Chunk.from(1 to totalAdds)) { id =>
-                // Mirror the bounded onEvict logic: drop oldest when at capacity, then append.
-                conn.pendingCloses.getAndUpdate { current =>
-                    val trimmed = if current.size >= limit then current.drop(1) else current
-                    trimmed.appended(id.toString)
-                }
-            }.flatMap { _ =>
-                conn.pendingCloses.get.map { queue =>
-                    assert(queue.size <= limit, s"Queue grew beyond limit: ${queue.size} > $limit")
-                }
-            }
-        }
-    }
+    // --- pendingCloses queue drain contract ---
 
     "pendingCloses flush, drainPendingCloses clears all queued ids" in {
-        val limit = 4
-        stubMysqlConnectionWithLimit(limit).flatMap { conn =>
-            // Pre-populate the queue with `limit` IDs.
-            val ids = Chunk.from(1 to limit).map(_.toString)
+        stubMysqlConnection.flatMap { conn =>
+            // Pre-populate the queue with 4 IDs (the count is not significant: drainPendingCloses
+            // sends `COM_STMT_CLOSE` for every ID present at the moment of the atomic swap, no matter
+            // how many).
+            val ids = Chunk.from(1 to 4).map(_.toString)
             conn.pendingCloses.set(ids).flatMap { _ =>
                 conn.pendingCloses.get.flatMap { before =>
-                    assert(before.size == limit, s"Expected $limit ids before drain, got ${before.size}")
+                    assert(before.size == 4, s"Expected 4 ids before drain, got ${before.size}")
                     // drainPendingCloses atomically swaps out all IDs and sends COM_STMT_CLOSE for each.
                     // The StubConnection outbound channel accepts bytes but returns no MySQL OK packets,
                     // so drainPendingCloses will fail trying to write if the channel is closed. We wrap

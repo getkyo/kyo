@@ -36,8 +36,7 @@ final class MysqlConnection(
     val charset: AtomicRef[Int],
     val statusFlags: AtomicRef[Int],
     private[mysql] val preparedStmts: Cache[String, MysqlPreparedStmt],
-    private[kyo] val pendingCloses: AtomicRef[Chunk[String]],
-    private val pendingClosesLimit: Int
+    private[kyo] val pendingCloses: AtomicRef[Chunk[String]]
 ):
     // CLIENT_DEPRECATE_EOF: when negotiated, EOF packets between column defs and rows are replaced by OK packets.
     private def hasDeprecateEof(caps: Long): Boolean =
@@ -55,18 +54,6 @@ final class MysqlConnection(
                 channel.resetSeq()
                 channel.send(ComStmtClose(stmtId))(using channel.marshallers.comStmtClose)
             }.unit
-        }
-
-    /** Appends `stmtId` to [[pendingCloses]] and eagerly flushes if the queue size reaches [[pendingClosesLimit]].
-      *
-      * This bounds the queue to at most `pendingClosesLimit` entries. On long-idle connections with aggressive cache eviction the queue
-      * could otherwise grow without limit; the eager flush keeps memory usage bounded by sending `COM_STMT_CLOSE` packets before the next
-      * extended-protocol request arrives.
-      */
-    private[kyo] def enqueueClose(stmtId: Int)(using Frame): Unit < (Async & Abort[SqlException]) =
-        pendingCloses.updateAndGet(_.appended(stmtId.toString)).flatMap { current =>
-            if current.size >= pendingClosesLimit then drainPendingCloses
-            else ()
         }
 
     /** Executes `sql` using the simple-query (text) protocol and returns all result rows. */
@@ -440,8 +427,7 @@ object MysqlConnection:
         db: Maybe[String],
         tls: Maybe[NetTlsConfig],
         preparedStmtCacheSize: Int,
-        preparedStmtTtl: Duration,
-        pendingClosesLimit: Int = 256
+        preparedStmtTtl: Duration
     )(using Frame): MysqlConnection < (Async & Abort[SqlException]) =
         Abort.run[kyo.net.NetException](Sync.Unsafe.defer(NetPlatform.transport.connect(
             host,
@@ -458,7 +444,6 @@ object MysqlConnection:
                         // result.channel is the TLS-wrapped channel (or the original if no TLS).
                         val activeChannel = result.channel
                         val ttl           = if preparedStmtTtl == Duration.Infinity then Duration.Zero else preparedStmtTtl
-                        val closeLimit    = pendingClosesLimit
                         for
                             connIdRef  <- AtomicRef.init(result.connectionId)
                             capsRef    <- AtomicRef.init(result.capabilities)
@@ -475,8 +460,7 @@ object MysqlConnection:
                             charsetRef,
                             statusRef,
                             stmtCache,
-                            closesRef,
-                            closeLimit
+                            closesRef
                         )
                         end for
                     }
@@ -504,8 +488,7 @@ object MysqlConnection:
         tls: Maybe[NetTlsConfig],
         tlsMode: TlsMode,
         preparedStmtCacheSize: Int,
-        preparedStmtTtl: Duration,
-        pendingClosesLimit: Int
+        preparedStmtTtl: Duration
     )(using Frame): MysqlConnection < (Async & Abort[SqlException]) =
         Abort.run[kyo.net.NetException](Sync.Unsafe.defer(NetPlatform.transport.connect(
             host,
@@ -520,7 +503,6 @@ object MysqlConnection:
                 MysqlChannel(conn).flatMap { rawChannel =>
                     val preferFallback = tlsMode == TlsMode.Prefer
                     val ttl            = if preparedStmtTtl == Duration.Infinity then Duration.Zero else preparedStmtTtl
-                    val closeLimit     = pendingClosesLimit
                     HandshakeExchange.run(rawChannel, user, password, db, host, port, tls, preferFallback).flatMap { result =>
                         val activeChannel = result.channel
                         for
@@ -539,8 +521,7 @@ object MysqlConnection:
                             charsetRef,
                             statusRef,
                             stmtCache,
-                            closesRef,
-                            closeLimit
+                            closesRef
                         )
                         end for
                     }
@@ -554,9 +535,6 @@ object MysqlConnection:
       * initialised with a minimal capacity and no TTL.
       */
     private[kyo] def withConnection(conn: kyo.net.Connection)(using Frame): MysqlConnection < Sync =
-        withConnectionAndLimit(conn, 256)
-
-    private[kyo] def withConnectionAndLimit(conn: kyo.net.Connection, pendingClosesLimit: Int)(using Frame): MysqlConnection < Sync =
         MysqlChannel(conn).flatMap { channel =>
             for
                 connIdRef  <- AtomicRef.init(0L)
@@ -574,8 +552,7 @@ object MysqlConnection:
                 charsetRef,
                 statusRef,
                 stmtCache,
-                closesRef,
-                pendingClosesLimit
+                closesRef
             )
             end for
         }

@@ -96,10 +96,6 @@ import kyo.net.NetTlsConfig
   *   maximum time allowed for the uninterruptible `CopyFail` + `ReadyForQuery`-drain cleanup path that runs when a `COPY TO STDOUT` stream
   *   is closed before the server has sent [[CopyDone]]. If the budget expires the connection is marked corrupted and removed from the pool.
   *   Default `5.seconds`.
-  * @param pendingClosesLimit
-  *   *(MySQL only)* maximum number of `COM_STMT_CLOSE` IDs that may accumulate in the per-connection pending-closes queue before an eager
-  *   flush is triggered automatically. When the queue reaches this threshold, all queued IDs are sent to the server immediately (before the
-  *   next extended-protocol request). This bounds memory usage on long-idle connections with aggressive cache eviction. Default `256`.
   */
 final case class SqlClientConfig(
     maxConnections: Int,
@@ -130,8 +126,7 @@ final case class SqlClientConfig(
     connectionInitTimeout: Duration = 30.seconds,
     closeGrace: Duration = 30.seconds,
     streamBatchSize: Int = 64,
-    copyOutCleanupTimeout: Duration = 5.seconds,
-    pendingClosesLimit: Int = 256
+    copyOutCleanupTimeout: Duration = 5.seconds
 ) derives CanEqual
 
 object SqlClientConfig:
@@ -158,7 +153,6 @@ object SqlClientConfig:
       *   - closeGrace: 30 seconds
       *   - streamBatchSize: 64 (rows per Execute batch)
       *   - copyOutCleanupTimeout: 5 seconds
-      *   - pendingClosesLimit: 256 (MySQL: flush COM_STMT_CLOSE queue when it reaches this size)
       */
     val default: SqlClientConfig = SqlClientConfig(
         maxConnections = 10,
