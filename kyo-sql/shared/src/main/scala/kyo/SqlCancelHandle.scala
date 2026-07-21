@@ -16,7 +16,7 @@ import kyo.net.NetTlsConfig
   */
 sealed abstract class SqlCancelHandle:
     /** Server address (host, port, db, user). */
-    def address: SqlAddress
+    def address: SqlConfig.Address
 
 object SqlCancelHandle:
 
@@ -36,7 +36,7 @@ object SqlCancelHandle:
       *   secret key from `BackendKeyData`
       */
     final case class Pg(
-        address: SqlAddress,
+        address: SqlConfig.Address,
         tls: Maybe[NetTlsConfig],
         processId: Int,
         secretKey: Int
@@ -55,7 +55,7 @@ object SqlCancelHandle:
       *   the target connection's MySQL thread/connection ID (from `HandshakeV10.threadId`)
       */
     final case class My(
-        address: SqlAddress,
+        address: SqlConfig.Address,
         connectionId: Long
     ) extends SqlCancelHandle
         derives CanEqual

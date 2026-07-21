@@ -49,7 +49,7 @@ class CancelExchangeTest extends kyo.Test:
             SqlSharedContainers.withFreshSchema(SqlSharedContainers.Backend.Postgres) { ctx =>
                 withConn(ctx) { queryConn =>
                     withConn(ctx) { _ =>
-                        val address = SqlAddress("postgres", ctx.host, ctx.port, ctx.database, ctx.username)
+                        val address = SqlConfig.Address("postgres", ctx.host, ctx.port, ctx.database, ctx.username)
 
                         // Fire a slow query in a background fiber; wrap with Abort.run so the fiber type has no error effect.
                         Fiber.init(Abort.run[SqlException](queryConn.simpleQuery("SELECT pg_sleep(10)"))).flatMap {
@@ -84,7 +84,7 @@ class CancelExchangeTest extends kyo.Test:
         Scope.run {
             SqlSharedContainers.withFreshSchema(SqlSharedContainers.Backend.Postgres) { ctx =>
                 withConn(ctx) { conn =>
-                    val address = SqlAddress("postgres", ctx.host, ctx.port, ctx.database, ctx.username)
+                    val address = SqlConfig.Address("postgres", ctx.host, ctx.port, ctx.database, ctx.username)
                     // Run a fast query to completion.
                     conn.simpleQuery("SELECT 1").andThen {
                         // Cancel should be silently ignored, the query already finished.
@@ -106,7 +106,7 @@ class CancelExchangeTest extends kyo.Test:
         Scope.run {
             SqlSharedContainers.withFreshSchema(SqlSharedContainers.Backend.Postgres) { ctx =>
                 withConn(ctx) { conn =>
-                    val address = SqlAddress("postgres", ctx.host, ctx.port, ctx.database, ctx.username)
+                    val address = SqlConfig.Address("postgres", ctx.host, ctx.port, ctx.database, ctx.username)
                     // Send a cancel with a deliberately wrong secret key (wrong key, same PID).
                     val wrongHandle = SqlCancelHandle.Pg(address, Absent, conn.processId, conn.secretKey ^ 0xdeadbeef)
                     // Issue cancel using the wrong handle, server ignores it silently.

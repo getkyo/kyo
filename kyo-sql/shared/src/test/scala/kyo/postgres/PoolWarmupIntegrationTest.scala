@@ -21,7 +21,7 @@ class PoolWarmupIntegrationTest extends kyo.Test:
     /** Acquires a Postgres-backed SqlClient scoped to `Scope`, available inside `f`. */
     private def withPgClient[A, S](
         url: String,
-        config: SqlClientConfig
+        config: SqlConfig
     )(f: SqlClient => A < (S & Async & Abort[SqlException]))(using Frame): A < (S & Async & Scope & Abort[SqlException]) =
         Abort.run[SqlException.Connection](SqlClient.init(url, config)).flatMap {
             case Result.Success(client) => SqlClient.let(client)(f(client))
@@ -38,7 +38,7 @@ class PoolWarmupIntegrationTest extends kyo.Test:
             Async.timeout(60.seconds) {
                 SqlSharedContainers.withFreshSchema(SqlSharedContainers.Backend.Postgres) { ctx =>
                     val url = s"postgres://${ctx.username}:${ctx.password}@${ctx.host}:${ctx.port}/${ctx.database}"
-                    val config = SqlClientConfig(
+                    val config = SqlConfig(
                         maxConnections = 10,
                         minConnections = 5,
                         acquireTimeout = 10.seconds,

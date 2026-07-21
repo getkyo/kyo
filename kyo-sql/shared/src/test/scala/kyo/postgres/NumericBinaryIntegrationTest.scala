@@ -22,7 +22,7 @@ class NumericBinaryIntegrationTest extends kyo.Test:
                 SqlSharedContainers.withFreshSchema(SqlSharedContainers.Backend.Postgres) { ctx =>
                     SqlClient.initWith(
                         pgUrl(ctx),
-                        SqlClientConfig.default.copy(maxConnections = 1, minConnections = 1)
+                        SqlConfig.default.copy(maxConnections = 1, minConnections = 1)
                     ) { client =>
                         // Set up a table with a NUMERIC column of sufficient precision.
                         client.executeRaw("CREATE TABLE numeric_rt (id INT PRIMARY KEY, val NUMERIC(150, 100))").andThen {

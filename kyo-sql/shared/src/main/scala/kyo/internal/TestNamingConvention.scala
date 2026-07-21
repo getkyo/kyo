@@ -5,8 +5,8 @@ package kyo.internal
   * A test file at `kyo-sql/{shared,jvm}/src/test/scala/.../FooTest.scala` must satisfy ONE of:
   *
   *   1. **Unit-test rule**: `Foo` (the basename minus the `Test` suffix) has at least one production source-file basename in
-  *      `kyo-sql/{shared,jvm,native,js}/src/main/scala/` that is a prefix of `Foo`. Example: `SqlUrlTest` matches `SqlUrl.scala` (because
-  *      `SqlUrl` is a prefix of `SqlUrl`); `SqlUrlParseTest` also matches (because `SqlUrl` is a prefix of `SqlUrlParse`).
+  *      `kyo-sql/{shared,jvm,native,js}/src/main/scala/` that is a prefix of `Foo`. Example: `SqlUrlTest` matches `SqlConfig.Url.scala` (because
+  *      `SqlConfig.Url` is a prefix of `SqlConfig.Url`); `SqlUrlParseTest` also matches (because `SqlConfig.Url` is a prefix of `SqlUrlParse`).
   *   2. **Categorical rule**: the test file's name ends in one of these documented suffixes:
   *      - `IntegrationTest`, exercises a feature flow that spans multiple source files.
   *      - `ConsistencyTest`, verifies cross-backend invariants.

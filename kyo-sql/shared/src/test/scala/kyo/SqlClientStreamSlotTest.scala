@@ -67,8 +67,8 @@ class SqlClientStreamSlotTest extends Test:
     private def fakeUrl(port: Int): String =
         s"postgres://testuser:testpass@127.0.0.1:$port/testdb"
 
-    private def slotConfig: SqlClientConfig =
-        SqlClientConfig(
+    private def slotConfig: SqlConfig =
+        SqlConfig(
             maxConnections = 1,
             acquireTimeout = 500.millis,
             queryTimeout = 100.millis,

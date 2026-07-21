@@ -121,7 +121,7 @@ class TlsIntegrationTest extends kyo.Test:
     )(using Frame): SqlClient < (Async & Scope & Abort[SqlException]) =
         SqlClient.init(
             s"postgres://$user:$password@$host:$port/$db",
-            SqlClientConfig.default.copy(
+            SqlConfig.default.copy(
                 tls = Present(trustAllConfig),
                 maxConnections = 1,
                 minConnections = 1
@@ -184,7 +184,7 @@ class TlsIntegrationTest extends kyo.Test:
                         Scope.run {
                             SqlClient.init(
                                 s"postgres://${pg.username}:${pg.password}@${pg.container.host}:$port/${pg.database}",
-                                SqlClientConfig.default.copy(
+                                SqlConfig.default.copy(
                                     tls = Present(NetTlsConfig.default),
                                     maxConnections = 1,
                                     minConnections = 1
@@ -222,7 +222,7 @@ class TlsIntegrationTest extends kyo.Test:
             withPostgresTls() { (host, port, user, password, db, tlsConfig) =>
                 SqlClient.init(
                     s"postgres://$user:$password@$host:$port/$db",
-                    SqlClientConfig.default.copy(
+                    SqlConfig.default.copy(
                         tls = Present(tlsConfig),
                         maxConnections = 1,
                         minConnections = 1

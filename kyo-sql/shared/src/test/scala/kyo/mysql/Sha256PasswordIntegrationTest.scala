@@ -42,7 +42,7 @@ class Sha256PasswordIntegrationTest extends kyo.Test:
                     Scope.run {
                         SqlClient.initMy(
                             s"mysql://root:${mysql.config.rootPassword}@$host:$port/mysql",
-                            SqlClientConfig.default.copy(maxConnections = 1, minConnections = 1)
+                            SqlConfig.default.copy(maxConnections = 1, minConnections = 1)
                         ).flatMap { root =>
                             val alterSql = s"ALTER USER '$user'@'%' IDENTIFIED WITH sha256_password BY '$pass'"
                             Abort.run[SqlException](root.executeRaw(alterSql).andThen(root.executeRaw("FLUSH PRIVILEGES"))).flatMap {
@@ -72,7 +72,7 @@ class Sha256PasswordIntegrationTest extends kyo.Test:
                 // Connect without TLS: HandshakeExchange sends empty auth → receives PEM key → XOR+RSA-OAEP encrypts → server decrypts.
                 SqlClient.initMy(
                     s"mysql://$user:$pass@$host:$port/$db",
-                    SqlClientConfig.default.copy(maxConnections = 1, minConnections = 1)
+                    SqlConfig.default.copy(maxConnections = 1, minConnections = 1)
                 ).flatMap { client =>
                     client.query("SELECT 'sha256_rsa_ok'").map { rows =>
                         val str = new String(rows(0).column(0).get.toArray, java.nio.charset.StandardCharsets.UTF_8)
@@ -91,7 +91,7 @@ class Sha256PasswordIntegrationTest extends kyo.Test:
                 // Connect with TLS (trustAll): sends cleartext NUL-terminated password in HandshakeResponse41, no RSA involved.
                 SqlClient.initMy(
                     s"mysql://$user:$pass@$host:$port/$db",
-                    SqlClientConfig.default.copy(
+                    SqlConfig.default.copy(
                         tls = Present(NetTlsConfig(trustAll = true)),
                         maxConnections = 1,
                         minConnections = 1

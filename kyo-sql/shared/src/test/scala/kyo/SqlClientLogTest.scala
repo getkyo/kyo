@@ -183,9 +183,9 @@ class SqlClientLogTest extends Test:
     private def fakeUrl(port: Int): String =
         s"postgres://testuser:s3cr3tpass@127.0.0.1:$port/testdb"
 
-    /** Minimal SqlClientConfig for log tests: no TLS, short timeouts, single connection. */
-    private def logTestConfig(maxConns: Int = 2, acquireTimeout: Duration = 5.seconds): SqlClientConfig =
-        SqlClientConfig(
+    /** Minimal SqlConfig for log tests: no TLS, short timeouts, single connection. */
+    private def logTestConfig(maxConns: Int = 2, acquireTimeout: Duration = 5.seconds): SqlConfig =
+        SqlConfig(
             maxConnections = maxConns,
             minConnections = 0,
             acquireTimeout = acquireTimeout,

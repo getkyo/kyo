@@ -71,8 +71,8 @@ class SqlClientCloseAllTest extends Test:
     private def fakeUrl(port: Int): String =
         s"postgres://testuser:testpass@127.0.0.1:$port/testdb"
 
-    private def baseConfig(maxConns: Int = 3): SqlClientConfig =
-        SqlClientConfig(
+    private def baseConfig(maxConns: Int = 3): SqlConfig =
+        SqlConfig(
             maxConnections = maxConns,
             minConnections = maxConns, // warm up all slots so we have idle conns to drain
             acquireTimeout = 5.seconds,

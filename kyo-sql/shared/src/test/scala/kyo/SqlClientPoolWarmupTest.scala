@@ -96,9 +96,9 @@ class SqlClientPoolWarmupTest extends Test:
     private def fakeUrl(port: Int): String =
         s"postgres://testuser:testpass@127.0.0.1:$port/testdb"
 
-    /** Constructs a [[SqlClientConfig]] for warm-up tests with no TLS, short timeouts, and the given pool parameters. */
-    private def warmupConfig(maxConns: Int, minConns: Int): SqlClientConfig =
-        SqlClientConfig(
+    /** Constructs a [[SqlConfig]] for warm-up tests with no TLS, short timeouts, and the given pool parameters. */
+    private def warmupConfig(maxConns: Int, minConns: Int): SqlConfig =
+        SqlConfig(
             maxConnections = maxConns,
             minConnections = minConns,
             acquireTimeout = 5.seconds,
@@ -302,7 +302,7 @@ class SqlClientPoolWarmupTest extends Test:
                 }.flatMap { listener =>
                     val port = listener.port
                     val url  = fakeUrl(port)
-                    val config = SqlClientConfig(
+                    val config = SqlConfig(
                         maxConnections = 5,
                         minConnections = 3,
                         acquireTimeout = 5.seconds,

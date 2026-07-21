@@ -29,7 +29,7 @@ class PreparedStmtEvictionIntegrationTest extends kyo.Test:
     )(using Frame): A < (S & Async & Scope & Abort[SqlException.Connection | SqlException]) =
         SqlClient.initWith(
             pgUrl(ctx),
-            SqlClientConfig.default.copy(
+            SqlConfig.default.copy(
                 preparedStmtCacheSize = cacheSize,
                 maxConnections = 1,
                 minConnections = 1

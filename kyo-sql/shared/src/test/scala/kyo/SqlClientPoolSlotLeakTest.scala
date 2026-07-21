@@ -93,8 +93,8 @@ class SqlClientPoolSlotLeakTest extends Test:
     private def slotConfig(
         queryTimeout: Duration = 200.millis,
         acquireTimeout: Duration = 500.millis
-    ): SqlClientConfig =
-        SqlClientConfig(
+    ): SqlConfig =
+        SqlConfig(
             maxConnections = 1,
             acquireTimeout = acquireTimeout,
             queryTimeout = queryTimeout,

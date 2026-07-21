@@ -52,7 +52,7 @@ class ClearPasswordIntegrationTest extends kyo.Test:
                     Scope.run {
                         SqlClient.initMy(
                             s"mysql://root:${mysql.config.rootPassword}@$host:$port/mysql",
-                            SqlClientConfig.default.copy(maxConnections = 1, minConnections = 1)
+                            SqlConfig.default.copy(maxConnections = 1, minConnections = 1)
                         ).flatMap { root =>
                             val alterSql = s"ALTER USER '$user'@'%' IDENTIFIED WITH mysql_clear_password BY '$pass'"
                             Abort.run[SqlException](root.executeRaw(alterSql).andThen(root.executeRaw("FLUSH PRIVILEGES"))).flatMap {

@@ -29,7 +29,7 @@ class RetryIntegrationTest extends kyo.Test:
     /** Helper: initialise a Postgres-backed SqlClient and pass it to f. */
     private def withPgClient[A, S](
         url: String,
-        config: SqlClientConfig
+        config: SqlConfig
     )(f: SqlClient => A < (S & Async & Abort[SqlException]))(using Frame): A < (S & Async & Scope & Abort[SqlException]) =
         Abort.run[SqlException.Connection](SqlClient.init(url, config)).flatMap {
             case Result.Success(client) => SqlClient.let(client)(f(client))
@@ -61,7 +61,7 @@ class RetryIntegrationTest extends kyo.Test:
                         // is discarded as expired on poll). This ensures the second query goes through the
                         // connect-and-startup path while the server is paused, exercising the SqlException.Connection
                         // → Retry path that the production fix protects against.
-                        val config = SqlClientConfig(
+                        val config = SqlConfig(
                             maxConnections = 4,
                             acquireTimeout = 1.second,
                             queryTimeout = 5.seconds,

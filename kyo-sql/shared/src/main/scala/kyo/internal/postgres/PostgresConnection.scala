@@ -1,7 +1,7 @@
 package kyo.internal.postgres
 
 import kyo.*
-import kyo.SqlAddress
+import kyo.SqlConfig.Address
 import kyo.SqlException
 import kyo.SqlIsolationLevel
 import kyo.SqlNotification
@@ -330,11 +330,11 @@ final class PostgresConnection(
       * The server matches by `(processId, secretKey)` and cancels the running query, causing it to fail with SQLSTATE `57014`.
       *
       * @param address
-      *   the same [[SqlAddress]] used by this connection
+      *   the same [[SqlConfig.Address]] used by this connection
       * @param tls
       *   optional TLS config (cancel will attempt TLS if [[Present]]; falls back to plaintext on refusal)
       */
-    def cancel(address: SqlAddress, tls: Maybe[NetTlsConfig])(using Frame): Unit < (Async & Abort[SqlException]) =
+    def cancel(address: SqlConfig.Address, tls: Maybe[NetTlsConfig])(using Frame): Unit < (Async & Abort[SqlException]) =
         CancelExchange.cancel(address, tls, processId, secretKey)
 
     /** Drains all pending [[NotificationResponse]] messages from the notification channel and converts them to public [[SqlNotification]]

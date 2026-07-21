@@ -1,7 +1,7 @@
 package kyo.internal.postgres.exchange
 
 import kyo.*
-import kyo.SqlAddress
+import kyo.SqlConfig.Address
 import kyo.SqlException
 import kyo.internal.postgres.CancelRequest
 import kyo.internal.postgres.PostgresBufferWriter
@@ -16,7 +16,7 @@ import kyo.net.NetTlsConfig
 private[kyo] object CancelExchange:
 
     def cancel(
-        address: SqlAddress,
+        address: SqlConfig.Address,
         tls: Maybe[NetTlsConfig],
         processId: Int,
         secretKey: Int

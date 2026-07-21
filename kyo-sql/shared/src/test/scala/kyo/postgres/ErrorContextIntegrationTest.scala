@@ -23,7 +23,7 @@ class ErrorContextIntegrationTest extends kyo.Test:
 
     private def withPgClient[A, S](
         url: String,
-        config: SqlClientConfig = SqlClientConfig.default
+        config: SqlConfig = SqlConfig.default
     )(f: SqlClient => A < (S & Async & Abort[SqlException]))(using Frame): A < (S & Async & Scope & Abort[SqlException]) =
         Abort.run[SqlException.Connection](SqlClient.init(url, config)).flatMap {
             case Result.Success(client) => SqlClient.let(client)(f(client))
@@ -40,7 +40,7 @@ class ErrorContextIntegrationTest extends kyo.Test:
             Async.timeout(60.seconds) {
                 SqlSharedContainers.withFreshSchema(SqlSharedContainers.Backend.Postgres) { ctx =>
                     val url = s"postgres://${ctx.username}:${ctx.password}@${ctx.host}:${ctx.port}/${ctx.database}"
-                    val config = SqlClientConfig(
+                    val config = SqlConfig(
                         maxConnections = 2,
                         acquireTimeout = 15.seconds,
                         queryTimeout = 15.seconds,

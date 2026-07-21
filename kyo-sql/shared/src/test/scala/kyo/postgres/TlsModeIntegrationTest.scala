@@ -76,7 +76,7 @@ class TlsModeIntegrationTest extends kyo.Test:
 
     "sslmode=require connects with TLS, accepts self-signed cert".tagged("kyo.OwnContainer") in {
         withTlsContainer { ctx =>
-            val config = SqlClientConfig.default.copy(tls = Present(NetTlsConfig(trustAll = true)))
+            val config = SqlConfig.default.copy(tls = Present(NetTlsConfig(trustAll = true)))
             val url    = s"postgres://${ctx.user}:${ctx.password}@${ctx.host}:${ctx.port}/${ctx.db}?sslmode=require"
             Async.timeout(30.seconds) {
                 Scope.run {

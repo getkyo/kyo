@@ -42,12 +42,12 @@ import kyo.net.NetTlsConfig
 sealed abstract class SqlClient:
     self =>
     val backend: SqlClientBackend
-    val url: SqlUrl
-    val config: SqlClientConfig
+    val url: SqlConfig.Url
+    val config: SqlConfig
     val closedRef: AtomicBoolean
 
     /** Returns the server address (host, port, db, user) for this client's pool. */
-    def address: SqlAddress = self.url.address
+    def address: SqlConfig.Address = self.url.address
 
     /** Returns all rows for a parameterised query using the extended protocol.
       *
@@ -949,7 +949,7 @@ sealed abstract class SqlClient:
       *   - Postgres: runs `DISCARD ALL`, clears prepared statements, session variables, temp tables, listeners, and any open
       *     transaction.
       *
-      * Distinct from pool-recycle resets controlled by `SqlClientConfig.resetOnRelease`; `reset` operates explicitly on the current
+      * Distinct from pool-recycle resets controlled by `SqlConfig.resetOnRelease`; `reset` operates explicitly on the current
       * client and the operation's success/failure is observable to the caller.
       */
     def reset(using Frame): Unit < (Async & Abort[SqlException]) =
@@ -1040,8 +1040,8 @@ end SqlClient
   */
 final class PgSqlClient(
     val backend: PgSqlClientBackend,
-    val url: SqlUrl,
-    val config: SqlClientConfig,
+    val url: SqlConfig.Url,
+    val config: SqlConfig,
     val closedRef: AtomicBoolean
 ) extends SqlClient:
     self =>
@@ -1246,8 +1246,8 @@ end PgSqlClient
   */
 final class MySqlSqlClient(
     val backend: MySqlClientBackend,
-    val url: SqlUrl,
-    val config: SqlClientConfig,
+    val url: SqlConfig.Url,
+    val config: SqlConfig,
     val closedRef: AtomicBoolean
 ) extends SqlClient:
     self =>
@@ -1611,10 +1611,10 @@ object SqlClient:
 
     // --- Fiber-local active client + config ---
 
-    private val defaultConfig: SqlClientConfig = SqlClientConfig.default
+    private val defaultConfig: SqlConfig = SqlConfig.default
 
     // Stores Maybe[SqlClient] so the "no client" state is represented as Absent, avoiding a null sentinel.
-    private[kyo] val local: Local[(Maybe[SqlClient], SqlClientConfig)] =
+    private[kyo] val local: Local[(Maybe[SqlClient], SqlConfig)] =
         Local.init((Absent, SqlClient.defaultConfig))
 
     /** Fiber-local active transaction context.
@@ -1644,7 +1644,7 @@ object SqlClient:
       *
       * Delegates to `initWith(rawUrl, config)(identity)`.
       */
-    def init(rawUrl: String, config: SqlClientConfig)(using Frame): PgSqlClient < (Async & Scope & Abort[SqlException]) =
+    def init(rawUrl: String, config: SqlConfig)(using Frame): PgSqlClient < (Async & Scope & Abort[SqlException]) =
         initWith(rawUrl, config)(identity)
 
     /** Creates a Postgres [[SqlClient]], registers `Scope.ensure(close)`, applies `f`, and returns.
@@ -1666,7 +1666,7 @@ object SqlClient:
     inline def initWith[B, S](rawUrl: String)(inline f: PgSqlClient => B < S)(using
         inline frame: Frame
     ): B < (S & Async & Scope & Abort[SqlException]) =
-        initWith(rawUrl, SqlClientConfig.default)(f)
+        initWith(rawUrl, SqlConfig.default)(f)
 
     /** Creates a Postgres [[PgSqlClient]] with custom config, registers `Scope.ensure(close)`, applies `f`, and returns.
       *
@@ -1683,10 +1683,10 @@ object SqlClient:
       * @param f
       *   function receiving the initialized client
       */
-    inline def initWith[B, S](rawUrl: String, config: SqlClientConfig)(inline f: PgSqlClient => B < S)(using
+    inline def initWith[B, S](rawUrl: String, config: SqlConfig)(inline f: PgSqlClient => B < S)(using
         inline frame: Frame
     ): B < (S & Async & Scope & Abort[SqlException]) =
-        Abort.get(SqlUrl.parse(rawUrl)).flatMap { url =>
+        Abort.get(SqlConfig.Url.parse(rawUrl)).flatMap { url =>
             if url.address.driver != "postgres" then
                 Abort.fail(SqlException.Connection(
                     s"SqlClient.init requires a postgres:// URL; got '${url.address.driver}://'. Use SqlClient.initMy for mysql:// URLs.",
@@ -1732,7 +1732,7 @@ object SqlClient:
     inline def use[B, S](rawUrl: String)(inline f: PgSqlClient => B < S)(using
         inline frame: Frame
     ): B < (S & Async & Abort[SqlException]) =
-        use(rawUrl, SqlClientConfig.default)(f)
+        use(rawUrl, SqlConfig.default)(f)
 
     /** Creates a Postgres [[PgSqlClient]] with custom config and bracket semantics: no [[Scope]] required, close guaranteed via
       * `Sync.ensure`.
@@ -1750,10 +1750,10 @@ object SqlClient:
       * @param f
       *   function receiving the initialized client
       */
-    inline def use[B, S](rawUrl: String, config: SqlClientConfig)(inline f: PgSqlClient => B < S)(using
+    inline def use[B, S](rawUrl: String, config: SqlConfig)(inline f: PgSqlClient => B < S)(using
         inline frame: Frame
     ): B < (S & Async & Abort[SqlException]) =
-        Abort.get(SqlUrl.parse(rawUrl)).flatMap { url =>
+        Abort.get(SqlConfig.Url.parse(rawUrl)).flatMap { url =>
             if url.address.driver != "postgres" then
                 Abort.fail(SqlException.Connection(
                     s"SqlClient.use requires a postgres:// URL; got '${url.address.driver}://'. Use SqlClient.useMy for mysql:// URLs.",
@@ -1791,7 +1791,7 @@ object SqlClient:
     def initUnscoped(rawUrl: String)(using Frame): PgSqlClient < (Async & Abort[SqlException]) =
         initUnscopedWith(rawUrl)(identity)
 
-    def initUnscoped(rawUrl: String, config: SqlClientConfig)(using Frame): PgSqlClient < (Async & Abort[SqlException]) =
+    def initUnscoped(rawUrl: String, config: SqlConfig)(using Frame): PgSqlClient < (Async & Abort[SqlException]) =
         initUnscopedWith(rawUrl, config)(identity)
 
     /** Creates a Postgres [[SqlClient]] with no cleanup registered, applies `f`, and returns.
@@ -1812,7 +1812,7 @@ object SqlClient:
     inline def initUnscopedWith[B, S](rawUrl: String)(inline f: PgSqlClient => B < S)(using
         inline frame: Frame
     ): B < (S & Async & Abort[SqlException]) =
-        initUnscopedWith(rawUrl, SqlClientConfig.default)(f)
+        initUnscopedWith(rawUrl, SqlConfig.default)(f)
 
     /** Creates a Postgres [[PgSqlClient]] with custom config, no cleanup registered, applies `f`, and returns.
       *
@@ -1831,10 +1831,10 @@ object SqlClient:
       * @param f
       *   function receiving the initialized client
       */
-    inline def initUnscopedWith[B, S](rawUrl: String, config: SqlClientConfig)(inline f: PgSqlClient => B < S)(using
+    inline def initUnscopedWith[B, S](rawUrl: String, config: SqlConfig)(inline f: PgSqlClient => B < S)(using
         inline frame: Frame
     ): B < (S & Async & Abort[SqlException]) =
-        Abort.get(SqlUrl.parse(rawUrl)).flatMap { url =>
+        Abort.get(SqlConfig.Url.parse(rawUrl)).flatMap { url =>
             if url.address.driver != "postgres" then
                 Abort.fail(SqlException.Connection(
                     s"SqlClient.initUnscoped requires a postgres:// URL; got '${url.address.driver}://'. Use SqlClient.initMyUnscoped for mysql:// URLs.",
@@ -1870,7 +1870,7 @@ object SqlClient:
     def initMy(rawUrl: String)(using Frame): MySqlSqlClient < (Async & Scope & Abort[SqlException]) =
         initMyWith(rawUrl)(identity)
 
-    def initMy(rawUrl: String, config: SqlClientConfig)(using Frame): MySqlSqlClient < (Async & Scope & Abort[SqlException]) =
+    def initMy(rawUrl: String, config: SqlConfig)(using Frame): MySqlSqlClient < (Async & Scope & Abort[SqlException]) =
         initMyWith(rawUrl, config)(identity)
 
     /** Creates a MySQL [[SqlClient]], registers `Scope.ensure(close)`, applies `f`, and returns.
@@ -1889,7 +1889,7 @@ object SqlClient:
     inline def initMyWith[B, S](rawUrl: String)(inline f: MySqlSqlClient => B < S)(using
         inline frame: Frame
     ): B < (S & Async & Scope & Abort[SqlException]) =
-        initMyWith(rawUrl, SqlClientConfig.default)(f)
+        initMyWith(rawUrl, SqlConfig.default)(f)
 
     /** Creates a MySQL [[MySqlSqlClient]] with custom config, registers `Scope.ensure(close)`, applies `f`, and returns.
       *
@@ -1906,10 +1906,10 @@ object SqlClient:
       * @param f
       *   function receiving the initialized client
       */
-    inline def initMyWith[B, S](rawUrl: String, config: SqlClientConfig)(inline f: MySqlSqlClient => B < S)(using
+    inline def initMyWith[B, S](rawUrl: String, config: SqlConfig)(inline f: MySqlSqlClient => B < S)(using
         inline frame: Frame
     ): B < (S & Async & Scope & Abort[SqlException]) =
-        Abort.get(SqlUrl.parse(rawUrl)).flatMap { url =>
+        Abort.get(SqlConfig.Url.parse(rawUrl)).flatMap { url =>
             if url.address.driver != "mysql" then
                 Abort.fail(SqlException.Connection(
                     s"SqlClient.initMy requires a mysql:// URL; got '${url.address.driver}://'. Use SqlClient.init for postgres:// URLs.",
@@ -1951,7 +1951,7 @@ object SqlClient:
     inline def useMy[B, S](rawUrl: String)(inline f: MySqlSqlClient => B < S)(using
         inline frame: Frame
     ): B < (S & Async & Abort[SqlException]) =
-        useMy(rawUrl, SqlClientConfig.default)(f)
+        useMy(rawUrl, SqlConfig.default)(f)
 
     /** Creates a MySQL [[MySqlSqlClient]] with custom config and bracket semantics: no [[Scope]] required, close guaranteed via
       * `Sync.ensure`.
@@ -1969,10 +1969,10 @@ object SqlClient:
       * @param f
       *   function receiving the initialized client
       */
-    inline def useMy[B, S](rawUrl: String, config: SqlClientConfig)(inline f: MySqlSqlClient => B < S)(using
+    inline def useMy[B, S](rawUrl: String, config: SqlConfig)(inline f: MySqlSqlClient => B < S)(using
         inline frame: Frame
     ): B < (S & Async & Abort[SqlException]) =
-        Abort.get(SqlUrl.parse(rawUrl)).flatMap { url =>
+        Abort.get(SqlConfig.Url.parse(rawUrl)).flatMap { url =>
             if url.address.driver != "mysql" then
                 Abort.fail(SqlException.Connection(
                     s"SqlClient.useMy requires a mysql:// URL; got '${url.address.driver}://'. Use SqlClient.use for postgres:// URLs.",
@@ -2003,7 +2003,7 @@ object SqlClient:
     def initMyUnscoped(rawUrl: String)(using Frame): MySqlSqlClient < (Async & Abort[SqlException]) =
         initMyUnscopedWith(rawUrl)(identity)
 
-    def initMyUnscoped(rawUrl: String, config: SqlClientConfig)(using Frame): MySqlSqlClient < (Async & Abort[SqlException]) =
+    def initMyUnscoped(rawUrl: String, config: SqlConfig)(using Frame): MySqlSqlClient < (Async & Abort[SqlException]) =
         initMyUnscopedWith(rawUrl, config)(identity)
 
     /** Creates a MySQL [[SqlClient]] with no cleanup registered, applies `f`, and returns.
@@ -2022,7 +2022,7 @@ object SqlClient:
     inline def initMyUnscopedWith[B, S](rawUrl: String)(inline f: MySqlSqlClient => B < S)(using
         inline frame: Frame
     ): B < (S & Async & Abort[SqlException]) =
-        initMyUnscopedWith(rawUrl, SqlClientConfig.default)(f)
+        initMyUnscopedWith(rawUrl, SqlConfig.default)(f)
 
     /** Creates a MySQL [[MySqlSqlClient]] with custom config, no cleanup registered, applies `f`, and returns.
       *
@@ -2039,10 +2039,10 @@ object SqlClient:
       * @param f
       *   function receiving the initialized client
       */
-    inline def initMyUnscopedWith[B, S](rawUrl: String, config: SqlClientConfig)(inline f: MySqlSqlClient => B < S)(using
+    inline def initMyUnscopedWith[B, S](rawUrl: String, config: SqlConfig)(inline f: MySqlSqlClient => B < S)(using
         inline frame: Frame
     ): B < (S & Async & Abort[SqlException]) =
-        Abort.get(SqlUrl.parse(rawUrl)).flatMap { url =>
+        Abort.get(SqlConfig.Url.parse(rawUrl)).flatMap { url =>
             if url.address.driver != "mysql" then
                 Abort.fail(SqlException.Connection(
                     s"SqlClient.initMyUnscoped requires a mysql:// URL; got '${url.address.driver}://'. Use SqlClient.initUnscoped for postgres:// URLs.",
@@ -2104,7 +2104,7 @@ object SqlClient:
         }
 
     /** Transforms the active config within the scope of `v`. */
-    def withConfig[A, S](f: SqlClientConfig => SqlClientConfig)(v: A < S)(using Frame): A < S =
+    def withConfig[A, S](f: SqlConfig => SqlConfig)(v: A < S)(using Frame): A < S =
         SqlClient.local.use { (client, config) => SqlClient.local.let((client, f(config)))(v) }
 
     // --- Companion-level API mirrors ---
@@ -2140,7 +2140,7 @@ object SqlClient:
         use { c => c.transactionTyped[E, A, S](isolation, readOnly)(body) }
 
     /** Returns the server address of the active client. */
-    def address(using Frame): SqlAddress < (Async & Abort[SqlException]) =
+    def address(using Frame): SqlConfig.Address < (Async & Abort[SqlException]) =
         use { c => c.address }
 
     /** Returns the metrics instance of the active client. */
@@ -2243,13 +2243,13 @@ object SqlClient:
         end if
     end sanitizeTypeNames
 
-    /** Merges [[SqlClientConfig]] overrides with defaults derived from the URL.
+    /** Merges [[SqlConfig]] overrides with defaults derived from the URL.
       *
-      * Calls [[SqlUrl.toClientConfig]] which delegates to [[kyo.internal.tls.TlsContext.build]]; fails with [[SqlException.Connection]] for
+      * Calls [[SqlConfig.Url.toConfig]] which delegates to [[kyo.internal.tls.TlsContext.build]]; fails with [[SqlException.Connection]] for
       * invalid sslmode + sslrootcert combinations (e.g., `verify-ca` without `sslrootcert`).
       */
-    private def mergeConfig(url: SqlUrl, config: SqlClientConfig)(using Frame): SqlClientConfig < Abort[SqlException.Connection] =
-        url.toClientConfig.map { urlConfig =>
+    private def mergeConfig(url: SqlConfig.Url, config: SqlConfig)(using Frame): SqlConfig < Abort[SqlException.Connection] =
+        url.toConfig.map { urlConfig =>
             urlConfig.copy(
                 maxConnections = config.maxConnections,
                 minConnections = config.minConnections,
@@ -2282,14 +2282,16 @@ object SqlClient:
       *
       * The connection is scope-managed: it will be terminated when the enclosing [[Scope]] exits.
       */
-    def connect(address: SqlAddress)(using Frame): PostgresConnection < (Async & Scope & Abort[SqlException]) =
+    def connect(address: SqlConfig.Address)(using Frame): PostgresConnection < (Async & Scope & Abort[SqlException]) =
         connect(address, Absent, Absent)
 
-    def connect(address: SqlAddress, password: Maybe[String])(using Frame): PostgresConnection < (Async & Scope & Abort[SqlException]) =
+    def connect(address: SqlConfig.Address, password: Maybe[String])(using
+        Frame
+    ): PostgresConnection < (Async & Scope & Abort[SqlException]) =
         connect(address, password, Absent)
 
     def connect(
-        address: SqlAddress,
+        address: SqlConfig.Address,
         password: Maybe[String],
         tls: Maybe[kyo.net.NetTlsConfig]
     )(using Frame): PostgresConnection < (Async & Scope & Abort[SqlException]) =

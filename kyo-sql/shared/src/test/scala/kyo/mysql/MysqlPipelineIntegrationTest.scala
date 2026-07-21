@@ -46,7 +46,7 @@ class MysqlPipelineIntegrationTest extends kyo.Test:
         Abort.run[SqlException.Connection](
             SqlClient.initMy(
                 myUrl(ctx),
-                SqlClientConfig.default.copy(maxConnections = 1, minConnections = 1)
+                SqlConfig.default.copy(maxConnections = 1, minConnections = 1)
             )
         ).flatMap {
             case Result.Success(client) =>

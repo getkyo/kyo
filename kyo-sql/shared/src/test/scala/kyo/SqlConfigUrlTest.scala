@@ -4,10 +4,10 @@ import kyo.Frame
 import kyo.Maybe.Absent
 import kyo.Maybe.Present
 
-class SqlUrlTest extends Test:
+class SqlConfigUrlTest extends Test:
     "valid URL returns Result.Success" in {
         val raw    = "postgres://alice:secret@localhost:5432/mydb"
-        val result = SqlUrl.parse(raw)
+        val result = SqlConfig.Url.parse(raw)
         assert(result.isSuccess)
         val url = result.getOrElse(???)
         assert(url.address.driver == "postgres")
@@ -19,7 +19,7 @@ class SqlUrlTest extends Test:
     }
     "missing scheme returns Result.Failure with correct message" in {
         val raw    = "localhost:5432/mydb"
-        val result = SqlUrl.parse(raw)
+        val result = SqlConfig.Url.parse(raw)
         assert(result.isFailure)
         result match
             case Result.Failure(e: SqlException.Connection) =>
@@ -30,7 +30,7 @@ class SqlUrlTest extends Test:
     }
     "unsupported scheme returns Result.Failure with correct message" in {
         val raw    = "ftp://user:pw@host:5432/db"
-        val result = SqlUrl.parse(raw)
+        val result = SqlConfig.Url.parse(raw)
         assert(result.isFailure)
         result match
             case Result.Failure(e: SqlException.Connection) =>
@@ -41,7 +41,7 @@ class SqlUrlTest extends Test:
     }
     "missing database name returns Result.Failure with correct message" in {
         val raw    = "postgres://user:pw@localhost:5432"
-        val result = SqlUrl.parse(raw)
+        val result = SqlConfig.Url.parse(raw)
         assert(result.isFailure)
         result match
             case Result.Failure(e: SqlException.Connection) =>
@@ -52,7 +52,7 @@ class SqlUrlTest extends Test:
     }
     "malformed IPv6 host returns Result.Failure with correct message" in {
         val raw    = "postgres://user:pw@[::1:5432/db"
-        val result = SqlUrl.parse(raw)
+        val result = SqlConfig.Url.parse(raw)
         assert(result.isFailure)
         result match
             case Result.Failure(e: SqlException.Connection) =>
@@ -63,7 +63,7 @@ class SqlUrlTest extends Test:
     }
     "IPv6 host missing colon before port returns Result.Failure with correct message" in {
         val raw    = "postgres://user:pw@[::1]5432/db"
-        val result = SqlUrl.parse(raw)
+        val result = SqlConfig.Url.parse(raw)
         assert(result.isFailure)
         result match
             case Result.Failure(e: SqlException.Connection) =>
@@ -76,7 +76,7 @@ class SqlUrlTest extends Test:
     }
     "non-IPv6 host without colon returns Result.Failure with correct message" in {
         val raw    = "postgres://user:pw@localhost/db"
-        val result = SqlUrl.parse(raw)
+        val result = SqlConfig.Url.parse(raw)
         assert(result.isFailure)
         result match
             case Result.Failure(e: SqlException.Connection) =>
@@ -89,7 +89,7 @@ class SqlUrlTest extends Test:
     }
     "non-IPv6 host with empty port string returns Result.Failure with correct message" in {
         val raw    = "postgres://user:pw@localhost:/db"
-        val result = SqlUrl.parse(raw)
+        val result = SqlConfig.Url.parse(raw)
         assert(result.isFailure)
         result match
             case Result.Failure(e: SqlException.Connection) =>
@@ -102,7 +102,7 @@ class SqlUrlTest extends Test:
     }
     "non-numeric port returns Result.Failure with correct message" in {
         val raw    = "postgres://user:pw@localhost:notaport/db"
-        val result = SqlUrl.parse(raw)
+        val result = SqlConfig.Url.parse(raw)
         assert(result.isFailure)
         result match
             case Result.Failure(e: SqlException.Connection) =>
@@ -115,7 +115,7 @@ class SqlUrlTest extends Test:
     }
     "non-numeric IPv6 port returns Result.Failure with correct message" in {
         val raw    = "postgres://user:pw@[::1]:notaport/db"
-        val result = SqlUrl.parse(raw)
+        val result = SqlConfig.Url.parse(raw)
         assert(result.isFailure)
         result match
             case Result.Failure(e: SqlException.Connection) =>
@@ -131,17 +131,17 @@ class SqlUrlTest extends Test:
     }
     "parseOptions returns Present for a present option key" in {
         val raw    = "postgres://alice:pw@localhost:5432/mydb?application_name=myapp"
-        val result = SqlUrl.parse(raw)
+        val result = SqlConfig.Url.parse(raw)
         assert(result.isSuccess)
         val url = result.getOrElse(???)
         assert(url.options.applicationName == Present("myapp"))
     }
     "parseOptions returns Absent for an absent option key" in {
         val raw    = "postgres://alice:pw@localhost:5432/mydb"
-        val result = SqlUrl.parse(raw)
+        val result = SqlConfig.Url.parse(raw)
         assert(result.isSuccess)
         val url = result.getOrElse(???)
         assert(url.options.applicationName == Absent)
     }
 
-end SqlUrlTest
+end SqlConfigUrlTest

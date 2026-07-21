@@ -28,7 +28,7 @@ class LocalInfileIntegrationTest extends kyo.Test:
         withLocalInfileOn { ctx =>
             SqlClient.initMyWith(
                 myUrl(ctx),
-                SqlClientConfig.default.copy(maxConnections = 1, minConnections = 1)
+                SqlConfig.default.copy(maxConnections = 1, minConnections = 1)
             )(f)
         }
 
@@ -343,7 +343,7 @@ class LocalInfileIntegrationTest extends kyo.Test:
                 withLocalInfileOff { ctx =>
                     SqlClient.initMyWith(
                         myUrl(ctx),
-                        SqlClientConfig.default.copy(maxConnections = 1, minConnections = 1)
+                        SqlConfig.default.copy(maxConnections = 1, minConnections = 1)
                     ) { client =>
                         val sql = s"LOAD DATA LOCAL INFILE 'x.csv' INTO TABLE t (id)"
                         Abort.run[SqlException](

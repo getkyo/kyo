@@ -2,7 +2,7 @@ package kyo.internal.client
 
 /** Per-connection map from PostgreSQL type name to OID.
   *
-  * Populated at connection startup by querying `pg_type` for each name declared in [[kyo.SqlClientConfig.typeNames]]. Empty when no custom
+  * Populated at connection startup by querying `pg_type` for each name declared in [[kyo.SqlConfig.typeNames]]. Empty when no custom
   * types are configured, or on the MySQL backend which has no equivalent runtime type-name resolution path.
   *
   * This is a plain type alias, callers may use `Map[String, Int]` literals directly.

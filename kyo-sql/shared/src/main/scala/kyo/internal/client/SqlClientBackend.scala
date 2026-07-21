@@ -24,7 +24,7 @@ import kyo.net.NetAddress
   *   - [[SqlClientBackend.Pg]], backed by a [[ConnectionPool[NetAddress, PostgresConnection]]], uses the Postgres extended protocol.
   *   - [[SqlClientBackend.My]], backed by a [[ConnectionPool[NetAddress, MysqlConnection]]], uses the MySQL binary prepared-statement protocol.
   *
-  * All public methods accept a `SqlClientConfig` (sourced from the fiber-local in `SqlClient`) and apply the four-layer chain (retry → pool
+  * All public methods accept a `SqlConfig` (sourced from the fiber-local in `SqlClient`) and apply the four-layer chain (retry → pool
   * → connect+execute → timeout) to execute a single query or statement.
   *
   * Both variants expose an identical surface:
@@ -54,38 +54,38 @@ sealed trait SqlClientBackend:
 
     /** Returns all rows for a parameterised query via the extended/binary protocol. */
     def query(
-        address: SqlAddress,
+        address: SqlConfig.Address,
         password: String,
         sql: String,
         params: Chunk[BoundParam[?]],
-        config: SqlClientConfig
+        config: SqlConfig
     )(using Frame): Chunk[SqlRow] < (Async & Abort[SqlException])
 
     /** Executes a parameterised DML statement and returns the affected-row count. */
     def execute(
-        address: SqlAddress,
+        address: SqlConfig.Address,
         password: String,
         sql: String,
         params: Chunk[BoundParam[?]],
-        config: SqlClientConfig
+        config: SqlConfig
     )(using Frame): Long < (Async & Abort[SqlException])
 
     /** Executes a raw simple-query (no parameters, may be multi-statement) and returns the affected-row count. */
     def executeRaw(
-        address: SqlAddress,
+        address: SqlConfig.Address,
         password: String,
         sql: String,
-        config: SqlClientConfig
+        config: SqlConfig
     )(using Frame): Long < (Async & Abort[SqlException])
 
     /** Streams rows from a parameterised query. */
     def streamQuery(
-        address: SqlAddress,
+        address: SqlConfig.Address,
         password: String,
         sql: String,
         params: Chunk[BoundParam[?]],
         batchSize: Int,
-        config: SqlClientConfig
+        config: SqlConfig
     )(using Frame): Stream[SqlRow, Async & Abort[SqlException] & Scope]
 
     /** Executes a parameterised DML statement using the unified [[BoundValue]] surface.
@@ -94,11 +94,11 @@ sealed trait SqlClientBackend:
       * MySQL) via the carried [[SqlSchema]] and dispatches to the appropriate wire-level path.
       */
     def executeBound(
-        address: SqlAddress,
+        address: SqlConfig.Address,
         password: String,
         sql: String,
         params: Chunk[BoundValue[?]],
-        config: SqlClientConfig
+        config: SqlConfig
     )(using Frame): Long < (Async & Abort[SqlException])
 
     /** Executes a parameterised INSERT statement and returns an [[InsertResult]].
@@ -110,30 +110,30 @@ sealed trait SqlClientBackend:
       *     `generatedKey` is `Maybe.Absent`.
       */
     def executeInsert(
-        address: SqlAddress,
+        address: SqlConfig.Address,
         password: String,
         sql: String,
         params: Chunk[BoundValue[?]],
-        config: SqlClientConfig
+        config: SqlConfig
     )(using Frame): InsertResult < (Async & Abort[SqlException])
 
     /** Returns all rows for a parameterised query using the unified [[BoundValue]] surface. */
     def queryBound(
-        address: SqlAddress,
+        address: SqlConfig.Address,
         password: String,
         sql: String,
         params: Chunk[BoundValue[?]],
-        config: SqlClientConfig
+        config: SqlConfig
     )(using Frame): Chunk[SqlRow] < (Async & Abort[SqlException])
 
     /** Streams rows from a parameterised query using the unified [[BoundValue]] surface. */
     def streamBound(
-        address: SqlAddress,
+        address: SqlConfig.Address,
         password: String,
         sql: String,
         params: Chunk[BoundValue[?]],
         batchSize: Int,
-        config: SqlClientConfig
+        config: SqlConfig
     )(using Frame): Stream[SqlRow, Async & Abort[SqlException] & Scope]
 
     /** Executes a parameterised MySQL query and returns all rows as backend-neutral [[Row]] values.
@@ -142,11 +142,11 @@ sealed trait SqlClientBackend:
       * [[MysqlRow]] to [[Row]] with synthetic field descriptors (same as the simple-query path).
       */
     def queryMysql(
-        address: SqlAddress,
+        address: SqlConfig.Address,
         password: String,
         sql: String,
         params: Chunk[BoundMysqlParam[?]],
-        config: SqlClientConfig
+        config: SqlConfig
     )(using Frame): Chunk[SqlRow] < (Async & Abort[SqlException])
 
     /** Executes a parameterised MySQL DML statement and returns the affected-row count.
@@ -154,11 +154,11 @@ sealed trait SqlClientBackend:
       * Only implemented by [[SqlClientBackend.My]]; [[SqlClientBackend.Pg]] raises [[SqlException.Connection]].
       */
     def executeMysql(
-        address: SqlAddress,
+        address: SqlConfig.Address,
         password: String,
         sql: String,
         params: Chunk[BoundMysqlParam[?]],
-        config: SqlClientConfig
+        config: SqlConfig
     )(using Frame): Long < (Async & Abort[SqlException])
 
     /** Streams MySQL rows from a parameterised query.
@@ -166,12 +166,12 @@ sealed trait SqlClientBackend:
       * Only implemented by [[SqlClientBackend.My]]; [[SqlClientBackend.Pg]] raises [[SqlException.Connection]].
       */
     def streamQueryMysql(
-        address: SqlAddress,
+        address: SqlConfig.Address,
         password: String,
         sql: String,
         params: Chunk[BoundMysqlParam[?]],
         batchSize: Int,
-        config: SqlClientConfig
+        config: SqlConfig
     )(using Frame): Stream[MysqlRow, Async & Abort[SqlException] & Scope]
 
     /** Streams MySQL rows from a parameterised query, converting each row to [[SqlRow]] so that [[SqlSchema]] instances can be applied.
@@ -179,12 +179,12 @@ sealed trait SqlClientBackend:
       * Only implemented by [[SqlClientBackend.My]]; [[SqlClientBackend.Pg]] raises [[SqlException.Connection]].
       */
     def streamQueryMysqlRows(
-        address: SqlAddress,
+        address: SqlConfig.Address,
         password: String,
         sql: String,
         params: Chunk[BoundMysqlParam[?]],
         batchSize: Int,
-        config: SqlClientConfig
+        config: SqlConfig
     )(using Frame): Stream[SqlRow, Async & Abort[SqlException] & Scope]
 
     /** Acquires a Postgres connection, calls `f`, then releases.
@@ -192,9 +192,9 @@ sealed trait SqlClientBackend:
       * Only implemented by [[SqlClientBackend.Pg]]; [[SqlClientBackend.My]] raises [[SqlException.Connection]].
       */
     def withConnection[A, S](
-        address: SqlAddress,
+        address: SqlConfig.Address,
         password: String,
-        config: SqlClientConfig
+        config: SqlConfig
     )(f: PostgresConnection => A < (S & Async & Abort[SqlException]))(using Frame): A < (S & Async & Abort[SqlException])
 
     /** Acquires a MySQL connection, calls `f`, then releases.
@@ -202,9 +202,9 @@ sealed trait SqlClientBackend:
       * Only implemented by [[SqlClientBackend.My]]; [[SqlClientBackend.Pg]] raises [[SqlException.Connection]].
       */
     def withMysqlConnection[A, S](
-        address: SqlAddress,
+        address: SqlConfig.Address,
         password: String,
-        config: SqlClientConfig
+        config: SqlConfig
     )(f: MysqlConnection => A < (S & Async & Abort[SqlException]))(using Frame): A < (S & Async & Abort[SqlException])
 
     /** Runs `body` while holding a database advisory lock for `key` on a pinned session.
@@ -217,18 +217,18 @@ sealed trait SqlClientBackend:
       * Release fires on every exit edge (success, `Abort`, panic) before the pinned connection is returned to the pool.
       */
     def withAdvisoryLock[A, S](
-        address: SqlAddress,
+        address: SqlConfig.Address,
         password: String,
         key: Long,
         timeout: Maybe[Duration],
-        config: SqlClientConfig
+        config: SqlConfig
     )(body: A < (S & Async & Abort[SqlException]))(using Frame): A < (S & Async & Abort[SqlException])
 
     /** Cancels a Postgres query via `CancelRequest`. */
     def cancel(handle: SqlCancelHandle.Pg)(using Frame): Unit < (Async & Abort[SqlException])
 
     /** Cancels a MySQL query via `KILL QUERY <connectionId>` on a fresh sidecar connection. */
-    def cancelMysql(handle: SqlCancelHandle.My, password: String, config: SqlClientConfig)(using
+    def cancelMysql(handle: SqlCancelHandle.My, password: String, config: SqlConfig)(using
         Frame
     ): Unit < (Async & Abort[SqlException])
 
@@ -237,9 +237,9 @@ sealed trait SqlClientBackend:
       * Only implemented by [[SqlClientBackend.Pg]]; [[SqlClientBackend.My]] raises [[SqlException.Connection]].
       */
     def withCancelInfo[A](
-        address: SqlAddress,
+        address: SqlConfig.Address,
         password: String,
-        config: SqlClientConfig
+        config: SqlConfig
     )(f: (PostgresConnection, Int, Int) => A < (Async & Abort[SqlException]))(using Frame): A < (Async & Abort[SqlException])
 
     /** Acquires a MySQL connection and calls `f` with the connection and its `connectionId`.
@@ -247,9 +247,9 @@ sealed trait SqlClientBackend:
       * Only implemented by [[SqlClientBackend.My]]; [[SqlClientBackend.Pg]] raises [[SqlException.Connection]].
       */
     def withCancelInfoMysql[A](
-        address: SqlAddress,
+        address: SqlConfig.Address,
         password: String,
-        config: SqlClientConfig
+        config: SqlConfig
     )(f: (MysqlConnection, Long) => A < (Async & Abort[SqlException]))(using Frame): A < (Async & Abort[SqlException])
 
     /** Streams Postgres LISTEN/NOTIFY notifications.
@@ -257,10 +257,10 @@ sealed trait SqlClientBackend:
       * Only implemented by [[SqlClientBackend.Pg]]; [[SqlClientBackend.My]] raises [[SqlException.Connection]].
       */
     def notificationStream(
-        address: SqlAddress,
+        address: SqlConfig.Address,
         password: String,
         channel: String,
-        config: SqlClientConfig
+        config: SqlConfig
     )(using Frame): Stream[SqlNotification, Async & Abort[SqlException] & Scope]
 
     /** MySQL savepoint helpers, delegated to [[MysqlConnection]]. */
@@ -273,11 +273,11 @@ sealed trait SqlClientBackend:
       * Only implemented by [[MySqlClientBackend]]; [[PgSqlClientBackend]] raises [[SqlException.Connection]].
       */
     def loadLocalInfileMysql[S](
-        address: SqlAddress,
+        address: SqlConfig.Address,
         password: String,
         sql: String,
         data: Stream[Byte, S],
-        config: SqlClientConfig
+        config: SqlConfig
     )(using Frame): Long < (Async & Abort[SqlException] & S)
 
     /** Warms up the pool by opening `n` connections concurrently and releasing them to the idle ring.
@@ -291,10 +291,10 @@ sealed trait SqlClientBackend:
       * Called from [[kyo.sql.SqlClient.init]] / [[kyo.sql.SqlClient.initMy]] with `n = min(config.minConnections, config.maxConnections)`.
       */
     def warmUp(
-        address: SqlAddress,
+        address: SqlConfig.Address,
         password: String,
         n: Int,
-        config: SqlClientConfig
+        config: SqlConfig
     )(using Frame): Unit < (Async & Abort[SqlException])
 
     /** Closes all idle connections and shuts down the pool. Waits up to `gracePeriod` for in-flight queries to complete before
@@ -305,11 +305,11 @@ sealed trait SqlClientBackend:
     // --- Shared slot-channel helpers (hoisted from both concrete backends) ---
 
     /** Per-address slot channels: limits concurrency to `maxConnections` per address. */
-    protected val slotChans: ConcurrentHashMap[SqlAddress, Channel[Unit]]
+    protected val slotChans: ConcurrentHashMap[SqlConfig.Address, Channel[Unit]]
 
     // Unsafe: requires AllowUnsafe to call Sync.Unsafe.evalOrThrow.
     // STEERING case 2: lazy resource initialisation run synchronously from inside Sync.Unsafe.defer.
-    protected def getOrCreateSlotChanUnsafe(address: SqlAddress, maxConns: Int)(using AllowUnsafe, Frame): Channel[Unit] =
+    protected def getOrCreateSlotChanUnsafe(address: SqlConfig.Address, maxConns: Int)(using AllowUnsafe, Frame): Channel[Unit] =
         slotChans.computeIfAbsent(
             address,
             _ =>
@@ -323,7 +323,7 @@ sealed trait SqlClientBackend:
         )
     end getOrCreateSlotChanUnsafe
 
-    protected def withSlot[A](slotCh: Channel[Unit], config: SqlClientConfig)(
+    protected def withSlot[A](slotCh: Channel[Unit], config: SqlConfig)(
         body: A < (Async & Abort[SqlException])
     )(using Frame): A < (Async & Abort[SqlException]) =
         val takeSlot: Unit < (Async & Abort[SqlException]) =
@@ -388,7 +388,7 @@ sealed trait SqlClientBackend:
         }
     end withSlot
 
-    protected def withSlotS[A, S](slotCh: Channel[Unit], config: SqlClientConfig)(
+    protected def withSlotS[A, S](slotCh: Channel[Unit], config: SqlConfig)(
         body: A < (S & Async & Abort[SqlException])
     )(using Frame): A < (S & Async & Abort[SqlException]) =
         val takeSlot: Unit < (S & Async & Abort[SqlException]) =
@@ -457,7 +457,7 @@ end SqlClientBackend
   */
 final class PgSqlClientBackend private[client] (
     private val pool: ConnectionPool[NetAddress, PostgresConnection],
-    protected val slotChans: ConcurrentHashMap[SqlAddress, Channel[Unit]],
+    protected val slotChans: ConcurrentHashMap[SqlConfig.Address, Channel[Unit]],
     val clientFrame: Frame,
     val metrics: SqlClient.Metrics
 ) extends SqlClientBackend:
@@ -465,38 +465,38 @@ final class PgSqlClientBackend private[client] (
     // --- query / execute / executeRaw / streamQuery ---
 
     def query(
-        address: SqlAddress,
+        address: SqlConfig.Address,
         password: String,
         sql: String,
         params: Chunk[BoundParam[?]],
-        config: SqlClientConfig
+        config: SqlConfig
     )(using Frame): Chunk[SqlRow] < (Async & Abort[SqlException]) =
         metrics.timedQuery(retryWith(address, password, config)(conn => conn.extendedQuery(sql, params)))
 
     def execute(
-        address: SqlAddress,
+        address: SqlConfig.Address,
         password: String,
         sql: String,
         params: Chunk[BoundParam[?]],
-        config: SqlClientConfig
+        config: SqlConfig
     )(using Frame): Long < (Async & Abort[SqlException]) =
         metrics.timedQuery(retryWith(address, password, config)(conn => conn.extendedExecute(sql, params)))
 
     def executeRaw(
-        address: SqlAddress,
+        address: SqlConfig.Address,
         password: String,
         sql: String,
-        config: SqlClientConfig
+        config: SqlConfig
     )(using Frame): Long < (Async & Abort[SqlException]) =
         metrics.timedQuery(retryWith(address, password, config)(conn => conn.simpleExecute(sql)))
 
     def streamQuery(
-        address: SqlAddress,
+        address: SqlConfig.Address,
         password: String,
         sql: String,
         params: Chunk[BoundParam[?]],
         batchSize: Int,
-        config: SqlClientConfig
+        config: SqlConfig
     )(using Frame): Stream[SqlRow, Async & Abort[SqlException] & Scope] =
         // Retry is intentionally absent here: mid-stream retries would require resetting the
         // cursor position, which the current Stream API does not support.
@@ -509,83 +509,83 @@ final class PgSqlClientBackend private[client] (
     // --- BoundValue surface (unified) ---
 
     def executeBound(
-        address: SqlAddress,
+        address: SqlConfig.Address,
         password: String,
         sql: String,
         params: Chunk[BoundValue[?]],
-        config: SqlClientConfig
+        config: SqlConfig
     )(using Frame): Long < (Async & Abort[SqlException]) =
         execute(address, password, sql, params.flatMap(bv => SqlClientBackend.boundToPostgres(bv)), config)
 
     def executeInsert(
-        address: SqlAddress,
+        address: SqlConfig.Address,
         password: String,
         sql: String,
         params: Chunk[BoundValue[?]],
-        config: SqlClientConfig
+        config: SqlConfig
     )(using Frame): InsertResult < (Async & Abort[SqlException]) =
         val pgParams = params.flatMap(bv => SqlClientBackend.boundToPostgres(bv))
         metrics.timedQuery(retryWith(address, password, config)(conn => conn.extendedExecuteInsert(sql, pgParams)))
     end executeInsert
 
     def queryBound(
-        address: SqlAddress,
+        address: SqlConfig.Address,
         password: String,
         sql: String,
         params: Chunk[BoundValue[?]],
-        config: SqlClientConfig
+        config: SqlConfig
     )(using Frame): Chunk[SqlRow] < (Async & Abort[SqlException]) =
         query(address, password, sql, params.flatMap(bv => SqlClientBackend.boundToPostgres(bv)), config)
 
     def streamBound(
-        address: SqlAddress,
+        address: SqlConfig.Address,
         password: String,
         sql: String,
         params: Chunk[BoundValue[?]],
         batchSize: Int,
-        config: SqlClientConfig
+        config: SqlConfig
     )(using Frame): Stream[SqlRow, Async & Abort[SqlException] & Scope] =
         streamQuery(address, password, sql, params.flatMap(bv => SqlClientBackend.boundToPostgres(bv)), batchSize, config)
 
     // --- MySQL operations, not supported on PG backend ---
 
     def queryMysql(
-        address: SqlAddress,
+        address: SqlConfig.Address,
         password: String,
         sql: String,
         params: Chunk[BoundMysqlParam[?]],
-        config: SqlClientConfig
+        config: SqlConfig
     )(using Frame): Chunk[SqlRow] < (Async & Abort[SqlException]) =
         Abort.fail(SqlException.Connection("queryMysql is not supported on the Postgres backend", summon[Frame]))
 
     def executeMysql(
-        address: SqlAddress,
+        address: SqlConfig.Address,
         password: String,
         sql: String,
         params: Chunk[BoundMysqlParam[?]],
-        config: SqlClientConfig
+        config: SqlConfig
     )(using Frame): Long < (Async & Abort[SqlException]) =
         Abort.fail(SqlException.Connection("executeMysql is not supported on the Postgres backend", summon[Frame]))
 
     def streamQueryMysql(
-        address: SqlAddress,
+        address: SqlConfig.Address,
         password: String,
         sql: String,
         params: Chunk[BoundMysqlParam[?]],
         batchSize: Int,
-        config: SqlClientConfig
+        config: SqlConfig
     )(using Frame): Stream[MysqlRow, Async & Abort[SqlException] & Scope] =
         Stream[MysqlRow, Async & Abort[SqlException] & Scope](
             Abort.fail(SqlException.Connection("streamQueryMysql is not supported on the Postgres backend", summon[Frame]))
         )
 
     def streamQueryMysqlRows(
-        address: SqlAddress,
+        address: SqlConfig.Address,
         password: String,
         sql: String,
         params: Chunk[BoundMysqlParam[?]],
         batchSize: Int,
-        config: SqlClientConfig
+        config: SqlConfig
     )(using Frame): Stream[SqlRow, Async & Abort[SqlException] & Scope] =
         Stream[SqlRow, Async & Abort[SqlException] & Scope](
             Abort.fail(SqlException.Connection("streamQueryMysqlRows is not supported on the Postgres backend", summon[Frame]))
@@ -594,9 +594,9 @@ final class PgSqlClientBackend private[client] (
     // --- withConnection (PG transaction support) ---
 
     def withConnection[A, S](
-        address: SqlAddress,
+        address: SqlConfig.Address,
         password: String,
-        config: SqlClientConfig
+        config: SqlConfig
     )(f: PostgresConnection => A < (S & Async & Abort[SqlException]))(using Frame): A < (S & Async & Abort[SqlException]) =
         // Unsafe: getOrCreateSlotChanUnsafe and all pool ops require AllowUnsafe.
         // STEERING case 2: bridging to kyo-net ConnectionPool.
@@ -623,18 +623,18 @@ final class PgSqlClientBackend private[client] (
     end withConnection
 
     def withMysqlConnection[A, S](
-        address: SqlAddress,
+        address: SqlConfig.Address,
         password: String,
-        config: SqlClientConfig
+        config: SqlConfig
     )(f: MysqlConnection => A < (S & Async & Abort[SqlException]))(using Frame): A < (S & Async & Abort[SqlException]) =
         Abort.fail(SqlException.Connection("withMysqlConnection is not supported on the Postgres backend", summon[Frame]))
 
     def withAdvisoryLock[A, S](
-        address: SqlAddress,
+        address: SqlConfig.Address,
         password: String,
         key: Long,
         timeout: Maybe[Duration],
-        config: SqlClientConfig
+        config: SqlConfig
     )(body: A < (S & Async & Abort[SqlException]))(using Frame): A < (S & Async & Abort[SqlException]) =
         // PG session-level advisory locks always block until acquired; `timeout` is not used here.
         val _ = timeout
@@ -657,7 +657,7 @@ final class PgSqlClientBackend private[client] (
     def cancel(handle: SqlCancelHandle.Pg)(using Frame): Unit < (Async & Abort[SqlException]) =
         CancelExchange.cancel(handle.address, handle.tls, handle.processId, handle.secretKey)
 
-    def cancelMysql(handle: SqlCancelHandle.My, password: String, config: SqlClientConfig)(using
+    def cancelMysql(handle: SqlCancelHandle.My, password: String, config: SqlConfig)(using
         Frame
     ): Unit < (Async & Abort[SqlException]) =
         Abort.fail(SqlException.Connection(
@@ -669,28 +669,28 @@ final class PgSqlClientBackend private[client] (
     // --- withCancelInfo ---
 
     def withCancelInfo[A](
-        address: SqlAddress,
+        address: SqlConfig.Address,
         password: String,
-        config: SqlClientConfig
+        config: SqlConfig
     )(f: (PostgresConnection, Int, Int) => A < (Async & Abort[SqlException]))(using Frame): A < (Async & Abort[SqlException]) =
         poolWith(address, password, config) { conn =>
             f(conn, conn.processId, conn.secretKey)
         }
 
     def withCancelInfoMysql[A](
-        address: SqlAddress,
+        address: SqlConfig.Address,
         password: String,
-        config: SqlClientConfig
+        config: SqlConfig
     )(f: (MysqlConnection, Long) => A < (Async & Abort[SqlException]))(using Frame): A < (Async & Abort[SqlException]) =
         Abort.fail(SqlException.Connection("withCancelInfoMysql is not supported on the Postgres backend", summon[Frame]))
 
     // --- Notifications ---
 
     def notificationStream(
-        address: SqlAddress,
+        address: SqlConfig.Address,
         password: String,
         channel: String,
-        config: SqlClientConfig
+        config: SqlConfig
     )(using Frame): Stream[SqlNotification, Async & Abort[SqlException] & Scope] =
         Stream[SqlNotification, Async & Abort[SqlException] & Scope](
             PostgresConnection.connect(
@@ -733,21 +733,21 @@ final class PgSqlClientBackend private[client] (
     // --- loadLocalInfileMysql, not supported on PG backend ---
 
     def loadLocalInfileMysql[S](
-        address: SqlAddress,
+        address: SqlConfig.Address,
         password: String,
         sql: String,
         data: Stream[Byte, S],
-        config: SqlClientConfig
+        config: SqlConfig
     )(using Frame): Long < (Async & Abort[SqlException] & S) =
         Abort.fail(SqlException.Connection("loadLocalInfileMysql is not supported on the Postgres backend", summon[Frame]))
 
     // --- warmUp ---
 
     def warmUp(
-        address: SqlAddress,
+        address: SqlConfig.Address,
         password: String,
         n: Int,
-        config: SqlClientConfig
+        config: SqlConfig
     )(using Frame): Unit < (Async & Abort[SqlException]) =
         if n <= 0 then ()
         else
@@ -875,9 +875,9 @@ final class PgSqlClientBackend private[client] (
     // --- Layer 1: retry ---
 
     private def retryWith[A](
-        address: SqlAddress,
+        address: SqlConfig.Address,
         password: String,
-        config: SqlClientConfig
+        config: SqlConfig
     )(f: PostgresConnection => A < (Async & Abort[SqlException]))(using Frame): A < (Async & Abort[SqlException]) =
         config.retrySchedule match
             case Absent =>
@@ -904,9 +904,9 @@ final class PgSqlClientBackend private[client] (
     // --- Layer 2: pool ---
 
     private def poolWith[A](
-        address: SqlAddress,
+        address: SqlConfig.Address,
         password: String,
-        config: SqlClientConfig
+        config: SqlConfig
     )(f: PostgresConnection => A < (Async & Abort[SqlException]))(using Frame): A < (Async & Abort[SqlException]) =
         // Unsafe: getOrCreateSlotChanUnsafe runs Channel.initUnscoped synchronously on the hot path.
         // STEERING case 2: lazy initialisation of a Channel that is pure-Sync.
@@ -920,9 +920,9 @@ final class PgSqlClientBackend private[client] (
     // --- Layer 3: acquire + execute ---
 
     private def acquireAndRun[A](
-        address: SqlAddress,
+        address: SqlConfig.Address,
         password: String,
-        config: SqlClientConfig
+        config: SqlConfig
     )(f: PostgresConnection => A < (Async & Abort[SqlException]))(using Frame): A < (Async & Abort[SqlException]) =
         val netKey = NetAddress.Tcp(address.host, address.port)
         val timedF: PostgresConnection => A < (Async & Abort[SqlException]) =
@@ -1008,10 +1008,10 @@ final class PgSqlClientBackend private[client] (
     end releaseOnExit
 
     private def connectAndRun[A](
-        address: SqlAddress,
+        address: SqlConfig.Address,
         password: String,
         netKey: NetAddress,
-        config: SqlClientConfig
+        config: SqlConfig
     )(f: PostgresConnection => A < (Async & Abort[SqlException]))(using Frame): A < (Async & Abort[SqlException]) =
         pgConnect(address, password, config).flatMap { conn =>
             Log.debug(
@@ -1048,10 +1048,10 @@ final class PgSqlClientBackend private[client] (
     end releaseOnExitS
 
     private def connectAndRunS[A, S](
-        address: SqlAddress,
+        address: SqlConfig.Address,
         password: String,
         netKey: NetAddress,
-        config: SqlClientConfig
+        config: SqlConfig
     )(f: PostgresConnection => A < (S & Async & Abort[SqlException]))(using Frame): A < (S & Async & Abort[SqlException]) =
         pgConnect(address, password, config).flatMap { conn =>
             Log.debug(
@@ -1063,9 +1063,9 @@ final class PgSqlClientBackend private[client] (
     end connectAndRunS
 
     private def acquireStreamConn(
-        address: SqlAddress,
+        address: SqlConfig.Address,
         password: String,
-        config: SqlClientConfig
+        config: SqlConfig
     )(using Frame): PostgresConnection < (Async & Abort[SqlException] & Scope) =
         val netKey = NetAddress.Tcp(address.host, address.port)
         // Unsafe: getOrCreateSlotChanUnsafe and pool ops need AllowUnsafe.
@@ -1091,7 +1091,7 @@ final class PgSqlClientBackend private[client] (
         }
     end acquireStreamConn
 
-    private def takeSlotForStream(slotCh: Channel[Unit], config: SqlClientConfig)(using Frame): Unit < (Async & Abort[SqlException]) =
+    private def takeSlotForStream(slotCh: Channel[Unit], config: SqlConfig)(using Frame): Unit < (Async & Abort[SqlException]) =
         if config.acquireTimeout == Duration.Infinity then
             Abort.run[Closed](slotCh.take).flatMap {
                 case Result.Success(()) => ()
@@ -1120,10 +1120,10 @@ final class PgSqlClientBackend private[client] (
             )
 
     private def acquireStreamSlot(
-        address: SqlAddress,
+        address: SqlConfig.Address,
         password: String,
         netKey: NetAddress,
-        config: SqlClientConfig
+        config: SqlConfig
     )(using Frame): PostgresConnection < (Async & Abort[SqlException] & Scope) =
         // Unsafe: pool ops (spinAcquire, poolRelease, poolUnreserve, poolDiscard) require AllowUnsafe; Scope.ensure callback runs outside fiber suspension.
         // STEERING case 2: bridging to kyo-net ConnectionPool and cleanup path from Scope.ensure.
@@ -1189,8 +1189,8 @@ final class PgSqlClientBackend private[client] (
       * inside `withSlot` is normally near-instant; the dominant cost when reconnecting is the connect+startup itself.
       */
     private def boundedConnect(
-        config: SqlClientConfig,
-        address: SqlAddress
+        config: SqlConfig,
+        address: SqlConfig.Address
     )(connect: PostgresConnection < (Async & Abort[SqlException]))(using
         Frame
     ): PostgresConnection < (Async & Abort[SqlException]) =
@@ -1215,9 +1215,9 @@ final class PgSqlClientBackend private[client] (
       * Bounded by `acquireTimeout` to ensure a stuck connect or startup against a partially-up server cannot stall the retry schedule.
       */
     private def pgConnect(
-        address: SqlAddress,
+        address: SqlConfig.Address,
         password: String,
-        config: SqlClientConfig
+        config: SqlConfig
     )(using Frame): PostgresConnection < (Async & Abort[SqlException]) = boundedConnect(config, address) {
         pgConnectInner(address, password, config).flatMap { conn =>
             populateTypeRegistry(config.typeNames, conn).andThen(conn)
@@ -1261,9 +1261,9 @@ final class PgSqlClientBackend private[client] (
             }
 
     private def pgConnectInner(
-        address: SqlAddress,
+        address: SqlConfig.Address,
         password: String,
-        config: SqlClientConfig
+        config: SqlConfig
     )(using Frame): PostgresConnection < (Async & Abort[SqlException]) =
         config.tlsMode match
             case TlsMode.Prefer =>
@@ -1439,7 +1439,7 @@ end PgSqlClientBackend
   */
 final class MySqlClientBackend private[client] (
     private val pool: ConnectionPool[NetAddress, MysqlConnection],
-    protected val slotChans: ConcurrentHashMap[SqlAddress, Channel[Unit]],
+    protected val slotChans: ConcurrentHashMap[SqlConfig.Address, Channel[Unit]],
     val clientFrame: Frame,
     val metrics: SqlClient.Metrics
 ) extends SqlClientBackend:
@@ -1476,11 +1476,11 @@ final class MySqlClientBackend private[client] (
     // --- query / execute / executeRaw / streamQuery (BoundParam surface) ---
 
     def query(
-        address: SqlAddress,
+        address: SqlConfig.Address,
         password: String,
         sql: String,
         params: Chunk[BoundParam[?]],
-        config: SqlClientConfig
+        config: SqlConfig
     )(using Frame): Chunk[SqlRow] < (Async & Abort[SqlException]) =
         // PG-typed params are not used on MySQL; route simple queries through simple-query protocol.
         // The params chunk must be empty for this path to work correctly.
@@ -1495,11 +1495,11 @@ final class MySqlClientBackend private[client] (
             })
 
     def execute(
-        address: SqlAddress,
+        address: SqlConfig.Address,
         password: String,
         sql: String,
         params: Chunk[BoundParam[?]],
-        config: SqlClientConfig
+        config: SqlConfig
     )(using Frame): Long < (Async & Abort[SqlException]) =
         if params.nonEmpty then
             Abort.fail(SqlException.Connection(
@@ -1510,20 +1510,20 @@ final class MySqlClientBackend private[client] (
             metrics.timedQuery(retryWith(address, password, config)(conn => conn.simpleExecute(sql)))
 
     def executeRaw(
-        address: SqlAddress,
+        address: SqlConfig.Address,
         password: String,
         sql: String,
-        config: SqlClientConfig
+        config: SqlConfig
     )(using Frame): Long < (Async & Abort[SqlException]) =
         metrics.timedQuery(retryWith(address, password, config)(conn => conn.simpleExecute(sql)))
 
     def streamQuery(
-        address: SqlAddress,
+        address: SqlConfig.Address,
         password: String,
         sql: String,
         params: Chunk[BoundParam[?]],
         batchSize: Int,
-        config: SqlClientConfig
+        config: SqlConfig
     )(using Frame): Stream[SqlRow, Async & Abort[SqlException] & Scope] =
         // Retry is intentionally absent here: mid-stream retries would require resetting the
         // cursor position, which the current Stream API does not support.
@@ -1546,71 +1546,71 @@ final class MySqlClientBackend private[client] (
     // --- BoundValue surface (unified) ---
 
     def executeBound(
-        address: SqlAddress,
+        address: SqlConfig.Address,
         password: String,
         sql: String,
         params: Chunk[BoundValue[?]],
-        config: SqlClientConfig
+        config: SqlConfig
     )(using Frame): Long < (Async & Abort[SqlException]) =
         executeMysql(address, password, sql, params.flatMap(bv => SqlClientBackend.boundToMysql(bv)), config)
 
     def executeInsert(
-        address: SqlAddress,
+        address: SqlConfig.Address,
         password: String,
         sql: String,
         params: Chunk[BoundValue[?]],
-        config: SqlClientConfig
+        config: SqlConfig
     )(using Frame): InsertResult < (Async & Abort[SqlException]) =
         val myParams = params.flatMap(bv => SqlClientBackend.boundToMysql(bv))
         metrics.timedQuery(retryWith(address, password, config)(conn => conn.extendedExecuteInsert(sql, myParams)))
     end executeInsert
 
     def queryBound(
-        address: SqlAddress,
+        address: SqlConfig.Address,
         password: String,
         sql: String,
         params: Chunk[BoundValue[?]],
-        config: SqlClientConfig
+        config: SqlConfig
     )(using Frame): Chunk[SqlRow] < (Async & Abort[SqlException]) =
         queryMysql(address, password, sql, params.flatMap(bv => SqlClientBackend.boundToMysql(bv)), config)
 
     def streamBound(
-        address: SqlAddress,
+        address: SqlConfig.Address,
         password: String,
         sql: String,
         params: Chunk[BoundValue[?]],
         batchSize: Int,
-        config: SqlClientConfig
+        config: SqlConfig
     )(using Frame): Stream[SqlRow, Async & Abort[SqlException] & Scope] =
         streamQueryMysqlRows(address, password, sql, params.flatMap(bv => SqlClientBackend.boundToMysql(bv)), batchSize, config)
 
     // --- MySQL-typed operations ---
 
     def queryMysql(
-        address: SqlAddress,
+        address: SqlConfig.Address,
         password: String,
         sql: String,
         params: Chunk[BoundMysqlParam[?]],
-        config: SqlClientConfig
+        config: SqlConfig
     )(using Frame): Chunk[SqlRow] < (Async & Abort[SqlException]) =
         metrics.timedQuery(retryWith(address, password, config)(conn => conn.extendedQuery(sql, params).map(_.map(mysqlRowToRow))))
 
     def executeMysql(
-        address: SqlAddress,
+        address: SqlConfig.Address,
         password: String,
         sql: String,
         params: Chunk[BoundMysqlParam[?]],
-        config: SqlClientConfig
+        config: SqlConfig
     )(using Frame): Long < (Async & Abort[SqlException]) =
         metrics.timedQuery(retryWith(address, password, config)(conn => conn.extendedExecute(sql, params)))
 
     def streamQueryMysql(
-        address: SqlAddress,
+        address: SqlConfig.Address,
         password: String,
         sql: String,
         params: Chunk[BoundMysqlParam[?]],
         batchSize: Int,
-        config: SqlClientConfig
+        config: SqlConfig
     )(using Frame): Stream[MysqlRow, Async & Abort[SqlException] & Scope] =
         Stream[MysqlRow, Async & Abort[SqlException] & Scope](
             acquireStreamConn(address, password, config).flatMap { conn =>
@@ -1619,12 +1619,12 @@ final class MySqlClientBackend private[client] (
         )
 
     def streamQueryMysqlRows(
-        address: SqlAddress,
+        address: SqlConfig.Address,
         password: String,
         sql: String,
         params: Chunk[BoundMysqlParam[?]],
         batchSize: Int,
-        config: SqlClientConfig
+        config: SqlConfig
     )(using Frame): Stream[SqlRow, Async & Abort[SqlException] & Scope] =
         Stream[SqlRow, Async & Abort[SqlException] & Scope](
             acquireStreamConn(address, password, config).flatMap { conn =>
@@ -1637,16 +1637,16 @@ final class MySqlClientBackend private[client] (
     // --- withConnection ---
 
     def withConnection[A, S](
-        address: SqlAddress,
+        address: SqlConfig.Address,
         password: String,
-        config: SqlClientConfig
+        config: SqlConfig
     )(f: PostgresConnection => A < (S & Async & Abort[SqlException]))(using Frame): A < (S & Async & Abort[SqlException]) =
         Abort.fail(SqlException.Connection("withConnection (Postgres) is not supported on the MySQL backend", summon[Frame]))
 
     def withMysqlConnection[A, S](
-        address: SqlAddress,
+        address: SqlConfig.Address,
         password: String,
-        config: SqlClientConfig
+        config: SqlConfig
     )(f: MysqlConnection => A < (S & Async & Abort[SqlException]))(using Frame): A < (S & Async & Abort[SqlException]) =
         // Unsafe: getOrCreateSlotChanUnsafe and all pool ops require AllowUnsafe.
         // STEERING case 2: bridging to kyo-net ConnectionPool.
@@ -1675,11 +1675,11 @@ final class MySqlClientBackend private[client] (
     end withMysqlConnection
 
     def withAdvisoryLock[A, S](
-        address: SqlAddress,
+        address: SqlConfig.Address,
         password: String,
         key: Long,
         timeout: Maybe[Duration],
-        config: SqlClientConfig
+        config: SqlConfig
     )(body: A < (S & Async & Abort[SqlException]))(using Frame): A < (S & Async & Abort[SqlException]) =
         val name           = key.toString
         val timeoutSeconds = timeout.fold(-1L)(d => Math.max(0L, d.toSeconds))
@@ -1738,7 +1738,7 @@ final class MySqlClientBackend private[client] (
       * Sends `KILL QUERY <connectionId>` on the fresh sidecar, then closes it. The target connection will receive ER_QUERY_INTERRUPTED /
       * SQLSTATE `70100`. If `cancelTimeout` is finite, the entire open+kill+close is wrapped in a timeout.
       */
-    def cancelMysql(handle: SqlCancelHandle.My, password: String, config: SqlClientConfig)(using
+    def cancelMysql(handle: SqlCancelHandle.My, password: String, config: SqlConfig)(using
         Frame
     ): Unit < (Async & Abort[SqlException]) =
         val addr = handle.address
@@ -1783,9 +1783,9 @@ final class MySqlClientBackend private[client] (
     // --- withCancelInfo / withCancelInfoMysql ---
 
     def withCancelInfo[A](
-        address: SqlAddress,
+        address: SqlConfig.Address,
         password: String,
-        config: SqlClientConfig
+        config: SqlConfig
     )(f: (PostgresConnection, Int, Int) => A < (Async & Abort[SqlException]))(using Frame): A < (Async & Abort[SqlException]) =
         Abort.fail(SqlException.Connection("withCancelInfo (Postgres) is not supported on the MySQL backend", summon[Frame]))
 
@@ -1795,9 +1795,9 @@ final class MySqlClientBackend private[client] (
       * and the cancellation handle is valid for the full duration of the query.
       */
     def withCancelInfoMysql[A](
-        address: SqlAddress,
+        address: SqlConfig.Address,
         password: String,
-        config: SqlClientConfig
+        config: SqlConfig
     )(f: (MysqlConnection, Long) => A < (Async & Abort[SqlException]))(using Frame): A < (Async & Abort[SqlException]) =
         poolWith(address, password, config) { conn =>
             conn.connectionId.get.flatMap { connId =>
@@ -1809,10 +1809,10 @@ final class MySqlClientBackend private[client] (
     // --- Notifications (PG-only) ---
 
     def notificationStream(
-        address: SqlAddress,
+        address: SqlConfig.Address,
         password: String,
         channel: String,
-        config: SqlClientConfig
+        config: SqlConfig
     )(using Frame): Stream[SqlNotification, Async & Abort[SqlException] & Scope] =
         Stream[SqlNotification, Async & Abort[SqlException] & Scope](
             Abort.fail(SqlException.Connection("PostgreSQL LISTEN/NOTIFY is not supported on the MySQL backend", summon[Frame]))
@@ -1832,11 +1832,11 @@ final class MySqlClientBackend private[client] (
     // --- loadLocalInfileMysql ---
 
     def loadLocalInfileMysql[S](
-        address: SqlAddress,
+        address: SqlConfig.Address,
         password: String,
         sql: String,
         data: Stream[Byte, S],
-        config: SqlClientConfig
+        config: SqlConfig
     )(using Frame): Long < (Async & Abort[SqlException] & S) =
         withMysqlConnection(address, password, config) { conn =>
             conn.loadLocalInfile(sql, data)
@@ -1846,10 +1846,10 @@ final class MySqlClientBackend private[client] (
     // --- warmUp ---
 
     def warmUp(
-        address: SqlAddress,
+        address: SqlConfig.Address,
         password: String,
         n: Int,
-        config: SqlClientConfig
+        config: SqlConfig
     )(using Frame): Unit < (Async & Abort[SqlException]) =
         if n <= 0 then ()
         else
@@ -1978,9 +1978,9 @@ final class MySqlClientBackend private[client] (
     // --- Layer 1: retry ---
 
     private def retryWith[A](
-        address: SqlAddress,
+        address: SqlConfig.Address,
         password: String,
-        config: SqlClientConfig
+        config: SqlConfig
     )(f: MysqlConnection => A < (Async & Abort[SqlException]))(using Frame): A < (Async & Abort[SqlException]) =
         config.retrySchedule match
             case Absent =>
@@ -2007,9 +2007,9 @@ final class MySqlClientBackend private[client] (
     // --- Layer 2: pool ---
 
     private def poolWith[A](
-        address: SqlAddress,
+        address: SqlConfig.Address,
         password: String,
-        config: SqlClientConfig
+        config: SqlConfig
     )(f: MysqlConnection => A < (Async & Abort[SqlException]))(using Frame): A < (Async & Abort[SqlException]) =
         // Unsafe: getOrCreateSlotChanUnsafe runs Channel.initUnscoped synchronously on the hot path.
         // STEERING case 2: lazy initialisation of a Channel that is pure-Sync.
@@ -2023,9 +2023,9 @@ final class MySqlClientBackend private[client] (
     // --- Layer 3: acquire + execute ---
 
     private def acquireAndRun[A](
-        address: SqlAddress,
+        address: SqlConfig.Address,
         password: String,
-        config: SqlClientConfig
+        config: SqlConfig
     )(f: MysqlConnection => A < (Async & Abort[SqlException]))(using Frame): A < (Async & Abort[SqlException]) =
         val netKey = NetAddress.Tcp(address.host, address.port)
         val timedF: MysqlConnection => A < (Async & Abort[SqlException]) =
@@ -2100,10 +2100,10 @@ final class MySqlClientBackend private[client] (
         }
 
     private def connectAndRun[A](
-        address: SqlAddress,
+        address: SqlConfig.Address,
         password: String,
         netKey: NetAddress,
-        config: SqlClientConfig
+        config: SqlConfig
     )(f: MysqlConnection => A < (Async & Abort[SqlException]))(using Frame): A < (Async & Abort[SqlException]) =
         myConnect(address, password, config).flatMap { conn =>
             conn.connectionId.get.flatMap { connId =>
@@ -2140,10 +2140,10 @@ final class MySqlClientBackend private[client] (
         }
 
     private def connectAndRunS[A, S](
-        address: SqlAddress,
+        address: SqlConfig.Address,
         password: String,
         netKey: NetAddress,
-        config: SqlClientConfig
+        config: SqlConfig
     )(f: MysqlConnection => A < (S & Async & Abort[SqlException]))(using Frame): A < (S & Async & Abort[SqlException]) =
         myConnect(address, password, config).flatMap { conn =>
             conn.connectionId.get.flatMap { connId =>
@@ -2157,9 +2157,9 @@ final class MySqlClientBackend private[client] (
     end connectAndRunS
 
     private def acquireStreamConn(
-        address: SqlAddress,
+        address: SqlConfig.Address,
         password: String,
-        config: SqlClientConfig
+        config: SqlConfig
     )(using Frame): MysqlConnection < (Async & Abort[SqlException] & Scope) =
         val netKey = NetAddress.Tcp(address.host, address.port)
         // Unsafe: getOrCreateSlotChanUnsafe and pool ops need AllowUnsafe.
@@ -2185,7 +2185,7 @@ final class MySqlClientBackend private[client] (
         }
     end acquireStreamConn
 
-    private def takeSlotForStream(slotCh: Channel[Unit], config: SqlClientConfig)(using Frame): Unit < (Async & Abort[SqlException]) =
+    private def takeSlotForStream(slotCh: Channel[Unit], config: SqlConfig)(using Frame): Unit < (Async & Abort[SqlException]) =
         if config.acquireTimeout == Duration.Infinity then
             Abort.run[Closed](slotCh.take).flatMap {
                 case Result.Success(()) => ()
@@ -2214,10 +2214,10 @@ final class MySqlClientBackend private[client] (
             )
 
     private def acquireStreamSlot(
-        address: SqlAddress,
+        address: SqlConfig.Address,
         password: String,
         netKey: NetAddress,
-        config: SqlClientConfig
+        config: SqlConfig
     )(using Frame): MysqlConnection < (Async & Abort[SqlException] & Scope) =
         // Unsafe: pool ops (spinAcquire, poolRelease, poolUnreserve, poolDiscard) require AllowUnsafe; Scope.ensure callback runs outside fiber suspension.
         // STEERING case 2: bridging to kyo-net ConnectionPool and cleanup path from Scope.ensure.
@@ -2273,8 +2273,8 @@ final class MySqlClientBackend private[client] (
 
     /** Bounds a MySQL connection-establishment attempt by `acquireTimeout`. See [[PgSqlClientBackend.boundedConnect]] for rationale. */
     private def boundedMyConnect(
-        config: SqlClientConfig,
-        address: SqlAddress
+        config: SqlConfig,
+        address: SqlConfig.Address
     )(connect: MysqlConnection < (Async & Abort[SqlException]))(using
         Frame
     ): MysqlConnection < (Async & Abort[SqlException]) =
@@ -2299,17 +2299,17 @@ final class MySqlClientBackend private[client] (
       * Bounded by `acquireTimeout` to ensure a stuck connect or handshake against a partially-up server cannot stall the retry schedule.
       */
     private def myConnect(
-        address: SqlAddress,
+        address: SqlConfig.Address,
         password: String,
-        config: SqlClientConfig
+        config: SqlConfig
     )(using Frame): MysqlConnection < (Async & Abort[SqlException]) = boundedMyConnect(config, address) {
         myConnectInner(address, password, config)
     }
 
     private def myConnectInner(
-        address: SqlAddress,
+        address: SqlConfig.Address,
         password: String,
-        config: SqlClientConfig
+        config: SqlConfig
     )(using Frame): MysqlConnection < (Async & Abort[SqlException]) =
         config.tlsMode match
             case TlsMode.Prefer =>
@@ -2467,7 +2467,7 @@ object SqlClientBackend:
       * @param frame
       *   captured from the call site so the pool's isAlive/discard callbacks carry a real source location.
       */
-    def initPg(config: SqlClientConfig, frame: Frame)(using AllowUnsafe): PgSqlClientBackend =
+    def initPg(config: SqlConfig, frame: Frame)(using AllowUnsafe): PgSqlClientBackend =
         given capturedFrame: Frame = frame
         val pool = ConnectionPool.init[NetAddress, PostgresConnection](
             maxConnectionsPerHost = config.maxConnections.max(2),
@@ -2500,7 +2500,7 @@ object SqlClientBackend:
                     case t: Throwable =>
                         Log.live.unsafe.error(s"kyo.sql: PgSqlClientBackend.discard: error closing connection: ${t.getMessage}")
         )
-        val slotChans = new ConcurrentHashMap[SqlAddress, Channel[Unit]]()
+        val slotChans = new ConcurrentHashMap[SqlConfig.Address, Channel[Unit]]()
         val metrics   = SqlClient.Metrics(config.metricsEnabled, config.metricsScope)
         new PgSqlClientBackend(pool, slotChans, frame, metrics)
     end initPg
@@ -2512,7 +2512,7 @@ object SqlClientBackend:
       * @param frame
       *   captured from the call site so the pool's isAlive/discard callbacks carry a real source location.
       */
-    def initMy(config: SqlClientConfig, frame: Frame)(using AllowUnsafe): MySqlClientBackend =
+    def initMy(config: SqlConfig, frame: Frame)(using AllowUnsafe): MySqlClientBackend =
         given capturedFrame: Frame = frame
         val pool = ConnectionPool.init[NetAddress, MysqlConnection](
             maxConnectionsPerHost = config.maxConnections.max(2),
@@ -2547,7 +2547,7 @@ object SqlClientBackend:
                     case t: Throwable =>
                         Log.live.unsafe.error(s"kyo.sql: MySqlClientBackend.discard: error closing connection: ${t.getMessage}")
         )
-        val slotChans = new ConcurrentHashMap[SqlAddress, Channel[Unit]]()
+        val slotChans = new ConcurrentHashMap[SqlConfig.Address, Channel[Unit]]()
         val metrics   = SqlClient.Metrics(config.metricsEnabled, config.metricsScope)
         new MySqlClientBackend(pool, slotChans, frame, metrics)
     end initMy

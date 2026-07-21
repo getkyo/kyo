@@ -5,7 +5,7 @@ import kyo.Test
 import kyo.net.Connection
 import kyo.net.NetPlatform
 
-/** Unit tests for [[SqlClient.close]] idempotency, [[SqlClient.isClosed]] predicate, and `SqlClientConfig.closeGrace` defaulting.
+/** Unit tests for [[SqlClient.close]] idempotency, [[SqlClient.isClosed]] predicate, and `SqlConfig.closeGrace` defaulting.
   *
   * All tests are shared/cross-platform and use a minimal fake Postgres server (trust-auth handshake only). No real database required.
   *
@@ -59,8 +59,8 @@ class SqlClientCloseTest extends Test:
     private def fakeUrl(port: Int): String =
         s"postgres://testuser:testpass@127.0.0.1:$port/testdb"
 
-    private def baseConfig: SqlClientConfig =
-        SqlClientConfig(
+    private def baseConfig: SqlConfig =
+        SqlConfig(
             maxConnections = 2,
             acquireTimeout = 5.seconds,
             queryTimeout = 5.seconds,

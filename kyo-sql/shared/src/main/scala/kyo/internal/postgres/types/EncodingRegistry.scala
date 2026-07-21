@@ -14,7 +14,7 @@ import kyo.Maybe.Present
   * val myEncoder: PostgresEncoder[MyType] = ...
   * val myDecoder: PostgresDecoder[MyType] = ...
   * val registry = EncodingRegistry.builtin.register(myOid, myEncoder, myDecoder)
-  * // pass `registry` via SqlClientConfig.encodingRegistry
+  * // pass `registry` via SqlConfig.encodingRegistry
   * }}}
   */
 trait EncodingRegistry:

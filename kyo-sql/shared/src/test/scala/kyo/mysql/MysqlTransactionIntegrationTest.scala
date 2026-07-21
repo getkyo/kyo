@@ -33,7 +33,7 @@ class MysqlTransactionIntegrationTest extends kyo.Test:
     )(using Frame): A < (S & Async & Scope & Abort[SqlException]) =
         SqlClient.initMyWith(
             s"mysql://${ctx.username}:${ctx.password}@${ctx.host}:${ctx.port}/${ctx.database}",
-            SqlClientConfig.default.copy(
+            SqlConfig.default.copy(
                 maxConnections = maxConns,
                 minConnections = maxConns
             )

@@ -118,7 +118,7 @@ class CancelIntegrationTest extends kyo.Test:
         Scope.run {
             withPostgresTls { (host, port, user, password, db, trustAllConfig) =>
                 val url = s"postgres://$user:$password@$host:$port/$db?sslmode=require"
-                SqlClient.init(url, SqlClientConfig.default.copy(tls = Present(trustAllConfig))).flatMap { client =>
+                SqlClient.init(url, SqlConfig.default.copy(tls = Present(trustAllConfig))).flatMap { client =>
                     SqlClient.let(client) {
                         // Run a fast query over TLS and check that the returned SqlCancelHandle carries the TLS config.
                         client.cancellableQuery("SELECT 42").map {

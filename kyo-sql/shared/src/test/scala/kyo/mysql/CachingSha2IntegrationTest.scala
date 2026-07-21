@@ -51,7 +51,7 @@ class CachingSha2IntegrationTest extends kyo.Test:
     )(using Frame): SqlClient < (Async & Scope & Abort[SqlException]) =
         SqlClient.initMy(
             s"mysql://${details.user}:${details.password}@${details.host}:${details.port}/${details.db}",
-            SqlClientConfig.default.copy(maxConnections = 1, minConnections = 1)
+            SqlConfig.default.copy(maxConnections = 1, minConnections = 1)
         )
 
     // ── caching_sha2 fast-path (warm cache) ───────────────────────────────────
@@ -104,7 +104,7 @@ class CachingSha2IntegrationTest extends kyo.Test:
                     Scope.run {
                         SqlClient.initMy(
                             s"mysql://${details.user}:definitly_wrong_pw_xyz@${details.host}:${details.port}/${details.db}",
-                            SqlClientConfig.default.copy(maxConnections = 1, minConnections = 1)
+                            SqlConfig.default.copy(maxConnections = 1, minConnections = 1)
                         )
                     }
                 ).map {
@@ -180,7 +180,7 @@ class CachingSha2IntegrationTest extends kyo.Test:
                     // Connect to native_password container, the server may send AuthSwitchRequest.
                     SqlClient.initMy(
                         s"mysql://${mysql.username}:${mysql.password}@${mysql.container.host}:$port/${mysql.database}",
-                        SqlClientConfig.default.copy(maxConnections = 1, minConnections = 1)
+                        SqlConfig.default.copy(maxConnections = 1, minConnections = 1)
                     ).flatMap { client =>
                         client.query("SELECT 'switch_ok'").map { rows =>
                             val str = new String(rows(0).column(0).get.toArray, java.nio.charset.StandardCharsets.UTF_8)

@@ -16,7 +16,7 @@ class Md5IntegrationTest extends kyo.Test:
         pg.container.mappedPort(pg.config.port).flatMap { port =>
             SqlClient.init(
                 s"postgres://${pg.username}:${pg.password}@${pg.container.host}:$port/${pg.database}",
-                SqlClientConfig.default.copy(maxConnections = 1, minConnections = 1)
+                SqlConfig.default.copy(maxConnections = 1, minConnections = 1)
             )
         }
 
@@ -49,7 +49,7 @@ class Md5IntegrationTest extends kyo.Test:
                         Scope.run {
                             SqlClient.init(
                                 s"postgres://${pg.username}:wrongmd5pw@${pg.container.host}:$port/${pg.database}",
-                                SqlClientConfig.default.copy(maxConnections = 1, minConnections = 1)
+                                SqlConfig.default.copy(maxConnections = 1, minConnections = 1)
                             )
                         }
                     }.map {

@@ -52,7 +52,7 @@ class MysqlTlsIntegrationTest extends kyo.Test:
     )(using Frame): SqlClient < (Async & Scope & Abort[SqlException]) =
         SqlClient.initMy(
             s"mysql://${details.user}:${details.password}@${details.host}:${details.port}/${details.db}",
-            SqlClientConfig.default.copy(
+            SqlConfig.default.copy(
                 tls = Present(details.trustAllConfig),
                 maxConnections = 1,
                 minConnections = 1

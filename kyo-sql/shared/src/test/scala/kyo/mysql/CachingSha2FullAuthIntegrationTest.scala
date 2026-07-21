@@ -25,7 +25,7 @@ class CachingSha2FullAuthIntegrationTest extends kyo.Test:
                     // Connect without TLS: forces the RSA-OAEP encrypted full-auth path.
                     SqlClient.initMy(
                         s"mysql://${mysql.username}:${mysql.password}@${mysql.container.host}:$port/${mysql.database}",
-                        SqlClientConfig.default.copy(maxConnections = 1, minConnections = 1)
+                        SqlConfig.default.copy(maxConnections = 1, minConnections = 1)
                     ).flatMap { client =>
                         // Verify the connection works by running SELECT 1. `client.query` on MySQL routes
                         // unparameterised queries to the binary extended protocol; `SELECT 1` comes back

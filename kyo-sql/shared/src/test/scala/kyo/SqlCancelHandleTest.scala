@@ -8,7 +8,7 @@ class SqlCancelHandleTest extends Test:
     "SqlCancelHandle.Pg pattern-matches correctly as sealed abstract class" in {
         // Verify exhaustive match on SqlCancelHandle after the sealed trait → sealed abstract class change.
         val pg: SqlCancelHandle = SqlCancelHandle.Pg(
-            SqlAddress("postgres", "localhost", 5432, "testdb", "user"),
+            SqlConfig.Address("postgres", "localhost", 5432, "testdb", "user"),
             Maybe.Absent,
             processId = 42,
             secretKey = 99
@@ -24,7 +24,7 @@ class SqlCancelHandleTest extends Test:
 
     "SqlCancelHandle.My pattern-matches correctly as sealed abstract class" in {
         val my: SqlCancelHandle = SqlCancelHandle.My(
-            SqlAddress("mysql", "localhost", 3306, "testdb", "user"),
+            SqlConfig.Address("mysql", "localhost", 3306, "testdb", "user"),
             connectionId = 7L
         )
         my match
@@ -37,13 +37,13 @@ class SqlCancelHandleTest extends Test:
 
     "SqlCancelHandle.address is accessible on both variants" in {
         val pg: SqlCancelHandle = SqlCancelHandle.Pg(
-            SqlAddress("postgres", "localhost", 5432, "testdb", "user"),
+            SqlConfig.Address("postgres", "localhost", 5432, "testdb", "user"),
             Maybe.Absent,
             processId = 1,
             secretKey = 2
         )
         val my: SqlCancelHandle = SqlCancelHandle.My(
-            SqlAddress("mysql", "localhost", 3306, "testdb", "user"),
+            SqlConfig.Address("mysql", "localhost", 3306, "testdb", "user"),
             connectionId = 3L
         )
         assert(pg.address.host == "localhost")
