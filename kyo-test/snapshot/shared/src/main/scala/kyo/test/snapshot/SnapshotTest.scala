@@ -3,14 +3,20 @@ package kyo.test.snapshot
 import kyo.<
 import kyo.Abort
 import kyo.Async
+import kyo.Changeset
+import kyo.Chunk
 import kyo.Frame
 import kyo.Maybe
 import kyo.Render
+import kyo.Result
+import kyo.Schema
 import kyo.Scope
 import kyo.test.AssertionFailed
 import kyo.test.SuiteFingerprintMarker
 import kyo.test.internal.TestBase
+import kyo.test.snapshot.SnapshotCodec
 import kyo.test.snapshot.SnapshotNotFound
+import kyo.test.snapshot.SnapshotSchemaEvolution
 import kyo.test.snapshot.internal.SnapshotDiff
 import kyo.test.snapshot.internal.SnapshotStore
 
@@ -79,23 +85,7 @@ abstract class SnapshotTestBase[S] extends TestBase[S]:
     )(using inline r: Render[A], inline frame: Frame, inline as: kyo.test.AssertScope): Unit < (S & Async & Abort[Throwable] & Scope) =
         as.recordEvaluated()
         val rendered = r.asString(actual)
-        if name.contains('/') || name.contains('\\') then
-            throw new IllegalArgumentException(
-                s"Snapshot name must not contain path separators: $name"
-            )
-        end if
-        if name.isEmpty then
-            throw new IllegalArgumentException("snapshot name must not be empty")
-        end if
-        if name == "." then
-            throw new IllegalArgumentException("snapshot name must not be '.'")
-        end if
-        if name == ".." then
-            throw new IllegalArgumentException("snapshot name must not be '..'")
-        end if
-        if name.contains(' ') then
-            throw new IllegalArgumentException("snapshot name must not contain a space")
-        end if
+        validateSnapshotName(name)
         val path       = s"${snapshotDir}/${this.name}/${name}.snap"
         val updateMode = snapshotUpdateMode
         if updateMode then
@@ -113,6 +103,136 @@ abstract class SnapshotTestBase[S] extends TestBase[S]:
                     throw SnapshotNotFound(path)(using frame)
         end if
     end assertSnapshot
+
+    /** Snapshot serialization format used by [[assertSchemaSnapshot]].
+      *
+      * Override in a suite to change the format (e.g. `SnapshotCodec.Protobuf` for a binary round trip). Defaults to
+      * `SnapshotCodec.Yaml`, the readable field-named text format.
+      */
+    protected def snapshotCodec: SnapshotCodec = SnapshotCodec.Yaml
+
+    /** Assert that `actual`, normalized then encoded through [[snapshotCodec]], matches the stored schema snapshot named `name`.
+      *
+      * Algorithm:
+      *   1. Normalize: `norm = config(SnapshotConfig.apply[A]).modify.applyTo(actual)`, applied before encode AND before compare.
+      *   2. Encode `norm` by codec kind: a Text codec produces a UTF-8 string, a Binary codec produces raw wire bytes.
+      *   3. Compute the storage path `${snapshotDir}/${this.name}/${name}.${snapshotCodec.ext}`.
+      *   4. If update mode: write the proposed value and pass.
+      *   5. If no snapshot exists yet: write the proposed value and fail with `SnapshotNotFound`.
+      *   6. If a snapshot exists: decode it via `Schema[A]`; a decode failure fails with `SnapshotSchemaEvolution`, a decode
+      *      success compares structurally and passes when equal, else fails with the changed field paths (plus a textual diff
+      *      for Text codecs).
+      *
+      * @param actual
+      *   the value to snapshot; a `Schema[A]` instance must be in scope
+      * @param name
+      *   the snapshot identifier; must not contain path separators, be empty, be `.` or `..`, or contain a space
+      * @param config
+      *   customizes the assertion through the `SnapshotConfig[A]` builder (today `.normalize`); defaults to `identity`
+      * @tparam A
+      *   the type of the value; a `Schema[A]` instance must be in scope
+      */
+    protected inline def assertSchemaSnapshot[A](
+        inline actual: A,
+        inline name: String,
+        inline config: SnapshotConfig[A] => SnapshotConfig[A] = identity[SnapshotConfig[A]]
+    )(using inline schema: Schema[A], inline frame: Frame, inline as: kyo.test.AssertScope): Unit < (S & Async & Abort[Throwable] & Scope) =
+        as.recordEvaluated()
+        validateSnapshotName(name)
+        val codec = snapshotCodec
+        val norm  = normalizeWith(config, actual)
+        val path  = s"${snapshotDir}/${this.name}/${name}.${codec.ext}"
+        codec match
+            case SnapshotCodec.Text(c, _) =>
+                val proposed = schema.encodeString(norm)(using c, frame)
+                if snapshotUpdateMode then
+                    SnapshotStore.write(path, proposed)
+                else
+                    SnapshotStore.read(path) match
+                        case Maybe.Absent =>
+                            SnapshotStore.write(path, proposed)
+                            throw SnapshotNotFound(path)(using frame)
+                        case Maybe.Present(stored) =>
+                            schema.decodeString(stored)(using c, frame) match
+                                case Result.Failure(err) =>
+                                    throw SnapshotSchemaEvolution(
+                                        path,
+                                        s"${err.getMessage}\n\n${SnapshotDiff.render(stored, proposed)}"
+                                    )(using frame)
+                                case Result.Panic(err) =>
+                                    throw err
+                                case Result.Success(storedValue) =>
+                                    val ops = Changeset[A](storedValue, norm)(using schema, frame).operations
+                                    if ops.nonEmpty then
+                                        val paths   = snapshotChangedPaths(ops)
+                                        val diagram = s"changed fields: ${paths.mkString(", ")}\n\n${SnapshotDiff.render(stored, proposed)}"
+                                        val failure = new AssertionFailed(diagram, frame, Maybe.Present("Snapshot mismatch"), Maybe.Absent)
+                                        as.record(failure)
+                                        throw failure
+                                    end if
+                    end match
+                end if
+            case SnapshotCodec.Binary(c, _) =>
+                val proposed = schema.encode(norm)(using c, frame)
+                if snapshotUpdateMode then
+                    SnapshotStore.writeBytes(path, proposed)
+                else
+                    SnapshotStore.readBytes(path) match
+                        case Maybe.Absent =>
+                            SnapshotStore.writeBytes(path, proposed)
+                            throw SnapshotNotFound(path)(using frame)
+                        case Maybe.Present(stored) =>
+                            schema.decode(stored)(using c, frame) match
+                                case Result.Failure(err) =>
+                                    throw SnapshotSchemaEvolution(path, err.getMessage)(using frame)
+                                case Result.Panic(err) =>
+                                    throw err
+                                case Result.Success(storedValue) =>
+                                    val ops = Changeset[A](storedValue, norm)(using schema, frame).operations
+                                    if ops.nonEmpty then
+                                        val paths = snapshotChangedPaths(ops)
+                                        val failure = new AssertionFailed(
+                                            s"changed fields: ${paths.mkString(", ")}",
+                                            frame,
+                                            Maybe.Present("Snapshot mismatch"),
+                                            Maybe.Absent
+                                        )
+                                        as.record(failure)
+                                        throw failure
+                                    end if
+                    end match
+                end if
+        end match
+    end assertSchemaSnapshot
+
+    private def normalizeWith[A](config: SnapshotConfig[A] => SnapshotConfig[A], value: A): A =
+        config(SnapshotConfig.apply[A]).modify.applyTo(value)
+
+    private def validateSnapshotName(name: String): Unit =
+        if name.contains('/') || name.contains('\\') then
+            throw new IllegalArgumentException(
+                s"Snapshot name must not contain path separators: $name"
+            )
+        end if
+        if name.isEmpty then
+            throw new IllegalArgumentException("snapshot name must not be empty")
+        end if
+        if name == "." then
+            throw new IllegalArgumentException("snapshot name must not be '.'")
+        end if
+        if name == ".." then
+            throw new IllegalArgumentException("snapshot name must not be '..'")
+        end if
+        if name.contains(' ') then
+            throw new IllegalArgumentException("snapshot name must not contain a space")
+        end if
+    end validateSnapshotName
+
+    private def snapshotChangedPaths(ops: Chunk[Changeset.Patch], prefix: Chunk[String] = Chunk.empty): Chunk[String] =
+        ops.flatMap {
+            case Changeset.Patch.Nested(fp, nested) => snapshotChangedPaths(nested, prefix ++ fp)
+            case patch                              => Chunk((prefix ++ patch.fieldPath).mkString("."))
+        }
 
 end SnapshotTestBase
 
