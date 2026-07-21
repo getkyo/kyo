@@ -1,18 +1,18 @@
 package kyo
 
-class RandomSecureTest extends Test:
+class RandomSecureTest extends kyo.test.Test[Any]:
 
     "secure" - {
 
         // Leaf 1: nextBytes returns 32-byte sequence
-        "nextBytes(32) returns a 32-byte sequence" in run {
+        "nextBytes(32) returns a 32-byte sequence" in {
             Random.secure.nextBytes(32).map { bytes =>
                 assert(bytes.length == 32)
             }
         }
 
         // Leaf 2: Two consecutive calls produce distinct sequences
-        "two consecutive nextBytes(32) calls produce distinct sequences" in run {
+        "two consecutive nextBytes(32) calls produce distinct sequences" in {
             for
                 bytes1 <- Random.secure.nextBytes(32)
                 bytes2 <- Random.secure.nextBytes(32)
@@ -20,7 +20,7 @@ class RandomSecureTest extends Test:
         }
 
         // Leaf 3: Round-trip via unsafe/safe
-        "Random.secure.unsafe.safe round-trip is sane" in run {
+        "Random.secure.unsafe.safe round-trip is sane" in {
             Sync.defer {
                 val unsafeInst = Random.secure.unsafe
                 val safeInst   = unsafeInst.safe
@@ -29,7 +29,7 @@ class RandomSecureTest extends Test:
         }
 
         // Leaf 4: Unsafe.secure, nextBytes returns full-entropy bytes (at least one non-zero in 32 bytes)
-        "Random.Unsafe.secure, nextBytes fills with at least one non-zero byte" in run {
+        "Random.Unsafe.secure, nextBytes fills with at least one non-zero byte" in {
             Sync.defer {
                 import AllowUnsafe.embrace.danger
                 val bytes = Random.Unsafe.secure.nextBytes(32)
@@ -38,7 +38,7 @@ class RandomSecureTest extends Test:
         }
 
         // Leaf 5: Unsafe.secure.safe returns a Random
-        "Random.Unsafe.secure.safe returns a Random" in run {
+        "Random.Unsafe.secure.safe returns a Random" in {
             Sync.defer {
                 import AllowUnsafe.embrace.danger
                 val safeInst = Random.Unsafe.secure.safe
@@ -47,7 +47,7 @@ class RandomSecureTest extends Test:
         }
 
         // Leaf 6: Each call to Unsafe.secure returns a fresh instance
-        "each call to Random.Unsafe.secure returns a fresh Random.Unsafe" in run {
+        "each call to Random.Unsafe.secure returns a fresh Random.Unsafe" in {
             Sync.defer {
                 import AllowUnsafe.embrace.danger
                 val u1 = Random.Unsafe.secure
@@ -57,7 +57,7 @@ class RandomSecureTest extends Test:
         }
 
         // Leaf 7: 1024 samples via Random.Unsafe.secure.nextBytes have byte distribution within 3 sigma of uniform
-        "1024 samples have byte distribution within 3 sigma of uniform" in run {
+        "1024 samples have byte distribution within 3 sigma of uniform" in {
             Sync.defer {
                 import AllowUnsafe.embrace.danger
                 val u       = Random.Unsafe.secure
@@ -84,7 +84,7 @@ class RandomSecureTest extends Test:
         }
 
         // Leaf 8: Two distinct Random.secure instances produce independent streams
-        "two distinct Random.secure instances produce independent streams" in run {
+        "two distinct Random.secure instances produce independent streams" in {
             for
                 bytes1 <- Random.secure.nextBytes(64)
                 bytes2 <- Random.secure.nextBytes(64)
@@ -92,7 +92,7 @@ class RandomSecureTest extends Test:
         }
 
         // Leaf 9: nextLong produces both positive and negative values
-        "Random.secure.nextLong produces both positive and negative values across 100 samples" in run {
+        "Random.secure.nextLong produces both positive and negative values across 100 samples" in {
             Sync.defer {
                 import AllowUnsafe.embrace.danger
                 val u       = Random.Unsafe.secure
@@ -103,7 +103,7 @@ class RandomSecureTest extends Test:
         }
 
         // Leaf 10: Random.secure under fiber forking via Async.gather returns distinct streams per fiber
-        "Random.secure under fiber forking via Async.gather returns distinct streams per fiber" in run {
+        "Random.secure under fiber forking via Async.gather returns distinct streams per fiber" in {
             val tasks: Seq[Seq[Byte] < Async] = Seq.fill(10)(Random.secure.nextBytes(32))
             Async.gather(tasks).map { results =>
                 assert(

@@ -797,8 +797,23 @@ object Cache:
         end init
 
         private[kyo] object internal:
+            /** Encodes a `Duration` as a centisecond count for expiry bookkeeping.
+              *
+              *   - `Duration.Zero` (or non-positive) maps to `-1` (the "no expiry" sentinel).
+              *   - `Duration.Infinity` and any duration whose centisecond count would exceed `Int.MaxValue`
+              *     also map to `-1`, since a bounded-width centi field cannot represent them and a naive
+              *     `toInt` would wrap the low 32 bits (e.g. `365.days` and `Infinity` would both alias to
+              *     `1` centi, i.e. 10 ms, expiring every entry immediately).
+              *   - Otherwise, returns `max(1, millis / 10)` clamped into `Int`.
+              */
             def toCentis(duration: Duration): Int =
-                if duration > Duration.Zero then (duration.toMillis / 10).toInt.max(1) else -1
+                if duration <= Duration.Zero then -1
+                else
+                    val centis = duration.toMillis / 10
+                    if centis <= 0 || centis > Int.MaxValue.toLong then -1
+                    else centis.toInt.max(1)
+                end if
+            end toCentis
 
             opaque type Slot[+V] = V | AnyRef
 
