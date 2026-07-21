@@ -10,7 +10,7 @@ import kyo.OwnContainer
   *
   * Test discipline:
   *   - All container tests wrapped in Async.timeout(60.seconds).
-  *   - Retry counts verified via SqlMetrics counters, never wall-clock assertions.
+  *   - Retry counts verified via SqlClient.Metrics counters, never wall-clock assertions.
   *   - After every container test, one probe query verifies connection reusability.
   *
   * Container ownership: this suite mutates server state via `Container.pause` / `Container.unpause`. It cannot share the per-fork-JVM

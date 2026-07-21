@@ -385,12 +385,12 @@ class PipelineIntegrationTest extends kyo.Test:
         }
     }
 
-    // Verify that both SqlPipelineBuilder.execute overloads compile:
+    // Verify that both SqlClient.PipelineBuilder.execute overloads compile:
     //   execute(sql)         , no-params form delegates to execute(sql, Chunk.empty)
     //   execute(sql, params) , explicit-params canonical form
     // No integration call is needed; the test exercises the API surface itself.
-    "SqlPipelineBuilder execute(sql) and execute(sql, params) both compile" in {
-        val builder = new SqlPipelineBuilder
+    "SqlClient.PipelineBuilder execute(sql) and execute(sql, params) both compile" in {
+        val builder = new SqlClient.PipelineBuilder
         builder.execute("SELECT 1")
         builder.execute("SELECT $1", Seq.empty[SqlSchema.BoundValue[?]])
         builder.query("SELECT 2")

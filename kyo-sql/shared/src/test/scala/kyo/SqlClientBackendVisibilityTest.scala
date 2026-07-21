@@ -19,7 +19,7 @@ class SqlClientBackendVisibilityTest extends Test:
             """import kyo.*
 import kyo.internal.client.PgSqlClientBackend
 import java.util.concurrent.ConcurrentHashMap
-import kyo.SqlMetrics
+import kyo.SqlClient.Metrics
 import kyo.internal.client.ConnectionPool
 import kyo.internal.postgres.PostgresConnection
 import kyo.internal.tls.TlsMode
@@ -28,7 +28,7 @@ val _ = new PgSqlClientBackend(
     null.asInstanceOf[ConnectionPool[kyo.net.NetAddress, PostgresConnection]],
     new ConcurrentHashMap(),
     summon[Frame],
-    SqlMetrics(false, "")
+    SqlClient.Metrics(false, "")
 )"""
         )
         val hasAccessError = errors.exists(e =>
@@ -45,7 +45,7 @@ val _ = new PgSqlClientBackend(
             """import kyo.*
 import kyo.internal.client.MySqlClientBackend
 import java.util.concurrent.ConcurrentHashMap
-import kyo.SqlMetrics
+import kyo.SqlClient.Metrics
 import kyo.internal.client.ConnectionPool
 import kyo.internal.mysql.MysqlConnection
 // Attempt direct construction, must be rejected
@@ -53,7 +53,7 @@ val _ = new MySqlClientBackend(
     null.asInstanceOf[ConnectionPool[kyo.net.NetAddress, MysqlConnection]],
     new ConcurrentHashMap(),
     summon[Frame],
-    SqlMetrics(false, "")
+    SqlClient.Metrics(false, "")
 )"""
         )
         val hasAccessError = errors.exists(e =>

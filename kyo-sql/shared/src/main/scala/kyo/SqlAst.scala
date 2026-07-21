@@ -586,6 +586,47 @@ object SqlAst:
         inline def exceptAll(inline other: Query[A]): Query[A]    = SetOp(SetOp.Kind.ExceptAll, this, other)
     end Query
 
+    /** Companion of [[Query]] hosting the `.run` / `.runStatic` / `.runDynamic` extensions.
+      *
+      * `.run` / `.runStatic` need a `Query[A]` receiver spliced as its full construction tree so the [[kyo.internal.SqlStaticMacro]] can
+      * fold the AST at compile time; that requires an `extension [A](inline q: Query[A])` with an inline parameter (an `inline def` on
+      * `Query[A]` sees only `Ident(this)` at the splice site, which cannot be folded). Extensions live in this companion (rather than at
+      * the top of the `kyo` package) so they are found by implicit search on any `Query[A]` receiver without polluting the top-level
+      * namespace.
+      */
+    object Query:
+
+        extension [A](inline q: Query[A])
+
+            /** Try the static-emission path; fall back to the runtime renderer if the AST is not reducible at compile time.
+              *
+              * ==Error types==
+              * Aborts with [[SqlException]] (any subtype). The two most common decode-time variants:
+              *   - [[SqlException.Decode]], a column value could not be converted to the target Scala type. Check the [[SqlSchema]]
+              *     derivation for `A`, ensure nullable columns use `Maybe[T]`, and confirm the database schema matches the query result.
+              *   - [[SqlException.Unsupported]], the [[SqlSchema]] decoder called a structural read operation (array element, map entry)
+              *     that the backend does not yet implement. Re-derive the schema without the unsupported structural type, or supply a
+              *     custom decoder via [[SqlSchema.withDecoder]].
+              */
+            inline def run(using SqlSchema[A], Frame): Chunk[A] < (Async & Abort[SqlException] & Scope) =
+                ${ kyo.internal.SqlRunMacro.runQueryImpl[A]('q) }
+
+            /** Requires compile-time AST reduction; produces a compile error if the AST is not reducible. */
+            inline def runStatic(using SqlSchema[A], Frame): Chunk[A] < (Async & Abort[SqlException] & Scope) =
+                ${ kyo.internal.SqlRunMacro.runQueryStaticImpl[A]('q) }
+        end extension
+
+        extension [A](q: Query[A])
+
+            /** Skip the static path entirely and always use the runtime renderer. Non-inline so it can be invoked with a `val` reference. */
+            def runDynamic(using SqlSchema[A], Frame): Chunk[A] < (Async & Abort[SqlException] & Scope) =
+                SqlClient.use { client =>
+                    val r = kyo.internal.SqlRender.render(q, client.sqlBackend)
+                    client.executeBoundQuery[A](r.sql, r.params)
+                }
+        end extension
+    end Query
+
     sealed abstract class From[T, F] extends Query[T]:
         def columns: Record[F]
 
@@ -1038,6 +1079,27 @@ object SqlAst:
                 where: Maybe[Term[Boolean]]
             ) extends OnConflict[F] derives CanEqual
         end OnConflict
+
+        extension [T, F](inline ins: Insert[T, F])
+
+            /** Try the static-emission path; fall back to the runtime renderer if the AST is not reducible at compile time. */
+            inline def run(using Frame): InsertResult < (Async & Abort[SqlException] & Scope) =
+                ${ kyo.internal.SqlRunMacro.runInsertImpl[T, F]('ins) }
+
+            /** Requires compile-time AST reduction; produces a compile error if the AST is not reducible. */
+            inline def runStatic(using Frame): InsertResult < (Async & Abort[SqlException] & Scope) =
+                ${ kyo.internal.SqlRunMacro.runInsertStaticImpl[T, F]('ins) }
+        end extension
+
+        extension [T, F](ins: Insert[T, F])
+
+            /** Skip the static path entirely and always use the runtime renderer. Non-inline so it can be invoked with a `val` reference. */
+            def runDynamic(using frame: Frame): InsertResult < (Async & Abort[SqlException] & Scope) =
+                SqlClient.use { client =>
+                    val r = kyo.internal.SqlRender.render(ins, client.sqlBackend, frame)
+                    client.executeBoundInsert(r.sql, r.params)
+                }
+        end extension
     end Insert
 
     final case class InsertBuilder[T, F](
@@ -1121,6 +1183,31 @@ object SqlAst:
         returning: Maybe[Chunk[Column[?, ?]]]
     ) extends Action[Long]
 
+    /** Companion of [[Update]] hosting the `.run` / `.runStatic` / `.runDynamic` extensions (see [[Query$]] for the rationale). */
+    object Update:
+
+        extension [T, F](inline upd: Update[T, F])
+
+            /** Try the static-emission path; fall back to the runtime renderer if the AST is not reducible at compile time. */
+            inline def run(using Frame): Long < (Async & Abort[SqlException] & Scope) =
+                ${ kyo.internal.SqlRunMacro.runUpdateImpl[T, F]('upd) }
+
+            /** Requires compile-time AST reduction; produces a compile error if the AST is not reducible. */
+            inline def runStatic(using Frame): Long < (Async & Abort[SqlException] & Scope) =
+                ${ kyo.internal.SqlRunMacro.runUpdateStaticImpl[T, F]('upd) }
+        end extension
+
+        extension [T, F](upd: Update[T, F])
+
+            /** Skip the static path entirely and always use the runtime renderer. Non-inline so it can be invoked with a `val` reference. */
+            def runDynamic(using Frame): Long < (Async & Abort[SqlException] & Scope) =
+                SqlClient.use { client =>
+                    val r = kyo.internal.SqlRender.render(upd, client.sqlBackend)
+                    client.executeBoundUpdate(r.sql, r.params)
+                }
+        end extension
+    end Update
+
     final case class UpdateBuilder[T, F](
         columns: Record[F],
         tableName: String,
@@ -1153,6 +1240,31 @@ object SqlAst:
         whereClause: Maybe[Term[Boolean]],
         returning: Maybe[Chunk[Column[?, ?]]]
     ) extends Action[Long]
+
+    /** Companion of [[Delete]] hosting the `.run` / `.runStatic` / `.runDynamic` extensions (see [[Query$]] for the rationale). */
+    object Delete:
+
+        extension [T, F](inline del: Delete[T, F])
+
+            /** Try the static-emission path; fall back to the runtime renderer if the AST is not reducible at compile time. */
+            inline def run(using Frame): Long < (Async & Abort[SqlException] & Scope) =
+                ${ kyo.internal.SqlRunMacro.runDeleteImpl[T, F]('del) }
+
+            /** Requires compile-time AST reduction; produces a compile error if the AST is not reducible. */
+            inline def runStatic(using Frame): Long < (Async & Abort[SqlException] & Scope) =
+                ${ kyo.internal.SqlRunMacro.runDeleteStaticImpl[T, F]('del) }
+        end extension
+
+        extension [T, F](del: Delete[T, F])
+
+            /** Skip the static path entirely and always use the runtime renderer. Non-inline so it can be invoked with a `val` reference. */
+            def runDynamic(using Frame): Long < (Async & Abort[SqlException] & Scope) =
+                SqlClient.use { client =>
+                    val r = kyo.internal.SqlRender.render(del, client.sqlBackend)
+                    client.executeBoundUpdate(r.sql, r.params)
+                }
+        end extension
+    end Delete
 
     final case class DeleteBuilder[T, F](
         columns: Record[F],

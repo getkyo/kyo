@@ -1,7 +1,7 @@
 package kyo.postgres
 
 import kyo.*
-import kyo.SqlMetrics
+import kyo.SqlClient.Metrics
 import kyo.internal.SqlSharedContainers
 
 /** Integration test for metrics via kyo.Stat.
@@ -46,7 +46,7 @@ class MetricsIntegrationTest extends kyo.Test:
                         metricsEnabled = true
                     )
                     withPgClient(url, config) { client =>
-                        val m: SqlMetrics = client.metrics
+                        val m: SqlClient.Metrics = client.metrics
 
                         // Run several successful queries to exercise queries_executed and
                         // query_duration_ms, connections_acquired, connections_released,

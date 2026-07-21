@@ -1,13 +1,13 @@
 package kyo
 
 import kyo.*
-import kyo.SqlMetrics
+import kyo.SqlClient.Metrics
 import kyo.Test
 import kyo.stats.internal.Summary
 
 /** Unit tests for metrics via kyo.Stat.
   *
-  * All tests are in-process (no Docker). They exercise `SqlMetrics` directly, creating instances, calling instrumented methods, and
+  * All tests are in-process (no Docker). They exercise `SqlClient.Metrics` directly, creating instances, calling instrumented methods, and
   * asserting counter/histogram state. No wall-clock assertions are present.
   *
   * Key constraints:
@@ -17,13 +17,13 @@ import kyo.stats.internal.Summary
   *
   * Test count: 12 shared unit tests (target: 12 shared + 1 JVM integration).
   */
-class SqlMetricsTest extends Test:
+class SqlClientMetricsTest extends Test:
 
     // ── helpers ───────────────────────────────────────────────────────────────
 
-    /** Creates an enabled SqlMetrics instance under a unique scope to avoid cross-test counter pollution. */
-    private def freshMetrics(scope: String = "kyo.sql.test"): SqlMetrics =
-        SqlMetrics(metricsEnabled = true, metricsScope = Present(scope))
+    /** Creates an enabled SqlClient.Metrics instance under a unique scope to avoid cross-test counter pollution. */
+    private def freshMetrics(scope: String = "kyo.sql.test"): SqlClient.Metrics =
+        SqlClient.Metrics(metricsEnabled = true, metricsScope = Present(scope))
 
     /** A fake query body that always succeeds with a unit result. */
     private def successBody(using Frame): Unit < (Async & Abort[SqlException]) = ()
@@ -121,7 +121,7 @@ class SqlMetricsTest extends Test:
     // ── metricsEnabled=false makes every metric op a no-op ───────────────────
 
     "metricsEnabled=false makes every metric op a no-op" in {
-        val m = SqlMetrics(metricsEnabled = false, metricsScope = Absent)
+        val m = SqlClient.Metrics(metricsEnabled = false, metricsScope = Absent)
         // Run successful and failed queries through the disabled metrics.
         m.timedQuery(successBody).andThen {
             Abort.run[SqlException](m.timedQuery(failBody)).andThen {
@@ -156,7 +156,7 @@ class SqlMetricsTest extends Test:
         // Create metrics under a custom scope. The test verifies that:
         //   1. The metrics instance is created without errors under the custom scope.
         //   2. Counters still function correctly (the scope is purely a naming prefix).
-        val m = SqlMetrics(metricsEnabled = true, metricsScope = Present("myapp.db"))
+        val m = SqlClient.Metrics(metricsEnabled = true, metricsScope = Present("myapp.db"))
         m.timedQuery(successBody).andThen {
             // The metric was recorded under "myapp.db.queries_executed".
             // We verify behaviour (counter works) not the registration name
@@ -255,4 +255,4 @@ class SqlMetricsTest extends Test:
         }
     }
 
-end SqlMetricsTest
+end SqlClientMetricsTest

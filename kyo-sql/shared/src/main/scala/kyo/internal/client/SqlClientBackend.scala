@@ -2,7 +2,7 @@ package kyo.internal.client
 
 import java.util.concurrent.ConcurrentHashMap
 import kyo.*
-import kyo.SqlMetrics
+import kyo.SqlClient.Metrics
 import kyo.SqlSchema.BoundValue
 import kyo.internal.client.ConnectionPool
 import kyo.internal.mysql.BoundMysqlParam
@@ -48,7 +48,7 @@ sealed trait SqlClientBackend:
     val clientFrame: Frame
 
     /** Metrics instance, no-op when `metricsEnabled = false` in the config. */
-    val metrics: SqlMetrics
+    val metrics: SqlClient.Metrics
 
     // --- Abstract operations exposed to SqlClient ---
 
@@ -459,7 +459,7 @@ final class PgSqlClientBackend private[client] (
     private val pool: ConnectionPool[NetAddress, PostgresConnection],
     protected val slotChans: ConcurrentHashMap[SqlAddress, Channel[Unit]],
     val clientFrame: Frame,
-    val metrics: SqlMetrics
+    val metrics: SqlClient.Metrics
 ) extends SqlClientBackend:
 
     // --- query / execute / executeRaw / streamQuery ---
@@ -1441,7 +1441,7 @@ final class MySqlClientBackend private[client] (
     private val pool: ConnectionPool[NetAddress, MysqlConnection],
     protected val slotChans: ConcurrentHashMap[SqlAddress, Channel[Unit]],
     val clientFrame: Frame,
-    val metrics: SqlMetrics
+    val metrics: SqlClient.Metrics
 ) extends SqlClientBackend:
 
     // --- Row conversion helper ---
@@ -2501,7 +2501,7 @@ object SqlClientBackend:
                         Log.live.unsafe.error(s"kyo.sql: PgSqlClientBackend.discard: error closing connection: ${t.getMessage}")
         )
         val slotChans = new ConcurrentHashMap[SqlAddress, Channel[Unit]]()
-        val metrics   = SqlMetrics(config.metricsEnabled, config.metricsScope)
+        val metrics   = SqlClient.Metrics(config.metricsEnabled, config.metricsScope)
         new PgSqlClientBackend(pool, slotChans, frame, metrics)
     end initPg
 
@@ -2548,7 +2548,7 @@ object SqlClientBackend:
                         Log.live.unsafe.error(s"kyo.sql: MySqlClientBackend.discard: error closing connection: ${t.getMessage}")
         )
         val slotChans = new ConcurrentHashMap[SqlAddress, Channel[Unit]]()
-        val metrics   = SqlMetrics(config.metricsEnabled, config.metricsScope)
+        val metrics   = SqlClient.Metrics(config.metricsEnabled, config.metricsScope)
         new MySqlClientBackend(pool, slotChans, frame, metrics)
     end initMy
 

@@ -3,7 +3,7 @@ package kyo
 /** Per-statement outcome returned by [[SqlClient.pipeline]].
   *
   * Each element of the `Chunk[SqlStatementResult]` returned by `pipeline` corresponds to one statement registered on the
-  * [[SqlPipelineBuilder]], in submission order. A per-statement error is represented as [[SqlStatementResult.Failure]] and does NOT abort
+  * [[SqlClient.PipelineBuilder]], in submission order. A per-statement error is represented as [[SqlStatementResult.Failure]] and does NOT abort
   * subsequent statements.
   */
 sealed abstract class SqlStatementResult derives CanEqual
