@@ -1,5 +1,5 @@
 package kyo
-
+// TODO MOve to a companion
 /** An asynchronous notification delivered by the PostgreSQL `LISTEN`/`NOTIFY` mechanism.
   *
   * The server sends a [[kyo.internal.postgres.NotificationResponse]] message asynchronously (between commands) to every connection that is

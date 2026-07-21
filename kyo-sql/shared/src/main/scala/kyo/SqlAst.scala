@@ -7,6 +7,8 @@ import scala.annotation.targetName
 import scala.compiletime.summonFrom
 import scala.deriving.Mirror
 
+// TODO this file is quite large, could we break it up? any internal impls that coulg go to the internal package?
+
 /** SQL Abstract Syntax Tree for the Sql DSL.
   *
   * Holds every AST node, every typeclass, and every DSL method that constructs an AST node. The companion `Sql` object exposes top-level

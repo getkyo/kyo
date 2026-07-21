@@ -43,6 +43,7 @@ import scala.annotation.nowarn
   * })
   * }}}
   */
+// TODO this should be a flat herarchy. No nested SqlExeption.SomeFailyre types at all. All exception types in the kyo package with the Exceptiob suffix. See the /kyo:dev instructions on how to do this and how to use traits for ops and concrete types for speific failures that can appear in multiple ops (inherit multiple traits). We need proper granularity as well and no error messages outside of this file
 sealed abstract class SqlException(message: => String, cause: String | Throwable = "")(using Frame) extends KyoException(message, cause)
     derives CanEqual
 

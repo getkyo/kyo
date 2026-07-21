@@ -1,5 +1,5 @@
 package kyo
-
+// TODO can we remove this or move to a companion?
 /** Per-statement outcome returned by [[SqlClient.pipeline]].
   *
   * Each element of the `Chunk[SqlStatementResult]` returned by `pipeline` corresponds to one statement registered on the
@@ -26,5 +26,6 @@ object SqlStatementResult:
       * @param error
       *   the SQL error returned by the server
       */
+    // TODO this makes no sense, failures must be modeled via Result or Abort
     final case class Failure(error: SqlException) extends SqlStatementResult derives CanEqual
 end SqlStatementResult

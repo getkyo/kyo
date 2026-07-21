@@ -1,5 +1,5 @@
 package kyo
-
+// TODO move to a companion
 /** Standard SQL transaction isolation levels.
   *
   * Controls the visibility of uncommitted data written by concurrent transactions. Higher isolation reduces anomalies at the cost of

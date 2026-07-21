@@ -4,7 +4,7 @@ import kyo.SqlAst.*
 import kyo.SqlSchema.BoundValue
 import kyo.internal.SqlBackend
 import scala.quoted.*
-
+// TODO why is this here? Is it user facing/ don't we have apis for static queries elsewhere already?
 /** Static-SQL emitter: `SqlStatic.staticSql(q)` → `Rendered(sql, params)` produced as compile-time literals.
   *
   * The macro lifts the full AST value via `FromExpr.derived`, then renders it for both backends with `SqlRender.render`, the single

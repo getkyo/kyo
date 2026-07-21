@@ -2,7 +2,7 @@ package kyo
 
 import kyo.*
 import kyo.net.NetTlsConfig
-
+// TODO move to a companion
 /** An opaque handle that can be used to cancel the query running on a specific connection.
   *
   * Obtained from [[SqlClient.cancellableQuery]]. Pass the handle to [[SqlClient.cancel]] from a separate fiber while the query fiber is

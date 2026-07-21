@@ -1,5 +1,6 @@
 package kyo
 
+// TODO can we move these some companion? each file should have a type and its companion only
 /** Result of executing an INSERT statement.
   *
   * @param affectedRows

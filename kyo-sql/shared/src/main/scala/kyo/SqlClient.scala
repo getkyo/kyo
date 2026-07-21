@@ -1042,6 +1042,7 @@ sealed abstract class SqlClient:
 
 end SqlClient
 
+// TODO move to SqlClient.Mysql/Postgres. Each file = one type and oen companion
 /** Postgres-backed [[SqlClient]]. Obtain via [[SqlClient.init]] / [[SqlClient.initWith]] / [[SqlClient.initUnscoped]].
   *
   * Backend-specific extension methods (copyIn, copyOut, cancellableQuery, cancellableQueryFiber, parameters, simpleQuery) are available
