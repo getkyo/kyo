@@ -5,7 +5,7 @@ import kyo.SqlAst.*
 /** Tests that verify per-field SQL column renames applied via [[SqlSchema.rename]] are correctly baked into
   * [[kyo.SqlAst.Column.sqlName]] at construction time and emitted by [[kyo.internal.SqlRender]].
   *
-  * No [[NamingStrategy]] is attached; only explicit `rename(from, to)` transforms are in play. Two leaves exercise the SELECT column list
+  * No [[SqlSchema.Naming]] is attached; only explicit `rename(from, to)` transforms are in play. Two leaves exercise the SELECT column list
   * (via `Sql.from[T].select`) and the WHERE predicate (via `Sql.from[T].where`).
   */
 class SqlRenameNoStrategyTest extends Test:

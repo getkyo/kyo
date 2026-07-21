@@ -17,7 +17,7 @@ import scala.deriving.Mirror
 
 /** Public typeclass for SQL schema derivation.
   *
-  * Opaque wrapper around a [[kyo.Schema]] plus SQL-specific naming state ([[NamingStrategy]], table-name override, renamed fields). Users
+  * Opaque wrapper around a [[kyo.Schema]] plus SQL-specific naming state ([[SqlSchema.Naming]], table-name override, renamed fields). Users
   * register case class schemas via `given SqlSchema[A] = SqlSchema.derived` in the companion object. Primitive schemas are provided
   * automatically.
   *
@@ -33,7 +33,7 @@ object SqlSchema:
       */
     final private[kyo] case class State[A](
         schema: Schema[A],
-        namingStrategy: Maybe[NamingStrategy] = Maybe.Absent,
+        namingStrategy: Maybe[SqlSchema.Naming] = Maybe.Absent,
         tableNameOverride: Maybe[String] = Maybe.Absent,
         renamedFields: Chunk[(String, String)] = Chunk.empty
     )
@@ -46,8 +46,8 @@ object SqlSchema:
     /** Lifts an existing [[Schema]] into a [[SqlSchema]]. */
     def apply[A](using s: SqlSchema[A]): SqlSchema[A] = s
 
-    /** Alias accessor for [[NamingStrategy]] companion. Enables `SqlSchema.naming.snakeCase` at the call site. */
-    inline def naming: NamingStrategy.type = NamingStrategy
+    /** Alias accessor for [[SqlSchema.Naming]] companion. Enables `SqlSchema.naming.snakeCase` at the call site. */
+    inline def naming: SqlSchema.Naming.type = SqlSchema.Naming
 
     /** Derives a [[SqlSchema]] for a case class or sealed trait / enum `A`.
       *
@@ -1557,17 +1557,17 @@ object SqlSchema:
             end match
         end readMysql
 
-        /** Returns a new [[SqlSchema]] with the given [[NamingStrategy]] attached.
+        /** Returns a new [[SqlSchema]] with the given [[SqlSchema.Naming]] attached.
           *
-          * The strategy is stored on the [[SqlSchema.State]] wrapper. Phase 3 macros read it via [[SqlSchema.readNamingStrategy]] to
+          * The strategy is stored on the [[SqlSchema.State]] wrapper. Phase 3 macros read it via [[SqlSchema.readNaming]] to
           * convert Scala field names to SQL column names at expansion time. Transforms compose: calling `.withNaming` after
           * `.withTableName` preserves the table-name override and vice versa.
           *
           * @param strategy
-          *   the naming convention to attach (e.g. `NamingStrategy.snakeCase`)
+          *   the naming convention to attach (e.g. `SqlSchema.Naming.snakeCase`)
           */
-        transparent inline def withNaming(strategy: NamingStrategy): SqlSchema[A] =
-            SqlSchema.applyNamingStrategy(self, strategy)
+        transparent inline def withNaming(strategy: SqlSchema.Naming): SqlSchema[A] =
+            SqlSchema.applyNaming(self, strategy)
 
         /** Returns a new [[SqlSchema]] with the given SQL table name attached.
           *
@@ -1595,9 +1595,9 @@ object SqlSchema:
         transparent inline def rename(inline from: String, inline to: String): SqlSchema[A] =
             SqlSchema.applyRenamedField(self, from, to)
 
-        /** Reads the [[NamingStrategy]] attached to this schema. Returns [[Maybe.Absent]] when no strategy has been set. */
-        private[kyo] def namingStrategy: Maybe[NamingStrategy] =
-            SqlSchema.readNamingStrategy(self)
+        /** Reads the [[SqlSchema.Naming]] attached to this schema. Returns [[Maybe.Absent]] when no strategy has been set. */
+        private[kyo] def namingStrategy: Maybe[SqlSchema.Naming] =
+            SqlSchema.readNaming(self)
 
         /** Reads the SQL table name override attached to this schema. Returns [[Maybe.Absent]] when no override has been set. */
         private[kyo] def tableNameOverride: Maybe[String] =
@@ -1672,13 +1672,13 @@ object SqlSchema:
     // These are private[kyo] so [[SqlSchemaInfo]] (in the kyo.internal package) can call them.
     // Every naming override lives on the SqlSchema wrapper's State; the underlying Schema stays untouched.
 
-    private[kyo] def applyNamingStrategy[A](s: SqlSchema[A], strategy: NamingStrategy): SqlSchema[A] =
+    private[kyo] def applyNaming[A](s: SqlSchema[A], strategy: SqlSchema.Naming): SqlSchema[A] =
         s.copy(namingStrategy = Maybe(strategy))
 
     private[kyo] def applyTableNameOverride[A](s: SqlSchema[A], name: String): SqlSchema[A] =
         s.copy(tableNameOverride = Maybe(name))
 
-    private[kyo] def readNamingStrategy[A](s: SqlSchema[A]): Maybe[NamingStrategy] =
+    private[kyo] def readNaming[A](s: SqlSchema[A]): Maybe[SqlSchema.Naming] =
         s.namingStrategy
 
     private[kyo] def readTableNameOverride[A](s: SqlSchema[A]): Maybe[String] =
@@ -1713,5 +1713,34 @@ object SqlSchema:
       *   the type of the bound value; must have a [[SqlSchema]] instance
       */
     final case class BoundValue[A](value: A, schema: SqlSchema[A])
+
+    /** Pluggable naming convention for mapping Scala type and field names to SQL table and column names.
+      *
+      * Two built-in implementations are provided: [[SqlSchema.Naming.identity]] and [[SqlSchema.Naming.snakeCase]]. Custom implementations
+      * may be defined inline as `new SqlSchema.Naming { ... }` or as objects extending the trait.
+      */
+    trait Naming:
+        def tableName(typeName: String): String
+        def columnName(fieldName: String): String
+
+    object Naming:
+
+        /** Pass-through. Type and field names are emitted verbatim. */
+        case object identity extends Naming:
+            def tableName(s: String): String  = s
+            def columnName(s: String): String = s
+
+        /** `Country` becomes `country`; `countryCode` becomes `country_code`; `topLevelCategoryId` becomes `top_level_category_id`. */
+        case object snakeCase extends Naming:
+            def tableName(s: String): String  = camelToSnake(s)
+            def columnName(s: String): String = camelToSnake(s)
+
+        private def camelToSnake(s: String): String =
+            s.foldLeft(new StringBuilder) { (acc, c) =>
+                if c.isUpper && acc.nonEmpty then acc.append('_')
+                acc.append(c.toLower)
+            }.toString
+
+    end Naming
 
 end SqlSchema

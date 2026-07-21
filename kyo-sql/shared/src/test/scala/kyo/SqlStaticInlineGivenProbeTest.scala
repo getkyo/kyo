@@ -30,7 +30,7 @@ class SqlStaticInlineGivenProbeTest extends Test:
             import kyo.*
             case class ProbeRowB(id: Long, firstName: String) derives Schema
             inline given inlineSqlSchemaProbeRowB: SqlSchema[ProbeRowB] =
-                SqlSchema.derived[ProbeRowB].withNaming(NamingStrategy.snakeCase)
+                SqlSchema.derived[ProbeRowB].withNaming(SqlSchema.Naming.snakeCase)
             SqlStatic.staticSql(Sql.from[ProbeRowB]("u").select(c => c.u.firstName))
             """
         )

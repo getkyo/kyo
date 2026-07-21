@@ -2,8 +2,8 @@ package kyo.internal
 
 import kyo.Chunk
 import kyo.Maybe
-import kyo.NamingStrategy
 import kyo.SqlSchema
+import kyo.SqlSchema.Naming
 
 /** Centralised SQL name resolution for columns and tables.
   *
@@ -12,7 +12,7 @@ import kyo.SqlSchema
   *
   * Resolution order for column names:
   *   1. renamedFields override (Schema.rename applied before the given was built).
-  *   2. namingStrategy (e.g. NamingStrategy.snakeCase).
+  *   2. namingStrategy (e.g. SqlSchema.Naming.snakeCase).
   *   3. Verbatim Scala field name (fallback, preserves pre-change behaviour byte-for-byte).
   *
   * Resolution order for table names:
@@ -25,7 +25,7 @@ object SqlNameResolver:
     /** Returns the SQL column name for a Scala field, consulting the attached [[SqlSchema]]. */
     def columnName[A](scalaName: String, schema: SqlSchema[A]): String =
         val renamedFields    = SqlSchema.readRenamedFields(schema)
-        val namingStrategyOp = SqlSchema.readNamingStrategy(schema)
+        val namingStrategyOp = SqlSchema.readNaming(schema)
         renamedFields
             .toSeq
             .find(_._1 == scalaName)
@@ -40,7 +40,7 @@ object SqlNameResolver:
     /** Returns the SQL table name for a Scala type, consulting the attached [[SqlSchema]]. */
     def tableName[A](typeName: String, schema: SqlSchema[A]): String =
         val overrideOp       = SqlSchema.readTableNameOverride(schema)
-        val namingStrategyOp = SqlSchema.readNamingStrategy(schema)
+        val namingStrategyOp = SqlSchema.readNaming(schema)
         overrideOp match
             case Maybe.Present(overrideName) => overrideName
             case Maybe.Absent =>

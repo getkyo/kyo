@@ -76,7 +76,7 @@ class SqlStaticAuditTest extends Test:
             import kyo.SqlAst.*
             case class AuditUserCRow(id: Long, firstName: String) derives Schema
             inline given SqlSchema[AuditUserCRow] =
-                SqlSchema.derived[AuditUserCRow].withNaming(NamingStrategy.snakeCase)
+                SqlSchema.derived[AuditUserCRow].withNaming(SqlSchema.Naming.snakeCase)
             val r = SqlStatic.staticSql(
                 Sql.from[AuditUserCRow]("u").select(c => c.u.firstName)
             )
@@ -141,26 +141,26 @@ class SqlStaticAuditTest extends Test:
     }
 
     // -----------------------------------------------------------------------
-    // Scenario F, Custom NamingStrategy (not snakeCase / identity) under
-    //   `.runStatic` via FromExpr[NamingStrategy].
+    // Scenario F, Custom SqlSchema.Naming (not snakeCase / identity) under
+    //   `.runStatic` via FromExpr[SqlSchema.Naming].
     // EXPECTED: NEGATIVE-GENERIC initially. The FromExpr only matches the
     //   two known strategies; a custom one would fail to lift.
-    // GAP: error message should name the unsupported NamingStrategy variant.
+    // GAP: error message should name the unsupported SqlSchema.Naming variant.
     // -----------------------------------------------------------------------
-    "F, custom NamingStrategy via inline given under .runStatic produces a compile error" in {
+    "F, custom SqlSchema.Naming via inline given under .runStatic produces a compile error" in {
         val errors = typeCheckErrors(
             """
             import kyo.*
             import kyo.SqlAst.*
             case class AuditUserF(id: Long, firstName: String) derives Schema
-            val custom: NamingStrategy = new NamingStrategy:
+            val custom: SqlSchema.Naming = new SqlSchema.Naming:
                 def tableName(scalaName: String): String  = scalaName + "_custom"
                 def columnName(scalaName: String): String = scalaName + "_c"
             inline given SqlSchema[AuditUserF] = SqlSchema.derived[AuditUserF].withNaming(custom)
             SqlStatic.staticSql(Sql.from[AuditUserF]("u").select(c => c.u.firstName))
             """
         )
-        assert(errors.nonEmpty, "expected compile error for unliftable custom NamingStrategy")
+        assert(errors.nonEmpty, "expected compile error for unliftable custom SqlSchema.Naming")
     }
 
     // -----------------------------------------------------------------------

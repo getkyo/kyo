@@ -1,8 +1,8 @@
 package kyo.internal
 
 import kyo.Maybe
-import kyo.NamingStrategy
 import kyo.SqlSchema
+import kyo.SqlSchema.Naming
 import scala.quoted.*
 
 /** Macro-side extractor that recovers the override info from a `SqlSchema[T]` construction expression at macro expansion time.
@@ -21,11 +21,11 @@ import scala.quoted.*
   * {{{
   * case class User(id: Long, firstName: String)
   * object User:
-  *     inline given SqlSchema[User] = SqlSchema.derived[User].withNaming(NamingStrategy.snakeCase)
+  *     inline given SqlSchema[User] = SqlSchema.derived[User].withNaming(SqlSchema.Naming.snakeCase)
   * }}}
   *
   * With `inline given`, `Expr.summon[SqlSchema[T]]` returns the inlined construction expression (the transforms expand into a chain of
-  * `SqlSchema.applyNamingStrategy` / `applyTableNameOverride` / `applyRenamedField` calls), which [[extract]] can pattern-match
+  * `SqlSchema.applyNaming` / `applyTableNameOverride` / `applyRenamedField` calls), which [[extract]] can pattern-match
   * recursively.
   *
   * With plain `given SqlSchema[T] = ...`, the Scala 3 macro API exposes only a reference to a `final lazy val given_SqlSchema_T:
@@ -38,7 +38,7 @@ object SqlSchemaInfo:
     /** The three pieces of info needed to resolve SQL column and table names. */
     final case class Info(
         tableNameOverride: Maybe[String],
-        namingStrategy: Maybe[NamingStrategy],
+        namingStrategy: Maybe[SqlSchema.Naming],
         renamedFields: List[(String, String)]
     )
 
@@ -52,7 +52,7 @@ object SqlSchemaInfo:
     def extract[T: Type](e: Expr[SqlSchema[T]])(using Quotes): Option[Info] =
         import quotes.reflect.*
 
-        given FromExpr[NamingStrategy] = NamingStrategyFromExpr.given_FromExpr_NamingStrategy
+        given FromExpr[SqlSchema.Naming] = SqlSchemaNamingFromExpr.given_FromExpr_Naming
 
         /** True if the expression is a reference (`Ident` or `Select`) to a non-`inline` `val` / `lazy val` / `def` definition. A plain
           * (non-inline) `given` is summoned as such a reference, the macro sees the symbol but not the construction body. Returning early
@@ -79,7 +79,7 @@ object SqlSchemaInfo:
           */
         def hasOverrides(expr: Expr[SqlSchema[T]]): Boolean =
             val source = expr.asTerm.show
-            source.contains("applyNamingStrategy") ||
+            source.contains("applyNaming") ||
             source.contains("applyTableNameOverride") ||
             source.contains("applyRenamedField")
         end hasOverrides
@@ -89,7 +89,7 @@ object SqlSchemaInfo:
             else if !hasOverrides(expr) then Some(empty)
             else
                 expr match
-                    case '{ SqlSchema.applyNamingStrategy[T]($base, ${ Expr(strategy) }) } =>
+                    case '{ SqlSchema.applyNaming[T]($base, ${ Expr(strategy) }) } =>
                         loop(base).map(_.copy(namingStrategy = Maybe(strategy)))
                     case '{ SqlSchema.applyTableNameOverride[T]($base, ${ Expr(name) }) } =>
                         loop(base).map(_.copy(tableNameOverride = Maybe(name)))
