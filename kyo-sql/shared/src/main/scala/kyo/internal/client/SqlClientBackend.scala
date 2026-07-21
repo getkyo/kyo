@@ -206,6 +206,23 @@ sealed trait SqlClientBackend:
         config: SqlClientConfig
     )(f: MysqlConnection => A < (S & Async & Abort[SqlException]))(using Frame): A < (S & Async & Abort[SqlException])
 
+    /** Runs `body` while holding a database advisory lock for `key` on a pinned session.
+      *
+      * Both the acquire SQL and the release SQL execute on the same pinned connection (PG and MySQL advisory locks are session-scoped, so
+      * a pool-mediated release would silently no-op on the wrong session). Backend-specific keyword: PG uses `pg_advisory_lock` /
+      * `pg_advisory_unlock`; MySQL uses `GET_LOCK(name, timeoutSeconds)` / `RELEASE_LOCK(name)`. `timeout` is only used on MySQL; PG's
+      * `pg_advisory_lock` always blocks until acquired.
+      *
+      * Release fires on every exit edge (success, `Abort`, panic) before the pinned connection is returned to the pool.
+      */
+    def withAdvisoryLock[A, S](
+        address: SqlAddress,
+        password: String,
+        key: Long,
+        timeout: Maybe[Duration],
+        config: SqlClientConfig
+    )(body: A < (S & Async & Abort[SqlException]))(using Frame): A < (S & Async & Abort[SqlException])
+
     /** Cancels a Postgres query via `CancelRequest`. */
     def cancel(handle: SqlCancelHandle.Pg)(using Frame): Unit < (Async & Abort[SqlException])
 
@@ -610,6 +627,29 @@ final class PgSqlClientBackend private[client] (
         config: SqlClientConfig
     )(f: MysqlConnection => A < (S & Async & Abort[SqlException]))(using Frame): A < (S & Async & Abort[SqlException]) =
         Abort.fail(SqlException.Connection("withMysqlConnection is not supported on the Postgres backend", summon[Frame]))
+
+    def withAdvisoryLock[A, S](
+        address: SqlAddress,
+        password: String,
+        key: Long,
+        timeout: Maybe[Duration],
+        config: SqlClientConfig
+    )(body: A < (S & Async & Abort[SqlException]))(using Frame): A < (S & Async & Abort[SqlException]) =
+        // PG session-level advisory locks always block until acquired; `timeout` is not used here.
+        val _ = timeout
+        withConnection(address, password, config) { conn =>
+            conn.simpleExecute(s"SELECT pg_advisory_lock($key)").andThen {
+                Abort.run[SqlException](body).flatMap { result =>
+                    Abort.run[SqlException](conn.simpleExecute(s"SELECT pg_advisory_unlock($key)")).andThen {
+                        result match
+                            case Result.Success(a) => a
+                            case Result.Failure(e) => Abort.fail[SqlException](e)
+                            case Result.Panic(t)   => Abort.error(Result.Panic(t))
+                    }
+                }
+            }
+        }
+    end withAdvisoryLock
 
     // --- Cancel ---
 
@@ -1632,6 +1672,52 @@ final class MySqlClientBackend private[client] (
             }
         }
     end withMysqlConnection
+
+    def withAdvisoryLock[A, S](
+        address: SqlAddress,
+        password: String,
+        key: Long,
+        timeout: Maybe[Duration],
+        config: SqlClientConfig
+    )(body: A < (S & Async & Abort[SqlException]))(using Frame): A < (S & Async & Abort[SqlException]) =
+        val name           = key.toString
+        val timeoutSeconds = timeout.fold(-1L)(d => Math.max(0L, d.toSeconds))
+        // Simple (text) query on the pinned connection: `GET_LOCK`'s BIGINT result comes back
+        // as the ASCII string "1"/"0"/NULL. The matching `RELEASE_LOCK` targets the same session.
+        val lockSql    = s"SELECT GET_LOCK('$name', $timeoutSeconds)"
+        val releaseSql = s"SELECT RELEASE_LOCK('$name')"
+        withMysqlConnection(address, password, config) { conn =>
+            conn.simpleQuery(lockSql).flatMap { rows =>
+                val acquired =
+                    rows.headMaybe match
+                        case Present(row) =>
+                            row.column(0) match
+                                case Present(bytes) =>
+                                    new String(bytes.toArray, java.nio.charset.StandardCharsets.UTF_8) == "1"
+                                case Absent => false
+                        case Absent => false
+                if !acquired then
+                    Abort.fail[SqlException](SqlException.Request(
+                        s"GET_LOCK('$name', $timeoutSeconds) timed out or failed (key=$key)",
+                        Maybe.Absent,
+                        summon[Frame]
+                    ))
+                else
+                    // Both success and error paths run RELEASE_LOCK on the pinned connection
+                    // before it returns to the pool. The release failure is swallowed so it
+                    // does not shadow the body's outcome.
+                    Abort.run[SqlException](body).flatMap { result =>
+                        Abort.run[SqlException](conn.simpleExecute(releaseSql)).andThen {
+                            result match
+                                case Result.Success(a) => a
+                                case Result.Failure(e) => Abort.fail[SqlException](e)
+                                case Result.Panic(t)   => Abort.error(Result.Panic(t))
+                        }
+                    }
+                end if
+            }
+        }
+    end withAdvisoryLock
 
     // --- Cancel ---
 

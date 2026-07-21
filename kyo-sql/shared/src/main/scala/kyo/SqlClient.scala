@@ -1737,71 +1737,7 @@ object SqlClient:
             body: A < (S & Async & Abort[SqlException])
         )(using Frame): A < (S & Async & Abort[SqlException]) =
             local.use { (_, config) =>
-                self.backend match
-                    case _: MySqlClientBackend =>
-                        val name           = key.toString
-                        val timeoutSeconds = timeout.fold(-1L)(d => Math.max(0L, d.toSeconds))
-                        // Simple (text) query protocol on the pinned connection: `GET_LOCK`'s BIGINT
-                        // result comes back as the ASCII string "1"/"0"/NULL and the matching
-                        // `RELEASE_LOCK` targets the same session.
-                        val lockSql    = s"SELECT GET_LOCK('$name', $timeoutSeconds)"
-                        val releaseSql = s"SELECT RELEASE_LOCK('$name')"
-                        self.backend.withMysqlConnection(self.url.address, self.url.password, config) { conn =>
-                            // NOTE: the acquire / release SQL run directly on the pinned `conn`, but
-                            // txLocal is NOT set inside `body`. If we bound the pinned conn to the
-                            // txLocal, any nested SqlClient (including a freshly-opened one for a
-                            // separate session probe) would inherit it and end up executing on the
-                            // owner's pinned session, defeating the "different session" contract of
-                            // MySQL `GET_LOCK`.
-                            conn.simpleQuery(lockSql).flatMap { rows =>
-                                val acquired =
-                                    rows.headMaybe match
-                                        case Present(row) =>
-                                            row.column(0) match
-                                                case Present(bytes) =>
-                                                    new String(bytes.toArray, java.nio.charset.StandardCharsets.UTF_8) == "1"
-                                                case Absent => false
-                                        case Absent => false
-                                if !acquired then
-                                    Abort.fail[SqlException](SqlException.Request(
-                                        s"GET_LOCK('$name', $timeoutSeconds) timed out or failed (key=$key)",
-                                        Maybe.Absent,
-                                        summon[Frame]
-                                    ))
-                                else
-                                    // Both success and error paths run RELEASE_LOCK on the pinned
-                                    // connection before it is handed back to the pool
-                                    // (withMysqlConnection's release fires after this body returns).
-                                    // The release is fire-and-forget: its failure is swallowed so
-                                    // the body's outcome is not shadowed by an unrelated release
-                                    // error.
-                                    Abort.run[SqlException](body).flatMap { result =>
-                                        Abort.run[SqlException](conn.simpleExecute(releaseSql)).andThen {
-                                            result match
-                                                case Result.Success(a) => a
-                                                case Result.Failure(e) => Abort.fail[SqlException](e)
-                                                case Result.Panic(t)   => Abort.error(Result.Panic(t))
-                                        }
-                                    }
-                                end if
-                            }
-                        }
-                    case _ =>
-                        self.backend.withConnection(self.url.address, self.url.password, config) { conn =>
-                            // See MySQL note above: pinning via txLocal would leak the pinned session
-                            // to a nested probe client and break "different session" tests.
-                            conn.simpleExecute(s"SELECT pg_advisory_lock($key)").andThen {
-                                Abort.run[SqlException](body).flatMap { result =>
-                                    Abort.run[SqlException](conn.simpleExecute(s"SELECT pg_advisory_unlock($key)")).andThen {
-                                        result match
-                                            case Result.Success(a) => a
-                                            case Result.Failure(e) => Abort.fail[SqlException](e)
-                                            case Result.Panic(t)   => Abort.error(Result.Panic(t))
-                                    }
-                                }
-                            }
-                        }
-                end match
+                self.backend.withAdvisoryLock(self.url.address, self.url.password, key, timeout, config)(body)
             }
         end withAdvisoryLock
 

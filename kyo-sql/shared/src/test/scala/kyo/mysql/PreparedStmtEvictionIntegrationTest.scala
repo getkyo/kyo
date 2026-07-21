@@ -44,18 +44,17 @@ class PreparedStmtEvictionIntegrationTest extends kyo.Test:
                 client.query(
                     "SELECT COUNT(*) FROM performance_schema.prepared_statements_instances " +
                         "WHERE OWNER_THREAD_ID = sys.ps_thread_id(connection_id())"
-                )
+                ).flatMap { rows =>
+                    // client.query on MySQL uses the binary extended protocol; COUNT(*) is BIGINT
+                    // (8 little-endian bytes), not ASCII digits, so decode via row.decode[Long]
+                    // (routed to MysqlRowReader by SqlRow.decode's OID dispatch).
+                    if rows.isEmpty then (0L: Long)
+                    else Abort.recover((e: SqlException.Decode) => Abort.fail(e: SqlException))(rows(0).decode[Long](0))
+                }
             )
             .map {
-                case Result.Success(rows) =>
-                    rows.headMaybe.fold(0L) { row =>
-                        row.column(0).fold(0L) { bytes =>
-                            new String(bytes.toArray, java.nio.charset.StandardCharsets.UTF_8).trim.toLongOption.getOrElse(0L)
-                        }
-                    }
-                case Result.Failure(_) =>
-                    // performance_schema unavailable, can't verify.
-                    -1L
+                case Result.Success(v) => v
+                case Result.Failure(_) => -1L // performance_schema unavailable, can't verify.
                 case Result.Panic(t) =>
                     scala.Console.err.println(s"[kyo-sql] serverStmtCount panic: ${t.getMessage}")
                     -1L

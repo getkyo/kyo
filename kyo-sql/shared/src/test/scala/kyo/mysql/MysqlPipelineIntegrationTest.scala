@@ -57,14 +57,17 @@ class MysqlPipelineIntegrationTest extends kyo.Test:
                 Abort.error(Result.Panic(t))
         }
 
-    /** Reads a single long value from the first column of the first row. */
+    /** Reads a single long value from the first column of the first row.
+      *
+      * `client.query` routes to the MySQL binary extended protocol, so the column comes back as
+      * an 8-byte little-endian BIGINT rather than ASCII digits. Use `row.decode[Long]` (which
+      * dispatches to `MysqlRowReader` via `SqlRow.decode`) instead of treating the wire bytes as
+      * UTF-8 text.
+      */
     private def countVia(client: SqlClient, sql: String)(using Frame): Long < (Async & Abort[SqlException]) =
-        client.query(sql).map { rows =>
+        client.query(sql).flatMap { rows =>
             if rows.isEmpty then 0L
-            else
-                rows(0).column(0).fold(0L) { bytes =>
-                    new String(bytes.toArray, java.nio.charset.StandardCharsets.UTF_8).trim.toLong
-                }
+            else rows(0).decode[Long](0)
         }
 
     private def isSuccess(r: SqlStatementResult): Boolean = r match
