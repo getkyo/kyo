@@ -254,13 +254,16 @@ final class PostgresRowReader(row: SqlRow)(using Frame) extends SqlReader(summon
 
     // --- Case-class field-iteration protocol ---
     //
-    // Schema-derived read bodies for case classes/tuples call objectStart/hasNextField/
-    // fieldParse/matchField/objectEnd to iterate over fields. SQL result sets are positional:
-    // the n-th projected column maps to the n-th Schema field, regardless of column name.
-    // (A SELECT projects columns in case-class field order; a tuple projection's columns map
-    // to tuple elements _1, _2, … positionally even though their SQL names differ.) So
-    // matchField is positional — it accepts the next field whenever the cursor is in bounds.
-    // hasNextField returns true while idx < row size; primitive reads advance the cursor.
+    // Schema-derived read bodies for case classes / tuples call objectStart / hasNextField /
+    // fieldParse / matchField / objectEnd to iterate over fields. The generated body emits
+    // an if/else-if dispatch on matchField, so matchField MUST return true only for the arm
+    // that matches the current column's name; otherwise the first arm swallows every column
+    // and the required-fields mask reports the later fields missing.
+    //
+    // For column-name comparison we accept two shapes: the column name reported by the
+    // server (SqlRow.fields(idx).name), and a positional `_<n>` alias for tuple projections
+    // whose column names are the SQL projection labels, not `_1` / `_2`. Everything else is
+    // read positionally through primitive reads, which advance the cursor.
 
     /** Opens an object (case class) scope. The return value is not used by the generated decoder. */
     override def objectStart(): Int = 0
@@ -274,14 +277,26 @@ final class PostgresRowReader(row: SqlRow)(using Frame) extends SqlReader(summon
     /** No-op: SQL field names come from SqlRow.fields, not from the wire stream. */
     override def fieldParse(): Unit = ()
 
-    /** Accepts the field at the current cursor position positionally.
+    /** Accepts the field at the current cursor position when its name matches the probe.
       *
-      * SQL result sets are positional: the generated decoder consumes Schema fields in declaration order and each maps to the next column.
-      * The probed name is ignored — column names in SQL projections (tuple `_1`/`_2`, aliased expressions, joined columns sharing a name)
-      * do not necessarily match Schema field names. Does NOT advance the cursor; the cursor advances only when a primitive value is read.
+      * The generated Schema decoder emits an `if matchField(nameOfField0) then arm0 else if matchField(nameOfField1) ...` chain per loop
+      * iteration, so a `matchField` that always returned true would pin every column to arm0 and leave later fields' `_seen` bits
+      * unset, producing spurious `Missing required field` errors. Compare the probe against the current column's UTF-8 name, and also
+      * accept `_<idx+1>` so tuple projections whose SQL columns are aliased (or named after arbitrary expressions) still map to `_1` /
+      * `_2` positionally. Does NOT advance the cursor; the cursor advances only when a primitive value is read.
       */
     override def matchField(nameBytes: Array[Byte]): Boolean =
-        idx < row.fields.size
+        if idx >= row.fields.size then false
+        else
+            val currentName  = row.fields(idx).name
+            val currentBytes = currentName.getBytes(java.nio.charset.StandardCharsets.UTF_8)
+            if java.util.Arrays.equals(currentBytes, nameBytes) then true
+            else
+                // Accept `_<idx+1>` for tuple projections whose SQL columns are named after
+                // the expressions they compute, not the Schema-declared tuple element names.
+                val probe = new String(nameBytes, java.nio.charset.StandardCharsets.UTF_8)
+                probe.length > 1 && probe.charAt(0) == '_' && probe.drop(1) == (idx + 1).toString
+            end if
 
     /** Returns the name of the column at the current cursor position for error reporting. */
     override def lastFieldName(): String =

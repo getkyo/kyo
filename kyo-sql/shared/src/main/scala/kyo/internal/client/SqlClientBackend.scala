@@ -664,7 +664,10 @@ final class PgSqlClientBackend private[client] (
                 config.encodingRegistry
             ).flatMap { conn =>
                 Scope.ensure(Abort.run(conn.terminate).unit).andThen {
-                    conn.simpleExecute(s"""LISTEN "$channel"""").andThen {
+                    // Postgres identifier quoting: double each `"` inside the name so `foo"; DROP TABLE users; --`
+                    // cannot break out of the quoted identifier and inject a second simple-query statement.
+                    val quoted = channel.replace("\"", "\"\"")
+                    conn.simpleExecute(s"""LISTEN "$quoted"""").andThen {
                         Fiber.init(pumpNotifications(conn)).flatMap { pumpFiber =>
                             Scope.ensure(pumpFiber.interrupt.unit).andThen {
                                 emitNotifications(conn).emit
@@ -887,9 +890,12 @@ final class PgSqlClientBackend private[client] (
                 conn =>
                     Async.timeoutWithError(
                         config.queryTimeout,
-                        Result.Failure(SqlException.Request(
+                        // Connection, not Request: the wire is desynced when a query is interrupted
+                        // mid-response, so the pool must discard the connection on exit (isProtocolFatal
+                        // classifies Connection as fatal). Filing as Request would leave the connection
+                        // reusable and corrupt the next borrower.
+                        Result.Failure(SqlException.Connection(
                             s"Query exceeded timeout of ${config.queryTimeout}",
-                            Maybe.Absent,
                             summon[Frame]
                         ))
                     )(f(conn))
@@ -946,15 +952,15 @@ final class PgSqlClientBackend private[client] (
                 // Unsafe: pool.release / pool.discard require AllowUnsafe.
                 // STEERING case 2: Sync.ensure callback runs outside fiber suspension.
                 Sync.Unsafe.defer {
-                    error match
-                        case Absent =>
-                            poolRelease(netKey, conn)
-                            discard(Sync.Unsafe.evalOrThrow(metrics.recordRelease))
-                            logger.unsafe.debug(s"kyo.sql: closed connection id=$connId reason=released")
-                        case _ =>
-                            poolDiscard(conn)
-                            discard(Sync.Unsafe.evalOrThrow(metrics.recordDiscard))
-                            logger.unsafe.debug(s"kyo.sql: closed connection id=$connId reason=discarded")
+                    if SqlClientBackend.shouldReleaseOnExit(error) then
+                        poolRelease(netKey, conn)
+                        discard(Sync.Unsafe.evalOrThrow(metrics.recordRelease))
+                        logger.unsafe.debug(s"kyo.sql: closed connection id=$connId reason=released")
+                    else
+                        poolDiscard(conn)
+                        discard(Sync.Unsafe.evalOrThrow(metrics.recordDiscard))
+                        logger.unsafe.debug(s"kyo.sql: closed connection id=$connId reason=discarded")
+                    end if
                 }
             }(body)
         }
@@ -986,15 +992,15 @@ final class PgSqlClientBackend private[client] (
                 // Unsafe: pool.release / pool.discard require AllowUnsafe.
                 // STEERING case 2: Sync.ensure callback runs outside fiber suspension.
                 Sync.Unsafe.defer {
-                    error match
-                        case Absent =>
-                            poolRelease(netKey, conn)
-                            discard(Sync.Unsafe.evalOrThrow(metrics.recordRelease))
-                            logger.unsafe.debug(s"kyo.sql: closed connection id=$connId reason=released")
-                        case _ =>
-                            poolDiscard(conn)
-                            discard(Sync.Unsafe.evalOrThrow(metrics.recordDiscard))
-                            logger.unsafe.debug(s"kyo.sql: closed connection id=$connId reason=discarded")
+                    if SqlClientBackend.shouldReleaseOnExit(error) then
+                        poolRelease(netKey, conn)
+                        discard(Sync.Unsafe.evalOrThrow(metrics.recordRelease))
+                        logger.unsafe.debug(s"kyo.sql: closed connection id=$connId reason=released")
+                    else
+                        poolDiscard(conn)
+                        discard(Sync.Unsafe.evalOrThrow(metrics.recordDiscard))
+                        logger.unsafe.debug(s"kyo.sql: closed connection id=$connId reason=discarded")
+                    end if
                 }
             }(body)
         }
@@ -1935,9 +1941,10 @@ final class MySqlClientBackend private[client] (
                 conn =>
                     Async.timeoutWithError(
                         config.queryTimeout,
-                        Result.Failure(SqlException.Request(
+                        // Connection, not Request: see the sibling Pg path for the wire-desync rationale
+                        // the pool must see this as fatal so the timed-out connection is discarded.
+                        Result.Failure(SqlException.Connection(
                             s"Query exceeded timeout of ${config.queryTimeout}",
-                            Maybe.Absent,
                             summon[Frame]
                         ))
                     )(f(conn))
@@ -1986,15 +1993,15 @@ final class MySqlClientBackend private[client] (
                 // Unsafe: pool.release / pool.discard require AllowUnsafe.
                 // STEERING case 2: Sync.ensure callback runs outside fiber suspension.
                 Sync.Unsafe.defer {
-                    error match
-                        case Absent =>
-                            poolRelease(netKey, conn)
-                            discard(Sync.Unsafe.evalOrThrow(metrics.recordRelease))
-                            logger.unsafe.debug(s"kyo.sql: closed connection id=$connId reason=released")
-                        case _ =>
-                            poolDiscard(conn)
-                            discard(Sync.Unsafe.evalOrThrow(metrics.recordDiscard))
-                            logger.unsafe.debug(s"kyo.sql: closed connection id=$connId reason=discarded")
+                    if SqlClientBackend.shouldReleaseOnExit(error) then
+                        poolRelease(netKey, conn)
+                        discard(Sync.Unsafe.evalOrThrow(metrics.recordRelease))
+                        logger.unsafe.debug(s"kyo.sql: closed connection id=$connId reason=released")
+                    else
+                        poolDiscard(conn)
+                        discard(Sync.Unsafe.evalOrThrow(metrics.recordDiscard))
+                        logger.unsafe.debug(s"kyo.sql: closed connection id=$connId reason=discarded")
+                    end if
                 }
             }(body)
         }
@@ -2026,15 +2033,15 @@ final class MySqlClientBackend private[client] (
                 // Unsafe: pool.release / pool.discard require AllowUnsafe.
                 // STEERING case 2: Sync.ensure callback runs outside fiber suspension.
                 Sync.Unsafe.defer {
-                    error match
-                        case Absent =>
-                            poolRelease(netKey, conn)
-                            discard(Sync.Unsafe.evalOrThrow(metrics.recordRelease))
-                            logger.unsafe.debug(s"kyo.sql: closed connection id=$connId reason=released")
-                        case _ =>
-                            poolDiscard(conn)
-                            discard(Sync.Unsafe.evalOrThrow(metrics.recordDiscard))
-                            logger.unsafe.debug(s"kyo.sql: closed connection id=$connId reason=discarded")
+                    if SqlClientBackend.shouldReleaseOnExit(error) then
+                        poolRelease(netKey, conn)
+                        discard(Sync.Unsafe.evalOrThrow(metrics.recordRelease))
+                        logger.unsafe.debug(s"kyo.sql: closed connection id=$connId reason=released")
+                    else
+                        poolDiscard(conn)
+                        discard(Sync.Unsafe.evalOrThrow(metrics.recordDiscard))
+                        logger.unsafe.debug(s"kyo.sql: closed connection id=$connId reason=discarded")
+                    end if
                 }
             }(body)
         }
@@ -2324,6 +2331,19 @@ object SqlClientBackend:
             case s: SqlException.Server      => s.sqlState.startsWith("08") || s.sqlState.startsWith("25")
             case _: SqlException.Unsupported => false
             case _: SqlException.Request     => false
+
+    /** Pool-lifecycle policy applied by the `releaseOnExit` finalizers: release a healthy connection back to the pool, discard on anything
+      * that would leave the next borrower with a corrupted or half-consumed wire.
+      *
+      * The default `Absent` case matches a normal exit; a non-SqlException failure, a panic, an interrupt, or a protocol-fatal SqlException
+      * all fall through to `discard`. A `SqlException` that is not protocol-fatal (a routine server error like `23505` unique-violation, a
+      * client-side `Unsupported` / `Request` that never reached the wire) is releasable.
+      */
+    private[kyo] def shouldReleaseOnExit(error: Maybe[Result.Error[Any]]): Boolean =
+        error match
+            case Absent                                   => true
+            case Present(Result.Failure(e: SqlException)) => !isProtocolFatal(e)
+            case Present(_)                               => false
 
     /** Converts a [[BoundValue]] to the Postgres-native [[BoundParam]] chunk by invoking the schema's `writePostgres` encoder.
       *

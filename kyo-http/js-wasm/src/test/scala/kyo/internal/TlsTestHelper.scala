@@ -1,7 +1,7 @@
 package kyo.internal
 
 import kyo.*
-import kyo.net.NetTlsConfig
+import kyo.HttpTlsConfig
 import scala.scalajs.js
 
 /** Generates ephemeral TLS certificates for tests using openssl via child_process.execSync.
@@ -23,13 +23,13 @@ object TlsTestHelper:
     end val
 
     /** Server TLS config with self-signed cert for localhost. */
-    lazy val serverTlsConfig: NetTlsConfig = NetTlsConfig(
+    lazy val serverTlsConfig: HttpTlsConfig = HttpTlsConfig(
         certChainPath = Present(certPath),
         privateKeyPath = Present(keyPath)
     )
 
     /** Client TLS config that trusts any certificate (for connecting to self-signed test servers). */
-    lazy val clientTlsConfig: NetTlsConfig = NetTlsConfig(
+    lazy val clientTlsConfig: HttpTlsConfig = HttpTlsConfig(
         trustAll = true
     )
 

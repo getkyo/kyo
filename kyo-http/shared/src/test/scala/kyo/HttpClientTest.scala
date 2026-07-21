@@ -1,7 +1,7 @@
 package kyo
 
 import kyo.*
-import kyo.net.NetTlsConfig
+import kyo.HttpTlsConfig
 import scala.language.implicitConversions
 
 class HttpClientTest extends BaseHttpTest:
@@ -76,7 +76,7 @@ class HttpClientTest extends BaseHttpTest:
         route: HttpRoute[In, Out, ?],
         request: HttpRequest[In]
     )(using Frame): HttpResponse[Out] < (Async & Abort[HttpException]) =
-        client.connectWith(url, 30.seconds, NetTlsConfig(trustAll = true)) { conn =>
+        client.connectWith(url, 30.seconds, HttpTlsConfig(trustAll = true)) { conn =>
             Scope.run {
                 Scope.ensure(client.closeNow(conn)).andThen {
                     client.sendWith(conn, route, request)(identity)
@@ -604,7 +604,7 @@ class HttpClientTest extends BaseHttpTest:
             }
             runServer(ep) { url =>
                 var called = false
-                client.connectWith(url, 30.seconds, NetTlsConfig(trustAll = true)) { conn =>
+                client.connectWith(url, 30.seconds, HttpTlsConfig(trustAll = true)) { conn =>
                     Scope.run {
                         Scope.ensure(client.closeNow(conn)).andThen {
                             client.sendWith(conn, route, HttpRequest.getRaw(HttpUrl.fromUri("/stream"))) { resp =>
@@ -641,7 +641,7 @@ class HttpClientTest extends BaseHttpTest:
                 ))
                 val request = HttpRequest.postRaw(HttpUrl.fromUri("/upload"))
                     .addField("body", bodyStream)
-                client.connectWith(url, 30.seconds, NetTlsConfig(trustAll = true)) { conn =>
+                client.connectWith(url, 30.seconds, HttpTlsConfig(trustAll = true)) { conn =>
                     Scope.run {
                         Scope.ensure(client.closeNow(conn)).andThen {
                             client.sendWith(conn, route, request) { resp =>
@@ -672,7 +672,7 @@ class HttpClientTest extends BaseHttpTest:
                 ))
                 val request = HttpRequest.postRaw(HttpUrl.fromUri("/upload"))
                     .addField("body", bodyStream)
-                client.connectWith(url, 30.seconds, NetTlsConfig(trustAll = true)) { conn =>
+                client.connectWith(url, 30.seconds, HttpTlsConfig(trustAll = true)) { conn =>
                     Scope.run {
                         Scope.ensure(client.closeNow(conn)).andThen {
                             client.sendWith(conn, route, request) { resp =>
@@ -1930,7 +1930,7 @@ class HttpClientTest extends BaseHttpTest:
                 HttpResponse.ok.addField("body", chunks)
             }
             runServer(ep) { url =>
-                client.connectWith(url, 30.seconds, NetTlsConfig(trustAll = true)) { conn =>
+                client.connectWith(url, 30.seconds, HttpTlsConfig(trustAll = true)) { conn =>
                     Scope.run {
                         Scope.ensure(client.closeNow(conn)).andThen {
                             client.sendWith(conn, route, HttpRequest.getRaw(HttpUrl.fromUri("/infinite"))) { resp =>
@@ -1958,7 +1958,7 @@ class HttpClientTest extends BaseHttpTest:
                 HttpResponse.ok.addField("body", failingStream)
             }
             runServer(ep) { url =>
-                client.connectWith(url, 30.seconds, NetTlsConfig(trustAll = true)) { conn =>
+                client.connectWith(url, 30.seconds, HttpTlsConfig(trustAll = true)) { conn =>
                     Scope.run {
                         Scope.ensure(client.closeNow(conn)).andThen {
                             client.sendWith(conn, route, HttpRequest.getRaw(HttpUrl.fromUri("/fail-stream"))) { resp =>
@@ -2013,7 +2013,7 @@ class HttpClientTest extends BaseHttpTest:
                 }
             }
             runServer(ep) { url =>
-                client.connectWith(url, 30.seconds, NetTlsConfig(trustAll = true)) { conn =>
+                client.connectWith(url, 30.seconds, HttpTlsConfig(trustAll = true)) { conn =>
                     Scope.run {
                         Scope.ensure(client.closeNow(conn)).andThen {
                             val bodyStream: Stream[Span[Byte], Async] = Stream.init(Seq(
@@ -2972,7 +2972,7 @@ class HttpClientTest extends BaseHttpTest:
             }
             withServer(ep) { url =>
                 var called = false
-                client.connectWith(url, 30.seconds, NetTlsConfig(trustAll = true)) { conn =>
+                client.connectWith(url, 30.seconds, HttpTlsConfig(trustAll = true)) { conn =>
                     Scope.run {
                         Scope.ensure(client.closeNow(conn)).andThen {
                             client.sendWith(conn, route, HttpRequest.getRaw(HttpUrl.fromUri("/pump-stream"))) { resp =>
@@ -3916,7 +3916,7 @@ class HttpClientTest extends BaseHttpTest:
                         // Use the low-level client to verify the header was sent
                         // by checking the server's echo of the header value
                         val rawUrl = url.copy(path = "/raw-headers")
-                        client.connectWith(rawUrl, 30.seconds, NetTlsConfig(trustAll = true)) { conn =>
+                        client.connectWith(rawUrl, 30.seconds, HttpTlsConfig(trustAll = true)) { conn =>
                             Scope.run {
                                 Scope.ensure(client.closeNow(conn)).andThen {
                                     val textRoute = HttpRoute.postRaw("raw-headers").request(_.bodyBinary).response(_.bodyText)
@@ -3949,7 +3949,7 @@ class HttpClientTest extends BaseHttpTest:
                 withServer(ep) { url =>
                     HttpClient.withConfig(noTimeout) {
                         val rawUrl = url.copy(path = "/raw-body")
-                        client.connectWith(rawUrl, 30.seconds, NetTlsConfig(trustAll = true)) { conn =>
+                        client.connectWith(rawUrl, 30.seconds, HttpTlsConfig(trustAll = true)) { conn =>
                             Scope.run {
                                 Scope.ensure(client.closeNow(conn)).andThen {
                                     val bodyBytes   = Span.fromUnsafe("hello raw body".getBytes("UTF-8"))

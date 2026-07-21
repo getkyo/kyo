@@ -72,12 +72,20 @@ private[mysql] object InitTlsExchange:
             )
             // Send SslRequest using the existing channel (seqId=1 — after the server's HandshakeV10 seqId=0).
             channel.send(sslRequest)(using channel.marshallers.sslRequest).flatMap { _ =>
+                // Inject the connect host into sniHostname when the caller left it empty so that JDK's
+                // hostname verifier and JS's Node TLS have a reference identity to check the server
+                // certificate against (mirrors the Postgres path in InitSSLExchange). Without this,
+                // sslmode=verify-full on MySQL is either fail-closed on JVM or verifies against the
+                // JS default servername ("localhost"), neither of which is useful.
+                val tlsWithHost =
+                    if host.nonEmpty && tls.sniHostname.isEmpty then tls.copy(sniHostname = Present(host))
+                    else tls
                 // Perform TLS upgrade on the underlying connection (no additional protocol bytes exchanged).
                 Abort.run[kyo.net.NetException] {
                     Sync.Unsafe.defer {
                         kyo.net.NetPlatform.transport.upgradeToTls(
                             channel.conn,
-                            tls,
+                            tlsWithHost,
                             kyo.net.NetConfig.DefaultChannelCapacity
                         ).safe.use(identity)
                     }

@@ -1,6 +1,7 @@
 package kyo.internal
 
 import kyo.*
+import kyo.HttpTlsConfig
 import kyo.internal.transport.NetConfigTranslation
 import kyo.net.NetAddress
 import kyo.net.NetConfig

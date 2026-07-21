@@ -4,7 +4,7 @@ import java.io.File
 import java.security.*
 import java.security.cert.X509Certificate
 import javax.net.ssl.*
-import kyo.net.NetTlsConfig
+import kyo.HttpTlsConfig
 
 /** Generates ephemeral TLS certificates for tests using keytool (ships with every JDK).
   *
@@ -115,13 +115,13 @@ object TlsTestHelper:
     end val
 
     /** Server TLS config with self-signed cert for localhost. */
-    lazy val serverTlsConfig: NetTlsConfig = NetTlsConfig(
+    lazy val serverTlsConfig: HttpTlsConfig = HttpTlsConfig(
         certChainPath = kyo.Present(certPath),
         privateKeyPath = kyo.Present(keyPath)
     )
 
     /** Client TLS config that trusts any certificate (for connecting to self-signed test servers). */
-    lazy val clientTlsConfig: NetTlsConfig = NetTlsConfig(
+    lazy val clientTlsConfig: HttpTlsConfig = HttpTlsConfig(
         trustAll = true
     )
 

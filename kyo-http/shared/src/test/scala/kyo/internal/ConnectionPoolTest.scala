@@ -13,8 +13,8 @@ class ConnectionPoolTest extends BaseHttpTest:
     val key1 = NetAddress.Tcp("host1", 80)
     val key2 = NetAddress.Tcp("host2", 80)
 
-    def mkPool(max: Int = 2): ConnectionPool[String, String] =
-        ConnectionPool.init[String, String](max, kyo.Duration.Infinity, _ => true, _ => ())
+    def mkPool(max: Int = 2): ConnectionPool[NetAddress, String] =
+        ConnectionPool.init[NetAddress, String](max, kyo.Duration.Infinity, _ => true, _ => ())
 
     "poll" - {
         "returns empty when no idle connections" in {
@@ -34,7 +34,7 @@ class ConnectionPoolTest extends BaseHttpTest:
     "release" - {
         "discards when full" in {
             val discardCount = new AtomicInteger(0)
-            val pool = ConnectionPool.init[String, String](
+            val pool = ConnectionPool.init[NetAddress, String](
                 2,
                 kyo.Duration.Infinity,
                 _ => true,
@@ -100,7 +100,7 @@ class ConnectionPoolTest extends BaseHttpTest:
 
     "isAlive check during poll" in {
         val discardCount = new AtomicInteger(0)
-        val pool = ConnectionPool.init[String, String](
+        val pool = ConnectionPool.init[NetAddress, String](
             2,
             kyo.Duration.Infinity,
             conn => conn != "dead",
@@ -119,7 +119,7 @@ class ConnectionPoolTest extends BaseHttpTest:
         // strictly positive, reliably exceeding the zero timeout. The expired conn is discarded and
         // poll continues to the next slot.
         val discardCount = new AtomicInteger(0)
-        val pool = ConnectionPool.init[String, String](
+        val pool = ConnectionPool.init[NetAddress, String](
             2,
             kyo.Duration.Zero,
             _ => true,
