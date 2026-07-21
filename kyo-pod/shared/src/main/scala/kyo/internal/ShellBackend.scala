@@ -199,24 +199,42 @@ final private[kyo] class ShellBackend(
     def rename(id: Container.Id, newName: String)(using Frame): Unit < (Async & Abort[ContainerException]) =
         runUnit(ResourceContext.Container(id), "rename", id.value, newName)
 
-    def waitForExit(id: Container.Id)(using Frame): ExitCode < (Async & Abort[ContainerException]) =
+    def waitForExit(id: Container.Id, timeout: Duration)(using Frame): ExitCode < (Async & Abort[ContainerException]) =
         val waitCmd = Command(cmd, "wait", id.value)
-        Abort.runWith[CommandException](waitCmd.textWithExitCode) {
-            case Result.Success((output, _)) =>
-                // docker wait prints the container's exit code to stdout
-                parseExitCode(output.trim) match
-                    case Result.Success(code) => code
-                    case _                    =>
-                        // Couldn't parse output; try inspect as fallback
-                        inspectExitCode(id)
-            case Result.Failure(_) =>
-                // docker wait failed (e.g. container already removed); try inspect
-                inspectExitCode(id)
-            case Result.Panic(ex) =>
-                Abort.fail[ContainerException](
-                    ContainerBackendException(s"waitForExit panicked for ${id.value}", ex)
-                )
-        }
+        // Shell backend bounds the caller's `timeout` via `Async.timeout` since `docker wait` has no
+        // native deadline flag. `Duration.Infinity` skips the wrapper and lets `docker wait` block
+        // until the container exits.
+        val call: ExitCode < (Async & Abort[ContainerException]) =
+            Abort.runWith[CommandException](waitCmd.textWithExitCode) {
+                case Result.Success((output, _)) =>
+                    // docker wait prints the container's exit code to stdout
+                    parseExitCode(output.trim) match
+                        case Result.Success(code) => code
+                        case _                    =>
+                            // Couldn't parse output; try inspect as fallback
+                            inspectExitCode(id)
+                case Result.Failure(_) =>
+                    // docker wait failed (e.g. container already removed); try inspect
+                    inspectExitCode(id)
+                case Result.Panic(ex) =>
+                    Abort.fail[ContainerException](
+                        ContainerBackendException(s"waitForExit panicked for ${id.value}", ex)
+                    )
+            }
+        if timeout == Duration.Infinity then call
+        else
+            Abort.run[Timeout](Async.timeout(timeout)(call)).map {
+                case Result.Success(code) => code
+                case Result.Failure(_) =>
+                    Abort.fail[ContainerException](
+                        ContainerBackendException(s"waitForExit for ${id.value} exceeded $timeout")
+                    )
+                case Result.Panic(ex) =>
+                    Abort.fail[ContainerException](
+                        ContainerBackendException(s"waitForExit panicked for ${id.value}", ex)
+                    )
+            }
+        end if
     end waitForExit
 
     private def parseExitCode(s: String): Result[NumberFormatException, ExitCode] =

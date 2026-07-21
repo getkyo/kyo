@@ -97,7 +97,10 @@ final class Container private[kyo] (
                 case Present(_) => ()
                 case Absent =>
                     Latch.init(1).map { latch =>
-                        Fiber.initUnscoped(latch.release.andThen(backend.waitForExit(id))).map { fiber =>
+                        // autoRemove-tracking observer: the container may live for hours, so pass
+                        // `Duration.Infinity`. If the caller wants an upper bound they cancel the
+                        // fiber (Fiber cancellation propagates through the HTTP client).
+                        Fiber.initUnscoped(latch.release.andThen(backend.waitForExit(id, Duration.Infinity))).map { fiber =>
                             latch.await.andThen(pendingExit.set(Present(fiber)))
                         }
                     }
@@ -131,11 +134,19 @@ final class Container private[kyo] (
     def rename(newName: String)(using Frame): Unit < (Async & Abort[ContainerException]) =
         backend.rename(id, newName)
 
-    /** Block until the container exits and return its exit code. */
+    /** Block until the container exits and return its exit code, waiting indefinitely. Callers that need an upper bound should use
+      * [[waitForExit(timeout:*]] or wrap this call in `Async.timeout`.
+      */
     def waitForExit(using Frame): ExitCode < (Async & Abort[ContainerException]) =
+        waitForExit(Duration.Infinity)
+
+    /** Block until the container exits and return its exit code, giving up after `timeout`. Pass `Duration.Infinity` to wait
+      * indefinitely (equivalent to the no-arg overload).
+      */
+    def waitForExit(timeout: Duration)(using Frame): ExitCode < (Async & Abort[ContainerException]) =
         pendingExit.get.map {
             case Present(fiber) => fiber.get
-            case Absent         => backend.waitForExit(id)
+            case Absent         => backend.waitForExit(id, timeout)
         }
 
     // --- Health ---
@@ -483,9 +494,8 @@ object Container:
                     val shutdown: Unit < (Async & Abort[Nothing]) = config.stopSignal match
                         case Present(signal) =>
                             Abort.run[ContainerException](b.kill(cid, signal)).map(logFailure("kill")).andThen(
-                                Abort.run[ContainerException | Timeout](
-                                    Async.timeout(config.stopTimeout)(b.waitForExit(cid))
-                                ).map(r => logFailure("waitForExit")(r.map(_ => ())))
+                                Abort.run[ContainerException](b.waitForExit(cid, config.stopTimeout))
+                                    .map(r => logFailure("waitForExit")(r.map(_ => ())))
                             )
                         case Absent =>
                             Abort.run[ContainerException](b.stop(cid, config.stopTimeout)).map(logFailure("stop"))

@@ -229,13 +229,20 @@ object ContainerPredef:
             password: String = "test",
             database: String = "test",
             rootPassword: String = "test",
-            port: Int = defaultPort
+            port: Int = defaultPort,
+            /** Extra `mysqld` command-line args appended after [[defaultServerArgs]]. Use for per-fixture overrides such as
+              * `--default-authentication-plugin=mysql_native_password` or `--innodb-buffer-pool-size=<larger>`; anything set here follows
+              * the baseline args, so later flags win by MySQL's last-write semantics.
+              */
+            serverArgs: Chunk[String] = Chunk.empty
         ) derives CanEqual:
-            def image(i: ContainerImage): Config = copy(image = i)
-            def username(u: String): Config      = copy(username = u)
-            def password(p: String): Config      = copy(password = p)
-            def database(d: String): Config      = copy(database = d)
-            def rootPassword(p: String): Config  = copy(rootPassword = p)
+            def image(i: ContainerImage): Config        = copy(image = i)
+            def username(u: String): Config             = copy(username = u)
+            def password(p: String): Config             = copy(password = p)
+            def database(d: String): Config             = copy(database = d)
+            def rootPassword(p: String): Config         = copy(rootPassword = p)
+            def serverArgs(args: Chunk[String]): Config = copy(serverArgs = args)
+            def appendServerArgs(args: String*): Config = copy(serverArgs = serverArgs ++ Chunk.from(args))
         end Config
 
         object Config:
@@ -286,14 +293,39 @@ object ContainerPredef:
             end if
         end applyEnv
 
+        /** Baseline mysqld args composed into every MySQL fixture: keep the container test-lean so many can coexist on a single Docker
+          * daemon without OOMing.
+          *
+          *   - `--innodb-buffer-pool-size=64M`: default is 128M and grows with server-tuning; 64M is enough for functional tests and
+          *     fits with a fast shutdown flush.
+          *   - `--performance-schema=OFF`: the performance_schema engine reserves ~350MB of shared memory at boot.
+          *   - `--innodb-log-file-size=32M`: default is 48MB per log file × 2 files; 32M × 2 keeps the redo log lean.
+          *
+          * Users who need a production-shaped MySQL can compose their own args via [[serverArgs]] on top of these.
+          */
+        val defaultServerArgs: Chunk[String] = Chunk(
+            "--innodb-buffer-pool-size=64M",
+            "--performance-schema=OFF",
+            "--innodb-log-file-size=32M"
+        )
+
+        /** MySQL flushes its InnoDB buffer pool during a graceful shutdown. The [[Container.Config]] default `stopTimeout` of `3.seconds`
+          * is too short: `mysqld` receives SIGTERM, cannot flush in time, and is SIGKILL'd — leaving the daemon's `/stop` HTTP handler
+          * spinning past the client deadline and reporting `HttpTimeoutException` on teardown. `30.seconds` covers the flush.
+          */
+        val defaultStopTimeout: Duration = 30.seconds
+
         /** Build the [[Container.Config]] for a MySQL fixture from this config. */
         private[kyo] def buildContainerConfig(c: Config): Container.Config =
             val healthCmdBase = Chunk("mysql", "-h", "127.0.0.1", "-u", c.username) ++
                 (if c.password.nonEmpty then Chunk(s"-p${c.password}") else Chunk.empty) ++
                 Chunk(c.database, "-N", "-e", "SELECT 1")
+            val commandLine: Chunk[String] = Chunk("mysqld") ++ defaultServerArgs ++ c.serverArgs
             val base = Container.Config(c.image)
                 .env("MYSQL_DATABASE", c.database)
                 .port(c.port, 0)
+                .command(commandLine*)
+                .stopTimeout(defaultStopTimeout)
                 .healthCheck(Container.HealthCheck.exec(
                     Command(healthCmdBase*),
                     Absent,

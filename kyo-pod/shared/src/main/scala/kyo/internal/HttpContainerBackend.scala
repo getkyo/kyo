@@ -410,7 +410,7 @@ final private[kyo] class HttpContainerBackend(
         val seconds = timeout.toMillis / 1000
         // Start the /wait call as a background fiber BEFORE sending stop, so the exit code is
         // captured before auto-remove cleanup can race and remove the container from the daemon.
-        Fiber.initUnscoped(waitForExit(id)).map { waitFiber =>
+        Fiber.initUnscoped(waitForExit(id, timeout)).map { waitFiber =>
             // The daemon's `/stop?t=$seconds` waits up to `seconds` for graceful shutdown, then
             // SIGKILLs the container; its HTTP response returns only once the container has
             // actually stopped. The HTTP-client deadline must therefore cover the *full* grace
@@ -472,10 +472,20 @@ final private[kyo] class HttpContainerBackend(
     def rename(id: Container.Id, newName: String)(using Frame): Unit < (Async & Abort[ContainerException]) =
         postUnit(s"/containers/${id.value}/rename?name=${java.net.URLEncoder.encode(newName, "UTF-8")}", ctxContainer(id))
 
-    def waitForExit(id: Container.Id)(using Frame): ExitCode < (Async & Abort[ContainerException]) =
+    def waitForExit(id: Container.Id, timeout: Duration)(using Frame): ExitCode < (Async & Abort[ContainerException]) =
+        // `/containers/{id}/wait` is a long-poll endpoint: the daemon holds the HTTP connection open
+        // until the container exits. The HTTP-client deadline must therefore track the caller's own
+        // budget so a legitimate long wait is not mis-reported as `HttpTimeoutException`. Add a small
+        // slack so the transport does not race the daemon's SIGKILL+response overhead when `timeout`
+        // is finite; for `Duration.Infinity`, the addition is a no-op and the client waits until the
+        // daemon replies (or the caller cancels the fiber).
+        val httpDeadline = if timeout == Duration.Infinity then Duration.Infinity else timeout + 30.seconds
         Abort.run[ContainerException](
             withErrorMapping(ctxContainer(id)) {
-                HttpClient.postJson[WaitResponse](url(s"/containers/${id.value}/wait"), "")
+                // Preserve any caller-set longer deadline via `max`, same pattern as `stop`.
+                HttpClient.withConfig(c => c.timeout(c.timeout.max(httpDeadline))) {
+                    HttpClient.postJson[WaitResponse](url(s"/containers/${id.value}/wait"), "")
+                }
             }.map(resp => ExitCode(resp.StatusCode))
         ).map {
             case Result.Success(code)                         => code
@@ -485,6 +495,7 @@ final private[kyo] class HttpContainerBackend(
             case Result.Failure(other) => Abort.fail(other)
             case Result.Panic(ex)      => Abort.fail(ContainerBackendException(s"waitForExit panicked for ${id.value}", ex))
         }
+    end waitForExit
 
     // --- Checkpoint/Restore ---
 
