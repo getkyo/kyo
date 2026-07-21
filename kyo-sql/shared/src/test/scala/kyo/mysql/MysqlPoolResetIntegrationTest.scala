@@ -32,14 +32,19 @@ class MysqlPoolResetIntegrationTest extends kyo.Test:
             )
         )(f)
 
+    /** Read `@user_var` and return its rendered value. The client's `query` path uses MySQL's extended (binary) wire protocol; reading
+      * `row.column(0)` as raw UTF-8 would return the little-endian binary encoding, not the ASCII digits. Route through
+      * [[SqlRow.decode]] with a [[SqlSchema]]-typed target so the schema decoder respects the wire format.
+      */
     private def readUserVar(client: SqlClient)(using Frame): String < (Async & Abort[SqlException]) =
         client.query("SELECT @user_var").map { rows =>
             rows.headOption match
                 case None => "NULL"
                 case Some(row) =>
-                    row.column(0) match
-                        case Maybe.Present(bytes) => new String(bytes.toArray, java.nio.charset.StandardCharsets.UTF_8)
-                        case Maybe.Absent         => "NULL"
+                    row.decode[Maybe[Long]](0).map {
+                        case Maybe.Present(v) => v.toString
+                        case Maybe.Absent     => "NULL"
+                    }
         }
 
     // ── without reset session variable leaks ──────────────────────────────────
@@ -99,10 +104,9 @@ class MysqlPoolResetIntegrationTest extends kyo.Test:
                             // Connection must still be able to execute queries.
                             client.query("SELECT 99").map { rows =>
                                 assert(rows.size == 1, "Expected 1 row after reset")
-                                val value = rows(0)
-                                    .column(0)
-                                    .fold("NULL")(bytes => new String(bytes.toArray, java.nio.charset.StandardCharsets.UTF_8))
-                                assert(value == "99", s"Expected '99', got '$value'")
+                                rows(0).decode[Long](0).map { value =>
+                                    assert(value == 99L, s"Expected 99, got $value")
+                                }
                             }
                         }
                     }

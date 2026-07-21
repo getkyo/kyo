@@ -106,9 +106,9 @@ object SqlSharedContainers:
                             }
                         case true =>
                             val predefCfg = ContainerPredef.MySQL.Config.default
+                                .appendServerArgs("--default-authentication-plugin=mysql_native_password")
                             val cfg = ContainerPredef.MySQL
                                 .buildContainerConfig(predefCfg)
-                                .command("--default-authentication-plugin=mysql_native_password")
                                 .label("kyo-sql-singleton", s"mysql-$gitSha")
                             Fiber.initUnscoped(
                                 Container.initUnscoped(cfg).map(c => new ContainerPredef.MySQL(c, predefCfg))

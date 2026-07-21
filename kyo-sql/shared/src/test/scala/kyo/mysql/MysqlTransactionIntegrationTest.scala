@@ -39,10 +39,22 @@ class MysqlTransactionIntegrationTest extends kyo.Test:
             )
         )(f)
 
+    /** Decode the first column of each row as a UTF-8 string. Safe for VARCHAR / CHAR / TEXT columns: the wire bytes for these types are
+      * the UTF-8 encoded characters in both text and binary MySQL protocols. Not safe for numeric columns; use [[firstCount]] for those.
+      */
     private def rowsAsString(rows: Chunk[SqlRow]): Seq[String] =
         rows.toSeq.map { row =>
             row.column(0).fold("NULL")(bytes => new String(bytes.toArray, java.nio.charset.StandardCharsets.UTF_8))
         }
+
+    /** Decode the first column of the first row as a `Long` via the schema-aware decoder. Required for numeric columns because the
+      * client's `query` uses MySQL's extended (binary) protocol, which returns integers in fixed-width little-endian bytes, not ASCII.
+      * Returns 0 when the result set is empty.
+      */
+    private def firstCount(rows: Chunk[SqlRow])(using Frame): Long < Abort[SqlException] =
+        rows.headOption match
+            case None      => 0L
+            case Some(row) => row.decode[Long](0)
 
     // ── commit persists data ───────────────────────────────────────────────────
 
@@ -83,11 +95,10 @@ class MysqlTransactionIntegrationTest extends kyo.Test:
                                 )
                             }
                         }
-                        rows <- client.query(s"SELECT COUNT(*) FROM $tableName WHERE id = 2")
-                        _    <- client.executeRaw(s"DROP TABLE $tableName")
-                    yield
-                        val count = rowsAsString(rows).headOption.getOrElse("0").toInt
-                        assert(count == 0, s"Expected 0 rows after rollback, got $count")
+                        rows  <- client.query(s"SELECT COUNT(*) FROM $tableName WHERE id = 2")
+                        _     <- client.executeRaw(s"DROP TABLE $tableName")
+                        count <- firstCount(rows)
+                    yield assert(count == 0L, s"Expected 0 rows after rollback, got $count")
                     end for
                 }
             }
@@ -111,10 +122,11 @@ class MysqlTransactionIntegrationTest extends kyo.Test:
                                 }
                             Abort.run[SqlException](txBody).flatMap { result =>
                                 client.query(s"SELECT COUNT(*) FROM $tableName").flatMap { rows =>
-                                    client.executeRaw(s"DROP TABLE $tableName").map { _ =>
-                                        assert(result.isFailure, "Expected failure from simulated error")
-                                        val count = rowsAsString(rows).headOption.getOrElse("0").toInt
-                                        assert(count == 0, s"Expected 0 rows after rollback, got $count")
+                                    client.executeRaw(s"DROP TABLE $tableName").andThen {
+                                        firstCount(rows).map { count =>
+                                            assert(result.isFailure, "Expected failure from simulated error")
+                                            assert(count == 0L, s"Expected 0 rows after rollback, got $count")
+                                        }
                                     }
                                 }
                             }
@@ -144,11 +156,10 @@ class MysqlTransactionIntegrationTest extends kyo.Test:
                                 }
                             yield ()
                         }
-                        rows <- client.query(s"SELECT COUNT(*) FROM $tableName")
-                        _    <- client.executeRaw(s"DROP TABLE $tableName")
-                    yield
-                        val count = rowsAsString(rows).headOption.getOrElse("0").toInt
-                        assert(count == 2, s"Expected 2 rows after nested commit, got $count")
+                        rows  <- client.query(s"SELECT COUNT(*) FROM $tableName")
+                        _     <- client.executeRaw(s"DROP TABLE $tableName")
+                        count <- firstCount(rows)
+                    yield assert(count == 2L, s"Expected 2 rows after nested commit, got $count")
                     end for
                 }
             }
@@ -179,11 +190,10 @@ class MysqlTransactionIntegrationTest extends kyo.Test:
                             // Inner failure is swallowed; outer continues and commits row 1.
                             yield ()
                         }
-                        rows <- client.query(s"SELECT COUNT(*) FROM $tableName")
-                        _    <- client.executeRaw(s"DROP TABLE $tableName")
-                    yield
-                        val count = rowsAsString(rows).headOption.getOrElse("0").toInt
-                        assert(count == 1, s"Expected 1 row after inner rollback + outer commit, got $count")
+                        rows  <- client.query(s"SELECT COUNT(*) FROM $tableName")
+                        _     <- client.executeRaw(s"DROP TABLE $tableName")
+                        count <- firstCount(rows)
+                    yield assert(count == 1L, s"Expected 1 row after inner rollback + outer commit, got $count")
                     end for
                 }
             }
@@ -216,11 +226,10 @@ class MysqlTransactionIntegrationTest extends kyo.Test:
                                 yield ()
                             }
                         }
-                        rows <- client.query(s"SELECT COUNT(*) FROM $tableName")
-                        _    <- client.executeRaw(s"DROP TABLE $tableName")
-                    yield
-                        val count = rowsAsString(rows).headOption.getOrElse("0").toInt
-                        assert(count == 0, s"Expected 0 rows after full rollback, got $count")
+                        rows  <- client.query(s"SELECT COUNT(*) FROM $tableName")
+                        _     <- client.executeRaw(s"DROP TABLE $tableName")
+                        count <- firstCount(rows)
+                    yield assert(count == 0L, s"Expected 0 rows after full rollback, got $count")
                     end for
                 }
             }
@@ -331,13 +340,13 @@ class MysqlTransactionIntegrationTest extends kyo.Test:
                                 yield ()
                             }
                         }
-                        rows <- client.query(s"SELECT COUNT(*) FROM $dataTable")
-                        _    <- client.executeRaw(s"DROP TABLE $dataTable")
-                        _    <- client.executeRaw(s"DROP TABLE IF EXISTS $ddlTable")
+                        rows  <- client.query(s"SELECT COUNT(*) FROM $dataTable")
+                        _     <- client.executeRaw(s"DROP TABLE $dataTable")
+                        _     <- client.executeRaw(s"DROP TABLE IF EXISTS $ddlTable")
+                        count <- firstCount(rows)
                     yield
-                        val count = rowsAsString(rows).headOption.getOrElse("0").toInt
                         // The INSERT was committed by the DDL's implicit commit, ROLLBACK cannot undo it.
-                        assert(count == 1, s"Expected 1 row (DDL implicit commit preserved INSERT), got $count")
+                        assert(count == 1L, s"Expected 1 row (DDL implicit commit preserved INSERT), got $count")
                     end for
                 }
             }

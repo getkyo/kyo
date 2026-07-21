@@ -66,9 +66,10 @@ class LocalInfileIntegrationTest extends kyo.Test:
                             s"LOAD DATA LOCAL INFILE 'data.csv' INTO TABLE $tbl FIELDS TERMINATED BY ',' LINES TERMINATED BY '\\n' (id, name)"
                         client.loadLocalInfile(sql, csvStream(rows)).flatMap { affected =>
                             assert(affected == rowCount.toLong, s"Expected $rowCount affected rows, got $affected")
-                            client.query(s"SELECT COUNT(*) FROM $tbl").map { result =>
-                                val count = new String(result.head.column(0).get.toArray, java.nio.charset.StandardCharsets.UTF_8).toLong
-                                assert(count == rowCount.toLong, s"Expected $rowCount rows in table, got $count")
+                            client.query(s"SELECT COUNT(*) FROM $tbl").flatMap { result =>
+                                result.head.decode[Long](0).map { count =>
+                                    assert(count == rowCount.toLong, s"Expected $rowCount rows in table, got $count")
+                                }
                             }
                         }
                     }
@@ -113,12 +114,10 @@ class LocalInfileIntegrationTest extends kyo.Test:
                                         client.loadLocalInfile(sql, tmpPath.readBytesStream)
                                     }.flatMap { affected =>
                                         assert(affected == 3L, s"Expected 3 affected rows, got $affected")
-                                        client.query(s"SELECT COUNT(*) FROM $tbl").map { result =>
-                                            val count = new String(
-                                                result.head.column(0).get.toArray,
-                                                java.nio.charset.StandardCharsets.UTF_8
-                                            ).toLong
-                                            assert(count == 3L, s"Expected 3 rows in table, got $count")
+                                        client.query(s"SELECT COUNT(*) FROM $tbl").flatMap { result =>
+                                            result.head.decode[Long](0).map { count =>
+                                                assert(count == 3L, s"Expected 3 rows in table, got $count")
+                                            }
                                         }
                                     }
                                 }
@@ -235,9 +234,10 @@ class LocalInfileIntegrationTest extends kyo.Test:
                             s"LOAD DATA LOCAL INFILE 'big.csv' INTO TABLE $tbl FIELDS TERMINATED BY ',' LINES TERMINATED BY '\\n' (id, name)"
                         client.loadLocalInfile(sql, csvStream(rows)).flatMap { affected =>
                             assert(affected == rowCount.toLong, s"Expected $rowCount affected rows for 50 MB upload, got $affected")
-                            client.query(s"SELECT COUNT(*) FROM $tbl").map { result =>
-                                val count = new String(result.head.column(0).get.toArray, java.nio.charset.StandardCharsets.UTF_8).toLong
-                                assert(count == rowCount.toLong, s"Expected $rowCount rows in table after 50 MB upload, got $count")
+                            client.query(s"SELECT COUNT(*) FROM $tbl").flatMap { result =>
+                                result.head.decode[Long](0).map { count =>
+                                    assert(count == rowCount.toLong, s"Expected $rowCount rows in table after 50 MB upload, got $count")
+                                }
                             }
                         }
                     }
@@ -306,8 +306,9 @@ class LocalInfileIntegrationTest extends kyo.Test:
                                 // production bug. Any SqlException is an expected, honest failure.
                                 Abort.run[SqlException](client.query("SELECT 42")).flatMap {
                                     case Result.Success(rows) =>
-                                        val v = new String(rows.head.column(0).get.toArray, java.nio.charset.StandardCharsets.UTF_8)
-                                        assert(v == "42", s"Connection reused cleanly after Timeout, got $v")
+                                        rows.head.decode[Long](0).map { v =>
+                                            assert(v == 42L, s"Connection reused cleanly after Timeout, got $v")
+                                        }
                                     case Result.Failure(e: SqlException.Connection)
                                         if e.getMessage != null && e.getMessage.contains("unusable") =>
                                         // Cleanup failed → channel marked corrupted via markCorrupted() → connection is
@@ -404,9 +405,10 @@ class LocalInfileIntegrationTest extends kyo.Test:
                                 s"Expected MidFailure to propagate, got: $uploadResult"
                             )
                             // Now verify the connection is still reusable for a follow-up SELECT.
-                            client.query("SELECT 99").map { rows =>
-                                val v = new String(rows.head.column(0).get.toArray, java.nio.charset.StandardCharsets.UTF_8)
-                                assert(v == "99", s"Connection should be reusable after mid-stream failure, got $v")
+                            client.query("SELECT 99").flatMap { rows =>
+                                rows.head.decode[Long](0).map { v =>
+                                    assert(v == 99L, s"Connection should be reusable after mid-stream failure, got $v")
+                                }
                             }
                         }
                     }
@@ -490,12 +492,9 @@ object LocalInfileIntegrationTest:
         Frame
     ): MysqlCtx < (Async & Abort[ContainerException]) =
         val predef = ContainerPredef.MySQL.Config.default
+            .appendServerArgs("--default-authentication-plugin=mysql_native_password", localInfileFlag)
         val cfg = ContainerPredef.MySQL
             .buildContainerConfig(predef)
-            .command(
-                "--default-authentication-plugin=mysql_native_password",
-                localInfileFlag
-            )
             .label("kyo-sql-singleton", labelSuffix)
         Container.initUnscoped(cfg).flatMap { container =>
             val mysql = new ContainerPredef.MySQL(container, predef)

@@ -82,8 +82,9 @@ class MysqlTlsIntegrationTest extends kyo.Test:
                             openTlsClient(details).flatMap { client =>
                                 client.query("SELECT 1").map { rows =>
                                     assert(rows.size == 1)
-                                    val str = new String(rows(0).column(0).get.toArray, java.nio.charset.StandardCharsets.UTF_8)
-                                    assert(str == "1", s"Expected '1', got '$str'")
+                                    rows(0).decode[Long](0).map { v =>
+                                        assert(v == 1L, s"Expected 1, got $v")
+                                    }
                                 }
                             }
                         }.flatMap { _ =>
@@ -91,8 +92,9 @@ class MysqlTlsIntegrationTest extends kyo.Test:
                             Scope.run {
                                 openTlsClient(details).flatMap { client =>
                                     client.query("SELECT 'tls_csha2_ok'").map { rows =>
-                                        val str = new String(rows(0).column(0).get.toArray, java.nio.charset.StandardCharsets.UTF_8)
-                                        assert(str == "tls_csha2_ok")
+                                        rows(0).decode[String](0).map { v =>
+                                            assert(v == "tls_csha2_ok")
+                                        }
                                     }
                                 }
                             }.flatMap { _ =>
@@ -102,11 +104,14 @@ class MysqlTlsIntegrationTest extends kyo.Test:
                                         client.query("SELECT 1").flatMap { r1 =>
                                             client.query("SELECT 2").flatMap { r2 =>
                                                 client.query("SELECT 3").map { r3 =>
-                                                    def str(rows: Chunk[SqlRow]) =
-                                                        new String(rows(0).column(0).get.toArray, java.nio.charset.StandardCharsets.UTF_8)
-                                                    assert(str(r1) == "1")
-                                                    assert(str(r2) == "2")
-                                                    assert(str(r3) == "3")
+                                                    for
+                                                        v1 <- r1(0).decode[Long](0)
+                                                        v2 <- r2(0).decode[Long](0)
+                                                        v3 <- r3(0).decode[Long](0)
+                                                    yield
+                                                        assert(v1 == 1L)
+                                                        assert(v2 == 2L)
+                                                        assert(v3 == 3L)
                                                 }
                                             }
                                         }
