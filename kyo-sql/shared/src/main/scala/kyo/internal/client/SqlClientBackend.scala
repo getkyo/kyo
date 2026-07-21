@@ -1422,7 +1422,14 @@ final class MySqlClientBackend private[client] (
                 formatCode = 0
             )
         }
-        new SqlRow(r.values, fields, Format.Text)
+        // The `format` field on the produced SqlRow is retained from the source MysqlRow so
+        // callers that consume the raw byte column can differentiate binary vs text bytes.
+        // Downstream typed decoding via `SqlRow.decode` currently routes MySQL rows through
+        // `MysqlRowReader` which reads little-endian binary regardless of format, so callers
+        // that need text-protocol simple-query results should compare raw bytes rather than call
+        // `decode[T]`. A future generalisation should extend `MysqlRowReader` to also handle
+        // text-protocol byte parsing for numeric types.
+        new SqlRow(r.values, fields, r.format)
     end mysqlRowToRow
 
     // --- query / execute / executeRaw / streamQuery (BoundParam surface) ---

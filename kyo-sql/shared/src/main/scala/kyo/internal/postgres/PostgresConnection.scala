@@ -38,7 +38,16 @@ final class PostgresConnection(
     private[postgres] val preparedStmts: Cache[String, PreparedStmt],
     private[kyo] val pendingCloses: AtomicRef[Chunk[String]],
     private[kyo] val typeRegistryRef: AtomicRef[TypeRegistry],
-    private[postgres] val encodingRegistry: EncodingRegistry
+    private[postgres] val encodingRegistry: EncodingRegistry,
+    // Per-connection monotonic counter used to synthesise a UNIQUE server-side prepared statement
+    // name on every `Parse`. Keying stmt names on `s_$hash` alone would collide with a still-live
+    // server statement when the local cache evicts an entry whose `Close 'S'` is still pending in
+    // the drain queue (or when the `expireAfterAccess` TTL expires locally while the server-side
+    // entry is intact): the Parse for the "same SQL" re-uses `s_$hash`, hits an already-registered
+    // name, and the server rejects it with SQLSTATE 42P05. Appending a monotonic suffix here makes
+    // every Parse target a fresh name, so eviction-then-re-Parse never collides with an in-flight
+    // Close.
+    private[kyo] val stmtCounter: AtomicLong
 ):
 
     /** Sends `Close 'S' <name>` for each name accumulated in [[pendingCloses]] since the last drain, clearing the queue.
@@ -126,6 +135,7 @@ final class PostgresConnection(
         drainPendingCloses.andThen(ExtendedQueryExchange.query(
             channel,
             preparedStmts,
+            stmtCounter,
             sql,
             params,
             encodingRegistry,
@@ -159,6 +169,7 @@ final class PostgresConnection(
                 StreamQueryExchange.stream(
                     channel,
                     preparedStmts,
+                    stmtCounter,
                     sql,
                     params,
                     batchSize,
@@ -179,6 +190,7 @@ final class PostgresConnection(
         drainPendingCloses.andThen(ExtendedQueryExchange.execute(
             channel,
             preparedStmts,
+            stmtCounter,
             sql,
             params,
             encodingRegistry,
@@ -259,15 +271,16 @@ final class PostgresConnection(
     def pipelined(
         stmts: Chunk[(String, Chunk[BoundParam[?]])]
     )(using Frame): Chunk[SqlStatementResult] < (Async & Abort[SqlException]) =
-        PipelineExchange.prepare(
+        drainPendingCloses.andThen(PipelineExchange.prepare(
             channel,
             preparedStmts,
+            stmtCounter,
             stmts,
             encodingRegistry,
             processId.toLong,
             updateParam,
             sendNotification
-        )
+        ))
 
     // --- Transaction control ---
 
@@ -577,11 +590,12 @@ object PostgresConnection:
         registry: EncodingRegistry
     )(using Frame): PostgresConnection < (Async & Abort[SqlException]) =
         for
-            params     <- AtomicRef.init(result.parameters)
-            txStatus   <- AtomicRef.init('I'.toByte)
-            notifChan  <- Channel.initUnscoped[NotificationResponse](128)
-            closesRef  <- AtomicRef.init(Chunk.empty[String])
-            typeRegRef <- AtomicRef.init[TypeRegistry](TypeRegistry.empty)
+            params      <- AtomicRef.init(result.parameters)
+            txStatus    <- AtomicRef.init('I'.toByte)
+            notifChan   <- Channel.initUnscoped[NotificationResponse](128)
+            closesRef   <- AtomicRef.init(Chunk.empty[String])
+            typeRegRef  <- AtomicRef.init[TypeRegistry](TypeRegistry.empty)
+            stmtCounter <- AtomicLong.init(0L)
             stmtCache <- Sync.Unsafe.defer:
                 // Unsafe: wire an onEvict callback into the low-level cache so an evicted
                 // PreparedStmt's server-side name gets queued for `Close 'S'` (drained on the next
@@ -594,14 +608,13 @@ object PostgresConnection:
                     discard(closesRef.unsafe.updateAndGet(_ :+ stmt.name))
                 val onExpire: (String, PreparedStmt) => Unit = onEvict
                 val onRemove: (String, PreparedStmt) => Unit = onEvict
-                val store = Cache.Unsafe.init[String, PreparedStmt](
+                Cache.Unsafe.init[String, PreparedStmt](
                     maxSize = preparedStmtCacheSize,
                     expireAfterAccess = ttl,
                     onEvict = onEvict,
                     onExpire = onExpire,
                     onRemove = onRemove
-                )
-                new Cache.Stored[String, PreparedStmt](store, Maybe.empty).asInstanceOf[Cache[String, PreparedStmt]]
+                ).safe
         yield new PostgresConnection(
             channel,
             params,
@@ -612,7 +625,8 @@ object PostgresConnection:
             stmtCache,
             closesRef,
             typeRegRef,
-            registry
+            registry,
+            stmtCounter
         )
         end for
     end mkConnection

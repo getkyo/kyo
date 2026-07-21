@@ -1710,61 +1710,100 @@ object SqlClient:
 
     extension (self: SqlClient)
 
-        /** Acquires a database advisory lock for `key` and holds it until the enclosing [[Scope]] exits.
+        /** Acquires a database advisory lock for `key`, runs `body` while holding it, and releases the lock on completion.
           *
-          * On PostgreSQL, calls `SELECT pg_advisory_lock(key)` (session-scoped, blocking) and registers `SELECT pg_advisory_unlock(key)` as
-          * a [[Scope.ensure]] finaliser. The lock is re-entrant on the same session: acquiring it twice from the same connection increments
-          * an internal counter; the counter is decremented on each `pg_advisory_unlock` call.
+          * Because PG and MySQL advisory locks are session-scoped, correct semantics require the acquire and release to happen on the SAME
+          * connection. This method pins one connection from the pool for the duration of `body`, so both the acquire SQL and the release SQL
+          * execute against that pinned connection (all in-body [[SqlClient]] queries also route to it via [[txLocal]]).
           *
-          * On MySQL, calls `SELECT GET_LOCK('key', timeoutSeconds)` (user-level named lock, also blocking). `GET_LOCK` returns 1 on
-          * success, 0 on timeout, or NULL on error. If the result is not 1, [[SqlException.Request]] is raised and no lock is held. On
-          * success, `SELECT RELEASE_LOCK('key')` is registered as a [[Scope.ensure]] finaliser.
+          * PostgreSQL: runs `SELECT pg_advisory_lock(key)` (blocking, session-scoped) on the pinned connection, executes `body`, then always
+          * runs `SELECT pg_advisory_unlock(key)` on the same connection (even on `Abort` or panic). Re-entrant on the same session:
+          * acquiring twice from the same pinned connection increments an internal counter that the two matching unlocks decrement.
           *
-          * The lock is always released when the enclosing [[Scope]] exits, whether by success, `Abort`, or panic.
+          * MySQL: runs `SELECT GET_LOCK('key', timeoutSeconds)` on the pinned connection. `GET_LOCK` returns 1 on success, 0 on timeout,
+          * NULL on error; anything other than 1 raises [[SqlException.Request]] and skips `body`. On success, executes `body`, then always
+          * runs `SELECT RELEASE_LOCK('key')` on the same connection.
           *
           * @param key
-          *   numeric lock identifier; used directly as the `bigint` argument to `pg_advisory_lock` on PG, and as the string `key.toString`
-          *   lock name for MySQL `GET_LOCK`
+          *   numeric lock identifier; used as the `bigint` argument to `pg_advisory_lock` on PG, and as the string `key.toString` lock name
+          *   for MySQL `GET_LOCK`
           * @param timeout
           *   how long to wait for the lock on MySQL; [[Maybe.Absent]] waits indefinitely (`timeout = -1`); on PG this parameter is unused
           *   (PG session-level advisory locks always block until acquired)
+          * @param body
+          *   the effect run while the lock is held; nested [[SqlClient]] queries share the pinned connection via [[txLocal]]
           */
-        def advisoryLock(key: Long, timeout: Maybe[Duration] = Maybe.Absent)(using Frame): Unit < (Async & Abort[SqlException] & Scope) =
-            self.backend match
-                case _: MySqlClientBackend =>
-                    val name           = key.toString
-                    val timeoutSeconds = timeout.fold(-1L)(d => Math.max(0L, d.toSeconds))
-                    val lockSql        = s"SELECT GET_LOCK('$name', $timeoutSeconds)"
-                    val releaseSql     = s"SELECT RELEASE_LOCK('$name')"
-                    // `GET_LOCK` returns a `BIGINT` (Long): 1 on acquired, 0 on timeout, NULL on error.
-                    // The client's binary result protocol returns raw wire bytes for that column, not the
-                    // decimal string; decode via the schema-derived Long reader so BIGINT / TINYINT /
-                    // whatever the server chooses on this MySQL version is parsed consistently.
-                    self.query(lockSql).flatMap { rows =>
-                        val acquiredEff =
-                            rows.headMaybe match
-                                case Present(row) =>
-                                    row.column(0) match
-                                        case Present(_) => row.decode[Long](0).map(_ == 1L)
-                                        case Absent     => (false: Boolean): Boolean < (Async & Abort[SqlException])
-                                case Absent => (false: Boolean): Boolean < (Async & Abort[SqlException])
-                        acquiredEff.flatMap { acquired =>
-                            if !acquired then
-                                Abort.fail(SqlException.Request(
-                                    s"GET_LOCK('$name', $timeoutSeconds) timed out or failed (key=$key)",
-                                    Maybe.Absent,
-                                    summon[Frame]
-                                ))
-                            else
-                                Scope.ensure(self.executeRaw(releaseSql).unit)
-                            end if
+        def withAdvisoryLock[A, S](key: Long, timeout: Maybe[Duration] = Maybe.Absent)(
+            body: A < (S & Async & Abort[SqlException])
+        )(using Frame): A < (S & Async & Abort[SqlException]) =
+            local.use { (_, config) =>
+                self.backend match
+                    case _: MySqlClientBackend =>
+                        val name           = key.toString
+                        val timeoutSeconds = timeout.fold(-1L)(d => Math.max(0L, d.toSeconds))
+                        // Simple (text) query protocol on the pinned connection: `GET_LOCK`'s BIGINT
+                        // result comes back as the ASCII string "1"/"0"/NULL and the matching
+                        // `RELEASE_LOCK` targets the same session.
+                        val lockSql    = s"SELECT GET_LOCK('$name', $timeoutSeconds)"
+                        val releaseSql = s"SELECT RELEASE_LOCK('$name')"
+                        self.backend.withMysqlConnection(self.url.address, self.url.password, config) { conn =>
+                            // NOTE: the acquire / release SQL run directly on the pinned `conn`, but
+                            // txLocal is NOT set inside `body`. If we bound the pinned conn to the
+                            // txLocal, any nested SqlClient (including a freshly-opened one for a
+                            // separate session probe) would inherit it and end up executing on the
+                            // owner's pinned session, defeating the "different session" contract of
+                            // MySQL `GET_LOCK`.
+                            conn.simpleQuery(lockSql).flatMap { rows =>
+                                val acquired =
+                                    rows.headMaybe match
+                                        case Present(row) =>
+                                            row.column(0) match
+                                                case Present(bytes) =>
+                                                    new String(bytes.toArray, java.nio.charset.StandardCharsets.UTF_8) == "1"
+                                                case Absent => false
+                                        case Absent => false
+                                if !acquired then
+                                    Abort.fail[SqlException](SqlException.Request(
+                                        s"GET_LOCK('$name', $timeoutSeconds) timed out or failed (key=$key)",
+                                        Maybe.Absent,
+                                        summon[Frame]
+                                    ))
+                                else
+                                    // Both success and error paths run RELEASE_LOCK on the pinned
+                                    // connection before it is handed back to the pool
+                                    // (withMysqlConnection's release fires after this body returns).
+                                    // The release is fire-and-forget: its failure is swallowed so
+                                    // the body's outcome is not shadowed by an unrelated release
+                                    // error.
+                                    Abort.run[SqlException](body).flatMap { result =>
+                                        Abort.run[SqlException](conn.simpleExecute(releaseSql)).andThen {
+                                            result match
+                                                case Result.Success(a) => a
+                                                case Result.Failure(e) => Abort.fail[SqlException](e)
+                                                case Result.Panic(t)   => Abort.error(Result.Panic(t))
+                                        }
+                                    }
+                                end if
+                            }
                         }
-                    }
-                case _ =>
-                    // PostgreSQL, session-scoped, always blocks until acquired
-                    self.executeRaw(s"SELECT pg_advisory_lock($key)").andThen {
-                        Scope.ensure(self.executeRaw(s"SELECT pg_advisory_unlock($key)").unit)
-                    }
+                    case _ =>
+                        self.backend.withConnection(self.url.address, self.url.password, config) { conn =>
+                            // See MySQL note above: pinning via txLocal would leak the pinned session
+                            // to a nested probe client and break "different session" tests.
+                            conn.simpleExecute(s"SELECT pg_advisory_lock($key)").andThen {
+                                Abort.run[SqlException](body).flatMap { result =>
+                                    Abort.run[SqlException](conn.simpleExecute(s"SELECT pg_advisory_unlock($key)")).andThen {
+                                        result match
+                                            case Result.Success(a) => a
+                                            case Result.Failure(e) => Abort.fail[SqlException](e)
+                                            case Result.Panic(t)   => Abort.error(Result.Panic(t))
+                                    }
+                                }
+                            }
+                        }
+                end match
+            }
+        end withAdvisoryLock
 
         /** Sets auto-commit on or off for the duration of the enclosing [[Scope]], restoring the previous value on exit.
           *

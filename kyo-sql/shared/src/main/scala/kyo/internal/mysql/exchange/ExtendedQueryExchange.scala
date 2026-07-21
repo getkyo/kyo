@@ -393,9 +393,10 @@ private[mysql] object ExtendedQueryExchange:
         columnDefs: Chunk[ColumnDefinition41]
     ): MysqlRow =
         // BinaryResultsetRow.values already contains Maybe[Span[Byte]] per column.
-        // NULL columns → Absent; non-null → Present(raw bytes).
-        // MysqlRow stores these as-is; callers use a decoder to interpret.
-        new MysqlRow(row.values, columnDefs)
+        // NULL columns → Absent; non-null → Present(raw bytes) in the MySQL BINARY wire format.
+        // Row-level format tag lets downstream decoders (SqlRow.decode / MysqlRowReader) choose the
+        // right decoder path per column type (binary integer widths, binary date/time, etc.).
+        new MysqlRow(row.values, columnDefs, kyo.internal.postgres.types.Format.Binary)
     end decodeBinaryRow
 
     private def readErrPayload(

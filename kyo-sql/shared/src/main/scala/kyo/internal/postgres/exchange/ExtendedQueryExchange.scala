@@ -35,6 +35,7 @@ object ExtendedQueryExchange:
     def query(
         channel: PostgresChannel,
         stmtCache: Cache[String, PreparedStmt],
+        stmtCounter: AtomicLong,
         sql: String,
         params: Chunk[BoundParam[?]],
         registry: EncodingRegistry,
@@ -42,13 +43,14 @@ object ExtendedQueryExchange:
         onParameterStatus: (String, String) => Unit < Async,
         onNotification: NotificationResponse => Unit < Async
     )(using Frame): Chunk[SqlRow] < (Async & Abort[SqlException]) =
-        prepareAndBind(channel, stmtCache, sql, params, registry, pid, onParameterStatus, onNotification)
+        prepareAndBind(channel, stmtCache, stmtCounter, sql, params, registry, pid, onParameterStatus, onNotification)
             .map { case (rows, _) => rows }
 
     /** Runs an extended execute and returns the number of affected rows. */
     def execute(
         channel: PostgresChannel,
         stmtCache: Cache[String, PreparedStmt],
+        stmtCounter: AtomicLong,
         sql: String,
         params: Chunk[BoundParam[?]],
         registry: EncodingRegistry,
@@ -56,7 +58,7 @@ object ExtendedQueryExchange:
         onParameterStatus: (String, String) => Unit < Async,
         onNotification: NotificationResponse => Unit < Async
     )(using Frame): Long < (Async & Abort[SqlException]) =
-        prepareAndBind(channel, stmtCache, sql, params, registry, pid, onParameterStatus, onNotification)
+        prepareAndBind(channel, stmtCache, stmtCounter, sql, params, registry, pid, onParameterStatus, onNotification)
             .map { case (_, affected) => affected }
 
     /** Computes the parameter OID list to send in Parse from the [[BoundParam]] sequence.
@@ -77,22 +79,28 @@ object ExtendedQueryExchange:
     private[exchange] def prepareStmt(
         channel: PostgresChannel,
         stmtCache: Cache[String, PreparedStmt],
+        stmtCounter: AtomicLong,
         sql: String,
         paramOids: Chunk[Int],
         pid: Long,
         onParameterStatus: (String, String) => Unit < Async,
         onNotification: NotificationResponse => Unit < Async
     )(using Frame): PreparedStmt < (Async & Abort[SqlException]) =
-        val key      = cacheKey(sql, paramOids)
-        val stmtName = s"s_$key"
+        val key = cacheKey(sql, paramOids)
         stmtCache.get(key).flatMap {
             case Present(stmt) =>
                 // Cache hit, return immediately.
                 stmt
             case Absent =>
-                // Cache miss, parse + describe, then cache.
-                parseAndDescribe(channel, stmtName, sql, paramOids, pid, onParameterStatus, onNotification).flatMap { stmt =>
-                    stmtCache.add(key, stmt).andThen(stmt)
+                // Cache miss, parse + describe with a UNIQUE server-side statement name so a
+                // re-Parse that follows an eviction (or expiry) can never collide with a still-live
+                // `s_$key` on the server whose `Close 'S'` is queued in `pendingCloses` but not yet
+                // flushed. The suffix comes from the per-connection monotonic counter.
+                stmtCounter.incrementAndGet.flatMap { seq =>
+                    val stmtName = s"s_${seq}_$key"
+                    parseAndDescribe(channel, stmtName, sql, paramOids, pid, onParameterStatus, onNotification).flatMap { stmt =>
+                        stmtCache.add(key, stmt).andThen(stmt)
+                    }
                 }
         }
     end prepareStmt
@@ -101,6 +109,7 @@ object ExtendedQueryExchange:
     private def prepareAndBind(
         channel: PostgresChannel,
         stmtCache: Cache[String, PreparedStmt],
+        stmtCounter: AtomicLong,
         sql: String,
         params: Chunk[BoundParam[?]],
         registry: EncodingRegistry,
@@ -108,7 +117,7 @@ object ExtendedQueryExchange:
         onParameterStatus: (String, String) => Unit < Async,
         onNotification: NotificationResponse => Unit < Async
     )(using Frame): (Chunk[SqlRow], Long) < (Async & Abort[SqlException]) =
-        prepareStmt(channel, stmtCache, sql, paramOidsOf(params), pid, onParameterStatus, onNotification).flatMap { stmt =>
+        prepareStmt(channel, stmtCache, stmtCounter, sql, paramOidsOf(params), pid, onParameterStatus, onNotification).flatMap { stmt =>
             bindAndExecute(channel, stmt, params, pid, onParameterStatus, onNotification)
         }
     end prepareAndBind

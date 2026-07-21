@@ -141,7 +141,8 @@ private[mysql] object StreamQueryExchange:
                 val reader       = MysqlBufferReader(payload.slice(1, payload.size))
                 Abort.run[SqlException.Decode](unmarshaller.read(reader)).flatMap {
                     case Result.Success(row) =>
-                        val mysqlRow = new MysqlRow(row.values, columnDefs)
+                        // MySQL streaming path uses the binary prepared-statement wire format.
+                        val mysqlRow = new MysqlRow(row.values, columnDefs, kyo.internal.postgres.types.Format.Binary)
                         Emit.valueWith(Chunk(mysqlRow))(emitRows(
                             channel,
                             columnDefs,

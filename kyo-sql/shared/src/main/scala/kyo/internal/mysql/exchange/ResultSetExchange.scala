@@ -105,7 +105,8 @@ private[mysql] object ResultSetExchange:
                 val rowUnmarshaller = ResultsetRowUnmarshaller(columnDefs.size)
                 Abort.run[SqlException.Decode](rowUnmarshaller.read(reader)).flatMap {
                     case Result.Success(row) =>
-                        val mysqlRow = new MysqlRow(row.values, columnDefs)
+                        // Text protocol: values are ASCII-encoded per MySQL simple-query wire format.
+                        val mysqlRow = new MysqlRow(row.values, columnDefs, kyo.internal.postgres.types.Format.Text)
                         readRows(channel, columnDefs, acc.appended(mysqlRow), sqlText, connectionId)
                     case Result.Failure(e) =>
                         Abort.fail(SqlException.Connection(s"Row decode failed: ${e.message}", summon[Frame]))

@@ -3,28 +3,32 @@ package kyo.internal.mysql
 import kyo.*
 import kyo.SqlDecoder
 import kyo.SqlException
+import kyo.internal.postgres.types.Format
 
-/** A single row from a MySQL text-protocol result set.
+/** A single row from a MySQL result set.
   *
-  * Stores the raw UTF-8 bytes for each column alongside the column metadata from [[ColumnDefinition41]]. SQL NULL columns are represented
-  * as [[Maybe.Absent]].
+  * Stores the raw bytes for each column alongside the column metadata from [[ColumnDefinition41]] and the wire [[Format]] the values came
+  * back in (Text for simple-query, Binary for extended / prepared-stmt). SQL NULL columns are represented as [[Maybe.Absent]].
   *
   * This is separate from the shared [[kyo.SqlRow]] to keep MySQL column metadata ([[ColumnDefinition41]]) decoupled from the
   * Postgres-oriented [[kyo.internal.postgres.FieldDescription]] type. A future generalisation could introduce a backend-agnostic
   * `RowMetadata` trait if both backends need to share a public `Row` API.
   *
   * WARNING: `MysqlRow.columns` is `Chunk[ColumnDefinition41]`, not the `Chunk[FieldDescription]` exposed by [[kyo.SqlRow.fields]]. Code
-  * that bridges [[MysqlRow]] to [[kyo.SqlRow]] (e.g. inside [[kyo.SqlClient]]) must convert column definitions explicitly, do not pass
-  * `columns` where `fields` is expected.
+  * that bridges [[MysqlRow]] to [[kyo.SqlRow]] (e.g. inside [[kyo.SqlClient]]) must convert column definitions explicitly and forward the
+  * `format` field, do not pass `columns` where `fields` is expected.
   *
   * @param values
   *   one entry per column; [[Maybe.Absent]] = SQL NULL
   * @param columns
   *   column definitions from the preceding ColumnDefinition41 packets, in the same order as [[values]]
+  * @param format
+  *   wire format the `values` bytes are encoded in; [[Format.Text]] for simple-query, [[Format.Binary]] for extended / prepared-stmt
   */
 final class MysqlRow(
     val values: Chunk[Maybe[Span[Byte]]],
-    val columns: Chunk[ColumnDefinition41]
+    val columns: Chunk[ColumnDefinition41],
+    val format: Format
 ):
 
     /** Returns the raw bytes for the column at `idx`, or [[Maybe.Absent]] for SQL NULL or out-of-bounds. */

@@ -142,9 +142,10 @@ class CachingSha2IntegrationTest extends kyo.Test:
             withCachingSha2Container { details =>
                 Scope.run {
                     openClient(details).flatMap { client =>
-                        // `client.query` returns MySQL binary-encoded results: integer selects come back as
-                        // fixed-width wire bytes, not the ASCII string. Decode typed via row.decode[Long]
-                        // so the assertion compares numeric values consistently.
+                        // `client.query` on MySQL routes unparameterised statements to the extended
+                        // (binary prepared-stmt) protocol; `SELECT n` comes back as an 8-byte little-
+                        // endian BIGINT. Decode via `row.decode[Long]` (routed to MysqlRowReader by
+                        // SqlRow.decode's OID-based dispatch) so the assertion compares numeric values.
                         client.query("SELECT 1").flatMap { r1 =>
                             client.query("SELECT 2").flatMap { r2 =>
                                 client.query("SELECT 3").flatMap { r3 =>
@@ -232,9 +233,8 @@ class CachingSha2IntegrationTest extends kyo.Test:
                                 client.query("SELECT id, name FROM csha2_test").flatMap { rows =>
                                     assert(rows.size == 1)
                                     val row = rows(0)
-                                    // `client.query` binary protocol: MySQL INT column comes back as a 4-byte
-                                    // little-endian LONG (not LONGLONG), so decode as Int. VARCHAR decodes
-                                    // straight to String.
+                                    // Extended protocol: INT is a 4-byte little-endian LONG, VARCHAR is
+                                    // length-prefixed UTF-8. Decode typed.
                                     for
                                         idVal   <- row.decode[Int]("id")
                                         nameVal <- row.decode[String]("name")

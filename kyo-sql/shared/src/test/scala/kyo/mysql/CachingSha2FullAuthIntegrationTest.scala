@@ -27,10 +27,10 @@ class CachingSha2FullAuthIntegrationTest extends kyo.Test:
                         s"mysql://${mysql.username}:${mysql.password}@${mysql.container.host}:$port/${mysql.database}",
                         SqlClientConfig.default.copy(maxConnections = 1, minConnections = 1)
                     ).flatMap { client =>
-                        // Verify the connection works by running SELECT 1. `client.query` returns MySQL
-                        // binary-encoded results: `SELECT 1` comes back as a fixed-width numeric column,
-                        // not the ASCII string "1". Decode as Long (MySQL wraps bare integer literals as
-                        // BIGINT/LONGLONG at the wire level).
+                        // Verify the connection works by running SELECT 1. `client.query` on MySQL routes
+                        // unparameterised queries to the binary extended protocol; `SELECT 1` comes back
+                        // as an 8-byte little-endian BIGINT, decoded via row.decode[Long] which routes
+                        // to MysqlRowReader (SqlRow.decode dispatches by field OID presence).
                         client.query("SELECT 1").flatMap { rows =>
                             rows(0).decode[Long](0).map { v =>
                                 assert(v == 1L)

@@ -397,14 +397,13 @@ object MysqlConnection:
         Sync.Unsafe.defer:
             val onEvict: (String, MysqlPreparedStmt) => Unit = (_, stmt) =>
                 discard(closesRef.unsafe.updateAndGet(_ :+ stmt.stmtId.toString))
-            val store = Cache.Unsafe.init[String, MysqlPreparedStmt](
+            Cache.Unsafe.init[String, MysqlPreparedStmt](
                 maxSize = maxSize,
                 expireAfterAccess = ttl,
                 onEvict = onEvict,
                 onExpire = onEvict,
                 onRemove = onEvict
-            )
-            new Cache.Stored[String, MysqlPreparedStmt](store, Maybe.empty).asInstanceOf[Cache[String, MysqlPreparedStmt]]
+            ).safe
 
     /** Establishes a MySQL connection (plaintext or TLS).
       *

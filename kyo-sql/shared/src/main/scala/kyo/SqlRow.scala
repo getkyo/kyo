@@ -109,10 +109,13 @@ final class SqlRow(
         else
             val count  = schema.fieldCount
             val sliced = slice(idx, idx + count)
-            if format == Format.Binary || fields.exists(_.dataType != 0) then
-                schema.readPostgres(sliced)
-            else
-                schema.readMysql(sliced)
+            // PG rows always carry a non-zero data-type OID per column; MySQL rows always have
+            // dataType == 0 (its `FieldDescription` conversion in `mysqlRowToRow` leaves it zero).
+            // Route by the OID presence first so a MySQL-produced binary row (extended protocol)
+            // does NOT get sent to `readPostgres` (which decodes big-endian PG binary and would
+            // mis-read MySQL's little-endian layout).
+            if fields.exists(_.dataType != 0) then schema.readPostgres(sliced)
+            else schema.readMysql(sliced)
             end if
     end decode
 

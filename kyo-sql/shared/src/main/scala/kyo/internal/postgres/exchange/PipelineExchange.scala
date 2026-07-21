@@ -112,6 +112,7 @@ object PipelineExchange:
     def prepare(
         channel: PostgresChannel,
         stmtCache: Cache[String, PreparedStmt],
+        stmtCounter: AtomicLong,
         stmts: Chunk[(String, Chunk[BoundParam[?]])],
         registry: EncodingRegistry,
         pid: Long,
@@ -125,6 +126,7 @@ object PipelineExchange:
                 ExtendedQueryExchange.prepareStmt(
                     channel,
                     stmtCache,
+                    stmtCounter,
                     sql,
                     ExtendedQueryExchange.paramOidsOf(params),
                     pid,

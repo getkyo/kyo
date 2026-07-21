@@ -70,6 +70,7 @@ private[postgres] object StreamQueryExchange:
     def stream(
         channel: PostgresChannel,
         stmtCache: Cache[String, PreparedStmt],
+        stmtCounter: AtomicLong,
         sql: String,
         params: Chunk[BoundParam[?]],
         batchSize: Int,
@@ -91,6 +92,7 @@ private[postgres] object StreamQueryExchange:
                         stmt <- ExtendedQueryExchange.prepareStmt(
                             channel,
                             stmtCache,
+                            stmtCounter,
                             sql,
                             paramOids,
                             pid,
