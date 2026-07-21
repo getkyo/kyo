@@ -151,9 +151,14 @@ class SqlSchemaTest extends Test:
     // --- 5. Unsupported field type produces compile error ---
 
     "SqlSchema.derived on a class with unsupported field type fails to compile" in {
-        // typeCheckErrors returns an Array in Scala 3.8+; use .length instead of .nonEmpty to avoid
-        // the Array→Seq cast that .nonEmpty forces at runtime under the current stdlib shape.
-        assert(compiletime.testing.typeCheckErrors("SqlSchema.derived[java.lang.Thread]").length > 0)
+        // typeCheckErrors' declared `Seq[Error]` return does not match the underlying `Array[Error]`
+        // the compiler produces under the current stdlib. Route through java.lang.reflect.Array.
+        // so no Scala collection dispatch or Array-vs-Seq cast is involved.
+        val errors = compiletime.testing.typeCheckErrors("SqlSchema.derived[java.lang.Thread]").asInstanceOf[AnyRef]
+        val n =
+            if errors.getClass.isArray then java.lang.reflect.Array.getLength(errors)
+            else errors.asInstanceOf[Seq[?]].size
+        assert(n > 0)
     }
 
     // --- 6. SqlSchema.of constructs a single-column schema ---
