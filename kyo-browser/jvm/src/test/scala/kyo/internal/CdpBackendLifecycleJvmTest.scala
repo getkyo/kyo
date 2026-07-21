@@ -35,10 +35,10 @@ private[kyo] object CdpBackendFixtureServer:
 
     /** Starts an ephemeral-port WS server bound to localhost serving the given Behavior. Lifecycle bound to `Scope`.
       *
-      * `HttpServer.init`'s effect signature is `Async & Scope`; bind failures throw `HttpBindException` rather than aborting. We let those
-      * propagate as panics; for an ephemeral localhost bind they should never happen.
+      * `HttpServer.init` surfaces a bind failure as a recoverable `Abort[HttpBindException]`, so its row appears here. We let that abort
+      * propagate to the suite's baseline handler; for an ephemeral localhost bind it should never happen.
       */
-    def start(behavior: Behavior)(using Frame): FixtureHandle < (Async & Scope) =
+    def start(behavior: Behavior)(using Frame): FixtureHandle < (Async & Scope & Abort[HttpBindException]) =
         AtomicRef.initWith(Absent: Maybe[HttpWebSocket]) { wsRef =>
             val handler = HttpHandler.webSocket("devtools/browser/fixture") {
                 (_: HttpRequest[Any], ws: HttpWebSocket) =>

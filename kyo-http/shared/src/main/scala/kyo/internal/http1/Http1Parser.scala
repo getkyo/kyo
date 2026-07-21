@@ -214,6 +214,12 @@ final private[kyo] class Http1Parser(
             // Scan for bare CR (CR not followed by LF) in entire header region
             if containsBareCr(rawBuf, 0, headerEnd) then
                 invalid = true
+            // Scan for bare LF (LF not preceded by CR) in the same region. Every legitimate LF here is the second
+            // byte of a CRLF, so any other is a peer smuggling a line break past the CRLF framing: RFC 9112
+            // section 2.2 lets a downstream recognize it as a line terminator, which turns one header this parser
+            // stores into two headers that recipient reads. RFC 9110 section 5.5 makes rejecting it a MUST.
+            if containsBareLf(rawBuf, 0, headerEnd) then
+                invalid = true
             parseRequestLine(rawBuf, 0, requestLineEnd)
             parseHeaders(rawBuf, requestLineEnd + 2, headerEnd)
             // Set Host header flags based on count observed during parsing
@@ -316,12 +322,11 @@ final private[kyo] class Http1Parser(
                         val nameStart = lineStart
                         val nameLen   = colonIdx - lineStart
 
-                        // RFC 7230 section 3.2.4: no whitespace between header name and colon
-                        if nameLen > 0 && (rawBuf(colonIdx - 1) == ' ' || rawBuf(colonIdx - 1) == '\t') then
-                            invalid = true
-
-                        // Reject null bytes in header name
-                        if containsNull(rawBuf, nameStart, nameLen) then
+                        // RFC 9110 section 5.1: a field name is a token. This subsumes narrower per-character checks:
+                        // SP and HTAB are not tchars, so it rejects whitespace before the colon (RFC 7230 section 3.2.4,
+                        // CVE-2019-16276) wherever it sits rather than only immediately before it; NUL is not a tchar
+                        // either; and an empty name is not a token, since token = 1*tchar.
+                        if !isToken(rawBuf, nameStart, nameLen) then
                             invalid = true
 
                         // Skip ": " (colon + optional OWS including HTAB)
@@ -456,6 +461,23 @@ final private[kyo] class Http1Parser(
             if i + 1 >= end || buf(i + 1) != '\n' then true
             else containsBareCr(buf, i + 2, end) // skip past CRLF
         else containsBareCr(buf, i + 1, end)
+
+    /** Scans buf[i..end) for any LF byte not immediately preceded by CR. */
+    @tailrec private def containsBareLf(buf: Array[Byte], i: Int, end: Int): Boolean =
+        if i >= end then false
+        else if buf(i) == '\n' then
+            if i == 0 || buf(i - 1) != '\r' then true
+            else containsBareLf(buf, i + 1, end)
+        else containsBareLf(buf, i + 1, end)
+
+    /** Whether buf[off..off+len) is an RFC 9110 section 5.6.2 `token`: `1*tchar`, so a zero length is not one. */
+    private def isToken(buf: Array[Byte], off: Int, len: Int): Boolean =
+        @tailrec def loop(i: Int): Boolean =
+            if i >= len then true
+            else if HttpHeaders.isTokenChar((buf(off + i) & 0xff).toChar) then loop(i + 1)
+            else false
+        len > 0 && loop(0)
+    end isToken
 
     /** Scans buf[off..off+len) for null bytes (0x00). */
     @tailrec private def containsNull(buf: Array[Byte], off: Int, remaining: Int): Boolean =

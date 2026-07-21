@@ -24,4 +24,15 @@ jobs:
         with:
           jvm: corretto:25
           apps: sbt
+      # liburing (build-time only): `sbt doctest` compiles kyo-net's io_uring FFI shim (kyo_uring.c), which
+      # statically links -luring. This workflow does not use .github/actions/setup, so install it here too.
+      - name: Install liburing (Linux)
+        uses: nick-fields/retry@v4
+        with:
+          max_attempts: 3
+          timeout_minutes: 5
+          retry_wait_seconds: 15
+          command: |
+            sudo apt-get update
+            sudo apt-get install -y -o Acquire::Retries=3 liburing-dev
       - run: sbt doctest

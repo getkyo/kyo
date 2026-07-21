@@ -5,10 +5,10 @@ import kyo.*
 /** Base class for all HTTP-related errors, organized into four sealed subcategories by failure mode.
   *
   * The four subcategories map to distinct failure modes:
-  *   - [[kyo.HttpConnectionException]] — transport-level failures before a response is received (connection refused, pool exhausted)
-  *   - [[kyo.HttpRequestException]] — protocol-level failures during request processing (timeout, redirect loop, non-success status)
-  *   - [[kyo.HttpServerException]] — server-side operational failures (bind error, unhandled handler error)
-  *   - [[kyo.HttpDecodeException]] — parsing and deserialization failures (URL parse, field decode, JSON decode)
+  *   - [[kyo.HttpConnectionException]], transport-level failures before a response is received (connection refused, pool exhausted)
+  *   - [[kyo.HttpRequestException]], protocol-level failures during request processing (timeout, redirect loop, non-success status)
+  *   - [[kyo.HttpServerException]], server-side operational failures (bind error, unhandled handler error)
+  *   - [[kyo.HttpDecodeException]], parsing and deserialization failures (URL parse, field decode, JSON decode)
   *
   * All exception constructors strip query parameters from URLs before storing them, so sensitive data embedded in query strings (API keys,
   * tokens, session identifiers) is never retained in exception messages or stack traces.
@@ -44,6 +44,10 @@ end HttpException
   * @see
   *   [[kyo.HttpConnectException]] Connection refused or unreachable host
   * @see
+  *   [[kyo.HttpDnsResolutionException]] Name resolution failed for the host
+  * @see
+  *   [[kyo.HttpUnixConnectException]] Connection to a Unix domain socket failed
+  * @see
   *   [[kyo.HttpPoolExhaustedException]] All connections to a host are in use
   */
 sealed abstract class HttpConnectionException(message: String, cause: String | Throwable = "")(using Frame)
@@ -55,6 +59,24 @@ case class HttpConnectException(host: String, port: Int, cause: Throwable)(using
         s"""Connection to $host:$port failed.
            |
            |  Verify the server is running and reachable.""".stripMargin,
+        cause
+    )
+
+/** Name resolution for the request host failed (no such host, no address, temporary resolver failure). */
+case class HttpDnsResolutionException(host: String, cause: Throwable)(using Frame)
+    extends HttpConnectionException(
+        s"""DNS resolution failed for $host.
+           |
+           |  Verify the hostname is correct and resolvable.""".stripMargin,
+        cause
+    )
+
+/** Connection to a Unix domain socket failed (no such file, connection refused, permission denied). */
+case class HttpUnixConnectException(path: String, cause: Throwable)(using Frame)
+    extends HttpConnectionException(
+        s"""Connection to Unix socket $path failed.
+           |
+           |  Verify the socket path exists and the server is listening.""".stripMargin,
         cause
     )
 
@@ -84,6 +106,10 @@ case class HttpPoolExhaustedException(host: String, port: Int, maxConnections: I
   *   [[kyo.HttpTimeoutException]] Request exceeded the configured timeout
   * @see
   *   [[kyo.HttpRedirectLoopException]] Too many redirects
+  * @see
+  *   [[kyo.HttpNonAsciiException]] A request host or path cannot be encoded as ASCII
+  * @see
+  *   [[kyo.HttpInvalidFieldException]] A field name is not a token, or a field carries a control character
   * @see
   *   [[kyo.HttpStatusException]] Non-success status code when the response body can't be decoded
   */
@@ -120,6 +146,54 @@ object HttpRedirectLoopException:
             chain.takeRight(5).map(HttpException.stripQuery)
         )
 end HttpRedirectLoopException
+
+/** The host or the path of a request carries a char above 0x7F, which kyo-http cannot put on a request line.
+  *
+  * A request line is ASCII: a path must be percent-encoded and an internationalized host punycode-encoded before a request can carry them.
+  * kyo-http does neither, so it rejects the value rather than truncate each char to its low byte and send a corrupted octet. A peer can reach
+  * this, because the host and path of a `Location` header are followed on a redirect.
+  *
+  * This applies to the request line only. A field *value* may carry obs-text (`%x80-FF`) per RFC 9110 section 5.5, so a non-ASCII header
+  * value is legal HTTP and is sent as its UTF-8 octets rather than reported here. A field *name* is a token, which is a stronger rule than
+  * ASCII and is enforced by [[kyo.HttpInvalidFieldException]].
+  *
+  * `field` names the offending element (for example "the request path" or "the redirect host") but never carries its value, which can hold a
+  * credential.
+  */
+case class HttpNonAsciiException private[kyo] (field: String)(using Frame)
+    extends HttpRequestException(
+        s"""Cannot send $field: it contains a char above 0x7F.
+           |
+           |  An HTTP/1.1 request line is ASCII. Percent-encode a non-ASCII path and
+           |  punycode-encode an internationalized host before sending, or drop the
+           |  value.""".stripMargin
+    )
+
+/** A field name is not a token, or a field value or request-line element carries a control character, so kyo-http has no valid wire form for
+  * it.
+  *
+  * A field name is a `token` (RFC 9110 section 5.6.2), which admits letters, digits and a fixed set of symbols but neither SP nor colon: a
+  * name carrying either is read by a recipient as a different name and value than the sender meant. A field value admits SP, HTAB, visible
+  * characters and obs-text, and no other control character. The rule that matters most is that a CR or an LF ends a header line or a request
+  * line early, so a recipient reads one line as two: that is response splitting and request smuggling (RFC 9112 section 11), and it is why
+  * an ASCII check is no substitute, CR and LF being ASCII themselves.
+  *
+  * kyo-http refuses such a field rather than rewriting it. RFC 9110 section 5.5 offers a recipient the choice of rejecting the message or
+  * replacing each offending character with SP, but that remedy is addressed to recipients; silently rewriting an application's own data on
+  * the way out is worse than refusing to send it.
+  *
+  * `field` names the offending element (for example "the value of header 'X-Trace'") but never carries its value, which can hold a
+  * credential, and never quotes back a name that is not a token, which can carry a line break of its own.
+  */
+case class HttpInvalidFieldException private[kyo] (field: String)(using Frame)
+    extends HttpRequestException(
+        s"""Cannot send $field: it is not a valid HTTP/1.1 field.
+           |
+           |  A field name must be a token (RFC 9110 section 5.6.2): letters, digits,
+           |  and the symbols !#$$%&'*+-.^_`|~ . A field value must carry no control
+           |  character other than HTAB; a CR or an LF would let a recipient read the
+           |  header line as two. Remove the offending characters before sending.""".stripMargin
+    )
 
 /** Non-success status code when the response body can't be decoded. */
 case class HttpStatusException private (status: HttpStatus, method: String, url: String, body: Maybe[String])(using Frame)
@@ -338,14 +412,14 @@ case class HttpProtocolException private[kyo] (detail: String)(using Frame)
     )
 
 /** A response body exceeds the client's configured `HttpClientConfig.maxResponseLength`. The client rejects an oversized response (by its
-  * declared `Content-Length` or its accumulated bytes) rather than buffer it without bound (CWE-400); `bodySize` is the offending size,
-  * `maxSize` the configured cap.
+  * declared `Content-Length` or its accumulated bytes) rather than buffer it without bound (CWE-400); `bodySize` is the offending size, `maxSize`
+  * the configured cap.
   */
 case class HttpPayloadTooLargeException private[kyo] (bodySize: Int, maxSize: Int)(using Frame)
     extends HttpDecodeException(
         s"Response body size $bodySize exceeds the configured maximum $maxSize"
     )
 
-/** Connection closed cleanly (EOF). Not an error — normal keep-alive termination. */
+/** Connection closed cleanly (EOF). Not an error, normal keep-alive termination. */
 case class HttpConnectionClosedException private[kyo] ()(using Frame)
     extends HttpDecodeException("Connection closed")

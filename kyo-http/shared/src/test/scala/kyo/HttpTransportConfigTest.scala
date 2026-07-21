@@ -17,27 +17,55 @@ class HttpTransportConfigTest extends BaseHttpTest:
             }
         }
 
-    "default config values match design doc".notNative in {
+    "default config values match design doc" in {
         val config = HttpTransportConfig.default
         assert(config.channelCapacity == 4)
         assert(config.readChunkSize == 8192)
-        assert(config.writeBatchSize == 16)
         assert(config.maxHeaderSize == 65536)
+        assert(config.handshakeTimeout == Duration.Infinity)
     }
 
-    "builder methods produce correct values".notNative in {
+    "client transport ownership" - {
+
+        "every client owns and releases its transport when its Scope exits" in {
+            // No client shares a process-global transport: each builds its own via init and closes it on shutdown. The Scope
+            // release closing the pool proves that owned-transport release ran for both a default-config and a customized-config
+            // client (the customized one applies a byte-transport field, so its transport is unambiguously per-config).
+            var captured: Maybe[(HttpClient, HttpClient)] = Absent
+            Scope.run {
+                HttpClient.init().map { defaultClient =>
+                    HttpClient.init(transportConfig = HttpTransportConfig.default.channelCapacity(8)).map { customClient =>
+                        captured = Present((defaultClient, customClient))
+                    }
+                }
+            }.andThen {
+                captured match
+                    case Present((defaultClient, customClient)) =>
+                        Sync.Unsafe.defer(
+                            assert(
+                                defaultClient.isPoolClosed && customClient.isPoolClosed,
+                                "the Scope release must close each client's owned transport"
+                            )
+                        )
+                    case Absent =>
+                        fail("clients were not captured")
+            }
+        }
+    }
+
+    "builder methods produce correct values" in {
         val config = HttpTransportConfig.default
             .channelCapacity(8)
             .readChunkSize(4096)
-            .writeBatchSize(32)
             .maxHeaderSize(32768)
+            .handshakeTimeout(250.millis)
         assert(config.channelCapacity == 8)
         assert(config.readChunkSize == 4096)
-        assert(config.writeBatchSize == 32)
         assert(config.maxHeaderSize == 32768)
+        assert(config.handshakeTimeout == 250.millis)
     }
 
-    "custom channelCapacity respected".notNative in {
+    "custom channelCapacity respected" in {
         val tc     = HttpTransportConfig.default.channelCapacity(1)
         val config = HttpServerConfig.default.port(0).host("localhost").transportConfig(tc)
         val route  = HttpRoute.getText("hello").response(_.bodyText)
@@ -54,7 +82,7 @@ class HttpTransportConfigTest extends BaseHttpTest:
         }
     }
 
-    "custom readChunkSize respected".notNative in {
+    "custom readChunkSize respected" in {
         val tc     = HttpTransportConfig.default.readChunkSize(512)
         val config = HttpServerConfig.default.port(0).host("localhost").transportConfig(tc)
         val route  = HttpRoute.getText("hello").response(_.bodyText)
@@ -71,24 +99,7 @@ class HttpTransportConfigTest extends BaseHttpTest:
         }
     }
 
-    "custom writeBatchSize respected".notNative in {
-        val tc     = HttpTransportConfig.default.writeBatchSize(2)
-        val config = HttpServerConfig.default.port(0).host("localhost").transportConfig(tc)
-        val route  = HttpRoute.getText("hello").response(_.bodyText)
-        val ep     = route.handler(_ => HttpResponse.ok("world"))
-        HttpClient.init().map { httpClient =>
-            HttpServer.init(config)(ep).map { server =>
-                HttpClient.let(httpClient) {
-                    val url = HttpUrl.parse(s"http://localhost:${server.port}").getOrThrow
-                    send(url, route, HttpRequest.getRaw(HttpUrl.fromUri("/hello"))).map { resp =>
-                        assert(resp.status == HttpStatus.OK)
-                    }
-                }
-            }
-        }
-    }
-
-    "custom maxHeaderSize rejects oversized headers".notNative in {
+    "custom maxHeaderSize rejects oversized headers" in {
         val tc     = HttpTransportConfig.default.maxHeaderSize(128)
         val config = HttpServerConfig.default.port(0).host("localhost").transportConfig(tc)
         val route  = HttpRoute.getText("hello").response(_.bodyText)
@@ -118,15 +129,13 @@ class HttpTransportConfigTest extends BaseHttpTest:
         }
     }
 
-    "config propagated through HttpServerConfig".notNative in {
+    "config propagated through HttpServerConfig" in {
         val tc = HttpTransportConfig.default
             .channelCapacity(2)
             .readChunkSize(1024)
-            .writeBatchSize(4)
         val config = HttpServerConfig.default.port(0).host("localhost").transportConfig(tc)
         assert(config.transportConfig.channelCapacity == 2)
         assert(config.transportConfig.readChunkSize == 1024)
-        assert(config.transportConfig.writeBatchSize == 4)
         val route = HttpRoute.getText("hello").response(_.bodyText)
         val ep    = route.handler(_ => HttpResponse.ok("world"))
         HttpClient.init().map { httpClient =>
@@ -141,24 +150,38 @@ class HttpTransportConfigTest extends BaseHttpTest:
         }
     }
 
-    "config propagated through HttpClientConfig".notNative in {
-        val tc = HttpTransportConfig.default
-            .channelCapacity(2)
-            .readChunkSize(1024)
-        val clientConfig = HttpClientConfig().transportConfig(tc)
-        assert(clientConfig.transportConfig.channelCapacity == 2)
-        assert(clientConfig.transportConfig.readChunkSize == 1024)
-        // Verify the config is properly stored and retrievable
+    "transportConfig propagated through HttpClient.init: owned transport serves requests" in {
+        // A custom byte-transport field makes HttpClient.init build a per-config owned transport (closed when the client closes). A normal
+        // request routed through this client (not the shared test backend) must succeed, proving the owned transport works end to end. The
+        // high-level HttpClient.getText API is used so the request flows through the fiber-local client set by HttpClient.let.
+        val tc    = HttpTransportConfig.default.channelCapacity(2).readChunkSize(1024)
         val route = HttpRoute.getText("hello").response(_.bodyText)
         val ep    = route.handler(_ => HttpResponse.ok("world"))
-        HttpClient.init().map { httpClient =>
+        HttpClient.init(transportConfig = tc).map { httpClient =>
             HttpServer.init(0, "localhost")(ep).map { server =>
                 HttpClient.let(httpClient) {
-                    HttpClient.withConfig(clientConfig) {
-                        val url = HttpUrl.parse(s"http://localhost:${server.port}").getOrThrow
-                        send(url, route, HttpRequest.getRaw(HttpUrl.fromUri("/hello"))).map { resp =>
-                            assert(resp.status == HttpStatus.OK)
-                        }
+                    HttpClient.getText(s"http://localhost:${server.port}/hello").map { body =>
+                        assert(body == "world")
+                    }
+                }
+            }
+        }
+    }
+
+    "client maxHeaderSize is reachable via HttpClient.init and rejects an oversized response (CWE-400)" in {
+        // The client parser's header limit is settable via HttpClient.init. A 512-byte limit against a ~2 KiB response header must fail
+        // (a malicious/buggy server cannot force unbounded client header buffering); if the limit were ignored the request would succeed.
+        val bigHeaderValue = "x" * 2048
+        val route          = HttpRoute.getText("big").response(_.bodyText)
+        val ep             = route.handler(_ => HttpResponse.ok("ok").addHeader("X-Big", bigHeaderValue))
+        HttpClient.init(transportConfig = HttpTransportConfig.default.maxHeaderSize(512)).map { httpClient =>
+            HttpServer.init(0, "localhost")(ep).map { server =>
+                HttpClient.let(httpClient) {
+                    Abort.run[HttpException](HttpClient.getText(s"http://localhost:${server.port}/big")).map { result =>
+                        assert(
+                            result.isFailure || result.isPanic,
+                            s"expected the 512-byte client maxHeaderSize to reject the oversized response, got $result"
+                        )
                     }
                 }
             }

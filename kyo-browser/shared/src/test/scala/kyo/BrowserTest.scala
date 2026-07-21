@@ -135,7 +135,7 @@ abstract class BrowserTest extends BaseBrowserTest:
       */
     def withLocalhostServer[A, S](handlers: HttpHandler[?, ?, ?]*)(f: (String, Int) => A < S)(using
         Frame
-    ): A < (Async & Scope & S) =
+    ): A < (Async & Scope & Abort[HttpBindException] & S) =
         HttpServer.init(0, "127.0.0.1")(handlers*).map { server =>
             f(server.host, server.port)
         }

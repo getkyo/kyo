@@ -74,6 +74,20 @@ runs:
           sudo apt-get update
           sudo apt-get install -y -o Acquire::Retries=3 libcurl4-openssl-dev libidn2-dev libh2o-evloop-dev=2.2.5+dfsg2-8.1ubuntu3
 
+    # liburing is a build-time-only dependency of the kyo-net io_uring shim (kyo_uring.c), statically
+    # linked so the shipped artifact has no runtime liburing dependency. The JVM target compiles the shim
+    # via the kyo-ffi plugin's cc; the Native target links it through the Scala Native linker.
+    - name: Install liburing (Linux)
+      if: ${{ contains(inputs.os, 'linux') && (inputs.target == 'JVM' || inputs.target == 'Native') }}
+      uses: nick-fields/retry@v4
+      with:
+        max_attempts: 3
+        timeout_minutes: 5
+        retry_wait_seconds: 15
+        command: |
+          sudo apt-get update
+          sudo apt-get install -y -o Acquire::Retries=3 liburing-dev
+
     - name: Install podman (Linux)
       if: ${{ contains(inputs.os, 'linux') }}
       uses: nick-fields/retry@v4
@@ -130,3 +144,27 @@ runs:
       with:
         jvm: corretto:25
         apps: sbt
+
+    # Build and stage the vendored BoringSSL static archives (libssl.a, libcrypto.a) for the runner's
+    # os-arch, used by the kyo-net TLS data plane. build-boringssl.sh clones BoringSSL at the pinned commit
+    # and builds via CMake plus Go (pre-installed on GitHub-hosted runners; installed defensively if
+    # absent). The staged tree is gitignored, so it is produced on every JVM/Native runner; without it the
+    # kyonet_boringssl shim links a stub and the BoringSSL TLS tests cancel.
+    - name: Prepare BoringSSL
+      if: ${{ inputs.target == 'JVM' || inputs.target == 'Native' }}
+      shell: bash
+      run: |
+        case "${{ inputs.os }}" in
+          linux-x64)   OS_ARCH=linux-x86_64 ;;
+          linux-arm64) OS_ARCH=linux-aarch64 ;;
+          macos-arm64) OS_ARCH=darwin-aarch64 ;;
+          *) echo "BoringSSL not staged for ${{ inputs.os }} (unsupported os-arch); skipping" && exit 0 ;;
+        esac
+        if [[ "${{ inputs.os }}" == linux-* ]]; then
+          command -v cmake >/dev/null 2>&1 || { sudo apt-get update && sudo apt-get install -y -o Acquire::Retries=3 cmake; }
+          command -v go >/dev/null 2>&1 || { sudo apt-get update && sudo apt-get install -y -o Acquire::Retries=3 golang-go; }
+        else
+          command -v cmake >/dev/null 2>&1 || brew install cmake
+          command -v go >/dev/null 2>&1 || brew install go
+        fi
+        bash kyo-net/build/boringssl/build-boringssl.sh "$OS_ARCH"

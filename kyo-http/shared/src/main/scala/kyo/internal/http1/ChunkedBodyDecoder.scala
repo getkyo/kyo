@@ -2,6 +2,7 @@ package kyo.internal.http1
 
 import kyo.*
 import kyo.internal.util.*
+import kyo.net.internal.util.GrowableByteBuffer
 import scala.annotation.tailrec
 
 /** Strips HTTP/1.1 chunked transfer encoding framing from raw bytes.
@@ -14,8 +15,7 @@ import scala.annotation.tailrec
   *   - readBuffered: Kyo-native, accumulates all decoded chunks into one Span[Byte]
   *   - readStreaming: Kyo-native, delivers decoded chunks to an output channel as they arrive
   *
-  * The DecoderState class holds the mutable parse state and internal byte buffer. It is created fresh per request — not connection-scoped —
-  * because chunked bodies are not reused.
+  * The DecoderState class holds the mutable parse state and internal byte buffer. It is created fresh per request, not connection-scoped,  * because chunked bodies are not reused.
   */
 private[kyo] object ChunkedBodyDecoder:
 
@@ -42,9 +42,8 @@ private[kyo] object ChunkedBodyDecoder:
 
     /** Main unsafe buffered decode loop. Processes buffer, accumulates data, reads more via callbacks. Caps the accumulated body at
       * `maxBytes`: a server streaming an unbounded chunked body would otherwise grow `accumulator` without limit (CWE-400). The cap is
-      * checked at the top of each drain iteration; since per-chunk size is already overflow-bounded ([[parseChunkSizeLine]]) and the
-      * realistic attack is many chunks, the accumulated total cannot grow past `maxBytes` plus at most one in-flight chunk before
-      * `onTooLarge` fires.
+      * checked at the top of each drain iteration; since per-chunk size is already overflow-bounded ([[parseChunkSizeLine]]) and the realistic
+      * attack is many chunks, the accumulated total cannot grow past `maxBytes` plus at most one in-flight chunk before `onTooLarge` fires.
       */
     private def bufferedLoopUnsafe(
         inbound: Channel.Unsafe[Span[Byte]],
@@ -142,11 +141,11 @@ private[kyo] object ChunkedBodyDecoder:
     )(using Frame): Unit < (Async & Abort[Closed]) =
         state.drain(chunkBuf) match
             case DrainResult.Done =>
-                // Don't close the channel here — the caller (UnsafeServerDispatch) manages lifecycle.
+                // Don't close the channel here, the caller (UnsafeServerDispatch) manages lifecycle.
                 // Channel.close drops buffered items, which would lose chunks the consumer hasn't read yet.
                 ()
             case DrainResult.ChunkReady =>
-                // A complete chunk has been decoded — deliver it
+                // A complete chunk has been decoded, deliver it
                 val decoded = Span.fromUnsafe(chunkBuf.toByteArray)
                 chunkBuf.reset()
                 output.safe.put(decoded).andThen(
@@ -182,7 +181,7 @@ private[kyo] object ChunkedBodyDecoder:
       * Phases: ReadSize -> ReadData -> ReadDataCrlf -> (loop back to ReadSize or ReadTrailer -> Done)
       *
       * drain() processes the internal buffer until it either completes (Done), needs more input (NeedMore), or finishes decoding one
-      * chunk's data (ChunkReady). The caller decides how to handle each result — buffered mode ignores ChunkReady and keeps draining,
+      * chunk's data (ChunkReady). The caller decides how to handle each result, buffered mode ignores ChunkReady and keeps draining,
       * streaming mode delivers the chunk to the output channel.
       *
       * Instances can be reset and reused across multiple responses on the same connection via reset().
@@ -247,10 +246,10 @@ private[kyo] object ChunkedBodyDecoder:
                             case PhaseReadData =>
                                 val transitioned = processReadData(accumulator)
                                 if transitioned then
-                                    // Full chunk data consumed — signal chunk ready
+                                    // Full chunk data consumed, signal chunk ready
                                     DrainResult.ChunkReady
                                 else
-                                    // Partial data consumed — need more bytes
+                                    // Partial data consumed, need more bytes
                                     compact()
                                     DrainResult.NeedMore
                                 end if
@@ -278,7 +277,7 @@ private[kyo] object ChunkedBodyDecoder:
                 else findLf(i + 1)
             val lfPos = findLf(readPos)
             if lfPos < 0 then
-                // No complete line yet — buffer the bytes for next time
+                // No complete line yet, buffer the bytes for next time
                 sizeLine.writeBytes(buf, readPos, end - readPos)
                 readPos = end
                 false
@@ -436,7 +435,7 @@ private[kyo] object ChunkedBodyDecoder:
         // Find semicolon for extensions
         @tailrec def findHexEnd(i: Int): Int = if i >= len || lineBytes(i) == ';'.toByte then i else findHexEnd(i + 1)
         val hexEnd                           = findHexEnd(0)
-        // Parse hex digits — use Long to detect overflow, reject invalid chars
+        // Parse hex digits, use Long to detect overflow, reject invalid chars
         @tailrec def parseHex(i: Int, acc: Long): Int =
             if i >= hexEnd then
                 if acc > Int.MaxValue then -1 else acc.toInt
