@@ -17,6 +17,12 @@ import kyo.OwnContainer
   */
 class CachingSha2IntegrationTest extends kyo.Test:
 
+    // Each leaf spins its own MySQL container. Running leaves in parallel puts many concurrent
+    // container starts on the local Docker daemon, and the port-binding budget (~30 s per container)
+    // is exceeded when several MySQL boots race for the same slirp4netns / vmnet forwarder. Running
+    // the suite sequentially bounds concurrent container starts to one at a time.
+    override def config = super.config.sequential
+
     override def timeout: Duration = 4.minutes
 
     // Case class to carry connection details from the Kyo fiber to openClient.

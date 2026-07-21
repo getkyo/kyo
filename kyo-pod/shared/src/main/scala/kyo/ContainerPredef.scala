@@ -315,6 +315,13 @@ object ContainerPredef:
           */
         val defaultStopTimeout: Duration = 30.seconds
 
+        /** MySQL's docker-entrypoint init (temporary listener → DB/user creation → real listener) takes 10–20 s cold, and can stretch to
+          * a minute or more when several MySQL containers race for the same Docker VM's CPU / disk. The [[Container.Config]] default of
+          * 60 s is fine for a single container in isolation but too tight for aggregate test runs; MySQL fixtures get their own longer
+          * budget so the port-binding wait doesn't spuriously trip on a healthy but slow start.
+          */
+        val defaultPortMappingTimeout: Duration = 3.minutes
+
         /** Build the [[Container.Config]] for a MySQL fixture from this config. */
         private[kyo] def buildContainerConfig(c: Config): Container.Config =
             val healthCmdBase = Chunk("mysql", "-h", "127.0.0.1", "-u", c.username) ++
@@ -326,6 +333,7 @@ object ContainerPredef:
                 .port(c.port, 0)
                 .command(commandLine*)
                 .stopTimeout(defaultStopTimeout)
+                .portMappingTimeout(defaultPortMappingTimeout)
                 .healthCheck(Container.HealthCheck.exec(
                     Command(healthCmdBase*),
                     Absent,

@@ -801,6 +801,11 @@ object Container:
         restartPolicy: Config.RestartPolicy,
         stopSignal: Maybe[Signal],
         stopTimeout: Duration,
+        /** Wall-clock budget for the host-side port-binding wait that runs after `start`. The daemon's port forwarder can take much longer
+          * than the observed <100ms happy path when several containers boot in parallel or the local Docker VM is under memory / CPU
+          * pressure; bumping this per-fixture avoids spurious teardown when the forwarder is just slow.
+          */
+        portMappingTimeout: Duration,
         healthCheck: HealthCheck
     ) derives CanEqual:
         // --- Builder methods ---
@@ -908,6 +913,8 @@ object Container:
 
         def stopTimeout(timeout: Duration): Config = copy(stopTimeout = timeout)
 
+        def portMappingTimeout(timeout: Duration): Config = copy(portMappingTimeout = timeout)
+
         def healthCheck(hc: HealthCheck): Config = copy(healthCheck = hc)
 
     end Config
@@ -949,6 +956,7 @@ object Container:
             restartPolicy = Config.RestartPolicy.No,
             stopSignal = Absent,
             stopTimeout = 3.seconds,
+            portMappingTimeout = 60.seconds,
             healthCheck = HealthCheck.running
         )
 
@@ -2102,13 +2110,11 @@ object Container:
     /** Threshold (milliseconds) above which elapsed-time strings switch from "Nms" to "Ns" formatting. */
     private val elapsedMillisFormatThreshold: Long = 1000L
 
-    /** Wall-clock budget for `waitForPortMappings` and the bounds of its adaptive backoff. The host-side port forwarding hook on rootless
-      * podman (slirp4netns/pasta) and Docker Desktop's VM completes asynchronously after `start` — typically <100ms but can stretch
-      * dramatically under load when `inspect` itself takes 1–2s per call. The budget is wall-clock so the actual timeout matches the
-      * configured value regardless of `inspect` latency, and the backoff doubles from `min` to `max` to reduce daemon pressure when the
-      * first few attempts fail.
+    /** Bounds of the adaptive backoff used inside `waitForPortMappings`. The host-side port forwarder on rootless podman
+      * (slirp4netns/pasta) and Docker Desktop's VM completes asynchronously after `start` — typically <100ms but can stretch dramatically
+      * under load when `inspect` itself takes 1–2s per call. The wall-clock budget is now caller-tunable per fixture via
+      * [[Container.Config.portMappingTimeout]]; only the poll cadence lives here.
       */
-    private val portMappingBudget: Duration  = 30.seconds
     private val portMappingMinPoll: Duration = 50.millis
     private val portMappingMaxPoll: Duration = 500.millis
 
@@ -2259,8 +2265,9 @@ object Container:
     private def waitForPortMappings(container: Container)(using Frame): Unit < (Async & Abort[ContainerException]) =
         if container.config.ports.isEmpty then ()
         else
+            val budgetMs = container.config.portMappingTimeout.toMillis
             Clock.now.map { startedAt =>
-                val deadlineMs = startedAt.toJava.toEpochMilli + portMappingBudget.toMillis
+                val deadlineMs = startedAt.toJava.toEpochMilli + budgetMs
                 val maxPollMs  = portMappingMaxPoll.toMillis
                 Loop(portMappingMinPoll.toMillis) { pollMs =>
                     container.backend.inspect(container.id).map { info =>
@@ -2278,7 +2285,7 @@ object Container:
                                     val observed =
                                         info.ports.map(p => s"${p.containerPort}/${p.protocol.cliName}->${p.hostPort}").mkString(", ")
                                     Abort.fail[ContainerException](ContainerOperationException(
-                                        s"Container ${container.id.value} ports not bound on host after ${elapsedMs}ms (budget ${portMappingBudget.toMillis}ms). " +
+                                        s"Container ${container.id.value} ports not bound on host after ${elapsedMs}ms (budget ${budgetMs}ms). " +
                                             s"Configured: [$configured]. Observed via inspect: [$observed]."
                                     ))
                                 else

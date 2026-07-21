@@ -13,6 +13,11 @@ import kyo.OwnContainer
   */
 class CachingSha2FullAuthIntegrationTest extends kyo.Test:
 
+    // Each leaf spins its own MySQL container. Serialize leaves so at most one MySQL boot races
+    // for host resources at a time; the 30-second port-binding budget is unreliable under parallel
+    // container starts on a single Docker host.
+    override def config = super.config.sequential
+
     override def timeout: Duration = 4.minutes
 
     // ─── Integration leaf: cache-miss full-auth via pure-Scala RSA-OAEP ──────────
