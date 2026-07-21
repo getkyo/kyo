@@ -393,6 +393,33 @@ object PostgresConnection:
             SqlException.Connection(s"Failed to connect: ${t.getMessage}", summon[Frame])
         )
 
+    /** Builds the per-connection prepared-statement cache with eviction wired into `pendingCloses`.
+      *
+      * A plain `Cache.init` silently drops evicted `PreparedStmt` values; the server-side statement stays allocated for the life of the
+      * session (a bounded but real leak on any connection that churns through more distinct SQL than the cache holds). Wiring `onEvict`,
+      * `onExpire`, and `onRemove` into `closesRef` enqueues the evicted PG statement name so the next `drainPendingCloses` call flushes
+      * `Close 'S'` for the released statement.
+      *
+      * The callback is `(K, V) => Unit`, synchronous and invoked inline on the cache's Sync sweep. It uses the AtomicRef's non-suspending
+      * `unsafe.updateAndGet`; the actual `Close 'S'` write happens on the next extended-protocol request (which starts by calling
+      * `drainPendingCloses`). Mirrors [[kyo.internal.mysql.MysqlConnection.mkStmtCache]].
+      */
+    private[postgres] def mkStmtCache(
+        closesRef: AtomicRef[Chunk[String]],
+        maxSize: Int,
+        ttl: Duration
+    )(using Frame): Cache[String, PreparedStmt] < Sync =
+        Sync.Unsafe.defer:
+            val onEvict: (String, PreparedStmt) => Unit = (_, stmt) =>
+                discard(closesRef.unsafe.updateAndGet(_ :+ stmt.name))
+            Cache.Unsafe.init[String, PreparedStmt](
+                maxSize = maxSize,
+                expireAfterAccess = ttl,
+                onEvict = onEvict,
+                onExpire = onEvict,
+                onRemove = onEvict
+            ).safe
+
     // --- Connection factories ---
 
     /** Establishes a Postgres connection to `address` using plaintext or TLS authentication.
@@ -596,25 +623,7 @@ object PostgresConnection:
             closesRef   <- AtomicRef.init(Chunk.empty[String])
             typeRegRef  <- AtomicRef.init[TypeRegistry](TypeRegistry.empty)
             stmtCounter <- AtomicLong.init(0L)
-            stmtCache <- Sync.Unsafe.defer:
-                // Unsafe: wire an onEvict callback into the low-level cache so an evicted
-                // PreparedStmt's server-side name gets queued for `Close 'S'` (drained on the next
-                // extended-query request via `drainPendingCloses`). Without this the cache
-                // silently drops evicted entries and the server accumulates a session-scoped
-                // prepared-statement leak. The callback is a synchronous (K, V) => Unit invoked
-                // inline on the cache's Sync sweep, so it must not suspend: we use the AtomicRef's
-                // unsafe non-suspending update.
-                val onEvict: (String, PreparedStmt) => Unit = (_, stmt) =>
-                    discard(closesRef.unsafe.updateAndGet(_ :+ stmt.name))
-                val onExpire: (String, PreparedStmt) => Unit = onEvict
-                val onRemove: (String, PreparedStmt) => Unit = onEvict
-                Cache.Unsafe.init[String, PreparedStmt](
-                    maxSize = preparedStmtCacheSize,
-                    expireAfterAccess = ttl,
-                    onEvict = onEvict,
-                    onExpire = onExpire,
-                    onRemove = onRemove
-                ).safe
+            stmtCache   <- PostgresConnection.mkStmtCache(closesRef, preparedStmtCacheSize, ttl)
         yield new PostgresConnection(
             channel,
             params,
