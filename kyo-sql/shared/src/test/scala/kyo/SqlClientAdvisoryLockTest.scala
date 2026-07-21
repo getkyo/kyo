@@ -77,16 +77,15 @@ class SqlClientAdvisoryLockTest extends kyo.Test:
                         }.andThen {
                             // After scope exit the lock must be free.
                             // GET_LOCK with timeout=0 returns 1 immediately if the lock is free, 0 if held.
-                            client.query(s"SELECT GET_LOCK('$key', 0)").map { rows =>
+                            client.query(s"SELECT GET_LOCK('$key', 0)").flatMap { rows =>
                                 assert(rows.size == 1, s"Expected 1 row from GET_LOCK probe, got ${rows.size}")
-                                val raw = rows(0).column(0)
-                                val acquired = raw match
-                                    case Present(bytes) =>
-                                        new String(bytes.toArray, java.nio.charset.StandardCharsets.UTF_8) == "1"
-                                    case Absent => false
-                                // Release the probe lock we just acquired.
-                                client.executeRaw(s"SELECT RELEASE_LOCK('$key')").map { _ =>
-                                    assert(acquired, "Expected GET_LOCK to succeed (lock should be free after Scope exit)")
+                                // `client.query` returns binary-encoded MySQL BIGINT for `GET_LOCK`; decode the
+                                // typed Long rather than compare raw wire bytes to the ASCII "1".
+                                rows(0).decode[Long](0).flatMap { got =>
+                                    // Release the probe lock we just acquired.
+                                    client.executeRaw(s"SELECT RELEASE_LOCK('$key')").map { _ =>
+                                        assert(got == 1L, s"Expected GET_LOCK to return 1 (lock free after Scope exit), got: $got")
+                                    }
                                 }
                             }
                         }
@@ -145,18 +144,15 @@ class SqlClientAdvisoryLockTest extends kyo.Test:
                                 // Probe from a second connection with timeout=0.
                                 SqlClient.initMy(myUrl(ctx)).flatMap { innerClient =>
                                     SqlClient.let(innerClient) {
-                                        innerClient.query(s"SELECT GET_LOCK('$key', 0)").map { rows =>
+                                        innerClient.query(s"SELECT GET_LOCK('$key', 0)").flatMap { rows =>
                                             assert(rows.size == 1)
-                                            val raw = rows(0).column(0)
-                                            val txt = raw match
-                                                case Present(bytes) =>
-                                                    new String(bytes.toArray, java.nio.charset.StandardCharsets.UTF_8)
-                                                case Absent => "null"
-                                            // Must return 0 (timed out) because the outer client holds the lock.
-                                            assert(
-                                                txt == "0",
-                                                s"Expected GET_LOCK to return 0 (lock held by outer connection), got: '$txt'"
-                                            )
+                                            // Binary BIGINT, decode typed rather than compare wire bytes to ASCII.
+                                            rows(0).decode[Long](0).map { got =>
+                                                assert(
+                                                    got == 0L,
+                                                    s"Expected GET_LOCK to return 0 (lock held by outer connection), got: $got"
+                                                )
+                                            }
                                         }
                                     }
                                 }

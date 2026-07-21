@@ -1736,23 +1736,29 @@ object SqlClient:
                     val timeoutSeconds = timeout.fold(-1L)(d => Math.max(0L, d.toSeconds))
                     val lockSql        = s"SELECT GET_LOCK('$name', $timeoutSeconds)"
                     val releaseSql     = s"SELECT RELEASE_LOCK('$name')"
+                    // `GET_LOCK` returns a `BIGINT` (Long): 1 on acquired, 0 on timeout, NULL on error.
+                    // The client's binary result protocol returns raw wire bytes for that column, not the
+                    // decimal string; decode via the schema-derived Long reader so BIGINT / TINYINT /
+                    // whatever the server chooses on this MySQL version is parsed consistently.
                     self.query(lockSql).flatMap { rows =>
-                        val acquired = rows.headMaybe match
-                            case Present(row) =>
-                                row.column(0) match
-                                    case Present(bytes) =>
-                                        new String(bytes.toArray, java.nio.charset.StandardCharsets.UTF_8) == "1"
-                                    case Absent => false
-                            case Absent => false
-                        if !acquired then
-                            Abort.fail(SqlException.Request(
-                                s"GET_LOCK('$name', $timeoutSeconds) timed out or failed (key=$key)",
-                                Maybe.Absent,
-                                summon[Frame]
-                            ))
-                        else
-                            Scope.ensure(self.executeRaw(releaseSql).unit)
-                        end if
+                        val acquiredEff =
+                            rows.headMaybe match
+                                case Present(row) =>
+                                    row.column(0) match
+                                        case Present(_) => row.decode[Long](0).map(_ == 1L)
+                                        case Absent     => (false: Boolean): Boolean < (Async & Abort[SqlException])
+                                case Absent => (false: Boolean): Boolean < (Async & Abort[SqlException])
+                        acquiredEff.flatMap { acquired =>
+                            if !acquired then
+                                Abort.fail(SqlException.Request(
+                                    s"GET_LOCK('$name', $timeoutSeconds) timed out or failed (key=$key)",
+                                    Maybe.Absent,
+                                    summon[Frame]
+                                ))
+                            else
+                                Scope.ensure(self.executeRaw(releaseSql).unit)
+                            end if
+                        }
                     }
                 case _ =>
                     // PostgreSQL — session-scoped, always blocks until acquired

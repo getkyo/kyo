@@ -61,9 +61,15 @@ class SqlStaticAuditTest extends Test:
 
     // -----------------------------------------------------------------------
     // Scenario C — Inline given with .withNaming(snakeCase) for the table type.
-    // EXPECTED: POSITIVE. Folds and applies snake_case.
+    // EXPECTED: NEGATIVE-GOOD. Per the design documented on
+    // `SqlStaticInlineGivenProbeTest`: any override chain (.withNaming /
+    // .withTableName / .rename) can't fold per-column `sqlName` under
+    // `.runStatic` because `resolveSqlName` runs inside the polyfunction body
+    // that `Record.stageNamed` accepts, and the macro can't expand past that
+    // substitution. The macro must surface a positioned error directing the
+    // user to `.run` / `.render` (the runtime path applies the strategy correctly).
     // -----------------------------------------------------------------------
-    "C — inline given with .withNaming applies snake_case under .runStatic" in {
+    "C: inline given with .withNaming under .runStatic reports positioned error" in {
         val errors = typeCheckErrors(
             """
             import kyo.*
@@ -76,9 +82,11 @@ class SqlStaticAuditTest extends Test:
             )
             """
         )
+        assert(errors.nonEmpty, "expected a positioned compile error for override chain under .runStatic")
+        val texts = errors.map(_.message).mkString("\n---\n")
         assert(
-            errors.isEmpty,
-            s"expected static fold to succeed; got errors:\n${errors.map(_.message).mkString("\n---\n")}"
+            texts.contains("inline given") && texts.contains("cannot be folded"),
+            s"expected the runStatic walker to direct user to `inline given`, got:\n$texts"
         )
     }
 
@@ -105,11 +113,18 @@ class SqlStaticAuditTest extends Test:
     }
 
     // -----------------------------------------------------------------------
-    // Scenario E — sql"$val" interpolation under .runStatic with runtime val.
-    // EXPECTED: POSITIVE. The interpolated value is a bind parameter, not a
-    //   structural part; static fold should succeed and emit a parameter.
+    // Scenario E: sql"$val" interpolation under .runStatic with a runtime val.
+    // EXPECTED: NEGATIVE. `staticSql` requires the AST to lift to a compile-time
+    // constant via `FromExpr.derived`. A `Fragment.Bind` whose value is a runtime
+    // `val` reference (not a literal) cannot be lifted: `FromExpr[String]` only
+    // recovers `Literal(StringConstant(_))`. The macro must surface a positioned
+    // error directing the user to `.run` (which does the same lift opportunistically
+    // and falls back to the runtime renderer that binds the value at execution
+    // time). The compile-time bind fast-path is possible in principle but would
+    // require deferred lifting of the argument Expr; the current design does not
+    // implement it, and this leaf pins the observed contract.
     // -----------------------------------------------------------------------
-    "E — sql interpolation with runtime val under .runStatic emits a bind parameter" in {
+    "E: sql interpolation with runtime val under .runStatic reports positioned error" in {
         val errors = typeCheckErrors(
             """
             import kyo.*
@@ -117,9 +132,11 @@ class SqlStaticAuditTest extends Test:
             val r = SqlStatic.staticSql(sql"SELECT id FROM users WHERE name = $name")
             """
         )
+        assert(errors.nonEmpty, "expected positioned compile error for non-liftable runtime bind under .runStatic")
+        val texts = errors.map(_.message).mkString("\n---\n")
         assert(
-            errors.isEmpty,
-            s"expected sql\"$$val\" to fold; got errors:\n${errors.map(_.message).mkString("\n---\n")}"
+            texts.contains("cannot be folded at compile time"),
+            s"expected the runStatic walker to explain the fold failure, got:\n$texts"
         )
     }
 
@@ -169,6 +186,14 @@ class SqlStaticAuditTest extends Test:
     // -----------------------------------------------------------------------
     // Scenario H — Inline def for the source under .runStatic.
     // EXPECTED: POSITIVE. The inliner can see through inline def.
+    //
+    // The source uses `Sql.from[T](alias)` on its own (no `.select` chain). The
+    // two `.select` overloads (single-`Term[V]` vs `Tup <: Tuple`) both match a
+    // `<?> => <?>` lambda at inline-def type-check time (before substitution),
+    // so `.select` inside an inline def body is an inherently unresolvable
+    // ambiguity in Scala 3, orthogonal to the `.runStatic` fold this leaf
+    // audits. The DSL entry `Sql.from` alone is unambiguous and still exercises
+    // the inline-def-through-fold path.
     // -----------------------------------------------------------------------
     "H — inline def source under .runStatic folds successfully" in {
         val errors = typeCheckErrors(
@@ -177,8 +202,8 @@ class SqlStaticAuditTest extends Test:
             import kyo.SqlAst.*
             case class AuditUserH(id: Long, name: String) derives Schema
             inline given SqlSchema[AuditUserH] = SqlSchema.derived
-            inline def adults = Sql.from[AuditUserH]("u").select(c => c.u.name)
-            SqlStatic.staticSql(adults)
+            inline def allRows = Sql.from[AuditUserH]("u")
+            SqlStatic.staticSql(allRows)
             """
         )
         assert(

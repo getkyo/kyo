@@ -61,9 +61,9 @@ class SqlClientLogTest extends Test:
       *
       * Usage: `withLogSink { sink => Log.let(Log(sink)) { ... } }` but more ergonomically: `withLogCapture { sink => body(sink) }`.
       */
-    private def withLogCapture[A, S](body: TestLogSink => A < S)(using Frame): (TestLogSink, A) < S =
+    private def withLogCapture[A, S](body: TestLogSink => A < S)(using Frame): (TestLogSink, A) < (S & Async) =
         val sink = new TestLogSink
-        Log.let(Log(sink))(body(sink)).map(a => (sink, a))
+        Log.let(Log(sink))(body(sink).map(a => Log.flush.andThen(a))).map(a => (sink, a))
 
     // ── Postgres wire-protocol helpers ────────────────────────────────────────
 

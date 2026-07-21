@@ -439,17 +439,19 @@ class PostgresConnectionTest extends kyo.Test:
         val cause = new RuntimeException("test panic cause")
         Log.let(Log(sink)) {
             PostgresConnection.onConnectPanic(cause, "testLabel").map { exc =>
-                val entries = sink.captured
-                assert(entries.size == 1, s"expected exactly 1 log entry, got: $entries")
-                val (level, msg) = entries(0)
-                assert(level == Log.Level.error, s"expected error level, got: $level")
-                assert(msg.contains("testLabel"), s"log message should contain the label: $msg")
-                assert(msg.contains("test panic cause"), s"log message should contain throwable message: $msg")
-                assert(msg.contains("[kyo-sql] PostgresConnection"), s"log message should contain module prefix: $msg")
-                assert(
-                    exc.message.contains("test panic cause"),
-                    s"SqlException.Connection message should contain throwable: ${exc.message}"
-                )
+                Log.flush.andThen {
+                    val entries = sink.captured
+                    assert(entries.size == 1, s"expected exactly 1 log entry, got: $entries")
+                    val (level, msg) = entries(0)
+                    assert(level == Log.Level.error, s"expected error level, got: $level")
+                    assert(msg.contains("testLabel"), s"log message should contain the label: $msg")
+                    assert(msg.contains("test panic cause"), s"log message should contain throwable message: $msg")
+                    assert(msg.contains("[kyo-sql] PostgresConnection"), s"log message should contain module prefix: $msg")
+                    assert(
+                        exc.message.contains("test panic cause"),
+                        s"SqlException.Connection message should contain throwable: ${exc.message}"
+                    )
+                }
             }
         }
     }

@@ -142,14 +142,20 @@ class CachingSha2IntegrationTest extends kyo.Test:
             withCachingSha2Container { details =>
                 Scope.run {
                     openClient(details).flatMap { client =>
+                        // `client.query` returns MySQL binary-encoded results: integer selects come back as
+                        // fixed-width wire bytes, not the ASCII string. Decode typed via row.decode[Long]
+                        // so the assertion compares numeric values consistently.
                         client.query("SELECT 1").flatMap { r1 =>
                             client.query("SELECT 2").flatMap { r2 =>
-                                client.query("SELECT 3").map { r3 =>
-                                    def str(rows: Chunk[SqlRow]) =
-                                        new String(rows(0).column(0).get.toArray, java.nio.charset.StandardCharsets.UTF_8)
-                                    assert(str(r1) == "1")
-                                    assert(str(r2) == "2")
-                                    assert(str(r3) == "3")
+                                client.query("SELECT 3").flatMap { r3 =>
+                                    for
+                                        v1 <- r1(0).decode[Long](0)
+                                        v2 <- r2(0).decode[Long](0)
+                                        v3 <- r3(0).decode[Long](0)
+                                    yield
+                                        assert(v1 == 1L)
+                                        assert(v2 == 2L)
+                                        assert(v3 == 3L)
                                 }
                             }
                         }
@@ -225,12 +231,18 @@ class CachingSha2IntegrationTest extends kyo.Test:
                                 assert(affected == 1L)
                                 client.query("SELECT id, name FROM csha2_test").flatMap { rows =>
                                     assert(rows.size == 1)
-                                    val row     = rows(0)
-                                    val idStr   = new String(row.column("id").get.toArray, java.nio.charset.StandardCharsets.UTF_8)
-                                    val nameStr = new String(row.column("name").get.toArray, java.nio.charset.StandardCharsets.UTF_8)
-                                    assert(idStr == "42")
-                                    assert(nameStr == "hello")
-                                    client.executeRaw("DROP TABLE csha2_test").map(_ => succeed)
+                                    val row = rows(0)
+                                    // `client.query` binary protocol: MySQL INT column comes back as a 4-byte
+                                    // little-endian LONG (not LONGLONG), so decode as Int. VARCHAR decodes
+                                    // straight to String.
+                                    for
+                                        idVal   <- row.decode[Int]("id")
+                                        nameVal <- row.decode[String]("name")
+                                        _ = assert(idVal == 42)
+                                        _ = assert(nameVal == "hello")
+                                        r <- client.executeRaw("DROP TABLE csha2_test").map(_ => succeed)
+                                    yield r
+                                    end for
                                 }
                             }
                         }

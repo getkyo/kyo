@@ -27,10 +27,14 @@ class CachingSha2FullAuthIntegrationTest extends kyo.Test:
                         s"mysql://${mysql.username}:${mysql.password}@${mysql.container.host}:$port/${mysql.database}",
                         SqlClientConfig.default.copy(maxConnections = 1, minConnections = 1)
                     ).flatMap { client =>
-                        // Verify the connection works by running SELECT 1.
-                        client.query("SELECT 1").map { rows =>
-                            val str = new String(rows(0).column(0).get.toArray, java.nio.charset.StandardCharsets.UTF_8)
-                            assert(str == "1")
+                        // Verify the connection works by running SELECT 1. `client.query` returns MySQL
+                        // binary-encoded results: `SELECT 1` comes back as a fixed-width numeric column,
+                        // not the ASCII string "1". Decode as Long (MySQL wraps bare integer literals as
+                        // BIGINT/LONGLONG at the wire level).
+                        client.query("SELECT 1").flatMap { rows =>
+                            rows(0).decode[Long](0).map { v =>
+                                assert(v == 1L)
+                            }
                         }
                     }
                 }

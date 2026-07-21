@@ -376,6 +376,36 @@ object MysqlConnection:
     /** Default prepared-statement cache size per connection. */
     private val DefaultStmtCacheSize = 64
 
+    /** Builds the per-connection prepared-statement cache with eviction wired into `pendingCloses`.
+      *
+      * A plain `Cache.init` silently drops evicted `MysqlPreparedStmt` values; the server-side
+      * statement stays allocated for the life of the session (a bounded but real leak on any
+      * connection that churns through more distinct SQL than the cache holds). Wiring `onEvict`,
+      * `onExpire`, and `onRemove` into `closesRef` enqueues the evicted `stmtId` so the next
+      * `drainPendingCloses` call flushes `COM_STMT_CLOSE` for the released statement.
+      *
+      * The callback is `(K, V) => Unit`, synchronous and invoked inline on the cache's Sync
+      * sweep. It uses the AtomicRef's non-suspending `unsafe.updateAndGet`; the actual
+      * `COM_STMT_CLOSE` write happens on the next extended-protocol request (which starts by
+      * calling `drainPendingCloses`).
+      */
+    private[mysql] def mkStmtCache(
+        closesRef: AtomicRef[Chunk[String]],
+        maxSize: Int,
+        ttl: Duration
+    )(using Frame): Cache[String, MysqlPreparedStmt] < Sync =
+        Sync.Unsafe.defer:
+            val onEvict: (String, MysqlPreparedStmt) => Unit = (_, stmt) =>
+                discard(closesRef.unsafe.updateAndGet(_ :+ stmt.stmtId.toString))
+            val store = Cache.Unsafe.init[String, MysqlPreparedStmt](
+                maxSize = maxSize,
+                expireAfterAccess = ttl,
+                onEvict = onEvict,
+                onExpire = onEvict,
+                onRemove = onEvict
+            )
+            new Cache.Stored[String, MysqlPreparedStmt](store, Maybe.empty).asInstanceOf[Cache[String, MysqlPreparedStmt]]
+
     /** Establishes a MySQL connection (plaintext or TLS).
       *
       * Sequence:
@@ -437,10 +467,7 @@ object MysqlConnection:
                             charsetRef <- AtomicRef.init(result.charset)
                             statusRef  <- AtomicRef.init(result.statusFlags)
                             closesRef  <- AtomicRef.init(Chunk.empty[String])
-                            stmtCache <- Cache.init[String, MysqlPreparedStmt](
-                                preparedStmtCacheSize,
-                                expireAfterAccess = ttl
-                            )
+                            stmtCache  <- MysqlConnection.mkStmtCache(closesRef, preparedStmtCacheSize, ttl)
                         yield new MysqlConnection(
                             activeChannel,
                             connIdRef,
@@ -504,10 +531,7 @@ object MysqlConnection:
                             charsetRef <- AtomicRef.init(result.charset)
                             statusRef  <- AtomicRef.init(result.statusFlags)
                             closesRef  <- AtomicRef.init(Chunk.empty[String])
-                            stmtCache <- Cache.init[String, MysqlPreparedStmt](
-                                preparedStmtCacheSize,
-                                expireAfterAccess = ttl
-                            )
+                            stmtCache  <- MysqlConnection.mkStmtCache(closesRef, preparedStmtCacheSize, ttl)
                         yield new MysqlConnection(
                             activeChannel,
                             connIdRef,
@@ -542,7 +566,7 @@ object MysqlConnection:
                 charsetRef <- AtomicRef.init(0)
                 statusRef  <- AtomicRef.init(0)
                 closesRef  <- AtomicRef.init(Chunk.empty[String])
-                stmtCache  <- Cache.init[String, MysqlPreparedStmt](8, expireAfterAccess = Duration.Zero)
+                stmtCache  <- MysqlConnection.mkStmtCache(closesRef, 8, Duration.Zero)
             yield new MysqlConnection(
                 channel,
                 connIdRef,

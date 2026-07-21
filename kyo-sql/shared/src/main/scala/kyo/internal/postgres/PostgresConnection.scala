@@ -582,10 +582,26 @@ object PostgresConnection:
             notifChan  <- Channel.initUnscoped[NotificationResponse](128)
             closesRef  <- AtomicRef.init(Chunk.empty[String])
             typeRegRef <- AtomicRef.init[TypeRegistry](TypeRegistry.empty)
-            stmtCache <- Cache.init[String, PreparedStmt](
-                preparedStmtCacheSize,
-                expireAfterAccess = ttl
-            )
+            stmtCache <- Sync.Unsafe.defer:
+                // Unsafe: wire an onEvict callback into the low-level cache so an evicted
+                // PreparedStmt's server-side name gets queued for `Close 'S'` (drained on the next
+                // extended-query request via `drainPendingCloses`). Without this the cache
+                // silently drops evicted entries and the server accumulates a session-scoped
+                // prepared-statement leak. The callback is a synchronous (K, V) => Unit invoked
+                // inline on the cache's Sync sweep, so it must not suspend: we use the AtomicRef's
+                // unsafe non-suspending update.
+                val onEvict: (String, PreparedStmt) => Unit = (_, stmt) =>
+                    discard(closesRef.unsafe.updateAndGet(_ :+ stmt.name))
+                val onExpire: (String, PreparedStmt) => Unit = onEvict
+                val onRemove: (String, PreparedStmt) => Unit = onEvict
+                val store = Cache.Unsafe.init[String, PreparedStmt](
+                    maxSize = preparedStmtCacheSize,
+                    expireAfterAccess = ttl,
+                    onEvict = onEvict,
+                    onExpire = onExpire,
+                    onRemove = onRemove
+                )
+                new Cache.Stored[String, PreparedStmt](store, Maybe.empty).asInstanceOf[Cache[String, PreparedStmt]]
         yield new PostgresConnection(
             channel,
             params,

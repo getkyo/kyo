@@ -10,7 +10,10 @@ case class SqlRunBytecodePerson(id: Long, name: String, age: Int, deptId: Long) 
 case class SqlRunBytecodeUser(id: Long, email: String) derives Schema
 
 private object SqlRunBytecodeStaticFastPathHolder:
-    given SqlSchema[SqlRunBytecodePerson] = SqlSchema.derived
+    // `inline given` is required for the static fast-path: the macro's SqlSchemaInfo.extract can only
+    // see the schema's construction body when the given is declared inline (Scala 3 hides plain-given
+    // RHSes behind a lazy-val reference at macro-expansion time).
+    inline given SqlSchema[SqlRunBytecodePerson] = SqlSchema.derived
 
     // Fully-inline literal query: `isStaticallyReducible` returns true; the macro splices the
     // compile-time-rendered SqlStatic.Rendered constant, never naming SqlRender in the emitted code.
