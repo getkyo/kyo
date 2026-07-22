@@ -110,25 +110,25 @@ final class MysqlConnection(
             }
         })
 
-    /** Runs an extended INSERT and returns an [[InsertResult]] derived from the server's OK packet.
+    /** Runs an extended INSERT and returns an [[SqlClient.InsertOutcome]] derived from the server's OK packet.
       *
-      * `generatedKey` is [[GeneratedKey.Value]]`(<lastInsertId>)` when the server reported a non-zero auto-increment value, and
-      * [[GeneratedKey.Unavailable]] when `lastInsertId == 0` (MySQL's convention for "no auto-increment value generated for this statement"
+      * `generatedKey` is [[SqlClient.InsertOutcome.GeneratedKey.Value]]`(<lastInsertId>)` when the server reported a non-zero auto-increment value, and
+      * [[SqlClient.InsertOutcome.GeneratedKey.Unavailable]] when `lastInsertId == 0` (MySQL's convention for "no auto-increment value generated for this statement"
       * applies even when the target schema does have an `AUTO_INCREMENT` column, e.g. when the caller supplied an explicit non-zero id).
-      * The pure-no-auto-column case ([[GeneratedKey.NoAutoKey]]) is emitted by the Postgres path only; MySQL cannot distinguish "no
+      * The pure-no-auto-column case ([[SqlClient.InsertOutcome.GeneratedKey.NoAutoKey]]) is emitted by the Postgres path only; MySQL cannot distinguish "no
       * AUTO_INCREMENT column" from "auto-increment suppressed" at the OK-packet level.
       */
     def extendedExecuteInsert(sql: String, params: Chunk[BoundMysqlParam[?]])(using
         Frame
-    ): InsertResult < (Async & Abort[SqlException]) =
+    ): SqlClient.InsertOutcome < (Async & Abort[SqlException]) =
         drainPendingCloses.andThen(serverCapabilities.get.flatMap { caps =>
             connectionId.get.flatMap { cid =>
                 ExtendedQueryExchange.executeInsert(channel, preparedStmts, sql, params, hasDeprecateEof(caps), Maybe(cid)).map {
                     case (affected, lastInsertId) =>
                         val key =
-                            if lastInsertId == 0L then GeneratedKey.Unavailable
-                            else GeneratedKey.Value(lastInsertId)
-                        InsertResult(affected, key)
+                            if lastInsertId == 0L then SqlClient.InsertOutcome.GeneratedKey.Unavailable
+                            else SqlClient.InsertOutcome.GeneratedKey.Value(lastInsertId)
+                        SqlClient.InsertOutcome(affected, key)
                 }
             }
         })

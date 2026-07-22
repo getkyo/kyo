@@ -67,7 +67,7 @@ class SqlRunStaticTest extends Test:
     // ── Leaf D, Insert.runStatic compiles for a static AST ───────────────────────
 
     "Insert.runStatic compiles for a static AST" in {
-        def shape(using Frame): InsertResult < (Async & Abort[SqlException] & Scope) =
+        def shape(using Frame): SqlClient.InsertOutcome < (Async & Abort[SqlException] & Scope) =
             Sql.insert[User].values(User(0L, "ada@example.com")).runStatic
         succeed
     }
@@ -109,7 +109,7 @@ class SqlRunStaticTest extends Test:
     // Delete is liftable and uses the static path).
 
     "Insert.run uses static fast-path on a literal" in {
-        def shape(using Frame): InsertResult < (Async & Abort[SqlException] & Scope) =
+        def shape(using Frame): SqlClient.InsertOutcome < (Async & Abort[SqlException] & Scope) =
             Sql.insert[User].values(User(0L, "x")).run
         succeed
     }

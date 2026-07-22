@@ -3,12 +3,12 @@ package kyo
 import kyo.SqlAst.*
 import scala.compiletime.testing.typeChecks
 
-/** Verifies the AST/renderer/decoder pieces of the `InsertResult` surface.
+/** Verifies the AST/renderer/decoder pieces of the `SqlClient.InsertOutcome` surface.
   *
   * Renderer and wire-decoder tests run in unit mode (no container). Container-integration tests are marked `pending` because the test tree
   * currently has no container harness, they will be filled in once kyo-sql gains an integration-test fixture for live PG + MySQL servers.
   */
-class SqlInsertResultTest extends Test:
+class SqlClientInsertOutcomeTest extends Test:
 
     case class Account(id: Long, name: String) derives Schema
     case class Tag(name: String) derives Schema
@@ -48,19 +48,19 @@ class SqlInsertResultTest extends Test:
     // ── 4-7. Container-integration leaves ──────────────────────────────────────
     //
     // The plan calls for live-container assertions:
-    //   #4  Sql.insert[Account].values(Account(0L, "Ada")).runDynamic on PG → InsertResult(1, Present(<long>))
-    //   #5  Same on MySQL container                                          → InsertResult(1, Present(<long>))
-    //   #6  Sql.insert[Tag].values(Tag("x")).runDynamic on PG               → InsertResult(1, Absent)
-    //   #7  Sql.insert[Tag].values(Tag("x")).runDynamic on MySQL            → InsertResult(1, Absent) (lastInsertId == 0)
+    //   #4  Sql.insert[Account].values(Account(0L, "Ada")).runDynamic on PG → SqlClient.InsertOutcome(1, Present(<long>))
+    //   #5  Same on MySQL container                                          → SqlClient.InsertOutcome(1, Present(<long>))
+    //   #6  Sql.insert[Tag].values(Tag("x")).runDynamic on PG               → SqlClient.InsertOutcome(1, Absent)
+    //   #7  Sql.insert[Tag].values(Tag("x")).runDynamic on MySQL            → SqlClient.InsertOutcome(1, Absent) (lastInsertId == 0)
     //
     // These require a container harness (PG + MySQL test containers) that kyo-sql does not currently
     // expose. The `executeInsert` path is wired end-to-end (SqlClientBackend → PostgresConnection /
     // MysqlConnection); once the integration fixture lands, these become straight calls into it.
 
-    "PG container: Insert.run on Account returns InsertResult(1, Present(<long>))".ignore("pending") - {}
-    "MySQL container: Insert.run on Account returns InsertResult(1, Present(<long>))".ignore("pending") - {}
-    "PG container: Insert.run on Tag returns InsertResult(1, Absent)".ignore("pending") - {}
-    "MySQL container: Insert.run on Tag returns InsertResult(1, Absent) (last_insert_id == 0)".ignore("pending") - {}
+    "PG container: Insert.run on Account returns SqlClient.InsertOutcome(1, Present(<long>))".ignore("pending") - {}
+    "MySQL container: Insert.run on Account returns SqlClient.InsertOutcome(1, Present(<long>))".ignore("pending") - {}
+    "PG container: Insert.run on Tag returns SqlClient.InsertOutcome(1, Absent)".ignore("pending") - {}
+    "MySQL container: Insert.run on Tag returns SqlClient.InsertOutcome(1, Absent) (last_insert_id == 0)".ignore("pending") - {}
 
     // ── 8. .returning compiles on Insert/Update/Delete (Phase 40, G-Parity-16) ─
 
@@ -113,34 +113,34 @@ class SqlInsertResultTest extends Test:
     "PG batch INSERT: live-container generatedKey is the LAST id".ignore("pending") - {}
     "MySQL batch INSERT: live-container generatedKey is the FIRST id".ignore("pending") - {}
 
-    // ── InsertResult value type assertions ─────────────────────────────────────
+    // ── SqlClient.InsertOutcome value type assertions ─────────────────────────────────────
 
-    "InsertResult fields are Long + GeneratedKey.Value" in {
-        val r = InsertResult(2L, GeneratedKey.Value(99L))
+    "SqlClient.InsertOutcome fields are Long + SqlClient.InsertOutcome.GeneratedKey.Value" in {
+        val r = SqlClient.InsertOutcome(2L, SqlClient.InsertOutcome.GeneratedKey.Value(99L))
         assert(r.affectedRows == 2L)
-        assert(r.generatedKey == GeneratedKey.Value(99L))
-        assert(GeneratedKey.isPresent(r.generatedKey))
-        assert(GeneratedKey.foldKey(r.generatedKey)(0L)(identity) == 99L)
+        assert(r.generatedKey == SqlClient.InsertOutcome.GeneratedKey.Value(99L))
+        assert(SqlClient.InsertOutcome.GeneratedKey.isPresent(r.generatedKey))
+        assert(SqlClient.InsertOutcome.GeneratedKey.foldKey(r.generatedKey)(0L)(identity) == 99L)
     }
 
-    "InsertResult.generatedKey can be NoAutoKey" in {
-        val r = InsertResult(1L, GeneratedKey.NoAutoKey)
-        assert(r.generatedKey == GeneratedKey.NoAutoKey)
-        assert(!GeneratedKey.isPresent(r.generatedKey))
-        assert(GeneratedKey.foldKey(r.generatedKey)(-1L)(identity) == -1L)
+    "SqlClient.InsertOutcome.generatedKey can be NoAutoKey" in {
+        val r = SqlClient.InsertOutcome(1L, SqlClient.InsertOutcome.GeneratedKey.NoAutoKey)
+        assert(r.generatedKey == SqlClient.InsertOutcome.GeneratedKey.NoAutoKey)
+        assert(!SqlClient.InsertOutcome.GeneratedKey.isPresent(r.generatedKey))
+        assert(SqlClient.InsertOutcome.GeneratedKey.foldKey(r.generatedKey)(-1L)(identity) == -1L)
     }
 
-    "InsertResult.generatedKey can be Unavailable" in {
-        val r = InsertResult(1L, GeneratedKey.Unavailable)
-        assert(r.generatedKey == GeneratedKey.Unavailable)
-        assert(!GeneratedKey.isPresent(r.generatedKey))
+    "SqlClient.InsertOutcome.generatedKey can be Unavailable" in {
+        val r = SqlClient.InsertOutcome(1L, SqlClient.InsertOutcome.GeneratedKey.Unavailable)
+        assert(r.generatedKey == SqlClient.InsertOutcome.GeneratedKey.Unavailable)
+        assert(!SqlClient.InsertOutcome.GeneratedKey.isPresent(r.generatedKey))
     }
 
-    "GeneratedKey.NoAutoKey and Unavailable are distinguishable" in {
-        assert(GeneratedKey.NoAutoKey != GeneratedKey.Unavailable)
+    "SqlClient.InsertOutcome.GeneratedKey.NoAutoKey and Unavailable are distinguishable" in {
+        assert(SqlClient.InsertOutcome.GeneratedKey.NoAutoKey != SqlClient.InsertOutcome.GeneratedKey.Unavailable)
         // The split is the reason this enum exists, both used to collapse to Maybe.Absent under the
         // legacy API, hiding the root cause from callers.
         succeed
     }
 
-end SqlInsertResultTest
+end SqlClientInsertOutcomeTest

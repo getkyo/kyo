@@ -101,7 +101,7 @@ sealed trait SqlClientBackend:
         config: SqlConfig
     )(using Frame): Long < (Async & Abort[SqlException])
 
-    /** Executes a parameterised INSERT statement and returns an [[InsertResult]].
+    /** Executes a parameterised INSERT statement and returns an [[SqlClient.InsertOutcome]].
       *
       *   - On Postgres, when `sql` includes a `RETURNING <pk>` clause (auto-emitted by the renderer for tables with an auto-key column),
       *     the path reads the response's DataRow(s) and surfaces the LAST generated key as `generatedKey`. When no `RETURNING` is present,
@@ -115,7 +115,7 @@ sealed trait SqlClientBackend:
         sql: String,
         params: Chunk[BoundValue[?]],
         config: SqlConfig
-    )(using Frame): InsertResult < (Async & Abort[SqlException])
+    )(using Frame): SqlClient.InsertOutcome < (Async & Abort[SqlException])
 
     /** Returns all rows for a parameterised query using the unified [[BoundValue]] surface. */
     def queryBound(
@@ -523,7 +523,7 @@ final class PostgresSqlClientBackend private[client] (
         sql: String,
         params: Chunk[BoundValue[?]],
         config: SqlConfig
-    )(using Frame): InsertResult < (Async & Abort[SqlException]) =
+    )(using Frame): SqlClient.InsertOutcome < (Async & Abort[SqlException]) =
         val pgParams = params.flatMap(bv => SqlClientBackend.boundToPostgres(bv))
         metrics.timedQuery(retryWith(address, password, config)(conn => conn.extendedExecuteInsert(sql, pgParams)))
     end executeInsert
@@ -1562,7 +1562,7 @@ final class MysqlSqlClientBackend private[client] (
         sql: String,
         params: Chunk[BoundValue[?]],
         config: SqlConfig
-    )(using Frame): InsertResult < (Async & Abort[SqlException]) =
+    )(using Frame): SqlClient.InsertOutcome < (Async & Abort[SqlException]) =
         val myParams = params.flatMap(bv => SqlClientBackend.boundToMysql(bv))
         metrics.timedQuery(retryWith(address, password, config)(conn => conn.extendedExecuteInsert(sql, myParams)))
     end executeInsert

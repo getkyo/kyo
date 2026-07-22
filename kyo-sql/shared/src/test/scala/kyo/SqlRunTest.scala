@@ -68,10 +68,10 @@ class SqlRunTest extends Test:
         assert(errors.nonEmpty)
     }
 
-    // ── Leaf 4, .run on Insert returns InsertResult ────────────────────────────
+    // ── Leaf 4, .run on Insert returns SqlClient.InsertOutcome ────────────────────────────
 
-    "Insert.run returns InsertResult" in {
-        def shape(using Frame): InsertResult < (Async & Abort[SqlException] & Scope) =
+    "Insert.run returns SqlClient.InsertOutcome" in {
+        def shape(using Frame): SqlClient.InsertOutcome < (Async & Abort[SqlException] & Scope) =
             Sql.insert[User].values(User(0L, "ada@example.com")).run
         succeed
     }
@@ -100,13 +100,13 @@ class SqlRunTest extends Test:
             """def shape(using kyo.Frame): Long < (kyo.Async & kyo.Abort[kyo.SqlException] & kyo.Scope) =
   kyo.Sql.insert[User].values(User(0L, "ada@example.com")).run"""
         )
-        // Type mismatch (InsertResult vs Long), must produce at least one error.
+        // Type mismatch (SqlClient.InsertOutcome vs Long), must produce at least one error.
         assert(errs.nonEmpty)
     }
 
-    "Update.run does NOT return InsertResult (negative form)" in {
+    "Update.run does NOT return SqlClient.InsertOutcome (negative form)" in {
         val errs = typeCheckErrors(
-            """def shape(using kyo.Frame): InsertResult < (kyo.Async & kyo.Abort[kyo.SqlException] & kyo.Scope) =
+            """def shape(using kyo.Frame): SqlClient.InsertOutcome < (kyo.Async & kyo.Abort[kyo.SqlException] & kyo.Scope) =
   kyo.Sql.update[User].set(_.email := "x").where(_.id == 1L).run"""
         )
         assert(errs.nonEmpty)
@@ -159,9 +159,9 @@ def shape(client: kyo.SqlClient)(using kyo.Frame): kyo.Chunk[NoSchema2] < (kyo.A
             Sql.from[Person]("p").select(c => c.p.name).run
         def queryRunDyn(using Frame): Chunk[String] < (Async & Abort[SqlException] & Scope) =
             Sql.from[Person]("p").select(c => c.p.name).runDynamic
-        def insertRun(using Frame): InsertResult < (Async & Abort[SqlException] & Scope) =
+        def insertRun(using Frame): SqlClient.InsertOutcome < (Async & Abort[SqlException] & Scope) =
             Sql.insert[User].values(User(0L, "x")).run
-        def insertRunDyn(using Frame): InsertResult < (Async & Abort[SqlException] & Scope) =
+        def insertRunDyn(using Frame): SqlClient.InsertOutcome < (Async & Abort[SqlException] & Scope) =
             Sql.insert[User].values(User(0L, "x")).runDynamic
         def updateRun(using Frame): Long < (Async & Abort[SqlException] & Scope) =
             Sql.update[User].set(_.email := "x").where(_.id == 1L).run

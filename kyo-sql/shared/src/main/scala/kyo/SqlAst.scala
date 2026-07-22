@@ -1092,18 +1092,18 @@ object SqlAst:
         extension [T, F](inline ins: Insert[T, F])
 
             /** Try the static-emission path; fall back to the runtime renderer if the AST is not reducible at compile time. */
-            inline def run(using Frame): InsertResult < (Async & Abort[SqlException] & Scope) =
+            inline def run(using Frame): SqlClient.InsertOutcome < (Async & Abort[SqlException] & Scope) =
                 ${ kyo.internal.SqlRunMacro.runInsertImpl[T, F]('ins) }
 
             /** Requires compile-time AST reduction; produces a compile error if the AST is not reducible. */
-            inline def runStatic(using Frame): InsertResult < (Async & Abort[SqlException] & Scope) =
+            inline def runStatic(using Frame): SqlClient.InsertOutcome < (Async & Abort[SqlException] & Scope) =
                 ${ kyo.internal.SqlRunMacro.runInsertStaticImpl[T, F]('ins) }
         end extension
 
         extension [T, F](ins: Insert[T, F])
 
             /** Skip the static path entirely and always use the runtime renderer. Non-inline so it can be invoked with a `val` reference. */
-            def runDynamic(using frame: Frame): InsertResult < (Async & Abort[SqlException] & Scope) =
+            def runDynamic(using frame: Frame): SqlClient.InsertOutcome < (Async & Abort[SqlException] & Scope) =
                 SqlClient.use { client =>
                     val r = kyo.internal.SqlRender.render(ins, client.sqlBackend, frame)
                     client.executeBoundInsert(r.sql, r.params)

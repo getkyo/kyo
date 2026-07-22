@@ -87,7 +87,7 @@ object SqlRunMacro:
     def runInsertImpl[T: Type, F: Type](ins: Expr[Insert[T, F]])(using
         Quotes
     )
-        : Expr[InsertResult < (Async & Abort[SqlException] & Scope)] =
+        : Expr[SqlClient.InsertOutcome < (Async & Abort[SqlException] & Scope)] =
         SqlStaticMacro.tryImpl(widenStatement(ins)) match
             case Some(rendered) =>
                 '{
@@ -109,7 +109,7 @@ object SqlRunMacro:
     def runInsertStaticImpl[T: Type, F: Type](ins: Expr[Insert[T, F]])(using
         Quotes
     )
-        : Expr[InsertResult < (Async & Abort[SqlException] & Scope)] =
+        : Expr[SqlClient.InsertOutcome < (Async & Abort[SqlException] & Scope)] =
         val rendered: Expr[SqlRendered] = SqlStaticMacro.impl(widenStatement(ins))
         '{
             SqlClient.use { client =>

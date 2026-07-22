@@ -9,7 +9,7 @@ import kyo.internal.SqlSharedContainers.Backend
   *
   * Covers the full pipeline: DSL → AST → SqlRender → SqlClient.executeBound* → real DB → assertion.
   *
-  * InsertResult contract (InsertResult.scala):
+  * SqlClient.InsertOutcome contract (SqlClient.InsertOutcome.scala):
   *   - affectedRows: Long, row count from CommandComplete / OK packet
   *   - generatedKey: Maybe[Long], Present when autoKey detected + DB reported one; Absent when no autoKey column or DB reports 0.
   * Auto-key detection: case class whose FIRST field is Long-typed. PG: auto-appends RETURNING <pk>; MySQL: reads last_insert_id from OK
@@ -302,14 +302,14 @@ class SqlEndToEndTest extends Test:
         }
     }
 
-    // ── Leaves 9-11: InsertResult ─────────────────────────────────────────────
+    // ── Leaves 9-11: SqlClient.InsertOutcome ─────────────────────────────────────────────
     //
-    // InsertResult contract for auto-key INSERTs:
+    // SqlClient.InsertOutcome contract for auto-key INSERTs:
     //   - affectedRows: Long
     //   - generatedKey: Maybe[Long], Present when first field is Long AND DB reports a key.
     //     PG auto-appends RETURNING <pk>; MySQL reads last_insert_id from OK packet.
 
-    "Leaf 9: INSERT with auto-key returns InsertResult.generatedKey = Present on PG" in {
+    "Leaf 9: INSERT with auto-key returns SqlClient.InsertOutcome.generatedKey = Present on PG" in {
         Scope.run {
             Async.timeout(120.seconds) {
                 SqlSharedContainers.withFreshSchema(Backend.Postgres) { ctx =>
@@ -328,11 +328,11 @@ class SqlEndToEndTest extends Test:
                         yield
                             assert(result.affectedRows == 1L, s"Expected 1 affected row, got: ${result.affectedRows}")
                             assert(
-                                GeneratedKey.isPresent(result.generatedKey),
+                                SqlClient.InsertOutcome.GeneratedKey.isPresent(result.generatedKey),
                                 s"Expected Value generatedKey for PG auto-RETURNING, got: ${result.generatedKey}"
                             )
                             assert(
-                                GeneratedKey.foldKey(result.generatedKey)(-1L)(identity) == 42L,
+                                SqlClient.InsertOutcome.GeneratedKey.foldKey(result.generatedKey)(-1L)(identity) == 42L,
                                 s"Expected generatedKey == Value(42L), got: ${result.generatedKey}"
                             )
                     }
@@ -341,7 +341,7 @@ class SqlEndToEndTest extends Test:
         }
     }
 
-    "Leaf 10: INSERT with auto-key returns InsertResult.generatedKey = Present on MySQL" in {
+    "Leaf 10: INSERT with auto-key returns SqlClient.InsertOutcome.generatedKey = Present on MySQL" in {
         Scope.run {
             Async.timeout(120.seconds) {
                 SqlSharedContainers.withFreshSchema(Backend.MySQL) { ctx =>
@@ -357,11 +357,11 @@ class SqlEndToEndTest extends Test:
                         yield
                             assert(result.affectedRows == 1L, s"Expected 1 affected row, got: ${result.affectedRows}")
                             assert(
-                                GeneratedKey.isPresent(result.generatedKey),
+                                SqlClient.InsertOutcome.GeneratedKey.isPresent(result.generatedKey),
                                 s"Expected Value generatedKey for MySQL AUTO_INCREMENT, got: ${result.generatedKey}"
                             )
                             assert(
-                                GeneratedKey.foldKey(result.generatedKey)(false)(_ > 0L),
+                                SqlClient.InsertOutcome.GeneratedKey.foldKey(result.generatedKey)(false)(_ > 0L),
                                 s"Expected positive generated key, got: ${result.generatedKey}"
                             )
                     }
@@ -370,7 +370,7 @@ class SqlEndToEndTest extends Test:
         }
     }
 
-    "Leaf 11: INSERT without auto-key column returns InsertResult.generatedKey = Absent" in {
+    "Leaf 11: INSERT without auto-key column returns SqlClient.InsertOutcome.generatedKey = Absent" in {
         Scope.run {
             Async.timeout(120.seconds) {
                 SqlSharedContainers.withFreshSchema(Backend.Postgres) { ctx =>
@@ -387,7 +387,7 @@ class SqlEndToEndTest extends Test:
                         yield
                             assert(result.affectedRows == 1L, s"Expected 1 affected row, got: ${result.affectedRows}")
                             assert(
-                                result.generatedKey == GeneratedKey.NoAutoKey,
+                                result.generatedKey == SqlClient.InsertOutcome.GeneratedKey.NoAutoKey,
                                 s"Expected NoAutoKey generatedKey for non-auto-key table, got: ${result.generatedKey}"
                             )
                     }

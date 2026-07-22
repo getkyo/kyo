@@ -199,29 +199,31 @@ final class PostgresConnection(
             sendNotification
         ))
 
-    /** Runs an extended INSERT and returns an [[InsertResult]].
+    /** Runs an extended INSERT and returns an [[SqlClient.InsertOutcome]].
       *
       * When `sql` ends with a `RETURNING` clause (auto-emitted by `SqlRender` for tables with an auto-key column), this issues a query and
       * decodes the single-column response as a `Long`, the generated key. The `affectedRows` count equals the number of rows returned.
       * When `sql` carries no `RETURNING` (target table has no auto-key column), this falls through to `extendedExecute` and reports
-      * `InsertResult(affected, GeneratedKey.NoAutoKey)`.
+      * `SqlClient.InsertOutcome(affected, SqlClient.InsertOutcome.GeneratedKey.NoAutoKey)`.
       *
       * Multi-row INSERTs with `RETURNING <pk>` yield multiple DataRows; this method retains the LAST decoded key as the `generatedKey`. See
-      * `InsertResult` scaladoc.
+      * `SqlClient.InsertOutcome` scaladoc.
       */
-    def extendedExecuteInsert(sql: String, params: Chunk[BoundParam[?]])(using Frame): InsertResult < (Async & Abort[SqlException]) =
+    def extendedExecuteInsert(sql: String, params: Chunk[BoundParam[?]])(using
+        Frame
+    ): SqlClient.InsertOutcome < (Async & Abort[SqlException]) =
         if sqlHasReturning(sql) then
             extendedQuery(sql, params).map { rows =>
-                if rows.isEmpty then InsertResult(0L, GeneratedKey.NoAutoKey)
+                if rows.isEmpty then SqlClient.InsertOutcome(0L, SqlClient.InsertOutcome.GeneratedKey.NoAutoKey)
                 else
                     val last = rows.last
                     val key = last.column(0) match
-                        case Maybe.Present(_) => GeneratedKey.Value(decodeFirstColumnAsLong(last))
-                        case Maybe.Absent     => GeneratedKey.Unavailable
-                    InsertResult(rows.size.toLong, key)
+                        case Maybe.Present(_) => SqlClient.InsertOutcome.GeneratedKey.Value(decodeFirstColumnAsLong(last))
+                        case Maybe.Absent     => SqlClient.InsertOutcome.GeneratedKey.Unavailable
+                    SqlClient.InsertOutcome(rows.size.toLong, key)
             }
         else
-            extendedExecute(sql, params).map(affected => InsertResult(affected, GeneratedKey.NoAutoKey))
+            extendedExecute(sql, params).map(affected => SqlClient.InsertOutcome(affected, SqlClient.InsertOutcome.GeneratedKey.NoAutoKey))
 
     private def sqlHasReturning(sql: String): Boolean =
         // Trailing-whitespace-tolerant detection of the auto-emitted RETURNING clause.

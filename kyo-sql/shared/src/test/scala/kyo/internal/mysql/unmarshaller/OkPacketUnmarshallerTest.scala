@@ -10,7 +10,7 @@ import kyo.internal.mysql.MysqlBufferReader
   * This file lives under `kyo/internal/` because it directly exercises the unmarshaller and buffer-reader internals: it constructs a
   * `MysqlBufferReader` from a hand-written fixture byte sequence and asserts the decoded [[OkPacket]] field values. The public `SqlClient`
   * surface never exposes these types, so the test legitimately belongs to the internal layer per the LHS-rule
-  * (`kyo-sql/TEST-AUDIT-FIX/STEERING.md`). The public-API path is `SqlClient.execute` returning `InsertResult` (covered in
+  * (`kyo-sql/TEST-AUDIT-FIX/STEERING.md`). The public-API path is `SqlClient.execute` returning `SqlClient.InsertOutcome` (covered in
   * `SqlInsertResultTest`'s container-gated leaves).
   *
   * The fixture (synthetic OK packet) is identical to the one that previously lived in `kyo.SqlInsertResultTest` lines 103-110 prior to the
