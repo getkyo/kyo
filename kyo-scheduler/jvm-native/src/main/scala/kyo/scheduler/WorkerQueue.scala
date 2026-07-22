@@ -4,17 +4,22 @@ import java.lang.invoke.VarHandle
 import java.util.concurrent.atomic.AtomicBoolean
 import scala.annotation.tailrec
 
-/** Worker run queue: a zero-allocation 4-ary array-backed min-heap of `Task`, keyed on `Task.runtime()`.
+/** Worker run queue: a zero-allocation 4-ary array-backed min-heap of `Task`, keyed on a snapshot of `Task.runtime()` taken at insertion.
   *
-  * The heap root (index 0) is the lowest-runtime task, which is the highest scheduling priority: lower accumulated runtime sorts ahead, so a
+  * The heap root (index 0) is the lowest-key task, which is the highest scheduling priority: lower accumulated runtime sorts ahead, so a
   * task whose runtime was reset to the minimum reaches the head first. `poll` removes the root; `add`/`offer` sift a new element up;
   * `addAndPoll` swaps the root for a new element; `stealingBy` batch-transfers the head plus about half of the remainder to an empty target
-  * queue; `drain` snapshots and clears; `rebuild` re-establishes the heap invariant in place after an element's key changed without a heap
-  * operation (Floyd, O(n)).
+  * queue; `drain` snapshots and clears; `rebuild` re-snapshots every live key and re-establishes the heap invariant (Floyd, O(n)).
+  *
+  * The queue OWNS its sort key rather than reading it live off the element. A task's runtime can change while it sits in the heap, from a
+  * thread that is not the one holding this lock, and a key that moves under a heap nobody re-sifts leaves the invariant broken: `poll` then
+  * returns an element that is not the minimum. Snapshotting at insertion makes every comparison a pure function of queue-owned state read
+  * under the lock, so no writer can perturb the ordering. The cost of that guarantee is that a runtime change becomes visible to the ordering
+  * only at the next `rebuild`, which is exactly the path the interrupt priority boost already takes.
   *
   * Thread safety is provided by an explicit spin-lock (the inherited AtomicBoolean), held for the minimal critical section. Work stealing
-  * fails fast when either lock is unavailable. The structure is specialized on `Task` so the priority comparison inlines to a direct
-  * `runtime()` read with no Ordering indirection and no element casts.
+  * fails fast when either lock is unavailable. The structure is specialized on `Task` so the priority comparison inlines to two loads from a
+  * contiguous int array, with no Ordering indirection and no element casts.
   *
   * The scheduler uses one queue per worker as the foundation for task distribution, leveraging the work-stealing and draining capabilities
   * for load balancing and worker management.
@@ -27,14 +32,21 @@ final private class WorkerQueue extends AtomicBoolean {
     // d=4 gives shallower trees (log_4 n levels) and better cache locality (4 contiguous
     // children per probe) than a binary heap, at the cost of a 4-way min scan per level.
     private var arr: Array[Task] = new Array[Task](queueCapacity())
+    // The sort key, snapshotted from `Task.runtime()` when the element is inserted and owned by the queue thereafter.
+    // The key must NOT be read live off the element: a task can be inside this heap while another thread changes its
+    // runtime (Worker.runTask bills the task it just ran AFTER `run` returned, by which point a mid-run self-schedule
+    // may already have enqueued it; Task.doPreempt and IOTask.onComplete likewise reset the runtime of queued tasks).
+    // A key that moves under a heap that is not re-sifted leaves the invariant broken, so the queue keeps its own copy
+    // and every comparison is a pure function of queue-owned state read under the lock. `rebuild` re-snapshots.
+    private var keys: Array[Int] = new Array[Int](queueCapacity())
     // Mutated under the spin-lock but read lock-free by size()/isEmpty() (e.g. Worker.checkStalling) from other
     // threads. @volatile so those cross-thread reads see fresh writes: with a plain var a stale 0 can persist on
     // weak memory models (observed on linux), making a worker pinned on a CPU-bound task whose queue has pending
     // work look empty, so checkStalling skips its doPreempt.
     @volatile private var count: Int = 0
 
-    @inline private def lessThan(a: Task, b: Task): Boolean =
-        a.runtime() < b.runtime()
+    @inline private def lessThan(i: Int, j: Int): Boolean =
+        keys(i) < keys(j)
 
     /** Tests if queue contains no elements. Provides a non-blocking snapshot of empty state.
       */
@@ -95,6 +107,7 @@ final private class WorkerQueue extends AtomicBoolean {
                 else {
                     val root = arr(0)
                     arr(0) = value
+                    keys(0) = value.runtime()
                     siftDownLocked(0)
                     root
                 }
@@ -147,11 +160,13 @@ final private class WorkerQueue extends AtomicBoolean {
       */
     def drain(f: Task => Unit): Unit =
         if (!isEmpty()) {
-            val fresh = new Array[Task](queueCapacity())
+            val fresh     = new Array[Task](queueCapacity())
+            val freshKeys = new Array[Int](queueCapacity())
             lock()
             val snapshot = arr
             val n        = count
             arr = fresh
+            keys = freshKeys
             count = 0
             unlock()
             @tailrec def loop(idx: Int): Unit =
@@ -174,6 +189,15 @@ final private class WorkerQueue extends AtomicBoolean {
             lock()
             try
                 if (count > 1) {
+                    // Re-snapshot first: rebuild exists precisely because an element's live runtime changed under the
+                    // heap, so the stored keys are the stale ones. Heapifying without refreshing them would re-sort by
+                    // the very values that are out of date and drop the interrupt priority boost on the floor.
+                    @tailrec def resnapshot(i: Int): Unit =
+                        if (i < count) {
+                            keys(i) = arr(i).runtime()
+                            resnapshot(i + 1)
+                        }
+                    resnapshot(0)
                     @tailrec def loop(i: Int): Unit =
                         if (i >= 0) {
                             siftDownLocked(i)
@@ -189,6 +213,7 @@ final private class WorkerQueue extends AtomicBoolean {
     private def addLocked(value: Task): Unit = {
         ensureCapacity(count + 1)
         arr(count) = value
+        keys(count) = value.runtime()
         siftUp(count)
         count += 1
     }
@@ -198,19 +223,22 @@ final private class WorkerQueue extends AtomicBoolean {
         val root = arr(0)
         count -= 1
         arr(0) = arr(count)
+        keys(0) = keys(count)
         arr(count) = null
         siftDownLocked(0)
         root
     }
 
     private def ensureCapacity(n: Int): Unit =
-        if (n > arr.length)
+        if (n > arr.length) {
             arr = java.util.Arrays.copyOf(arr, arr.length << 1)
+            keys = java.util.Arrays.copyOf(keys, keys.length << 1)
+        }
 
     @tailrec private def siftUp(i: Int): Unit =
         if (i > 0) {
             val p = (i - 1) >>> 2
-            if (lessThan(arr(i), arr(p))) {
+            if (lessThan(i, p)) {
                 swap(i, p)
                 siftUp(p)
             }
@@ -222,9 +250,9 @@ final private class WorkerQueue extends AtomicBoolean {
             val last = Math.min(first + 3, count - 1)
             @tailrec def minChild(c: Int, best: Int): Int =
                 if (c > last) best
-                else minChild(c + 1, if (lessThan(arr(c), arr(best))) c else best)
+                else minChild(c + 1, if (lessThan(c, best)) c else best)
             val min = minChild(first + 1, first)
-            if (lessThan(arr(min), arr(i))) {
+            if (lessThan(min, i)) {
                 swap(i, min)
                 siftDownLocked(min)
             }
@@ -235,6 +263,9 @@ final private class WorkerQueue extends AtomicBoolean {
         val tmp = arr(i)
         arr(i) = arr(j)
         arr(j) = tmp
+        val tmpKey = keys(i)
+        keys(i) = keys(j)
+        keys(j) = tmpKey
     }
 
     /** Acquires queue lock using busy-wait spin loop.

@@ -220,7 +220,7 @@ class Rfc6265Test extends BaseHttpTest:
             )(identity)
         }
 
-    "Section 4.1 - Server sets cookie via Set-Cookie header".notNative in {
+    "Section 4.1 - Server sets cookie via Set-Cookie header" in {
         val route = HttpRoute.getRaw("set-cookie").response(_.bodyText)
         val ep = route.handler { _ =>
             HttpResponse.ok("ok")
@@ -236,7 +236,7 @@ class Rfc6265Test extends BaseHttpTest:
         }
     }
 
-    "Section 4.2 - Client sends cookie via Cookie header".notNative in {
+    "Section 4.2 - Client sends cookie via Cookie header" in {
         val route = HttpRoute.getRaw("read-cookie")
             .request(_.headerOpt[String]("cookie"))
             .response(_.bodyText)
@@ -254,7 +254,7 @@ class Rfc6265Test extends BaseHttpTest:
         }
     }
 
-    "Section 4.1 - Server sets multiple cookies".notNative in {
+    "Section 4.1 - Server sets multiple cookies" in {
         val route = HttpRoute.getRaw("multi-cookie").response(_.bodyText)
         val ep = route.handler { _ =>
             HttpResponse.ok("ok")

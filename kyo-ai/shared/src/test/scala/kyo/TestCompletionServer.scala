@@ -78,17 +78,19 @@ object TestCompletionServer:
       * on an ephemeral port within the enclosing `Scope` and runs `f` with the handle. Used by the
       * non-streaming completion/eval/thought tests.
       */
-    def run[A, S](f: TestCompletionServer => A < S)(using Frame): A < (S & Async & Scope) =
+    def run[A, S](f: TestCompletionServer => A < S)(using Frame): A < (S & Async & Scope & Abort[HttpBindException]) =
         bind(streaming = false)(f)
 
     /** Binds a STREAMING server (SSE completion responses on both `/v1/chat/completions` and `/v1/messages`,
       * read by the client's `sendWith` SSE path) on an ephemeral port within the enclosing `Scope`. Used by
       * the streaming test.
       */
-    def runStreaming[A, S](f: TestCompletionServer => A < S)(using Frame): A < (S & Async & Scope) =
+    def runStreaming[A, S](f: TestCompletionServer => A < S)(using Frame): A < (S & Async & Scope & Abort[HttpBindException]) =
         bind(streaming = true)(f)
 
-    private def bind[A, S](streaming: Boolean)(f: TestCompletionServer => A < S)(using Frame): A < (S & Async & Scope) =
+    private def bind[A, S](streaming: Boolean)(f: TestCompletionServer => A < S)(using
+        Frame
+    ): A < (S & Async & Scope & Abort[HttpBindException]) =
         for
             scripts  <- AtomicRef.init(Chunk.empty[Scripted])
             received <- AtomicRef.init(Chunk.empty[Captured])

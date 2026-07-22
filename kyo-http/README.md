@@ -350,7 +350,7 @@ Caution: `trustAll = true` disables all certificate verification and exposes the
 
 ### Transport Tuning
 
-For low-level tuning of the NIO pump-and-parser pipeline, both configs accept an `HttpTransportConfig` via `.transportConfig(...)`. The defaults are production-ready; override only when profiling reveals a bottleneck. The main knobs are `channelCapacity` (in-flight chunks buffered before backpressure), `readChunkSize` (per-connection read buffer in bytes), and `ioPoolSize` (OS threads for I/O event loops, defaulting to `max(1, cores / 2)`):
+For low-level tuning of the byte-transport pipeline, both configs accept an `HttpTransportConfig` via `.transportConfig(...)`. The defaults are production-ready; override only when profiling reveals a bottleneck. The knobs are `channelCapacity` (in-flight chunks buffered before backpressure), `readChunkSize` (per-connection read buffer in bytes), `maxHeaderSize` (the HTTP header limit the parser enforces), and `handshakeTimeout` (the TLS handshake deadline, off by default):
 
 ```scala
 val server = HttpServer.init(
@@ -360,10 +360,12 @@ val server = HttpServer.init(
             HttpTransportConfig.default
                 .channelCapacity(8)
                 .readChunkSize(16384)
-                .ioPoolSize(4)
+                .handshakeTimeout(10.seconds)
         )
 )(handler1, handler2)
 ```
+
+The number of I/O event loops is not a per-client or per-server setting: every component in the process shares one transport, so it is the `kyo.net.ioPoolSize` system property, sized from the scheduler's worker count.
 
 ## Describing Endpoints with Routes
 

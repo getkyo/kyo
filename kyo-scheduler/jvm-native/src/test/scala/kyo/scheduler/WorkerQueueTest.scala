@@ -399,6 +399,45 @@ class WorkerQueueTest extends AnyFreeSpec with NonImplicitAssertions {
         }
     }
 
+    "key mutated after insertion" - {
+        // Worker.runTask bills the task it just ran in its `finally`, after `run` has returned. A task can already be back
+        // inside a queue at that moment: an IOTask whose awaited promise completes mid-run re-schedules itself from the
+        // completing thread (the promise callback runs synchronously, so this happens even single-threaded). The bill then
+        // changes the sort key of an element that is already inside the heap, with no heap operation to restore order.
+        //
+        // This is the sequential shape of that hazard: insert, mutate a key in place, poll. Ordering by a key the queue
+        // snapshots at insertion is what makes the drain order well defined regardless of later billing.
+        "billing a task that is already enqueued does not bury lower-key tasks behind it" in {
+            val queue = new WorkerQueue()
+            val a     = task(1)
+            val x     = task(2)
+            val b     = task(11)
+            val c     = task(12)
+            val d     = task(13)
+            val e     = task(3)
+            val f     = task(4)
+            val g     = task(5)
+            List(a, x, b, c, d, e, f, g).foreach(queue.add)
+
+            // Exactly Worker.runTask's post-run bill landing on a task a mid-run schedule already enqueued.
+            x.addRuntime(12) // runtime 2 -> 14
+
+            // Identity, not value: Task has no CanEqual, and labels make the failure message state the actual drain order.
+            val labels                 = List(a -> "A", x -> "X", b -> "B", c -> "C", d -> "D", e -> "E", f -> "F", g -> "G")
+            def label(t: Task): String = labels.collectFirst { case (task, name) if task eq t => name }.getOrElse("?")
+            val order                  = List.fill(8)(label(queue.poll(): Task))
+
+            assert(
+                order == List("A", "X", "E", "F", "G", "B", "C", "D"),
+                s"the queue must drain in the key order captured at insertion (1,2,3,4,5,11,12,13), got ${order.mkString(",")}"
+            )
+            assert(
+                order.indexOf("E") < order.indexOf("G"),
+                s"a task whose key was mutated after insertion must not bury lower-key tasks behind it, got ${order.mkString(",")}"
+            )
+        }
+    }
+
     "rebuild" - {
         "re-sorts after an in-place runtime key change" in {
             val queue  = new WorkerQueue()

@@ -4,6 +4,7 @@ import kyo.*
 import kyo.internal.codec.*
 import kyo.internal.server.*
 import kyo.internal.util.*
+import kyo.net.internal.util.GrowableByteBuffer
 import scala.annotation.tailrec
 
 /** HTTP/1.1 implementation of StreamContext — one instance per connection, reused across requests.
@@ -107,7 +108,8 @@ final private[kyo] class Http1StreamContext(
 
     def bodyChannel: Channel.Unsafe[Span[Byte]] = inbound
 
-    def respond(status: HttpStatus, headers: HttpHeaders)(using AllowUnsafe): ResponseWriter =
+    /** Serializes the status line, the Date header and `headers` into headerBuf, then offers the block to the outbound channel. */
+    private def writeHead(status: HttpStatus, headers: HttpHeaders)(using AllowUnsafe): Unit =
         headerBuf.reset()
         val code   = status.code
         val cached = if code >= 0 && code < 600 then Http1StreamContext.statusLineCache(code) else null
@@ -127,7 +129,28 @@ final private[kyo] class Http1StreamContext(
         headers.writeToBuffer(headerBuf)
         headerBuf.writeBytes(Http1StreamContext.CRLF, 0, Http1StreamContext.CRLF.length)
         offerOrLog(Span.fromUnsafe(headerBuf.toByteArray), "Http1StreamContext respond")
-        http1ResponseWriter
+    end writeHead
+
+    /** Serializes a response and returns the writer for its body.
+      *
+      * Every response header of every route converges here, so this is where a header that cannot go on the wire is caught: a name that is
+      * not a token, or a value carrying a control character, would let a recipient read one header line as two and see a header the handler
+      * never set (response splitting, RFC 9112 section 11.1). A handler reaches this with peer data whenever it echoes one, a trace id or a
+      * CORS origin being the usual shapes.
+      *
+      * `respond` has no error channel, so an invalid field fails closed: the handler's headers are dropped and a bare 500 goes out in their
+      * place. The returned writer discards the body that was meant for the original response, which would otherwise run past the 500's
+      * declared length and desynchronize the connection.
+      */
+    def respond(status: HttpStatus, headers: HttpHeaders)(using AllowUnsafe): ResponseWriter =
+        headers.invalidField match
+            case Absent =>
+                writeHead(status, headers)
+                http1ResponseWriter
+            case Present(field) =>
+                Log.live.unsafe.error(s"Http1StreamContext respond: cannot write $field, responding 500")
+                writeHead(HttpStatus.InternalServerError, Http1StreamContext.EmptyBodyHeaders)
+                Http1StreamContext.discardingResponseWriter
     end respond
 
     /** Puts data to outbound channel with backpressure. Uses offer() first for the fast path, falls back to putFiber() when the channel is
@@ -170,6 +193,21 @@ private[kyo] object Http1StreamContext:
     val LAST_CHUNK: Array[Byte]                = "0\r\n\r\n".getBytes(java.nio.charset.StandardCharsets.US_ASCII)
     private val HttpVersionPrefix: Array[Byte] = "HTTP/1.1 ".getBytes(java.nio.charset.StandardCharsets.US_ASCII)
     private val DatePrefix: Array[Byte]        = "Date: ".getBytes(java.nio.charset.StandardCharsets.US_ASCII)
+
+    /** The only headers of the 500 that replaces a response carrying a field the serializer must refuse. Declaring an empty body is what
+      * lets the connection stay framed once the original response's body is discarded.
+      */
+    private val EmptyBodyHeaders: HttpHeaders = HttpHeaders.empty.add("Content-Length", 0)
+
+    /** Drops everything written to it, for a response whose head was replaced by a 500. The 500 declares `Content-Length: 0`, so a body
+      * write would run past the declared length and `finish()` would append the chunked last-chunk marker; either desynchronizes the
+      * connection for the next request on it.
+      */
+    private val discardingResponseWriter: ResponseWriter = new ResponseWriter:
+        def writeBody(data: Span[Byte])(using AllowUnsafe): Unit  = ()
+        def writeChunk(data: Span[Byte])(using AllowUnsafe): Unit = ()
+        def finish()(using AllowUnsafe): Unit                     = ()
+    end discardingResponseWriter
 
     /** Returns the standard HTTP reason phrase for common status codes. HttpStatus owns the canonical name but reason phrases are HTTP/1.1
       * wire-format specific, so they live here.

@@ -4,6 +4,7 @@ import java.nio.charset.StandardCharsets
 import kyo.*
 import kyo.internal.codec.*
 import kyo.internal.util.*
+import kyo.net.internal.util.GrowableByteBuffer
 import kyo.scheduler.IOPromise
 import scala.annotation.tailrec
 
@@ -32,6 +33,7 @@ final private[kyo] class Http1ResponseParser(
     private var headerCount    = 0
     private var hdrOffsets     = new Array[Int](128)
     private var hdrOffsetCount = 0
+    private var invalid        = false
 
     /** Reusable take promise — same pattern as Http1Parser.
       *
@@ -79,6 +81,8 @@ final private[kyo] class Http1ResponseParser(
             parse()
         else
             needMoreBytes()
+        end if
+    end start
 
     private def parse(): Unit =
         val headerEnd = indexOf(buf, pos, Http1Parser.CRLF_CRLF)
@@ -91,6 +95,9 @@ final private[kyo] class Http1ResponseParser(
             // failures under cancellation noise.
             if response.statusCode < 100 || response.statusCode > 599 then
                 Log.live.unsafe.debug(s"Http1ResponseParser: invalid status code ${response.statusCode}, closing")
+                onClosed()
+            else if invalid then
+                Log.live.unsafe.debug("Http1ResponseParser: header field violates RFC 9110 section 5.5, closing")
                 onClosed()
             else
                 // Extract remaining bytes after headers — these are body bytes
@@ -149,6 +156,7 @@ final private[kyo] class Http1ResponseParser(
         rawBytes.reset()
         headerCount = 0
         hdrOffsetCount = 0
+        invalid = false
     end reset
 
     /** Parses the status line and headers from raw bytes into a ParsedResponse. */
@@ -156,6 +164,14 @@ final private[kyo] class Http1ResponseParser(
         rawBytes.reset()
         headerCount = 0
         hdrOffsetCount = 0
+        invalid = false
+
+        // A response header is stored as the raw octets it was parsed from and is written back out verbatim, so a peer
+        // that smuggles a line break past this parser has it re-emitted unchanged by any proxy that echoes the header.
+        // Every legitimate CR and LF in this region is half of a CRLF; a bare one is a line terminator a downstream MAY
+        // recognize (RFC 9112 section 2.2), and rejecting it is a recipient MUST (RFC 9110 section 5.5).
+        if containsBareCr(rawBuf, 0, headerEnd) || containsBareLf(rawBuf, 0, headerEnd) then
+            invalid = true
 
         // Find the end of the status line (first CRLF)
         val statusLineEnd = indexOf(rawBuf, headerEnd + 2, Http1Parser.CRLF_SINGLE)
@@ -256,6 +272,15 @@ final private[kyo] class Http1ResponseParser(
                         val valStart  = skipSpaces(rawBuf, colonIdx + 1, actualLineEnd)
                         val valLen    = actualLineEnd - valStart
 
+                        // RFC 9110 section 5.1: a field name is a token. A name is re-emitted verbatim, and one carrying
+                        // SP or a colon reads to a recipient as a different name and value than the peer sent.
+                        if !isToken(rawBuf, nameStart, nameLen) then
+                            invalid = true
+
+                        // RFC 9110 section 5.5 names NUL alongside CR and LF in its recipient MUST.
+                        if containsNull(rawBuf, valStart, valLen) then
+                            invalid = true
+
                         // Write name and value to rawBytes buffer, record offsets
                         val rawNameOff = rawBytes.size
                         rawBytes.writeBytes(rawBuf, nameStart, nameLen)
@@ -336,6 +361,37 @@ final private[kyo] class Http1ResponseParser(
                     else loop(i + 1, acc * 10 + (b - '0'))
             loop(0, 0)
     end parseContentLength
+
+    /** Scans buf[i..end) for any CR byte not immediately followed by LF. */
+    @tailrec private def containsBareCr(buf: Array[Byte], i: Int, end: Int): Boolean =
+        if i >= end then false
+        else if buf(i) == '\r' then
+            if i + 1 >= end || buf(i + 1) != '\n' then true
+            else containsBareCr(buf, i + 2, end) // skip past CRLF
+        else containsBareCr(buf, i + 1, end)
+
+    /** Scans buf[i..end) for any LF byte not immediately preceded by CR. */
+    @tailrec private def containsBareLf(buf: Array[Byte], i: Int, end: Int): Boolean =
+        if i >= end then false
+        else if buf(i) == '\n' then
+            if i == 0 || buf(i - 1) != '\r' then true
+            else containsBareLf(buf, i + 1, end)
+        else containsBareLf(buf, i + 1, end)
+
+    /** Scans buf[off..off+len) for null bytes (0x00). */
+    @tailrec private def containsNull(buf: Array[Byte], off: Int, remaining: Int): Boolean =
+        if remaining <= 0 then false
+        else if buf(off) == 0 then true
+        else containsNull(buf, off + 1, remaining - 1)
+
+    /** Whether buf[off..off+len) is an RFC 9110 section 5.6.2 `token`: `1*tchar`, so a zero length is not one. */
+    private def isToken(buf: Array[Byte], off: Int, len: Int): Boolean =
+        @tailrec def loop(i: Int): Boolean =
+            if i >= len then true
+            else if HttpHeaders.isTokenChar((buf(off + i) & 0xff).toChar) then loop(i + 1)
+            else false
+        len > 0 && loop(0)
+    end isToken
 
     /** Case-insensitive comparison of raw bytes against an ASCII string. */
     private def asciiEqualsIgnoreCase(src: Array[Byte], off: Int, target: String): Boolean =

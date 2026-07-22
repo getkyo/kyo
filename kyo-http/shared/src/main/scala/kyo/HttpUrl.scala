@@ -98,7 +98,7 @@ final case class HttpUrl(
             case Absent     => HttpQueryParams.empty
             case Present(q) => HttpUrl.parseAllQueryParams(q)
 
-    /** URL without query params — safe for logging/error messages (no sensitive data). */
+    /** URL without query params, safe for logging/error messages (no sensitive data). */
     def baseUrl: String =
         scheme match
             case Absent => path
@@ -178,6 +178,20 @@ object HttpUrl:
             val schemeName  = url.substring(0, schemeEnd)
             val afterScheme = schemeEnd + 3
             val isUnix      = schemeName.equalsIgnoreCase("http+unix") || schemeName.equalsIgnoreCase("https+unix")
+            val isHttp      = schemeName.equalsIgnoreCase("http") || schemeName.equalsIgnoreCase("https")
+            val isWs        = schemeName.equalsIgnoreCase("ws") || schemeName.equalsIgnoreCase("wss")
+            // Reject any non-HTTP `scheme://` rather than silently dispatching it as HTTP. A non-HTTP scheme from
+            // untrusted input (ftp, gopher, file, ...) would otherwise be sent through the HTTP transport to the
+            // authority, an SSRF surface. Only http(s), the WebSocket ws(s) schemes (the HTTP-upgrade family used by
+            // HttpClient.webSocket), and the urllib3 Unix-socket variants are accepted. parse() wraps this throw into
+            // an HttpUrlParseException. (Opaque, slash-less forms such as `javascript:...` carry no `://`, so they are
+            // handled as relative paths by the branch above and resolved against the configured baseUrl, not
+            // dispatched to an arbitrary host.)
+            if !isHttp && !isWs && !isUnix then
+                throw new IllegalArgumentException(
+                    s"unsupported URL scheme: '$schemeName' (allowed: http, https, ws, wss, http+unix, https+unix)"
+                )
+            end if
             if isUnix then
                 parseUnixSocketUrl(url, schemeName, afterScheme)
             else

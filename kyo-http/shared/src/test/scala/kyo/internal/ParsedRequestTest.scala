@@ -4,6 +4,7 @@ import java.nio.charset.StandardCharsets
 import kyo.*
 import kyo.internal.codec.*
 import kyo.internal.util.*
+import kyo.net.internal.util.GrowableByteBuffer
 
 class ParsedRequestTest extends kyo.BaseHttpTest:
 

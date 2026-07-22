@@ -65,7 +65,7 @@ An `LspServer.initWith(...)` expression is an effect description, not a running 
 ```scala doctest:scope=inherited expect=compiles
 object TodoServer extends KyoApp:
     run {
-        JsonRpcTransport.contentLengthStdio(java.lang.System.in, java.lang.System.out).map { t =>
+        JsonRpcTransport.contentLengthStdio().map { t =>
             LspServer.initWith(t, hover) { _ =>
                 Async.never
             }
@@ -622,13 +622,13 @@ Pick `init` / `initWith` (Scope-managed) by default. Reach for `initUnscoped` / 
 
 ## Transports
 
-`kyo-lsp` does not define its own transport; it reuses every `JsonRpcTransport` factory from `kyo-jsonrpc`. The two everyday choices for an LSP wire are `contentLengthStdio` (the LSP spec's framed stdio, JVM-only) and `stdio` (line-delimited JSON, for testing and bespoke peers):
+`kyo-lsp` does not define its own transport; it reuses every `JsonRpcTransport` factory from `kyo-jsonrpc`. The two everyday choices for an LSP wire are `contentLengthStdio` (the LSP spec's framed stdio) and `stdio` (line-delimited JSON, for testing and bespoke peers):
 
-- `JsonRpcTransport.contentLengthStdio(in, out)` (JVM only): the LSP standard wire framing. Each message is preceded by a `Content-Length: N\r\n\r\n` header. This is what editors expect from a stdio server.
+- `JsonRpcTransport.contentLengthStdio()`: the LSP standard wire framing. Each message is preceded by a `Content-Length: N\r\n\r\n` header. This is what editors expect from a stdio server.
 - `JsonRpcTransport.inMemory` and `JsonRpcTransport.inMemory(capacity)`: returns a paired `(t1, t2)` for in-process tests. Each end's `send` becomes the other's `incoming`.
 
-The transport seam is intentionally thin (`send`, `incoming`, `close`); other framings (line-delimited stdio, Unix domain sockets, custom byte streams) are available through `JsonRpcTransport.stdio()`, `JsonRpcTransport.unixDomain(...)` (JVM only), and `JsonRpcTransport.fromWire(...)`.
+The transport seam is intentionally thin (`send`, `incoming`, `close`); other framings (line-delimited stdio, Unix domain sockets, custom byte streams) are available through `JsonRpcTransport.stdio()`, `JsonRpcTransport.unixDomain(...)`, and `JsonRpcTransport.fromWire(...)`.
 
 ## Cross-platform behavior
 
-Source lives entirely under `shared/` and compiles on JVM, JavaScript, and Scala Native. The integration test suite exercises every handler factory and the engine policies against `JsonRpcTransport.inMemory` on all three platforms. The Content-Length stdio framer (`JsonRpcTransport.contentLengthStdio`) and the Unix-domain-socket transport are JVM-only; JS and Native servers run against in-memory or custom-framed transports the host supplies.
+Source lives entirely under `shared/` and compiles on JVM, JavaScript, and Scala Native. The integration test suite exercises every handler factory and the engine policies against `JsonRpcTransport.inMemory` on all three platforms. The Content-Length stdio framer (`JsonRpcTransport.contentLengthStdio`) and the Unix-domain-socket transport are cross-platform too: both run over the platform kyo-net transport, so JS and Wasm need a Node.js runtime (a browser has no sockets or process stdio) while JVM and Native use native APIs directly. Stdio is process-global: only one stdio transport may be open per process, and a second one aborts `NetStdioAlreadyOpenException`.

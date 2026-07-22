@@ -46,7 +46,7 @@ abstract class UITest extends kyo.test.Test[Any]:
 
     def withUI[A, S](ui: UI < Async)(f: A < (Browser & S))(using
         Frame
-    ): A < (Async & Scope & Abort[BrowserException] & S) =
+    ): A < (Async & Scope & Abort[BrowserException] & Abort[HttpBindException] & S) =
         // JVM-shared Chrome (Browser.runShared). One Chrome process is launched lazily on the
         // first call and kept alive for the JVM; each call attaches its own tab and tears it
         // down via internal Scope.run. Amortizes the per-test Chrome boot across the suite

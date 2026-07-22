@@ -858,6 +858,50 @@ class WorkerTest extends AnyFreeSpec with NonImplicitAssertions with Eventually 
             eventually(assert(task1.executions == 1))
         }
 
+        "a task enqueued after the worker already stalled is still drained" in {
+            val drained = new java.util.concurrent.ConcurrentLinkedQueue[Task]()
+            val started = new CountDownLatch(1)
+            val done    = new CountDownLatch(1)
+            val worker = createWorker(
+                executor = executor,
+                scheduleTask = (t, _) => { val _ = drained.add(t) }
+            )
+            val blocking = TestTask(_run = () => {
+                started.countDown()
+                done.await(5, TimeUnit.SECONDS)
+                Task.Done
+            })
+            worker.enqueue(blocking)
+            assert(started.await(5, TimeUnit.SECONDS))
+            worker.blocked = true
+
+            // First check takes the Running -> Stalled edge and drains whatever was queued at that instant.
+            eventually {
+                assert(!worker.checkAvailability(System.currentTimeMillis()))
+            }
+            drained.clear()
+
+            // Scheduler.schedule's random fallback ignores availability, so a task can land here now, with the
+            // worker already Stalled and parked inside its blocking call. The producer cannot prevent this: a
+            // worker may block at any point after a task is handed to it.
+            val stranded = TestTask()
+            worker.enqueue(stranded)
+
+            // Every later check finds the Running -> Stalled CAS already taken, so a drain gated on that edge
+            // alone never runs again and this task sits in the queue of a worker that cannot run it. When the
+            // blocked worker is an I/O driver parked in a poll, and the stranded task is what would produce the
+            // event that poll waits for, neither side can move: the driver never cycles and the task never runs.
+            val _ = worker.checkAvailability(System.currentTimeMillis())
+            assert(
+                drained.contains(stranded),
+                "a task enqueued onto an already-stalled worker must be drained, or it strands until that worker unblocks"
+            )
+
+            worker.blocked = false
+            done.countDown()
+            eventually(assert(blocking.executions == 1))
+        }
+
         "cleared blocked flag restores availability" in {
             val worker = createWorker(executor = executor)
             // No task running, checkStalling won't trigger
