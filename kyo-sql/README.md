@@ -48,20 +48,20 @@ case class User(id: Long, name: String, email: String) derives CanEqual
 given RowDecoder[User] = RowDecoder.derived
 
 val program: Unit < (Async & Abort[SqlException] & Scope) =
-  for
-    client <- SqlClient.init("postgres://app:secret@localhost:5432/mydb")
-    _      <- client.executeRaw(
-                "CREATE TABLE IF NOT EXISTS users (id BIGSERIAL PRIMARY KEY, name TEXT, email TEXT)"
-              )
-    _      <- client.execute(sql"INSERT INTO users (name, email) VALUES (${"Alice"}, ${"alice@example.com"})")
-    rows   <- client.query(sql"SELECT id, name, email FROM users WHERE name = ${"Alice"}")
-    users  <- Kyo.foreach(rows)(row => RowDecoder[User].decode(row))
-    _       = users.foreach(u => println(s"User: $u"))
-  yield ()
+    for
+        client <- SqlClient.init("postgres://app:secret@localhost:5432/mydb")
+        _ <- client.executeRaw(
+            "CREATE TABLE IF NOT EXISTS users (id BIGSERIAL PRIMARY KEY, name TEXT, email TEXT)"
+        )
+        _     <- client.execute(sql"INSERT INTO users (name, email) VALUES (${"Alice"}, ${"alice@example.com"})")
+        rows  <- client.query(sql"SELECT id, name, email FROM users WHERE name = ${"Alice"}")
+        users <- Kyo.foreach(rows)(row => RowDecoder[User].decode(row))
+        _ = users.foreach(u => println(s"User: $u"))
+    yield ()
 
 // Run it:
 KyoApp.run:
-  Scope.run(Abort.run(program).map(_.getOrElse(())))
+    Scope.run(Abort.run(program).map(_.getOrElse(())))
 ```
 
 ---
@@ -73,18 +73,18 @@ import kyo.*
 import kyo.sql.*
 
 val program: Unit < (Async & Abort[SqlException] & Scope) =
-  for
-    client <- SqlClient.init("mysql://app:secret@localhost:3306/mydb")
-    _      <- client.executeRaw(
-                "CREATE TABLE IF NOT EXISTS users (id BIGINT AUTO_INCREMENT PRIMARY KEY, name VARCHAR(255), email VARCHAR(255))"
-              )
-    _      <- client.execute(sql"INSERT INTO users (name, email) VALUES (${"Bob"}, ${"bob@example.com"})")
-    rows   <- client.query(sql"SELECT id, name, email FROM users WHERE name = ${"Bob"}")
-    _       = rows.foreach(row => println(row))
-  yield ()
+    for
+        client <- SqlClient.init("mysql://app:secret@localhost:3306/mydb")
+        _ <- client.executeRaw(
+            "CREATE TABLE IF NOT EXISTS users (id BIGINT AUTO_INCREMENT PRIMARY KEY, name VARCHAR(255), email VARCHAR(255))"
+        )
+        _    <- client.execute(sql"INSERT INTO users (name, email) VALUES (${"Bob"}, ${"bob@example.com"})")
+        rows <- client.query(sql"SELECT id, name, email FROM users WHERE name = ${"Bob"}")
+        _ = rows.foreach(row => println(row))
+    yield ()
 
 KyoApp.run:
-  Scope.run(Abort.run(program).map(_.getOrElse(())))
+    Scope.run(Abort.run(program).map(_.getOrElse(())))
 ```
 
 ---
@@ -141,13 +141,13 @@ case class Product(id: Long, name: String, price: BigDecimal, inStock: Boolean)
 
 // Build a query using the typed DSL:
 val q = from[Product]("products", "p")
-          .where(_.p.inStock == Expr.Lit(true))
-          .select(_.p.name, _.p.price)
-          .orderBy(_.p.price.asc)
-          .limit(20)
+    .where(_.p.inStock == Expr.Lit(true))
+    .select(_.p.name, _.p.price)
+    .orderBy(_.p.price.asc)
+    .limit(20)
 
 // Execute:
-client.query(q)  // : Chunk[Row] < (Async & Abort[SqlException])
+client.query(q) // : Chunk[Row] < (Async & Abort[SqlException])
 ```
 
 Supported combinators:
@@ -231,12 +231,14 @@ propagate encoders and decoders through a `Conversion`:
 ```scala
 opaque type UserId = Long
 object UserId:
-  def apply(v: Long): UserId = v
-  given Conversion[UserId, Long] = identity
-  given Conversion[Long, UserId] = UserId(_)
-  // mappedPostgresEncoder and mappedPostgresDecoder kick in automatically.
+    def apply(v: Long): UserId     = v
+    given Conversion[UserId, Long] = identity
+    given Conversion[Long, UserId] = UserId(_)
+    // mappedPostgresEncoder and mappedPostgresDecoder kick in automatically.
+end UserId
 
-import kyo.sql.internal.{mappedPostgresEncoder, mappedPostgresDecoder}
+import kyo.sql.internal.mappedPostgresDecoder
+import kyo.sql.internal.mappedPostgresEncoder
 
 val userId: UserId = UserId(42L)
 client.query(sql"SELECT * FROM users WHERE id = ${userId}")
@@ -255,7 +257,7 @@ case class Person(id: Long, name: String, age: Int) derives CanEqual
 given RowDecoder[Person] = RowDecoder.derived
 
 val rows: Chunk[Row] = ... // from client.query(...)
-val people: Chunk[Person] < Abort[SqlException.Decode] =
+val people: Chunk[Person] < Abort[SqlDecodeException] =
   Kyo.foreach(rows)(RowDecoder[Person].decode(_))
 ```
 
@@ -282,8 +284,8 @@ Built-in `RowDecoder` instances for `Long`, `Int`, `Short`, `String`, `Boolean`,
 
 ```scala
 val row: Row = ...
-val name: String < Abort[SqlException.Decode] = row.columnAs[String]("name")
-val id:   Long   < Abort[SqlException.Decode] = row.columnAs[Long](0)
+val name: String < Abort[SqlDecodeException] = row.columnAs[String]("name")
+val id:   Long   < Abort[SqlDecodeException] = row.columnAs[Long](0)
 ```
 
 ---
@@ -296,14 +298,14 @@ with configurable batch size; MySQL streams rows packet-by-packet from the wire.
 ```scala
 // Stream all rows in batches of 100 (Postgres portal fetch size):
 val stream: Stream[Row, Async & Abort[SqlException] & Scope] =
-  client.streamQuery(sql"SELECT * FROM large_table", batchSize = 100)
+    client.streamQuery(sql"SELECT * FROM large_table", batchSize = 100)
 
 // Consume with backpressure:
 Scope.run:
-  stream.runForeach { row =>
-    // processed one row at a time; server delivers next batch only when asked
-    processRow(row)
-  }
+    stream.runForeach { row =>
+        // processed one row at a time; server delivers next batch only when asked
+        processRow(row)
+    }
 ```
 
 Streaming inside a transaction reuses the bound connection automatically.
@@ -314,10 +316,10 @@ Streaming inside a transaction reuses the bound connection automatically.
 
 ```scala
 client.transaction() {
-  for
-    _ <- client.execute(sql"UPDATE accounts SET balance = balance - ${amount} WHERE id = ${from}")
-    _ <- client.execute(sql"UPDATE accounts SET balance = balance + ${amount} WHERE id = ${to}")
-  yield ()
+    for
+        _ <- client.execute(sql"UPDATE accounts SET balance = balance - ${amount} WHERE id = ${from}")
+        _ <- client.execute(sql"UPDATE accounts SET balance = balance + ${amount} WHERE id = ${to}")
+    yield ()
 }
 ```
 
@@ -341,11 +343,11 @@ Available levels: `ReadUncommitted`, `ReadCommitted`, `RepeatableRead`, `Seriali
 Nested `transaction { ... }` calls automatically use `SAVEPOINT`:
 
 ```scala
-client.transaction() {          // BEGIN
-  client.transaction() {        // SAVEPOINT sp_xxx
-    client.execute(sql"...")
-  }                             // RELEASE SAVEPOINT sp_xxx (or ROLLBACK TO on failure)
-}                               // COMMIT (or ROLLBACK on failure)
+client.transaction() {     // BEGIN
+    client.transaction() { // SAVEPOINT sp_xxx
+        client.execute(sql"...")
+    } // RELEASE SAVEPOINT sp_xxx (or ROLLBACK TO on failure)
+}     // COMMIT (or ROLLBACK on failure)
 ```
 
 The inner call reuses the outer connection. Its `isolation` parameter is ignored (savepoints do not
@@ -356,38 +358,42 @@ support per-savepoint isolation levels).
 ## Pool configuration
 
 ```scala
-val config = SqlClientConfig(
-  maxConnections      = 20,
-  acquireTimeout      = 5.seconds,
-  queryTimeout        = 30.seconds,
-  idleTimeout         = 10.minutes,
-  retries             = 0,
-  retryDelay          = 1.second,
-  tls                 = Maybe.Absent,       // or Maybe.Present(NetTlsConfig.default) for TLS
-  preparedStmtCacheSize = 64,
-  preparedStmtTtl     = Duration.Infinity,
-  resetOnRelease      = false,              // MySQL only: send COM_RESET_CONNECTION on release
-  cancelTimeout       = 2.seconds          // MySQL only: timeout for acquiring a cancel connection
+val config = SqlConfig.default.copy(
+    maxConnections = 20,
+    acquireTimeout = 5.seconds,
+    queryTimeout = 30.seconds,
+    idleTimeout = 10.minutes,
+    retrySchedule = Present(Schedule.exponentialBackoff(100.millis, 2.0, 5.seconds).take(5)),
+    tls = Absent, // or Present(NetTlsConfig.default) for TLS
+    preparedStmtCacheSize = 64,
+    preparedStmtTtl = Duration.Infinity,
+    cancelTimeout = 2.seconds // MySQL only: timeout for acquiring a cancel connection
 )
 
 val client = SqlClient.init("postgres://...", config)
 ```
 
-### `SqlClientConfig` reference
+### `SqlConfig` reference
 
-| Field                  | Default          | Description                                                                    |
-|------------------------|------------------|--------------------------------------------------------------------------------|
-| `maxConnections`       | 10               | Maximum concurrent connections in the pool.                                    |
-| `acquireTimeout`       | 5 seconds        | Time to wait for a connection before raising `SqlException.Connection`.        |
-| `queryTimeout`         | 30 seconds       | Maximum time for a single query/execute.                                       |
-| `idleTimeout`          | 10 minutes       | Maximum idle time before a connection is closed.                               |
-| `retries`              | 0                | Automatic retry count (0 = fail immediately).                                  |
-| `retryDelay`           | 1 second         | Base delay between retries (exponential backoff).                              |
-| `tls`                  | `Absent`         | TLS configuration. `Absent` = plaintext.                                       |
-| `preparedStmtCacheSize`| 64               | LRU cache size for server-side prepared statements per connection.             |
-| `preparedStmtTtl`      | `Duration.Infinity` | TTL for cached prepared statements. `Infinity` = evict on capacity only.    |
-| `resetOnRelease`       | `false`          | (MySQL) Send `COM_RESET_CONNECTION` before returning to pool.                 |
-| `cancelTimeout`        | 2 seconds        | (MySQL) Timeout when acquiring a cancel connection.                            |
+| Field                  | Default             | Description                                                                        |
+|------------------------|---------------------|------------------------------------------------------------------------------------|
+| `maxConnections`       | 10                  | Maximum concurrent connections in the pool.                                        |
+| `acquireTimeout`       | 5 seconds           | Time to wait for a connection before raising `SqlConnectionException`.             |
+| `queryTimeout`         | 30 seconds          | Maximum time for a single query/execute.                                           |
+| `idleTimeout`          | 10 minutes          | Maximum idle time before a connection is closed.                                   |
+| `minConnections`       | 0                   | Pre-open this many connections on `init` (warm-up).                                |
+| `retrySchedule`        | `Absent`            | Retry policy for `SqlConnectionException`. Supply a `Present(Schedule)` to opt in. |
+| `tls`                  | `Absent`            | TLS configuration. `Absent` = plaintext.                                           |
+| `preparedStmtCacheSize`| 64                  | LRU cache size for server-side prepared statements per connection.                 |
+| `preparedStmtTtl`      | `Duration.Infinity` | TTL for cached prepared statements. `Infinity` = evict on capacity only.           |
+| `cancelTimeout`        | 2 seconds           | (MySQL) Timeout when acquiring a cancel connection.                                |
+| `metricsEnabled`       | `true`              | Emit `kyo.Stat` metrics for pool + query throughput.                               |
+| `metricsScope`         | `Absent`            | Override the default `"kyo.sql"` metric scope prefix.                              |
+| `encodingRegistry`     | `EncodingRegistry.builtin` | Custom Postgres codec registry (register extra OIDs).                       |
+| `connectionTestQuery`  | `Absent`            | SQL to ping before lending a connection; `Absent` uses a driver-level ping.        |
+| `closeGrace`           | 30 seconds          | Default grace period for `close()`.                                                |
+| `streamBatchSize`      | 64                  | Rows fetched per `Execute` round-trip inside `streamQuery`.                        |
+| `copyOutCleanupTimeout`| 5 seconds           | Bound the `CopyFail`+`ReadyForQuery`-drain cleanup after an early `copyOut` close. |
 
 ### TLS
 
@@ -401,8 +407,8 @@ val tlsDefault = NetTlsConfig.default
 val tlsTrustAll = NetTlsConfig(trustAll = true)
 
 val client = SqlClient.init(
-  "postgres://app:secret@prod.db:5432/orders?sslmode=require",
-  SqlClientConfig.default.copy(tls = Maybe.Present(tlsDefault))
+    "postgres://app:secret@prod.db:5432/orders?sslmode=require",
+    SqlConfig.default.copy(tls = Maybe.Present(tlsDefault))
 )
 ```
 
@@ -415,40 +421,41 @@ takes precedence over the URL when both are set.
 
 ```scala
 for
-  (handle, rows) <- client.cancellableQuery(sql"SELECT pg_sleep(30)")
-  _              <- Fiber.init:
-                      Async.sleep(2.seconds).andThen(client.cancel(handle))
+    (handle, rows) <- client.cancellableQuery(sql"SELECT pg_sleep(30)")
+    _ <- Fiber.init:
+        Async.sleep(2.seconds).andThen(client.cancel(handle))
 yield rows
+end for
 ```
 
 `cancellableQuery` returns `(CancelHandle, Chunk[Row])`. Pass the handle to `cancel` from another fiber
 while the query is in-flight. If the query finishes first, `cancel` is a no-op.
 
 - **PostgreSQL**: opens a fresh TCP sidecar connection, sends a 16-byte `CancelRequest`. The server
-  interrupts the query and the query fiber receives `SqlException.Server` with SQLSTATE `57014`.
+  interrupts the query and the query fiber receives `SqlServerException` with SQLSTATE `57014`.
 - **MySQL**: acquires a connection from the pool, sends `KILL QUERY <connectionId>`, releases it.
-  The query fiber receives `SqlException.Server` with SQLSTATE `70100`.
+  The query fiber receives `SqlServerException` with SQLSTATE `70100`.
 
 ---
 
 ## LISTEN / NOTIFY (PostgreSQL only)
 
 ```scala
-val stream: Stream[Notification, Async & Abort[SqlException] & Scope] =
-  client.notifications("order_events")
+val stream: Stream[SqlClient.Postgres.Notification, Async & Abort[SqlException] & Scope] =
+    client.notifications("order_events")
 
 Scope.run:
-  stream.runForeach { notif =>
-    println(s"Channel=${notif.channel} PID=${notif.processId} Payload=${notif.payload}")
-  }
+    stream.runForeach { notif =>
+        println(s"Channel=${notif.channel} PID=${notif.processId} Payload=${notif.payload}")
+    }
 
 // Send a notification from another connection:
 client.executeRaw("NOTIFY order_events, 'order_123_shipped'")
 ```
 
-`notifications(channel)` acquires a dedicated connection, sends `LISTEN <channel>`, and streams
-`Notification(channel, payload, processId)` values. When the `Scope` exits, `UNLISTEN` is sent and
-the connection returns to the pool.
+`SqlClient.Postgres.notifications(channel)` acquires a dedicated connection, sends `LISTEN <channel>`,
+and streams `SqlClient.Postgres.Notification(channel, payload, processId)` values. When the `Scope`
+exits, `UNLISTEN` is sent and the connection returns to the pool.
 
 ---
 
@@ -458,21 +465,21 @@ All failures surface as `Abort[SqlException]`. The hierarchy:
 
 | Variant                 | Cause                                                                           |
 |-------------------------|---------------------------------------------------------------------------------|
-| `SqlException.Connection` | TCP refused, pool exhausted, TLS handshake failed, acquire timeout            |
-| `SqlException.Request`  | Client-side error: missing encoder, parameter serialization, protocol mismatch  |
-| `SqlException.Server`   | Error response from the database (SQLSTATE + severity + message + detail)       |
-| `SqlException.Decode`   | Row decoded from the server but could not be mapped to the expected Scala type  |
+| `SqlConnectionException` | TCP refused, pool exhausted, TLS handshake failed, acquire timeout            |
+| `SqlRequestException`  | Client-side error: missing encoder, parameter serialization, protocol mismatch  |
+| `SqlServerException`   | Error response from the database (SQLSTATE + severity + message + detail)       |
+| `SqlDecodeException`   | Row decoded from the server but could not be mapped to the expected Scala type  |
 
 ```scala
 Abort.run[SqlException](client.query(sql"SELECT 1")).flatMap {
-  case Result.Success(rows)                                => println(s"Got ${rows.size} rows")
-  case Result.Failure(e: SqlException.Server) if e.sqlState == "23505" =>
-    println("Unique-violation, duplicate key")
-  case Result.Failure(e) =>
-    println(s"Query failed: ${e.getMessage}")
-  case Result.Panic(t) =>
-    // Unexpected runtime exception, always log these
-    java.lang.System.err.println(s"Panic: ${t.getMessage}")
+    case Result.Success(rows) => println(s"Got ${rows.size} rows")
+    case Result.Failure(e: SqlServerException) if e.sqlState == "23505" =>
+        println("Unique-violation, duplicate key")
+    case Result.Failure(e) =>
+        println(s"Query failed: ${e.getMessage}")
+    case Result.Panic(t) =>
+        // Unexpected runtime exception, always log these
+        Log.error(s"Panic: ${t.getMessage}")
 }
 ```
 
@@ -511,11 +518,6 @@ position is missing.
 - **Pool backpressure**: `kyo.Channel`-backed FIFO waiter queue inside `kyo.net.ConnectionPool`. Fibers
   that cannot acquire a connection immediately suspend and are resumed in order as connections are released.
 
-Reference design documents (in `kyo-sql/`):
-- `DESIGN-SYNTHESIS.md`, authoritative design decisions and trade-offs
-- `RESEARCH-PROTOCOLS.md`, PostgreSQL and MySQL wire-protocol reference
-- `RESEARCH-NDBC-LESSONS.md`, lessons from studying the ndbc driver
-
 ---
 
 ## Limitations / known issues (v1)
@@ -524,9 +526,6 @@ Reference design documents (in `kyo-sql/`):
 |---|---|
 | Auth crypto is JVM-only | SCRAM-SHA-256, MD5, and caching_sha2_password RSA use `javax.crypto`. JS/Native compile but won't connect. Cross-platform crypto is follow-up work. |
 | `verify-ca` / `verify-full` = `require` | v1 treats them all as "TLS required, JDK default trust". Strict cert-chain and hostname-check differences are v2. |
-| No pipeline mode | PostgreSQL pipeline mode (≥PG14) is not yet implemented. Each connection processes one in-flight message at a time. v2. |
-| MySQL LOCAL INFILE rejected | Requires security review before enabling. |
-| No PostgreSQL COPY protocol | `COPY … FROM STDIN` / `COPY … TO STDOUT` are v2. |
 | No SCRAM channel binding | `SCRAM-SHA-256-PLUS` (channel binding) is v2. |
 | No `allow` / `prefer` TLS upgrade | Opportunistic TLS for `sslmode=allow/prefer` is v2. v1 treats them as plaintext. |
 | TLS test flake in full-suite runs | One PostgreSQL TLS integration test occasionally times out when the full test suite runs all containers concurrently (resource contention between Podman containers). The test passes consistently in isolation. Mitigated by `Test / parallelExecution := false` in the kyo-sql build config. |
@@ -535,35 +534,35 @@ Reference design documents (in `kyo-sql/`):
 
 ## Troubleshooting
 
-### `SqlException.Connection: pool exhausted, no connection available within 5 seconds`
+### `SqlConnectionException: pool exhausted, no connection available within 5 seconds`
 
 The pool is saturated. Options:
 - Increase `maxConnections`.
 - Increase `acquireTimeout`.
 - Check for connection leaks (connections not released when the scope exits).
 
-### `SqlException.Connection: Server at host:port does not support TLS`
+### `SqlConnectionException: Server at host:port does not support TLS`
 
 The server responded `N` to the SSLRequest. Either disable TLS (`sslmode=disable`) or configure the
 server to support TLS.
 
-### `SqlException.Server: [28P01] FATAL: password authentication failed for user "..."`
+### `SqlServerException: [28P01] FATAL: password authentication failed for user "..."`
 
 Wrong password, or the user does not exist. Check the credentials in the URL.
 
-### `SqlException.Server: [57014] ERROR: canceling statement due to user request`
+### `SqlServerException: [57014] ERROR: canceling statement due to user request`
 
 The query was cancelled via `SqlClient.cancel`. This is expected when cancellation is intentional.
 
-### `SqlException.Server: [23505] ERROR: duplicate key value violates unique constraint "..."`
+### `SqlServerException: [23505] ERROR: duplicate key value violates unique constraint "..."`
 
 Unique-constraint violation. Catch this specific SQLSTATE in your error handler.
 
-### `SqlException.Decode: Column 'xyz' not found in row`
+### `SqlDecodeException: Column 'xyz' not found in row`
 
 The query did not return the expected column. Check the SELECT list or use `RowDecoder.positional`.
 
-### `SqlException.Decode: Column 'xyz' is NULL but field is non-optional`
+### `SqlDecodeException: Column 'xyz' is NULL but field is non-optional`
 
 The column returned NULL but the Scala field is not `Maybe[A]`. Change the field type to `Maybe[A]`
 or ensure the column is NOT NULL in the schema.
