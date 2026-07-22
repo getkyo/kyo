@@ -262,7 +262,7 @@ sealed trait SqlClientBackend:
         password: String,
         channel: String,
         config: SqlConfig
-    )(using Frame): Stream[SqlClient.Notification, Async & Abort[SqlException] & Scope]
+    )(using Frame): Stream[SqlClient.Postgres.Notification, Async & Abort[SqlException] & Scope]
 
     /** MySQL savepoint helpers, delegated to [[MysqlConnection]]. */
     def mysqlSavepointTransaction(conn: MysqlConnection, name: String)(using Frame): Unit < (Async & Abort[SqlException])
@@ -682,8 +682,8 @@ final class PostgresSqlClientBackend private[client] (
         password: String,
         channel: String,
         config: SqlConfig
-    )(using Frame): Stream[SqlClient.Notification, Async & Abort[SqlException] & Scope] =
-        Stream[SqlClient.Notification, Async & Abort[SqlException] & Scope](
+    )(using Frame): Stream[SqlClient.Postgres.Notification, Async & Abort[SqlException] & Scope] =
+        Stream[SqlClient.Postgres.Notification, Async & Abort[SqlException] & Scope](
             PostgresConnection.connect(
                 address.host,
                 address.port,
@@ -1388,14 +1388,14 @@ final class PostgresSqlClientBackend private[client] (
 
     private def emitNotifications(
         conn: PostgresConnection
-    )(using Frame): Stream[SqlClient.Notification, Async & Abort[SqlException]] =
-        Stream[SqlClient.Notification, Async & Abort[SqlException]]:
+    )(using Frame): Stream[SqlClient.Postgres.Notification, Async & Abort[SqlException]] =
+        Stream[SqlClient.Postgres.Notification, Async & Abort[SqlException]]:
             Loop.foreach:
                 Abort.run[Closed](conn.notifications.take).flatMap {
                     case Result.Success(n) =>
-                        Emit.valueWith(Chunk(SqlClient.Notification(n.channel, n.payload, n.processId)))(Loop.continue)
+                        Emit.valueWith(Chunk(SqlClient.Postgres.Notification(n.channel, n.payload, n.processId)))(Loop.continue)
                     case Result.Failure(_) =>
-                        Emit.valueWith(Chunk.empty[SqlClient.Notification])(Loop.done)
+                        Emit.valueWith(Chunk.empty[SqlClient.Postgres.Notification])(Loop.done)
                     case Result.Panic(t) =>
                         java.lang.System.err.println(s"[kyo-sql] notificationStream: take panic: ${t.getMessage}")
                         Abort.fail(SqlConnectionNotificationPanicException(t))
@@ -1753,8 +1753,8 @@ final class MysqlSqlClientBackend private[client] (
         password: String,
         channel: String,
         config: SqlConfig
-    )(using Frame): Stream[SqlClient.Notification, Async & Abort[SqlException] & Scope] =
-        Stream[SqlClient.Notification, Async & Abort[SqlException] & Scope](
+    )(using Frame): Stream[SqlClient.Postgres.Notification, Async & Abort[SqlException] & Scope] =
+        Stream[SqlClient.Postgres.Notification, Async & Abort[SqlException] & Scope](
             Abort.fail(SqlConnectionBackendMismatchException(SqlBackend.Postgres, SqlBackend.Mysql, "PostgreSQL LISTEN/NOTIFY"))
         )
 

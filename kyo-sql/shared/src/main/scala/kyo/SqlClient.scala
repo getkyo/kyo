@@ -444,24 +444,6 @@ sealed abstract class SqlClient:
             case h: SqlClient.CancelHandle.Postgres => self.backend.cancel(h)
             case h: SqlClient.CancelHandle.Mysql    => self.backend.cancelMysql(h, self.url.password, self.config)
 
-    /** Subscribes to PostgreSQL `LISTEN`/`NOTIFY` notifications on the named channel.
-      *
-      * Acquires a dedicated connection from the pool, sends `LISTEN <channel>`, and returns a [[Stream]] that emits one
-      * [[Notification]] per `NOTIFY` message received on that channel. When the stream ends (the enclosing [[Scope]] exits, or the
-      * caller calls `.take(n)`), `UNLISTEN <channel>` is sent and the connection is released back to the pool.
-      *
-      * This method does `LISTEN channel` automatically. To send `NOTIFY`, use a separate client call or a second connection.
-      *
-      * @param channel
-      *   PostgreSQL channel name (case-sensitive; will be quoted to preserve case)
-      */
-    def notifications(channel: String)(using Frame): Stream[SqlClient.Notification, Async & Abort[SqlException] & Scope] =
-        Stream[SqlClient.Notification, Async & Abort[SqlException] & Scope](
-            SqlClient.local.use { (_, config) =>
-                self.backend.notificationStream(self.url.address, self.url.password, channel, config).emit
-            }
-        )
-
     /** Runs `body` inside a database transaction.
       *
       * Acquires a single connection from the pool and binds it to the fiber-SqlClient.local [[SqlClient.txLocal]] for the duration of `body`. All
@@ -1094,22 +1076,6 @@ object SqlClient:
         case Serializable
     end IsolationLevel
 
-    /** An asynchronous notification delivered by the PostgreSQL `LISTEN`/`NOTIFY` mechanism.
-      *
-      * The server sends a [[kyo.internal.postgres.NotificationResponse]] message asynchronously (between commands) to every connection that is
-      * currently listening on the named channel. The [[kyo.internal.postgres.PostgresConnection]] routes those messages into its per-connection
-      * [[kyo.Channel]] and this public type is the value exposed to callers via [[SqlClient.notifications]].
-      *
-      * @param channel
-      *   the channel name that was used in `NOTIFY channel [, payload]`
-      * @param payload
-      *   the optional payload string (empty string when the `NOTIFY` had no payload clause)
-      * @param processId
-      *   the backend PID of the notifying session
-      */
-    final case class Notification(channel: String, payload: String, processId: Int) derives CanEqual
-
-    // TODO move to SqlClient.Mysql/Postgres. Each file = one type and oen companion
     /** Postgres-backed [[SqlClient]]. Obtain via [[SqlClient.init]] / [[SqlClient.initWith]] / [[SqlClient.initUnscoped]].
       *
       * Backend-specific extension methods (copyIn, copyOut, cancellableQuery, cancellableQueryFiber, parameters, simpleQuery) are available
@@ -1313,6 +1279,43 @@ object SqlClient:
                     conn.simpleQuery(sql)
                 }
             }
+
+        /** Subscribes to PostgreSQL `LISTEN`/`NOTIFY` notifications on the named channel.
+          *
+          * Acquires a dedicated connection from the pool, sends `LISTEN <channel>`, and returns a [[Stream]] that emits one
+          * [[SqlClient.Postgres.Notification]] per `NOTIFY` message received on that channel. When the stream ends (the enclosing [[Scope]]
+          * exits, or the caller calls `.take(n)`), `UNLISTEN <channel>` is sent and the connection is released back to the pool.
+          *
+          * This method does `LISTEN channel` automatically. To send `NOTIFY`, use a separate client call or a second connection.
+          *
+          * @param channel
+          *   PostgreSQL channel name (case-sensitive; will be quoted to preserve case)
+          */
+        def notifications(channel: String)(using Frame): Stream[SqlClient.Postgres.Notification, Async & Abort[SqlException] & Scope] =
+            Stream[SqlClient.Postgres.Notification, Async & Abort[SqlException] & Scope](
+                SqlClient.local.use { (_, config) =>
+                    self.backend.notificationStream(self.url.address, self.url.password, channel, config).emit
+                }
+            )
+
+    end Postgres
+
+    object Postgres:
+
+        /** A PostgreSQL `LISTEN`/`NOTIFY` message delivered on a subscribed channel.
+          *
+          * Emitted by [[SqlClient.Postgres.notifications]]. Each element corresponds to one `NotificationResponse` message from a server
+          * currently listening on the named channel. The internal Postgres connection routes those messages into its per-connection
+          * [[kyo.Channel]] and this public type is the value exposed to callers.
+          *
+          * @param channel
+          *   the channel name that was used in `NOTIFY channel [, payload]`
+          * @param payload
+          *   the optional payload string (empty string when the `NOTIFY` had no payload clause)
+          * @param processId
+          *   the backend PID of the notifying session
+          */
+        final case class Notification(channel: String, payload: String, processId: Int) derives CanEqual
 
     end Postgres
 
@@ -2209,21 +2212,6 @@ object SqlClient:
     /** Sends a cancel request using the active client. */
     def cancel(handle: SqlClient.CancelHandle)(using Frame): Unit < (Async & Abort[SqlException]) =
         use { c => c.cancel(handle) }
-
-    /** Subscribes to NOTIFY messages on the named channel using the active client.
-      *
-      * The [[Local]] access is embedded inside the [[Stream]] body so the stream itself is a pure value.
-      */
-    def notifications(channel: String)(using Frame): Stream[SqlClient.Notification, Async & Abort[SqlException] & Scope] =
-        Stream[SqlClient.Notification, Async & Abort[SqlException] & Scope](
-            SqlClient.local.use { (maybeClient, _) =>
-                maybeClient match
-                    case Absent =>
-                        Abort.fail(SqlConnectionNoActiveClientException())
-                    case Present(c) =>
-                        c.notifications(channel).emit
-            }
-        )
 
     /** Runs `f` with the active client when it is a [[SqlClient.Postgres]].
       *

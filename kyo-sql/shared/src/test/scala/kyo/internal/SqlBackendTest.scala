@@ -51,8 +51,8 @@ class SqlBackendTest extends Test:
 
     "usePostgres block sees a SqlClient.Postgres so PG-only members compile" in {
         // Compile-only: if usePostgres passed an abstract SqlClient the calls below would not typecheck.
-        // The block never runs (no active client, Abort.fail short-circuits) but its type is Chunk[SqlClient.Notification].
-        val prog: Chunk[SqlClient.Notification] < (Async & Abort[SqlException] & Scope) =
+        // The block never runs (no active client, Abort.fail short-circuits) but its type is Chunk[SqlClient.Postgres.Notification].
+        val prog: Chunk[SqlClient.Postgres.Notification] < (Async & Abort[SqlException] & Scope) =
             SqlClient.usePostgres { (p: SqlClient.Postgres) => p.notifications("chan").take(0).run }
         val _ = prog
         succeed

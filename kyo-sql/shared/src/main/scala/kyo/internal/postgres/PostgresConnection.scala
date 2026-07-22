@@ -2,7 +2,7 @@ package kyo.internal.postgres
 
 import kyo.*
 import kyo.SqlClient.IsolationLevel
-import kyo.SqlClient.Notification
+import kyo.SqlClient.Postgres.Notification
 import kyo.SqlConfig.Address
 import kyo.SqlConnectionConnectFailedException
 import kyo.SqlConnectionException
@@ -343,16 +343,16 @@ final class PostgresConnection(
     def cancel(address: SqlConfig.Address, tls: Maybe[NetTlsConfig])(using Frame): Unit < (Async & Abort[SqlException]) =
         CancelExchange.cancel(address, tls, processId, secretKey)
 
-    /** Drains all pending [[NotificationResponse]] messages from the notification channel and converts them to public [[SqlClient.Notification]]
+    /** Drains all pending [[NotificationResponse]] messages from the notification channel and converts them to public [[SqlClient.Postgres.Notification]]
       * values.
       *
       * Non-blocking: returns only notifications already buffered; does NOT wait for new ones.
       */
-    def drainNotifications(using Frame): Chunk[SqlClient.Notification] < Sync =
-        def loop(acc: Chunk[SqlClient.Notification]): Chunk[SqlClient.Notification] < Sync =
+    def drainNotifications(using Frame): Chunk[SqlClient.Postgres.Notification] < Sync =
+        def loop(acc: Chunk[SqlClient.Postgres.Notification]): Chunk[SqlClient.Postgres.Notification] < Sync =
             Abort.run[Closed](notifications.poll).flatMap {
                 case Result.Success(Present(n)) =>
-                    loop(acc.appended(SqlClient.Notification(n.channel, n.payload, n.processId)))
+                    loop(acc.appended(SqlClient.Postgres.Notification(n.channel, n.payload, n.processId)))
                 case _ => acc
             }
         loop(Chunk.empty)
