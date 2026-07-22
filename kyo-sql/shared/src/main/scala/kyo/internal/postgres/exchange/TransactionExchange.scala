@@ -1,8 +1,8 @@
 package kyo.internal.postgres.exchange
 
 import kyo.*
+import kyo.SqlClient.IsolationLevel
 import kyo.SqlException
-import kyo.SqlIsolationLevel
 import kyo.internal.postgres.*
 
 /** Simple-query round-trips for transaction control commands.
@@ -14,12 +14,12 @@ import kyo.internal.postgres.*
   */
 object TransactionExchange:
 
-    /** Maps an [[SqlIsolationLevel]] to its SQL clause fragment. */
-    private def isolationClause(level: SqlIsolationLevel): String = level match
-        case SqlIsolationLevel.ReadUncommitted => "READ UNCOMMITTED"
-        case SqlIsolationLevel.ReadCommitted   => "READ COMMITTED"
-        case SqlIsolationLevel.RepeatableRead  => "REPEATABLE READ"
-        case SqlIsolationLevel.Serializable    => "SERIALIZABLE"
+    /** Maps an [[SqlClient.IsolationLevel]] to its SQL clause fragment. */
+    private def isolationClause(level: SqlClient.IsolationLevel): String = level match
+        case SqlClient.IsolationLevel.ReadUncommitted => "READ UNCOMMITTED"
+        case SqlClient.IsolationLevel.ReadCommitted   => "READ COMMITTED"
+        case SqlClient.IsolationLevel.RepeatableRead  => "REPEATABLE READ"
+        case SqlClient.IsolationLevel.Serializable    => "SERIALIZABLE"
 
     /** Sends `BEGIN` (or `BEGIN ISOLATION LEVEL …` / `BEGIN … READ ONLY`).
       *
@@ -33,7 +33,7 @@ object TransactionExchange:
     def begin(
         channel: PostgresChannel,
         pid: Long,
-        isolation: Maybe[SqlIsolationLevel],
+        isolation: Maybe[SqlClient.IsolationLevel],
         readOnly: Boolean
     )(using Frame): Unit < (Async & Abort[SqlException]) =
         val clauses = Chunk.from(

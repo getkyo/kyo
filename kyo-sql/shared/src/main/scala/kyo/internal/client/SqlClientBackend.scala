@@ -225,10 +225,10 @@ sealed trait SqlClientBackend:
     )(body: A < (S & Async & Abort[SqlException]))(using Frame): A < (S & Async & Abort[SqlException])
 
     /** Cancels a Postgres query via `CancelRequest`. */
-    def cancel(handle: SqlCancelHandle.Postgres)(using Frame): Unit < (Async & Abort[SqlException])
+    def cancel(handle: SqlClient.CancelHandle.Postgres)(using Frame): Unit < (Async & Abort[SqlException])
 
     /** Cancels a MySQL query via `KILL QUERY <connectionId>` on a fresh sidecar connection. */
-    def cancelMysql(handle: SqlCancelHandle.Mysql, password: String, config: SqlConfig)(using
+    def cancelMysql(handle: SqlClient.CancelHandle.Mysql, password: String, config: SqlConfig)(using
         Frame
     ): Unit < (Async & Abort[SqlException])
 
@@ -261,7 +261,7 @@ sealed trait SqlClientBackend:
         password: String,
         channel: String,
         config: SqlConfig
-    )(using Frame): Stream[SqlNotification, Async & Abort[SqlException] & Scope]
+    )(using Frame): Stream[SqlClient.Notification, Async & Abort[SqlException] & Scope]
 
     /** MySQL savepoint helpers, delegated to [[MysqlConnection]]. */
     def mysqlSavepointTransaction(conn: MysqlConnection, name: String)(using Frame): Unit < (Async & Abort[SqlException])
@@ -654,10 +654,10 @@ final class PostgresSqlClientBackend private[client] (
 
     // --- Cancel ---
 
-    def cancel(handle: SqlCancelHandle.Postgres)(using Frame): Unit < (Async & Abort[SqlException]) =
+    def cancel(handle: SqlClient.CancelHandle.Postgres)(using Frame): Unit < (Async & Abort[SqlException]) =
         CancelExchange.cancel(handle.address, handle.tls, handle.processId, handle.secretKey)
 
-    def cancelMysql(handle: SqlCancelHandle.Mysql, password: String, config: SqlConfig)(using
+    def cancelMysql(handle: SqlClient.CancelHandle.Mysql, password: String, config: SqlConfig)(using
         Frame
     ): Unit < (Async & Abort[SqlException]) =
         Abort.fail(SqlException.Connection(
@@ -691,8 +691,8 @@ final class PostgresSqlClientBackend private[client] (
         password: String,
         channel: String,
         config: SqlConfig
-    )(using Frame): Stream[SqlNotification, Async & Abort[SqlException] & Scope] =
-        Stream[SqlNotification, Async & Abort[SqlException] & Scope](
+    )(using Frame): Stream[SqlClient.Notification, Async & Abort[SqlException] & Scope] =
+        Stream[SqlClient.Notification, Async & Abort[SqlException] & Scope](
             PostgresConnection.connect(
                 address.host,
                 address.port,
@@ -1409,14 +1409,14 @@ final class PostgresSqlClientBackend private[client] (
 
     private def emitNotifications(
         conn: PostgresConnection
-    )(using Frame): Stream[SqlNotification, Async & Abort[SqlException]] =
-        Stream[SqlNotification, Async & Abort[SqlException]]:
+    )(using Frame): Stream[SqlClient.Notification, Async & Abort[SqlException]] =
+        Stream[SqlClient.Notification, Async & Abort[SqlException]]:
             Loop.foreach:
                 Abort.run[Closed](conn.notifications.take).flatMap {
                     case Result.Success(n) =>
-                        Emit.valueWith(Chunk(SqlNotification(n.channel, n.payload, n.processId)))(Loop.continue)
+                        Emit.valueWith(Chunk(SqlClient.Notification(n.channel, n.payload, n.processId)))(Loop.continue)
                     case Result.Failure(_) =>
-                        Emit.valueWith(Chunk.empty[SqlNotification])(Loop.done)
+                        Emit.valueWith(Chunk.empty[SqlClient.Notification])(Loop.done)
                     case Result.Panic(t) =>
                         java.lang.System.err.println(s"[kyo-sql] notificationStream: take panic: ${t.getMessage}")
                         Abort.fail(SqlException.Connection(s"Notification channel panic: ${t.getMessage}", summon[Frame]))
@@ -1724,7 +1724,7 @@ final class MysqlSqlClientBackend private[client] (
 
     // --- Cancel ---
 
-    def cancel(handle: SqlCancelHandle.Postgres)(using Frame): Unit < (Async & Abort[SqlException]) =
+    def cancel(handle: SqlClient.CancelHandle.Postgres)(using Frame): Unit < (Async & Abort[SqlException]) =
         Abort.fail(SqlException.Connection(
             "Postgres cancel (CancelRequest) is not supported on the MySQL backend. Use a MySQL client.",
             summon[Frame]
@@ -1740,7 +1740,7 @@ final class MysqlSqlClientBackend private[client] (
       * Sends `KILL QUERY <connectionId>` on the fresh sidecar, then closes it. The target connection will receive ER_QUERY_INTERRUPTED /
       * SQLSTATE `70100`. If `cancelTimeout` is finite, the entire open+kill+close is wrapped in a timeout.
       */
-    def cancelMysql(handle: SqlCancelHandle.Mysql, password: String, config: SqlConfig)(using
+    def cancelMysql(handle: SqlClient.CancelHandle.Mysql, password: String, config: SqlConfig)(using
         Frame
     ): Unit < (Async & Abort[SqlException]) =
         val addr = handle.address
@@ -1815,8 +1815,8 @@ final class MysqlSqlClientBackend private[client] (
         password: String,
         channel: String,
         config: SqlConfig
-    )(using Frame): Stream[SqlNotification, Async & Abort[SqlException] & Scope] =
-        Stream[SqlNotification, Async & Abort[SqlException] & Scope](
+    )(using Frame): Stream[SqlClient.Notification, Async & Abort[SqlException] & Scope] =
+        Stream[SqlClient.Notification, Async & Abort[SqlException] & Scope](
             Abort.fail(SqlException.Connection("PostgreSQL LISTEN/NOTIFY is not supported on the MySQL backend", summon[Frame]))
         )
 

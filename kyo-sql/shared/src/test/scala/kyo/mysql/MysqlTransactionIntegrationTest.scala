@@ -246,7 +246,7 @@ class MysqlTransactionIntegrationTest extends kyo.Test:
             SqlSharedContainers.withFreshSchema(SqlSharedContainers.Backend.MySQL) { ctx =>
                 initClient(ctx, maxConns = 1) { client =>
                     Abort.run[SqlException] {
-                        client.transaction(Maybe.Present(SqlIsolationLevel.RepeatableRead), readOnly = false) {
+                        client.transaction(Maybe.Present(SqlClient.IsolationLevel.RepeatableRead), readOnly = false) {
                             client.query("SELECT 1").unit
                         }
                     }.map {
@@ -270,7 +270,7 @@ class MysqlTransactionIntegrationTest extends kyo.Test:
             SqlSharedContainers.withFreshSchema(SqlSharedContainers.Backend.MySQL) { ctx =>
                 initClient(ctx, maxConns = 1) { client =>
                     Abort.run[SqlException] {
-                        client.transaction(Maybe.Present(SqlIsolationLevel.Serializable), readOnly = false) {
+                        client.transaction(Maybe.Present(SqlClient.IsolationLevel.Serializable), readOnly = false) {
                             client.query("SELECT 1").unit
                         }
                     }.map {

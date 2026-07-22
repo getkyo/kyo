@@ -1,8 +1,8 @@
 package kyo.internal.mysql.exchange
 
 import kyo.*
+import kyo.SqlClient.IsolationLevel
 import kyo.SqlException
-import kyo.SqlIsolationLevel
 import kyo.internal.mysql.*
 
 /** Simple-query (COM_QUERY) round-trips for MySQL transaction control commands.
@@ -24,12 +24,12 @@ import kyo.internal.mysql.*
   */
 private[kyo] object MysqlTransactionExchange:
 
-    /** Maps [[SqlIsolationLevel]] to the MySQL SQL keyword phrase. */
-    private def isolationClause(level: SqlIsolationLevel): String = level match
-        case SqlIsolationLevel.ReadUncommitted => "READ UNCOMMITTED"
-        case SqlIsolationLevel.ReadCommitted   => "READ COMMITTED"
-        case SqlIsolationLevel.RepeatableRead  => "REPEATABLE READ"
-        case SqlIsolationLevel.Serializable    => "SERIALIZABLE"
+    /** Maps [[SqlClient.IsolationLevel]] to the MySQL SQL keyword phrase. */
+    private def isolationClause(level: SqlClient.IsolationLevel): String = level match
+        case SqlClient.IsolationLevel.ReadUncommitted => "READ UNCOMMITTED"
+        case SqlClient.IsolationLevel.ReadCommitted   => "READ COMMITTED"
+        case SqlClient.IsolationLevel.RepeatableRead  => "REPEATABLE READ"
+        case SqlClient.IsolationLevel.Serializable    => "SERIALIZABLE"
 
     /** Sends `START TRANSACTION` (optionally with isolation level and access mode).
       *
@@ -47,7 +47,7 @@ private[kyo] object MysqlTransactionExchange:
     def begin(
         channel: MysqlChannel,
         deprecateEof: Boolean,
-        isolation: Maybe[SqlIsolationLevel],
+        isolation: Maybe[SqlClient.IsolationLevel],
         readOnly: Boolean
     )(using Frame): Unit < (Async & Abort[SqlException]) =
         // MySQL requires SET TRANSACTION ... before START TRANSACTION to affect only the next transaction.

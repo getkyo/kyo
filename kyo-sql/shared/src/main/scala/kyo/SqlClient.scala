@@ -487,10 +487,10 @@ sealed abstract class SqlClient:
       *
       * If the query has already completed, the cancel is a no-op (the server finds no matching active query).
       */
-    def cancel(handle: SqlCancelHandle)(using Frame): Unit < (Async & Abort[SqlException]) =
+    def cancel(handle: SqlClient.CancelHandle)(using Frame): Unit < (Async & Abort[SqlException]) =
         handle match
-            case h: SqlCancelHandle.Postgres => self.backend.cancel(h)
-            case h: SqlCancelHandle.Mysql    => self.backend.cancelMysql(h, self.url.password, self.config)
+            case h: SqlClient.CancelHandle.Postgres => self.backend.cancel(h)
+            case h: SqlClient.CancelHandle.Mysql    => self.backend.cancelMysql(h, self.url.password, self.config)
 
     /** Subscribes to PostgreSQL `LISTEN`/`NOTIFY` notifications on the named channel.
       *
@@ -503,8 +503,8 @@ sealed abstract class SqlClient:
       * @param channel
       *   PostgreSQL channel name (case-sensitive; will be quoted to preserve case)
       */
-    def notifications(channel: String)(using Frame): Stream[SqlNotification, Async & Abort[SqlException] & Scope] =
-        Stream[SqlNotification, Async & Abort[SqlException] & Scope](
+    def notifications(channel: String)(using Frame): Stream[SqlClient.Notification, Async & Abort[SqlException] & Scope] =
+        Stream[SqlClient.Notification, Async & Abort[SqlException] & Scope](
             SqlClient.local.use { (_, config) =>
                 self.backend.notificationStream(self.url.address, self.url.password, channel, config).emit
             }
@@ -540,7 +540,7 @@ sealed abstract class SqlClient:
       *   the computation to run inside the transaction
       */
     private def transactionImpl[A, S](
-        isolation: Maybe[SqlIsolationLevel],
+        isolation: Maybe[SqlClient.IsolationLevel],
         readOnly: Boolean,
         body: A < S
     )(using Frame): A < (S & Async & Abort[SqlException]) =
@@ -687,7 +687,7 @@ sealed abstract class SqlClient:
       * savepoint / outermost) of [[transactionImpl]].
       */
     private def transactionTypedImpl[E, A, S](
-        isolation: Maybe[SqlIsolationLevel],
+        isolation: Maybe[SqlClient.IsolationLevel],
         readOnly: Boolean,
         body: A < (S & Abort[E])
     )(using ConcreteTag[E], Frame): A < (S & Async & Abort[SqlException | E]) =
@@ -811,7 +811,7 @@ sealed abstract class SqlClient:
       *   the computation to run inside the transaction
       */
     def transaction[A, S](
-        isolation: Maybe[SqlIsolationLevel],
+        isolation: Maybe[SqlClient.IsolationLevel],
         readOnly: Boolean
     )(body: A < S)(using Frame): A < (S & Async & Abort[SqlException]) =
         transactionImpl(isolation, readOnly, body)
@@ -840,7 +840,7 @@ sealed abstract class SqlClient:
 
     /** Typed-error transaction with explicit isolation and read-only mode. See the no-arg [[transactionTyped]] for semantics. */
     def transactionTyped[E, A, S](
-        isolation: Maybe[SqlIsolationLevel],
+        isolation: Maybe[SqlClient.IsolationLevel],
         readOnly: Boolean
     )(body: A < (S & Abort[E]))(using ConcreteTag[E], Frame): A < (S & Async & Abort[SqlException | E]) =
         transactionTypedImpl[E, A, S](isolation, readOnly, body)
@@ -1044,6 +1044,101 @@ end SqlClient
 
 object SqlClient:
 
+    /** An opaque handle that can be used to cancel the query running on a specific connection.
+      *
+      * Obtained from [[SqlClient.cancellableQuery]]. Pass the handle to [[SqlClient.cancel]] from a separate fiber while the query fiber is
+      * still active to request cancellation.
+      *
+      * There are two concrete variants:
+      *   - [[CancelHandle.Postgres]], PostgreSQL cancel via a fresh `CancelRequest` TCP connection (no auth required).
+      *   - [[CancelHandle.Mysql]], MySQL cancel via `KILL QUERY <connectionId>` on a pooled connection.
+      *
+      * Both variants carry the `address` field for network connectivity.
+      */
+    sealed abstract class CancelHandle:
+        /** Server address (host, port, db, user). */
+        def address: SqlConfig.Address
+
+    object CancelHandle:
+
+        /** PostgreSQL cancel handle.
+          *
+          * Carries the `(processId, secretKey)` pair from `BackendKeyData` and the TLS configuration. To cancel, open a fresh TCP connection
+          * (never from the pool), send a 16-byte `CancelRequest`, and close. The database will abort the query identified by this pair, causing
+          * the query fiber to receive a [[SqlException.Server]] with SQLSTATE `57014`.
+          *
+          * @param address
+          *   server address
+          * @param tls
+          *   TLS configuration used by the original connection (if any); the cancel connection will try the same upgrade
+          * @param processId
+          *   backend PID from `BackendKeyData`
+          * @param secretKey
+          *   secret key from `BackendKeyData`
+          */
+        final case class Postgres(
+            address: SqlConfig.Address,
+            tls: Maybe[NetTlsConfig],
+            processId: Int,
+            secretKey: Int
+        ) extends CancelHandle
+            derives CanEqual
+
+        /** MySQL cancel handle.
+          *
+          * Carries the server-assigned `connectionId` (thread ID) of the connection executing the query. To cancel, acquire a second
+          * authenticated connection from the pool (with a bounded timeout), send `KILL QUERY <connectionId>`, and release the connection. The
+          * database will interrupt the running query with ER_QUERY_INTERRUPTED / SQLSTATE `70100`.
+          *
+          * @param address
+          *   server address (used to acquire the cancel connection from the pool)
+          * @param connectionId
+          *   the target connection's MySQL thread/connection ID (from `HandshakeV10.threadId`)
+          */
+        final case class Mysql(
+            address: SqlConfig.Address,
+            connectionId: Long
+        ) extends CancelHandle
+            derives CanEqual
+
+    end CancelHandle
+
+    /** Standard SQL transaction isolation levels.
+      *
+      * Controls the visibility of uncommitted data written by concurrent transactions. Higher isolation reduces anomalies at the cost of
+      * concurrency.
+      *
+      * PostgreSQL default: ReadCommitted. MySQL InnoDB default: RepeatableRead.
+      */
+    enum IsolationLevel derives CanEqual:
+        /** Allows reading uncommitted data from other transactions (dirty reads). Lowest isolation; rarely used in practice. */
+        case ReadUncommitted
+
+        /** Only committed data is visible. Prevents dirty reads; phantom reads and non-repeatable reads may occur. */
+        case ReadCommitted
+
+        /** Snapshot of the database at transaction start. Prevents dirty and non-repeatable reads; phantom reads may occur in some engines. */
+        case RepeatableRead
+
+        /** Strictest level: transactions execute as if they were serial. Prevents all read anomalies; lowest concurrency. */
+        case Serializable
+    end IsolationLevel
+
+    /** An asynchronous notification delivered by the PostgreSQL `LISTEN`/`NOTIFY` mechanism.
+      *
+      * The server sends a [[kyo.internal.postgres.NotificationResponse]] message asynchronously (between commands) to every connection that is
+      * currently listening on the named channel. The [[kyo.internal.postgres.PostgresConnection]] routes those messages into its per-connection
+      * [[kyo.Channel]] and this public type is the value exposed to callers via [[SqlClient.notifications]].
+      *
+      * @param channel
+      *   the channel name that was used in `NOTIFY channel [, payload]`
+      * @param payload
+      *   the optional payload string (empty string when the `NOTIFY` had no payload clause)
+      * @param processId
+      *   the backend PID of the notifying session
+      */
+    final case class Notification(channel: String, payload: String, processId: Int) derives CanEqual
+
     // TODO move to SqlClient.Mysql/Postgres. Each file = one type and oen companion
     /** Postgres-backed [[SqlClient]]. Obtain via [[SqlClient.init]] / [[SqlClient.initWith]] / [[SqlClient.initUnscoped]].
       *
@@ -1114,9 +1209,9 @@ object SqlClient:
                 }
             )
 
-        /** Acquires a pooled Postgres connection, runs `sql`, and exposes a [[SqlCancelHandle.Postgres]] that can interrupt the query.
+        /** Acquires a pooled Postgres connection, runs `sql`, and exposes a [[SqlClient.CancelHandle.Postgres]] that can interrupt the query.
           *
-          * Returns `(SqlCancelHandle.Postgres, Chunk[SqlRow])`. The [[SqlCancelHandle.Postgres]] carries the `(processId, secretKey)` pair from
+          * Returns `(SqlClient.CancelHandle.Postgres, Chunk[SqlRow])`. The [[SqlClient.CancelHandle.Postgres]] carries the `(processId, secretKey)` pair from
           * `BackendKeyData` and is available immediately. Pass it to [[cancel]] from a separate fiber while this query fiber is active to
           * send a fresh `CancelRequest` TCP connection to the server.
           *
@@ -1133,23 +1228,23 @@ object SqlClient:
           *   query completes to avoid resource leaks.
           */
         @scala.annotation.targetName("cancellableQueryPg0")
-        def cancellableQuery(sql: String)(using Frame): (SqlCancelHandle.Postgres, Chunk[SqlRow]) < (Async & Abort[SqlException]) =
+        def cancellableQuery(sql: String)(using Frame): (SqlClient.CancelHandle.Postgres, Chunk[SqlRow]) < (Async & Abort[SqlException]) =
             cancellableQuery(SqlAst.Fragment.lit[Any](sql))
 
         @scala.annotation.targetName("cancellableQueryPg")
         def cancellableQuery(
             executable: SqlAst.Executable[?]
-        )(using Frame): (SqlCancelHandle.Postgres, Chunk[SqlRow]) < (Async & Abort[SqlException]) =
+        )(using Frame): (SqlClient.CancelHandle.Postgres, Chunk[SqlRow]) < (Async & Abort[SqlException]) =
             val rendered = SqlRender.render(executable, self.sqlBackend, summon[Frame])
             SqlClient.local.use { (_, config) =>
                 self.backend.withCancelInfo(self.url.address, self.url.password, config) { (conn, pid, secret) =>
-                    val handle = SqlCancelHandle.Postgres(self.url.address, config.tls, pid, secret)
+                    val handle = SqlClient.CancelHandle.Postgres(self.url.address, config.tls, pid, secret)
                     conn.extendedQuery(rendered.sql, rendered.params.flatMap(SqlClientBackend.boundToPostgres)).map(rows => (handle, rows))
                 }
             }
         end cancellableQuery
 
-        /** Acquires a pooled Postgres connection, starts `sql`, and returns the [[SqlCancelHandle.Postgres]] together with a [[Fiber]] that
+        /** Acquires a pooled Postgres connection, starts `sql`, and returns the [[SqlClient.CancelHandle.Postgres]] together with a [[Fiber]] that
           * resolves to the query rows.
           *
           * No-parameter overload, delegates to the parameterised form with [[Seq.empty]].
@@ -1157,10 +1252,10 @@ object SqlClient:
         @scala.annotation.targetName("cancellableQueryFiberPg0")
         def cancellableQueryFiber(sql: String)(using
             Frame
-        ): (SqlCancelHandle.Postgres, Fiber[Chunk[SqlRow], Abort[SqlException]]) < (Async & Abort[SqlException]) =
+        ): (SqlClient.CancelHandle.Postgres, Fiber[Chunk[SqlRow], Abort[SqlException]]) < (Async & Abort[SqlException]) =
             cancellableQueryFiber(SqlAst.Fragment.lit[Any](sql))
 
-        /** Acquires a pooled Postgres connection, starts `sql`, and returns the [[SqlCancelHandle.Postgres]] together with a [[Fiber]] that
+        /** Acquires a pooled Postgres connection, starts `sql`, and returns the [[SqlClient.CancelHandle.Postgres]] together with a [[Fiber]] that
           * resolves to the query rows.
           *
           * Unlike [[cancellableQuery]], which returns `(handle, rows)` as part of the suspended computation result and therefore only
@@ -1185,14 +1280,14 @@ object SqlClient:
         @scala.annotation.targetName("cancellableQueryFiberPg")
         def cancellableQueryFiber(
             executable: SqlAst.Executable[?]
-        )(using Frame): (SqlCancelHandle.Postgres, Fiber[Chunk[SqlRow], Abort[SqlException]]) < (Async & Abort[SqlException]) =
+        )(using Frame): (SqlClient.CancelHandle.Postgres, Fiber[Chunk[SqlRow], Abort[SqlException]]) < (Async & Abort[SqlException]) =
             val rendered = SqlRender.render(executable, self.sqlBackend, summon[Frame])
             SqlClient.local.use { (_, config) =>
-                Fiber.Promise.init[SqlCancelHandle.Postgres, Abort[SqlException]].flatMap { handlePromise =>
+                Fiber.Promise.init[SqlClient.CancelHandle.Postgres, Abort[SqlException]].flatMap { handlePromise =>
                     Fiber.initUnscoped {
                         Abort.run[SqlException](
                             self.backend.withCancelInfo(self.url.address, self.url.password, config) { (conn, pid, secret) =>
-                                val handle = SqlCancelHandle.Postgres(self.url.address, config.tls, pid, secret)
+                                val handle = SqlClient.CancelHandle.Postgres(self.url.address, config.tls, pid, secret)
                                 // Publish the handle BEFORE the query starts so a cancelling fiber can read it
                                 // while extendedQuery is still suspended on the wire.
                                 handlePromise.complete(Result.succeed(handle)).andThen {
@@ -1264,9 +1359,9 @@ object SqlClient:
     ) extends SqlClient:
         self =>
 
-        /** Acquires a pooled MySQL connection, runs `sql`, and exposes a [[SqlCancelHandle.Mysql]] that can interrupt the query.
+        /** Acquires a pooled MySQL connection, runs `sql`, and exposes a [[SqlClient.CancelHandle.Mysql]] that can interrupt the query.
           *
-          * Returns `(SqlCancelHandle.Mysql, Chunk[SqlRow])`. The [[SqlCancelHandle.Mysql]] is populated from the connection's `connectionId`
+          * Returns `(SqlClient.CancelHandle.Mysql, Chunk[SqlRow])`. The [[SqlClient.CancelHandle.Mysql]] is populated from the connection's `connectionId`
           * (assigned during the MySQL handshake) and is available immediately. Pass it to [[cancel]] from a separate fiber while this query
           * fiber is active to send `KILL QUERY <connectionId>`.
           *
@@ -1286,10 +1381,10 @@ object SqlClient:
         def cancellableQuery(
             sql: String,
             params: Chunk[BoundMysqlParam[?]]
-        )(using Frame): (SqlCancelHandle.Mysql, Chunk[SqlRow]) < (Async & Abort[SqlException]) =
+        )(using Frame): (SqlClient.CancelHandle.Mysql, Chunk[SqlRow]) < (Async & Abort[SqlException]) =
             SqlClient.local.use { (_, config) =>
                 self.backend.withCancelInfoMysql(self.url.address, self.url.password, config) { (conn, connId) =>
-                    val handle = SqlCancelHandle.Mysql(self.url.address, connId)
+                    val handle = SqlClient.CancelHandle.Mysql(self.url.address, connId)
                     conn.extendedQuery(sql, params).map { mysqlRows =>
                         val rows = mysqlRows.map { r =>
                             import kyo.internal.postgres.FieldDescription
@@ -1303,7 +1398,7 @@ object SqlClient:
             }
         end cancellableQuery
 
-        /** Acquires a pooled MySQL connection, runs `executable` (a rendered [[SqlAst.Executable]]), and exposes a [[SqlCancelHandle.Mysql]]
+        /** Acquires a pooled MySQL connection, runs `executable` (a rendered [[SqlAst.Executable]]), and exposes a [[SqlClient.CancelHandle.Mysql]]
           * that can interrupt the query.
           *
           * The executable is rendered via [[SqlRender]] against the MySQL backend, producing the SQL string and bind parameters. Pass a
@@ -1312,12 +1407,12 @@ object SqlClient:
         @scala.annotation.targetName("cancellableQueryMyBound")
         def cancellableQuery(
             executable: SqlAst.Executable[?]
-        )(using Frame): (SqlCancelHandle.Mysql, Chunk[SqlRow]) < (Async & Abort[SqlException]) =
+        )(using Frame): (SqlClient.CancelHandle.Mysql, Chunk[SqlRow]) < (Async & Abort[SqlException]) =
             val rendered = SqlRender.render(executable, self.sqlBackend, summon[Frame])
             self.cancellableQuery(rendered.sql, rendered.params.flatMap(SqlClientBackend.boundToMysql))
         end cancellableQuery
 
-        /** Acquires a pooled MySQL connection, starts `sql`, and returns the [[SqlCancelHandle.Mysql]] together with a [[Fiber]] that resolves
+        /** Acquires a pooled MySQL connection, starts `sql`, and returns the [[SqlClient.CancelHandle.Mysql]] together with a [[Fiber]] that resolves
           * to the query rows.
           *
           * No-parameter overload, delegates to the parameterised form with [[Seq.empty]].
@@ -1325,10 +1420,10 @@ object SqlClient:
         @scala.annotation.targetName("cancellableQueryFiberMy0")
         def cancellableQueryFiber(sql: String)(using
             Frame
-        ): (SqlCancelHandle.Mysql, Fiber[Chunk[SqlRow], Abort[SqlException]]) < (Async & Abort[SqlException]) =
+        ): (SqlClient.CancelHandle.Mysql, Fiber[Chunk[SqlRow], Abort[SqlException]]) < (Async & Abort[SqlException]) =
             cancellableQueryFiber(SqlAst.Fragment.lit[Any](sql))
 
-        /** Acquires a pooled MySQL connection, starts `executable`, and returns the [[SqlCancelHandle.Mysql]] together with a [[Fiber]] that
+        /** Acquires a pooled MySQL connection, starts `executable`, and returns the [[SqlClient.CancelHandle.Mysql]] together with a [[Fiber]] that
           * resolves to the query rows.
           *
           * Unlike [[cancellableQuery]], which returns `(handle, rows)` as part of the suspended computation result and therefore only
@@ -1354,15 +1449,15 @@ object SqlClient:
         @scala.annotation.targetName("cancellableQueryFiberMy")
         def cancellableQueryFiber(
             executable: SqlAst.Executable[?]
-        )(using Frame): (SqlCancelHandle.Mysql, Fiber[Chunk[SqlRow], Abort[SqlException]]) < (Async & Abort[SqlException]) =
+        )(using Frame): (SqlClient.CancelHandle.Mysql, Fiber[Chunk[SqlRow], Abort[SqlException]]) < (Async & Abort[SqlException]) =
             val rendered = SqlRender.render(executable, self.sqlBackend, summon[Frame])
             val myParams = rendered.params.flatMap(SqlClientBackend.boundToMysql)
             SqlClient.local.use { (_, config) =>
-                Fiber.Promise.init[SqlCancelHandle.Mysql, Abort[SqlException]].flatMap { handlePromise =>
+                Fiber.Promise.init[SqlClient.CancelHandle.Mysql, Abort[SqlException]].flatMap { handlePromise =>
                     Fiber.initUnscoped {
                         Abort.run[SqlException](
                             self.backend.withCancelInfoMysql(self.url.address, self.url.password, config) { (conn, connId) =>
-                                val handle = SqlCancelHandle.Mysql(self.url.address, connId)
+                                val handle = SqlClient.CancelHandle.Mysql(self.url.address, connId)
                                 // Publish the handle BEFORE the query starts so a cancelling fiber can read it
                                 // while extendedQuery is still suspended on the wire.
                                 handlePromise.complete(Result.succeed(handle)).andThen {
@@ -2129,7 +2224,7 @@ object SqlClient:
 
     /** Runs `body` inside a transaction with explicit isolation/read-only using the active client. */
     def transaction[A, S](
-        isolation: Maybe[SqlIsolationLevel],
+        isolation: Maybe[SqlClient.IsolationLevel],
         readOnly: Boolean
     )(body: A < S)(using Frame): A < (S & Async & Abort[SqlException]) =
         use { c => c.transaction(isolation, readOnly)(body) }
@@ -2144,7 +2239,7 @@ object SqlClient:
 
     /** Typed-error transaction with explicit isolation/read-only using the active client. */
     def transactionTyped[E, A, S](
-        isolation: Maybe[SqlIsolationLevel],
+        isolation: Maybe[SqlClient.IsolationLevel],
         readOnly: Boolean
     )(body: A < (S & Abort[E]))(using ConcreteTag[E], Frame): A < (S & Async & Abort[SqlException | E]) =
         use { c => c.transactionTyped[E, A, S](isolation, readOnly)(body) }
@@ -2158,15 +2253,15 @@ object SqlClient:
         use { c => c.metrics }
 
     /** Sends a cancel request using the active client. */
-    def cancel(handle: SqlCancelHandle)(using Frame): Unit < (Async & Abort[SqlException]) =
+    def cancel(handle: SqlClient.CancelHandle)(using Frame): Unit < (Async & Abort[SqlException]) =
         use { c => c.cancel(handle) }
 
     /** Subscribes to NOTIFY messages on the named channel using the active client.
       *
       * The [[Local]] access is embedded inside the [[Stream]] body so the stream itself is a pure value.
       */
-    def notifications(channel: String)(using Frame): Stream[SqlNotification, Async & Abort[SqlException] & Scope] =
-        Stream[SqlNotification, Async & Abort[SqlException] & Scope](
+    def notifications(channel: String)(using Frame): Stream[SqlClient.Notification, Async & Abort[SqlException] & Scope] =
+        Stream[SqlClient.Notification, Async & Abort[SqlException] & Scope](
             SqlClient.local.use { (maybeClient, _) =>
                 maybeClient match
                     case Absent =>

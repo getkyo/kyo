@@ -108,7 +108,7 @@ class CancelExchangeTest extends kyo.Test:
                 withConn(ctx) { conn =>
                     val address = SqlConfig.Address("postgres", ctx.host, ctx.port, ctx.database, ctx.username)
                     // Send a cancel with a deliberately wrong secret key (wrong key, same PID).
-                    val wrongHandle = SqlCancelHandle.Postgres(address, Absent, conn.processId, conn.secretKey ^ 0xdeadbeef)
+                    val wrongHandle = SqlClient.CancelHandle.Postgres(address, Absent, conn.processId, conn.secretKey ^ 0xdeadbeef)
                     // Issue cancel using the wrong handle, server ignores it silently.
                     Abort.run[SqlException](CancelExchange.cancel(
                         wrongHandle.address,

@@ -8,11 +8,11 @@ import kyo.net.NetTlsConfig
 /** Integration tests for query cancellation via the public SqlClient API.
   *
   * These tests exercise the public cancellation surface:
-  *   - `SqlClient.cancellableQuery` returns a `SqlCancelHandle.Postgres` carrying the backend's process ID, secret key, address, and TLS config.
-  *   - `client.cancel(handle: SqlCancelHandle.Postgres)` opens a fresh out-of-band TCP connection to deliver the cancel request.
+  *   - `SqlClient.cancellableQuery` returns a `SqlClient.CancelHandle.Postgres` carrying the backend's process ID, secret key, address, and TLS config.
+  *   - `client.cancel(handle: SqlClient.CancelHandle.Postgres)` opens a fresh out-of-band TCP connection to deliver the cancel request.
   *
   * Tests:
-  *   1. cancellableQuery exposes a SqlCancelHandle with correct processId.
+  *   1. cancellableQuery exposes a SqlClient.CancelHandle with correct processId.
   *   2. cancellableQuery via TLS, handle carries TLS config from the client.
   *
   * Internal CancelExchange / PostgresConnection tests live in `kyo.internal.postgres.exchange.CancelExchangeTest`.
@@ -96,17 +96,17 @@ class CancelIntegrationTest extends kyo.Test:
         }
     end withPostgresTls
 
-    "cancellableQuery exposes a SqlCancelHandle with correct processId".tagged("kyo.OwnContainer") in {
+    "cancellableQuery exposes a SqlClient.CancelHandle with correct processId".tagged("kyo.OwnContainer") in {
         Scope.run {
             SqlSharedContainers.withFreshSchema(SqlSharedContainers.Backend.Postgres) { ctx =>
                 val url = s"postgres://${ctx.username}:${ctx.password}@${ctx.host}:${ctx.port}/${ctx.database}"
                 SqlClient.init(url).flatMap { client =>
                     SqlClient.let(client) {
                         client.cancellableQuery("SELECT 42").map {
-                            case (handle: SqlCancelHandle.Postgres, rows) =>
+                            case (handle: SqlClient.CancelHandle.Postgres, rows) =>
                                 assert(handle.processId > 0, s"Expected positive processId, got ${handle.processId}")
                                 assert(rows.size == 1, s"Expected 1 row, got ${rows.size}")
-                            case null => fail("Expected SqlCancelHandle.Postgres for a Postgres client")
+                            case null => fail("Expected SqlClient.CancelHandle.Postgres for a Postgres client")
                         }
                     }
                 }
@@ -120,14 +120,14 @@ class CancelIntegrationTest extends kyo.Test:
                 val url = s"postgres://$user:$password@$host:$port/$db?sslmode=require"
                 SqlClient.init(url, SqlConfig.default.copy(tls = Present(trustAllConfig))).flatMap { client =>
                     SqlClient.let(client) {
-                        // Run a fast query over TLS and check that the returned SqlCancelHandle carries the TLS config.
+                        // Run a fast query over TLS and check that the returned SqlClient.CancelHandle carries the TLS config.
                         client.cancellableQuery("SELECT 42").map {
-                            case (handle: SqlCancelHandle.Postgres, rows) =>
+                            case (handle: SqlClient.CancelHandle.Postgres, rows) =>
                                 assert(rows.size == 1, s"Expected 1 row, got ${rows.size}")
                                 assert(handle.processId > 0, s"Expected positive processId, got ${handle.processId}")
                                 // The handle's TLS config should be Present (since we configured TLS).
-                                assert(handle.tls.isDefined, "Expected Present tls in SqlCancelHandle for TLS client")
-                            case null => fail("Expected SqlCancelHandle.Postgres for a Postgres client")
+                                assert(handle.tls.isDefined, "Expected Present tls in SqlClient.CancelHandle for TLS client")
+                            case null => fail("Expected SqlClient.CancelHandle.Postgres for a Postgres client")
                         }
                     }
                 }

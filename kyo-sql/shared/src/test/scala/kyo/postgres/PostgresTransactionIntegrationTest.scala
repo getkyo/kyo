@@ -36,7 +36,7 @@ class PostgresTransactionIntegrationTest extends Test:
 
     // ── Phase 69: isolation level coverage (PG) ────────────────────────────────
 
-    private def isolationLeaf(level: SqlIsolationLevel)(using kyo.test.AssertScope) =
+    private def isolationLeaf(level: SqlClient.IsolationLevel)(using kyo.test.AssertScope) =
         Scope.run {
             Async.timeout(120.seconds) {
                 SqlSharedContainers.withFreshSchema(Backend.Postgres) { ctx =>
@@ -58,19 +58,19 @@ class PostgresTransactionIntegrationTest extends Test:
         }
 
     "PG transaction with ReadUncommitted isolation completes end-to-end" in {
-        isolationLeaf(SqlIsolationLevel.ReadUncommitted)
+        isolationLeaf(SqlClient.IsolationLevel.ReadUncommitted)
     }
 
     "PG transaction with ReadCommitted isolation completes end-to-end" in {
-        isolationLeaf(SqlIsolationLevel.ReadCommitted)
+        isolationLeaf(SqlClient.IsolationLevel.ReadCommitted)
     }
 
     "PG transaction with RepeatableRead isolation completes end-to-end" in {
-        isolationLeaf(SqlIsolationLevel.RepeatableRead)
+        isolationLeaf(SqlClient.IsolationLevel.RepeatableRead)
     }
 
     "PG transaction with Serializable isolation completes end-to-end" in {
-        isolationLeaf(SqlIsolationLevel.Serializable)
+        isolationLeaf(SqlClient.IsolationLevel.Serializable)
     }
 
     // ── Phase 70: READ ONLY transactions (PG) ──────────────────────────────────

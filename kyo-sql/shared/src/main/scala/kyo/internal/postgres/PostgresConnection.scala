@@ -1,10 +1,10 @@
 package kyo.internal.postgres
 
 import kyo.*
+import kyo.SqlClient.IsolationLevel
+import kyo.SqlClient.Notification
 import kyo.SqlConfig.Address
 import kyo.SqlException
-import kyo.SqlIsolationLevel
-import kyo.SqlNotification
 import kyo.SqlRow
 import kyo.SqlStatementResult
 import kyo.internal.client.TypeRegistry
@@ -286,7 +286,7 @@ final class PostgresConnection(
 
     /** Sends `BEGIN` (optionally with an isolation level and/or `READ ONLY`). */
     def beginTransaction(
-        isolation: Maybe[SqlIsolationLevel],
+        isolation: Maybe[SqlClient.IsolationLevel],
         readOnly: Boolean
     )(using Frame): Unit < (Async & Abort[SqlException]) =
         TransactionExchange.begin(channel, processId.toLong, isolation, readOnly)
@@ -337,16 +337,16 @@ final class PostgresConnection(
     def cancel(address: SqlConfig.Address, tls: Maybe[NetTlsConfig])(using Frame): Unit < (Async & Abort[SqlException]) =
         CancelExchange.cancel(address, tls, processId, secretKey)
 
-    /** Drains all pending [[NotificationResponse]] messages from the notification channel and converts them to public [[SqlNotification]]
+    /** Drains all pending [[NotificationResponse]] messages from the notification channel and converts them to public [[SqlClient.Notification]]
       * values.
       *
       * Non-blocking: returns only notifications already buffered; does NOT wait for new ones.
       */
-    def drainNotifications(using Frame): Chunk[SqlNotification] < Sync =
-        def loop(acc: Chunk[SqlNotification]): Chunk[SqlNotification] < Sync =
+    def drainNotifications(using Frame): Chunk[SqlClient.Notification] < Sync =
+        def loop(acc: Chunk[SqlClient.Notification]): Chunk[SqlClient.Notification] < Sync =
             Abort.run[Closed](notifications.poll).flatMap {
                 case Result.Success(Present(n)) =>
-                    loop(acc.appended(SqlNotification(n.channel, n.payload, n.processId)))
+                    loop(acc.appended(SqlClient.Notification(n.channel, n.payload, n.processId)))
                 case _ => acc
             }
         loop(Chunk.empty)

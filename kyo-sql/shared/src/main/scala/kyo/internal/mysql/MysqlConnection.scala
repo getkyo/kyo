@@ -1,8 +1,8 @@
 package kyo.internal.mysql
 
 import kyo.*
+import kyo.SqlClient.IsolationLevel
 import kyo.SqlException
-import kyo.SqlIsolationLevel
 import kyo.internal.mysql.exchange.ExtendedQueryExchange
 import kyo.internal.mysql.exchange.HandshakeExchange
 import kyo.internal.mysql.exchange.LocalInfileExchange
@@ -224,7 +224,7 @@ final class MysqlConnection(
       *   if `true`, opens a `READ ONLY` transaction (INSERT/UPDATE/DELETE will fail)
       */
     def beginTransaction(
-        isolation: Maybe[SqlIsolationLevel],
+        isolation: Maybe[SqlClient.IsolationLevel],
         readOnly: Boolean
     )(using Frame): Unit < (Async & Abort[SqlException]) =
         serverCapabilities.get.flatMap { caps =>

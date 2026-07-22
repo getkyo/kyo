@@ -4,27 +4,27 @@ import kyo.Test
 
 class SqlIsolationLevelTest extends Test:
 
-    "SqlIsolationLevel has all four standard levels" in {
-        val levels = SqlIsolationLevel.values.toList
-        assert(levels.contains(SqlIsolationLevel.ReadUncommitted))
-        assert(levels.contains(SqlIsolationLevel.ReadCommitted))
-        assert(levels.contains(SqlIsolationLevel.RepeatableRead))
-        assert(levels.contains(SqlIsolationLevel.Serializable))
+    "SqlClient.IsolationLevel has all four standard levels" in {
+        val levels = SqlClient.IsolationLevel.values.toList
+        assert(levels.contains(SqlClient.IsolationLevel.ReadUncommitted))
+        assert(levels.contains(SqlClient.IsolationLevel.ReadCommitted))
+        assert(levels.contains(SqlClient.IsolationLevel.RepeatableRead))
+        assert(levels.contains(SqlClient.IsolationLevel.Serializable))
     }
 
-    "SqlIsolationLevel equality works" in {
-        assert(SqlIsolationLevel.ReadCommitted == SqlIsolationLevel.ReadCommitted)
-        assert(SqlIsolationLevel.Serializable != SqlIsolationLevel.ReadCommitted)
+    "SqlClient.IsolationLevel equality works" in {
+        assert(SqlClient.IsolationLevel.ReadCommitted == SqlClient.IsolationLevel.ReadCommitted)
+        assert(SqlClient.IsolationLevel.Serializable != SqlClient.IsolationLevel.ReadCommitted)
     }
 
-    "SqlIsolationLevel pattern match is exhaustive" in {
-        def name(level: SqlIsolationLevel): String = level match
-            case SqlIsolationLevel.ReadUncommitted => "READ UNCOMMITTED"
-            case SqlIsolationLevel.ReadCommitted   => "READ COMMITTED"
-            case SqlIsolationLevel.RepeatableRead  => "REPEATABLE READ"
-            case SqlIsolationLevel.Serializable    => "SERIALIZABLE"
+    "SqlClient.IsolationLevel pattern match is exhaustive" in {
+        def name(level: SqlClient.IsolationLevel): String = level match
+            case SqlClient.IsolationLevel.ReadUncommitted => "READ UNCOMMITTED"
+            case SqlClient.IsolationLevel.ReadCommitted   => "READ COMMITTED"
+            case SqlClient.IsolationLevel.RepeatableRead  => "REPEATABLE READ"
+            case SqlClient.IsolationLevel.Serializable    => "SERIALIZABLE"
 
-        assert(name(SqlIsolationLevel.Serializable) == "SERIALIZABLE")
+        assert(name(SqlClient.IsolationLevel.Serializable) == "SERIALIZABLE")
     }
 
 end SqlIsolationLevelTest
