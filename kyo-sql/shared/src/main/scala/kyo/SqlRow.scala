@@ -1,8 +1,8 @@
 package kyo
 
 import kyo.*
+import kyo.EncodingRegistry
 import kyo.internal.postgres.FieldDescription
-import kyo.internal.postgres.types.EncodingRegistry
 import kyo.internal.postgres.types.Format
 import kyo.internal.postgres.types.PostgresDecoder
 
@@ -21,8 +21,8 @@ import kyo.internal.postgres.types.PostgresDecoder
   */
 final class SqlRow(
     val values: Chunk[Maybe[Span[Byte]]],
-    val fields: Chunk[FieldDescription],
-    val format: Format = Format.Text
+    private[kyo] val fields: Chunk[FieldDescription],
+    private[kyo] val format: Format = Format.Text
 ):
 
     /** Returns the raw bytes for the column at `idx`, or [[Absent]] for SQL NULL. */
@@ -65,7 +65,7 @@ final class SqlRow(
       * @throws SqlDecodeException
       *   if the column is out of bounds, is NULL, the decoder is not found, or decoding fails
       */
-    def columnDecoded[A](idx: Int)(using Frame, PostgresDecoder[A]): A < Abort[SqlDecodeException] =
+    private[kyo] def columnDecoded[A](idx: Int)(using Frame, PostgresDecoder[A]): A < Abort[SqlDecodeException] =
         if idx < 0 || idx >= values.size then
             Abort.fail(SqlDecodeColumnOutOfBoundsException(idx, values.size))
         else
@@ -82,7 +82,7 @@ final class SqlRow(
       * @throws SqlDecodeException
       *   if the column is not found, is NULL, no decoder is registered, or decoding fails
       */
-    def columnDecoded[A](name: String)(using Frame, PostgresDecoder[A]): A < Abort[SqlDecodeException] =
+    private[kyo] def columnDecoded[A](name: String)(using Frame, PostgresDecoder[A]): A < Abort[SqlDecodeException] =
         val idx = fields.indexWhere(_.name == name)
         if idx < 0 then Abort.fail(SqlDecodeColumnNotFoundException(name))
         else columnDecoded[A](idx)

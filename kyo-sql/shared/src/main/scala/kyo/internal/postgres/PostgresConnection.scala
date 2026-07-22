@@ -1,6 +1,7 @@
 package kyo.internal.postgres
 
 import kyo.*
+import kyo.EncodingRegistry
 import kyo.SqlClient.IsolationLevel
 import kyo.SqlClient.Postgres.Notification
 import kyo.SqlConfig.Address
@@ -11,7 +12,6 @@ import kyo.SqlException
 import kyo.SqlRow
 import kyo.internal.client.TypeRegistry
 import kyo.internal.postgres.exchange.*
-import kyo.internal.postgres.types.EncodingRegistry
 import kyo.internal.tls.TlsNegotiator
 import kyo.net.Connection
 import kyo.net.NetPlatform

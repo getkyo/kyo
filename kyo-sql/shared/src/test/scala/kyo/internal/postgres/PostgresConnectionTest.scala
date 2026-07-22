@@ -3,10 +3,10 @@ package kyo.internal.postgres
 import java.nio.charset.StandardCharsets
 import java.util.concurrent.CopyOnWriteArrayList
 import kyo.*
+import kyo.EncodingRegistry
 import kyo.internal.SqlSharedContainers
 import kyo.internal.postgres.*
 import kyo.internal.postgres.exchange.*
-import kyo.internal.postgres.types.EncodingRegistry
 
 /** Integration tests for PostgreSQL connection startup and authentication.
   *

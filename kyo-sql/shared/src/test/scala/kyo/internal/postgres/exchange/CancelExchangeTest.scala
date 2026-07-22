@@ -1,10 +1,10 @@
 package kyo.internal.postgres.exchange
 
 import kyo.*
+import kyo.EncodingRegistry
 import kyo.OwnContainer
 import kyo.internal.SqlSharedContainers
 import kyo.internal.postgres.PostgresConnection
-import kyo.internal.postgres.types.EncodingRegistry
 import kyo.net.NetTlsConfig
 
 /** Integration tests for `CancelExchange` internal protocol mechanics.

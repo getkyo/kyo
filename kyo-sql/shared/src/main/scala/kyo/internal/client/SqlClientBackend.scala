@@ -2,8 +2,10 @@ package kyo.internal.client
 
 import java.util.concurrent.ConcurrentHashMap
 import kyo.*
+import kyo.EncodingRegistry
 import kyo.SqlClient.Metrics
 import kyo.SqlSchema.BoundValue
+import kyo.TlsMode
 import kyo.internal.SqlBackend
 import kyo.internal.client.ConnectionPool
 import kyo.internal.mysql.BoundMysqlParam
@@ -13,9 +15,7 @@ import kyo.internal.postgres.BoundParam
 import kyo.internal.postgres.FieldDescription
 import kyo.internal.postgres.PostgresConnection
 import kyo.internal.postgres.exchange.CancelExchange
-import kyo.internal.postgres.types.EncodingRegistry
 import kyo.internal.postgres.types.Format
-import kyo.internal.tls.TlsMode
 import kyo.internal.tls.TlsNegotiator
 import kyo.net.NetAddress
 
@@ -542,7 +542,7 @@ final class PostgresSqlClientBackend private[client] (
         params: Chunk[BoundMysqlParam[?]],
         config: SqlConfig
     )(using Frame): Chunk[SqlRow] < (Async & Abort[SqlException]) =
-        Abort.fail(SqlConnectionBackendMismatchException(SqlBackend.Mysql, SqlBackend.Postgres, "queryMysql"))
+        Abort.fail(SqlConnectionBackendMismatchException("mysql", "postgres", "queryMysql"))
 
     def executeMysql(
         address: SqlConfig.Address,
@@ -551,7 +551,7 @@ final class PostgresSqlClientBackend private[client] (
         params: Chunk[BoundMysqlParam[?]],
         config: SqlConfig
     )(using Frame): Long < (Async & Abort[SqlException]) =
-        Abort.fail(SqlConnectionBackendMismatchException(SqlBackend.Mysql, SqlBackend.Postgres, "executeMysql"))
+        Abort.fail(SqlConnectionBackendMismatchException("mysql", "postgres", "executeMysql"))
 
     def streamQueryMysql(
         address: SqlConfig.Address,
@@ -562,7 +562,7 @@ final class PostgresSqlClientBackend private[client] (
         config: SqlConfig
     )(using Frame): Stream[MysqlRow, Async & Abort[SqlException] & Scope] =
         Stream[MysqlRow, Async & Abort[SqlException] & Scope](
-            Abort.fail(SqlConnectionBackendMismatchException(SqlBackend.Mysql, SqlBackend.Postgres, "streamQueryMysql"))
+            Abort.fail(SqlConnectionBackendMismatchException("mysql", "postgres", "streamQueryMysql"))
         )
 
     def streamQueryMysqlRows(
@@ -574,7 +574,7 @@ final class PostgresSqlClientBackend private[client] (
         config: SqlConfig
     )(using Frame): Stream[SqlRow, Async & Abort[SqlException] & Scope] =
         Stream[SqlRow, Async & Abort[SqlException] & Scope](
-            Abort.fail(SqlConnectionBackendMismatchException(SqlBackend.Mysql, SqlBackend.Postgres, "streamQueryMysqlRows"))
+            Abort.fail(SqlConnectionBackendMismatchException("mysql", "postgres", "streamQueryMysqlRows"))
         )
 
     // --- withConnection (PG transaction support) ---
@@ -613,7 +613,7 @@ final class PostgresSqlClientBackend private[client] (
         password: String,
         config: SqlConfig
     )(f: MysqlConnection => A < (S & Async & Abort[SqlException]))(using Frame): A < (S & Async & Abort[SqlException]) =
-        Abort.fail(SqlConnectionBackendMismatchException(SqlBackend.Mysql, SqlBackend.Postgres, "withMysqlConnection"))
+        Abort.fail(SqlConnectionBackendMismatchException("mysql", "postgres", "withMysqlConnection"))
 
     def withAdvisoryLock[A, S](
         address: SqlConfig.Address,
@@ -646,7 +646,7 @@ final class PostgresSqlClientBackend private[client] (
     def cancelMysql(handle: SqlClient.CancelHandle.Mysql, password: String, config: SqlConfig)(using
         Frame
     ): Unit < (Async & Abort[SqlException]) =
-        Abort.fail(SqlConnectionBackendMismatchException(SqlBackend.Mysql, SqlBackend.Postgres, "cancel"))
+        Abort.fail(SqlConnectionBackendMismatchException("mysql", "postgres", "cancel"))
 
     // --- withCancelInfo ---
 
@@ -664,7 +664,7 @@ final class PostgresSqlClientBackend private[client] (
         password: String,
         config: SqlConfig
     )(f: (MysqlConnection, Long) => A < (Async & Abort[SqlException]))(using Frame): A < (Async & Abort[SqlException]) =
-        Abort.fail(SqlConnectionBackendMismatchException(SqlBackend.Mysql, SqlBackend.Postgres, "withCancelInfoMysql"))
+        Abort.fail(SqlConnectionBackendMismatchException("mysql", "postgres", "withCancelInfoMysql"))
 
     // --- Notifications ---
 
@@ -721,7 +721,7 @@ final class PostgresSqlClientBackend private[client] (
         data: Stream[Byte, S],
         config: SqlConfig
     )(using Frame): Long < (Async & Abort[SqlException] & S) =
-        Abort.fail(SqlConnectionBackendMismatchException(SqlBackend.Mysql, SqlBackend.Postgres, "loadLocalInfileMysql"))
+        Abort.fail(SqlConnectionBackendMismatchException("mysql", "postgres", "loadLocalInfileMysql"))
 
     // --- warmUp ---
 
@@ -1422,7 +1422,7 @@ final class MysqlSqlClientBackend private[client] (
         // PG-typed params are not used on MySQL; route simple queries through simple-query protocol.
         // The params chunk must be empty for this path to work correctly.
         if params.nonEmpty then
-            Abort.fail(SqlConnectionBackendMismatchException(SqlBackend.Postgres, SqlBackend.Mysql, "query with BoundParam"))
+            Abort.fail(SqlConnectionBackendMismatchException("postgres", "mysql", "query with BoundParam"))
         else
             metrics.timedQuery(retryWith(address, password, config) { conn =>
                 conn.simpleQuery(sql).map(rows => rows.map(mysqlRowToRow))
@@ -1436,7 +1436,7 @@ final class MysqlSqlClientBackend private[client] (
         config: SqlConfig
     )(using Frame): Long < (Async & Abort[SqlException]) =
         if params.nonEmpty then
-            Abort.fail(SqlConnectionBackendMismatchException(SqlBackend.Postgres, SqlBackend.Mysql, "execute with BoundParam"))
+            Abort.fail(SqlConnectionBackendMismatchException("postgres", "mysql", "execute with BoundParam"))
         else
             metrics.timedQuery(retryWith(address, password, config)(conn => conn.simpleExecute(sql)))
 
@@ -1460,7 +1460,7 @@ final class MysqlSqlClientBackend private[client] (
         // cursor position, which the current Stream API does not support.
         if params.nonEmpty then
             Stream[SqlRow, Async & Abort[SqlException] & Scope](
-                Abort.fail(SqlConnectionBackendMismatchException(SqlBackend.Postgres, SqlBackend.Mysql, "streamQuery with BoundParam"))
+                Abort.fail(SqlConnectionBackendMismatchException("postgres", "mysql", "streamQuery with BoundParam"))
             )
         else
             Stream[SqlRow, Async & Abort[SqlException] & Scope](
@@ -1569,7 +1569,7 @@ final class MysqlSqlClientBackend private[client] (
         password: String,
         config: SqlConfig
     )(f: PostgresConnection => A < (S & Async & Abort[SqlException]))(using Frame): A < (S & Async & Abort[SqlException]) =
-        Abort.fail(SqlConnectionBackendMismatchException(SqlBackend.Postgres, SqlBackend.Mysql, "withConnection"))
+        Abort.fail(SqlConnectionBackendMismatchException("postgres", "mysql", "withConnection"))
 
     def withMysqlConnection[A, S](
         address: SqlConfig.Address,
@@ -1647,7 +1647,7 @@ final class MysqlSqlClientBackend private[client] (
     // --- Cancel ---
 
     def cancel(handle: SqlClient.CancelHandle.Postgres)(using Frame): Unit < (Async & Abort[SqlException]) =
-        Abort.fail(SqlConnectionBackendMismatchException(SqlBackend.Postgres, SqlBackend.Mysql, "cancel"))
+        Abort.fail(SqlConnectionBackendMismatchException("postgres", "mysql", "cancel"))
 
     /** Cancels the MySQL query via `KILL QUERY <connectionId>` on a fresh out-of-pool connection.
       *
@@ -1708,7 +1708,7 @@ final class MysqlSqlClientBackend private[client] (
         password: String,
         config: SqlConfig
     )(f: (PostgresConnection, Int, Int) => A < (Async & Abort[SqlException]))(using Frame): A < (Async & Abort[SqlException]) =
-        Abort.fail(SqlConnectionBackendMismatchException(SqlBackend.Postgres, SqlBackend.Mysql, "withCancelInfo"))
+        Abort.fail(SqlConnectionBackendMismatchException("postgres", "mysql", "withCancelInfo"))
 
     /** Acquires a MySQL connection from the pool, exposes its `connectionId`, and calls `f`.
       *
@@ -1736,7 +1736,7 @@ final class MysqlSqlClientBackend private[client] (
         config: SqlConfig
     )(using Frame): Stream[SqlClient.Postgres.Notification, Async & Abort[SqlException] & Scope] =
         Stream[SqlClient.Postgres.Notification, Async & Abort[SqlException] & Scope](
-            Abort.fail(SqlConnectionBackendMismatchException(SqlBackend.Postgres, SqlBackend.Mysql, "PostgreSQL LISTEN/NOTIFY"))
+            Abort.fail(SqlConnectionBackendMismatchException("postgres", "mysql", "PostgreSQL LISTEN/NOTIFY"))
         )
 
     // --- MySQL savepoint helpers ---

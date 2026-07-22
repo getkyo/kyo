@@ -1,9 +1,9 @@
 package kyo.internal
 
 import kyo.*
+import kyo.EncodingRegistry
 import kyo.internal.mysql.MysqlConnection
 import kyo.internal.postgres.PostgresConnection
-import kyo.internal.postgres.types.EncodingRegistry
 
 /** Per-fork-JVM singleton holder for the cross-backend container fixtures used by kyo-sql tests, plus a `withFreshSchema` API that hands
   * the caller a freshly-created database/schema scoped to the test's lifetime.

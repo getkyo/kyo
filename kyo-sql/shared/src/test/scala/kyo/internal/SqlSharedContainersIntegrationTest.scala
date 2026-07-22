@@ -1,10 +1,10 @@
 package kyo.internal
 
 import kyo.*
+import kyo.EncodingRegistry
 import kyo.internal.SqlSharedContainers.Backend
 import kyo.internal.SqlSharedContainers.SchemaCtx
 import kyo.internal.postgres.PostgresConnection
-import kyo.internal.postgres.types.EncodingRegistry
 
 /** End-to-end integration test for [[SqlSharedContainers]]. Validates that:
   *

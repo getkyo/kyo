@@ -6,7 +6,6 @@ import kyo.KyoException
 import kyo.Maybe
 import kyo.Maybe.Absent
 import kyo.Maybe.Present
-import kyo.internal.SqlBackend
 
 /** Base class for every error raised by kyo-sql, organized into five sealed sub-categories by failure mode.
   *
@@ -229,10 +228,13 @@ final case class SqlConnectionResetFailedException(errorCode: Int, errorMessage:
         s"Connection reset failed (errorCode=$errorCode): $errorMessage"
     )
 
-/** An operation was invoked on the wrong backend (e.g. a Postgres-only call on a MySQL client). */
-final case class SqlConnectionBackendMismatchException(requiredDriver: SqlBackend, activeDriver: SqlBackend, operation: String)(using Frame)
+/** An operation was invoked on the wrong backend (e.g. a Postgres-only call on a MySQL client).
+  *
+  * `requiredDriver` and `activeDriver` are opaque short backend names, `"postgres"` or `"mysql"`.
+  */
+final case class SqlConnectionBackendMismatchException(requiredDriver: String, activeDriver: String, operation: String)(using Frame)
     extends SqlConnectionException(
-        s"Operation '$operation' requires ${requiredDriver} driver, but active driver is ${activeDriver}"
+        s"Operation '$operation' requires '$requiredDriver' driver, but active driver is '$activeDriver'"
     )
 
 /** No active kyo-sql client is available in the current scope. */

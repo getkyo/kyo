@@ -7,6 +7,7 @@ import kyo.SqlConnectionConnectFailedException
 import kyo.SqlConnectionUnexpectedMessageException
 import kyo.SqlException
 import kyo.SqlServerException
+import kyo.TlsMode
 import kyo.internal.mysql.exchange.ExtendedQueryExchange
 import kyo.internal.mysql.exchange.HandshakeExchange
 import kyo.internal.mysql.exchange.LocalInfileExchange
@@ -16,7 +17,6 @@ import kyo.internal.mysql.exchange.MysqlTransactionExchange
 import kyo.internal.mysql.exchange.ResetConnectionExchange
 import kyo.internal.mysql.exchange.SimpleQueryExchange
 import kyo.internal.mysql.exchange.StreamQueryExchange
-import kyo.internal.tls.TlsMode
 import kyo.net.NetPlatform
 import kyo.net.NetTlsConfig
 

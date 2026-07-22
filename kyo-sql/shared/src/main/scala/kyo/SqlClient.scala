@@ -1,6 +1,7 @@
 package kyo
 
 import kyo.*
+import kyo.EncodingRegistry
 import kyo.Log
 import kyo.SqlSchema
 import kyo.SqlSchema.BoundValue
@@ -17,7 +18,6 @@ import kyo.internal.mysql.exchange.MysqlPipelineExchange
 import kyo.internal.postgres.BoundParam
 import kyo.internal.postgres.PostgresConnection
 import kyo.internal.postgres.exchange.PipelineExchange
-import kyo.internal.postgres.types.EncodingRegistry
 import kyo.net.NetTlsConfig
 
 /** Sealed handle for a database connection pool.
@@ -42,10 +42,10 @@ import kyo.net.NetTlsConfig
   */
 sealed abstract class SqlClient:
     self =>
-    val backend: SqlClientBackend
+    private[kyo] val backend: SqlClientBackend
     val url: SqlConfig.Url
     val config: SqlConfig
-    val closedRef: AtomicBoolean
+    private[kyo] val closedRef: AtomicBoolean
 
     /** Returns the server address (host, port, db, user) for this client's pool. */
     def address: SqlConfig.Address = self.url.address
@@ -1082,10 +1082,10 @@ object SqlClient:
       * directly on values of this type without a cast.
       */
     final class Postgres(
-        val backend: PostgresSqlClientBackend,
+        private[kyo] val backend: PostgresSqlClientBackend,
         val url: SqlConfig.Url,
         val config: SqlConfig,
-        val closedRef: AtomicBoolean
+        private[kyo] val closedRef: AtomicBoolean
     ) extends SqlClient:
         self =>
 
@@ -1325,10 +1325,10 @@ object SqlClient:
       * type without a cast.
       */
     final class Mysql(
-        val backend: MysqlSqlClientBackend,
+        private[kyo] val backend: MysqlSqlClientBackend,
         val url: SqlConfig.Url,
         val config: SqlConfig,
-        val closedRef: AtomicBoolean
+        private[kyo] val closedRef: AtomicBoolean
     ) extends SqlClient:
         self =>
 
@@ -1351,7 +1351,7 @@ object SqlClient:
           *   query completes to avoid resource leaks.
           */
         @scala.annotation.targetName("cancellableQueryMy")
-        def cancellableQuery(
+        private[kyo] def cancellableQuery(
             sql: String,
             params: Chunk[BoundMysqlParam[?]]
         )(using Frame): (SqlClient.CancelHandle.Mysql, Chunk[SqlRow]) < (Async & Abort[SqlException]) =
@@ -2232,7 +2232,7 @@ object SqlClient:
                 case Absent                         => Abort.fail(SqlConnectionNoActiveClientException())
                 case Present(p: SqlClient.Postgres) => f(p)
                 case Present(other) =>
-                    Abort.fail(SqlConnectionBackendMismatchException(SqlBackend.Postgres, SqlBackend.Mysql, "usePostgres"))
+                    Abort.fail(SqlConnectionBackendMismatchException("postgres", "mysql", "usePostgres"))
         }
 
     /** Runs `f` with the active client when it is a [[SqlClient.Mysql]].
@@ -2253,7 +2253,7 @@ object SqlClient:
                 case Absent                      => Abort.fail(SqlConnectionNoActiveClientException())
                 case Present(m: SqlClient.Mysql) => f(m)
                 case Present(other) =>
-                    Abort.fail(SqlConnectionBackendMismatchException(SqlBackend.Mysql, SqlBackend.Postgres, "useMysql"))
+                    Abort.fail(SqlConnectionBackendMismatchException("mysql", "postgres", "useMysql"))
         }
 
     /** Validates that each type name in `names` does not contain characters that would break SQL literal interpolation.
@@ -2297,15 +2297,15 @@ object SqlClient:
       *
       * The connection is scope-managed: it will be terminated when the enclosing [[Scope]] exits.
       */
-    def connect(address: SqlConfig.Address)(using Frame): PostgresConnection < (Async & Scope & Abort[SqlException]) =
+    private[kyo] def connect(address: SqlConfig.Address)(using Frame): PostgresConnection < (Async & Scope & Abort[SqlException]) =
         connect(address, Absent, Absent)
 
-    def connect(address: SqlConfig.Address, password: Maybe[String])(using
+    private[kyo] def connect(address: SqlConfig.Address, password: Maybe[String])(using
         Frame
     ): PostgresConnection < (Async & Scope & Abort[SqlException]) =
         connect(address, password, Absent)
 
-    def connect(
+    private[kyo] def connect(
         address: SqlConfig.Address,
         password: Maybe[String],
         tls: Maybe[kyo.net.NetTlsConfig]

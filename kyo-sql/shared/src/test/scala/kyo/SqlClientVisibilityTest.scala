@@ -10,20 +10,17 @@ import scala.compiletime.testing.typeCheckErrors
   */
 class SqlClientVisibilityTest extends Test:
 
-    "public cancellableQuery overload is callable on MySQL clients" in {
-        // The MySQL cancellableQuery was previously private[kyo]; it is now public.
-        // We verify accessibility by checking that typeCheckErrors does NOT produce an
-        // "cannot be accessed as a member" visibility error.  BoundMysqlParam is internal so
-        // the snippet may produce type errors for the import or parameter type, but those are
-        // *not* visibility errors on cancellableQuery itself.
+    "public cancellableQuery(executable) overload is callable on MySQL clients" in {
+        // The MySQL cancellableQuery(sql, params: Chunk[BoundMysqlParam[?]]) overload takes an
+        // internal type and is private[kyo]. The user-facing surface is the SqlAst.Executable[?]
+        // overload; verify it does NOT produce a visibility error for an external caller.
         val errors = typeCheckErrors(
             """import kyo.*
-import kyo.internal.mysql.BoundMysqlParam
-def probe(client: SqlClient)(using Frame): Unit =
-    val _ = client.cancellableQuery("SELECT SLEEP(1)", Chunk.empty[BoundMysqlParam[?]])"""
+def probe(client: SqlClient.Mysql, exec: SqlAst.Executable[?])(using Frame): Unit =
+    val _ = client.cancellableQuery(exec)"""
         )
         val hasAccessError = errors.exists(e => e.message.contains("cannot be accessed as a member"))
-        assert(!hasAccessError, s"cancellableQuery must not have a visibility error; got: $errors")
+        assert(!hasAccessError, s"cancellableQuery(executable) must not have a visibility error; got: $errors")
     }
 
     "txLocal is a private[kyo] value on SqlClient" in {

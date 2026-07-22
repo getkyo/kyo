@@ -1,7 +1,7 @@
 package kyo
 
-import kyo.internal.postgres.types.EncodingRegistry
-import kyo.internal.tls.TlsMode
+import kyo.EncodingRegistry
+import kyo.TlsMode
 
 /** Unit tests for [[SqlClient.mergeConfig]], focused on which fields of the caller's [[SqlConfig]] survive the merge.
   *

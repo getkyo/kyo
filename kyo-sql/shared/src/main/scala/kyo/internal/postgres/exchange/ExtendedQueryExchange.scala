@@ -1,12 +1,12 @@
 package kyo.internal.postgres.exchange
 
 import kyo.*
+import kyo.EncodingRegistry
 import kyo.SqlConnectionUnexpectedMessageException
 import kyo.SqlException
 import kyo.SqlRow
 import kyo.internal.Hash
 import kyo.internal.postgres.*
-import kyo.internal.postgres.types.EncodingRegistry
 import kyo.internal.postgres.types.Format
 
 /** Implements the PostgreSQL extended-query protocol cycle (Parse/Bind/Execute).

@@ -22,7 +22,7 @@ import java.util.concurrent.ConcurrentHashMap
 import kyo.SqlClient.Metrics
 import kyo.internal.client.ConnectionPool
 import kyo.internal.postgres.PostgresConnection
-import kyo.internal.tls.TlsMode
+import kyo.TlsMode
 // Attempt direct construction, must be rejected
 val _ = new PostgresSqlClientBackend(
     null.asInstanceOf[ConnectionPool[kyo.net.NetAddress, PostgresConnection]],

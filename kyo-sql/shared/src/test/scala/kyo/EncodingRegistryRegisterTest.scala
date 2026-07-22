@@ -1,5 +1,6 @@
 package kyo
 
+import kyo.EncodingRegistry
 import kyo.Frame
 import kyo.Maybe
 import kyo.Maybe.Absent
@@ -7,7 +8,6 @@ import kyo.Maybe.Present
 import kyo.Span
 import kyo.Test
 import kyo.internal.postgres.PostgresBufferWriter
-import kyo.internal.postgres.types.EncodingRegistry
 import kyo.internal.postgres.types.Format
 import kyo.internal.postgres.types.PostgresDecoder
 import kyo.internal.postgres.types.PostgresEncoder

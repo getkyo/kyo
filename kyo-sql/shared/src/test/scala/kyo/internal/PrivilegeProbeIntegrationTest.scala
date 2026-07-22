@@ -1,9 +1,9 @@
 package kyo.internal
 
 import kyo.*
+import kyo.EncodingRegistry
 import kyo.internal.mysql.MysqlConnection
 import kyo.internal.postgres.PostgresConnection
-import kyo.internal.postgres.types.EncodingRegistry
 
 /** Empirical probe for the privileges granted by [[ContainerPredef.Postgres]] and [[ContainerPredef.MySQL]] default configurations.
   *

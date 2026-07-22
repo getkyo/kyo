@@ -1,8 +1,11 @@
-package kyo.internal.postgres.types
+package kyo
 
 import kyo.Maybe
 import kyo.Maybe.Absent
 import kyo.Maybe.Present
+import kyo.internal.postgres.types.Format
+import kyo.internal.postgres.types.PostgresDecoder
+import kyo.internal.postgres.types.PostgresEncoder
 
 /** Registry mapping (OID, format) to wire encoders and decoders.
   *
@@ -171,7 +174,7 @@ object EncodingRegistry:
             encoders.get((oid, format.code)) match
                 case Some(enc) => Present(enc)
                 case None      =>
-                    // Fallback to the other format (Text↔Binary) only when explicitly registered.
+                    // Fallback to the other format (Text, Binary) only when explicitly registered.
                     val fallbackFormat = if format == Format.Binary then Format.Text else Format.Binary
                     encoders.get((oid, fallbackFormat.code)) match
                         case Some(enc) => Present(enc)

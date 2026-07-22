@@ -1,11 +1,11 @@
 package kyo
 
 import kyo.*
+import kyo.EncodingRegistry
 import kyo.Maybe.Absent
 import kyo.Maybe.Present
-import kyo.internal.postgres.types.EncodingRegistry
+import kyo.TlsMode
 import kyo.internal.tls.TlsContext
-import kyo.internal.tls.TlsMode
 import kyo.net.NetTlsConfig
 
 /** Configuration for a [[SqlClient]] connection pool.

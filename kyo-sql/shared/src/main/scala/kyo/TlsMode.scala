@@ -1,4 +1,4 @@
-package kyo.internal.tls
+package kyo
 
 /** Supported TLS modes, matching PostgreSQL's `sslmode` connection parameter semantics.
   *

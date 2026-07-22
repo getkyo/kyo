@@ -1,13 +1,13 @@
 package kyo.internal.postgres.exchange
 
 import kyo.*
+import kyo.EncodingRegistry
 import kyo.SqlConnectionClosedException
 import kyo.SqlConnectionUnexpectedMessageException
 import kyo.SqlConnectionWritePanicException
 import kyo.SqlException
 import kyo.SqlRow
 import kyo.internal.postgres.*
-import kyo.internal.postgres.types.EncodingRegistry
 import kyo.internal.postgres.types.Format
 
 /** Implements the PostgreSQL extended-query pipeline mode.
