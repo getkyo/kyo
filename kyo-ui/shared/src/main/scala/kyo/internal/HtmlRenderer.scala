@@ -7,10 +7,32 @@ import kyo.UI.Ast.*
 
 private[kyo] object HtmlRenderer:
 
+    // className -> rule CSS text, accumulated during a renderWithCss traversal. Threaded through
+    // renderTo/renderCommonAttrs/renderDropdown* the same way `sb` carries the HTML, so collection
+    // costs nothing on the render(...) path (cssRules stays Absent there).
+    private type CssCollector = scala.collection.mutable.LinkedHashMap[String, String]
+
     /** Render a UI tree to HTML with data-kyo-path attributes. */
     def render(ui: UI, path: Seq[String])(using Frame): String < Sync =
         val sb = new StringBuilder
         renderTo(sb, ui, path).andThen(sb.toString)
+
+    /** Render a UI tree to HTML, additionally collecting the CSS rule(s) for every pseudo-state
+      * (hover/focus/active/disabled) [[kyo.Style]] encountered along the way.
+      *
+      * Used by the server-push runtime (`kyo.internal.UIServer`), which has no inline-style channel
+      * for pseudo-states: an inline `style="..."` attribute cannot express `:hover` etc., so the
+      * collected rules must be carried in a real stylesheet alongside the HTML instead. Each entry is
+      * `(stableClass, ruleCss)`; an element whose pseudo-state style produces the SAME rule text as one
+      * already collected shares its class rather than generating a new one (see
+      * [[kyo.internal.CssStyleRenderer.pseudoStateClass]]), so the result has one entry per distinct
+      * rule, in first-encountered order.
+      */
+    private[kyo] def renderWithCss(ui: UI, path: Seq[String])(using Frame): (String, Chunk[(String, String)]) < Sync =
+        val sb  = new StringBuilder
+        val css = new CssCollector
+        renderTo(sb, ui, path, cssRules = Present(css)).andThen((sb.toString, Chunk.from(css)))
+    end renderWithCss
 
     /** Wrap a reactive region's inner HTML in the appropriate placeholder tag.
       *
@@ -98,15 +120,17 @@ private[kyo] object HtmlRenderer:
 
     // ---- Core rendering ----
 
-    private def renderTo(sb: StringBuilder, ui: UI, path: Seq[String], svg: Boolean = false)(using Frame): Unit < Sync =
+    private def renderTo(sb: StringBuilder, ui: UI, path: Seq[String], svg: Boolean = false, cssRules: Maybe[CssCollector] = Absent)(using
+        Frame
+    ): Unit < Sync =
         ui match
             case dd: Dropdown =>
-                renderDropdown(sb, dd, path)
+                renderDropdown(sb, dd, path, cssRules)
             case elem: Element =>
                 val tag  = tagName(elem)
                 val void = elem.isInstanceOf[Void]
                 w(sb, s"""<$tag data-kyo-path="${pathAttr(path)}"""")
-                renderCommonAttrs(sb, elem.attrs)
+                renderCommonAttrs(sb, elem.attrs, cssRules)
                 renderEventAttr(sb, elem)
                 for _ <- renderElementAttrs(sb, elem)
                 yield
@@ -137,7 +161,7 @@ private[kyo] object HtmlRenderer:
                             case _            => Kyo.unit
                         textChild.andThen(
                             Kyo.foreachDiscard(elem.children.toSeq.zipWithIndex) { (child, i) =>
-                                renderTo(sb, child, path :+ i.toString, childSvg)
+                                renderTo(sb, child, path :+ i.toString, childSvg, cssRules)
                             }.andThen(w(sb, s"</$tag>"))
                         )
                     end if
@@ -156,11 +180,11 @@ private[kyo] object HtmlRenderer:
                     val childPath = child match
                         case kc: KeyedChild[?] => path :+ kc.key
                         case _                 => path :+ i.toString
-                    renderTo(sb, child, childPath, svg)
+                    renderTo(sb, child, childPath, svg, cssRules)
                 }
 
             case KeyedChild(_, child) =>
-                renderTo(sb, child, path, svg)
+                renderTo(sb, child, path, svg, cssRules)
 
             case r: Reactive[?] =>
                 // In SVG context emit a <g> placeholder (a <span> is invalid inside <svg>); the
@@ -168,7 +192,7 @@ private[kyo] object HtmlRenderer:
                 val tag = if svg then "g" else "span"
                 w(sb, s"""<$tag data-kyo-path="${pathAttr(path)}" data-kyo-reactive>""")
                 for current <- r.signal.current(using r.frame)
-                yield renderTo(sb, current, path, svg).andThen(w(sb, s"</$tag>"))
+                yield renderTo(sb, current, path, svg, cssRules).andThen(w(sb, s"</$tag>"))
 
             case fe: Foreach[?, ?] @unchecked =>
                 val tag = if svg then "g" else "span"
@@ -181,7 +205,7 @@ private[kyo] object HtmlRenderer:
                                 val key = keyFn match
                                     case Present(f) => f(item)
                                     case Absent     => i.toString
-                                renderTo(sb, renderFn(i, item), path :+ key, svg)
+                                renderTo(sb, renderFn(i, item), path :+ key, svg, cssRules)
                             }.andThen(w(sb, s"</$tag>"))
                             end for
                 }
@@ -197,35 +221,53 @@ private[kyo] object HtmlRenderer:
 
     // ---- Dropdown (custom div-based overlay) ----
 
-    private def renderDropdown(sb: StringBuilder, dd: Dropdown, path: Seq[String])(using Frame): Unit < Sync =
+    private def renderDropdown(sb: StringBuilder, dd: Dropdown, path: Seq[String], cssRules: Maybe[CssCollector])(using
+        Frame
+    ): Unit < Sync =
         val baseId = dd.attrs.identifier.getOrElse("")
         // Read current selected value for initial highlight
         val currentValueEffect: Unit < Sync = dd.value match
             case Present(Bound.Ref(ref)) =>
                 ref.get.map { currentVal =>
-                    renderDropdownWithValue(sb, dd, path, baseId, currentVal)
+                    renderDropdownWithValue(sb, dd, path, baseId, currentVal, cssRules)
                 }
             case Present(Bound.Const(s)) =>
-                renderDropdownWithValue(sb, dd, path, baseId, s)
+                renderDropdownWithValue(sb, dd, path, baseId, s, cssRules)
             case _ =>
-                renderDropdownWithValue(sb, dd, path, baseId, "")
+                renderDropdownWithValue(sb, dd, path, baseId, "", cssRules)
         currentValueEffect
     end renderDropdown
 
-    private def renderDropdownWithValue(sb: StringBuilder, dd: Dropdown, path: Seq[String], baseId: String, currentVal: String)(using
+    private def renderDropdownWithValue(
+        sb: StringBuilder,
+        dd: Dropdown,
+        path: Seq[String],
+        baseId: String,
+        currentVal: String,
+        cssRules: Maybe[CssCollector]
+    )(using
         Frame
     ): Unit =
-        val pathStr   = pathAttr(path)
-        val idAttr    = if baseId.nonEmpty then s""" id="${esc(baseId)}"""" else ""
-        val ddAttr    = if baseId.nonEmpty then s""" data-kyo-dropdown="${esc(baseId)}"""" else " data-kyo-dropdown"
-        val disAttr   = if dd.disabled.getOrElse(false) then " data-kyo-disabled" else ""
-        val hidAttr   = if dd.attrs.hidden.getOrElse(false) then " hidden" else ""
-        val tabAttr   = dd.attrs.tabIndex.map(n => s""" tabindex="$n"""").getOrElse("")
-        val styleAttr = CssStyleRenderer.render(dd.attrs.uiStyle)
-        val styleStr  = if styleAttr.nonEmpty then s""" style="${esc(styleAttr)}"""" else ""
+        val pathStr     = pathAttr(path)
+        val idAttr      = if baseId.nonEmpty then s""" id="${esc(baseId)}"""" else ""
+        val ddAttr      = if baseId.nonEmpty then s""" data-kyo-dropdown="${esc(baseId)}"""" else " data-kyo-dropdown"
+        val disAttr     = if dd.disabled.getOrElse(false) then " data-kyo-disabled" else ""
+        val hidAttr     = if dd.attrs.hidden.getOrElse(false) then " hidden" else ""
+        val tabAttr     = dd.attrs.tabIndex.map(n => s""" tabindex="$n"""").getOrElse("")
+        val pseudoClass = registerPseudoClass(cssRules, dd.attrs.uiStyle)
+        // A generated pseudoClass already carries the base props in its own rule (see
+        // registerPseudoClass); rendering them inline too would shadow the pseudo-state override.
+        val styleStr = if pseudoClass.nonEmpty then ""
+        else
+            val styleAttr = CssStyleRenderer.render(dd.attrs.uiStyle)
+            if styleAttr.nonEmpty then s""" style="${esc(styleAttr)}"""" else ""
         // The dropdown wrapper carries its cssClasses (the same `.cssClass(...)` hook every other
-        // element honors) so callers can style the trigger container via a class selector.
-        val clsStr = if dd.attrs.cssClasses.nonEmpty then s""" class="${esc(dd.attrs.cssClasses.mkString(" "))}"""" else ""
+        // element honors), plus the generated pseudoClass when present, so callers can style the
+        // trigger container via a class selector.
+        val classes = pseudoClass match
+            case Present(cls) => dd.attrs.cssClasses :+ cls
+            case Absent       => dd.attrs.cssClasses
+        val clsStr = if classes.nonEmpty then s""" class="${esc(classes.mkString(" "))}"""" else ""
         // Determine initial trigger label
         val firstLabel    = dd.options.headMaybe.map(_._1).getOrElse("")
         val currentLabel  = Maybe.fromOption(dd.options.toSeq.find(_._2 == currentVal)).map(_._1).getOrElse(firstLabel)
@@ -315,15 +357,42 @@ private[kyo] object HtmlRenderer:
 
     // ---- Common attributes ----
 
-    private def renderCommonAttrs(sb: StringBuilder, attrs: Attrs): Unit =
+    /** Registers `style`'s pseudo-state rule (if any) into `cssRules` and returns its generated class,
+      * for an element whose render call is collecting CSS (the server-push path). Returns `Absent`
+      * when `cssRules` is `Absent` (the plain `render(...)` path, which keeps today's inline-style
+      * behavior unchanged) or `style` carries no pseudo-state prop. Deduped by class: an identical
+      * pseudo-state style anywhere else in the tree reuses the same entry rather than appending a
+      * duplicate rule.
+      *
+      * When this returns `Present`, the rule already carries the element's BASE props too (see
+      * [[kyo.internal.CssStyleRenderer.pseudoStateClass]]), so the caller must render NO inline style
+      * for `style` in that case, or the inline declaration would out-specificity the class rule and
+      * the pseudo-state would never visibly apply.
+      */
+    private def registerPseudoClass(cssRules: Maybe[CssCollector], style: Style): Maybe[String] =
+        cssRules.flatMap { rules =>
+            CssStyleRenderer.pseudoStateClass(style).map { case (cls, rule) =>
+                if !rules.contains(cls) then rules(cls) = rule
+                cls
+            }
+        }
+
+    private def renderCommonAttrs(sb: StringBuilder, attrs: Attrs, cssRules: Maybe[CssCollector] = Absent): Unit =
         attrs.identifier.foreach(id => w(sb, s""" id="${esc(id)}""""))
-        if attrs.cssClasses.nonEmpty then w(sb, s""" class="${esc(attrs.cssClasses.mkString(" "))}"""")
+        val pseudoClass = registerPseudoClass(cssRules, attrs.uiStyle)
+        val classes = pseudoClass match
+            case Present(cls) => attrs.cssClasses :+ cls
+            case Absent       => attrs.cssClasses
+        if classes.nonEmpty then w(sb, s""" class="${esc(classes.mkString(" "))}"""")
         attrs.hidden.foreach(v => if v then w(sb, " hidden"))
         attrs.tabIndex.foreach(n => w(sb, s""" tabindex="$n""""))
         attrs.focusTrap.foreach(v => if v then w(sb, """ data-kyo-focus-trap="1""""))
         attrs.focusGroup.foreach(id => w(sb, s""" data-kyo-focus-group="${esc(id)}""""))
-        val css = CssStyleRenderer.render(attrs.uiStyle)
-        if css.nonEmpty then w(sb, s""" style="${esc(css)}"""")
+        // A generated pseudoClass already carries the base props in its own rule (see
+        // registerPseudoClass); rendering them inline too would shadow the pseudo-state override.
+        if pseudoClass.isEmpty then
+            val css = CssStyleRenderer.render(attrs.uiStyle)
+            if css.nonEmpty then w(sb, s""" style="${esc(css)}"""")
         attrs.ariaAttrs.toSeq.sortBy(_._1).foreach { case (name, value) =>
             w(sb, s""" aria-$name="${esc(value)}"""")
         }
@@ -714,6 +783,13 @@ private[kyo] object HtmlRenderer:
            |    var s=document.createElement("style");
            |    s.textContent=op.InjectCss.css;
            |    document.head.appendChild(s);
+           |  }else if(op.ScrollIntoView){
+           |    // The scroll may arrive in the same batch as the Replace that introduces its target, so
+           |    // resolve the id after this frame's DOM writes have applied.
+           |    requestAnimationFrame(function(){
+           |      var el=document.getElementById(op.ScrollIntoView.id);
+           |      if(el)el.scrollIntoView({behavior:"smooth",block:"start"});
+           |    });
            |  }
            |};
            |function fp(el){

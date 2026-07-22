@@ -146,6 +146,14 @@ final case class Style private[kyo] (props: Chunk[Style.Prop]) derives CanEqual:
     def color(c: Color): Style               = appendProp(Prop.TextColor(c))
     def color(f: Color.type => Color): Style = color(f(Color))
 
+    // Accent color (form controls)
+
+    /** Maps to the CSS `accent-color` property: tints the native check/track of checkbox, radio, range, and progress controls to match this
+      * color, without needing to rebuild the control's chrome from scratch.
+      */
+    def accentColor(c: Color): Style               = appendProp(Prop.AccentColorProp(c))
+    def accentColor(f: Color.type => Color): Style = accentColor(f(Color))
+
     // Padding: px, pct, or em (no auto)
 
     /** Sets padding. The 1-arg form applies to all four sides, the 2-arg form to vertical/horizontal, the 4-arg form to top/right/bottom/left.
@@ -282,6 +290,13 @@ final case class Style private[kyo] (props: Chunk[Style.Prop]) derives CanEqual:
 
     def textWrap(v: TextWrap): Style                  = appendProp(Prop.TextWrapProp(v))
     def textWrap(f: TextWrap.type => TextWrap): Style = textWrap(f(TextWrap))
+
+    /** Maps to the CSS `white-space` property: controls whether whitespace runs collapse and whether newlines are preserved, independent of
+      * [[textWrap]] (which controls word-breaking/balancing, not whitespace preservation). `preWrap` is the common case for rendering
+      * preformatted text (e.g. a log line) that must still wrap inside a constrained box rather than overflow.
+      */
+    def whiteSpace(v: WhiteSpace): Style                    = appendProp(Prop.WhiteSpaceProp(v))
+    def whiteSpace(f: WhiteSpace.type => WhiteSpace): Style = whiteSpace(f(WhiteSpace))
 
     // Borders: width is px only
 
@@ -626,6 +641,8 @@ object Style:
     def backgroundClip(f: BackgroundClip.type => BackgroundClip): Style = empty.backgroundClip(f)
     def color(c: Color): Style                                          = empty.color(c)
     def color(f: Color.type => Color): Style                            = empty.color(f)
+    def accentColor(c: Color): Style                                    = empty.accentColor(c)
+    def accentColor(f: Color.type => Color): Style                      = empty.accentColor(f)
     def padding(all: Length.Px | Length.Pct | Length.Em): Style         = empty.padding(all)
     def padding(vertical: Length.Px | Length.Pct | Length.Em, horizontal: Length.Px | Length.Pct | Length.Em): Style =
         empty.padding(vertical, horizontal)
@@ -692,6 +709,8 @@ object Style:
     def textOverflow(f: TextOverflow.type => TextOverflow): Style                   = empty.textOverflow(f)
     def textWrap(v: TextWrap): Style                                                = empty.textWrap(v)
     def textWrap(f: TextWrap.type => TextWrap): Style                               = empty.textWrap(f)
+    def whiteSpace(v: WhiteSpace): Style                                            = empty.whiteSpace(v)
+    def whiteSpace(f: WhiteSpace.type => WhiteSpace): Style                         = empty.whiteSpace(f)
     def border(width: Length.Px, style: BorderStyle, c: Color): Style               = empty.border(width, style, c)
     def border(width: Length.Px, style: BorderStyle, f: Color.type => Color): Style = empty.border(width, style, f)
     def border(width: Length.Px, c: Color): Style                                   = empty.border(width, c)
@@ -961,6 +980,19 @@ object Style:
     enum TextWrap derives CanEqual:
         case wrap, noWrap, ellipsis, balance, pretty
 
+    /** Maps to the CSS `white-space` property: controls whitespace collapsing and newline preservation, independent of [[TextWrap]] (which
+      * governs word-breaking/balancing within a line, not whether whitespace and newlines survive at all).
+      *
+      *   - `normal`: collapses whitespace runs and wraps lines normally (the CSS default).
+      *   - `noWrap`: collapses whitespace runs but never wraps; the text stays on one line.
+      *   - `pre`: preserves whitespace and newlines verbatim and never wraps, like HTML `<pre>`.
+      *   - `preWrap`: preserves whitespace and newlines verbatim but still wraps long lines, the common choice for pre-formatted text (e.g. a
+      *     log line) that must fit a constrained box.
+      *   - `preLine`: collapses whitespace runs but preserves newlines, wrapping long lines.
+      */
+    enum WhiteSpace derives CanEqual:
+        case normal, noWrap, pre, preWrap, preLine
+
     /** Maps to the CSS `font-family` property; `Custom` carries an arbitrary family name. */
     enum FontFamily derives CanEqual:
         case SansSerif, Serif, Monospace, Cursive, Fantasy, SystemUi
@@ -1090,6 +1122,7 @@ object Style:
         // Background
         case BgColor(color: Color)
         case TextColor(color: Color)
+        case AccentColorProp(color: Color)
         // Layout
         case Padding(top: Length, right: Length, bottom: Length, left: Length)
         case Margin(top: Length, right: Length, bottom: Length, left: Length)
@@ -1125,6 +1158,7 @@ object Style:
         case TextTransformProp(value: TextTransform)
         case TextOverflowProp(value: TextOverflow)
         case TextWrapProp(value: TextWrap)
+        case WhiteSpaceProp(value: WhiteSpace)
         // Borders
         case BorderColorProp(top: Color, right: Color, bottom: Color, left: Color)
         case BorderWidthProp(top: Length, right: Length, bottom: Length, left: Length)
