@@ -910,8 +910,7 @@ sealed abstract class SqlClient:
       *   - Postgres: runs `DISCARD ALL`, clears prepared statements, session variables, temp tables, listeners, and any open
       *     transaction.
       *
-      * Distinct from pool-recycle resets controlled by `SqlConfig.resetOnRelease`; `reset` operates explicitly on the current
-      * client and the operation's success/failure is observable to the caller.
+      * The operation runs on the borrowed pool connection and its success or failure is observable to the caller.
       */
     def reset(using Frame): Unit < (Async & Abort[SqlException]) =
         SqlClient.local.use { (_, config) =>
@@ -2297,7 +2296,7 @@ object SqlClient:
       *   - `tls`, `caCertPath`: user wins if set, URL fills in otherwise.
       *
       * Every other field in `config` is preserved unchanged so knobs like `metricsEnabled`, `encodingRegistry`, `cancelTimeout`,
-      * `resetOnRelease`, `closeGrace`, `streamBatchSize`, and `copyOutCleanupTimeout` reach the backend as-is.
+      * `closeGrace`, `streamBatchSize`, and `copyOutCleanupTimeout` reach the backend as-is.
       *
       * Calls [[SqlConfig.Url.toConfig]] which delegates to [[kyo.internal.tls.TlsContext.build]]; fails with [[SqlConnectionException]] for
       * invalid sslmode + sslrootcert combinations (e.g., `verify-ca` without `sslrootcert`).

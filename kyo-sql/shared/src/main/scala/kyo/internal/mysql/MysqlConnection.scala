@@ -212,8 +212,7 @@ final class MysqlConnection(
     /** Sends [[ComResetConnection]] and waits for OK.
       *
       * Resets all per-session state (user variables, prepared statements on the server, open transactions, last-insert-id, current schema,
-      * advisory locks) without re-running the auth handshake. Use this when returning a connection to the pool with `resetOnRelease = true`
-      * to guarantee that the next borrower sees a clean session.
+      * advisory locks) without re-running the auth handshake. Callers use this to guarantee the next borrower sees a clean session.
       *
       * Delegates to [[ResetConnectionExchange]].
       */

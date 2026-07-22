@@ -101,95 +101,11 @@ class SqlConfigTest extends Test:
         }
     }
 
-    // ---- Phase 23: pool lifecycle fields ----
-
-    "default config has expected defaults for each new field" in {
-        val cfg = SqlConfig.default
-        assert(cfg.maxLifetime == Absent)
-        assert(cfg.connectionTestQuery == Absent)
-        assert(cfg.connectionInitSql == Absent)
-        assert(cfg.keepaliveTime == Absent)
-        assert(cfg.connectTimeout == 30.seconds)
-        assert(cfg.socketTimeout == Absent)
-        assert(cfg.leakDetectionThreshold == Absent)
-        assert(cfg.connectionInitTimeout == 30.seconds)
-    }
-
-    "config with maxLifetime serializes/round-trips through copy" in {
-        val lifetime = 10.minutes
-        val cfg      = SqlConfig.default.copy(maxLifetime = Present(lifetime))
-        assert(cfg.maxLifetime == Present(lifetime))
-        val cfg2 = cfg.copy(maxConnections = 5)
-        assert(cfg2.maxLifetime == Present(lifetime))
-        assert(cfg2.maxConnections == 5)
-    }
-
-    "maxLifetime field: explicit construction and access" in {
-        val cfg = SqlConfig.default.copy(maxLifetime = Present(1.hour))
-        assert(cfg.maxLifetime == Present(1.hour))
-    }
-
-    "connectionTestQuery field: explicit construction and access" in {
+    "connectionTestQuery default is Absent, custom value round-trips through copy" in {
+        assert(SqlConfig.default.connectionTestQuery == Absent)
         val cfg = SqlConfig.default.copy(connectionTestQuery = Present("SELECT 1"))
         assert(cfg.connectionTestQuery == Present("SELECT 1"))
     }
-
-    "connectionInitSql field: explicit construction and access" in {
-        val cfg = SqlConfig.default.copy(connectionInitSql = Present("SET search_path = myschema"))
-        assert(cfg.connectionInitSql == Present("SET search_path = myschema"))
-    }
-
-    "keepaliveTime field: explicit construction and access" in {
-        val cfg = SqlConfig.default.copy(keepaliveTime = Present(30.seconds))
-        assert(cfg.keepaliveTime == Present(30.seconds))
-    }
-
-    "connectTimeout field: explicit construction and access" in {
-        val cfg = SqlConfig.default.copy(connectTimeout = 15.seconds)
-        assert(cfg.connectTimeout == 15.seconds)
-        val cfg2 = SqlConfig.default
-        assert(cfg2.connectTimeout == 30.seconds)
-    }
-
-    "socketTimeout field: explicit construction and access" in {
-        val cfg = SqlConfig.default.copy(socketTimeout = Present(5.seconds))
-        assert(cfg.socketTimeout == Present(5.seconds))
-    }
-
-    "leakDetectionThreshold field: explicit construction and access" in {
-        val cfg = SqlConfig.default.copy(leakDetectionThreshold = Present(2.minutes))
-        assert(cfg.leakDetectionThreshold == Present(2.minutes))
-    }
-
-    "connectionInitTimeout field: explicit construction and access" in {
-        val cfg = SqlConfig.default.copy(connectionInitTimeout = 60.seconds)
-        assert(cfg.connectionInitTimeout == 60.seconds)
-        val cfg2 = SqlConfig.default
-        assert(cfg2.connectionInitTimeout == 30.seconds)
-    }
-
-    "all new lifecycle fields can be set simultaneously" in {
-        val cfg = SqlConfig.default.copy(
-            maxLifetime = Present(30.minutes),
-            connectionTestQuery = Present("DO 1"),
-            connectionInitSql = Present("SET time_zone = '+00:00'"),
-            keepaliveTime = Present(1.minute),
-            connectTimeout = 10.seconds,
-            socketTimeout = Present(20.seconds),
-            leakDetectionThreshold = Present(5.minutes),
-            connectionInitTimeout = 45.seconds
-        )
-        assert(cfg.maxLifetime == Present(30.minutes))
-        assert(cfg.connectionTestQuery == Present("DO 1"))
-        assert(cfg.connectionInitSql == Present("SET time_zone = '+00:00'"))
-        assert(cfg.keepaliveTime == Present(1.minute))
-        assert(cfg.connectTimeout == 10.seconds)
-        assert(cfg.socketTimeout == Present(20.seconds))
-        assert(cfg.leakDetectionThreshold == Present(5.minutes))
-        assert(cfg.connectionInitTimeout == 45.seconds)
-    }
-
-    // ---- Phase 25: closeGrace field ----
 
     "closeGrace defaults to 30 seconds" in {
         assert(SqlConfig.default.closeGrace == 30.seconds)
@@ -206,8 +122,6 @@ class SqlConfigTest extends Test:
         assert(cfg2.closeGrace == 10.seconds)
         assert(cfg2.maxConnections == 3)
     }
-
-    // ---- Phase 27: streamBatchSize + copyOutCleanupTimeout fields ----
 
     "streamBatchSize default is 64" in {
         assert(SqlConfig.default.streamBatchSize == 64)

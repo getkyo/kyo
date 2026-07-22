@@ -47,17 +47,10 @@ import kyo.net.NetTlsConfig
   *   to `maxConnections`. When > 0, [[SqlClient.init]] and [[SqlClient.initMysql]] open `min(minConnections, maxConnections)` connections
   *   concurrently before returning the client, so the first user query is served from a pre-warmed pool without incurring connection
   *   establishment latency. Any connection failure during warm-up aborts `init` with [[SqlConnectionException]]. Default `0` (no warm-up).
-  * @param resetOnRelease
-  *   *(MySQL only)* if `true`, sends `COM_RESET_CONNECTION` before returning a MySQL connection to the pool. This clears session variables,
-  *   server-side prepared statements, last-insert-id, and other per-session state accumulated during the connection's use, ensuring the
-  *   next borrower sees a clean session. Default `false` to avoid the latency cost on every connection release.
   * @param cancelTimeout
   *   *(MySQL only)* maximum time to wait for a cancel connection to become available from the pool when calling [[SqlClient.cancel]] on a
   *   MySQL handle. MySQL cancellation requires acquiring a second connection from the pool and sending `KILL QUERY <connectionId>`; if the
   *   pool is saturated for longer than `cancelTimeout`, [[SqlConnectionException]] is raised. Default `2.seconds`.
-  * @param pipelineMode
-  *   if `true`, the `pipeline` API is enabled. When `false` (the default), calls to `pipeline` still work but are executed sequentially
-  *   using individual Bind/Execute/Sync round trips. Enable to coalesce multiple DML statements into a single TCP write.
   * @param metricsEnabled
   *   if `true` (the default), kyo.Stat metrics are collected: counters for connection lifecycle and query throughput, histograms for query
   *   duration and pool acquire wait time. Set to `false` to disable all metric instrumentation with zero overhead.
@@ -72,23 +65,8 @@ import kyo.net.NetTlsConfig
   *   SqlConfig.default.copy(encodingRegistry = registry)
   *   }}}
   *   Only applies to PostgreSQL connections; MySQL connections use their own type encoding layer.
-  * @param maxLifetime
-  *   maximum age a connection may reach before it is closed and replaced; [[Absent]] means connections live forever.
   * @param connectionTestQuery
   *   SQL to run as a liveness ping before lending a connection (e.g. `"SELECT 1"`); [[Absent]] uses a driver-level ping instead.
-  * @param connectionInitSql
-  *   SQL to execute once after a new connection is established and before it enters the pool; [[Absent]] skips init SQL.
-  * @param keepaliveTime
-  *   interval between TCP keepalive probes sent while a connection is idle; [[Absent]] relies on OS defaults.
-  * @param connectTimeout
-  *   maximum time allowed for the TCP+TLS+auth handshake when opening a new connection. Separate from [[acquireTimeout]].
-  * @param socketTimeout
-  *   maximum time allowed for a single socket read or write; [[Absent]] disables the per-IO bound. TODO: wire through transport layer.
-  * @param leakDetectionThreshold
-  *   if a borrowed connection is held longer than this duration a warning is emitted; [[Absent]] disables leak detection. TODO: wire
-  *   through pool borrow tracking.
-  * @param connectionInitTimeout
-  *   maximum time allowed for the combined connect + [[connectionInitSql]] phase before the attempt is aborted.
   * @param closeGrace
   *   default grace period passed to [[SqlClient.close]] when no explicit `gracePeriod` argument is supplied. After the grace period, any
   *   remaining in-flight connections are force-closed. Default `30.seconds`.
@@ -111,22 +89,13 @@ final case class SqlConfig(
     caCertPath: Maybe[String] = Absent,
     preparedStmtCacheSize: Int = 64,
     preparedStmtTtl: Duration = Duration.Infinity,
-    resetOnRelease: Boolean = false,
     cancelTimeout: Duration = 2.seconds,
     tlsMode: TlsMode = TlsMode.Disable,
-    pipelineMode: Boolean = false,
     metricsEnabled: Boolean = true,
     metricsScope: Maybe[String] = Absent,
     typeNames: Set[String] = Set.empty,
     encodingRegistry: EncodingRegistry = EncodingRegistry.builtin,
-    maxLifetime: Maybe[Duration] = Absent,
     connectionTestQuery: Maybe[String] = Absent,
-    connectionInitSql: Maybe[String] = Absent,
-    keepaliveTime: Maybe[Duration] = Absent,
-    connectTimeout: Duration = 30.seconds,
-    socketTimeout: Maybe[Duration] = Absent,
-    leakDetectionThreshold: Maybe[Duration] = Absent,
-    connectionInitTimeout: Duration = 30.seconds,
     closeGrace: Duration = 30.seconds,
     streamBatchSize: Int = 64,
     copyOutCleanupTimeout: Duration = 5.seconds
@@ -145,14 +114,7 @@ object SqlConfig:
       *   - tls: Absent (plaintext)
       *   - metricsEnabled: true (kyo.Stat metrics collected under scope `"kyo.sql"`)
       *   - metricsScope: Absent (uses default `"kyo.sql"`)
-      *   - maxLifetime: Absent (connections live forever)
       *   - connectionTestQuery: Absent (driver-level ping)
-      *   - connectionInitSql: Absent (no init SQL)
-      *   - keepaliveTime: Absent (OS default keepalive)
-      *   - connectTimeout: 30 seconds
-      *   - socketTimeout: Absent (no per-IO bound)
-      *   - leakDetectionThreshold: Absent (no leak detection)
-      *   - connectionInitTimeout: 30 seconds
       *   - closeGrace: 30 seconds
       *   - streamBatchSize: 64 (rows per Execute batch)
       *   - copyOutCleanupTimeout: 5 seconds
@@ -262,10 +224,6 @@ object SqlConfig:
           *   Required when `sslmode=verify-ca` or `sslmode=verify-full`.
           * @param applicationName
           *   value for the `application_name` session parameter (PG) / connection attribute (MySQL)
-          * @param connectTimeout
-          *   maximum time allowed to establish the TCP connection
-          * @param socketTimeout
-          *   maximum idle time on an established socket before it is forcibly closed
           * @param params
           *   unrecognised query-string key/value pairs preserved for driver-specific use
           */
@@ -273,13 +231,11 @@ object SqlConfig:
             sslmode: Maybe[SslMode],
             sslrootcert: Maybe[String],
             applicationName: Maybe[String],
-            connectTimeout: Maybe[Duration],
-            socketTimeout: Maybe[Duration],
             params: Map[String, String]
         ) derives CanEqual
 
         object Options:
-            val default: Options = Options(Absent, Absent, Absent, Absent, Absent, Map.empty)
+            val default: Options = Options(Absent, Absent, Absent, Map.empty)
         end Options
 
         /** Parses a URL string into a [[Url]].
@@ -383,15 +339,11 @@ object SqlConfig:
                 val sslmode     = Maybe.fromOption(pairs.get("sslmode")).flatMap(parseSslMode)
                 val sslrootcert = Maybe.fromOption(pairs.get("sslrootcert"))
                 val appName     = Maybe.fromOption(pairs.get("application_name"))
-                val connectTimeout = Maybe.fromOption(pairs.get("connect_timeout"))
-                    .flatMap(s => Maybe.fromOption(s.toLongOption).map(_.seconds))
-                val socketTimeout = Maybe.fromOption(pairs.get("socket_timeout"))
-                    .flatMap(s => Maybe.fromOption(s.toLongOption).map(_.seconds))
 
-                val knownKeys = Set("sslmode", "sslrootcert", "application_name", "connect_timeout", "socket_timeout")
+                val knownKeys = Set("sslmode", "sslrootcert", "application_name")
                 val extra     = pairs.filterNot { case (k, _) => knownKeys.contains(k) }
 
-                Options(sslmode, sslrootcert, appName, connectTimeout, socketTimeout, extra)
+                Options(sslmode, sslrootcert, appName, extra)
             else
                 Options.default
         end parseOptions

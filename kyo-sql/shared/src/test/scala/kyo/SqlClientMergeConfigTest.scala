@@ -6,8 +6,8 @@ import kyo.internal.tls.TlsMode
 /** Unit tests for [[SqlClient.mergeConfig]], focused on which fields of the caller's [[SqlConfig]] survive the merge.
   *
   * Regression: the previous implementation copied a fixed subset of fields from `config` onto `url.toConfig`, silently resetting eight
-  * public knobs to their defaults (metricsEnabled, encodingRegistry, cancelTimeout, resetOnRelease, closeGrace, streamBatchSize,
-  * copyOutCleanupTimeout, metricsScope). Each of the assertions below would have failed on that implementation.
+  * public knobs to their defaults (metricsEnabled, encodingRegistry, cancelTimeout, closeGrace, streamBatchSize, copyOutCleanupTimeout,
+  * metricsScope). Each of the assertions below would have failed on that implementation.
   */
 class SqlClientMergeConfigTest extends Test:
 
@@ -42,14 +42,6 @@ class SqlClientMergeConfigTest extends Test:
         val cfg = SqlConfig.default.copy(cancelTimeout = 15.seconds)
         Abort.run[SqlConnectionException](SqlClient.mergeConfig(url, cfg)).map {
             case Result.Success(merged) => assert(merged.cancelTimeout == 15.seconds)
-            case other                  => fail(s"mergeConfig failed unexpectedly: $other")
-        }
-    }
-
-    "preserves resetOnRelease" in {
-        val cfg = SqlConfig.default.copy(resetOnRelease = true)
-        Abort.run[SqlConnectionException](SqlClient.mergeConfig(url, cfg)).map {
-            case Result.Success(merged) => assert(merged.resetOnRelease == true)
             case other                  => fail(s"mergeConfig failed unexpectedly: $other")
         }
     }
