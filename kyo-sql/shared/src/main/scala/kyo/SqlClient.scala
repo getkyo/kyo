@@ -957,41 +957,6 @@ sealed abstract class SqlClient:
         }
     end withAdvisoryLock
 
-    /** Sets auto-commit on or off for the duration of the enclosing [[Scope]], restoring the previous value on exit.
-      *
-      * Auto-commit semantics differ by backend:
-      *
-      *   - **MySQL**: has a real server-side `autocommit` variable. `withAutoCommit(false)` emits `SET autocommit=0`; `true` emits `SET
-      *     autocommit=1`. The prior value is restored via a matching `SET` when the enclosing [[Scope]] exits.
-      *   - **PostgreSQL**: does not have a server-side `autocommit` variable. PostgreSQL is always in autocommit mode at the SQL layer
-      *     (each statement is its own transaction unless wrapped in an explicit `BEGIN`/`COMMIT`). `withAutoCommit` on PG is therefore
-      *     a client-side no-op, the call succeeds without emitting any SQL, and the [[Scope.ensure]] restore is also a no-op. For
-      *     explicit transaction control on PG, use `transaction { ... }` instead.
-      *
-      * Prefer `transaction(...)` blocks for ACID work; use `withAutoCommit(false)` only when you need MySQL-style implicit-transaction
-      * semantics (e.g., to disable mid-batch auto-commits during a bulk load that issues its own COMMITs).
-      *
-      * @param enabled
-      *   true to enable auto-commit, false to disable
-      */
-    def withAutoCommit(enabled: Boolean)(using Frame): Unit < (Async & Abort[SqlException] & Scope) =
-        self.backend match
-            case _: MysqlSqlClientBackend =>
-                val newVal     = if enabled then 1 else 0
-                val oldVal     = if enabled then 0 else 1
-                val setSql     = s"SET autocommit=$newVal"
-                val restoreSql = s"SET autocommit=$oldVal"
-                self.executeRaw(setSql).andThen {
-                    Scope.ensure(self.executeRaw(restoreSql).unit)
-                }
-            case _ =>
-                // PostgreSQL has no server-side autocommit GUC. Issuing SET AUTOCOMMIT is invalid
-                // (error 42704). PG is always autocommit at the protocol layer, the only way to
-                // opt out is an explicit BEGIN/COMMIT, which the transaction(...) API handles.
-                // withAutoCommit is a no-op on PG: no SQL is emitted, and the Scope.ensure is empty.
-                Scope.ensure(())
-    end withAutoCommit
-
 end SqlClient
 
 object SqlClient:
