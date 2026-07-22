@@ -2,7 +2,7 @@ package kyo
 
 import kyo.Test
 
-class SqlIsolationLevelTest extends Test:
+class SqlClientIsolationLevelTest extends Test:
 
     "SqlClient.IsolationLevel has all four standard levels" in {
         val levels = SqlClient.IsolationLevel.values.toList
@@ -27,4 +27,4 @@ class SqlIsolationLevelTest extends Test:
         assert(name(SqlClient.IsolationLevel.Serializable) == "SERIALIZABLE")
     }
 
-end SqlIsolationLevelTest
+end SqlClientIsolationLevelTest

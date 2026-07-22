@@ -3,7 +3,6 @@ package kyo.internal
 import java.nio.charset.StandardCharsets
 import kyo.Codec
 import kyo.Frame
-import kyo.NumericSubtype
 import kyo.Span
 import kyo.SqlDecodeDurationException
 import kyo.SqlDecodeEmptyStringForCharException
@@ -144,7 +143,7 @@ final class BufferedSqlReader(
         try BigDecimal(s)
         catch
             case _: NumberFormatException =>
-                throw SqlDecodeNumericException(s, NumericSubtype.Parse)(using captureFrame)
+                throw SqlDecodeNumericException(s, SqlDecodeNumericException.Subtype.Parse)(using captureFrame)
         end try
     end bigDecimal
 

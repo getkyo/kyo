@@ -2,7 +2,6 @@ package kyo.internal.mysql.types
 
 import java.nio.charset.StandardCharsets
 import kyo.*
-import kyo.NumericSubtype
 import kyo.SqlDecodeDurationException
 import kyo.SqlDecodeException
 import kyo.SqlDecodeInsufficientBytesException
@@ -92,7 +91,7 @@ object MysqlDecoder:
             try BigDecimal(s)
             catch
                 case _: NumberFormatException =>
-                    kyo.Abort.fail(SqlDecodeNumericException(s, NumericSubtype.Parse))
+                    kyo.Abort.fail(SqlDecodeNumericException(s, SqlDecodeNumericException.Subtype.Parse))
             end try
         end decode
 

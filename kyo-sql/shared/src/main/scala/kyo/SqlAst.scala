@@ -799,11 +799,10 @@ object SqlAst:
         // Escape hatch: takes a list of grouping sets explicitly. The post-groupBy view exposes the source view (`columns`);
         // rows where a field is not in the active grouping set carry NULL for that column, so user projections should treat
         // such fields as nullable (e.g. wrap with Maybe).
-        inline def groupByGroupingSets(inline sets: Record[F] => Seq[Seq[Term[?]]]): GroupBy[T, F] =
-            val nested: Seq[Seq[Term[?]]]     = sets(columns)
-            val asSets: Chunk[Chunk[Term[?]]] = Chunk.from(nested.map(s => Chunk.from(s)))
+        inline def groupByGroupingSets(inline sets: Record[F] => Chunk[Chunk[Term[?]]]): GroupBy[T, F] =
+            val nested: Chunk[Chunk[Term[?]]] = sets(columns)
             val flatKeys: Chunk[Term[?]]      = Chunk.from(nested.flatten.distinct)
-            new GroupBy(this, flatKeys, columns, Maybe.empty, GroupBy.Kind.GroupingSets(asSets))
+            new GroupBy(this, flatKeys, columns, Maybe.empty, GroupBy.Kind.GroupingSets(nested))
         end groupByGroupingSets
 
         inline def orderBy[A](inline spec: Record[F] => A)(using arg: OrderArg[A]): OrderBy[T] =
@@ -1018,11 +1017,10 @@ object SqlAst:
         // Escape hatch: takes a list of grouping sets explicitly. The post-groupBy view exposes the source view (`columns`);
         // rows where a field is not in the active grouping set carry NULL for that column, so user projections should treat
         // such fields as nullable (e.g. wrap with Maybe).
-        inline def groupByGroupingSets(inline sets: Record[F] => Seq[Seq[Term[?]]]): GroupBy[T, F] =
-            val nested: Seq[Seq[Term[?]]]     = sets(columns)
-            val asSets: Chunk[Chunk[Term[?]]] = Chunk.from(nested.map(s => Chunk.from(s)))
+        inline def groupByGroupingSets(inline sets: Record[F] => Chunk[Chunk[Term[?]]]): GroupBy[T, F] =
+            val nested: Chunk[Chunk[Term[?]]] = sets(columns)
             val flatKeys: Chunk[Term[?]]      = Chunk.from(nested.flatten.distinct)
-            new GroupBy(this, flatKeys, columns, Maybe.empty, GroupBy.Kind.GroupingSets(asSets))
+            new GroupBy(this, flatKeys, columns, Maybe.empty, GroupBy.Kind.GroupingSets(nested))
         end groupByGroupingSets
 
         inline def orderBy[A](inline spec: Record[F] => A)(using arg: OrderArg[A]): OrderBy[T] =

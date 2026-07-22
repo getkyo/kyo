@@ -91,9 +91,9 @@ final class SqlRow(
     /** Reads a typed value from column index [[idx]] using the given [[SqlSchema]].
       *
       * Handles both binary (PostgreSQL extended protocol) and text (PostgreSQL simple query or MySQL) protocol formats transparently. The
-      * backend is inferred from the row's [[format]] and field OIDs: [[Format.Binary]] rows route to the PostgreSQL binary decoder;
-      * [[Format.Text]] rows with at least one non-zero field OID route to the PostgreSQL text decoder; [[Format.Text]] rows with all-zero
-      * OIDs (MySQL) route to the MySQL decoder.
+      * backend is inferred by inspecting field OIDs (not the wire [[format]]): any row whose field descriptors carry at least one non-zero
+      * OID routes to the PostgreSQL decoder, regardless of Text vs Binary format; rows with all-zero OIDs, which the MySQL bridge produces
+      * because MySQL wire packets do not surface PG-style OIDs, route to the MySQL decoder.
       *
       * For multi-column types (e.g. derived case classes or tuples), [[idx]] is the start index of the first column; the schema's
       * [[SqlSchema.fieldCount]] determines how many columns are consumed.

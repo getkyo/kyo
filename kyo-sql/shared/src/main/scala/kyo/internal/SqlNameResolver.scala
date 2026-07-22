@@ -12,7 +12,7 @@ import kyo.SqlSchema.Naming
   *
   * Resolution order for column names:
   *   1. renamedFields override (Schema.rename applied before the given was built).
-  *   2. namingStrategy (e.g. SqlSchema.Naming.snakeCase).
+  *   2. namingStrategy (e.g. SqlSchema.Naming.SnakeCase).
   *   3. Verbatim Scala field name (fallback, preserves pre-change behaviour byte-for-byte).
   *
   * Resolution order for table names:

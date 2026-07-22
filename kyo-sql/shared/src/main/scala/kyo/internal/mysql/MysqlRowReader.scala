@@ -4,7 +4,6 @@ import java.nio.charset.StandardCharsets
 import kyo.Codec
 import kyo.Frame
 import kyo.Maybe
-import kyo.NumericSubtype
 import kyo.Span
 import kyo.SqlDecodeColumnNullException
 import kyo.SqlDecodeDurationException
@@ -222,7 +221,7 @@ final class MysqlRowReader(row: SqlRow)(using Frame) extends SqlReader(summon[Fr
                 try BigDecimal(s)
                 catch
                     case _: NumberFormatException =>
-                        throw SqlDecodeNumericException(s, NumericSubtype.Parse)(using frame)
+                        throw SqlDecodeNumericException(s, SqlDecodeNumericException.Subtype.Parse)(using frame)
                 end try
             case sub => sub.bigDecimal()
 

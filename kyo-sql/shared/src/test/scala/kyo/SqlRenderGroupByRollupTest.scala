@@ -66,10 +66,10 @@ class SqlRenderGroupByRollupTest extends Test:
 
     "GROUP BY GROUPING SETS with three sets renders correctly on PG" in {
         val q = sales.groupByGroupingSets(c =>
-            Seq(
-                Seq(c.s.region, c.s.product),
-                Seq(c.s.region),
-                Seq()
+            Chunk(
+                Chunk(c.s.region, c.s.product),
+                Chunk(c.s.region),
+                Chunk.empty
             )
         )
         val r = q.renderPostgres
@@ -80,7 +80,7 @@ class SqlRenderGroupByRollupTest extends Test:
     }
 
     "GROUP BY GROUPING SETS with single set renders as (a) on PG" in {
-        val q = sales.groupByGroupingSets(c => Seq(Seq(c.s.region)))
+        val q = sales.groupByGroupingSets(c => Chunk(Chunk(c.s.region)))
         val r = q.renderPostgres
         assert(r.sql.contains("GROUP BY GROUPING SETS ("))
         assert(r.sql.contains("""("s"."region")"""))
@@ -88,10 +88,10 @@ class SqlRenderGroupByRollupTest extends Test:
 
     "GROUP BY GROUPING SETS renders identically on MySQL (8.0+)" in {
         val q = sales.groupByGroupingSets(c =>
-            Seq(
-                Seq(c.s.region),
-                Seq(c.s.product),
-                Seq()
+            Chunk(
+                Chunk(c.s.region),
+                Chunk(c.s.product),
+                Chunk.empty
             )
         )
         val r = q.renderMysql
@@ -102,7 +102,7 @@ class SqlRenderGroupByRollupTest extends Test:
     }
 
     "GROUP BY GROUPING SETS empty-set-only emits just ()" in {
-        val q = sales.groupByGroupingSets(_ => Seq(Seq()))
+        val q = sales.groupByGroupingSets(_ => Chunk(Chunk.empty))
         val r = q.renderPostgres
         assert(r.sql.contains("GROUP BY GROUPING SETS (()"))
     }

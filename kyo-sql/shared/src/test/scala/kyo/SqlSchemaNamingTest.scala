@@ -3,39 +3,39 @@ package kyo
 class SqlSchemaNamingTest extends Test:
 
     "identityTableNameIsIdentity" in {
-        assert(SqlSchema.Naming.identity.tableName("Country") == "Country")
+        assert(SqlSchema.Naming.Identity.tableName("Country") == "Country")
     }
 
     "identityColumnNameIsIdentity" in {
-        assert(SqlSchema.Naming.identity.columnName("countryCode") == "countryCode")
+        assert(SqlSchema.Naming.Identity.columnName("countryCode") == "countryCode")
     }
 
     "snakeCaseTableNameCountry" in {
-        assert(SqlSchema.Naming.snakeCase.tableName("Country") == "country")
+        assert(SqlSchema.Naming.SnakeCase.tableName("Country") == "country")
     }
 
     "snakeCaseTableNameCamelCase" in {
-        assert(SqlSchema.Naming.snakeCase.tableName("CountryRegion") == "country_region")
+        assert(SqlSchema.Naming.SnakeCase.tableName("CountryRegion") == "country_region")
     }
 
     "snakeCaseColumnSimple" in {
-        assert(SqlSchema.Naming.snakeCase.columnName("name") == "name")
+        assert(SqlSchema.Naming.SnakeCase.columnName("name") == "name")
     }
 
     "snakeCaseColumnCamel" in {
-        assert(SqlSchema.Naming.snakeCase.columnName("countryCode") == "country_code")
+        assert(SqlSchema.Naming.SnakeCase.columnName("countryCode") == "country_code")
     }
 
     "snakeCaseColumnTripleSegment" in {
-        assert(SqlSchema.Naming.snakeCase.columnName("topLevelCategoryId") == "top_level_category_id")
+        assert(SqlSchema.Naming.SnakeCase.columnName("topLevelCategoryId") == "top_level_category_id")
     }
 
     "snakeCaseEmpty" in {
-        assert(SqlSchema.Naming.snakeCase.columnName("") == "")
+        assert(SqlSchema.Naming.SnakeCase.columnName("") == "")
     }
 
     "snakeCaseLeadingUpperNoUnderscore" in {
-        assert(SqlSchema.Naming.snakeCase.columnName("X") == "x")
+        assert(SqlSchema.Naming.SnakeCase.columnName("X") == "x")
     }
 
 end SqlSchemaNamingTest

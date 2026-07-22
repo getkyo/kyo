@@ -5,7 +5,6 @@ import kyo.Chunk
 import kyo.Frame
 import kyo.Instant
 import kyo.Maybe
-import kyo.NumericSubtype
 import kyo.Span
 import kyo.SqlDecodeArrayNullElementException
 import kyo.SqlDecodeException
@@ -144,7 +143,7 @@ object PostgresDecoder:
                 try BigDecimal(s)
                 catch
                     case e: NumberFormatException =>
-                        throw SqlDecodeNumericException(s, NumericSubtype.Parse)
+                        throw SqlDecodeNumericException(s, SqlDecodeNumericException.Subtype.Parse)
                 end try
             case Format.Binary =>
                 // Read the 4-field fixed header directly (8 bytes total).
@@ -159,11 +158,11 @@ object PostgresDecoder:
 
                 sign match
                     case 0xc000 =>
-                        throw SqlDecodeNumericException("NaN", NumericSubtype.NaN)
+                        throw SqlDecodeNumericException("NaN", SqlDecodeNumericException.Subtype.NaN)
                     case 0xd000 =>
-                        throw SqlDecodeNumericException("+Infinity", NumericSubtype.PosInf)
+                        throw SqlDecodeNumericException("+Infinity", SqlDecodeNumericException.Subtype.PosInf)
                     case 0xf000 =>
-                        throw SqlDecodeNumericException("-Infinity", NumericSubtype.NegInf)
+                        throw SqlDecodeNumericException("-Infinity", SqlDecodeNumericException.Subtype.NegInf)
                     case _ => ()
                 end match
 

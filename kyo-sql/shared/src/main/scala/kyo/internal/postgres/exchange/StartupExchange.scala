@@ -225,14 +225,31 @@ object StartupExchange:
                 ))
         }
 
-    /** Converts an authentication ErrorResponse to a [[SqlServerException]] leaf (preserving sqlState) when a valid SQLSTATE is present, or
-      * falls back to a [[SqlConnectionException]] leaf for malformed or empty responses.
+    /** Converts an authentication ErrorResponse into a marker-carrying [[SqlException]].
       *
-      * PG auth failures carry sqlState "28P01" (invalid_password), "28000" (invalid_authorization_specification), etc. Surfacing sqlState
-      * allows tests and callers to discriminate between auth, TLS, and protocol failures.
+      * PG auth failures carry sqlState "28P01" (invalid_password), "28000" (invalid_authorization_specification), etc. Any sqlState in the
+      * "28" class routes to [[SqlConnectionAuthenticationFailedException]] so callers can recover via `Abort.recover[SqlAuthenticationFailure]`.
+      * Other sqlStates fall back to the generic [[SqlServerException]] classification.
       */
     private def mkAuthError(fields: Chunk[(Byte, String)])(using Frame): SqlException =
-        QueryResultExchange.mkServerError(fields, Maybe.Absent, 0, Maybe.Absent)
+        var sqlState: String     = "00000"
+        var message: String      = "Authentication failed"
+        var errorCodeStr: String = ""
+        val it                   = fields.iterator
+        while it.hasNext do
+            val (tag, value) = it.next()
+            if tag == 'C'.toByte then sqlState = value
+            else if tag == 'M'.toByte then message = value
+            else if tag == 'c'.toByte then errorCodeStr = value
+            else ()
+            end if
+        end while
+        if sqlState.startsWith("28") then
+            val errorCode = errorCodeStr.toIntOption.getOrElse(0)
+            SqlConnectionAuthenticationFailedException(sqlState, errorCode, message)
+        else
+            QueryResultExchange.mkServerError(fields, Maybe.Absent, 0, Maybe.Absent)
+        end if
     end mkAuthError
 
 end StartupExchange

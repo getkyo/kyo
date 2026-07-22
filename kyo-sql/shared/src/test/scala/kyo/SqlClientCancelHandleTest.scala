@@ -3,7 +3,7 @@ package kyo
 import kyo.Test
 
 /** Unit tests for [[SqlClient.CancelHandle]], structural hierarchy and pattern-match coverage. */
-class SqlCancelHandleTest extends Test:
+class SqlClientCancelHandleTest extends Test:
 
     "SqlClient.CancelHandle.Postgres pattern-matches correctly as sealed abstract class" in {
         // Verify exhaustive match on SqlClient.CancelHandle after the sealed trait → sealed abstract class change.
@@ -51,4 +51,4 @@ class SqlCancelHandleTest extends Test:
         succeed
     }
 
-end SqlCancelHandleTest
+end SqlClientCancelHandleTest

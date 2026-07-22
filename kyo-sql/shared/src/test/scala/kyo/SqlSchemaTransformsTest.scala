@@ -15,8 +15,8 @@ class SqlSchemaTransformsTest extends Test:
     given CanEqual[Any, Any] = CanEqual.derived
 
     "withNamingAttachesStrategy" in {
-        val schema = SqlSchema.derived[Country].withNaming(SqlSchema.Naming.snakeCase)
-        assert(schema.namingStrategy == Maybe(SqlSchema.Naming.snakeCase))
+        val schema = SqlSchema.derived[Country].withNaming(SqlSchema.Naming.SnakeCase)
+        assert(schema.namingStrategy == Maybe(SqlSchema.Naming.SnakeCase))
     }
 
     "withTableNameAttachesOverride" in {
@@ -26,22 +26,22 @@ class SqlSchemaTransformsTest extends Test:
 
     "withNamingThenWithTableNameComposes" in {
         val schema = SqlSchema.derived[Country]
-            .withNaming(SqlSchema.Naming.snakeCase)
+            .withNaming(SqlSchema.Naming.SnakeCase)
             .withTableName("countries")
-        assert(schema.namingStrategy == Maybe(SqlSchema.Naming.snakeCase))
+        assert(schema.namingStrategy == Maybe(SqlSchema.Naming.SnakeCase))
         assert(schema.tableNameOverride == Maybe("countries"))
     }
 
     "withTableNameThenWithNamingComposes" in {
         val schema = SqlSchema.derived[Country]
             .withTableName("countries")
-            .withNaming(SqlSchema.Naming.snakeCase)
+            .withNaming(SqlSchema.Naming.SnakeCase)
         assert(schema.tableNameOverride == Maybe("countries"))
-        assert(schema.namingStrategy == Maybe(SqlSchema.Naming.snakeCase))
+        assert(schema.namingStrategy == Maybe(SqlSchema.Naming.SnakeCase))
     }
 
     "sugarNamingAccessorReturnsCompanion" in {
-        assert(SqlSchema.naming.snakeCase eq SqlSchema.Naming.snakeCase)
+        assert(SqlSchema.naming.SnakeCase eq SqlSchema.Naming.SnakeCase)
     }
 
 end SqlSchemaTransformsTest

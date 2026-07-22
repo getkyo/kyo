@@ -83,7 +83,7 @@ object SqlBackendOps:
             params: Chunk[BoundParam[?]],
             batchSize: Int
         )(using Frame): Stream[SqlRow, Async & Abort[SqlException] & Scope] =
-            client.streamPgQuery(sql, params, batchSize)
+            client.streamPostgresQuery(sql, params, batchSize)
 
         def readRow[A](schema: SqlSchema[A], row: SqlRow)(using Frame): A < Abort[SqlDecodeException] =
             schema.readPostgres(row)

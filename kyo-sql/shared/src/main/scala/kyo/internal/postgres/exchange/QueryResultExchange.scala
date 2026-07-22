@@ -133,19 +133,19 @@ object QueryResultExchange:
         paramCount: Int,
         connectionId: Maybe[Long]
     )(using Frame): SqlServerException =
-        var sqlState = "00000"
-        var severity = "ERROR"
-        var message  = "Unknown server error"
-        var detail   = Maybe.empty[String]
-        var hint     = Maybe.empty[String]
-        var position = Maybe.empty[Int]
-        val extra    = scala.collection.mutable.Map.empty[String, String]
+        var sqlState                 = "00000"
+        var severityV: Maybe[String] = Absent // non-localized, preferred
+        var severityS: Maybe[String] = Absent // localized fallback
+        var message                  = "Unknown server error"
+        var detail                   = Maybe.empty[String]
+        var hint                     = Maybe.empty[String]
+        var position                 = Maybe.empty[Int]
+        val extra                    = scala.collection.mutable.Map.empty[String, String]
 
         fields.foreach { case (tag, value) =>
             if tag == 'C'.toByte then sqlState = value
-            else if tag == 'V'.toByte then severity = value
-            else if tag == 'S'.toByte then
-                if severity == "ERROR" then severity = value // 'S' is localised; 'V' overrides if present
+            else if tag == 'V'.toByte then severityV = Present(value)
+            else if tag == 'S'.toByte then severityS = Present(value)
             else if tag == 'M'.toByte then message = value
             else if tag == 'D'.toByte then detail = Present(value)
             else if tag == 'H'.toByte then hint = Present(value)
@@ -162,6 +162,7 @@ object QueryResultExchange:
         }
 
         val truncatedSql = sqlText.map(truncateSqlText)
+        val severity     = severityV.orElse(severityS).getOrElse("ERROR")
         SqlServerException(sqlState, severity, message, detail, hint, position, extra.toMap, truncatedSql, paramCount, connectionId)
     end mkServerError
 

@@ -21,7 +21,7 @@ import scala.quoted.*
   * {{{
   * case class User(id: Long, firstName: String)
   * object User:
-  *     inline given SqlSchema[User] = SqlSchema.derived[User].withNaming(SqlSchema.Naming.snakeCase)
+  *     inline given SqlSchema[User] = SqlSchema.derived[User].withNaming(SqlSchema.Naming.SnakeCase)
   * }}}
   *
   * With `inline given`, `Expr.summon[SqlSchema[T]]` returns the inlined construction expression (the transforms expand into a chain of

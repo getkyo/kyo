@@ -22,8 +22,8 @@ import kyo.net.NetAddress
 /** Sealed orchestration layer for kyo-sql: retry → timeout → pool → connect+execute.
   *
   * Two concrete implementations:
-  *   - [[SqlClientBackend.Pg]], backed by a [[ConnectionPool[NetAddress, PostgresConnection]]], uses the Postgres extended protocol.
-  *   - [[SqlClientBackend.My]], backed by a [[ConnectionPool[NetAddress, MysqlConnection]]], uses the MySQL binary prepared-statement protocol.
+  *   - [[PostgresSqlClientBackend]], backed by a [[ConnectionPool[NetAddress, PostgresConnection]]], uses the Postgres extended protocol.
+  *   - [[MysqlSqlClientBackend]], backed by a [[ConnectionPool[NetAddress, MysqlConnection]]], uses the MySQL binary prepared-statement protocol.
   *
   * All public methods accept a `SqlConfig` (sourced from the fiber-local in `SqlClient`) and apply the four-layer chain (retry → pool
   * → connect+execute → timeout) to execute a single query or statement.
@@ -138,7 +138,7 @@ sealed trait SqlClientBackend:
 
     /** Executes a parameterised MySQL query and returns all rows as backend-neutral [[Row]] values.
       *
-      * Only implemented by [[SqlClientBackend.My]]; [[SqlClientBackend.Pg]] raises [[SqlConnectionException]]. The MySQL backend converts
+      * Only implemented by [[MysqlSqlClientBackend]]; [[PostgresSqlClientBackend]] raises [[SqlConnectionException]]. The MySQL backend converts
       * [[MysqlRow]] to [[Row]] with synthetic field descriptors (same as the simple-query path).
       */
     def queryMysql(
@@ -151,7 +151,7 @@ sealed trait SqlClientBackend:
 
     /** Executes a parameterised MySQL DML statement and returns the affected-row count.
       *
-      * Only implemented by [[SqlClientBackend.My]]; [[SqlClientBackend.Pg]] raises [[SqlConnectionException]].
+      * Only implemented by [[MysqlSqlClientBackend]]; [[PostgresSqlClientBackend]] raises [[SqlConnectionException]].
       */
     def executeMysql(
         address: SqlConfig.Address,
@@ -163,7 +163,7 @@ sealed trait SqlClientBackend:
 
     /** Streams MySQL rows from a parameterised query.
       *
-      * Only implemented by [[SqlClientBackend.My]]; [[SqlClientBackend.Pg]] raises [[SqlConnectionException]].
+      * Only implemented by [[MysqlSqlClientBackend]]; [[PostgresSqlClientBackend]] raises [[SqlConnectionException]].
       */
     def streamQueryMysql(
         address: SqlConfig.Address,
@@ -176,7 +176,7 @@ sealed trait SqlClientBackend:
 
     /** Streams MySQL rows from a parameterised query, converting each row to [[SqlRow]] so that [[SqlSchema]] instances can be applied.
       *
-      * Only implemented by [[SqlClientBackend.My]]; [[SqlClientBackend.Pg]] raises [[SqlConnectionException]].
+      * Only implemented by [[MysqlSqlClientBackend]]; [[PostgresSqlClientBackend]] raises [[SqlConnectionException]].
       */
     def streamQueryMysqlRows(
         address: SqlConfig.Address,
@@ -189,7 +189,7 @@ sealed trait SqlClientBackend:
 
     /** Acquires a Postgres connection, calls `f`, then releases.
       *
-      * Only implemented by [[SqlClientBackend.Pg]]; [[SqlClientBackend.My]] raises [[SqlConnectionException]].
+      * Only implemented by [[PostgresSqlClientBackend]]; [[MysqlSqlClientBackend]] raises [[SqlConnectionException]].
       */
     def withConnection[A, S](
         address: SqlConfig.Address,
@@ -199,7 +199,7 @@ sealed trait SqlClientBackend:
 
     /** Acquires a MySQL connection, calls `f`, then releases.
       *
-      * Only implemented by [[SqlClientBackend.My]]; [[SqlClientBackend.Pg]] raises [[SqlConnectionException]].
+      * Only implemented by [[MysqlSqlClientBackend]]; [[PostgresSqlClientBackend]] raises [[SqlConnectionException]].
       */
     def withMysqlConnection[A, S](
         address: SqlConfig.Address,
@@ -234,7 +234,7 @@ sealed trait SqlClientBackend:
 
     /** Acquires a Postgres connection and calls `f` with the connection and its cancel info `(conn, pid, secretKey)`.
       *
-      * Only implemented by [[SqlClientBackend.Pg]]; [[SqlClientBackend.My]] raises [[SqlConnectionException]].
+      * Only implemented by [[PostgresSqlClientBackend]]; [[MysqlSqlClientBackend]] raises [[SqlConnectionException]].
       */
     def withCancelInfo[A](
         address: SqlConfig.Address,
@@ -244,7 +244,7 @@ sealed trait SqlClientBackend:
 
     /** Acquires a MySQL connection and calls `f` with the connection and its `connectionId`.
       *
-      * Only implemented by [[SqlClientBackend.My]]; [[SqlClientBackend.Pg]] raises [[SqlConnectionException]].
+      * Only implemented by [[MysqlSqlClientBackend]]; [[PostgresSqlClientBackend]] raises [[SqlConnectionException]].
       */
     def withCancelInfoMysql[A](
         address: SqlConfig.Address,
@@ -254,7 +254,7 @@ sealed trait SqlClientBackend:
 
     /** Streams Postgres LISTEN/NOTIFY notifications.
       *
-      * Only implemented by [[SqlClientBackend.Pg]]; [[SqlClientBackend.My]] raises [[SqlConnectionException]].
+      * Only implemented by [[PostgresSqlClientBackend]]; [[MysqlSqlClientBackend]] raises [[SqlConnectionException]].
       */
     def notificationStream(
         address: SqlConfig.Address,
@@ -288,7 +288,7 @@ sealed trait SqlClientBackend:
       * [[SqlServerException]] for auth/permission failures) see the original exception, not a blanket [[SqlConnectionException]] wrap.
       * Non-SqlException transport errors are wrapped as [[SqlConnectionException]].
       *
-      * Called from [[kyo.sql.SqlClient.init]] / [[kyo.sql.SqlClient.initMysql]] with `n = min(config.minConnections, config.maxConnections)`.
+      * Called from [[kyo.SqlClient.init]] / [[kyo.SqlClient.initMysql]] with `n = min(config.minConnections, config.maxConnections)`.
       */
     def warmUp(
         address: SqlConfig.Address,
@@ -679,7 +679,7 @@ final class PostgresSqlClientBackend private[client] (
                 address.host,
                 address.port,
                 address.user,
-                address.db,
+                address.database,
                 Present(password),
                 config.tls,
                 config.preparedStmtCacheSize,
@@ -1240,7 +1240,7 @@ final class PostgresSqlClientBackend private[client] (
                             address.host,
                             address.port,
                             address.user,
-                            address.db,
+                            address.database,
                             Present(password),
                             tls = Absent,
                             negotiator = Present(neg),
@@ -1254,7 +1254,7 @@ final class PostgresSqlClientBackend private[client] (
                             address.host,
                             address.port,
                             address.user,
-                            address.db,
+                            address.database,
                             Present(password),
                             Absent,
                             config.preparedStmtCacheSize,
@@ -1268,7 +1268,7 @@ final class PostgresSqlClientBackend private[client] (
                         address.host,
                         address.port,
                         address.user,
-                        address.db,
+                        address.database,
                         Present(password),
                         Absent,
                         config.preparedStmtCacheSize,
@@ -1287,7 +1287,7 @@ final class PostgresSqlClientBackend private[client] (
                                     address.host,
                                     address.port,
                                     address.user,
-                                    address.db,
+                                    address.database,
                                     Present(password),
                                     tls = Present(tlsConfig),
                                     negotiator = Absent, // allow: TlsNegotiator.negotiate is a no-op; use strict TLS upgrade
@@ -1308,7 +1308,7 @@ final class PostgresSqlClientBackend private[client] (
                     address.host,
                     address.port,
                     address.user,
-                    address.db,
+                    address.database,
                     Present(password),
                     config.tls,
                     config.preparedStmtCacheSize,
@@ -1670,7 +1670,7 @@ final class MysqlSqlClientBackend private[client] (
                     addr.port,
                     addr.user,
                     Maybe.Present(password),
-                    Maybe.Present(addr.db),
+                    Maybe.Present(addr.database),
                     Maybe.Absent,
                     64,
                     Duration.Infinity
@@ -2226,7 +2226,7 @@ final class MysqlSqlClientBackend private[client] (
                     address.port,
                     address.user,
                     Present(password),
-                    Present(address.db),
+                    Present(address.database),
                     config.tls,
                     TlsMode.Prefer,
                     config.preparedStmtCacheSize,
@@ -2240,7 +2240,7 @@ final class MysqlSqlClientBackend private[client] (
                         address.port,
                         address.user,
                         Present(password),
-                        Present(address.db),
+                        Present(address.database),
                         Maybe.Absent,
                         config.preparedStmtCacheSize,
                         config.preparedStmtTtl
@@ -2258,7 +2258,7 @@ final class MysqlSqlClientBackend private[client] (
                                     address.port,
                                     address.user,
                                     Present(password),
-                                    Present(address.db),
+                                    Present(address.database),
                                     config.tls,
                                     TlsMode.Require,
                                     config.preparedStmtCacheSize,
@@ -2278,7 +2278,7 @@ final class MysqlSqlClientBackend private[client] (
                     address.port,
                     address.user,
                     Present(password),
-                    Present(address.db),
+                    Present(address.database),
                     config.tls,
                     config.preparedStmtCacheSize,
                     config.preparedStmtTtl
@@ -2392,7 +2392,7 @@ object SqlClientBackend:
       * @param frame
       *   captured from the call site so the pool's isAlive/discard callbacks carry a real source location.
       */
-    def initPg(config: SqlConfig, frame: Frame)(using AllowUnsafe): PostgresSqlClientBackend =
+    def initPostgres(config: SqlConfig, frame: Frame)(using AllowUnsafe): PostgresSqlClientBackend =
         given capturedFrame: Frame = frame
         val pool = ConnectionPool.init[NetAddress, PostgresConnection](
             maxConnectionsPerHost = config.maxConnections.max(2),
@@ -2427,7 +2427,7 @@ object SqlClientBackend:
         val slotChans = new ConcurrentHashMap[SqlConfig.Address, Channel[Unit]]()
         val metrics   = SqlClient.Metrics(config.metricsEnabled, config.metricsScope)
         new PostgresSqlClientBackend(pool, slotChans, frame, metrics)
-    end initPg
+    end initPostgres
 
     /** Creates a MySQL-backed [[SqlClientBackend]] wrapped by a fresh [[ConnectionPool[NetAddress, MysqlConnection]]].
       *

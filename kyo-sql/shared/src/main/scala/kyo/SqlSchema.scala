@@ -46,7 +46,7 @@ object SqlSchema:
     /** Lifts an existing [[Schema]] into a [[SqlSchema]]. */
     def apply[A](using s: SqlSchema[A]): SqlSchema[A] = s
 
-    /** Alias accessor for [[SqlSchema.Naming]] companion. Enables `SqlSchema.naming.snakeCase` at the call site. */
+    /** Alias accessor for [[SqlSchema.Naming]] companion. Enables `SqlSchema.naming.SnakeCase` at the call site. */
     inline def naming: SqlSchema.Naming.type = SqlSchema.Naming
 
     /** Derives a [[SqlSchema]] for a case class or sealed trait / enum `A`.
@@ -1518,7 +1518,7 @@ object SqlSchema:
           * `.withTableName` preserves the table-name override and vice versa.
           *
           * @param strategy
-          *   the naming convention to attach (e.g. `SqlSchema.Naming.snakeCase`)
+          *   the naming convention to attach (e.g. `SqlSchema.Naming.SnakeCase`)
           */
         transparent inline def withNaming(strategy: SqlSchema.Naming): SqlSchema[A] =
             SqlSchema.applyNaming(self, strategy)
@@ -1670,7 +1670,7 @@ object SqlSchema:
 
     /** Pluggable naming convention for mapping Scala type and field names to SQL table and column names.
       *
-      * Two built-in implementations are provided: [[SqlSchema.Naming.identity]] and [[SqlSchema.Naming.snakeCase]]. Custom implementations
+      * Two built-in implementations are provided: [[SqlSchema.Naming.Identity]] and [[SqlSchema.Naming.SnakeCase]]. Custom implementations
       * may be defined inline as `new SqlSchema.Naming { ... }` or as objects extending the trait.
       */
     trait Naming:
@@ -1680,12 +1680,12 @@ object SqlSchema:
     object Naming:
 
         /** Pass-through. Type and field names are emitted verbatim. */
-        case object identity extends Naming:
+        case object Identity extends Naming:
             def tableName(s: String): String  = s
             def columnName(s: String): String = s
 
         /** `Country` becomes `country`; `countryCode` becomes `country_code`; `topLevelCategoryId` becomes `top_level_category_id`. */
-        case object snakeCase extends Naming:
+        case object SnakeCase extends Naming:
             def tableName(s: String): String  = camelToSnake(s)
             def columnName(s: String): String = camelToSnake(s)
 

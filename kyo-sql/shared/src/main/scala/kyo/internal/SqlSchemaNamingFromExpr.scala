@@ -7,7 +7,7 @@ import scala.quoted.*
 /** Macro-side lifter for [[kyo.Naming]].
   *
   * Provides `FromExpr[Naming]` so that the static-SQL macros can recover a `Naming` value from an
-  * `Expr[Naming]` when the strategy is one of the two built-in singletons (`identity` or `snakeCase`). User-defined strategies
+  * `Expr[Naming]` when the strategy is one of the two built-in singletons (`Identity` or `SnakeCase`). User-defined strategies
   * (anonymous `new Naming { ... }` or custom objects) are not liftable and return `None`; the macro falls back to the runtime
   * renderer path.
   *
@@ -19,8 +19,8 @@ object SqlSchemaNamingFromExpr:
     given FromExpr[Naming] with
         def unapply(x: Expr[Naming])(using Quotes): Option[Naming] =
             x match
-                case '{ Naming.snakeCase } => Some(Naming.snakeCase)
-                case '{ Naming.identity }  => Some(Naming.identity)
+                case '{ Naming.SnakeCase } => Some(Naming.SnakeCase)
+                case '{ Naming.Identity }  => Some(Naming.Identity)
                 case _                     => None
     end given
 

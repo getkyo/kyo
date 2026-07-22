@@ -7,19 +7,12 @@ import kyo.internal.mysql.MysqlBufferReader
 
 /** Unit tests for [[OkPacketUnmarshaller]], the MySQL OK-packet wire decoder.
   *
-  * This file lives under `kyo/internal/` because it directly exercises the unmarshaller and buffer-reader internals: it constructs a
-  * `MysqlBufferReader` from a hand-written fixture byte sequence and asserts the decoded [[OkPacket]] field values. The public `SqlClient`
-  * surface never exposes these types, so the test legitimately belongs to the internal layer per the LHS-rule
-  * (`kyo-sql/TEST-AUDIT-FIX/STEERING.md`). The public-API path is `SqlClient.execute` returning `SqlClient.InsertOutcome` (covered in
-  * `SqlInsertResultTest`'s container-gated leaves).
-  *
-  * The fixture (synthetic OK packet) is identical to the one that previously lived in `kyo.SqlInsertResultTest` lines 103-110 prior to the
-  * Phase 4 split:
+  * The fixture (synthetic OK packet) encodes:
   *   - header byte (0x00 / 0xFE) ALREADY consumed by the dispatcher; the unmarshaller reads from the body
-  *   - lenenc(affectedRows = 1) → 0x01
-  *   - lenenc(lastInsertId = 42) → 0x2a
-  *   - uint16 LE statusFlags = 0 → 0x00 0x00
-  *   - uint16 LE warnings = 0 → 0x00 0x00
+  *   - lenenc(affectedRows = 1), 0x01
+  *   - lenenc(lastInsertId = 42), 0x2a
+  *   - uint16 LE statusFlags = 0, 0x00 0x00
+  *   - uint16 LE warnings = 0, 0x00 0x00
   *   - (no trailing info bytes)
   */
 class OkPacketUnmarshallerTest extends Test:

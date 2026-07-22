@@ -24,6 +24,13 @@ class SqlExceptionTest extends Test:
         assert(ex.isInstanceOf[SqlRetryable])
     }
 
+    "SqlServerException factory dispatches 40P01 to deadlock and carries SqlRetryable" in {
+        val ex = SqlServerException("40P01", "ERROR", "deadlock detected")
+        assert(ex.isInstanceOf[SqlServerDeadlockException])
+        assert(ex.isInstanceOf[SqlRetryable])
+        assert(ex.asInstanceOf[SqlServerDeadlockException].sqlState == "40P01")
+    }
+
     "SqlServerException factory dispatches 42xxx to syntax" in {
         val ex = SqlServerException("42601", "ERROR", "syntax error")
         assert(ex.isInstanceOf[SqlServerSyntaxException])
@@ -101,6 +108,26 @@ class SqlExceptionTest extends Test:
         val ex = SqlDecodeColumnNullException(3)
         assert(ex.columnIndex == 3)
         assert(ex.getMessage.contains("3"))
+    }
+
+    "SqlDecodeColumnNullException(columnName) omits the -1 index from the rendered message" in {
+        val ex = SqlDecodeColumnNullException("email")
+        assert(ex.columnIndex == -1)
+        assert(ex.columnName == Present("email"))
+        assert(ex.getMessage == "Non-nullable column 'email' was SQL NULL")
+    }
+
+    "SqlConnectionAuthenticationFailedException carries the SqlAuthenticationFailure marker" in {
+        val ex: SqlException = SqlConnectionAuthenticationFailedException("28P01", 0, "invalid password")
+        assert(ex.isInstanceOf[SqlAuthenticationFailure])
+        assert(ex.isInstanceOf[SqlConnectionException])
+    }
+
+    "SqlConnectionConnectFailedException propagates the underlying cause" in {
+        val cause                 = new RuntimeException("boom")
+        val ex                    = SqlConnectionConnectFailedException("db.example.com", 5432, cause)
+        val propagated: Throwable = ex.getCause
+        assert(propagated eq cause)
     }
 
     "SqlDecodeColumnNotFoundException reports column name" in {

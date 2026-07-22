@@ -31,9 +31,7 @@ object Sql:
     /** INSERT entry point, table name derived from `T`'s case-class label, column names from [[Fields]] (declaration order).
       *
       * Auto-key detection: if `T`'s first declared field is `Long`-typed, that field is treated as the auto-incrementing primary key. The
-      * PG renderer auto-appends `RETURNING <pk>`; the MySQL driver reads `last_insert_id` from the OK packet. Future work: a `@PrimaryKey`
-      * / `@AutoIncrement` annotation may provide explicit primary-key declaration; currently the first `Long` field heuristic is the only
-      * detection mechanism.
+      * PG renderer auto-appends `RETURNING <pk>`; the MySQL driver reads `last_insert_id` from the OK packet.
       */
     transparent inline def insert[T](using f: Fields[T]) =
         val cols = kyo.internal.SqlAstInternal.buildRowColumns[T]
@@ -113,9 +111,9 @@ object Sql:
     inline def raw[A](inline sql: String): Term[A] = RawSql(sql)
 
     /** Public projection of the SQL renderer's output, the SQL text and the runtime bind values produced from any [[SqlAst.SqlAst]] node
-      * ([[SqlAst.Query]], [[SqlAst.Action]], [[SqlAst.Term]], [[SqlAst.Fragment]]). Obtained via [[SqlAst.SqlAst.render]]; used for
-      * logging, debugging, migration scripts, or any caller that needs to inspect the rendered SQL alongside its parameters without
-      * executing it.
+      * ([[SqlAst.Query]], [[SqlAst.Action]], [[SqlAst.Term]], [[SqlAst.Fragment]]). Obtained via `.renderPostgres` / `.renderMysql` on the
+      * AST node, or via [[SqlClient.render]]. Used for logging, debugging, migration scripts, or any caller that needs to inspect the
+      * rendered SQL alongside its parameters without executing it.
       */
     final case class Rendered(sql: String, params: Chunk[BoundValue[?]])
 

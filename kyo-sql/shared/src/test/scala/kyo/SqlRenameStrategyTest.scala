@@ -6,7 +6,7 @@ import kyo.SqlAst.*
   * `.withTableName`, per-field `.rename`, and combinations -- correctly flow through [[kyo.SqlAst.Column.sqlName]] into rendered SQL.
   *
   * Eight leaves are organised as four groups:
-  *   1. Leaves 1-2: [[SqlSchema.Naming.snakeCase]] strategy only (columns + table name).
+  *   1. Leaves 1-2: [[SqlSchema.Naming.SnakeCase]] strategy only (columns + table name).
   *   2. Leaves 3-4: `.withTableName` override (no strategy).
   *   3. Leaves 5-6: `.rename` overrides snakeCase for selected fields (rename wins over strategy).
   *   4. Leaves 7-8: combined strategy + table-name override + per-field rename.
@@ -19,7 +19,7 @@ class SqlRenameStrategyTest extends Test:
     case class UserProfile(id: Long, firstName: String, createdAt: Long)
     object UserProfile:
         inline given SqlSchema[UserProfile] = SqlSchema.derived[UserProfile]
-            .withNaming(SqlSchema.Naming.snakeCase)
+            .withNaming(SqlSchema.Naming.SnakeCase)
 
     // Leaf 1: snakeCase applied to all columns in SELECT.
     "snakeCase strategy: all columns rendered as snake_case in SELECT" in {
@@ -72,7 +72,7 @@ class SqlRenameStrategyTest extends Test:
     case class Employee(id: Long, deptId: Long, salary: BigDecimal)
     object Employee:
         inline given SqlSchema[Employee] = SqlSchema.derived[Employee]
-            .withNaming(SqlSchema.Naming.snakeCase)
+            .withNaming(SqlSchema.Naming.SnakeCase)
             .rename("deptId", "dept_code")
     end Employee
 
@@ -100,7 +100,7 @@ class SqlRenameStrategyTest extends Test:
     case class ProductCatalog(id: Long, productName: String, listPrice: BigDecimal)
     object ProductCatalog:
         inline given SqlSchema[ProductCatalog] = SqlSchema.derived[ProductCatalog]
-            .withNaming(SqlSchema.Naming.snakeCase)
+            .withNaming(SqlSchema.Naming.SnakeCase)
             .withTableName("catalog")
             .rename("productName", "name")
     end ProductCatalog

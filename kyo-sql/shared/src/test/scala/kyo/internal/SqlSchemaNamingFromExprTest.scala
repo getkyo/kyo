@@ -16,8 +16,8 @@ class SqlSchemaNamingFromExprTest extends Test:
         def columnName(s: String): String = s.toUpperCase
 
     "liftsSnakeCase" in {
-        // SqlSchemaNamingFromExpr.given FromExpr[Naming] should match Naming.snakeCase.
-        assert(SqlSchemaNamingFromExprHarness.matched(Naming.snakeCase))
+        // SqlSchemaNamingFromExpr.given FromExpr[Naming] should match Naming.SnakeCase.
+        assert(SqlSchemaNamingFromExprHarness.matched(Naming.SnakeCase))
     }
 
     "failsOnUnknownStrategy" in {

@@ -15,7 +15,7 @@ class SqlConfigUrlTest extends Test:
         assert(url.address.driver == "postgres")
         assert(url.address.host == "localhost")
         assert(url.address.port == 5432)
-        assert(url.address.db == "mydb")
+        assert(url.address.database == "mydb")
         assert(url.address.user == "alice")
         assert(url.password == "secret")
     }

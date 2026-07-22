@@ -197,10 +197,10 @@ sealed abstract class SqlClient:
     private[kyo] def executePostgresQuery(sql: String, params: Chunk[BoundParam[?]])(using
         Frame
     ): Chunk[SqlRow] < (Async & Abort[SqlException]) =
-        val pgSql = SqlClient.translatePlaceholders(sql)
+        val postgresSql = SqlClient.translatePlaceholders(sql)
         SqlClient.txLocal.use {
             case Present(ctx: TransactionContext.Postgres) =>
-                ctx.connection.extendedQuery(pgSql, params)
+                ctx.connection.extendedQuery(postgresSql, params)
             case Present(myCtx: TransactionContext.Mysql) =>
                 if params.nonEmpty then
                     Abort.fail(SqlRequestMysqlTxRequiresConnectionApiException("query"))
@@ -208,17 +208,17 @@ sealed abstract class SqlClient:
                     myCtx.connection.simpleQuery(sql).map(_.map(SqlClientBackend.mysqlRowToRow))
             case Absent =>
                 SqlClient.local.use { (_, config) =>
-                    self.backend.query(self.url.address, self.url.password, pgSql, params, config)
+                    self.backend.query(self.url.address, self.url.password, postgresSql, params, config)
                 }
         }
     end executePostgresQuery
 
     /** Runs a Postgres DML statement with pre-converted `BoundParam` params. Used by [[kyo.internal.SqlBackendOps.postgres]]. */
     private[kyo] def executePostgresUpdate(sql: String, params: Chunk[BoundParam[?]])(using Frame): Long < (Async & Abort[SqlException]) =
-        val pgSql = SqlClient.translatePlaceholders(sql)
+        val postgresSql = SqlClient.translatePlaceholders(sql)
         SqlClient.txLocal.use {
             case Present(ctx: TransactionContext.Postgres) =>
-                ctx.connection.extendedExecute(pgSql, params)
+                ctx.connection.extendedExecute(postgresSql, params)
             case Present(myCtx: TransactionContext.Mysql) =>
                 if params.nonEmpty then
                     Abort.fail(SqlRequestMysqlTxRequiresConnectionApiException("execute"))
@@ -226,34 +226,34 @@ sealed abstract class SqlClient:
                     myCtx.connection.simpleExecute(sql)
             case Absent =>
                 SqlClient.local.use { (_, config) =>
-                    self.backend.execute(self.url.address, self.url.password, pgSql, params, config)
+                    self.backend.execute(self.url.address, self.url.password, postgresSql, params, config)
                 }
         }
     end executePostgresUpdate
 
     /** Streams a Postgres query with pre-converted `BoundParam` params. Used by [[kyo.internal.SqlBackendOps.postgres]]. */
-    private[kyo] def streamPgQuery(sql: String, params: Chunk[BoundParam[?]], batchSize: Int)(using
+    private[kyo] def streamPostgresQuery(sql: String, params: Chunk[BoundParam[?]], batchSize: Int)(using
         Frame
     ): Stream[SqlRow, Async & Abort[SqlException] & Scope] =
-        val pgSql = SqlClient.translatePlaceholders(sql)
+        val postgresSql = SqlClient.translatePlaceholders(sql)
         Stream[SqlRow, Async & Abort[SqlException] & Scope](
             SqlClient.txLocal.use {
                 case Present(ctx: TransactionContext.Postgres) =>
-                    ctx.connection.streamQuery(pgSql, params, batchSize).emit
+                    ctx.connection.streamQuery(postgresSql, params, batchSize).emit
                 case Present(_: TransactionContext.Mysql) =>
                     Abort.fail(SqlRequestMysqlTxRequiresConnectionApiException("streamQuery"))
                 case Absent =>
                     SqlClient.local.use { (_, config) =>
-                        self.backend.streamQuery(self.url.address, self.url.password, pgSql, params, batchSize, config).emit
+                        self.backend.streamQuery(self.url.address, self.url.password, postgresSql, params, batchSize, config).emit
                     }
             }
         )
-    end streamPgQuery
+    end streamPostgresQuery
 
     /** Returns the rows of a parameterised query using the backend-agnostic [[BoundValue]] surface, decoded as `A` via the supplied
       * [[SqlSchema]].
       *
-      * Threads the fiber-SqlClient.local [[SqlClient.txLocal]] so calls inside a `transaction { ... }` block use the bound connection. Dispatches the
+      * Threads the fiber-local [[SqlClient.txLocal]] so calls inside a `transaction { ... }` block use the bound connection. Dispatches the
       * backend-specific row reader (`schema.readPostgres` for PG, `schema.readMysql` for MySQL).
       *
       * Used by the `.run` / `.runDynamic` extension methods on `Query[A]`.
@@ -289,11 +289,11 @@ sealed abstract class SqlClient:
                         self.backend.queryBound(self.url.address, self.url.password, sql, params, config)
                     }
             }
-        val isPg = self.url.address.driver == "postgres"
+        val isPostgres = self.url.address.driver == "postgres"
         rowsK.map { rows =>
             Kyo.foreach(rows) { row =>
                 val decodeK: A < Abort[SqlDecodeException] =
-                    if isPg then schema.readPostgres(row) else schema.readMysql(row)
+                    if isPostgres then schema.readPostgres(row) else schema.readMysql(row)
                 Abort.recover[SqlDecodeException](
                     (e: SqlDecodeException) => Abort.fail(e: SqlException),
                     t => Abort.error(Result.Panic(t))
@@ -304,7 +304,7 @@ sealed abstract class SqlClient:
 
     /** Executes a parameterised DML statement using the [[BoundValue]] surface and returns the affected-row count.
       *
-      * Threads the fiber-SqlClient.local [[SqlClient.txLocal]] so calls inside a `transaction { ... }` block use the bound connection.
+      * Threads the fiber-local [[SqlClient.txLocal]] so calls inside a `transaction { ... }` block use the bound connection.
       *
       * Used by the `.run` / `.runDynamic` extension methods on `Update[T, F]` / `Delete[T, F]`.
       */
@@ -324,7 +324,7 @@ sealed abstract class SqlClient:
 
     /** Executes a parameterised INSERT statement using the [[BoundValue]] surface and returns an [[SqlClient.InsertOutcome]].
       *
-      * Threads the fiber-SqlClient.local [[SqlClient.txLocal]] so calls inside a `transaction { ... }` block use the bound connection.
+      * Threads the fiber-local [[SqlClient.txLocal]] so calls inside a `transaction { ... }` block use the bound connection.
       *
       * Used by the `.run` / `.runDynamic` extension methods on `Insert[T, F]`.
       */
@@ -411,7 +411,7 @@ sealed abstract class SqlClient:
 
     /** Returns `true` if [[close]] has been called on this client, `false` otherwise.
       *
-      * The predicate reflects only the SqlClient.local closed flag set by [[close]] / [[closeNow]]; it does not probe the underlying pool or
+      * The predicate reflects only the local closed flag set by [[close]] / [[closeNow]]; it does not probe the underlying pool or
       * network.
       */
     def isClosed(using Frame): Boolean < Sync = self.closedRef.get
@@ -446,7 +446,7 @@ sealed abstract class SqlClient:
 
     /** Runs `body` inside a database transaction.
       *
-      * Acquires a single connection from the pool and binds it to the fiber-SqlClient.local [[SqlClient.txLocal]] for the duration of `body`. All
+      * Acquires a single connection from the pool and binds it to the fiber-local [[SqlClient.txLocal]] for the duration of `body`. All
       * `query`/`execute`/`streamQuery` calls within `body` automatically use the bound connection.
       *
       * On success: sends `COMMIT`. On `Abort[SqlException]`: sends `ROLLBACK` and re-raises the error. On `Result.Panic` (unhandled
@@ -617,8 +617,8 @@ sealed abstract class SqlClient:
 
     /** Typed-error sibling of [[transactionImpl]]. Catches both `SqlException` and a caller-provided `E` failure via
       * `Abort.run[E | SqlException]`, re-failing each branch on its respective slot of the output's `Abort[SqlException | E]`. Rollback
-      * fires for any non-Success outcome (typed failure or panic). Mirrors the three transaction-context branches (Pg savepoint / My
-      * savepoint / outermost) of [[transactionImpl]].
+      * fires for any non-Success outcome (typed failure or panic). Mirrors the three transaction-context branches (Postgres savepoint /
+      * MySQL savepoint / outermost) of [[transactionImpl]].
       */
     private def transactionTypedImpl[E, A, S](
         isolation: Maybe[SqlClient.IsolationLevel],
@@ -729,6 +729,9 @@ sealed abstract class SqlClient:
       *
       * Equivalent to `transaction(Absent, false)(body)`.
       *
+      * Note: a `body` that raises `Abort[E]` for a non-[[SqlException]] `E` is caught and re-raised as `Result.Panic(RuntimeException(...))`,
+      * losing the typed value. Use [[transactionTyped]] to preserve typed failures across the rollback boundary.
+      *
       * @param body
       *   the computation to run inside the transaction
       */
@@ -737,10 +740,13 @@ sealed abstract class SqlClient:
 
     /** Runs `body` inside a database transaction with an explicit isolation level or read-only mode.
       *
+      * Note: a `body` that raises `Abort[E]` for a non-[[SqlException]] `E` is caught and re-raised as `Result.Panic(RuntimeException(...))`,
+      * losing the typed value. Use [[transactionTyped]] to preserve typed failures across the rollback boundary.
+      *
       * @param isolation
       *   optional isolation level; `Absent` uses the server default
       * @param readOnly
-      *   if `true`, sends `BEGIN … READ ONLY`
+      *   if `true`, sends `BEGIN ... READ ONLY`
       * @param body
       *   the computation to run inside the transaction
       */
@@ -880,9 +886,9 @@ sealed abstract class SqlClient:
 
     /** Convenience wrapper over [[ping]] that returns `true` when the probe succeeds and `false` when it raises a [[SqlException]].
       *
-      * Distinct from [[SqlClient.isClosed]] (a SqlClient.local close-flag predicate), `isAlive` reaches the server.
+      * Distinct from [[SqlClient.isClosed]] (a local close-flag predicate), `isAlive` reaches the server.
       */
-    def isAlive(using Frame): Boolean < (Async & Abort[SqlException]) =
+    def isAlive(using Frame): Boolean < Async =
         Abort.run[SqlException](self.ping).map(_.isSuccess)
 
     /** Explicitly scrubs per-session state (variables, prepared statements, temp tables, listeners, transactions) on a freshly acquired
@@ -968,11 +974,13 @@ object SqlClient:
           *
           *   - [[GeneratedKey.Value]], backend reported a non-zero generated id. On Postgres the renderer emitted `RETURNING <pk>` for an
           *     auto-key column and decoded the DataRow's id; on MySQL the OK packet's `lastInsertId` field was non-zero.
-          *   - [[GeneratedKey.NoAutoKey]], the target table has no auto-incrementing column, so no id was requested. Postgres: no
-          *     `RETURNING` was added; MySQL: schema declared no AUTO_INCREMENT.
-          *   - [[GeneratedKey.Unavailable]], the schema does have an auto-key column but the backend did not surface a value. Currently
-          *     this surfaces only on MySQL when `last_insert_id == 0` despite an AUTO_INCREMENT column (e.g. when the user supplied an
-          *     explicit non-zero value for the auto column, suppressing the auto-increment generation).
+          *   - [[GeneratedKey.NoAutoKey]], the target table has no auto-incrementing column, so no id was requested. This is Postgres-only:
+          *     the renderer did not emit `RETURNING`. MySQL cannot distinguish "no AUTO_INCREMENT column" from "column present but zero"
+          *     from the OK packet alone, so MySQL always uses [[GeneratedKey.Unavailable]] instead, never [[GeneratedKey.NoAutoKey]].
+          *   - [[GeneratedKey.Unavailable]], the backend did not surface a concrete id. On MySQL this covers both "no AUTO_INCREMENT
+          *     column" and "column present but the user supplied an explicit non-zero value, suppressing generation": the OK packet
+          *     reports `last_insert_id == 0` in both cases and MySQL surfaces them uniformly as `Unavailable`. On Postgres it applies
+          *     when the schema has an auto-key column yet the backend reports no value.
           */
         enum GeneratedKey derives CanEqual:
             case Value(key: Long)
@@ -1341,7 +1349,7 @@ object SqlClient:
           * Example:
           * {{{
           * for
-          *   (handle, rows) <- mysqlClient.cancellableQuery("SELECT SLEEP(5)")
+          *   (handle, rows) <- mysqlClient.cancellableQuery(sql"SELECT SLEEP(5)")
           *   _              <- Fiber.init(Async.sleep(1.second).andThen(mysqlClient.cancel(handle)))
           * yield rows
           * }}}
@@ -1480,30 +1488,36 @@ object SqlClient:
       * Thread-safety: A [[PipelineBuilder]] is NOT thread-safe. It is always consumed synchronously within the pipeline body before flush.
       */
     final class PipelineBuilder:
-        private val _stmts = scala.collection.mutable.ArrayBuffer.empty[(String, Seq[SqlSchema.BoundValue[?]])]
+        private val _stmts = scala.collection.mutable.ArrayBuffer.empty[(String, Chunk[SqlSchema.BoundValue[?]])]
 
         /** Registers a DML statement for later batch execution. Returns `Unit` within the pipeline body; the actual row-count is returned
           * by the outer `pipeline` call as part of the result [[Chunk]].
+          *
+          * Equivalent to [[query]]: both append the statement to the same buffer. The two names document caller intent (DML vs SELECT)
+          * without any behavioral difference in the pipeline.
           */
         def execute(sql: String): Unit =
-            execute(sql, Seq.empty)
+            execute(sql, Chunk.empty)
 
-        def execute(sql: String, params: Seq[SqlSchema.BoundValue[?]]): Unit =
+        def execute(sql: String, params: Chunk[SqlSchema.BoundValue[?]]): Unit =
             val _ = _stmts += ((sql, params))
 
         /** Registers a query statement for later batch execution. Returns `Unit` within the pipeline body; the rows are returned by the
           * outer `pipeline` call as part of the result [[Chunk]].
+          *
+          * Equivalent to [[execute]]: both append the statement to the same buffer. The two names document caller intent (SELECT vs DML)
+          * without any behavioral difference in the pipeline.
           */
         def query(sql: String): Unit =
-            query(sql, Seq.empty)
+            query(sql, Chunk.empty)
 
-        def query(sql: String, params: Seq[SqlSchema.BoundValue[?]]): Unit =
+        def query(sql: String, params: Chunk[SqlSchema.BoundValue[?]]): Unit =
             val _ = _stmts += ((sql, params))
 
         /** Returns the accumulated statements as an immutable [[Chunk]]. Called internally by [[SqlClient.pipeline]] after the body
           * returns.
           */
-        private[kyo] def drainStmts(): Chunk[(String, Seq[SqlSchema.BoundValue[?]])] =
+        private[kyo] def drainStmts(): Chunk[(String, Chunk[SqlSchema.BoundValue[?]])] =
             Chunk.from(_stmts.toSeq)
     end PipelineBuilder
 
@@ -1710,7 +1724,7 @@ object SqlClient:
 
     // --- Lifecycle: Postgres ---
     //
-    // Lifecycle factories precede fiber-SqlClient.local plumbing per CONTRIBUTING resource-factory convention.
+    // Lifecycle factories precede fiber-local plumbing per CONTRIBUTING resource-factory convention.
     // All variants delegate downward: init → initWith → create + Scope.ensure(close) + warmup + f(client).
 
     /** Creates a Postgres [[SqlClient]] scoped to the enclosing [[Scope]].
@@ -1723,7 +1737,7 @@ object SqlClient:
     def init(rawUrl: String)(using Frame): Postgres < (Async & Scope & Abort[SqlException]) =
         initWith(rawUrl)(identity)
 
-    /** Creates a Postgres [[Postgres]] scoped to the enclosing [[Scope]], using custom config.
+    /** Creates a [[Postgres]] scoped to the enclosing [[Scope]], using custom config.
       *
       * Delegates to `initWith(rawUrl, config)(identity)`.
       */
@@ -1751,7 +1765,7 @@ object SqlClient:
     ): B < (S & Async & Scope & Abort[SqlException]) =
         initWith(rawUrl, SqlConfig.default)(f)
 
-    /** Creates a Postgres [[Postgres]] with custom config, registers `Scope.ensure(close)`, applies `f`, and returns.
+    /** Creates a [[Postgres]] with custom config, registers `Scope.ensure(close)`, applies `f`, and returns.
       *
       * Effect set: `Async & Scope & Abort[SqlException] & S`.
       *
@@ -1778,7 +1792,7 @@ object SqlClient:
                         // Unsafe: ConnectionPool.init uses AllowUnsafe for ring-buffer initialisation.
                         // Capturing the current Frame so the pool's isAlive/discard callbacks have a call-site.
                         val backend: PostgresSqlClientBackend < Sync = Sync.Unsafe.defer {
-                            SqlClientBackend.initPg(mergedConfig, summon[Frame])
+                            SqlClientBackend.initPostgres(mergedConfig, summon[Frame])
                         }
                         backend.flatMap { (b: PostgresSqlClientBackend) =>
                             AtomicBoolean.init(false).flatMap { closedRef =>
@@ -1794,7 +1808,7 @@ object SqlClient:
         }
     end initWith
 
-    /** Creates a Postgres [[SqlClient]] with bracket semantics: no [[Scope]] required, close guaranteed via `Sync.ensure`.
+    /** Creates a Postgres [[SqlClient]] with bracket semantics: no [[Scope]] required, close guaranteed via `Scope.ensure`.
       *
       * Warmup runs before `f` is called. The client is closed when `f` returns (success, failure, or panic).
       *
@@ -1814,8 +1828,8 @@ object SqlClient:
     ): B < (S & Async & Abort[SqlException]) =
         use(rawUrl, SqlConfig.default)(f)
 
-    /** Creates a Postgres [[Postgres]] with custom config and bracket semantics: no [[Scope]] required, close guaranteed via
-      * `Sync.ensure`.
+    /** Creates a [[Postgres]] with custom config and bracket semantics: no [[Scope]] required, close guaranteed via
+      * `Scope.ensure`.
       *
       * Effect set: `Async & Abort[SqlException] & S`, no `Scope` in the set.
       *
@@ -1840,7 +1854,7 @@ object SqlClient:
                 SqlClient.sanitizeTypeNames(config.typeNames).flatMap { _ =>
                     SqlClient.mergeConfig(url, config).flatMap { mergedConfig =>
                         val backend: PostgresSqlClientBackend < Sync = Sync.Unsafe.defer {
-                            SqlClientBackend.initPg(mergedConfig, summon[Frame])
+                            SqlClientBackend.initPostgres(mergedConfig, summon[Frame])
                         }
                         backend.flatMap { (b: PostgresSqlClientBackend) =>
                             AtomicBoolean.init(false).flatMap { closedRef =>
@@ -1891,7 +1905,7 @@ object SqlClient:
     ): B < (S & Async & Abort[SqlException]) =
         initUnscopedWith(rawUrl, SqlConfig.default)(f)
 
-    /** Creates a Postgres [[Postgres]] with custom config, no cleanup registered, applies `f`, and returns.
+    /** Creates a [[Postgres]] with custom config, no cleanup registered, applies `f`, and returns.
       *
       * No `Scope.ensure` or `Sync.ensure` is registered. The caller is responsible for calling `client.close()`.
       *
@@ -1918,7 +1932,7 @@ object SqlClient:
                 SqlClient.sanitizeTypeNames(config.typeNames).flatMap { _ =>
                     SqlClient.mergeConfig(url, config).flatMap { mergedConfig =>
                         val backend: PostgresSqlClientBackend < Sync = Sync.Unsafe.defer {
-                            SqlClientBackend.initPg(mergedConfig, summon[Frame])
+                            SqlClientBackend.initPostgres(mergedConfig, summon[Frame])
                         }
                         backend.flatMap { (b: PostgresSqlClientBackend) =>
                             AtomicBoolean.init(false).flatMap { closedRef =>
@@ -2006,7 +2020,7 @@ object SqlClient:
         }
     end initMysqlWith
 
-    /** Creates a MySQL [[SqlClient]] with bracket semantics: no [[Scope]] required, close guaranteed via `Sync.ensure`.
+    /** Creates a MySQL [[SqlClient]] with bracket semantics: no [[Scope]] required, close guaranteed via `Scope.ensure`.
       *
       * Effect set: `Async & Abort[SqlException] & S`, no `Scope` in the set.
       *
@@ -2025,7 +2039,7 @@ object SqlClient:
         useMysql(rawUrl, SqlConfig.default)(f)
 
     /** Creates a MySQL [[Mysql]] with custom config and bracket semantics: no [[Scope]] required, close guaranteed via
-      * `Sync.ensure`.
+      * `Scope.ensure`.
       *
       * Effect set: `Async & Abort[SqlException] & S`, no `Scope` in the set.
       *
@@ -2133,7 +2147,7 @@ object SqlClient:
 
     /** Installs `client` as the active client for the duration of `v`.
       *
-      * The client's resolved config (from [[SqlClient.init]]) is also installed in the fiber-SqlClient.local, so that per-query timeouts and other
+      * The client's resolved config (from [[SqlClient.init]]) is also installed in the fiber-local, so that per-query timeouts and other
       * settings take effect without requiring an explicit [[withConfig]] call.
       */
     def let[A, S](client: SqlClient)(v: A < S)(using Frame): A < S =
@@ -2314,7 +2328,7 @@ object SqlClient:
             address.host,
             address.port,
             address.user,
-            address.db,
+            address.database,
             password,
             tls,
             64,

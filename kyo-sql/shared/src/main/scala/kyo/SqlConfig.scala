@@ -38,7 +38,7 @@ import kyo.net.NetTlsConfig
   *   `sslmode=verify-full`. Equivalent to the `sslrootcert` URL query parameter. [[Absent]] = use the JDK default trust store.
   * @param preparedStmtCacheSize
   *   maximum number of server-side prepared statements cached per connection. Each connection independently maintains a cache; the total
-  *   server-side statement memory is bounded by `preparedStmtCacheSize × maxConnections`.
+  *   server-side statement memory is bounded by `preparedStmtCacheSize x maxConnections`.
   * @param preparedStmtTtl
   *   how long a cached prepared statement may remain unused before expiry. [[Duration.Infinity]] (the default) disables time-based expiry,
   *   entries are only evicted when the cache reaches capacity (CLOCK eviction).
@@ -137,7 +137,7 @@ object SqlConfig:
       *   hostname or IP address
       * @param port
       *   TCP port number
-      * @param db
+      * @param database
       *   database name
       * @param user
       *   authentication user name
@@ -146,13 +146,13 @@ object SqlConfig:
         driver: String,
         host: String,
         port: Int,
-        db: String,
+        database: String,
         user: String
     ) derives CanEqual
 
     object Address:
         given Render[Address] = Render.from { a =>
-            s"${a.driver}://${a.user}@${a.host}:${a.port}/${a.db}"
+            s"${a.driver}://${a.user}@${a.host}:${a.port}/${a.database}"
         }
     end Address
 
@@ -165,7 +165,7 @@ object SqlConfig:
       * Port is required. Missing port is a parse error.
       *
       * @param address
-      *   the [[SqlConfig.Address]] extracted from the URL (driver, host, port, db, user)
+      *   the [[SqlConfig.Address]] extracted from the URL (driver, host, port, database, user)
       * @param password
       *   authentication password (may be empty)
       * @param options
@@ -176,6 +176,10 @@ object SqlConfig:
         password: String,
         options: Url.Options
     ) derives CanEqual:
+
+        /** Redacts the password so it never appears in logs or error messages. */
+        override def toString: String =
+            s"Url($address,***,$options)"
 
         /** Converts this [[Url]] into a [[SqlConfig]] by mapping the `sslmode` and `sslrootcert` query parameters to TLS configuration via
           * [[kyo.internal.tls.TlsContext.build]].

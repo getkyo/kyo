@@ -29,6 +29,7 @@ import kyo.Maybe.Present
   *   case e: SqlServerConstraintViolationException => // unique / foreign-key / check violation
   *   case e: SqlDecodeException                    => // schema mismatch, check derivation
   *   case e: SqlConnectionException                => // transport failure
+  *   case other                                    => throw other // rethrow other categories
   * })
   * }}}
   */
@@ -64,8 +65,34 @@ sealed abstract class SqlConnectionException(msg: => String, cause: String | Thr
 /** Cannot parse a database URL into scheme, host, port, database, and options. */
 final case class SqlConnectionUrlParseException(rawUrl: String, scheme: String)(using Frame)
     extends SqlConnectionException(
-        s"Cannot parse database URL for scheme '$scheme'. Input: $rawUrl"
+        s"Cannot parse database URL for scheme '$scheme'. Input: ${SqlConnectionUrlParseException.redactUserInfo(rawUrl)}"
     )
+
+object SqlConnectionUrlParseException:
+    /** Redact `://user:password@` credentials in a URL string so the exception message never leaks the password. If the pattern is not
+      * present (already malformed input), returns the original.
+      */
+    private[kyo] def redactUserInfo(url: String): String =
+        val schemeSep = url.indexOf("://")
+        if schemeSep < 0 then url
+        else
+            val start   = schemeSep + 3
+            val atIndex = url.indexOf('@', start)
+            if atIndex < 0 then url
+            else
+                val userInfo = url.substring(start, atIndex)
+                val colon    = userInfo.indexOf(':')
+                if colon < 0 then url
+                else
+                    val user   = userInfo.substring(0, colon)
+                    val prefix = url.substring(0, start)
+                    val rest   = url.substring(atIndex)
+                    s"$prefix$user:***$rest"
+                end if
+            end if
+        end if
+    end redactUserInfo
+end SqlConnectionUrlParseException
 
 /** TCP connect to the database server failed. */
 final case class SqlConnectionConnectFailedException(host: String, port: Int, cause: Throwable)(using Frame)
@@ -346,7 +373,7 @@ object SqlServerException:
     end apply
 
     /** Convenience for tests and simple construction with no optional fields. */
-    def apply(sqlState: String, severity: String, message: String)(using Frame): SqlServerException =
+    private[kyo] def apply(sqlState: String, severity: String, message: String)(using Frame): SqlServerException =
         apply(sqlState, severity, message, Absent, Absent, Absent, Map.empty, Absent, 0, Absent)
 
     private[kyo] def format(
@@ -470,7 +497,8 @@ final case class SqlDecodeInsufficientBytesException(typeName: String, expected:
 final case class SqlDecodeColumnNullException(columnIndex: Int, columnName: Maybe[String])(using Frame)
     extends SqlDecodeException(
         columnName.fold(s"Non-nullable column at index $columnIndex was SQL NULL")(name =>
-            s"Non-nullable column '$name' (index $columnIndex) was SQL NULL"
+            if columnIndex < 0 then s"Non-nullable column '$name' was SQL NULL"
+            else s"Non-nullable column '$name' (index $columnIndex) was SQL NULL"
         )
     )
 
@@ -539,23 +567,25 @@ final case class SqlDecodeEmptyStringForCharException(columnIndex: Int)(using Fr
         s"Column at index $columnIndex is empty; cannot decode as Char"
     )
 
-/** Distinguishes the four numeric-decode failure modes. */
-enum NumericSubtype derives CanEqual:
-    case NaN
-    case PosInf
-    case NegInf
-    case Parse
-end NumericSubtype
-
 /** A numeric wire value could not be decoded (NaN, infinity, or unparseable text). */
-final case class SqlDecodeNumericException(text: String, subtype: NumericSubtype)(using Frame)
+final case class SqlDecodeNumericException(text: String, subtype: SqlDecodeNumericException.Subtype)(using Frame)
     extends SqlDecodeException(
         subtype match
-            case NumericSubtype.NaN    => s"Numeric value is NaN: '$text'"
-            case NumericSubtype.PosInf => s"Numeric value is +Infinity: '$text'"
-            case NumericSubtype.NegInf => s"Numeric value is -Infinity: '$text'"
-            case NumericSubtype.Parse  => s"Cannot parse numeric value: '$text'"
+            case SqlDecodeNumericException.Subtype.NaN    => s"Numeric value is NaN: '$text'"
+            case SqlDecodeNumericException.Subtype.PosInf => s"Numeric value is +Infinity: '$text'"
+            case SqlDecodeNumericException.Subtype.NegInf => s"Numeric value is -Infinity: '$text'"
+            case SqlDecodeNumericException.Subtype.Parse  => s"Cannot parse numeric value: '$text'"
     )
+
+object SqlDecodeNumericException:
+    /** Distinguishes the four numeric-decode failure modes. */
+    enum Subtype derives CanEqual:
+        case NaN
+        case PosInf
+        case NegInf
+        case Parse
+    end Subtype
+end SqlDecodeNumericException
 
 /** A PostgreSQL interval field could not be decoded. */
 final case class SqlDecodeIntervalException(field: String, value: String)(using Frame)
@@ -659,8 +689,8 @@ final case class SqlUnsupportedStructuralReadException(methodName: String)(using
         s"Structural read operation '$methodName' is not supported by the buffered SqlReader"
     )
 
-/** A user-declared custom type name is not registered in the built-in map or in [[kyo.SqlClientConfig.typeNames]]. */
+/** A user-declared custom type name is not registered in the built-in map or in [[kyo.SqlConfig.typeNames]]. */
 final case class SqlUnsupportedCustomTypeException(typeName: String)(using Frame)
     extends SqlUnsupportedException(
-        s"Custom type '$typeName' is not registered. Add '$typeName' to SqlClientConfig.typeNames before pool initialization."
+        s"Custom type '$typeName' is not registered. Add '$typeName' to SqlConfig.typeNames before pool initialization."
     )

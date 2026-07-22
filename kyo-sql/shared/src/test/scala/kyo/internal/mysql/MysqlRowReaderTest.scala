@@ -261,17 +261,16 @@ class MysqlRowReaderTest extends Test:
     }
 
     "frame is preserved through to subclass" in {
+        val expectedFrame = summon[Frame]
         def makeReader()(using f: Frame): MysqlRowReader =
             val row = singleColumnRow(encodeRaw(0, MysqlEncoder.intEncoder))
             new MysqlRowReader(row)
         end makeReader
         val r = makeReader()
-        // frame is not null, that's the minimal contract (Frame equality is not specified).
-        assert(r.frame != null)
-        succeed
+        assert(r.frame == expectedFrame)
     }
 
-    // ── Nested array/map methods throw UnsupportedOperationException ──────────
+    // ── Nested array/map methods on non-JSON columns raise SqlDecodeException ──────────
     // SQL rows are flat: nested arrays/maps/captures are not meaningful. The
     // case-class field-iteration protocol (objectStart/hasNextField/matchField/…)
     // IS supported, see the next test.
