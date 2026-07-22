@@ -474,27 +474,45 @@ final private[kyo] class HttpContainerBackend(
 
     def waitForExit(id: Container.Id, timeout: Duration)(using Frame): ExitCode < (Async & Abort[ContainerException]) =
         // `/containers/{id}/wait` is a long-poll endpoint: the daemon holds the HTTP connection open
-        // until the container exits. The HTTP-client deadline must therefore track the caller's own
-        // budget so a legitimate long wait is not mis-reported as `HttpTimeoutException`. Add a small
-        // slack so the transport does not race the daemon's SIGKILL+response overhead when `timeout`
-        // is finite; for `Duration.Infinity`, the addition is a no-op and the client waits until the
-        // daemon replies (or the caller cancels the fiber).
+        // until the container exits. Two deadlines cooperate:
+        //   1. The HTTP transport deadline gets the caller's `timeout` plus 30s slack, so a
+        //      legitimate long wait that completes right at `timeout` is not lost to the transport.
+        //   2. `Async.timeout(timeout)` bounds the caller-observable wait to exactly `timeout`,
+        //      matching the shell backend's contract. Without this the caller would wait for the
+        //      transport deadline (timeout + 30s) instead of the requested `timeout`.
+        // For `Duration.Infinity`, both are no-ops and the client waits until the daemon replies
+        // (or the caller cancels the fiber).
         val httpDeadline = if timeout == Duration.Infinity then Duration.Infinity else timeout + 30.seconds
-        Abort.run[ContainerException](
-            withErrorMapping(ctxContainer(id)) {
-                // Preserve any caller-set longer deadline via `max`, same pattern as `stop`.
-                HttpClient.withConfig(c => c.timeout(c.timeout.max(httpDeadline))) {
-                    HttpClient.postJson[WaitResponse](url(s"/containers/${id.value}/wait"), "")
-                }
-            }.map(resp => ExitCode(resp.StatusCode))
-        ).map {
-            case Result.Success(code)                         => code
-            case Result.Failure(_: ContainerMissingException) =>
-                // Container was auto-removed before wait completed — exit code lost
-                ExitCode.Success
-            case Result.Failure(other) => Abort.fail(other)
-            case Result.Panic(ex)      => Abort.fail(ContainerBackendException(s"waitForExit panicked for ${id.value}", ex))
-        }
+        val call: ExitCode < (Async & Abort[ContainerException]) =
+            Abort.run[ContainerException](
+                withErrorMapping(ctxContainer(id)) {
+                    // Preserve any caller-set longer deadline via `max`, same pattern as `stop`.
+                    HttpClient.withConfig(c => c.timeout(c.timeout.max(httpDeadline))) {
+                        HttpClient.postJson[WaitResponse](url(s"/containers/${id.value}/wait"), "")
+                    }
+                }.map(resp => ExitCode(resp.StatusCode))
+            ).map {
+                case Result.Success(code)                         => code
+                case Result.Failure(_: ContainerMissingException) =>
+                    // Container was auto-removed before wait completed — exit code lost
+                    ExitCode.Success
+                case Result.Failure(other) => Abort.fail(other)
+                case Result.Panic(ex)      => Abort.fail(ContainerBackendException(s"waitForExit panicked for ${id.value}", ex))
+            }
+        if timeout == Duration.Infinity then call
+        else
+            Abort.run[Timeout](Async.timeout(timeout)(call)).map {
+                case Result.Success(code) => code
+                case Result.Failure(_) =>
+                    Abort.fail[ContainerException](
+                        ContainerBackendException(s"waitForExit for ${id.value} exceeded $timeout")
+                    )
+                case Result.Panic(ex) =>
+                    Abort.fail[ContainerException](
+                        ContainerBackendException(s"waitForExit panicked for ${id.value}", ex)
+                    )
+            }
+        end if
     end waitForExit
 
     // --- Checkpoint/Restore ---
