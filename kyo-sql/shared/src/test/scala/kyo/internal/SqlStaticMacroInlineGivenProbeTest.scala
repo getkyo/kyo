@@ -11,7 +11,7 @@ import scala.compiletime.testing.typeCheckErrors
   *     [[kyo.internal.SqlStaticMacro.emitOpaqueCauses]] produces a positioned error directing the user to `.run` (the runtime path
   *     applies the strategy correctly).
   *
-  * Why the override case can't fold: the per-column `Column.sqlName` is resolved by [[kyo.SqlAst.internal.resolveSqlName]] inside the
+  * Why the override case can't fold: the per-column `Column.sqlName` is resolved by [[kyo.internal.SqlAstInternal.resolveSqlName]] inside the
   * polyfunction body that `Record.stageNamed` accepts. Macros expand at polyfunction-body type-check time (with `n` still abstract),
   * not at per-field substitution time inside `stageNamedLoop`. Without a Scala 3 mechanism to defer macro expansion past polyfunction
   * substitution, we can't constant-fold the per-column resolved name from this site. The runtime path (`.render` / `.run`) works

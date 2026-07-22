@@ -36,8 +36,8 @@ object Sql:
       * detection mechanism.
       */
     transparent inline def insert[T](using f: Fields[T]) =
-        val cols = SqlAst.internal.buildRowColumns[T]
-        Insert.Builder[T, SqlAst.internal.RecordF[cols.type]](
+        val cols = kyo.internal.SqlAstInternal.buildRowColumns[T]
+        Insert.Builder[T, SqlAst.RecordF[cols.type]](
             cols,
             kyo.internal.SqlMacros.tableName[T],
             kyo.internal.SqlMacros.columnNames[T],
@@ -47,13 +47,13 @@ object Sql:
 
     /** UPDATE entry point. */
     transparent inline def update[T](using f: Fields[T]) =
-        val cols = SqlAst.internal.buildRowColumns[T]
-        Update.Builder[T, SqlAst.internal.RecordF[cols.type]](cols, kyo.internal.SqlMacros.tableName[T])
+        val cols = kyo.internal.SqlAstInternal.buildRowColumns[T]
+        Update.Builder[T, SqlAst.RecordF[cols.type]](cols, kyo.internal.SqlMacros.tableName[T])
 
     /** DELETE entry point. */
     transparent inline def delete[T](using f: Fields[T]) =
-        val cols = SqlAst.internal.buildRowColumns[T]
-        Delete.Builder[T, SqlAst.internal.RecordF[cols.type]](cols, kyo.internal.SqlMacros.tableName[T])
+        val cols = kyo.internal.SqlAstInternal.buildRowColumns[T]
+        Delete.Builder[T, SqlAst.RecordF[cols.type]](cols, kyo.internal.SqlMacros.tableName[T])
 
     // --- CTE (WITH) entry points ---
 

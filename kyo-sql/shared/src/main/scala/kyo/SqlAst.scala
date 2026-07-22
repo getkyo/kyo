@@ -742,7 +742,7 @@ object SqlAst:
         // -- GROUP BY -------------------------------------------------------
         inline def groupBy[N <: String & Singleton, V, FT <: Tuple](inline key: Record[F] => Column[N, V])(using
             Fields.Aux[T, FT]
-        ): GroupBy[T, internal.RewriteGrouped[FT, (N ~ Unit) *: EmptyTuple]] =
+        ): GroupBy[T, RewriteGrouped[FT, (N ~ Unit) *: EmptyTuple]] =
             val ks = Chunk(key(columns))
             new GroupBy(this, ks, kyo.internal.SqlGroupedView.buildGroupedView(this, ks), Maybe.empty, GroupBy.Kind.Plain)
         end groupBy
@@ -750,7 +750,7 @@ object SqlAst:
         @targetName("groupByLabelled")
         inline def groupBy[N <: String & Singleton, V, FT <: Tuple](inline key: Record[F] => LabelledTerm[N, V])(using
             Fields.Aux[T, FT]
-        ): GroupBy[T, internal.RewriteGrouped[FT, EmptyTuple] & (N ~ GroupedColumn[N, V])] =
+        ): GroupBy[T, RewriteGrouped[FT, EmptyTuple] & (N ~ GroupedColumn[N, V])] =
             val ks = Chunk(key(columns))
             new GroupBy(this, ks, kyo.internal.SqlGroupedView.buildGroupedView(this, ks), Maybe.empty, GroupBy.Kind.Plain)
         end groupBy
@@ -759,7 +759,7 @@ object SqlAst:
         inline def groupBy[Tup <: Tuple, FT <: Tuple](inline keys: Record[F] => Tup)(using
             f: Fields.Aux[T, FT],
             ev: IsTupleOfTerms[Tup]
-        ): GroupBy[T, internal.RewriteGrouped[FT, internal.ColumnsToFields[Tup]]] =
+        ): GroupBy[T, RewriteGrouped[FT, ColumnsToFields[Tup]]] =
             val ks = ev.toChunk(keys(columns))
             new GroupBy(this, ks, kyo.internal.SqlGroupedView.buildGroupedView(this, ks), Maybe.empty, GroupBy.Kind.Plain)
         end groupBy
@@ -767,7 +767,7 @@ object SqlAst:
         // -- GROUP BY ROLLUP ------------------------------------------------
         inline def groupByRollup[N <: String & Singleton, V, FT <: Tuple](inline key: Record[F] => Column[N, V])(using
             Fields.Aux[T, FT]
-        ): GroupBy[T, internal.RewriteGrouped[FT, (N ~ Unit) *: EmptyTuple]] =
+        ): GroupBy[T, RewriteGrouped[FT, (N ~ Unit) *: EmptyTuple]] =
             val ks = Chunk(key(columns))
             new GroupBy(this, ks, kyo.internal.SqlGroupedView.buildGroupedView(this, ks), Maybe.empty, GroupBy.Kind.Rollup)
         end groupByRollup
@@ -776,7 +776,7 @@ object SqlAst:
         inline def groupByRollup[Tup <: Tuple, FT <: Tuple](inline keys: Record[F] => Tup)(using
             f: Fields.Aux[T, FT],
             ev: IsTupleOfTerms[Tup]
-        ): GroupBy[T, internal.RewriteGrouped[FT, internal.ColumnsToFields[Tup]]] =
+        ): GroupBy[T, RewriteGrouped[FT, ColumnsToFields[Tup]]] =
             val ks = ev.toChunk(keys(columns))
             new GroupBy(this, ks, kyo.internal.SqlGroupedView.buildGroupedView(this, ks), Maybe.empty, GroupBy.Kind.Rollup)
         end groupByRollup
@@ -784,7 +784,7 @@ object SqlAst:
         // -- GROUP BY CUBE -------------------------------------------------
         inline def groupByCube[N <: String & Singleton, V, FT <: Tuple](inline key: Record[F] => Column[N, V])(using
             Fields.Aux[T, FT]
-        ): GroupBy[T, internal.RewriteGrouped[FT, (N ~ Unit) *: EmptyTuple]] =
+        ): GroupBy[T, RewriteGrouped[FT, (N ~ Unit) *: EmptyTuple]] =
             val ks = Chunk(key(columns))
             new GroupBy(this, ks, kyo.internal.SqlGroupedView.buildGroupedView(this, ks), Maybe.empty, GroupBy.Kind.Cube)
         end groupByCube
@@ -793,7 +793,7 @@ object SqlAst:
         inline def groupByCube[Tup <: Tuple, FT <: Tuple](inline keys: Record[F] => Tup)(using
             f: Fields.Aux[T, FT],
             ev: IsTupleOfTerms[Tup]
-        ): GroupBy[T, internal.RewriteGrouped[FT, internal.ColumnsToFields[Tup]]] =
+        ): GroupBy[T, RewriteGrouped[FT, ColumnsToFields[Tup]]] =
             val ks = ev.toChunk(keys(columns))
             new GroupBy(this, ks, kyo.internal.SqlGroupedView.buildGroupedView(this, ks), Maybe.empty, GroupBy.Kind.Cube)
         end groupByCube
@@ -844,8 +844,8 @@ object SqlAst:
     object Table:
         final class Builder[T]:
             transparent inline def apply[N <: String & Singleton](alias: N)(using f: Fields[T]) =
-                val cols = internal.buildColumns[T, N](alias)
-                Table[T, internal.RecordF[cols.type]](
+                val cols = kyo.internal.SqlAstInternal.buildColumns[T, N](alias)
+                Table[T, RecordF[cols.type]](
                     cols,
                     alias,
                     kyo.internal.SqlMacros.tableName[T],
@@ -865,8 +865,8 @@ object SqlAst:
     object Nested:
         final class Builder[T]:
             transparent inline def apply[N <: String & Singleton](alias: N, query: Query[?])(using f: Fields[T]) =
-                val cols = internal.buildColumns[T, N](alias)
-                Nested[T, internal.RecordF[cols.type]](cols, query, alias, kyo.internal.SqlMacros.columnNames[T])
+                val cols = kyo.internal.SqlAstInternal.buildColumns[T, N](alias)
+                Nested[T, RecordF[cols.type]](cols, query, alias, kyo.internal.SqlMacros.columnNames[T])
             end apply
         end Builder
     end Nested
@@ -881,8 +881,8 @@ object SqlAst:
     object Lateral:
         final class Builder[T]:
             transparent inline def apply[N <: String & Singleton](alias: N, query: Query[?])(using f: Fields[T]) =
-                val cols = internal.buildColumns[T, N](alias)
-                Lateral[T, internal.RecordF[cols.type]](cols, query, alias, kyo.internal.SqlMacros.columnNames[T])
+                val cols = kyo.internal.SqlAstInternal.buildColumns[T, N](alias)
+                Lateral[T, RecordF[cols.type]](cols, query, alias, kyo.internal.SqlMacros.columnNames[T])
             end apply
         end Builder
     end Lateral
@@ -904,8 +904,8 @@ object SqlAst:
                 m: Mirror.ProductOf[T],
                 f: Fields[T]
             ) =
-                val cols = internal.buildColumns[T, N](alias)
-                ValuesFrom[T, internal.RecordF[cols.type]](
+                val cols = kyo.internal.SqlAstInternal.buildColumns[T, N](alias)
+                ValuesFrom[T, RecordF[cols.type]](
                     cols,
                     kyo.internal.SqlMacros.rowValues[T](rows),
                     alias,
@@ -961,7 +961,7 @@ object SqlAst:
 
         inline def groupBy[N <: String & Singleton, V, FT <: Tuple](inline key: Record[F] => Column[N, V])(using
             Fields.Aux[T, FT]
-        ): GroupBy[T, internal.RewriteGrouped[FT, (N ~ Unit) *: EmptyTuple]] =
+        ): GroupBy[T, RewriteGrouped[FT, (N ~ Unit) *: EmptyTuple]] =
             val ks = Chunk(key(columns))
             new GroupBy(this, ks, kyo.internal.SqlGroupedView.buildGroupedView(this, ks), Maybe.empty, GroupBy.Kind.Plain)
         end groupBy
@@ -969,7 +969,7 @@ object SqlAst:
         @targetName("groupByLabelled")
         inline def groupBy[N <: String & Singleton, V, FT <: Tuple](inline key: Record[F] => LabelledTerm[N, V])(using
             Fields.Aux[T, FT]
-        ): GroupBy[T, internal.RewriteGrouped[FT, EmptyTuple] & (N ~ GroupedColumn[N, V])] =
+        ): GroupBy[T, RewriteGrouped[FT, EmptyTuple] & (N ~ GroupedColumn[N, V])] =
             val ks = Chunk(key(columns))
             new GroupBy(this, ks, kyo.internal.SqlGroupedView.buildGroupedView(this, ks), Maybe.empty, GroupBy.Kind.Plain)
         end groupBy
@@ -978,7 +978,7 @@ object SqlAst:
         inline def groupBy[Tup <: Tuple, FT <: Tuple](inline keys: Record[F] => Tup)(using
             f: Fields.Aux[T, FT],
             ev: IsTupleOfTerms[Tup]
-        ): GroupBy[T, internal.RewriteGrouped[FT, internal.ColumnsToFields[Tup]]] =
+        ): GroupBy[T, RewriteGrouped[FT, ColumnsToFields[Tup]]] =
             val ks = ev.toChunk(keys(columns))
             new GroupBy(this, ks, kyo.internal.SqlGroupedView.buildGroupedView(this, ks), Maybe.empty, GroupBy.Kind.Plain)
         end groupBy
@@ -986,7 +986,7 @@ object SqlAst:
         // -- GROUP BY ROLLUP ------------------------------------------------
         inline def groupByRollup[N <: String & Singleton, V, FT <: Tuple](inline key: Record[F] => Column[N, V])(using
             Fields.Aux[T, FT]
-        ): GroupBy[T, internal.RewriteGrouped[FT, (N ~ Unit) *: EmptyTuple]] =
+        ): GroupBy[T, RewriteGrouped[FT, (N ~ Unit) *: EmptyTuple]] =
             val ks = Chunk(key(columns))
             new GroupBy(this, ks, kyo.internal.SqlGroupedView.buildGroupedView(this, ks), Maybe.empty, GroupBy.Kind.Rollup)
         end groupByRollup
@@ -995,7 +995,7 @@ object SqlAst:
         inline def groupByRollup[Tup <: Tuple, FT <: Tuple](inline keys: Record[F] => Tup)(using
             f: Fields.Aux[T, FT],
             ev: IsTupleOfTerms[Tup]
-        ): GroupBy[T, internal.RewriteGrouped[FT, internal.ColumnsToFields[Tup]]] =
+        ): GroupBy[T, RewriteGrouped[FT, ColumnsToFields[Tup]]] =
             val ks = ev.toChunk(keys(columns))
             new GroupBy(this, ks, kyo.internal.SqlGroupedView.buildGroupedView(this, ks), Maybe.empty, GroupBy.Kind.Rollup)
         end groupByRollup
@@ -1003,7 +1003,7 @@ object SqlAst:
         // -- GROUP BY CUBE -------------------------------------------------
         inline def groupByCube[N <: String & Singleton, V, FT <: Tuple](inline key: Record[F] => Column[N, V])(using
             Fields.Aux[T, FT]
-        ): GroupBy[T, internal.RewriteGrouped[FT, (N ~ Unit) *: EmptyTuple]] =
+        ): GroupBy[T, RewriteGrouped[FT, (N ~ Unit) *: EmptyTuple]] =
             val ks = Chunk(key(columns))
             new GroupBy(this, ks, kyo.internal.SqlGroupedView.buildGroupedView(this, ks), Maybe.empty, GroupBy.Kind.Cube)
         end groupByCube
@@ -1012,7 +1012,7 @@ object SqlAst:
         inline def groupByCube[Tup <: Tuple, FT <: Tuple](inline keys: Record[F] => Tup)(using
             f: Fields.Aux[T, FT],
             ev: IsTupleOfTerms[Tup]
-        ): GroupBy[T, internal.RewriteGrouped[FT, internal.ColumnsToFields[Tup]]] =
+        ): GroupBy[T, RewriteGrouped[FT, ColumnsToFields[Tup]]] =
             val ks = ev.toChunk(keys(columns))
             new GroupBy(this, ks, kyo.internal.SqlGroupedView.buildGroupedView(this, ks), Maybe.empty, GroupBy.Kind.Cube)
         end groupByCube
@@ -1516,59 +1516,26 @@ object SqlAst:
 
     // --- Internal type machinery and helpers ---
 
-    object internal:
-        type ColumnFields[T <: Tuple] = T match
-            case EmptyTuple      => Any
-            case (n ~ v) *: rest => (n ~ Column[n & String, v]) & ColumnFields[rest]
+    type ColumnFields[T <: Tuple] = T match
+        case EmptyTuple      => Any
+        case (n ~ v) *: rest => (n ~ Column[n & String, v]) & ColumnFields[rest]
 
-        type RecordF[R] = R match
-            case Record[f] => f
+    type RecordF[R] = R match
+        case Record[f] => f
 
-        type ExtractTermValueTypes[T <: Tuple] <: Tuple = T match
-            case EmptyTuple      => EmptyTuple
-            case Term[v] *: rest => v *: ExtractTermValueTypes[rest]
+    type ExtractTermValueTypes[T <: Tuple] <: Tuple = T match
+        case EmptyTuple      => EmptyTuple
+        case Term[v] *: rest => v *: ExtractTermValueTypes[rest]
 
-        type ColumnsToFields[T <: Tuple] <: Tuple = T match
-            case EmptyTuple           => EmptyTuple
-            case Column[n, ?] *: rest => (n ~ Unit) *: ColumnsToFields[rest]
+    type ColumnsToFields[T <: Tuple] <: Tuple = T match
+        case EmptyTuple           => EmptyTuple
+        case Column[n, ?] *: rest => (n ~ Unit) *: ColumnsToFields[rest]
 
-        type GroupedG[GroupedFs <: Tuple] =
-            [n <: String & Singleton, v] =>> Fields.IfHasName[GroupedFs, n, GroupedColumn[n, v], GroupTerm[v]]
+    type GroupedG[GroupedFs <: Tuple] =
+        [n <: String & Singleton, v] =>> Fields.IfHasName[GroupedFs, n, GroupedColumn[n, v], GroupTerm[v]]
 
-        type RewriteGrouped[FT <: Tuple, GroupedFs <: Tuple] =
-            Fields.Join[Tuple.Map[FT, Record.~.MapNamedValue[GroupedG[GroupedFs]]]]
-
-        /** Per-field SQL-name resolver used by `buildColumns` / `buildRowColumns` to populate `Column.sqlName`.
-          *
-          * Uses `summonFrom` to find the `SqlSchema[T]` in scope and delegates to runtime `SqlNameResolver.columnName`. The result is a
-          * runtime call (not a literal), so `Column.sqlName` is opaque to the static-SQL macro's lift step.
-          * `SqlStaticMacro.emitOpaqueCauses` detects this pattern and produces a positioned error directing the user to `.run` for
-          * queries whose columns participate in `.runStatic` and have schema-driven name overrides.
-          *
-          * Why this isn't a macro that constant-folds: the per-field name singleton lives behind a polyfunction parameter
-          * `[n <: String & Singleton, v]` passed to `Record.stageNamed`. Macro expansion fires at polyfunction-body type-check time
-          * (with `n` still abstract), not at per-field substitution time inside `stageNamedLoop`. Without a Scala 3 mechanism to defer
-          * macro expansion past polyfunction substitution, we can't constant-fold the resolved name from this site.
-          */
-        private[kyo] inline def resolveSqlName[T](scalaName: String): String = summonFrom {
-            case s: SqlSchema[T] => kyo.internal.SqlNameResolver.columnName(scalaName, s)
-            case _               => scalaName
-        }
-
-        transparent inline def buildColumns[T, N <: String & Singleton](alias: N)(using Fields[T]) =
-            alias ~ Record.stageNamed[T] {
-                [n <: String & Singleton, v] =>
-                    (g: Field[n, v]) =>
-                        Column[n & String, v](alias, g.name, resolveSqlName[T](g.name))
-            }
-
-        transparent inline def buildRowColumns[T](using Fields[T]) =
-            Record.stageNamed[T] {
-                [n <: String & Singleton, v] =>
-                    (g: Field[n, v]) =>
-                        Column[n & String, v]("", g.name, resolveSqlName[T](g.name))
-            }
-    end internal
+    type RewriteGrouped[FT <: Tuple, GroupedFs <: Tuple] =
+        Fields.Join[Tuple.Map[FT, Record.~.MapNamedValue[GroupedG[GroupedFs]]]]
 
     private[kyo] inline def intLit(inline n: Int): Term[Int] = Literal(n, summon[SqlSchema[Int]])
     private[kyo] inline def oneInt: Term[Int]                = intLit(1)
