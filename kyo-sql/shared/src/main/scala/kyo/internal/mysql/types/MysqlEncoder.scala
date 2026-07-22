@@ -1,8 +1,10 @@
 package kyo.internal.mysql.types
 
 import java.nio.charset.StandardCharsets
+import kyo.Frame
 import kyo.Instant
 import kyo.Span
+import kyo.SqlRequestDurationOverflowException
 import kyo.internal.mysql.MysqlBufferWriter
 
 /** Encodes a Scala value into MySQL binary-protocol wire bytes for use in [[ComStmtExecute]].
@@ -237,20 +239,22 @@ object MysqlEncoder:
     // Non-fractional (no sub-second component): 8 bytes body → total 9 bytes with length prefix.
     // Fractional (nanoseconds > 0): 12 bytes body → total 13 bytes with length prefix.
     // Range: MySQL TIME supports -838:59:59 to 838:59:59 (days up to 34).
-    // Days exceeding Int.MaxValue raise SqlException.Decode.
+    // Days exceeding Int.MaxValue raise SqlRequestDurationOverflowException.
 
     val durationEncoder: MysqlEncoder[java.time.Duration] = new MysqlEncoder[java.time.Duration]:
         def mysqlType: Int = TYPE_TIME
         def write(value: java.time.Duration, buf: MysqlBufferWriter): Unit =
             val isNegative = value.isNegative
             val abs        = if isNegative then value.negated() else value
-            // toDays can overflow Int if the duration is extremely large; throw ArithmeticException
-            // so MysqlParamWriter.duration() can catch and wrap it as SqlException.Decode.
+            // toDays can overflow Int if the duration is extremely large; throw the typed leaf
+            // so callers see SqlRequestDurationOverflowException. MysqlParamWriter.duration()
+            // performs the same check up-front with a call-site Frame; this is the safety net
+            // for direct encoder use, using Frame.internal because the trait signature does
+            // not thread a Frame implicit through every encoder.
             val totalDays = abs.toDays
             if totalDays > Int.MaxValue.toLong then
-                throw new ArithmeticException(
-                    s"Duration.toDays=$totalDays exceeds MySQL TIME day-count range (Int.MAX_VALUE)"
-                )
+                given Frame = Frame.internal
+                throw SqlRequestDurationOverflowException(totalDays)
             end if
             val days    = totalDays.toInt
             val hours   = abs.toHoursPart

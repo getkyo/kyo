@@ -23,7 +23,7 @@ class MysqlPoolResetIntegrationTest extends kyo.Test:
         ctx: SqlSharedContainers.SchemaCtx
     )(
         f: SqlClient => A < (S & Async & Abort[SqlException])
-    )(using Frame): A < (S & Async & Scope & Abort[SqlException.Connection | SqlException]) =
+    )(using Frame): A < (S & Async & Scope & Abort[SqlConnectionException | SqlException]) =
         SqlClient.initMysqlWith(
             myUrl(ctx),
             SqlConfig.default.copy(

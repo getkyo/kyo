@@ -1,8 +1,10 @@
 package kyo.internal.postgres.exchange
 
 import kyo.*
+import kyo.SqlConnectionUnexpectedMessageException
 import kyo.SqlException
 import kyo.SqlRow
+import kyo.SqlServerException
 import kyo.internal.postgres.*
 
 /** Result of a single query result set. */
@@ -23,7 +25,7 @@ final case class QueryResult(
   *   - [[ParameterStatus]], updates the parameters map via callback.
   *   - [[NoticeResponse]], logged and discarded.
   *   - [[NotificationResponse]], enqueued to the notifications channel.
-  *   - [[ErrorResponse]], converted to [[SqlException.Server]] and raised via [[Abort]].
+  *   - [[ErrorResponse]], converted to [[SqlServerException]] and raised via [[Abort]].
   *
   * Does NOT read the trailing [[ReadyForQuery]]; that is the caller's responsibility (via [[BarrierGuard]]).
   */
@@ -59,7 +61,11 @@ object QueryResultExchange:
                 Abort.fail(mkServerError(fields, Absent, 0, Present(pid)))
 
             case other =>
-                Abort.fail(SqlException.Connection(s"Unexpected message in QueryResult: $other", summon[Frame]))
+                Abort.fail(SqlConnectionUnexpectedMessageException(
+                    "QueryResult",
+                    "RowDescription / CommandComplete / EmptyQueryResponse / ErrorResponse",
+                    other.toString
+                ))
         }
 
     private def collectRows(
@@ -93,7 +99,11 @@ object QueryResultExchange:
                 Abort.fail(mkServerError(fields, Absent, 0, Present(pid)))
 
             case other =>
-                Abort.fail(SqlException.Connection(s"Unexpected message during row collection: $other", summon[Frame]))
+                Abort.fail(SqlConnectionUnexpectedMessageException(
+                    "row collection",
+                    "DataRow / CommandComplete / EmptyQueryResponse / ErrorResponse",
+                    other.toString
+                ))
         }
 
     // --- Error construction ---
@@ -106,7 +116,7 @@ object QueryResultExchange:
         if sql.length <= SqlTextMaxLen then sql
         else sql.take(SqlTextMaxLen) + TruncationSuffix
 
-    /** Converts an [[ErrorResponse]] field list to a [[SqlException.Server]].
+    /** Converts an [[ErrorResponse]] field list to a [[SqlServerException]].
       *
       * @param fields
       *   raw wire fields from the ErrorResponse message
@@ -122,7 +132,7 @@ object QueryResultExchange:
         sqlText: Maybe[String],
         paramCount: Int,
         connectionId: Maybe[Long]
-    )(using frame: Frame): SqlException.Server =
+    )(using Frame): SqlServerException =
         var sqlState = "00000"
         var severity = "ERROR"
         var message  = "Unknown server error"
@@ -152,7 +162,7 @@ object QueryResultExchange:
         }
 
         val truncatedSql = sqlText.map(truncateSqlText)
-        SqlException.Server(sqlState, severity, message, detail, hint, position, extra.toMap, truncatedSql, paramCount, connectionId, frame)
+        SqlServerException(sqlState, severity, message, detail, hint, position, extra.toMap, truncatedSql, paramCount, connectionId)
     end mkServerError
 
 end QueryResultExchange

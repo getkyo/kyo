@@ -4,6 +4,7 @@ import java.util.concurrent.ConcurrentHashMap
 import kyo.*
 import kyo.SqlClient.Metrics
 import kyo.SqlSchema.BoundValue
+import kyo.internal.SqlBackend
 import kyo.internal.client.ConnectionPool
 import kyo.internal.mysql.BoundMysqlParam
 import kyo.internal.mysql.MysqlConnection
@@ -138,7 +139,7 @@ sealed trait SqlClientBackend:
 
     /** Executes a parameterised MySQL query and returns all rows as backend-neutral [[Row]] values.
       *
-      * Only implemented by [[SqlClientBackend.My]]; [[SqlClientBackend.Pg]] raises [[SqlException.Connection]]. The MySQL backend converts
+      * Only implemented by [[SqlClientBackend.My]]; [[SqlClientBackend.Pg]] raises [[SqlConnectionException]]. The MySQL backend converts
       * [[MysqlRow]] to [[Row]] with synthetic field descriptors (same as the simple-query path).
       */
     def queryMysql(
@@ -151,7 +152,7 @@ sealed trait SqlClientBackend:
 
     /** Executes a parameterised MySQL DML statement and returns the affected-row count.
       *
-      * Only implemented by [[SqlClientBackend.My]]; [[SqlClientBackend.Pg]] raises [[SqlException.Connection]].
+      * Only implemented by [[SqlClientBackend.My]]; [[SqlClientBackend.Pg]] raises [[SqlConnectionException]].
       */
     def executeMysql(
         address: SqlConfig.Address,
@@ -163,7 +164,7 @@ sealed trait SqlClientBackend:
 
     /** Streams MySQL rows from a parameterised query.
       *
-      * Only implemented by [[SqlClientBackend.My]]; [[SqlClientBackend.Pg]] raises [[SqlException.Connection]].
+      * Only implemented by [[SqlClientBackend.My]]; [[SqlClientBackend.Pg]] raises [[SqlConnectionException]].
       */
     def streamQueryMysql(
         address: SqlConfig.Address,
@@ -176,7 +177,7 @@ sealed trait SqlClientBackend:
 
     /** Streams MySQL rows from a parameterised query, converting each row to [[SqlRow]] so that [[SqlSchema]] instances can be applied.
       *
-      * Only implemented by [[SqlClientBackend.My]]; [[SqlClientBackend.Pg]] raises [[SqlException.Connection]].
+      * Only implemented by [[SqlClientBackend.My]]; [[SqlClientBackend.Pg]] raises [[SqlConnectionException]].
       */
     def streamQueryMysqlRows(
         address: SqlConfig.Address,
@@ -189,7 +190,7 @@ sealed trait SqlClientBackend:
 
     /** Acquires a Postgres connection, calls `f`, then releases.
       *
-      * Only implemented by [[SqlClientBackend.Pg]]; [[SqlClientBackend.My]] raises [[SqlException.Connection]].
+      * Only implemented by [[SqlClientBackend.Pg]]; [[SqlClientBackend.My]] raises [[SqlConnectionException]].
       */
     def withConnection[A, S](
         address: SqlConfig.Address,
@@ -199,7 +200,7 @@ sealed trait SqlClientBackend:
 
     /** Acquires a MySQL connection, calls `f`, then releases.
       *
-      * Only implemented by [[SqlClientBackend.My]]; [[SqlClientBackend.Pg]] raises [[SqlException.Connection]].
+      * Only implemented by [[SqlClientBackend.My]]; [[SqlClientBackend.Pg]] raises [[SqlConnectionException]].
       */
     def withMysqlConnection[A, S](
         address: SqlConfig.Address,
@@ -234,7 +235,7 @@ sealed trait SqlClientBackend:
 
     /** Acquires a Postgres connection and calls `f` with the connection and its cancel info `(conn, pid, secretKey)`.
       *
-      * Only implemented by [[SqlClientBackend.Pg]]; [[SqlClientBackend.My]] raises [[SqlException.Connection]].
+      * Only implemented by [[SqlClientBackend.Pg]]; [[SqlClientBackend.My]] raises [[SqlConnectionException]].
       */
     def withCancelInfo[A](
         address: SqlConfig.Address,
@@ -244,7 +245,7 @@ sealed trait SqlClientBackend:
 
     /** Acquires a MySQL connection and calls `f` with the connection and its `connectionId`.
       *
-      * Only implemented by [[SqlClientBackend.My]]; [[SqlClientBackend.Pg]] raises [[SqlException.Connection]].
+      * Only implemented by [[SqlClientBackend.My]]; [[SqlClientBackend.Pg]] raises [[SqlConnectionException]].
       */
     def withCancelInfoMysql[A](
         address: SqlConfig.Address,
@@ -254,7 +255,7 @@ sealed trait SqlClientBackend:
 
     /** Streams Postgres LISTEN/NOTIFY notifications.
       *
-      * Only implemented by [[SqlClientBackend.Pg]]; [[SqlClientBackend.My]] raises [[SqlException.Connection]].
+      * Only implemented by [[SqlClientBackend.Pg]]; [[SqlClientBackend.My]] raises [[SqlConnectionException]].
       */
     def notificationStream(
         address: SqlConfig.Address,
@@ -270,7 +271,7 @@ sealed trait SqlClientBackend:
 
     /** Executes a `LOAD DATA LOCAL INFILE` statement via the MySQL-only LOCAL INFILE protocol.
       *
-      * Only implemented by [[MysqlSqlClientBackend]]; [[PostgresSqlClientBackend]] raises [[SqlException.Connection]].
+      * Only implemented by [[MysqlSqlClientBackend]]; [[PostgresSqlClientBackend]] raises [[SqlConnectionException]].
       */
     def loadLocalInfileMysql[S](
         address: SqlConfig.Address,
@@ -285,8 +286,8 @@ sealed trait SqlClientBackend:
       * If `n == 0`, returns immediately without opening any connection. If `n > 0`, opens exactly `n` connections concurrently via
       * `Async.fill`. Each opened connection is immediately released to the pool (available for the first user query). Any connection
       * failure aborts the warm-up and propagates the typed [[SqlException]] as-is, callers that pattern-match on specific subclasses (e.g.
-      * [[SqlException.Server]] for auth/permission failures) see the original exception, not a blanket [[SqlException.Connection]] wrap.
-      * Non-SqlException transport errors are wrapped as [[SqlException.Connection]].
+      * [[SqlServerException]] for auth/permission failures) see the original exception, not a blanket [[SqlConnectionException]] wrap.
+      * Non-SqlException transport errors are wrapped as [[SqlConnectionException]].
       *
       * Called from [[kyo.sql.SqlClient.init]] / [[kyo.sql.SqlClient.initMysql]] with `n = min(config.minConnections, config.maxConnections)`.
       */
@@ -330,7 +331,7 @@ sealed trait SqlClientBackend:
             if config.acquireTimeout == Duration.Infinity then
                 Abort.run[Closed](slotCh.take).flatMap {
                     case Result.Success(()) => ()
-                    case Result.Failure(_)  => Abort.fail(SqlException.Connection("Connection pool is closed", summon[Frame]))
+                    case Result.Failure(_)  => Abort.fail(SqlConnectionPoolClosedException())
                     case Result.Panic(t) =>
                         java.lang.System.err.println(s"[kyo-sql] SqlClientBackend.withSlot: slotCh.take panic: ${t.getMessage}")
                         Abort.error(Result.Panic(t))
@@ -338,14 +339,11 @@ sealed trait SqlClientBackend:
             else
                 Async.timeoutWithError(
                     config.acquireTimeout,
-                    Result.Failure(SqlException.Connection(
-                        s"Timed out waiting ${config.acquireTimeout} for a connection (pool exhausted)",
-                        summon[Frame]
-                    ))
+                    Result.Failure(SqlConnectionAcquireTimeoutException(config.acquireTimeout))
                 )(
                     Abort.run[Closed](slotCh.take).flatMap {
                         case Result.Success(()) => ()
-                        case Result.Failure(_)  => Abort.fail(SqlException.Connection("Connection pool is closed", summon[Frame]))
+                        case Result.Failure(_)  => Abort.fail(SqlConnectionPoolClosedException())
                         case Result.Panic(t) =>
                             java.lang.System.err.println(
                                 s"[kyo-sql] SqlClientBackend.withSlot: slotCh.take panic (timeout path): ${t.getMessage}"
@@ -358,7 +356,7 @@ sealed trait SqlClientBackend:
         // Time the wait for the slot (pool acquire wait = time blocked waiting for a free connection).
         Clock.stopwatch.flatMap { sw =>
             Abort.run[SqlException](takeSlot).flatMap {
-                case Result.Failure(e @ SqlException.Connection(msg, _)) if msg.startsWith("Timed out") =>
+                case Result.Failure(e: SqlConnectionAcquireTimeoutException) =>
                     Log.warn(
                         s"kyo.sql: pool acquire timeout after ${config.acquireTimeout} poolSize=${config.maxConnections}"
                     ).andThen(Abort.fail(e))
@@ -370,14 +368,14 @@ sealed trait SqlClientBackend:
                     }.andThen {
                         // Sync.ensure guarantees the slot is returned on every exit edge
                         // (success, Abort, Panic, fiber interrupt). The inner Abort.run[SqlException]
-                        // preserves the Log.error path for SqlException.Server before re-raising.
+                        // preserves the Log.error path for SqlServerException before re-raising.
                         Sync.ensure(Sync.Unsafe.defer {
                             discard(Sync.Unsafe.evalOrThrow(Abort.run[Closed](slotCh.offer(()))))
                         }) {
                             Abort.run[SqlException](body).flatMap {
                                 case Result.Success(a) => a
-                                case Result.Failure(e: SqlException.Server) =>
-                                    Log.error(s"kyo.sql: server error sqlState=${e.sqlState} msg=${e.message}")
+                                case Result.Failure(e: SqlServerException) =>
+                                    Log.error(s"kyo.sql: server error sqlState=${e.sqlState} msg=${e.serverMessage}")
                                         .andThen(Abort.fail[SqlException](e))
                                 case Result.Failure(e) => Abort.fail[SqlException](e)
                                 case Result.Panic(t)   => Abort.error(Result.Panic(t))
@@ -395,7 +393,7 @@ sealed trait SqlClientBackend:
             if config.acquireTimeout == Duration.Infinity then
                 Abort.run[Closed](slotCh.take).flatMap {
                     case Result.Success(()) => ()
-                    case Result.Failure(_)  => Abort.fail(SqlException.Connection("Connection pool is closed", summon[Frame]))
+                    case Result.Failure(_)  => Abort.fail(SqlConnectionPoolClosedException())
                     case Result.Panic(t) =>
                         java.lang.System.err.println(s"[kyo-sql] SqlClientBackend.withSlotS: slotCh.take panic: ${t.getMessage}")
                         Abort.error(Result.Panic(t))
@@ -403,14 +401,11 @@ sealed trait SqlClientBackend:
             else
                 Async.timeoutWithError(
                     config.acquireTimeout,
-                    Result.Failure(SqlException.Connection(
-                        s"Timed out waiting ${config.acquireTimeout} for a connection (pool exhausted)",
-                        summon[Frame]
-                    ))
+                    Result.Failure(SqlConnectionAcquireTimeoutException(config.acquireTimeout))
                 )(
                     Abort.run[Closed](slotCh.take).flatMap {
                         case Result.Success(()) => ()
-                        case Result.Failure(_)  => Abort.fail(SqlException.Connection("Connection pool is closed", summon[Frame]))
+                        case Result.Failure(_)  => Abort.fail(SqlConnectionPoolClosedException())
                         case Result.Panic(t) =>
                             java.lang.System.err.println(
                                 s"[kyo-sql] SqlClientBackend.withSlotS: slotCh.take panic (timeout path): ${t.getMessage}"
@@ -421,7 +416,7 @@ sealed trait SqlClientBackend:
             end if
         end takeSlot
         Abort.run[SqlException](takeSlot).flatMap {
-            case Result.Failure(e @ SqlException.Connection(msg, _)) if msg.startsWith("Timed out") =>
+            case Result.Failure(e: SqlConnectionAcquireTimeoutException) =>
                 Log.warn(
                     s"kyo.sql: pool acquire timeout after ${config.acquireTimeout} poolSize=${config.maxConnections}"
                 ).andThen(Abort.fail(e))
@@ -431,14 +426,14 @@ sealed trait SqlClientBackend:
                 // Per-attempt slot release, wrapped in Sync.ensure so the slot is
                 // returned on every exit edge (success, Abort, Panic, fiber interrupt).
                 // The inner Abort.run[SqlException] preserves the Log.error path for
-                // SqlException.Server before re-raising.
+                // SqlServerException before re-raising.
                 Sync.ensure(Sync.Unsafe.defer {
                     discard(Sync.Unsafe.evalOrThrow(Abort.run[Closed](slotCh.offer(()))))
                 }) {
                     Abort.run[SqlException](body).flatMap {
                         case Result.Success(a) => a
-                        case Result.Failure(e: SqlException.Server) =>
-                            Log.error(s"kyo.sql: server error sqlState=${e.sqlState} msg=${e.message}")
+                        case Result.Failure(e: SqlServerException) =>
+                            Log.error(s"kyo.sql: server error sqlState=${e.sqlState} msg=${e.serverMessage}")
                                 .andThen(Abort.fail[SqlException](e))
                         case Result.Failure(e) => Abort.fail[SqlException](e)
                         case Result.Panic(t)   => Abort.error(Result.Panic(t))
@@ -556,7 +551,7 @@ final class PostgresSqlClientBackend private[client] (
         params: Chunk[BoundMysqlParam[?]],
         config: SqlConfig
     )(using Frame): Chunk[SqlRow] < (Async & Abort[SqlException]) =
-        Abort.fail(SqlException.Connection("queryMysql is not supported on the Postgres backend", summon[Frame]))
+        Abort.fail(SqlConnectionBackendMismatchException(SqlBackend.Mysql, SqlBackend.Postgres, "queryMysql"))
 
     def executeMysql(
         address: SqlConfig.Address,
@@ -565,7 +560,7 @@ final class PostgresSqlClientBackend private[client] (
         params: Chunk[BoundMysqlParam[?]],
         config: SqlConfig
     )(using Frame): Long < (Async & Abort[SqlException]) =
-        Abort.fail(SqlException.Connection("executeMysql is not supported on the Postgres backend", summon[Frame]))
+        Abort.fail(SqlConnectionBackendMismatchException(SqlBackend.Mysql, SqlBackend.Postgres, "executeMysql"))
 
     def streamQueryMysql(
         address: SqlConfig.Address,
@@ -576,7 +571,7 @@ final class PostgresSqlClientBackend private[client] (
         config: SqlConfig
     )(using Frame): Stream[MysqlRow, Async & Abort[SqlException] & Scope] =
         Stream[MysqlRow, Async & Abort[SqlException] & Scope](
-            Abort.fail(SqlException.Connection("streamQueryMysql is not supported on the Postgres backend", summon[Frame]))
+            Abort.fail(SqlConnectionBackendMismatchException(SqlBackend.Mysql, SqlBackend.Postgres, "streamQueryMysql"))
         )
 
     def streamQueryMysqlRows(
@@ -588,7 +583,7 @@ final class PostgresSqlClientBackend private[client] (
         config: SqlConfig
     )(using Frame): Stream[SqlRow, Async & Abort[SqlException] & Scope] =
         Stream[SqlRow, Async & Abort[SqlException] & Scope](
-            Abort.fail(SqlException.Connection("streamQueryMysqlRows is not supported on the Postgres backend", summon[Frame]))
+            Abort.fail(SqlConnectionBackendMismatchException(SqlBackend.Mysql, SqlBackend.Postgres, "streamQueryMysqlRows"))
         )
 
     // --- withConnection (PG transaction support) ---
@@ -627,7 +622,7 @@ final class PostgresSqlClientBackend private[client] (
         password: String,
         config: SqlConfig
     )(f: MysqlConnection => A < (S & Async & Abort[SqlException]))(using Frame): A < (S & Async & Abort[SqlException]) =
-        Abort.fail(SqlException.Connection("withMysqlConnection is not supported on the Postgres backend", summon[Frame]))
+        Abort.fail(SqlConnectionBackendMismatchException(SqlBackend.Mysql, SqlBackend.Postgres, "withMysqlConnection"))
 
     def withAdvisoryLock[A, S](
         address: SqlConfig.Address,
@@ -660,11 +655,7 @@ final class PostgresSqlClientBackend private[client] (
     def cancelMysql(handle: SqlClient.CancelHandle.Mysql, password: String, config: SqlConfig)(using
         Frame
     ): Unit < (Async & Abort[SqlException]) =
-        Abort.fail(SqlException.Connection(
-            "MySQL cancel via SqlClient requires a MySQL pool backend. " +
-                "Use SqlClient.initMysql and then client.cancel(handle).",
-            summon[Frame]
-        ))
+        Abort.fail(SqlConnectionBackendMismatchException(SqlBackend.Mysql, SqlBackend.Postgres, "cancel"))
 
     // --- withCancelInfo ---
 
@@ -682,7 +673,7 @@ final class PostgresSqlClientBackend private[client] (
         password: String,
         config: SqlConfig
     )(f: (MysqlConnection, Long) => A < (Async & Abort[SqlException]))(using Frame): A < (Async & Abort[SqlException]) =
-        Abort.fail(SqlException.Connection("withCancelInfoMysql is not supported on the Postgres backend", summon[Frame]))
+        Abort.fail(SqlConnectionBackendMismatchException(SqlBackend.Mysql, SqlBackend.Postgres, "withCancelInfoMysql"))
 
     // --- Notifications ---
 
@@ -739,7 +730,7 @@ final class PostgresSqlClientBackend private[client] (
         data: Stream[Byte, S],
         config: SqlConfig
     )(using Frame): Long < (Async & Abort[SqlException] & S) =
-        Abort.fail(SqlException.Connection("loadLocalInfileMysql is not supported on the Postgres backend", summon[Frame]))
+        Abort.fail(SqlConnectionBackendMismatchException(SqlBackend.Mysql, SqlBackend.Postgres, "loadLocalInfileMysql"))
 
     // --- warmUp ---
 
@@ -760,14 +751,14 @@ final class PostgresSqlClientBackend private[client] (
                 val successes = results.collect { case Result.Success(conn) => conn }
                 val firstFailure = results.collectFirst {
                     case Result.Failure(e: SqlException) =>
-                        // Preserve the typed exception: callers' try/catch on specific subclasses (e.g., SqlException.Server
+                        // Preserve the typed exception: callers' try/catch on specific subclasses (e.g., SqlServerException
                         // for auth/permission failures) must see the original class, not a blanket Connection wrap.
                         // Non-SqlException transport errors are not reachable here, Abort.run[SqlException] only captures
                         // SqlException failures; anything else becomes a Result.Panic.
                         e
                     case Result.Panic(t) =>
                         java.lang.System.err.println(s"[kyo-sql] PostgresSqlClientBackend.warmUp: unexpected panic: ${t.getMessage}")
-                        SqlException.Connection(s"Warm-up panic: ${t.getMessage}", summon[Frame])
+                        SqlConnectionWarmupPanicException(t)
                 }
                 firstFailure match
                     case None =>
@@ -887,7 +878,7 @@ final class PostgresSqlClientBackend private[client] (
                 // The attempt counter starts at 0 and is incremented atomically before each pool call.
                 // The first attempt (prev=0) is NOT a retry; subsequent calls (prev=1, 2, …) record a retry.
                 AtomicInt.init(0).flatMap { counter =>
-                    Retry[SqlException.Connection](schedule) {
+                    Retry[SqlConnectionException](schedule) {
                         counter.getAndUpdate(_ + 1).flatMap { prev =>
                             val recordRetry: Unit < (Async & Abort[SqlException]) =
                                 if prev == 0 then ()
@@ -935,10 +926,7 @@ final class PostgresSqlClientBackend private[client] (
                         // mid-response, so the pool must discard the connection on exit (isProtocolFatal
                         // classifies Connection as fatal). Filing as Request would leave the connection
                         // reusable and corrupt the next borrower.
-                        Result.Failure(SqlException.Connection(
-                            s"Query exceeded timeout of ${config.queryTimeout}",
-                            summon[Frame]
-                        ))
+                        Result.Failure(SqlConnectionQueryTimeoutException(config.queryTimeout))
                     )(f(conn))
         // Unsafe: pool operations require AllowUnsafe (lock-free CAS on ring buffer).
         // STEERING case 2: bridging to kyo-net ConnectionPool whose API requires AllowUnsafe.
@@ -1075,7 +1063,7 @@ final class PostgresSqlClientBackend private[client] (
             // If pgConnect fails, the surrounding Scope still closes and releases the slot,
             // preventing the leak that caused dead-pool deadlock under server restart.
             Abort.run[SqlException](takeSlotForStream(slotCh, config)).flatMap {
-                case Result.Failure(e @ SqlException.Connection(msg, _)) if msg.startsWith("Timed out") =>
+                case Result.Failure(e: SqlConnectionAcquireTimeoutException) =>
                     Log.warn(
                         s"kyo.sql: pool acquire timeout after ${config.acquireTimeout} poolSize=${config.maxConnections}"
                     ).andThen(Abort.fail(e))
@@ -1095,7 +1083,7 @@ final class PostgresSqlClientBackend private[client] (
         if config.acquireTimeout == Duration.Infinity then
             Abort.run[Closed](slotCh.take).flatMap {
                 case Result.Success(()) => ()
-                case Result.Failure(_)  => Abort.fail(SqlException.Connection("Connection pool is closed", summon[Frame]))
+                case Result.Failure(_)  => Abort.fail(SqlConnectionPoolClosedException())
                 case Result.Panic(t) =>
                     java.lang.System.err.println(s"[kyo-sql] PostgresSqlClientBackend.acquireStreamConn panic: ${t.getMessage}")
                     Abort.error(Result.Panic(t))
@@ -1103,14 +1091,11 @@ final class PostgresSqlClientBackend private[client] (
         else
             Async.timeoutWithError(
                 config.acquireTimeout,
-                Result.Failure(SqlException.Connection(
-                    s"Timed out waiting ${config.acquireTimeout} for a connection (pool exhausted)",
-                    summon[Frame]
-                ))
+                Result.Failure(SqlConnectionAcquireTimeoutException(config.acquireTimeout))
             )(
                 Abort.run[Closed](slotCh.take).flatMap {
                     case Result.Success(()) => ()
-                    case Result.Failure(_)  => Abort.fail(SqlException.Connection("Connection pool is closed", summon[Frame]))
+                    case Result.Failure(_)  => Abort.fail(SqlConnectionPoolClosedException())
                     case Result.Panic(t) =>
                         java.lang.System.err.println(
                             s"[kyo-sql] PostgresSqlClientBackend.acquireStreamConn panic (timeout path): ${t.getMessage}"
@@ -1198,10 +1183,7 @@ final class PostgresSqlClientBackend private[client] (
         else
             Async.timeoutWithError(
                 config.acquireTimeout,
-                Result.Failure(SqlException.Connection(
-                    s"Timed out after ${config.acquireTimeout} establishing connection to ${address.host}:${address.port}",
-                    summon[Frame]
-                ))
+                Result.Failure(SqlConnectionEstablishTimeoutException(config.acquireTimeout, address.host, address.port))
             )(connect)
 
     /** Connects to Postgres with mode-aware TLS handling.
@@ -1227,7 +1209,7 @@ final class PostgresSqlClientBackend private[client] (
     /** Issues `SELECT typname, oid::int4 FROM pg_type WHERE typname IN (...)` on `conn` (already authenticated) and sets
       * `conn.typeRegistryRef` with the resolved name→OID mapping.
       *
-      * If any configured name is absent from `pg_type`, fails with [[SqlException.Connection]]. When `typeNames` is empty, returns
+      * If any configured name is absent from `pg_type`, fails with [[SqlConnectionException]]. When `typeNames` is empty, returns
       * immediately without any network round-trip.
       */
     private def populateTypeRegistry(
@@ -1249,10 +1231,7 @@ final class PostgresSqlClientBackend private[client] (
                 }
                 val missing = typeNames -- foundMap.keySet
                 if missing.nonEmpty then
-                    Abort.fail(SqlException.Connection(
-                        s"type(s) ${missing.mkString(", ")} not found in pg_type, verify the extension is installed",
-                        summon[Frame]
-                    ))
+                    Abort.fail(SqlConnectionTypeLookupMissingException(Chunk.from(missing)))
                 else
                     // Unsafe: AtomicRef.unsafe.set is AllowUnsafe; inside Sync.Unsafe.defer which is the approved bridging pattern.
                     // STEERING case 2: setting a per-connection AtomicRef during connection startup, before the connection is exposed.
@@ -1357,7 +1336,7 @@ final class PostgresSqlClientBackend private[client] (
     /** Returns true when a [[SqlException]] indicates the server requires SSL (sslmode=allow retry trigger).
       *
       * PostgreSQL sends SQLSTATE 28000 ("invalid_authorization_specification") when `hostssl` rules in pg_hba.conf require SSL but the
-      * client connected plaintext. The StartupExchange wraps the server ErrorResponse as [[SqlException.Connection]] with the message field
+      * client connected plaintext. The StartupExchange wraps the server ErrorResponse as [[SqlConnectionException]] with the message field
       * (M) from the ErrorResponse prepended with "Authentication failed: ".
       *
       * Observed message patterns (locale-sensitive; matched by substring):
@@ -1379,10 +1358,10 @@ final class PostgresSqlClientBackend private[client] (
                 (message.contains("SSL") && message.contains("required")) ||
                 message.contains("SSL") || message.contains("ssl")
         e match
-            case SqlException.Server(sqlState, _, message, _, _, _, _, _, _, _, _) =>
-                sqlState == "28000" && messageMatches(message)
-            case SqlException.Connection(message, _) =>
-                messageMatches(message)
+            case s: SqlServerException =>
+                s.sqlState == "28000" && messageMatches(s.serverMessage)
+            case c: SqlConnectionException =>
+                messageMatches(c.getMessage())
             case _ =>
                 false
         end match
@@ -1419,7 +1398,7 @@ final class PostgresSqlClientBackend private[client] (
                         Emit.valueWith(Chunk.empty[SqlClient.Notification])(Loop.done)
                     case Result.Panic(t) =>
                         java.lang.System.err.println(s"[kyo-sql] notificationStream: take panic: ${t.getMessage}")
-                        Abort.fail(SqlException.Connection(s"Notification channel panic: ${t.getMessage}", summon[Frame]))
+                        Abort.fail(SqlConnectionNotificationPanicException(t))
                 }
 
 end PostgresSqlClientBackend
@@ -1487,10 +1466,7 @@ final class MysqlSqlClientBackend private[client] (
         // PG-typed params are not used on MySQL; route simple queries through simple-query protocol.
         // The params chunk must be empty for this path to work correctly.
         if params.nonEmpty then
-            Abort.fail(SqlException.Connection(
-                "MySQL SqlClient.query with BoundParam is not supported, use SqlClient.queryMysqlFrag with BoundMysqlParam.",
-                summon[Frame]
-            ))
+            Abort.fail(SqlConnectionBackendMismatchException(SqlBackend.Postgres, SqlBackend.Mysql, "query with BoundParam"))
         else
             metrics.timedQuery(retryWith(address, password, config) { conn =>
                 conn.simpleQuery(sql).map(rows => rows.map(mysqlRowToRow))
@@ -1504,10 +1480,7 @@ final class MysqlSqlClientBackend private[client] (
         config: SqlConfig
     )(using Frame): Long < (Async & Abort[SqlException]) =
         if params.nonEmpty then
-            Abort.fail(SqlException.Connection(
-                "MySQL SqlClient.execute with BoundParam is not supported, use SqlClient.executeMysqlFrag with BoundMysqlParam.",
-                summon[Frame]
-            ))
+            Abort.fail(SqlConnectionBackendMismatchException(SqlBackend.Postgres, SqlBackend.Mysql, "execute with BoundParam"))
         else
             metrics.timedQuery(retryWith(address, password, config)(conn => conn.simpleExecute(sql)))
 
@@ -1531,10 +1504,7 @@ final class MysqlSqlClientBackend private[client] (
         // cursor position, which the current Stream API does not support.
         if params.nonEmpty then
             Stream[SqlRow, Async & Abort[SqlException] & Scope](
-                Abort.fail(SqlException.Connection(
-                    "MySQL SqlClient.streamQuery with BoundParam is not supported, use SqlClient.streamQueryMysqlFrag with BoundMysqlParam.",
-                    summon[Frame]
-                ))
+                Abort.fail(SqlConnectionBackendMismatchException(SqlBackend.Postgres, SqlBackend.Mysql, "streamQuery with BoundParam"))
             )
         else
             Stream[SqlRow, Async & Abort[SqlException] & Scope](
@@ -1643,7 +1613,7 @@ final class MysqlSqlClientBackend private[client] (
         password: String,
         config: SqlConfig
     )(f: PostgresConnection => A < (S & Async & Abort[SqlException]))(using Frame): A < (S & Async & Abort[SqlException]) =
-        Abort.fail(SqlException.Connection("withConnection (Postgres) is not supported on the MySQL backend", summon[Frame]))
+        Abort.fail(SqlConnectionBackendMismatchException(SqlBackend.Postgres, SqlBackend.Mysql, "withConnection"))
 
     def withMysqlConnection[A, S](
         address: SqlConfig.Address,
@@ -1700,11 +1670,7 @@ final class MysqlSqlClientBackend private[client] (
                                 case Absent => false
                         case Absent => false
                 if !acquired then
-                    Abort.fail[SqlException](SqlException.Request(
-                        s"GET_LOCK('$name', $timeoutSeconds) timed out or failed (key=$key)",
-                        Maybe.Absent,
-                        summon[Frame]
-                    ))
+                    Abort.fail[SqlException](SqlRequestMysqlGetLockException(name, timeoutSeconds.toInt, key.toString))
                 else
                     // Both success and error paths run RELEASE_LOCK on the pinned connection
                     // before it returns to the pool. The release failure is swallowed so it
@@ -1725,10 +1691,7 @@ final class MysqlSqlClientBackend private[client] (
     // --- Cancel ---
 
     def cancel(handle: SqlClient.CancelHandle.Postgres)(using Frame): Unit < (Async & Abort[SqlException]) =
-        Abort.fail(SqlException.Connection(
-            "Postgres cancel (CancelRequest) is not supported on the MySQL backend. Use a MySQL client.",
-            summon[Frame]
-        ))
+        Abort.fail(SqlConnectionBackendMismatchException(SqlBackend.Postgres, SqlBackend.Mysql, "cancel"))
 
     /** Cancels the MySQL query via `KILL QUERY <connectionId>` on a fresh out-of-pool connection.
       *
@@ -1777,7 +1740,7 @@ final class MysqlSqlClientBackend private[client] (
             else
                 Async.timeoutWithError(
                     config.cancelTimeout,
-                    Result.Failure(SqlException.Connection(s"MySQL cancel timed out after ${config.cancelTimeout}", summon[Frame]))
+                    Result.Failure(SqlConnectionCancelTimeoutException(config.cancelTimeout))
                 )(doCancel)
         Scope.run(timed)
     end cancelMysql
@@ -1789,7 +1752,7 @@ final class MysqlSqlClientBackend private[client] (
         password: String,
         config: SqlConfig
     )(f: (PostgresConnection, Int, Int) => A < (Async & Abort[SqlException]))(using Frame): A < (Async & Abort[SqlException]) =
-        Abort.fail(SqlException.Connection("withCancelInfo (Postgres) is not supported on the MySQL backend", summon[Frame]))
+        Abort.fail(SqlConnectionBackendMismatchException(SqlBackend.Postgres, SqlBackend.Mysql, "withCancelInfo"))
 
     /** Acquires a MySQL connection from the pool, exposes its `connectionId`, and calls `f`.
       *
@@ -1817,7 +1780,7 @@ final class MysqlSqlClientBackend private[client] (
         config: SqlConfig
     )(using Frame): Stream[SqlClient.Notification, Async & Abort[SqlException] & Scope] =
         Stream[SqlClient.Notification, Async & Abort[SqlException] & Scope](
-            Abort.fail(SqlException.Connection("PostgreSQL LISTEN/NOTIFY is not supported on the MySQL backend", summon[Frame]))
+            Abort.fail(SqlConnectionBackendMismatchException(SqlBackend.Postgres, SqlBackend.Mysql, "PostgreSQL LISTEN/NOTIFY"))
         )
 
     // --- MySQL savepoint helpers ---
@@ -1864,14 +1827,14 @@ final class MysqlSqlClientBackend private[client] (
                 val successes = results.collect { case Result.Success(conn) => conn }
                 val firstFailure = results.collectFirst {
                     case Result.Failure(e: SqlException) =>
-                        // Preserve the typed exception: callers' try/catch on specific subclasses (e.g., SqlException.Server
+                        // Preserve the typed exception: callers' try/catch on specific subclasses (e.g., SqlServerException
                         // for auth/permission failures) must see the original class, not a blanket Connection wrap.
                         // Non-SqlException transport errors are not reachable here, Abort.run[SqlException] only captures
                         // SqlException failures; anything else becomes a Result.Panic.
                         e
                     case Result.Panic(t) =>
                         java.lang.System.err.println(s"[kyo-sql] MysqlSqlClientBackend.warmUp: unexpected panic: ${t.getMessage}")
-                        SqlException.Connection(s"Warm-up panic: ${t.getMessage}", summon[Frame])
+                        SqlConnectionWarmupPanicException(t)
                 }
                 firstFailure match
                     case None =>
@@ -1992,7 +1955,7 @@ final class MysqlSqlClientBackend private[client] (
                 // The attempt counter starts at 0 and is incremented atomically before each pool call.
                 // The first attempt (prev=0) is NOT a retry; subsequent calls (prev=1, 2, …) record a retry.
                 AtomicInt.init(0).flatMap { counter =>
-                    Retry[SqlException.Connection](schedule) {
+                    Retry[SqlConnectionException](schedule) {
                         counter.getAndUpdate(_ + 1).flatMap { prev =>
                             val recordRetry: Unit < (Async & Abort[SqlException]) =
                                 if prev == 0 then ()
@@ -2038,10 +2001,7 @@ final class MysqlSqlClientBackend private[client] (
                         config.queryTimeout,
                         // Connection, not Request: see the sibling Pg path for the wire-desync rationale
                         // the pool must see this as fatal so the timed-out connection is discarded.
-                        Result.Failure(SqlException.Connection(
-                            s"Query exceeded timeout of ${config.queryTimeout}",
-                            summon[Frame]
-                        ))
+                        Result.Failure(SqlConnectionQueryTimeoutException(config.queryTimeout))
                     )(f(conn))
         // Unsafe: pool operations require AllowUnsafe (lock-free CAS on ring buffer).
         // STEERING case 2: bridging to kyo-net ConnectionPool whose API requires AllowUnsafe.
@@ -2171,7 +2131,7 @@ final class MysqlSqlClientBackend private[client] (
             // If myConnect fails, the surrounding Scope still closes and releases the slot,
             // preventing the leak that caused dead-pool deadlock under server restart.
             Abort.run[SqlException](takeSlotForStream(slotCh, config)).flatMap {
-                case Result.Failure(e @ SqlException.Connection(msg, _)) if msg.startsWith("Timed out") =>
+                case Result.Failure(e: SqlConnectionAcquireTimeoutException) =>
                     Log.warn(
                         s"kyo.sql: pool acquire timeout after ${config.acquireTimeout} poolSize=${config.maxConnections}"
                     ).andThen(Abort.fail(e))
@@ -2191,7 +2151,7 @@ final class MysqlSqlClientBackend private[client] (
         if config.acquireTimeout == Duration.Infinity then
             Abort.run[Closed](slotCh.take).flatMap {
                 case Result.Success(()) => ()
-                case Result.Failure(_)  => Abort.fail(SqlException.Connection("Connection pool is closed", summon[Frame]))
+                case Result.Failure(_)  => Abort.fail(SqlConnectionPoolClosedException())
                 case Result.Panic(t) =>
                     java.lang.System.err.println(s"[kyo-sql] MysqlSqlClientBackend.acquireStreamConn panic: ${t.getMessage}")
                     Abort.error(Result.Panic(t))
@@ -2199,14 +2159,11 @@ final class MysqlSqlClientBackend private[client] (
         else
             Async.timeoutWithError(
                 config.acquireTimeout,
-                Result.Failure(SqlException.Connection(
-                    s"Timed out waiting ${config.acquireTimeout} for a connection (pool exhausted)",
-                    summon[Frame]
-                ))
+                Result.Failure(SqlConnectionAcquireTimeoutException(config.acquireTimeout))
             )(
                 Abort.run[Closed](slotCh.take).flatMap {
                     case Result.Success(()) => ()
-                    case Result.Failure(_)  => Abort.fail(SqlException.Connection("Connection pool is closed", summon[Frame]))
+                    case Result.Failure(_)  => Abort.fail(SqlConnectionPoolClosedException())
                     case Result.Panic(t) =>
                         java.lang.System.err.println(
                             s"[kyo-sql] MysqlSqlClientBackend.acquireStreamConn panic (timeout path): ${t.getMessage}"
@@ -2284,10 +2241,7 @@ final class MysqlSqlClientBackend private[client] (
         else
             Async.timeoutWithError(
                 config.acquireTimeout,
-                Result.Failure(SqlException.Connection(
-                    s"Timed out after ${config.acquireTimeout} establishing connection to ${address.host}:${address.port}",
-                    summon[Frame]
-                ))
+                Result.Failure(SqlConnectionEstablishTimeoutException(config.acquireTimeout, address.host, address.port))
             )(connect)
 
     /** Connects to MySQL with mode-aware TLS handling.
@@ -2387,12 +2341,13 @@ final class MysqlSqlClientBackend private[client] (
       */
     private def myIsSslRequired(e: SqlException): Boolean =
         e match
-            case SqlException.Connection(message, _) =>
+            case c: SqlConnectionException =>
                 // Authentication-level connection error containing SSL indicator.
+                val message = c.getMessage()
                 message.contains("3159") || (message.contains("secure") && message.contains("transport"))
-            case SqlException.Server(_, _, message, _, _, _, extra, _, _, _, _) =>
+            case s: SqlServerException =>
                 // Server error code 3159 (ER_SECURE_TRANSPORT_REQUIRED).
-                extra.get("code").contains("3159") || message.contains("secure_transport") || message.contains("3159")
+                s.extra.get("code").contains("3159") || s.serverMessage.contains("secure_transport") || s.serverMessage.contains("3159")
             case _ =>
                 false
 
@@ -2405,23 +2360,23 @@ object SqlClientBackend:
     /** Returns true if the exception indicates the connection is protocol-poisoned and must be discarded rather than returned to the pool.
       *
       * Protocol-fatal categories:
-      *   - [[SqlException.Connection]], transport-level failure; the socket is already unusable.
-      *   - [[SqlException.Decode]], wire-format desync; the framing is out of sync with the server.
-      *   - [[SqlException.Server]] with SQLSTATE class `08` (connection exception) or `25` (invalid transaction state), the server
+      *   - [[SqlConnectionException]], transport-level failure; the socket is already unusable.
+      *   - [[SqlDecodeException]], wire-format desync; the framing is out of sync with the server.
+      *   - [[SqlServerException]] with SQLSTATE class `08` (connection exception) or `25` (invalid transaction state), the server
       *     terminated or invalidated the connection at the protocol level.
       *
       * Non-fatal categories (connection is still healthy):
-      *   - [[SqlException.Unsupported]], an operation not supported by this backend; the wire is fine.
-      *   - [[SqlException.Request]], a client-side encoding error; the wire is fine.
-      *   - [[SqlException.Server]] with other SQLSTATE classes, a query-level error; the wire is fine.
+      *   - [[SqlUnsupportedException]], an operation not supported by this backend; the wire is fine.
+      *   - [[SqlRequestException]], a client-side encoding error; the wire is fine.
+      *   - [[SqlServerException]] with other SQLSTATE classes, a query-level error; the wire is fine.
       */
     private[kyo] def isProtocolFatal(e: SqlException): Boolean =
         e match
-            case _: SqlException.Connection  => true
-            case _: SqlException.Decode      => true
-            case s: SqlException.Server      => s.sqlState.startsWith("08") || s.sqlState.startsWith("25")
-            case _: SqlException.Unsupported => false
-            case _: SqlException.Request     => false
+            case _: SqlConnectionException  => true
+            case _: SqlDecodeException      => true
+            case s: SqlServerException      => s.sqlState.startsWith("08") || s.sqlState.startsWith("25")
+            case _: SqlUnsupportedException => false
+            case _: SqlRequestException     => false
 
     /** Pool-lifecycle policy applied by the `releaseOnExit` finalizers: release a healthy connection back to the pool, discard on anything
       * that would leave the next borrower with a corrupted or half-consumed wire.

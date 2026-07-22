@@ -1,6 +1,11 @@
 package kyo.internal.postgres
 
 import kyo.*
+import kyo.SqlConnectionClosedException
+import kyo.SqlConnectionException
+import kyo.SqlConnectionProtocolDecodeException
+import kyo.SqlDecodeException
+import kyo.SqlDecodeUnknownBackendMessageException
 import kyo.SqlException
 import kyo.internal.postgres.unmarshaller.Unmarshallers
 import kyo.net.Connection
@@ -52,9 +57,9 @@ final class MessageReader:
             // Need more bytes to even read the header.
             pullMoreAndRetry(conn, unmarshallers)
 
-    private[postgres] def onTakePanic(t: Throwable)(using Frame): SqlException.Connection < Sync =
+    private[postgres] def onTakePanic(t: Throwable)(using Frame): SqlConnectionException < Sync =
         Log.error(s"[kyo-sql] MessageReader: unexpected panic: ${t.getMessage}").andThen(
-            SqlException.Connection(s"Unexpected error reading message: ${t.getMessage}", summon[Frame])
+            SqlConnectionClosedException("reading (panic: " + t.getMessage + ")")
         )
 
     private def pullMoreAndRetry(conn: Connection, unmarshallers: Unmarshallers)(using
@@ -67,7 +72,7 @@ final class MessageReader:
                 pending = pending.concat(Chunk.from(span.toArray))
                 pullUntilComplete(conn, unmarshallers)
             case Result.Failure(_) =>
-                Abort.fail(SqlException.Connection("Connection closed while reading message", summon[Frame]))
+                Abort.fail(SqlConnectionClosedException("reading message"))
             case Result.Panic(t) =>
                 onTakePanic(t).flatMap(Abort.fail(_))
         }
@@ -84,7 +89,7 @@ final class MessageReader:
         Frame
     ): BackendMessage < (Async & Abort[SqlException]) =
         val buf = new PostgresBufferReader(Span.from(body.toArray))
-        val result: BackendMessage < Abort[SqlException.Decode] = msgType match
+        val result: BackendMessage < Abort[SqlDecodeException] = msgType match
             case 'R' => unmarshallers.authentication.read(buf)
             case 'S' => unmarshallers.parameterStatus.read(buf)
             case 'K' => unmarshallers.backendKeyData.read(buf)
@@ -108,17 +113,13 @@ final class MessageReader:
             case 'd' => unmarshallers.copyData.read(buf)
             case 'c' => unmarshallers.copyDone.read(buf)
             case unknown =>
-                Abort.fail(SqlException.Decode(
-                    s"Unknown backend message type: '${unknown.toChar}' (0x${(unknown & 0xff).toHexString})",
-                    Maybe.Absent,
-                    summon[Frame]
-                ))
-        Abort.run[SqlException.Decode](result).flatMap {
+                Abort.fail(SqlDecodeUnknownBackendMessageException(unknown))
+        Abort.run[SqlDecodeException](result).flatMap {
             case Result.Success(msg) => msg
-            case Result.Failure(e)   => Abort.fail(SqlException.Connection(s"Message decode failed: ${e.message}", summon[Frame]))
+            case Result.Failure(e)   => Abort.fail(SqlConnectionProtocolDecodeException("message", e))
             case Result.Panic(t) =>
                 Log.error(s"[kyo-sql] MessageReader: decode panic: ${t.getMessage}").andThen(
-                    Abort.fail(SqlException.Connection(s"Decode panic: ${t.getMessage}", summon[Frame]))
+                    Abort.fail(SqlConnectionProtocolDecodeException("message", t))
                 )
         }
     end decodeMessage

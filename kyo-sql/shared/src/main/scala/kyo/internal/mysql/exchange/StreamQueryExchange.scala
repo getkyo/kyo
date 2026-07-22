@@ -1,6 +1,10 @@
 package kyo.internal.mysql.exchange
 
 import kyo.*
+import kyo.SqlConnectionProtocolDecodeException
+import kyo.SqlConnectionUnexpectedMessageException
+import kyo.SqlConnectionUnexpectedSentinelException
+import kyo.SqlDecodeException
 import kyo.SqlException
 import kyo.internal.mysql.*
 import kyo.internal.mysql.unmarshaller.BinaryResultsetRowUnmarshaller
@@ -58,9 +62,9 @@ private[mysql] object StreamQueryExchange:
                         else
                             // Result set: firstPayload carries the lenenc-int column count.
                             val reader = MysqlBufferReader(firstPayload)
-                            Abort.run[SqlException.Decode](reader.readLenencInt()).flatMap {
+                            Abort.run[SqlDecodeException](reader.readLenencInt()).flatMap {
                                 case Result.Success(Maybe.Absent) =>
-                                    Abort.fail(SqlException.Connection("Unexpected 0xFF sentinel in column count", summon[Frame]))
+                                    Abort.fail(SqlConnectionUnexpectedSentinelException("column count"))
                                 case Result.Success(Maybe.Present(columnCountLong)) =>
                                     val columnCount = columnCountLong.toInt
                                     ExtendedQueryExchange.readColumnDefs(channel, columnCount).flatMap { columnDefs =>
@@ -104,10 +108,10 @@ private[mysql] object StreamQueryExchange:
                                         }
                                     }
                                 case Result.Failure(e) =>
-                                    Abort.fail(SqlException.Connection(s"Column count decode failed: ${e.message}", summon[Frame]))
+                                    Abort.fail(SqlConnectionProtocolDecodeException("column count", e))
                                 case Result.Panic(t) =>
                                     java.lang.System.err.println(s"[kyo-sql] StreamQueryExchange: column count panic: ${t.getMessage}")
-                                    Abort.fail(SqlException.Connection(s"Column count decode panic: ${t.getMessage}", summon[Frame]))
+                                    Abort.fail(SqlConnectionProtocolDecodeException("column count", t))
                             }
                         end if
                     }
@@ -139,7 +143,7 @@ private[mysql] object StreamQueryExchange:
                 // Binary result row (0x00 header byte).
                 val unmarshaller = BinaryResultsetRowUnmarshaller(colTypes.size, colTypes)
                 val reader       = MysqlBufferReader(payload.slice(1, payload.size))
-                Abort.run[SqlException.Decode](unmarshaller.read(reader)).flatMap {
+                Abort.run[SqlDecodeException](unmarshaller.read(reader)).flatMap {
                     case Result.Success(row) =>
                         // MySQL streaming path uses the binary prepared-statement wire format.
                         val mysqlRow = new MysqlRow(row.values, columnDefs, kyo.internal.postgres.types.Format.Binary)
@@ -154,15 +158,16 @@ private[mysql] object StreamQueryExchange:
                             connectionId
                         ))
                     case Result.Failure(e) =>
-                        Abort.fail(SqlException.Connection(s"BinaryResultsetRow decode failed: ${e.message}", summon[Frame]))
+                        Abort.fail(SqlConnectionProtocolDecodeException("BinaryResultsetRow", e))
                     case Result.Panic(t) =>
                         java.lang.System.err.println(s"[kyo-sql] StreamQueryExchange: binary row panic: ${t.getMessage}")
-                        Abort.fail(SqlException.Connection(s"Binary row decode panic: ${t.getMessage}", summon[Frame]))
+                        Abort.fail(SqlConnectionProtocolDecodeException("BinaryResultsetRow", t))
                 }
             else
-                Abort.fail(SqlException.Connection(
-                    s"Unexpected first byte in binary stream: 0x${firstByte.toHexString}",
-                    summon[Frame]
+                Abort.fail(SqlConnectionUnexpectedMessageException(
+                    "binary stream",
+                    "OK / ERR / row",
+                    s"byte 0x${firstByte.toHexString}"
                 ))
             end if
         }
@@ -225,16 +230,16 @@ private[mysql] object StreamQueryExchange:
         connectionId: Maybe[Long]
     )(using frame: Frame): A < (Async & Abort[SqlException]) =
         val reader = MysqlBufferReader(payload.slice(1, payload.size))
-        Abort.run[SqlException.Decode](
+        Abort.run[SqlDecodeException](
             kyo.internal.mysql.unmarshaller.ErrPacketUnmarshaller.read(reader)
         ).flatMap {
             case Result.Success(err) =>
                 Abort.fail(MysqlErrors.mkServerError(err, sqlText, paramCount, connectionId))
             case Result.Failure(e) =>
-                Abort.fail(SqlException.Connection(s"ERR packet decode failed: ${e.message}", summon[Frame]))
+                Abort.fail(SqlConnectionProtocolDecodeException("ERR", e))
             case Result.Panic(t) =>
                 java.lang.System.err.println(s"[kyo-sql] StreamQueryExchange: ERR decode panic: ${t.getMessage}")
-                Abort.fail(SqlException.Connection(s"ERR decode panic: ${t.getMessage}", summon[Frame]))
+                Abort.fail(SqlConnectionProtocolDecodeException("ERR", t))
         }
     end readErrAndFail
 

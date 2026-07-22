@@ -1,5 +1,6 @@
 package kyo
 
+import kyo.SqlDecodeException
 import kyo.internal.postgres.FieldDescription
 import kyo.internal.postgres.PostgresBufferWriter
 import kyo.internal.postgres.types.Format
@@ -155,10 +156,10 @@ class SqlSchemaPeriodTest extends Test:
         // months = 0, days = 0, the non-zero µs alone must trigger the error
         val bytes  = Span.from(arr)
         val row    = pgRow("p" -> bytes)
-        val result = Abort.run[SqlException.Decode](summon[SqlSchema[java.time.Period]].readPostgres(row)).eval
+        val result = Abort.run[SqlDecodeException](summon[SqlSchema[java.time.Period]].readPostgres(row)).eval
         result match
-            case Result.Failure(_: SqlException.Decode) => succeed
-            case other                                  => fail(s"expected typed Decode failure, got $other")
+            case Result.Failure(_: SqlDecodeException) => succeed
+            case other                                 => fail(s"expected typed Decode failure, got $other")
         end match
     }
 
@@ -274,10 +275,10 @@ class SqlSchemaPeriodTest extends Test:
     "Period MySQL decode raises a typed failure on malformed text" in {
         val raw    = "not-a-period".getBytes(java.nio.charset.StandardCharsets.UTF_8)
         val row    = new SqlRow(Chunk(Maybe.Present(Span.from(raw))), Chunk(field("p")), Format.Binary)
-        val result = Abort.run[SqlException.Decode](summon[SqlSchema[java.time.Period]].readMysql(row)).eval
+        val result = Abort.run[SqlDecodeException](summon[SqlSchema[java.time.Period]].readMysql(row)).eval
         result match
-            case Result.Failure(_: SqlException.Decode) => succeed
-            case other                                  => fail(s"expected Failure(SqlException.Decode), got $other")
+            case Result.Failure(_: SqlDecodeException) => succeed
+            case other                                 => fail(s"expected Failure(SqlDecodeException), got $other")
         end match
     }
 

@@ -3,10 +3,14 @@ package kyo.internal
 import java.nio.charset.StandardCharsets
 import kyo.Codec
 import kyo.Frame
-import kyo.Maybe
-import kyo.Maybe.Absent
+import kyo.NumericSubtype
 import kyo.Span
-import kyo.SqlException
+import kyo.SqlDecodeDurationException
+import kyo.SqlDecodeEmptyStringForCharException
+import kyo.SqlDecodeInstantException
+import kyo.SqlDecodeInsufficientBytesException
+import kyo.SqlDecodeNumericException
+import kyo.SqlUnsupportedStructuralReadException
 import kyo.internal.postgres.types.Format
 import kyo.internal.postgres.types.PostgresDecoder
 
@@ -16,7 +20,7 @@ import kyo.internal.postgres.types.PostgresDecoder
   * the raw wire bytes for one SQL column and decodes primitive values from them using either the PostgreSQL binary-format decoders or the
   * MySQL little-endian protocol.
   *
-  * Structural reads (arrayStart, mapStart) raise [[SqlException.Decode]] because nested structural reads through captureValue are not
+  * Structural reads (arrayStart, mapStart) raise [[kyo.SqlDecodeException]] because nested structural reads through captureValue are not
   * supported, the captured value is always a flat scalar column.
   *
   * @param rawBytes
@@ -50,7 +54,7 @@ final class BufferedSqlReader(
         case BufferedSqlReader.Backend.Postgres =>
             PostgresDecoder.int4.read(format, rawBytes)(using captureFrame)
         case BufferedSqlReader.Backend.Mysql =>
-            if rawBytes.size < 4 then throw SqlException.Decode(s"LONG: expected 4 bytes, got ${rawBytes.size}", Absent, captureFrame)
+            if rawBytes.size < 4 then throw SqlDecodeInsufficientBytesException("LONG", 4, rawBytes.size, 0)(using captureFrame)
             val b0 = rawBytes(0).toLong & 0xffL
             val b1 = rawBytes(1).toLong & 0xffL
             val b2 = rawBytes(2).toLong & 0xffL
@@ -61,7 +65,7 @@ final class BufferedSqlReader(
         case BufferedSqlReader.Backend.Postgres =>
             PostgresDecoder.int8.read(format, rawBytes)(using captureFrame)
         case BufferedSqlReader.Backend.Mysql =>
-            if rawBytes.size < 8 then throw SqlException.Decode(s"LONGLONG: expected 8 bytes, got ${rawBytes.size}", Absent, captureFrame)
+            if rawBytes.size < 8 then throw SqlDecodeInsufficientBytesException("LONGLONG", 8, rawBytes.size, 0)(using captureFrame)
             val b0 = rawBytes(0).toLong & 0xffL
             val b1 = rawBytes(1).toLong & 0xffL
             val b2 = rawBytes(2).toLong & 0xffL
@@ -76,7 +80,7 @@ final class BufferedSqlReader(
         case BufferedSqlReader.Backend.Postgres =>
             PostgresDecoder.float4.read(format, rawBytes)(using captureFrame)
         case BufferedSqlReader.Backend.Mysql =>
-            if rawBytes.size < 4 then throw SqlException.Decode(s"FLOAT: expected 4 bytes, got ${rawBytes.size}", Absent, captureFrame)
+            if rawBytes.size < 4 then throw SqlDecodeInsufficientBytesException("FLOAT", 4, rawBytes.size, 0)(using captureFrame)
             val b0 = rawBytes(0).toLong & 0xffL
             val b1 = rawBytes(1).toLong & 0xffL
             val b2 = rawBytes(2).toLong & 0xffL
@@ -87,7 +91,7 @@ final class BufferedSqlReader(
         case BufferedSqlReader.Backend.Postgres =>
             PostgresDecoder.float8.read(format, rawBytes)(using captureFrame)
         case BufferedSqlReader.Backend.Mysql =>
-            if rawBytes.size < 8 then throw SqlException.Decode(s"DOUBLE: expected 8 bytes, got ${rawBytes.size}", Absent, captureFrame)
+            if rawBytes.size < 8 then throw SqlDecodeInsufficientBytesException("DOUBLE", 8, rawBytes.size, 0)(using captureFrame)
             val b0 = rawBytes(0).toLong & 0xffL
             val b1 = rawBytes(1).toLong & 0xffL
             val b2 = rawBytes(2).toLong & 0xffL
@@ -104,14 +108,14 @@ final class BufferedSqlReader(
         case BufferedSqlReader.Backend.Postgres =>
             PostgresDecoder.bool.read(format, rawBytes)(using captureFrame)
         case BufferedSqlReader.Backend.Mysql =>
-            if rawBytes.isEmpty then throw SqlException.Decode("TINY: expected 1 byte, got 0", Absent, captureFrame)
+            if rawBytes.isEmpty then throw SqlDecodeInsufficientBytesException("TINY", 1, 0, 0)(using captureFrame)
             (rawBytes(0) & 0xff) != 0
 
     override def short(): Short = backend match
         case BufferedSqlReader.Backend.Postgres =>
             PostgresDecoder.int2.read(format, rawBytes)(using captureFrame)
         case BufferedSqlReader.Backend.Mysql =>
-            if rawBytes.size < 2 then throw SqlException.Decode(s"SHORT: expected 2 bytes, got ${rawBytes.size}", Absent, captureFrame)
+            if rawBytes.size < 2 then throw SqlDecodeInsufficientBytesException("SHORT", 2, rawBytes.size, 0)(using captureFrame)
             val lo = rawBytes(0) & 0xff
             val hi = rawBytes(1) & 0xff
             ((hi << 8) | lo).toShort
@@ -120,12 +124,12 @@ final class BufferedSqlReader(
         case BufferedSqlReader.Backend.Postgres =>
             PostgresDecoder.int2.read(format, rawBytes)(using captureFrame).toByte
         case BufferedSqlReader.Backend.Mysql =>
-            if rawBytes.isEmpty then throw SqlException.Decode("TINY: expected 1 byte, got 0", Absent, captureFrame)
+            if rawBytes.isEmpty then throw SqlDecodeInsufficientBytesException("TINY", 1, 0, 0)(using captureFrame)
             rawBytes(0)
 
     override def char(): Char =
         val s = string()
-        if s.isEmpty then throw SqlException.Decode("captureValue char: empty string, cannot read as Char", Absent, captureFrame)
+        if s.isEmpty then throw SqlDecodeEmptyStringForCharException(-1)(using captureFrame)
         else s.charAt(0)
     end char
 
@@ -139,8 +143,8 @@ final class BufferedSqlReader(
         val s = string()
         try BigDecimal(s)
         catch
-            case e: NumberFormatException =>
-                throw SqlException.Decode(s"captureValue bigDecimal: cannot parse '$s': ${e.getMessage}", Absent, captureFrame)
+            case _: NumberFormatException =>
+                throw SqlDecodeNumericException(s, NumericSubtype.Parse)(using captureFrame)
         end try
     end bigDecimal
 
@@ -151,7 +155,7 @@ final class BufferedSqlReader(
         try java.time.Instant.parse(s)
         catch
             case e: java.time.format.DateTimeParseException =>
-                throw SqlException.Decode(s"captureValue instant: cannot parse '$s': ${e.getMessage}", Absent, captureFrame)
+                throw SqlDecodeInstantException(s, e)(using captureFrame)
         end try
     end instant
 
@@ -160,7 +164,7 @@ final class BufferedSqlReader(
         try java.time.Duration.parse(s)
         catch
             case e: java.time.format.DateTimeParseException =>
-                throw SqlException.Decode(s"captureValue duration: cannot parse '$s': ${e.getMessage}", Absent, captureFrame)
+                throw SqlDecodeDurationException(s, e)(using captureFrame)
         end try
     end duration
 
@@ -184,11 +188,7 @@ final class BufferedSqlReader(
     // --- Structural reads, not supported through captureValue ---
 
     private def structuralUnsupported(method: String): Nothing =
-        throw SqlException.Decode(
-            s"nested structural reads through captureValue not yet supported ($method)",
-            Absent,
-            captureFrame
-        )
+        throw SqlUnsupportedStructuralReadException(method)(using captureFrame)
 
     override def arrayStart(): Int         = structuralUnsupported("arrayStart")
     override def arrayEnd(): Unit          = structuralUnsupported("arrayEnd")

@@ -1,7 +1,7 @@
 package kyo.internal.postgres.unmarshaller
 
 import kyo.*
-import kyo.SqlException
+import kyo.SqlDecodeException
 import kyo.internal.postgres.CopyData
 import kyo.internal.postgres.PostgresBufferReader
 import kyo.internal.postgres.Unmarshaller
@@ -13,7 +13,7 @@ import kyo.internal.postgres.Unmarshaller
   * Reference: PostgreSQL §55.7 "CopyData"
   */
 object CopyDataUnmarshaller extends Unmarshaller[CopyData]:
-    def read(buf: PostgresBufferReader)(using Frame): CopyData < Abort[SqlException.Decode] =
+    def read(buf: PostgresBufferReader)(using Frame): CopyData < Abort[SqlDecodeException] =
         CopyData(buf.readAll())
     end read
 end CopyDataUnmarshaller

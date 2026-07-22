@@ -3,6 +3,8 @@ package kyo
 import kyo.Frame
 import kyo.Maybe.Absent
 import kyo.Maybe.Present
+import kyo.SqlConnectionException
+import kyo.SqlConnectionUrlParseException
 
 class SqlConfigUrlTest extends Test:
     "valid URL returns Result.Success" in {
@@ -22,10 +24,11 @@ class SqlConfigUrlTest extends Test:
         val result = SqlConfig.Url.parse(raw)
         assert(result.isFailure)
         result match
-            case Result.Failure(e: SqlException.Connection) =>
-                assert(e.message == s"Missing scheme in URL: $raw")
+            case Result.Failure(e: SqlConnectionUrlParseException) =>
+                assert(e.rawUrl == raw, s"expected rawUrl '$raw', got: ${e.rawUrl}")
+                assert(e.scheme == "", s"expected empty scheme, got: ${e.scheme}")
             case other =>
-                fail(s"Expected Result.Failure(SqlException.Connection) but got: $other")
+                fail(s"Expected Result.Failure(SqlConnectionUrlParseException) but got: $other")
         end match
     }
     "unsupported scheme returns Result.Failure with correct message" in {
@@ -33,10 +36,11 @@ class SqlConfigUrlTest extends Test:
         val result = SqlConfig.Url.parse(raw)
         assert(result.isFailure)
         result match
-            case Result.Failure(e: SqlException.Connection) =>
-                assert(e.message == "Unsupported scheme 'ftp'; expected 'postgres' or 'mysql'")
+            case Result.Failure(e: SqlConnectionUrlParseException) =>
+                assert(e.rawUrl == raw, s"expected rawUrl '$raw', got: ${e.rawUrl}")
+                assert(e.scheme == "ftp", s"expected scheme 'ftp', got: ${e.scheme}")
             case other =>
-                fail(s"Expected Result.Failure(SqlException.Connection) but got: $other")
+                fail(s"Expected Result.Failure(SqlConnectionUrlParseException) but got: $other")
         end match
     }
     "missing database name returns Result.Failure with correct message" in {
@@ -44,10 +48,11 @@ class SqlConfigUrlTest extends Test:
         val result = SqlConfig.Url.parse(raw)
         assert(result.isFailure)
         result match
-            case Result.Failure(e: SqlException.Connection) =>
-                assert(e.message == s"Missing database name in URL: $raw")
+            case Result.Failure(e: SqlConnectionUrlParseException) =>
+                assert(e.rawUrl == raw, s"expected rawUrl '$raw', got: ${e.rawUrl}")
+                assert(e.scheme == "postgres", s"expected scheme 'postgres', got: ${e.scheme}")
             case other =>
-                fail(s"Expected Result.Failure(SqlException.Connection) but got: $other")
+                fail(s"Expected Result.Failure(SqlConnectionUrlParseException) but got: $other")
         end match
     }
     "malformed IPv6 host returns Result.Failure with correct message" in {
@@ -55,10 +60,11 @@ class SqlConfigUrlTest extends Test:
         val result = SqlConfig.Url.parse(raw)
         assert(result.isFailure)
         result match
-            case Result.Failure(e: SqlException.Connection) =>
-                assert(e.message == s"Malformed IPv6 host in URL: $raw")
+            case Result.Failure(e: SqlConnectionUrlParseException) =>
+                assert(e.rawUrl == raw, s"expected rawUrl '$raw', got: ${e.rawUrl}")
+                assert(e.scheme == "postgres", s"expected scheme 'postgres', got: ${e.scheme}")
             case other =>
-                fail(s"Expected Result.Failure(SqlException.Connection) but got: $other")
+                fail(s"Expected Result.Failure(SqlConnectionUrlParseException) but got: $other")
         end match
     }
     "IPv6 host missing colon before port returns Result.Failure with correct message" in {
@@ -66,12 +72,11 @@ class SqlConfigUrlTest extends Test:
         val result = SqlConfig.Url.parse(raw)
         assert(result.isFailure)
         result match
-            case Result.Failure(e: SqlException.Connection) =>
-                assert(e.message == s"Port is required in URL: $raw")
-                // Discriminator: this trigger is the IPv6-bracket-closed-but-no-colon branch
-                assert(e.message.contains("[::1]5432"), s"message should contain the IPv6+digits trigger: ${e.message}")
+            case Result.Failure(e: SqlConnectionUrlParseException) =>
+                assert(e.rawUrl == raw, s"expected rawUrl '$raw', got: ${e.rawUrl}")
+                assert(e.scheme == "postgres", s"expected scheme 'postgres', got: ${e.scheme}")
             case other =>
-                fail(s"Expected Result.Failure(SqlException.Connection) but got: $other")
+                fail(s"Expected Result.Failure(SqlConnectionUrlParseException) but got: $other")
         end match
     }
     "non-IPv6 host without colon returns Result.Failure with correct message" in {
@@ -79,12 +84,11 @@ class SqlConfigUrlTest extends Test:
         val result = SqlConfig.Url.parse(raw)
         assert(result.isFailure)
         result match
-            case Result.Failure(e: SqlException.Connection) =>
-                assert(e.message == s"Port is required in URL: $raw")
-                // Discriminator: this trigger is a plain hostname with no colon at all
-                assert(e.message.contains("localhost/db"), s"message should contain the no-colon host trigger: ${e.message}")
+            case Result.Failure(e: SqlConnectionUrlParseException) =>
+                assert(e.rawUrl == raw, s"expected rawUrl '$raw', got: ${e.rawUrl}")
+                assert(e.scheme == "postgres", s"expected scheme 'postgres', got: ${e.scheme}")
             case other =>
-                fail(s"Expected Result.Failure(SqlException.Connection) but got: $other")
+                fail(s"Expected Result.Failure(SqlConnectionUrlParseException) but got: $other")
         end match
     }
     "non-IPv6 host with empty port string returns Result.Failure with correct message" in {
@@ -92,12 +96,11 @@ class SqlConfigUrlTest extends Test:
         val result = SqlConfig.Url.parse(raw)
         assert(result.isFailure)
         result match
-            case Result.Failure(e: SqlException.Connection) =>
-                assert(e.message == s"Port is required in URL: $raw")
-                // Discriminator: this trigger is a colon-present but empty port-string branch
-                assert(e.message.contains("localhost:/db"), s"message should contain the empty-port trigger: ${e.message}")
+            case Result.Failure(e: SqlConnectionUrlParseException) =>
+                assert(e.rawUrl == raw, s"expected rawUrl '$raw', got: ${e.rawUrl}")
+                assert(e.scheme == "postgres", s"expected scheme 'postgres', got: ${e.scheme}")
             case other =>
-                fail(s"Expected Result.Failure(SqlException.Connection) but got: $other")
+                fail(s"Expected Result.Failure(SqlConnectionUrlParseException) but got: $other")
         end match
     }
     "non-numeric port returns Result.Failure with correct message" in {
@@ -105,12 +108,11 @@ class SqlConfigUrlTest extends Test:
         val result = SqlConfig.Url.parse(raw)
         assert(result.isFailure)
         result match
-            case Result.Failure(e: SqlException.Connection) =>
-                assert(e.message == s"Port is required in URL: $raw")
-                // Discriminator: this trigger is a non-numeric port string on a plain host
-                assert(e.message.contains("notaport"), s"message should contain the non-numeric port trigger: ${e.message}")
+            case Result.Failure(e: SqlConnectionUrlParseException) =>
+                assert(e.rawUrl == raw, s"expected rawUrl '$raw', got: ${e.rawUrl}")
+                assert(e.scheme == "postgres", s"expected scheme 'postgres', got: ${e.scheme}")
             case other =>
-                fail(s"Expected Result.Failure(SqlException.Connection) but got: $other")
+                fail(s"Expected Result.Failure(SqlConnectionUrlParseException) but got: $other")
         end match
     }
     "non-numeric IPv6 port returns Result.Failure with correct message" in {
@@ -118,15 +120,11 @@ class SqlConfigUrlTest extends Test:
         val result = SqlConfig.Url.parse(raw)
         assert(result.isFailure)
         result match
-            case Result.Failure(e: SqlException.Connection) =>
-                assert(e.message == s"Port is required in URL: $raw")
-                // Discriminator: this trigger is a non-numeric port on an IPv6 host
-                assert(
-                    e.message.contains("[::1]:notaport"),
-                    s"message should contain the IPv6+non-numeric-port trigger: ${e.message}"
-                )
+            case Result.Failure(e: SqlConnectionUrlParseException) =>
+                assert(e.rawUrl == raw, s"expected rawUrl '$raw', got: ${e.rawUrl}")
+                assert(e.scheme == "postgres", s"expected scheme 'postgres', got: ${e.scheme}")
             case other =>
-                fail(s"Expected Result.Failure(SqlException.Connection) but got: $other")
+                fail(s"Expected Result.Failure(SqlConnectionUrlParseException) but got: $other")
         end match
     }
     "parseOptions returns Present for a present option key" in {

@@ -1,7 +1,7 @@
 package kyo.internal.mysql.unmarshaller
 
 import kyo.*
-import kyo.SqlException
+import kyo.SqlDecodeException
 import kyo.internal.mysql.EofPacket
 import kyo.internal.mysql.MysqlBufferReader
 import kyo.internal.mysql.Unmarshaller
@@ -20,7 +20,7 @@ import kyo.internal.mysql.Unmarshaller
   */
 object EofPacketUnmarshaller extends Unmarshaller[EofPacket]:
 
-    def read(buf: MysqlBufferReader)(using Frame): EofPacket < Abort[SqlException.Decode] =
+    def read(buf: MysqlBufferReader)(using Frame): EofPacket < Abort[SqlDecodeException] =
         buf.readUInt16LE().flatMap { warningsInt =>
             buf.readUInt16LE().map { statusFlagsInt =>
                 EofPacket(warningsInt.toShort, statusFlagsInt.toShort)

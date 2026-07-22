@@ -21,7 +21,7 @@ class MysqlEncoderJsonTest extends kyo.Test:
         buf.toSpan
     end mysqlEncode
 
-    private def mysqlDecode(bytes: Span[Byte]): String < Abort[SqlException.Decode] =
+    private def mysqlDecode(bytes: Span[Byte]): String < Abort[SqlDecodeException] =
         MysqlDecoder.jsonDecoder.decode(bytes)
 
     "MySQL JSON encodes Json as UTF-8 text (TYPE_JSON)" in {

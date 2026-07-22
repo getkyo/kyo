@@ -1,7 +1,7 @@
 package kyo.internal.postgres.unmarshaller
 
 import kyo.*
-import kyo.SqlException
+import kyo.SqlDecodeException
 import kyo.internal.postgres.FieldDescription
 import kyo.internal.postgres.PostgresBufferReader
 import kyo.internal.postgres.RowDescription
@@ -20,7 +20,7 @@ import kyo.internal.postgres.Unmarshaller
   * Reference: PostgreSQL §55.7 "RowDescription"
   */
 object RowDescriptionUnmarshaller extends Unmarshaller[RowDescription]:
-    def read(buf: PostgresBufferReader)(using Frame): RowDescription < Abort[SqlException.Decode] =
+    def read(buf: PostgresBufferReader)(using Frame): RowDescription < Abort[SqlDecodeException] =
         buf.readInt16().flatMap { numFieldsShort =>
             readFields(buf, numFieldsShort.toInt & 0xffff, Chunk.empty).map { fields =>
                 RowDescription(fields)
@@ -30,7 +30,7 @@ object RowDescriptionUnmarshaller extends Unmarshaller[RowDescription]:
 
     private def readFields(buf: PostgresBufferReader, remaining: Int, acc: Chunk[FieldDescription])(using
         Frame
-    ): Chunk[FieldDescription] < Abort[SqlException.Decode] =
+    ): Chunk[FieldDescription] < Abort[SqlDecodeException] =
         if remaining == 0 then acc
         else
             val name = buf.readString()

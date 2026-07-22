@@ -25,7 +25,7 @@ private[kyo] object MysqlCancelExchange:
       *   1. Sends `KILL QUERY <targetConnectionId>` via the simple-query protocol.
       *   2. Reads the server response (OK = kill delivered; ERR = target not found or privilege error).
       *   3. Returns `Unit` on success. If the target is not found (ER_NO_SUCH_THREAD), returns `Unit` silently (query already done).
-      *   4. Any other ERR raises [[SqlException.Connection]].
+      *   4. Any other ERR raises a [[kyo.SqlConnectionException]] leaf.
       *
       * The caller is responsible for releasing `cancelConn` back to the pool after this method returns.
       *

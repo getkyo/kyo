@@ -2,7 +2,8 @@ package kyo.internal.mysql.unmarshaller
 
 import java.nio.charset.StandardCharsets
 import kyo.*
-import kyo.SqlException
+import kyo.SqlDecodeException
+import kyo.SqlDecodeProtocolFormatException
 import kyo.internal.mysql.ErrPacket
 import kyo.internal.mysql.MysqlBufferReader
 import kyo.internal.mysql.Unmarshaller
@@ -19,16 +20,12 @@ import kyo.internal.mysql.Unmarshaller
   */
 object ErrPacketUnmarshaller extends Unmarshaller[ErrPacket]:
 
-    def read(buf: MysqlBufferReader)(using Frame): ErrPacket < Abort[SqlException.Decode] =
+    def read(buf: MysqlBufferReader)(using Frame): ErrPacket < Abort[SqlDecodeException] =
         buf.readUInt16LE().flatMap { errorCode =>
             // '#' marker, consume and discard (0x23)
             buf.readByte().flatMap { marker =>
                 if marker != '#'.toByte then
-                    Abort.fail(SqlException.Decode(
-                        s"Expected '#' (0x23) SQLSTATE marker in ERR packet, got 0x${(marker & 0xff).toHexString}",
-                        Maybe.Absent,
-                        summon[Frame]
-                    ))
+                    Abort.fail(SqlDecodeProtocolFormatException(marker, buf.position))
                 else
                     val sqlState     = buf.readFixedString(5)
                     val msgBytes     = buf.readRestOfPacket()

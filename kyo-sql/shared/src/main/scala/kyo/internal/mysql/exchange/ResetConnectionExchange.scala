@@ -1,6 +1,8 @@
 package kyo.internal.mysql.exchange
 
 import kyo.*
+import kyo.SqlConnectionResetFailedException
+import kyo.SqlConnectionUnexpectedMessageException
 import kyo.SqlException
 import kyo.internal.mysql.*
 
@@ -19,7 +21,7 @@ private[mysql] object ResetConnectionExchange:
       * @param channel
       *   the active MySQL channel (connection must not be inside a transaction)
       * @return
-      *   `Unit` on success; raises [[SqlException.Connection]] if the server replies with an [[ErrPacket]] or an unexpected message
+      *   `Unit` on success; raises a [[kyo.SqlConnectionException]] leaf if the server replies with an [[ErrPacket]] or an unexpected message
       */
     def run(channel: MysqlChannel)(using Frame): Unit < (Async & Abort[SqlException]) =
         channel.resetSeq()
@@ -28,15 +30,9 @@ private[mysql] object ResetConnectionExchange:
                 case _: OkPacket =>
                     ()
                 case err: ErrPacket =>
-                    Abort.fail(SqlException.Connection(
-                        s"COM_RESET_CONNECTION failed: [${err.errorCode}] ${err.errorMessage}",
-                        summon[Frame]
-                    ))
+                    Abort.fail(SqlConnectionResetFailedException(err.errorCode, err.errorMessage))
                 case other =>
-                    Abort.fail(SqlException.Connection(
-                        s"COM_RESET_CONNECTION: unexpected server response: $other",
-                        summon[Frame]
-                    ))
+                    Abort.fail(SqlConnectionUnexpectedMessageException("COM_RESET_CONNECTION", "OkPacket / ErrPacket", other.toString))
             }
         }
     end run

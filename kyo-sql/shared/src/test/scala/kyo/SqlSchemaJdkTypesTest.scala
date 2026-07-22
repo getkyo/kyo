@@ -1,5 +1,6 @@
 package kyo
 
+import kyo.SqlDecodeException
 import kyo.internal.postgres.BoundParam
 import kyo.internal.postgres.FieldDescription
 import kyo.internal.postgres.PostgresBufferWriter
@@ -93,13 +94,13 @@ class SqlSchemaJdkTypesTest extends Test:
         end match
     }
 
-    "URI decode from invalid string raises Abort[SqlException.Decode]" in {
+    "URI decode from invalid string raises Abort[SqlDecodeException]" in {
         // Space characters are illegal in a URI, URI.create will throw IllegalArgumentException.
         val row    = pgStringRow("not a valid uri with spaces here")
-        val result = Abort.run[SqlException.Decode](summon[SqlSchema[java.net.URI]].readPostgres(row)).eval
+        val result = Abort.run[SqlDecodeException](summon[SqlSchema[java.net.URI]].readPostgres(row)).eval
         result match
-            case Result.Failure(_: SqlException.Decode) => succeed
-            case other                                  => fail(s"Expected Failure(SqlException.Decode) but got $other")
+            case Result.Failure(_: SqlDecodeException) => succeed
+            case other                                 => fail(s"Expected Failure(SqlDecodeException) but got $other")
         end match
     }
 
@@ -149,13 +150,13 @@ class SqlSchemaJdkTypesTest extends Test:
         end match
     }
 
-    "URL decode from invalid string raises Abort[SqlException.Decode]" in {
+    "URL decode from invalid string raises Abort[SqlDecodeException]" in {
         // "not-a-url" has no scheme, URI.create succeeds but toURL throws MalformedURLException.
         val row    = pgStringRow("not-a-url")
-        val result = Abort.run[SqlException.Decode](summon[SqlSchema[java.net.URL]].readPostgres(row)).eval
+        val result = Abort.run[SqlDecodeException](summon[SqlSchema[java.net.URL]].readPostgres(row)).eval
         result match
-            case Result.Failure(_: SqlException.Decode) => succeed
-            case other                                  => fail(s"Expected Failure(SqlException.Decode) but got $other")
+            case Result.Failure(_: SqlDecodeException) => succeed
+            case other                                 => fail(s"Expected Failure(SqlDecodeException) but got $other")
         end match
     }
 
@@ -272,13 +273,13 @@ class SqlSchemaJdkTypesTest extends Test:
         end match
     }
 
-    "Currency decode from invalid code raises Abort[SqlException.Decode]" in {
+    "Currency decode from invalid code raises Abort[SqlDecodeException]" in {
         // "NOTACURRENCY" is not a valid ISO 4217 code, Currency.getInstance throws IllegalArgumentException.
         val row    = pgStringRow("NOTACURRENCY")
-        val result = Abort.run[SqlException.Decode](summon[SqlSchema[java.util.Currency]].readPostgres(row)).eval
+        val result = Abort.run[SqlDecodeException](summon[SqlSchema[java.util.Currency]].readPostgres(row)).eval
         result match
-            case Result.Failure(_: SqlException.Decode) => succeed
-            case other                                  => fail(s"Expected Failure(SqlException.Decode) but got $other")
+            case Result.Failure(_: SqlDecodeException) => succeed
+            case other                                 => fail(s"Expected Failure(SqlDecodeException) but got $other")
         end match
     }
 

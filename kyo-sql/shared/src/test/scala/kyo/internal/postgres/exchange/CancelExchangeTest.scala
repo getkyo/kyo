@@ -57,15 +57,15 @@ class CancelExchangeTest extends kyo.Test:
                                 // Wait briefly, then cancel.
                                 Async.sleep(200.millis).andThen {
                                     queryConn.cancel(address, Absent).andThen {
-                                        // The slow fiber should complete with a SqlException.Server(57014).
+                                        // The slow fiber should complete with a SqlServerException(57014).
                                         slowFiber.get.map {
-                                            case Result.Failure(e: SqlException.Server) =>
+                                            case Result.Failure(e: SqlServerException) =>
                                                 assert(
                                                     e.sqlState == "57014",
                                                     s"Expected SQLSTATE 57014 (query_canceled), got ${e.sqlState}: ${e.message}"
                                                 )
                                             case Result.Failure(e) =>
-                                                fail(s"Expected SqlException.Server(57014), got: $e")
+                                                fail(s"Expected SqlServerException(57014), got: $e")
                                             case Result.Success(_) =>
                                                 fail("Expected query to be cancelled but it returned successfully")
                                             case Result.Panic(t) =>

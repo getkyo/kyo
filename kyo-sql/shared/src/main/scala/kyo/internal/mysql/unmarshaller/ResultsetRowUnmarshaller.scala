@@ -1,7 +1,7 @@
 package kyo.internal.mysql.unmarshaller
 
 import kyo.*
-import kyo.SqlException
+import kyo.SqlDecodeException
 import kyo.internal.mysql.MysqlBufferReader
 import kyo.internal.mysql.ResultsetRow
 import kyo.internal.mysql.Unmarshaller
@@ -21,7 +21,7 @@ import kyo.internal.mysql.Unmarshaller
   */
 final class ResultsetRowUnmarshaller(numColumns: Int) extends Unmarshaller[ResultsetRow]:
 
-    def read(buf: MysqlBufferReader)(using Frame): ResultsetRow < Abort[SqlException.Decode] =
+    def read(buf: MysqlBufferReader)(using Frame): ResultsetRow < Abort[SqlDecodeException] =
         readColumns(buf).map { values =>
             ResultsetRow(values)
         }
@@ -29,9 +29,9 @@ final class ResultsetRowUnmarshaller(numColumns: Int) extends Unmarshaller[Resul
 
     private def readColumns(buf: MysqlBufferReader)(using
         Frame
-    ): Chunk[Maybe[Span[Byte]]] < Abort[SqlException.Decode] =
+    ): Chunk[Maybe[Span[Byte]]] < Abort[SqlDecodeException] =
         val b = Chunk.newBuilder[Maybe[Span[Byte]]]
-        def loop(remaining: Int): Chunk[Maybe[Span[Byte]]] < Abort[SqlException.Decode] =
+        def loop(remaining: Int): Chunk[Maybe[Span[Byte]]] < Abort[SqlDecodeException] =
             if remaining == 0 then b.result()
             else
                 buf.readByte().flatMap { rawByte =>
@@ -41,7 +41,7 @@ final class ResultsetRowUnmarshaller(numColumns: Int) extends Unmarshaller[Resul
                         loop(remaining - 1)
                     else
                         // firstByte is the first byte of a lenenc-int encoding the string length
-                        val lenEffect: Long < Abort[SqlException.Decode] = firstByte match
+                        val lenEffect: Long < Abort[SqlDecodeException] = firstByte match
                             case v if v <= 250 => v.toLong
                             case 0xfc          => buf.readUInt16LE().map(_.toLong)
                             case 0xfd          => buf.readUInt24LE().map(_.toLong)

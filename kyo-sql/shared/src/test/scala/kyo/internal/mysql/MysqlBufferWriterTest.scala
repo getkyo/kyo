@@ -58,7 +58,7 @@ class MysqlBufferWriterTest extends Test:
         val buf = new MysqlBufferWriter
         buf.writeLenencInt(251L)
         val reader = MysqlBufferReader(buf.toSpan)
-        Abort.run[SqlException.Decode](reader.readLenencInt()).map {
+        Abort.run[SqlDecodeException](reader.readLenencInt()).map {
             case Result.Success(Maybe.Present(v)) => assert(v == 251L)
             case other                            => fail(s"Expected Success(Present(251)), got: $other")
         }
@@ -69,7 +69,7 @@ class MysqlBufferWriterTest extends Test:
         val buf = new MysqlBufferWriter
         buf.writeLenencInt(65536L)
         val reader = MysqlBufferReader(buf.toSpan)
-        Abort.run[SqlException.Decode](reader.readLenencInt()).map {
+        Abort.run[SqlDecodeException](reader.readLenencInt()).map {
             case Result.Success(Maybe.Present(v)) => assert(v == 65536L)
             case other                            => fail(s"Expected Success(Present(65536)), got: $other")
         }
@@ -80,7 +80,7 @@ class MysqlBufferWriterTest extends Test:
         val buf = new MysqlBufferWriter
         buf.writeLenencInt(16777216L)
         val reader = MysqlBufferReader(buf.toSpan)
-        Abort.run[SqlException.Decode](reader.readLenencInt()).map {
+        Abort.run[SqlDecodeException](reader.readLenencInt()).map {
             case Result.Success(Maybe.Present(v)) => assert(v == 16777216L)
             case other                            => fail(s"Expected Success(Present(16777216)), got: $other")
         }
@@ -103,7 +103,7 @@ class MysqlBufferWriterTest extends Test:
         val buf = new MysqlBufferWriter
         buf.writeUInt32LE(0x01020304L)
         val reader = MysqlBufferReader(buf.toSpan)
-        Abort.run[SqlException.Decode](reader.readUInt32LE()).map {
+        Abort.run[SqlDecodeException](reader.readUInt32LE()).map {
             case Result.Success(v) => assert(v == 0x01020304L)
             case other             => fail(s"Expected Success(0x01020304), got: $other")
         }

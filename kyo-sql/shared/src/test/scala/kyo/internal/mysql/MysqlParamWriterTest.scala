@@ -3,7 +3,11 @@ package kyo.internal.mysql
 import kyo.Instant
 import kyo.Maybe
 import kyo.Span
+import kyo.SqlDecodeException
 import kyo.SqlException
+import kyo.SqlRequestDurationOverflowException
+import kyo.SqlUnsupportedCustomTypeException
+import kyo.SqlUnsupportedException
 import kyo.Test
 import kyo.internal.mysql.types.MysqlEncoder
 import kyo.internal.postgres.types.Format
@@ -295,23 +299,20 @@ class MysqlParamWriterTest extends Test:
     }
 
     "duration encoding raises Decode on day-count overflow" in {
-        // Duration with more than Int.MaxValue days, construct via ofSeconds.
-        // Goes through MysqlParamWriter.duration() which catches ArithmeticException and wraps as SqlException.Decode.
+        // Duration with more than Int.MaxValue days, MysqlParamWriter.duration() guards
+        // day-count overflow eagerly and raises the typed SqlRequestDurationOverflowException leaf.
         val hugeSeconds = (Int.MaxValue.toLong + 1L) * 86400L
         val value       = java.time.Duration.ofSeconds(hugeSeconds)
-        val ex = intercept[SqlException.Decode] {
+        val ex = intercept[SqlRequestDurationOverflowException] {
             singleParam(_.duration(value))
         }
-        assert(ex.getMessage.contains("toDays") || ex.getMessage.contains("day"), s"message was: ${ex.getMessage}")
+        assert(ex.totalDays > Int.MaxValue.toLong, s"expected totalDays > Int.MaxValue, got: ${ex.totalDays}")
     }
 
-    "custom() with unregistered type name throws SqlException.Unsupported with message" in {
+    "custom() with unregistered type name throws SqlUnsupportedException with message" in {
         val w  = new MysqlParamWriter(Map.empty)
-        val ex = intercept[SqlException.Unsupported] { w.custom("geometry", Span.empty, Format.Binary) }
-        assert(
-            ex.getMessage.contains("type 'geometry' is not supported by the MySQL backend"),
-            s"message was: ${ex.getMessage}"
-        )
+        val ex = intercept[SqlUnsupportedCustomTypeException] { w.custom("geometry", Span.empty, Format.Binary) }
+        assert(ex.typeName == "geometry", s"expected typeName 'geometry', got: ${ex.typeName}")
     }
 
     // ── Bonus: multiple params accumulate in order ────────────────────────────

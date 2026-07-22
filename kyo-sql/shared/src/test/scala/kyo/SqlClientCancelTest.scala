@@ -47,7 +47,7 @@ class MysqlCancelLeakTest extends Test:
             val timed: Unit < (Async & Abort[SqlException] & Scope) =
                 Async.timeoutWithError(
                     50.millis,
-                    Result.Failure(SqlException.Connection("cancel timed out (test)", summon[Frame]))
+                    Result.Failure(SqlConnectionCancelTimeoutException(50.millis))
                 )(doCancel)
 
             Abort.run[SqlException](Scope.run(timed)).flatMap { _ =>

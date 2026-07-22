@@ -1,6 +1,11 @@
 package kyo.internal.mysql.exchange
 
 import kyo.*
+import kyo.SqlConnectionAuthenticationFailedException
+import kyo.SqlConnectionCachingSha2EmptyPayloadException
+import kyo.SqlConnectionClearPasswordRequiresTlsException
+import kyo.SqlConnectionUnexpectedMessageException
+import kyo.SqlConnectionUnsupportedAuthPluginException
 import kyo.SqlException
 import kyo.internal.mysql.*
 import kyo.internal.mysql.auth.CachingSha2
@@ -90,7 +95,7 @@ private[mysql] object HandshakeExchange:
       * @param preferFallback
       *   if `true`, enables `sslmode=prefer` behaviour: attempt TLS upgrade if server advertises CLIENT_SSL, but fall back to plaintext if
       *   it does not (instead of failing). When `false` (the default), TLS is required if `tls` is [[Maybe.Present]] and the server does
-      *   not advertise CLIENT_SSL, [[InitTlsExchange]] will fail with [[SqlException.Connection]].
+      *   not advertise CLIENT_SSL, [[InitTlsExchange]] will fail with a [[kyo.SqlConnectionException]] leaf.
       */
     def run(
         channel: MysqlChannel,
@@ -172,7 +177,11 @@ private[mysql] object HandshakeExchange:
                                 handleAuthSwitch(activeChannel, newPlugin, newScramble, password, handshake, clientCaps, tlsActive)
 
                             case other =>
-                                Abort.fail(SqlException.Connection(s"Unexpected message after HandshakeResponse41: $other", summon[Frame]))
+                                Abort.fail(SqlConnectionUnexpectedMessageException(
+                                    "HandshakeResponse41",
+                                    "AuthMoreData / AuthSwitchRequest / OK / ERR",
+                                    other.toString
+                                ))
                         }
                     }
                 } // end computeAuthResponse.flatMap
@@ -197,7 +206,7 @@ private[mysql] object HandshakeExchange:
         tlsActive: Boolean
     )(using Frame): HandshakeResult < (Async & Abort[SqlException]) =
         if data.size < 1 then
-            Abort.fail(SqlException.Connection("Empty AuthMoreData payload during caching_sha2_password", summon[Frame]))
+            Abort.fail(SqlConnectionCachingSha2EmptyPayloadException())
         else
             val statusByte = data(0)
             if statusByte == FastPathOk then
@@ -215,15 +224,16 @@ private[mysql] object HandshakeExchange:
                     case err: ErrPacket =>
                         Abort.fail(mkServerError(err))
                     case other =>
-                        Abort.fail(SqlException.Connection(s"Expected OK after caching_sha2 fast-path, got: $other", summon[Frame]))
+                        Abort.fail(SqlConnectionUnexpectedMessageException("caching_sha2 fast-path", "OK", other.toString))
                 }
             else if statusByte == FullAuthRequired then
                 // Full-auth required: cache miss.
                 performFullAuth(channel, password, scramble, handshake, clientCaps, tlsActive)
             else
-                Abort.fail(SqlException.Connection(
-                    s"Unknown caching_sha2_password AuthMoreData status: 0x${(statusByte & 0xff).toHexString}",
-                    summon[Frame]
+                Abort.fail(SqlConnectionUnexpectedMessageException(
+                    "caching_sha2_password AuthMoreData",
+                    "FastPathOk (0x03) or FullAuthRequired (0x04)",
+                    s"byte 0x${(statusByte & 0xff).toHexString}"
                 ))
             end if
         end if
@@ -274,9 +284,10 @@ private[mysql] object HandshakeExchange:
                     case err: ErrPacket =>
                         Abort.fail(mkServerError(err))
                     case other =>
-                        Abort.fail(SqlException.Connection(
-                            s"Expected AuthMoreData (RSA PEM) during caching_sha2 full-auth, got: $other",
-                            summon[Frame]
+                        Abort.fail(SqlConnectionUnexpectedMessageException(
+                            "caching_sha2 full-auth",
+                            "AuthMoreData (RSA PEM)",
+                            other.toString
                         ))
                 }
             }
@@ -302,7 +313,7 @@ private[mysql] object HandshakeExchange:
             case err: ErrPacket =>
                 Abort.fail(mkServerError(err))
             case other =>
-                Abort.fail(SqlException.Connection(s"Expected OK after caching_sha2 full-auth, got: $other", summon[Frame]))
+                Abort.fail(SqlConnectionUnexpectedMessageException("caching_sha2 full-auth", "OK", other.toString))
         }
     end readFinalOk
 
@@ -380,9 +391,10 @@ private[mysql] object HandshakeExchange:
                     case err: ErrPacket =>
                         Abort.fail(mkServerError(err))
                     case other =>
-                        Abort.fail(SqlException.Connection(
-                            s"Expected AuthMoreData (RSA PEM) during sha256_password auth, got: $other",
-                            summon[Frame]
+                        Abort.fail(SqlConnectionUnexpectedMessageException(
+                            "sha256_password auth",
+                            "AuthMoreData (RSA PEM)",
+                            other.toString
                         ))
                 }
             }
@@ -417,7 +429,7 @@ private[mysql] object HandshakeExchange:
                         case err: ErrPacket =>
                             Abort.fail(mkServerError(err))
                         case other =>
-                            Abort.fail(SqlException.Connection(s"Unexpected message after AuthSwitchResponse: $other", summon[Frame]))
+                            Abort.fail(SqlConnectionUnexpectedMessageException("AuthSwitchResponse", "OK / ERR", other.toString))
                     }
                 }
             case "caching_sha2_password" =>
@@ -442,9 +454,10 @@ private[mysql] object HandshakeExchange:
                             // Fast-path result after AuthSwitchRequest re-auth.
                             handleCachingSha2MoreData(channel, data, password, newScramble, handshake, clientCaps, tlsActive)
                         case other =>
-                            Abort.fail(SqlException.Connection(
-                                s"Unexpected message after caching_sha2 AuthSwitchResponse: $other",
-                                summon[Frame]
+                            Abort.fail(SqlConnectionUnexpectedMessageException(
+                                "caching_sha2 AuthSwitchResponse",
+                                "AuthMoreData",
+                                other.toString
                             ))
                     }
                 }
@@ -455,10 +468,7 @@ private[mysql] object HandshakeExchange:
             case "mysql_clear_password" =>
                 // mysql_clear_password MUST NOT be used without TLS, password would be sent in plaintext.
                 if !tlsActive then
-                    Abort.fail(SqlException.Connection(
-                        "mysql_clear_password requires TLS to avoid sending the password in plaintext",
-                        summon[Frame]
-                    ))
+                    Abort.fail(SqlConnectionClearPasswordRequiresTlsException())
                 else
                     channel.send(AuthSwitchResponse(ClearPassword.encode(password)))(using channel.marshallers.authSwitchResponse).flatMap {
                         _ =>
@@ -466,7 +476,7 @@ private[mysql] object HandshakeExchange:
                     }
 
             case other =>
-                Abort.fail(SqlException.Connection(s"Auth switch to unsupported plugin: $other", summon[Frame]))
+                Abort.fail(SqlConnectionUnsupportedAuthPluginException(other))
 
     // --- Utilities ---
 
@@ -502,10 +512,7 @@ private[mysql] object HandshakeExchange:
             case "mysql_clear_password" =>
                 // mysql_clear_password MUST NOT be used without TLS, password would be sent in plaintext.
                 if !tlsActive then
-                    Abort.fail(SqlException.Connection(
-                        "mysql_clear_password requires TLS to avoid sending the password in plaintext",
-                        summon[Frame]
-                    ))
+                    Abort.fail(SqlConnectionClearPasswordRequiresTlsException())
                 else
                     ClearPassword.encode(password)
             case _ =>
@@ -530,10 +537,7 @@ private[mysql] object HandshakeExchange:
         caps & serverCaps
     end buildClientCaps
 
-    private def mkServerError(err: ErrPacket)(using frame: Frame): SqlException.Connection =
-        SqlException.Connection(
-            s"Authentication failed: [${err.sqlState}] ${err.errorMessage} (code=${err.errorCode})",
-            frame
-        )
+    private def mkServerError(err: ErrPacket)(using Frame): SqlConnectionAuthenticationFailedException =
+        SqlConnectionAuthenticationFailedException(err.sqlState, err.errorCode.toInt, err.errorMessage)
 
 end HandshakeExchange

@@ -23,7 +23,7 @@ class PostgresBufferReaderTest extends Test:
     "BufferReader readInt32 big-endian" in {
         val bytes  = Array[Byte](0, 0, 1, 0)
         val reader = PostgresBufferReader(bytes)
-        Abort.run[SqlException.Decode](reader.readInt32()).map {
+        Abort.run[SqlDecodeException](reader.readInt32()).map {
             case Result.Success(v) => assert(v == 256)
             case other             => fail(s"Expected Success(256), got: $other")
         }
@@ -32,7 +32,7 @@ class PostgresBufferReaderTest extends Test:
     "BufferReader readInt16 big-endian" in {
         val bytes  = Array[Byte](1, 0)
         val reader = PostgresBufferReader(bytes)
-        Abort.run[SqlException.Decode](reader.readInt16()).map {
+        Abort.run[SqlDecodeException](reader.readInt16()).map {
             case Result.Success(v) => assert(v == 256.toShort)
             case other             => fail(s"Expected Success(256.toShort), got: $other")
         }
@@ -40,25 +40,25 @@ class PostgresBufferReaderTest extends Test:
 
     "BufferReader readByte returns Abort.fail on empty buffer" in {
         val reader = PostgresBufferReader(Array.empty[Byte])
-        Abort.run[SqlException.Decode](reader.readByte()).map {
-            case Result.Failure(_: SqlException.Decode) => succeed
-            case other                                  => fail(s"Expected Decode failure, got: $other")
+        Abort.run[SqlDecodeException](reader.readByte()).map {
+            case Result.Failure(_: SqlDecodeException) => succeed
+            case other                                 => fail(s"Expected Decode failure, got: $other")
         }
     }
 
     "BufferReader readInt32 returns Abort.fail on under-length buffer" in {
         val reader = PostgresBufferReader(Array[Byte](1, 2)) // only 2 bytes, need 4
-        Abort.run[SqlException.Decode](reader.readInt32()).map {
-            case Result.Failure(_: SqlException.Decode) => succeed
-            case other                                  => fail(s"Expected Decode failure, got: $other")
+        Abort.run[SqlDecodeException](reader.readInt32()).map {
+            case Result.Failure(_: SqlDecodeException) => succeed
+            case other                                 => fail(s"Expected Decode failure, got: $other")
         }
     }
 
     "BufferReader readBytes returns Abort.fail on under-length buffer" in {
         val reader = PostgresBufferReader(Array[Byte](1, 2)) // only 2 bytes
-        Abort.run[SqlException.Decode](reader.readBytes(4)).map {
-            case Result.Failure(_: SqlException.Decode) => succeed
-            case other                                  => fail(s"Expected Decode failure, got: $other")
+        Abort.run[SqlDecodeException](reader.readBytes(4)).map {
+            case Result.Failure(_: SqlDecodeException) => succeed
+            case other                                 => fail(s"Expected Decode failure, got: $other")
         }
     }
 

@@ -3,7 +3,10 @@ package kyo.internal.postgres
 import kyo.Instant
 import kyo.Maybe
 import kyo.Span
+import kyo.SqlDecodeException
 import kyo.SqlException
+import kyo.SqlRequestDurationOverflowException
+import kyo.SqlUnsupportedException
 import kyo.Test
 import kyo.internal.client.TypeRegistry
 import kyo.internal.postgres.types.Format
@@ -357,19 +360,20 @@ class PostgresParamWriterTest extends Test:
         end match
     }
 
-    "duration encoding raises SqlException.Decode on overflow (seconds exceed µs Int64 range)" in {
+    "duration encoding raises SqlDecodeException on overflow (seconds exceed µs Int64 range)" in {
         val w = new PostgresParamWriter(TypeRegistry.empty)
         // 9_223_372_036_855L seconds × 1_000_000 overflows Int64
         val overflowDuration = java.time.Duration.ofSeconds(9_223_372_036_855L)
-        val ex = intercept[SqlException.Decode] {
+        val ex = intercept[SqlRequestDurationOverflowException] {
             w.duration(overflowDuration)
         }
-        assert(ex.message.contains("Duration exceeds INTERVAL µs range"), s"unexpected message: ${ex.message}")
+        val expectedDays = overflowDuration.getSeconds / 86_400L
+        assert(ex.totalDays == expectedDays, s"expected totalDays $expectedDays, got: ${ex.totalDays}")
     }
 
-    "custom with unknown type name throws SqlException.Unsupported" in {
+    "custom with unknown type name throws SqlUnsupportedException" in {
         val w = new PostgresParamWriter(TypeRegistry.empty) // registry is empty
-        val ex = intercept[SqlException.Unsupported] {
+        val ex = intercept[SqlUnsupportedException] {
             w.custom("geometry", Span.empty, Format.Binary)
         }
         assert(ex.message.contains("geometry"), s"error message should mention type name: ${ex.message}")
@@ -386,10 +390,10 @@ class PostgresParamWriterTest extends Test:
         assert(ps(0).oid == geomOid, s"expected OID=$geomOid but got ${ps(0).oid}")
     }
 
-    "custom with populated TypeRegistry throws SqlException.Unsupported for unregistered type names" in {
+    "custom with populated TypeRegistry throws SqlUnsupportedException for unregistered type names" in {
         val reg = TypeRegistry(Map("geometry" -> 12345))
         val w   = new PostgresParamWriter(reg)
-        val ex = intercept[SqlException.Unsupported] {
+        val ex = intercept[SqlUnsupportedException] {
             w.custom("hstore", Span.empty, Format.Binary)
         }
         assert(ex.message.contains("hstore"), s"error message should mention type name: ${ex.message}")

@@ -12,7 +12,7 @@ import kyo.net.NetTlsConfig
   *   2. Multi-row query through TLS.
   *   3. drainToReadyForQuery still works through TLS (error recovery).
   *   4. SCRAM-SHA-256 auth works over TLS.
-  *   5. TLS connect to a non-TLS Postgres → SqlException.Connection (TlsNotSupported).
+  *   5. TLS connect to a non-TLS Postgres → SqlConnectionException (TlsNotSupported).
   *   6. SCRAM-SHA-256-PLUS handshake via SqlClient.init with TLS config succeeds.
   *
   * The TLS fixture generates a self-signed cert on the host via `openssl`, mounts it into a Postgres container, and starts Postgres with
@@ -183,7 +183,7 @@ class TlsIntegrationTest extends kyo.Test:
         }
     }
 
-    "TLS connection, connect with Present(tls) to non-TLS Postgres raises SqlException.Connection".tagged("kyo.OwnContainer") in {
+    "TLS connection, connect with Present(tls) to non-TLS Postgres raises SqlConnectionException".tagged("kyo.OwnContainer") in {
         Scope.run {
             // Start a standard (non-TLS) Postgres and try to connect with TLS required.
             ContainerPredef.Postgres.initWith(ContainerPredef.Postgres.Config.default) { pg =>
@@ -200,13 +200,10 @@ class TlsIntegrationTest extends kyo.Test:
                             )
                         }
                     }.map {
-                        case Result.Failure(SqlException.Connection(msg, _)) =>
-                            assert(
-                                msg.contains("does not support TLS") || msg.contains("TLS"),
-                                s"Expected TlsNotSupported message, got: $msg"
-                            )
+                        case Result.Failure(_: SqlConnectionTlsNotAdvertisedException) =>
+                            succeed
                         case other =>
-                            fail(s"Expected SqlException.Connection for TLS-required connect to non-TLS server, got: $other")
+                            fail(s"Expected SqlConnectionTlsNotAdvertisedException for TLS-required connect to non-TLS server, got: $other")
                     }
                 }
             }

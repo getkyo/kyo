@@ -39,52 +39,52 @@ final class SqlRow(
 
     /** Decodes the column at `idx` using the provided [[SqlDecoder]].
       *
-      * @throws SqlException.Decode
+      * @throws SqlDecodeException
       *   if the column is out of bounds, is NULL, or the decoder fails
       */
-    def columnAs[A](idx: Int)(using Frame, SqlDecoder[A]): A < Abort[SqlException.Decode] =
+    def columnAs[A](idx: Int)(using Frame, SqlDecoder[A]): A < Abort[SqlDecodeException] =
         column(idx) match
-            case Absent         => Abort.fail(SqlException.Decode(s"Column $idx is NULL or out of bounds", Maybe.Absent, summon[Frame]))
+            case Absent         => Abort.fail(SqlDecodeColumnNullException(idx))
             case Present(bytes) => summon[SqlDecoder[A]].decode(bytes)
 
     /** Decodes the column with `name` using the provided [[SqlDecoder]].
       *
-      * @throws SqlException.Decode
+      * @throws SqlDecodeException
       *   if the column is not found, is NULL, or the decoder fails
       */
-    def columnAs[A](name: String)(using Frame, SqlDecoder[A]): A < Abort[SqlException.Decode] =
+    def columnAs[A](name: String)(using Frame, SqlDecoder[A]): A < Abort[SqlDecodeException] =
         column(name) match
-            case Absent         => Abort.fail(SqlException.Decode(s"Column '$name' is NULL or not found", Maybe.Absent, summon[Frame]))
+            case Absent         => Abort.fail(SqlDecodeColumnNotFoundException(name))
             case Present(bytes) => summon[SqlDecoder[A]].decode(bytes)
 
     /** Decodes the column at `idx` using a [[PostgresDecoder]], looked up via the builtin [[EncodingRegistry]].
       *
       * The decoder is resolved by the column's OID (from [[FieldDescription.dataType]]) and the row's [[format]]. If no decoder is
-      * registered for the OID/format combination, [[SqlException.Decode]] is raised.
+      * registered for the OID/format combination, [[SqlDecodeException]] is raised.
       *
-      * @throws SqlException.Decode
+      * @throws SqlDecodeException
       *   if the column is out of bounds, is NULL, the decoder is not found, or decoding fails
       */
-    def columnDecoded[A](idx: Int)(using Frame, PostgresDecoder[A]): A < Abort[SqlException.Decode] =
+    def columnDecoded[A](idx: Int)(using Frame, PostgresDecoder[A]): A < Abort[SqlDecodeException] =
         if idx < 0 || idx >= values.size then
-            Abort.fail(SqlException.Decode(s"Column $idx is out of bounds (${values.size} columns)", Maybe.Absent, summon[Frame]))
+            Abort.fail(SqlDecodeColumnOutOfBoundsException(idx, values.size))
         else
             column(idx) match
-                case Absent => Abort.fail(SqlException.Decode(s"Column $idx is NULL", Maybe.Absent, summon[Frame]))
+                case Absent => Abort.fail(SqlDecodeColumnNullException(idx))
                 case Present(bytes) =>
                     try summon[PostgresDecoder[A]].read(format, bytes)
                     catch
                         case e: Exception =>
-                            Abort.fail(SqlException.Decode(s"Failed to decode column $idx: ${e.getMessage}", Maybe.Absent, summon[Frame]))
+                            Abort.fail(SqlDecodeColumnDecodeException(idx, e))
 
     /** Decodes the column with `name` using a [[PostgresDecoder]], looked up via the builtin [[EncodingRegistry]].
       *
-      * @throws SqlException.Decode
+      * @throws SqlDecodeException
       *   if the column is not found, is NULL, no decoder is registered, or decoding fails
       */
-    def columnDecoded[A](name: String)(using Frame, PostgresDecoder[A]): A < Abort[SqlException.Decode] =
+    def columnDecoded[A](name: String)(using Frame, PostgresDecoder[A]): A < Abort[SqlDecodeException] =
         val idx = fields.indexWhere(_.name == name)
-        if idx < 0 then Abort.fail(SqlException.Decode(s"Column '$name' not found", Maybe.Absent, summon[Frame]))
+        if idx < 0 then Abort.fail(SqlDecodeColumnNotFoundException(name))
         else columnDecoded[A](idx)
     end columnDecoded
 
@@ -100,12 +100,12 @@ final class SqlRow(
       *
       * For raw bytes use [[column]]; for the backend-specific decoder extension point see [[columnDecoded]] (requires internal types).
       *
-      * @throws SqlException.Decode
+      * @throws SqlDecodeException
       *   if the column is out of bounds or decoding fails
       */
-    def decode[A](idx: Int)(using frame: Frame, schema: SqlSchema[A]): A < Abort[SqlException.Decode] =
+    def decode[A](idx: Int)(using frame: Frame, schema: SqlSchema[A]): A < Abort[SqlDecodeException] =
         if idx < 0 || idx >= values.size then
-            Abort.fail(SqlException.Decode(s"Column $idx is out of bounds (${values.size} columns)", Maybe.Absent, frame))
+            Abort.fail(SqlDecodeColumnOutOfBoundsException(idx, values.size))
         else
             val count  = schema.fieldCount
             val sliced = slice(idx, idx + count)
@@ -124,12 +124,12 @@ final class SqlRow(
       * Equivalent to finding the column index by name and calling [[decode[A](idx: Int)]]. The backend is inferred from [[format]] and
       * field OIDs exactly as in the index-based overload.
       *
-      * @throws SqlException.Decode
+      * @throws SqlDecodeException
       *   if the column is not found or decoding fails
       */
-    def decode[A](name: String)(using frame: Frame, schema: SqlSchema[A]): A < Abort[SqlException.Decode] =
+    def decode[A](name: String)(using frame: Frame, schema: SqlSchema[A]): A < Abort[SqlDecodeException] =
         val idx = fields.indexWhere(_.name == name)
-        if idx < 0 then Abort.fail(SqlException.Decode(s"Column '$name' not found", Maybe.Absent, frame))
+        if idx < 0 then Abort.fail(SqlDecodeColumnNotFoundException(name))
         else decode[A](idx)
     end decode
 
@@ -187,11 +187,11 @@ object SqlRow:
   *   the Scala type to decode into
   */
 trait SqlDecoder[A]:
-    def decode(bytes: Span[Byte])(using Frame): A < Abort[SqlException.Decode]
+    def decode(bytes: Span[Byte])(using Frame): A < Abort[SqlDecodeException]
 
 object SqlDecoder:
     /** Decodes text-format bytes as a UTF-8 [[String]]. */
     given SqlDecoder[String] with
-        def decode(bytes: Span[Byte])(using Frame): String < Abort[SqlException.Decode] =
+        def decode(bytes: Span[Byte])(using Frame): String < Abort[SqlDecodeException] =
             new String(bytes.toArray, java.nio.charset.StandardCharsets.UTF_8)
 end SqlDecoder

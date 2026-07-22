@@ -1,7 +1,7 @@
 package kyo.internal.postgres.unmarshaller
 
 import kyo.*
-import kyo.SqlException
+import kyo.SqlDecodeException
 import kyo.internal.postgres.NotificationResponse
 import kyo.internal.postgres.PostgresBufferReader
 import kyo.internal.postgres.Unmarshaller
@@ -15,7 +15,7 @@ import kyo.internal.postgres.Unmarshaller
   * Reference: PostgreSQL §55.7 "NotificationResponse"
   */
 object NotificationResponseUnmarshaller extends Unmarshaller[NotificationResponse]:
-    def read(buf: PostgresBufferReader)(using Frame): NotificationResponse < Abort[SqlException.Decode] =
+    def read(buf: PostgresBufferReader)(using Frame): NotificationResponse < Abort[SqlDecodeException] =
         buf.readInt32().map { pid =>
             val channel = buf.readString()
             val payload = buf.readString()

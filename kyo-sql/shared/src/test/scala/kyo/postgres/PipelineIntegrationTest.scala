@@ -26,7 +26,7 @@ class PipelineIntegrationTest extends kyo.Test:
       */
     private def withPg[A, S](
         f: SqlClient => A < (S & Async & Abort[SqlException])
-    )(using Frame): A < (S & Async & Scope & Abort[SqlException] & Abort[SqlException.Connection] & Abort[ContainerException]) =
+    )(using Frame): A < (S & Async & Scope & Abort[SqlException] & Abort[SqlConnectionException] & Abort[ContainerException]) =
         SqlSharedContainers.withFreshSchema(SqlSharedContainers.Backend.Postgres) { ctx =>
             val url = s"postgres://${ctx.username}:${ctx.password}@${ctx.host}:${ctx.port}/${ctx.database}"
             SqlClient.init(url).flatMap { client =>
@@ -41,7 +41,7 @@ class PipelineIntegrationTest extends kyo.Test:
     /** Runs a COUNT(*) query via `client.query` and returns the count using the typed decoder. */
     private def simpleCount(client: SqlClient, table: String)(using
         Frame
-    ): Long < (Async & Abort[SqlException] & Abort[SqlException.Decode]) =
+    ): Long < (Async & Abort[SqlException] & Abort[SqlDecodeException]) =
         client.query(s"SELECT COUNT(*) FROM $table").flatMap { rows =>
             if rows.isEmpty then 0L
             else rows(0).decode[Long](0)
@@ -52,7 +52,7 @@ class PipelineIntegrationTest extends kyo.Test:
       */
     private def simpleStrCol(client: SqlClient, sql: String)(using
         Frame
-    ): Chunk[String] < (Async & Abort[SqlException] & Abort[SqlException.Decode]) =
+    ): Chunk[String] < (Async & Abort[SqlException] & Abort[SqlDecodeException]) =
         client.query(sql).flatMap { rows =>
             Kyo.foreach(rows)(r => r.decode[Int](0).map(_.toString))
         }

@@ -1,6 +1,9 @@
 package kyo.internal.postgres.exchange
 
 import kyo.*
+import kyo.SqlConnectionClosedException
+import kyo.SqlConnectionUnexpectedMessageException
+import kyo.SqlConnectionWritePanicException
 import kyo.SqlException
 import kyo.SqlRow
 import kyo.internal.postgres.*
@@ -96,10 +99,10 @@ object PipelineExchange:
                 case Result.Success(_) =>
                     // Increment the transport-local write counter (one increment = one TCP batch flush).
                     val _ = writeCount.incrementAndGet()
-                case Result.Failure(_) => Abort.fail(SqlException.Connection("Connection closed while writing pipeline", summon[Frame]))
+                case Result.Failure(_) => Abort.fail(SqlConnectionClosedException("writing (pipeline)"))
                 case Result.Panic(t) =>
                     Log.error(s"[kyo-sql] PipelineExchange: write panic: ${t.getMessage}").andThen(
-                        Abort.fail(SqlException.Connection(s"Pipeline write panic: ${t.getMessage}", summon[Frame]))
+                        Abort.fail(SqlConnectionWritePanicException(t))
                     )
             }.andThen {
                 // 3. Read responses for each statement in order.
@@ -231,7 +234,11 @@ object PipelineExchange:
 
                 case other =>
                     // Connection-level error, re-raise (not a per-statement error).
-                    Abort.fail(SqlException.Connection(s"Unexpected message during pipeline Execute: $other", summon[Frame]))
+                    Abort.fail(SqlConnectionUnexpectedMessageException(
+                        "pipeline Execute",
+                        "BindComplete / DataRow / CommandComplete / EmptyQueryResponse / ReadyForQuery / ErrorResponse",
+                        other.toString
+                    ))
             }
 
         loop(bindSeen = false, Chunk.empty, Absent)

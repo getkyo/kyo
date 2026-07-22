@@ -192,7 +192,7 @@ class PostgresEncoderNumericTest extends kyo.Test:
     //   ndigits=0 (00 00), weight=0 (00 00), sign=0xC000/0xD000/0xF000, dscale=0 (00 00)
     // Total: 8 bytes.
 
-    "NUMERIC decode of NaN sentinel raises SqlException.Decode" in {
+    "NUMERIC decode of NaN sentinel raises SqlDecodeException" in {
         // sign=0xC000 → NaN
         val nanBytes = Span.from(Array[Byte](
             0x00,
@@ -206,17 +206,17 @@ class PostgresEncoderNumericTest extends kyo.Test:
         ))
         try
             PostgresDecoder.numeric.read(Format.Binary, nanBytes)
-            fail("Expected SqlException.Decode for NaN but read succeeded")
+            fail("Expected SqlDecodeException for NaN but read succeeded")
         catch
-            case e: kyo.SqlException.Decode =>
+            case e: kyo.SqlDecodeException =>
                 assert(
                     e.getMessage.contains("NaN"),
-                    s"SqlException.Decode message should contain 'NaN', got: ${e.getMessage}"
+                    s"SqlDecodeException message should contain 'NaN', got: ${e.getMessage}"
                 )
         end try
     }
 
-    "NUMERIC decode of +Infinity sentinel raises SqlException.Decode" in {
+    "NUMERIC decode of +Infinity sentinel raises SqlDecodeException" in {
         // sign=0xD000 → +Infinity
         val infPosBytes = Span.from(Array[Byte](
             0x00,
@@ -230,17 +230,17 @@ class PostgresEncoderNumericTest extends kyo.Test:
         ))
         try
             PostgresDecoder.numeric.read(Format.Binary, infPosBytes)
-            fail("Expected SqlException.Decode for +Infinity but read succeeded")
+            fail("Expected SqlDecodeException for +Infinity but read succeeded")
         catch
-            case e: kyo.SqlException.Decode =>
+            case e: kyo.SqlDecodeException =>
                 assert(
                     e.getMessage.contains("Infinity"),
-                    s"SqlException.Decode message should contain 'Infinity', got: ${e.getMessage}"
+                    s"SqlDecodeException message should contain 'Infinity', got: ${e.getMessage}"
                 )
         end try
     }
 
-    "NUMERIC decode of -Infinity sentinel raises SqlException.Decode" in {
+    "NUMERIC decode of -Infinity sentinel raises SqlDecodeException" in {
         // sign=0xF000 → -Infinity
         val infNegBytes = Span.from(Array[Byte](
             0x00,
@@ -254,20 +254,20 @@ class PostgresEncoderNumericTest extends kyo.Test:
         ))
         try
             PostgresDecoder.numeric.read(Format.Binary, infNegBytes)
-            fail("Expected SqlException.Decode for -Infinity but read succeeded")
+            fail("Expected SqlDecodeException for -Infinity but read succeeded")
         catch
-            case e: kyo.SqlException.Decode =>
+            case e: kyo.SqlDecodeException =>
                 assert(
                     e.getMessage.contains("Infinity"),
-                    s"SqlException.Decode message should contain 'Infinity', got: ${e.getMessage}"
+                    s"SqlDecodeException message should contain 'Infinity', got: ${e.getMessage}"
                 )
         end try
     }
 
-    "numeric (decoder) parses NaN as SqlException.Decode when decoded through SqlSchema" in {
+    "numeric (decoder) parses NaN as SqlDecodeException when decoded through SqlSchema" in {
         // NaN wire bytes: ndigits=0, weight=0, sign=0xC000, dscale=0 (8 bytes total).
-        // PostgresDecoder.numeric.read throws SqlException.Decode directly for NaN.
-        // SqlSchema.readPostgres re-raises SqlException.Decode via Abort.
+        // PostgresDecoder.numeric.read throws SqlDecodeException directly for NaN.
+        // SqlSchema.readPostgres re-raises SqlDecodeException via Abort.
         import kyo.SqlException
         import kyo.SqlRow
         import kyo.internal.postgres.FieldDescription
@@ -288,17 +288,17 @@ class PostgresEncoderNumericTest extends kyo.Test:
             FieldDescription("n", 0, 0.toShort, 1700 /* OID_NUMERIC */, -1.toShort, -1, 1.toShort /* binary format code */ )
         val fakeRow = SqlRow(Chunk(Maybe.Present(nanBytes)), Chunk(dummyField), Format.Binary)
 
-        // Decode through SqlSchema[BigDecimal], which wraps all serializeRead exceptions into SqlException.Decode.
-        Abort.run[SqlException.Decode](summon[SqlSchema[BigDecimal]].readPostgres(fakeRow)).map {
+        // Decode through SqlSchema[BigDecimal], which wraps all serializeRead exceptions into SqlDecodeException.
+        Abort.run[SqlDecodeException](summon[SqlSchema[BigDecimal]].readPostgres(fakeRow)).map {
             case Result.Failure(e) =>
                 assert(
                     e.getMessage.contains("NaN") || e.getMessage.contains("decode") || e.getMessage.contains("column"),
-                    s"SqlException.Decode message did not mention NaN/decode/column: ${e.getMessage}"
+                    s"SqlDecodeException message did not mention NaN/decode/column: ${e.getMessage}"
                 )
             case Result.Success(v) =>
-                fail(s"Expected SqlException.Decode for NaN input but got value: $v")
+                fail(s"Expected SqlDecodeException for NaN input but got value: $v")
             case Result.Panic(t) =>
-                fail(s"Expected SqlException.Decode for NaN input but got panic: ${t.getClass.getName}: ${t.getMessage}")
+                fail(s"Expected SqlDecodeException for NaN input but got panic: ${t.getClass.getName}: ${t.getMessage}")
         }
     }
 

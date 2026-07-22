@@ -1,7 +1,8 @@
 package kyo.internal.auth
 
 import kyo.*
-import kyo.SqlException
+import kyo.SqlRequestException
+import kyo.SqlRequestRsaOaepException
 import kyo.internal.Hash
 
 /** Pure-Scala RSA-OAEP encryption (RFC 8017 §7.1.1) using SHA-1 and MGF1-SHA-1.
@@ -46,16 +47,16 @@ private[kyo] object RsaOaep:
         publicKeyPem: String,
         plaintext: Span[Byte],
         random: Random
-    )(using Frame): Span[Byte] < (Sync & Abort[SqlException.Request]) =
+    )(using Frame): Span[Byte] < (Sync & Abort[SqlRequestException]) =
         parsePem(publicKeyPem).flatMap { key =>
             val k      = keyLenBytes(key.modulus)
             val maxLen = k - 2 * hLen - 2
             val mLen   = plaintext.size
             if mLen > maxLen then
-                Abort.fail(SqlException.Request(
-                    s"RSA-OAEP: plaintext length $mLen exceeds maximum $maxLen bytes for ${k * 8}-bit key",
-                    Maybe.Absent,
-                    summon[Frame]
+                Abort.fail(SqlRequestRsaOaepException(
+                    "EME-OAEP",
+                    "plaintext-length",
+                    new Exception(s"plaintext $mLen > max $maxLen for ${k * 8}-bit key")
                 ))
             else
                 random.nextBytes(hLen).map { seedSeq =>
@@ -78,17 +79,17 @@ private[kyo] object RsaOaep:
       *   PEM string (may contain headers and whitespace)
       * @return
       *   parsed [[RsaPublicKey]]
-      * @throws SqlException.Request
+      * @throws SqlRequestException
       *   if the PEM header is absent or the DER structure is malformed
       */
-    def parsePem(pem: String)(using Frame): RsaPublicKey < Abort[SqlException.Request] =
+    def parsePem(pem: String)(using Frame): RsaPublicKey < Abort[SqlRequestException] =
         val header = "-----BEGIN PUBLIC KEY-----"
         val footer = "-----END PUBLIC KEY-----"
         if !pem.contains(header) then
-            Abort.fail(SqlException.Request(
-                "RSA-OAEP: PEM data does not contain '-----BEGIN PUBLIC KEY-----' header",
-                Maybe.Absent,
-                summon[Frame]
+            Abort.fail(SqlRequestRsaOaepException(
+                "PEM",
+                "header-missing",
+                new Exception("missing BEGIN PUBLIC KEY header")
             ))
         else
             val cleaned = pem
@@ -96,11 +97,7 @@ private[kyo] object RsaOaep:
                 .replace(footer, "")
                 .replaceAll("\\s+", "")
             Abort.catching[IllegalArgumentException](e =>
-                SqlException.Request(
-                    s"RSA-OAEP: invalid base64 in PEM data: ${e.getMessage}",
-                    Maybe.Absent,
-                    summon[Frame]
-                )
+                SqlRequestRsaOaepException("PEM", "base64", e)
             ) {
                 java.util.Base64.getDecoder.decode(cleaned)
             }.flatMap { derBytes =>
@@ -127,10 +124,10 @@ private[kyo] object RsaOaep:
       *   DER-encoded SubjectPublicKeyInfo bytes
       * @return
       *   [[RsaPublicKey]] with modulus and exponent
-      * @throws SqlException.Request
+      * @throws SqlRequestException
       *   if the DER structure is malformed or an unexpected tag is encountered
       */
-    def parseDerSpki(der: Array[Byte])(using Frame): RsaPublicKey < Abort[SqlException.Request] =
+    def parseDerSpki(der: Array[Byte])(using Frame): RsaPublicKey < Abort[SqlRequestException] =
         val reader = new DerReader(der)
         // outer SEQUENCE
         reader.readTag(0x30).flatMap { _ =>
@@ -262,20 +259,20 @@ private[kyo] object RsaOaep:
         private var pos: Int = 0
 
         /** Expects the next byte to equal `tag`; advances position. Raises on mismatch. */
-        def readTag(tag: Int)(using Frame): Unit < Abort[SqlException.Request] =
+        def readTag(tag: Int)(using Frame): Unit < Abort[SqlRequestException] =
             if pos >= der.length then
-                Abort.fail(SqlException.Request(
-                    s"RSA-OAEP DER: unexpected end of data expecting tag 0x${tag.toHexString}",
-                    Maybe.Absent,
-                    summon[Frame]
+                Abort.fail(SqlRequestRsaOaepException(
+                    "DER",
+                    s"tag-0x${tag.toHexString}",
+                    new Exception("unexpected end of data")
                 ))
             else
                 val actual = der(pos) & 0xff
                 if actual != tag then
-                    Abort.fail(SqlException.Request(
-                        s"RSA-OAEP DER: expected tag 0x${tag.toHexString} but found 0x${actual.toHexString} at offset $pos",
-                        Maybe.Absent,
-                        summon[Frame]
+                    Abort.fail(SqlRequestRsaOaepException(
+                        "DER",
+                        s"tag-0x${tag.toHexString}",
+                        new Exception(s"found 0x${actual.toHexString} at offset $pos")
                     ))
                 else
                     pos += 1
@@ -284,9 +281,9 @@ private[kyo] object RsaOaep:
         end readTag
 
         /** Reads a BER length field; returns the length value and advances position past it. */
-        def readLength()(using Frame): Int < Abort[SqlException.Request] =
+        def readLength()(using Frame): Int < Abort[SqlRequestException] =
             if pos >= der.length then
-                Abort.fail(SqlException.Request("RSA-OAEP DER: unexpected end of data reading length", Maybe.Absent, summon[Frame]))
+                Abort.fail(SqlRequestRsaOaepException("DER", "length", new Exception("unexpected end of data")))
             else
                 val first = der(pos) & 0xff
                 pos += 1
@@ -296,10 +293,10 @@ private[kyo] object RsaOaep:
                 else
                     val nBytes = first & 0x7f
                     if nBytes == 0 || nBytes > 4 || pos + nBytes > der.length then
-                        Abort.fail(SqlException.Request(
-                            s"RSA-OAEP DER: unsupported long-form length at offset ${pos - 1}",
-                            Maybe.Absent,
-                            summon[Frame]
+                        Abort.fail(SqlRequestRsaOaepException(
+                            "DER",
+                            "length",
+                            new Exception(s"unsupported long-form at offset ${pos - 1}")
                         ))
                     else
                         var len = 0
@@ -316,12 +313,12 @@ private[kyo] object RsaOaep:
         end readLength
 
         /** Skips `n` bytes unconditionally. */
-        def skip(n: Int)(using Frame): Unit < Abort[SqlException.Request] =
+        def skip(n: Int)(using Frame): Unit < Abort[SqlRequestException] =
             if pos + n > der.length then
-                Abort.fail(SqlException.Request(
-                    s"RSA-OAEP DER: skip($n) past end of data at offset $pos",
-                    Maybe.Absent,
-                    summon[Frame]
+                Abort.fail(SqlRequestRsaOaepException(
+                    "DER",
+                    "skip",
+                    new Exception(s"skip($n) past end at offset $pos")
                 ))
             else
                 pos += n
@@ -329,14 +326,14 @@ private[kyo] object RsaOaep:
         end skip
 
         /** Reads a DER INTEGER tag+length+value; returns the value as a positive BigInt. */
-        def readInteger()(using Frame): BigInt < Abort[SqlException.Request] =
+        def readInteger()(using Frame): BigInt < Abort[SqlRequestException] =
             readTag(0x02).flatMap { _ =>
                 readLength().flatMap { len =>
                     if pos + len > der.length then
-                        Abort.fail(SqlException.Request(
-                            s"RSA-OAEP DER: INTEGER value exceeds data at offset $pos",
-                            Maybe.Absent,
-                            summon[Frame]
+                        Abort.fail(SqlRequestRsaOaepException(
+                            "DER",
+                            "integer",
+                            new Exception(s"exceeds data at offset $pos")
                         ))
                     else
                         val bytes = java.util.Arrays.copyOfRange(der, pos, pos + len)

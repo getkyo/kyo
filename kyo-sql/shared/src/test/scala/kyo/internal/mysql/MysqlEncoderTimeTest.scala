@@ -2,7 +2,10 @@ package kyo.internal.mysql
 
 import kyo.Maybe
 import kyo.Span
+import kyo.SqlDecodeException
+import kyo.SqlDecodeTemporalException
 import kyo.SqlException
+import kyo.SqlRequestDurationOverflowException
 import kyo.Test
 import kyo.internal.mysql.types.MysqlDecoder
 import kyo.internal.mysql.types.MysqlEncoder
@@ -92,17 +95,14 @@ class MysqlEncoderTimeTest extends Test:
     }
 
     "TIME encode raises ArithmeticException on day-count overflow" in {
-        // The encoder throws ArithmeticException when days > Int.MaxValue;
-        // MysqlParamWriter.duration() catches and wraps it as SqlException.Decode.
+        // The encoder throws SqlRequestDurationOverflowException when the duration's
+        // total-day count exceeds Int.MaxValue, carrying the overflowing day count.
         val hugeSeconds = (Int.MaxValue.toLong + 1L) * 86400L
         val value       = java.time.Duration.ofSeconds(hugeSeconds)
-        val ex = intercept[ArithmeticException] {
+        val ex = intercept[SqlRequestDurationOverflowException] {
             encode(value)
         }
-        assert(
-            ex.getMessage.contains("toDays") || ex.getMessage.contains("day"),
-            s"expected day-overflow message, got: ${ex.getMessage}"
-        )
+        assert(ex.totalDays > Int.MaxValue.toLong, s"expected totalDays > Int.MaxValue, got: ${ex.totalDays}")
     }
 
     // ── Decode tests ─────────────────────────────────────────────────────────
@@ -161,7 +161,7 @@ class MysqlEncoderTimeTest extends Test:
     "TIME decode raises Decode on unexpected length" in {
         // 5 bytes is not a valid TIME struct length (must be 0, 8, or 12).
         val badBody = Array[Byte](0x00.toByte, 0x01.toByte, 0x02.toByte, 0x03.toByte, 0x04.toByte)
-        val ex = intercept[SqlException.Decode] {
+        val ex = intercept[SqlDecodeException] {
             decode(badBody)
         }
         assert(

@@ -41,7 +41,7 @@ class Md5IntegrationTest extends kyo.Test:
         }
     }
 
-    "StartupExchange MD5 wrong password raises SqlException.Server".tagged("kyo.OwnContainer") in {
+    "StartupExchange MD5 wrong password raises SqlServerException".tagged("kyo.OwnContainer") in {
         Scope.run {
             initWithMd5(ContainerPredef.Postgres.Config.default.password("correctmd5pw")) { pg =>
                 pg.container.mappedPort(pg.config.port).flatMap { port =>
@@ -53,12 +53,12 @@ class Md5IntegrationTest extends kyo.Test:
                             )
                         }
                     }.map {
-                        case Result.Failure(e: SqlException.Server) =>
+                        case Result.Failure(e: SqlServerException) =>
                             assert(
                                 e.sqlState == "28P01" || e.sqlState == "28000",
                                 s"Expected sqlState 28P01 or 28000 for wrong MD5 password, got: ${e.sqlState}"
                             )
-                        case other => fail(s"Expected SqlException.Server for wrong MD5 password, got: $other")
+                        case other => fail(s"Expected SqlServerException for wrong MD5 password, got: $other")
                     }
                 }
             }

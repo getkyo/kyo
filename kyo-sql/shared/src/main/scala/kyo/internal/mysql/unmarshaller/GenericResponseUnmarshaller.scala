@@ -1,7 +1,8 @@
 package kyo.internal.mysql.unmarshaller
 
 import kyo.*
-import kyo.SqlException
+import kyo.SqlDecodeException
+import kyo.SqlDecodeUnknownBackendMessageException
 import kyo.internal.mysql.AuthMoreData
 import kyo.internal.mysql.AuthSwitchRequest
 import kyo.internal.mysql.BackendMessage
@@ -49,7 +50,7 @@ object GenericResponseUnmarshaller:
         totalPayloadLength: Int,
         inAuthContext: Boolean,
         isStmtPrepareContext: Boolean
-    )(using Frame): BackendMessage < Abort[SqlException.Decode] =
+    )(using Frame): BackendMessage < Abort[SqlDecodeException] =
         buf.readByte().flatMap { rawByte =>
             val firstByte = rawByte & 0xff
             firstByte match
@@ -73,11 +74,7 @@ object GenericResponseUnmarshaller:
                 case 0x01 =>
                     AuthMoreDataUnmarshaller.read(buf)
                 case other =>
-                    Abort.fail(SqlException.Decode(
-                        s"Unexpected first byte in generic response: 0x${other.toHexString} (payload length=$totalPayloadLength)",
-                        Maybe.Absent,
-                        summon[Frame]
-                    ))
+                    Abort.fail(SqlDecodeUnknownBackendMessageException(other.toByte))
             end match
         }
     end read

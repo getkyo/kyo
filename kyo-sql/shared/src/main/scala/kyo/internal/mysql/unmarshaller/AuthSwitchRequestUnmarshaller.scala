@@ -1,7 +1,7 @@
 package kyo.internal.mysql.unmarshaller
 
 import kyo.*
-import kyo.SqlException
+import kyo.SqlDecodeException
 import kyo.internal.mysql.AuthSwitchRequest
 import kyo.internal.mysql.MysqlBufferReader
 import kyo.internal.mysql.Unmarshaller
@@ -21,7 +21,7 @@ import kyo.internal.mysql.Unmarshaller
   */
 object AuthSwitchRequestUnmarshaller extends Unmarshaller[AuthSwitchRequest]:
 
-    def read(buf: MysqlBufferReader)(using Frame): AuthSwitchRequest < Abort[SqlException.Decode] =
+    def read(buf: MysqlBufferReader)(using Frame): AuthSwitchRequest < Abort[SqlDecodeException] =
         val pluginName = buf.readNulTerminatedString()
         val pluginData = buf.readRestOfPacket()
         AuthSwitchRequest(pluginName, pluginData)

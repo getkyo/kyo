@@ -31,18 +31,18 @@ class RetryIntegrationTest extends kyo.Test:
         url: String,
         config: SqlConfig
     )(f: SqlClient => A < (S & Async & Abort[SqlException]))(using Frame): A < (S & Async & Scope & Abort[SqlException]) =
-        Abort.run[SqlException.Connection](SqlClient.init(url, config)).flatMap {
+        Abort.run[SqlConnectionException](SqlClient.init(url, config)).flatMap {
             case Result.Success(client) => SqlClient.let(client)(f(client))
             case Result.Failure(e)      => Abort.fail(e: SqlException)
             case Result.Panic(t) =>
                 scala.Console.err.println(s"[kyo-sql] RetryIntegrationTest.withPgClient panic: ${t.getMessage}")
-                Abort.fail(SqlException.Connection(t.getMessage, summon[Frame]))
+                Abort.fail(SqlConnectionConnectFailedException("test", 0, new Exception(t.getMessage)))
         }
 
     // ── pause+unpause Postgres mid-query causes one retry then succeeds ────────
 
     /** Validates the four-layer retry chain (Retry → withSlot → pool → connect+execute) by briefly making the server unresponsive
-      * mid-flight via `Container.pause` and confirming `Retry[SqlException.Connection]` bridges the downtime.
+      * mid-flight via `Container.pause` and confirming `Retry[SqlConnectionException]` bridges the downtime.
       *
       * Why pause/unpause and not stop/start: Docker Desktop on macOS reassigns the host port when a container is restarted, so the
       * SqlClient's cached URL would point at a dead port forever. `pause` keeps the container/port mapping intact while suspending the
@@ -59,7 +59,7 @@ class RetryIntegrationTest extends kyo.Test:
                         // and the retry schedule cycles through several attempts within the unpause window.
                         // idleTimeout = 1.nanos forces every connection to be re-established (any pooled connection
                         // is discarded as expired on poll). This ensures the second query goes through the
-                        // connect-and-startup path while the server is paused, exercising the SqlException.Connection
+                        // connect-and-startup path while the server is paused, exercising the SqlConnectionException
                         // → Retry path that the production fix protects against.
                         val config = SqlConfig(
                             maxConnections = 4,
@@ -74,13 +74,21 @@ class RetryIntegrationTest extends kyo.Test:
                             client.query("SELECT 1").flatMap { _ =>
                                 // Pause the container, new TCP connections will succeed at the kernel proxy
                                 // but the server never responds to StartupExchange, so each connect attempt
-                                // hits acquireTimeout and aborts with SqlException.Connection.
+                                // hits acquireTimeout and aborts with SqlConnectionException.
                                 Abort.run[ContainerException](pg.container.pause).flatMap {
                                     case Result.Failure(e) =>
-                                        Abort.fail(SqlException.Connection(s"pause failed: $e", summon[Frame]): SqlException)
+                                        Abort.fail(SqlConnectionConnectFailedException(
+                                            "test",
+                                            0,
+                                            new Exception(s"pause failed: $e")
+                                        ): SqlException)
                                     case Result.Panic(t) =>
                                         scala.Console.err.println(s"[kyo-sql] RetryIntegrationTest: pause panic: ${t.getMessage}")
-                                        Abort.fail(SqlException.Connection(s"pause panic: ${t.getMessage}", summon[Frame]): SqlException)
+                                        Abort.fail(SqlConnectionConnectFailedException(
+                                            "test",
+                                            0,
+                                            new Exception(s"pause panic: ${t.getMessage}")
+                                        ): SqlException)
                                     case Result.Success(_) =>
                                         // Schedule an unpause partway through the retry schedule so the server
                                         // becomes responsive while Retry is still active.
@@ -89,7 +97,7 @@ class RetryIntegrationTest extends kyo.Test:
                                                 Abort.run[ContainerException](pg.container.unpause).unit
                                             }
                                         ).flatMap { _ =>
-                                            // Issue a query; Retry[SqlException.Connection] bridges the downtime.
+                                            // Issue a query; Retry[SqlConnectionException] bridges the downtime.
                                             client.query("SELECT 42").flatMap { rows =>
                                                 client.metrics.retriesAttempted.get.map { ra =>
                                                     assert(ra >= 1, s"expected >= 1 retry, got $ra")

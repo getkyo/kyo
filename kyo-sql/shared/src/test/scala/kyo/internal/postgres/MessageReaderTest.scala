@@ -113,12 +113,12 @@ class MessageReaderTest extends Test:
         }
     }
 
-    /** Verifies that [[MessageReader.readOne]] fails with [[SqlException.Connection]] when the inbound channel is closed mid-read.
+    /** Verifies that [[MessageReader.readOne]] fails with [[SqlConnectionException]] when the inbound channel is closed mid-read.
       *
       * A partial frame (header only, no body) is delivered, then the inbound channel is closed. [[MessageReader]] must detect the closure
-      * and fail with [[SqlException.Connection]] rather than hanging indefinitely.
+      * and fail with [[SqlConnectionException]] rather than hanging indefinitely.
       */
-    "MessageReader readOne fails with SqlException.Connection when channel closes mid-read" in {
+    "MessageReader readOne fails with SqlConnectionException when channel closes mid-read" in {
         val conn          = StubConnection()
         val reader        = new MessageReader()
         val unmarshallers = Unmarshallers.default
@@ -128,14 +128,14 @@ class MessageReaderTest extends Test:
             // Close the inbound channel so the next take returns Abort[Closed].
             Sync.Unsafe.defer(conn.close()).flatMap { _ =>
                 Abort.run[SqlException](reader.readOne(conn, unmarshallers)).map {
-                    case Result.Failure(_: SqlException.Connection) => succeed
-                    case other => fail(s"Expected SqlException.Connection on closed channel, got: $other")
+                    case Result.Failure(_: SqlConnectionException) => succeed
+                    case other => fail(s"Expected SqlConnectionException on closed channel, got: $other")
                 }
             }
         }
     }
 
-    /** Verifies that a malformed BackendKeyData frame (body too short for the declared type) produces a [[SqlException.Connection]] rather
+    /** Verifies that a malformed BackendKeyData frame (body too short for the declared type) produces a [[SqlConnectionException]] rather
       * than an unhandled panic.
       *
       * A `'K'` (BackendKeyData) frame normally has an 8-byte body (processId + secretKey = 4+4 bytes). This test delivers a frame whose
@@ -143,18 +143,18 @@ class MessageReaderTest extends Test:
       * and delivers the 2-byte body to [[BackendKeyDataUnmarshaller]], which calls `readInt32()` but has only 2 bytes available.
       *
       * With the effectful [[PostgresBufferReader]] API, `readInt32()` on the under-length buffer returns
-      * `Abort.fail(SqlException.Decode(...))` instead of throwing. [[decodeMessage]] catches this as `Result.Failure` and converts it to
-      * `SqlException.Connection`.
+      * `Abort.fail(SqlDecodeException(...))` instead of throwing. [[decodeMessage]] catches this as `Result.Failure` and converts it to
+      * `SqlConnectionException`.
       *
-      * Before the fix, `readInt32()` threw `ArrayIndexOutOfBoundsException` eagerly outside `Abort.run[SqlException.Decode]`'s try-block,
+      * Before the fix, `readInt32()` threw `ArrayIndexOutOfBoundsException` eagerly outside `Abort.run[SqlDecodeException]`'s try-block,
       * bypassing the `Result.Failure` arm entirely and escaping as an unhandled panic.
       */
-    "MessageReader decodeMessage converts short-read body to SqlException.Connection" in {
+    "MessageReader decodeMessage converts short-read body to SqlConnectionException" in {
         val conn = StubConnection()
         // BackendKeyData ('K') frame: type byte + Int32(length=6) + 2-byte body.
         // Length=6 means: 4-byte length field + 2-byte body = 6. Total frame = 7 bytes.
         // BackendKeyDataUnmarshaller expects 8 body bytes (pid Int32 + secret Int32),
-        // so readInt32() on a 2-byte buffer returns Abort.fail(SqlException.Decode(...)).
+        // so readInt32() on a 2-byte buffer returns Abort.fail(SqlDecodeException(...)).
         val frame = Span.from(Array[Byte](
             'K'.toByte, // type byte
             0x00,
@@ -168,22 +168,22 @@ class MessageReaderTest extends Test:
         val unmarshallers = Unmarshallers.default
         Abort.run[Closed](conn.inbound.safe.put(frame)).flatMap { _ =>
             Abort.run[SqlException](reader.readOne(conn, unmarshallers)).map {
-                case Result.Failure(_: SqlException.Connection) => succeed
+                case Result.Failure(_: SqlConnectionException) => succeed
                 case Result.Panic(t) =>
-                    fail(s"Expected SqlException.Connection but got panic: ${t.getMessage}")
+                    fail(s"Expected SqlConnectionException but got panic: ${t.getMessage}")
                 case other =>
-                    fail(s"Expected SqlException.Connection, got: $other")
+                    fail(s"Expected SqlConnectionException, got: $other")
             }
         }
     }
 
-    /** Verifies that [[MessageReader.onTakePanic]] logs an error message and returns a [[SqlException.Connection]] with the expected
+    /** Verifies that [[MessageReader.onTakePanic]] logs an error message and returns a [[SqlConnectionException]] with the expected
       * message.
       *
       * Calls the real production helper directly with a synthetic [[Throwable]]. A capturing [[Log]] is installed via [[Log.let]] so the
       * assertion can confirm the error was logged, not just swallowed.
       */
-    "MessageReader onTakePanic logs error and returns SqlException.Connection with throwable message" in {
+    "MessageReader onTakePanic logs error and returns SqlConnectionException with throwable message" in {
         val sink   = new MessageReaderTestLogSink
         val cause  = new RuntimeException("boom from test")
         val reader = new MessageReader()
@@ -198,7 +198,7 @@ class MessageReaderTest extends Test:
                     assert(msg.contains("[kyo-sql] MessageReader"), s"log message should contain module prefix: $msg")
                     assert(
                         exc.message.contains("boom from test"),
-                        s"SqlException.Connection message should contain throwable: ${exc.message}"
+                        s"SqlConnectionException message should contain throwable: ${exc.message}"
                     )
                 }
             }

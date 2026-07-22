@@ -1,7 +1,7 @@
 package kyo.internal.mysql.unmarshaller
 
 import kyo.*
-import kyo.SqlException
+import kyo.SqlDecodeException
 import kyo.internal.mysql.AuthMoreData
 import kyo.internal.mysql.MysqlBufferReader
 import kyo.internal.mysql.Unmarshaller
@@ -21,7 +21,7 @@ import kyo.internal.mysql.Unmarshaller
   */
 object AuthMoreDataUnmarshaller extends Unmarshaller[AuthMoreData]:
 
-    def read(buf: MysqlBufferReader)(using Frame): AuthMoreData < Abort[SqlException.Decode] =
+    def read(buf: MysqlBufferReader)(using Frame): AuthMoreData < Abort[SqlDecodeException] =
         val data = buf.readRestOfPacket()
         AuthMoreData(data)
     end read

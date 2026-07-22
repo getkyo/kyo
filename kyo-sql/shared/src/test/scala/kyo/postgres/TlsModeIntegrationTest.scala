@@ -32,8 +32,8 @@ import kyo.net.NetTlsConfig
   *   4. `sslmode=verify-full` rejects connection when hostname mismatches cert SAN (cert CN=notlocalhost).
   *   5. `sslmode=verify-ca` connects when CA path matches server cert issuer (positive case).
   *   6. `sslmode=verify-full` connects when CA matches AND hostname matches SAN (positive case).
-  *   7. `sslmode=verify-ca` with missing `sslrootcert` fails at `SqlClient.init` with [[SqlException.Connection]].
-  *   8. `sslmode=verify-ca` with malformed PEM at `sslrootcert` fails with [[SqlException.Connection]].
+  *   7. `sslmode=verify-ca` with missing `sslrootcert` fails at `SqlClient.init` with [[SqlConnectionException]].
+  *   8. `sslmode=verify-ca` with malformed PEM at `sslrootcert` fails with [[SqlConnectionException]].
   *   9. Cancellation mid-TLS handshake leaves no leaked connection, pool remains reusable.
   *   10. `sslmode=allow` connects plaintext when server permits plaintext.
   *   11. `sslmode=allow` upgrades to TLS when server requires TLS, uses the require-ssl container.
@@ -110,10 +110,10 @@ class TlsModeIntegrationTest extends kyo.Test:
                     }
                 }
             }.map {
-                case Result.Failure(_: SqlException.Connection) =>
+                case Result.Failure(_: SqlConnectionException) =>
                     succeed // expected: TLS handshake fails with wrong CA
                 case Result.Success(_) =>
-                    fail("Expected SqlException.Connection for wrong CA cert, but connection succeeded")
+                    fail("Expected SqlConnectionException for wrong CA cert, but connection succeeded")
                 case Result.Panic(t) =>
                     fail(s"Unexpected panic in leaf 3: ${t.getMessage}")
                 case Result.Failure(e) =>
@@ -143,10 +143,10 @@ class TlsModeIntegrationTest extends kyo.Test:
                     }
                 }
             }.map {
-                case Result.Failure(_: SqlException.Connection) =>
+                case Result.Failure(_: SqlConnectionException) =>
                     succeed // expected: hostname mismatch
                 case Result.Success(_) =>
-                    fail("Expected SqlException.Connection for hostname mismatch, but connection succeeded")
+                    fail("Expected SqlConnectionException for hostname mismatch, but connection succeeded")
                 case Result.Panic(t) =>
                     fail(s"Unexpected panic in leaf 4: ${t.getMessage}")
                 case Result.Failure(e) =>
@@ -201,9 +201,9 @@ class TlsModeIntegrationTest extends kyo.Test:
     // ── Leaf 7: sslmode=verify-ca missing sslrootcert ────────────────────────
     // Shared TLS container; no sslrootcert, JDK default trust store rejects self-signed cert.
 
-    "sslmode=verify-ca with missing sslrootcert fails at SqlClient.init with SqlException.Connection".tagged("kyo.OwnContainer") in {
+    "sslmode=verify-ca with missing sslrootcert fails at SqlClient.init with SqlConnectionException".tagged("kyo.OwnContainer") in {
         withTlsContainer { ctx =>
-            // No sslrootcert param, TlsContext.build fails with SqlException.Connection for VerifyCa + Absent,
+            // No sslrootcert param, TlsContext.build fails with SqlConnectionException for VerifyCa + Absent,
             // OR the JDK default trust store rejects the self-signed cert at handshake time.
             val url = s"postgres://${ctx.user}:${ctx.password}@${ctx.host}:${ctx.port}/${ctx.db}?sslmode=verify-ca"
             Abort.run[SqlException] {
@@ -217,10 +217,10 @@ class TlsModeIntegrationTest extends kyo.Test:
                     }
                 }
             }.map {
-                case Result.Failure(_: SqlException.Connection) =>
+                case Result.Failure(_: SqlConnectionException) =>
                     succeed // expected: no CA specified, fails with Connection error
                 case Result.Success(_) =>
-                    fail("Expected SqlException.Connection when sslrootcert is missing, but connection succeeded")
+                    fail("Expected SqlConnectionException when sslrootcert is missing, but connection succeeded")
                 case Result.Panic(t) =>
                     fail(s"Unexpected panic in leaf 7: ${t.getMessage}")
                 case Result.Failure(e) =>
@@ -232,7 +232,7 @@ class TlsModeIntegrationTest extends kyo.Test:
     // ── Leaf 8: sslmode=verify-ca malformed PEM ───────────────────────────────
     // Shared TLS container; malformed PEM file, SSL context creation fails.
 
-    "sslmode=verify-ca with malformed PEM at sslrootcert fails with SqlException.Connection".tagged("kyo.OwnContainer") in {
+    "sslmode=verify-ca with malformed PEM at sslrootcert fails with SqlConnectionException".tagged("kyo.OwnContainer") in {
         withTlsContainer { ctx =>
             // Write a malformed PEM file to a temp path using kyo.Path (cross-platform).
             Path.temp(prefix = "kyo-sql-bad-cert-", suffix = ".pem").flatMap { tempPath =>
@@ -252,10 +252,10 @@ class TlsModeIntegrationTest extends kyo.Test:
                                 }
                             }
                         }.map {
-                            case Result.Failure(_: SqlException.Connection) =>
+                            case Result.Failure(_: SqlConnectionException) =>
                                 succeed // expected: malformed PEM rejected
                             case Result.Success(_) =>
-                                fail("Expected SqlException.Connection for malformed PEM, but connection succeeded")
+                                fail("Expected SqlConnectionException for malformed PEM, but connection succeeded")
                             case Result.Panic(t) =>
                                 fail(s"Unexpected panic in leaf 8: ${t.getMessage}")
                             case Result.Failure(e) =>

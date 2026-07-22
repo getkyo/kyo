@@ -1,7 +1,7 @@
 package kyo.internal.postgres.unmarshaller
 
 import kyo.*
-import kyo.SqlException
+import kyo.SqlDecodeException
 import kyo.internal.postgres.DataRow
 import kyo.internal.postgres.PostgresBufferReader
 import kyo.internal.postgres.Unmarshaller
@@ -16,7 +16,7 @@ import kyo.internal.postgres.Unmarshaller
   * Reference: PostgreSQL §55.7 "DataRow"
   */
 object DataRowUnmarshaller extends Unmarshaller[DataRow]:
-    def read(buf: PostgresBufferReader)(using Frame): DataRow < Abort[SqlException.Decode] =
+    def read(buf: PostgresBufferReader)(using Frame): DataRow < Abort[SqlDecodeException] =
         buf.readInt16().flatMap { numColsShort =>
             readColumns(buf, numColsShort.toInt & 0xffff, Chunk.empty).map { values =>
                 DataRow(values)
@@ -26,11 +26,11 @@ object DataRowUnmarshaller extends Unmarshaller[DataRow]:
 
     private def readColumns(buf: PostgresBufferReader, remaining: Int, acc: Chunk[Maybe[kyo.Span[Byte]]])(using
         Frame
-    ): Chunk[Maybe[kyo.Span[Byte]]] < Abort[SqlException.Decode] =
+    ): Chunk[Maybe[kyo.Span[Byte]]] < Abort[SqlDecodeException] =
         if remaining == 0 then acc
         else
             buf.readInt32().flatMap { colLen =>
-                val valueEffect: Maybe[kyo.Span[Byte]] < Abort[SqlException.Decode] =
+                val valueEffect: Maybe[kyo.Span[Byte]] < Abort[SqlDecodeException] =
                     if colLen == -1 then Absent
                     else buf.readBytes(colLen).map(Present(_))
                 valueEffect.flatMap { value =>

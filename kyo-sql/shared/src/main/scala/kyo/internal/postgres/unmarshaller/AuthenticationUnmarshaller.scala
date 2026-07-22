@@ -1,7 +1,8 @@
 package kyo.internal.postgres.unmarshaller
 
 import kyo.*
-import kyo.SqlException
+import kyo.SqlDecodeException
+import kyo.SqlDecodeUnknownAuthTypeException
 import kyo.internal.postgres.Authentication
 import kyo.internal.postgres.AuthenticationKind
 import kyo.internal.postgres.PostgresBufferReader
@@ -20,9 +21,9 @@ import scala.annotation.tailrec
   */
 object AuthenticationUnmarshaller extends Unmarshaller[Authentication]:
 
-    def read(buf: PostgresBufferReader)(using Frame): Authentication < Abort[SqlException.Decode] =
+    def read(buf: PostgresBufferReader)(using Frame): Authentication < Abort[SqlDecodeException] =
         buf.readInt32().flatMap { subType =>
-            val kind: AuthenticationKind < Abort[SqlException.Decode] = subType match
+            val kind: AuthenticationKind < Abort[SqlDecodeException] = subType match
                 case 0 => AuthenticationKind.Ok
                 case 2 => AuthenticationKind.KerberosV5
                 case 3 => AuthenticationKind.CleartextPassword
@@ -46,14 +47,14 @@ object AuthenticationUnmarshaller extends Unmarshaller[Authentication]:
                     val data = buf.readAll()
                     AuthenticationKind.SASLFinal(data)
                 case n =>
-                    Abort.fail(SqlException.Decode(s"Unknown Authentication sub-type: $n", Maybe.Absent, summon[Frame]))
+                    Abort.fail(SqlDecodeUnknownAuthTypeException(n))
             kind.map(Authentication(_))
         }
     end read
 
     private def readMechanisms(buf: PostgresBufferReader, acc: Chunk[String])(using
         Frame
-    ): Chunk[String] < Abort[SqlException.Decode] =
+    ): Chunk[String] < Abort[SqlDecodeException] =
         if buf.remaining == 0 then acc
         else
             val mech = buf.readString()

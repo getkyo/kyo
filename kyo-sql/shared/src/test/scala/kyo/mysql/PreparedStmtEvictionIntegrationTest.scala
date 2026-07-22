@@ -24,7 +24,7 @@ class PreparedStmtEvictionIntegrationTest extends kyo.Test:
         cacheSize: Int
     )(
         f: SqlClient => A < (S & Async & Abort[SqlException])
-    )(using Frame): A < (S & Async & Scope & Abort[SqlException.Connection | SqlException]) =
+    )(using Frame): A < (S & Async & Scope & Abort[SqlConnectionException | SqlException]) =
         SqlClient.initMysqlWith(
             myUrl(ctx),
             SqlConfig.default.copy(
@@ -49,7 +49,7 @@ class PreparedStmtEvictionIntegrationTest extends kyo.Test:
                     // (8 little-endian bytes), not ASCII digits, so decode via row.decode[Long]
                     // (routed to MysqlRowReader by SqlRow.decode's OID dispatch).
                     if rows.isEmpty then (0L: Long)
-                    else Abort.recover((e: SqlException.Decode) => Abort.fail(e: SqlException))(rows(0).decode[Long](0))
+                    else Abort.recover((e: SqlDecodeException) => Abort.fail(e: SqlException))(rows(0).decode[Long](0))
                 }
             )
             .map {

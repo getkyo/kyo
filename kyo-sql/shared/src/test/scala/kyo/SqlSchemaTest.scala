@@ -1,5 +1,6 @@
 package kyo
 
+import kyo.SqlDecodeException
 import kyo.internal.mysql.MysqlBufferWriter
 import kyo.internal.mysql.types.MysqlEncoder
 import kyo.internal.postgres.BoundParam
@@ -228,16 +229,16 @@ class SqlSchemaTest extends Test:
         end match
     }
 
-    // --- 12. readPostgres failure surfaces as Abort[SqlException.Decode] ---
+    // --- 12. readPostgres failure surfaces as Abort[SqlDecodeException] ---
 
-    "readPostgres failure surfaces as Abort[SqlException.Decode]" in {
+    "readPostgres failure surfaces as Abort[SqlDecodeException]" in {
         // Feed a 3-byte payload where Long expects exactly 8 bytes, will throw inside serializeRead.
         val badBytes = Span.from(Array[Byte](0x01, 0x02, 0x03))
         val row      = binaryRow("val" -> badBytes)
-        val result   = Abort.run[SqlException.Decode](summon[SqlSchema[Long]].readPostgres(row)).eval
+        val result   = Abort.run[SqlDecodeException](summon[SqlSchema[Long]].readPostgres(row)).eval
         result match
-            case Result.Failure(_: SqlException.Decode) => succeed
-            case other                                  => fail(s"Expected Failure(SqlException.Decode) but got $other")
+            case Result.Failure(_: SqlDecodeException) => succeed
+            case other                                 => fail(s"Expected Failure(SqlDecodeException) but got $other")
     }
 
     // --- 13. nullable writePostgres for Maybe.Absent produces null param ---
@@ -466,7 +467,7 @@ class SqlSchemaTest extends Test:
         // `columnAs` is called with no explicit `using`, Frame and SqlDecoder[String] are both summonable.
         val bytes  = Span.from("hello".getBytes(java.nio.charset.StandardCharsets.UTF_8))
         val row    = new SqlRow(Chunk(Maybe.Present(bytes)), Chunk.empty, kyo.internal.postgres.types.Format.Text)
-        val result = Abort.run[SqlException.Decode](row.columnAs[String](0)).eval
+        val result = Abort.run[SqlDecodeException](row.columnAs[String](0)).eval
         result match
             case Result.Success(s) => assert(s == "hello")
             case other             => fail(s"Expected Success(hello) but got $other")
@@ -476,14 +477,14 @@ class SqlSchemaTest extends Test:
 
     "readPostgres decode failure is a SqlException (executeBoundQuery error-remapping widening contract)" in {
         // Verifies the behavioral contract shared by executeBoundQuery's Abort.recover rewrite:
-        // SqlException.Decode IS-A SqlException, so the widening Abort.fail(e: SqlException) succeeds
+        // SqlDecodeException IS-A SqlException, so the widening Abort.fail(e: SqlException) succeeds
         // and the result at the outer Abort[SqlException] boundary is a Failure.
         val badBytes = Span.from(Array[Byte](0x01, 0x02, 0x03)) // too short for Long
         val row      = binaryRow("val" -> badBytes)
-        val result   = Abort.run[SqlException.Decode](summon[SqlSchema[Long]].readPostgres(row)).eval
+        val result   = Abort.run[SqlDecodeException](summon[SqlSchema[Long]].readPostgres(row)).eval
         result match
             case Result.Failure(e) =>
-                // SqlException.Decode extends SqlException, verify the is-a relationship
+                // SqlDecodeException extends SqlException, verify the is-a relationship
                 // that makes the Abort.recover widening correct.
                 assert(e.isInstanceOf[SqlException])
                 succeed
@@ -495,7 +496,7 @@ class SqlSchemaTest extends Test:
         // Same contract via readMysql, covers the decodeStream path.
         val badBytes = Span.from(Array[Byte](0x01, 0x02, 0x03))
         val row      = mysqlBinaryRow("val" -> badBytes)
-        val result   = Abort.run[SqlException.Decode](summon[SqlSchema[Long]].readMysql(row)).eval
+        val result   = Abort.run[SqlDecodeException](summon[SqlSchema[Long]].readMysql(row)).eval
         result match
             case Result.Failure(e) =>
                 assert(e.isInstanceOf[SqlException])
@@ -504,15 +505,15 @@ class SqlSchemaTest extends Test:
         end match
     }
 
-    "readPostgres decode failure surfaces as Abort[SqlException.Decode] (error-remapping source unchanged)" in {
-        // Regression: the SqlSchema error-remapping site must continue to produce SqlException.Decode
+    "readPostgres decode failure surfaces as Abort[SqlDecodeException] (error-remapping source unchanged)" in {
+        // Regression: the SqlSchema error-remapping site must continue to produce SqlDecodeException
         // so the Abort.recover in executeBoundQuery/decodeStream can catch and widen it.
         val badBytes = Span.from(Array[Byte](0x01))
         val row      = binaryRow("val" -> badBytes)
-        val result   = Abort.run[SqlException.Decode](summon[SqlSchema[Long]].readPostgres(row)).eval
+        val result   = Abort.run[SqlDecodeException](summon[SqlSchema[Long]].readPostgres(row)).eval
         result match
-            case Result.Failure(_: SqlException.Decode) => succeed
-            case other                                  => fail(s"Expected Failure(SqlException.Decode) but got $other")
+            case Result.Failure(_: SqlDecodeException) => succeed
+            case other                                 => fail(s"Expected Failure(SqlDecodeException) but got $other")
     }
 
     // --- 22. Schema.derived[Maybe[Int]] round-trips (test 9 / G-Codec-2) ---
@@ -599,12 +600,12 @@ class SqlSchemaTest extends Test:
 
     "SqlSchema.derived[TestColor] decode raises typed Decode on unknown label" in {
         val unknown = Span.from("Green".getBytes(java.nio.charset.StandardCharsets.UTF_8))
-        val result = Abort.run[SqlException.Decode](summon[SqlSchema[TestColor]].readPostgres(
+        val result = Abort.run[SqlDecodeException](summon[SqlSchema[TestColor]].readPostgres(
             new SqlRow(Chunk(Maybe.Present(unknown)), Chunk(field("color")), Format.Text)
         )).eval
         result match
-            case Result.Failure(_: SqlException.Decode) => succeed
-            case other                                  => fail(s"Expected typed Decode failure, got $other")
+            case Result.Failure(_: SqlDecodeException) => succeed
+            case other                                 => fail(s"Expected typed Decode failure, got $other")
         end match
     }
 

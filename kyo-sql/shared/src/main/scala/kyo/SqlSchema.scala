@@ -137,11 +137,7 @@ object SqlSchema:
                 val s   = r.string()
                 val ord = labels.indexOf(s)
                 if ord < 0 then
-                    throw SqlException.Decode(
-                        s"unknown variant label '$s'; expected one of ${labels.mkString("[", ", ", "]")}",
-                        Maybe.empty,
-                        r.frame
-                    )
+                    throw SqlDecodeSumTypeUnknownLabelException(s, Chunk.from(labels))(using r.frame)
                 end if
                 singletons(ord).asInstanceOf[A]
         )
@@ -188,11 +184,7 @@ object SqlSchema:
                 kyo.Json.decode[A](text) match
                     case kyo.Result.Success(a) => a
                     case kyo.Result.Failure(e) =>
-                        throw SqlException.Decode(
-                            s"sum-type JSON decode failed: ${e.getMessage}",
-                            Maybe.empty,
-                            r.frame
-                        )
+                        throw SqlDecodeJsonException(e.getMessage.take(100), new Exception(e.getMessage))(using r.frame)
                     case kyo.Result.Panic(t) => throw t
                 end match
         )
@@ -529,7 +521,7 @@ object SqlSchema:
 
     /** URI schema: encodes via [[java.net.URI#toString]] / decodes via [[java.net.URI#create]].
       *
-      * Occupies a single TEXT column on both Postgres and MySQL. Any string that is not a valid URI raises a [[SqlException.Decode]] on
+      * Occupies a single TEXT column on both Postgres and MySQL. Any string that is not a valid URI raises a [[SqlDecodeException]] on
       * round-trip.
       */
     given SqlSchema[java.net.URI] = SqlSchema.of[java.net.URI](
@@ -566,7 +558,7 @@ object SqlSchema:
     /** Currency schema: encodes via [[java.util.Currency#getCurrencyCode]] / decodes via [[java.util.Currency#getInstance]].
       *
       * Occupies a single TEXT column on both Postgres and MySQL. The ISO 4217 currency code is stored (e.g. "USD", "BRL", "JPY"). An
-      * invalid code raises [[java.lang.IllegalArgumentException]] on decode, which is surfaced as a [[SqlException.Decode]] failure via the
+      * invalid code raises [[java.lang.IllegalArgumentException]] on decode, which is surfaced as a [[SqlDecodeException]] failure via the
       * schema's `readPostgres` / `readMysql` helpers.
       */
     given SqlSchema[java.util.Currency] = SqlSchema.of[java.util.Currency](
@@ -639,11 +631,7 @@ object SqlSchema:
                     kyo.Json.decode[Chunk[Int]](mr.string()) match
                         case kyo.Result.Success(c) => c
                         case kyo.Result.Failure(e) =>
-                            throw SqlException.Decode(
-                                s"Chunk[Int] JSON decode failed: ${e.getMessage}",
-                                Maybe.Absent,
-                                mr.frame
-                            )
+                            throw SqlDecodeJsonException(e.getMessage.take(100), new Exception(e.getMessage))(using mr.frame)
                         case kyo.Result.Panic(t) => throw t
                     end match
                 case _ =>
@@ -686,11 +674,7 @@ object SqlSchema:
                     kyo.Json.decode[Chunk[String]](mr.string()) match
                         case kyo.Result.Success(c) => c
                         case kyo.Result.Failure(e) =>
-                            throw SqlException.Decode(
-                                s"Chunk[String] JSON decode failed: ${e.getMessage}",
-                                Maybe.Absent,
-                                mr.frame
-                            )
+                            throw SqlDecodeJsonException(e.getMessage.take(100), new Exception(e.getMessage))(using mr.frame)
                         case kyo.Result.Panic(t) => throw t
                     end match
                 case _ =>
@@ -771,18 +755,14 @@ object SqlSchema:
                     kyo.Json.decode[Chunk[Structure.Value]](mr.string()) match
                         case kyo.Result.Success(c) => c
                         case kyo.Result.Failure(e) =>
-                            throw SqlException.Decode(
-                                s"Chunk[Structure.Value] JSON decode failed: ${e.getMessage}",
-                                Maybe.Absent,
-                                mr.frame
-                            )
+                            throw SqlDecodeJsonException(e.getMessage.take(100), new Exception(e.getMessage))(using mr.frame)
                         case kyo.Result.Panic(t) => throw t
                     end match
                 case _ =>
                     bug(s"SqlSchema[Chunk[Structure.Value]] cannot read from ${r.getClass}")
     )
 
-    /** Parses JSON text into a [[Structure.Value]] or throws a positioned [[SqlException.Decode]] on failure. Factored out because both
+    /** Parses JSON text into a [[Structure.Value]] or throws a positioned [[SqlDecodeException]] on failure. Factored out because both
       * scalar and array reads share the same parse-or-fail path.
       */
     private def decodeStructureValue(jsonText: String, frame: Frame): Structure.Value =
@@ -790,11 +770,7 @@ object SqlSchema:
         kyo.Json.decode[Structure.Value](jsonText) match
             case kyo.Result.Success(v) => v
             case kyo.Result.Failure(e) =>
-                throw SqlException.Decode(
-                    s"Structure.Value JSON decode failed: ${e.getMessage}",
-                    Maybe.Absent,
-                    frame
-                )
+                throw SqlDecodeJsonException(e.getMessage.take(100), new Exception(e.getMessage))
             case kyo.Result.Panic(t) => throw t
         end match
     end decodeStructureValue
@@ -1502,58 +1478,50 @@ object SqlSchema:
           *
           * Columns are consumed positionally starting at index 0. Column names in the [[SqlRow]] must match the field names of `A` for case
           * class decoding (Schema uses field-name matching internally). On decode failure, the thrown exception is caught via
-          * `Result.catching[Exception]` and surfaced as `Abort[SqlException.Decode]`.
+          * `Result.catching[Exception]` and surfaced as `Abort[SqlDecodeException]`.
           */
-        def readPostgres(row: SqlRow)(using Frame): A < Abort[SqlException.Decode] =
+        def readPostgres(row: SqlRow)(using Frame): A < Abort[SqlDecodeException] =
             val reader = PostgresRowReader(row)
             // serializeRead throws a JVM exception directly on failure, use Result.catching,
             // not Abort.run, to intercept the throw before converting to Abort.
             (Result.catching[Throwable](self.schema.serializeRead(reader)): Result[Throwable, A]) match
                 case Result.Success(a) => a
                 case Result.Failure(e) =>
-                    Abort.fail(SqlException.Decode(
-                        e.getMessage,
-                        Maybe.Absent,
-                        summon[Frame]
-                    ))
+                    e match
+                        case decode: SqlDecodeException => Abort.fail(decode)
+                        case other                      => Abort.fail(SqlDecodeColumnDecodeException(-1, other))
                 case Result.Panic(t) =>
                     java.lang.System.err.println(
                         s"[kyo-sql] readPostgres: unexpected decode panic: ${t.getMessage}"
                     )
-                    Abort.fail(SqlException.Decode(
-                        s"Unexpected decode failure: ${t.getMessage}",
-                        Maybe.Absent,
-                        summon[Frame]
-                    ))
+                    t match
+                        case decode: SqlDecodeException => Abort.fail(decode)
+                        case other                      => Abort.fail(SqlDecodeColumnDecodeException(-1, other))
             end match
         end readPostgres
 
         /** Decodes `row` into an `A` using the MySQL binary column format.
           *
           * Columns are consumed positionally starting at index 0. On decode failure, the thrown exception is caught via
-          * `Result.catching[Throwable]` and surfaced as `Abort[SqlException.Decode]`.
+          * `Result.catching[Throwable]` and surfaced as `Abort[SqlDecodeException]`.
           */
-        def readMysql(row: SqlRow)(using Frame): A < Abort[SqlException.Decode] =
+        def readMysql(row: SqlRow)(using Frame): A < Abort[SqlDecodeException] =
             val reader = MysqlRowReader(row)
             // serializeRead throws a JVM exception directly on failure, use Result.catching,
             // not Abort.run, to intercept the throw before converting to Abort.
             (Result.catching[Throwable](self.schema.serializeRead(reader)): Result[Throwable, A]) match
                 case Result.Success(a) => a
                 case Result.Failure(e) =>
-                    Abort.fail(SqlException.Decode(
-                        e.getMessage,
-                        Maybe.Absent,
-                        summon[Frame]
-                    ))
+                    e match
+                        case decode: SqlDecodeException => Abort.fail(decode)
+                        case other                      => Abort.fail(SqlDecodeColumnDecodeException(-1, other))
                 case Result.Panic(t) =>
                     java.lang.System.err.println(
                         s"[kyo-sql] readMysql: unexpected decode panic: ${t.getMessage}"
                     )
-                    Abort.fail(SqlException.Decode(
-                        s"Unexpected decode failure: ${t.getMessage}",
-                        Maybe.Absent,
-                        summon[Frame]
-                    ))
+                    t match
+                        case decode: SqlDecodeException => Abort.fail(decode)
+                        case other                      => Abort.fail(SqlDecodeColumnDecodeException(-1, other))
             end match
         end readMysql
 

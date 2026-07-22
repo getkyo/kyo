@@ -11,8 +11,8 @@ import kyo.internal.mysql.unmarshaller.ResultsetRowUnmarshaller
 /** Tests for COM_QUERY encode, OkPacket / ErrPacket decode, and ResultsetRow decode. */
 class QueryMessagesTest extends Test:
 
-    private def decode[A](result: A < Abort[SqlException.Decode])(using kyo.test.AssertScope): A =
-        Abort.run[SqlException.Decode](result).eval match
+    private def decode[A](result: A < Abort[SqlDecodeException])(using kyo.test.AssertScope): A =
+        Abort.run[SqlDecodeException](result).eval match
             case Result.Success(a) => a
             case Result.Failure(e) => fail(s"Decode failed: $e")
             case Result.Panic(t)   => throw t

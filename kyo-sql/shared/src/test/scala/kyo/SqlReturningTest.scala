@@ -1,6 +1,7 @@
 package kyo
 
 import kyo.SqlAst.*
+import kyo.SqlUnsupportedException
 
 /** Tests for user-specified RETURNING clauses on INSERT, UPDATE, and DELETE.
   *
@@ -8,7 +9,7 @@ import kyo.SqlAst.*
   *   - INSERT.returning(id, created_at) renders on PG, both columns appear after RETURNING.
   *   - UPDATE.returning(version) renders on PG.
   *   - DELETE.returning(id) renders on PG.
-  *   - RETURNING on MySQL raises SqlException.Unsupported.
+  *   - RETURNING on MySQL raises SqlUnsupportedException.
   */
 class SqlReturningTest extends Test:
 
@@ -54,10 +55,10 @@ class SqlReturningTest extends Test:
         assert(afterReturning.contains(""""id""""))
     }
 
-    // Leaf 4: RETURNING on MySQL raises SqlException.Unsupported (requires Frame for typed error).
+    // Leaf 4: RETURNING on MySQL raises SqlUnsupportedException (requires Frame for typed error).
     "RETURNING on MySQL raises Unsupported" in {
         val s = Sql.insert[Event].values(Event(0L, "boot", "2024-01-01")).returning(_.id)
-        val ex = intercept[SqlException.Unsupported] {
+        val ex = intercept[SqlUnsupportedException] {
             s.renderMysql
         }
         assert(ex.getMessage.contains("RETURNING"))

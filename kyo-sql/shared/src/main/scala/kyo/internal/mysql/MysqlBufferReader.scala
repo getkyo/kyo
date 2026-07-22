@@ -3,7 +3,9 @@ package kyo.internal.mysql
 import java.nio.charset.StandardCharsets
 import kyo.*
 import kyo.Span
-import kyo.SqlException
+import kyo.SqlDecodeException
+import kyo.SqlDecodeInsufficientBytesException
+import kyo.SqlDecodeProtocolFormatException
 
 /** Little-endian byte reader for the MySQL 8.x wire protocol.
   *
@@ -13,7 +15,7 @@ import kyo.SqlException
   *
   * Read methods that consume bytes (`readByte`, `readUInt8`, `readUInt16LE`, `readUInt24LE`, `readUInt32LE`, `readUInt64LE`,
   * `readLenencInt`) perform a bounds check before any array access. On under-length input they return
-  * `Abort.fail(SqlException.Decode(...))` rather than throwing an exception.
+  * `Abort.fail(SqlDecodeInsufficientBytesException(...))` rather than throwing an exception.
   *
   * Reference: MySQL Internals, Connection Phase Packets and Text Protocol
   *
@@ -30,13 +32,9 @@ final class MysqlBufferReader(private val span: Span[Byte]):
     def position: Int = pos
 
     /** Reads a single unsigned byte (0..255) and advances the cursor. */
-    def readByte()(using Frame): Byte < Abort[SqlException.Decode] =
+    def readByte()(using Frame): Byte < Abort[SqlDecodeException] =
         if pos >= span.size then
-            Abort.fail(SqlException.Decode(
-                s"Short read: expected 1 byte at position $pos but only ${span.size - pos} remain",
-                Maybe.Absent,
-                summon[Frame]
-            ))
+            Abort.fail(SqlDecodeInsufficientBytesException("bytes", 1, span.size - pos, pos))
         else
             val b = span(pos)
             pos += 1
@@ -44,17 +42,13 @@ final class MysqlBufferReader(private val span: Span[Byte]):
     end readByte
 
     /** Reads an unsigned 8-bit integer (0..255). */
-    def readUInt8()(using Frame): Int < Abort[SqlException.Decode] =
+    def readUInt8()(using Frame): Int < Abort[SqlDecodeException] =
         readByte().map(_ & 0xff)
 
     /** Reads a little-endian unsigned 16-bit integer (0..65535). */
-    def readUInt16LE()(using Frame): Int < Abort[SqlException.Decode] =
+    def readUInt16LE()(using Frame): Int < Abort[SqlDecodeException] =
         if pos + 2 > span.size then
-            Abort.fail(SqlException.Decode(
-                s"Short read: expected 2 bytes at position $pos but only ${span.size - pos} remain",
-                Maybe.Absent,
-                summon[Frame]
-            ))
+            Abort.fail(SqlDecodeInsufficientBytesException("bytes", 2, span.size - pos, pos))
         else
             val lo = span(pos) & 0xff
             val hi = span(pos + 1) & 0xff
@@ -63,13 +57,9 @@ final class MysqlBufferReader(private val span: Span[Byte]):
     end readUInt16LE
 
     /** Reads a little-endian unsigned 24-bit integer (0..16777215). */
-    def readUInt24LE()(using Frame): Int < Abort[SqlException.Decode] =
+    def readUInt24LE()(using Frame): Int < Abort[SqlDecodeException] =
         if pos + 3 > span.size then
-            Abort.fail(SqlException.Decode(
-                s"Short read: expected 3 bytes at position $pos but only ${span.size - pos} remain",
-                Maybe.Absent,
-                summon[Frame]
-            ))
+            Abort.fail(SqlDecodeInsufficientBytesException("bytes", 3, span.size - pos, pos))
         else
             val b0 = span(pos) & 0xff
             val b1 = span(pos + 1) & 0xff
@@ -79,13 +69,9 @@ final class MysqlBufferReader(private val span: Span[Byte]):
     end readUInt24LE
 
     /** Reads a little-endian unsigned 32-bit integer (0..4294967295) as a Long. */
-    def readUInt32LE()(using Frame): Long < Abort[SqlException.Decode] =
+    def readUInt32LE()(using Frame): Long < Abort[SqlDecodeException] =
         if pos + 4 > span.size then
-            Abort.fail(SqlException.Decode(
-                s"Short read: expected 4 bytes at position $pos but only ${span.size - pos} remain",
-                Maybe.Absent,
-                summon[Frame]
-            ))
+            Abort.fail(SqlDecodeInsufficientBytesException("bytes", 4, span.size - pos, pos))
         else
             val b0 = span(pos).toLong & 0xffL
             val b1 = span(pos + 1).toLong & 0xffL
@@ -96,13 +82,9 @@ final class MysqlBufferReader(private val span: Span[Byte]):
     end readUInt32LE
 
     /** Reads a little-endian unsigned 64-bit integer as a Long (unsigned semantics via bit pattern). */
-    def readUInt64LE()(using Frame): Long < Abort[SqlException.Decode] =
+    def readUInt64LE()(using Frame): Long < Abort[SqlDecodeException] =
         if pos + 8 > span.size then
-            Abort.fail(SqlException.Decode(
-                s"Short read: expected 8 bytes at position $pos but only ${span.size - pos} remain",
-                Maybe.Absent,
-                summon[Frame]
-            ))
+            Abort.fail(SqlDecodeInsufficientBytesException("bytes", 8, span.size - pos, pos))
         else
             val b0 = span(pos).toLong & 0xffL
             val b1 = span(pos + 1).toLong & 0xffL
@@ -129,7 +111,7 @@ final class MysqlBufferReader(private val span: Span[Byte]):
       * @return
       *   [[Maybe.Present]] with the decoded value for valid lenenc ints; [[Maybe.Absent]] for the 0xFF sentinel
       */
-    def readLenencInt()(using Frame): Maybe[Long] < Abort[SqlException.Decode] =
+    def readLenencInt()(using Frame): Maybe[Long] < Abort[SqlDecodeException] =
         readByte().map { rawByte =>
             val first = rawByte & 0xff
             first match
@@ -144,16 +126,12 @@ final class MysqlBufferReader(private val span: Span[Byte]):
 
     /** Reads a length-encoded string: a lenenc-int length followed by that many raw bytes decoded as UTF-8.
       *
-      * Returns `Abort.fail(SqlException.Decode)` if the 0xFF sentinel byte is encountered (invalid in string position).
+      * Returns `Abort.fail(SqlDecodeProtocolFormatException)` if the 0xFF sentinel byte is encountered (invalid in string position).
       */
-    def readLenencString()(using Frame): String < Abort[SqlException.Decode] =
+    def readLenencString()(using Frame): String < Abort[SqlDecodeException] =
         readLenencInt().flatMap {
             case Maybe.Absent =>
-                Abort.fail(SqlException.Decode(
-                    s"Unexpected 0xFF sentinel in lenenc-string at position $pos",
-                    Maybe.Absent,
-                    summon[Frame]
-                ))
+                Abort.fail(SqlDecodeProtocolFormatException(0xff.toByte, pos))
             case Maybe.Present(len) =>
                 readBytes(len.toInt).map { bytes =>
                     new String(bytes.toArray, StandardCharsets.UTF_8)
@@ -180,15 +158,11 @@ final class MysqlBufferReader(private val span: Span[Byte]):
 
     /** Reads exactly `n` raw bytes and returns them as an immutable [[Span[Byte]]].
       *
-      * If fewer than `n` bytes remain, returns `Abort.fail(SqlException.Decode(...))`.
+      * If fewer than `n` bytes remain, returns `Abort.fail(SqlDecodeInsufficientBytesException(...))`.
       */
-    def readBytes(n: Int)(using Frame): Span[Byte] < Abort[SqlException.Decode] =
+    def readBytes(n: Int)(using Frame): Span[Byte] < Abort[SqlDecodeException] =
         if n < 0 || pos + n > span.size then
-            Abort.fail(SqlException.Decode(
-                s"Short read: expected $n bytes at position $pos but only ${span.size - pos} remain",
-                Maybe.Absent,
-                summon[Frame]
-            ))
+            Abort.fail(SqlDecodeInsufficientBytesException("bytes", n, span.size - pos, pos))
         else
             val result = span.slice(pos, pos + n)
             pos += n

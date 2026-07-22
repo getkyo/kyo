@@ -1,7 +1,7 @@
 package kyo.internal.mysql.auth
 
 import kyo.*
-import kyo.SqlException
+import kyo.SqlRequestException
 import kyo.internal.auth.RsaOaep
 
 /** sha256_password authentication helper.
@@ -46,7 +46,7 @@ private[mysql] object Sha256Password:
         password: String,
         scramble: Span[Byte],
         publicKeyPem: Span[Byte]
-    )(using Frame): Span[Byte] < (Sync & Abort[SqlException.Request]) =
+    )(using Frame): Span[Byte] < (Sync & Abort[SqlRequestException]) =
         val passwordBytes = password.getBytes(java.nio.charset.StandardCharsets.UTF_8)
         val scrambleArr   = scramble.toArray
         // NUL-terminate the password.

@@ -6,7 +6,7 @@ import kyo.internal.SqlSharedContainers
 /** Integration tests for SqlException enriched context fields, MySQL backend.
   *
   * Each test runs against a fresh schema in the per-fork-JVM shared MySQL container (via [[SqlSharedContainers.withFreshSchema]]). Fires a
-  * query that fails (SELECT 1 FROM no_such_table) and asserts that the resulting SqlException.Server carries:
+  * query that fails (SELECT 1 FROM no_such_table) and asserts that the resulting SqlServerException carries:
   *   - non-empty sqlState (MySQL returns "42S02" for undefined_table)
   *   - sqlText containing the original SQL
   *   - paramCount matching the bind count
@@ -25,12 +25,12 @@ class ErrorContextIntegrationTest extends kyo.Test:
         url: String,
         config: SqlConfig = SqlConfig.default
     )(f: SqlClient => A < (S & Async & Abort[SqlException]))(using Frame): A < (S & Async & Scope & Abort[SqlException]) =
-        Abort.run[SqlException.Connection](SqlClient.initMysql(url, config)).flatMap {
+        Abort.run[SqlConnectionException](SqlClient.initMysql(url, config)).flatMap {
             case Result.Success(client) => SqlClient.let(client)(f(client))
             case Result.Failure(e)      => Abort.fail(e: SqlException)
             case Result.Panic(t) =>
                 scala.Console.err.println(s"[kyo-sql] ErrorContextIntegrationTest(MySQL).withMyClient panic: ${t.getMessage}")
-                Abort.fail(SqlException.Connection(t.getMessage, summon[Frame]): SqlException)
+                Abort.fail(SqlConnectionConnectFailedException("test", 0, new Exception(t.getMessage)): SqlException)
         }
 
     // ── Integration leaf: real server error includes sqlState, sqlText, paramCount, connectionId ──
@@ -52,7 +52,7 @@ class ErrorContextIntegrationTest extends kyo.Test:
                         Abort.run[SqlException](
                             client.executeRaw(failSql)(using Frame.derive)
                         ).flatMap {
-                            case Result.Failure(e: SqlException.Server) =>
+                            case Result.Failure(e: SqlServerException) =>
                                 // MySQL returns SQLSTATE 42S02 for "table doesn't exist" (ER_NO_SUCH_TABLE)
                                 assert(e.sqlState.nonEmpty, s"Expected non-empty sqlState, got empty")
                                 assert(
@@ -86,10 +86,10 @@ class ErrorContextIntegrationTest extends kyo.Test:
                                 }
 
                             case Result.Failure(other) =>
-                                fail(s"Expected SqlException.Server with SQLSTATE 42S02, got: $other")
+                                fail(s"Expected SqlServerException with SQLSTATE 42S02, got: $other")
 
                             case Result.Success(_) =>
-                                fail("Expected query to fail with SqlException.Server but it succeeded")
+                                fail("Expected query to fail with SqlServerException but it succeeded")
 
                             case Result.Panic(t) =>
                                 fail(s"Unexpected panic: ${t.getMessage}")

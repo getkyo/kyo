@@ -177,7 +177,7 @@ class LocalInfileIntegrationTest extends kyo.Test:
 
     // ── Leaf 5: server-side rejection (bad column in column list) ───────────
 
-    "server-side rejection (bad column reference) surfaces SqlException.Server".tagged("kyo.OwnContainer") in {
+    "server-side rejection (bad column reference) surfaces SqlServerException".tagged("kyo.OwnContainer") in {
         Async.timeout(60.seconds) {
             Scope.run {
                 withMyClient { client =>
@@ -185,7 +185,7 @@ class LocalInfileIntegrationTest extends kyo.Test:
                     // MySQL resolves the column list at parse / validation time, before sending the
                     // LOCAL_INFILE_REQUEST (0xFB), so it returns an ERR packet immediately.
                     // This exercises the 0xFF branch in SimpleQueryExchange.runLocalInfile and
-                    // surfaces a SqlException.Server with ER_BAD_FIELD_ERROR (error 1054).
+                    // surfaces a SqlServerException with ER_BAD_FIELD_ERROR (error 1054).
                     withLoadTable(client) { tbl =>
                         val sql =
                             s"LOAD DATA LOCAL INFILE 'x.csv' INTO TABLE $tbl " +
@@ -193,7 +193,7 @@ class LocalInfileIntegrationTest extends kyo.Test:
                         Abort.run[SqlException](
                             client.loadLocalInfile(sql, csvStream(Seq("1,row,extra\n")))
                         ).flatMap {
-                            case Result.Failure(e: SqlException.Server) =>
+                            case Result.Failure(e: SqlServerException) =>
                                 // ER_BAD_FIELD_ERROR (1054), unknown column reference.
                                 val code = e.extra.getOrElse("code", "")
                                 assert(
@@ -202,11 +202,11 @@ class LocalInfileIntegrationTest extends kyo.Test:
                                         s"but got code=$code, message=${e.message}"
                                 )
                             case Result.Failure(e) =>
-                                assert(false, s"Expected SqlException.Server but got ${e.getClass.getSimpleName}: $e")
+                                assert(false, s"Expected SqlServerException but got ${e.getClass.getSimpleName}: $e")
                             case Result.Success(affected) =>
                                 assert(
                                     false,
-                                    s"Expected SqlException.Server from bad column, but upload succeeded with affected=$affected"
+                                    s"Expected SqlServerException from bad column, but upload succeeded with affected=$affected"
                                 )
                             case Result.Panic(t) =>
                                 Log.error(s"[test] Unexpected panic: ${t.getMessage}").andThen(
@@ -297,9 +297,9 @@ class LocalInfileIntegrationTest extends kyo.Test:
                                 //   (a) Cleanup succeeded (before or concurrently) → connection is clean →
                                 //       SELECT 42 returns "42".
                                 //   (b) Cleanup failed → channel marked corrupted → SELECT 42 fails with
-                                //       SqlException.Connection containing "unusable".
+                                //       SqlConnectionException containing "unusable".
                                 //   (c) Cleanup is racing concurrently → protocol state unknown → SELECT 42
-                                //       fails with SqlException.Server or SqlException.Connection (e.g.,
+                                //       fails with SqlServerException or SqlConnectionException (e.g.,
                                 //       "Got packets out of order", "Connection closed while reading", etc.).
                                 //
                                 // The ONLY banned outcome is a Panic, an unexpected exception indicates a
@@ -309,7 +309,7 @@ class LocalInfileIntegrationTest extends kyo.Test:
                                         rows.head.decode[Long](0).map { v =>
                                             assert(v == 42L, s"Connection reused cleanly after Timeout, got $v")
                                         }
-                                    case Result.Failure(e: SqlException.Connection)
+                                    case Result.Failure(e: SqlConnectionException)
                                         if e.getMessage != null && e.getMessage.contains("unusable") =>
                                         // Cleanup failed → channel marked corrupted via markCorrupted() → connection is
                                         // explicitly NOT reusable. This is a SAFE failure: the caller knows the connection
@@ -338,7 +338,7 @@ class LocalInfileIntegrationTest extends kyo.Test:
 
     // ── Leaf 8: server with local_infile=OFF ──────────────────────────────────
 
-    "server with local_infile=OFF rejects LOCAL INFILE with SqlException.Server".tagged("kyo.OwnContainer") in {
+    "server with local_infile=OFF rejects LOCAL INFILE with SqlServerException".tagged("kyo.OwnContainer") in {
         Async.timeout(120.seconds) {
             Scope.run {
                 withLocalInfileOff { ctx =>
@@ -350,7 +350,7 @@ class LocalInfileIntegrationTest extends kyo.Test:
                         Abort.run[SqlException](
                             client.loadLocalInfile(sql, csvStream(Seq("1\n")))
                         ).flatMap {
-                            case Result.Failure(e: SqlException.Server) =>
+                            case Result.Failure(e: SqlServerException) =>
                                 // MySQL rejects LOAD DATA LOCAL when local_infile=OFF:
                                 //   MySQL 5.x: error 1148 (ER_NOT_ALLOWED_COMMAND)
                                 //   MySQL 8+:  error 3948 (ER_CLIENT_LOCAL_INFILES_NOT_ALLOWED)
@@ -363,7 +363,7 @@ class LocalInfileIntegrationTest extends kyo.Test:
                             case Result.Failure(e) =>
                                 assert(
                                     false,
-                                    s"Expected SqlException.Server (ER_NOT_ALLOWED_COMMAND / code 1148) but got ${e.getClass.getSimpleName}: $e"
+                                    s"Expected SqlServerException (ER_NOT_ALLOWED_COMMAND / code 1148) but got ${e.getClass.getSimpleName}: $e"
                                 )
                             case Result.Success(_) =>
                                 assert(false, "Expected server to reject LOCAL INFILE when local_infile=OFF")

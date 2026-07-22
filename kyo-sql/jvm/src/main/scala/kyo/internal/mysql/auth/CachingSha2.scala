@@ -7,7 +7,8 @@ import java.security.spec.X509EncodedKeySpec
 import java.util.Base64
 import javax.crypto.Cipher
 import kyo.*
-import kyo.SqlException
+import kyo.SqlRequestException
+import kyo.SqlRequestRsaOaepException
 import kyo.internal.auth.RsaOaep
 
 /** caching_sha2_password authentication helper.
@@ -77,7 +78,7 @@ private[mysql] object CachingSha2:
         password: String,
         scramble: Span[Byte],
         publicKeyPem: Span[Byte]
-    )(using Frame): Span[Byte] < (Sync & Abort[SqlException.Request]) =
+    )(using Frame): Span[Byte] < (Sync & Abort[SqlRequestException]) =
         val passwordBytes = password.getBytes(java.nio.charset.StandardCharsets.UTF_8)
         val scrambleArr   = scramble.toArray
         // NUL-terminate the password.
@@ -96,7 +97,7 @@ private[mysql] object CachingSha2:
         // Parse PEM key and encrypt using JDK Cipher.
         // Narrow catch to GeneralSecurityException so unexpected panics (OOM, Error subclasses) propagate as panics.
         Abort.catching[GeneralSecurityException](gse =>
-            SqlException.Request(s"RSA-OAEP encryption failed: ${gse.getMessage}", Maybe.Present("<caching_sha2_password>"), summon[Frame])
+            SqlRequestRsaOaepException("Cipher.doFinal", "encrypt", gse)
         ) {
             val pubKey = decodePemKey(publicKeyPem)
             val cipher = Cipher.getInstance("RSA/ECB/OAEPWithSHA-1AndMGF1Padding")

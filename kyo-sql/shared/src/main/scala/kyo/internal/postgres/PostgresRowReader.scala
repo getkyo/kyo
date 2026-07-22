@@ -7,7 +7,10 @@ import kyo.Instant
 import kyo.Maybe
 import kyo.Maybe.Absent
 import kyo.Span
-import kyo.SqlException
+import kyo.SqlDecodeArrayNullElementException
+import kyo.SqlDecodeColumnDecodeException
+import kyo.SqlDecodeColumnNullException
+import kyo.SqlDecodeEmptyStringForCharException
 import kyo.SqlRow
 import kyo.internal.BufferedSqlReader
 import kyo.internal.JsonReader
@@ -53,13 +56,13 @@ final class PostgresRowReader(row: SqlRow)(using Frame) extends SqlReader(summon
 
     /** Returns the raw bytes for the current column and advances the cursor.
       *
-      * @throws SqlException.Decode
+      * @throws SqlDecodeColumnNullException
       *   if the current column value is SQL NULL (i.e. [[row.column]] returns [[Maybe.Absent]])
       */
     private def nextBytes(): Span[Byte] =
         val column = row.column(idx)
         idx += 1
-        column.getOrElse(throw SqlException.Decode(s"column ${idx - 1} is NULL", Absent, frame))
+        column.getOrElse(throw SqlDecodeColumnNullException(idx - 1))
     end nextBytes
 
     // --- Nil check, peek without advancing ---
@@ -83,7 +86,7 @@ final class PostgresRowReader(row: SqlRow)(using Frame) extends SqlReader(summon
                     case arr =>
                         arr.nextElement() match
                             case Maybe.Present(b) => PostgresDecoder.bool.read(Format.Binary, b)(using frame)
-                            case Absent => throw SqlException.Decode("PG array element is NULL, cannot decode as Boolean", Absent, frame)
+                            case Absent           => throw SqlDecodeArrayNullElementException("Boolean", -1)
             case sub => sub.boolean()
 
     override def short(): Short =
@@ -94,7 +97,7 @@ final class PostgresRowReader(row: SqlRow)(using Frame) extends SqlReader(summon
                     case arr =>
                         arr.nextElement() match
                             case Maybe.Present(b) => PostgresDecoder.int2.read(Format.Binary, b)(using frame)
-                            case Absent => throw SqlException.Decode("PG array element is NULL, cannot decode as Short", Absent, frame)
+                            case Absent           => throw SqlDecodeArrayNullElementException("Short", -1)
             case sub => sub.short()
 
     override def int(): Int =
@@ -105,7 +108,7 @@ final class PostgresRowReader(row: SqlRow)(using Frame) extends SqlReader(summon
                     case arr =>
                         arr.nextElement() match
                             case Maybe.Present(b) => PostgresDecoder.int4.read(Format.Binary, b)(using frame)
-                            case Absent => throw SqlException.Decode("PG array element is NULL, cannot decode as Int", Absent, frame)
+                            case Absent           => throw SqlDecodeArrayNullElementException("Int", -1)
             case sub => sub.int()
 
     override def long(): Long =
@@ -116,7 +119,7 @@ final class PostgresRowReader(row: SqlRow)(using Frame) extends SqlReader(summon
                     case arr =>
                         arr.nextElement() match
                             case Maybe.Present(b) => PostgresDecoder.int8.read(Format.Binary, b)(using frame)
-                            case Absent => throw SqlException.Decode("PG array element is NULL, cannot decode as Long", Absent, frame)
+                            case Absent           => throw SqlDecodeArrayNullElementException("Long", -1)
             case sub => sub.long()
 
     override def float(): Float =
@@ -127,7 +130,7 @@ final class PostgresRowReader(row: SqlRow)(using Frame) extends SqlReader(summon
                     case arr =>
                         arr.nextElement() match
                             case Maybe.Present(b) => PostgresDecoder.float4.read(Format.Binary, b)(using frame)
-                            case Absent => throw SqlException.Decode("PG array element is NULL, cannot decode as Float", Absent, frame)
+                            case Absent           => throw SqlDecodeArrayNullElementException("Float", -1)
             case sub => sub.float()
 
     override def double(): Double =
@@ -138,7 +141,7 @@ final class PostgresRowReader(row: SqlRow)(using Frame) extends SqlReader(summon
                     case arr =>
                         arr.nextElement() match
                             case Maybe.Present(b) => PostgresDecoder.float8.read(Format.Binary, b)(using frame)
-                            case Absent => throw SqlException.Decode("PG array element is NULL, cannot decode as Double", Absent, frame)
+                            case Absent           => throw SqlDecodeArrayNullElementException("Double", -1)
             case sub => sub.double()
 
     override def string(): String =
@@ -153,12 +156,12 @@ final class PostgresRowReader(row: SqlRow)(using Frame) extends SqlReader(summon
                                 arr.nextElement() match
                                     case Maybe.Present(b) => PostgresDecoder.textDecoder.read(Format.Binary, b)(using frame)
                                     case Absent =>
-                                        throw SqlException.Decode("PG array element is NULL, cannot decode as String", Absent, frame)
+                                        throw SqlDecodeArrayNullElementException("String", -1)
                     case sub => sub.string()
             case hs =>
                 hs.nextValue() match
                     case Maybe.Present(s) => s
-                    case Absent           => throw SqlException.Decode("PG hstore value is NULL, cannot decode as String", Absent, frame)
+                    case Absent           => throw SqlDecodeColumnNullException(-1, "hstore value")
 
     override def bytes(): Span[Byte] =
         jsonSubReaderOrNull match
@@ -168,7 +171,7 @@ final class PostgresRowReader(row: SqlRow)(using Frame) extends SqlReader(summon
                     case arr =>
                         arr.nextElement() match
                             case Maybe.Present(b) => PostgresDecoder.bytea.read(Format.Binary, b)(using frame)
-                            case Absent => throw SqlException.Decode("PG array element is NULL, cannot decode as Bytes", Absent, frame)
+                            case Absent           => throw SqlDecodeArrayNullElementException("Bytes", -1)
             case sub => sub.bytes()
 
     override def bigDecimal(): BigDecimal =
@@ -180,7 +183,7 @@ final class PostgresRowReader(row: SqlRow)(using Frame) extends SqlReader(summon
                     case arr =>
                         arr.nextElement() match
                             case Maybe.Present(b) => PostgresDecoder.numeric.read(row.format, b)(using frame)
-                            case Absent => throw SqlException.Decode("PG array element is NULL, cannot decode as BigDecimal", Absent, frame)
+                            case Absent           => throw SqlDecodeArrayNullElementException("BigDecimal", -1)
             case sub => sub.bigDecimal()
 
     override def instant(): java.time.Instant =
@@ -192,7 +195,7 @@ final class PostgresRowReader(row: SqlRow)(using Frame) extends SqlReader(summon
                     case arr =>
                         arr.nextElement() match
                             case Maybe.Present(b) => PostgresDecoder.timestamptz.read(Format.Binary, b)(using frame).toJava
-                            case Absent => throw SqlException.Decode("PG array element is NULL, cannot decode as Instant", Absent, frame)
+                            case Absent           => throw SqlDecodeArrayNullElementException("Instant", -1)
             case sub => sub.instant()
 
     override def byte(): Byte =
@@ -204,7 +207,7 @@ final class PostgresRowReader(row: SqlRow)(using Frame) extends SqlReader(summon
                     case arr =>
                         arr.nextElement() match
                             case Maybe.Present(b) => PostgresDecoder.int2.read(Format.Binary, b)(using frame).toByte
-                            case Absent => throw SqlException.Decode("PG array element is NULL, cannot decode as Byte", Absent, frame)
+                            case Absent           => throw SqlDecodeArrayNullElementException("Byte", -1)
             case sub => sub.byte()
 
     override def char(): Char =
@@ -216,8 +219,8 @@ final class PostgresRowReader(row: SqlRow)(using Frame) extends SqlReader(summon
                     case arr =>
                         arr.nextElement() match
                             case Maybe.Present(b) => PostgresDecoder.textDecoder.read(Format.Binary, b)(using frame)
-                            case Absent => throw SqlException.Decode("PG array element is NULL, cannot decode as Char", Absent, frame)
-                if s.isEmpty then throw SqlException.Decode(s"column ${idx - 1} is an empty string, cannot read as Char", Absent, frame)
+                            case Absent           => throw SqlDecodeArrayNullElementException("Char", -1)
+                if s.isEmpty then throw SqlDecodeEmptyStringForCharException(idx - 1)
                 else s.charAt(0)
             case sub => sub.char()
     end char
@@ -231,7 +234,7 @@ final class PostgresRowReader(row: SqlRow)(using Frame) extends SqlReader(summon
                     case arr =>
                         arr.nextElement() match
                             case Maybe.Present(b) => PostgresDecoder.numeric.read(row.format, b)(using frame).toBigInt
-                            case Absent => throw SqlException.Decode("PG array element is NULL, cannot decode as BigInt", Absent, frame)
+                            case Absent           => throw SqlDecodeArrayNullElementException("BigInt", -1)
             case sub => sub.bigInt()
 
     override def duration(): java.time.Duration =
@@ -307,16 +310,15 @@ final class PostgresRowReader(row: SqlRow)(using Frame) extends SqlReader(summon
     /** Reads the current column as a PostgreSQL binary array and returns its element count.
       *
       * Recognised array OIDs (from [[PostgresArrayReader.ArrayOids]]): 1007 (int4[]), 1009 (text[]), 1015 (varchar[]), 199 (json[]), 3807
-      * (jsonb[]). Raises [[SqlException.Decode]] (not [[SqlException.Unsupported]]) when the column OID is not a recognised array OID.
+      * (jsonb[]). Raises [[SqlDecodeColumnDecodeException]] when the column OID is not a recognised array OID.
       */
     override def arrayStart(): Int =
         val colIdx = idx
         val colOid = if colIdx < row.fields.size then row.fields(colIdx).dataType else 0
         if !PostgresArrayReader.isArrayOid(colOid) && colOid != 0 then
-            throw SqlException.Decode(
-                s"column $colIdx has OID $colOid which is not a recognised array OID ${PostgresArrayReader.ArrayOids.mkString("{", ",", "}")}",
-                Absent,
-                frame
+            throw SqlDecodeColumnDecodeException(
+                colIdx,
+                new Exception(s"OID $colOid is not a recognised array OID ${PostgresArrayReader.ArrayOids.mkString("{", ",", "}")}")
             )
         end if
         val bytes  = nextBytes()
@@ -396,7 +398,7 @@ final class PostgresRowReader(row: SqlRow)(using Frame) extends SqlReader(summon
       *
       * Used by sum codecs (sealed traits, `Result`, `Either`) for field-order-independent decoding. The returned reader's primitive methods
       * decode against the buffered bytes using the same PostgreSQL binary-format decoders as this row reader. Structural reads (arrayStart,
-      * mapStart) on the buffered reader raise [[SqlException.Decode]].
+      * mapStart) on the buffered reader raise a [[SqlDecodeException]] leaf.
       */
     override def captureValue(): Codec.Reader =
         val bytes = nextBytes()

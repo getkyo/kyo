@@ -7,6 +7,8 @@ import kyo.Maybe.Absent
 import kyo.Maybe.Present
 import kyo.Result
 import kyo.Span
+import kyo.SqlConnectionScramFailedException
+import kyo.SqlDecodeScramFormatException
 import kyo.SqlException
 
 /** Shared SCRAM-SHA-256 / SCRAM-SHA-256-PLUS state machine (RFC 7677 / RFC 5802).
@@ -90,25 +92,25 @@ abstract class ScramSha256Base(username: String, clientNonce: String, channelBin
       * @return
       *   Result.Success(()) if valid, Result.Failure(SqlException) if signature mismatch or malformed
       */
-    def verifyServerSignature(serverFinal: String, expectedServerSignature: Array[Byte])(using frame: Frame): Result[SqlException, Unit] =
+    def verifyServerSignature(serverFinal: String, expectedServerSignature: Array[Byte])(using Frame): Result[SqlException, Unit] =
         // server-final-message = server-error / ("v=" base64(ServerSignature))
         if serverFinal.startsWith("e=") then
-            Result.fail(SqlException.Connection(s"SCRAM authentication failed: server reported error: ${serverFinal.drop(2)}", frame))
+            Result.fail(SqlConnectionScramFailedException(s"server reported error: ${serverFinal.drop(2)}"))
         else if serverFinal.startsWith("v=") then
             val b64sig = serverFinal.drop(2)
             Result.catching[IllegalArgumentException](b64decode(b64sig))
-                .mapFailure(_ => SqlException.Decode(s"SCRAM: malformed server-final v= value: $b64sig", Maybe.Absent, frame))
+                .mapFailure(_ => SqlDecodeScramFormatException("v", b64sig))
                 .flatMap { sig =>
                     if Span.from(sig).constantTimeEquals(Span.from(expectedServerSignature)) then Result.unit
-                    else Result.fail(SqlException.Connection("SCRAM authentication failed: server signature mismatch", frame))
+                    else Result.fail(SqlConnectionScramFailedException("server signature mismatch"))
                 }
         else
-            Result.fail(SqlException.Decode(s"SCRAM: malformed server-final-message: $serverFinal", Maybe.Absent, frame))
+            Result.fail(SqlDecodeScramFormatException("server-final-message", serverFinal))
 
     // --- Private helpers ---
 
     /** Parses server-first-message into (serverNonce, rawSalt, iterations). */
-    private def parseServerFirst(serverFirst: String)(using frame: Frame): Result[SqlException, (String, Array[Byte], Int)] =
+    private def parseServerFirst(serverFirst: String)(using Frame): Result[SqlException, (String, Array[Byte], Int)] =
         val parts  = serverFirst.split(",")
         val rField = Maybe.fromOption(parts.find(_.startsWith("r=")).map(_.drop(2)))
         val sField = Maybe.fromOption(parts.find(_.startsWith("s=")).map(_.drop(2)))
@@ -116,30 +118,19 @@ abstract class ScramSha256Base(username: String, clientNonce: String, channelBin
         (rField, sField, iField) match
             case (Maybe.Present(r), Maybe.Present(s), Maybe.Present(i)) =>
                 if !r.startsWith(clientNonce) then
-                    Result.fail(SqlException.Connection(
-                        s"SCRAM: server nonce does not extend client nonce. Server nonce: $r, client nonce: $clientNonce",
-                        frame
+                    Result.fail(SqlConnectionScramFailedException(
+                        s"server nonce does not extend client nonce (server=$r client=$clientNonce)"
                     ))
                 else
                     Result.catching[IllegalArgumentException](b64decode(s))
-                        .mapFailure(_ =>
-                            SqlException.Decode(
-                                s"SCRAM: malformed salt in server-first-message: $s",
-                                Maybe.Absent,
-                                frame
-                            )
-                        )
+                        .mapFailure(_ => SqlDecodeScramFormatException("s", s))
                         .flatMap { salt =>
                             val iter = Maybe.fromOption(i.toIntOption).getOrElse(0)
-                            if iter <= 0 then Result.fail(SqlException.Decode(s"SCRAM: invalid iteration count: $i", Maybe.Absent, frame))
+                            if iter <= 0 then Result.fail(SqlDecodeScramFormatException("i", i))
                             else Result.Success((r, salt, iter))
                         }
             case _ =>
-                Result.fail(SqlException.Decode(
-                    s"SCRAM: missing required fields (r, s, i) in server-first-message: $serverFirst",
-                    Maybe.Absent,
-                    frame
-                ))
+                Result.fail(SqlDecodeScramFormatException("server-first-message", serverFirst))
         end match
     end parseServerFirst
 

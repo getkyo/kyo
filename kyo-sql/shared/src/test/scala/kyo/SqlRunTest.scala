@@ -1,6 +1,7 @@
 package kyo
 
 import kyo.SqlAst.*
+import kyo.SqlConnectionException
 import scala.compiletime.testing.typeCheckErrors
 
 /** Verifies the `.run` / `.runStatic` / `.runDynamic` extension surface on `Query[A]` / `Insert` / `Update` / `Delete`.
@@ -10,7 +11,7 @@ import scala.compiletime.testing.typeCheckErrors
   *
   *   - method availability (leaves 1, 4-6, compilation of typed `def shape(...)` bodies)
   *   - `runStatic` failing at compile time (leaf 3, `typeCheckErrors`)
-  *   - `.run` outside a `let` block fails with `SqlException.Connection` (leaf 7)
+  *   - `.run` outside a `let` block fails with `SqlConnectionException` (leaf 7)
   *   - `SqlClient.use` returns `Abort[SqlException]` and does not panic (leaf 8)
   */
 class SqlRunTest extends Test:
@@ -114,20 +115,20 @@ class SqlRunTest extends Test:
 
     // ── Leaf 7, runDynamic reads the client from SqlClient.use correctly ──────
 
-    "runDynamic surfaces SqlException.Connection when no client is active" in {
+    "runDynamic surfaces SqlConnectionException when no client is active" in {
         val q = Sql.from[Person]("p").select(c => c.p.name)
         Abort.run[SqlException](q.runDynamic).map {
-            case Result.Failure(_: SqlException.Connection) => succeed
-            case other                                      => fail(s"Expected SqlException.Connection, got $other")
+            case Result.Failure(_: SqlConnectionException) => succeed
+            case other                                     => fail(s"Expected SqlConnectionException, got $other")
         }
     }
 
     // ── Leaf 8, SqlClient.use returns Abort.fail (not IllegalStateException) ──
 
-    "SqlClient.use returns Abort.fail(SqlException.Connection) when no client active" in {
+    "SqlClient.use returns Abort.fail(SqlConnectionException) when no client active" in {
         Abort.run[SqlException](SqlClient.use(c => c.address)).map {
-            case Result.Failure(_: SqlException.Connection) => succeed
-            case other                                      => fail(s"Expected SqlException.Connection, got $other")
+            case Result.Failure(_: SqlConnectionException) => succeed
+            case other                                     => fail(s"Expected SqlConnectionException, got $other")
         }
     }
 

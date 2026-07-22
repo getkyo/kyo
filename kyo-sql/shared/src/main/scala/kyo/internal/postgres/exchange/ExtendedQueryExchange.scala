@@ -1,6 +1,7 @@
 package kyo.internal.postgres.exchange
 
 import kyo.*
+import kyo.SqlConnectionUnexpectedMessageException
 import kyo.SqlException
 import kyo.SqlRow
 import kyo.internal.Hash
@@ -212,7 +213,11 @@ object ExtendedQueryExchange:
                     )
 
                 case other =>
-                    Abort.fail(SqlException.Connection(s"Unexpected message during Parse/Describe: $other", summon[Frame]))
+                    Abort.fail(SqlConnectionUnexpectedMessageException(
+                        "Parse/Describe",
+                        "ParseComplete / ParameterDescription / RowDescription / NoData / ReadyForQuery",
+                        other.toString
+                    ))
             }
 
         loop(parseDone = false, Absent, Absent)
@@ -300,7 +305,11 @@ object ExtendedQueryExchange:
                     )
 
                 case other =>
-                    Abort.fail(SqlException.Connection(s"Unexpected message during Execute: $other", summon[Frame]))
+                    Abort.fail(SqlConnectionUnexpectedMessageException(
+                        "Execute",
+                        "DataRow / CommandComplete / EmptyQueryResponse / PortalSuspended / ReadyForQuery",
+                        other.toString
+                    ))
             }
 
         loop(Chunk.empty)

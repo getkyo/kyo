@@ -420,14 +420,14 @@ object PostgresEncoder:
     // Wire: 16-byte big-endian struct: Int64 microseconds, Int32 days (always 0), Int32 months (always 0).
     // java.time.Duration carries no calendar-day or month/year component; both are encoded as zero.
     // On encode overflow (seconds × 1_000_000L exceeds Int64), an ArithmeticException from
-    // Math.multiplyExact is wrapped as SqlException.Decode.
+    // Math.multiplyExact is wrapped as SqlDecodeException.
 
     val intervalBinary: PostgresEncoder[java.time.Duration] = new PostgresEncoder[java.time.Duration]:
         def oid: Int = OID_INTERVAL
         def format   = Format.Binary
         def write(value: java.time.Duration, buf: PostgresBufferWriter): Unit =
             // ArithmeticException propagates to the caller (PostgresParamWriter.duration) which
-            // has a Frame in scope and wraps it as SqlException.Decode.
+            // has a Frame in scope and wraps it as SqlDecodeException.
             val micros = java.lang.Math.multiplyExact(value.getSeconds, 1_000_000L) + value.getNano / 1000
             buf.writeInt32(((micros >> 32) & 0xffffffffL).toInt)
             buf.writeInt32((micros & 0xffffffffL).toInt)

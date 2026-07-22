@@ -1,7 +1,8 @@
 package kyo.internal.mysql.unmarshaller
 
 import kyo.*
-import kyo.SqlException
+import kyo.SqlDecodeException
+import kyo.SqlDecodeProtocolFormatException
 import kyo.internal.mysql.BinaryResultsetRow
 import kyo.internal.mysql.MysqlBufferReader
 import kyo.internal.mysql.Unmarshaller
@@ -27,7 +28,7 @@ import kyo.internal.mysql.Unmarshaller
 final class BinaryResultsetRowUnmarshaller(numColumns: Int, columnTypes: Chunk[Int])
     extends Unmarshaller[BinaryResultsetRow]:
 
-    def read(buf: MysqlBufferReader)(using Frame): BinaryResultsetRow < Abort[SqlException.Decode] =
+    def read(buf: MysqlBufferReader)(using Frame): BinaryResultsetRow < Abort[SqlDecodeException] =
         // null-bitmap length: ceil((numColumns + 2 + 7) / 8), the +2 is the historical offset
         val bitmapLen = (numColumns + 2 + 7) / 8
         buf.readBytes(bitmapLen).flatMap { nullBitmap =>
@@ -40,9 +41,9 @@ final class BinaryResultsetRowUnmarshaller(numColumns: Int, columnTypes: Chunk[I
     private def readColumns(
         buf: MysqlBufferReader,
         nullBitmap: Span[Byte]
-    )(using Frame): Chunk[Maybe[Span[Byte]]] < Abort[SqlException.Decode] =
+    )(using Frame): Chunk[Maybe[Span[Byte]]] < Abort[SqlDecodeException] =
         val b = Chunk.newBuilder[Maybe[Span[Byte]]]
-        def loop(i: Int): Chunk[Maybe[Span[Byte]]] < Abort[SqlException.Decode] =
+        def loop(i: Int): Chunk[Maybe[Span[Byte]]] < Abort[SqlDecodeException] =
             if i >= numColumns then b.result()
             else
                 // Check null-bitmap: bit (i+2) of the bitmap
@@ -78,7 +79,7 @@ final class BinaryResultsetRowUnmarshaller(numColumns: Int, columnTypes: Chunk[I
       */
     private def readColumnValue(buf: MysqlBufferReader, colType: Int)(using
         Frame
-    ): Span[Byte] < Abort[SqlException.Decode] =
+    ): Span[Byte] < Abort[SqlDecodeException] =
         colType match
             case 0x01        => buf.readBytes(1) // TINY
             case 0x02 | 0x0d => buf.readBytes(2) // SHORT, YEAR
@@ -89,11 +90,7 @@ final class BinaryResultsetRowUnmarshaller(numColumns: Int, columnTypes: Chunk[I
                 // Variable-length types: lenenc-string
                 buf.readLenencInt().flatMap {
                     case Maybe.Absent =>
-                        Abort.fail(SqlException.Decode(
-                            "Unexpected 0xFF sentinel in binary resultset column length",
-                            Maybe.Absent,
-                            summon[Frame]
-                        ))
+                        Abort.fail(SqlDecodeProtocolFormatException(0xff.toByte, buf.position))
                     case Maybe.Present(len) =>
                         buf.readBytes(len.toInt)
                 }

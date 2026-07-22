@@ -1,8 +1,10 @@
 package kyo.internal.mysql
 
 import kyo.*
+import kyo.SqlDecodeColumnNotFoundException
+import kyo.SqlDecodeColumnNullException
+import kyo.SqlDecodeException
 import kyo.SqlDecoder
-import kyo.SqlException
 import kyo.internal.postgres.types.Format
 
 /** A single row from a MySQL result set.
@@ -46,15 +48,15 @@ final class MysqlRow(
     end column
 
     /** Decodes the column at `idx` using the provided [[Decoder]]. */
-    def columnAs[A](idx: Int)(using d: SqlDecoder[A])(using Frame): A < Abort[SqlException.Decode] =
+    def columnAs[A](idx: Int)(using d: SqlDecoder[A])(using Frame): A < Abort[SqlDecodeException] =
         column(idx) match
-            case Maybe.Absent => Abort.fail(SqlException.Decode(s"Column $idx is NULL or out of bounds", Maybe.Absent, summon[Frame]))
+            case Maybe.Absent         => Abort.fail(SqlDecodeColumnNullException(idx))
             case Maybe.Present(bytes) => d.decode(bytes)
 
     /** Decodes the column with `name` using the provided [[Decoder]]. */
-    def columnAs[A](name: String)(using d: SqlDecoder[A])(using Frame): A < Abort[SqlException.Decode] =
+    def columnAs[A](name: String)(using d: SqlDecoder[A])(using Frame): A < Abort[SqlDecodeException] =
         column(name) match
-            case Maybe.Absent => Abort.fail(SqlException.Decode(s"Column '$name' is NULL or not found", Maybe.Absent, summon[Frame]))
+            case Maybe.Absent         => Abort.fail(SqlDecodeColumnNotFoundException(name))
             case Maybe.Present(bytes) => d.decode(bytes)
 
     override def toString: String =

@@ -55,7 +55,7 @@ sealed abstract class SqlClient:
       * If a transaction is active in the current fiber (via [[SqlClient.txLocal]]), uses the bound connection directly. Otherwise acquires a
       * connection from the pool.
       *
-      * NOTE: If the pool has been closed (via [[close]]), this method surfaces [[SqlException.Connection]] rather than [[kyo.Closed]].
+      * NOTE: If the pool has been closed (via [[close]]), this method surfaces [[SqlConnectionException]] rather than [[kyo.Closed]].
       * See [[close]] for the rationale.
       */
     def query(sql: String)(using Frame): Chunk[SqlRow] < (Async & Abort[SqlException]) =
@@ -70,11 +70,7 @@ sealed abstract class SqlClient:
                 // MySQL transaction: use simple query on the bound connection (params must be empty).
                 // For parameterized queries inside a MySQL transaction, use MysqlConnection.extendedQuery directly.
                 if rendered.params.nonEmpty then
-                    Abort.fail(SqlException.Request(
-                        "Parameterized query inside a MySQL transaction requires MysqlConnection.extendedQuery directly.",
-                        Maybe.Absent,
-                        summon[Frame]
-                    ))
+                    Abort.fail(SqlRequestMysqlTxRequiresConnectionApiException("query"))
                 else
                     ctx.connection.simpleQuery(rendered.sql).map(rows =>
                         rows.map(r =>
@@ -110,11 +106,7 @@ sealed abstract class SqlClient:
                 // MySQL transaction: route through simple execute (params must be empty).
                 // For parameterized DML inside a MySQL transaction, use MysqlConnection.extendedExecute directly.
                 if rendered.params.nonEmpty then
-                    Abort.fail(SqlException.Request(
-                        "Parameterized execute inside a MySQL transaction requires MysqlConnection.extendedExecute directly.",
-                        Maybe.Absent,
-                        summon[Frame]
-                    ))
+                    Abort.fail(SqlRequestMysqlTxRequiresConnectionApiException("execute"))
                 else
                     ctx.connection.simpleExecute(rendered.sql)
             case Absent =>
@@ -152,11 +144,7 @@ sealed abstract class SqlClient:
                     // transaction holds the connection for the full transaction lifetime.
                     ctx.connection.streamQuery(rendered.sql, rendered.params.flatMap(SqlClientBackend.boundToPostgres), batchSize).emit
                 case Present(_: TransactionContext.Mysql) =>
-                    Abort.fail(SqlException.Request(
-                        "Use MysqlConnection.streamQuery inside a MySQL transaction",
-                        Maybe.Absent,
-                        summon[Frame]
-                    ))
+                    Abort.fail(SqlRequestMysqlTxRequiresConnectionApiException("streamQuery"))
                 case Absent =>
                     SqlClient.local.use { (_, config) =>
                         self.backend.streamBound(
@@ -224,11 +212,7 @@ sealed abstract class SqlClient:
                 ctx.connection.extendedQuery(pgSql, params)
             case Present(myCtx: TransactionContext.Mysql) =>
                 if params.nonEmpty then
-                    Abort.fail(SqlException.Request(
-                        "Parameterized query inside a MySQL transaction requires MysqlConnection.extendedQuery directly.",
-                        Maybe.Absent,
-                        summon[Frame]
-                    ))
+                    Abort.fail(SqlRequestMysqlTxRequiresConnectionApiException("query"))
                 else
                     myCtx.connection.simpleQuery(sql).map(rows =>
                         rows.map(r =>
@@ -255,11 +239,7 @@ sealed abstract class SqlClient:
                 ctx.connection.extendedExecute(pgSql, params)
             case Present(myCtx: TransactionContext.Mysql) =>
                 if params.nonEmpty then
-                    Abort.fail(SqlException.Request(
-                        "Parameterized execute inside a MySQL transaction requires MysqlConnection.extendedExecute directly.",
-                        Maybe.Absent,
-                        summon[Frame]
-                    ))
+                    Abort.fail(SqlRequestMysqlTxRequiresConnectionApiException("execute"))
                 else
                     myCtx.connection.simpleExecute(sql)
             case Absent =>
@@ -279,11 +259,7 @@ sealed abstract class SqlClient:
                 case Present(ctx: TransactionContext.Postgres) =>
                     ctx.connection.streamQuery(pgSql, params, batchSize).emit
                 case Present(_: TransactionContext.Mysql) =>
-                    Abort.fail(SqlException.Request(
-                        "Use MysqlConnection.streamQuery inside a MySQL transaction",
-                        Maybe.Absent,
-                        summon[Frame]
-                    ))
+                    Abort.fail(SqlRequestMysqlTxRequiresConnectionApiException("streamQuery"))
                 case Absent =>
                     SqlClient.local.use { (_, config) =>
                         self.backend.streamQuery(self.url.address, self.url.password, pgSql, params, batchSize, config).emit
@@ -302,13 +278,13 @@ sealed abstract class SqlClient:
       *
       * ==Error types==
       * This method can abort with any [[SqlException]] subtype:
-      *   - [[SqlException.Connection]], pool exhausted, TCP failure, or acquire timeout before the query was sent.
-      *   - [[SqlException.Request]], SQL serialization or parameter encoding failure before the query was sent.
-      *   - [[SqlException.Server]], the database rejected the query and returned an error response.
-      *   - [[SqlException.Decode]], the query succeeded but a returned column value could not be converted to the target Scala type.
+      *   - [[SqlConnectionException]], pool exhausted, TCP failure, or acquire timeout before the query was sent.
+      *   - [[SqlRequestException]], SQL serialization or parameter encoding failure before the query was sent.
+      *   - [[SqlServerException]], the database rejected the query and returned an error response.
+      *   - [[SqlDecodeException]], the query succeeded but a returned column value could not be converted to the target Scala type.
       *     Each row is decoded independently; a `Decode` failure on one row aborts the entire `Chunk` result. Check the [[SqlSchema]]
       *     derivation or widen the column type to diagnose.
-      *   - [[SqlException.Unsupported]], the [[SqlSchema]] decoder called a structural read operation (array, map) that the backend
+      *   - [[SqlUnsupportedException]], the [[SqlSchema]] decoder called a structural read operation (array, map) that the backend
       *     does not yet implement. Re-derive the schema without the unsupported structural type, or supply a custom decoder via
       *     [[SqlSchema.withDecoder]].
       *
@@ -340,10 +316,10 @@ sealed abstract class SqlClient:
         val isPg = self.url.address.driver == "postgres"
         rowsK.map { rows =>
             Kyo.foreach(rows) { row =>
-                val decodeK: A < Abort[SqlException.Decode] =
+                val decodeK: A < Abort[SqlDecodeException] =
                     if isPg then schema.readPostgres(row) else schema.readMysql(row)
-                Abort.recover[SqlException.Decode](
-                    (e: SqlException.Decode) => Abort.fail(e: SqlException),
+                Abort.recover[SqlDecodeException](
+                    (e: SqlDecodeException) => Abort.fail(e: SqlException),
                     t => Abort.error(Result.Panic(t))
                 )(decodeK)
             }
@@ -438,8 +414,8 @@ sealed abstract class SqlClient:
       *   maximum time to wait for in-flight queries to complete; `Duration.Zero` forces an immediate close
       *
       * NOTE: Operations attempted after `close` (including operations on other methods of this client) will surface as
-      * [[SqlException.Connection]], not [[kyo.Closed]]. This is a deliberate design choice: `SqlClient`'s entire public surface is
-      * uniformly typed `Abort[SqlException]`, and `SqlException.Connection` correctly models "cannot reach the database" regardless of
+      * [[SqlConnectionException]], not [[kyo.Closed]]. This is a deliberate design choice: `SqlClient`'s entire public surface is
+      * uniformly typed `Abort[SqlException]`, and `SqlConnectionException` correctly models "cannot reach the database" regardless of
       * whether the cause is a network failure or a closed pool. `kyo.Closed` is the idiom for kernel concurrency primitives
       * (`Channel`/`Queue`/`Hub`); it is not a subtype of `SqlException` and adding it to every method's effect row would double every
       * caller's error-handling burden for one failure mode already covered.
@@ -483,7 +459,7 @@ sealed abstract class SqlClient:
       *
       * The `handle` is obtained from [[cancellableQuery]]. This method opens a brand-new TCP connection (never acquires from the pool),
       * sends the 16-byte cancel packet, and closes the connection. The server will interrupt the query identified by the handle's
-      * `(processId, secretKey)` pair, causing the query fiber to receive a [[SqlException.Server]] with SQLSTATE `57014`.
+      * `(processId, secretKey)` pair, causing the query fiber to receive a [[SqlServerException]] with SQLSTATE `57014`.
       *
       * If the query has already completed, the cancel is a no-op (the server finds no matching active query).
       */
@@ -985,7 +961,7 @@ sealed abstract class SqlClient:
       * acquiring twice from the same pinned connection increments an internal counter that the two matching unlocks decrement.
       *
       * MySQL: runs `SELECT GET_LOCK('key', timeoutSeconds)` on the pinned connection. `GET_LOCK` returns 1 on success, 0 on timeout,
-      * NULL on error; anything other than 1 raises [[SqlException.Request]] and skips `body`. On success, executes `body`, then always
+      * NULL on error; anything other than 1 raises [[SqlRequestException]] and skips `body`. On success, executes `body`, then always
       * runs `SELECT RELEASE_LOCK('key')` on the same connection.
       *
       * @param key
@@ -1119,7 +1095,7 @@ object SqlClient:
           *
           * Carries the `(processId, secretKey)` pair from `BackendKeyData` and the TLS configuration. To cancel, open a fresh TCP connection
           * (never from the pool), send a 16-byte `CancelRequest`, and close. The database will abort the query identified by this pair, causing
-          * the query fiber to receive a [[SqlException.Server]] with SQLSTATE `57014`.
+          * the query fiber to receive a [[SqlServerException]] with SQLSTATE `57014`.
           *
           * @param address
           *   server address
@@ -1550,7 +1526,7 @@ object SqlClient:
           * echoes back and always uploads `data` unconditionally.
           *
           * The CLIENT_LOCAL_FILES capability is negotiated automatically. The server must also have `local_infile=ON` (MySQL system
-          * variable); otherwise the server rejects the statement with [[SqlException.Server]].
+          * variable); otherwise the server rejects the statement with [[SqlServerException]].
           *
           * @param sql
           *   a `LOAD DATA LOCAL INFILE 'filename' INTO TABLE ...` statement
@@ -1829,7 +1805,7 @@ object SqlClient:
       * The client is available for the lifetime of the enclosing [[Scope]]. Warmup runs before `f` is called, so connections are ready.
       *
       * Effect set: `Async & Scope & Abort[SqlException] & S` (wider than Channel's `Sync & Scope & S` because warmup is async; auth
-      * failures during warm-up surface as [[SqlException.Server]], not wrapped as [[SqlException.Connection]]).
+      * failures during warm-up surface as [[SqlServerException]], not wrapped as [[SqlConnectionException]]).
       *
       * @tparam B
       *   the result type of `f`
@@ -1865,10 +1841,7 @@ object SqlClient:
     ): B < (S & Async & Scope & Abort[SqlException]) =
         Abort.get(SqlConfig.Url.parse(rawUrl)).flatMap { url =>
             if url.address.driver != "postgres" then
-                Abort.fail(SqlException.Connection(
-                    s"SqlClient.init requires a postgres:// URL; got '${url.address.driver}://'. Use SqlClient.initMysql for mysql:// URLs.",
-                    summon[Frame]
-                ))
+                Abort.fail(SqlConnectionUrlParseException(rawUrl, url.address.driver))
             else
                 SqlClient.sanitizeTypeNames(config.typeNames).flatMap { _ =>
                     SqlClient.mergeConfig(url, config).flatMap { mergedConfig =>
@@ -1932,10 +1905,7 @@ object SqlClient:
     ): B < (S & Async & Abort[SqlException]) =
         Abort.get(SqlConfig.Url.parse(rawUrl)).flatMap { url =>
             if url.address.driver != "postgres" then
-                Abort.fail(SqlException.Connection(
-                    s"SqlClient.use requires a postgres:// URL; got '${url.address.driver}://'. Use SqlClient.useMysql for mysql:// URLs.",
-                    summon[Frame]
-                ))
+                Abort.fail(SqlConnectionUrlParseException(rawUrl, url.address.driver))
             else
                 SqlClient.sanitizeTypeNames(config.typeNames).flatMap { _ =>
                     SqlClient.mergeConfig(url, config).flatMap { mergedConfig =>
@@ -2013,10 +1983,7 @@ object SqlClient:
     ): B < (S & Async & Abort[SqlException]) =
         Abort.get(SqlConfig.Url.parse(rawUrl)).flatMap { url =>
             if url.address.driver != "postgres" then
-                Abort.fail(SqlException.Connection(
-                    s"SqlClient.initUnscoped requires a postgres:// URL; got '${url.address.driver}://'. Use SqlClient.initMysqlUnscoped for mysql:// URLs.",
-                    summon[Frame]
-                ))
+                Abort.fail(SqlConnectionUrlParseException(rawUrl, url.address.driver))
             else
                 SqlClient.sanitizeTypeNames(config.typeNames).flatMap { _ =>
                     SqlClient.mergeConfig(url, config).flatMap { mergedConfig =>
@@ -2088,10 +2055,7 @@ object SqlClient:
     ): B < (S & Async & Scope & Abort[SqlException]) =
         Abort.get(SqlConfig.Url.parse(rawUrl)).flatMap { url =>
             if url.address.driver != "mysql" then
-                Abort.fail(SqlException.Connection(
-                    s"SqlClient.initMysql requires a mysql:// URL; got '${url.address.driver}://'. Use SqlClient.init for postgres:// URLs.",
-                    summon[Frame]
-                ))
+                Abort.fail(SqlConnectionUrlParseException(rawUrl, url.address.driver))
             else
                 SqlClient.mergeConfig(url, config).flatMap { mergedConfig =>
                     // Unsafe: ConnectionPool.init uses AllowUnsafe for ring-buffer initialisation.
@@ -2151,10 +2115,7 @@ object SqlClient:
     ): B < (S & Async & Abort[SqlException]) =
         Abort.get(SqlConfig.Url.parse(rawUrl)).flatMap { url =>
             if url.address.driver != "mysql" then
-                Abort.fail(SqlException.Connection(
-                    s"SqlClient.useMysql requires a mysql:// URL; got '${url.address.driver}://'. Use SqlClient.use for postgres:// URLs.",
-                    summon[Frame]
-                ))
+                Abort.fail(SqlConnectionUrlParseException(rawUrl, url.address.driver))
             else
                 SqlClient.mergeConfig(url, config).flatMap { mergedConfig =>
                     val backend: MysqlSqlClientBackend < Sync = Sync.Unsafe.defer {
@@ -2221,10 +2182,7 @@ object SqlClient:
     ): B < (S & Async & Abort[SqlException]) =
         Abort.get(SqlConfig.Url.parse(rawUrl)).flatMap { url =>
             if url.address.driver != "mysql" then
-                Abort.fail(SqlException.Connection(
-                    s"SqlClient.initMysqlUnscoped requires a mysql:// URL; got '${url.address.driver}://'. Use SqlClient.initUnscoped for postgres:// URLs.",
-                    summon[Frame]
-                ))
+                Abort.fail(SqlConnectionUrlParseException(rawUrl, url.address.driver))
             else
                 SqlClient.mergeConfig(url, config).flatMap { mergedConfig =>
                     val backend: MysqlSqlClientBackend < Sync = Sync.Unsafe.defer {
@@ -2256,9 +2214,9 @@ object SqlClient:
     /** Reads the active client and applies `f` to it.
       *
       * Effect row widens to `Abort[SqlException]` so callers carrying that effect row (`.run` / `.runDynamic`) compose without an extra
-      * `Abort.fold`/`Abort.run` layer. The Absent branch raises a typed `SqlException.Connection`; the Present branch is fully transparent.
+      * `Abort.fold`/`Abort.run` layer. The Absent branch raises a typed `SqlConnectionException`; the Present branch is fully transparent.
       *
-      * IMPORTANT: Fails at runtime with [[SqlException.Connection]] if no client is active in the current fiber, wrap the computation in
+      * IMPORTANT: Fails at runtime with [[SqlConnectionException]] if no client is active in the current fiber, wrap the computation in
       * [[SqlClient.let]] first.
       *
       * @tparam A
@@ -2272,10 +2230,7 @@ object SqlClient:
         SqlClient.local.use { (maybeClient, _) =>
             maybeClient match
                 case Absent =>
-                    Abort.fail(SqlException.Connection(
-                        "No SqlClient active, wrap the computation in SqlClient.let(client) { ... }",
-                        summon[Frame]
-                    ))
+                    Abort.fail(SqlConnectionNoActiveClientException())
                 case Present(client) =>
                     f(client)
         }
@@ -2337,10 +2292,7 @@ object SqlClient:
             SqlClient.local.use { (maybeClient, _) =>
                 maybeClient match
                     case Absent =>
-                        Abort.fail(SqlException.Connection(
-                            "No SqlClient active, wrap the computation in SqlClient.let(client) { ... }",
-                            summon[Frame]
-                        ))
+                        Abort.fail(SqlConnectionNoActiveClientException())
                     case Present(c) =>
                         c.notifications(channel).emit
             }
@@ -2348,7 +2300,7 @@ object SqlClient:
 
     /** Runs `f` with the active client when it is Postgres-backed.
       *
-      * Fails at runtime with `SqlException.Connection` if the active client is backed by MySQL. Use this to reach Postgres-only methods
+      * Fails at runtime with `SqlConnectionException` if the active client is backed by MySQL. Use this to reach Postgres-only methods
       * (`copyIn`, `copyOut`, `pipeline`, `cancellableQuery`) with a typed driver-mismatch failure surfaced early.
       *
       * @tparam A
@@ -2362,22 +2314,18 @@ object SqlClient:
         SqlClient.local.use { (maybeClient, _) =>
             maybeClient match
                 case Absent =>
-                    Abort.fail(SqlException.Connection(
-                        "No SqlClient active, wrap the computation in SqlClient.let(client) { ... }",
-                        summon[Frame]
-                    ))
+                    Abort.fail(SqlConnectionNoActiveClientException())
                 case Present(client) if client.url.address.driver == "postgres" =>
                     f(client)
                 case Present(client) =>
-                    Abort.fail(SqlException.Connection(
-                        s"usePostgres requires a Postgres client; active client is '${client.url.address.driver}'",
-                        summon[Frame]
-                    ))
+                    val activeBackend =
+                        if client.url.address.driver == "mysql" then SqlBackend.Mysql else SqlBackend.Postgres
+                    Abort.fail(SqlConnectionBackendMismatchException(SqlBackend.Postgres, activeBackend, "usePostgres"))
         }
 
     /** Runs `f` with the active client when it is MySQL-backed.
       *
-      * Fails at runtime with `SqlException.Connection` if the active client is backed by Postgres.
+      * Fails at runtime with `SqlConnectionException` if the active client is backed by Postgres.
       *
       * @tparam A
       *   the result type of `f`
@@ -2390,17 +2338,13 @@ object SqlClient:
         SqlClient.local.use { (maybeClient, _) =>
             maybeClient match
                 case Absent =>
-                    Abort.fail(SqlException.Connection(
-                        "No SqlClient active, wrap the computation in SqlClient.let(client) { ... }",
-                        summon[Frame]
-                    ))
+                    Abort.fail(SqlConnectionNoActiveClientException())
                 case Present(client) if client.url.address.driver == "mysql" =>
                     f(client)
                 case Present(client) =>
-                    Abort.fail(SqlException.Connection(
-                        s"useMysql requires a MySQL client; active client is '${client.url.address.driver}'",
-                        summon[Frame]
-                    ))
+                    val activeBackend =
+                        if client.url.address.driver == "postgres" then SqlBackend.Postgres else SqlBackend.Mysql
+                    Abort.fail(SqlConnectionBackendMismatchException(SqlBackend.Mysql, activeBackend, "useMysql"))
         }
 
     /** Validates that each type name in `names` does not contain characters that would break SQL literal interpolation.
@@ -2409,23 +2353,20 @@ object SqlClient:
       * (`SELECT typname, oid FROM pg_type WHERE typname IN ('a', 'b')`). Any name containing these characters would corrupt the query or
       * allow injection. Type names are expected to be simple identifiers (e.g. `hstore`, `geometry`, `vector`).
       */
-    private def sanitizeTypeNames(names: Set[String])(using Frame): Unit < Abort[SqlException.Connection] =
+    private def sanitizeTypeNames(names: Set[String])(using Frame): Unit < Abort[SqlConnectionException] =
         val invalid = names.filter(n => n.contains('\'') || n.contains('\\'))
         if invalid.nonEmpty then
-            Abort.fail(SqlException.Connection(
-                s"invalid type name(s) ${invalid.mkString(", ")}: must not contain single-quote or backslash",
-                summon[Frame]
-            ))
+            Abort.fail(SqlConnectionInvalidTypeNameException(Chunk.from(invalid)))
         else ()
         end if
     end sanitizeTypeNames
 
     /** Merges [[SqlConfig]] overrides with defaults derived from the URL.
       *
-      * Calls [[SqlConfig.Url.toConfig]] which delegates to [[kyo.internal.tls.TlsContext.build]]; fails with [[SqlException.Connection]] for
+      * Calls [[SqlConfig.Url.toConfig]] which delegates to [[kyo.internal.tls.TlsContext.build]]; fails with [[SqlConnectionException]] for
       * invalid sslmode + sslrootcert combinations (e.g., `verify-ca` without `sslrootcert`).
       */
-    private def mergeConfig(url: SqlConfig.Url, config: SqlConfig)(using Frame): SqlConfig < Abort[SqlException.Connection] =
+    private def mergeConfig(url: SqlConfig.Url, config: SqlConfig)(using Frame): SqlConfig < Abort[SqlConnectionException] =
         url.toConfig.map { urlConfig =>
             urlConfig.copy(
                 maxConnections = config.maxConnections,

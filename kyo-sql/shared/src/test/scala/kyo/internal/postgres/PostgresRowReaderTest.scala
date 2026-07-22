@@ -6,8 +6,12 @@ import kyo.Frame
 import kyo.Instant
 import kyo.Maybe
 import kyo.Span
+import kyo.SqlDecodeColumnNullException
+import kyo.SqlDecodeEmptyStringForCharException
+import kyo.SqlDecodeException
 import kyo.SqlException
 import kyo.SqlRow
+import kyo.SqlUnsupportedException
 import kyo.Test
 import kyo.internal.postgres.types.Format
 import kyo.internal.postgres.types.PostgresDecoder
@@ -246,11 +250,11 @@ class PostgresRowReaderTest extends Test:
         assert(r.isNil() == true)
         // isNil must not advance: calling it twice returns true both times.
         assert(r.isNil() == true)
-        // And reading after isNil on a null column should throw SqlException.Decode.
-        val ex = intercept[SqlException.Decode] {
+        // And reading after isNil on a null column should throw SqlDecodeColumnNullException.
+        val ex = intercept[SqlDecodeColumnNullException] {
             r.int()
         }
-        assert(ex.message.contains("column 0 is NULL"))
+        assert(ex.columnIndex == 0, s"expected columnIndex 0, got: ${ex.columnIndex}")
         succeed
     }
 
@@ -262,24 +266,24 @@ class PostgresRowReaderTest extends Test:
         assert(r.int() == 99)
     }
 
-    "reading an empty-string column as Char throws SqlException.Decode with original message" in {
+    "reading an empty-string column as Char throws SqlDecodeException with original message" in {
         val emptyTextBytes = Span.from("".getBytes(java.nio.charset.StandardCharsets.UTF_8))
         val row            = binaryRow(emptyTextBytes)
         val r              = reader(row)
-        val ex = intercept[SqlException.Decode] {
+        val ex = intercept[SqlDecodeEmptyStringForCharException] {
             r.char()
         }
-        assert(ex.message.contains("column 0 is an empty string, cannot read as Char"))
+        assert(ex.columnIndex == 0, s"expected columnIndex 0, got: ${ex.columnIndex}")
         succeed
     }
 
-    "arrayStart on a flat SQL row throws SqlException.Decode with unrecognised OID message" in {
+    "arrayStart on a flat SQL row throws SqlDecodeException with unrecognised OID message" in {
         // Use int4 OID (23) so the OID-mismatch check fires before any binary parsing.
         val int4Oid = 23
         val fdInt4  = FieldDescription("column", 0, 0, int4Oid, 0, 0, 1)
         val row     = new SqlRow(Chunk(Maybe.Present(encode(1, PostgresEncoder.int4Binary))), Chunk(fdInt4), Format.Binary)
         val r       = new PostgresRowReader(row)
-        val ex = intercept[SqlException.Decode] {
+        val ex = intercept[SqlDecodeException] {
             r.arrayStart()
         }
         assert(ex.message.contains("not a recognised array OID"))
@@ -477,17 +481,17 @@ class PostgresRowReaderTest extends Test:
             succeed
         }
 
-        "arrayStart on a non-array OID raises SqlException.Decode (not Unsupported)" in {
+        "arrayStart on a non-array OID raises SqlDecodeException (not Unsupported)" in {
             // OID 23 = int4 (not an array OID)
             val intBytes = pgInt4ArrayBytes() // use any bytes; the OID check happens first
             val row      = pgRowCols(("col", Span.from(Array[Byte](0, 0, 0, 42)), 23))
             val reader   = new PostgresRowReader(row)
             try
                 val _ = reader.arrayStart()
-                fail("Expected SqlException.Decode but no exception was thrown")
+                fail("Expected SqlDecodeException but no exception was thrown")
             catch
-                case _: SqlException.Decode      => succeed
-                case _: SqlException.Unsupported => fail("Got Unsupported, expected Decode")
+                case _: SqlDecodeException      => succeed
+                case _: SqlUnsupportedException => fail("Got Unsupported, expected Decode")
             end try
         }
 

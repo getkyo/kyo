@@ -112,7 +112,7 @@ class SqlClientLogTest extends Test:
 
     /** Postgres ErrorResponse with SQLSTATE=42601 (syntax error) + ReadyForQuery.
       *
-      * Sent after startup to simulate a server-side query error. Triggers SqlException.Server.
+      * Sent after startup to simulate a server-side query error. Triggers SqlServerException.
       *
       * ErrorResponse body:
       *   - `S` "ERROR\0" (severity)
@@ -262,7 +262,7 @@ class SqlClientLogTest extends Test:
                 val url  = fakeUrl(port)
                 withLogCapture { sink =>
                     Log.let(Log(sink)) {
-                        Abort.run[SqlException.Connection](
+                        Abort.run[SqlConnectionException](
                             SqlClient.init(url, logTestConfig(maxConns = 2, acquireTimeout = 5.seconds))
                         ).flatMap {
                             case Result.Success(client) =>
@@ -301,7 +301,7 @@ class SqlClientLogTest extends Test:
                 val url  = fakeUrl(port)
                 withLogCapture { sink =>
                     Log.let(Log(sink)) {
-                        Abort.run[SqlException.Connection](
+                        Abort.run[SqlConnectionException](
                             SqlClient.init(url, logTestConfig(maxConns = 2, acquireTimeout = 5.seconds))
                         ).flatMap {
                             case Result.Success(client) =>
@@ -330,7 +330,7 @@ class SqlClientLogTest extends Test:
 
     "retry attempt emits a warn-level log with attempt number" in {
         // Build a fake PG server that rejects the first TCP connection (closes immediately,
-        // triggering SqlException.Connection) and accepts subsequent ones normally.
+        // triggering SqlConnectionException) and accepts subsequent ones normally.
         // The retry warn log must come from SqlClientBackend.retryWith, not from the test body.
         Scope.run {
             val connectionCount: AtomicInt =
@@ -340,7 +340,7 @@ class SqlClientLogTest extends Test:
                 connectionCount.getAndIncrement.flatMap { n =>
                     if n == 0 then
                         // First connection: read the startup message then close without replying.
-                        // Explicitly close the connection so the client gets EOF → SqlException.Connection.
+                        // Explicitly close the connection so the client gets EOF → SqlConnectionException.
                         Abort.run[Closed](conn.inbound.safe.take).andThen(Sync.Unsafe.defer(conn.close()))
                     else
                         // Subsequent connections: full trust-auth flow.
@@ -356,7 +356,7 @@ class SqlClientLogTest extends Test:
                 )
                 withLogCapture { sink =>
                     Log.let(Log(sink)) {
-                        Abort.run[SqlException.Connection](
+                        Abort.run[SqlConnectionException](
                             SqlClient.init(url, retryConfig)
                         ).flatMap {
                             case Result.Success(client) =>
@@ -397,7 +397,7 @@ class SqlClientLogTest extends Test:
                 val url  = fakeUrl(port)
                 withLogCapture { sink =>
                     Log.let(Log(sink)) {
-                        Abort.run[SqlException.Connection](
+                        Abort.run[SqlConnectionException](
                             SqlClient.init(url, logTestConfig(maxConns = 2, acquireTimeout = 5.seconds))
                         ).flatMap {
                             case Result.Success(client) =>
@@ -408,7 +408,7 @@ class SqlClientLogTest extends Test:
                                     SqlClient.let(client)(
                                         Async.timeoutWithError(
                                             5.seconds,
-                                            Result.Failure(SqlException.Connection("tx test timed out", summon[Frame]))
+                                            Result.Failure(SqlConnectionQueryTimeoutException(5.seconds))
                                         )(
                                             client.transaction {
                                                 client.executeRaw("SELECT 1")
@@ -448,7 +448,7 @@ class SqlClientLogTest extends Test:
                 val url  = fakeUrl(port)
                 withLogCapture { sink =>
                     Log.let(Log(sink)) {
-                        Abort.run[SqlException.Connection](
+                        Abort.run[SqlConnectionException](
                             SqlClient.init(url, logTestConfig(maxConns = 2, acquireTimeout = 5.seconds))
                         ).flatMap {
                             case Result.Success(client) =>
@@ -500,21 +500,18 @@ class SqlClientLogTest extends Test:
                             Abort.run[SqlException](
                                 Async.timeoutWithError(
                                     acquireTimeout,
-                                    Result.Failure(SqlException.Connection(
-                                        s"Timed out waiting $acquireTimeout for a connection (pool exhausted)",
-                                        summon[Frame]
-                                    ))
+                                    Result.Failure(SqlConnectionAcquireTimeoutException(acquireTimeout))
                                 )(
                                     Abort.run[Closed](ch.take).flatMap {
                                         case Result.Success(()) => ()
-                                        case Result.Failure(_)  => Abort.fail(SqlException.Connection("pool closed", summon[Frame]))
+                                        case Result.Failure(_)  => Abort.fail(SqlConnectionPoolClosedException())
                                         case Result.Panic(t)    => Abort.error(Result.Panic(t))
                                     }
                                 )
                             ).flatMap { timeoutResult =>
                                 // Log the timeout, we only care that the log fires; discard the error.
                                 timeoutResult match
-                                    case Result.Failure(SqlException.Connection(msg, _)) if msg.startsWith("Timed out") =>
+                                    case Result.Failure(_: SqlConnectionAcquireTimeoutException) =>
                                         Log.warn(s"kyo.sql: pool acquire timeout after $acquireTimeout poolSize=$maxConnections")
                                     case _ => ()
                             }
@@ -567,7 +564,7 @@ class SqlClientLogTest extends Test:
                 val url      = s"postgres://testuser:$password@127.0.0.1:$port/testdb"
                 withLogCapture { sink =>
                     Log.let(Log(sink)) {
-                        Abort.run[SqlException.Connection](
+                        Abort.run[SqlConnectionException](
                             SqlClient.init(url, logTestConfig(maxConns = 2, acquireTimeout = 5.seconds))
                         ).flatMap {
                             case Result.Success(client) =>
@@ -603,7 +600,7 @@ class SqlClientLogTest extends Test:
                 val paramValue = "my-secret-param-value-12345"
                 withLogCapture { sink =>
                     Log.let(Log(sink)) {
-                        Abort.run[SqlException.Connection](
+                        Abort.run[SqlConnectionException](
                             SqlClient.init(url, logTestConfig(maxConns = 2, acquireTimeout = 5.seconds))
                         ).flatMap {
                             case Result.Success(client) =>
@@ -646,7 +643,7 @@ class SqlClientLogTest extends Test:
                 val url  = fakeUrl(port)
                 withLogCapture { sink =>
                     Log.let(Log(sink)) {
-                        Abort.run[SqlException.Connection](
+                        Abort.run[SqlConnectionException](
                             SqlClient.init(url, logTestConfig(maxConns = 2, acquireTimeout = 5.seconds))
                         ).flatMap {
                             case Result.Success(client) =>

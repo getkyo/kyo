@@ -14,7 +14,7 @@ import kyo.internal.SqlSharedContainers
   *   6. nested SAVEPOINT on outer abort rolls back outer, full rollback
   *   7. REPEATABLE READ isolation level accepted, SET TRANSACTION ISOLATION LEVEL REPEATABLE READ
   *   8. SERIALIZABLE isolation level accepted, SET TRANSACTION ISOLATION LEVEL SERIALIZABLE
-  *   9. read-only rejects INSERT, SqlException.Server from the server
+  *   9. read-only rejects INSERT, SqlServerException from the server
   *   10. DDL implicit commit caveat, CREATE TABLE inside transaction commits, contradicting caller expectation
   *
   * Each test runs against a fresh schema in the per-fork-JVM shared MySQL container (via [[SqlSharedContainers.withFreshSchema]]).
@@ -91,7 +91,7 @@ class MysqlTransactionIntegrationTest extends kyo.Test:
                         result <- Abort.run[SqlException] {
                             client.transaction {
                                 client.executeRaw(s"INSERT INTO $tableName VALUES (2, 'rollback')").andThen(
-                                    Abort.fail(SqlException.Request("force rollback", kyo.Maybe.Absent, summon[Frame]))
+                                    Abort.fail(SqlServerException("XX000", "ERROR", "force rollback"))
                                 )
                             }
                         }
@@ -117,7 +117,7 @@ class MysqlTransactionIntegrationTest extends kyo.Test:
                             val txBody: Unit < (Async & Abort[SqlException]) =
                                 client.transaction {
                                     client.executeRaw(s"INSERT INTO $tableName VALUES (99)").andThen(
-                                        Abort.fail(SqlException.Request("simulated error", kyo.Maybe.Absent, summon[Frame]))
+                                        Abort.fail(SqlServerException("XX000", "ERROR", "simulated error"))
                                     )
                                 }
                             Abort.run[SqlException](txBody).flatMap { result =>
@@ -183,7 +183,7 @@ class MysqlTransactionIntegrationTest extends kyo.Test:
                                 _ <- Abort.run[SqlException] {
                                     client.transaction {
                                         client.executeRaw(s"INSERT INTO $tableName VALUES (2)").andThen(
-                                            Abort.fail(SqlException.Request("inner abort", kyo.Maybe.Absent, summon[Frame]))
+                                            Abort.fail(SqlServerException("XX000", "ERROR", "inner abort"))
                                         )
                                     }
                                 }
@@ -217,12 +217,12 @@ class MysqlTransactionIntegrationTest extends kyo.Test:
                                     _ <- Abort.run[SqlException] {
                                         client.transaction {
                                             client.executeRaw(s"INSERT INTO $tableName VALUES (20)").andThen(
-                                                Abort.fail(SqlException.Request("inner sp rollback", kyo.Maybe.Absent, summon[Frame]))
+                                                Abort.fail(SqlServerException("XX000", "ERROR", "inner sp rollback"))
                                             )
                                         }
                                     }
                                     // Inner failure swallowed; now force outer rollback.
-                                    _ <- Abort.fail(SqlException.Request("outer rollback", kyo.Maybe.Absent, summon[Frame]))
+                                    _ <- Abort.fail(SqlServerException("XX000", "ERROR", "outer rollback"))
                                 yield ()
                             }
                         }
@@ -285,7 +285,7 @@ class MysqlTransactionIntegrationTest extends kyo.Test:
 
     // ── read-only transaction rejects INSERT ──────────────────────────────────
 
-    "read-only transaction rejects INSERT, SqlException.Server raised" in {
+    "read-only transaction rejects INSERT, SqlServerException raised" in {
         Scope.run {
             SqlSharedContainers.withFreshSchema(SqlSharedContainers.Backend.MySQL) { ctx =>
                 initClient(ctx, maxConns = 1) { client =>
@@ -298,10 +298,10 @@ class MysqlTransactionIntegrationTest extends kyo.Test:
                         }.flatMap { result =>
                             client.executeRaw(s"DROP TABLE $tableName").map { _ =>
                                 result match
-                                    case Result.Failure(_: SqlException.Server) =>
+                                    case Result.Failure(_: SqlServerException) =>
                                         succeed // expected: server rejects INSERT in READ ONLY
                                     case Result.Failure(e) =>
-                                        fail(s"Expected SqlException.Server, got: $e")
+                                        fail(s"Expected SqlServerException, got: $e")
                                     case Result.Success(_) =>
                                         fail("Expected INSERT to fail in READ ONLY transaction, but it succeeded")
                                     case Result.Panic(t) =>
@@ -336,7 +336,7 @@ class MysqlTransactionIntegrationTest extends kyo.Test:
                                     // DDL causes implicit COMMIT of the INSERT above.
                                     _ <- client.executeRaw(s"CREATE TABLE $ddlTable (x INT)")
                                     // Force outer rollback via synthetic abort, verifies the INSERT survives.
-                                    _ <- Abort.fail(SqlException.Request("force rollback", kyo.Maybe.Absent, summon[Frame]))
+                                    _ <- Abort.fail(SqlServerException("XX000", "ERROR", "force rollback"))
                                 yield ()
                             }
                         }

@@ -1,6 +1,8 @@
 package kyo
 
 import kyo.SqlAst.*
+import kyo.SqlConnectionException
+import kyo.SqlServerException
 import kyo.internal.SqlRender
 import kyo.internal.SqlSharedContainers
 import kyo.internal.SqlSharedContainers.Backend
@@ -45,7 +47,7 @@ class SqlEndToEndTest extends Test:
     )(f: SqlClient => A < (S & Async & Abort[SqlException]))(using
         Frame
     ): A < (S & Async & Scope & Abort[SqlException]) =
-        Abort.run[SqlException.Connection](SqlClient.init(pgUrl(ctx))).flatMap {
+        Abort.run[SqlConnectionException](SqlClient.init(pgUrl(ctx))).flatMap {
             case Result.Success(client) =>
                 Scope.ensure(client.close).andThen(SqlClient.let(client)(f(client)))
             case Result.Failure(e) =>
@@ -59,7 +61,7 @@ class SqlEndToEndTest extends Test:
     )(f: SqlClient => A < (S & Async & Abort[SqlException]))(using
         Frame
     ): A < (S & Async & Scope & Abort[SqlException]) =
-        Abort.run[SqlException.Connection](SqlClient.initMysql(myUrl(ctx))).flatMap {
+        Abort.run[SqlConnectionException](SqlClient.initMysql(myUrl(ctx))).flatMap {
             case Result.Success(client) =>
                 Scope.ensure(client.close).andThen(SqlClient.let(client)(f(client)))
             case Result.Failure(e) =>
@@ -510,11 +512,7 @@ class SqlEndToEndTest extends Test:
                                         .values(Person(1L, "alice", 30))
                                         .run
                                         .flatMap { _ =>
-                                            Abort.fail[SqlException](SqlException.Request(
-                                                "intentional rollback",
-                                                Maybe.Absent,
-                                                summon[Frame]
-                                            ))
+                                            Abort.fail[SqlException](SqlServerException("XX000", "ERROR", "intentional rollback"))
                                         }
                                 }
                             )
@@ -543,11 +541,7 @@ class SqlEndToEndTest extends Test:
                                         .values(Person(1L, "alice", 30))
                                         .run
                                         .flatMap { _ =>
-                                            Abort.fail[SqlException](SqlException.Request(
-                                                "intentional rollback",
-                                                Maybe.Absent,
-                                                summon[Frame]
-                                            ))
+                                            Abort.fail[SqlException](SqlServerException("XX000", "ERROR", "intentional rollback"))
                                         }
                                 }
                             )

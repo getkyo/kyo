@@ -1,7 +1,7 @@
 package kyo.internal.postgres.unmarshaller
 
 import kyo.*
-import kyo.SqlException
+import kyo.SqlDecodeException
 import kyo.internal.postgres.PostgresBufferReader
 import kyo.internal.postgres.ReadyForQuery
 import kyo.internal.postgres.Unmarshaller
@@ -16,7 +16,7 @@ import kyo.internal.postgres.Unmarshaller
   * Reference: PostgreSQL §55.7 "ReadyForQuery"
   */
 object ReadyForQueryUnmarshaller extends Unmarshaller[ReadyForQuery]:
-    def read(buf: PostgresBufferReader)(using Frame): ReadyForQuery < Abort[SqlException.Decode] =
+    def read(buf: PostgresBufferReader)(using Frame): ReadyForQuery < Abort[SqlDecodeException] =
         buf.readByte().map { status =>
             ReadyForQuery(status)
         }

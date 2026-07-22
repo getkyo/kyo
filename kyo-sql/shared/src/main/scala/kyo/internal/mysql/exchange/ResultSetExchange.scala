@@ -1,6 +1,9 @@
 package kyo.internal.mysql.exchange
 
 import kyo.*
+import kyo.SqlConnectionProtocolDecodeException
+import kyo.SqlConnectionUnexpectedMessageException
+import kyo.SqlDecodeException
 import kyo.SqlException
 import kyo.internal.mysql.*
 import kyo.internal.mysql.unmarshaller.ColumnDefinition41Unmarshaller
@@ -43,9 +46,10 @@ private[mysql] object ResultSetExchange:
                         case err: ErrPacket =>
                             Abort.fail(MysqlErrors.mkServerError(err, sqlText, 0, connectionId))
                         case other =>
-                            Abort.fail(SqlException.Connection(
-                                s"Expected intermediate EOF/OK between column defs and rows, got: $other",
-                                summon[Frame]
+                            Abort.fail(SqlConnectionUnexpectedMessageException(
+                                "column defs",
+                                "EOF",
+                                other.toString
                             ))
                     }
             readRowsEffect
@@ -61,14 +65,14 @@ private[mysql] object ResultSetExchange:
         else
             channel.readRawPayload.flatMap { payload =>
                 val reader = MysqlBufferReader(payload)
-                Abort.run[SqlException.Decode](ColumnDefinition41Unmarshaller.read(reader)).flatMap {
+                Abort.run[SqlDecodeException](ColumnDefinition41Unmarshaller.read(reader)).flatMap {
                     case Result.Success(colDef) =>
                         readColumnDefs(channel, remaining - 1, acc.appended(colDef))
                     case Result.Failure(e) =>
-                        Abort.fail(SqlException.Connection(s"Column definition decode failed: ${e.message}", summon[Frame]))
+                        Abort.fail(SqlConnectionProtocolDecodeException("ColumnDefinition41", e))
                     case Result.Panic(t) =>
                         java.lang.System.err.println(s"[kyo-sql] ResultSetExchange: column def decode panic: ${t.getMessage}")
-                        Abort.fail(SqlException.Connection(s"Column definition decode panic: ${t.getMessage}", summon[Frame]))
+                        Abort.fail(SqlConnectionProtocolDecodeException("ColumnDefinition41", t))
                 }
             }
     end readColumnDefs
@@ -90,29 +94,29 @@ private[mysql] object ResultSetExchange:
             else if firstByte == 0xff then
                 // ERR packet mid-result
                 val reader = MysqlBufferReader(payload.slice(1, payload.size))
-                Abort.run[SqlException.Decode](
+                Abort.run[SqlDecodeException](
                     kyo.internal.mysql.unmarshaller.ErrPacketUnmarshaller.read(reader)
                 ).flatMap {
                     case Result.Success(err) => Abort.fail(MysqlErrors.mkServerError(err, sqlText, 0, connectionId))
-                    case Result.Failure(e)   => Abort.fail(SqlException.Connection(s"ERR decode failed: ${e.message}", summon[Frame]))
+                    case Result.Failure(e)   => Abort.fail(SqlConnectionProtocolDecodeException("ERR", e))
                     case Result.Panic(t) =>
                         java.lang.System.err.println(s"[kyo-sql] ResultSetExchange: ERR decode panic: ${t.getMessage}")
-                        Abort.fail(SqlException.Connection(s"ERR decode panic: ${t.getMessage}", summon[Frame]))
+                        Abort.fail(SqlConnectionProtocolDecodeException("ERR", t))
                 }
             else
                 // Row packet, decode as ResultsetRow
                 val reader          = MysqlBufferReader(payload)
                 val rowUnmarshaller = ResultsetRowUnmarshaller(columnDefs.size)
-                Abort.run[SqlException.Decode](rowUnmarshaller.read(reader)).flatMap {
+                Abort.run[SqlDecodeException](rowUnmarshaller.read(reader)).flatMap {
                     case Result.Success(row) =>
                         // Text protocol: values are ASCII-encoded per MySQL simple-query wire format.
                         val mysqlRow = new MysqlRow(row.values, columnDefs, kyo.internal.postgres.types.Format.Text)
                         readRows(channel, columnDefs, acc.appended(mysqlRow), sqlText, connectionId)
                     case Result.Failure(e) =>
-                        Abort.fail(SqlException.Connection(s"Row decode failed: ${e.message}", summon[Frame]))
+                        Abort.fail(SqlConnectionProtocolDecodeException("Row", e))
                     case Result.Panic(t) =>
                         java.lang.System.err.println(s"[kyo-sql] ResultSetExchange: row decode panic: ${t.getMessage}")
-                        Abort.fail(SqlException.Connection(s"Row decode panic: ${t.getMessage}", summon[Frame]))
+                        Abort.fail(SqlConnectionProtocolDecodeException("Row", t))
                 }
             end if
         }

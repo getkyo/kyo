@@ -14,7 +14,7 @@ class SqlClientRetryTest extends Test:
 
     // ── helper: fake operation that fails `failCount` times then succeeds ─────
 
-    /** Runs `effect` through `Retry[SqlException.Connection](schedule)` with an `AtomicInt` counter, then asserts the counter equals
+    /** Runs `effect` through `Retry[SqlConnectionException](schedule)` with an `AtomicInt` counter, then asserts the counter equals
       * `expectedAttempts`. The `effect` receives the counter's current value before each call.
       */
     private def withCounter[A](
@@ -28,7 +28,7 @@ class SqlClientRetryTest extends Test:
     private val successValue: Chunk[SqlRow] < (Async & Abort[SqlException]) =
         Chunk.empty[SqlRow]
 
-    /** An operation that aborts with SqlException.Connection the first `failCount` times it is called (as tracked by `counter`), then
+    /** An operation that aborts with SqlConnectionException the first `failCount` times it is called (as tracked by `counter`), then
       * returns `successValue`.
       */
     private def failNTimes(
@@ -37,15 +37,15 @@ class SqlClientRetryTest extends Test:
     )(using Frame): Chunk[SqlRow] < (Async & Abort[SqlException]) =
         counter.getAndIncrement.flatMap { n =>
             if n < failCount then
-                Abort.fail(SqlException.Connection(s"simulated connection failure #$n", summon[Frame]))
+                Abort.fail(SqlConnectionConnectFailedException("test", 0, new Exception(s"simulated connection failure #$n")))
             else
                 successValue
         }
 
-    /** An operation that always aborts with SqlException.Server (non-retriable). */
+    /** An operation that always aborts with SqlServerException (non-retriable). */
     private def alwaysServerError(counter: AtomicInt)(using Frame): Chunk[SqlRow] < (Async & Abort[SqlException]) =
         counter.getAndIncrement.andThen(
-            Abort.fail[SqlException](SqlException.Server("42601", "ERROR", "syntax error near 'FOO'"))
+            Abort.fail[SqlException](SqlServerException("42601", "ERROR", "syntax error near 'FOO'"))
         )
 
     // ── connection-level error triggers retry ─────────────────────────────────
@@ -54,7 +54,7 @@ class SqlClientRetryTest extends Test:
         // Schedule: 2 retries (zero delay for speed), total 3 attempts.
         val schedule = Schedule.fixed(Duration.Zero).take(2)
         withCounter() { counter =>
-            val result = Retry[SqlException.Connection](schedule)(failNTimes(counter, 2))
+            val result = Retry[SqlConnectionException](schedule)(failNTimes(counter, 2))
             result.flatMap { rows =>
                 counter.get.map { count =>
                     assert(rows.isEmpty)
@@ -70,13 +70,13 @@ class SqlClientRetryTest extends Test:
         val schedule = Schedule.fixed(Duration.Zero).take(3)
         withCounter() { counter =>
             Abort.run[SqlException](
-                Retry[SqlException.Connection](schedule)(alwaysServerError(counter))
+                Retry[SqlConnectionException](schedule)(alwaysServerError(counter))
             ).flatMap { result =>
                 counter.get.map { count =>
                     assert(result.isFailure)
                     result match
-                        case Result.Failure(_: SqlException.Server) => succeed
-                        case _                                      => fail(s"Expected SqlException.Server, got: $result")
+                        case Result.Failure(_: SqlServerException) => succeed
+                        case _                                     => fail(s"Expected SqlServerException, got: $result")
                     assert(count == 1)
                 }
             }
@@ -89,16 +89,16 @@ class SqlClientRetryTest extends Test:
         val schedule = Schedule.fixed(Duration.Zero).take(2)
         withCounter() { counter =>
             // Fails all 3 attempts (initial + 2 retries); schedule is exhausted.
-            Abort.run[SqlException.Connection](
-                Retry[SqlException.Connection](schedule)(failNTimes(counter, 99))
+            Abort.run[SqlConnectionException](
+                Retry[SqlConnectionException](schedule)(failNTimes(counter, 99))
             ).flatMap { result =>
                 counter.get.map { count =>
                     assert(count == 3) // initial + 2 retries
                     result match
-                        case Result.Failure(SqlException.Connection(msg, _)) =>
-                            assert(msg.contains("simulated connection failure"))
+                        case Result.Failure(e: SqlConnectionConnectFailedException) =>
+                            assert(e.cause.getMessage.contains("simulated connection failure"))
                         case _ =>
-                            fail(s"Expected SqlException.Connection, got: $result")
+                            fail(s"Expected SqlConnectionConnectFailedException, got: $result")
                     end match
                 }
             }
@@ -111,7 +111,7 @@ class SqlClientRetryTest extends Test:
         // Use Duration.Zero to keep the test fast; the assertion is on count, not wall-clock.
         val schedule = Schedule.fixed(Duration.Zero).take(2)
         withCounter() { counter =>
-            Retry[SqlException.Connection](schedule)(failNTimes(counter, 2)).flatMap { _ =>
+            Retry[SqlConnectionException](schedule)(failNTimes(counter, 2)).flatMap { _ =>
                 counter.get.map { count =>
                     assert(count == 3)
                 }
@@ -126,8 +126,8 @@ class SqlClientRetryTest extends Test:
         val schedule = Schedule.fixed(Duration.Zero).take(5)
         withCounter() { counter =>
             // Fail all 6 attempts so we observe the full schedule play out.
-            Abort.run[SqlException.Connection](
-                Retry[SqlException.Connection](schedule)(failNTimes(counter, 99))
+            Abort.run[SqlConnectionException](
+                Retry[SqlConnectionException](schedule)(failNTimes(counter, 99))
             ).flatMap { result =>
                 counter.get.map { count =>
                     assert(count == 6) // initial + 5 retries
@@ -140,10 +140,10 @@ class SqlClientRetryTest extends Test:
     // ── Absent schedule, no retry at all ────────────────────────────────────
 
     "Absent retrySchedule produces 0 retries, connection error propagates immediately" in {
-        // Verify that when retrySchedule = Absent, a SqlException.Connection is NOT retried.
+        // Verify that when retrySchedule = Absent, a SqlConnectionException is NOT retried.
         // We simulate retryWith(Absent) semantics directly: no Retry wrapper.
         withCounter() { counter =>
-            Abort.run[SqlException.Connection](failNTimes(counter, 99)).flatMap { result =>
+            Abort.run[SqlConnectionException](failNTimes(counter, 99)).flatMap { result =>
                 counter.get.map { count =>
                     assert(count == 1)
                     assert(result.isFailure)
@@ -159,9 +159,9 @@ class SqlClientRetryTest extends Test:
         val schedule = Schedule.fixed(10.seconds).take(3)
         // initUnscoped so we manually manage interrupt and get.
         Fiber.initUnscoped(
-            Abort.run[SqlException.Connection](
-                Retry[SqlException.Connection](schedule)(
-                    Abort.fail[SqlException.Connection](SqlException.Connection("always fail", summon[Frame]))
+            Abort.run[SqlConnectionException](
+                Retry[SqlConnectionException](schedule)(
+                    Abort.fail[SqlConnectionException](SqlConnectionConnectFailedException("test", 0, new Exception("always fail")))
                 )
             )
         ).flatMap { f =>
@@ -181,7 +181,7 @@ class SqlClientRetryTest extends Test:
         // on each subsequent attempt (pool eviction + re-acquire is transparent to this layer).
         val schedule = Schedule.fixed(Duration.Zero).take(2)
         withCounter() { counter =>
-            Retry[SqlException.Connection](schedule)(failNTimes(counter, 2)).flatMap { _ =>
+            Retry[SqlConnectionException](schedule)(failNTimes(counter, 2)).flatMap { _ =>
                 counter.get.map { count =>
                     // 3 attempts means the retry loop re-entered the operation twice after failure,
                     // which is only possible if the failed "connection" was released each time.
@@ -200,7 +200,7 @@ class SqlClientRetryTest extends Test:
         Async.fill(10, concurrency = 10) {
             // Each fiber has its own local counter to track its own attempts.
             AtomicInt.initWith(0) { localCounter =>
-                Retry[SqlException.Connection](schedule)(failNTimes(localCounter, 1)).flatMap { _ =>
+                Retry[SqlConnectionException](schedule)(failNTimes(localCounter, 1)).flatMap { _ =>
                     localCounter.get.map { localCount =>
                         assert(localCount == 2) // initial failure + success on retry
                     }
@@ -219,10 +219,10 @@ class SqlClientRetryTest extends Test:
         // checking a retryCount field on the exception (which doesn't exist and isn't in the plan).
         val schedule = Schedule.fixed(Duration.Zero).take(2)
         withCounter() { counter =>
-            Abort.run[SqlException.Connection](
-                Retry[SqlException.Connection](schedule)(
+            Abort.run[SqlConnectionException](
+                Retry[SqlConnectionException](schedule)(
                     counter.getAndIncrement.flatMap { n =>
-                        Abort.fail(SqlException.Connection(s"failure attempt #$n", summon[Frame]))
+                        Abort.fail(SqlConnectionConnectFailedException("test", 0, new Exception(s"failure attempt #$n")))
                     }
                 )
             ).flatMap { result =>
@@ -230,11 +230,11 @@ class SqlClientRetryTest extends Test:
                     // 3 attempts made (initial + 2 retries), schedule then exhausted.
                     assert(count == 3)
                     result match
-                        case Result.Failure(SqlException.Connection(msg, _)) =>
+                        case Result.Failure(e: SqlConnectionConnectFailedException) =>
                             // The original failure (last attempt) is preserved.
-                            assert(msg.contains("failure attempt"))
+                            assert(e.cause.getMessage.contains("failure attempt"))
                         case _ =>
-                            fail(s"Expected SqlException.Connection on exhaustion, got: $result")
+                            fail(s"Expected SqlConnectionConnectFailedException on exhaustion, got: $result")
                     end match
                 }
             }

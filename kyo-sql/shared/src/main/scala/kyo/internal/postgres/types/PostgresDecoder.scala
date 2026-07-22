@@ -5,8 +5,14 @@ import kyo.Chunk
 import kyo.Frame
 import kyo.Instant
 import kyo.Maybe
+import kyo.NumericSubtype
 import kyo.Span
-import kyo.SqlException
+import kyo.SqlDecodeArrayNullElementException
+import kyo.SqlDecodeException
+import kyo.SqlDecodeInetException
+import kyo.SqlDecodeIntervalException
+import kyo.SqlDecodeNumericException
+import kyo.SqlDecodeUuidException
 import kyo.internal.postgres.PostgresArrayReader
 
 /** Decodes raw PostgreSQL wire bytes into a Scala value.
@@ -15,7 +21,7 @@ import kyo.internal.postgres.PostgresArrayReader
   * Text format is always accepted as a fallback so that results from SimpleQueryExchange (which uses text format exclusively) can be
   * decoded using the same codec layer.
   *
-  * Throw contract: `read` throws `SqlException.Decode` directly for:
+  * Throw contract: `read` throws a [[SqlDecodeException]] leaf directly for:
   *   - the NaN / +Infinity / -Infinity NUMERIC cases (the NUMERIC wire protocol has no Scala representation for these);
   *   - the INTERVAL wire-format cases with non-zero `months` or `days` components (Duration has no calendar-arithmetic representation,
   *     callers needing `java.time.Period` semantics should use a different schema);
@@ -23,7 +29,7 @@ import kyo.internal.postgres.PostgresArrayReader
   *   - UUID binary buffers whose length is not exactly 16 bytes.
   *
   * All other decode failures (e.g. `NumberFormatException` from `.toInt`) propagate as unchecked exceptions; callers (specifically
-  * `PostgresRowReader`) catch them and wrap them in `SqlException.Decode`.
+  * `PostgresRowReader`) catch them and wrap them in a [[SqlDecodeException]] leaf.
   *
   * @tparam A
   *   the Scala type this decoder produces
@@ -138,7 +144,7 @@ object PostgresDecoder:
                 try BigDecimal(s)
                 catch
                     case e: NumberFormatException =>
-                        throw SqlException.Decode(s"NUMERIC text decode failed: '$s' is not a valid BigDecimal", Maybe.Absent, frame)
+                        throw SqlDecodeNumericException(s, NumericSubtype.Parse)
                 end try
             case Format.Binary =>
                 // Read the 4-field fixed header directly (8 bytes total).
@@ -153,23 +159,11 @@ object PostgresDecoder:
 
                 sign match
                     case 0xc000 =>
-                        throw SqlException.Decode(
-                            "PostgreSQL NUMERIC NaN cannot be represented as BigDecimal",
-                            Maybe.Absent,
-                            frame
-                        )
+                        throw SqlDecodeNumericException("NaN", NumericSubtype.NaN)
                     case 0xd000 =>
-                        throw SqlException.Decode(
-                            "PostgreSQL NUMERIC +Infinity cannot be represented as BigDecimal",
-                            Maybe.Absent,
-                            frame
-                        )
+                        throw SqlDecodeNumericException("+Infinity", NumericSubtype.PosInf)
                     case 0xf000 =>
-                        throw SqlException.Decode(
-                            "PostgreSQL NUMERIC -Infinity cannot be represented as BigDecimal",
-                            Maybe.Absent,
-                            frame
-                        )
+                        throw SqlDecodeNumericException("-Infinity", NumericSubtype.NegInf)
                     case _ => ()
                 end match
 
@@ -326,10 +320,10 @@ object PostgresDecoder:
 
     // --- INTERVAL, java.time.Duration ---
     // Wire: 16-byte big-endian struct: Int64 microseconds, Int32 days, Int32 months.
-    // Months != 0 or days != 0 raise SqlException.Decode, java.time.Duration cannot represent
+    // Months != 0 or days != 0 raise a SqlDecodeIntervalException; java.time.Duration cannot represent
     // calendar-relative components without data loss (e.g. DST-sensitive calendar days).
     // Text format: try ISO-8601 parse (java.time.Duration.parse); PG verbose format with
-    // months/years raises SqlException.Decode directing the caller to cast to ISO-formatted text.
+    // months/years raises a SqlDecodeIntervalException directing the caller to cast to ISO-formatted text.
 
     val interval: PostgresDecoder[java.time.Duration] = new PostgresDecoder[java.time.Duration]:
         def oids = Set(OID_INTERVAL)
@@ -339,18 +333,10 @@ object PostgresDecoder:
                 val days   = readBigEndianInt(bytes, 8)
                 val months = readBigEndianInt(bytes, 12)
                 if months != 0 then
-                    throw SqlException.Decode(
-                        s"INTERVAL months field is non-zero (value=$months); java.time.Duration cannot represent calendar months, use java.time.Period",
-                        Maybe.Absent,
-                        frame
-                    )
+                    throw SqlDecodeIntervalException("months", months.toString)
                 end if
                 if days != 0 then
-                    throw SqlException.Decode(
-                        s"INTERVAL days field is non-zero (value=$days); java.time.Duration cannot represent calendar days, use java.time.Period for year/month/day components",
-                        Maybe.Absent,
-                        frame
-                    )
+                    throw SqlDecodeIntervalException("days", days.toString)
                 end if
                 java.time.Duration.ofSeconds(micros / 1_000_000L, (micros % 1_000_000L) * 1_000L)
             case Format.Text =>
@@ -379,19 +365,14 @@ object PostgresDecoder:
                                 val posDuration = java.time.Duration.ofSeconds(totalSecs, nanos)
                                 if sign == "-" then posDuration.negated() else posDuration
                             case _ =>
-                                throw SqlException.Decode(
-                                    s"Cannot parse INTERVAL text '$s' as java.time.Duration; " +
-                                        "cast the column to ISO-8601 format (e.g. to_char(col,'HH24:MI:SS') or CAST(col AS text) after SET intervalstyle = 'iso_8601')",
-                                    Maybe.Absent,
-                                    frame
-                                )
+                                throw SqlDecodeIntervalException("text", s)
                         end match
                 end try
 
     // --- INTERVAL, java.time.Period ---
     // Wire: 16-byte big-endian struct: Int64 microseconds, Int32 days, Int32 months.
-    // Period has no time component, microseconds must be zero; non-zero raises SqlException.Decode.
-    // Text format: attempt ISO-8601 period parse (e.g. "P1Y6M15D"); raises SqlException.Decode
+    // Period has no time component, microseconds must be zero; non-zero raises a SqlDecodeIntervalException.
+    // Text format: attempt ISO-8601 period parse (e.g. "P1Y6M15D"); raises a SqlDecodeIntervalException
     // for values that cannot be parsed as a Period or that carry a time component.
 
     val intervalPeriod: PostgresDecoder[java.time.Period] = new PostgresDecoder[java.time.Period]:
@@ -402,11 +383,7 @@ object PostgresDecoder:
                 val days   = readBigEndianInt(bytes, 8)
                 val months = readBigEndianInt(bytes, 12)
                 if micros != 0L then
-                    throw SqlException.Decode(
-                        s"INTERVAL microseconds field is non-zero (value=$micros); java.time.Period cannot represent sub-day time components, use java.time.Duration",
-                        Maybe.Absent,
-                        frame
-                    )
+                    throw SqlDecodeIntervalException("microseconds", micros.toString)
                 end if
                 java.time.Period.of(0, months, days).normalized()
             case Format.Text =>
@@ -416,17 +393,13 @@ object PostgresDecoder:
                     p
                 catch
                     case _: java.time.format.DateTimeParseException =>
-                        throw SqlException.Decode(
-                            s"Cannot parse INTERVAL text '$s' as java.time.Period; expected ISO-8601 period format (e.g. 'P1Y6M15D')",
-                            Maybe.Absent,
-                            frame
-                        )
+                        throw SqlDecodeIntervalException("text", s)
                 end try
 
     // --- InetAddress (PG inet, OID 869) ---
     // Binary wire: family(1) + prefix_bits(1) + is_cidr(1) + addr_len(1) + addr_bytes(N).
     // Text wire: standard dotted-decimal (IPv4) or colon-hex (IPv6) notation.
-    // Unknown address family raises SqlException.Decode.
+    // Unknown address family raises a SqlDecodeInetException.
 
     val inet: PostgresDecoder[java.net.InetAddress] = new PostgresDecoder[java.net.InetAddress]:
         def oids = Set(OID_INET)
@@ -439,7 +412,7 @@ object PostgresDecoder:
     // the prefix equals the host width (`/32` for IPv4, `/128` for IPv6), which makes `InetAddress.getByName`
     // accept it. Text representations with an explicit `/prefix` mask (e.g. `192.168.1.0/24`) cannot be
     // round-tripped as `java.net.InetAddress` because the class carries no prefix; such values raise
-    // `SqlException.Decode` for the user to handle.
+    // a `SqlDecodeInetException` for the user to handle.
     val cidr: PostgresDecoder[java.net.InetAddress] = new PostgresDecoder[java.net.InetAddress]:
         def oids = Set(OID_CIDR)
         def read(format: Format, bytes: Span[Byte])(using frame: Frame): java.net.InetAddress =
@@ -454,11 +427,7 @@ object PostgresDecoder:
                         val mask      = s.substring(slashIdx + 1).toInt
                         val hostWidth = if addrPart.contains(':') then 128 else 32
                         if mask < hostWidth then
-                            throw SqlException.Decode(
-                                s"cidr text value '$s' carries a non-host prefix; java.net.InetAddress cannot represent network masks",
-                                Maybe.Absent,
-                                frame
-                            )
+                            throw SqlDecodeInetException("cidr", -1, mask, hostWidth)
                         end if
                         java.net.InetAddress.getByName(addrPart)
                     end if
@@ -470,30 +439,18 @@ object PostgresDecoder:
         format match
             case Format.Binary =>
                 if bytes.size < 4 then
-                    throw SqlException.Decode(
-                        s"$typeName binary wire value must be at least 4 bytes, got ${bytes.size}",
-                        Maybe.Absent,
-                        frame
-                    )
+                    throw SqlDecodeInetException(typeName, -1, -1, bytes.size)
                 end if
                 val family  = bytes(0)
                 val addrLen = bytes(3).toInt & 0xff
                 if bytes.size < 4 + addrLen then
-                    throw SqlException.Decode(
-                        s"$typeName binary wire value truncated: expected ${4 + addrLen} bytes, got ${bytes.size}",
-                        Maybe.Absent,
-                        frame
-                    )
+                    throw SqlDecodeInetException(typeName, family.toInt & 0xff, addrLen, bytes.size)
                 end if
                 val addrBytes = bytes.slice(4, 4 + addrLen).toArray
                 if family == 2.toByte || family == 3.toByte then
                     java.net.InetAddress.getByAddress(addrBytes)
                 else
-                    throw SqlException.Decode(
-                        s"$typeName binary wire value has unknown address family: $family (expected 2=IPv4 or 3=IPv6)",
-                        Maybe.Absent,
-                        frame
-                    )
+                    throw SqlDecodeInetException(typeName, family.toInt & 0xff, addrLen, bytes.size)
                 end if
             case Format.Text =>
                 java.net.InetAddress.getByName(text(bytes))
@@ -508,11 +465,7 @@ object PostgresDecoder:
         def read(format: Format, bytes: Span[Byte])(using frame: Frame): java.util.UUID = format match
             case Format.Binary =>
                 if bytes.size != 16 then
-                    throw SqlException.Decode(
-                        s"UUID binary wire value must be exactly 16 bytes, got ${bytes.size}",
-                        Maybe.Absent,
-                        frame
-                    )
+                    throw SqlDecodeUuidException(bytes.size)
                 end if
                 val msb = readBigEndianLong(bytes, 0)
                 val lsb = readBigEndianLong(bytes, 8)
@@ -539,11 +492,7 @@ object PostgresDecoder:
                     case Maybe.Present(elemBytes) =>
                         builder += PostgresDecoder.int4.read(Format.Binary, elemBytes)
                     case Maybe.Absent =>
-                        throw SqlException.Decode(
-                            s"int4[] element at index $i is NULL; use Maybe[Int] to represent nullable elements",
-                            Maybe.Absent,
-                            frame
-                        )
+                        throw SqlDecodeArrayNullElementException("Int", i)
                 end match
                 i += 1
             end while
@@ -563,11 +512,7 @@ object PostgresDecoder:
                     case Maybe.Present(elemBytes) =>
                         builder += PostgresDecoder.textDecoder.read(Format.Binary, elemBytes)
                     case Maybe.Absent =>
-                        throw SqlException.Decode(
-                            s"text[] element at index $i is NULL; use Maybe[String] to represent nullable elements",
-                            Maybe.Absent,
-                            frame
-                        )
+                        throw SqlDecodeArrayNullElementException("String", i)
                 end match
                 i += 1
             end while
@@ -589,11 +534,7 @@ object PostgresDecoder:
                     case Maybe.Present(elemBytes) =>
                         builder += PostgresDecoder.jsonDecoder.read(Format.Binary, elemBytes)
                     case Maybe.Absent =>
-                        throw SqlException.Decode(
-                            s"jsonb[] element at index $i is NULL; use Maybe[String] to represent nullable elements",
-                            Maybe.Absent,
-                            frame
-                        )
+                        throw SqlDecodeArrayNullElementException("String", i)
                 end match
                 i += 1
             end while

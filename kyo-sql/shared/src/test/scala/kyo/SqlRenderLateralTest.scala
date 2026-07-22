@@ -5,7 +5,7 @@ package kyo
   * Verifies that:
   *   - Postgres always emits the `LATERAL` keyword.
   *   - MySQL 8.0.14 or newer emits the `LATERAL` keyword.
-  *   - MySQL older than 8.0.14 (e.g. 5.7.x) raises [[SqlException.Unsupported]] at render time instead of emitting invalid SQL.
+  *   - MySQL older than 8.0.14 (e.g. 5.7.x) raises [[SqlUnsupportedException]] at render time instead of emitting invalid SQL.
   */
 class SqlRenderLateralTest extends Test:
 
@@ -34,24 +34,27 @@ class SqlRenderLateralTest extends Test:
     }
 
     // Leaf 4, MySQL 8.0.13 (one patch before LATERAL support) raises Unsupported.
-    "LATERAL on MySQL 8.0.13 raises SqlException.Unsupported" in {
+    "LATERAL on MySQL 8.0.13 raises SqlUnsupportedException" in {
         val q       = Sql.lateral[Department]("d", Sql.from[Department]("dept"))
         val backend = kyo.internal.SqlBackend.Mysql.versioned((8, 0, 13))
-        val ex = intercept[SqlException.Unsupported] {
+        val ex = intercept[SqlUnsupportedMysqlVersionFeatureException] {
             kyo.internal.SqlRender.render(q, backend, summon[Frame])
         }
-        assert(ex.getMessage.contains("LATERAL requires MySQL 8.0.14"))
+        assert(ex.feature == "LATERAL", s"expected feature 'LATERAL', got: ${ex.feature}")
+        assert(ex.requiredVersion == "8.0.14", s"expected requiredVersion '8.0.14', got: ${ex.requiredVersion}")
+        assert(ex.serverVersion == "8.0.13", s"expected serverVersion '8.0.13', got: ${ex.serverVersion}")
     }
 
-    // Leaf 5, MySQL 5.7.x raises Unsupported with the server version in the message.
-    "LATERAL on MySQL 5.7 raises SqlException.Unsupported" in {
+    // Leaf 5, MySQL 5.7.x raises Unsupported with the server version in the typed fields.
+    "LATERAL on MySQL 5.7 raises SqlUnsupportedException" in {
         val q       = Sql.lateral[Department]("d", Sql.from[Department]("dept"))
         val backend = kyo.internal.SqlBackend.Mysql.versioned((5, 7, 44))
-        val ex = intercept[SqlException.Unsupported] {
+        val ex = intercept[SqlUnsupportedMysqlVersionFeatureException] {
             kyo.internal.SqlRender.render(q, backend, summon[Frame])
         }
-        assert(ex.getMessage.contains("LATERAL requires MySQL 8.0.14"))
-        assert(ex.getMessage.contains("5.7.44"))
+        assert(ex.feature == "LATERAL", s"expected feature 'LATERAL', got: ${ex.feature}")
+        assert(ex.requiredVersion == "8.0.14", s"expected requiredVersion '8.0.14', got: ${ex.requiredVersion}")
+        assert(ex.serverVersion == "5.7.44", s"expected serverVersion '5.7.44', got: ${ex.serverVersion}")
     }
 
     // Leaf 6, supportsLateral boundary: exactly (8, 0, 14) returns true.

@@ -1,7 +1,8 @@
 package kyo.internal.mysql.unmarshaller
 
 import kyo.*
-import kyo.SqlException
+import kyo.SqlDecodeException
+import kyo.SqlDecodeProtocolFormatException
 import kyo.internal.mysql.HandshakeV10
 import kyo.internal.mysql.MysqlBufferReader
 import kyo.internal.mysql.Unmarshaller
@@ -23,14 +24,10 @@ import kyo.internal.mysql.Unmarshaller
   */
 object HandshakeV10Unmarshaller extends Unmarshaller[HandshakeV10]:
 
-    def read(buf: MysqlBufferReader)(using Frame): HandshakeV10 < Abort[SqlException.Decode] =
+    def read(buf: MysqlBufferReader)(using Frame): HandshakeV10 < Abort[SqlDecodeException] =
         buf.readUInt8().flatMap { protocolVersion =>
             if protocolVersion != 10 then
-                Abort.fail(SqlException.Decode(
-                    s"Expected HandshakeV10 (protocolVersion=10) but got $protocolVersion",
-                    Maybe.Absent,
-                    summon[Frame]
-                ))
+                Abort.fail(SqlDecodeProtocolFormatException(protocolVersion.toByte, buf.position))
             else
                 val serverVersion = buf.readNulTerminatedString()
                 buf.readUInt32LE().flatMap { threadId =>

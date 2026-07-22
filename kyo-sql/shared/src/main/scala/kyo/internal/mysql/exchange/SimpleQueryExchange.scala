@@ -1,7 +1,12 @@
 package kyo.internal.mysql.exchange
 
 import kyo.*
+import kyo.SqlConnectionProtocolDecodeException
+import kyo.SqlConnectionUnexpectedMessageException
+import kyo.SqlConnectionUnexpectedSentinelException
+import kyo.SqlDecodeException
 import kyo.SqlException
+import kyo.SqlRequestMysqlLocalInfileRequiresLoadApiException
 import kyo.internal.mysql.*
 
 /** Sends a COM_QUERY text-protocol request and collects the complete result.
@@ -43,54 +48,50 @@ private[mysql] object SimpleQueryExchange:
                     // OkPacket (no result set).
                     // 0x00: standard OK; 0xFE with len>=7: CLIENT_DEPRECATE_EOF OK marker.
                     val reader = MysqlBufferReader(payload.slice(1, payload.size))
-                    Abort.run[SqlException.Decode](
+                    Abort.run[SqlDecodeException](
                         channel.unmarshallers.okPacket.read(reader)
                     ).flatMap {
                         case Result.Success(ok) =>
                             (Chunk.empty[MysqlRow], ok.affectedRows)
                         case Result.Failure(e) =>
-                            Abort.fail(SqlException.Connection(s"OK packet decode failed: ${e.message}", summon[Frame]))
+                            Abort.fail(SqlConnectionProtocolDecodeException("OK", e))
                         case Result.Panic(t) =>
                             java.lang.System.err.println(s"[kyo-sql] SimpleQueryExchange: OK decode panic: ${t.getMessage}")
-                            Abort.fail(SqlException.Connection(s"OK decode panic: ${t.getMessage}", summon[Frame]))
+                            Abort.fail(SqlConnectionProtocolDecodeException("OK", t))
                     }
                 else if firstByte == 0xff then
                     // ErrPacket
                     val reader = MysqlBufferReader(payload.slice(1, payload.size))
-                    Abort.run[SqlException.Decode](
+                    Abort.run[SqlDecodeException](
                         channel.unmarshallers.errPacket.read(reader)
                     ).flatMap {
                         case Result.Success(err) =>
                             Abort.fail(MysqlErrors.mkServerError(err, Present(sql), 0, connectionId))
                         case Result.Failure(e) =>
-                            Abort.fail(SqlException.Connection(s"ERR packet decode failed: ${e.message}", summon[Frame]))
+                            Abort.fail(SqlConnectionProtocolDecodeException("ERR", e))
                         case Result.Panic(t) =>
                             java.lang.System.err.println(s"[kyo-sql] SimpleQueryExchange: ERR decode panic: ${t.getMessage}")
-                            Abort.fail(SqlException.Connection(s"ERR decode panic: ${t.getMessage}", summon[Frame]))
+                            Abort.fail(SqlConnectionProtocolDecodeException("ERR", t))
                     }
                 else if firstByte == 0xfb then
                     // LOCAL INFILE request received for a regular query, use loadLocalInfile API instead.
-                    Abort.fail(SqlException.Request(
-                        "Server sent a LOCAL INFILE request. Use SqlClient.loadLocalInfile or MysqlConnection.loadLocalInfile instead of a plain query.",
-                        Present(sql),
-                        summon[Frame]
-                    ))
+                    Abort.fail(SqlRequestMysqlLocalInfileRequiresLoadApiException())
                 else
                     // Result set: firstByte is the first byte of a lenenc-int column count
                     val reader = MysqlBufferReader(payload)
-                    Abort.run[SqlException.Decode](reader.readLenencInt()).flatMap {
+                    Abort.run[SqlDecodeException](reader.readLenencInt()).flatMap {
                         case Result.Success(Maybe.Absent) =>
-                            Abort.fail(SqlException.Connection("Unexpected 0xFF sentinel in column count", summon[Frame]))
+                            Abort.fail(SqlConnectionUnexpectedSentinelException("column count"))
                         case Result.Success(Maybe.Present(columnCountLong)) =>
                             val columnCount = columnCountLong.toInt
                             ResultSetExchange.collect(channel, columnCount, deprecateEof, Present(sql), connectionId).map { rows =>
                                 (rows, 0L)
                             }
                         case Result.Failure(e) =>
-                            Abort.fail(SqlException.Connection(s"Column count decode failed: ${e.message}", summon[Frame]))
+                            Abort.fail(SqlConnectionProtocolDecodeException("column count", e))
                         case Result.Panic(t) =>
                             java.lang.System.err.println(s"[kyo-sql] SimpleQueryExchange: column count panic: ${t.getMessage}")
-                            Abort.fail(SqlException.Connection(s"Column count decode panic: ${t.getMessage}", summon[Frame]))
+                            Abort.fail(SqlConnectionProtocolDecodeException("column count", t))
                     }
                 end if
             }
@@ -130,21 +131,22 @@ private[mysql] object SimpleQueryExchange:
                 else if firstByte == 0xff then
                     // Server rejected the LOAD DATA statement (e.g., local_infile=OFF, column mismatch).
                     val reader = MysqlBufferReader(payload.slice(1, payload.size))
-                    Abort.run[SqlException.Decode](
+                    Abort.run[SqlDecodeException](
                         channel.unmarshallers.errPacket.read(reader)
                     ).flatMap {
                         case Result.Success(err) =>
                             Abort.fail(MysqlErrors.mkServerError(err, Present(sql), 0, connectionId))
                         case Result.Failure(e) =>
-                            Abort.fail(SqlException.Connection(s"LOCAL INFILE ERR packet decode failed: ${e.message}", summon[Frame]))
+                            Abort.fail(SqlConnectionProtocolDecodeException("LOCAL INFILE ERR", e))
                         case Result.Panic(t) =>
                             java.lang.System.err.println(s"[kyo-sql] SimpleQueryExchange.runLocalInfile: ERR decode panic: ${t.getMessage}")
-                            Abort.fail(SqlException.Connection(s"LOCAL INFILE ERR decode panic: ${t.getMessage}", summon[Frame]))
+                            Abort.fail(SqlConnectionProtocolDecodeException("LOCAL INFILE ERR", t))
                     }
                 else
-                    Abort.fail(SqlException.Connection(
-                        s"LOCAL INFILE: unexpected response byte 0x${firstByte.toHexString} to LOAD DATA LOCAL INFILE command",
-                        summon[Frame]
+                    Abort.fail(SqlConnectionUnexpectedMessageException(
+                        "LOAD DATA LOCAL INFILE",
+                        "0xFB request or 0xFF error",
+                        s"byte 0x${firstByte.toHexString}"
                     ))
                 end if
             }

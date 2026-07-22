@@ -1,6 +1,9 @@
 package kyo.internal.postgres.exchange
 
 import kyo.*
+import kyo.SqlConnectionClosedException
+import kyo.SqlConnectionUnexpectedMessageException
+import kyo.SqlConnectionWritePanicException
 import kyo.SqlException
 import kyo.internal.postgres.*
 
@@ -243,7 +246,7 @@ private[postgres] object CopyExchange:
                     Present(pid)
                 )))
             case other =>
-                Abort.fail(SqlException.Connection(s"Expected CopyInResponse, got: $other", summon[Frame]))
+                Abort.fail(SqlConnectionUnexpectedMessageException("COPY FROM STDIN negotiation", "CopyInResponse", other.toString))
         }
 
     /** Reads messages until [[CopyOutResponse]], skipping [[ParameterStatus]] and [[NoticeResponse]].
@@ -265,7 +268,7 @@ private[postgres] object CopyExchange:
                     Present(pid)
                 )))
             case other =>
-                Abort.fail(SqlException.Connection(s"Expected CopyOutResponse, got: $other", summon[Frame]))
+                Abort.fail(SqlConnectionUnexpectedMessageException("COPY TO STDOUT negotiation", "CopyOutResponse", other.toString))
         }
 
     /** Sends a [[Span[Byte]]] to the server as a CopyData packet, splitting into [[MaxChunkBytes]]-sized chunks.
@@ -293,10 +296,10 @@ private[postgres] object CopyExchange:
         buf.writeBytes(data)
         Abort.run[Closed](channel.conn.outbound.safe.put(buf.toSpan)).flatMap {
             case Result.Success(_) => ()
-            case Result.Failure(_) => Abort.fail(SqlException.Connection("Connection closed while sending CopyData", summon[Frame]))
+            case Result.Failure(_) => Abort.fail(SqlConnectionClosedException("writing (CopyData)"))
             case Result.Panic(t) =>
                 Log.error(s"[kyo-sql] CopyExchange: CopyData write panic: ${t.getMessage}").andThen(
-                    Abort.fail(SqlException.Connection(s"CopyData write panic: ${t.getMessage}", summon[Frame]))
+                    Abort.fail(SqlConnectionWritePanicException(t))
                 )
         }
     end writeCopyDataRaw
@@ -308,10 +311,10 @@ private[postgres] object CopyExchange:
         buf.writeInt32(4)
         Abort.run[Closed](channel.conn.outbound.safe.put(buf.toSpan)).flatMap {
             case Result.Success(_) => ()
-            case Result.Failure(_) => Abort.fail(SqlException.Connection("Connection closed while sending CopyDone", summon[Frame]))
+            case Result.Failure(_) => Abort.fail(SqlConnectionClosedException("writing (CopyDone)"))
             case Result.Panic(t) =>
                 Log.error(s"[kyo-sql] CopyExchange: CopyDone write panic: ${t.getMessage}").andThen(
-                    Abort.fail(SqlException.Connection(s"CopyDone write panic: ${t.getMessage}", summon[Frame]))
+                    Abort.fail(SqlConnectionWritePanicException(t))
                 )
         }
     end sendCopyDone
@@ -326,10 +329,10 @@ private[postgres] object CopyExchange:
         buf.patchInt32(lenOffset, buf.size - lenOffset)
         Abort.run[Closed](channel.conn.outbound.safe.put(buf.toSpan)).flatMap {
             case Result.Success(_) => ()
-            case Result.Failure(_) => Abort.fail(SqlException.Connection("Connection closed while sending CopyFail", summon[Frame]))
+            case Result.Failure(_) => Abort.fail(SqlConnectionClosedException("writing (CopyFail)"))
             case Result.Panic(t) =>
                 Log.error(s"[kyo-sql] CopyExchange: CopyFail write panic: ${t.getMessage}").andThen(
-                    Abort.fail(SqlException.Connection(s"CopyFail write panic: ${t.getMessage}", summon[Frame]))
+                    Abort.fail(SqlConnectionWritePanicException(t))
                 )
         }
     end sendCopyFail
@@ -371,7 +374,7 @@ private[postgres] object CopyExchange:
                 0L
 
             case other =>
-                Abort.fail(SqlException.Connection(s"Expected CommandComplete after CopyDone, got: $other", summon[Frame]))
+                Abort.fail(SqlConnectionUnexpectedMessageException("COPY completion", "CommandComplete", other.toString))
         }
 
     /** Drains to ReadyForQuery (inclusive) using receiveSkipCheck. */
@@ -420,7 +423,7 @@ private[postgres] object CopyExchange:
                 )))
 
             case other =>
-                Abort.fail(SqlException.Connection(s"Unexpected message in COPY TO STDOUT stream: $other", summon[Frame]))
+                Abort.fail(SqlConnectionUnexpectedMessageException("COPY TO STDOUT stream", "CopyData / CopyDone", other.toString))
         }
 
     /** Drains [[CommandComplete]] and [[ReadyForQuery]] after [[CopyDone]] on the copyOut path. */
@@ -438,7 +441,7 @@ private[postgres] object CopyExchange:
                     Present(pid)
                 )))
             case other =>
-                Abort.fail(SqlException.Connection(s"Unexpected message after CopyDone: $other", summon[Frame]))
+                Abort.fail(SqlConnectionUnexpectedMessageException("after CopyDone", "CommandComplete / ReadyForQuery", other.toString))
         }
 
     /** Parses the affected-row count from a COPY command tag (e.g. "COPY 1000" → 1000L). */

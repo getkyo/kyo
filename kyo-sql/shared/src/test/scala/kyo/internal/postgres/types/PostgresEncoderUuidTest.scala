@@ -85,9 +85,9 @@ class PostgresEncoderUuidTest extends kyo.Test:
         val badBytes = Span.from(Array.fill[Byte](15)(0x00))
         try
             val _ = decode(Format.Binary, badBytes)
-            assert(false, "Expected SqlException.Decode to be thrown")
+            assert(false, "Expected SqlDecodeException to be thrown")
         catch
-            case ex: SqlException.Decode =>
+            case ex: SqlDecodeException =>
                 assert(ex.getMessage.contains("16"))
         end try
     }

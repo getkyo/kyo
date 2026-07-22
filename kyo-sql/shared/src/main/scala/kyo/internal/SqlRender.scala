@@ -39,20 +39,20 @@ object SqlRender:
 
     /** Unified render entry point, accepts any [[SqlAst.SqlAst]] node (queries, actions, terms, fragments). */
     def render(ast: SqlAst.SqlAst[?], backend: SqlBackend): Rendered =
-        val s = new State(backend, Maybe.empty)
+        val s = new State(backend, Frame.internal)
         s.dispatch(ast)
         s.result
     end render
 
     /** Runtime variant with call-site [[Frame]] for actionable backend-unsupported errors. */
     private[kyo] def render(ast: SqlAst.SqlAst[?], backend: SqlBackend, frame: Frame): Rendered =
-        val s = new State(backend, Maybe(frame))
+        val s = new State(backend, frame)
         s.dispatch(ast)
         s.result
     end render
 
     def render(statement: Action[?], backend: SqlBackend): Rendered =
-        val s = new State(backend, Maybe.empty)
+        val s = new State(backend, Frame.internal)
         s.action(statement)
         s.result
     end render
@@ -63,31 +63,31 @@ object SqlRender:
       * variant above because no user Frame exists during macro expansion; any throw there surfaces as a macro compile error.
       */
     private[kyo] def render(statement: Action[?], backend: SqlBackend, frame: Frame): Rendered =
-        val s = new State(backend, Maybe(frame))
+        val s = new State(backend, frame)
         s.action(statement)
         s.result
     end render
 
     def render(query: Query[?], backend: SqlBackend): Rendered =
-        val s = new State(backend, Maybe.empty)
+        val s = new State(backend, Frame.internal)
         s.query(query)
         s.result
     end render
 
     private[kyo] def render(query: Query[?], backend: SqlBackend, frame: Frame): Rendered =
-        val s = new State(backend, Maybe(frame))
+        val s = new State(backend, frame)
         s.query(query)
         s.result
     end render
 
     def render(term: Term[?], backend: SqlBackend): Rendered =
-        val s = new State(backend, Maybe.empty)
+        val s = new State(backend, Frame.internal)
         s.term(term)
         s.result
     end render
 
     private[kyo] def render(term: Term[?], backend: SqlBackend, frame: Frame): Rendered =
-        val s = new State(backend, Maybe(frame))
+        val s = new State(backend, frame)
         s.term(term)
         s.result
     end render
@@ -109,12 +109,12 @@ object SqlRender:
       *
       * @param backend
       *   the target SQL backend; drives all backend-specific rendering forks.
-      * @param frameOpt
-      *   optional call-site frame carried from the runtime render overload. When present, backend-unsupported operations (e.g. MySQL
-      *   `ON DUPLICATE KEY UPDATE … WHERE`) throw [[kyo.SqlException.Unsupported]] with a typed, actionable message. When absent
-      *   (compile-time macro render), the check is skipped and the exception propagates as a JVM error during macro expansion if triggered.
+      * @param frame
+      *   call-site frame carried from the render entry point. Backend-unsupported operations (e.g. MySQL `ON DUPLICATE KEY UPDATE … WHERE`)
+      *   throw a [[kyo.SqlUnsupportedException]] leaf using this frame. The frameless render entry points pass [[Frame.internal]] so the
+      *   throw still identifies the render layer.
       */
-    final private class State(backend: SqlBackend, frameOpt: Maybe[Frame]):
+    final private class State(backend: SqlBackend, frame: Frame):
         private val sb         = new StringBuilder
         private val paramBuf   = scala.collection.mutable.ArrayBuffer.empty[BoundValue[?]]
         private val bindBuf    = scala.collection.mutable.ArrayBuffer.empty[RenderedBind[?]]
@@ -323,18 +323,11 @@ object SqlRender:
             if isIntersectOrExcept then
                 backend match
                     case m: SqlBackend.Mysql if !m.supportsIntersectExcept =>
-                        frameOpt match
-                            case Maybe.Present(f) =>
-                                throw SqlException.Unsupported(
-                                    s"INTERSECT and EXCEPT require MySQL 8.0.31 or newer (detected server version " +
-                                        s"${m.serverVersion._1}.${m.serverVersion._2}.${m.serverVersion._3})",
-                                    f
-                                )
-                            case Maybe.Absent =>
-                                throw new IllegalStateException(
-                                    "INTERSECT and EXCEPT require MySQL 8.0.31 or newer"
-                                )
-                        end match
+                        throw SqlUnsupportedMysqlVersionFeatureException(
+                            "INTERSECT / EXCEPT",
+                            "8.0.31",
+                            s"${m.serverVersion._1}.${m.serverVersion._2}.${m.serverVersion._3}"
+                        )(using frame)
                     case _ =>
                 end match
             end if
@@ -354,18 +347,11 @@ object SqlRender:
             if recursive then
                 backend match
                     case m: SqlBackend.Mysql if !m.supportsRecursiveCte =>
-                        frameOpt match
-                            case Maybe.Present(f) =>
-                                throw SqlException.Unsupported(
-                                    s"WITH RECURSIVE requires MySQL 8.0 or newer (detected server version " +
-                                        s"${m.serverVersion._1}.${m.serverVersion._2}.${m.serverVersion._3})",
-                                    f
-                                )
-                            case Maybe.Absent =>
-                                throw new IllegalStateException(
-                                    "WITH RECURSIVE requires MySQL 8.0 or newer"
-                                )
-                        end match
+                        throw SqlUnsupportedMysqlVersionFeatureException(
+                            "WITH RECURSIVE",
+                            "8.0",
+                            s"${m.serverVersion._1}.${m.serverVersion._2}.${m.serverVersion._3}"
+                        )(using frame)
                     case _ =>
                         append("WITH RECURSIVE ")
                 end match
@@ -395,18 +381,11 @@ object SqlRender:
             case l: Lateral[?, ?] =>
                 backend match
                     case m: SqlBackend.Mysql if !m.supportsLateral =>
-                        frameOpt match
-                            case Maybe.Present(f) =>
-                                throw SqlException.Unsupported(
-                                    s"LATERAL requires MySQL 8.0.14 or newer (detected server version " +
-                                        s"${m.serverVersion._1}.${m.serverVersion._2}.${m.serverVersion._3})",
-                                    f
-                                )
-                            case Maybe.Absent =>
-                                throw new IllegalStateException(
-                                    "LATERAL requires MySQL 8.0.14 or newer"
-                                )
-                        end match
+                        throw SqlUnsupportedMysqlVersionFeatureException(
+                            "LATERAL",
+                            "8.0.14",
+                            s"${m.serverVersion._1}.${m.serverVersion._2}.${m.serverVersion._3}"
+                        )(using frame)
                     case _ =>
                         append("LATERAL ("); query(l.source); append(") "); appendQuoted(l.alias)
                 end match
@@ -841,17 +820,7 @@ object SqlRender:
                             append(" RETURNING ")
                             append(cols.toSeq.map(c => quoted(c.sqlName)).mkString(", "))
                         case _: SqlBackend.Mysql =>
-                            frameOpt match
-                                case Maybe.Present(f) =>
-                                    throw SqlException.Unsupported(
-                                        "RETURNING is not supported on MySQL; use a follow-up SELECT instead",
-                                        f
-                                    )
-                                case Maybe.Absent =>
-                                    throw new IllegalStateException(
-                                        "RETURNING is not supported on MySQL"
-                                    )
-                            end match
+                            throw SqlUnsupportedReturningOnMysqlException()(using frame)
                     end match
                 case Maybe.Absent =>
                     // Auto-emit RETURNING <pk> on Postgres when the AST carries an `autoKey` column (computed at
@@ -914,21 +883,7 @@ object SqlRender:
                         // MySQL does not support a WHERE clause on ON DUPLICATE KEY UPDATE.
                         // Silently dropping the predicate would produce wrong updates, raise a typed error instead.
                         if du.where.isDefined then
-                            frameOpt match
-                                case Maybe.Present(f) =>
-                                    throw SqlException.Unsupported(
-                                        "MySQL does not support a WHERE clause on ON DUPLICATE KEY UPDATE. " +
-                                            "Use ON CONFLICT DO UPDATE WHERE on PG, or restructure the upsert.",
-                                        f
-                                    )
-                                case Maybe.Absent =>
-                                    // Compile-time macro path: no user Frame available.  Throw a plain
-                                    // IllegalStateException so the macro runner surfaces a compile error.
-                                    throw new IllegalStateException(
-                                        "MySQL does not support a WHERE clause on ON DUPLICATE KEY UPDATE. " +
-                                            "Use ON CONFLICT DO UPDATE WHERE on PG, or restructure the upsert."
-                                    )
-                            end match
+                            throw SqlUnsupportedUpsertWhereClauseOnMysqlException()(using frame)
                         end if
                         append(" ON DUPLICATE KEY UPDATE ")
                         joinWith(", ")(du.sets) { s =>
@@ -949,17 +904,7 @@ object SqlRender:
                         append(" RETURNING ")
                         append(cols.toSeq.map(c => quoted(c.sqlName)).mkString(", "))
                     case _: SqlBackend.Mysql =>
-                        frameOpt match
-                            case Maybe.Present(f) =>
-                                throw SqlException.Unsupported(
-                                    "RETURNING is not supported on MySQL; use a follow-up SELECT instead",
-                                    f
-                                )
-                            case Maybe.Absent =>
-                                throw new IllegalStateException(
-                                    "RETURNING is not supported on MySQL"
-                                )
-                        end match
+                        throw SqlUnsupportedReturningOnMysqlException()(using frame)
                 end match
         end update
 
@@ -974,17 +919,7 @@ object SqlRender:
                         append(" RETURNING ")
                         append(cols.toSeq.map(c => quoted(c.sqlName)).mkString(", "))
                     case _: SqlBackend.Mysql =>
-                        frameOpt match
-                            case Maybe.Present(f) =>
-                                throw SqlException.Unsupported(
-                                    "RETURNING is not supported on MySQL; use a follow-up SELECT instead",
-                                    f
-                                )
-                            case Maybe.Absent =>
-                                throw new IllegalStateException(
-                                    "RETURNING is not supported on MySQL"
-                                )
-                        end match
+                        throw SqlUnsupportedReturningOnMysqlException()(using frame)
                 end match
         end delete
 

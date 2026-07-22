@@ -91,7 +91,7 @@ class SqlClientCloseAllTest extends Test:
             val port   = listener.port
             val url    = fakeUrl(port)
             val config = baseConfig(maxConns = 3)
-            Abort.run[SqlException.Connection](
+            Abort.run[SqlConnectionException](
                 SqlClient.initUnscoped(url, config)
             ).flatMap {
                 case Result.Failure(e) =>
@@ -140,7 +140,7 @@ class SqlClientCloseAllTest extends Test:
                 val port   = listener.port
                 val url    = fakeUrl(port)
                 val config = baseConfig(maxConns = 2)
-                Abort.run[SqlException.Connection](
+                Abort.run[SqlConnectionException](
                     SqlClient.initUnscoped(url, config)
                 ).flatMap {
                     case Result.Failure(e) =>

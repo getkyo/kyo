@@ -1,6 +1,7 @@
 package kyo
 
 import kyo.SqlAst.*
+import kyo.SqlUnsupportedException
 
 /** Backend-specific renderer translation tests.
   *
@@ -242,16 +243,16 @@ class SqlRenderTest extends Test:
         assert(!r.sql.contains("ON DUPLICATE KEY UPDATE"))
     }
 
-    // Leaf 16: onConflictDoUpdate with WHERE on MySQL, raises SqlException.Unsupported (not a silent drop).
-    "ON DUPLICATE KEY UPDATE WHERE raises SqlException.Unsupported on MySQL (G-Parity-6)" in {
+    // Leaf 16: onConflictDoUpdate with WHERE on MySQL, raises SqlUnsupportedException (not a silent drop).
+    "ON DUPLICATE KEY UPDATE WHERE raises SqlUnsupportedException on MySQL (G-Parity-6)" in {
         val s = Sql.insert[User].values(User(1L, "Alice"))
             .onConflictDoUpdate(_.name)
             .where(c => c.id > 0L)(c => c.name := Excluded(c.name))
-        val ex = intercept[SqlException.Unsupported] {
+        val ex = intercept[SqlUnsupportedUpsertWhereClauseOnMysqlException] {
             s.renderMysql
         }
-        assert(ex.getMessage.contains("MySQL does not support a WHERE clause on ON DUPLICATE KEY UPDATE"))
-        assert(ex.getMessage.contains("ON CONFLICT DO UPDATE WHERE on PG"))
+        val _ = ex
+        succeed
     }
 
     // --- Leaves 17-21, ORDER BY NULLS FIRST/LAST lowering (G-Parity-2) ---

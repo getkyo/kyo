@@ -10,8 +10,8 @@ import kyo.internal.mysql.unmarshaller.*
 /** Round-trip tests: encode every Frontend message, decode every Backend message. Validates structural equality. */
 class RoundTripTest extends Test:
 
-    private def decode[A](result: A < Abort[SqlException.Decode])(using kyo.test.AssertScope): A =
-        Abort.run[SqlException.Decode](result).eval match
+    private def decode[A](result: A < Abort[SqlDecodeException])(using kyo.test.AssertScope): A =
+        Abort.run[SqlDecodeException](result).eval match
             case Result.Success(a) => a
             case Result.Failure(e) => fail(s"Decode failed: $e")
             case Result.Panic(t)   => throw t
@@ -230,7 +230,7 @@ class RoundTripTest extends Test:
     // binary DATETIME zero-length struct decodes as epoch-ish (zero-date edge case)
     "binary DATETIME zero-length struct decodes (MySQL zero-date edge case)" in {
         // 0-length struct = 0000-00-00 00:00:00 → our decoder maps year 0 to 1, month 0 to 1, day 0 to 1
-        val result = Abort.run[SqlException.Decode](
+        val result = Abort.run[SqlDecodeException](
             MysqlDecoder.localDateTimeDecoder.decode(Span.from(Array.empty[Byte]))
         ).eval
         result match
@@ -255,7 +255,7 @@ class RoundTripTest extends Test:
         buf.writeUInt16LE(2024) // year
         buf.writeUInt8(6)       // month = June
         buf.writeUInt8(15)      // day
-        val result = Abort.run[SqlException.Decode](
+        val result = Abort.run[SqlDecodeException](
             MysqlDecoder.localDateTimeDecoder.decode(buf.toSpan)
         ).eval
         result match
@@ -281,7 +281,7 @@ class RoundTripTest extends Test:
         buf.writeUInt8(30)         // minute = 30
         buf.writeUInt8(45)         // second = 45
         buf.writeUInt32LE(123456L) // micros = 123456
-        val result = Abort.run[SqlException.Decode](
+        val result = Abort.run[SqlDecodeException](
             MysqlDecoder.localTimeDecoder.decode(buf.toSpan)
         ).eval
         result match
@@ -312,7 +312,7 @@ class RoundTripTest extends Test:
         // Verify every field matches the expected shape shared by all 4 former per-exchange copies
         assert(result.sqlState == "42000")
         assert(result.severity == "ERROR")
-        assert(result.message == "You have an error in your SQL syntax")
+        assert(result.serverMessage == "You have an error in your SQL syntax")
         assert(result.detail.isEmpty)
         assert(result.hint.isEmpty)
         assert(result.position.isEmpty)

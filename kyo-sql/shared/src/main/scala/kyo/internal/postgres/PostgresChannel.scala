@@ -1,6 +1,10 @@
 package kyo.internal.postgres
 
 import kyo.*
+import kyo.SqlConnectionClosedException
+import kyo.SqlConnectionException
+import kyo.SqlConnectionProtocolCorruptedException
+import kyo.SqlConnectionWritePanicException
 import kyo.SqlException
 import kyo.internal.postgres.marshaller.Marshallers
 import kyo.internal.postgres.unmarshaller.Unmarshallers
@@ -31,7 +35,7 @@ final class PostgresChannel(
 
     /** Marks the channel as corrupted after a failed COPY cleanup attempt.
       *
-      * Once corrupted, all subsequent send/receive operations on this channel fail immediately with [[SqlException.Connection]]. Called by
+      * Once corrupted, all subsequent send/receive operations on this channel fail immediately with a [[SqlConnectionException]]. Called by
       * [[exchange.CopyExchange]] when the error-path cleanup itself fails.
       */
     private[postgres] def markCorrupted()(using Frame): Unit < Sync = _corrupted.set(true)
@@ -72,10 +76,10 @@ final class PostgresChannel(
         val bytes = buf.toSpan
         Abort.run[Closed](conn.outbound.safe.put(bytes)).flatMap {
             case Result.Success(_) => ()
-            case Result.Failure(_) => Abort.fail(SqlException.Connection("Connection closed while writing (skip-check)", summon[Frame]))
+            case Result.Failure(_) => Abort.fail(SqlConnectionClosedException("writing (skip-check)"))
             case Result.Panic(t) =>
                 Log.error(s"[kyo-sql] PostgresChannel: write panic (skip-check): ${t.getMessage}").andThen(
-                    Abort.fail(SqlException.Connection(s"Write panic: ${t.getMessage}", summon[Frame]))
+                    Abort.fail(SqlConnectionWritePanicException(t))
                 )
         }
     end sendSkipCheck
@@ -94,10 +98,7 @@ final class PostgresChannel(
             case Maybe.Absent =>
                 _corrupted.get.flatMap { corrupted =>
                     if corrupted then
-                        Abort.fail(SqlException.Connection(
-                            "Postgres connection is unusable: a COPY operation was interrupted and protocol recovery failed. Discard this connection.",
-                            summon[Frame]
-                        ))
+                        Abort.fail(SqlConnectionProtocolCorruptedException("COPY"))
                     else
                         (
                     )
@@ -112,10 +113,10 @@ final class PostgresChannel(
             val bytes = buf.toSpan
             Abort.run[Closed](conn.outbound.safe.put(bytes)).flatMap {
                 case Result.Success(_) => ()
-                case Result.Failure(_) => Abort.fail(SqlException.Connection("Connection closed while writing", summon[Frame]))
+                case Result.Failure(_) => Abort.fail(SqlConnectionClosedException("writing"))
                 case Result.Panic(t) =>
                     Log.error(s"[kyo-sql] PostgresChannel: write panic: ${t.getMessage}").andThen(
-                        Abort.fail(SqlException.Connection(s"Write panic: ${t.getMessage}", summon[Frame]))
+                        Abort.fail(SqlConnectionWritePanicException(t))
                     )
             }
         }

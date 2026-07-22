@@ -25,15 +25,15 @@ class PrivilegeProbeIntegrationTest extends kyo.Test:
 
     private def describeFailure(label: String, t: Throwable): String =
         t match
-            case s: SqlException.Server =>
+            case s: SqlServerException =>
                 val code = s.extra.getOrElse("code", "")
-                s"FAILURE, SqlException.Server[sqlState=${s.sqlState}, code=$code, message=${s.message}]"
-            case s: SqlException.Connection =>
-                s"FAILURE, SqlException.Connection[message=${s.message}]"
-            case s: SqlException.Request =>
-                s"FAILURE, SqlException.Request[message=${s.message}]"
-            case s: SqlException.Decode =>
-                s"FAILURE, SqlException.Decode[message=${s.message}]"
+                s"FAILURE, SqlServerException[sqlState=${s.sqlState}, code=$code, message=${s.message}]"
+            case s: SqlConnectionException =>
+                s"FAILURE, SqlConnectionException[message=${s.message}]"
+            case s: SqlRequestException =>
+                s"FAILURE, SqlRequestException[message=${s.message}]"
+            case s: SqlDecodeException =>
+                s"FAILURE, SqlDecodeException[message=${s.message}]"
             case other =>
                 s"FAILURE, ${other.getClass.getSimpleName}[message=${other.getMessage}]"
 

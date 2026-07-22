@@ -153,7 +153,7 @@ class SqlClientPoolIsAliveTest extends Test:
                     val port   = listener.port
                     val url    = fakeUrl(port)
                     val config = baseConfig.copy(connectionTestQuery = Present("SELECT 1"))
-                    Abort.run[SqlException.Connection](
+                    Abort.run[SqlConnectionException](
                         SqlClient.init(url, config)
                     ).flatMap {
                         case Result.Success(client) =>
@@ -199,7 +199,7 @@ class SqlClientPoolIsAliveTest extends Test:
                     val port   = listener.port
                     val url    = fakeUrl(port)
                     val config = baseConfig.copy(connectionTestQuery = Absent)
-                    Abort.run[SqlException.Connection](
+                    Abort.run[SqlConnectionException](
                         SqlClient.init(url, config)
                     ).flatMap {
                         case Result.Success(client) =>
@@ -244,7 +244,7 @@ class SqlClientPoolIsAliveTest extends Test:
                 val port   = listener.port
                 val url    = fakeUrl(port)
                 val config = baseConfig.copy(connectionTestQuery = Present("SELECT 1"))
-                Abort.run[SqlException.Connection](
+                Abort.run[SqlConnectionException](
                     SqlClient.init(url, config)
                 ).flatMap {
                     case Result.Success(client) =>

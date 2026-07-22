@@ -53,7 +53,7 @@ sealed trait SqlBackendOps[B <: SqlBackend]:
       * @tparam A
       *   the Scala type to decode into; must have a [[kyo.SqlSchema]] instance
       */
-    def readRow[A](schema: SqlSchema[A], row: SqlRow)(using Frame): A < Abort[SqlException.Decode]
+    def readRow[A](schema: SqlSchema[A], row: SqlRow)(using Frame): A < Abort[SqlDecodeException]
 
 end SqlBackendOps
 
@@ -85,7 +85,7 @@ object SqlBackendOps:
         )(using Frame): Stream[SqlRow, Async & Abort[SqlException] & Scope] =
             client.streamPgQuery(sql, params, batchSize)
 
-        def readRow[A](schema: SqlSchema[A], row: SqlRow)(using Frame): A < Abort[SqlException.Decode] =
+        def readRow[A](schema: SqlSchema[A], row: SqlRow)(using Frame): A < Abort[SqlDecodeException] =
             schema.readPostgres(row)
     end postgres
 
@@ -113,7 +113,7 @@ object SqlBackendOps:
         )(using Frame): Stream[SqlRow, Async & Abort[SqlException] & Scope] =
             client.streamQueryMysqlFrag(sql, params, batchSize)
 
-        def readRow[A](schema: SqlSchema[A], row: SqlRow)(using Frame): A < Abort[SqlException.Decode] =
+        def readRow[A](schema: SqlSchema[A], row: SqlRow)(using Frame): A < Abort[SqlDecodeException] =
             schema.readMysql(row)
     end mysql
 

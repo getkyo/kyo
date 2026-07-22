@@ -690,9 +690,9 @@ object SqlAst:
               *
               * ==Error types==
               * Aborts with [[SqlException]] (any subtype). The two most common decode-time variants:
-              *   - [[SqlException.Decode]], a column value could not be converted to the target Scala type. Check the [[SqlSchema]]
+              *   - [[SqlDecodeException]], a column value could not be converted to the target Scala type. Check the [[SqlSchema]]
               *     derivation for `A`, ensure nullable columns use `Maybe[T]`, and confirm the database schema matches the query result.
-              *   - [[SqlException.Unsupported]], the [[SqlSchema]] decoder called a structural read operation (array element, map entry)
+              *   - [[SqlUnsupportedException]], the [[SqlSchema]] decoder called a structural read operation (array element, map entry)
               *     that the backend does not yet implement. Re-derive the schema without the unsupported structural type, or supply a
               *     custom decoder via [[SqlSchema.withDecoder]].
               */

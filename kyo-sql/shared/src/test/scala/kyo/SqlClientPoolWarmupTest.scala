@@ -116,7 +116,7 @@ class SqlClientPoolWarmupTest extends Test:
                 }.flatMap { listener =>
                     val port = listener.port
                     val url  = fakeUrl(port)
-                    Abort.run[SqlException.Connection](
+                    Abort.run[SqlConnectionException](
                         SqlClient.init(url, warmupConfig(maxConns = 5, minConns = 3))
                     ).flatMap {
                         case Result.Success(_) =>
@@ -148,7 +148,7 @@ class SqlClientPoolWarmupTest extends Test:
                     val port = listener.port
                     val url  = fakeUrl(port)
                     // minConnections=0: warmUp is a no-op, no TCP connects should occur.
-                    Abort.run[SqlException.Connection](
+                    Abort.run[SqlConnectionException](
                         SqlClient.init(url, warmupConfig(maxConns = 5, minConns = 0))
                     ).flatMap { _ =>
                         acceptCount.get.map { count =>
@@ -171,7 +171,7 @@ class SqlClientPoolWarmupTest extends Test:
                     val port = listener.port
                     val url  = fakeUrl(port)
                     // minConnections=7 but maxConnections=5 → clamp to 5.
-                    Abort.run[SqlException.Connection](
+                    Abort.run[SqlConnectionException](
                         SqlClient.init(url, warmupConfig(maxConns = 5, minConns = 7))
                     ).flatMap { _ =>
                         acceptCount.get.map { count =>
@@ -183,23 +183,23 @@ class SqlClientPoolWarmupTest extends Test:
         }
     }
 
-    // ── warm-up errors abort init with SqlException.Connection ────────────────
+    // ── warm-up errors abort init with SqlConnectionException ────────────────
 
-    "warm-up errors abort init with SqlException.Connection" in {
+    "warm-up errors abort init with SqlConnectionException" in {
         Scope.run {
             kyo.internal.FakeServer.listenPort { conn =>
-                // Immediately close: Postgres startup will fail → SqlException.Connection.
+                // Immediately close: Postgres startup will fail → SqlConnectionException.
                 Sync.Unsafe.defer(conn.close())
             }.flatMap { listener =>
                 val port = listener.port
                 val url  = fakeUrl(port)
-                Abort.run[SqlException.Connection](
+                Abort.run[SqlConnectionException](
                     SqlClient.init(url, warmupConfig(maxConns = 5, minConns = 3))
                 ).map {
-                    case Result.Failure(_: SqlException.Connection) =>
+                    case Result.Failure(_: SqlConnectionException) =>
                         succeed
                     case Result.Success(_) =>
-                        fail("Expected init to fail with SqlException.Connection when server refuses all connections")
+                        fail("Expected init to fail with SqlConnectionException when server refuses all connections")
                     case Result.Panic(t) =>
                         fail(s"Unexpected panic: ${t.getMessage}")
                 }
@@ -228,14 +228,14 @@ class SqlClientPoolWarmupTest extends Test:
                     }.flatMap { listener =>
                         val port = listener.port
                         val url  = fakeUrl(port)
-                        Abort.run[SqlException.Connection](
+                        Abort.run[SqlConnectionException](
                             SqlClient.init(url, warmupConfig(maxConns = 5, minConns = 5))
                         ).map {
-                            case Result.Failure(_: SqlException.Connection) =>
+                            case Result.Failure(_: SqlConnectionException) =>
                                 // Expected: warmUp aborted because at least one connection failed.
                                 succeed
                             case Result.Success(_) =>
-                                fail("Expected init to fail with SqlException.Connection on partial warm-up failure")
+                                fail("Expected init to fail with SqlConnectionException on partial warm-up failure")
                             case Result.Panic(t) =>
                                 fail(s"Unexpected panic: ${t.getMessage}")
                         }
@@ -269,7 +269,7 @@ class SqlClientPoolWarmupTest extends Test:
                     val port = listener.port
                     val url  = fakeUrl(port)
                     Fiber.initUnscoped(
-                        Abort.run[SqlException.Connection](
+                        Abort.run[SqlConnectionException](
                             SqlClient.init(url, warmupConfig(maxConns = 3, minConns = 3))
                         )
                     ).flatMap { fiber =>
@@ -309,7 +309,7 @@ class SqlClientPoolWarmupTest extends Test:
                         queryTimeout = 200.millis,
                         idleTimeout = 10.minutes
                     )
-                    Abort.run[SqlException.Connection](
+                    Abort.run[SqlConnectionException](
                         SqlClient.init(url, config)
                     ).flatMap {
                         case Result.Success(client) =>
@@ -376,7 +376,7 @@ class SqlClientPoolWarmupTest extends Test:
                             val port   = listener.port
                             val url    = fakeUrl(port)
                             val config = warmupConfig(maxConns = 5, minConns = minConns)
-                            Abort.run[SqlException.Connection](
+                            Abort.run[SqlConnectionException](
                                 SqlClient.init(url, config)
                             ).flatMap { _ =>
                                 snapshotRef.get.map { snap =>
@@ -403,7 +403,7 @@ class SqlClientPoolWarmupTest extends Test:
                 }.flatMap { listener =>
                     val port = listener.port
                     val url  = fakeUrl(port)
-                    Abort.run[SqlException.Connection](
+                    Abort.run[SqlConnectionException](
                         SqlClient.init(url, warmupConfig(maxConns = 3, minConns = 3))
                     ).flatMap {
                         case Result.Success(_) =>
@@ -425,8 +425,8 @@ class SqlClientPoolWarmupTest extends Test:
     /** Regression test for G-Leak-2: `warmUp` used to drop partial successes on the first failure.
       *
       * The server accepts and completes the handshake for the first 2 connections, then immediately closes the 3rd (causing a
-      * `SqlException.Connection`). The fix must:
-      *   1. Propagate the error (init fails with `SqlException.Connection`).
+      * `SqlConnectionException`). The fix must:
+      *   1. Propagate the error (init fails with `SqlConnectionException`).
       *   2. Close the 2 successful connections so the server-side sockets are released.
       *
       * Server-side closure detection: the handler for each of the 2 successful connections waits for the client to close (inbound.take
@@ -455,16 +455,16 @@ class SqlClientPoolWarmupTest extends Test:
                                     }
                                 }
                             else
-                                // Refuse: immediately close, 3rd+ connections fail with SqlException.Connection.
+                                // Refuse: immediately close, 3rd+ connections fail with SqlConnectionException.
                                 Sync.Unsafe.defer(conn.close())
                         }
                     }.flatMap { listener =>
                         val port = listener.port
                         val url  = fakeUrl(port)
-                        Abort.run[SqlException.Connection](
+                        Abort.run[SqlConnectionException](
                             SqlClient.init(url, warmupConfig(maxConns = 3, minConns = 3))
                         ).flatMap {
-                            case Result.Failure(_: SqlException.Connection) =>
+                            case Result.Failure(_: SqlConnectionException) =>
                                 // Expected: warmUp aborted. Wait for latch to confirm the 2 successful
                                 // connections were closed (G-Leak-2 fix verification).
                                 Abort.run[Timeout](Async.timeout(5.seconds)(clientClosedLatch.await)).map {
@@ -475,7 +475,7 @@ class SqlClientPoolWarmupTest extends Test:
                                         )
                                 }
                             case Result.Success(_) =>
-                                fail("Expected init to fail with SqlException.Connection on partial warm-up failure")
+                                fail("Expected init to fail with SqlConnectionException on partial warm-up failure")
                             case Result.Panic(t) =>
                                 fail(s"Unexpected panic: ${t.getMessage}")
                         }

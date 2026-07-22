@@ -4,6 +4,7 @@ import java.net.Inet4Address
 import java.net.Inet6Address
 import java.net.InetAddress
 import kyo.*
+import kyo.SqlDecodeInetException
 import kyo.SqlException
 import kyo.internal.postgres.PostgresBufferWriter
 
@@ -125,10 +126,11 @@ class PostgresEncoderInetTest extends kyo.Test:
         ))
         try
             val _ = decode(Format.Binary, badBytes)
-            assert(false, "Expected SqlException.Decode to be thrown")
+            assert(false, "Expected SqlDecodeInetException to be thrown")
         catch
-            case ex: SqlException.Decode =>
-                assert(ex.getMessage.contains("unknown address family"))
+            case ex: SqlDecodeInetException =>
+                assert(ex.typeName == "inet", s"expected typeName 'inet', got: ${ex.typeName}")
+                assert(ex.family == 99, s"expected family 99, got: ${ex.family}")
         end try
     }
 
@@ -186,7 +188,7 @@ class PostgresEncoderInetTest extends kyo.Test:
     //
     // cidr shares inet's binary wire format with `is_cidr = 1`. java.net.InetAddress has no prefix
     // representation, so we emit the host bits (/32 or /128). The decoder rejects text values with
-    // a non-host prefix mask (e.g. "192.168.1.0/24") via SqlException.Decode.
+    // a non-host prefix mask (e.g. "192.168.1.0/24") via SqlDecodeException.
 
     "cidrBinary encodes IPv4 as 8 bytes with is_cidr=1" in {
         val addr = InetAddress.getByName("10.0.0.5")
@@ -221,14 +223,16 @@ class PostgresEncoderInetTest extends kyo.Test:
         assert(java.util.Arrays.equals(decoded.getAddress, InetAddress.getByName("10.1.2.3").getAddress))
     }
 
-    "cidr text raises SqlException.Decode for a non-host network prefix" in {
+    "cidr text raises SqlDecodeException for a non-host network prefix" in {
         val bytes = Span.from("192.168.1.0/24".getBytes(java.nio.charset.StandardCharsets.UTF_8))
         try
             val _ = PostgresDecoder.cidr.read(Format.Text, bytes)
-            assert(false, "Expected SqlException.Decode for non-host CIDR prefix")
+            assert(false, "Expected SqlDecodeInetException for non-host CIDR prefix")
         catch
-            case ex: SqlException.Decode =>
-                assert(ex.getMessage.contains("non-host prefix"))
+            case ex: SqlDecodeInetException =>
+                assert(ex.typeName == "cidr", s"expected typeName 'cidr', got: ${ex.typeName}")
+                assert(ex.addressLength == 24, s"expected addressLength (mask) 24, got: ${ex.addressLength}")
+                assert(ex.byteSize == 32, s"expected byteSize (host width) 32, got: ${ex.byteSize}")
         end try
     }
 

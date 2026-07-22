@@ -12,16 +12,16 @@ import kyo.net.StubConnection
   */
 class PostgresChannelTest extends Test:
 
-    "markCorrupted then receive raises SqlException.Connection with 'unusable'" in {
+    "markCorrupted then receive raises SqlConnectionProtocolCorruptedException" in {
         PostgresChannel(StubConnection()).flatMap { channel =>
             channel.markCorrupted().flatMap { _ =>
                 // receive calls checkCorrupted() first; after markCorrupted it should abort
-                // immediately with SqlException.Connection before touching the stub's inbound.
+                // immediately with SqlConnectionProtocolCorruptedException before touching the stub's inbound.
                 Abort.run[SqlException](channel.receive).map {
-                    case Result.Failure(e: SqlException.Connection) =>
-                        assert(e.message.contains("unusable"))
+                    case Result.Failure(e: SqlConnectionProtocolCorruptedException) =>
+                        assert(e.operation == "COPY")
                     case other =>
-                        fail(s"Expected SqlException.Connection 'unusable', got: $other")
+                        fail(s"Expected SqlConnectionProtocolCorruptedException, got: $other")
                 }
             }
         }

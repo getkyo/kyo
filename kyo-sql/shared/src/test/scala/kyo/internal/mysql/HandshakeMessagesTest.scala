@@ -12,8 +12,8 @@ import kyo.internal.mysql.unmarshaller.HandshakeV10Unmarshaller
   */
 class HandshakeMessagesTest extends Test:
 
-    private def decode[A](result: A < Abort[SqlException.Decode])(using kyo.test.AssertScope): A =
-        Abort.run[SqlException.Decode](result).eval match
+    private def decode[A](result: A < Abort[SqlDecodeException])(using kyo.test.AssertScope): A =
+        Abort.run[SqlDecodeException](result).eval match
             case Result.Success(a) => a
             case Result.Failure(e) => fail(s"Decode failed: $e")
             case Result.Panic(t)   => throw t
@@ -130,7 +130,7 @@ class HandshakeMessagesTest extends Test:
         val span = buf.toSpan
         // Read back the capability flags (first 4 bytes, LE uint32)
         val reader = MysqlBufferReader(span)
-        Abort.run[SqlException.Decode](reader.readUInt32LE()).map {
+        Abort.run[SqlDecodeException](reader.readUInt32LE()).map {
             case Result.Success(decodedCaps) =>
                 assert((decodedCaps & Capabilities.CLIENT_PROTOCOL_41) != 0)
             case other => fail(s"readUInt32LE failed: $other")
@@ -179,7 +179,7 @@ class HandshakeMessagesTest extends Test:
 
     "HandshakeV10Unmarshaller fails on non-10 protocol version" in {
         val bad    = Array[Byte](9.toByte) ++ testPacket.tail
-        val result = Abort.run[SqlException.Decode](HandshakeV10Unmarshaller.read(MysqlBufferReader(bad))).eval
+        val result = Abort.run[SqlDecodeException](HandshakeV10Unmarshaller.read(MysqlBufferReader(bad))).eval
         assert(result.isFailure)
     }
 

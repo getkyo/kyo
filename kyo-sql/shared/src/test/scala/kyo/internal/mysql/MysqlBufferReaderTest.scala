@@ -14,7 +14,7 @@ class MysqlBufferReaderTest extends Test:
 
     "MysqlBufferReader readUInt16LE [1,0] = 1" in {
         val reader = MysqlBufferReader(Array[Byte](1, 0))
-        Abort.run[SqlException.Decode](reader.readUInt16LE()).map {
+        Abort.run[SqlDecodeException](reader.readUInt16LE()).map {
             case Result.Success(v) => assert(v == 1)
             case other             => fail(s"Expected Success(1), got: $other")
         }
@@ -22,7 +22,7 @@ class MysqlBufferReaderTest extends Test:
 
     "MysqlBufferReader readUInt16LE [0,1] = 256" in {
         val reader = MysqlBufferReader(Array[Byte](0, 1))
-        Abort.run[SqlException.Decode](reader.readUInt16LE()).map {
+        Abort.run[SqlDecodeException](reader.readUInt16LE()).map {
             case Result.Success(v) => assert(v == 256)
             case other             => fail(s"Expected Success(256), got: $other")
         }
@@ -30,7 +30,7 @@ class MysqlBufferReaderTest extends Test:
 
     "MysqlBufferReader readUInt32LE [1,0,0,0] = 1" in {
         val reader = MysqlBufferReader(Array[Byte](1, 0, 0, 0))
-        Abort.run[SqlException.Decode](reader.readUInt32LE()).map {
+        Abort.run[SqlDecodeException](reader.readUInt32LE()).map {
             case Result.Success(v) => assert(v == 1L)
             case other             => fail(s"Expected Success(1L), got: $other")
         }
@@ -38,7 +38,7 @@ class MysqlBufferReaderTest extends Test:
 
     "MysqlBufferReader readUInt32LE [255,255,255,255] = 4294967295" in {
         val reader = MysqlBufferReader(Array[Byte](0xff.toByte, 0xff.toByte, 0xff.toByte, 0xff.toByte))
-        Abort.run[SqlException.Decode](reader.readUInt32LE()).map {
+        Abort.run[SqlDecodeException](reader.readUInt32LE()).map {
             case Result.Success(v) => assert(v == 4294967295L)
             case other             => fail(s"Expected Success(4294967295L), got: $other")
         }
@@ -46,7 +46,7 @@ class MysqlBufferReaderTest extends Test:
 
     "MysqlBufferReader readLengthEncodedInt 1-byte value 42" in {
         val reader = MysqlBufferReader(Array[Byte](42))
-        Abort.run[SqlException.Decode](reader.readLenencInt()).map {
+        Abort.run[SqlDecodeException](reader.readLenencInt()).map {
             case Result.Success(Maybe.Present(v)) => assert(v == 42L)
             case other                            => fail(s"Expected Success(Present(42L)), got: $other")
         }
@@ -54,7 +54,7 @@ class MysqlBufferReaderTest extends Test:
 
     "MysqlBufferReader readLengthEncodedInt 0xFC prefix encodes 100" in {
         val reader = MysqlBufferReader(Array[Byte](0xfc.toByte, 100, 0))
-        Abort.run[SqlException.Decode](reader.readLenencInt()).map {
+        Abort.run[SqlDecodeException](reader.readLenencInt()).map {
             case Result.Success(Maybe.Present(v)) => assert(v == 100L)
             case other                            => fail(s"Expected Success(Present(100L)), got: $other")
         }
@@ -62,7 +62,7 @@ class MysqlBufferReaderTest extends Test:
 
     "MysqlBufferReader readLengthEncodedInt 0xFD prefix encodes 1" in {
         val reader = MysqlBufferReader(Array[Byte](0xfd.toByte, 1, 0, 0))
-        Abort.run[SqlException.Decode](reader.readLenencInt()).map {
+        Abort.run[SqlDecodeException](reader.readLenencInt()).map {
             case Result.Success(Maybe.Present(v)) => assert(v == 1L)
             case other                            => fail(s"Expected Success(Present(1L)), got: $other")
         }
@@ -71,7 +71,7 @@ class MysqlBufferReaderTest extends Test:
     "MysqlBufferReader readLengthEncodedInt 0xFE prefix encodes 1" in {
         val bytes  = Array[Byte](0xfe.toByte, 1, 0, 0, 0, 0, 0, 0, 0)
         val reader = MysqlBufferReader(bytes)
-        Abort.run[SqlException.Decode](reader.readLenencInt()).map {
+        Abort.run[SqlDecodeException](reader.readLenencInt()).map {
             case Result.Success(Maybe.Present(v)) => assert(v == 1L)
             case other                            => fail(s"Expected Success(Present(1L)), got: $other")
         }
@@ -79,7 +79,7 @@ class MysqlBufferReaderTest extends Test:
 
     "MysqlBufferReader readLengthEncodedInt 0xFF sentinel returns Maybe.Absent" in {
         val reader = MysqlBufferReader(Array[Byte](0xff.toByte))
-        Abort.run[SqlException.Decode](reader.readLenencInt()).map {
+        Abort.run[SqlDecodeException](reader.readLenencInt()).map {
             case Result.Success(Maybe.Absent) => succeed
             case other                        => fail(s"Expected Success(Absent) for 0xFF sentinel, got: $other")
         }
@@ -88,7 +88,7 @@ class MysqlBufferReaderTest extends Test:
     "MysqlBufferReader readLengthEncodedString decodes 5-byte string" in {
         val bytes  = Array[Byte](5, 'h'.toByte, 'e'.toByte, 'l'.toByte, 'l'.toByte, 'o'.toByte)
         val reader = MysqlBufferReader(bytes)
-        Abort.run[SqlException.Decode](reader.readLenencString()).map {
+        Abort.run[SqlDecodeException](reader.readLenencString()).map {
             case Result.Success(v) => assert(v == "hello")
             case other             => fail(s"Expected Success(\"hello\"), got: $other")
         }
@@ -111,7 +111,7 @@ class MysqlBufferReaderTest extends Test:
     "MysqlBufferReader readUInt24LE [5,0,1] = 65541" in {
         val reader = MysqlBufferReader(Array[Byte](5, 0, 1))
         // 5 + (0 << 8) + (1 << 16) = 65541
-        Abort.run[SqlException.Decode](reader.readUInt24LE()).map {
+        Abort.run[SqlDecodeException](reader.readUInt24LE()).map {
             case Result.Success(v) => assert(v == 65541)
             case other             => fail(s"Expected Success(65541), got: $other")
         }
@@ -119,25 +119,25 @@ class MysqlBufferReaderTest extends Test:
 
     "MysqlBufferReader readByte returns Abort.fail on empty buffer" in {
         val reader = MysqlBufferReader(Array.empty[Byte])
-        Abort.run[SqlException.Decode](reader.readByte()).map {
-            case Result.Failure(_: SqlException.Decode) => succeed
-            case other                                  => fail(s"Expected Decode failure, got: $other")
+        Abort.run[SqlDecodeException](reader.readByte()).map {
+            case Result.Failure(_: SqlDecodeException) => succeed
+            case other                                 => fail(s"Expected Decode failure, got: $other")
         }
     }
 
     "MysqlBufferReader readUInt16LE returns Abort.fail on under-length buffer" in {
         val reader = MysqlBufferReader(Array[Byte](1)) // only 1 byte, need 2
-        Abort.run[SqlException.Decode](reader.readUInt16LE()).map {
-            case Result.Failure(_: SqlException.Decode) => succeed
-            case other                                  => fail(s"Expected Decode failure, got: $other")
+        Abort.run[SqlDecodeException](reader.readUInt16LE()).map {
+            case Result.Failure(_: SqlDecodeException) => succeed
+            case other                                 => fail(s"Expected Decode failure, got: $other")
         }
     }
 
     "MysqlBufferReader readBytes returns Abort.fail on under-length buffer" in {
         val reader = MysqlBufferReader(Array[Byte](1, 2)) // only 2 bytes
-        Abort.run[SqlException.Decode](reader.readBytes(5)).map {
-            case Result.Failure(_: SqlException.Decode) => succeed
-            case other                                  => fail(s"Expected Decode failure, got: $other")
+        Abort.run[SqlDecodeException](reader.readBytes(5)).map {
+            case Result.Failure(_: SqlDecodeException) => succeed
+            case other                                 => fail(s"Expected Decode failure, got: $other")
         }
     }
 

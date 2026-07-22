@@ -3,7 +3,8 @@ package kyo.internal.postgres
 import java.nio.charset.StandardCharsets
 import kyo.*
 import kyo.Span
-import kyo.SqlException
+import kyo.SqlDecodeException
+import kyo.SqlDecodeInsufficientBytesException
 
 /** Big-endian byte reader for the PostgreSQL v3 wire protocol.
   *
@@ -12,7 +13,7 @@ import kyo.SqlException
   * All multi-byte integers are read in network byte order (big-endian) as required by the PostgreSQL protocol (§55.7).
   *
   * Read methods that consume bytes (`readByte`, `readInt16`, `readInt32`, `readBytes`) perform a bounds check before any array access. On
-  * under-length input they return `Abort.fail(SqlException.Decode(...))` rather than throwing an exception.
+  * under-length input they return `Abort.fail(SqlDecodeInsufficientBytesException(...))` rather than throwing an exception.
   *
   * @param span
   *   the immutable byte span to read from
@@ -28,13 +29,9 @@ final class PostgresBufferReader(private val span: Span[Byte]):
     def position: Int = pos
 
     /** Reads a single byte and advances the cursor. */
-    def readByte()(using Frame): Byte < Abort[SqlException.Decode] =
+    def readByte()(using Frame): Byte < Abort[SqlDecodeException] =
         if pos >= span.size then
-            Abort.fail(SqlException.Decode(
-                s"Short read: expected 1 byte at position $pos but only ${span.size - pos} remain",
-                Maybe.Absent,
-                summon[Frame]
-            ))
+            Abort.fail(SqlDecodeInsufficientBytesException("bytes", 1, span.size - pos, pos))
         else
             val b = span(pos)
             pos += 1
@@ -42,13 +39,9 @@ final class PostgresBufferReader(private val span: Span[Byte]):
     end readByte
 
     /** Reads a big-endian Int16 (2 bytes) and advances the cursor. */
-    def readInt16()(using Frame): Short < Abort[SqlException.Decode] =
+    def readInt16()(using Frame): Short < Abort[SqlDecodeException] =
         if pos + 2 > span.size then
-            Abort.fail(SqlException.Decode(
-                s"Short read: expected 2 bytes at position $pos but only ${span.size - pos} remain",
-                Maybe.Absent,
-                summon[Frame]
-            ))
+            Abort.fail(SqlDecodeInsufficientBytesException("bytes", 2, span.size - pos, pos))
         else
             val hi = span(pos) & 0xff
             val lo = span(pos + 1) & 0xff
@@ -57,13 +50,9 @@ final class PostgresBufferReader(private val span: Span[Byte]):
     end readInt16
 
     /** Reads a big-endian Int32 (4 bytes) and advances the cursor. */
-    def readInt32()(using Frame): Int < Abort[SqlException.Decode] =
+    def readInt32()(using Frame): Int < Abort[SqlDecodeException] =
         if pos + 4 > span.size then
-            Abort.fail(SqlException.Decode(
-                s"Short read: expected 4 bytes at position $pos but only ${span.size - pos} remain",
-                Maybe.Absent,
-                summon[Frame]
-            ))
+            Abort.fail(SqlDecodeInsufficientBytesException("bytes", 4, span.size - pos, pos))
         else
             val b0 = span(pos) & 0xff
             val b1 = span(pos + 1) & 0xff
@@ -84,15 +73,11 @@ final class PostgresBufferReader(private val span: Span[Byte]):
 
     /** Reads exactly `n` bytes and returns them as an immutable [[Span[Byte]]]. Advances the cursor by `n`.
       *
-      * If fewer than `n` bytes remain, returns `Abort.fail(SqlException.Decode(...))`.
+      * If fewer than `n` bytes remain, returns `Abort.fail(SqlDecodeInsufficientBytesException(...))`.
       */
-    def readBytes(n: Int)(using Frame): Span[Byte] < Abort[SqlException.Decode] =
+    def readBytes(n: Int)(using Frame): Span[Byte] < Abort[SqlDecodeException] =
         if n < 0 || pos + n > span.size then
-            Abort.fail(SqlException.Decode(
-                s"Short read: expected $n bytes at position $pos but only ${span.size - pos} remain",
-                Maybe.Absent,
-                summon[Frame]
-            ))
+            Abort.fail(SqlDecodeInsufficientBytesException("bytes", n, span.size - pos, pos))
         else
             val result = span.slice(pos, pos + n)
             pos += n

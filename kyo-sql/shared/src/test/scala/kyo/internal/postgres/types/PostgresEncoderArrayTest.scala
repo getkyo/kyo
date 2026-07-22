@@ -98,16 +98,16 @@ class PostgresEncoderArrayTest extends kyo.Test:
 
     // ── decode raises Decode on truncated bytes ──────────────────────────────
 
-    "array decode raises SqlException.Decode on truncated bytes" in {
+    "array decode raises SqlDecodeException on truncated bytes" in {
         // Supply only 4 bytes, far too short for the 12-byte minimum header. The decoder must surface
-        // the truncation as a typed `SqlException.Decode`, NOT as a NullPointerException / ArrayIndex
+        // the truncation as a typed `SqlDecodeException`, NOT as a NullPointerException / ArrayIndex
         // / similar reflection-layer panic. Per Phase 16 audit W-1, the previous assertion
         // (`result.isFailure || result.isPanic`) passed on any throwable and did not discriminate.
         val truncated = Span.from(Array[Byte](0, 0, 0, 1))
         val result    = Result.catching[Throwable](PostgresDecoder.int4Array.read(Format.Binary, truncated))
         result match
-            case Result.Failure(_: SqlException.Decode) => succeed
-            case other                                  => fail(s"expected Result.Failure(SqlException.Decode), got: $other")
+            case Result.Failure(_: SqlDecodeException) => succeed
+            case other                                 => fail(s"expected Result.Failure(SqlDecodeException), got: $other")
         end match
     }
 
@@ -189,12 +189,12 @@ class PostgresEncoderArrayTest extends kyo.Test:
         assert(decoded == Chunk.empty)
     }
 
-    "jsonbArray decode raises SqlException.Decode on truncated bytes" in {
+    "jsonbArray decode raises SqlDecodeException on truncated bytes" in {
         val truncated = Span.from(Array[Byte](0, 0, 0, 1))
         val result    = Result.catching[Throwable](PostgresDecoder.jsonbArray.read(Format.Binary, truncated))
         result match
-            case Result.Failure(_: SqlException.Decode) => succeed
-            case other                                  => fail(s"expected Result.Failure(SqlException.Decode), got: $other")
+            case Result.Failure(_: SqlDecodeException) => succeed
+            case other                                 => fail(s"expected Result.Failure(SqlDecodeException), got: $other")
         end match
     }
 

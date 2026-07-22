@@ -4,6 +4,9 @@ import kyo.*
 import kyo.SqlClient.IsolationLevel
 import kyo.SqlClient.Notification
 import kyo.SqlConfig.Address
+import kyo.SqlConnectionConnectFailedException
+import kyo.SqlConnectionException
+import kyo.SqlConnectionUnexpectedMessageException
 import kyo.SqlException
 import kyo.SqlRow
 import kyo.internal.client.TypeRegistry
@@ -80,7 +83,8 @@ final class PostgresConnection(
                 case ParameterStatus(n, v)   => updateParam(n, v).andThen(drainCloseResponses(0))
                 case n: NotificationResponse => sendNotification(n).andThen(drainCloseResponses(0))
                 case NoticeResponse(_)       => drainCloseResponses(0)
-                case other => Abort.fail(SqlException.Connection(s"Unexpected message waiting for ReadyForQuery: $other", summon[Frame]))
+                case other =>
+                    Abort.fail(SqlConnectionUnexpectedMessageException("waiting for ReadyForQuery", "ReadyForQuery", other.toString))
             }
         else
             channel.receive.flatMap {
@@ -89,7 +93,8 @@ final class PostgresConnection(
                 case ParameterStatus(n, v)   => updateParam(n, v).andThen(drainCloseResponses(remaining))
                 case n: NotificationResponse => sendNotification(n).andThen(drainCloseResponses(remaining))
                 case NoticeResponse(_)       => drainCloseResponses(remaining)
-                case other => Abort.fail(SqlException.Connection(s"Unexpected message during Close drain: $other", summon[Frame]))
+                case other =>
+                    Abort.fail(SqlConnectionUnexpectedMessageException("Close drain", "CloseComplete / ReadyForQuery", other.toString))
             }
         end if
     end drainCloseResponses
@@ -389,9 +394,9 @@ object PostgresConnection:
 
     // --- Internal helpers ---
 
-    private[kyo] def onConnectPanic(t: Throwable, label: String)(using Frame): SqlException.Connection < Sync =
+    private[kyo] def onConnectPanic(t: Throwable, label: String, host: String, port: Int)(using Frame): SqlConnectionException < Sync =
         Log.error(s"[kyo-sql] PostgresConnection.$label: panic: ${t.getMessage}").andThen(
-            SqlException.Connection(s"Failed to connect: ${t.getMessage}", summon[Frame])
+            SqlConnectionConnectFailedException(host, port, t)
         )
 
     /** Builds the per-connection prepared-statement cache with eviction wired into `pendingCloses`.
@@ -468,9 +473,9 @@ object PostgresConnection:
             port
         ).safe).flatMap(_.use(identity))).flatMap {
             case Result.Failure(_) =>
-                Abort.fail(SqlException.Connection(s"Failed to connect to $host:$port", summon[Frame]))
+                Abort.fail(SqlConnectionConnectFailedException(host, port, new Exception("connect refused")))
             case Result.Panic(t) =>
-                onConnectPanic(t, "connect").flatMap(Abort.fail(_))
+                onConnectPanic(t, "connect", host, port).flatMap(Abort.fail(_))
             case Result.Success(rawConn) =>
                 // If TLS is requested, perform the SSLRequest dance and upgrade; otherwise use the raw connection.
                 val connEffect: Connection < (Async & Abort[SqlException]) = tls match
@@ -532,9 +537,9 @@ object PostgresConnection:
             port
         ).safe).flatMap(_.use(identity))).flatMap {
             case Result.Failure(_) =>
-                Abort.fail(SqlException.Connection(s"Failed to connect to $host:$port", summon[Frame]))
+                Abort.fail(SqlConnectionConnectFailedException(host, port, new Exception("connect refused")))
             case Result.Panic(t) =>
-                onConnectPanic(t, "connectWithNegotiator").flatMap(Abort.fail(_))
+                onConnectPanic(t, "connectWithNegotiator", host, port).flatMap(Abort.fail(_))
             case Result.Success(rawConn) =>
                 // Step 1: apply negotiator (prefer/allow) or strict TLS upgrade (require/verify-*).
                 val connEffect: Connection < (Async & Abort[SqlException]) = negotiator match
@@ -585,9 +590,9 @@ object PostgresConnection:
             port
         ).safe).flatMap(_.use(identity))).flatMap {
             case Result.Failure(_) =>
-                Abort.fail(SqlException.Connection(s"Failed to connect to $host:$port", summon[Frame]))
+                Abort.fail(SqlConnectionConnectFailedException(host, port, new Exception("connect refused")))
             case Result.Panic(t) =>
-                onConnectPanic(t, "connectWithCertHashOverride").flatMap(Abort.fail(_))
+                onConnectPanic(t, "connectWithCertHashOverride", host, port).flatMap(Abort.fail(_))
             case Result.Success(rawConn) =>
                 val connEffect: Connection < (Async & Abort[SqlException]) = tls match
                     case Absent             => rawConn

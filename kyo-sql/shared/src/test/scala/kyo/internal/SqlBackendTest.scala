@@ -34,18 +34,18 @@ class SqlBackendTest extends Test:
         assert(evPg != null && evMy != null)
     }
 
-    "SqlClient.usePostgres fails with SqlException.Connection when no client is active" in {
+    "SqlClient.usePostgres fails with SqlConnectionException when no client is active" in {
         // Runtime gate: usePostgres requires an active client. With none, fail with Connection.
         Abort.run[SqlException](SqlClient.usePostgres(_ => 1)).map {
-            case Result.Failure(_: SqlException.Connection) => succeed
-            case other                                      => fail(s"Expected SqlException.Connection, got $other")
+            case Result.Failure(_: SqlConnectionException) => succeed
+            case other                                     => fail(s"Expected SqlConnectionException, got $other")
         }
     }
 
-    "SqlClient.useMysql fails with SqlException.Connection when no client is active" in {
+    "SqlClient.useMysql fails with SqlConnectionException when no client is active" in {
         Abort.run[SqlException](SqlClient.useMysql(_ => 1)).map {
-            case Result.Failure(_: SqlException.Connection) => succeed
-            case other                                      => fail(s"Expected SqlException.Connection, got $other")
+            case Result.Failure(_: SqlConnectionException) => succeed
+            case other                                     => fail(s"Expected SqlConnectionException, got $other")
         }
     }
 

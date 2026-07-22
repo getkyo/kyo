@@ -23,12 +23,12 @@ class PoolWarmupIntegrationTest extends kyo.Test:
         url: String,
         config: SqlConfig
     )(f: SqlClient => A < (S & Async & Abort[SqlException]))(using Frame): A < (S & Async & Scope & Abort[SqlException]) =
-        Abort.run[SqlException.Connection](SqlClient.init(url, config)).flatMap {
+        Abort.run[SqlConnectionException](SqlClient.init(url, config)).flatMap {
             case Result.Success(client) => SqlClient.let(client)(f(client))
             case Result.Failure(e)      => Abort.fail(e: SqlException)
             case Result.Panic(t) =>
                 scala.Console.err.println(s"[kyo-sql] PoolWarmupIntegrationTest.withPgClient panic: ${t.getMessage}")
-                Abort.fail(SqlException.Connection(t.getMessage, summon[Frame]): SqlException)
+                Abort.fail(SqlConnectionConnectFailedException("test", 0, new Exception(t.getMessage)): SqlException)
         }
 
     // ── Integration leaf: minConnections=5 opens 5 connections at startup ─────

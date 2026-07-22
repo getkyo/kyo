@@ -1,6 +1,11 @@
 package kyo.internal.mysql
 
 import kyo.*
+import kyo.SqlConnectionClosedException
+import kyo.SqlConnectionProtocolCorruptedException
+import kyo.SqlConnectionProtocolDecodeException
+import kyo.SqlConnectionWritePanicException
+import kyo.SqlDecodeException
 import kyo.SqlException
 import kyo.internal.mysql.marshaller.Marshallers
 import kyo.internal.mysql.unmarshaller.GenericResponseUnmarshaller
@@ -52,7 +57,7 @@ final class MysqlChannel(
 
     /** Marks the channel as corrupted after a failed [[exchange.LocalInfileExchange]] cleanup attempt.
       *
-      * Once corrupted, all subsequent send/receive operations on this channel fail immediately with [[SqlException.Connection]]. The
+      * Once corrupted, all subsequent send/receive operations on this channel fail immediately with a [[kyo.SqlConnectionException]] leaf. The
       * channel must be discarded (closed and not returned to any pool). Called by [[exchange.LocalInfileExchange]] when the error-path
       * cleanup (empty terminator + drain) itself fails, meaning the TCP stream framing is irrecoverably broken.
       */
@@ -94,10 +99,7 @@ final class MysqlChannel(
             case Maybe.Absent =>
                 _corrupted.get.flatMap { corrupted =>
                     if corrupted then
-                        Abort.fail(SqlException.Connection(
-                            "MySQL connection is unusable: a LOAD DATA LOCAL INFILE upload was interrupted and protocol recovery failed. Discard this connection.",
-                            summon[Frame]
-                        ))
+                        Abort.fail(SqlConnectionProtocolCorruptedException("LOAD DATA LOCAL INFILE"))
                     else
                         (
                     )
@@ -132,10 +134,10 @@ final class MysqlChannel(
             }.flatMap { bytes =>
                 Abort.run[Closed](conn.outbound.safe.put(bytes)).flatMap {
                     case Result.Success(_) => ()
-                    case Result.Failure(_) => Abort.fail(SqlException.Connection("Connection closed while writing", summon[Frame]))
+                    case Result.Failure(_) => Abort.fail(SqlConnectionClosedException("writing"))
                     case Result.Panic(t) =>
                         java.lang.System.err.println(s"[kyo-sql] MysqlChannel: write panic: ${t.getMessage}")
-                        Abort.fail(SqlException.Connection(s"Write panic: ${t.getMessage}", summon[Frame]))
+                        Abort.fail(SqlConnectionWritePanicException(t))
                 }
             }
         }
@@ -149,14 +151,14 @@ final class MysqlChannel(
     def receive(inAuthContext: Boolean)(using Frame): BackendMessage < (Async & Abort[SqlException]) =
         readPayload.flatMap { payload =>
             val reader = MysqlBufferReader(payload)
-            Abort.run[SqlException.Decode](
+            Abort.run[SqlDecodeException](
                 GenericResponseUnmarshaller.read(reader, payload.size, inAuthContext, isStmtPrepareContext = false)
             ).flatMap {
                 case Result.Success(msg) => msg
-                case Result.Failure(e)   => Abort.fail(SqlException.Connection(s"Message decode failed: ${e.message}", summon[Frame]))
+                case Result.Failure(e)   => Abort.fail(SqlConnectionProtocolDecodeException("message", e))
                 case Result.Panic(t) =>
                     java.lang.System.err.println(s"[kyo-sql] MysqlChannel: decode panic: ${t.getMessage}")
-                    Abort.fail(SqlException.Connection(s"Decode panic: ${t.getMessage}", summon[Frame]))
+                    Abort.fail(SqlConnectionProtocolDecodeException("message", t))
             }
         }
     end receive
@@ -165,12 +167,12 @@ final class MysqlChannel(
     def receiveHandshake(using Frame): HandshakeV10 < (Async & Abort[SqlException]) =
         readPayload.flatMap { payload =>
             val reader = MysqlBufferReader(payload)
-            Abort.run[SqlException.Decode](unmarshallers.handshakeV10.read(reader)).flatMap {
+            Abort.run[SqlDecodeException](unmarshallers.handshakeV10.read(reader)).flatMap {
                 case Result.Success(hs) => hs
-                case Result.Failure(e)  => Abort.fail(SqlException.Connection(s"Handshake decode failed: ${e.message}", summon[Frame]))
+                case Result.Failure(e)  => Abort.fail(SqlConnectionProtocolDecodeException("Handshake", e))
                 case Result.Panic(t) =>
                     java.lang.System.err.println(s"[kyo-sql] MysqlChannel: handshake decode panic: ${t.getMessage}")
-                    Abort.fail(SqlException.Connection(s"Handshake decode panic: ${t.getMessage}", summon[Frame]))
+                    Abort.fail(SqlConnectionProtocolDecodeException("Handshake", t))
             }
         }
     end receiveHandshake
@@ -202,10 +204,10 @@ final class MysqlChannel(
             case Result.Success(span) =>
                 buf.append(span)
             case Result.Failure(_) =>
-                Abort.fail(SqlException.Connection("Connection closed while reading", summon[Frame]))
+                Abort.fail(SqlConnectionClosedException("reading"))
             case Result.Panic(t) =>
                 java.lang.System.err.println(s"[kyo-sql] MysqlChannel: read panic: ${t.getMessage}")
-                Abort.fail(SqlException.Connection(s"Read panic: ${t.getMessage}", summon[Frame]))
+                Abort.fail(SqlConnectionClosedException("reading (panic: " + t.getMessage + ")"))
         }
     end pullChunk
 

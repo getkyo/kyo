@@ -4,9 +4,15 @@ import java.nio.charset.StandardCharsets
 import kyo.Codec
 import kyo.Frame
 import kyo.Maybe
-import kyo.Maybe.Absent
+import kyo.NumericSubtype
 import kyo.Span
-import kyo.SqlException
+import kyo.SqlDecodeColumnNullException
+import kyo.SqlDecodeDurationException
+import kyo.SqlDecodeEmptyStringForCharException
+import kyo.SqlDecodeException
+import kyo.SqlDecodeInsufficientBytesException
+import kyo.SqlDecodeNumericException
+import kyo.SqlDecodeTemporalException
 import kyo.SqlRow
 import kyo.internal.BufferedSqlReader
 import kyo.internal.JsonReader
@@ -44,13 +50,13 @@ final class MysqlRowReader(row: SqlRow)(using Frame) extends SqlReader(summon[Fr
     private def nextBytes(): Span[Byte] =
         val column = row.column(idx)
         idx += 1
-        column.getOrElse(throw SqlException.Decode(s"column ${idx - 1} is NULL", Absent, frame))
+        column.getOrElse(throw SqlDecodeColumnNullException(idx - 1)(using frame))
     end nextBytes
 
     // --- Inline little-endian readers, direct span access, mirrors MysqlBufferReader primitives ---
 
     private def readInt4LE(bytes: Span[Byte]): Int =
-        if bytes.size < 4 then throw SqlException.Decode(s"LONG: expected 4 bytes, got ${bytes.size}", Absent, frame)
+        if bytes.size < 4 then throw SqlDecodeInsufficientBytesException("LONG", 4, bytes.size, 0)(using frame)
         val b0 = bytes(0).toLong & 0xffL
         val b1 = bytes(1).toLong & 0xffL
         val b2 = bytes(2).toLong & 0xffL
@@ -59,7 +65,7 @@ final class MysqlRowReader(row: SqlRow)(using Frame) extends SqlReader(summon[Fr
     end readInt4LE
 
     private def readInt8LE(bytes: Span[Byte]): Long =
-        if bytes.size < 8 then throw SqlException.Decode(s"LONGLONG: expected 8 bytes, got ${bytes.size}", Absent, frame)
+        if bytes.size < 8 then throw SqlDecodeInsufficientBytesException("LONGLONG", 8, bytes.size, 0)(using frame)
         val b0 = bytes(0).toLong & 0xffL
         val b1 = bytes(1).toLong & 0xffL
         val b2 = bytes(2).toLong & 0xffL
@@ -72,24 +78,24 @@ final class MysqlRowReader(row: SqlRow)(using Frame) extends SqlReader(summon[Fr
     end readInt8LE
 
     private def readInt2LE(bytes: Span[Byte]): Short =
-        if bytes.size < 2 then throw SqlException.Decode(s"SHORT: expected 2 bytes, got ${bytes.size}", Absent, frame)
+        if bytes.size < 2 then throw SqlDecodeInsufficientBytesException("SHORT", 2, bytes.size, 0)(using frame)
         val lo = bytes(0) & 0xff
         val hi = bytes(1) & 0xff
         ((hi << 8) | lo).toShort
     end readInt2LE
 
     private def readInt1(bytes: Span[Byte]): Int =
-        if bytes.size < 1 then throw SqlException.Decode(s"TINY: expected 1 byte, got ${bytes.size}", Absent, frame)
+        if bytes.size < 1 then throw SqlDecodeInsufficientBytesException("TINY", 1, bytes.size, 0)(using frame)
         bytes(0) & 0xff
     end readInt1
 
     private def readFloat4LE(bytes: Span[Byte]): Float =
-        if bytes.size < 4 then throw SqlException.Decode(s"FLOAT: expected 4 bytes, got ${bytes.size}", Absent, frame)
+        if bytes.size < 4 then throw SqlDecodeInsufficientBytesException("FLOAT", 4, bytes.size, 0)(using frame)
         java.lang.Float.intBitsToFloat(readInt4LE(bytes))
     end readFloat4LE
 
     private def readFloat8LE(bytes: Span[Byte]): Double =
-        if bytes.size < 8 then throw SqlException.Decode(s"DOUBLE: expected 8 bytes, got ${bytes.size}", Absent, frame)
+        if bytes.size < 8 then throw SqlDecodeInsufficientBytesException("DOUBLE", 8, bytes.size, 0)(using frame)
         java.lang.Double.longBitsToDouble(readInt8LE(bytes))
     end readFloat8LE
 
@@ -122,7 +128,7 @@ final class MysqlRowReader(row: SqlRow)(using Frame) extends SqlReader(summon[Fr
                 try java.time.LocalDateTime.of(safeYear, safeMon, safeDay, 0, 0, 0)
                 catch
                     case e: java.time.DateTimeException =>
-                        throw SqlException.Decode(s"DATETIME: invalid date $year-$month-$day: ${e.getMessage}", Absent, frame)
+                        throw SqlDecodeTemporalException(year, month, day, 0, 0, 0, 4)(using frame)
                 end try
             case 7 =>
                 val year     = (bytes(0) & 0xff) | ((bytes(1) & 0xff) << 8)
@@ -137,11 +143,7 @@ final class MysqlRowReader(row: SqlRow)(using Frame) extends SqlReader(summon[Fr
                 try java.time.LocalDateTime.of(safeYear, safeMon, safeDay, hour, minute, second)
                 catch
                     case e: java.time.DateTimeException =>
-                        throw SqlException.Decode(
-                            s"DATETIME: invalid datetime $year-$month-$day $hour:$minute:$second: ${e.getMessage}",
-                            Absent,
-                            frame
-                        )
+                        throw SqlDecodeTemporalException(year, month, day, hour, minute, second, 7)(using frame)
                 end try
             case 11 =>
                 val year     = (bytes(0) & 0xff) | ((bytes(1) & 0xff) << 8)
@@ -157,14 +159,10 @@ final class MysqlRowReader(row: SqlRow)(using Frame) extends SqlReader(summon[Fr
                 try java.time.LocalDateTime.of(safeYear, safeMon, safeDay, hour, minute, second, micros * 1000)
                 catch
                     case e: java.time.DateTimeException =>
-                        throw SqlException.Decode(
-                            s"DATETIME: invalid datetime $year-$month-$day $hour:$minute:$second.$micros: ${e.getMessage}",
-                            Absent,
-                            frame
-                        )
+                        throw SqlDecodeTemporalException(year, month, day, hour, minute, second, 11)(using frame)
                 end try
             case n =>
-                throw SqlException.Decode(s"DATETIME: unexpected struct length $n (expected 0, 4, 7, or 11)", Absent, frame)
+                throw SqlDecodeTemporalException(0, 0, 0, 0, 0, 0, n)(using frame)
         end match
     end decodeDatetimeBody
 
@@ -224,7 +222,7 @@ final class MysqlRowReader(row: SqlRow)(using Frame) extends SqlReader(summon[Fr
                 try BigDecimal(s)
                 catch
                     case _: NumberFormatException =>
-                        throw SqlException.Decode(s"NEWDECIMAL: cannot parse '$s' as BigDecimal", Absent, frame)
+                        throw SqlDecodeNumericException(s, NumericSubtype.Parse)(using frame)
                 end try
             case sub => sub.bigDecimal()
 
@@ -247,7 +245,7 @@ final class MysqlRowReader(row: SqlRow)(using Frame) extends SqlReader(summon[Fr
         jsonSubReader match
             case null =>
                 val s = readUtf8String(nextBytes())
-                if s.isEmpty then throw SqlException.Decode(s"column ${idx - 1} is an empty string, cannot read as Char", Absent, frame)
+                if s.isEmpty then throw SqlDecodeEmptyStringForCharException(idx - 1)(using frame)
                 else s.charAt(0)
             case sub => sub.char()
     end char
@@ -293,7 +291,7 @@ final class MysqlRowReader(row: SqlRow)(using Frame) extends SqlReader(summon[Fr
                 val d         = java.time.Duration.ofSeconds(totalSecs, nanos)
                 if isNeg != 0 then d.negated() else d
             case n =>
-                throw SqlException.Decode(s"TIME(duration): unexpected struct length $n (expected 0, 8, or 12)", Absent, frame)
+                throw SqlDecodeDurationException("<struct>", new Exception(s"unexpected struct length $n"))(using frame)
         end match
     end decodeDurationBody
 
@@ -423,7 +421,7 @@ final class MysqlRowReader(row: SqlRow)(using Frame) extends SqlReader(summon[Fr
       *
       * Used by sum codecs (sealed traits, `Result`, `Either`) for field-order-independent decoding. The returned reader's primitive methods
       * decode against the buffered bytes using MySQL little-endian binary decoders. Structural reads (arrayStart, mapStart) on the buffered
-      * reader raise [[SqlException.Decode]].
+      * reader raise [[SqlDecodeException]].
       */
     override def captureValue(): Codec.Reader =
         val bytes = nextBytes()
@@ -450,9 +448,9 @@ object MysqlRowReader:
                 try java.time.LocalDate.of(safeYear, safeMon, safeDay)
                 catch
                     case e: java.time.DateTimeException =>
-                        throw SqlException.Decode(s"DATE: invalid $year-$month-$day: ${e.getMessage}", Absent, frame)
+                        throw SqlDecodeTemporalException(year, month, day, 0, 0, 0, 4)(using frame)
                 end try
-            case n => throw SqlException.Decode(s"DATE: unexpected struct length $n", Absent, frame)
+            case n => throw SqlDecodeTemporalException(0, 0, 0, 0, 0, 0, n)(using frame)
         end match
     end decodeDateBytes
 
@@ -473,7 +471,7 @@ object MysqlRowReader:
                 try java.time.LocalDateTime.of(safeYear, safeMon, safeDay, 0, 0, 0)
                 catch
                     case e: java.time.DateTimeException =>
-                        throw SqlException.Decode(s"DATETIME: invalid date $year-$month-$day: ${e.getMessage}", Absent, frame)
+                        throw SqlDecodeTemporalException(year, month, day, 0, 0, 0, 4)(using frame)
                 end try
             case 7 =>
                 val year     = (bytes(0) & 0xff) | ((bytes(1) & 0xff) << 8)
@@ -488,11 +486,7 @@ object MysqlRowReader:
                 try java.time.LocalDateTime.of(safeYear, safeMon, safeDay, hour, minute, second)
                 catch
                     case e: java.time.DateTimeException =>
-                        throw SqlException.Decode(
-                            s"DATETIME: invalid datetime $year-$month-$day $hour:$minute:$second: ${e.getMessage}",
-                            Absent,
-                            frame
-                        )
+                        throw SqlDecodeTemporalException(year, month, day, hour, minute, second, 7)(using frame)
                 end try
             case 11 =>
                 val year     = (bytes(0) & 0xff) | ((bytes(1) & 0xff) << 8)
@@ -508,13 +502,9 @@ object MysqlRowReader:
                 try java.time.LocalDateTime.of(safeYear, safeMon, safeDay, hour, minute, second, micros * 1000)
                 catch
                     case e: java.time.DateTimeException =>
-                        throw SqlException.Decode(
-                            s"DATETIME: invalid datetime $year-$month-$day $hour:$minute:$second.$micros: ${e.getMessage}",
-                            Absent,
-                            frame
-                        )
+                        throw SqlDecodeTemporalException(year, month, day, hour, minute, second, 11)(using frame)
                 end try
-            case n => throw SqlException.Decode(s"DATETIME: unexpected struct length $n (expected 0, 4, 7, or 11)", Absent, frame)
+            case n => throw SqlDecodeTemporalException(0, 0, 0, 0, 0, 0, n)(using frame)
         end match
     end decodeDatetimeBytes
 

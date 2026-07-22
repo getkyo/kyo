@@ -2,7 +2,12 @@ package kyo.internal.mysql.types
 
 import java.nio.charset.StandardCharsets
 import kyo.*
-import kyo.SqlException
+import kyo.NumericSubtype
+import kyo.SqlDecodeDurationException
+import kyo.SqlDecodeException
+import kyo.SqlDecodeInsufficientBytesException
+import kyo.SqlDecodeNumericException
+import kyo.SqlDecodeTemporalException
 import kyo.internal.mysql.MysqlBufferReader
 
 /** Decodes a MySQL binary-protocol column value from raw [[Span[Byte]]] into a Scala type.
@@ -16,7 +21,7 @@ import kyo.internal.mysql.MysqlBufferReader
   *   the Scala type this decoder produces
   */
 trait MysqlDecoder[A]:
-    def decode(bytes: Span[Byte])(using kyo.Frame): A < kyo.Abort[SqlException.Decode]
+    def decode(bytes: Span[Byte])(using kyo.Frame): A < kyo.Abort[SqlDecodeException]
 end MysqlDecoder
 
 object MysqlDecoder:
@@ -24,8 +29,8 @@ object MysqlDecoder:
     // --- Boolean ---
 
     val boolDecoder: MysqlDecoder[Boolean] = new MysqlDecoder[Boolean]:
-        def decode(bytes: Span[Byte])(using kyo.Frame): Boolean < kyo.Abort[SqlException.Decode] =
-            if bytes.size < 1 then kyo.Abort.fail(SqlException.Decode("TINY(bool): expected 1 byte", kyo.Maybe.Absent, summon[kyo.Frame]))
+        def decode(bytes: Span[Byte])(using kyo.Frame): Boolean < kyo.Abort[SqlDecodeException] =
+            if bytes.size < 1 then kyo.Abort.fail(SqlDecodeInsufficientBytesException("TINY(bool)", 1, bytes.size, 0))
             else (bytes(0) & 0xff) != 0
 
     // --- Short (SHORT) ---
@@ -34,8 +39,8 @@ object MysqlDecoder:
     // Values 0..32767 stay unchanged; 32768..65535 become negative (-32768..-1) via toShort.
 
     val shortDecoder: MysqlDecoder[Short] = new MysqlDecoder[Short]:
-        def decode(bytes: Span[Byte])(using kyo.Frame): Short < kyo.Abort[SqlException.Decode] =
-            if bytes.size < 2 then kyo.Abort.fail(SqlException.Decode("SHORT: expected 2 bytes", kyo.Maybe.Absent, summon[kyo.Frame]))
+        def decode(bytes: Span[Byte])(using kyo.Frame): Short < kyo.Abort[SqlDecodeException] =
+            if bytes.size < 2 then kyo.Abort.fail(SqlDecodeInsufficientBytesException("SHORT", 2, bytes.size, 0))
             else
                 val b = MysqlBufferReader(bytes)
                 b.readUInt16LE().map(_.toShort)
@@ -45,8 +50,8 @@ object MysqlDecoder:
     // --- Int (LONG) ---
 
     val intDecoder: MysqlDecoder[Int] = new MysqlDecoder[Int]:
-        def decode(bytes: Span[Byte])(using kyo.Frame): Int < kyo.Abort[SqlException.Decode] =
-            if bytes.size < 4 then kyo.Abort.fail(SqlException.Decode("LONG: expected 4 bytes", kyo.Maybe.Absent, summon[kyo.Frame]))
+        def decode(bytes: Span[Byte])(using kyo.Frame): Int < kyo.Abort[SqlDecodeException] =
+            if bytes.size < 4 then kyo.Abort.fail(SqlDecodeInsufficientBytesException("LONG", 4, bytes.size, 0))
             else
                 val b = MysqlBufferReader(bytes)
                 b.readUInt32LE().map(_.toInt)
@@ -54,8 +59,8 @@ object MysqlDecoder:
     // --- Long (LONGLONG) ---
 
     val longDecoder: MysqlDecoder[Long] = new MysqlDecoder[Long]:
-        def decode(bytes: Span[Byte])(using kyo.Frame): Long < kyo.Abort[SqlException.Decode] =
-            if bytes.size < 8 then kyo.Abort.fail(SqlException.Decode("LONGLONG: expected 8 bytes", kyo.Maybe.Absent, summon[kyo.Frame]))
+        def decode(bytes: Span[Byte])(using kyo.Frame): Long < kyo.Abort[SqlDecodeException] =
+            if bytes.size < 8 then kyo.Abort.fail(SqlDecodeInsufficientBytesException("LONGLONG", 8, bytes.size, 0))
             else
                 val b = MysqlBufferReader(bytes)
                 b.readUInt64LE()
@@ -63,8 +68,8 @@ object MysqlDecoder:
     // --- Float (FLOAT) ---
 
     val floatDecoder: MysqlDecoder[Float] = new MysqlDecoder[Float]:
-        def decode(bytes: Span[Byte])(using kyo.Frame): Float < kyo.Abort[SqlException.Decode] =
-            if bytes.size < 4 then kyo.Abort.fail(SqlException.Decode("FLOAT: expected 4 bytes", kyo.Maybe.Absent, summon[kyo.Frame]))
+        def decode(bytes: Span[Byte])(using kyo.Frame): Float < kyo.Abort[SqlDecodeException] =
+            if bytes.size < 4 then kyo.Abort.fail(SqlDecodeInsufficientBytesException("FLOAT", 4, bytes.size, 0))
             else
                 val b = MysqlBufferReader(bytes)
                 b.readUInt32LE().map(bits => java.lang.Float.intBitsToFloat(bits.toInt))
@@ -72,8 +77,8 @@ object MysqlDecoder:
     // --- Double (DOUBLE) ---
 
     val doubleDecoder: MysqlDecoder[Double] = new MysqlDecoder[Double]:
-        def decode(bytes: Span[Byte])(using kyo.Frame): Double < kyo.Abort[SqlException.Decode] =
-            if bytes.size < 8 then kyo.Abort.fail(SqlException.Decode("DOUBLE: expected 8 bytes", kyo.Maybe.Absent, summon[kyo.Frame]))
+        def decode(bytes: Span[Byte])(using kyo.Frame): Double < kyo.Abort[SqlDecodeException] =
+            if bytes.size < 8 then kyo.Abort.fail(SqlDecodeInsufficientBytesException("DOUBLE", 8, bytes.size, 0))
             else
                 val b = MysqlBufferReader(bytes)
                 b.readUInt64LE().map(bits => java.lang.Double.longBitsToDouble(bits))
@@ -82,19 +87,19 @@ object MysqlDecoder:
     // When this decoder is called the raw bytes are already the UTF-8 text of the decimal.
 
     val bigDecimalDecoder: MysqlDecoder[BigDecimal] = new MysqlDecoder[BigDecimal]:
-        def decode(bytes: Span[Byte])(using kyo.Frame): BigDecimal < kyo.Abort[SqlException.Decode] =
+        def decode(bytes: Span[Byte])(using kyo.Frame): BigDecimal < kyo.Abort[SqlDecodeException] =
             val s = new String(bytes.toArray, StandardCharsets.UTF_8)
             try BigDecimal(s)
             catch
                 case _: NumberFormatException =>
-                    kyo.Abort.fail(SqlException.Decode(s"NEWDECIMAL: cannot parse '$s' as BigDecimal", kyo.Maybe.Absent, summon[kyo.Frame]))
+                    kyo.Abort.fail(SqlDecodeNumericException(s, NumericSubtype.Parse))
             end try
         end decode
 
     // --- String (VAR_STRING / STRING) ---
 
     val stringDecoder: MysqlDecoder[String] = new MysqlDecoder[String]:
-        def decode(bytes: Span[Byte])(using kyo.Frame): String < kyo.Abort[SqlException.Decode] =
+        def decode(bytes: Span[Byte])(using kyo.Frame): String < kyo.Abort[SqlDecodeException] =
             new String(bytes.toArray, StandardCharsets.UTF_8)
 
     // --- JSON (TYPE_JSON = 0xf5), UTF-8 text payload ---
@@ -109,20 +114,20 @@ object MysqlDecoder:
     // away from `string()` (e.g. routes JSON through a typed-codec map) starts from this declared
     // shape rather than inferring it from `string()`'s implementation.
     val jsonDecoder: MysqlDecoder[String] = new MysqlDecoder[String]:
-        def decode(bytes: Span[Byte])(using kyo.Frame): String < kyo.Abort[SqlException.Decode] =
+        def decode(bytes: Span[Byte])(using kyo.Frame): String < kyo.Abort[SqlDecodeException] =
             new String(bytes.toArray, StandardCharsets.UTF_8)
 
     // --- Span[Byte] (BLOB) ---
 
     val bytesDecoder: MysqlDecoder[Span[Byte]] = new MysqlDecoder[Span[Byte]]:
-        def decode(bytes: Span[Byte])(using kyo.Frame): Span[Byte] < kyo.Abort[SqlException.Decode] =
+        def decode(bytes: Span[Byte])(using kyo.Frame): Span[Byte] < kyo.Abort[SqlDecodeException] =
             bytes
 
     // --- kyo.Instant from TIMESTAMP bytes ---
     // Uses the raw lenenc-string bytes from the column value (already lenenc-decoded by BinaryResultsetRowUnmarshaller).
 
     val instantDecoder: MysqlDecoder[kyo.Instant] = new MysqlDecoder[kyo.Instant]:
-        def decode(bytes: Span[Byte])(using kyo.Frame): kyo.Instant < kyo.Abort[SqlException.Decode] =
+        def decode(bytes: Span[Byte])(using kyo.Frame): kyo.Instant < kyo.Abort[SqlDecodeException] =
             decodeDatetimeBytes(bytes).map { ldt =>
                 kyo.Instant.fromJava(ldt.toInstant(java.time.ZoneOffset.UTC))
             }
@@ -130,19 +135,19 @@ object MysqlDecoder:
     // --- java.time.LocalDateTime from DATETIME bytes ---
 
     val localDateTimeDecoder: MysqlDecoder[java.time.LocalDateTime] = new MysqlDecoder[java.time.LocalDateTime]:
-        def decode(bytes: Span[Byte])(using kyo.Frame): java.time.LocalDateTime < kyo.Abort[SqlException.Decode] =
+        def decode(bytes: Span[Byte])(using kyo.Frame): java.time.LocalDateTime < kyo.Abort[SqlDecodeException] =
             decodeDatetimeBytes(bytes)
 
     // --- java.time.LocalDate from DATE bytes ---
 
     val localDateDecoder: MysqlDecoder[java.time.LocalDate] = new MysqlDecoder[java.time.LocalDate]:
-        def decode(bytes: Span[Byte])(using kyo.Frame): java.time.LocalDate < kyo.Abort[SqlException.Decode] =
+        def decode(bytes: Span[Byte])(using kyo.Frame): java.time.LocalDate < kyo.Abort[SqlDecodeException] =
             decodeDateBytes(bytes)
 
     // --- java.time.LocalTime from TIME bytes ---
 
     val localTimeDecoder: MysqlDecoder[java.time.LocalTime] = new MysqlDecoder[java.time.LocalTime]:
-        def decode(bytes: Span[Byte])(using kyo.Frame): java.time.LocalTime < kyo.Abort[SqlException.Decode] =
+        def decode(bytes: Span[Byte])(using kyo.Frame): java.time.LocalTime < kyo.Abort[SqlDecodeException] =
             decodeTimeBytes(bytes)
 
     // --- Datetime binary struct decoder ---
@@ -173,7 +178,7 @@ object MysqlDecoder:
 
     private[types] def decodeDatetimeBytes(
         bytes: Span[Byte]
-    )(using kyo.Frame): java.time.LocalDateTime < kyo.Abort[SqlException.Decode] =
+    )(using kyo.Frame): java.time.LocalDateTime < kyo.Abort[SqlDecodeException] =
         bytes.size match
             case 0 =>
                 // Zero date: 0000-00-00 00:00:00 → represent as epoch
@@ -223,11 +228,7 @@ object MysqlDecoder:
                     }
                 }
             case n =>
-                kyo.Abort.fail(SqlException.Decode(
-                    s"DATETIME: unexpected struct length $n (expected 0, 4, 7, or 11)",
-                    kyo.Maybe.Absent,
-                    summon[kyo.Frame]
-                ))
+                kyo.Abort.fail(SqlDecodeTemporalException(0, 0, 0, 0, 0, 0, n))
         end match
     end decodeDatetimeBytes
 
@@ -239,7 +240,7 @@ object MysqlDecoder:
         minute: Int,
         second: Int,
         nanos: Int
-    )(using kyo.Frame): java.time.LocalDateTime < kyo.Abort[SqlException.Decode] =
+    )(using kyo.Frame): java.time.LocalDateTime < kyo.Abort[SqlDecodeException] =
         // Handle MySQL zero-date (0000-00-00): java.time doesn't support year 0; use year 1.
         val safeYear = if year == 0 then 1 else year
         val safeMon  = if month == 0 then 1 else month
@@ -247,17 +248,13 @@ object MysqlDecoder:
         try java.time.LocalDateTime.of(safeYear, safeMon, safeDay, hour, minute, second, nanos)
         catch
             case e: java.time.DateTimeException =>
-                kyo.Abort.fail(SqlException.Decode(
-                    s"DATETIME: invalid date $year-$month-$day $hour:$minute:$second: ${e.getMessage}",
-                    kyo.Maybe.Absent,
-                    summon[kyo.Frame]
-                ))
+                kyo.Abort.fail(SqlDecodeTemporalException(year, month, day, hour, minute, second, 7))
         end try
     end safeLocalDateTime
 
     private[types] def decodeDateBytes(
         bytes: Span[Byte]
-    )(using kyo.Frame): java.time.LocalDate < kyo.Abort[SqlException.Decode] =
+    )(using kyo.Frame): java.time.LocalDate < kyo.Abort[SqlDecodeException] =
         bytes.size match
             case 0 => java.time.LocalDate.of(1, 1, 1) // zero date
             case 4 =>
@@ -271,16 +268,12 @@ object MysqlDecoder:
                             try java.time.LocalDate.of(safeYear, safeMon, safeDay)
                             catch
                                 case e: java.time.DateTimeException =>
-                                    kyo.Abort.fail(SqlException.Decode(
-                                        s"DATE: invalid $year-$month-$day: ${e.getMessage}",
-                                        kyo.Maybe.Absent,
-                                        summon[kyo.Frame]
-                                    ))
+                                    kyo.Abort.fail(SqlDecodeTemporalException(year, month, day, 0, 0, 0, 4))
                             end try
                         }
                     }
                 }
-            case n => kyo.Abort.fail(SqlException.Decode(s"DATE: unexpected struct length $n", kyo.Maybe.Absent, summon[kyo.Frame]))
+            case n => kyo.Abort.fail(SqlDecodeTemporalException(0, 0, 0, 0, 0, 0, n))
         end match
     end decodeDateBytes
 
@@ -291,12 +284,12 @@ object MysqlDecoder:
     //   len=12 → same as 8 + micros(4 LE)
 
     val durationDecoder: MysqlDecoder[java.time.Duration] = new MysqlDecoder[java.time.Duration]:
-        def decode(bytes: Span[Byte])(using kyo.Frame): java.time.Duration < kyo.Abort[SqlException.Decode] =
+        def decode(bytes: Span[Byte])(using kyo.Frame): java.time.Duration < kyo.Abort[SqlDecodeException] =
             decodeDurationBytes(bytes)
 
     private[types] def decodeDurationBytes(
         bytes: Span[Byte]
-    )(using kyo.Frame): java.time.Duration < kyo.Abort[SqlException.Decode] =
+    )(using kyo.Frame): java.time.Duration < kyo.Abort[SqlDecodeException] =
         bytes.size match
             case 0 => java.time.Duration.ZERO
             case 8 =>
@@ -333,17 +326,13 @@ object MysqlDecoder:
                     }
                 }
             case n =>
-                kyo.Abort.fail(SqlException.Decode(
-                    s"TIME(duration): unexpected struct length $n (expected 0, 8, or 12)",
-                    kyo.Maybe.Absent,
-                    summon[kyo.Frame]
-                ))
+                kyo.Abort.fail(SqlDecodeDurationException("<struct>", new Exception(s"unexpected struct length $n")))
         end match
     end decodeDurationBytes
 
     private[types] def decodeTimeBytes(
         bytes: Span[Byte]
-    )(using kyo.Frame): java.time.LocalTime < kyo.Abort[SqlException.Decode] =
+    )(using kyo.Frame): java.time.LocalTime < kyo.Abort[SqlDecodeException] =
         bytes.size match
             case 0 => java.time.LocalTime.MIDNIGHT
             case 8 =>
@@ -356,11 +345,7 @@ object MysqlDecoder:
                                     try java.time.LocalTime.of(hour, minute, second)
                                     catch
                                         case e: java.time.DateTimeException =>
-                                            kyo.Abort.fail(SqlException.Decode(
-                                                s"TIME: invalid $hour:$minute:$second: ${e.getMessage}",
-                                                kyo.Maybe.Absent,
-                                                summon[kyo.Frame]
-                                            ))
+                                            kyo.Abort.fail(SqlDecodeTemporalException(0, 0, 0, hour, minute, second, 8))
                                     end try
                                 }
                             }
@@ -378,11 +363,7 @@ object MysqlDecoder:
                                         try java.time.LocalTime.of(hour, minute, second, micros.toInt * 1000)
                                         catch
                                             case e: java.time.DateTimeException =>
-                                                kyo.Abort.fail(SqlException.Decode(
-                                                    s"TIME: invalid $hour:$minute:$second.$micros: ${e.getMessage}",
-                                                    kyo.Maybe.Absent,
-                                                    summon[kyo.Frame]
-                                                ))
+                                                kyo.Abort.fail(SqlDecodeTemporalException(0, 0, 0, hour, minute, second, 12))
                                         end try
                                     }
                                 }
@@ -390,7 +371,7 @@ object MysqlDecoder:
                         }
                     )
                 )
-            case n => kyo.Abort.fail(SqlException.Decode(s"TIME: unexpected struct length $n", kyo.Maybe.Absent, summon[kyo.Frame]))
+            case n => kyo.Abort.fail(SqlDecodeDurationException("<struct>", new Exception(s"unexpected struct length $n")))
         end match
     end decodeTimeBytes
 

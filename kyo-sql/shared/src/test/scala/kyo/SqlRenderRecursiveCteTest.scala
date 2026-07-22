@@ -5,7 +5,7 @@ package kyo
   * Verifies that:
   *   - Postgres always emits the `WITH RECURSIVE` keyword.
   *   - MySQL 8.0.0 or newer emits the `WITH RECURSIVE` keyword.
-  *   - MySQL older than 8.0.0 (e.g. MySQL 5.7.x) raises [[SqlException.Unsupported]] at render time instead of emitting invalid SQL.
+  *   - MySQL older than 8.0.0 (e.g. MySQL 5.7.x) raises [[SqlUnsupportedException]] at render time instead of emitting invalid SQL.
   */
 class SqlRenderRecursiveCteTest extends Test:
 
@@ -36,15 +36,16 @@ class SqlRenderRecursiveCteTest extends Test:
         assert(r.sql.startsWith("WITH RECURSIVE "))
     }
 
-    // Leaf 4, MySQL 5.7.x raises Unsupported with the server version in the message.
-    "WITH RECURSIVE on MySQL 5.7 raises SqlException.Unsupported" in {
+    // Leaf 4, MySQL 5.7.x raises Unsupported with the server version in the typed fields.
+    "WITH RECURSIVE on MySQL 5.7 raises SqlUnsupportedException" in {
         val q       = Sql.commonTablesRecursive(cte)(nodes)
         val backend = kyo.internal.SqlBackend.Mysql.versioned((5, 7, 44))
-        val ex = intercept[SqlException.Unsupported] {
+        val ex = intercept[SqlUnsupportedMysqlVersionFeatureException] {
             kyo.internal.SqlRender.render(q, backend, summon[Frame])
         }
-        assert(ex.getMessage.contains("WITH RECURSIVE requires MySQL 8.0"))
-        assert(ex.getMessage.contains("5.7.44"))
+        assert(ex.feature == "WITH RECURSIVE", s"expected feature 'WITH RECURSIVE', got: ${ex.feature}")
+        assert(ex.requiredVersion == "8.0", s"expected requiredVersion '8.0', got: ${ex.requiredVersion}")
+        assert(ex.serverVersion == "5.7.44", s"expected serverVersion '5.7.44', got: ${ex.serverVersion}")
     }
 
     // Leaf 5, supportsRecursiveCte boundary: exactly (8, 0, 0) returns true.

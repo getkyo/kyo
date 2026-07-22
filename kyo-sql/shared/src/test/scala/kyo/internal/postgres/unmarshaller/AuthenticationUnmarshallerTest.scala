@@ -22,7 +22,7 @@ class AuthenticationUnmarshallerTest extends kyo.Test:
         val body   = Array[Byte](0, 0, 0, 0)
         val reader = new PostgresBufferReader(Span.from(body))
         val um     = Unmarshallers.default
-        Abort.run[SqlException.Decode](um.authentication.read(reader)).map { r =>
+        Abort.run[SqlDecodeException](um.authentication.read(reader)).map { r =>
             r match
                 case Result.Success(Authentication(AuthenticationKind.Ok)) => succeed
                 case other                                                 => fail(s"Expected AuthenticationOk, got $other")

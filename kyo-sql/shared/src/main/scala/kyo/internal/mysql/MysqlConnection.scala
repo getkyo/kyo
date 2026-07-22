@@ -2,7 +2,11 @@ package kyo.internal.mysql
 
 import kyo.*
 import kyo.SqlClient.IsolationLevel
+import kyo.SqlConnectionCancelTimeoutException
+import kyo.SqlConnectionConnectFailedException
+import kyo.SqlConnectionUnexpectedMessageException
 import kyo.SqlException
+import kyo.SqlServerException
 import kyo.internal.mysql.exchange.ExtendedQueryExchange
 import kyo.internal.mysql.exchange.HandshakeExchange
 import kyo.internal.mysql.exchange.LocalInfileExchange
@@ -189,7 +193,12 @@ final class MysqlConnection(
                 channel.receive(false).flatMap {
                     case _: OkPacket    => ()
                     case err: ErrPacket => Abort.fail(mkServerError(err, cid)(using frame))
-                    case other          => Abort.fail(SqlException.Connection(s"Unexpected ping response: $other", frame))
+                    case other =>
+                        Abort.fail(SqlConnectionUnexpectedMessageException(
+                            "ping",
+                            "OkPacket / ErrPacket",
+                            other.getClass.getSimpleName
+                        )(using frame))
                 }
             }
         }
@@ -326,7 +335,7 @@ final class MysqlConnection(
         else
             // Best-effort quit bounded by gracePeriod: ignore errors and timeout (connection may already be closing).
             Abort.run[SqlException](
-                Async.timeoutWithError(gracePeriod, Result.Failure(SqlException.Connection("quit timed out", summon[Frame])))(quit())
+                Async.timeoutWithError(gracePeriod, Result.Failure(SqlConnectionCancelTimeoutException(gracePeriod)))(quit())
             ).andThen(Sync.Unsafe.defer(channel.conn.close()))
 
     /** Gracefully closes the connection with a default 30-second grace period. Delegates to [[close(gracePeriod)]]. */
@@ -341,8 +350,8 @@ final class MysqlConnection(
     def closeNow(using Frame): Unit < Sync =
         Sync.Unsafe.defer(channel.conn.close())
 
-    private def mkServerError(err: ErrPacket, cid: Long)(using frame: Frame): SqlException.Server =
-        SqlException.Server(
+    private def mkServerError(err: ErrPacket, cid: Long)(using Frame): SqlServerException =
+        SqlServerException(
             err.sqlState,
             "ERROR",
             err.errorMessage,
@@ -352,8 +361,7 @@ final class MysqlConnection(
             Map("code" -> err.errorCode.toString),
             Maybe.Absent,
             0,
-            Maybe(cid),
-            frame
+            Maybe(cid)
         )
 
 end MysqlConnection
@@ -434,10 +442,10 @@ object MysqlConnection:
             port
         ).safe).flatMap(_.use(identity))).flatMap {
             case Result.Failure(_) =>
-                Abort.fail(SqlException.Connection(s"Failed to connect to MySQL at $host:$port", summon[Frame]))
+                Abort.fail(SqlConnectionConnectFailedException(host, port, new Exception("connect refused")))
             case Result.Panic(t) =>
                 java.lang.System.err.println(s"[kyo-sql] MysqlConnection.connect: panic: ${t.getMessage}")
-                Abort.fail(SqlException.Connection(s"Failed to connect to MySQL at $host:$port: ${t.getMessage}", summon[Frame]))
+                Abort.fail(SqlConnectionConnectFailedException(host, port, t))
             case Result.Success(conn) =>
                 MysqlChannel(conn).flatMap { rawChannel =>
                     HandshakeExchange.run(rawChannel, user, password, db, host, port, tls, false).flatMap { result =>
@@ -495,10 +503,10 @@ object MysqlConnection:
             port
         ).safe).flatMap(_.use(identity))).flatMap {
             case Result.Failure(_) =>
-                Abort.fail(SqlException.Connection(s"Failed to connect to MySQL at $host:$port", summon[Frame]))
+                Abort.fail(SqlConnectionConnectFailedException(host, port, new Exception("connect refused")))
             case Result.Panic(t) =>
                 java.lang.System.err.println(s"[kyo-sql] MysqlConnection.connectWithMode: panic: ${t.getMessage}")
-                Abort.fail(SqlException.Connection(s"Failed to connect to MySQL at $host:$port: ${t.getMessage}", summon[Frame]))
+                Abort.fail(SqlConnectionConnectFailedException(host, port, t))
             case Result.Success(conn) =>
                 MysqlChannel(conn).flatMap { rawChannel =>
                     val preferFallback = tlsMode == TlsMode.Prefer

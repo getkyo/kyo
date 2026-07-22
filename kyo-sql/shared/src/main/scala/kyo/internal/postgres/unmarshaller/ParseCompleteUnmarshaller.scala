@@ -1,7 +1,7 @@
 package kyo.internal.postgres.unmarshaller
 
 import kyo.*
-import kyo.SqlException
+import kyo.SqlDecodeException
 import kyo.internal.postgres.ParseComplete
 import kyo.internal.postgres.PostgresBufferReader
 import kyo.internal.postgres.Unmarshaller
@@ -15,6 +15,6 @@ import kyo.internal.postgres.Unmarshaller
   * Reference: PostgreSQL §55.7 "ParseComplete"
   */
 object ParseCompleteUnmarshaller extends Unmarshaller[ParseComplete.type]:
-    def read(buf: PostgresBufferReader)(using Frame): ParseComplete.type < Abort[SqlException.Decode] =
+    def read(buf: PostgresBufferReader)(using Frame): ParseComplete.type < Abort[SqlDecodeException] =
         ParseComplete
 end ParseCompleteUnmarshaller

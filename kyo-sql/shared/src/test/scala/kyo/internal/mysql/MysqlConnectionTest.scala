@@ -40,7 +40,7 @@ class MysqlConnectionTest extends kyo.Test:
         }
     }
 
-    "HandshakeExchange wrong password raises SqlException.Connection" in {
+    "HandshakeExchange wrong password raises SqlConnectionException" in {
         Scope.run {
             SqlSharedContainers.withFreshSchema(SqlSharedContainers.Backend.MySQL) { ctx =>
                 Abort.run[SqlException](
@@ -55,8 +55,8 @@ class MysqlConnectionTest extends kyo.Test:
                         Duration.Infinity
                     )
                 ).map {
-                    case Result.Failure(_: SqlException.Connection) => succeed
-                    case other                                      => fail(s"Expected SqlException.Connection, got: $other")
+                    case Result.Failure(_: SqlConnectionException) => succeed
+                    case other                                     => fail(s"Expected SqlConnectionException, got: $other")
                 }
             }
         }
@@ -182,7 +182,7 @@ class MysqlConnectionTest extends kyo.Test:
         }
     }
 
-    "simpleQuery bad SQL raises SqlException.Server with errorCode + sqlState" in {
+    "simpleQuery bad SQL raises SqlServerException with errorCode + sqlState" in {
         Scope.run {
             SqlSharedContainers.withFreshSchema(SqlSharedContainers.Backend.MySQL) { ctx =>
                 MysqlConnection
@@ -199,10 +199,10 @@ class MysqlConnectionTest extends kyo.Test:
                     .flatMap { conn =>
                         Scope.ensure(conn.close).andThen {
                             Abort.run[SqlException](conn.simpleQuery("SELECT * FROM nonexistent_table_xyz")).map {
-                                case Result.Failure(e: SqlException.Server) =>
+                                case Result.Failure(e: SqlServerException) =>
                                     assert(e.sqlState.nonEmpty)
                                     assert(e.message.nonEmpty)
-                                case other => fail(s"Expected SqlException.Server, got: $other")
+                                case other => fail(s"Expected SqlServerException, got: $other")
                             }
                         }
                     }
@@ -267,12 +267,12 @@ class MysqlConnectionTest extends kyo.Test:
         }
     }
 
-    "MysqlConnection.connect fails on wrong host with SqlException.Connection" in {
+    "MysqlConnection.connect fails on wrong host with SqlConnectionException" in {
         Abort.run[SqlException](
             MysqlConnection.connect("127.0.0.1", 19999, "root", Maybe.Present("test"), Maybe.Absent, Maybe.Absent, 64, Duration.Infinity)
         ).map {
-            case Result.Failure(_: SqlException.Connection) => succeed
-            case other                                      => fail(s"Expected SqlException.Connection, got: $other")
+            case Result.Failure(_: SqlConnectionException) => succeed
+            case other                                     => fail(s"Expected SqlConnectionException, got: $other")
         }
     }
 
@@ -389,7 +389,7 @@ class MysqlConnectionTest extends kyo.Test:
         }
     }
 
-    "simpleQuery error mid-result raises SqlException.Server" in {
+    "simpleQuery error mid-result raises SqlServerException" in {
         Scope.run {
             SqlSharedContainers.withFreshSchema(SqlSharedContainers.Backend.MySQL) { ctx =>
                 MysqlConnection
@@ -405,11 +405,11 @@ class MysqlConnectionTest extends kyo.Test:
                     )
                     .flatMap { conn =>
                         Scope.ensure(conn.close).andThen {
-                            // A bad SELECT (missing table) should produce SqlException.Server.
+                            // A bad SELECT (missing table) should produce SqlServerException.
                             Abort.run[SqlException](conn.simpleQuery("SELECT * FROM does_not_exist_xyz")).map {
-                                case Result.Failure(e: SqlException.Server) =>
+                                case Result.Failure(e: SqlServerException) =>
                                     assert(e.sqlState.nonEmpty)
-                                case other => fail(s"Expected SqlException.Server, got: $other")
+                                case other => fail(s"Expected SqlServerException, got: $other")
                             }
                         }
                     }

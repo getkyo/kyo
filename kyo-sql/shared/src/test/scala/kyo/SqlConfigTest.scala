@@ -50,28 +50,27 @@ class SqlConfigTest extends Test:
 
     "SqlClient.init rejects type name containing single quote" in {
         val config = SqlConfig.default.copy(typeNames = Set("foo'bar"))
-        Abort.run[SqlException.Connection](
+        Abort.run[SqlConnectionException](
             SqlClient.init("postgres://user:pass@127.0.0.1:9999/db", config)
         ).map {
-            case Result.Failure(e) =>
-                assert(e.message.contains("single-quote") || e.message.contains("must not contain"))
-                assert(e.message.contains("foo'bar") || e.message.contains("invalid"))
+            case Result.Failure(e: SqlConnectionInvalidTypeNameException) =>
+                assert(e.typeNames.contains("foo'bar"))
                 succeed
             case other =>
-                fail(s"Expected Failure(SqlException.Connection) but got $other")
+                fail(s"Expected Failure(SqlConnectionInvalidTypeNameException) but got $other")
         }
     }
 
     "SqlClient.init rejects type name containing backslash" in {
         val config = SqlConfig.default.copy(typeNames = Set("foo\\bar"))
-        Abort.run[SqlException.Connection](
+        Abort.run[SqlConnectionException](
             SqlClient.init("postgres://user:pass@127.0.0.1:9999/db", config)
         ).map {
-            case Result.Failure(e) =>
-                assert(e.message.contains("must not contain") || e.message.contains("backslash") || e.message.contains("invalid"))
+            case Result.Failure(e: SqlConnectionInvalidTypeNameException) =>
+                assert(e.typeNames.contains("foo\\bar"))
                 succeed
             case other =>
-                fail(s"Expected Failure(SqlException.Connection) but got $other")
+                fail(s"Expected Failure(SqlConnectionInvalidTypeNameException) but got $other")
         }
     }
 

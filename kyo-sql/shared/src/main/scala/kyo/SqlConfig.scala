@@ -13,22 +13,22 @@ import kyo.net.NetTlsConfig
   * @param maxConnections
   *   maximum number of concurrent database connections in the pool
   * @param acquireTimeout
-  *   maximum time to wait for a connection to become available from the pool before raising [[SqlException.Connection]]
+  *   maximum time to wait for a connection to become available from the pool before raising [[SqlConnectionException]]
   * @param queryTimeout
   *   maximum time allowed for a single query/execute call before it is aborted
   * @param idleTimeout
   *   maximum time a pooled connection may remain idle before being closed and replaced
   * @param retrySchedule
-  *   retry policy for [[SqlException.Connection]] failures. [[Absent]] (the default) means no automatic retry, the error is propagated
+  *   retry policy for [[SqlConnectionException]] failures. [[Absent]] (the default) means no automatic retry, the error is propagated
   *   immediately. Supply a [[Schedule]] to enable retries; for example:
   *   {{{
   *   Schedule.exponentialBackoff(initial = 100.millis, factor = 2.0, maxBackoff = 5.seconds).take(5)
   *   }}}
-  *   Only [[SqlException.Connection]] errors are retried. [[SqlException.Server]], [[SqlException.Request]], and [[SqlException.Decode]]
+  *   Only [[SqlConnectionException]] errors are retried. [[SqlServerException]], [[SqlRequestException]], and [[SqlDecodeException]]
   *   pass through unchanged. Note that retrying non-idempotent DML (INSERT/UPDATE/DELETE) carries the risk of duplicate execution if the
   *   server executed the statement before the connection was lost; consider this carefully before enabling automatic retries.
-  *   [[SqlException.Connection]] due to [[acquireTimeout]] is also retried, so if the pool remains saturated, all retries may timeout too.
-  *   For 40xxx (serialization failure / deadlock) [[SqlException.Server]] errors, wrap the call in your own retry loop if needed.
+  *   [[SqlConnectionException]] due to [[acquireTimeout]] is also retried, so if the pool remains saturated, all retries may timeout too.
+  *   For 40xxx (serialization failure / deadlock) [[SqlServerException]] errors, wrap the call in your own retry loop if needed.
   * @param tls
   *   TLS configuration. [[Absent]] = no TLS (plaintext). [[Present]] = TLS required; the connection will perform an SSLRequest handshake
   *   before startup. Use [[NetTlsConfig.default]] for JDK default trust validation, or [[NetTlsConfig]] with `trustAll = true` for
@@ -46,7 +46,7 @@ import kyo.net.NetTlsConfig
   *   minimum number of connections to open eagerly when the pool is initialised (warm-up). If greater than `maxConnections`, it is clamped
   *   to `maxConnections`. When > 0, [[SqlClient.init]] and [[SqlClient.initMysql]] open `min(minConnections, maxConnections)` connections
   *   concurrently before returning the client, so the first user query is served from a pre-warmed pool without incurring connection
-  *   establishment latency. Any connection failure during warm-up aborts `init` with [[SqlException.Connection]]. Default `0` (no warm-up).
+  *   establishment latency. Any connection failure during warm-up aborts `init` with [[SqlConnectionException]]. Default `0` (no warm-up).
   * @param resetOnRelease
   *   *(MySQL only)* if `true`, sends `COM_RESET_CONNECTION` before returning a MySQL connection to the pool. This clears session variables,
   *   server-side prepared statements, last-insert-id, and other per-session state accumulated during the connection's use, ensuring the
@@ -54,7 +54,7 @@ import kyo.net.NetTlsConfig
   * @param cancelTimeout
   *   *(MySQL only)* maximum time to wait for a cancel connection to become available from the pool when calling [[SqlClient.cancel]] on a
   *   MySQL handle. MySQL cancellation requires acquiring a second connection from the pool and sending `KILL QUERY <connectionId>`; if the
-  *   pool is saturated for longer than `cancelTimeout`, [[SqlException.Connection]] is raised. Default `2.seconds`.
+  *   pool is saturated for longer than `cancelTimeout`, [[SqlConnectionException]] is raised. Default `2.seconds`.
   * @param pipelineMode
   *   if `true`, the `pipeline` API is enabled. When `false` (the default), calls to `pipeline` still work but are executed sequentially
   *   using individual Bind/Execute/Sync round trips. Enable to coalesce multiple DML statements into a single TCP write.
@@ -222,14 +222,14 @@ object SqlConfig:
           *   - `sslmode=disable` or absent → `tls = Absent`
           *   - `sslmode=allow` or `sslmode=prefer` → `tls = Absent` (opportunistic upgrade handled at the backend layer)
           *   - `sslmode=require` → `tls = Present(NetTlsConfig(trustAll = true))` (TLS required, no cert-chain or hostname check)
-          *   - `sslmode=verify-ca` → requires `sslrootcert`; fails with [[SqlException.Connection]] if absent
-          *   - `sslmode=verify-full` → requires `sslrootcert`; fails with [[SqlException.Connection]] if absent
+          *   - `sslmode=verify-ca` → requires `sslrootcert`; fails with [[SqlConnectionException]] if absent
+          *   - `sslmode=verify-full` → requires `sslrootcert`; fails with [[SqlConnectionException]] if absent
           *
           * `sslrootcert` is also stored in [[SqlConfig.caCertPath]] for programmatic use.
           *
           * All other config fields use [[SqlConfig.default]].
           */
-        def toConfig(using Frame): SqlConfig < Abort[SqlException.Connection] =
+        def toConfig(using Frame): SqlConfig < Abort[SqlConnectionException] =
             val caCertPath = options.sslrootcert
             val tlsMode: TlsMode = options.sslmode match
                 case Present(Url.SslMode.Disable)    => TlsMode.Disable
@@ -284,23 +284,23 @@ object SqlConfig:
 
         /** Parses a URL string into a [[Url]].
           *
-          * Returns [[SqlException.Connection]] as a pure [[Result]] on any parse error (unknown scheme, missing port, malformed syntax).
+          * Returns [[SqlConnectionException]] as a pure [[Result]] on any parse error (unknown scheme, missing port, malformed syntax).
           */
-        def parse(raw: String)(using Frame): Result[SqlException.Connection, Url] =
+        def parse(raw: String)(using Frame): Result[SqlConnectionException, Url] =
             parseResult(raw)
 
         // --- internal parse implementation ---
 
-        private def parseResult(raw: String)(using Frame): Result[SqlException.Connection, Url] =
+        private def parseResult(raw: String)(using Frame): Result[SqlConnectionException, Url] =
             // Minimal URL parsing without java.net.URI to stay cross-platform and avoid
             // java.net.MalformedURLException for non-http schemes on some platforms.
             val schemeEnd = raw.indexOf("://")
             if schemeEnd < 0 then
-                Result.fail(SqlException.Connection(s"Missing scheme in URL: $raw", summon[Frame]))
+                Result.fail(SqlConnectionUrlParseException(raw, ""))
             else
                 val scheme = raw.substring(0, schemeEnd).toLowerCase
                 if scheme != "postgres" && scheme != "mysql" then
-                    Result.fail(SqlException.Connection(s"Unsupported scheme '$scheme'; expected 'postgres' or 'mysql'", summon[Frame]))
+                    Result.fail(SqlConnectionUrlParseException(raw, scheme))
                 else
                     val rest = raw.substring(schemeEnd + 3) // after "://"
 
@@ -321,7 +321,7 @@ object SqlConfig:
 
                     hostPart.indexOf('/') match
                         case -1 =>
-                            Result.fail(SqlException.Connection(s"Missing database name in URL: $raw", summon[Frame]))
+                            Result.fail(SqlConnectionUrlParseException(raw, scheme))
                         case idx =>
                             val hostPort = hostPart.substring(0, idx)
                             val db       = hostPart.substring(idx + 1)
@@ -329,16 +329,16 @@ object SqlConfig:
                             if hostPort.startsWith("[") then
                                 val closeBracket = hostPort.indexOf(']')
                                 if closeBracket < 0 then
-                                    Result.fail(SqlException.Connection(s"Malformed IPv6 host in URL: $raw", summon[Frame]))
+                                    Result.fail(SqlConnectionUrlParseException(raw, scheme))
                                 else
                                     val h        = hostPort.substring(1, closeBracket)
                                     val portPart = hostPort.substring(closeBracket + 1)
                                     if !portPart.startsWith(":") then
-                                        Result.fail(SqlException.Connection(s"Port is required in URL: $raw", summon[Frame]))
+                                        Result.fail(SqlConnectionUrlParseException(raw, scheme))
                                     else
                                         portPart.substring(1).toIntOption match
                                             case None =>
-                                                Result.fail(SqlException.Connection(s"Port is required in URL: $raw", summon[Frame]))
+                                                Result.fail(SqlConnectionUrlParseException(raw, scheme))
                                             case Some(port) =>
                                                 val address = Address(scheme, h, port, db, user)
                                                 val options = parseOptions(queryString)
@@ -348,15 +348,15 @@ object SqlConfig:
                             else
                                 hostPort.lastIndexOf(':') match
                                     case -1 =>
-                                        Result.fail(SqlException.Connection(s"Port is required in URL: $raw", summon[Frame]))
+                                        Result.fail(SqlConnectionUrlParseException(raw, scheme))
                                     case portIdx =>
                                         val portStr = hostPort.substring(portIdx + 1)
                                         if portStr.isEmpty then
-                                            Result.fail(SqlException.Connection(s"Port is required in URL: $raw", summon[Frame]))
+                                            Result.fail(SqlConnectionUrlParseException(raw, scheme))
                                         else
                                             portStr.toIntOption match
                                                 case None =>
-                                                    Result.fail(SqlException.Connection(s"Port is required in URL: $raw", summon[Frame]))
+                                                    Result.fail(SqlConnectionUrlParseException(raw, scheme))
                                                 case Some(port) =>
                                                     val host    = hostPort.substring(0, portIdx)
                                                     val address = Address(scheme, host, port, db, user)

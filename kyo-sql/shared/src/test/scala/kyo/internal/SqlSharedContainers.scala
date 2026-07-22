@@ -142,7 +142,7 @@ object SqlSharedContainers:
                 admin.simpleExecute(s"""DROP DATABASE IF EXISTS "$schema"""")
             ).flatMap {
                 case Result.Success(_) => Kyo.unit
-                case Result.Failure(s: SqlException.Server) if s.sqlState == "55006" && remaining > 0 =>
+                case Result.Failure(s: SqlServerException) if s.sqlState == "55006" && remaining > 0 =>
                     Async.sleep(50.millis).andThen(attempt(remaining - 1))
                 case Result.Failure(e) => Abort.fail(e)
                 case Result.Panic(t)   => Abort.panic(t)

@@ -22,7 +22,7 @@ import kyo.internal.SqlSharedContainers
   *   4. COPY FROM STDIN with binary format round-trips
   *   5. COPY TO STDOUT cancellation closes the stream and drains the protocol cleanly
   *   6. COPY FROM STDIN of empty stream reports 0 affected
-  *   7. COPY FROM with constraint violation mid-stream surfaces SqlException.Server (SQLSTATE 23505)
+  *   7. COPY FROM with constraint violation mid-stream surfaces SqlServerException (SQLSTATE 23505)
   *   8. COPY TO consumer pauses; client backpressure does not corrupt protocol
   *   9. connection is reusable after COPY TO cancellation (issue follow-up SELECT successfully)
   *   10. COPY FROM in a transaction rolled back leaves zero rows visible to a fresh connection
@@ -51,7 +51,7 @@ class CopyIntegrationTest extends kyo.Test:
     /** Reads a COUNT(*) result via `client.query` using the typed decoder. */
     private def countRows(client: SqlClient, table: String)(using
         Frame
-    ): Long < (Async & Abort[SqlException] & Abort[SqlException.Decode]) =
+    ): Long < (Async & Abort[SqlException] & Abort[SqlDecodeException]) =
         client.query(s"SELECT COUNT(*) FROM $table").flatMap { rows =>
             if rows.isEmpty then 0L
             else rows(0).decode[Long](0)
@@ -149,8 +149,10 @@ class CopyIntegrationTest extends kyo.Test:
             withPg { client =>
                 Async.timeout(60.seconds) {
                     client.executeRaw("CREATE TABLE copy_t3 (id INT, val TEXT)").flatMap { _ =>
-                        // A stream that yields 3 good rows then raises SqlException.Request.
-                        val err = SqlException.Request("deliberate stream failure", kyo.Maybe.Absent, summon[Frame])
+                        // A stream that yields 3 good rows then raises an SqlException. The exact leaf
+                        // is not part of the contract under test; the assertion is that whatever the
+                        // stream raises surfaces via the CopyFail flow as the same SqlException value.
+                        val err = SqlServerException("XX000", "ERROR", "deliberate stream failure")
                         val data = Stream[Span[Byte], Abort[SqlException]] {
                             Emit.valueWith(Chunk(csvRow(1, "a"), csvRow(2, "b"), csvRow(3, "c"))) {
                                 Abort.fail(err)
@@ -159,8 +161,8 @@ class CopyIntegrationTest extends kyo.Test:
                         Abort.run[SqlException] {
                             client.copyIn("COPY copy_t3 (id, val) FROM STDIN WITH (FORMAT CSV)", data)
                         }.flatMap {
-                            case Result.Failure(e: SqlException.Request) =>
-                                assert(e.message.contains("deliberate stream failure"))
+                            case Result.Failure(e: SqlServerException) =>
+                                assert(e.serverMessage.contains("deliberate stream failure"))
                                 // After the failure, the connection must be reusable.
                                 client.query("SELECT 1").flatMap { rows =>
                                     assert(rows.nonEmpty)
@@ -170,7 +172,7 @@ class CopyIntegrationTest extends kyo.Test:
                                     }
                                 }
                             case other =>
-                                fail(s"Expected SqlException.Request, got: $other")
+                                fail(s"Expected the stream-raised SqlServerException to surface, got: $other")
                         }
                     }
                 }
@@ -255,7 +257,7 @@ class CopyIntegrationTest extends kyo.Test:
                                 // Acceptable outcomes:
                                 //   - Success(Success(_))  , completed before the 1ms timeout
                                 //   - Success(Failure(_))  , timeout fired, no SqlException surfaced
-                                //   - Failure(_)           , SqlException.Connection (cleanup path)
+                                //   - Failure(_)           , SqlConnectionException (cleanup path)
                                 // What is NOT acceptable: Panic from an unexpected throw.
                                 r match
                                     case Result.Panic(t) =>
@@ -295,7 +297,7 @@ class CopyIntegrationTest extends kyo.Test:
 
     // ── COPY FROM constraint violation ────────────────────────────────────────
 
-    "COPY FROM with constraint violation mid-stream surfaces SqlException.Server with the failing row's context (line/column)" in {
+    "COPY FROM with constraint violation mid-stream surfaces SqlServerException with the failing row's context (line/column)" in {
         Scope.run {
             withPg { client =>
                 Async.timeout(60.seconds) {
@@ -310,14 +312,14 @@ class CopyIntegrationTest extends kyo.Test:
                             Abort.run[SqlException] {
                                 client.copyIn("COPY copy_t7 (id, val) FROM STDIN WITH (FORMAT CSV)", data)
                             }.map {
-                                case Result.Failure(e: SqlException.Server) =>
+                                case Result.Failure(e: SqlServerException) =>
                                     // PostgreSQL raises 23505 (unique_violation) for PRIMARY KEY conflicts.
                                     assert(
                                         e.sqlState == "23505",
                                         s"Expected SQLSTATE 23505 (unique_violation), got '${e.sqlState}': ${e.message}"
                                     )
                                 case Result.Failure(e) =>
-                                    fail(s"Expected SqlException.Server(23505), got: ${e.getClass.getSimpleName}: $e")
+                                    fail(s"Expected SqlServerException(23505), got: ${e.getClass.getSimpleName}: $e")
                                 case Result.Success(n) =>
                                     fail(s"Expected constraint violation but got success with $n rows")
                                 case Result.Panic(t) =>
@@ -465,7 +467,7 @@ class CopyIntegrationTest extends kyo.Test:
                                 // Uses columnDecoded[Long] because client.query uses the extended
                                 // protocol (binary format); text-oriented decodeStr would fail.
                                 client.query("SELECT COUNT(*) FROM copy_t10").flatMap { rows =>
-                                    Abort.run[SqlException.Decode] {
+                                    Abort.run[SqlDecodeException] {
                                         if rows.isEmpty then 0L
                                         else rows(0).columnDecoded[Long](0)
                                     }.map {

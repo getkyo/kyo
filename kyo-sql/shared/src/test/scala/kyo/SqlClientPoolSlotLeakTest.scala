@@ -60,7 +60,7 @@ class SqlClientPoolSlotLeakTest extends Test:
     /** Completes the trust-auth handshake then immediately closes the connection.
       *
       * This causes any subsequent `client.query` call (which sends `pgConnect + extendedQuery`) to fail inside `acquireAndRun` with a
-      * `SqlException.Connection` (body Abort edge). After the handshake the connection is dropped, so the query read loop hits EOF.
+      * `SqlConnectionException` (body Abort edge). After the handshake the connection is dropped, so the query read loop hits EOF.
       */
     private def pgHandshakeThenClose(conn: Connection)(using Frame): Unit < Async =
         Abort.run[Closed](conn.inbound.safe.take).andThen {
@@ -105,13 +105,13 @@ class SqlClientPoolSlotLeakTest extends Test:
 
     /** Returns `true` if the error is a pool-exhaustion acquire-timeout.
       *
-      * A "Timed out waiting" message on `SqlException.Connection` is the signal that the slot channel was empty and the acquire waited for
+      * A "Timed out waiting" message on `SqlConnectionException` is the signal that the slot channel was empty and the acquire waited for
       * `acquireTimeout` without success.
       */
     private def isPoolExhausted(e: SqlException): Boolean =
         e match
-            case SqlException.Connection(msg, _) => msg.startsWith("Timed out")
-            case _                               => false
+            case _: SqlConnectionAcquireTimeoutException => true
+            case _                                       => false
 
     // ── withSlot returns the connection on body success ───────────────────────
 
@@ -126,7 +126,7 @@ class SqlClientPoolSlotLeakTest extends Test:
             val port   = listener.port
             val url    = fakeUrl(port)
             val config = slotConfig(queryTimeout = 100.millis)
-            Abort.run[SqlException.Connection](
+            Abort.run[SqlConnectionException](
                 SqlClient.initUnscoped(url, config)
             ).flatMap {
                 case Result.Failure(e)      => fail(s"init failed: $e")
@@ -166,7 +166,7 @@ class SqlClientPoolSlotLeakTest extends Test:
 
     "withSlot returns the connection on body Abort" in {
         // Fake server: closes immediately after handshake, the query body aborts with
-        // SqlException.Connection (EOF on the wire). The slot must be returned so the
+        // SqlConnectionException (EOF on the wire). The slot must be returned so the
         // second acquire can proceed.
         kyo.internal.FakeServer.listenPort { conn =>
             pgHandshakeThenClose(conn)
@@ -174,7 +174,7 @@ class SqlClientPoolSlotLeakTest extends Test:
             val port   = listener.port
             val url    = fakeUrl(port)
             val config = slotConfig()
-            Abort.run[SqlException.Connection](
+            Abort.run[SqlConnectionException](
                 SqlClient.initUnscoped(url, config)
             ).flatMap {
                 case Result.Failure(e)      => fail(s"init failed: $e")
@@ -278,7 +278,7 @@ class SqlClientPoolSlotLeakTest extends Test:
                 val port   = listener.port
                 val url    = fakeUrl(port)
                 val config = slotConfig(queryTimeout = Duration.Infinity, acquireTimeout = 500.millis)
-                Abort.run[SqlException.Connection](
+                Abort.run[SqlConnectionException](
                     SqlClient.initUnscoped(url, config)
                 ).flatMap {
                     case Result.Failure(e)      => fail(s"init failed: $e")
@@ -303,10 +303,7 @@ class SqlClientPoolSlotLeakTest extends Test:
                                     Abort.run[SqlException](
                                         Async.timeoutWithError(
                                             1.second,
-                                            Result.Failure(SqlException.Connection(
-                                                "second query timed out (slot returned OK)",
-                                                summon[Frame]
-                                            ))
+                                            Result.Failure(SqlConnectionQueryTimeoutException(1.second))
                                         )(
                                             SqlClient.let(client)(client.query("SELECT 1"))
                                         )

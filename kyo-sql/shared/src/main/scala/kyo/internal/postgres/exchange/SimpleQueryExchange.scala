@@ -1,6 +1,7 @@
 package kyo.internal.postgres.exchange
 
 import kyo.*
+import kyo.SqlConnectionUnexpectedMessageException
 import kyo.SqlException
 import kyo.SqlRow
 import kyo.internal.postgres.*
@@ -80,7 +81,11 @@ object SimpleQueryExchange:
                 drainToReadyForQuery(channel).andThen(Abort.fail(QueryResultExchange.mkServerError(fields, Present(sql), 0, Present(pid))))
 
             case other =>
-                Abort.fail(SqlException.Connection(s"Unexpected message in simple-query cycle: $other", summon[Frame]))
+                Abort.fail(SqlConnectionUnexpectedMessageException(
+                    "simple-query cycle",
+                    "ReadyForQuery / RowDescription / CommandComplete / EmptyQueryResponse / ErrorResponse",
+                    other.toString
+                ))
         }
 
     private def collectDataRows(
@@ -131,7 +136,11 @@ object SimpleQueryExchange:
                 drainToReadyForQuery(channel).andThen(Abort.fail(QueryResultExchange.mkServerError(fields, Present(sql), 0, Present(pid))))
 
             case other =>
-                Abort.fail(SqlException.Connection(s"Unexpected message while collecting rows: $other", summon[Frame]))
+                Abort.fail(SqlConnectionUnexpectedMessageException(
+                    "collecting rows",
+                    "DataRow / CommandComplete / EmptyQueryResponse / ErrorResponse",
+                    other.toString
+                ))
         }
 
     /** Drains messages until ReadyForQuery (inclusive), discarding all. Used after ErrorResponse. */

@@ -12,16 +12,16 @@ import kyo.net.StubConnection
   */
 class MysqlChannelTest extends Test:
 
-    "markCorrupted then readRawPayload raises SqlException.Connection with 'unusable'" in {
+    "markCorrupted then readRawPayload raises SqlConnectionProtocolCorruptedException" in {
         MysqlChannel(StubConnection()).flatMap { channel =>
             channel.markCorrupted().flatMap { _ =>
                 // readRawPayload calls checkCorrupted() first; after markCorrupted it should abort
-                // immediately with SqlException.Connection before touching the stub's inbound.
+                // immediately with SqlConnectionProtocolCorruptedException before touching the stub's inbound.
                 Abort.run[SqlException](channel.readRawPayload).map {
-                    case Result.Failure(e: SqlException.Connection) =>
-                        assert(e.message.contains("unusable"))
+                    case Result.Failure(e: SqlConnectionProtocolCorruptedException) =>
+                        assert(e.operation == "LOAD DATA LOCAL INFILE")
                     case other =>
-                        fail(s"Expected SqlException.Connection 'unusable', got: $other")
+                        fail(s"Expected SqlConnectionProtocolCorruptedException, got: $other")
                 }
             }
         }

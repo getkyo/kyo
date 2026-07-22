@@ -49,7 +49,7 @@ class NumericBinaryIntegrationTest extends kyo.Test:
                                         ).flatMap { rows =>
                                             assert(rows.size == 1, s"Expected 1 row for id=$i, got ${rows.size}")
                                             val row = rows(0)
-                                            Abort.run[SqlException.Decode](row.columnDecoded[BigDecimal](0)).map {
+                                            Abort.run[SqlDecodeException](row.columnDecoded[BigDecimal](0)).map {
                                                 case Result.Success(actual) =>
                                                     assert(
                                                         actual.compare(expected) == 0,

@@ -1,7 +1,7 @@
 package kyo.internal.postgres.unmarshaller
 
 import kyo.*
-import kyo.SqlException
+import kyo.SqlDecodeException
 import kyo.internal.postgres.ParameterDescription
 import kyo.internal.postgres.PostgresBufferReader
 import kyo.internal.postgres.Unmarshaller
@@ -15,7 +15,7 @@ import kyo.internal.postgres.Unmarshaller
   * Reference: PostgreSQL §55.7 "ParameterDescription"
   */
 object ParameterDescriptionUnmarshaller extends Unmarshaller[ParameterDescription]:
-    def read(buf: PostgresBufferReader)(using Frame): ParameterDescription < Abort[SqlException.Decode] =
+    def read(buf: PostgresBufferReader)(using Frame): ParameterDescription < Abort[SqlDecodeException] =
         buf.readInt16().flatMap { numParamsShort =>
             readOids(buf, numParamsShort.toInt & 0xffff, Chunk.empty).map { oids =>
                 ParameterDescription(oids)
@@ -25,7 +25,7 @@ object ParameterDescriptionUnmarshaller extends Unmarshaller[ParameterDescriptio
 
     private def readOids(buf: PostgresBufferReader, remaining: Int, acc: Chunk[Int])(using
         Frame
-    ): Chunk[Int] < Abort[SqlException.Decode] =
+    ): Chunk[Int] < Abort[SqlDecodeException] =
         if remaining == 0 then acc
         else buf.readInt32().flatMap { oid => readOids(buf, remaining - 1, acc.appended(oid)) }
 

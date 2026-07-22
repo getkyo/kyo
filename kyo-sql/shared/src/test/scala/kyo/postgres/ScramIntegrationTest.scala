@@ -33,7 +33,7 @@ class ScramIntegrationTest extends kyo.Test:
         }
     }
 
-    "StartupExchange SCRAM wrong password raises SqlException.Server".tagged("kyo.OwnContainer") in {
+    "StartupExchange SCRAM wrong password raises SqlServerException".tagged("kyo.OwnContainer") in {
         Scope.run {
             ContainerPredef.Postgres.initWith(
                 ContainerPredef.Postgres.Config.default.password("correctpassword")
@@ -47,12 +47,12 @@ class ScramIntegrationTest extends kyo.Test:
                             )
                         }
                     }.map {
-                        case Result.Failure(e: SqlException.Server) =>
+                        case Result.Failure(e: SqlServerException) =>
                             assert(
                                 e.sqlState == "28P01" || e.sqlState == "28000",
                                 s"Expected sqlState 28P01 or 28000 for wrong SCRAM password, got: ${e.sqlState}"
                             )
-                        case other => fail(s"Expected SqlException.Server for wrong SCRAM password, got: $other")
+                        case other => fail(s"Expected SqlServerException for wrong SCRAM password, got: $other")
                     }
                 }
             }
@@ -62,7 +62,7 @@ class ScramIntegrationTest extends kyo.Test:
     "StartupExchange SCRAM server signature verified, no error after successful SCRAM".tagged("kyo.OwnContainer") in {
         Scope.run {
             ContainerPredef.Postgres.initWith(ContainerPredef.Postgres.Config.default) { pg =>
-                // If server signature verification fails, connect raises SqlException.Connection.
+                // If server signature verification fails, connect raises SqlConnectionException.
                 // Success here proves the server signature was accepted.
                 initScramClient(pg).flatMap { client =>
                     client.isAlive.map(alive => assert(alive, "Connection should be open after SCRAM with valid server signature"))

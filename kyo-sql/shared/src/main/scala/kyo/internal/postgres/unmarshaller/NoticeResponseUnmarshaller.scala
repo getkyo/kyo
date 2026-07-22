@@ -1,7 +1,7 @@
 package kyo.internal.postgres.unmarshaller
 
 import kyo.*
-import kyo.SqlException
+import kyo.SqlDecodeException
 import kyo.internal.postgres.NoticeResponse
 import kyo.internal.postgres.PostgresBufferReader
 import kyo.internal.postgres.Unmarshaller
@@ -16,7 +16,7 @@ import kyo.internal.postgres.Unmarshaller
   * Reference: PostgreSQL §55.7 "NoticeResponse"
   */
 object NoticeResponseUnmarshaller extends Unmarshaller[NoticeResponse]:
-    def read(buf: PostgresBufferReader)(using Frame): NoticeResponse < Abort[SqlException.Decode] =
+    def read(buf: PostgresBufferReader)(using Frame): NoticeResponse < Abort[SqlDecodeException] =
         buf.readByte().flatMap { firstTag =>
             readFields(buf, firstTag, Chunk.empty).map { fields =>
                 NoticeResponse(fields)
@@ -26,7 +26,7 @@ object NoticeResponseUnmarshaller extends Unmarshaller[NoticeResponse]:
 
     private def readFields(buf: PostgresBufferReader, tag: Byte, acc: Chunk[(Byte, String)])(using
         Frame
-    ): Chunk[(Byte, String)] < Abort[SqlException.Decode] =
+    ): Chunk[(Byte, String)] < Abort[SqlDecodeException] =
         if tag == 0.toByte then acc
         else
             val value = buf.readString()

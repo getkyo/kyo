@@ -2,6 +2,8 @@ package kyo.internal.postgres.exchange
 
 import java.nio.charset.StandardCharsets
 import kyo.*
+import kyo.SqlConnectionUnexpectedMessageException
+import kyo.SqlConnectionUnsupportedAuthMethodException
 import kyo.SqlException
 import kyo.internal.postgres.*
 import kyo.internal.postgres.auth.Md5Password
@@ -25,7 +27,7 @@ final case class StartupResult(
   *      - [[AuthenticationKind.MD5Password]] → hash via MD5, send [[PasswordMessage]], read [[AuthenticationKind.Ok]].
   *      - [[AuthenticationKind.SASL]] with "SCRAM-SHA-256" or "SCRAM-SHA-256-PLUS" → full SCRAM exchange. When the server offers
   *        SCRAM-SHA-256-PLUS AND the connection has a known TLS cert hash, uses PLUS (channel binding). Otherwise uses SCRAM-SHA-256.
-  *      - Other kinds → [[SqlException.Connection]] ("auth method not supported").
+  *      - Other kinds fail with [[SqlConnectionUnsupportedAuthMethodException]] ("auth method not supported").
   *   3. Drain [[ParameterStatus]] and [[BackendKeyData]] messages until [[ReadyForQuery]].
   *   4. Return [[StartupResult]] with the accumulated parameters and backend key data.
   */
@@ -100,19 +102,16 @@ object StartupExchange:
                     }
                 else
                     val mechs = mechanisms.mkString(", ")
-                    Abort.fail(SqlException.Connection(s"auth method not supported: SASL with mechanisms [$mechs]", summon[Frame]))
+                    Abort.fail(SqlConnectionUnsupportedAuthMethodException(s"SASL with mechanisms [$mechs]"))
 
             case ErrorResponse(fields) =>
                 Abort.fail(mkAuthError(fields))
 
             case Authentication(other) =>
-                Abort.fail(SqlException.Connection(
-                    s"auth method not supported: ${other.getClass.getSimpleName}",
-                    summon[Frame]
-                ))
+                Abort.fail(SqlConnectionUnsupportedAuthMethodException(other.getClass.getSimpleName))
 
             case other =>
-                Abort.fail(SqlException.Connection(s"Unexpected message during authentication: $other", summon[Frame]))
+                Abort.fail(SqlConnectionUnexpectedMessageException("authentication", "Authentication / ErrorResponse", other.toString))
         }
 
     private def authenticateSCRAM(
@@ -164,9 +163,10 @@ object StartupExchange:
                                             case ErrorResponse(fields) =>
                                                 Abort.fail(mkAuthError(fields))
                                             case other =>
-                                                Abort.fail(SqlException.Connection(
-                                                    s"Unexpected message during SCRAM final: $other",
-                                                    summon[Frame]
+                                                Abort.fail(SqlConnectionUnexpectedMessageException(
+                                                    "SCRAM final",
+                                                    "AuthenticationSASLFinal / ErrorResponse",
+                                                    other.toString
                                                 ))
                                         }
                                     }
@@ -174,9 +174,10 @@ object StartupExchange:
                         case ErrorResponse(fields) =>
                             Abort.fail(mkAuthError(fields))
                         case other =>
-                            Abort.fail(SqlException.Connection(
-                                s"Unexpected message during SCRAM continue: $other",
-                                summon[Frame]
+                            Abort.fail(SqlConnectionUnexpectedMessageException(
+                                "SCRAM continue",
+                                "AuthenticationSASLContinue / ErrorResponse",
+                                other.toString
                             ))
                     }
                 }
@@ -190,7 +191,7 @@ object StartupExchange:
             case ErrorResponse(fields) =>
                 Abort.fail(mkAuthError(fields))
             case other =>
-                Abort.fail(SqlException.Connection(s"Unexpected message after password: $other", summon[Frame]))
+                Abort.fail(SqlConnectionUnexpectedMessageException("after password", "AuthenticationOk / ErrorResponse", other.toString))
         }
 
     private def collectStartupMessages(
@@ -217,11 +218,15 @@ object StartupExchange:
                 Abort.fail(mkAuthError(fields))
 
             case other =>
-                Abort.fail(SqlException.Connection(s"Unexpected message during startup: $other", summon[Frame]))
+                Abort.fail(SqlConnectionUnexpectedMessageException(
+                    "startup",
+                    "ParameterStatus / BackendKeyData / ReadyForQuery / NoticeResponse / ErrorResponse",
+                    other.toString
+                ))
         }
 
-    /** Converts an authentication ErrorResponse to SqlException.Server (preserving sqlState) when a valid SQLSTATE is present, or falls
-      * back to SqlException.Connection for malformed or empty responses.
+    /** Converts an authentication ErrorResponse to a [[SqlServerException]] leaf (preserving sqlState) when a valid SQLSTATE is present, or
+      * falls back to a [[SqlConnectionException]] leaf for malformed or empty responses.
       *
       * PG auth failures carry sqlState "28P01" (invalid_password), "28000" (invalid_authorization_specification), etc. Surfacing sqlState
       * allows tests and callers to discriminate between auth, TLS, and protocol failures.

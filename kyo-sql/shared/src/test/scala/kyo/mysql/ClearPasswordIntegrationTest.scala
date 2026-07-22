@@ -16,7 +16,7 @@ import kyo.net.NetTlsConfig
   *   - A fresh MySQL 8.0 container is started with `--enable-cleartext-plugin`.
   *   - Root connects and runs `ALTER USER 'test'@'%' IDENTIFIED WITH mysql_clear_password BY 'test'` to switch the test user.
   *   - TLS leaf: client connects with [[NetTlsConfig]](trustAll=true); sends NUL-terminated cleartext password, auth succeeds.
-  *   - Non-TLS leaf: client connects without TLS; [[HandshakeExchange]] raises [[SqlException.Connection]] before sending any password
+  *   - Non-TLS leaf: client connects without TLS; [[HandshakeExchange]] raises [[SqlConnectionException]] before sending any password
   *     bytes, because `mysql_clear_password` without TLS would expose the password.
   *
   * Both leaves exercise distinct code paths in [[kyo.internal.mysql.exchange.HandshakeExchange]].

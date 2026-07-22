@@ -1,7 +1,7 @@
 package kyo.internal.postgres.unmarshaller
 
 import kyo.*
-import kyo.SqlException
+import kyo.SqlDecodeException
 import kyo.internal.postgres.ParameterStatus
 import kyo.internal.postgres.PostgresBufferReader
 import kyo.internal.postgres.Unmarshaller
@@ -15,7 +15,7 @@ import kyo.internal.postgres.Unmarshaller
   * Reference: PostgreSQL §55.7 "ParameterStatus"
   */
 object ParameterStatusUnmarshaller extends Unmarshaller[ParameterStatus]:
-    def read(buf: PostgresBufferReader)(using Frame): ParameterStatus < Abort[SqlException.Decode] =
+    def read(buf: PostgresBufferReader)(using Frame): ParameterStatus < Abort[SqlDecodeException] =
         val name  = buf.readString()
         val value = buf.readString()
         ParameterStatus(name, value)

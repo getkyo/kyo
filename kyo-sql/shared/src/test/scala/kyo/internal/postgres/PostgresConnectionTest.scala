@@ -92,7 +92,7 @@ class PostgresConnectionTest extends kyo.Test:
         }
     }
 
-    "StartupExchange fails on wrong password, raises SqlException.Connection" in {
+    "StartupExchange fails on wrong password, raises SqlConnectionException" in {
         Scope.run {
             SqlSharedContainers.withFreshSchema(SqlSharedContainers.Backend.Postgres) { ctx =>
                 Abort.run[SqlException] {
@@ -112,9 +112,9 @@ class PostgresConnectionTest extends kyo.Test:
                             Scope.ensure(conn.close).andThen(conn.isOpen)
                         }
                 }.map {
-                    case Result.Failure(e: SqlException.Server) =>
+                    case Result.Failure(e: SqlServerException) =>
                         assert(e.sqlState == "28P01", s"Expected SQLSTATE 28P01 for wrong password, got: ${e.sqlState}")
-                    case other => fail(s"Expected SqlException.Server(28P01) for wrong password, got: $other")
+                    case other => fail(s"Expected SqlServerException(28P01) for wrong password, got: $other")
                 }
             }
         }
@@ -217,16 +217,16 @@ class PostgresConnectionTest extends kyo.Test:
         }
     }
 
-    "SimpleQueryExchange error mid-stream, server error raises SqlException.Server with sqlState" in {
+    "SimpleQueryExchange error mid-stream, server error raises SqlServerException with sqlState" in {
         Scope.run {
             SqlSharedContainers.withFreshSchema(SqlSharedContainers.Backend.Postgres) { ctx =>
                 withConn(ctx) { conn =>
                     Abort.run[SqlException](conn.simpleQuery("SELECT 1/0")).map {
-                        case Result.Failure(SqlException.Server(sqlState, _, _, _, _, _, _, _, _, _, _)) =>
+                        case Result.Failure(e: SqlServerException) =>
                             // Division by zero: 22012
-                            assert(sqlState == "22012")
+                            assert(e.sqlState == "22012")
                         case other =>
-                            fail(s"Expected SqlException.Server, got $other")
+                            fail(s"Expected SqlServerException, got $other")
                     }
                 }
             }
@@ -242,8 +242,8 @@ class PostgresConnectionTest extends kyo.Test:
                         err <- Abort.run[SqlException](conn.simpleQuery("SELECT 1/0"))
                         // Verify it was a server error.
                         _ = err match
-                            case Result.Failure(SqlException.Server(_, _, _, _, _, _, _, _, _, _, _)) => ()
-                            case other => fail(s"Expected server error, got $other")
+                            case Result.Failure(_: SqlServerException) => ()
+                            case other                                 => fail(s"Expected server error, got $other")
                         // Second: run a normal query, must succeed (proves barrier drained RFQ).
                         rows <- conn.simpleQuery("SELECT 42")
                     yield
@@ -260,8 +260,8 @@ class PostgresConnectionTest extends kyo.Test:
             SqlSharedContainers.withFreshSchema(SqlSharedContainers.Backend.Postgres) { ctx =>
                 withConn(ctx) { conn =>
                     Abort.run[SqlException](conn.simpleQuery("bad sql !!")).map {
-                        case Result.Failure(_: SqlException.Server) => succeed
-                        case other                                  => fail(s"Expected SqlException.Server, got $other")
+                        case Result.Failure(_: SqlServerException) => succeed
+                        case other                                 => fail(s"Expected SqlServerException, got $other")
                     }
                 }
             }
@@ -297,15 +297,15 @@ class PostgresConnectionTest extends kyo.Test:
         }
     }
 
-    "PostgresConnection.connect fails on wrong host, SqlException.Connection raised" in {
+    "PostgresConnection.connect fails on wrong host, SqlConnectionException raised" in {
         Scope.run {
             Abort.run[SqlException] {
                 PostgresConnection
                     .connect("127.0.0.1", 19999, "user", "db", Absent, Absent, 64, Duration.Infinity, EncodingRegistry.builtin)
                     .map { conn => conn.isOpen }
             }.map {
-                case Result.Failure(SqlException.Connection(_, _)) => succeed
-                case other                                         => fail(s"Expected SqlException.Connection, got $other")
+                case Result.Failure(_: SqlConnectionException) => succeed
+                case other                                     => fail(s"Expected SqlConnectionException, got $other")
             }
         }
     }
@@ -428,17 +428,17 @@ class PostgresConnectionTest extends kyo.Test:
         }
     }
 
-    /** Verifies that [[PostgresConnection.onConnectPanic]] logs an error with the label and returns a [[SqlException.Connection]] whose
+    /** Verifies that [[PostgresConnection.onConnectPanic]] logs an error with the label and returns a [[SqlConnectionException]] whose
       * message contains the throwable's message.
       *
       * Calls the real production helper directly, no network I/O. Installs a capturing [[Log]] via [[Log.let]] to assert that the log
       * entry was emitted at error level with the expected module prefix and label.
       */
-    "PostgresConnection onConnectPanic logs error with label and returns SqlException.Connection" in {
+    "PostgresConnection onConnectPanic logs error with label and returns SqlConnectionException" in {
         val sink  = new TestLogSink
         val cause = new RuntimeException("test panic cause")
         Log.let(Log(sink)) {
-            PostgresConnection.onConnectPanic(cause, "testLabel").map { exc =>
+            PostgresConnection.onConnectPanic(cause, "testLabel", "127.0.0.1", 5432).map { exc =>
                 Log.flush.andThen {
                     val entries = sink.captured
                     assert(entries.size == 1, s"expected exactly 1 log entry, got: $entries")
@@ -447,9 +447,10 @@ class PostgresConnectionTest extends kyo.Test:
                     assert(msg.contains("testLabel"), s"log message should contain the label: $msg")
                     assert(msg.contains("test panic cause"), s"log message should contain throwable message: $msg")
                     assert(msg.contains("[kyo-sql] PostgresConnection"), s"log message should contain module prefix: $msg")
+                    val causeMsg = Option(exc.getCause).map(_.getMessage).getOrElse("")
                     assert(
-                        exc.message.contains("test panic cause"),
-                        s"SqlException.Connection message should contain throwable: ${exc.message}"
+                        causeMsg.contains("test panic cause"),
+                        s"SqlConnectionException cause should contain throwable message: $causeMsg"
                     )
                 }
             }

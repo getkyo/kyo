@@ -42,12 +42,12 @@ class MysqlExtendedProtocolIntegrationTest extends kyo.Test:
     )(using Frame): A < (Async & Abort[SqlException]) =
         row.column(colIdx) match
             case Maybe.Absent =>
-                Abort.fail(SqlException.Connection(s"Column $colIdx is NULL", summon[Frame]))
+                Abort.fail(SqlDecodeColumnNullException(colIdx))
             case Maybe.Present(bytes) =>
-                Abort.run[SqlException.Decode](decoder.decode(bytes)).flatMap {
+                Abort.run[SqlDecodeException](decoder.decode(bytes)).flatMap {
                     case Result.Success(v) => v
-                    case Result.Failure(e) => Abort.fail(SqlException.Connection(s"Decode failed: ${e.message}", summon[Frame]))
-                    case Result.Panic(t)   => Abort.fail(SqlException.Connection(s"Decode panic: ${t.getMessage}", summon[Frame]))
+                    case Result.Failure(e) => Abort.fail(SqlDecodeColumnDecodeException(colIdx, e))
+                    case Result.Panic(t)   => Abort.fail(SqlDecodeColumnDecodeException(colIdx, t))
                 }
 
     // ── COM_STMT_PREPARE returns valid stmtId ─────────────────────────────────
@@ -293,20 +293,20 @@ class MysqlExtendedProtocolIntegrationTest extends kyo.Test:
         }
     }
 
-    // ── error response becomes SqlException.Server ────────────────────────────
+    // ── error response becomes SqlServerException ────────────────────────────
 
-    "ExtendedQueryExchange error response becomes SqlException.Server" in {
+    "ExtendedQueryExchange error response becomes SqlServerException" in {
         Scope.run {
             SqlSharedContainers.withFreshSchema(SqlSharedContainers.Backend.MySQL) { ctx =>
                 withConn(ctx) { conn =>
                     Abort.run[SqlException](
                         conn.extendedQuery("SELECT * FROM nonexistent_table_xyz_abc", Chunk.empty)
                     ).map {
-                        case Result.Failure(e: SqlException.Server) =>
+                        case Result.Failure(e: SqlServerException) =>
                             assert(e.sqlState.nonEmpty, "Expected non-empty sqlState")
                             assert(e.message.nonEmpty, "Expected non-empty error message")
                         case other =>
-                            fail(s"Expected SqlException.Server, got: $other")
+                            fail(s"Expected SqlServerException, got: $other")
                     }
                 }
             }

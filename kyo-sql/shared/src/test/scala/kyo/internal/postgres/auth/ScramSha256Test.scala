@@ -92,9 +92,9 @@ class ScramSha256Test extends kyo.Test:
                 val result      = scram.verifyServerSignature(b64Tampered, serverSig)
                 assert(result.isFailure, "Expected Failure (signature mismatch) but got Success")
                 result match
-                    case Result.Failure(SqlException.Connection(msg, _)) =>
-                        assert(msg.contains("signature mismatch"), s"Expected 'signature mismatch' in: $msg")
-                    case other => fail(s"Expected SqlException.Connection, got: $other")
+                    case Result.Failure(e: SqlConnectionScramFailedException) =>
+                        assert(e.reason.contains("signature mismatch"), s"Expected 'signature mismatch' in: ${e.reason}")
+                    case other => fail(s"Expected SqlConnectionScramFailedException, got: $other")
                 end match
             case Result.Panic(t) => fail(s"Unexpected panic: $t")
         end match
@@ -147,13 +147,14 @@ class ScramSha256Test extends kyo.Test:
         end match
     }
 
-    "ScramSha256 malformed server-first missing fields raises SqlException.Decode" in {
+    "ScramSha256 malformed server-first missing fields raises SqlDecodeException" in {
         val scram = new ScramSha256(rfcUsername, rfcClientNonce, Absent)
         scram.clientFinalMessage("r=badnonce", rfcPassword) match
-            case Result.Failure(e: SqlException.Decode) =>
-                assert(e.message.contains("missing required fields"), s"Unexpected error message: ${e.message}")
+            case Result.Failure(e: SqlDecodeScramFormatException) =>
+                assert(e.field == "server-first-message", s"expected field 'server-first-message', got: ${e.field}")
+                assert(e.text == "r=badnonce", s"expected text 'r=badnonce', got: ${e.text}")
             case Result.Failure(other) =>
-                fail(s"Expected SqlException.Decode but got: $other")
+                fail(s"Expected SqlDecodeScramFormatException but got: $other")
             case Result.Success(_) =>
                 fail("Expected failure for malformed server-first")
             case Result.Panic(t) => fail(s"Unexpected panic: $t")
@@ -164,10 +165,10 @@ class ScramSha256Test extends kyo.Test:
         val scram    = new ScramSha256(rfcUsername, rfcClientNonce, Absent)
         val badFirst = "r=TOTALLY_DIFFERENT_NONCE,s=W22ZaJ0SNY7soEsUEjb6gQ==,i=4096"
         scram.clientFinalMessage(badFirst, rfcPassword) match
-            case Result.Failure(e: SqlException.Connection) =>
+            case Result.Failure(e: SqlConnectionException) =>
                 assert(e.message.contains("client nonce"), s"Unexpected error message: ${e.message}")
             case Result.Failure(other) =>
-                fail(s"Expected SqlException.Connection but got: $other")
+                fail(s"Expected SqlConnectionException but got: $other")
             case Result.Success(_) =>
                 fail("Expected failure for non-extending server nonce")
             case Result.Panic(t) => fail(s"Unexpected panic: $t")
@@ -200,9 +201,10 @@ class ScramSha256Test extends kyo.Test:
                 val result = scram.verifyServerSignature("not-valid-format", serverSig)
                 assert(result.isFailure)
                 result match
-                    case Result.Failure(e: SqlException.Decode) =>
-                        assert(e.message.contains("malformed"), s"Expected 'malformed' in: ${e.message}")
-                    case other => fail(s"Expected SqlException.Decode, got: $other")
+                    case Result.Failure(e: SqlDecodeScramFormatException) =>
+                        assert(e.field == "server-final-message", s"expected field 'server-final-message', got: ${e.field}")
+                        assert(e.text == "not-valid-format", s"expected text 'not-valid-format', got: ${e.text}")
+                    case other => fail(s"Expected SqlDecodeScramFormatException, got: $other")
                 end match
             case Result.Panic(t) => fail(s"Unexpected panic: $t")
         end match
@@ -215,9 +217,9 @@ class ScramSha256Test extends kyo.Test:
             case Result.Success((_, serverSig)) =>
                 val result = scram.verifyServerSignature("e=invalid-proof", serverSig)
                 result match
-                    case Result.Failure(e: SqlException.Connection) =>
+                    case Result.Failure(e: SqlConnectionException) =>
                         assert(e.message.contains("invalid-proof"), s"Expected server error in: ${e.message}")
-                    case other => fail(s"Expected SqlException.Connection, got: $other")
+                    case other => fail(s"Expected SqlConnectionException, got: $other")
                 end match
             case Result.Panic(t) => fail(s"Unexpected panic: $t")
         end match

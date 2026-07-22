@@ -28,9 +28,9 @@ class SqlClientMetricsTest extends Test:
     /** A fake query body that always succeeds with a unit result. */
     private def successBody(using Frame): Unit < (Async & Abort[SqlException]) = ()
 
-    /** A fake query body that always fails with a SqlException.Server. */
+    /** A fake query body that always fails with a SqlServerException. */
     private def failBody(using Frame): Unit < (Async & Abort[SqlException]) =
-        Abort.fail(SqlException.Server("42601", "ERROR", "syntax error"))
+        Abort.fail(SqlServerException("42601", "ERROR", "syntax error"))
 
     // ── queries_executed counter increments on each query ─────────────────────
 

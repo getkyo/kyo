@@ -5,7 +5,7 @@ package kyo
   * Verifies that:
   *   - Postgres always emits `INTERSECT` and `EXCEPT` keywords.
   *   - MySQL 8.0.31 or newer emits `INTERSECT` and `EXCEPT` keywords.
-  *   - MySQL older than 8.0.31 (e.g. 8.0.30, 5.7.x) raises [[SqlException.Unsupported]] at render time instead of emitting invalid SQL.
+  *   - MySQL older than 8.0.31 (e.g. 8.0.30, 5.7.x) raises [[SqlUnsupportedException]] at render time instead of emitting invalid SQL.
   *   - `UNION` / `UNION ALL` are unaffected by the gate on all backends.
   */
 class SqlRenderIntersectExceptTest extends Test:
@@ -51,22 +51,24 @@ class SqlRenderIntersectExceptTest extends Test:
     "INTERSECT on MySQL 8.0.30 raises Unsupported" in {
         val q       = left.intersect(right)
         val backend = kyo.internal.SqlBackend.Mysql.versioned((8, 0, 30))
-        val ex = intercept[SqlException.Unsupported] {
+        val ex = intercept[SqlUnsupportedMysqlVersionFeatureException] {
             kyo.internal.SqlRender.render(q, backend, summon[Frame])
         }
-        assert(ex.getMessage.contains("INTERSECT and EXCEPT require MySQL 8.0.31"))
-        assert(ex.getMessage.contains("8.0.30"))
+        assert(ex.feature == "INTERSECT / EXCEPT", s"expected feature 'INTERSECT / EXCEPT', got: ${ex.feature}")
+        assert(ex.requiredVersion == "8.0.31", s"expected requiredVersion '8.0.31', got: ${ex.requiredVersion}")
+        assert(ex.serverVersion == "8.0.30", s"expected serverVersion '8.0.30', got: ${ex.serverVersion}")
     }
 
-    // Leaf 6, EXCEPT on MySQL 5.7 raises Unsupported with the server version in the message.
+    // Leaf 6, EXCEPT on MySQL 5.7 raises Unsupported with the server version in the typed fields.
     "EXCEPT on MySQL 5.7 raises Unsupported" in {
         val q       = left.except(right)
         val backend = kyo.internal.SqlBackend.Mysql.versioned((5, 7, 44))
-        val ex = intercept[SqlException.Unsupported] {
+        val ex = intercept[SqlUnsupportedMysqlVersionFeatureException] {
             kyo.internal.SqlRender.render(q, backend, summon[Frame])
         }
-        assert(ex.getMessage.contains("INTERSECT and EXCEPT require MySQL 8.0.31"))
-        assert(ex.getMessage.contains("5.7.44"))
+        assert(ex.feature == "INTERSECT / EXCEPT", s"expected feature 'INTERSECT / EXCEPT', got: ${ex.feature}")
+        assert(ex.requiredVersion == "8.0.31", s"expected requiredVersion '8.0.31', got: ${ex.requiredVersion}")
+        assert(ex.serverVersion == "5.7.44", s"expected serverVersion '5.7.44', got: ${ex.serverVersion}")
     }
 
     // Leaf 7, INTERSECT ALL renders on PG (no version gate).
@@ -87,20 +89,22 @@ class SqlRenderIntersectExceptTest extends Test:
     "INTERSECT ALL on MySQL 5.7 raises Unsupported" in {
         val q       = left.intersectAll(right)
         val backend = kyo.internal.SqlBackend.Mysql.versioned((5, 7, 44))
-        val ex = intercept[SqlException.Unsupported] {
+        val ex = intercept[SqlUnsupportedMysqlVersionFeatureException] {
             kyo.internal.SqlRender.render(q, backend, summon[Frame])
         }
-        assert(ex.getMessage.contains("INTERSECT and EXCEPT require MySQL 8.0.31"))
+        assert(ex.feature == "INTERSECT / EXCEPT", s"expected feature 'INTERSECT / EXCEPT', got: ${ex.feature}")
+        assert(ex.requiredVersion == "8.0.31", s"expected requiredVersion '8.0.31', got: ${ex.requiredVersion}")
     }
 
     // Leaf 10, EXCEPT ALL on MySQL 8.0.30 raises Unsupported.
     "EXCEPT ALL on MySQL 8.0.30 raises Unsupported" in {
         val q       = left.exceptAll(right)
         val backend = kyo.internal.SqlBackend.Mysql.versioned((8, 0, 30))
-        val ex = intercept[SqlException.Unsupported] {
+        val ex = intercept[SqlUnsupportedMysqlVersionFeatureException] {
             kyo.internal.SqlRender.render(q, backend, summon[Frame])
         }
-        assert(ex.getMessage.contains("INTERSECT and EXCEPT require MySQL 8.0.31"))
+        assert(ex.feature == "INTERSECT / EXCEPT", s"expected feature 'INTERSECT / EXCEPT', got: ${ex.feature}")
+        assert(ex.requiredVersion == "8.0.31", s"expected requiredVersion '8.0.31', got: ${ex.requiredVersion}")
     }
 
     // Leaf 11, UNION is unaffected by the gate on MySQL 5.7 (always supported).

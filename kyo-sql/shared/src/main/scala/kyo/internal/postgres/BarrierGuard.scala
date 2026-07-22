@@ -7,7 +7,7 @@ import kyo.SqlException
 /** Wraps a protocol command body with a drain-to-[[ReadyForQuery]] guarantee on any exit path.
   *
   * The PostgreSQL simple-query protocol always terminates with a [[ReadyForQuery]] message. If the command body fails (e.g. a server error
-  * response is raised as [[SqlException.Server]]), the server still sends [[ReadyForQuery]] before it is ready for the next command. If we
+  * response is raised as [[SqlServerException]]), the server still sends [[ReadyForQuery]] before it is ready for the next command. If we
   * skip draining that message the connection is left in a corrupt state: the next command will read stale bytes.
   *
   * [[runWithBarrier]] captures the outcome of `body`, drains all inbound messages to [[ReadyForQuery]], then either returns the value or

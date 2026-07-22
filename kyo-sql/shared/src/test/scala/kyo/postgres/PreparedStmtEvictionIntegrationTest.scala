@@ -26,7 +26,7 @@ class PreparedStmtEvictionIntegrationTest extends kyo.Test:
         cacheSize: Int
     )(
         f: SqlClient.Postgres => A < (S & Async & Abort[SqlException])
-    )(using Frame): A < (S & Async & Scope & Abort[SqlException.Connection | SqlException]) =
+    )(using Frame): A < (S & Async & Scope & Abort[SqlConnectionException | SqlException]) =
         SqlClient.initWith(
             pgUrl(ctx),
             SqlConfig.default.copy(
@@ -39,7 +39,7 @@ class PreparedStmtEvictionIntegrationTest extends kyo.Test:
     /** Query the number of server-side prepared statements for this connection via `pg_prepared_statements`. */
     private def serverStmtCount(client: SqlClient.Postgres)(using
         Frame
-    ): Long < (Async & Abort[SqlException] & Abort[SqlException.Decode]) =
+    ): Long < (Async & Abort[SqlException] & Abort[SqlDecodeException]) =
         client.simpleQuery("SELECT count(*) FROM pg_prepared_statements").flatMap { rows =>
             rows.headMaybe match
                 case Absent       => 0L

@@ -2,6 +2,8 @@ package kyo.internal.postgres.exchange
 
 import kyo.*
 import kyo.SqlConfig.Address
+import kyo.SqlConnectionConnectFailedException
+import kyo.SqlConnectionWritePanicException
 import kyo.SqlException
 import kyo.internal.postgres.CancelRequest
 import kyo.internal.postgres.PostgresBufferWriter
@@ -27,10 +29,10 @@ private[kyo] object CancelExchange:
                 address.port
             ).safe).flatMap(_.use(identity))).flatMap {
                 case Result.Failure(_) =>
-                    Abort.fail(SqlException.Connection(s"Cancel: failed to connect to ${address.host}:${address.port}", summon[Frame]))
+                    Abort.fail(SqlConnectionConnectFailedException(address.host, address.port, new Exception("cancel connect failed")))
                 case Result.Panic(t) =>
                     Log.error(s"[kyo-sql] CancelExchange: connect panic: ${t.getMessage}").andThen(
-                        Abort.fail(SqlException.Connection(s"Cancel: connect panic: ${t.getMessage}", summon[Frame]))
+                        Abort.fail(SqlConnectionConnectFailedException(address.host, address.port, t))
                     )
                 case Result.Success(rawConn) =>
                     tls match
@@ -77,7 +79,7 @@ private[kyo] object CancelExchange:
             case Result.Success(_) | Result.Failure(_) => () // Failure = server closed, acceptable for cancel
             case Result.Panic(t) =>
                 Log.error(s"[kyo-sql] CancelExchange: write panic: ${t.getMessage}").andThen(
-                    Abort.fail(SqlException.Connection(s"Cancel write panic: ${t.getMessage}", summon[Frame]))
+                    Abort.fail(SqlConnectionWritePanicException(t))
                 )
         }
     end sendCancel

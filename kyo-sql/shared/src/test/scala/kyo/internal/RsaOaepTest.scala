@@ -17,7 +17,7 @@ import kyo.internal.auth.RsaOaep.RsaPublicKey
   *   - MGF1 known-answer test vector (leaf 7)
   *   - Deterministic OAEP encryption pinned to known ciphertext (leaf 8)
   *   - Non-deterministic OAEP (same input, distinct ciphertext on re-run) (leaf 9)
-  *   - Plaintext-too-long raises SqlException.Request (leaf 10)
+  *   - Plaintext-too-long raises SqlRequestException (leaf 10)
   *   - Empty plaintext encrypts successfully (leaf 11)
   *
   * Test RSA key is a pre-generated 2048-bit RSA public key (SubjectPublicKeyInfo PEM). Tests involving full RSA encryption use
@@ -95,11 +95,11 @@ FwIDAQAB
 
     "RsaOaep PEM parser rejects PEM with missing '-----BEGIN PUBLIC KEY-----' header" in {
         val noPem = "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA..."
-        Abort.run[SqlException.Request](RsaOaep.parsePem(noPem)).map {
-            case Result.Failure(e: SqlException.Request) =>
+        Abort.run[SqlRequestException](RsaOaep.parsePem(noPem)).map {
+            case Result.Failure(e: SqlRequestException) =>
                 assert(e.getMessage.contains("BEGIN PUBLIC KEY"))
             case other =>
-                fail(s"Expected SqlException.Request for missing header, got: $other")
+                fail(s"Expected SqlRequestException for missing header, got: $other")
         }
     }
 
@@ -110,11 +110,11 @@ FwIDAQAB
             "-----BEGIN PUBLIC KEY-----\n" +
                 "!!!not-valid-base64!!!%%%\n" +
                 "-----END PUBLIC KEY-----\n"
-        Abort.run[SqlException.Request](RsaOaep.parsePem(badPem)).map {
-            case Result.Failure(e: SqlException.Request) =>
+        Abort.run[SqlRequestException](RsaOaep.parsePem(badPem)).map {
+            case Result.Failure(e: SqlRequestException) =>
                 assert(e.getMessage.contains("base64") || e.getMessage.toLowerCase.contains("illegal"))
             case other =>
-                fail(s"Expected SqlException.Request for bad base64, got: $other")
+                fail(s"Expected SqlRequestException for bad base64, got: $other")
         }
     }
 
@@ -142,11 +142,11 @@ FwIDAQAB
     "RsaOaep ASN.1 BER decoder rejects truncated DER (malformed structure)" in {
         // Provide a truncated DER, just a SEQUENCE tag with no length/content.
         val truncated = Array[Byte](0x30.toByte)
-        Abort.run[SqlException.Request](RsaOaep.parseDerSpki(truncated)).map {
-            case Result.Failure(_: SqlException.Request) =>
+        Abort.run[SqlRequestException](RsaOaep.parseDerSpki(truncated)).map {
+            case Result.Failure(_: SqlRequestException) =>
                 succeed
             case other =>
-                fail(s"Expected SqlException.Request for malformed DER, got: $other")
+                fail(s"Expected SqlRequestException for malformed DER, got: $other")
         }
     }
 
@@ -219,23 +219,23 @@ FwIDAQAB
         }
     }
 
-    // ─── Leaf 10: Plaintext exceeding capacity raises SqlException.Request ────────
+    // ─── Leaf 10: Plaintext exceeding capacity raises SqlRequestException ────────
 
-    "RsaOaep plaintext exceeding k−2·hLen−2 = 214 bytes raises SqlException.Request" in {
+    "RsaOaep plaintext exceeding k−2·hLen−2 = 214 bytes raises SqlRequestException" in {
         // For 2048-bit key: k=256, hLen=20, maxLen=256-40-2=214.
         val tooLong = Span.from(Array.fill[Byte](215)(0x42.toByte))
-        Abort.run[SqlException.Request](
+        Abort.run[SqlRequestException](
             Random.withSeed(1) {
                 Random.get.flatMap { r =>
                     RsaOaep.encrypt(testPubPem, tooLong, r)
                 }
             }
         ).map {
-            case Result.Failure(e: SqlException.Request) =>
-                assert(e.getMessage.contains("plaintext length 215"))
-                assert(e.getMessage.contains("214"))
+            case Result.Failure(e: SqlRequestRsaOaepException) =>
+                assert(e.position == "EME-OAEP", s"expected position 'EME-OAEP', got: ${e.position}")
+                assert(e.tag == "plaintext-length", s"expected tag 'plaintext-length', got: ${e.tag}")
             case other =>
-                fail(s"Expected SqlException.Request for oversized plaintext, got: $other")
+                fail(s"Expected SqlRequestRsaOaepException for oversized plaintext, got: $other")
         }
     }
 

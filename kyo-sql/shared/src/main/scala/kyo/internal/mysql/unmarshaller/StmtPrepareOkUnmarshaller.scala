@@ -1,7 +1,7 @@
 package kyo.internal.mysql.unmarshaller
 
 import kyo.*
-import kyo.SqlException
+import kyo.SqlDecodeException
 import kyo.internal.mysql.MysqlBufferReader
 import kyo.internal.mysql.StmtPrepareOk
 import kyo.internal.mysql.Unmarshaller
@@ -22,7 +22,7 @@ import kyo.internal.mysql.Unmarshaller
   */
 object StmtPrepareOkUnmarshaller extends Unmarshaller[StmtPrepareOk]:
 
-    def read(buf: MysqlBufferReader)(using Frame): StmtPrepareOk < Abort[SqlException.Decode] =
+    def read(buf: MysqlBufferReader)(using Frame): StmtPrepareOk < Abort[SqlDecodeException] =
         buf.readUInt32LE().flatMap { stmtIdLong =>
             buf.readUInt16LE().flatMap { numColumnsInt =>
                 buf.readUInt16LE().flatMap { numParamsInt =>

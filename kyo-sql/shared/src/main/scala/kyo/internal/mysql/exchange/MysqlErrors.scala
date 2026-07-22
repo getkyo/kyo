@@ -2,7 +2,7 @@ package kyo.internal.mysql.exchange
 
 import kyo.Frame
 import kyo.Maybe
-import kyo.SqlException
+import kyo.SqlServerException
 import kyo.internal.mysql.ErrPacket
 
 private[mysql] object MysqlErrors:
@@ -18,9 +18,9 @@ private[mysql] object MysqlErrors:
         sqlText: Maybe[String],
         paramCount: Int,
         connectionId: Maybe[Long]
-    )(using frame: Frame): SqlException.Server =
+    )(using Frame): SqlServerException =
         val truncatedSql = sqlText.map(truncateSqlText)
-        SqlException.Server(
+        SqlServerException(
             err.sqlState,
             "ERROR",
             err.errorMessage,
@@ -30,8 +30,7 @@ private[mysql] object MysqlErrors:
             Map("code" -> err.errorCode.toString),
             truncatedSql,
             paramCount,
-            connectionId,
-            frame
+            connectionId
         )
     end mkServerError
 end MysqlErrors

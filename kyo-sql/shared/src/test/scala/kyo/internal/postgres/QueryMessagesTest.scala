@@ -56,10 +56,10 @@ class QueryMessagesTest extends Test:
         val reader = PostgresBufferReader(bytes.drop(5))
         assert(reader.readString() == "s1")
         assert(reader.readString() == "SELECT $1")
-        Abort.run[SqlException.Decode](reader.readInt16()).flatMap {
+        Abort.run[SqlDecodeException](reader.readInt16()).flatMap {
             case Result.Success(numParams) =>
                 assert(numParams == 1.toShort)
-                Abort.run[SqlException.Decode](reader.readInt32()).map {
+                Abort.run[SqlDecodeException](reader.readInt32()).map {
                     case Result.Success(oid) => assert(oid == 23)
                     case other               => fail(s"readInt32 failed: $other")
                 }
@@ -84,13 +84,13 @@ class QueryMessagesTest extends Test:
         // "" = 1 byte (just NUL), "s1" = 3 bytes (s,1,NUL) => header = 5+1+3 = 9 bytes
         val afterHeader = 5 + 1 + 3 // type+len=5, portal=1 byte (NUL), stmt=3 bytes
         val reader      = PostgresBufferReader(bytes.drop(afterHeader))
-        Abort.run[SqlException.Decode](reader.readInt16()).flatMap {
+        Abort.run[SqlDecodeException](reader.readInt16()).flatMap {
             case Result.Success(numFmts) =>
                 assert(numFmts == 2.toShort)
-                Abort.run[SqlException.Decode](reader.readInt16()).flatMap {
+                Abort.run[SqlDecodeException](reader.readInt16()).flatMap {
                     case Result.Success(fmt0) =>
                         assert(fmt0 == 0.toShort) // text
-                        Abort.run[SqlException.Decode](reader.readInt16()).map {
+                        Abort.run[SqlDecodeException](reader.readInt16()).map {
                             case Result.Success(fmt1) => assert(fmt1 == 1.toShort) // binary
                             case other                => fail(s"readInt16 fmt1 failed: $other")
                         }
@@ -108,7 +108,7 @@ class QueryMessagesTest extends Test:
         // type(1)+len(4)+portal""\0(1)+stmt""\0(1)+numFmts(2)+numParams(2) = 11
         val paramStart = 11
         val reader     = PostgresBufferReader(bytes.drop(paramStart))
-        Abort.run[SqlException.Decode](reader.readInt32()).map {
+        Abort.run[SqlDecodeException](reader.readInt32()).map {
             case Result.Success(colLen) => assert(colLen == -1)
             case other                  => fail(s"readInt32 failed: $other")
         }
@@ -120,7 +120,7 @@ class QueryMessagesTest extends Test:
         val bytes = buf.toSpan.toArray
         // type(1)+len(4)+portal""\0(1) = 6 bytes before maxRows
         val reader = PostgresBufferReader(bytes.drop(6))
-        Abort.run[SqlException.Decode](reader.readInt32()).map {
+        Abort.run[SqlDecodeException](reader.readInt32()).map {
             case Result.Success(v) => assert(v == 0)
             case other             => fail(s"readInt32 failed: $other")
         }
@@ -132,7 +132,7 @@ class QueryMessagesTest extends Test:
         val bytes = buf.toSpan.toArray
         // type(1)+len(4)+portal""\0(1) = 6 bytes before maxRows
         val reader = PostgresBufferReader(bytes.drop(6))
-        Abort.run[SqlException.Decode](reader.readInt32()).map {
+        Abort.run[SqlDecodeException](reader.readInt32()).map {
             case Result.Success(v) => assert(v == 100)
             case other             => fail(s"readInt32 failed: $other")
         }

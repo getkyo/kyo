@@ -6,7 +6,8 @@ import kyo.Frame
 import kyo.Maybe
 import kyo.Maybe.Absent
 import kyo.Span
-import kyo.SqlException
+import kyo.SqlDecodeArrayFormatException
+import kyo.SqlDecodeInsufficientBytesException
 import kyo.internal.JsonReader
 import kyo.internal.postgres.types.Format
 import kyo.internal.postgres.types.PostgresDecoder
@@ -56,16 +57,13 @@ final class PostgresArrayReader(bytes: Span[Byte], readerFrame: Frame):
       *
       * @return
       *   the element count (first dimension's `dim_size`)
-      * @throws SqlException.Decode
+      * @throws SqlDecodeArrayFormatException
       *   if the header is malformed or the array has more than one dimension
       */
     def openArray(): Int =
+        given Frame = readerFrame
         if bytes.size < 12 then
-            throw SqlException.Decode(
-                s"PG array binary format: header too short (${bytes.size} bytes, expected ≥ 12)",
-                Absent,
-                readerFrame
-            )
+            throw SqlDecodeArrayFormatException(0, bytes.size, 0)
         end if
         pos = 0
         val ndim     = readInt32BE()
@@ -76,11 +74,7 @@ final class PostgresArrayReader(bytes: Span[Byte], readerFrame: Frame):
             _remaining = 0
             0
         else if ndim != 1 then
-            throw SqlException.Decode(
-                s"PG array binary format: multidimensional arrays (ndim=$ndim) not yet supported",
-                Absent,
-                readerFrame
-            )
+            throw SqlDecodeArrayFormatException(ndim, 0, pos)
         else
             val dimSize = readInt32BE()
             val _lbound = readInt32BE() // lower bound, unused
@@ -93,32 +87,27 @@ final class PostgresArrayReader(bytes: Span[Byte], readerFrame: Frame):
       *
       * @return
       *   `Maybe.Present(bytes)` for a non-NULL element, `Maybe.Absent` for a NULL element
-      * @throws SqlException.Decode
+      * @throws SqlDecodeArrayFormatException
       *   if there are no elements remaining or if the length prefix is malformed
+      * @throws SqlDecodeInsufficientBytesException
+      *   if the element data is truncated
       */
     def nextElement(): Maybe[Span[Byte]] =
+        given Frame = readerFrame
         if _remaining <= 0 then
-            throw SqlException.Decode("PG array binary format: nextElement called with no elements remaining", Absent, readerFrame)
+            throw SqlDecodeArrayFormatException(1, 0, pos)
         _remaining -= 1
         if pos + 4 > bytes.size then
-            throw SqlException.Decode(
-                s"PG array binary format: truncated element length at offset $pos (total ${bytes.size} bytes)",
-                Absent,
-                readerFrame
-            )
+            throw SqlDecodeInsufficientBytesException("array element length", 4, bytes.size - pos, pos)
         end if
         val elemLen = readInt32BE()
         if elemLen == -1 then
             // NULL element
             Absent
         else if elemLen < 0 then
-            throw SqlException.Decode(s"PG array binary format: invalid element length $elemLen at offset ${pos - 4}", Absent, readerFrame)
+            throw SqlDecodeArrayFormatException(1, elemLen, pos - 4)
         else if pos + elemLen > bytes.size then
-            throw SqlException.Decode(
-                s"PG array binary format: element data truncated (need $elemLen bytes at offset $pos, total ${bytes.size})",
-                Absent,
-                readerFrame
-            )
+            throw SqlDecodeInsufficientBytesException("array element", elemLen, bytes.size - pos, pos)
         else
             val slice = bytes.slice(pos, pos + elemLen)
             pos += elemLen

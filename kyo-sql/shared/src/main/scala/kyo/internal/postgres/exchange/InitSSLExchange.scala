@@ -1,6 +1,11 @@
 package kyo.internal.postgres.exchange
 
 import kyo.*
+import kyo.SqlConnectionClosedException
+import kyo.SqlConnectionConnectFailedException
+import kyo.SqlConnectionSslRequestFailedException
+import kyo.SqlConnectionTlsNotAdvertisedException
+import kyo.SqlConnectionWritePanicException
 import kyo.SqlException
 import kyo.internal.postgres.PostgresBufferWriter
 import kyo.net.Connection
@@ -13,7 +18,7 @@ import kyo.net.NetTlsConfig
   *   2. Server replies with a single byte: 'S' (SSL supported) or 'N' (not supported). No other bytes follow before the TLS handshake.
   *   3. On 'S': call conn.upgradeToTls(tls) on the same socket, returning a new TLS-wrapped Connection.
   *   4. On 'N': behaviour depends on mode:
-  *      - strict mode (require/verify-ca/verify-full): fail with [[SqlException.Connection]].
+  *      - strict mode (require/verify-ca/verify-full): fail with [[SqlConnectionException]].
   *      - prefer mode: return the original plaintext [[Connection]] so startup can proceed without TLS.
   *   5. Any other byte is a protocol error.
   *
@@ -35,7 +40,7 @@ private[internal] object InitSSLExchange:
       * @param tls
       *   TLS configuration to pass to [[Connection.upgradeToTls]]
       * @return
-      *   a new TLS-wrapped [[Connection]] on 'S', or fails with [[SqlException.Connection]] on 'N' / protocol error
+      *   a new TLS-wrapped [[Connection]] on 'S', or fails with [[SqlConnectionException]] on 'N' / protocol error
       */
     def run(
         conn: Connection,
@@ -92,10 +97,10 @@ private[internal] object InitSSLExchange:
         val packet = buf.toSpan
         Abort.run[Closed](conn.outbound.safe.put(packet)).flatMap {
             case Result.Failure(_) =>
-                Result.Failure(SqlException.Connection(s"Connection to $host:$port closed while sending SSLRequest", summon[Frame]))
+                Result.Failure(SqlConnectionClosedException("writing (SSLRequest)"))
             case Result.Panic(t) =>
                 Log.error(s"[kyo-sql] InitSSLExchange: write panic: ${t.getMessage}").andThen(
-                    Result.Failure(SqlException.Connection(s"SSLRequest write panic: ${t.getMessage}", summon[Frame]))
+                    Result.Failure(SqlConnectionWritePanicException(t))
                 )
             case Result.Success(_) =>
                 Result.unit
@@ -111,20 +116,17 @@ private[internal] object InitSSLExchange:
     )(using Frame): Connection < (Async & Abort[SqlException]) =
         Abort.run[Closed](conn.inbound.safe.take).flatMap {
             case Result.Failure(_) =>
-                Abort.fail(SqlException.Connection(s"Connection to $host:$port closed before SSLRequest response", summon[Frame]))
+                Abort.fail(SqlConnectionClosedException("reading (SSLRequest response)"))
             case Result.Panic(t) =>
                 Log.error(s"[kyo-sql] InitSSLExchange: read panic: ${t.getMessage}").andThen(
-                    Abort.fail(SqlException.Connection(s"SSLRequest read panic: ${t.getMessage}", summon[Frame]))
+                    Abort.fail(SqlConnectionClosedException("reading (panic: " + t.getMessage + ")"))
                 )
             case Result.Success(span) =>
                 if span.isEmpty then
-                    Abort.fail(SqlException.Connection(s"Connection to $host:$port sent empty span in SSLRequest response", summon[Frame]))
+                    Abort.fail(SqlConnectionSslRequestFailedException(host, port, 0.toByte))
                 else if span.size > 1 then
                     // Protocol error: server sent more than 1 byte before TLS handshake.
-                    Abort.fail(SqlException.Connection(
-                        s"Protocol error: server at $host:$port sent ${span.size} bytes in SSLRequest response (expected exactly 1)",
-                        summon[Frame]
-                    ))
+                    Abort.fail(SqlConnectionSslRequestFailedException(host, port, span(0)))
                 else
                     val responseByte = span(0)
                     responseByte match
@@ -148,14 +150,10 @@ private[internal] object InitSSLExchange:
                             }.flatMap {
                                 case Result.Success(tlsConn) => tlsConn
                                 case Result.Failure(netEx) =>
-                                    Abort.fail(SqlException.Connection.TlsHandshakeFailed(
-                                        host,
-                                        port,
-                                        netEx
-                                    ))
+                                    Abort.fail(SqlConnectionConnectFailedException(host, port, netEx))
                                 case Result.Panic(t) =>
                                     Log.error(s"[kyo-sql] InitSSLExchange: TLS upgrade panic: ${t.getMessage}").andThen(
-                                        Abort.fail(SqlException.Connection.TlsHandshakeFailed(host, port, t))
+                                        Abort.fail(SqlConnectionConnectFailedException(host, port, t))
                                     )
                             }
                         case 'N' =>
@@ -164,12 +162,9 @@ private[internal] object InitSSLExchange:
                                 // Per PG protocol §55.2.10, the same socket continues with plaintext after 'N'.
                                 conn
                             else
-                                Abort.fail(SqlException.Connection.TlsNotSupported(host, port))
+                                Abort.fail(SqlConnectionTlsNotAdvertisedException(host, port))
                         case other =>
-                            Abort.fail(SqlException.Connection(
-                                s"Server at $host:$port refused TLS (unexpected SSLRequest response byte: 0x${"%02x".format(other & 0xff)})",
-                                summon[Frame]
-                            ))
+                            Abort.fail(SqlConnectionSslRequestFailedException(host, port, other))
                     end match
                 end if
         }

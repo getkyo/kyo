@@ -2,7 +2,8 @@ package kyo.internal.mysql.unmarshaller
 
 import java.nio.charset.StandardCharsets
 import kyo.*
-import kyo.SqlException
+import kyo.SqlDecodeException
+import kyo.SqlDecodeProtocolFormatException
 import kyo.internal.mysql.MysqlBufferReader
 import kyo.internal.mysql.OkPacket
 import kyo.internal.mysql.Unmarshaller
@@ -26,18 +27,14 @@ object OkPacketUnmarshaller extends Unmarshaller[OkPacket]:
 
     private val ServerSessionStateChanged = 0x4000
 
-    def read(buf: MysqlBufferReader)(using Frame): OkPacket < Abort[SqlException.Decode] =
+    def read(buf: MysqlBufferReader)(using Frame): OkPacket < Abort[SqlDecodeException] =
         buf.readLenencInt().flatMap {
             case Maybe.Absent =>
-                Abort.fail(SqlException.Decode("Unexpected 0xFF sentinel in OK packet affectedRows field", Maybe.Absent, summon[Frame]))
+                Abort.fail(SqlDecodeProtocolFormatException(0xff.toByte, buf.position))
             case Maybe.Present(affectedRows) =>
                 buf.readLenencInt().flatMap {
                     case Maybe.Absent =>
-                        Abort.fail(SqlException.Decode(
-                            "Unexpected 0xFF sentinel in OK packet lastInsertId field",
-                            Maybe.Absent,
-                            summon[Frame]
-                        ))
+                        Abort.fail(SqlDecodeProtocolFormatException(0xff.toByte, buf.position))
                     case Maybe.Present(lastInsertId) =>
                         buf.readUInt16LE().flatMap { statusFlagsInt =>
                             buf.readUInt16LE().flatMap { warningsInt =>
@@ -48,11 +45,11 @@ object OkPacketUnmarshaller extends Unmarshaller[OkPacket]:
                                     OkPacket(affectedRows, lastInsertId, statusFlags, warnings, Maybe.Absent, Maybe.Absent)
                                 else if (statusFlagsInt & ServerSessionStateChanged) != 0 then
                                     // CLIENT_SESSION_TRACK + SERVER_SESSION_STATE_CHANGED: lenenc-string(info) + lenenc-string(sessionStateInfo)
-                                    val infoEffect: Maybe[String] < Abort[SqlException.Decode] =
+                                    val infoEffect: Maybe[String] < Abort[SqlDecodeException] =
                                         if buf.remaining > 0 then buf.readLenencString().map(Maybe.Present(_))
                                         else Maybe.Absent
                                     infoEffect.flatMap { info =>
-                                        val sessionStateInfoEffect: Maybe[String] < Abort[SqlException.Decode] =
+                                        val sessionStateInfoEffect: Maybe[String] < Abort[SqlDecodeException] =
                                             if buf.remaining > 0 then buf.readLenencString().map(Maybe.Present(_))
                                             else Maybe.Absent
                                         sessionStateInfoEffect.map { sessionStateInfo =>

@@ -1,7 +1,7 @@
 package kyo.internal.mysql.unmarshaller
 
 import kyo.*
-import kyo.SqlException
+import kyo.SqlDecodeException
 import kyo.internal.mysql.ColumnDefinition41
 import kyo.internal.mysql.MysqlBufferReader
 import kyo.internal.mysql.Unmarshaller
@@ -20,7 +20,7 @@ import kyo.internal.mysql.Unmarshaller
   */
 object ColumnDefinition41Unmarshaller extends Unmarshaller[ColumnDefinition41]:
 
-    def read(buf: MysqlBufferReader)(using Frame): ColumnDefinition41 < Abort[SqlException.Decode] =
+    def read(buf: MysqlBufferReader)(using Frame): ColumnDefinition41 < Abort[SqlDecodeException] =
         buf.readLenencString().flatMap { catalog =>
             buf.readLenencString().flatMap { schema =>
                 buf.readLenencString().flatMap { table =>

@@ -6,6 +6,9 @@ import kyo.Frame
 import kyo.Instant
 import kyo.Maybe
 import kyo.Span
+import kyo.SqlDecodeColumnNullException
+import kyo.SqlDecodeException
+import kyo.SqlDecodeTemporalException
 import kyo.SqlException
 import kyo.SqlRow
 import kyo.Test
@@ -214,7 +217,7 @@ class MysqlRowReaderTest extends Test:
         // isNil must not advance: calling it twice returns true both times.
         assert(r.isNil() == true)
         // Reading a NULL column must throw.
-        intercept[SqlException.Decode] {
+        intercept[SqlDecodeException] {
             r.int()
         }
         succeed
@@ -273,10 +276,10 @@ class MysqlRowReaderTest extends Test:
     // case-class field-iteration protocol (objectStart/hasNextField/matchField/…)
     // IS supported, see the next test.
 
-    "arrayStart on a non-JSON column throws SqlException.Decode (not Unsupported)" in {
+    "arrayStart on a non-JSON column throws SqlDecodeException (not Unsupported)" in {
         val row = singleColumnRow(encodeRaw(0, MysqlEncoder.intEncoder))
         val r   = reader(row)
-        intercept[SqlException.Decode] { r.arrayStart() }
+        intercept[SqlDecodeException] { r.arrayStart() }
         succeed
     }
 
@@ -318,11 +321,11 @@ class MysqlRowReaderTest extends Test:
         succeed
     }
 
-    "reading a NULL column throws SqlException.Decode with message 'column 0 is NULL'" in {
+    "reading a NULL column throws SqlDecodeException with message 'column 0 is NULL'" in {
         val row = nullColumnRow()
         val r   = reader(row)
-        val ex  = intercept[SqlException.Decode] { r.int() }
-        assert(ex.getMessage.contains("column 0 is NULL"), s"message was: ${ex.getMessage}")
+        val ex  = intercept[SqlDecodeColumnNullException] { r.int() }
+        assert(ex.columnIndex == 0, s"expected columnIndex 0, got: ${ex.columnIndex}")
     }
 
     "duration() decodes ZERO from empty body (zero-length TIME struct)" in {
@@ -348,16 +351,16 @@ class MysqlRowReaderTest extends Test:
         assert(r.duration().equals(java.time.Duration.ofHours(1)), "8-byte TIME struct should decode to 1 hour")
     }
 
-    "decodeDateBytes on malformed struct length throws SqlException.Decode" in {
+    "decodeDateBytes on malformed struct length throws SqlDecodeException" in {
         val malformed = Span.from(Array[Byte](0x01.toByte, 0x02.toByte, 0x03.toByte)) // 3 bytes, not 0 or 4
-        val ex        = intercept[SqlException.Decode] { MysqlRowReader.decodeDateBytes(malformed) }
-        assert(ex.getMessage.contains("DATE: unexpected struct length 3"), s"message was: ${ex.getMessage}")
+        val ex        = intercept[SqlDecodeTemporalException] { MysqlRowReader.decodeDateBytes(malformed) }
+        assert(ex.structLength == 3, s"expected structLength 3, got: ${ex.structLength}")
     }
 
-    "decodeDatetimeBytes on malformed struct length throws SqlException.Decode" in {
+    "decodeDatetimeBytes on malformed struct length throws SqlDecodeException" in {
         val malformed = Span.from(Array[Byte](0x01.toByte, 0x02.toByte)) // 2 bytes, not 0, 4, 7, or 11
-        val ex        = intercept[SqlException.Decode] { MysqlRowReader.decodeDatetimeBytes(malformed) }
-        assert(ex.getMessage.contains("DATETIME: unexpected struct length 2 (expected 0, 4, 7, or 11)"), s"message was: ${ex.getMessage}")
+        val ex        = intercept[SqlDecodeTemporalException] { MysqlRowReader.decodeDatetimeBytes(malformed) }
+        assert(ex.structLength == 2, s"expected structLength 2, got: ${ex.structLength}")
     }
 
     // ── Structural reader operation leaves (appended from Phase 24) ──────────

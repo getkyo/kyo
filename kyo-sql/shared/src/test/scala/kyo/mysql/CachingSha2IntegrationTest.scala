@@ -101,9 +101,9 @@ class CachingSha2IntegrationTest extends kyo.Test:
         }
     }
 
-    // ── wrong password raises SqlException.Connection ─────────────────────────
+    // ── wrong password raises SqlConnectionException ─────────────────────────
 
-    "HandshakeExchange caching_sha2 wrong password raises SqlException.Connection".tagged("kyo.OwnContainer") in {
+    "HandshakeExchange caching_sha2 wrong password raises SqlConnectionException".tagged("kyo.OwnContainer") in {
         Scope.run {
             withCachingSha2Container { details =>
                 Abort.run[SqlException](
@@ -114,8 +114,8 @@ class CachingSha2IntegrationTest extends kyo.Test:
                         )
                     }
                 ).map {
-                    case Result.Failure(_: SqlException.Connection) => succeed
-                    case other                                      => fail(s"Expected SqlException.Connection, got: $other")
+                    case Result.Failure(_: SqlConnectionException) => succeed
+                    case other                                     => fail(s"Expected SqlConnectionException, got: $other")
                 }
             }
         }

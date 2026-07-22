@@ -3,6 +3,8 @@ package kyo.internal.postgres
 import kyo.Maybe
 import kyo.Maybe.Absent
 import kyo.Span
+import kyo.SqlDecodeException
+import kyo.SqlDecodeIntervalException
 import kyo.SqlException
 import kyo.Test
 import kyo.internal.postgres.types.Format
@@ -135,35 +137,33 @@ class PostgresEncoderIntervalTest extends Test:
         assert(result.equals(java.time.Duration.ofSeconds(-30)), s"got $result")
     }
 
-    "INTERVAL decode raises SqlException.Decode when months != 0" in {
+    "INTERVAL decode raises SqlDecodeException when months != 0" in {
         // months = -1 (e.g. PG INTERVAL '1 month ago')
         val bytes = intervalBytes(0L, 0, -1)
-        val ex = intercept[SqlException.Decode] {
+        val ex = intercept[SqlDecodeIntervalException] {
             PostgresDecoder.interval.read(Format.Binary, bytes)
         }
-        assert(ex.message.contains("months"), s"expected months error, got: ${ex.message}")
-        assert(ex.message.contains("-1"), s"expected field value in message, got: ${ex.message}")
-        assert(ex.message.contains("java.time.Period"), s"expected Period reference, got: ${ex.message}")
+        assert(ex.field == "months", s"expected months field, got: ${ex.field}")
+        assert(ex.value == "-1", s"expected field value '-1', got: ${ex.value}")
     }
 
-    "INTERVAL decode raises SqlException.Decode when days != 0 and months == 0" in {
+    "INTERVAL decode raises SqlDecodeException when days != 0 and months == 0" in {
         // days = 3, months = 0
         val bytes = intervalBytes(0L, 3, 0)
-        val ex = intercept[SqlException.Decode] {
+        val ex = intercept[SqlDecodeIntervalException] {
             PostgresDecoder.interval.read(Format.Binary, bytes)
         }
-        assert(ex.message.contains("days"), s"expected days error, got: ${ex.message}")
-        assert(ex.message.contains("3"), s"expected field value in message, got: ${ex.message}")
-        assert(ex.message.contains("java.time.Period"), s"expected Period reference, got: ${ex.message}")
+        assert(ex.field == "days", s"expected days field, got: ${ex.field}")
+        assert(ex.value == "3", s"expected field value '3', got: ${ex.value}")
     }
 
     "INTERVAL decode raises months error before days error when both are non-zero" in {
         // months=1, days=5: months check fires first
         val bytes = intervalBytes(0L, 5, 1)
-        val ex = intercept[SqlException.Decode] {
+        val ex = intercept[SqlDecodeIntervalException] {
             PostgresDecoder.interval.read(Format.Binary, bytes)
         }
-        assert(ex.message.contains("months"), s"expected months error first, got: ${ex.message}")
+        assert(ex.field == "months", s"expected months field first, got: ${ex.field}")
     }
 
     // ── Encode/decode round-trip ──────────────────────────────────────────────
@@ -220,16 +220,14 @@ class PostgresEncoderIntervalTest extends Test:
         assert(result.equals(java.time.Duration.ofMinutes(90)), s"got $result")
     }
 
-    "INTERVAL text decode raises SqlException.Decode for PG verbose format with months" in {
+    "INTERVAL text decode raises SqlDecodeException for PG verbose format with months" in {
         val s     = "1 year 2 mons 00:01:02"
         val bytes = Span.from(s.getBytes(java.nio.charset.StandardCharsets.UTF_8))
-        val ex = intercept[SqlException.Decode] {
+        val ex = intercept[SqlDecodeIntervalException] {
             PostgresDecoder.interval.read(Format.Text, bytes)
         }
-        assert(
-            ex.message.contains("ISO") || ex.message.contains("cast") || ex.message.contains("intervalstyle"),
-            s"expected cast/ISO suggestion, got: ${ex.message}"
-        )
+        assert(ex.field == "text", s"expected 'text' field, got: ${ex.field}")
+        assert(ex.value == s, s"expected raw text as value, got: ${ex.value}")
     }
 
 end PostgresEncoderIntervalTest

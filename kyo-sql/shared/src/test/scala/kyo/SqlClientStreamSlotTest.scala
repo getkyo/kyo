@@ -77,8 +77,8 @@ class SqlClientStreamSlotTest extends Test:
 
     private def isPoolExhausted(e: SqlException): Boolean =
         e match
-            case SqlException.Connection(msg, _) => msg.startsWith("Timed out")
-            case _                               => false
+            case _: SqlConnectionAcquireTimeoutException => true
+            case _                                       => false
 
     // ── stream success returns connection to pool (regression) ────────────────
 
@@ -94,7 +94,7 @@ class SqlClientStreamSlotTest extends Test:
             val port   = listener.port
             val url    = fakeUrl(port)
             val config = slotConfig
-            Abort.run[SqlException.Connection](
+            Abort.run[SqlConnectionException](
                 SqlClient.initUnscoped(url, config)
             ).flatMap {
                 case Result.Failure(e)      => fail(s"init failed: $e")

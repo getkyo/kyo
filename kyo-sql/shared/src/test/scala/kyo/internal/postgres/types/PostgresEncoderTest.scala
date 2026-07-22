@@ -209,7 +209,7 @@ class PostgresEncoderTest extends kyo.Test:
     // ── NUMERIC special values ────────────────────────────────────────────────
     //
     // PostgreSQL binary NUMERIC uses sign codes 0xC000 (NaN), 0xD000 (+Inf), 0xF000 (-Inf).
-    // These have no Scala/BigDecimal representation; the decoder throws SqlException.Unsupported.
+    // These have no Scala/BigDecimal representation; the decoder throws SqlUnsupportedException.
     //
     // Wire layout: Int16 ndigits | Int16 weight | UInt16 sign | UInt16 dscale  (8 bytes, no digits)
 
@@ -223,23 +223,23 @@ class PostgresEncoderTest extends kyo.Test:
         buf.toSpan
     end numericSpecialBytes
 
-    "NUMERIC binary NaN throws SqlException.Decode with NaN in the message" in {
+    "NUMERIC binary NaN throws SqlDecodeException with NaN in the message" in {
         val bytes = numericSpecialBytes(0xc000)
-        val ex = intercept[SqlException.Decode] {
+        val ex = intercept[SqlDecodeException] {
             PostgresDecoder.numeric.read(Format.Binary, bytes)
         }
         assert(ex.getMessage.contains("NaN"), s"expected NaN in message, got: ${ex.getMessage}")
     }
 
-    "NUMERIC binary +Infinity and -Infinity throw SqlException.Decode with Infinity in the messages" in {
+    "NUMERIC binary +Infinity and -Infinity throw SqlDecodeException with Infinity in the messages" in {
         val posInfBytes = numericSpecialBytes(0xd000)
-        val posEx = intercept[SqlException.Decode] {
+        val posEx = intercept[SqlDecodeException] {
             PostgresDecoder.numeric.read(Format.Binary, posInfBytes)
         }
         assert(posEx.getMessage.contains("Infinity"), s"expected Infinity in message, got: ${posEx.getMessage}")
 
         val negInfBytes = numericSpecialBytes(0xf000)
-        val negEx = intercept[SqlException.Decode] {
+        val negEx = intercept[SqlDecodeException] {
             PostgresDecoder.numeric.read(Format.Binary, negInfBytes)
         }
         assert(negEx.getMessage.contains("Infinity"), s"expected Infinity in message, got: ${negEx.getMessage}")

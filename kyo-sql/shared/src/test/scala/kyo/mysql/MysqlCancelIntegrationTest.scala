@@ -49,14 +49,14 @@ class MysqlCancelIntegrationTest extends kyo.Test:
                                     // (b) The server returns a row with SLEEP value = 1 (interrupted early).
                                     // Both indicate the kill was effective. We accept both.
                                     Abort.run[SqlException](slowFiber.get).map {
-                                        case Result.Failure(e: SqlException.Server) =>
+                                        case Result.Failure(e: SqlServerException) =>
                                             // MySQL SQLSTATE for ER_QUERY_INTERRUPTED is 70100.
                                             assert(
                                                 e.extra.get("code").exists(c => c == "1317") || e.sqlState == "70100",
                                                 s"Expected error 1317 / SQLSTATE 70100, got: code=${e.extra.get("code")}, state=${e.sqlState}, msg=${e.message}"
                                             )
                                         case Result.Failure(e) =>
-                                            fail(s"Expected SqlException.Server, got: $e")
+                                            fail(s"Expected SqlServerException, got: $e")
                                         case Result.Success(rows) =>
                                             // SLEEP(5) returns 1 when interrupted by KILL QUERY, this is also a valid kill outcome.
                                             // Typed decode via Phase 19b row.decode[T], handles both binary
@@ -141,7 +141,7 @@ class MysqlCancelIntegrationTest extends kyo.Test:
                         Abort.run[SqlException](client.executeRaw(s"KILL QUERY $fakeConnectionId")).map {
                             case Result.Success(_) =>
                                 succeed // no error, thread doesn't exist, MySQL says OK
-                            case Result.Failure(_: SqlException.Server) =>
+                            case Result.Failure(_: SqlServerException) =>
                                 succeed // error 1094 (unknown thread) is also acceptable
                             case Result.Failure(e) =>
                                 fail(s"Unexpected error type: $e")

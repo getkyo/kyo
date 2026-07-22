@@ -24,7 +24,7 @@ class RoundTripTest extends Test:
 
         val stmtName = reader.readString()
         val sql      = reader.readString()
-        Abort.run[SqlException.Decode](reader.readInt16()).flatMap {
+        Abort.run[SqlDecodeException](reader.readInt16()).flatMap {
             case Result.Success(numParamsShort) =>
                 val numParams = numParamsShort.toInt & 0xffff
                 readOids(reader, numParams, Chunk.empty).map { oids =>
@@ -39,7 +39,7 @@ class RoundTripTest extends Test:
 
     private def readOids(reader: PostgresBufferReader, remaining: Int, acc: Chunk[Int])(using
         Frame
-    ): Chunk[Int] < Abort[SqlException.Decode] =
+    ): Chunk[Int] < Abort[SqlDecodeException] =
         if remaining == 0 then acc
         else reader.readInt32().flatMap { oid => readOids(reader, remaining - 1, acc.appended(oid)) }
 

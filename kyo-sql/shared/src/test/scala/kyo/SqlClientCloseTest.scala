@@ -75,7 +75,7 @@ class SqlClientCloseTest extends Test:
         }.flatMap { listener =>
             val port = listener.port
             val url  = fakeUrl(port)
-            Abort.run[SqlException.Connection](
+            Abort.run[SqlConnectionException](
                 SqlClient.initUnscoped(url, baseConfig)
             ).flatMap {
                 case Result.Success(client) =>
@@ -103,7 +103,7 @@ class SqlClientCloseTest extends Test:
         }.flatMap { listener =>
             val port = listener.port
             val url  = fakeUrl(port)
-            Abort.run[SqlException.Connection](
+            Abort.run[SqlConnectionException](
                 SqlClient.initUnscoped(url, baseConfig)
             ).flatMap {
                 case Result.Success(client) =>
@@ -135,7 +135,7 @@ class SqlClientCloseTest extends Test:
         }.flatMap { listener =>
             val port = listener.port
             val url  = fakeUrl(port)
-            Abort.run[SqlException.Connection](
+            Abort.run[SqlConnectionException](
                 SqlClient.initUnscoped(url, baseConfig)
             ).flatMap {
                 case Result.Success(client) =>
@@ -163,7 +163,7 @@ class SqlClientCloseTest extends Test:
         }.flatMap { listener =>
             val port = listener.port
             val url  = fakeUrl(port)
-            Abort.run[SqlException.Connection](
+            Abort.run[SqlConnectionException](
                 SqlClient.initUnscoped(url, config)
             ).flatMap {
                 case Result.Success(client) =>

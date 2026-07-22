@@ -27,7 +27,7 @@ class OkPacketUnmarshallerTest extends Test:
     "OkPacketUnmarshaller surfaces lastInsertId" in {
         val payload = Array[Byte](0x01, 0x2a, 0x00, 0x00, 0x00, 0x00)
         val reader  = MysqlBufferReader(payload)
-        // OkPacketUnmarshaller.read returns a Kyo computation in Abort[SqlException.Decode]; for a
+        // OkPacketUnmarshaller.read returns a Kyo computation in Abort[SqlDecodeException]; for a
         // well-formed packet it succeeds synchronously.
         import AllowUnsafe.embrace.danger
         val ok = Sync.Unsafe.evalOrThrow(Abort.run(OkPacketUnmarshaller.read(reader)).map(_.getOrThrow))

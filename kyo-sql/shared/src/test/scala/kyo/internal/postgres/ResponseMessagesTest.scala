@@ -11,9 +11,9 @@ import kyo.internal.postgres.unmarshaller.*
   */
 class ResponseMessagesTest extends Test:
 
-    // Helper: unwrap an Abort[SqlException.Decode] result to the success value, failing the test on error
-    private def decode[A](result: A < Abort[SqlException.Decode])(using kyo.test.AssertScope): A =
-        Abort.run[SqlException.Decode](result).eval match
+    // Helper: unwrap an Abort[SqlDecodeException] result to the success value, failing the test on error
+    private def decode[A](result: A < Abort[SqlDecodeException])(using kyo.test.AssertScope): A =
+        Abort.run[SqlDecodeException](result).eval match
             case Result.Success(a) => a
             case Result.Failure(e) => fail(s"Decode failed: $e")
             case Result.Panic(t)   => throw t

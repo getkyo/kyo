@@ -3,6 +3,7 @@ package kyo.internal.mysql
 import kyo.Chunk
 import kyo.Maybe
 import kyo.Span
+import kyo.SqlDecodeException
 import kyo.SqlException
 import kyo.SqlRow
 import kyo.Test
@@ -101,7 +102,7 @@ class MysqlEncoderShortTest extends Test:
     }
 
     "shortDecoder fails on fewer than 2 bytes" in {
-        val ex = intercept[SqlException.Decode] {
+        val ex = intercept[SqlDecodeException] {
             decode(Array[Byte](0x01.toByte))
         }
         assert(

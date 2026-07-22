@@ -1,6 +1,8 @@
 package kyo.internal.mysql.exchange
 
 import kyo.*
+import kyo.SqlConnectionConnectFailedException
+import kyo.SqlConnectionTlsNotAdvertisedException
 import kyo.SqlException
 import kyo.internal.mysql.Capabilities
 import kyo.internal.mysql.MysqlChannel
@@ -58,10 +60,7 @@ private[mysql] object InitTlsExchange:
     )(using Frame): MysqlChannel < (Async & Abort[SqlException]) =
         // Verify that the server advertises CLIENT_SSL support.
         if (serverCaps & Capabilities.CLIENT_SSL) == 0L then
-            Abort.fail(SqlException.Connection(
-                s"TLS requested but server at $host:$port does not advertise CLIENT_SSL capability",
-                summon[Frame]
-            ))
+            Abort.fail(SqlConnectionTlsNotAdvertisedException(host, port))
         else
             // Use the same capabilities as the full HandshakeResponse41 so MySQL's auth state machine
             // is configured correctly before the TLS handshake begins.
@@ -100,14 +99,10 @@ private[mysql] object InitTlsExchange:
                             tlsChannel
                         }
                     case Result.Failure(netEx) =>
-                        Abort.fail(SqlException.Connection.TlsHandshakeFailed(
-                            host,
-                            port,
-                            netEx
-                        ))
+                        Abort.fail(SqlConnectionConnectFailedException(host, port, netEx))
                     case Result.Panic(t) =>
                         java.lang.System.err.println(s"[kyo-sql] InitTlsExchange: TLS upgrade panic: ${t.getMessage}")
-                        Abort.fail(SqlException.Connection.TlsHandshakeFailed(host, port, t))
+                        Abort.fail(SqlConnectionConnectFailedException(host, port, t))
                 }
             }
         end if

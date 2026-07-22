@@ -1,6 +1,7 @@
 package kyo.internal.postgres.exchange
 
 import kyo.*
+import kyo.SqlConnectionUnexpectedMessageException
 import kyo.SqlException
 import kyo.SqlRow
 import kyo.internal.postgres.*
@@ -232,7 +233,11 @@ private[postgres] object StreamQueryExchange:
                     Abort.fail(QueryResultExchange.mkServerError(errFields, Absent, 0, Present(pid)))
 
                 case other =>
-                    Abort.fail(SqlException.Connection(s"Unexpected message during first Execute batch: $other", summon[Frame]))
+                    Abort.fail(SqlConnectionUnexpectedMessageException(
+                        "first Execute batch",
+                        "BindComplete / DataRow / PortalSuspended / CommandComplete / EmptyQueryResponse / ErrorResponse",
+                        other.toString
+                    ))
             }
 
         loop(bindSeen = false, Chunk.empty)
@@ -337,7 +342,11 @@ private[postgres] object StreamQueryExchange:
                     Abort.fail(QueryResultExchange.mkServerError(errFields, Absent, 0, Present(pid)))
 
                 case other =>
-                    Abort.fail(SqlException.Connection(s"Unexpected message during Execute batch: $other", summon[Frame]))
+                    Abort.fail(SqlConnectionUnexpectedMessageException(
+                        "Execute batch",
+                        "DataRow / PortalSuspended / CommandComplete / EmptyQueryResponse / ErrorResponse",
+                        other.toString
+                    ))
             }
 
         loop(Chunk.empty)

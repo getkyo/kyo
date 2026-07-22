@@ -3,7 +3,8 @@ package kyo.internal.tls
 import kyo.*
 import kyo.Maybe.Absent
 import kyo.Maybe.Present
-import kyo.SqlException
+import kyo.SqlConnectionException
+import kyo.SqlConnectionTlsConfigException
 import kyo.net.NetTlsConfig
 
 /** Builds a [[NetTlsConfig]] for a given [[TlsMode]] and optional CA certificate path.
@@ -20,16 +21,16 @@ import kyo.net.NetTlsConfig
   *   - [[TlsMode.Require]] → `Present(NetTlsConfig(trustAll = true))` (TLS mandatory; no cert-chain or hostname check, `require` only
   *     mandates encryption per PG/MySQL spec)
   *   - [[TlsMode.VerifyCa]] → requires `caCertPath`; `Present(NetTlsConfig(caCertPath = Present(path), hostnameVerification = false))`.
-  *     Fails with [[SqlException.Connection]] when `caCertPath` is [[Absent]].
+  *     Fails with [[SqlConnectionException]] when `caCertPath` is [[Absent]].
   *   - [[TlsMode.VerifyFull]] → requires `caCertPath`; `Present(NetTlsConfig(caCertPath = Present(path), hostnameVerification = true))`.
-  *     Fails with [[SqlException.Connection]] when `caCertPath` is [[Absent]].
+  *     Fails with [[SqlConnectionException]] when `caCertPath` is [[Absent]].
   *
   * Note: for `Allow` and `Prefer`, the TLS config is available but the [[TlsNegotiator]] decides whether to actually upgrade based on the
   * server's response during the connection protocol exchange.
   */
 object TlsContext:
 
-    def build(mode: TlsMode, caCertPath: Maybe[String])(using Frame): Maybe[NetTlsConfig] < Abort[SqlException.Connection] =
+    def build(mode: TlsMode, caCertPath: Maybe[String])(using Frame): Maybe[NetTlsConfig] < Abort[SqlConnectionException] =
         mode match
             case TlsMode.Disable =>
                 Absent
@@ -48,12 +49,12 @@ object TlsContext:
                     case Present(path) =>
                         Present(NetTlsConfig(caCertPath = Present(path), hostnameVerification = false))
                     case Absent =>
-                        Abort.fail(SqlException.Connection("sslmode=verify-ca requires sslrootcert", summon[Frame]))
+                        Abort.fail(SqlConnectionTlsConfigException("verify-ca"))
             case TlsMode.VerifyFull =>
                 caCertPath match
                     case Present(path) =>
                         Present(NetTlsConfig(caCertPath = Present(path), hostnameVerification = true))
                     case Absent =>
-                        Abort.fail(SqlException.Connection("sslmode=verify-full requires sslrootcert", summon[Frame]))
+                        Abort.fail(SqlConnectionTlsConfigException("verify-full"))
 
 end TlsContext

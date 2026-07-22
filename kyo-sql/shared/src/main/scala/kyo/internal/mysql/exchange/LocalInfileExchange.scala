@@ -1,7 +1,13 @@
 package kyo.internal.mysql.exchange
 
 import kyo.*
+import kyo.SqlConnectionClosedException
+import kyo.SqlConnectionProtocolDecodeException
+import kyo.SqlConnectionUnexpectedMessageException
+import kyo.SqlConnectionWritePanicException
+import kyo.SqlDecodeException
 import kyo.SqlException
+import kyo.SqlServerException
 import kyo.internal.mysql.*
 
 /** Handles a MySQL `LOCAL_INFILE_REQUEST` packet by streaming user-supplied bytes to the server.
@@ -200,35 +206,36 @@ private[mysql] object LocalInfileExchange:
             if firstByte == 0x00 || (firstByte == 0xfe && payload.size >= 7) then
                 // OK packet.
                 val reader = MysqlBufferReader(payload.slice(1, payload.size))
-                Abort.run[SqlException.Decode](
+                Abort.run[SqlDecodeException](
                     channel.unmarshallers.okPacket.read(reader)
                 ).flatMap {
                     case Result.Success(ok) =>
                         ok.affectedRows
                     case Result.Failure(e) =>
-                        Abort.fail(SqlException.Connection(s"LOCAL INFILE OK packet decode failed: ${e.message}", summon[Frame]))
+                        Abort.fail(SqlConnectionProtocolDecodeException("LOCAL INFILE OK", e))
                     case Result.Panic(t) =>
                         java.lang.System.err.println(s"[kyo-sql] LocalInfileExchange: OK decode panic: ${t.getMessage}")
-                        Abort.fail(SqlException.Connection(s"LOCAL INFILE OK decode panic: ${t.getMessage}", summon[Frame]))
+                        Abort.fail(SqlConnectionProtocolDecodeException("LOCAL INFILE OK", t))
                 }
             else if firstByte == 0xff then
                 // ERR packet.
                 val reader = MysqlBufferReader(payload.slice(1, payload.size))
-                Abort.run[SqlException.Decode](
+                Abort.run[SqlDecodeException](
                     channel.unmarshallers.errPacket.read(reader)
                 ).flatMap {
                     case Result.Success(err) =>
                         Abort.fail(mkServerError(err))
                     case Result.Failure(e) =>
-                        Abort.fail(SqlException.Connection(s"LOCAL INFILE ERR packet decode failed: ${e.message}", summon[Frame]))
+                        Abort.fail(SqlConnectionProtocolDecodeException("LOCAL INFILE ERR", e))
                     case Result.Panic(t) =>
                         java.lang.System.err.println(s"[kyo-sql] LocalInfileExchange: ERR decode panic: ${t.getMessage}")
-                        Abort.fail(SqlException.Connection(s"LOCAL INFILE ERR decode panic: ${t.getMessage}", summon[Frame]))
+                        Abort.fail(SqlConnectionProtocolDecodeException("LOCAL INFILE ERR", t))
                 }
             else
-                Abort.fail(SqlException.Connection(
-                    s"LOCAL INFILE: unexpected response byte 0x${firstByte.toHexString} after upload",
-                    summon[Frame]
+                Abort.fail(SqlConnectionUnexpectedMessageException(
+                    "LOCAL INFILE upload",
+                    "OK / ERR",
+                    s"byte 0x${firstByte.toHexString}"
                 ))
             end if
         }
@@ -256,15 +263,15 @@ private[mysql] object LocalInfileExchange:
         Abort.run[Closed](channel.conn.outbound.safe.put(Span.from(allBytes))).flatMap {
             case Result.Success(_) => ()
             case Result.Failure(_) =>
-                Abort.fail(SqlException.Connection("Connection closed while writing LOCAL INFILE data", summon[Frame]))
+                Abort.fail(SqlConnectionClosedException("writing LOCAL INFILE"))
             case Result.Panic(t) =>
                 java.lang.System.err.println(s"[kyo-sql] LocalInfileExchange: write panic: ${t.getMessage}")
-                Abort.fail(SqlException.Connection(s"LOCAL INFILE write panic: ${t.getMessage}", summon[Frame]))
+                Abort.fail(SqlConnectionWritePanicException(t))
         }
     end sendRawPayload
 
-    private def mkServerError(err: ErrPacket)(using frame: Frame): SqlException.Server =
-        SqlException.Server(
+    private def mkServerError(err: ErrPacket)(using Frame): SqlServerException =
+        SqlServerException(
             err.sqlState,
             "ERROR",
             err.errorMessage,
@@ -274,8 +281,7 @@ private[mysql] object LocalInfileExchange:
             Map("code" -> err.errorCode.toString),
             Maybe.Absent,
             0,
-            Maybe.Absent,
-            frame
+            Maybe.Absent
         )
 
 end LocalInfileExchange

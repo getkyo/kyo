@@ -5,7 +5,8 @@ import kyo.Frame
 import kyo.Maybe
 import kyo.Maybe.Absent
 import kyo.Span
-import kyo.SqlException
+import kyo.SqlDecodeHstoreFormatException
+import kyo.SqlDecodeInsufficientBytesException
 
 /** Parses the PostgreSQL `hstore` binary wire format and exposes alternating key / value access.
   *
@@ -45,21 +46,20 @@ final class HstoreReader(bytes: Span[Byte], readerFrame: Frame):
       *
       * @return
       *   number of key/value pairs in the hstore
-      * @throws SqlException.Decode
+      * @throws SqlDecodeInsufficientBytesException
       *   if the bytes are shorter than 4 bytes (header truncated)
+      * @throws SqlDecodeHstoreFormatException
+      *   if the header count is negative
       */
     def openMap(): Int =
+        given Frame = readerFrame
         if bytes.size < 4 then
-            throw SqlException.Decode(
-                s"PG hstore binary format: header too short (${bytes.size} bytes, expected ≥ 4)",
-                Absent,
-                readerFrame
-            )
+            throw SqlDecodeInsufficientBytesException("hstore header", 4, bytes.size, 0)
         end if
         pos = 0
         val count = readInt32BE()
         if count < 0 then
-            throw SqlException.Decode(s"PG hstore binary format: negative entry count $count", Absent, readerFrame)
+            throw SqlDecodeHstoreFormatException(count, 0, 0, pos)
         entriesRemaining = count
         expectingKey = true
         count
@@ -69,24 +69,22 @@ final class HstoreReader(bytes: Span[Byte], readerFrame: Frame):
       *
       * Hstore keys are always non-NULL; a `-1` keyLen sentinel is a wire-format error.
       *
-      * @throws SqlException.Decode
-      *   if called out of order (value expected next), if there are no entries remaining, or if the key length is invalid / the body is
-      *   truncated
+      * @throws SqlDecodeHstoreFormatException
+      *   if called out of order (value expected next), if there are no entries remaining, or if the key length is invalid
+      * @throws SqlDecodeInsufficientBytesException
+      *   if the key body is truncated
       */
     def nextKey(): String =
+        given Frame = readerFrame
         if !expectingKey then
-            throw SqlException.Decode("PG hstore: nextKey() called when a value was expected", Absent, readerFrame)
+            throw SqlDecodeHstoreFormatException(entriesRemaining, 0, 0, pos)
         if entriesRemaining <= 0 then
-            throw SqlException.Decode("PG hstore: nextKey() called with no entries remaining", Absent, readerFrame)
+            throw SqlDecodeHstoreFormatException(0, 0, 0, pos)
         val keyLen = readInt32BE()
         if keyLen < 0 then
-            throw SqlException.Decode(s"PG hstore: invalid keyLen=$keyLen (key is never NULL)", Absent, readerFrame)
+            throw SqlDecodeHstoreFormatException(entriesRemaining, keyLen, 0, pos - 4)
         if pos + keyLen > bytes.size then
-            throw SqlException.Decode(
-                s"PG hstore: key body truncated (need $keyLen bytes at offset $pos, total ${bytes.size})",
-                Absent,
-                readerFrame
-            )
+            throw SqlDecodeInsufficientBytesException("hstore key", keyLen, bytes.size - pos, pos)
         end if
         val keyArr = bytes.slice(pos, pos + keyLen).toArray
         pos += keyLen
@@ -96,8 +94,10 @@ final class HstoreReader(bytes: Span[Byte], readerFrame: Frame):
 
     /** Read the next entry's value as `Maybe.Present(String)` or `Maybe.Absent` when the value is SQL NULL.
       *
-      * @throws SqlException.Decode
-      *   if called out of order (key expected next) or if the value body is truncated
+      * @throws SqlDecodeHstoreFormatException
+      *   if called out of order (key expected next) or if the value length is invalid
+      * @throws SqlDecodeInsufficientBytesException
+      *   if the value body is truncated
       */
     def nextValue(): Maybe[String] =
         nextValueBytes() match
@@ -106,20 +106,17 @@ final class HstoreReader(bytes: Span[Byte], readerFrame: Frame):
 
     /** Read the next entry's value as raw bytes; `Absent` for SQL NULL. */
     def nextValueBytes(): Maybe[Span[Byte]] =
+        given Frame = readerFrame
         if expectingKey then
-            throw SqlException.Decode("PG hstore: nextValue() called when a key was expected", Absent, readerFrame)
+            throw SqlDecodeHstoreFormatException(entriesRemaining, 0, 0, pos)
         val valLen = readInt32BE()
         expectingKey = true
         entriesRemaining -= 1
         if valLen == -1 then Absent
         else if valLen < 0 then
-            throw SqlException.Decode(s"PG hstore: invalid valLen=$valLen", Absent, readerFrame)
+            throw SqlDecodeHstoreFormatException(entriesRemaining + 1, 0, valLen, pos - 4)
         else if pos + valLen > bytes.size then
-            throw SqlException.Decode(
-                s"PG hstore: value body truncated (need $valLen bytes at offset $pos, total ${bytes.size})",
-                Absent,
-                readerFrame
-            )
+            throw SqlDecodeInsufficientBytesException("hstore value", valLen, bytes.size - pos, pos)
         else
             val out = bytes.slice(pos, pos + valLen)
             pos += valLen

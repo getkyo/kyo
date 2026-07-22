@@ -29,7 +29,7 @@ class SqlMysqlOnlyTest extends Test:
     )(f: SqlClient => A < (S & Async & Abort[SqlException]))(using
         Frame
     ): A < (S & Async & Scope & Abort[SqlException]) =
-        Abort.run[SqlException.Connection](SqlClient.initMysql(myUrl(ctx))).flatMap {
+        Abort.run[SqlConnectionException](SqlClient.initMysql(myUrl(ctx))).flatMap {
             case Result.Success(client) =>
                 Scope.ensure(client.close).andThen(SqlClient.let(client)(f(client)))
             case Result.Failure(e) =>
