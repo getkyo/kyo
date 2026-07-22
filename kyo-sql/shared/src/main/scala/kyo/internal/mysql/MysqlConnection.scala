@@ -284,9 +284,9 @@ final class MysqlConnection(
             MysqlCancelExchange.kill(cancelConn, targetId)
         }
 
-    /** Executes multiple statements sequentially on this connection, returning one [[SqlStatementResult]] per statement.
+    /** Executes multiple statements sequentially on this connection, returning one pipeline result per statement.
       *
-      * Each statement is isolated: a per-statement server error is recorded as [[kyo.SqlStatementResult.Failure]] without aborting
+      * Each statement is isolated: a per-statement server error is recorded as [[kyo.Result[SqlException, SqlClient.PipelineBuilder.Outcome].Failure]] without aborting
       * subsequent statements. Connection-level errors (socket closed, panic) re-raise and abort the entire pipeline.
       *
       * MySQL does not support the PostgreSQL Sync-barrier batch-write protocol, so statements are executed one at a time in order using the
@@ -295,11 +295,11 @@ final class MysqlConnection(
       * @param stmts
       *   `(sql, params)` pairs in submission order
       * @return
-      *   one [[SqlStatementResult]] per statement, in submission order
+      *   one pipeline result per statement, in submission order
       */
     def pipelined(
         stmts: Chunk[(String, Chunk[BoundMysqlParam[?]])]
-    )(using Frame): Chunk[kyo.SqlStatementResult] < (Async & Abort[SqlException]) =
+    )(using Frame): Chunk[kyo.Result[SqlException, SqlClient.PipelineBuilder.Outcome]] < (Async & Abort[SqlException]) =
         val pipelineStmts = stmts.map { case (sql, params) =>
             MysqlPipelineExchange.PipelineStmt(sql, params)
         }

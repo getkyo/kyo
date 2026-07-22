@@ -20,6 +20,14 @@ import kyo.net.NetTlsConfig
   */
 class TlsIntegrationTest extends kyo.Test:
 
+    // Each leaf spins up its own Postgres container with TLS enabled. Running the six leaves in
+    // parallel against the same Docker daemon that also hosts the shared PG + MySQL fixtures for
+    // the rest of the suite pushes the container port-binding and TLS handshake past their default
+    // 5s connection timeout under load. Serialising the leaves within this suite keeps at most one
+    // TLS-enabled container in flight from here, matching the pattern established by
+    // CachingSha2IntegrationTest and CachingSha2FullAuthIntegrationTest.
+    override def config = super.config.sequential
+
     override def timeout: Duration = 5.minutes
 
     /** Starts a Postgres container with SSL enabled using a self-signed certificate generated on the host.

@@ -57,18 +57,9 @@ class PipelineIntegrationTest extends kyo.Test:
             Kyo.foreach(rows)(r => r.decode[Int](0).map(_.toString))
         }
 
-    /** Returns true if the [[SqlStatementResult]] represents a successful execution. */
-    private def isSuccess(r: SqlStatementResult): Boolean = r match
-        case _: SqlStatementResult.Success => true
-        case _: SqlStatementResult.Failure => false
-
-    /** Returns true if the [[SqlStatementResult]] represents a failure. */
-    private def isFailure(r: SqlStatementResult): Boolean = !isSuccess(r)
-
-    /** Extracts the affected row count from a successful [[SqlStatementResult]], defaulting to -1 on failure. */
-    private def affectedCount(r: SqlStatementResult): Long = r match
-        case SqlStatementResult.Success(_, n) => n
-        case _: SqlStatementResult.Failure    => -1L
+    /** Extracts the affected row count from a successful pipeline result, defaulting to -1 on failure. */
+    private def affectedCount(r: Result[SqlException, SqlClient.PipelineBuilder.Outcome]): Long =
+        r.map(_.affectedRowCount).getOrElse(-1L)
 
     // ── Base test leaves ───────────────────────────────────────────────────────
 
@@ -117,13 +108,13 @@ class PipelineIntegrationTest extends kyo.Test:
                                 assert(results.size == 10, s"Expected 10 results, got ${results.size}")
                                 // Statements 1..4 succeed (ids 1-4 don't exist yet).
                                 (0 until 4).foreach { i =>
-                                    assert(isSuccess(results(i)), s"Statement ${i + 1} should succeed, got ${results(i)}")
+                                    assert(results(i).isSuccess, s"Statement ${i + 1} should succeed, got ${results(i)}")
                                 }
                                 // Statement 5 fails (duplicate key).
-                                assert(isFailure(results(4)), s"Statement 5 should fail (duplicate key), got ${results(4)}")
+                                assert(results(4).isFailure, s"Statement 5 should fail (duplicate key), got ${results(4)}")
                                 // Statements 6..10 succeed (ids 6-10 don't exist).
                                 (5 until 10).foreach { i =>
-                                    assert(isSuccess(results(i)), s"Statement ${i + 1} should succeed after error, got ${results(i)}")
+                                    assert(results(i).isSuccess, s"Statement ${i + 1} should succeed after error, got ${results(i)}")
                                 }
                             }.andThen {
                                 // Verify rows 6..10 are present (pipeline continued after statement 5's error).
@@ -157,7 +148,7 @@ class PipelineIntegrationTest extends kyo.Test:
                                     p.execute(s"INSERT INTO pip_tx (id, val) VALUES ($i, 'tx$i')")
                                 }
                             }.map { results =>
-                                results.foreach(r => assert(isSuccess(r), s"Pipeline statement failed inside tx: $r"))
+                                results.foreach(r => assert(r.isSuccess, s"Pipeline statement failed inside tx: $r"))
                             }
                         }.andThen {
                             // After commit, all 5 rows are visible.
@@ -188,7 +179,7 @@ class PipelineIntegrationTest extends kyo.Test:
                             // Run the equivalent non-pipeline execute.
                             client.execute("INSERT INTO pip_single (id, val) VALUES (2, 'solo2')").map { directCount =>
                                 assert(pipeResults.size == 1, s"Expected 1 pipeline result, got ${pipeResults.size}")
-                                assert(isSuccess(pipeResults(0)), s"Pipeline result should succeed: ${pipeResults(0)}")
+                                assert(pipeResults(0).isSuccess, s"Pipeline result should succeed: ${pipeResults(0)}")
                                 val pipeCount = affectedCount(pipeResults(0))
                                 assert(pipeCount == directCount, s"Pipeline affected count $pipeCount != direct $directCount")
                             }
@@ -217,7 +208,7 @@ class PipelineIntegrationTest extends kyo.Test:
                             }
                         }.map { results =>
                             assert(results.size == 200, s"Expected 200 results, got ${results.size}")
-                            val failures = results.zipWithIndex.filter { case (r, _) => isFailure(r) }
+                            val failures = results.zipWithIndex.filter { case (r, _) => r.isFailure }
                             assert(failures.isEmpty, s"Unexpected failures: ${failures.take(5)}")
                         }.andThen {
                             simpleCount(client, "pip_200").map { count =>
@@ -318,11 +309,11 @@ class PipelineIntegrationTest extends kyo.Test:
                             }.map { results =>
                                 assert(results.size == 5, s"Expected 5 results, got ${results.size}")
                                 // Ordered exact match:
-                                assert(isSuccess(results(0)), s"stmt 1 should succeed: ${results(0)}")
-                                assert(isSuccess(results(1)), s"stmt 2 should succeed: ${results(1)}")
-                                assert(isFailure(results(2)), s"stmt 3 should fail (dup key): ${results(2)}")
-                                assert(isSuccess(results(3)), s"stmt 4 should succeed: ${results(3)}")
-                                assert(isSuccess(results(4)), s"stmt 5 should succeed: ${results(4)}")
+                                assert(results(0).isSuccess, s"stmt 1 should succeed: ${results(0)}")
+                                assert(results(1).isSuccess, s"stmt 2 should succeed: ${results(1)}")
+                                assert(results(2).isFailure, s"stmt 3 should fail (dup key): ${results(2)}")
+                                assert(results(3).isSuccess, s"stmt 4 should succeed: ${results(3)}")
+                                assert(results(4).isSuccess, s"stmt 5 should succeed: ${results(4)}")
                             }.andThen {
                                 // Rows 1, 2, 4, 5 are present; row 3 was pre-inserted (not replaced).
                                 simpleStrCol(client, "SELECT id FROM pip_mixed ORDER BY id").map { ids =>
@@ -355,7 +346,7 @@ class PipelineIntegrationTest extends kyo.Test:
                             p.execute("INSERT INTO pip_prep (id, val) VALUES (3, 'z')")
                         }.flatMap { firstResults =>
                             assert(firstResults.size == 3, s"Expected 3 results from first pipeline, got ${firstResults.size}")
-                            firstResults.foreach(r => assert(isSuccess(r), s"First pipeline result failed: $r"))
+                            firstResults.foreach(r => assert(r.isSuccess, s"First pipeline result failed: $r"))
 
                             // Second pipeline on a separate table, reuses the same prepared statements.
                             client.executeRaw("CREATE TABLE pip_prep2 (id INT PRIMARY KEY, val TEXT)").andThen {
@@ -367,7 +358,7 @@ class PipelineIntegrationTest extends kyo.Test:
                                     assert(secondResults.size == 3, s"Expected 3 results from second pipeline, got ${secondResults.size}")
                                     // Each Bind should return affected count = 1.
                                     secondResults.zipWithIndex.foreach { case (r, i) =>
-                                        assert(isSuccess(r), s"Second pipeline stmt ${i + 1} failed: $r")
+                                        assert(r.isSuccess, s"Second pipeline stmt ${i + 1} failed: $r")
                                         val count = affectedCount(r)
                                         assert(count == 1L, s"Expected affected count 1 for stmt ${i + 1}, got $count")
                                     }

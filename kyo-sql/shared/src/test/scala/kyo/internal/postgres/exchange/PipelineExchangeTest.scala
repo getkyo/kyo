@@ -47,12 +47,7 @@ class PipelineExchangeTest extends kyo.Test:
                             )
                             assert(results.size == 10, s"Expected 10 results, got ${results.size}")
                             results.zipWithIndex.foreach { case (r, i) =>
-                                assert(
-                                    r match
-                                        case _: SqlStatementResult.Success => true
-                                        case _: SqlStatementResult.Failure => false,
-                                    s"Statement ${i + 1} failed: $r"
-                                )
+                                assert(r.isSuccess, s"Statement ${i + 1} failed: $r")
                             }
                         }.andThen {
                             // Reusability probe: verification query sees the rows via pool connection.

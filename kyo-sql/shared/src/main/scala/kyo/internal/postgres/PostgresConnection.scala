@@ -6,7 +6,6 @@ import kyo.SqlClient.Notification
 import kyo.SqlConfig.Address
 import kyo.SqlException
 import kyo.SqlRow
-import kyo.SqlStatementResult
 import kyo.internal.client.TypeRegistry
 import kyo.internal.postgres.exchange.*
 import kyo.internal.postgres.types.EncodingRegistry
@@ -264,7 +263,7 @@ final class PostgresConnection(
 
     /** Executes multiple statements in pipeline mode.
       *
-      * Sends all `Bind`/`Execute`/`Sync` triples in one TCP write and reads all responses in order. Returns one [[SqlStatementResult]] per
+      * Sends all `Bind`/`Execute`/`Sync` triples in one TCP write and reads all responses in order. Returns one pipeline result per
       * statement. Per-statement errors are recorded in-place; subsequent statements still execute.
       *
       * @param stmts
@@ -272,7 +271,7 @@ final class PostgresConnection(
       */
     def pipelined(
         stmts: Chunk[(String, Chunk[BoundParam[?]])]
-    )(using Frame): Chunk[SqlStatementResult] < (Async & Abort[SqlException]) =
+    )(using Frame): Chunk[Result[SqlException, SqlClient.PipelineBuilder.Outcome]] < (Async & Abort[SqlException]) =
         drainPendingCloses.andThen(PipelineExchange.prepare(
             channel,
             preparedStmts,

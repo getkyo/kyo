@@ -855,8 +855,8 @@ sealed abstract class SqlClient:
       * [[SqlClient.PipelineBuilder.query]]. When the body returns, all registered statements are dispatched and their responses are read in
       * order.
       *
-      * Returns one [[SqlStatementResult]] per registered statement, in submission order. A per-statement failure is recorded as
-      * [[SqlStatementResult.Failure]] and does NOT abort subsequent statements. A connection-level failure raises `Abort[SqlException]`
+      * Returns one pipeline result per registered statement, in submission order. A per-statement failure is recorded as
+      * [[kyo.Result.Failure]] and does NOT abort subsequent statements. A connection-level failure raises `Abort[SqlException]`
       * for the entire pipeline.
       *
       * @param body
@@ -866,7 +866,7 @@ sealed abstract class SqlClient:
       */
     def pipeline[S](
         body: SqlClient.PipelineBuilder => Unit < S
-    )(using Frame): Chunk[SqlStatementResult] < (Async & Abort[SqlException] & S) =
+    )(using Frame): Chunk[Result[SqlException, SqlClient.PipelineBuilder.Outcome]] < (Async & Abort[SqlException] & S) =
         val builder = new SqlClient.PipelineBuilder
         body(builder).andThen {
             val rawStmts = builder.drainStmts()
@@ -1599,6 +1599,24 @@ object SqlClient:
           */
         private[kyo] def drainStmts(): Chunk[(String, Seq[SqlSchema.BoundValue[?]])] =
             Chunk.from(_stmts.toSeq)
+    end PipelineBuilder
+
+    /** Companion of [[PipelineBuilder]] hosting the per-statement outcome type produced by [[SqlClient.pipeline]]. */
+    object PipelineBuilder:
+
+        /** Per-statement outcome: the rows and affected-row count returned for one pipelined statement.
+          *
+          * Delivered as the success payload of a [[kyo.Result]] element in the [[Chunk]] that
+          * [[SqlClient.pipeline]] returns; per-statement failures surface as [[kyo.Result.Failure]]
+          * around the raised [[SqlException]], WITHOUT aborting subsequent statements.
+          *
+          * @param rows
+          *   rows returned by the statement (empty for DML statements such as INSERT/UPDATE/DELETE)
+          * @param affectedRowCount
+          *   number of rows affected (0 for query statements that return rows; populated for DML)
+          */
+        final case class Outcome(rows: Chunk[SqlRow], affectedRowCount: Long) derives CanEqual
+
     end PipelineBuilder
 
     /** Encapsulates all Stat counters and histograms for kyo-sql.

@@ -3,7 +3,6 @@ package kyo.internal.postgres.exchange
 import kyo.*
 import kyo.SqlException
 import kyo.SqlRow
-import kyo.SqlStatementResult
 import kyo.internal.postgres.*
 import kyo.internal.postgres.types.EncodingRegistry
 import kyo.internal.postgres.types.Format
@@ -25,7 +24,7 @@ import kyo.internal.postgres.types.Format
   *   2. Encodes all Bind/Execute/Sync triples into a single [[PostgresBufferWriter]] and writes them in one `conn.write`.
   *   3. Reads back one block of `BindComplete`/`DataRow*`/`CommandComplete|EmptyQueryResponse`/`ReadyForQuery` per statement. A
   *      per-statement `ErrorResponse`/`ReadyForQuery` pair is caught and recorded as a [[Result.Failure]] for that slot.
-  *   4. Returns a `Chunk[SqlStatementResult]`, one entry per input statement.
+  *   4. Returns a `Chunk[Result[SqlException, SqlClient.PipelineBuilder.Outcome]]`, one entry per input statement.
   */
 object PipelineExchange:
 
@@ -59,7 +58,7 @@ object PipelineExchange:
       * @param onNotification
       *   callback for `NotificationResponse` messages
       * @return
-      *   one [[SqlStatementResult]] per statement, in submission order
+      *   one pipeline result per statement, in submission order
       */
     def run(
         channel: PostgresChannel,
@@ -67,7 +66,7 @@ object PipelineExchange:
         pid: Long,
         onParameterStatus: (String, String) => Unit < Async,
         onNotification: NotificationResponse => Unit < Async
-    )(using Frame): Chunk[SqlStatementResult] < (Async & Abort[SqlException]) =
+    )(using Frame): Chunk[Result[SqlException, SqlClient.PipelineBuilder.Outcome]] < (Async & Abort[SqlException]) =
         if stmts.isEmpty then Chunk.empty
         else
             // 1. Encode ALL Bind/Execute/Sync triples into one buffer.
@@ -118,7 +117,7 @@ object PipelineExchange:
         pid: Long,
         onParameterStatus: (String, String) => Unit < Async,
         onNotification: NotificationResponse => Unit < Async
-    )(using Frame): Chunk[SqlStatementResult] < (Async & Abort[SqlException]) =
+    )(using Frame): Chunk[Result[SqlException, SqlClient.PipelineBuilder.Outcome]] < (Async & Abort[SqlException]) =
         if stmts.isEmpty then Chunk.empty
         else
             // Resolve prepared stmts sequentially (each cache miss needs a Parse/Describe/Sync round trip).
@@ -148,11 +147,11 @@ object PipelineExchange:
         pid: Long,
         onParameterStatus: (String, String) => Unit < Async,
         onNotification: NotificationResponse => Unit < Async
-    )(using Frame): Chunk[SqlStatementResult] < (Async & Abort[SqlException]) =
+    )(using Frame): Chunk[Result[SqlException, SqlClient.PipelineBuilder.Outcome]] < (Async & Abort[SqlException]) =
         def loop(
             idx: Int,
-            acc: Chunk[SqlStatementResult]
-        ): Chunk[SqlStatementResult] < (Async & Abort[SqlException]) =
+            acc: Chunk[Result[SqlException, SqlClient.PipelineBuilder.Outcome]]
+        ): Chunk[Result[SqlException, SqlClient.PipelineBuilder.Outcome]] < (Async & Abort[SqlException]) =
             if idx >= stmts.size then acc
             else
                 val stmt = stmts(idx)
@@ -165,7 +164,7 @@ object PipelineExchange:
 
     /** Reads the response for a single pipelined statement (up to and including `ReadyForQuery`).
       *
-      * Always returns a [[SqlStatementResult]], never raises [[Abort[SqlException]]] for per-statement errors. Connection-level errors
+      * Always returns a pipeline result, never raises [[Abort[SqlException]]] for per-statement errors. Connection-level errors
       * (e.g. closed TCP socket) are re-raised.
       */
     private def readOneStatementResult(
@@ -174,7 +173,7 @@ object PipelineExchange:
         pid: Long,
         onParameterStatus: (String, String) => Unit < Async,
         onNotification: NotificationResponse => Unit < Async
-    )(using Frame): SqlStatementResult < (Async & Abort[SqlException]) =
+    )(using Frame): Result[SqlException, SqlClient.PipelineBuilder.Outcome] < (Async & Abort[SqlException]) =
         val fields: Chunk[FieldDescription] = stmt.stmt.rowDescription match
             case Absent      => Chunk.empty
             case Present(rd) => rd.fields
@@ -183,7 +182,7 @@ object PipelineExchange:
             bindSeen: Boolean,
             acc: Chunk[SqlRow],
             failed: Maybe[SqlException]
-        ): SqlStatementResult < (Async & Abort[SqlException]) =
+        ): Result[SqlException, SqlClient.PipelineBuilder.Outcome] < (Async & Abort[SqlException]) =
             channel.receive.flatMap {
                 case BindComplete =>
                     loop(bindSeen = true, acc, failed)
@@ -199,27 +198,27 @@ object PipelineExchange:
                     // CommandComplete is followed by ReadyForQuery in pipelined mode.
                     drainToReadyForQuery(channel).map { _ =>
                         failed match
-                            case Absent     => SqlStatementResult.Success(acc, affected)
-                            case Present(e) => SqlStatementResult.Failure(e)
+                            case Absent     => Result.Success(SqlClient.PipelineBuilder.Outcome(acc, affected))
+                            case Present(e) => Result.Failure(e)
                     }
 
                 case EmptyQueryResponse =>
                     drainToReadyForQuery(channel).map { _ =>
                         failed match
-                            case Absent     => SqlStatementResult.Success(acc, 0L)
-                            case Present(e) => SqlStatementResult.Failure(e)
+                            case Absent     => Result.Success(SqlClient.PipelineBuilder.Outcome(acc, 0L))
+                            case Present(e) => Result.Failure(e)
                     }
 
                 case _: ReadyForQuery =>
                     // If we get RFQ without CommandComplete, treat as empty success or recorded failure.
                     failed match
-                        case Absent     => SqlStatementResult.Success(acc, 0L)
-                        case Present(e) => SqlStatementResult.Failure(e)
+                        case Absent     => Result.Success(SqlClient.PipelineBuilder.Outcome(acc, 0L))
+                        case Present(e) => Result.Failure(e)
 
                 case ErrorResponse(errorFields) =>
                     val ex = QueryResultExchange.mkServerError(errorFields, Present(stmt.stmt.sql), stmt.params.size, Present(pid))
                     // Record the error; still need to drain to ReadyForQuery.
-                    drainToReadyForQuery(channel).map(_ => SqlStatementResult.Failure(ex))
+                    drainToReadyForQuery(channel).map(_ => Result.Failure(ex))
 
                 case ParameterStatus(name, value) =>
                     onParameterStatus(name, value).andThen(loop(bindSeen, acc, failed))

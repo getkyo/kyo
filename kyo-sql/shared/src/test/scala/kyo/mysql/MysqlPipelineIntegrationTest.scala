@@ -8,7 +8,7 @@ import kyo.internal.SqlSharedContainers.Backend
   *
   * MySQL does not support the PostgreSQL Sync-barrier batch-write protocol, so `SqlClient.pipeline` on a MySQL client executes statements
   * sequentially on the same connection using the extended (binary) protocol. Each statement is isolated: a per-statement server error is
-  * recorded as [[SqlStatementResult.Failure]] without aborting subsequent statements.
+  * recorded as [[kyo.Result.Failure]] without aborting subsequent statements.
   *
   * All tests run against a live MySQL container via [[SqlSharedContainers.withFreshSchema]].
   *
@@ -69,16 +69,8 @@ class MysqlPipelineIntegrationTest extends kyo.Test:
             if rows.isEmpty then 0L
             else rows(0).decode[Long](0)
         }
-
-    private def isSuccess(r: SqlStatementResult): Boolean = r match
-        case _: SqlStatementResult.Success => true
-        case _: SqlStatementResult.Failure => false
-
-    private def isFailure(r: SqlStatementResult): Boolean = !isSuccess(r)
-
-    private def affectedCount(r: SqlStatementResult): Long = r match
-        case SqlStatementResult.Success(_, n) => n
-        case _: SqlStatementResult.Failure    => -1L
+    private def affectedCount(r: Result[SqlException, SqlClient.PipelineBuilder.Outcome]): Long =
+        r.map(_.affectedRowCount).getOrElse(-1L)
 
     // ── Leaf 1: pipeline of 5 queries returns 5 results in order on MySQL ─────
 
@@ -98,7 +90,7 @@ class MysqlPipelineIntegrationTest extends kyo.Test:
                                     }.map { results =>
                                         assert(results.size == 5, s"Expected 5 results, got ${results.size}")
                                         results.zipWithIndex.foreach { case (r, i) =>
-                                            assert(isSuccess(r), s"Statement ${i + 1} failed: $r")
+                                            assert(r.isSuccess, s"Statement ${i + 1} failed: $r")
                                         }
                                     }
                                 }
@@ -133,7 +125,7 @@ class MysqlPipelineIntegrationTest extends kyo.Test:
                                             }
                                         }.map { results =>
                                             results.foreach(r =>
-                                                assert(isSuccess(r), s"Pipeline statement failed inside tx: $r")
+                                                assert(r.isSuccess, s"Pipeline statement failed inside tx: $r")
                                             )
                                         }
                                     }
@@ -172,9 +164,9 @@ class MysqlPipelineIntegrationTest extends kyo.Test:
                                         p.execute("INSERT INTO pip_err (id, val) VALUES (3, 'c')") // success
                                     }.map { results =>
                                         assert(results.size == 3, s"Expected 3 results, got ${results.size}")
-                                        assert(isSuccess(results(0)), s"Statement 1 should succeed: ${results(0)}")
-                                        assert(isFailure(results(1)), s"Statement 2 should fail (dup key): ${results(1)}")
-                                        assert(isSuccess(results(2)), s"Statement 3 should succeed after error: ${results(2)}")
+                                        assert(results(0).isSuccess, s"Statement 1 should succeed: ${results(0)}")
+                                        assert(results(1).isFailure, s"Statement 2 should fail (dup key): ${results(1)}")
+                                        assert(results(2).isSuccess, s"Statement 3 should succeed after error: ${results(2)}")
                                     }
                                 }
                                 .andThen {
@@ -232,8 +224,8 @@ class MysqlPipelineIntegrationTest extends kyo.Test:
                                     p.execute("UPDATE pip_aff SET val = 'all' WHERE id IN (2, 3)") // 2 rows
                                 }.map { results =>
                                     assert(results.size == 2, s"Expected 2 results, got ${results.size}")
-                                    assert(isSuccess(results(0)), s"Statement 1 should succeed: ${results(0)}")
-                                    assert(isSuccess(results(1)), s"Statement 2 should succeed: ${results(1)}")
+                                    assert(results(0).isSuccess, s"Statement 1 should succeed: ${results(0)}")
+                                    assert(results(1).isSuccess, s"Statement 2 should succeed: ${results(1)}")
                                     assert(
                                         affectedCount(results(0)) == 1L,
                                         s"Statement 1 should affect 1 row, got ${affectedCount(results(0))}"
