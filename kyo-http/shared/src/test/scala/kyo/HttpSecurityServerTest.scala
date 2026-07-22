@@ -60,10 +60,12 @@ class HttpSecurityServerTest extends BaseHttpTest:
             }
         }
 
-    /** Send raw bytes over TCP to host:port and read the response as a string.
+    /** Send raw bytes over TCP to host:port and read the WHOLE response as a string, draining spans until the peer closes or a read
+      * finds no more data within the idle budget. The status line, headers and body can arrive in separate reads, so a single take
+      * would capture only the leading span.
       *
-      * Returns the response string, or empty string if the connection was closed or timed out (both indicate server rejection of the
-      * malformed request).
+      * Returns the concatenated response, or the empty string when the server answered nothing (a close or timeout with no bytes). An
+      * empty result is not by itself proof of rejection; `assertRejected` treats it as a failure, not a pass.
       */
     def sendRawBytes(host: String, port: Int, raw: Array[Byte])(using Frame): String < (Async & Abort[Any]) =
         Sync.Unsafe.defer {
@@ -74,23 +76,30 @@ class HttpSecurityServerTest extends BaseHttpTest:
                     val payload = Span.fromUnsafe(raw)
                     // Write the malicious request
                     Abort.run[Closed](conn.outbound.safe.put(payload)).map { _ =>
-                        // Give the server time to process and respond
-                        Async.sleep(500.millis).andThen {
-                            // Try to read the response; catch both Closed and Timeout
-                            Abort.run[Any](
-                                Async.timeout(2.seconds)(
-                                    Abort.run[Closed](conn.inbound.safe.take)
-                                )
-                            ).map { outerResult =>
-                                val response = outerResult match
+                        // Read the WHOLE response, not just the first span. The status line, headers and body can arrive in
+                        // separate reads (they reliably split on a loaded CI runner, coalesce locally), so a single take would
+                        // capture only the leading span and miss a body a later span carries. Drain spans until the peer closes
+                        // or a read finds no more data within the idle budget; the first read's longer budget covers the server's
+                        // processing latency, so no upfront fixed sleep is needed.
+                        def drain(acc: String, n: Int): String < (Async & Abort[Any]) =
+                            if n >= 64 then acc
+                            else
+                                // A generous first-read budget covers server latency; a shorter per-span idle budget bounds the tail
+                                // wait once bytes are flowing (only a keep-alive response with no close pays it). ISO-8859-1 is
+                                // byte-preserving, so concatenating per-span decodes can never corrupt a boundary the way a split
+                                // multibyte UTF-8 sequence would (matches sendStaged).
+                                val budget = if n == 0 then 2.seconds else 1.second
+                                Abort.run[Any](Async.timeout(budget)(Abort.run[Closed](conn.inbound.safe.take))).map {
                                     case Result.Success(Result.Success(data)) =>
-                                        new String(data.toArray, "UTF-8")
+                                        drain(acc + new String(data.toArray, "ISO-8859-1"), n + 1)
                                     case _ =>
-                                        // Closed, timed out, or other error — server rejected
-                                        ""
-                                Sync.Unsafe.defer(conn.close())
-                                    .andThen(response)
-                            }
+                                        // Peer close, idle timeout, or error: the response is complete. Empty acc means the
+                                        // server answered nothing (a close or timeout with no bytes), which assertRejected
+                                        // rejects as no proof of refusal.
+                                        acc
+                                }
+                        drain("", 0).map { response =>
+                            Sync.Unsafe.defer(conn.close()).andThen(response)
                         }
                     }
                 case _ => "" // connection failed
@@ -104,6 +113,12 @@ class HttpSecurityServerTest extends BaseHttpTest:
       * reason: a server that never started would pass every one of them. Requiring the status also pins the behavior that
       * makes silence unnecessary, since a peer that is refused is told so (RFC 9112 section 6.3) rather than left to infer
       * it from a disconnect after its own timeout expires.
+      *
+      * The check anchors on the FIRST status line (`startsWith`), not a substring `contains("400")`. `sendRawBytes` now drains
+      * the whole response, so a `contains` would pass on a later 400 too: exactly the smuggling failure these leaves guard, where
+      * a server that treats the malformed framing as bodyless answers 200 to the request and 400 to the reparsed leftover. Only a
+      * refusal answered as the FIRST response proves the request itself was rejected. This also closes the pre-existing hole where
+      * a `Content-Length: 400` (or any incidental "400") satisfied the substring.
       */
     def assertRejected(response: String, description: String)(using kyo.test.AssertScope): Unit =
         if response.isEmpty then
@@ -113,8 +128,8 @@ class HttpSecurityServerTest extends BaseHttpTest:
             )
         else
             assert(
-                response.contains("400"),
-                s"$description: expected 400 Bad Request, but got:\n${response.take(200)}"
+                response.startsWith("HTTP/1.1 400"),
+                s"$description: expected the first response to be 400 Bad Request, but got:\n${response.take(200)}"
             )
 
     "request smuggling defenses" - {
