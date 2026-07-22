@@ -152,15 +152,6 @@ class ConfigTest extends kyo.test.Test[Any]:
         assert(Config.Codex.default.modelName == "")
     }
 
-    "Config.embedder builder round-trips" in {
-        val config = Config.OpenAI.default
-        val e      = Config.Anthropic.default
-        config.embedder(e).embedder match
-            case Present(c) => assert(c eq e, s"expected the paired embedder config, got: $c")
-            case Absent     => assert(false, "expected embedder to be Present after the builder call")
-        assert(config.embedder == Absent, s"a default Config must leave embedder Absent, got: ${config.embedder}")
-    }
-
     "every catalog Provider.small resolves to its named cheap literal" in {
         assert(Config.Anthropic.small.modelName == "claude-haiku-4-5-20251001" && (Config.Anthropic.small.provider eq Config.Anthropic))
         assert(Config.OpenAI.small.modelName == "gpt-5-nano" && (Config.OpenAI.small.provider eq Config.OpenAI))

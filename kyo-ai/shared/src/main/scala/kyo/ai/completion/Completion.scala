@@ -28,17 +28,6 @@ trait Completion:
         resultSchema: Maybe[JsonSchema] = Absent
     )(using Frame): Completion.Reply < (LLM & Async & Abort[HttpException | AIGenException])
 
-    /** Embeds each input string with the provider's embeddings endpoint, one batched call.
-      *
-      * The default fails with `AIEmbeddingUnsupportedException`: only backends whose provider
-      * exposes an embeddings route override it (`OpenAICompletion` for OpenAI + Gemini's
-      * openai-compat layer). A caller pairs a supporting provider via `Config.embedder`.
-      */
-    def embed(config: Config, inputs: Chunk[String])(using
-        Frame
-    ): Chunk[Embedding] < (LLM & Async & Abort[HttpException | AIGenException]) =
-        Abort.fail(AIEmbeddingUnsupportedException(config.provider.name))
-
     /** Provides raw JSON fragments for the `{ resultValue: ... }` envelope consumed by `LLM.stream`.
       *
       * HTTP providers implement this by posting their native SSE request and projecting tool-call argument

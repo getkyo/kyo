@@ -28,7 +28,6 @@ final case class Config private (
     timeout: Duration = 2.minutes,
     maxIterations: Int = 5,
     retrySchedule: Schedule = Schedule.repeat(10),
-    embedder: Maybe[Config] = Absent,
     compactionBudget: Maybe[Int] = Absent,
     compactionHighWatermark: Double = 0.7,
     compactionLowWatermark: Double = 0.45,
@@ -82,12 +81,6 @@ final case class Config private (
       */
     private[kyo] def effectiveCompactionBudget: Int =
         compactionBudget.getOrElse(math.min(modelMaxTokens / 2, 48000))
-
-    /** Pairs a different provider config for embeddings. `Completion.embed` does not read this field;
-      * a caller that embeds resolves `embedder.getOrElse(this)` itself and embeds through THAT
-      * provider's completion, so `Absent` embeds with the chat config itself.
-      */
-    def embedder(config: Config): Config = copy(embedder = Present(config))
 
     // Internal Maybe form for cross-run seed derivation, where the prior seed may be Absent.
     private[kyo] def seed(seed: Maybe[Int]): Config = copy(seed = seed)

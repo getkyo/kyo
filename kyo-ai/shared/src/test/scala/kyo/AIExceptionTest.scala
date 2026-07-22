@@ -12,9 +12,10 @@ class AIExceptionTest extends kyo.test.Test[Any]:
             summon[AIStreamDeltaException <:< AIStreamException]
             summon[AIStreamIncompleteException <:< AIStreamException]
             summon[AIContextOverflowException <:< AIGenException]
-            summon[AIEmbeddingUnsupportedException <:< AIGenException]
             succeed
         }
+        "AIEmbeddingUnsupportedException is gone from the hierarchy (compile-absence)" in
+            typeCheckFailure("kyo.AIEmbeddingUnsupportedException(\"p\")")("AIEmbeddingUnsupportedException")
         "a shared failure belongs to multiple operations" in {
             // missing-key and transport occur in BOTH gen and stream, so each leaf mixes in both super-types.
             summon[AIMissingApiKeyException <:< AIGenException]

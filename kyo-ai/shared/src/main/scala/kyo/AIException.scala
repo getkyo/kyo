@@ -68,12 +68,6 @@ case class AIContextOverflowException(viewTokens: Int, modelMaxTokens: Int)(usin
             "with no further demotable units"
     ) with AIGenException
 
-/** The completion backend for the resolved provider exposes no embeddings endpoint, so
-  * `Completion.embed` cannot run. Pair a provider that does via `Config.embedder`.
-  */
-case class AIEmbeddingUnsupportedException(provider: String)(using Frame)
-    extends AIException(s"provider '$provider' does not support embeddings") with AIGenException
-
 /** A streaming SSE delta was not a parseable event for the provider. */
 case class AIStreamDeltaException(detail: String)(using Frame)
     extends AIException(s"malformed SSE delta: $detail") with AIStreamException
